@@ -53,12 +53,7 @@ def encode_me(rid, read, read_info, context):
 
 
 def unpack(f_pack):
-    a=np.cumsum(np.abs(f_pack))
-    b=np.append(0, a)[:-1]
-    c=np.zeros(max(a))+1
-    d=[c[i1:i2] for i1,i2 in zip(b,a)]
-    e=np.concatenate(d*f_pack)
-    return e
+    return np.repeat(f_pack, np.abs(f_pack))
 
 def apply_model(model, f, indir, outdir, context):
 
