@@ -11,6 +11,7 @@ This is an outdated version of FiberHMM that provides a snapshot of the tool as 
 - pytables (version: 3.8.0)
 - pickle (version: 0.7.5)
 
+
 **To simplify input and output, I set the script up to use a fixed directory structure.**
 
 - HMM_footprint_caller
@@ -30,6 +31,7 @@ This is an outdated version of FiberHMM that provides a snapshot of the tool as 
 The scripts produce quite a few intermediate files that help cut down on memory usage and give you checkpoints in the pipeline. 
 The final output file is very small, but the intermediate files are pretty big, so make sure you have space.  
 I don't have a single-line unified pipeline yet; rather, it's a set of scripts that you can run manually in order.
+
 
 **Order of scripts:**
 1. **generate_emission-probs.py**  
