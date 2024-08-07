@@ -11,22 +11,21 @@ This is an outdated version of FiberHMM that provides a snapshot of the tool as 
 - pytables (version: 3.8.0)
 - pickle (version: 0.7.5)
 
-To simplify input and output, I set the script up to use a set directory structure.
+**To simplify input and output, I set the script up to use a fixed directory structure.**
 
 - HMM_footprint_caller
   - EXPERIMENT_NAME
     - Reference
-      - GENOME.fa (fasta of your genome)
-      - accessible_probs.tsv (if you are not generating them)
-      - inaccessible_probs.tsv (if you are not generating them)
-      - chrom_info.tsv (a tsv with each line being: 'chromosome name','\t','chromosome length'
+      - GENOME.fa *(fasta of your entire genome)*
+      - accessible_probs.tsv *(if you are not generating them)*
+      - inaccessible_probs.tsv *(if you are not generating them)*
+      - chrom_info.tsv *(a tsv with each line being: 'chromosome name','\t','chromosome length')*
     - Infiles
       - bed
         - this is where you put your m6a-called bedfiles from fibertools
-        - the filename is carried through the whole pipeline, so I would rename them to whatever you want the final file to be called
-        - e.g. untreated_1.bed
-    - Outfiles (will be made by the script)
-    - Processed (will be made by the script)
+        - the filename is carried through the whole pipeline, so I would rename them to whatever you want the final file to be called *(e.g. untreated_1.bed)*
+    - Outfiles *(will be made by the script)*
+    - Processed *(will be made by the script)*
 
 The scripts produce quite a few intermediate files that help cut down on memory usage and give you checkpoints in the pipeline. 
 The final output file is very small, but the intermediate files are pretty big, so make sure you have space.  
@@ -66,5 +65,3 @@ I don't have a single-line unified pipeline yet; rather, it's a set of scripts t
    - `SAMPLE_chr.pq` -- the actual reads in each chromosome. The format is:  
      column names: read# read# read#  
      each column: accessible, footprint, accessible, footprint, ... accessible, footprint, accessible  
-   
-   The length of footprints and accessible regions are encoded as positive and negative numbers respectively. I will send you a Jupyter notebook running through how I decode and analyze this file.
