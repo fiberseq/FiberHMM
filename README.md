@@ -13,12 +13,6 @@ This is an outdated version of FiberHMM that provides a snapshot of the tool as 
 
 To simplify input and output, I set the script up to use a set directory structure.
 
-Here's the corrected version using Markdown's list formatting for better indentation visualization in GitHub:
-
-markdown
-
-To simplify input and output, I set the script up to use a set directory structure.
-
 - HMM_footprint_caller
   - EXPERIMENT_NAME
     - Reference
