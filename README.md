@@ -34,4 +34,4 @@
    Optional parameters:
    - `-l` minimum footprints allowed per read, default = 1
    
-   Applies the trained model to the rest of the data. The output is in the bed12 format, with footprint starts and lengths stored. Note that any footprints overlapping the start or end of the read are of unclear length and this should be taken into account for downstream analyhses
+   Applies the trained model to the rest of the data. The output is in the bed12 format, with footprint starts and lengths stored. Note that any footprints overlapping the start or end of the read are of unclear length and this should be taken into account for downstream analyses.
