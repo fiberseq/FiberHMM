@@ -10,7 +10,7 @@
 - pickle
 - tqdm
 
-**Typical script workflow:**
+**Script workflow:**
 1. **generate_emission-probs.py**  
    Optional, only if you want to use different control datasets for the emission probabilities.  
    I've included accessible and inaccessible probability tsv files which I generated from experimental data as described in our preprint.
