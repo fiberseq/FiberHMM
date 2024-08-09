@@ -27,10 +27,11 @@
    - `-o` a directory path where the output files will be stored (models, list of reads used in training).
 
    Trains the model on a given number of reads from a set of datasets.  
-   Outputs the best model and a list of all the models in pickles and a tsv of reads used in the training.
+   Outputs the best model and a list of all the models in pickles and a tsv of reads used in the training. Only needs to be run once per genome-- the model parameters shouldn't vary very much between similar datasets.
    
 6. **apply_model.py -i path_to/dataset_1.bed,path_to/dataset_2.bed,etc. -m path_to/best_model.pickle -t path_to/training-reads.tsv -g path_to/genome_name.h5 -p path_to/accessible_probs.tsv,path_to/inaccessible_probs.tsv -o path_to_output_directory**
+   <br>
    Optional parameters:
    - `-l` minimum footprints allowed per read, default = 1
    
-   Applies the trained model to the rest of the data. The output is in the bed12 format, with footprint starts and lengths stored.
+   Applies the trained model to the rest of the data. The output is in the bed12 format, with footprint starts and lengths stored. Note that any footprints overlapping the start or end of the read are of unclear length and this should be taken into account for downstream analyhses
