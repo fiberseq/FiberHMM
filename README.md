@@ -11,6 +11,7 @@
 - **pickle**
 - **tqdm**
 - **h5py**
+- **temnpfile**
 - **multiprocessing** (for multiprocess version)
 - **threading** (for multiprocess version)
 - **logging** (for multiprocess version)
