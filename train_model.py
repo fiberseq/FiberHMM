@@ -7,6 +7,7 @@ from hmmlearn import hmm
 import os
 import pickle
 from tqdm import tqdm
+import h5py
 tqdm.pandas()
 pd.options.mode.chained_assignment = None
 
@@ -17,11 +18,11 @@ def options():
     read_count = 150
     random_seed = 1
     me_col = 27
+    edge_trim = 10
 
 
-
-    optlist, args = getopt.getopt(sys.argv[1:],'i:c:r:s:g:m:p:o:',
-        ['infiles=','count=','read_count=','random_seed=', 'context=','me_col=', 'probs=', 'outdir='])
+    optlist, args = getopt.getopt(sys.argv[1:],'i:c:r:s:g:b:p:o:e:',
+        ['infiles=','count=','read_count=','random_seed=', 'context=','me_col=', 'probs=', 'outdir=', 'edge_trim='])
 
     for o, a in optlist:
         if o=='-i' or o=='--infiles':
@@ -34,13 +35,15 @@ def options():
             random_seed=int(a)  
         elif o=='-g' or o=='--context':
             context=a   
-        elif o=='-m' or o=='--me_col':
+        elif o=='-b' or o=='--me_col':
             me_col=int(a)   
         elif o=='-p' or o=='--probs':
             acc_in, inacc_in=a.split(',')
         elif o=='-o' or o=='--outdir':
             outdir = a
-    return infiles, count, read_count, random_seed, context, me_col, acc_in, inacc_in, outdir
+        elif o == '-e' or o == '--edge_trim':
+            edge_trim = int(a)
+    return infiles, count, read_count, random_seed, context, me_col, acc_in, inacc_in, outdir, edge_trim
 
 def make_emission_probs(acc_in, inacc_in):
     #generate dictionary of all hexamers
@@ -82,34 +85,41 @@ def make_emission_probs(acc_in, inacc_in):
 
     return emission_probs
 
-def encode_me(rid, read, read_info, context):
 
-    #grab methylation info, coordinates
+def encode_me(rid, read, read_info, context, edge_trim):
+    #grab info, read
+    chrom = read_info.loc[rid]['chrom']
+    start = read_info.loc[rid, 'start']
+    end = read_info.loc[rid, 'end']
 
-    chrom=read_info.loc[rid]['chrom']
-    me=np.array(read.dropna())
-    me=me[1:-1]
-    me=me.astype(int)
-    start=read_info.loc[rid,'start']
-    end=read_info.loc[rid,'end']
+    me = np.array(read.dropna())
+    #remove any methylations in the trim region
+    me = me.astype(int)
+    me = me[np.where(
+        (me>edge_trim)&(me<((end-start)-edge_trim))
+        )]
 
-    #generate array with marked methylations
+    #make sure within range, find positions with no methylation
+    me = me[np.where(me < (end - start))[0]]
+    no_me = np.arange(end - start)
+    no_me = np.delete(no_me, me)
 
-    me=me[np.where(me<(end-start))[0]]
-    #mask out the methylations from array for nonmethylated
-    no_me=np.arange(end-start)
-    no_me=np.delete(no_me, me)
+    #grab sequence context info from context file 
+    with h5py.File(context, 'r', swmr=True) as f:
+        hexamers = f[chrom]['table'][(start+edge_trim):(end-edge_trim)]
 
-    #read in hexamers for the region, encode the methylations based on the hexamers
-    hexamers=pd.read_hdf(context, key=chrom, start=start, stop=end)
-    me_encode=hexamers.to_numpy().T[0]
-    no_me_encode=me_encode+4097
-    #mask each other
-    me_encode[no_me]=0
-    no_me_encode[me]=0
+    #encode methylations and no methylations
+    me_encode = np.array([item[1] for item in hexamers]).T[0]
+    #add non-A (so, 0% probability of methylation) to edge bases
+    me_encode = np.pad(me_encode, pad_width=(edge_trim, edge_trim), mode='constant', constant_values=4096)
+    no_me_encode = me_encode + 4097
 
-        #return the full array
-    return me_encode+no_me_encode
+    #zero out me/no me positions
+    me_encode[no_me] = 0
+    no_me_encode[me] = 0
+
+    #add, return
+    return me_encode + no_me_encode
 
 
 def import_bed(f, me_col):
@@ -121,7 +131,7 @@ def import_bed(f, me_col):
     reads=reads.loc[reads['me']!='.']
     return reads
 
-def generate_training(infiles, count, read_count, random_seed, context, me_col):
+def generate_training(infiles, count, read_count, random_seed, context, me_col, edge_trim):
 
     train_df=pd.DataFrame()
     read_count=read_count//len(infiles)
@@ -145,7 +155,7 @@ def generate_training(infiles, count, read_count, random_seed, context, me_col):
             train_dic={}    
             for rid, read in train_reads.iterrows():
                 #encode the read and run it through the HMM
-                read_encode = encode_me(rid, read, ri, context)
+                read_encode = encode_me(rid, read, ri, context, edge_trim)
                 train_dic[rid]=read_encode
 
             tmp=pd.DataFrame.from_dict(train_dic, orient='index')
@@ -163,7 +173,7 @@ def generate_training(infiles, count, read_count, random_seed, context, me_col):
 
     return train_arrays, train_rids
 
-def trained_HMM(emission_probs, train_arrays):
+def train_HMM(emission_probs, train_arrays):
     #train HMM using dataset
     logprob=0
     best_model=''
@@ -217,7 +227,7 @@ def trained_HMM(emission_probs, train_arrays):
 
     return best_model, models
 
-infiles, count, read_count, random_seed, context, me_col, acc_in, inacc_in, outdir =options()
+infiles, count, read_count, random_seed, context, me_col, acc_in, inacc_in, outdir, edge_trim =options()
 
 if not os.path.exists(outdir):
     os.makedirs(outdir)
@@ -228,8 +238,8 @@ chromlist=np.array([s[1:] for s in chromlist])
 tmp.close()
 
 emission_probs=np.array(make_emission_probs(acc_in, inacc_in))
-train_arrays, train_rids=generate_training(infiles, count, read_count, random_seed, context, me_col)  
-model, models=trained_HMM(emission_probs, train_arrays)
+train_arrays, train_rids=generate_training(infiles, count, read_count, random_seed, context, me_col, edge_trim)  
+model, models=train_HMM(emission_probs, train_arrays)
 with open(outdir+'/best-model.pickle', 'wb') as handle:
     pickle.dump(model, handle, protocol=pickle.HIGHEST_PROTOCOL)
 with open(outdir+'/all_models.pickle', 'wb') as handle:

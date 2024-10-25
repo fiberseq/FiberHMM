@@ -26,15 +26,16 @@ def options():
     train_rids = []
     min_len = 0
     core_count = cpu_count()
+    edge_trim = 10
     #typically on my test machine this runs at 40-60 iterations/second, so this provides a very large buffer
     timeout = core_count*100
     circle=False
 
-    optlist, args = getopt.getopt(sys.argv[1:], 'i:g:m:t:o:b:s:l:c:x:r',
-                                  ['infile=', 'context=', 'model=', 'train_reads=', 'outdir=', 'me_col=', 'min_len=', 'core_count=', 'timeout=', 'circular'])
+    optlist, args = getopt.getopt(sys.argv[1:], 'i:g:m:t:o:b:s:l:c:x:re:',
+                                  ['infile=', 'context=', 'model=', 'train_reads=', 'outdir=', 'me_col=', 'min_len=', 'core_count=', 'timeout=', 'circular', 'edge_trim='])
 
     for o, a in optlist:
-        if o == '-i' or o == '--infiles':
+        if o == '-i' or o == '--infile':
             infile = a
         elif o == '-g' or o == '--context':
             context = a
@@ -57,31 +58,38 @@ def options():
             timeout = int(a)
         elif o == '-r' or o == '--circular':
             circle = True
+        elif o == '-e' or o == '--edge_trim':
+            edge_trim = int(a)
 
     logging.info("Options parsed successfully.")
-    return infile, context, model, train_rids, outdir, me_col, chunk_size, min_len, core_count, timeout, circle
+    return infile, context, model, train_rids, outdir, me_col, chunk_size, min_len, core_count, timeout, circle, edge_trim
 
 
-def encode_me(rid, read, read_info, context, circle):
+def encode_me(rid, read, read_info, context, circle, edge_trim):
     #grab info, read
     chrom = read_info.loc[rid]['chrom']
-    me = np.array(read.dropna())
-    me = me[1:-1]
-    me = me.astype(int)
     start = read_info.loc[rid, 'start']
     end = read_info.loc[rid, 'end']
+
+    me = np.array(read.dropna()).astype(int)
+    #remove any methylations in the trim region
+    me = me[np.where(
+        (me>edge_trim)&(me<((end-start)-edge_trim))
+        )] 
 
     #make sure within range, find positions with no methylation
     me = me[np.where(me < (end - start))[0]]
     no_me = np.arange(end - start)
     no_me = np.delete(no_me, me)
-
+   
     #grab sequence context info from context file 
     with h5py.File(context, 'r', swmr=True) as f:
-        hexamers = f[chrom]['table'][start:end]
+        hexamers = f[chrom]['table'][(start+edge_trim):(end-edge_trim)]
 
     #encode methylations and no methylations
     me_encode = np.array([item[1] for item in hexamers])
+    #add non-A (so, 0% probability of methylation) to edge bases
+    me_encode = np.pad(me_encode, pad_width=((edge_trim, edge_trim), (0, 0)), mode='constant', constant_values=4096)
     no_me_encode = me_encode + 4097
 
     #zero out me/no me positions
@@ -96,7 +104,7 @@ def encode_me(rid, read, read_info, context, circle):
         return np.tile(me_encode, 3)
 
 
-def process_chunk(chunk, model, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, dataset, i, circle):
+def process_chunk(chunk, model, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, dataset, i, circle, edge_trim):
     log_message = f"Processing chunk {i}..."
     sys.stdout.write(f'\r{log_message}')
     sys.stdout.flush()
@@ -125,6 +133,9 @@ def process_chunk(chunk, model, context, chromlist, train_rids, me_col, chunk_si
         # Generate bed12 for reads with methylation
         chunk = chunk.loc[chunk['me'] != '.']
         b12 = chunk.drop(columns=['me'])
+       # b12['start'] += edge_trim
+       # b12['end'] -= edge_trim
+
         b12['thickStart'] = b12['start']
         b12['thickEnd'] = b12['end']
         b12['itemRgb'] = '255,0,0'
@@ -138,7 +149,7 @@ def process_chunk(chunk, model, context, chromlist, train_rids, me_col, chunk_si
 
         # Encode methylations, predict footprints
         for index, read in chunk.iterrows():
-            read_encode = encode_me(index, read, b12, context, circle)
+            read_encode = encode_me(index, read, b12, context, circle, edge_trim)
             read_encode = read_encode.astype(int).reshape(-1, 1)
             pos = model.predict(read_encode)
 
@@ -170,7 +181,7 @@ def process_chunk(chunk, model, context, chromlist, train_rids, me_col, chunk_si
 
         # Combine, sort bed12s
         b12 = b12.rename(columns={'rid': 'name'})
-        b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockSizes', 'blockStarts']
+        b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockStarts', 'blockSizes']
         b12 = pd.concat([b12, no_me_b12])
         b12 = b12.sort_values(by=['chrom', 'start'])
 
@@ -203,7 +214,7 @@ def monitor_tasks(tasks, results_queue, timeout):
             tasks.append((task_id, task))  # Requeue the task to try again
 
 
-def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, core_count, timeout, circle):
+def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, core_count, timeout, circle, edge_trim):
     dataset = f.split('/')[-1].split('.')[0]
     logging.info(f"Starting model application for dataset {dataset}.")
 
@@ -218,7 +229,7 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
         #assign each chunk to a pool
         with Pool(core_count) as pool:
             for i, chunk in enumerate(reader):
-                task = pool.apply_async(process_chunk, args=(chunk, model, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, dataset, i, circle))
+                task = pool.apply_async(process_chunk, args=(chunk, model, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, dataset, i, circle, edge_trim))
                 tasks.append((i, task))
 
             monitor = Thread(target=monitor_tasks, args=(tasks, results_queue, timeout))
@@ -249,7 +260,7 @@ def combine_temp_files(chromlist, tmp_dir, outdir, dataset):
         logging.error(f"Error combining temporary files for dataset {dataset}: {e}", exc_info=True)
 
 
-f, context, model, train_rids, outdir, me_col, chunk_size, min_len, core_count, timeout, circle = options()
+f, context, model, train_rids, outdir, me_col, chunk_size, min_len, core_count, timeout, circle, edge_trim = options()
 
 dataset = f.split('/')[-1].split('.')[0]
 
@@ -270,7 +281,7 @@ with open(model, 'rb') as handle:
 logging.info(f"Model loaded successfully.")
 
 # Run model
-apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, core_count, timeout, circle)
+apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, core_count, timeout, circle, edge_trim)
 
 # Combine temp files, remove
 combine_temp_files(chromlist, tmp_dir, outdir, dataset)

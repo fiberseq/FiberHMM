@@ -22,13 +22,14 @@ def options():
     train_rids = []
     min_len = 0
     circle=False
+    edge_trim = 10
 
-    optlist, args = getopt.getopt(sys.argv[1:],'i:g:m:t:o:b:s:l:r',
-        ['infile=','context=','model=','train_reads=', 'outdir=', 'me_col=', 'min_len=','circular'])
+    optlist, args = getopt.getopt(sys.argv[1:],'i:g:m:t:o:b:s:l:re:',
+        ['infile=','context=','model=','train_reads=', 'outdir=', 'me_col=', 'min_len=','circular', 'edge_trim='])
 
     for o, a in optlist:
-        #comma-separated list of paths to input files
-        if o=='-i' or o=='--infiles':
+        #path to input file
+        if o=='-i' or o=='--infile':
             infile=a
         #path to context hdf5
         elif o=='-g' or o=='--context':
@@ -56,18 +57,23 @@ def options():
         #the output is a nonstandard bed12, which has 3x the footprints
         elif o == '-r' or o == '--circular':
             circle = True
+        elif o == '-e' or o == '--edge_trim':
+            edge_trim = int(a)
 
-    return infile, context, model, train_rids, outdir, me_col, chunk_size, min_len, circle 
+    return infile, context, model, train_rids, outdir, me_col, chunk_size, min_len, circle, edge_trim
 
 
-def encode_me(rid, read, read_info, context, circle):
+def encode_me(rid, read, read_info, context, circle, edge_trim):
     #grab info, read
     chrom = read_info.loc[rid]['chrom']
-    me = np.array(read.dropna())
-    me = me[1:-1]
-    me = me.astype(int)
     start = read_info.loc[rid, 'start']
     end = read_info.loc[rid, 'end']
+
+    me = np.array(read.dropna()).astype(int)
+    #remove any methylations in the trim region
+    me = me[np.where(
+        (me>edge_trim)&(me<((end-start)-edge_trim))
+        )]
 
     #make sure within range, find positions with no methylation
     me = me[np.where(me < (end - start))[0]]
@@ -76,10 +82,12 @@ def encode_me(rid, read, read_info, context, circle):
 
     #grab sequence context info from context file 
     with h5py.File(context, 'r', swmr=True) as f:
-        hexamers = f[chrom]['table'][start:end]
+        hexamers = f[chrom]['table'][(start+edge_trim):(end-edge_trim)]
 
     #encode methylations and no methylations
     me_encode = np.array([item[1] for item in hexamers])
+    #add non-A (so, 0% probability of methylation) to edge bases
+    me_encode = np.pad(me_encode, pad_width=((edge_trim, edge_trim), (0, 0)), mode='constant', constant_values=4096)
     no_me_encode = me_encode + 4097
 
     #zero out me/no me positions
@@ -108,7 +116,7 @@ def gaps_to_lengths(fps):
     
     return starts, lengths
 
-def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, circle):
+def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, circle, edge_trim):
 
     dataset=f.split('/')[-1].split('.')[0]
     sys.stdout.flush()
@@ -170,7 +178,7 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
                 pbar2.set_description(f"Applying model to chunk {i}")
 
                 for index, read in chunk.iterrows():
-                    read_encode = encode_me(index, read, b12, context, circle)
+                    read_encode = encode_me(index, read, b12, context, circle, edge_trim)
                     read_encode = read_encode.astype(int).reshape(-1, 1)
                     pos = model.predict(read_encode)
 
@@ -204,19 +212,17 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
 
                 #combine, sort bed12s
                 b12 = b12.rename(columns={'rid': 'name'})
-                b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockSizes', 'blockStarts']
+                b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockStarts', 'blockSizes']
                 b12 = pd.concat([b12, no_me_b12])
                 b12 = b12.sort_values(by=['chrom', 'start'])
 
                 # Write to a temporary file (split by chromosome if necessary)
-                for chrom in b12['chrom'].unique():
-                    tmp_b12=b12.loc[b12['chrom']==chrom]
-                    tmp_file = os.path.join(tmp_dir, f"{dataset}_{chrom}_{i}.bed")
-                    tmp_b12.to_csv(tmp_file, sep='\t', index=False)
+                tmp_file = os.path.join(tmp_dir, f"{dataset}_{i}.bed")
+                b12.to_csv(tmp_file, sep='\t', index=False)
 
 
 
-f, context, model, train_rids, outdir, me_col, chunk_size, min_len, circle = options()
+f, context, model, train_rids, outdir, me_col, chunk_size, min_len, circle, edge_trim = options()
 
 #grab list of chromosomes from context file
 tmp=pd.HDFStore(context, 'r')
@@ -238,19 +244,19 @@ with open(model, 'rb') as handle:
 dataset=f.split('/')[-1].split('.')[0]
 
 #run model
-apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, circle)
+apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, circle, edge_trim)
 
 #need to pause for 1s for small datasets
 time.sleep(1)
 
 #combine temp files, remove
-for chrom in tqdm(chromlist, desc='Combining temporary files'):
-    tmp_files = glob.glob(os.path.join(tmp_dir, f"{dataset}_{chrom}_*.bed"))
-    final_file = os.path.join(outdir, f"{dataset}-{chrom}_fp.bed")
-    with open(final_file, 'w') as fout:
-        for tmp_file in tmp_files:
-            with open(tmp_file, 'r') as fin:
-                fout.write(fin.read())
-            os.remove(tmp_file) 
+print('Combining temporary files')
+tmp_files = glob.glob(os.path.join(tmp_dir, f"{dataset}_*.bed"))
+final_file = os.path.join(outdir, f"{dataset}_fp.bed")
+with open(final_file, 'w') as fout:
+    for tmp_file in tmp_files:
+        with open(tmp_file, 'r') as fin:
+            fout.write(fin.read())
+        os.remove(tmp_file) 
 
 os.rmdir(tmp_dir)
