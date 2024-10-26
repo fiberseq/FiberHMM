@@ -69,7 +69,7 @@ def encode_me(rid, read, read_info, context, circle, edge_trim):
     start = read_info.loc[rid, 'start']
     end = read_info.loc[rid, 'end']
 
-    me = np.array(read.dropna()).astype(int)
+    me = np.array(read.dropna())[1:-1].astype(int)
     #remove any methylations in the trim region
     me = me[np.where(
         (me>edge_trim)&(me<((end-start)-edge_trim))
