@@ -43,6 +43,7 @@
      - `-b` Column number (0-based) in BED files with reference methylation starts (e.g., 12 for m6A output from fibertools, 28 by default for full output).
      - `-e` How many bases to mask on both ends of the read as 0% methylation probability (default is 10). Required due to the fact that fibertools needs a window to call methylations.
      - `-o` Directory path for storing output files (models, list of reads used in training).
+     - `-m` Minimum fraction of methylations required in a read (default: 0).
    - **Purpose:** Trains the model on a set of reads from specified datasets. Outputs the best model, a list of models in pickle format, and a TSV of reads used in training.
    - **Usage:** In general, run once per organism. Model parameters should remain consistent across similar datasets.
 
