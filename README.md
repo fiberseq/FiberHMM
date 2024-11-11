@@ -71,7 +71,7 @@ The repository includes a folder `Example files` containing necessary files to r
 ### Input Files
 - **accessible_probs.tsv** and **inaccessible_probs.tsv** – probability files for accessible and inaccessible regions (`-p` parameter).
 - **dm6.fa** – *Drosophila melanogaster* (dm6) reference genome in FASTA format. This file is too large for github, so please download the file yourself.
-- **dm6_example.bed** – example FiberHMM m6A-only output file for m6A modifications. You should specify `-b 11` to use the correct column.
+- **dm6_example.bed** – example FiberHMM m6A-only output file for m6A modifications. You should specify `-b 12` to use the correct column.
 
 ### Expected Output Files
 - **dm6_example_model.pickle** – trained model for the example dataset.
