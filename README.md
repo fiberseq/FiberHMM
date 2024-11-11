@@ -2,16 +2,14 @@
 
 - **pandas**
 - **numpy**
-- **os**
 - **getopt**
-- **sys**
 - **hmmlearn** (version: 0.2.5)
 - **pyarrow**
 - **pytables**
 - **pickle**
 - **tqdm**
 - **h5py**
-- **temnpfile**
+- **tempfile**
 - **multiprocessing** (for multiprocess version)
 - **threading** (for multiprocess version)
 - **logging** (for multiprocess version)
@@ -42,7 +40,7 @@
      - `-c` Number of iterations to run.
      - `-r` Total number of reads to use across all datasets.
      - `-s` Random seed for reproducibility.
-     - `-b` Column number (0-based) in BED files with methylation starts (e.g., 11 for m6A output from fibertools, 27 by default for full output).
+     - `-b` Column number (0-based) in BED files with reference methylation starts (e.g., 12 for m6A output from fibertools, 28 by default for full output).
      - `-e` How many bases to mask on both ends of the read as 0% methylation probability (default is 10). Required due to the fact that fibertools needs a window to call methylations.
      - `-o` Directory path for storing output files (models, list of reads used in training).
    - **Purpose:** Trains the model on a set of reads from specified datasets. Outputs the best model, a list of models in pickle format, and a TSV of reads used in training.
@@ -55,8 +53,10 @@
    - **Optional Parameters:**
      - `-l` Minimum footprints allowed per read (default: 0).
      - `-r` Enable circular mode (default: off).
+     - `-b` Column number (0-based) in BED files with reference methylation starts (e.g., 12 for m6A output from fibertools, 28 by default for full output).
      - `-s` Chunk size (default: 50000).
      - `-e` How many bases to mask on both ends of the read as 0% methylation probability (default is 10). Required due to the fact that fibertools needs a window to call methylations.
+     - `-m` Minimum fraction of methylations required in a read (default: 0).
      - Multiprocess-specific:
        - `-c` Core count for parallel processing (default: all available CPU cores, typically I recommend 4-8 for stability).
        - `-x` Timeout in seconds before restarting the pool (default: core count * 100).
