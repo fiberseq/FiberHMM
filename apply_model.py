@@ -69,14 +69,15 @@ def encode_me(rid, read, read_info, context, circle, edge_trim):
     start = read_info.loc[rid, 'start']
     end = read_info.loc[rid, 'end']
 
-    me = np.array(read.dropna())[1:-1].astype(int)
+    me = np.array(read.dropna())[1:-1]
     #remove any methylations in the trim region
+    me = me.astype(int)
     me = me[np.where(
-        (me>edge_trim)&(me<((end-start)-edge_trim))
+        (me>(edge_trim+start))&(me<(end-edge_trim))
         )]
 
     #make sure within range, find positions with no methylation
-    me = me[np.where(me < (end - start))[0]]
+    me = me[np.where(me < (end))[0]]-start
     no_me = np.arange(end - start)
     no_me = np.delete(no_me, me)
 
@@ -85,9 +86,9 @@ def encode_me(rid, read, read_info, context, circle, edge_trim):
         hexamers = f[chrom]['table'][(start+edge_trim):(end-edge_trim)]
 
     #encode methylations and no methylations
-    me_encode = np.array([item[1] for item in hexamers])
+    me_encode = np.array([item[1] for item in hexamers]).T[0]
     #add non-A (so, 0% probability of methylation) to edge bases
-    me_encode = np.pad(me_encode, pad_width=((edge_trim, edge_trim), (0, 0)), mode='constant', constant_values=4096)
+    me_encode = np.pad(me_encode, pad_width=(edge_trim, edge_trim), mode='constant', constant_values=4096)
     no_me_encode = me_encode + 4097
 
     #zero out me/no me positions

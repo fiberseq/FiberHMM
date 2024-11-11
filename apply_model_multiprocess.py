@@ -30,9 +30,10 @@ def options():
     #typically on my test machine this runs at 40-60 iterations/second, so this provides a very large buffer
     timeout = core_count*100
     circle=False
+    min_me=0
 
-    optlist, args = getopt.getopt(sys.argv[1:], 'i:g:m:t:o:b:s:l:c:x:re:',
-                                  ['infile=', 'context=', 'model=', 'train_reads=', 'outdir=', 'me_col=', 'min_len=', 'core_count=', 'timeout=', 'circular', 'edge_trim='])
+    optlist, args = getopt.getopt(sys.argv[1:], 'i:g:m:t:o:b:s:l:c:x:re:n:',
+                                  ['infile=', 'context=', 'model=', 'train_reads=', 'outdir=', 'me_col=', 'min_len=', 'core_count=', 'timeout=', 'circular', 'edge_trim=','--min_me='])
 
     for o, a in optlist:
         if o == '-i' or o == '--infile':
@@ -60,10 +61,11 @@ def options():
             circle = True
         elif o == '-e' or o == '--edge_trim':
             edge_trim = int(a)
+        elif o == '-n' or o == '--min_me':
+            min_me = int(a)
 
     logging.info("Options parsed successfully.")
-    return infile, context, model, train_rids, outdir, me_col, chunk_size, min_len, core_count, timeout, circle, edge_trim
-
+    return infile, context, model, train_rids, outdir, me_col, chunk_size, min_len, core_count, timeout, circle, edge_trim, min_me
 
 def encode_me(rid, read, read_info, context, circle, edge_trim):
     #grab info, read
@@ -71,25 +73,26 @@ def encode_me(rid, read, read_info, context, circle, edge_trim):
     start = read_info.loc[rid, 'start']
     end = read_info.loc[rid, 'end']
 
-    me = np.array(read.dropna())[1:-1].astype(int)
+    me = np.array(read.dropna())[1:-1]
     #remove any methylations in the trim region
+    me = me.astype(int)
     me = me[np.where(
-        (me>edge_trim)&(me<((end-start)-edge_trim))
-        )] 
+        (me>(edge_trim+start))&(me<(end-edge_trim))
+        )]
 
     #make sure within range, find positions with no methylation
-    me = me[np.where(me < (end - start))[0]]
+    me = me[np.where(me < (end))[0]]-start
     no_me = np.arange(end - start)
     no_me = np.delete(no_me, me)
-   
+
     #grab sequence context info from context file 
     with h5py.File(context, 'r', swmr=True) as f:
         hexamers = f[chrom]['table'][(start+edge_trim):(end-edge_trim)]
 
     #encode methylations and no methylations
-    me_encode = np.array([item[1] for item in hexamers])
+    me_encode = np.array([item[1] for item in hexamers]).T[0]
     #add non-A (so, 0% probability of methylation) to edge bases
-    me_encode = np.pad(me_encode, pad_width=((edge_trim, edge_trim), (0, 0)), mode='constant', constant_values=4096)
+    me_encode = np.pad(me_encode, pad_width=(edge_trim, edge_trim), mode='constant', constant_values=4096)
     no_me_encode = me_encode + 4097
 
     #zero out me/no me positions
@@ -103,8 +106,7 @@ def encode_me(rid, read, read_info, context, circle, edge_trim):
         me_encode = me_encode + no_me_encode
         return np.tile(me_encode, 3)
 
-
-def process_chunk(chunk, model, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, dataset, i, circle, edge_trim):
+def process_chunk(chunk, model, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, dataset, i, circle, edge_trim, min_me):
     log_message = f"Processing chunk {i}..."
     sys.stdout.write(f'\r{log_message}')
     sys.stdout.flush()
@@ -116,25 +118,32 @@ def process_chunk(chunk, model, context, chromlist, train_rids, me_col, chunk_si
         # Remove reads used in training if provided
         chunk = chunk.loc[~chunk['rid'].isin(train_rids)]
 
-        # Generate bed12 for reads with no methylation
-        no_me_b12 = chunk.loc[chunk['me'] == '.'].drop('me', axis=1)
-        no_me_b12['thickStart'] = no_me_b12['start']
-        no_me_b12['thickEnd'] = no_me_b12['end']
-        no_me_b12['itemRgb'] = '255,0,0'
-        no_me_b12['blockCount'] = 1
-        no_me_b12['blockStarts'] = 1
-        if not circle:
-            no_me_b12['blockSizes'] = no_me_b12['end'] - no_me_b12['start']
-        else:
-            no_me_b12['blockSizes'] = no_me_b12['end']*3 - no_me_b12['start']
+        if min_me == 0:
+            # Generate bed12 for reads with no methylation
+            no_me_b12 = chunk.loc[chunk['me'] == '.'].drop('me', axis=1)
+            no_me_b12['thickStart'] = no_me_b12['start']
+            no_me_b12['thickEnd'] = no_me_b12['end']
+            no_me_b12['itemRgb'] = '255,0,0'
+            no_me_b12['blockCount'] = 1
+            no_me_b12['blockStarts'] = 1
+            if not circle:
+                no_me_b12['blockSizes'] = no_me_b12['end'] - no_me_b12['start']
+            else:
+                no_me_b12['blockSizes'] = no_me_b12['end']*3 - no_me_b12['start']
 
-        no_me_b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockSizes', 'blockStarts']
+            no_me_b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockSizes', 'blockStarts']
+        
+        else:
+            no_me_b12=pd.DataFrame()
 
         # Generate bed12 for reads with methylation
         chunk = chunk.loc[chunk['me'] != '.']
-        b12 = chunk.drop(columns=['me'])
-       # b12['start'] += edge_trim
-       # b12['end'] -= edge_trim
+        if min_me > 0:
+            chunk['me_frac']=chunk['me_ct']/chunk['at_ct']
+            chunk=chunk.loc[chunk['me_frac']>min_me]
+            b12 = chunk.drop(columns=['me','me_ct','me_frac','at_ct'])
+        else:
+            b12 = chunk.drop(columns=['me'])
 
         b12['thickStart'] = b12['start']
         b12['thickEnd'] = b12['end']
@@ -224,12 +233,14 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
     
     try:
         # read in fibertools output bedfile in chunks
-        reader = pd.read_csv(f, usecols=[0, 1, 2, 3, me_col], names=['chrom', 'start', 'end', 'rid', 'me'], sep='\t', comment='#', chunksize=chunk_size)
-
+        if min_me > 0:
+            reader = pd.read_csv(f, usecols=[0, 1, 2, 3, 13, 14, me_col], names=['chrom', 'start', 'end', 'rid', 'at_ct','me_ct','me'], sep='\t', comment='#', chunksize=chunk_size)
+        else:
+            reader = pd.read_csv(f, usecols=[0, 1, 2, 3, me_col], names=['chrom', 'start', 'end', 'rid', 'me'], sep='\t', comment='#', chunksize=chunk_size)
         #assign each chunk to a pool
         with Pool(core_count) as pool:
             for i, chunk in enumerate(reader):
-                task = pool.apply_async(process_chunk, args=(chunk, model, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, dataset, i, circle, edge_trim))
+                task = pool.apply_async(process_chunk, args=(chunk, model, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, dataset, i, circle, edge_trim, min_me))
                 tasks.append((i, task))
 
             monitor = Thread(target=monitor_tasks, args=(tasks, results_queue, timeout))
@@ -260,7 +271,7 @@ def combine_temp_files(chromlist, tmp_dir, outdir, dataset):
         logging.error(f"Error combining temporary files for dataset {dataset}: {e}", exc_info=True)
 
 
-f, context, model, train_rids, outdir, me_col, chunk_size, min_len, core_count, timeout, circle, edge_trim = options()
+f, context, model, train_rids, outdir, me_col, chunk_size, min_len, core_count, timeout, circle, edge_trim, min_me = options()
 
 dataset = f.split('/')[-1].split('.')[0]
 
