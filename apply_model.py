@@ -17,7 +17,7 @@ import time
 
 def options():
     #default parameters
-    me_col = 27
+    me_col = 28
     chunk_size = 50000
     train_rids = []
     min_len = 0

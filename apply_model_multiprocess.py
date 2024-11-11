@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format='%(message)s', handlers=[logging.
 
 def options():
     # default parameters
-    me_col = 27
+    me_col = 28
     chunk_size = 10000
     train_rids = []
     min_len = 0
