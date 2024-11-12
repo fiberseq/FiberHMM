@@ -291,7 +291,7 @@ chromlist = chromlist[~np.char.find(chromlist, '_') >= 0]
 if not os.path.exists(outdir):
     os.mkdir(outdir)
 
-starting_it=0
+starting_it=-1
 if tmp_dir=='':
     tmp_dir = tempfile.mkdtemp(dir=outdir)
 else:
