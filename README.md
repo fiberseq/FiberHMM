@@ -50,7 +50,7 @@
 ### 4. **Apply model**
    - **Command:** 
      - Single-core version: `apply_model.py -i path_to/dataset.bed -m path_to/best_model.pickle -t path_to/training-reads.tsv -g path_to/genome_name.h5 -o path_to_output_directory`
-     - Multiprocess version: `apply_model_multiprocess.py -i path_to/dataset.bed -m path_to/best_model.pickle -t path_to/training-reads.tsv -g path_to/genome_name.h5 -o path_to_output_directory`
+     - Multi-core version: `apply_model_multiprocess.py -i path_to/dataset.bed -m path_to/best_model.pickle -t path_to/training-reads.tsv -g path_to/genome_name.h5 -o path_to_output_directory`
    - **Optional Parameters:**
      - `-l` Minimum footprints allowed per read (default: 0).
      - `-r` Enable circular mode (default: off).
