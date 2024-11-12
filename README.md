@@ -61,6 +61,7 @@
      - Multiprocess-specific:
        - `-c` Core count for parallel processing (default: all available CPU cores, typically I recommend 4-8 for stability).
        - `-x` Timeout in seconds before restarting the pool (default: core count * 100).
+       - `-d` Existing tempdir. Specify the path to an existing temp directory if the script previously failed to complete. This will skip quickly through all chunks of the bedfile already footprint-called, and then resume after the last chunk read previously. It is essential to use the same chunksize here (and should be the same parameters as the first time you ran it), as this is based on the # in the tempfile name.
    - **Purpose:** Applies the trained model to remaining data. Outputs results in BED12 format, including footprint starts and lengths. Multiprocess version offers faster execution but may require tuning for stability.
    - **Note:** When using circular mode, reads are tiled 3x, affecting footprint count/length; further downstream processing is required.
 
