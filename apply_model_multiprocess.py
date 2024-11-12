@@ -31,15 +31,18 @@ def options():
     timeout = core_count*100
     circle=False
     min_me=0
+    tmp_dir=''
 
-    optlist, args = getopt.getopt(sys.argv[1:], 'i:g:m:t:o:b:s:l:c:x:re:n:',
-                                  ['infile=', 'context=', 'model=', 'train_reads=', 'outdir=', 'me_col=', 'min_len=', 'core_count=', 'timeout=', 'circular', 'edge_trim=','--min_me='])
+    optlist, args = getopt.getopt(sys.argv[1:], 'i:g:m:t:o:b:s:l:c:x:re:n:d:',
+                                  ['infile=', 'context=', 'model=', 'train_reads=', 'outdir=', 'tmp_dir=','me_col=', 'min_len=', 'core_count=', 'timeout=', 'circular', 'edge_trim=','--min_me='])
 
     for o, a in optlist:
         if o == '-i' or o == '--infile':
             infile = a
         elif o == '-g' or o == '--context':
             context = a
+        elif o == '-d' or o == '--tmp_dir':
+            tmp_dir = a
         elif o == '-m' or o == '--model':
             model = a
         elif o == '-t' or o == '--train_reads':
@@ -65,7 +68,7 @@ def options():
             min_me = int(a)
 
     logging.info("Options parsed successfully.")
-    return infile, context, model, train_rids, outdir, me_col, chunk_size, min_len, core_count, timeout, circle, edge_trim, min_me
+    return infile, context, model, train_rids, outdir, me_col, chunk_size, min_len, core_count, timeout, circle, edge_trim, min_me, tmp_dir
 
 def encode_me(rid, read, read_info, context, circle, edge_trim):
     #grab info, read
@@ -223,7 +226,7 @@ def monitor_tasks(tasks, results_queue, timeout):
             tasks.append((task_id, task))  # Requeue the task to try again
 
 
-def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, core_count, timeout, circle, edge_trim):
+def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, core_count, timeout, circle, edge_trim,starting_it):
     dataset = f.split('/')[-1].split('.')[0]
     logging.info(f"Starting model application for dataset {dataset}.")
 
@@ -240,9 +243,12 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
         #assign each chunk to a pool
         with Pool(core_count) as pool:
             for i, chunk in enumerate(reader):
-                task = pool.apply_async(process_chunk, args=(chunk, model, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, dataset, i, circle, edge_trim, min_me))
-                tasks.append((i, task))
-
+                if i > starting_it:
+                    task = pool.apply_async(process_chunk, args=(chunk, model, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, dataset, i, circle, edge_trim, min_me))
+                    tasks.append((i, task))
+                else:
+                    print(f'Skipping chunk {i}', end='\r')
+                    sys.stdout.flush()
             monitor = Thread(target=monitor_tasks, args=(tasks, results_queue, timeout))
             monitor.start()
             monitor.join()  # Wait for all tasks to be monitored
@@ -271,7 +277,7 @@ def combine_temp_files(chromlist, tmp_dir, outdir, dataset):
         logging.error(f"Error combining temporary files for dataset {dataset}: {e}", exc_info=True)
 
 
-f, context, model, train_rids, outdir, me_col, chunk_size, min_len, core_count, timeout, circle, edge_trim, min_me = options()
+f, context, model, train_rids, outdir, me_col, chunk_size, min_len, core_count, timeout, circle, edge_trim, min_me, tmp_dir = options()
 
 dataset = f.split('/')[-1].split('.')[0]
 
@@ -284,7 +290,18 @@ chromlist = chromlist[~np.char.find(chromlist, '_') >= 0]
 # Make output directory and temporary directory
 if not os.path.exists(outdir):
     os.mkdir(outdir)
-tmp_dir = tempfile.mkdtemp(dir=outdir)
+
+starting_it=0
+if tmp_dir=='':
+    tmp_dir = tempfile.mkdtemp(dir=outdir)
+else:
+    print(f'Resuming with exisiting temporary directory: {tmp_dir}')
+    for tf in os.listdir(tmp_dir):
+        it = int(tf.split('_')[-1].split('.')[0])
+        if it > starting_it:
+            starting_it=it
+    print(f'Skipping chunks 0-{starting_it}')
+
 
 # Load model
 with open(model, 'rb') as handle:
@@ -292,7 +309,7 @@ with open(model, 'rb') as handle:
 logging.info(f"Model loaded successfully.")
 
 # Run model
-apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, core_count, timeout, circle, edge_trim)
+apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, core_count, timeout, circle, edge_trim, starting_it)
 
 # Combine temp files, remove
 combine_temp_files(chromlist, tmp_dir, outdir, dataset)
