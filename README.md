@@ -40,7 +40,7 @@
      - `-c` Number of iterations to run.
      - `-r` Total number of reads to use across all datasets.
      - `-s` Random seed for reproducibility.
-     - `-b` Column number (0-based) in BED files with reference methylation starts (e.g., 12 for m6A output from fibertools, 28 by default for full output).
+     - `-b` Column number (0-based) in BED files with reference methylation starts (e.g., 11 for m6A output from fibertools, 28 by default for full output).
      - `-e` How many bases to mask on both ends of the read as 0% methylation probability (default is 10). Required due to the fact that fibertools needs a window to call methylations.
      - `-o` Directory path for storing output files (models, list of reads used in training).
      - `-m` Minimum fraction of methylations required in a read (default: 0).
