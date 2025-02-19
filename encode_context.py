@@ -38,19 +38,25 @@ def make_fa_dic(infile):
     #for fast lookup of sequence context
     fdic={}
     chrom_filter=False
-    with open(infile, 'r') as f:
+    with tqdm(open(infile, 'r'), desc="counting lines in fasta") as f:
         total_lines = sum(1 for line in f)
     with open(infile, 'r') as f:
-        for line in tqdm(f, total=total_lines, desc="Importing fasta", leave=False):
+        for line in tqdm(f, desc="Importing fasta", leave=False, total = total_lines):
             line=line.rstrip()
-            if '>' in line and 'sequence' not in line and 'genome' not in line:
-                if '>' in line:
-                    line=line.split(' ')
-                    chrom='chr'+line[len(line)-1]
-                chrom_filter=True
+            if '>' in line and 'chr' in line:
+                chrom=line.split(' ')[0].replace('>','') #grab chromosome name up until first whitespace
+                if '-' in chrom: #replace forbidden characters
+                    chrom=chrom.replace('-','__')
+                    chrom=chrom.replace(':','___')
+
+                chrom_filter=True   # This is preserved in case I want to hardcode leaving out specific chromosomes.
+                                    # This can be useful in weird assemblies with many 1000s of contigs if you don't
+                                    # actually need all of them. If you want to use it, add an "if" statement that
+                                    # accounts for the string you want to filter out and set chrom_filter to False.
+                                    # If this script is slow or produces a huge database but you just need one or two
+                                    # chromosomes/contigs, consider using this option.
                 fdic[chrom]=[]
-            elif '>' in line and 'sequence' in line or 'genome' in line:
-                chrom_filter=False
+
             elif chrom_filter:
                 fdic[chrom].append(line.upper())
     for chrom in fdic:

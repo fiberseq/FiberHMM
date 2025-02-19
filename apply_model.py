@@ -23,9 +23,10 @@ def options():
     min_len = 0
     circle=False
     edge_trim = 10
+    tmp_dir=''
 
-    optlist, args = getopt.getopt(sys.argv[1:],'i:g:m:t:o:b:s:l:re:',
-        ['infile=','context=','model=','train_reads=', 'outdir=', 'me_col=', 'min_len=','circular', 'edge_trim='])
+    optlist, args = getopt.getopt(sys.argv[1:],'i:g:m:t:o:b:s:l:re:d:',
+        ['infile=','context=','model=','train_reads=', 'outdir=', 'me_col=', 'min_len=','circular', 'edge_trim=','tmp_dir'])
 
     for o, a in optlist:
         #path to input file
@@ -59,19 +60,30 @@ def options():
             circle = True
         elif o == '-e' or o == '--edge_trim':
             edge_trim = int(a)
+        elif o == '-d' or o == '--tmp_dir':
+            tmp_dir = a
 
-    return infile, context, model, train_rids, outdir, me_col, chunk_size, min_len, circle, edge_trim
+    return infile, context, model, train_rids, outdir, me_col, chunk_size, min_len, circle, edge_trim, tmp_dir
 
 
 def encode_me(rid, read, read_info, context, circle, edge_trim):
     #grab info, read
     chrom = read_info.loc[rid]['chrom']
+    #encode to remove unallowed characters
+    if '-' in chrom:
+        chrom=chrom.replace('-','__')
+    if ':' in chrom:
+        chrom=chrom.replace(':','___')
     start = read_info.loc[rid, 'start']
     end = read_info.loc[rid, 'end']
 
-    me = np.array(read.dropna())[1:-1]
+    me = np.array(read.dropna())[:-1]
     #remove any methylations in the trim region
     me = me.astype(int)
+    if me_col == 11:
+        me += start   #first, the methylation coordinates need to have the start added to convert to genomic coordinates
+        me = me[1:-1] #second, the first and last coordinate need to be trimmed as they are only there for the bed12 format
+
     me = me[np.where(
         (me>(edge_trim+start))&(me<(end-edge_trim))
         )]
@@ -117,7 +129,7 @@ def gaps_to_lengths(fps):
     
     return starts, lengths
 
-def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, circle, edge_trim):
+def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, circle, edge_trim, starting_it):
 
     dataset=f.split('/')[-1].split('.')[0]
     sys.stdout.flush()
@@ -127,115 +139,126 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
     reader = pd.read_csv(f, usecols=[0, 1, 2, 3, me_col], names=['chrom', 'start', 'end', 'rid', 'me'], sep='\t', comment='#', chunksize=chunk_size)
     
     with tqdm(total=len(chromlist), leave=True) as pbar:
-        i=0
+        i=-1
         for chunk in reader:
             i+=1
-            #make sure chromosomes are in the encoding
-            chunk = chunk.loc[chunk['chrom'].isin(chromlist)]
-            
-            #update displayed chromosome based on the first chromosome in the chunk
-            chrom_new=chunk['chrom'].tolist()[0]
-            if chrom!=chrom_new:  
-                chrom=chrom_new
-                pbar.set_description(f"Processing {chrom}")
-                pbar.update(1)
+            if i > starting_it:
+                #update displayed chromosome based on the first chromosome in the chunk
+                chrom_new=chunk['chrom'].tolist()[0]
+                if chrom!=chrom_new:  
+                    chrom=chrom_new
+                    pbar.set_description(f"Processing {chrom}")
+                    pbar.update(1)
 
-            #remove reads used in training if provided
-            chunk=chunk.loc[~chunk['rid'].isin(train_rids)]
-            
-            #generate bed12 for reads with no methylation (so, all one footprint)
-            no_me_b12 = chunk.loc[chunk['me'] == '.'].drop('me', axis=1)
-            no_me_b12['thickStart'] = no_me_b12['start']
-            no_me_b12['thickEnd'] = no_me_b12['end']
-            no_me_b12['itemRgb'] = '255,0,0'
-            no_me_b12['blockCount'] = 1
-            no_me_b12['blockStarts'] = 1
-            no_me_b12['blockSizes'] = no_me_b12['end'] - no_me_b12['start']
-
-            if not circle:
+                #remove reads used in training if provided
+                chunk=chunk.loc[~chunk['rid'].isin(train_rids)]
+                
+                #generate bed12 for reads with no methylation (so, all one footprint)
+                no_me_b12 = chunk.loc[chunk['me'] == '.'].drop('me', axis=1)
+                no_me_b12['thickStart'] = no_me_b12['start']
+                no_me_b12['thickEnd'] = no_me_b12['end']
+                no_me_b12['itemRgb'] = '255,0,0'
+                no_me_b12['blockCount'] = 1
+                no_me_b12['blockStarts'] = 1
                 no_me_b12['blockSizes'] = no_me_b12['end'] - no_me_b12['start']
+
+                if not circle:
+                    no_me_b12['blockSizes'] = no_me_b12['end'] - no_me_b12['start']
+                else:
+                    no_me_b12['blockSizes'] = no_me_b12['end']*3 - no_me_b12['start']
+
+                no_me_b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockSizes', 'blockStarts']
+                chrom = chunk['chrom'].iloc[0]
+
+                #generate bed12 for reads with methylation
+                chunk=chunk.loc[chunk['me']!='.']
+                b12 = chunk.drop(columns=['me'])
+                b12['thickStart'] = b12['start']
+                b12['thickEnd'] = b12['end']
+                b12['itemRgb'] = '255,0,0'
+
+                #grab methylations
+                chunk = chunk['me'].str.split(pat=',', expand=True)
+
+                all_starts=[]
+                all_lengths=[]
+                all_counts=[]
+
+                #encode methylations, predict footprints
+                with tqdm(total=chunk_size, initial=no_me_b12.shape[0], leave=False) as pbar2:
+                    pbar2.set_description(f"Applying model to chunk {i}")
+
+                    for index, read in chunk.iterrows():
+                        read_encode = encode_me(index, read, b12, context, circle, edge_trim)
+                        read_encode = read_encode.astype(int).reshape(-1, 1)
+                        pos = model.predict(read_encode)
+
+                        #if no footprints, store '.'
+                        if sum(pos) == 0:
+                            all_starts.append('.')
+                            all_lengths.append('.')
+                            all_counts.append(0)
+
+                        #else calculate footprint starts and lengths from probabilities
+                        else:
+                            pos_offset = np.append([0], pos)
+                            pos = np.append(pos, [0])
+                            pos_diff = pos_offset - pos
+                            starts = np.where(pos_diff == -1)[0]
+                            ends = np.where(pos_diff == 1)[0]
+                            ends = np.append([0], ends)
+                            lengths = np.sum((starts * -1, ends[1:]), axis=0).astype('int')
+                            all_starts.append(','.join(starts.astype(str)))
+                            all_lengths.append(','.join(lengths.astype(str)))
+                            all_counts.append(len(starts))
+
+                        pbar2.update(1)
+
+                    pbar2.set_description(f"Writing chunk {i}")
+
+                    #add to bed12
+                    b12['blockCount'] = all_counts
+                    b12['blockStarts'] = all_starts
+                    b12['blockSizes'] = all_lengths
+
+                    #combine, sort bed12s
+                    b12 = b12.rename(columns={'rid': 'name'})
+                    b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockStarts', 'blockSizes']
+                    b12 = pd.concat([b12, no_me_b12])
+                    b12 = b12.sort_values(by=['chrom', 'start'])
+
+                    # Write to a temporary file (split by chromosome if necessary)
+                    tmp_file = os.path.join(tmp_dir, f"{dataset}_{i}.bed")
+                    b12.to_csv(tmp_file, sep='\t', index=False)
             else:
-                no_me_b12['blockSizes'] = no_me_b12['end']*3 - no_me_b12['start']
-
-            no_me_b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockSizes', 'blockStarts']
-            chrom = chunk['chrom'].iloc[0]
-
-            #generate bed12 for reads with methylation
-            chunk=chunk.loc[chunk['me']!='.']
-            b12 = chunk.drop(columns=['me'])
-            b12['thickStart'] = b12['start']
-            b12['thickEnd'] = b12['end']
-            b12['itemRgb'] = '255,0,0'
-
-            #grab methylations
-            chunk = chunk['me'].str.split(pat=',', expand=True)
-
-            all_starts=[]
-            all_lengths=[]
-            all_counts=[]
-
-            #encode methylations, predict footprints
-            with tqdm(total=chunk_size, initial=no_me_b12.shape[0], leave=False) as pbar2:
-                pbar2.set_description(f"Applying model to chunk {i}")
-
-                for index, read in chunk.iterrows():
-                    read_encode = encode_me(index, read, b12, context, circle, edge_trim)
-                    read_encode = read_encode.astype(int).reshape(-1, 1)
-                    pos = model.predict(read_encode)
-
-                    #if no footprints, store '.'
-                    if sum(pos) == 0:
-                        all_starts.append('.')
-                        all_lengths.append('.')
-                        all_counts.append(0)
-
-                    #else calculate footprint starts and lengths from probabilities
-                    else:
-                        pos_offset = np.append([0], pos)
-                        pos = np.append(pos, [0])
-                        pos_diff = pos_offset - pos
-                        starts = np.where(pos_diff == -1)[0]
-                        ends = np.where(pos_diff == 1)[0]
-                        ends = np.append([0], ends)
-                        lengths = np.sum((starts * -1, ends[1:]), axis=0).astype('int')
-                        all_starts.append(','.join(starts.astype(str)))
-                        all_lengths.append(','.join(lengths.astype(str)))
-                        all_counts.append(len(starts))
-
-                    pbar2.update(1)
-
-                pbar2.set_description(f"Writing chunk {i}")
-
-                #add to bed12
-                b12['blockCount'] = all_counts
-                b12['blockStarts'] = all_starts
-                b12['blockSizes'] = all_lengths
-
-                #combine, sort bed12s
-                b12 = b12.rename(columns={'rid': 'name'})
-                b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockStarts', 'blockSizes']
-                b12 = pd.concat([b12, no_me_b12])
-                b12 = b12.sort_values(by=['chrom', 'start'])
-
-                # Write to a temporary file (split by chromosome if necessary)
-                tmp_file = os.path.join(tmp_dir, f"{dataset}_{i}.bed")
-                b12.to_csv(tmp_file, sep='\t', index=False)
+                print(f'Skipping chunk {i}', end='\r')
+                sys.stdout.flush()
 
 
 
-f, context, model, train_rids, outdir, me_col, chunk_size, min_len, circle, edge_trim = options()
+f, context, model, train_rids, outdir, me_col, chunk_size, min_len, circle, edge_trim, tmp_dir = options()
 
 #grab list of chromosomes from context file
 tmp=pd.HDFStore(context, 'r')
 chromlist=np.array(tmp.keys())
 chromlist=np.array([s[1:] for s in chromlist])
-chromlist = chromlist[~np.char.find(chromlist, '_') >= 0]
+#chromlist = chromlist[~np.char.find(chromlist, '_') >= 0]
 tmp.close()
-
+print(chromlist)
 #make out directory and temporary directory
 if not os.path.exists(outdir):
     os.system('mkdir '+outdir)
-tmp_dir = tempfile.mkdtemp(dir=outdir)  # Create a temporary directory for storing temporary files
+
+starting_it=-1
+if tmp_dir=='':
+    tmp_dir = tempfile.mkdtemp(dir=outdir)
+else:
+    print(f'Resuming with exisiting temporary directory: {tmp_dir}')
+    for tf in os.listdir(tmp_dir):
+        it = int(tf.split('_')[-1].split('.')[0])
+        if it > starting_it:
+            starting_it=it
+    print(f'Skipping chunks 0-{starting_it}')
 
 #load model
 with open(model, 'rb') as handle:
@@ -245,7 +268,7 @@ with open(model, 'rb') as handle:
 dataset=f.split('/')[-1].split('.')[0]
 
 #run model
-apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, circle, edge_trim)
+apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size, min_len, tmp_dir, circle, edge_trim, starting_it)
 
 #need to pause for 1s for small datasets
 time.sleep(1)

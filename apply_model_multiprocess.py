@@ -73,12 +73,21 @@ def options():
 def encode_me(rid, read, read_info, context, circle, edge_trim):
     #grab info, read
     chrom = read_info.loc[rid]['chrom']
+    #encode to remove unallowed characters
+    if '-' in chrom:
+        chrom=chrom.replace('-','__')
+    if ':' in chrom:
+        chrom=chrom.replace(':','___')
     start = read_info.loc[rid, 'start']
     end = read_info.loc[rid, 'end']
 
-    me = np.array(read.dropna())[1:-1]
+    me = np.array(read.dropna())[:-1]
     #remove any methylations in the trim region
     me = me.astype(int)
+    if me_col == 11:
+        me += start   #first, the methylation coordinates need to have the start added to convert to genomic coordinates
+        me = me[1:-1] #second, the first and last coordinate need to be trimmed as they are only there for the bed12 format
+
     me = me[np.where(
         (me>(edge_trim+start))&(me<(end-edge_trim))
         )]
@@ -115,9 +124,6 @@ def process_chunk(chunk, model, context, chromlist, train_rids, me_col, chunk_si
     sys.stdout.flush()
 
     try:
-        # Make sure chromosomes are in context file
-        chunk = chunk.loc[chunk['chrom'].isin(chromlist)]
-
         # Remove reads used in training if provided
         chunk = chunk.loc[~chunk['rid'].isin(train_rids)]
 
@@ -285,8 +291,8 @@ dataset = f.split('/')[-1].split('.')[0]
 with pd.HDFStore(context, 'r') as tmp:
     chromlist = np.array(tmp.keys())
 chromlist = np.array([s[1:] for s in chromlist])
-chromlist = chromlist[~np.char.find(chromlist, '_') >= 0]
-
+chromlist = [s + '.1' if 'chr' not in s else s for s in chromlist] # add .1 to scaffolds for checking
+tmp.close()
 # Make output directory and temporary directory
 if not os.path.exists(outdir):
     os.mkdir(outdir)
@@ -315,5 +321,5 @@ apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_size
 combine_temp_files(chromlist, tmp_dir, outdir, dataset)
 
 #this consistently fails on my tests because of permissions, but it's not a huge issue
-os.rmdir(tmp_dir)
+#os.rmdir(tmp_dir)
 logging.info("Temporary directory removed and script completed.")

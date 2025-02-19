@@ -17,14 +17,16 @@ def options():
     #default parameters
     count = 10
     read_count = 150
-    random_seed = 1
+    random_seed = 42
     me_col = 28
     edge_trim = 10
     min_me=0
+    nrows=-1
+    prob_adjust=1
 
 
-    optlist, args = getopt.getopt(sys.argv[1:],'i:c:r:s:g:b:p:o:e:m:',
-        ['infiles=','count=','read_count=','random_seed=', 'context=','me_col=', 'probs=', 'outdir=', 'edge_trim=', 'min_me='])
+    optlist, args = getopt.getopt(sys.argv[1:],'i:c:r:s:g:b:p:o:e:m:n:a:',
+        ['infiles=','count=','read_count=','random_seed=', 'context=','me_col=', 'probs=', 'outdir=', 'edge_trim=', 'min_me=', 'n_rows='])
 
     for o, a in optlist:
         if o=='-i' or o=='--infiles':
@@ -47,10 +49,14 @@ def options():
             edge_trim = int(a)
         elif o == '-m' or o == '--min_me':
             min_me = float(a)
+        elif o == '-n' or o == '--n_rows':
+            nrows = int(a)
+        elif o == '-a' or o == '--prob_adjust':
+            prob_adjust = float(a)
 
-    return infiles, count, read_count, random_seed, context, me_col, acc_in, inacc_in, outdir, edge_trim, min_me
+    return infiles, count, read_count, random_seed, context, me_col, acc_in, inacc_in, outdir, edge_trim, min_me, nrows, prob_adjust
 
-def make_emission_probs(acc_in, inacc_in):
+def make_emission_probs(acc_in, inacc_in, prob_adjust):
     #generate dictionary of all hexamers
     bases=['A','C','T','G']
     trimers=[]
@@ -73,7 +79,7 @@ def make_emission_probs(acc_in, inacc_in):
 
     acc['encode']=acc['encode'].astype(int)
     acc=acc.sort_values(by='encode').reset_index()
-    acc['prob_acc']=acc['prob_acc'].astype(float)
+    acc['prob_acc']=acc['prob_acc'].astype(float)*prob_adjust
     inacc['encode']=inacc['encode'].astype(int)
     inacc=inacc.sort_values(by='encode').reset_index()
     inacc['prob_inacc']=inacc['prob_inacc'].astype(float)
@@ -91,15 +97,26 @@ def make_emission_probs(acc_in, inacc_in):
     return emission_probs
 
 
-def encode_me(rid, read, read_info, context, edge_trim):
+def encode_me(rid, read, read_info, context, edge_trim, me_col):
     #grab info, read
     chrom = read_info.loc[rid]['chrom']
+    #encode to remove unallowed characters
+    if '-' in chrom:
+        chrom=chrom.replace('-','__')
+    if ':' in chrom:
+        chrom=chrom.replace(':','___')
     start = read_info.loc[rid, 'start']
     end = read_info.loc[rid, 'end']
 
-    me = np.array(read.dropna())[1:-1]
+    me = np.array(read.dropna())
     #remove any methylations in the trim region
-    me = me.astype(int)
+    me = me[:-1].astype(int)
+
+    #account for differences in ref-m6a w/ --m6a -r bed12 output (-b 11) from ft extract vs the --all output (-b 28)
+    if me_col == 11:
+        me += start   #first, the methylation coordinates need to have the start added to convert to genomic coordinates
+        me = me[1:] #second, the first coordinate needs to be trimmed as they are only there for the bed12 format
+
     me = me[np.where(
         (me>(edge_trim+start))&(me<(end-edge_trim))
         )]
@@ -127,26 +144,32 @@ def encode_me(rid, read, read_info, context, edge_trim):
     return me_encode + no_me_encode
 
 
-def import_bed(f, me_col, min_me):
+def import_bed(f, me_col, min_me, nrows):
     s_adjust={}
     e_adjust={}
     drops=[]
     
-    if min_me==0:   
-        reads=pd.read_csv(f, usecols=[0,1,2,3,me_col], names=['chrom','start','end', 'rid','me'], sep='\t',comment='#')
+    if min_me==0:
+        if nrows < 0:
+            reads=pd.read_csv(f, usecols=[0,1,2,3,me_col], names=['chrom','start','end', 'rid','me'], sep='\t',comment='#')
+        else:
+            reads=pd.read_csv(f, usecols=[0,1,2,3,me_col], names=['chrom','start','end', 'rid','me'], sep='\t',comment='#', nrows=nrows)
+
     
     else:
         #trim reads w/ low methylation
-        reads=pd.read_csv(f, usecols=[0,1,2,3,13,14,me_col], names=['chrom','start','end', 'rid', 'at_ct','me_ct','me'], sep='\t',comment='#')
+        if nrows < 0:
+            reads=pd.read_csv(f, usecols=[0,1,2,3,13,14,me_col], names=['chrom','start','end', 'rid', 'at_ct','me_ct','me'], sep='\t',comment='#')
+        else:
+            reads=pd.read_csv(f, usecols=[0,1,2,3,13,14,me_col], names=['chrom','start','end', 'rid', 'at_ct','me_ct','me'], sep='\t',comment='#', nrows=nrows)
         reads['me_frac']=reads['me_ct']/reads['at_ct']
         reads=reads.loc[reads['me_frac']>min_me]
         reads=reads.drop(['me_ct','at_ct','me_frac'], axis=1)
 
-    reads=reads.loc[reads['chrom'].isin(chromlist)]
     reads=reads.loc[reads['me']!='.']
     return reads
 
-def generate_training(infiles, count, read_count, random_seed, context, me_col, edge_trim, min_me):
+def generate_training(infiles, count, read_count, random_seed, context, me_col, edge_trim, min_me, nrows):
 
     train_df=pd.DataFrame()
     read_count=read_count//len(infiles)
@@ -157,20 +180,19 @@ def generate_training(infiles, count, read_count, random_seed, context, me_col, 
         for f in infiles:
             #import data
             pbar.set_description(f"Importing {f.rstrip().split('/')[-1]}")
-            reads = import_bed(f, me_col, min_me)
+            reads = import_bed(f, me_col, min_me, nrows)
             #sample data
             pbar.set_description(f"Encoding {f.rstrip().split('/')[-1]}")
             train_reads = reads.sample(n=read_count, random_state=random_seed)
             ri=train_reads.drop(columns=['me'])
             train_reads = train_reads['me'].str.split(pat=',', expand=True)
-            
             #saving list of reads used in training
             train_rids+=ri['rid'].to_list()
         
             train_dic={}    
             for rid, read in train_reads.iterrows():
                 #encode the read and run it through the HMM
-                read_encode = encode_me(rid, read, ri, context, edge_trim)
+                read_encode = encode_me(rid, read, ri, context, edge_trim, me_col)
                 train_dic[rid]=read_encode
 
             tmp=pd.DataFrame.from_dict(train_dic, orient='index')
@@ -242,18 +264,25 @@ def train_HMM(emission_probs, train_arrays):
 
     return best_model, models
 
-infiles, count, read_count, random_seed, context, me_col, acc_in, inacc_in, outdir, edge_trim, min_me =options()
+infiles, count, read_count, random_seed, context, me_col, acc_in, inacc_in, outdir, edge_trim, min_me, nrows, prob_adjust =options()
+
+print(f'iterations:{count}, reads used:{read_count}, number of total read:{nrows}')
 
 if not os.path.exists(outdir):
     os.makedirs(outdir)
 
+print('Reading in chromosomes from context database')
 tmp=pd.HDFStore(context, 'r')
 chromlist=np.array(tmp.keys())
 chromlist=np.array([s[1:] for s in chromlist])
+for c in chromlist:
+    if 'chr' in c:
+        print(c)
+chromlist = [s + '.1' if 'chr' not in s else s for s in chromlist] # add .1 to scaffolds for checking
 tmp.close()
 
-emission_probs=np.array(make_emission_probs(acc_in, inacc_in))
-train_arrays, train_rids=generate_training(infiles, count, read_count, random_seed, context, me_col, edge_trim, min_me)  
+emission_probs=np.array(make_emission_probs(acc_in, inacc_in, prob_adjust))
+train_arrays, train_rids=generate_training(infiles, count, read_count, random_seed, context, me_col, edge_trim, min_me, nrows)  
 model, models=train_HMM(emission_probs, train_arrays)
 with open(outdir+'/best-model.pickle', 'wb') as handle:
     pickle.dump(model, handle, protocol=pickle.HIGHEST_PROTOCOL)
