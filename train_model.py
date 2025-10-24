@@ -105,6 +105,8 @@ def encode_me(rid, read, read_info, context, edge_trim, me_col):
         chrom=chrom.replace('-','__')
     if ':' in chrom:
         chrom=chrom.replace(':','___')
+    if '.' in chrom:
+        chrom=chrom.replace('.','____')
     start = read_info.loc[rid, 'start']
     end = read_info.loc[rid, 'end']
 

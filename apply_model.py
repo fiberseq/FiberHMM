@@ -74,6 +74,8 @@ def encode_me(rid, read, read_info, context, circle, edge_trim):
         chrom=chrom.replace('-','__')
     if ':' in chrom:
         chrom=chrom.replace(':','___')
+    if '.' in chrom:
+        chrom=chrom.replace('.','____')
     start = read_info.loc[rid, 'start']
     end = read_info.loc[rid, 'end']
 
@@ -211,7 +213,7 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
                             all_starts.append(','.join(starts.astype(str)))
                             all_lengths.append(','.join(lengths.astype(str)))
                             all_counts.append(len(starts))
-
+                        
                         pbar2.update(1)
 
                     pbar2.set_description(f"Writing chunk {i}")
@@ -226,7 +228,18 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
                     b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockStarts', 'blockSizes']
                     b12 = pd.concat([b12, no_me_b12])
                     b12 = b12.sort_values(by=['chrom', 'start'])
-
+                    
+                    # back to the origninal chromosome name
+                    for chrName in b12['chrom'].unique():
+                        initName = chrName
+                        if '____' in chrName:
+                            initName = chrName.replace('____', '.')
+                        if '___' in chrName:
+                            initName = chrName.replace('___', ':')
+                        if '__' in chrName:
+                            initName = chrName.replace('__', '-')
+                        b12['chrom'].mask(b12['chrom'] == chrName, initName, inplace=True)
+                    
                     # Write to a temporary file (split by chromosome if necessary)
                     tmp_file = os.path.join(tmp_dir, f"{dataset}_{i}.bed")
                     b12.to_csv(tmp_file, sep='\t', index=False)
