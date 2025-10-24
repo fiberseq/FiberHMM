@@ -3,7 +3,7 @@
 - **pandas**
 - **numpy**
 - **getopt**
-- **hmmlearn** (version: 0.2.5)
+- **hmmlearn** (required version: 0.2.5)
 - **pyarrow**
 - **pytables**
 - **pickle**
@@ -54,7 +54,7 @@
    - **Optional Parameters:**
      - `-l` Minimum footprints allowed per read (default: 0).
      - `-r` Enable circular mode (default: off).
-     - `-b` Column number (0-based) in BED files with reference methylation starts (e.g., 12 for m6A output from fibertools, 28 by default for full output).
+     - `-b` Column number (0-based) in BED files with reference methylation starts (e.g., 11 for m6A output from fibertools, 28 by default for full output).
      - `-s` Chunk size (default: 50000).
      - `-e` How many bases to mask on both ends of the read as 0% methylation probability (default is 10). Required due to the fact that fibertools needs a window to call methylations.
      - `-m` Minimum fraction of methylations required in a read (default: 0).
@@ -72,7 +72,7 @@ The repository includes a folder `Example files` containing necessary files to r
 ### Input Files
 - **accessible_probs.tsv** and **inaccessible_probs.tsv** – probability files for accessible and inaccessible regions (`-p` parameter).
 - **dm6.fa** – *Drosophila melanogaster* (dm6) reference genome in FASTA format. This file is too large for github, so please download the file yourself.
-- **dm6_example.bed** – example FiberHMM m6A-only output file for m6A modifications. You should specify `-b 12` to use the correct column.
+- **dm6_example.bed** – example FiberHMM m6A-only output file for m6A modifications. You should specify `-b 11` to use the correct column.
 
 ### Expected Output Files
 - **dm6_example_model.pickle** – trained model for the example dataset.
