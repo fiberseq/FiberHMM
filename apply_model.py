@@ -136,7 +136,7 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
 
     #read in bedfile, grab reads from valid chromosomes
     chrom=''
-    reader = pd.read_csv(f, usecols=[0, 1, 2, 3, me_col], names=['chrom', 'start', 'end', 'rid', 'me'], sep='\t', comment='#', chunksize=chunk_size)
+    reader = pd.read_csv(f, usecols=[0, 1, 2, 3, 5, me_col], names=['chrom', 'start', 'end', 'rid', 'strand', 'me'], sep='\t', comment='#', chunksize=chunk_size)
     
     with tqdm(total=len(chromlist), leave=True) as pbar:
         i=-1
@@ -154,6 +154,7 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
                 chunk=chunk.loc[~chunk['rid'].isin(train_rids)]
                 
                 #generate bed12 for reads with no methylation (so, all one footprint)
+                no_me_b12['score'] = '.'
                 no_me_b12 = chunk.loc[chunk['me'] == '.'].drop('me', axis=1)
                 no_me_b12['thickStart'] = no_me_b12['start']
                 no_me_b12['thickEnd'] = no_me_b12['end']
@@ -161,13 +162,14 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
                 no_me_b12['blockCount'] = 1
                 no_me_b12['blockStarts'] = 1
                 no_me_b12['blockSizes'] = no_me_b12['end'] - no_me_b12['start']
-
+                
                 if not circle:
                     no_me_b12['blockSizes'] = no_me_b12['end'] - no_me_b12['start']
                 else:
                     no_me_b12['blockSizes'] = no_me_b12['end']*3 - no_me_b12['start']
-
-                no_me_b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockSizes', 'blockStarts']
+                
+                no_me_b12 = no_me_b12.rename(columns={'rid': 'name'})
+                no_me_b12 = no_me_b12[['chrom', 'start', 'end', 'name', 'score', 'strand', 'thickStart', 'thickEnd', 'itemRgb', 'blockCount', 'blockSizes', 'blockStarts']]
                 chrom = chunk['chrom'].iloc[0]
 
                 #generate bed12 for reads with methylation
@@ -176,7 +178,8 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
                 b12['thickStart'] = b12['start']
                 b12['thickEnd'] = b12['end']
                 b12['itemRgb'] = '255,0,0'
-
+                b12['score'] = '.'
+                
                 #grab methylations
                 chunk = chunk['me'].str.split(pat=',', expand=True)
 
@@ -223,7 +226,7 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
 
                     #combine, sort bed12s
                     b12 = b12.rename(columns={'rid': 'name'})
-                    b12.columns = ['chrom', 'start', 'end', 'name', 'thickStart', 'thickEnd', 'blockCount', 'itemRgb', 'blockStarts', 'blockSizes']
+                    b12 = b12[['chrom', 'start', 'end', 'name', 'score', 'strand', 'thickStart', 'thickEnd', 'itemRgb', 'blockCount', 'blockSizes', 'blockStarts']]
                     b12 = pd.concat([b12, no_me_b12])
                     b12 = b12.sort_values(by=['chrom', 'start'])
 
