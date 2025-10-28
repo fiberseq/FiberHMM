@@ -50,7 +50,7 @@ def make_fa_dic(infile):
                 if ':' in chrom:
                     chrom=chrom.replace(':','___')
                 if '.' in chrom:
-                   chrom=chrom.replace(':','____') 
+                   chrom=chrom.replace('.','____') 
 
                 chrom_filter=True   # This is preserved in case I want to hardcode leaving out specific chromosomes.
                                     # This can be useful in weird assemblies with many 1000s of contigs if you don't
