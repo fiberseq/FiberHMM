@@ -154,7 +154,6 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
                 chunk=chunk.loc[~chunk['rid'].isin(train_rids)]
                 
                 #generate bed12 for reads with no methylation (so, all one footprint)
-                no_me_b12['score'] = '.'
                 no_me_b12 = chunk.loc[chunk['me'] == '.'].drop('me', axis=1)
                 no_me_b12['thickStart'] = no_me_b12['start']
                 no_me_b12['thickEnd'] = no_me_b12['end']
@@ -162,7 +161,8 @@ def apply_model(model, f, outdir, context, chromlist, train_rids, me_col, chunk_
                 no_me_b12['blockCount'] = 1
                 no_me_b12['blockStarts'] = 1
                 no_me_b12['blockSizes'] = no_me_b12['end'] - no_me_b12['start']
-                
+                no_me_b12['score'] = '.'
+
                 if not circle:
                     no_me_b12['blockSizes'] = no_me_b12['end'] - no_me_b12['start']
                 else:
