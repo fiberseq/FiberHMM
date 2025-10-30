@@ -143,8 +143,8 @@ def process_chunk(chunk, model, context, chromlist, train_rids, me_col, chunk_si
                 no_me_b12['blockSizes'] = no_me_b12['end']*3 - no_me_b12['start']
 
             no_me_b12 = no_me_b12.rename(columns={'rid': 'name'})
-                no_me_b12 = no_me_b12[['chrom', 'start', 'end', 'name', 'score', 'strand', 'thickStart', 'thickEnd', 'itemRgb', 'blockCount', 'blockSizes', 'blockStarts']]
-                chrom = chunk['chrom'].iloc[0]
+            no_me_b12 = no_me_b12[['chrom', 'start', 'end', 'name', 'score', 'strand', 'thickStart', 'thickEnd', 'itemRgb', 'blockCount', 'blockSizes', 'blockStarts']]
+            chrom = chunk['chrom'].iloc[0]
         
         else:
             no_me_b12=pd.DataFrame()
@@ -328,3 +328,4 @@ combine_temp_files(chromlist, tmp_dir, outdir, dataset)
 #this consistently fails on my tests because of permissions, but it's not a huge issue
 #os.rmdir(tmp_dir)
 logging.info("Temporary directory removed and script completed.")
+
