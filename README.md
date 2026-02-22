@@ -1,6 +1,6 @@
 # FiberHMM
 
-Hidden Markov Model toolkit for calling chromatin footprints from fiber-seq and DAF-seq single-molecule data.
+Hidden Markov Model toolkit for calling chromatin footprints from Fiber-seq, DAF-seq, and other single-molecule footprinting data.
 
 FiberHMM identifies protected regions (footprints) and accessible regions (methylase-sensitive patches, MSPs) from single-molecule DNA modification data, including m6A methylation (fiber-seq) and deamination marks (DAF-seq).
 
