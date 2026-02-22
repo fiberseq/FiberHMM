@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Legacy model formats (JSON only going forward)
+*.pickle
+*.pkl
+*.npz
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Genomic data files
+*.fa
+*.fasta
+*.fa.fai
+*.fasta.fai
+*.bam
+*.bai
+*.bb
+*.bigBed
+*.bigbed
+*.bw
+*.bigWig
+*.bigwig
+*.gtf
+*.gff
+*.bed
+*.sam
+*.vcf
+
+# Generated output
+probs/
+training_datasets/
+test_datasets/
+
+# Images / figures (scratch)
+*.png
+*.pdf
+
+# Archives
+*.zip
+
+# Node (leftover from browser)
+node_modules/
+package-lock.json
+
+# Agent instructions
+CLAUDE.md
+AGENTS.md
+.claude/
