@@ -16411,5 +16411,5 @@
     ]
   ],
   "context_size": 3,
-  "mode": "nanopore"
+  "mode": "nanopore-fiber"
 }
