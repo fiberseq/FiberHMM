@@ -34,6 +34,7 @@ pip install -e .
 ```bash
 pip install numba        # ~10x faster HMM computation
 pip install matplotlib   # --stats visualization
+pip install h5py         # HDF5 posteriors export
 ```
 
 For bigBed output, install [`bedToBigBed`](https://hgdownload.soe.ucsc.edu/admin/exe/) from UCSC tools.
@@ -208,6 +209,18 @@ Extract footprint/MSP/m6A/m5C features from tagged BAMs to BED12/bigBed.
 
 ```bash
 python extract_tags.py -i output/sample_footprints.bam -o output/ -c 8
+```
+
+### export_posteriors.py / `fiberhmm-posteriors`
+
+Export per-position HMM posterior probabilities for downstream analysis.
+
+```bash
+# Export to gzipped TSV (no extra deps)
+python export_posteriors.py -i tagged.bam -m model.json -o posteriors.tsv.gz -c 4
+
+# Export to HDF5 (requires: pip install h5py)
+python export_posteriors.py -i tagged.bam -m model.json -o posteriors.h5 -c 4
 ```
 
 ### fiberhmm-utils

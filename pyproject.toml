@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fiberhmm"
-version = "2.0.0"
+version = "2.1.0"
 description = "Hidden Markov Model for calling chromatin footprints from fiber-seq and DAF-seq data"
 readme = "README.md"
 license = {text = "MIT"}
@@ -48,9 +48,11 @@ dependencies = [
 [project.optional-dependencies]
 numba = ["numba>=0.55"]
 plots = ["matplotlib>=3.5"]
+posteriors = ["h5py>=3.0"]
 all = [
     "numba>=0.55",
     "matplotlib>=3.5",
+    "h5py>=3.0",
 ]
 dev = [
     "pytest>=7.0",
@@ -71,6 +73,7 @@ fiberhmm-train = "fiberhmm.cli.train:main"
 fiberhmm-extract = "fiberhmm.cli.extract_tags:main"
 fiberhmm-probs = "fiberhmm.cli.generate_probs:main"
 fiberhmm-utils = "fiberhmm.cli.utils:main"
+fiberhmm-posteriors = "fiberhmm.cli.export_posteriors:main"
 
 # Top-level scripts kept for backward compatibility
 [tool.setuptools]
@@ -80,6 +83,7 @@ py-modules = [
     "generate_probs",
     "extract_tags",
     "fiberhmm_utils",
+    "export_posteriors",
 ]
 
 [tool.setuptools.packages.find]
