@@ -46,6 +46,11 @@ venv/
 *.sam
 *.vcf
 
+# Build artifacts
+dist/
+build/
+docs/fiberseq-site/
+
 # Generated output
 probs/
 training_datasets/

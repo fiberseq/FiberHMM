@@ -87,6 +87,22 @@ class TestPackageImports:
         assert callable(cmd_transfer)
         assert callable(cmd_adjust)
 
+    def test_posteriors_tsv_import(self):
+        from fiberhmm.posteriors.tsv_backend import PosteriorsTSVWriter
+        assert PosteriorsTSVWriter is not None
+
+    def test_posteriors_writer_import(self):
+        from fiberhmm.posteriors.writer import create_writer
+        assert callable(create_writer)
+
+    def test_posteriors_init_import(self):
+        from fiberhmm.posteriors import PosteriorsTSVWriter
+        assert PosteriorsTSVWriter is not None
+
+    def test_cli_export_posteriors_import(self):
+        from fiberhmm.cli.export_posteriors import main
+        assert callable(main)
+
 
 class TestEncodingConsistency:
     """Verify encoding produces consistent results via package path."""
