@@ -213,14 +213,16 @@ python extract_tags.py -i output/sample_footprints.bam -o output/ -c 8
 
 ### export_posteriors.py / `fiberhmm-posteriors`
 
-Export per-position HMM posterior probabilities for downstream analysis.
+Export per-position HMM posterior probabilities for downstream analysis (e.g., CNN training, custom scoring). This runs the HMM forward-backward algorithm on each read to produce P(footprint) at every position -- a continuous probability rather than the binary footprint/MSP calls from `apply_model.py`.
+
+**Input is the same BAM you would pass to `apply_model.py`** (any BAM with MM/ML modification tags). This is a parallel pipeline, not a downstream step -- you do not need to run `apply_model.py` first.
 
 ```bash
 # Export to gzipped TSV (no extra deps)
-python export_posteriors.py -i tagged.bam -m model.json -o posteriors.tsv.gz -c 4
+python export_posteriors.py -i experiment.bam -m model.json -o posteriors.tsv.gz -c 4
 
 # Export to HDF5 (requires: pip install h5py)
-python export_posteriors.py -i tagged.bam -m model.json -o posteriors.h5 -c 4
+python export_posteriors.py -i experiment.bam -m model.json -o posteriors.h5 -c 4
 ```
 
 ### fiberhmm-utils
