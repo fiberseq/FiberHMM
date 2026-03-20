@@ -4,6 +4,7 @@ import os
 import sys
 import re
 import time
+import array as pyarray
 import base64
 import json
 import gzip
@@ -176,7 +177,7 @@ def _init_region_worker(model_path: str, params: dict):
         raise
 
 
-def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[str]]:
+def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[str], Dict[str, int]]:
     """
     Worker function: process one genomic region and write to temp BAM.
 
@@ -218,6 +219,7 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
         mode = params['mode']
         context_size = int(params['context_size'])
         msp_min_size = int(params['msp_min_size'])
+        nuc_min_size = int(params.get('nuc_min_size', 85))
         min_mapq = int(params['min_mapq'])
         prob_threshold = int(params['prob_threshold'])
         min_read_length = int(params['min_read_length'])
@@ -225,11 +227,25 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
         train_rids = params['train_rids']
         primary_only = params.get('primary_only', False)
         return_posteriors = params.get('return_posteriors', False) and temp_tsv_path is not None
+        write_msps = params.get('write_msps', True)
 
         total_reads = 0
         reads_with_footprints = 0
         written = 0
+        skipped = 0
         posteriors_written = 0
+
+        # Track skip reasons
+        skip_reasons = {
+            'unmapped': 0,
+            'secondary_supplementary': 0,
+            'low_mapq': 0,
+            'too_short': 0,
+            'training_excluded': 0,
+            'no_modifications': 0,
+            'extraction_failed': 0,
+            'no_footprints': 0,
+        }
 
         # Suppress htslib warnings
         pysam.set_verbosity(0)
@@ -253,19 +269,23 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
                         # Region not in BAM (e.g., unplaced contigs)
                         if tsv_file:
                             tsv_file.close()
-                        return (temp_bam_path, 0, 0, 0, None)
+                        return (temp_bam_path, 0, 0, 0, None, {})
 
                     for read in read_iter:
                         # Pass through unmapped reads (no sequence to process)
                         if read.is_unmapped:
                             outbam.write(read)
                             written += 1
+                            skipped += 1
+                            skip_reasons['unmapped'] += 1
                             continue
 
                         # Skip secondary/supplementary if primary_only mode
                         if primary_only and (read.is_secondary or read.is_supplementary):
                             outbam.write(read)
                             written += 1
+                            skipped += 1
+                            skip_reasons['secondary_supplementary'] += 1
                             continue
 
                         # Only process reads that START in this region to avoid duplicates
@@ -277,17 +297,23 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
                         if read.mapping_quality < min_mapq:
                             outbam.write(read)
                             written += 1
+                            skipped += 1
+                            skip_reasons['low_mapq'] += 1
                             continue
 
                         if read.query_alignment_length is None or read.query_alignment_length < min_read_length:
                             outbam.write(read)
                             written += 1
+                            skipped += 1
+                            skip_reasons['too_short'] += 1
                             continue
 
                         read_id = read.query_name
                         if train_rids and read_id in train_rids:
                             outbam.write(read)
                             written += 1
+                            skipped += 1
+                            skip_reasons['training_excluded'] += 1
                             continue
 
                         # Extract data needed for processing
@@ -296,10 +322,14 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
                             if fiber_read is None:
                                 outbam.write(read)
                                 written += 1
+                                skipped += 1
+                                skip_reasons['no_modifications'] += 1
                                 continue
                         except Exception:
                             outbam.write(read)
                             written += 1
+                            skipped += 1
+                            skip_reasons['extraction_failed'] += 1
                             continue
 
                         total_reads += 1
@@ -307,26 +337,31 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
                         # Process the read (with posteriors if requested)
                         result = _process_single_read(
                             fiber_read, model, edge_trim, circular,
-                            mode, context_size, msp_min_size, with_scores,
+                            mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+                            with_scores=with_scores,
                             return_posteriors=return_posteriors
                         )
 
                         # Add tags to read
                         if result is not None:
                             reads_with_footprints += 1
+                        else:
+                            skip_reasons['no_footprints'] += 1
 
                             # Only set tags if arrays are non-empty
+                            # Use array.array('I', ...) to force B:I (unsigned 32-bit)
+                            # per Fiber-seq BAM format spec
                             if len(result['ns']) > 0:
-                                read.set_tag('ns', result['ns'].astype(np.uint32).tolist())
-                                read.set_tag('nl', result['nl'].astype(np.uint32).tolist())
+                                read.set_tag('ns', pyarray.array('I', result['ns'].astype(np.uint32).tolist()))
+                                read.set_tag('nl', pyarray.array('I', result['nl'].astype(np.uint32).tolist()))
                                 if result['ns_scores'] is not None:
                                     # nq:B:C - unsigned 8-bit per fiberseq spec (0-255)
                                     scores_u8 = np.clip(np.array(result['ns_scores']) * 255, 0, 255).astype(np.uint8)
                                     read.set_tag('nq', scores_u8.tolist())
 
-                            if len(result['as']) > 0:
-                                read.set_tag('as', result['as'].astype(np.uint32).tolist())
-                                read.set_tag('al', result['al'].astype(np.uint32).tolist())
+                            if write_msps and len(result['as']) > 0:
+                                read.set_tag('as', pyarray.array('I', result['as'].astype(np.uint32).tolist()))
+                                read.set_tag('al', pyarray.array('I', result['al'].astype(np.uint32).tolist()))
                                 if result['as_scores'] is not None:
                                     # aq:B:C - unsigned 8-bit per fiberseq spec (0-255)
                                     scores_u8 = np.clip(np.array(result['as_scores']) * 255, 0, 255).astype(np.uint8)
@@ -357,9 +392,9 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
 
         # Return TSV path if we wrote any posteriors
         if return_posteriors and posteriors_written > 0 and temp_tsv_path:
-            return (temp_bam_path, total_reads, reads_with_footprints, written, temp_tsv_path)
+            return (temp_bam_path, total_reads, reads_with_footprints, written, temp_tsv_path, skip_reasons)
 
-        return (temp_bam_path, total_reads, reads_with_footprints, written, None)
+        return (temp_bam_path, total_reads, reads_with_footprints, written, None, skip_reasons)
 
     except Exception as e:
         import traceback
@@ -482,6 +517,7 @@ def _process_region_to_bed(args: Tuple) -> Tuple[str, int, int]:
         mode = params['mode']
         context_size = int(params['context_size'])
         msp_min_size = int(params['msp_min_size'])
+        nuc_min_size = int(params.get('nuc_min_size', 85))
         min_mapq = int(params['min_mapq'])
         prob_threshold = int(params['prob_threshold'])
         min_read_length = int(params['min_read_length'])
@@ -530,7 +566,8 @@ def _process_region_to_bed(args: Tuple) -> Tuple[str, int, int]:
 
                     result = _process_single_read(
                         fiber_read, model, edge_trim, circular,
-                        mode, context_size, msp_min_size, with_scores
+                        mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+                        with_scores=with_scores
                     )
 
                     if result is not None and len(result['ns']) > 0:
@@ -729,15 +766,18 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    edge_trim: int, circular: bool,
                                    mode: str, context_size: int,
                                    msp_min_size: int,
-                                   min_mapq: int, prob_threshold: int,
-                                   min_read_length: int,
-                                   with_scores: bool,
-                                   n_cores: int,
+                                   nuc_min_size: int = 85,
+                                   min_mapq: int = 0,
+                                   prob_threshold: int = 0,
+                                   min_read_length: int = 0,
+                                   with_scores: bool = False,
+                                   n_cores: int = 1,
                                    region_size: int = 10_000_000,
                                    skip_scaffolds: bool = False,
                                    chroms: Optional[Set[str]] = None,
                                    primary_only: bool = False,
-                                   output_posteriors: Optional[str] = None) -> Tuple[int, int]:
+                                   output_posteriors: Optional[str] = None,
+                                   write_msps: bool = True) -> Tuple[int, int]:
     """
     Process BAM using region-based parallelism with indexed access.
 
@@ -750,6 +790,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         chroms: If provided, only process these chromosomes
         primary_only: If True, skip secondary/supplementary alignments
         output_posteriors: If provided, write HMM posteriors to this H5 file
+        write_msps: If True, write as/al/aq MSP tags to output BAM
 
     Returns:
         (total_reads_processed, reads_with_footprints)
@@ -786,6 +827,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             'mode': mode,
             'context_size': context_size,
             'msp_min_size': msp_min_size,
+            'nuc_min_size': nuc_min_size,
             'min_mapq': min_mapq,
             'prob_threshold': prob_threshold,
             'min_read_length': min_read_length,
@@ -793,6 +835,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             'train_rids': train_rids,
             'primary_only': primary_only,
             'return_posteriors': return_posteriors,
+            'write_msps': write_msps,
         }
 
         # Work items - include temp H5 path if posteriors requested
@@ -805,6 +848,8 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         # Process regions in parallel
         total_reads = 0
         reads_with_footprints = 0
+        total_skipped = 0
+        all_skip_reasons = {}
         temp_bams = []
         temp_h5s = []  # Collect temp H5 files for posteriors
         completed = 0
@@ -826,12 +871,20 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             for future in as_completed(futures):
                 try:
                     result = future.result()
-                    # Handle both old (4-tuple) and new (5-tuple) returns
-                    if len(result) == 5:
+                    # Handle return tuples (4/5/6 elements)
+                    region_skip = {}
+                    if len(result) == 6:
+                        temp_bam, n_reads, n_fp, n_written, temp_h5, region_skip = result
+                    elif len(result) == 5:
                         temp_bam, n_reads, n_fp, n_written, temp_h5 = result
                     else:
                         temp_bam, n_reads, n_fp, n_written = result
                         temp_h5 = None
+
+                    # Aggregate skip reasons across regions
+                    for reason, count in region_skip.items():
+                        all_skip_reasons[reason] = all_skip_reasons.get(reason, 0) + count
+                    total_skipped += sum(region_skip.values())
 
                     # Track first result
                     if first_result_time is None:
@@ -860,6 +913,16 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                     raise
 
         print()  # Newline after progress
+
+        # Print skip reasons summary
+        if total_skipped > 0:
+            total_encountered = total_reads + total_skipped
+            print(f"  Processed: {total_reads:,} | Skipped: {total_skipped:,} | With footprints: {reads_with_footprints:,}")
+            print("  Skip reasons:")
+            for reason, count in sorted(all_skip_reasons.items(), key=lambda x: -x[1]):
+                if count > 0:
+                    pct = 100 * count / total_encountered
+                    print(f"    {reason}: {count:,} ({pct:.1f}%)")
 
         # Sort temp BAMs by region order and filter to non-empty
         temp_bams.sort(key=lambda x: x[0])
@@ -1032,10 +1095,12 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
                                   edge_trim: int, circular: bool,
                                   mode: str, context_size: int,
                                   msp_min_size: int,
-                                  min_mapq: int, prob_threshold: int,
-                                  min_read_length: int,
-                                  with_scores: bool,
-                                  n_cores: int,
+                                  nuc_min_size: int = 85,
+                                  min_mapq: int = 0,
+                                  prob_threshold: int = 0,
+                                  min_read_length: int = 0,
+                                  with_scores: bool = False,
+                                  n_cores: int = 1,
                                   region_size: int = 10_000_000,
                                   skip_scaffolds: bool = False,
                                   chroms: Optional[Set[str]] = None,
@@ -1075,6 +1140,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
             'mode': mode,
             'context_size': context_size,
             'msp_min_size': msp_min_size,
+            'nuc_min_size': nuc_min_size,
             'min_mapq': min_mapq,
             'prob_threshold': prob_threshold,
             'min_read_length': min_read_length,
@@ -1164,8 +1230,10 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                               outbam, model, executor,
                               edge_trim: int, circular: bool,
                               mode: str, context_size: int,
-                              msp_min_size: int, with_scores: bool,
-                              return_posteriors: bool = False) -> Tuple[int, Optional[list]]:
+                              msp_min_size: int, nuc_min_size: int = 85,
+                              with_scores: bool = False,
+                              return_posteriors: bool = False,
+                              write_msps: bool = True) -> Tuple[int, int, Optional[list]]:
     """
     Process a chunk of reads and write to BAM.
 
@@ -1180,7 +1248,7 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
         future = executor.submit(
             _process_chunk_worker,
             chunk_reads, edge_trim, circular, mode, context_size, msp_min_size,
-            with_scores, return_posteriors
+            nuc_min_size, with_scores, return_posteriors
         )
         results = future.result()
     else:
@@ -1189,43 +1257,51 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
         for fiber_read in chunk_reads:
             result = _process_single_read(
                 fiber_read, model, edge_trim, circular,
-                mode, context_size, msp_min_size, with_scores,
+                mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+                with_scores=with_scores,
                 return_posteriors=return_posteriors
             )
             results.append(result)
 
     # Write annotated reads
     reads_with_footprints = 0
+    no_footprints = 0
     for read_obj, result in zip(chunk_read_objs, results):
         if result is not None:
             # Add footprint tags
+            # Use array.array('I', ...) to force B:I (unsigned 32-bit)
+            # per Fiber-seq BAM format spec
             if len(result['ns']) > 0:
-                read_obj.set_tag('ns', result['ns'].astype(np.uint32).tolist())
-                read_obj.set_tag('nl', result['nl'].astype(np.uint32).tolist())
+                read_obj.set_tag('ns', pyarray.array('I', result['ns'].astype(np.uint32).tolist()))
+                read_obj.set_tag('nl', pyarray.array('I', result['nl'].astype(np.uint32).tolist()))
                 if with_scores and result.get('ns_scores') is not None:
                     nq_scores = np.clip(result['ns_scores'] * 255, 0, 255).astype(np.uint8)
                     read_obj.set_tag('nq', nq_scores.tolist())
 
-            if len(result['as']) > 0:
-                read_obj.set_tag('as', result['as'].astype(np.uint32).tolist())
-                read_obj.set_tag('al', result['al'].astype(np.uint32).tolist())
+            if write_msps and len(result['as']) > 0:
+                read_obj.set_tag('as', pyarray.array('I', result['as'].astype(np.uint32).tolist()))
+                read_obj.set_tag('al', pyarray.array('I', result['al'].astype(np.uint32).tolist()))
                 if with_scores and result.get('as_scores') is not None:
                     aq_scores = np.clip(result['as_scores'] * 255, 0, 255).astype(np.uint8)
                     read_obj.set_tag('aq', aq_scores.tolist())
 
             reads_with_footprints += 1
+        else:
+            no_footprints += 1
 
         outbam.write(read_obj)
 
     # Return results for posteriors if requested
     if return_posteriors:
-        return reads_with_footprints, list(zip(chunk_read_objs, chunk_reads, results))
-    return reads_with_footprints, None
+        return reads_with_footprints, no_footprints, list(zip(chunk_read_objs, chunk_reads, results))
+    return reads_with_footprints, no_footprints, None
 
 
 def _process_chunk_worker(chunk_reads: list, edge_trim: int, circular: bool,
                            mode: str, context_size: int, msp_min_size: int,
-                           with_scores: bool, return_posteriors: bool = False) -> list:
+                           nuc_min_size: int = 85,
+                           with_scores: bool = False,
+                           return_posteriors: bool = False) -> list:
     """Worker function to process a chunk of reads."""
     global _worker_model
 
@@ -1233,7 +1309,8 @@ def _process_chunk_worker(chunk_reads: list, edge_trim: int, circular: bool,
     for fiber_read in chunk_reads:
         result = _process_single_read(
             fiber_read, _worker_model, edge_trim, circular,
-            mode, context_size, msp_min_size, with_scores,
+            mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
             return_posteriors=return_posteriors
         )
         results.append(result)
@@ -1246,8 +1323,10 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                                 edge_trim: int, circular: bool,
                                 mode: str, context_size: int,
                                 msp_min_size: int,
-                                min_mapq: int, prob_threshold: int,
-                                min_read_length: int,
+                                nuc_min_size: int = 85,
+                                min_mapq: int = 0,
+                                prob_threshold: int = 0,
+                                min_read_length: int = 0,
                                 with_scores: bool = False,
                                 n_cores: int = 1,
                                 max_reads: Optional[int] = None,
@@ -1257,7 +1336,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                                 skip_scaffolds: bool = False,
                                 chroms: Optional[Set[str]] = None,
                                 primary_only: bool = False,
-                                output_posteriors: Optional[str] = None) -> Tuple[int, int]:
+                                output_posteriors: Optional[str] = None,
+                                write_msps: bool = True) -> Tuple[int, int]:
     """
     Process BAM file and add footprint tags - SINGLE PASS STREAMING.
 
@@ -1302,6 +1382,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 mode=mode,
                 context_size=context_size,
                 msp_min_size=msp_min_size,
+                nuc_min_size=nuc_min_size,
                 min_mapq=min_mapq,
                 prob_threshold=prob_threshold,
                 min_read_length=min_read_length,
@@ -1311,7 +1392,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 skip_scaffolds=skip_scaffolds,
                 chroms=chroms,
                 primary_only=primary_only,
-                output_posteriors=output_posteriors
+                output_posteriors=output_posteriors,
+                write_msps=write_msps
             )
 
     total_reads = 0
@@ -1326,8 +1408,9 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
         'low_mapq': 0,
         'too_short': 0,
         'training_excluded': 0,
-        'no_sequence': 0,
+        'no_modifications': 0,
         'extraction_failed': 0,
+        'no_footprints': 0,
     }
 
     chunk_size = 2000  # Reads per chunk
@@ -1415,7 +1498,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                             outbam.write(read)
                             written += 1
                             skipped += 1
-                            skip_reasons['no_sequence'] += 1
+                            skip_reasons['no_modifications'] += 1
                             continue
                     except Exception:
                         outbam.write(read)
@@ -1435,13 +1518,16 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
 
                     # Process chunk when full
                     if len(chunk_reads) >= chunk_size:
-                        n_fp, chunk_results = _process_and_write_chunk(
+                        n_fp, n_nofp, chunk_results = _process_and_write_chunk(
                             chunk_reads, chunk_read_objs, outbam,
                             model, executor, edge_trim, circular,
-                            mode, context_size, msp_min_size, with_scores,
-                            return_posteriors=return_posteriors
+                            mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+                            with_scores=with_scores,
+                            return_posteriors=return_posteriors,
+                            write_msps=write_msps
                         )
                         reads_with_footprints += n_fp
+                        skip_reasons['no_footprints'] += n_nofp
                         written += len(chunk_read_objs)
 
                         # Write posteriors if requested
@@ -1474,13 +1560,15 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
 
                 # Process final partial chunk
                 if chunk_reads:
-                    n_fp, chunk_results = _process_and_write_chunk(
+                    n_fp, n_nofp, chunk_results = _process_and_write_chunk(
                         chunk_reads, chunk_read_objs, outbam,
                         model, executor, edge_trim, circular,
-                        mode, context_size, msp_min_size, with_scores,
+                        mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+                        with_scores=with_scores,
                         return_posteriors=return_posteriors
                     )
                     reads_with_footprints += n_fp
+                    skip_reasons['no_footprints'] += n_nofp
                     written += len(chunk_read_objs)
 
                     # Write posteriors if requested

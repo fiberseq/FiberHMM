@@ -201,7 +201,24 @@ Key options:
 | `--chroms` | all | Process only these chromosomes |
 | `--scores` | false | Compute per-footprint confidence scores |
 | `-q/--min-mapq` | 20 | Min mapping quality |
+| `--min-read-length` | 1000 | Min aligned read length (bp) |
 | `-e/--edge-trim` | 10 | Edge masking (bp) |
+
+#### Read Filtering
+
+By default, `apply_model.py` skips reads that are unlikely to produce reliable footprint calls. Skipped reads are still written to the output BAM but without `ns`/`nl`/`as`/`al` tags. A summary of skip reasons is printed when the run completes.
+
+Reads are skipped (written unchanged) when:
+
+| Reason | Default | Override |
+|--------|---------|----------|
+| **MAPQ too low** | < 20 | `--min-mapq 0` |
+| **Aligned length too short** | < 1000 bp | `--min-read-length 0` |
+| **No MM/ML modification tags** | -- | Cannot override (no data to process) |
+| **Unmapped** | -- | Cannot override |
+| **No footprints detected** | HMM found nothing | Cannot override (tags require content) |
+
+These defaults exist because low-MAPQ alignments have unreliable reference positions (making footprint coordinates meaningless), and very short reads provide insufficient signal for the HMM. You can lower or disable these thresholds, but results on marginal reads may be unreliable.
 
 ### extract_tags.py / `fiberhmm-extract`
 

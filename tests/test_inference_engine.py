@@ -150,7 +150,8 @@ class TestExtractFootprintsFromStates:
         states = np.concatenate([
             np.zeros(10), np.ones(5), np.zeros(10)  # MSP of size 5
         ]).astype(int)
-        result = _extract_footprints_from_states(states, None, 10, False)
+        # nuc_min_size=1 so 10bp footprints count as MSP boundaries
+        result = _extract_footprints_from_states(states, None, 10, False, nuc_min_size=1)
         assert len(result['msp_starts']) == 0  # Filtered by min_size=10
 
     def test_with_confidence_scores(self):

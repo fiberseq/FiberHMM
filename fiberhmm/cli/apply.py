@@ -14,7 +14,6 @@ import numpy as np
 import pandas as pd
 
 from fiberhmm.core.model_io import load_model_with_metadata
-from fiberhmm.inference.engine import detect_mode_from_bam
 from fiberhmm.inference.parallel import process_bam_for_footprints
 from fiberhmm.inference.stats import FootprintStats, collect_stats_from_bam
 from fiberhmm.cli.common import (
@@ -88,6 +87,13 @@ Examples:
                         help='Output SQLite database with detailed per-footprint scores')
     parser.add_argument('--msp-min-size', type=int, default=None,
                         help='Minimum size for MSP regions (default: 60)')
+    parser.add_argument('--nuc-min-size', type=int, default=85,
+                        help='Minimum footprint size (bp) to count as nucleosome-sized '
+                             'for MSP boundary detection. Only footprints >= this size '
+                             'split MSPs; smaller footprints are absorbed (default: 85)')
+    parser.add_argument('--no-msps', action='store_true',
+                        help='Do not write MSP tags (as/al/aq) to output BAM. '
+                             'Useful for Fiber-seq where MSPs are computed differently by fibertools')
 
     # QC and statistics
     add_stats_args(parser)
@@ -146,25 +152,18 @@ def main():
         context_size = model_context_size
     print(f"  Context size: k={context_size} ({2*context_size + 1}-mer)")
 
-    # Auto-detect mode from BAM MM tags if not specified
-    detected_mode = detect_mode_from_bam(args.input)
-    print(f"  Auto-detected mode from BAM: {detected_mode}")
-
-    # Determine final mode (priority: command line > auto-detect > model)
+    # Determine mode (priority: command line > model > default)
     if args.mode is not None:
         mode = args.mode
         if mode != model_mode:
             print(f"  NOTE: Command line mode '{mode}' overrides model mode '{model_mode}'")
-        if mode != detected_mode and detected_mode != 'unknown':
-            print(f"  WARNING: Command line mode '{mode}' differs from auto-detected '{detected_mode}'")
-    elif detected_mode != 'unknown' and detected_mode != model_mode:
-        mode = detected_mode
-        print(f"  WARNING: Model mode is '{model_mode}' but BAM appears to be '{detected_mode}'")
-        print(f"           Using auto-detected mode '{mode}'. Use --mode to override.")
-    else:
+    elif model_mode and model_mode != 'unknown':
         mode = model_mode
+    else:
+        mode = 'pacbio-fiber'
+        print(f"  No mode in model metadata, defaulting to '{mode}'")
 
-    print(f"  Final mode: {mode}")
+    print(f"  Mode: {mode}")
     args.mode = mode
 
     # Determine MSP minimum size (default 60bp for all modes)
@@ -214,7 +213,10 @@ def main():
         print(f"  Strand detection: automatic (C=+, G=-)")
     elif mode == 'nanopore-fiber':
         print(f"  Strand detection: none (A-centered only)")
-    print(f"  MSP min size: {msp_min_size} bp")
+    if args.no_msps:
+        print(f"  MSP output: disabled (--no-msps)")
+    else:
+        print(f"  MSP min size: {msp_min_size} bp")
     if args.stats:
         print(f"  Stats: enabled")
     print()
@@ -246,6 +248,7 @@ def main():
         mode=mode,
         context_size=context_size,
         msp_min_size=msp_min_size,
+        nuc_min_size=args.nuc_min_size,
         min_mapq=args.min_mapq,
         prob_threshold=args.prob_threshold,
         min_read_length=args.min_read_length,
@@ -259,6 +262,7 @@ def main():
         chroms=chroms_set,
         primary_only=args.primary,
         output_posteriors=args.output_posteriors,
+        write_msps=not args.no_msps,
     )
     print(f"\nProcessed {total_reads:,} reads -> {reads_with_footprints:,} with footprints")
     print(f"BAM: {output_bam}")
