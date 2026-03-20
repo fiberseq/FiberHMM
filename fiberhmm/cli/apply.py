@@ -88,6 +88,13 @@ Examples:
                         help='Output SQLite database with detailed per-footprint scores')
     parser.add_argument('--msp-min-size', type=int, default=None,
                         help='Minimum size for MSP regions (default: 60)')
+    parser.add_argument('--nuc-min-size', type=int, default=85,
+                        help='Minimum footprint size (bp) to count as nucleosome-sized '
+                             'for MSP boundary detection. Only footprints >= this size '
+                             'split MSPs; smaller footprints are absorbed (default: 85)')
+    parser.add_argument('--no-msps', action='store_true',
+                        help='Do not write MSP tags (as/al/aq) to output BAM. '
+                             'Useful for Fiber-seq where MSPs are computed differently by fibertools')
 
     # QC and statistics
     add_stats_args(parser)
@@ -214,7 +221,10 @@ def main():
         print(f"  Strand detection: automatic (C=+, G=-)")
     elif mode == 'nanopore-fiber':
         print(f"  Strand detection: none (A-centered only)")
-    print(f"  MSP min size: {msp_min_size} bp")
+    if args.no_msps:
+        print(f"  MSP output: disabled (--no-msps)")
+    else:
+        print(f"  MSP min size: {msp_min_size} bp")
     if args.stats:
         print(f"  Stats: enabled")
     print()
@@ -246,6 +256,7 @@ def main():
         mode=mode,
         context_size=context_size,
         msp_min_size=msp_min_size,
+        nuc_min_size=args.nuc_min_size,
         min_mapq=args.min_mapq,
         prob_threshold=args.prob_threshold,
         min_read_length=args.min_read_length,
@@ -259,6 +270,7 @@ def main():
         chroms=chroms_set,
         primary_only=args.primary,
         output_posteriors=args.output_posteriors,
+        write_msps=not args.no_msps,
     )
     print(f"\nProcessed {total_reads:,} reads -> {reads_with_footprints:,} with footprints")
     print(f"BAM: {output_bam}")
