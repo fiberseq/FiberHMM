@@ -3,6 +3,7 @@ Shared pytest fixtures for FiberHMM tests.
 """
 import pytest
 import numpy as np
+import pysam
 import tempfile
 import os
 
@@ -114,3 +115,180 @@ def mock_bam_data():
         'methylation_positions': [10, 25, 50, 75, 100, 150, 200],
         'methylation_probs': [200, 180, 220, 190, 240, 170, 210],  # 0-255 scale
     }
+
+
+# ---------------------------------------------------------------------------
+# Synthetic BAM generation for integration & streaming tests
+# ---------------------------------------------------------------------------
+
+def _make_mm_ml_tags(sequence, mod_positions, rng):
+    """
+    Build valid MM:Z and ML:B:C tags for m6A modifications at given positions.
+
+    Args:
+        sequence: DNA sequence string
+        mod_positions: sorted list of query positions with modifications (must be A bases)
+        rng: numpy RandomState
+
+    Returns:
+        (mm_tag_str, ml_tag_list) or (None, None) if no A bases
+    """
+    # Find all A positions in the sequence
+    a_positions = [i for i, b in enumerate(sequence) if b == 'A']
+    if not a_positions:
+        return None, None
+
+    # Filter mod_positions to only include valid A positions
+    a_set = set(a_positions)
+    mod_positions = [p for p in mod_positions if p in a_set]
+
+    if not mod_positions:
+        return 'A+a;', []
+
+    # Build skip counts: for each modified A, count unmodified A's since last
+    a_to_idx = {pos: i for i, pos in enumerate(a_positions)}
+    skips = []
+    prev_a_idx = -1
+    for mp in mod_positions:
+        cur_a_idx = a_to_idx[mp]
+        skip = cur_a_idx - prev_a_idx - 1
+        skips.append(skip)
+        prev_a_idx = cur_a_idx
+
+    mm_tag = 'A+a,' + ','.join(str(s) for s in skips) + ';'
+    ml_tag = [int(rng.randint(180, 256)) for _ in mod_positions]
+
+    return mm_tag, ml_tag
+
+
+def make_synthetic_bam(output_path, n_reads=100, read_length=5000,
+                       n_chroms=3, chrom_length=1_000_000,
+                       mod_rate=0.05, seed=42, aligned=True):
+    """
+    Generate a synthetic BAM with fiber-seq-like properties.
+
+    Reads have random DNA sequences with m6A modifications encoded as MM/ML
+    tags. When aligned=True, reads are coordinate-sorted and indexed.
+
+    Args:
+        output_path: path for output BAM
+        n_reads: number of reads to generate
+        read_length: length of each read
+        n_chroms: number of chromosomes
+        chrom_length: length of each chromosome
+        mod_rate: fraction of A bases to mark as modified
+        seed: random seed for reproducibility
+        aligned: if True, reads are aligned with coords; if False, unmapped
+
+    Returns:
+        output_path
+    """
+    rng = np.random.RandomState(seed)
+    bases = np.array(list('ACGT'))
+
+    header = pysam.AlignmentHeader.from_dict({
+        'HD': {'VN': '1.6', 'SO': 'coordinate' if aligned else 'unsorted'},
+        'SQ': [{'SN': f'chr{i+1}', 'LN': chrom_length} for i in range(n_chroms)],
+    })
+
+    # Write unsorted first, then sort
+    unsorted_path = output_path + '.unsorted.bam'
+    with pysam.AlignmentFile(unsorted_path, "wb", header=header) as outf:
+        for i in range(n_reads):
+            # Random sequence
+            seq = ''.join(bases[rng.randint(0, 4, read_length)])
+
+            # Find A positions and randomly modify some
+            a_positions = [j for j, b in enumerate(seq) if b == 'A']
+            if a_positions:
+                mod_mask = rng.random(len(a_positions)) < mod_rate
+                mod_positions = sorted(
+                    a_positions[j] for j in range(len(a_positions)) if mod_mask[j]
+                )
+            else:
+                mod_positions = []
+
+            # Build MM/ML tags
+            mm_tag, ml_tag = _make_mm_ml_tags(seq, mod_positions, rng)
+
+            # Create aligned segment
+            a = pysam.AlignedSegment()
+            a.query_name = f'read_{i:06d}'
+            a.query_sequence = seq
+            a.query_qualities = pysam.qualitystring_to_array('I' * read_length)
+
+            if aligned:
+                chrom_idx = i % n_chroms
+                max_pos = max(0, chrom_length - read_length)
+                pos = rng.randint(0, max_pos + 1) if max_pos > 0 else 0
+                a.flag = 0
+                a.reference_id = chrom_idx
+                a.reference_start = pos
+                a.mapping_quality = 60
+                a.cigar = [(0, read_length)]  # All M
+            else:
+                a.flag = 4  # unmapped
+                a.reference_id = -1
+                a.reference_start = -1
+                a.mapping_quality = 0
+
+            if mm_tag is not None:
+                a.set_tag('MM', mm_tag)
+                if ml_tag:
+                    a.set_tag('ML', ml_tag)
+
+            outf.write(a)
+
+    if aligned:
+        # Sort and index
+        pysam.sort("-o", output_path, unsorted_path)
+        os.remove(unsorted_path)
+        pysam.index(output_path)
+    else:
+        os.replace(unsorted_path, output_path)
+
+    return output_path
+
+
+@pytest.fixture(scope="session")
+def _synthetic_bam_dir():
+    """Session-scoped temp directory for synthetic BAMs."""
+    with tempfile.TemporaryDirectory(prefix="fiberhmm_test_") as d:
+        yield d
+
+
+@pytest.fixture(scope="session")
+def synthetic_bam_small(_synthetic_bam_dir):
+    """100 aligned reads, 3 chroms — for correctness tests."""
+    path = os.path.join(_synthetic_bam_dir, "small.bam")
+    return make_synthetic_bam(path, n_reads=100, n_chroms=3, read_length=5000)
+
+
+@pytest.fixture(scope="session")
+def synthetic_bam_medium(_synthetic_bam_dir):
+    """2000 aligned reads, 5 chroms — for throughput tests."""
+    path = os.path.join(_synthetic_bam_dir, "medium.bam")
+    return make_synthetic_bam(path, n_reads=2000, n_chroms=5, read_length=5000)
+
+
+@pytest.fixture(scope="session")
+def unaligned_bam(_synthetic_bam_dir):
+    """100 unaligned reads with sequences and MM/ML tags."""
+    path = os.path.join(_synthetic_bam_dir, "unaligned.bam")
+    return make_synthetic_bam(path, n_reads=100, n_chroms=3,
+                              read_length=5000, aligned=False)
+
+
+@pytest.fixture(scope="session")
+def empty_bam(_synthetic_bam_dir):
+    """Empty BAM file with header but no reads."""
+    path = os.path.join(_synthetic_bam_dir, "empty.bam")
+    return make_synthetic_bam(path, n_reads=0, aligned=True)
+
+
+@pytest.fixture(scope="session")
+def benchmark_model_path():
+    """Path to a real model for integration tests."""
+    path = os.path.join(os.path.dirname(__file__), '..', 'models', 'hia5_pacbio.json')
+    assert os.path.exists(path), f"Model not found: {path}"
+    return os.path.abspath(path)

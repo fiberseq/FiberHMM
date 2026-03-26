@@ -95,6 +95,19 @@ def add_parallel_args(parser: argparse.ArgumentParser,
         '--chroms', nargs='+', default=None,
         help="Only process these chromosomes"
     )
+    parser.add_argument(
+        '--io-threads', type=int, default=4,
+        help="Number of htslib decompression/compression threads for BAM I/O (default: 4)"
+    )
+    parser.add_argument(
+        '--streaming', action='store_true',
+        help="Use streaming pipeline mode (works with unaligned/unindexed BAMs and stdin). "
+             "Recommended for unaligned data or when reading from pipes."
+    )
+    parser.add_argument(
+        '--chunk-size', type=int, default=500,
+        help="Reads per compute chunk in streaming mode (default: 500)"
+    )
 
 
 def add_output_args(parser: argparse.ArgumentParser,

@@ -91,9 +91,13 @@ include = ["fiberhmm*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = ["test_*.py"]
+python_files = ["test_*.py", "bench_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
+markers = [
+    "benchmark: performance benchmark (deselect with '-m \"not benchmark\"')",
+    "slow: slow test (deselect with '-m \"not slow\"')",
+]
 
 [tool.coverage.run]
 source = ["fiberhmm"]

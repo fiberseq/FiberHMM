@@ -74,6 +74,9 @@ Examples:
                         help='Minimum footprints required per read')
     parser.add_argument('--primary', action='store_true',
                         help='Only process primary alignments (skip secondary/supplementary)')
+    parser.add_argument('--process-unmapped', action='store_true',
+                        help='Process unmapped reads that have sequences and modification tags. '
+                             'Enabled automatically in streaming mode when no BAM index exists.')
 
     # Processing
     add_edge_trim_args(parser, default=10)
@@ -228,8 +231,36 @@ def main():
     if args.skip_scaffolds:
         print("Skipping scaffold/contig chromosomes")
 
-    # Region-parallel is always used when cores > 1
-    use_region_parallel = n_cores > 1
+    # Mode selection:
+    #   --streaming or stdin → streaming pipeline
+    #   no BAM index found → streaming pipeline
+    #   n_cores > 1 + indexed → region-parallel (existing default)
+    #   n_cores == 1 → single-threaded streaming (existing behavior)
+    use_streaming = False
+    use_region_parallel = False
+
+    if args.streaming or args.input == '-':
+        use_streaming = True
+        if args.input == '-':
+            print("Reading from stdin, using streaming pipeline mode")
+    elif n_cores > 1:
+        has_index = (os.path.exists(args.input + '.bai') or
+                     os.path.exists(args.input.replace('.bam', '.bai')))
+        if has_index:
+            use_region_parallel = True
+        else:
+            use_streaming = True
+            print("No BAM index found, using streaming pipeline mode")
+    # else: n_cores == 1, use legacy single-threaded chunk mode
+
+    # Auto-detect process_unmapped: enable when streaming without an index
+    process_unmapped = args.process_unmapped
+    if use_streaming and not process_unmapped and args.input != '-':
+        has_index = (os.path.exists(args.input + '.bai') or
+                     os.path.exists(args.input.replace('.bam', '.bai')))
+        if not has_index:
+            process_unmapped = True
+            print("Enabling unmapped read processing (no BAM index)")
 
     # === MAIN PROCESSING ===
     output_bam = os.path.join(args.outdir, f"{dataset}_footprints.bam")
@@ -263,6 +294,10 @@ def main():
         primary_only=args.primary,
         output_posteriors=args.output_posteriors,
         write_msps=not args.no_msps,
+        io_threads=args.io_threads,
+        streaming_pipeline=use_streaming,
+        chunk_size=args.chunk_size,
+        process_unmapped=process_unmapped,
     )
     print(f"\nProcessed {total_reads:,} reads -> {reads_with_footprints:,} with footprints")
     print(f"BAM: {output_bam}")
