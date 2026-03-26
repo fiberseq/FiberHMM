@@ -54,7 +54,7 @@ Examples:
     parser.add_argument('-m', '--model', required=True,
                         help='Path to trained HMM model (.json, .npz, or .pickle)')
     parser.add_argument('-o', '--outdir', required=True,
-                        help='Output directory')
+                        help='Output directory, or "-" to write BAM to stdout (for piping)')
 
     # Mode
     add_mode_args(parser, default=None)
@@ -121,6 +121,12 @@ Examples:
 def main():
     args = parse_args()
 
+    # Handle stdout output mode — redirect all prints to stderr
+    # so they don't corrupt the BAM stream
+    stdout_mode = (args.outdir == '-')
+    if stdout_mode:
+        sys.stdout = sys.stderr
+
     # Determine number of cores
     if args.cores == 0:
         import multiprocessing
@@ -129,8 +135,9 @@ def main():
     else:
         n_cores = args.cores
 
-    # Create output directory
-    os.makedirs(args.outdir, exist_ok=True)
+    # Create output directory (unless writing to stdout)
+    if not stdout_mode:
+        os.makedirs(args.outdir, exist_ok=True)
 
     # Load model with metadata
     print(f"Loading model from {args.model}")
@@ -180,7 +187,10 @@ def main():
         print(f"Excluding {len(train_rids)} training reads")
 
     # Get dataset name
-    dataset = os.path.basename(args.input).replace('.bam', '')
+    if args.input == '-':
+        dataset = 'stdin'
+    else:
+        dataset = os.path.basename(args.input).replace('.bam', '')
 
     # Determine if we need scores
     with_scores = args.scores or args.scores_db
@@ -263,7 +273,10 @@ def main():
             print("Enabling unmapped read processing (no BAM index)")
 
     # === MAIN PROCESSING ===
-    output_bam = os.path.join(args.outdir, f"{dataset}_footprints.bam")
+    if stdout_mode:
+        output_bam = '-'
+    else:
+        output_bam = os.path.join(args.outdir, f"{dataset}_footprints.bam")
     if args.max_reads:
         print(f"Processing BAM (limited to {args.max_reads:,} reads)...")
     else:
@@ -299,12 +312,14 @@ def main():
         chunk_size=args.chunk_size,
         process_unmapped=process_unmapped,
     )
-    print(f"\nProcessed {total_reads:,} reads -> {reads_with_footprints:,} with footprints")
-    print(f"BAM: {output_bam}")
-    print(f"BAM index: {output_bam}.bai")
+    print(f"\nProcessed {total_reads:,} reads -> {reads_with_footprints:,} with footprints",
+          file=sys.stderr if stdout_mode else sys.stdout)
+    if not stdout_mode:
+        print(f"BAM: {output_bam}")
+        print(f"BAM index: {output_bam}.bai")
 
-    # Generate stats if requested
-    if args.stats:
+    # Generate stats if requested (not available for stdout mode)
+    if args.stats and not stdout_mode:
         print("\nGenerating statistics...")
         stats_prefix = os.path.join(args.outdir, f"{dataset}_footprints")
         stats = collect_stats_from_bam(output_bam,
@@ -328,9 +343,12 @@ def main():
         print(f"Scores DB: {db_path}")
         print(f"  {n_reads:,} reads, {n_footprints:,} footprints")
 
-    print("\nDone!")
-    print(f"\nTo extract BED12/bigBed for browser visualization:")
-    print(f"  fiberhmm-extract-tags -i {output_bam}")
+    if stdout_mode:
+        print("\nDone!", file=sys.stderr)
+    else:
+        print("\nDone!")
+        print(f"\nTo extract BED12/bigBed for browser visualization:")
+        print(f"  fiberhmm-extract-tags -i {output_bam}")
 
 
 if __name__ == '__main__':

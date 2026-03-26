@@ -1468,14 +1468,23 @@ def _process_bam_streaming_pipeline(
         else:
             print("WARNING: posterior_writer.py not found, skipping posteriors export")
 
+    # When writing to stdout, send progress to stderr to avoid corrupting BAM
+    _log = sys.stderr if output_bam == '-' else sys.stdout
+
     print(f"Processing BAM (streaming pipeline, {n_cores} workers, "
-          f"chunk_size={chunk_size}, max_inflight={max_inflight})...")
-    sys.stdout.flush()
+          f"chunk_size={chunk_size}, max_inflight={max_inflight})...", file=_log)
+    _log.flush()
 
     start_time = time.time()
 
-    with pysam.AlignmentFile(input_bam, "rb", threads=io_threads) as inbam:
-        with pysam.AlignmentFile(output_bam, "wb", header=inbam.header, threads=io_threads) as outbam:
+    # For stdout output, ensure pysam writes to the real stdout fd
+    # (sys.stdout may have been redirected to stderr for logging)
+    _output_target = output_bam
+    if output_bam == '-':
+        _output_target = os.fdopen(1, 'wb', closefd=False)
+
+    with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
+        with pysam.AlignmentFile(_output_target, "wb", header=inbam.header, threads=io_threads) as outbam:
 
             # Create worker pool
             executor = ProcessPoolExecutor(
@@ -1488,6 +1497,8 @@ def _process_bam_streaming_pipeline(
             chunk_reads = []
             chunk_read_objs = []
             skipped = 0
+            last_progress_reads = 0
+            last_progress_time = time.time()
 
             try:
                 for read in inbam.fetch(until_eof=True):
@@ -1585,13 +1596,18 @@ def _process_bam_streaming_pipeline(
                         chunk_read_objs = []
 
                         # Progress update
-                        elapsed = time.time() - start_time
-                        rate = total_reads / elapsed if elapsed > 0 else 0
+                        now = time.time()
+                        elapsed = now - start_time
+                        avg_rate = total_reads / elapsed if elapsed > 0 else 0
+                        dt = now - last_progress_time
+                        inst_rate = (total_reads - last_progress_reads) / dt if dt > 0 else 0
+                        last_progress_reads = total_reads
+                        last_progress_time = now
                         print(f"\r  Processed: {total_reads:,} | "
                               f"Skipped: {skipped:,} | "
                               f"Inflight: {len(inflight)} | "
-                              f"{rate:.1f} reads/s", end='')
-                        sys.stdout.flush()
+                              f"{inst_rate:.0f} reads/s (avg {avg_rate:.0f})", end='', file=_log)
+                        _log.flush()
 
                 # Submit final partial chunk
                 if chunk_reads:
@@ -1622,24 +1638,24 @@ def _process_bam_streaming_pipeline(
     rate = total_reads / elapsed if elapsed > 0 else 0
     reads_with_footprints = counters['reads_with_footprints']
     print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | "
-          f"With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s")
+          f"With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s", file=_log)
 
     # Print skip reasons
     if skipped > 0:
-        print("  Skip reasons:")
+        print("  Skip reasons:", file=_log)
         for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
             if count > 0:
                 pct = 100 * count / (total_reads + skipped)
-                print(f"    {reason}: {count:,} ({pct:.1f}%)")
+                print(f"    {reason}: {count:,} ({pct:.1f}%)", file=_log)
 
-    # Sort and index output BAM
+    # Sort and index output BAM (skip for stdout)
     if output_bam != '-':
         _sort_and_index_bam(output_bam, threads=n_cores)
 
     # Close posteriors writer
     if posterior_writer:
         n_fibers, file_size = posterior_writer.close()
-        print(f"Posteriors: {n_fibers:,} fibers -> {output_posteriors} ({file_size:.1f} MB)")
+        print(f"Posteriors: {n_fibers:,} fibers -> {output_posteriors} ({file_size:.1f} MB)", file=_log)
 
     return total_reads, reads_with_footprints
 
@@ -1796,7 +1812,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
     sys.stdout.flush()
 
     # Open input and output BAMs
-    with pysam.AlignmentFile(input_bam, "rb", threads=io_threads) as inbam:
+    with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
         with pysam.AlignmentFile(output_bam, "wb", header=inbam.header, threads=io_threads) as outbam:
 
             chunk_reads = []  # Buffer for current chunk
