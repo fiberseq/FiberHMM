@@ -1648,8 +1648,8 @@ def _process_bam_streaming_pipeline(
                 pct = 100 * count / (total_reads + skipped)
                 print(f"    {reason}: {count:,} ({pct:.1f}%)", file=_log)
 
-    # Sort and index output BAM (skip for stdout)
-    if output_bam != '-':
+    # Sort and index output BAM (skip for stdout and unaligned mode)
+    if output_bam != '-' and not process_unmapped:
         _sort_and_index_bam(output_bam, threads=n_cores)
 
     # Close posteriors writer
