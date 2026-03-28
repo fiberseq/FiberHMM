@@ -228,6 +228,7 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
         primary_only = params.get('primary_only', False)
         return_posteriors = params.get('return_posteriors', False) and temp_tsv_path is not None
         write_msps = params.get('write_msps', True)
+        io_threads = int(params.get('io_threads', 4))
 
         total_reads = 0
         reads_with_footprints = 0
@@ -259,8 +260,8 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
                 return_posteriors = False  # Can't write, disable
 
         try:
-            with pysam.AlignmentFile(input_bam, "rb") as inbam:
-                with pysam.AlignmentFile(temp_bam_path, "wb", header=inbam.header) as outbam:
+            with pysam.AlignmentFile(input_bam, "rb", threads=io_threads) as inbam:
+                with pysam.AlignmentFile(temp_bam_path, "wb", header=inbam.header, threads=io_threads) as outbam:
 
                     # Fetch reads from this region using the index
                     try:
@@ -345,8 +346,6 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
                         # Add tags to read
                         if result is not None:
                             reads_with_footprints += 1
-                        else:
-                            skip_reasons['no_footprints'] += 1
 
                             # Only set tags if arrays are non-empty
                             # Use array.array('I', ...) to force B:I (unsigned 32-bit)
@@ -382,6 +381,8 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
                                     posteriors_written += 1
                                 except Exception:
                                     pass  # Don't crash on posteriors write failure
+                        else:
+                            skip_reasons['no_footprints'] += 1
 
                         outbam.write(read)
                         written += 1
@@ -523,13 +524,14 @@ def _process_region_to_bed(args: Tuple) -> Tuple[str, int, int]:
         min_read_length = int(params['min_read_length'])
         with_scores = params['with_scores']
         train_rids = params['train_rids']
+        io_threads = int(params.get('io_threads', 4))
 
         total_reads = 0
         reads_with_footprints = 0
 
         pysam.set_verbosity(0)
 
-        with pysam.AlignmentFile(input_bam, "rb") as inbam:
+        with pysam.AlignmentFile(input_bam, "rb", threads=io_threads) as inbam:
             with open(temp_bed_path, 'w') as bed_out:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)
@@ -777,7 +779,8 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    chroms: Optional[Set[str]] = None,
                                    primary_only: bool = False,
                                    output_posteriors: Optional[str] = None,
-                                   write_msps: bool = True) -> Tuple[int, int]:
+                                   write_msps: bool = True,
+                                   io_threads: int = 4) -> Tuple[int, int]:
     """
     Process BAM using region-based parallelism with indexed access.
 
@@ -836,6 +839,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             'primary_only': primary_only,
             'return_posteriors': return_posteriors,
             'write_msps': write_msps,
+            'io_threads': io_threads,
         }
 
         # Work items - include temp H5 path if posteriors requested
@@ -1318,6 +1322,344 @@ def _process_chunk_worker(chunk_reads: list, edge_trim: int, circular: bool,
     return results
 
 
+# ---------------------------------------------------------------------------
+# Streaming pipeline: sliding-window producer-consumer architecture
+# ---------------------------------------------------------------------------
+
+from collections import deque
+
+
+def _drain_oldest_chunk(inflight, outbam, with_scores, write_msps,
+                        posterior_writer, counters):
+    """
+    Block on the oldest in-flight chunk, apply tags, write to BAM.
+
+    Args:
+        inflight: deque of (future, chunk_read_objs, chunk_reads)
+        outbam: pysam.AlignmentFile for writing
+        with_scores: whether to write nq/aq score tags
+        write_msps: whether to write as/al/aq MSP tags
+        posterior_writer: PosteriorWriter instance or None
+        counters: mutable dict with 'reads_with_footprints', 'no_footprints', 'written'
+    """
+    future, chunk_read_objs, chunk_reads = inflight.popleft()
+    results = future.result()
+
+    for read_obj, fiber_read, result in zip(chunk_read_objs, chunk_reads, results):
+        if result is not None:
+            # Add footprint tags (same logic as _process_and_write_chunk)
+            if len(result['ns']) > 0:
+                read_obj.set_tag('ns', pyarray.array('I', result['ns'].astype(np.uint32).tolist()))
+                read_obj.set_tag('nl', pyarray.array('I', result['nl'].astype(np.uint32).tolist()))
+                if with_scores and result.get('ns_scores') is not None:
+                    nq_scores = np.clip(result['ns_scores'] * 255, 0, 255).astype(np.uint8)
+                    read_obj.set_tag('nq', nq_scores.tolist())
+
+            if write_msps and len(result['as']) > 0:
+                read_obj.set_tag('as', pyarray.array('I', result['as'].astype(np.uint32).tolist()))
+                read_obj.set_tag('al', pyarray.array('I', result['al'].astype(np.uint32).tolist()))
+                if with_scores and result.get('as_scores') is not None:
+                    aq_scores = np.clip(result['as_scores'] * 255, 0, 255).astype(np.uint8)
+                    read_obj.set_tag('aq', aq_scores.tolist())
+
+            counters['reads_with_footprints'] += 1
+
+            # Posteriors export
+            if posterior_writer and result.get('posteriors') is not None:
+                chrom = read_obj.reference_name
+                if chrom:
+                    try:
+                        ref_positions = get_ref_positions_from_read(read_obj) if HAS_POSTERIOR_WRITER else np.array([], dtype=np.int32)
+                    except Exception:
+                        ref_positions = np.array([], dtype=np.int32)
+                    posterior_writer.add_fiber(chrom, {
+                        'read_name': read_obj.query_name,
+                        'ref_start': read_obj.reference_start,
+                        'ref_end': read_obj.reference_end,
+                        'strand': result.get('strand', '.'),
+                        'posteriors': result['posteriors'],
+                        'ref_positions': ref_positions,
+                        'footprint_starts': result['ns'],
+                        'footprint_sizes': result['nl'],
+                    })
+        else:
+            counters['no_footprints'] += 1
+
+        outbam.write(read_obj)
+        counters['written'] += 1
+
+
+def _process_bam_streaming_pipeline(
+    input_bam: str, output_bam: str,
+    model_path: str, train_rids: Set[str],
+    edge_trim: int, circular: bool,
+    mode: str, context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int = 85,
+    min_mapq: int = 0,
+    prob_threshold: int = 0,
+    min_read_length: int = 0,
+    with_scores: bool = False,
+    n_cores: int = 4,
+    chunk_size: int = 500,
+    max_inflight: Optional[int] = None,
+    io_threads: int = 4,
+    primary_only: bool = False,
+    output_posteriors: Optional[str] = None,
+    write_msps: bool = True,
+    max_reads: Optional[int] = None,
+    debug_timing: bool = False,
+    process_unmapped: bool = False,
+) -> Tuple[int, int]:
+    """
+    Streaming producer-consumer pipeline for BAM processing.
+
+    Uses a sliding window of in-flight futures to overlap I/O and compute.
+    Works with unaligned/unindexed BAMs and stdin. Order-preserving.
+
+    The main process reads BAM sequentially, extracts fiber data, and submits
+    chunks to a process pool. Multiple chunks can be in flight simultaneously
+    (bounded by max_inflight), keeping workers saturated while the main
+    process continues reading and writing.
+
+    Args:
+        max_inflight: Max chunks in flight (default: 2 * n_cores)
+        chunk_size: Reads per compute chunk (default: 500)
+        io_threads: htslib decompression threads (default: 4)
+        process_unmapped: If True, process unmapped reads that have sequences
+
+    Returns:
+        (total_reads_processed, reads_with_footprints)
+    """
+    if max_inflight is None:
+        max_inflight = 2 * n_cores
+
+    pysam.set_verbosity(0)
+
+    total_reads = 0
+    skip_reasons = {
+        'unmapped': 0,
+        'secondary_supplementary': 0,
+        'low_mapq': 0,
+        'too_short': 0,
+        'training_excluded': 0,
+        'no_modifications': 0,
+        'extraction_failed': 0,
+        'no_footprints': 0,
+    }
+
+    counters = {
+        'reads_with_footprints': 0,
+        'no_footprints': 0,
+        'written': 0,
+    }
+
+    # Initialize posteriors writer
+    posterior_writer = None
+    return_posteriors = False
+    if output_posteriors:
+        if HAS_POSTERIOR_WRITER:
+            posterior_writer = PosteriorWriter(
+                output_posteriors, mode, context_size,
+                edge_trim, input_bam, batch_size=1000
+            )
+            return_posteriors = True
+            print(f"Posteriors will be written to: {output_posteriors}")
+        else:
+            print("WARNING: posterior_writer.py not found, skipping posteriors export")
+
+    # When writing to stdout, send progress to stderr to avoid corrupting BAM
+    _log = sys.stderr if output_bam == '-' else sys.stdout
+
+    print(f"Processing BAM (streaming pipeline, {n_cores} workers, "
+          f"chunk_size={chunk_size}, max_inflight={max_inflight})...", file=_log)
+    _log.flush()
+
+    start_time = time.time()
+
+    # For stdout output, ensure pysam writes to the real stdout fd
+    # (sys.stdout may have been redirected to stderr for logging)
+    _output_target = output_bam
+    if output_bam == '-':
+        _output_target = os.fdopen(1, 'wb', closefd=False)
+
+    with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
+        with pysam.AlignmentFile(_output_target, "wb", header=inbam.header, threads=io_threads) as outbam:
+
+            # Create worker pool
+            executor = ProcessPoolExecutor(
+                max_workers=n_cores,
+                initializer=_init_bam_worker,
+                initargs=(model_path, debug_timing)
+            )
+
+            inflight = deque()
+            chunk_reads = []
+            chunk_read_objs = []
+            skipped = 0
+            last_progress_reads = 0
+            last_progress_time = time.time()
+
+            try:
+                for read in inbam.fetch(until_eof=True):
+                    # --- Filter phase ---
+
+                    # Handle unmapped reads
+                    if read.is_unmapped:
+                        if not process_unmapped or read.query_sequence is None:
+                            outbam.write(read)
+                            counters['written'] += 1
+                            skipped += 1
+                            skip_reasons['unmapped'] += 1
+                            continue
+                        # else: fall through to process unmapped read with sequence
+
+                    # Skip secondary/supplementary if primary_only
+                    if primary_only and (read.is_secondary or read.is_supplementary):
+                        outbam.write(read)
+                        counters['written'] += 1
+                        skipped += 1
+                        skip_reasons['secondary_supplementary'] += 1
+                        continue
+
+                    # MAPQ filter (skip for unmapped reads being processed)
+                    if not read.is_unmapped and read.mapping_quality < min_mapq:
+                        outbam.write(read)
+                        counters['written'] += 1
+                        skipped += 1
+                        skip_reasons['low_mapq'] += 1
+                        continue
+
+                    # Length filter (use query_length for unmapped, query_alignment_length for mapped)
+                    if read.is_unmapped:
+                        read_len = read.query_length or 0
+                    else:
+                        read_len = read.query_alignment_length
+                    if read_len < min_read_length:
+                        outbam.write(read)
+                        counters['written'] += 1
+                        skipped += 1
+                        skip_reasons['too_short'] += 1
+                        continue
+
+                    # Training exclusion
+                    read_id = read.query_name
+                    if train_rids and read_id in train_rids:
+                        outbam.write(read)
+                        counters['written'] += 1
+                        skipped += 1
+                        skip_reasons['training_excluded'] += 1
+                        continue
+
+                    # --- Extract phase ---
+                    try:
+                        fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
+                        if fiber_read is None:
+                            outbam.write(read)
+                            counters['written'] += 1
+                            skipped += 1
+                            skip_reasons['no_modifications'] += 1
+                            continue
+                    except Exception:
+                        outbam.write(read)
+                        counters['written'] += 1
+                        skipped += 1
+                        skip_reasons['extraction_failed'] += 1
+                        continue
+
+                    # --- Buffer into chunk ---
+                    chunk_reads.append(fiber_read)
+                    chunk_read_objs.append(read)
+                    total_reads += 1
+
+                    # Check max reads limit
+                    if max_reads and total_reads >= max_reads:
+                        break
+
+                    # --- Submit when chunk is full ---
+                    if len(chunk_reads) >= chunk_size:
+                        # Drain oldest if at capacity
+                        if len(inflight) >= max_inflight:
+                            _drain_oldest_chunk(
+                                inflight, outbam, with_scores, write_msps,
+                                posterior_writer, counters
+                            )
+
+                        # Submit chunk to workers
+                        future = executor.submit(
+                            _process_chunk_worker,
+                            chunk_reads, edge_trim, circular, mode, context_size,
+                            msp_min_size, nuc_min_size, with_scores, return_posteriors
+                        )
+                        inflight.append((future, chunk_read_objs, chunk_reads))
+                        chunk_reads = []
+                        chunk_read_objs = []
+
+                        # Progress update
+                        now = time.time()
+                        elapsed = now - start_time
+                        avg_rate = total_reads / elapsed if elapsed > 0 else 0
+                        dt = now - last_progress_time
+                        inst_rate = (total_reads - last_progress_reads) / dt if dt > 0 else 0
+                        last_progress_reads = total_reads
+                        last_progress_time = now
+                        print(f"\r  Processed: {total_reads:,} | "
+                              f"Skipped: {skipped:,} | "
+                              f"Inflight: {len(inflight)} | "
+                              f"{inst_rate:.0f} reads/s (avg {avg_rate:.0f})", end='', file=_log)
+                        _log.flush()
+
+                # Submit final partial chunk
+                if chunk_reads:
+                    if len(inflight) >= max_inflight:
+                        _drain_oldest_chunk(
+                            inflight, outbam, with_scores, write_msps,
+                            posterior_writer, counters
+                        )
+
+                    future = executor.submit(
+                        _process_chunk_worker,
+                        chunk_reads, edge_trim, circular, mode, context_size,
+                        msp_min_size, nuc_min_size, with_scores, return_posteriors
+                    )
+                    inflight.append((future, chunk_read_objs, chunk_reads))
+
+                # Drain all remaining in-flight chunks (in order)
+                while inflight:
+                    _drain_oldest_chunk(
+                        inflight, outbam, with_scores, write_msps,
+                        posterior_writer, counters
+                    )
+
+            finally:
+                executor.shutdown(wait=True)
+
+    elapsed = time.time() - start_time
+    rate = total_reads / elapsed if elapsed > 0 else 0
+    reads_with_footprints = counters['reads_with_footprints']
+    print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | "
+          f"With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s", file=_log)
+
+    # Print skip reasons
+    if skipped > 0:
+        print("  Skip reasons:", file=_log)
+        for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+            if count > 0:
+                pct = 100 * count / (total_reads + skipped)
+                print(f"    {reason}: {count:,} ({pct:.1f}%)", file=_log)
+
+    # Sort and index output BAM (skip for stdout and unaligned mode)
+    if output_bam != '-' and not process_unmapped:
+        _sort_and_index_bam(output_bam, threads=n_cores)
+
+    # Close posteriors writer
+    if posterior_writer:
+        n_fibers, file_size = posterior_writer.close()
+        print(f"Posteriors: {n_fibers:,} fibers -> {output_posteriors} ({file_size:.1f} MB)", file=_log)
+
+    return total_reads, reads_with_footprints
+
+
 def process_bam_for_footprints(input_bam: str, output_bam: str,
                                 model_or_path, train_rids: Set[str],
                                 edge_trim: int, circular: bool,
@@ -1337,7 +1679,11 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                                 chroms: Optional[Set[str]] = None,
                                 primary_only: bool = False,
                                 output_posteriors: Optional[str] = None,
-                                write_msps: bool = True) -> Tuple[int, int]:
+                                write_msps: bool = True,
+                                io_threads: int = 4,
+                                streaming_pipeline: bool = False,
+                                chunk_size: int = 500,
+                                process_unmapped: bool = False) -> Tuple[int, int]:
     """
     Process BAM file and add footprint tags - SINGLE PASS STREAMING.
 
@@ -1393,7 +1739,39 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 chroms=chroms,
                 primary_only=primary_only,
                 output_posteriors=output_posteriors,
-                write_msps=write_msps
+                write_msps=write_msps,
+                io_threads=io_threads
+            )
+
+    # Dispatch to streaming pipeline if requested (requires model_path for workers)
+    if streaming_pipeline:
+        if model_path is None:
+            print("Warning: streaming_pipeline requires model path, falling back to standard parallel")
+        else:
+            return _process_bam_streaming_pipeline(
+                input_bam=input_bam,
+                output_bam=output_bam,
+                model_path=model_path,
+                train_rids=train_rids,
+                edge_trim=edge_trim,
+                circular=circular,
+                mode=mode,
+                context_size=context_size,
+                msp_min_size=msp_min_size,
+                nuc_min_size=nuc_min_size,
+                min_mapq=min_mapq,
+                prob_threshold=prob_threshold,
+                min_read_length=min_read_length,
+                with_scores=with_scores,
+                n_cores=n_cores,
+                chunk_size=chunk_size,
+                io_threads=io_threads,
+                primary_only=primary_only,
+                output_posteriors=output_posteriors,
+                write_msps=write_msps,
+                max_reads=max_reads,
+                debug_timing=debug_timing,
+                process_unmapped=process_unmapped,
             )
 
     total_reads = 0
@@ -1434,8 +1812,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
     sys.stdout.flush()
 
     # Open input and output BAMs
-    with pysam.AlignmentFile(input_bam, "rb") as inbam:
-        with pysam.AlignmentFile(output_bam, "wb", header=inbam.header) as outbam:
+    with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
+        with pysam.AlignmentFile(output_bam, "wb", header=inbam.header, threads=io_threads) as outbam:
 
             chunk_reads = []  # Buffer for current chunk
             chunk_read_objs = []  # Corresponding pysam read objects

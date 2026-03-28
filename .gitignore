@@ -67,6 +67,9 @@ test_datasets/
 node_modules/
 package-lock.json
 
+# Proposals and design docs
+docs/proposals/
+
 # Agent instructions
 CLAUDE.md
 AGENTS.md
