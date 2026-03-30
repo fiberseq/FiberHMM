@@ -229,6 +229,7 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
         return_posteriors = params.get('return_posteriors', False) and temp_tsv_path is not None
         write_msps = params.get('write_msps', True)
         io_threads = int(params.get('io_threads', 4))
+        fingerprint = params.get('fingerprint', False)
 
         total_reads = 0
         reads_with_footprints = 0
@@ -340,7 +341,8 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
                             fiber_read, model, edge_trim, circular,
                             mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
                             with_scores=with_scores,
-                            return_posteriors=return_posteriors
+                            return_posteriors=return_posteriors,
+                            fingerprint=fingerprint
                         )
 
                         # Add tags to read
@@ -780,7 +782,8 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    primary_only: bool = False,
                                    output_posteriors: Optional[str] = None,
                                    write_msps: bool = True,
-                                   io_threads: int = 4) -> Tuple[int, int]:
+                                   io_threads: int = 4,
+                                   fingerprint: bool = False) -> Tuple[int, int]:
     """
     Process BAM using region-based parallelism with indexed access.
 
@@ -840,6 +843,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             'return_posteriors': return_posteriors,
             'write_msps': write_msps,
             'io_threads': io_threads,
+            'fingerprint': fingerprint,
         }
 
         # Work items - include temp H5 path if posteriors requested
@@ -1237,7 +1241,8 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                               msp_min_size: int, nuc_min_size: int = 85,
                               with_scores: bool = False,
                               return_posteriors: bool = False,
-                              write_msps: bool = True) -> Tuple[int, int, Optional[list]]:
+                              write_msps: bool = True,
+                              fingerprint: bool = False) -> Tuple[int, int, Optional[list]]:
     """
     Process a chunk of reads and write to BAM.
 
@@ -1252,7 +1257,7 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
         future = executor.submit(
             _process_chunk_worker,
             chunk_reads, edge_trim, circular, mode, context_size, msp_min_size,
-            nuc_min_size, with_scores, return_posteriors
+            nuc_min_size, with_scores, return_posteriors, fingerprint
         )
         results = future.result()
     else:
@@ -1263,7 +1268,8 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                 fiber_read, model, edge_trim, circular,
                 mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
                 with_scores=with_scores,
-                return_posteriors=return_posteriors
+                return_posteriors=return_posteriors,
+                fingerprint=fingerprint
             )
             results.append(result)
 
@@ -1305,7 +1311,8 @@ def _process_chunk_worker(chunk_reads: list, edge_trim: int, circular: bool,
                            mode: str, context_size: int, msp_min_size: int,
                            nuc_min_size: int = 85,
                            with_scores: bool = False,
-                           return_posteriors: bool = False) -> list:
+                           return_posteriors: bool = False,
+                           fingerprint: bool = False) -> list:
     """Worker function to process a chunk of reads."""
     global _worker_model
 
@@ -1315,7 +1322,8 @@ def _process_chunk_worker(chunk_reads: list, edge_trim: int, circular: bool,
             fiber_read, _worker_model, edge_trim, circular,
             mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
             with_scores=with_scores,
-            return_posteriors=return_posteriors
+            return_posteriors=return_posteriors,
+            fingerprint=fingerprint
         )
         results.append(result)
 
@@ -1410,6 +1418,7 @@ def _process_bam_streaming_pipeline(
     max_reads: Optional[int] = None,
     debug_timing: bool = False,
     process_unmapped: bool = False,
+    fingerprint: bool = False,
 ) -> Tuple[int, int]:
     """
     Streaming producer-consumer pipeline for BAM processing.
@@ -1589,7 +1598,7 @@ def _process_bam_streaming_pipeline(
                         future = executor.submit(
                             _process_chunk_worker,
                             chunk_reads, edge_trim, circular, mode, context_size,
-                            msp_min_size, nuc_min_size, with_scores, return_posteriors
+                            msp_min_size, nuc_min_size, with_scores, return_posteriors, fingerprint
                         )
                         inflight.append((future, chunk_read_objs, chunk_reads))
                         chunk_reads = []
@@ -1683,7 +1692,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                                 io_threads: int = 4,
                                 streaming_pipeline: bool = False,
                                 chunk_size: int = 500,
-                                process_unmapped: bool = False) -> Tuple[int, int]:
+                                process_unmapped: bool = False,
+                                fingerprint: bool = False) -> Tuple[int, int]:
     """
     Process BAM file and add footprint tags - SINGLE PASS STREAMING.
 
@@ -1740,7 +1750,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 primary_only=primary_only,
                 output_posteriors=output_posteriors,
                 write_msps=write_msps,
-                io_threads=io_threads
+                io_threads=io_threads,
+                fingerprint=fingerprint
             )
 
     # Dispatch to streaming pipeline if requested (requires model_path for workers)
@@ -1772,6 +1783,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 max_reads=max_reads,
                 debug_timing=debug_timing,
                 process_unmapped=process_unmapped,
+                fingerprint=fingerprint,
             )
 
     total_reads = 0
@@ -1902,7 +1914,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                             mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
                             with_scores=with_scores,
                             return_posteriors=return_posteriors,
-                            write_msps=write_msps
+                            write_msps=write_msps,
+                            fingerprint=fingerprint
                         )
                         reads_with_footprints += n_fp
                         skip_reasons['no_footprints'] += n_nofp
@@ -1943,7 +1956,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                         model, executor, edge_trim, circular,
                         mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
                         with_scores=with_scores,
-                        return_posteriors=return_posteriors
+                        return_posteriors=return_posteriors,
+                        fingerprint=fingerprint
                     )
                     reads_with_footprints += n_fp
                     skip_reasons['no_footprints'] += n_nofp

@@ -390,6 +390,82 @@ def detect_daf_strand(sequence: str, mod_positions: Set[int]) -> str:
         return '.'
 
 
+def has_iupac_encoding(sequence: str) -> bool:
+    """
+    Check if a BAM sequence contains IUPAC R/Y ambiguity codes.
+
+    DAF-seq collaborators may encode deamination events as R (purine
+    ambiguity, marks deaminated G on - strand) or Y (pyrimidine ambiguity,
+    marks deaminated C on + strand) directly in the BAM sequence instead of
+    using MM/ML tags.
+
+    Args:
+        sequence: Query sequence from BAM read
+
+    Returns:
+        True if sequence contains R or Y codes
+    """
+    seq = sequence.upper()
+    return 'R' in seq or 'Y' in seq
+
+
+def extract_daf_iupac_positions(sequence: str, st_tag: Optional[str] = None) -> Tuple[Set[int], str, str]:
+    """
+    Extract deamination positions from IUPAC R/Y encoded DAF-seq sequence.
+
+    Converts Y→T and R→A to produce the same representation as the legacy
+    MM/ML path (where deaminated C shows as T and deaminated G shows as A).
+    The existing encoder already reconstructs T→C / A→G internally.
+
+    Strand is determined from the ``st`` tag (``CT`` → ``+``, ``GA`` → ``-``).
+    If the tag is absent, strand is inferred by counting R vs Y occurrences.
+
+    Args:
+        sequence: Query sequence (may contain R/Y IUPAC codes)
+        st_tag: Value of the ``st:Z`` BAM tag, e.g. ``"CT"`` or ``"GA"``
+
+    Returns:
+        (mod_positions, strand, converted_sequence) where *converted_sequence*
+        has all R replaced with A and all Y replaced with T (pure ACGT).
+    """
+    seq_upper = sequence.upper()
+    mod_positions: Set[int] = set()
+
+    # Determine strand
+    if st_tag is not None:
+        st = st_tag.upper()
+        if st == 'CT':
+            strand = '+'
+        elif st == 'GA':
+            strand = '-'
+        else:
+            strand = '.'
+    else:
+        # Infer from R vs Y counts
+        y_count = seq_upper.count('Y')
+        r_count = seq_upper.count('R')
+        if y_count > r_count:
+            strand = '+'
+        elif r_count > y_count:
+            strand = '-'
+        else:
+            strand = '.'
+
+    # Convert IUPAC codes and collect modification positions
+    converted = list(seq_upper)
+    for i, base in enumerate(converted):
+        if base == 'Y':
+            # Y (pyrimidine ambiguity) marks deaminated C → convert to T
+            converted[i] = 'T'
+            mod_positions.add(i)
+        elif base == 'R':
+            # R (purine ambiguity) marks deaminated G → convert to A
+            converted[i] = 'A'
+            mod_positions.add(i)
+
+    return mod_positions, strand, ''.join(converted)
+
+
 def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
                                 edge_trim: int = 10,
                                 mode: str = 'pacbio-fiber',

@@ -97,6 +97,10 @@ Examples:
     parser.add_argument('--no-msps', action='store_true',
                         help='Do not write MSP tags (as/al/aq) to output BAM. '
                              'Useful for Fiber-seq where MSPs are computed differently by fibertools')
+    parser.add_argument('--fingerprint', action='store_true',
+                        help='[Experimental] Scan large footprints for internal posterior bumps '
+                             'indicating merged TF clusters. Splits footprints and emits new MSPs. '
+                             'Forces Forward-Backward computation even without --scores.')
 
     # QC and statistics
     add_stats_args(parser)
@@ -220,6 +224,8 @@ def main():
         print(f"  Circular mode: enabled")
     if with_scores:
         print(f"  Confidence scores: enabled")
+    if args.fingerprint:
+        print(f"  Fingerprinting: enabled (experimental)")
     if args.scores_db:
         print(f"  Scores database: {db_path}")
     if mode == 'daf':
@@ -311,6 +317,7 @@ def main():
         streaming_pipeline=use_streaming,
         chunk_size=args.chunk_size,
         process_unmapped=process_unmapped,
+        fingerprint=args.fingerprint,
     )
     print(f"\nProcessed {total_reads:,} reads -> {reads_with_footprints:,} with footprints",
           file=sys.stderr if stdout_mode else sys.stdout)
