@@ -5,12 +5,7 @@ import pysam
 from typing import Optional, Tuple, Set
 
 from fiberhmm.core.hmm import FiberHMM
-from fiberhmm.core.bam_reader import (
-    encode_from_query_sequence,
-    detect_daf_strand,
-    has_iupac_encoding,
-    extract_daf_iupac_positions,
-)
+from fiberhmm.core.bam_reader import encode_from_query_sequence, detect_daf_strand
 
 
 def predict_footprints(model: FiberHMM, encoded_read: np.ndarray,
@@ -170,8 +165,7 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
                                  msp_min_size: int = 147,
                                  with_scores: bool = False,
                                  return_posteriors: bool = False,
-                                 nuc_min_size: int = 85,
-                                 fingerprint: bool = False) -> dict:
+                                 nuc_min_size: int = 85) -> dict:
     """
     Run HMM prediction to call both footprints (ns/nl) and MSPs (as/al).
 
@@ -216,9 +210,8 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
         return result
 
     # Predict states (0 = footprint, 1 = accessible)
-    # Use predict_with_posteriors if we need posteriors, scores, or fingerprinting
-    posteriors_full = None
-    if with_scores or return_posteriors or fingerprint:
+    # Use predict_with_posteriors if we need posteriors or scores (shares computation)
+    if with_scores or return_posteriors:
         states, posteriors_full = model.predict_with_posteriors(encoded_read)
         confidence = posteriors_full[np.arange(len(states)), states]
 
@@ -250,25 +243,6 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
             for i, (s, e) in enumerate(zip(fp_starts, fp_ends)):
                 fp_scores[i] = np.mean(confidence[s:e])
             result['footprint_scores'] = fp_scores
-
-    # Fingerprint: scan large footprints for internal posterior bumps
-    if fingerprint and posteriors_full is not None and len(fp_starts) > 0:
-        from fiberhmm.inference.fingerprint import fingerprint_footprints
-        fp_starts, fp_ends, n_splits = fingerprint_footprints(
-            fp_starts.astype(np.int32), fp_ends.astype(np.int32),
-            posteriors_full,
-        )
-        if n_splits > 0:
-            # Update result with split footprints
-            result['footprint_starts'] = fp_starts
-            result['footprint_sizes'] = (fp_ends - fp_starts).astype(np.int32)
-            result['fingerprint_splits'] = n_splits
-            # Recompute scores for new footprints if needed
-            if with_scores and confidence is not None:
-                fp_scores = np.zeros(len(fp_starts), dtype=np.float32)
-                for i, (s, e) in enumerate(zip(fp_starts, fp_ends)):
-                    fp_scores[i] = np.mean(confidence[s:e])
-                result['footprint_scores'] = fp_scores
 
     # Find MSPs (accessible regions between nucleosome-sized footprints)
     # Following fibertools convention: only nucleosome-sized footprints
@@ -350,60 +324,46 @@ def detect_mode_from_bam(bam_path: str, n_sample: int = 100) -> str:
             c_plus_m_count = 0   # C+m tags (5mC methylation)
             other_count = 0
             reads_with_mm = 0
-            # Also track IUPAC indicators in the same pass
-            iupac_count = 0
-            st_count = 0
-            n_scanned = 0
 
             for read in bam.fetch(until_eof=True):
-                if reads_with_mm >= n_sample and n_scanned >= n_sample:
+                if reads_with_mm >= n_sample:
                     break
 
                 if read.is_unmapped or read.query_sequence is None:
                     continue
 
-                # Track IUPAC indicators (always, up to n_sample)
-                if n_scanned < n_sample:
-                    n_scanned += 1
-                    if has_iupac_encoding(read.query_sequence):
-                        iupac_count += 1
-                    if read.has_tag('st'):
-                        st_count += 1
-
                 # Get MM tag
-                if reads_with_mm < n_sample:
-                    try:
-                        mm_tag = read.get_tag('MM') if read.has_tag('MM') else \
-                                 read.get_tag('Mm') if read.has_tag('Mm') else None
-                    except KeyError:
-                        mm_tag = None
+                try:
+                    mm_tag = read.get_tag('MM') if read.has_tag('MM') else \
+                             read.get_tag('Mm') if read.has_tag('Mm') else None
+                except KeyError:
+                    mm_tag = None
 
-                    if mm_tag:
-                        reads_with_mm += 1
+                if not mm_tag:
+                    continue
 
-                        # Parse MM tag to identify modification types
-                        for mod_spec in mm_tag.split(';'):
-                            if not mod_spec:
-                                continue
-                            parts = mod_spec.split(',')
-                            if len(parts) < 2:
-                                continue
-                            base_mod = parts[0].strip()
+                reads_with_mm += 1
 
-                            if base_mod.startswith('T-a') or base_mod.startswith('T+a'):
-                                t_minus_a_count += 1
-                            elif base_mod.startswith('A+a') or base_mod.startswith('A-a'):
-                                a_plus_a_count += 1
-                            elif base_mod.startswith('C+m') or base_mod.startswith('C-m'):
-                                c_plus_m_count += 1
-                            else:
-                                other_count += 1
+                # Parse MM tag to identify modification types
+                for mod_spec in mm_tag.split(';'):
+                    if not mod_spec:
+                        continue
+                    parts = mod_spec.split(',')
+                    if len(parts) < 2:
+                        continue
+                    base_mod = parts[0].strip()
+
+                    if base_mod.startswith('T-a') or base_mod.startswith('T+a'):
+                        t_minus_a_count += 1
+                    elif base_mod.startswith('A+a') or base_mod.startswith('A-a'):
+                        a_plus_a_count += 1
+                    elif base_mod.startswith('C+m') or base_mod.startswith('C-m'):
+                        c_plus_m_count += 1
+                    else:
+                        other_count += 1
 
             # Determine mode based on tag patterns
             if reads_with_mm == 0:
-                # No MM tags found — check for IUPAC R/Y encoding
-                if iupac_count > 0 and st_count > 0:
-                    return 'daf'
                 return 'unknown'
 
             # DAF-seq uses T-a for + strand deamination (C→T)
@@ -430,21 +390,7 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int) -> Opti
     if not query_sequence:
         return None
 
-    # IUPAC R/Y branch: DAF-seq reads with deamination encoded in the sequence
-    if mode == 'daf' and has_iupac_encoding(query_sequence):
-        st_tag = read.get_tag('st') if read.has_tag('st') else None
-        mod_positions, strand, conv_seq = extract_daf_iupac_positions(query_sequence, st_tag)
-        if not mod_positions:
-            return None
-        return {
-            'read_id': read.query_name,
-            'query_sequence': conv_seq,       # Y→T, R→A (pure ACGT)
-            'm6a_query_positions': mod_positions,
-            'query_length': len(conv_seq),
-            '_daf_strand': strand,            # pre-computed from st tag
-        }
-
-    # Legacy MM/ML path
+    # Parse MM/ML tags for modification calls
     m6a_query_positions = []
 
     try:
@@ -485,8 +431,7 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int) -> Opti
 def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,
                           mode: str, context_size: int, msp_min_size: int,
                           with_scores: bool, return_posteriors: bool = False,
-                          nuc_min_size: int = 85,
-                          fingerprint: bool = False) -> Optional[dict]:
+                          nuc_min_size: int = 85) -> Optional[dict]:
     """Process a single read through HMM. Returns footprint data or None."""
 
     query_sequence = fiber_read['query_sequence']
@@ -494,7 +439,7 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
 
     # Detect strand
     if mode == 'daf':
-        strand = fiber_read.get('_daf_strand') or detect_daf_strand(query_sequence, m6a_positions)
+        strand = detect_daf_strand(query_sequence, m6a_positions)
     elif mode == 'nanopore-fiber':
         strand = '.'  # No strand detection for nanopore
     else:
@@ -512,8 +457,7 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     # Predict
     fp_result = predict_footprints_and_msps(model, encoded, msp_min_size, with_scores,
                                              return_posteriors=return_posteriors,
-                                             nuc_min_size=nuc_min_size,
-                                             fingerprint=fingerprint)
+                                             nuc_min_size=nuc_min_size)
 
     # If no footprints and we don't need posteriors, skip
     if len(fp_result['footprint_starts']) == 0 and len(fp_result['msp_starts']) == 0:
