@@ -170,8 +170,7 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
                                  msp_min_size: int = 147,
                                  with_scores: bool = False,
                                  return_posteriors: bool = False,
-                                 nuc_min_size: int = 85,
-                                 fingerprint: bool = False) -> dict:
+                                 nuc_min_size: int = 85) -> dict:
     """
     Run HMM prediction to call both footprints (ns/nl) and MSPs (as/al).
 
@@ -216,9 +215,8 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
         return result
 
     # Predict states (0 = footprint, 1 = accessible)
-    # Use predict_with_posteriors if we need posteriors, scores, or fingerprinting
-    posteriors_full = None
-    if with_scores or return_posteriors or fingerprint:
+    # Use predict_with_posteriors if we need posteriors or scores (shares computation)
+    if with_scores or return_posteriors:
         states, posteriors_full = model.predict_with_posteriors(encoded_read)
         confidence = posteriors_full[np.arange(len(states)), states]
 
@@ -250,25 +248,6 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
             for i, (s, e) in enumerate(zip(fp_starts, fp_ends)):
                 fp_scores[i] = np.mean(confidence[s:e])
             result['footprint_scores'] = fp_scores
-
-    # Fingerprint: scan large footprints for internal posterior bumps
-    if fingerprint and posteriors_full is not None and len(fp_starts) > 0:
-        from fiberhmm.inference.fingerprint import fingerprint_footprints
-        fp_starts, fp_ends, n_splits = fingerprint_footprints(
-            fp_starts.astype(np.int32), fp_ends.astype(np.int32),
-            posteriors_full,
-        )
-        if n_splits > 0:
-            # Update result with split footprints
-            result['footprint_starts'] = fp_starts
-            result['footprint_sizes'] = (fp_ends - fp_starts).astype(np.int32)
-            result['fingerprint_splits'] = n_splits
-            # Recompute scores for new footprints if needed
-            if with_scores and confidence is not None:
-                fp_scores = np.zeros(len(fp_starts), dtype=np.float32)
-                for i, (s, e) in enumerate(zip(fp_starts, fp_ends)):
-                    fp_scores[i] = np.mean(confidence[s:e])
-                result['footprint_scores'] = fp_scores
 
     # Find MSPs (accessible regions between nucleosome-sized footprints)
     # Following fibertools convention: only nucleosome-sized footprints
@@ -485,8 +464,7 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int) -> Opti
 def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,
                           mode: str, context_size: int, msp_min_size: int,
                           with_scores: bool, return_posteriors: bool = False,
-                          nuc_min_size: int = 85,
-                          fingerprint: bool = False) -> Optional[dict]:
+                          nuc_min_size: int = 85) -> Optional[dict]:
     """Process a single read through HMM. Returns footprint data or None."""
 
     query_sequence = fiber_read['query_sequence']
@@ -512,8 +490,7 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     # Predict
     fp_result = predict_footprints_and_msps(model, encoded, msp_min_size, with_scores,
                                              return_posteriors=return_posteriors,
-                                             nuc_min_size=nuc_min_size,
-                                             fingerprint=fingerprint)
+                                             nuc_min_size=nuc_min_size)
 
     # If no footprints and we don't need posteriors, skip
     if len(fp_result['footprint_starts']) == 0 and len(fp_result['msp_starts']) == 0:

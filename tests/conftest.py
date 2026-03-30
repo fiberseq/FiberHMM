@@ -295,19 +295,6 @@ def make_synthetic_iupac_bam(output_path, n_reads=50, read_length=5000,
     Reads have Y (deaminated C, + strand) or R (deaminated G, - strand) in
     the sequence instead of MM/ML tags.  Each read also carries an ``st:Z``
     tag (``CT`` or ``GA``).
-
-    Args:
-        output_path: path for output BAM
-        n_reads: number of reads to generate
-        read_length: length of each read
-        n_chroms: number of chromosomes
-        chrom_length: length of each chromosome
-        deam_rate: fraction of C (or G) bases to mark as deaminated
-        seed: random seed for reproducibility
-        aligned: if True, reads are coordinate-sorted and indexed
-
-    Returns:
-        output_path
     """
     rng = np.random.RandomState(seed)
     bases = np.array(list('ACGT'))
@@ -320,18 +307,13 @@ def make_synthetic_iupac_bam(output_path, n_reads=50, read_length=5000,
     unsorted_path = output_path + '.unsorted.bam'
     with pysam.AlignmentFile(unsorted_path, "wb", header=header) as outf:
         for i in range(n_reads):
-            # Random pure ACGT sequence
             seq_arr = bases[rng.randint(0, 4, read_length)]
-
-            # Alternate strands: even reads = + strand, odd = - strand
             is_plus = (i % 2 == 0)
 
             if is_plus:
-                # + strand: deaminate some C → Y
                 st_tag = 'CT'
                 target_positions = [j for j, b in enumerate(seq_arr) if b == 'C']
             else:
-                # - strand: deaminate some G → R
                 st_tag = 'GA'
                 target_positions = [j for j, b in enumerate(seq_arr) if b == 'G']
 
