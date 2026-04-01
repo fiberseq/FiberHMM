@@ -74,6 +74,7 @@ fiberhmm-extract = "fiberhmm.cli.extract_tags:main"
 fiberhmm-probs = "fiberhmm.cli.generate_probs:main"
 fiberhmm-utils = "fiberhmm.cli.utils:main"
 fiberhmm-posteriors = "fiberhmm.cli.export_posteriors:main"
+fiberhmm-daf-encode = "fiberhmm.cli.daf_encode:main"
 
 # Top-level scripts kept for backward compatibility
 [tool.setuptools]
