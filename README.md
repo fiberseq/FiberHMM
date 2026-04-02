@@ -10,7 +10,9 @@ FiberHMM identifies protected regions (footprints) and accessible regions (methy
 - **Fibertools-compatible output** -- tagged BAM with `ns`/`nl`/`as`/`al` tags, ready for downstream tools
 - **Native HMM implementation** -- no hmmlearn dependency; Numba JIT optional for ~10x speedup
 - **Region-parallel processing** -- scales linearly with cores for large genomes
+- **Streaming pipeline** -- supports stdin/stdout piping for composable workflows
 - **Multi-platform** -- supports PacBio fiber-seq, Nanopore fiber-seq, and DAF-seq
+- **DAF-seq preprocessing** -- `fiberhmm-daf-encode` converts plain aligned BAMs to IUPAC R/Y encoded BAMs
 - **Legacy model support** -- loads old hmmlearn-trained pickle/NPZ models seamlessly
 
 ## Installation
@@ -41,43 +43,46 @@ For bigBed output, install [`bedToBigBed`](https://hgdownload.soe.ucsc.edu/admin
 
 ## Quick Start
 
-### 1. Generate emission probabilities
+### Fiber-seq (PacBio or Nanopore)
 
-Requires accessible (naked DNA) and inaccessible (native chromatin) control BAMs:
+If you have a BAM with m6A modification tags (MM/ML), you can call footprints directly with a pre-trained model:
 
 ```bash
-python generate_probs.py \
-    -a accessible_control.bam \
-    -u inaccessible_control.bam \
-    -o probs/ \
-    --stats
+fiberhmm-apply -i experiment.bam -m models/hia5_pacbio.json -o output/ -c 8
 ```
 
-### 2. Train HMM
+### DAF-seq
+
+DAF-seq BAMs from minimap2 contain deamination events as C→T / G→A mismatches but lack the IUPAC encoding and strand tags that FiberHMM expects. Use `fiberhmm-daf-encode` to preprocess, then call footprints:
 
 ```bash
-python train_model.py \
-    -i sample.bam \
-    -p probs/tables/accessible_A_k3.tsv probs/tables/inaccessible_A_k3.tsv \
-    -o models/ \
-    --stats
+# Two-step
+fiberhmm-daf-encode -i aligned.bam -o encoded.bam
+fiberhmm-apply --mode daf -i encoded.bam -m models/ddda_pacbio.json -o output/ -c 8
+
+# Or as a streaming pipeline (no intermediate file)
+fiberhmm-daf-encode -i aligned.bam -o - | \
+    fiberhmm-apply --mode daf --streaming -i - -m models/ddda_pacbio.json -o output/
 ```
 
-### 3. Call footprints
+If your BAM is missing MD tags (minimap2 wasn't run with `--MD`), add them first:
 
 ```bash
-python apply_model.py \
-    -i experiment.bam \
-    -m models/best-model.json \
-    -o output/ \
-    -c 8 \
-    --scores
+samtools calmd -b aligned.bam ref.fa | \
+    fiberhmm-daf-encode -i - -o - | \
+    fiberhmm-apply --mode daf --streaming -i - -m models/ddda_pacbio.json -o output/
 ```
 
-### 4. Extract to BED12/bigBed
+Or pass the reference FASTA directly (slower):
 
 ```bash
-python extract_tags.py -i output/experiment_footprints.bam
+fiberhmm-daf-encode -i aligned.bam -o encoded.bam --reference ref.fa
+```
+
+### Extract to BED12/bigBed
+
+```bash
+fiberhmm-extract -i output/experiment_footprints.bam
 ```
 
 ## Pre-trained Models
@@ -91,11 +96,6 @@ FiberHMM ships with pre-trained models in `models/` ready for immediate use:
 | **DddA PacBio** | `ddda_pacbio.json` | DddA (deamination) | PacBio | `daf` |
 | **DddB Nanopore** | `dddb_nanopore.json` | DddB (deamination) | Nanopore | `daf` |
 
-```bash
-# Example: call footprints with a pre-trained model
-python apply_model.py -i experiment.bam -m models/hia5_pacbio.json -o output/ -c 8
-```
-
 ## Analysis Modes
 
 | Mode | Flag | Description | Target bases |
@@ -104,48 +104,79 @@ python apply_model.py -i experiment.bam -m models/hia5_pacbio.json -o output/ -c
 | **Nanopore fiber-seq** | `--mode nanopore-fiber` | m6A at A only (single strand) | A only |
 | **DAF-seq** | `--mode daf` | Deamination at C/G (strand-specific) | C or G |
 
-All scripts accept `--mode`; context size `-k` (3-10) determines the hexamer table size.
+**Note on mode selection:** The `pacbio-fiber` vs `nanopore-fiber` distinction only matters for Hia5 (m6A), where PacBio detects modifications on both strands while Nanopore detects only one. For deaminase-based methods (DddA, DddB), `--mode daf` is always used regardless of sequencing platform -- the chemistry is inherently strand-specific.
 
-**Note on mode selection:** The `pacbio-fiber` vs `nanopore-fiber` distinction only matters for Hia5 (m6A), where PacBio detects modifications on both strands while Nanopore detects only one. For deaminase-based methods (DddA, DddB), `--mode daf` is always used regardless of sequencing platform -- the chemistry is inherently strand-specific. Accuracy may differ between platforms, but the mode is the same.
+## CLI Tools Reference
 
-## Output
+### fiberhmm-daf-encode
 
-### BAM Tags
-
-`apply_model.py` adds footprint tags compatible with the fibertools ecosystem:
-
-| Tag | Type | Description |
-|-----|------|-------------|
-| `ns` | B,I | Nucleosome/footprint starts (0-based query coords) |
-| `nl` | B,I | Nucleosome/footprint lengths |
-| `as` | B,I | Accessible/MSP starts |
-| `al` | B,I | Accessible/MSP lengths |
-| `nq` | B,C | Footprint quality scores (0-255, with `--scores`) |
-| `aq` | B,C | MSP quality scores (0-255, with `--scores`) |
-
-### BED12/bigBed Extraction
-
-Use `extract_tags.py` to extract features from tagged BAMs for browser visualization:
+Preprocess plain aligned DAF-seq BAMs for FiberHMM. Identifies C→T and G→A deamination mismatches via the MD tag, encodes them as IUPAC Y/R in the query sequence, and adds `st:Z` strand tags.
 
 ```bash
-# Extract all feature types to bigBed
-python extract_tags.py -i output/sample_footprints.bam
-
-# Extract only footprints
-python extract_tags.py -i output/sample_footprints.bam --footprint
-
-# Keep BED files alongside bigBed
-python extract_tags.py -i output/sample_footprints.bam --keep-bed
+fiberhmm-daf-encode -i aligned.bam -o encoded.bam
 ```
 
-## Scripts Reference
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i/--input` | required | Input BAM, or `-` for stdin |
+| `-o/--output` | required | Output BAM, or `-` for stdout |
+| `--reference` | none | Reference FASTA (fallback if MD tag missing) |
+| `-q/--min-mapq` | 20 | Min mapping quality |
+| `--min-read-length` | 1000 | Min aligned read length (bp) |
+| `--io-threads` | 4 | htslib I/O threads |
+| `--strand` | auto | Force strand: `CT`, `GA`, or `auto` (per-read consensus) |
 
-### generate_probs.py / `fiberhmm-probs`
+The encoder determines conversion strand per read by counting which mismatch type (C→T vs G→A) dominates. Reads with no mismatches or equal counts are skipped. All C→T or G→A mismatches are encoded (the HMM handles noise via emission probabilities). Existing tags (including MM/ML for dual-labeling) are preserved.
+
+### fiberhmm-apply
+
+Apply a trained HMM to call footprints. Supports region-parallel and streaming modes.
+
+```bash
+# Region-parallel (indexed BAM)
+fiberhmm-apply -i experiment.bam -m model.json -o output/ -c 8
+
+# Streaming (stdin/stdout, unindexed BAM)
+fiberhmm-apply --streaming -i - -m model.json -o output/
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i/--input` | required | Input BAM, or `-` for stdin |
+| `-m/--model` | required | Trained HMM model (.json, .npz, or .pickle) |
+| `-o/--outdir` | required | Output directory, or `-` for stdout BAM |
+| `--mode` | auto-detect | Analysis mode (see table above) |
+| `-c/--cores` | 1 | CPU cores (0 = auto-detect) |
+| `--streaming` | false | Streaming pipeline mode (for unindexed/stdin input) |
+| `--io-threads` | 4 | htslib I/O threads |
+| `-q/--min-mapq` | 20 | Min mapping quality |
+| `--min-read-length` | 1000 | Min aligned read length (bp) |
+| `-e/--edge-trim` | 10 | Edge masking (bp) |
+| `--scores` | false | Compute per-footprint confidence scores |
+| `--region-size` | 10000000 | Region size for parallel chunks |
+| `--skip-scaffolds` | false | Skip scaffold/contig chromosomes |
+| `--chroms` | all | Process only these chromosomes |
+| `--msp-min-size` | 60 | Minimum MSP region size (bp) |
+| `--primary` | false | Only process primary alignments |
+
+#### Read Filtering
+
+By default, reads are skipped (written unchanged without footprint tags) when:
+
+| Reason | Default | Override |
+|--------|---------|----------|
+| **MAPQ too low** | < 20 | `--min-mapq 0` |
+| **Aligned length too short** | < 1000 bp | `--min-read-length 0` |
+| **No MM/ML modification tags** | -- | Cannot override (no data to process) |
+| **Unmapped** | -- | Cannot override |
+| **No footprints detected** | HMM found nothing | Cannot override |
+
+### fiberhmm-probs
 
 Generate emission probability tables from accessible and inaccessible control BAMs.
 
 ```bash
-python generate_probs.py \
+fiberhmm-probs \
     -a accessible_control.bam \
     -u inaccessible_control.bam \
     -o probs/ \
@@ -154,12 +185,12 @@ python generate_probs.py \
     --stats
 ```
 
-### train_model.py / `fiberhmm-train`
+### fiberhmm-train
 
 Train the HMM on BAM data using precomputed emission probabilities.
 
 ```bash
-python train_model.py \
+fiberhmm-train \
     -i sample.bam \
     -p probs/tables/accessible_A_k3.tsv probs/tables/inaccessible_A_k3.tsv \
     -o models/ \
@@ -178,73 +209,37 @@ models/
 └── plots/               # (with --stats)
 ```
 
-### apply_model.py / `fiberhmm-apply`
-
-Apply a trained model to call footprints. Supports region-parallel processing.
-
-```bash
-python apply_model.py \
-    -i experiment.bam \
-    -m models/best-model.json \
-    -o output/ \
-    -c 8 \
-    --scores
-```
-
-Key options:
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-c/--cores` | 1 | CPU cores (0 = auto-detect) |
-| `--region-size` | 10000000 | Region size for parallel chunks |
-| `--skip-scaffolds` | false | Skip scaffold/contig chromosomes |
-| `--chroms` | all | Process only these chromosomes |
-| `--scores` | false | Compute per-footprint confidence scores |
-| `-q/--min-mapq` | 20 | Min mapping quality |
-| `--min-read-length` | 1000 | Min aligned read length (bp) |
-| `-e/--edge-trim` | 10 | Edge masking (bp) |
-
-#### Read Filtering
-
-By default, `apply_model.py` skips reads that are unlikely to produce reliable footprint calls. Skipped reads are still written to the output BAM but without `ns`/`nl`/`as`/`al` tags. A summary of skip reasons is printed when the run completes.
-
-Reads are skipped (written unchanged) when:
-
-| Reason | Default | Override |
-|--------|---------|----------|
-| **MAPQ too low** | < 20 | `--min-mapq 0` |
-| **Aligned length too short** | < 1000 bp | `--min-read-length 0` |
-| **No MM/ML modification tags** | -- | Cannot override (no data to process) |
-| **Unmapped** | -- | Cannot override |
-| **No footprints detected** | HMM found nothing | Cannot override (tags require content) |
-
-These defaults exist because low-MAPQ alignments have unreliable reference positions (making footprint coordinates meaningless), and very short reads provide insufficient signal for the HMM. You can lower or disable these thresholds, but results on marginal reads may be unreliable.
-
-### extract_tags.py / `fiberhmm-extract`
+### fiberhmm-extract
 
 Extract footprint/MSP/m6A/m5C features from tagged BAMs to BED12/bigBed.
 
 ```bash
-python extract_tags.py -i output/sample_footprints.bam -o output/ -c 8
+fiberhmm-extract -i output/sample_footprints.bam -o output/ -c 8
+
+# Extract only footprints
+fiberhmm-extract -i output/sample_footprints.bam --footprint
+
+# Keep BED files alongside bigBed
+fiberhmm-extract -i output/sample_footprints.bam --keep-bed
 ```
 
-### export_posteriors.py / `fiberhmm-posteriors`
+### fiberhmm-posteriors
 
-Export per-position HMM posterior probabilities for downstream analysis (e.g., CNN training, custom scoring). This runs the HMM forward-backward algorithm on each read to produce P(footprint) at every position -- a continuous probability rather than the binary footprint/MSP calls from `apply_model.py`.
+Export per-position HMM posterior probabilities for downstream analysis (e.g., CNN training, custom scoring). Runs the HMM forward-backward algorithm on each read to produce P(footprint) at every position.
 
-**Input is the same BAM you would pass to `apply_model.py`** (any BAM with MM/ML modification tags). This is a parallel pipeline, not a downstream step -- you do not need to run `apply_model.py` first.
+**Input is the same BAM you would pass to `fiberhmm-apply`** (any BAM with MM/ML modification tags or IUPAC-encoded DAF-seq reads). This is a parallel pipeline, not a downstream step.
 
 ```bash
 # Export to gzipped TSV (no extra deps)
-python export_posteriors.py -i experiment.bam -m model.json -o posteriors.tsv.gz -c 4
+fiberhmm-posteriors -i experiment.bam -m model.json -o posteriors.tsv.gz -c 4
 
 # Export to HDF5 (requires: pip install h5py)
-python export_posteriors.py -i experiment.bam -m model.json -o posteriors.h5 -c 4
+fiberhmm-posteriors -i experiment.bam -m model.json -o posteriors.h5 -c 4
 ```
 
 ### fiberhmm-utils
 
-Consolidated utility for model and probability management. Four subcommands:
+Consolidated utility for model and probability management.
 
 **convert** -- Convert legacy pickle/NPZ models to JSON:
 ```bash
@@ -272,6 +267,51 @@ fiberhmm-utils transfer \
 fiberhmm-utils adjust model.json --state accessible --scale 1.1 -o adjusted.json
 ```
 
+## Output
+
+### BAM Tags
+
+`fiberhmm-apply` adds footprint tags compatible with the fibertools ecosystem:
+
+| Tag | Type | Description |
+|-----|------|-------------|
+| `ns` | B,I | Nucleosome/footprint starts (0-based query coords) |
+| `nl` | B,I | Nucleosome/footprint lengths |
+| `as` | B,I | Accessible/MSP starts |
+| `al` | B,I | Accessible/MSP lengths |
+| `nq` | B,C | Footprint quality scores (0-255, with `--scores`) |
+| `aq` | B,C | MSP quality scores (0-255, with `--scores`) |
+
+For DAF-seq, `fiberhmm-daf-encode` also adds:
+
+| Tag | Type | Description |
+|-----|------|-------------|
+| `st` | Z | Conversion strand: `CT` (+ strand, C→T) or `GA` (- strand, G→A) |
+
+## Streaming Pipelines
+
+All FiberHMM tools support `-` for stdin/stdout, enabling Unix-style piping with no intermediate files:
+
+```bash
+# DAF-seq: align → encode → call footprints
+minimap2 --MD -a ref.fa reads.fq | samtools view -b | \
+    fiberhmm-daf-encode -i - -o - | \
+    fiberhmm-apply --mode daf --streaming -i - -m models/ddda_pacbio.json -o output/
+
+# Fiber-seq: call footprints from stdin
+samtools view -b -h input.bam chr1 | \
+    fiberhmm-apply --streaming -i - -m model.json -o output/
+```
+
+When writing to stdout (`-o -`), the output is unsorted BAM. Sort and index downstream if needed:
+
+```bash
+fiberhmm-apply --streaming -i input.bam -m model.json -o - | \
+    samtools sort -o sorted.bam && samtools index sorted.bam
+```
+
+When writing to a file, FiberHMM automatically sorts and indexes the output BAM.
+
 ## Fibertools Integration
 
 FiberHMM produces BAM output with the same tag conventions used by [fibertools](https://github.com/fiberseq/fibertools-rs):
@@ -282,19 +322,17 @@ FiberHMM produces BAM output with the same tag conventions used by [fibertools](
 
 This means FiberHMM output can be used directly with any tool in the fibertools ecosystem, including `ft extract`, downstream analysis pipelines, and genome browsers that support fibertools-style BAM tags.
 
-## FiberBrowser
-
-FiberBrowser, a dedicated genome browser for single-molecule chromatin data, is coming soon.
-
 ## Performance Tips
 
 1. **Use multiple cores**: `-c 8` (or more) for parallel processing
-2. **Adjust region size for small genomes**:
+2. **Use `--io-threads`**: for BAM compression/decompression (default: 4)
+3. **Adjust region size for small genomes**:
    - Yeast (~12 MB): `--region-size 500000`
    - Drosophila (~140 MB): `--region-size 2000000`
    - Human/mammalian: default 10 MB is fine
-3. **Skip scaffolds**: `--skip-scaffolds` to avoid thousands of small contigs
-4. **Install numba**: `pip install numba` for ~10x faster HMM training
+4. **Skip scaffolds**: `--skip-scaffolds` to avoid thousands of small contigs
+5. **Install numba**: `pip install numba` for ~10x faster HMM computation
+6. **Streaming mode**: use `--streaming` with piped input to avoid writing intermediate files
 
 ## Model Formats
 
