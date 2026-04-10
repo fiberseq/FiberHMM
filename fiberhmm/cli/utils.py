@@ -373,7 +373,7 @@ def _process_reference_bam(bam_path, max_context, args):
     total_reads = 0
     reads_with_footprints = 0
 
-    with pysam.AlignmentFile(bam_path, "rb") as bam:
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         pbar = tqdm(bam.fetch(), desc="Processing reference BAM")
 
         for read in pbar:
@@ -427,7 +427,7 @@ def _process_target_bam(bam_path, mode, max_context, args):
     counters = {base: ContextCounter(max_context, base) for base in target_bases}
     total_reads = 0
 
-    with pysam.AlignmentFile(bam_path, "rb") as bam:
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         pbar = tqdm(bam.fetch(), desc="Processing target BAM")
 
         for read in pbar:

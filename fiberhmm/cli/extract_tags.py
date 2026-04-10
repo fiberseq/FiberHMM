@@ -41,7 +41,7 @@ from fiberhmm.inference.parallel import _get_genome_regions
 
 def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
     """Extract chromosome sizes from BAM header."""
-    with pysam.AlignmentFile(bam_path, "rb") as bam:
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         return {sq['SN']: sq['LN'] for sq in bam.header['SQ']}
 
 
@@ -79,7 +79,7 @@ def _extract_region_worker(args) -> Tuple[str, int, int]:
 
         pysam.set_verbosity(0)
 
-        with pysam.AlignmentFile(input_bam, "rb") as inbam:
+        with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as inbam:
             with open(temp_bed_path, 'w') as bed_out:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)

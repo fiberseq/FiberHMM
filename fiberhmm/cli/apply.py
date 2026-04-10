@@ -242,25 +242,15 @@ def main():
         print("Skipping scaffold/contig chromosomes")
 
     # Mode selection:
-    #   --streaming or stdin → streaming pipeline
-    #   no BAM index found → streaming pipeline
-    #   n_cores > 1 + indexed → region-parallel (existing default)
-    #   n_cores == 1 → single-threaded streaming (existing behavior)
+    #   n_cores > 1 or stdin → streaming pipeline
+    #   n_cores == 1 → single-threaded chunk mode
     use_streaming = False
-    use_region_parallel = False
 
-    if args.streaming or args.input == '-':
+    if args.input == '-':
         use_streaming = True
-        if args.input == '-':
-            print("Reading from stdin, using streaming pipeline mode")
+        print("Reading from stdin, using streaming pipeline mode")
     elif n_cores > 1:
-        has_index = (os.path.exists(args.input + '.bai') or
-                     os.path.exists(args.input.replace('.bam', '.bai')))
-        if has_index:
-            use_region_parallel = True
-        else:
-            use_streaming = True
-            print("No BAM index found, using streaming pipeline mode")
+        use_streaming = True
     # else: n_cores == 1, use legacy single-threaded chunk mode
 
     # Auto-detect process_unmapped: enable when streaming without an index
@@ -300,7 +290,7 @@ def main():
         n_cores=n_cores,
         max_reads=args.max_reads,
         debug_timing=args.debug_timing,
-        region_parallel=use_region_parallel,
+        region_parallel=False,
         region_size=args.region_size,
         skip_scaffolds=args.skip_scaffolds,
         chroms=chroms_set,

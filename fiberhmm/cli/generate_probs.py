@@ -122,7 +122,7 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
     mm_tag_types = defaultdict(int)
     strand_assignments = defaultdict(int)
 
-    with pysam.AlignmentFile(bam_path, "rb") as bam:
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         pbar = tqdm(bam.fetch(), desc=f"Processing {os.path.basename(bam_path)}")
         for read in pbar:
             reads_scanned += 1

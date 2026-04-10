@@ -46,6 +46,9 @@ venv/
 *.sam
 *.vcf
 
+# Development / validation scripts
+phase0/
+
 # Build artifacts
 dist/
 build/

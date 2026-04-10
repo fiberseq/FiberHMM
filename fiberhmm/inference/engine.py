@@ -323,7 +323,7 @@ def detect_mode_from_bam(bam_path: str, n_sample: int = 100) -> str:
     Returns: 'daf', 'pacbio-fiber', 'nanopore-fiber', or 'unknown'
     """
     try:
-        with pysam.AlignmentFile(bam_path, "rb") as bam:
+        with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
             t_minus_a_count = 0  # T-a tags (DAF + strand)
             a_plus_a_count = 0   # A+a tags (DAF - strand or m6A)
             c_plus_m_count = 0   # C+m tags (5mC methylation)

@@ -364,7 +364,7 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
     stats = FootprintStats()
 
     # First pass: count reads
-    bam = pysam.AlignmentFile(bam_path, "rb")
+    bam = pysam.AlignmentFile(bam_path, "rb", check_sq=False)
     total_reads = 0
     for read in bam:
         if not read.is_unmapped and not read.is_secondary and not read.is_supplementary:
@@ -380,7 +380,7 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
     print(f"  Sampling ~{min(n_samples, total_reads):,} reads from {total_reads:,} total ({sample_prob*100:.1f}%)")
 
     # Second pass: collect stats from sampled reads
-    bam = pysam.AlignmentFile(bam_path, "rb")
+    bam = pysam.AlignmentFile(bam_path, "rb", check_sq=False)
     sampled = 0
 
     for read in bam:

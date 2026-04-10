@@ -175,7 +175,7 @@ def _process_region_worker(args) -> Tuple[str, int, int, List[Dict]]:
 
     results = []
 
-    with pysam.AlignmentFile(input_bam, "rb") as bam:
+    with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as bam:
         for read in bam.fetch(chrom, start, end):
             result = extract_posteriors_from_read(
                 read, _worker_model, mode, context_size, edge_trim

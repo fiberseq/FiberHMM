@@ -9,8 +9,7 @@ FiberHMM identifies protected regions (footprints) and accessible regions (methy
 - **No genome context files** -- hexamer context computed directly from read sequences
 - **Fibertools-compatible output** -- tagged BAM with `ns`/`nl`/`as`/`al` tags, ready for downstream tools
 - **Native HMM implementation** -- no hmmlearn dependency; Numba JIT optional for ~10x speedup
-- **Region-parallel processing** -- scales linearly with cores for large genomes
-- **Streaming pipeline** -- supports stdin/stdout piping for composable workflows
+- **Streaming pipeline** -- scales linearly with cores; supports stdin/stdout piping for composable workflows
 - **Multi-platform** -- supports PacBio fiber-seq, Nanopore fiber-seq, and DAF-seq
 - **DAF-seq preprocessing** -- `fiberhmm-daf-encode` converts plain aligned BAMs to IUPAC R/Y encoded BAMs
 - **Legacy model support** -- loads old hmmlearn-trained pickle/NPZ models seamlessly
@@ -62,7 +61,7 @@ fiberhmm-apply --mode daf -i encoded.bam -m models/ddda_pacbio.json -o output/ -
 
 # Or as a streaming pipeline (no intermediate file)
 fiberhmm-daf-encode -i aligned.bam -o - | \
-    fiberhmm-apply --mode daf --streaming -i - -m models/ddda_pacbio.json -o output/
+    fiberhmm-apply --mode daf -i - -m models/ddda_pacbio.json -o output/
 ```
 
 If your BAM is missing MD tags (minimap2 wasn't run with `--MD`), add them first:
@@ -70,7 +69,7 @@ If your BAM is missing MD tags (minimap2 wasn't run with `--MD`), add them first
 ```bash
 samtools calmd -b aligned.bam ref.fa | \
     fiberhmm-daf-encode -i - -o - | \
-    fiberhmm-apply --mode daf --streaming -i - -m models/ddda_pacbio.json -o output/
+    fiberhmm-apply --mode daf -i - -m models/ddda_pacbio.json -o output/
 ```
 
 Or pass the reference FASTA directly (slower):
@@ -130,14 +129,14 @@ The encoder determines conversion strand per read by counting which mismatch typ
 
 ### fiberhmm-apply
 
-Apply a trained HMM to call footprints. Supports region-parallel and streaming modes.
+Apply a trained HMM to call footprints. Uses a streaming pipeline that scales with `-c` cores and supports stdin/stdout piping.
 
 ```bash
-# Region-parallel (indexed BAM)
+# Multi-core (streaming is the default)
 fiberhmm-apply -i experiment.bam -m model.json -o output/ -c 8
 
-# Streaming (stdin/stdout, unindexed BAM)
-fiberhmm-apply --streaming -i - -m model.json -o output/
+# Stdin/stdout piping
+fiberhmm-apply -i - -m model.json -o output/
 ```
 
 | Flag | Default | Description |
@@ -145,15 +144,13 @@ fiberhmm-apply --streaming -i - -m model.json -o output/
 | `-i/--input` | required | Input BAM, or `-` for stdin |
 | `-m/--model` | required | Trained HMM model (.json, .npz, or .pickle) |
 | `-o/--outdir` | required | Output directory, or `-` for stdout BAM |
-| `--mode` | auto-detect | Analysis mode (see table above) |
+| `--mode` | from model | Analysis mode (see table above) |
 | `-c/--cores` | 1 | CPU cores (0 = auto-detect) |
-| `--streaming` | false | Streaming pipeline mode (for unindexed/stdin input) |
 | `--io-threads` | 4 | htslib I/O threads |
 | `-q/--min-mapq` | 20 | Min mapping quality |
 | `--min-read-length` | 1000 | Min aligned read length (bp) |
 | `-e/--edge-trim` | 10 | Edge masking (bp) |
 | `--scores` | false | Compute per-footprint confidence scores |
-| `--region-size` | 10000000 | Region size for parallel chunks |
 | `--skip-scaffolds` | false | Skip scaffold/contig chromosomes |
 | `--chroms` | all | Process only these chromosomes |
 | `--msp-min-size` | 60 | Minimum MSP region size (bp) |
@@ -296,18 +293,25 @@ All FiberHMM tools support `-` for stdin/stdout, enabling Unix-style piping with
 # DAF-seq: align → encode → call footprints
 minimap2 --MD -a ref.fa reads.fq | samtools view -b | \
     fiberhmm-daf-encode -i - -o - | \
-    fiberhmm-apply --mode daf --streaming -i - -m models/ddda_pacbio.json -o output/
+    fiberhmm-apply --mode daf -i - -m models/ddda_pacbio.json -o output/
 
 # Fiber-seq: call footprints from stdin
 samtools view -b -h input.bam chr1 | \
-    fiberhmm-apply --streaming -i - -m model.json -o output/
+    fiberhmm-apply -i - -m model.json -o output/
 ```
 
 When writing to stdout (`-o -`), the output is unsorted BAM. Sort and index downstream if needed:
 
 ```bash
-fiberhmm-apply --streaming -i input.bam -m model.json -o - | \
+fiberhmm-apply -i input.bam -m model.json -o - | \
     samtools sort -o sorted.bam && samtools index sorted.bam
+```
+
+Pipe FiberHMM footprints directly to `ft fire` for FIRE element calling with no intermediate files:
+
+```bash
+fiberhmm-apply -i input.bam -m model.json -o - -c 8 | \
+    ft fire - output_fire.bam
 ```
 
 When writing to a file, FiberHMM automatically sorts and indexes the output BAM.
@@ -326,13 +330,9 @@ This means FiberHMM output can be used directly with any tool in the fibertools 
 
 1. **Use multiple cores**: `-c 8` (or more) for parallel processing
 2. **Use `--io-threads`**: for BAM compression/decompression (default: 4)
-3. **Adjust region size for small genomes**:
-   - Yeast (~12 MB): `--region-size 500000`
-   - Drosophila (~140 MB): `--region-size 2000000`
-   - Human/mammalian: default 10 MB is fine
-4. **Skip scaffolds**: `--skip-scaffolds` to avoid thousands of small contigs
-5. **Install numba**: `pip install numba` for ~10x faster HMM computation
-6. **Streaming mode**: use `--streaming` with piped input to avoid writing intermediate files
+3. **Skip scaffolds**: `--skip-scaffolds` to avoid thousands of small contigs
+4. **Install numba**: `pip install numba` for ~10x faster HMM computation
+5. **Pipe directly**: use `-o -` to pipe to downstream tools (e.g., `ft fire`) with no intermediate files
 
 ## Model Formats
 
