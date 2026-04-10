@@ -203,7 +203,7 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
     sampled = []
     seen_read_ids = set()
 
-    with pysam.AlignmentFile(bam_path, "rb") as bam:
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         # Get reference lengths from header
         ref_lengths = dict(zip(bam.references, bam.lengths))
 

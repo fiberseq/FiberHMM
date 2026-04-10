@@ -830,7 +830,7 @@ def read_bam(bam_path: str,
     Yields:
         FiberRead objects with modification positions and query-to-ref mapping
     """
-    with pysam.AlignmentFile(bam_path, "rb") as bam:
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         iterator = bam.fetch(region=region) if region else bam.fetch()
         
         for read in iterator:
@@ -912,13 +912,13 @@ def bam_to_chunks(bam_path: str, chunk_size: int = 50000,
 
 def get_bam_chromosomes(bam_path: str) -> List[str]:
     """Get list of chromosome names from BAM header."""
-    with pysam.AlignmentFile(bam_path, "rb") as bam:
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         return list(bam.references)
 
 
 def get_bam_chrom_sizes(bam_path: str) -> Dict[str, int]:
     """Get chromosome sizes from BAM header."""
-    with pysam.AlignmentFile(bam_path, "rb") as bam:
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         sizes = {}
         for sq in bam.header.get('SQ', []):
             sizes[sq['SN']] = sq['LN']

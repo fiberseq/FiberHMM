@@ -130,7 +130,7 @@ def _get_genome_regions(bam_path: str, region_size: int = 10_000_000,
     regions = []
     region_size = int(region_size)  # Ensure Python int
 
-    with pysam.AlignmentFile(bam_path, "rb") as bam:
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         for chrom in bam.references:
             # Filter by explicit chromosome list
             if chroms is not None and chrom not in chroms:
@@ -260,7 +260,7 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
                 return_posteriors = False  # Can't write, disable
 
         try:
-            with pysam.AlignmentFile(input_bam, "rb", threads=io_threads) as inbam:
+            with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
                 with pysam.AlignmentFile(temp_bam_path, "wb", header=inbam.header, threads=io_threads) as outbam:
 
                     # Fetch reads from this region using the index
@@ -531,7 +531,7 @@ def _process_region_to_bed(args: Tuple) -> Tuple[str, int, int]:
 
         pysam.set_verbosity(0)
 
-        with pysam.AlignmentFile(input_bam, "rb", threads=io_threads) as inbam:
+        with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
             with open(temp_bed_path, 'w') as bed_out:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)
@@ -658,11 +658,11 @@ def _hierarchical_merge(bam_files: List[str], output_bam: str, temp_dir: str,
                 raise subprocess.CalledProcessError(result.returncode, 'samtools cat', result.stderr)
         except (subprocess.CalledProcessError, FileNotFoundError):
             # Fallback to pysam
-            with pysam.AlignmentFile(inputs[0], "rb") as first_bam:
+            with pysam.AlignmentFile(inputs[0], "rb", check_sq=False) as first_bam:
                 header = first_bam.header
             with pysam.AlignmentFile(output, "wb", header=header) as outbam:
                 for bam_path in inputs:
-                    with pysam.AlignmentFile(bam_path, "rb") as inbam:
+                    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as inbam:
                         for read in inbam:
                             outbam.write(read)
 
@@ -753,12 +753,12 @@ def _merge_bams_simple(bam_files: List[str], output_bam: str) -> None:
                 raise subprocess.CalledProcessError(result.returncode, 'samtools cat', result.stderr)
         except (subprocess.CalledProcessError, FileNotFoundError):
             # Fallback to pysam
-            with pysam.AlignmentFile(valid_files[0], "rb") as first_bam:
+            with pysam.AlignmentFile(valid_files[0], "rb", check_sq=False) as first_bam:
                 header = first_bam.header
 
             with pysam.AlignmentFile(output_bam, "wb", header=header) as outbam:
                 for bam_path in valid_files:
-                    with pysam.AlignmentFile(bam_path, "rb") as inbam:
+                    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as inbam:
                         for read in inbam:
                             outbam.write(read)
 
@@ -943,7 +943,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         concat_start = time.time()
 
         if len(non_empty_bams) == 0:
-            with pysam.AlignmentFile(input_bam, "rb") as inbam:
+            with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as inbam:
                 with pysam.AlignmentFile(output_bam, "wb", header=inbam.header) as outbam:
                     pass
         elif len(non_empty_bams) == 1:
@@ -1008,13 +1008,13 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
                 try:
                     print(f"    Reading header from: {non_empty_bams[0]}")
-                    with pysam.AlignmentFile(non_empty_bams[0], "rb") as first_bam:
+                    with pysam.AlignmentFile(non_empty_bams[0], "rb", check_sq=False) as first_bam:
                         header = first_bam.header
 
                     print(f"    Opening output file: {output_bam}")
                     with pysam.AlignmentFile(output_bam, "wb", header=header) as outbam:
                         for i, bam_path in enumerate(non_empty_bams):
-                            with pysam.AlignmentFile(bam_path, "rb") as inbam:
+                            with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as inbam:
                                 for read in inbam:
                                     outbam.write(read)
                             if (i + 1) % 10 == 0:

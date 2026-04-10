@@ -41,7 +41,7 @@ def load_model(filepath: str, normalize: bool = True) -> FiberHMM:
 
     Args:
         filepath: Path to model file
-        normalize: If True, normalize states so State 0 = accessible (default True)
+        normalize: If True, normalize states so State 0 = footprint (default True)
 
     Returns:
         FiberHMM model instance
@@ -203,7 +203,7 @@ def load_model_with_metadata(filepath: str, normalize: bool = True) -> Tuple[Fib
 
     Args:
         filepath: Path to model file
-        normalize: If True, normalize states so State 0 = accessible (default True)
+        normalize: If True, normalize states so State 0 = footprint (default True)
 
     Returns:
         (model, context_size, mode)
