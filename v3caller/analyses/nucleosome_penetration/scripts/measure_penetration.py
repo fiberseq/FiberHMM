@@ -112,7 +112,8 @@ def smooth(x, window=10):
     return np.convolve(x, kernel, mode='same')
 
 
-def find_troughs(density, min_distance=160, prominence_frac=0.1):
+def find_troughs(density, min_distance=160, prominence_frac=0.1,
+                 min_width=80, max_width=200):
     """Find local minima in the density array that could be dyads.
 
     min_distance: minimum spacing between troughs (≈ nucleosome
@@ -120,16 +121,22 @@ def find_troughs(density, min_distance=160, prominence_frac=0.1):
     prominence_frac: trough depth relative to local max, as a
         fraction of the local range. 0.1 = trough must dip ≥10%
         below neighboring peaks to count.
+    min_width / max_width: require the trough to be at least
+        min_width bp wide (measured at rel_height=0.5 of prominence)
+        and at most max_width bp. Nucleosomes are ~120 bp wide;
+        TF footprints ~20-30 bp; so min_width=80 excludes TFs while
+        accepting partially-merged nucs.
     """
     from scipy.signal import find_peaks
-    # Find peaks in the INVERTED signal
     inverted = -density
-    peaks, props = find_peaks(inverted, distance=min_distance)
-    # Filter by prominence
+    # Use the built-in width filter in find_peaks
+    peaks, props = find_peaks(
+        inverted, distance=min_distance,
+        width=(min_width, max_width), rel_height=0.5,
+    )
     if len(peaks) == 0:
         return np.array([], dtype=int)
-    # Compute local prominence as the height relative to the local
-    # max within ±min_distance/2
+    # Additional filter: prominence relative to local range
     half = min_distance // 2
     kept = []
     for p in peaks:
@@ -145,16 +152,33 @@ def find_troughs(density, min_distance=160, prominence_frac=0.1):
     return np.array(kept, dtype=int)
 
 
-def aggregate_profile(density, trough_positions, window=120):
-    """Average the density profile at ±window around each trough."""
+def aggregate_profile(density, trough_positions, window=120,
+                       recenter_radius=30):
+    """Average the density profile at ±window around each trough.
+
+    recenter_radius: before extracting the profile, snap each trough
+        center to the argmin of the smoothed signal within ±radius.
+        This removes the ±10-20 bp jitter in peak detection that
+        otherwise blurs the averaged trough bottom. Set to 0 to
+        disable.
+    """
     w = window
     profiles = []
+    recentered = []
     for t in trough_positions:
-        lo = t - w
-        hi = t + w + 1
+        # Snap to argmin within ±recenter_radius
+        if recenter_radius > 0:
+            rlo = max(0, t - recenter_radius)
+            rhi = min(len(density), t + recenter_radius + 1)
+            t_snap = rlo + int(np.argmin(density[rlo:rhi]))
+        else:
+            t_snap = t
+        lo = t_snap - w
+        hi = t_snap + w + 1
         if lo < 0 or hi > len(density):
             continue
         profiles.append(density[lo:hi])
+        recentered.append(t_snap)
     if not profiles:
         return None, 0
     profiles = np.array(profiles)
@@ -184,8 +208,21 @@ def main():
                     help='minimum spacing between troughs (bp, ~NRL)')
     ap.add_argument('--prominence', type=float, default=0.15,
                     help='minimum relative depth of trough (0-1)')
+    ap.add_argument('--min-width', type=int, default=80,
+                    help='minimum trough width at half prominence (bp); '
+                         '80 excludes TF footprints (~20-30 bp) and keeps '
+                         'nucleosome-scale troughs (~120 bp)')
+    ap.add_argument('--max-width', type=int, default=200,
+                    help='maximum trough width at half prominence (bp); '
+                         'excludes over-wide features that span '
+                         'multiple nucs')
     ap.add_argument('--profile-window', type=int, default=120,
                     help='±bp window around each trough')
+    ap.add_argument('--recenter-radius', type=int, default=30,
+                    help='snap each detected trough to argmin of '
+                         'smoothed signal within ±radius (bp); '
+                         'removes detection jitter that blurs the '
+                         'averaged trough bottom. 0 to disable.')
     ap.add_argument('--max-reads', type=int, default=0,
                     help='cap on reads to pileup (0 = all)')
     args = ap.parse_args()
@@ -218,10 +255,19 @@ def main():
                 end = args.region_end if args.region_end is not None else positions[-1] + 1
                 regions = [(args.chrom, start, end)]
         else:
+            # Pick only the chromosome(s) that carry the bulk of
+            # the reads — otherwise whole-genome BAMs bring in
+            # scattered low-coverage positions that dominate the
+            # search and give spurious troughs.
+            total_opp = {c: sum(d.values()) for c, d in opp_counts.items()}
+            if not total_opp:
+                continue
+            top_opp = max(total_opp.values())
             for chrom, d in opp_counts.items():
-                if len(d) >= 500:  # lower threshold for amplicon data
-                    positions = sorted(d.keys())
-                    regions.append((chrom, positions[0], positions[-1] + 1))
+                if total_opp[chrom] < 0.1 * top_opp:
+                    continue  # chrom has <10% of peak coverage
+                positions = sorted(d.keys())
+                regions.append((chrom, positions[0], positions[-1] + 1))
 
         ds_profiles = []
         ds_troughs = 0
@@ -232,11 +278,14 @@ def main():
             if density.sum() == 0:
                 continue
             troughs = find_troughs(density, min_distance=args.min_distance,
-                                      prominence_frac=args.prominence)
+                                      prominence_frac=args.prominence,
+                                      min_width=args.min_width,
+                                      max_width=args.max_width)
             if len(troughs) == 0:
                 continue
-            profile, n_used = aggregate_profile(density, troughs,
-                                                  window=args.profile_window)
+            profile, n_used = aggregate_profile(
+                density, troughs, window=args.profile_window,
+                recenter_radius=args.recenter_radius)
             if profile is None:
                 continue
             ds_profiles.append((profile, n_used))
@@ -266,11 +315,14 @@ def main():
     mean_profile /= total_weight
 
     # Compute penetration:
-    #   - dyad rate = value at offset 0 (or mean of ±5 bp)
-    #   - linker rate = max value in the profile (at the edges)
+    #   - dyad rate = MIN of the averaged profile within ±20 bp of
+    #     center (after recentering, the true trough bottom is at 0,
+    #     but allow ±20 for residual jitter).
+    #   - linker rate = MAX of the averaged profile (typically at
+    #     |d| ≈ 90-100 bp, the linker flanks)
     center = args.profile_window
-    dyad_rate = mean_profile[center - 5:center + 6].mean()
-    linker_rate = np.max(mean_profile)
+    dyad_rate = float(mean_profile[center - 20:center + 21].min())
+    linker_rate = float(np.max(mean_profile))
     if linker_rate > 0:
         penetration = dyad_rate / linker_rate
     else:
@@ -344,6 +396,8 @@ def main():
             'smooth_window': args.smooth_window,
             'min_distance': args.min_distance,
             'prominence': args.prominence,
+            'min_width': args.min_width,
+            'max_width': args.max_width,
             'profile_window': args.profile_window,
         },
     }

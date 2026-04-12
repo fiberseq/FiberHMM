@@ -1,0 +1,39 @@
+{
+  "label": "PS01499_manual_2anchors",
+  "n_reads": 5001,
+  "n_anchors": 2,
+  "anchors_snapped": [
+    [
+      "chr5",
+      34762095,
+      34762095
+    ],
+    [
+      "chr5",
+      34762367,
+      34762367
+    ]
+  ],
+  "count_space": {
+    "dyad": 171.2,
+    "linker": 710.2333333333333,
+    "penetration": 0.24104754306096585
+  },
+  "rate_space": {
+    "dyad": 0.07541407259485493,
+    "linker": 0.19710511846765635,
+    "penetration": 0.3826083928268452
+  },
+  "rate_space_fp_subtracted": {
+    "dyad": 0.07541407259485493,
+    "linker": 0.19710511846765635,
+    "penetration": 0.3826083928268452,
+    "fp_rate": 0.0
+  },
+  "params": {
+    "smooth_window": 15,
+    "profile_window": 150,
+    "recenter_radius": 20,
+    "fp_rate": 0.0
+  }
+}

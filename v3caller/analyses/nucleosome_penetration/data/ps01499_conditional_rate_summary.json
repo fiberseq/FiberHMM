@@ -1,0 +1,46 @@
+{
+  "label": "PS01499_flank_rate_0p15",
+  "n_anchors": 2,
+  "per_anchor": [
+    {
+      "chrom": "chr5",
+      "dyad": 34762095,
+      "total_reads": 20001,
+      "covered_reads": 19953,
+      "wrapped_reads": 5804,
+      "core_hits": 32863,
+      "core_opps": 371456,
+      "flank_hits": 178166,
+      "flank_opps": 580400,
+      "core_rate": 0.0884707744658856,
+      "flank_rate": 0.3069710544452102,
+      "penetration": 0.28820559197602236
+    },
+    {
+      "chrom": "chr5",
+      "dyad": 34762367,
+      "total_reads": 20001,
+      "covered_reads": 19954,
+      "wrapped_reads": 2054,
+      "core_hits": 11437,
+      "core_opps": 90376,
+      "flank_hits": 52940,
+      "flank_opps": 184860,
+      "core_rate": 0.12654908382756483,
+      "flank_rate": 0.2863788813155902,
+      "penetration": 0.4418939107737747
+    }
+  ],
+  "pooled": {
+    "core_rate": 0.09592232673353081,
+    "flank_rate": 0.30199670700154196,
+    "penetration": 0.3176270618508467,
+    "wrapped_reads": 7858
+  },
+  "params": {
+    "core_half": 40,
+    "flank_lo": 80,
+    "flank_hi": 150,
+    "flank_min_rate": 0.15
+  }
+}
