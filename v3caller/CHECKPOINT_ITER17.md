@@ -1,9 +1,9 @@
-# FiberHMM v2 Caller — iter-17 Checkpoint
+# FiberHMM v3 Caller — iter-17 Checkpoint
 
 **Date**: 2026-04-12
-**Caller**: `phase0/caller_v8.py`
-**Tests**: `phase0/tests/test_caller_v8.py` — 62 tests passing
-**Key support files**: `phase0/ma_tags.py`, `phase0/best_guess.py`
+**Caller**: `v3caller/caller_v8.py`
+**Tests**: `v3caller/tests/test_caller_v8.py` — 62 tests passing
+**Key support files**: `v3caller/ma_tags.py`, `v3caller/best_guess.py`
 
 ---
 
@@ -21,12 +21,12 @@ Read → Extract (opp, hit) arrays → Pass 1 (nucleosome atoms)
 
 Two algorithms, selected via `--first-pass`:
 
-- **`protected_runs`** (default): v7's windowed-rate approach. Computes
-  a rolling hit rate in a W=40 bp window, finds stretches where the
-  rate is significantly below the read's baseline.
-- **`gap_cdf`** (recommended): finds every continuous hit-free stretch
-  ≥ `gap_radius` bp (default 10). Simpler, faster, lower overmerge
-  rate. The benchmark winner across 10 datasets.
+- **`gap_cdf`** (default, recommended): finds every continuous hit-free
+  stretch ≥ `gap_radius` bp (default 10). Simpler, faster, lower
+  overmerge rate. The benchmark winner across 10 datasets.
+- **`protected_runs`**: v7's windowed-rate approach. Computes a rolling
+  hit rate in a W=40 bp window, finds stretches where the rate is
+  significantly below the read's baseline.
 
 ### Pass 2: Poisson evidence merge
 
@@ -53,9 +53,11 @@ Runs on two sources of accessible DNA:
 2. **Merged-over gaps** inside merged atoms (alt-hypothesis: "maybe
    this merge was wrong and there's a TF inside")
 
-Emits every uninterrupted MISS run ≥ 2 consecutive missed
-opportunity positions. No hardcoded size or score filters. Each
-call carries three quality scores described in §3 below.
+Emits every uninterrupted MISS run meeting the configurable floor
+filter (`--min-tf-bp 5 --min-tf-tq 10` by default). These defaults
+cut pure noise (2-3 bp runs with near-zero significance) while
+remaining highly permissive. Set both to 0 for full overcall mode.
+Each call carries three quality scores described in §2.3 below.
 
 ### Rotational phase correction (iter-17)
 
@@ -69,12 +71,23 @@ For each miss at reference position p, the local hit rate is:
 
 ```
 d = distance from p to nearest nuc edge (bp)
-rate_profile = 1.0 + 0.35 * cos(2π * d / 10.4) * exp(-d / 15.0)
+edge_q = quality (0-1) of that nearest nuc edge (lq or rq / 255)
+amp = 0.35 * edge_q
+rate_profile = 1.0 + amp * cos(2π * d / 10.4) * exp(-d / 15.0)
 local_rate = baseline * rate_profile    (clamped to [0.001, 0.999])
 ```
 
 The corrected P-value is: `P = ∏ (1 - local_rate(d_i))` across
 all misses in the run, instead of the uniform `(1 - baseline)^k`.
+
+**Edge-quality dampening**: the correction amplitude is scaled by
+the edge quality of the nearest nucleosome boundary. Sharp edges
+(lq/rq ≈ 255) get the full calibrated amplitude (0.35); ambiguous
+edges (lq/rq < 128) get a proportionally reduced amplitude. This
+prevents applying an out-of-phase cosine correction when the nuc
+boundary position is uncertain — a 5 bp misplacement would invert
+the correction. When edge quality is 0, the correction reverts
+entirely to the uniform baseline model.
 
 This correction only fires within 30 bp of a nuc edge. Beyond that,
 `rate_profile ≈ 1.0` and the formula reduces to the uniform model.
@@ -85,8 +98,22 @@ This correction only fires within 30 bp of a nuc edge. Beyond that,
 Calibrated from 40,000 scDAF reads (PS00758) using edge-anchored
 pair-correlation, validated against naked DddB (no periodicity)
 and ≥200 bp from-any-nuc control (flat). See
-`project_rotational_calibration.md` and
 `bench/output/periodicity_edge_vs_far_FINAL.png`.
+
+### Enzyme extraction
+
+The `DAFExtractor` auto-detects four encoding styles per read via
+majority vote:
+- IUPAC-encoded: C→Y (forward) or G→R (reverse)
+- Raw mismatch: C→T (forward) or G→A (reverse)
+
+This lets a single extractor handle any DAF BAM (scDAF with IUPAC
+encoding, DddB spacetime with raw mismatches) without per-dataset
+configuration.
+
+The `Hia5Extractor` parses MM/ML tags for m6A detection and does
+NOT require a reference FASTA or MD tags — the caller passes a
+dummy ref_seq for Hia5 reads when neither is available.
 
 ---
 
@@ -107,15 +134,11 @@ annotation type. Lengths of parallel arrays must match.
 | `ns` | `B:I` | Nucleosome **start** positions (0-based query coords) |
 | `nl` | `B:I` | Nucleosome **lengths** (bp). End = ns[i] + nl[i] |
 | `nq` | `B:I` | **Protection quality** (0-255). How deeply the region is protected vs the read's baseline. 255 = near-zero internal hit rate, 0 = hit rate ≈ baseline |
+| `mq` | `B:I` | **Merge quality** (0-255). Confidence in the merge step. 255 = pure Pass-1 atom (no merges), lower = borderline merge. See §2.3 for full semantics |
 | `lq` | `B:I` | **Left edge quality** (0-255). Distance from the called left boundary to the first internal HIT, scaled linearly over a 50 bp breathing window. 255 = HIT right at boundary (sharp edge), 0 = no HIT within 50 bp (ambiguous edge) |
 | `rq` | `B:I` | **Right edge quality** (0-255). Mirror of `lq` for the right boundary |
 
-All five arrays have the same length = number of nucleosomes called.
-
-**Note**: `mq` (merge quality) is NOT a separate legacy tag. It is
-encoded in the MA tag's AQ array as the second quality value per
-nucleosome (see §2.2). To get mq from legacy-only BAMs, parse the
-MA tag.
+All six arrays have the same length = number of nucleosomes called.
 
 #### MSPs (accessible regions)
 
@@ -136,11 +159,15 @@ nucleosome spans in query coords when the merge was borderline.
 |-----|------|-------------|
 | `tn` | `B:I` | TF **start** positions (0-based query coords) |
 | `tl` | `B:I` | TF **lengths** (bp) |
-| `tq` | `B:I` | **Significance quality** (0-255). `-log10(P)` scaled to 0-255 via `tq = clip(255 * -log10(P) / 3.0)`. P is the probability of observing k consecutive misses under the local (rotationally-corrected for DAF) hit rate. Higher = more surprising = more likely a real footprint. 2 misses at baseline 0.24 → tq ≈ 21 |
+| `tq` | `B:I` | **Significance quality** (0-255). See §2.3 |
 | `el` | `B:I` | **Left edge sharpness** (0-255). 255 = a HIT sits immediately adjacent to the TF's left boundary (within 2 bp). 0 = the TF extends to the MSP boundary with no nearby HIT (ambiguous edge). Linear decay over 10 bp |
 | `er` | `B:I` | **Right edge sharpness** (0-255). Mirror of `el` |
 
 All five arrays have the same length = number of TF calls.
+
+TF calls are subject to a configurable floor filter before BAM
+emission (`--min-tf-bp 5 --min-tf-tq 10` by default). Set both
+to 0 to emit all candidates.
 
 **Important**: TF calls can sit INSIDE nucleosome spans. This
 happens when the TF caller scans a merged-over gap (a gap inside a
@@ -272,7 +299,9 @@ face-phasing near nucleosome edges (DAF enzymes only):
 ```
 For each miss at position p:
   d = distance to nearest nuc edge
-  local_rate = baseline * (1 + 0.35 * cos(2π*d/10.4) * exp(-d/15))
+  edge_q = quality of that nearest edge (lq or rq, 0-1 scale)
+  amp = 0.35 * edge_q
+  local_rate = baseline * (1 + amp * cos(2π*d/10.4) * exp(-d/15))
   (clamped to [0.001, 0.999])
 
 P = ∏ (1 - local_rate(d_i))   across all misses
@@ -306,7 +335,7 @@ el (or er) = round(255 * max(0, 1 - d / 10))
 
 ## 3. Best-guess filtering
 
-`phase0/best_guess.py` provides a one-line filter for users who
+`v3caller/best_guess.py` provides a one-line filter for users who
 want "just the confident calls" without reasoning about quality
 scores.
 
@@ -370,11 +399,10 @@ DAF deaminases (DddA/DddB) are blocked by histone contacts on one
 face of wrapped DNA, creating a 10.4 bp oscillation in hit rate
 near nucleosome edges. This was measured via:
 
-1. **Naked DddB** (phase0/data/dddb/): A ≈ 0 (no periodicity on
-   free helix)
+1. **Naked DddB** (data/dddb/): A ≈ 0 (no periodicity on free helix)
 2. **Chromatinized DddB** (spacetime): A ≈ 0.21 (strong oscillation)
 3. **Hia5 chromatinized**: smooth monotonic decay, NO oscillation
-   (Hia5 accesses both faces)
+   (Hia5 accesses both faces even on chromatin)
 4. **scDAF edge-anchored**: peak 1.515 at d=+10 from nuc edge,
    flat control (≥200 bp from nuc) at 1.166
 5. **Decay range**: ~30 bp from nuc edge
@@ -385,14 +413,23 @@ surprising), downward for misses on the "quiet face" (less
 surprising than uniform baseline assumes). Beyond 30 bp, the
 correction is a no-op.
 
+**Edge-quality dampening**: the amplitude (0.35) is multiplied by
+the nearest nuc edge's quality (lq or rq, scaled to 0-1). This
+guards against applying an out-of-phase correction when the nuc
+boundary is uncertain — a ~5 bp misplacement would invert the
+cosine. Sharp edges get full correction; ambiguous edges revert
+to the uniform model.
+
 ### 4.3 Dual tag output
 
-Both legacy (ns/nl/nq/...) and MA (MA:Z/AQ:B:C) tags are written
-simultaneously. They encode the SAME information in different
-formats:
+Both legacy (ns/nl/nq/mq/...) and MA (MA:Z/AQ:B:C) tags are
+written simultaneously. They encode the SAME information in
+different formats:
 
 - **Legacy**: simple, fast to parse, compatible with existing tools
   (FiberBrowser, custom scripts). Each quality is a separate tag.
+  `mq` is now included as a legacy tag (was MA-only prior to
+  iter-17 post-review fixes).
 - **MA**: fiberseq spec-compliant, carries all quality information in
   a structured format. Enables interop with Mitch Vollger's tools
   and the broader fiberseq ecosystem.
@@ -408,6 +445,33 @@ on absorbed hit count. This prevents labeling a merged atom as
 mislead the TF caller into thinking the atom is unambiguously
 protected.
 
+### 4.5 TF emission floor filter
+
+TF calls shorter than `--min-tf-bp` (default 5 bp) or with
+`tq < --min-tf-tq` (default 10) are dropped before BAM emission.
+This prevents BAM bloat from pure noise: at typical DAF baseline
+0.24, the probability of ≥2 consecutive misses by chance is ~58%,
+and a 3 bp run with tq=15 carries no biological signal. The floor
+is intentionally very permissive — `best_guess.py` handles the
+strict downstream filtering. Set both to 0 to restore full overcall.
+
+### 4.6 DAFExtractor auto-encoding detection
+
+The DAFExtractor handles both IUPAC-encoded (R/Y) and raw-mismatch
+(C→T / G→A) BAMs via a per-read majority vote across four encoding
+styles. This removes the need to pre-encode BAMs with
+`fiberhmm-daf-encode` before calling — the caller works directly
+on raw aligned BAMs (e.g. DddB spacetime data) as well as
+IUPAC-encoded ones (e.g. scDAF, NAPA).
+
+### 4.7 Hia5 without reference FASTA
+
+Hia5 reads use MM/ML tags for m6A detection — the Hia5Extractor
+does not use the reference sequence at all. When no FASTA or MD
+tags are available, the caller passes a dummy ref_seq for Hia5
+reads instead of skipping them. This makes the Hia5 path work
+on BAMs that lack MD tags without requiring a reference genome.
+
 ---
 
 ## 5. CLI reference
@@ -416,14 +480,16 @@ protected.
 python caller_v8.py \
   --in-bam INPUT.bam \
   --out-bam OUTPUT.bam \
-  --fa REFERENCE.fa \          # or '' to use MD tags
+  --fa REFERENCE.fa \          # or '' for MD tags / Hia5 dummy
   --enzyme {daf,hia5} \
-  --first-pass {protected_runs,gap_cdf} \  # default: protected_runs
+  --first-pass {gap_cdf,protected_runs} \  # default: gap_cdf
   --gap-radius 10 \            # gap_cdf only
   --W 40 \                     # scan window width
-  --min-read-rate 0.05 \       # skip low-signal reads
+  --min-read-rate 0.05 \       # skip low-signal reads (0.005 for DddB)
   --max-merge-len 250 \        # cascade guard
   --min-footprint 80 \         # reject merged atoms < 80 bp
+  --min-tf-bp 5 \              # TF emission floor: min bp length
+  --min-tf-tq 10 \             # TF emission floor: min tq score
   --tags {legacy,ma,both} \    # default: both
   --max-reads 0 \              # 0 = no limit
   --strip-mods                 # drop MM/ML tags to shrink output
@@ -435,14 +501,14 @@ python caller_v8.py \
 
 | file | description |
 |------|-------------|
-| `caller_v8.py` | Main caller (975 lines) |
+| `caller_v8.py` | Main caller (~1160 lines) |
 | `caller_v7.py` | v7 primitives (windowed_rate, find_pass1_atoms, etc.) |
 | `ma_tags.py` | Pure-Python MA/AQ tag writer + parser |
 | `best_guess.py` | Baseline-aware filter for "best guess" calls |
-| `enzyme_extractors.py` | DAFExtractor + Hia5Extractor |
+| `enzyme_extractors.py` | DAFExtractor (auto-encoding) + Hia5Extractor |
 | `tests/test_caller_v8.py` | 62 unit tests |
 
-### Bench scripts (phase0/bench/)
+### Bench scripts (v3caller/bench/)
 
 | script | purpose |
 |--------|---------|
@@ -469,60 +535,34 @@ python caller_v8.py \
 
 ### Reading the tags
 
-To display nucleosomes with quality information:
-
-1. Parse `MA:Z` string → get `nuc+QQQQ` intervals (1-based starts,
-   lengths)
-2. Parse `AQ:B:C` array → consume 4 bytes per nuc annotation:
-   `(nq, mq, lq, rq)`
-3. Convert starts from 1-based to 0-based: `start_0 = start_1 - 1`
-
-To display TF footprints:
-
-1. From `MA:Z`, get `tf+QQQ` intervals
-2. From `AQ`, consume 3 bytes per TF: `(tq, el, er)`
-
-To display MSPs:
-
-1. From `MA:Z`, get `msp+` intervals (no quality values)
-
-**OR** use the legacy tags directly:
+**Use the legacy tags directly** (simplest path — all information
+is now available without parsing MA/AQ):
 
 ```python
-ns = read.get_tag('ns')  # nucleosome starts
-nl = read.get_tag('nl')  # nucleosome lengths
+# Nucleosomes (6 parallel arrays)
+ns = read.get_tag('ns')  # starts (0-based query coords)
+nl = read.get_tag('nl')  # lengths
 nq = read.get_tag('nq')  # protection quality
+mq = read.get_tag('mq')  # merge quality
 lq = read.get_tag('lq')  # left edge quality
 rq = read.get_tag('rq')  # right edge quality
-as_ = read.get_tag('as') # MSP starts
-al = read.get_tag('al')  # MSP lengths
-tn = read.get_tag('tn')  # TF starts
-tl = read.get_tag('tl')  # TF lengths
-tq = read.get_tag('tq')  # TF significance
-el = read.get_tag('el')  # TF left edge sharpness
-er = read.get_tag('er')  # TF right edge sharpness
+
+# MSPs (2 arrays)
+as_ = read.get_tag('as') # starts
+al = read.get_tag('al')  # lengths
+
+# TF footprints (5 arrays)
+tn = read.get_tag('tn')  # starts
+tl = read.get_tag('tl')  # lengths
+tq = read.get_tag('tq')  # significance quality
+el = read.get_tag('el')  # left edge sharpness
+er = read.get_tag('er')  # right edge sharpness
 ```
 
-Note: `mq` is only in the MA/AQ tags, not as a separate legacy tag.
+All tags are `B:I` (32-bit integer arrays). All quality values are
+0-255. TF tags may be absent if no TFs were called on the read.
 
-### Suggested visualization
-
-- **Nucleosomes**: colored rectangles. Suggested color gradient:
-  - By `mq`: dark green (255, pure) → magenta (128, borderline) →
-    light pink (0, tail merge)
-  - By `nq`: dark blue (255, deep) → light orange (0, weak)
-  - Edge ambiguity: draw dotted/faded edges when `lq` or `rq` < 128
-
-- **TF footprints**: small colored rectangles or diamonds:
-  - By `tq`: bright yellow (255, strong) → dim gray (0, weak)
-  - Edge sharpness: solid outline when `el`/`er` ≥ 128, dashed when
-    < 128
-  - TFs inside nucleosome spans (alt-hypothesis) could be drawn in
-    a different color or with a special marker
-
-- **MSPs**: background shading behind the read in accessible regions
-
-### Parser code (Python)
+**OR** parse the MA/AQ tags (for tools built on the fiberseq spec):
 
 ```python
 from ma_tags import parse_ma_tag, parse_aq_array
@@ -543,3 +583,46 @@ per_annotation = parse_aq_array(aq, qual_specs, n_per_type)
 # MSP j → per_annotation[n_nucs + j] = []  (empty, no qualities)
 # TF k → per_annotation[n_nucs + n_msps + k] = [tq, el, er]
 ```
+
+### Suggested visualization
+
+- **Nucleosomes**: colored rectangles. Suggested color gradient:
+  - By `mq`: dark green (255, pure) → magenta (128, borderline) →
+    light pink (0, tail merge)
+  - By `nq`: dark blue (255, deep) → light orange (0, weak)
+  - Edge ambiguity: draw dotted/faded edges when `lq` or `rq` < 128
+
+- **TF footprints**: small colored rectangles or diamonds:
+  - By `tq`: bright yellow (255, strong) → dim gray (0, weak)
+  - Edge sharpness: solid outline when `el`/`er` ≥ 128, dashed when
+    < 128
+  - TFs inside nucleosome spans (alt-hypothesis) could be drawn in
+    a different color or with a special marker
+
+- **MSPs**: background shading behind the read in accessible regions
+
+---
+
+## 8. Validation results (v2 HMM → v3 comparison)
+
+### DddB spacetime (Drosophila, 7 time windows, ~297k reads called)
+
+| metric | v2 (HMM) | v3 (iter-17) |
+|--------|----------|--------------|
+| Reads called | ~242k | ~297k (+23%) |
+| Nucs/read | 11-13 | 19-22 (~2×) |
+| Median nuc size | 169-238 bp | 202-215 bp |
+| Mean nuc size | 641 bp | 282 bp |
+| ≥300 bp (overmerge) | 37.1% | 23.0% |
+| TFs/read | n/a (2.1 as <90bp nucs) | 4-5 (explicit) |
+
+### Hia5 (Drosophila fly embryo, sna/eve/ftz loci)
+
+| metric | v2 (HMM) | v3 (iter-17) |
+|--------|----------|--------------|
+| Nucs (≥90 bp)/read | 64.6 | 87.0 |
+| Median nuc size | 165 bp | 169 bp |
+| ≥300 bp (overmerge) | 24.1% | 3.9% |
+| ≥500 bp | 5.7% | 0.5% |
+| TFs (<90 bp in ns/nl)/read | 29.9 | 2.9 |
+| TFs (explicit tn/tl)/read | n/a | 133.1 |
