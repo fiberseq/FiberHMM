@@ -1205,6 +1205,15 @@ def main():
     if fa is not None:
         fa.close()
 
+    # Auto-index the output if it appears coordinate-sorted (most
+    # inputs are, and we preserve the input's read order).
+    try:
+        pysam.index(args.out_bam)
+        print(f'Indexed {args.out_bam}.bai')
+    except pysam.SamtoolsError as e:
+        print(f'(skipped indexing — output may not be sorted: {e})',
+              flush=True)
+
     if nuc_counts:
         nc = np.asarray(nuc_counts)
         print(f'\nTotal reads: {n_reads}')
