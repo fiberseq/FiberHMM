@@ -46,8 +46,13 @@ venv/
 *.sam
 *.vcf
 
-# Development / validation scripts
+# Development / validation scripts (v2 era)
 phase0/
+
+# v3 caller — track source, ignore generated outputs
+v3caller/bench/output/
+v3caller/data/
+v3caller/results/
 
 # Build artifacts
 dist/
@@ -77,3 +82,7 @@ docs/proposals/
 CLAUDE.md
 AGENTS.md
 .claude/
+
+# But DO track v3caller markdown (checkpoint docs)
+!v3caller/*.md
+!v3caller/**/*.md
