@@ -1,0 +1,13 @@
+{
+  "n_reads": 4092,
+  "n_troughs": 16773,
+  "dyad_rate": 45.26762166468837,
+  "linker_rate": 125.53691647290286,
+  "penetration_fraction": 0.360592110564221,
+  "params": {
+    "smooth_window": 10,
+    "min_distance": 180,
+    "prominence": 0.15,
+    "profile_window": 120
+  }
+}
