@@ -1,0 +1,14 @@
+{
+  "label": "dddb_4-4.5",
+  "n_pairs": 98541,
+  "n_reads": 3001,
+  "short_gaps_le_8bp": {
+    "count": 52635,
+    "median_hits": 1.0,
+    "pct_0_hits": 0.0,
+    "pct_1_hit": 86.12520186187898,
+    "pct_2plus_hits": 13.874798138121022,
+    "median_merged_len": 202,
+    "pct_merged_in_nuc_range_120_180": 19.675121117127386
+  }
+}

@@ -128,22 +128,32 @@ def classify_read_states(footprints, tss_q, strand, read_length=None,
 
     States:
       - paused: 35-65 bp in TSS+10..+50
-      - elongating: 35-65 bp in gene body (TSS..TSS+gene_body_span)
+      - elongating: 35-65 bp in gene body (TSS+50..TSS+gene_body_span),
+        i.e. downstream of the paused window
       - pic: 20-40 or 60-80 bp in TSS-50..+25
-      - accessible_promoter: ANY MSP/footprint gap straddling TSS-50..+25 is
-        missing a nuc. Proxy: no footprint ≥90 bp overlaps TSS±50
+      - accessible_promoter: no ≥90 bp footprint overlaps TSS±50
       - hyperburst: <50% of gene body covered by nucleosomes (≥90 bp fp)
     """
     state_counts = Counter()
     big_fps = [(s, l) for s, l in footprints if l >= 90]
+
+    # Gene body window in query coords (strand-flipped)
+    if strand == '+':
+        body_lo, body_hi = tss_q, tss_q + gene_body_span
+    else:
+        body_lo, body_hi = tss_q - gene_body_span, tss_q
+
     for s, l in footprints:
         center = s + l // 2
         if in_size_band(l, PAUSED_SIZE) and in_pos_band(center, tss_q,
                                                            PAUSED_POS,
                                                            strand):
             state_counts['paused'] += 1
+        # Elongating: 35-65 bp, IN gene body window, NOT in paused window
         if in_size_band(l, ELONG_SIZE):
-            if not in_pos_band(center, tss_q, PAUSED_POS, strand):
+            in_body = body_lo <= center <= body_hi
+            in_paused_window = in_pos_band(center, tss_q, PAUSED_POS, strand)
+            if in_body and not in_paused_window:
                 state_counts['elongating'] += 1
         for pic_band in PIC_SIZES:
             if in_size_band(l, pic_band) and in_pos_band(
@@ -259,8 +269,22 @@ def main():
                     tss_q = ref_to_query_pos(pysam_read, tss_ref)
                     if tss_q is None:
                         continue
-                    v2_states = classify_read_states(v2s, tss_q, strand)
-                    v3_states = classify_read_states(v3_all, tss_q, strand)
+                    # Compute gene body span in query coords from BED
+                    # TES, capped at 5kb to handle BED entries that
+                    # span adjacent genes. Fallback: 2kb.
+                    tes_q = ref_to_query_pos(pysam_read, tes_ref)
+                    if tes_q is not None:
+                        span = abs(tes_q - tss_q)
+                        if span < 200:
+                            span = 2000  # bed too tight, use default
+                        elif span > 5000:
+                            span = 5000  # bed too loose, cap
+                    else:
+                        span = 2000
+                    v2_states = classify_read_states(v2s, tss_q, strand,
+                                                         gene_body_span=span)
+                    v3_states = classify_read_states(v3_all, tss_q, strand,
+                                                         gene_body_span=span)
                     state_rows.append({
                         'read': read['name'],
                         'gene': name,
