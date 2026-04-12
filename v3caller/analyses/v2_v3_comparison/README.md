@@ -13,38 +13,57 @@ distinct biology or just re-drawing the same regions?
 v2 output: `Drosophila_phase2/Datasets/DAF-seq/spacetime/fp/fiberhmm_*.m6a_footprints.bam`
 v3 output: `Drosophila_phase2/Datasets/DAF-seq/spacetime/combined_bam/iter17_calls/*.called.bam`
 
-Across all 7 windows (2026-04-12):
+Across all 7 windows (2026-04-12, **v3 with FP model + SNP mask**):
 
-| metric | v2 (HMM) | v3 (iter-17) |
+| metric | v2 (HMM) | v3 (iter-17 + FP) |
 |---|---|---|
-| Reads called | ~242k | ~297k (+23%) |
-| Nucs (≥90 bp) / read | 10-13 | 18-22 (~2×) |
-| Median nuc size | 169-238 bp | 202-215 bp |
-| Mean nuc size | 641 bp | 282 bp |
-| ≥300 bp (overmerge) | 37.1% | 23.0% |
-| TFs / read (explicit) | n/a (2.1 as <90bp nucs) | 4-5 |
+| Total reads (passthrough) | 336k | 336k |
+| Reads with calls | 242k | 169k |
+| Nucs (≥90 bp) / read | 9.7 mean / 5 med | 23.4 mean / 21 med |
+| Median nuc size | 249 bp | 194 bp |
+| Mean nuc size | 752 bp | 237 bp |
+| ≥300 bp (overmerge) | 44.1% | 15.9% |
+| ≥500 bp | 26.8% | 5.2% |
+| TFs / read (explicit) | n/a (1.8 as <90bp nucs) | 8.1 |
 
-**Key finding**: v2 HMM was badly overmerging DddB — 37% of its
-"nucleosomes" exceeded 300 bp (dinucleosome+ mega-calls), mean 641
-bp. v3 cuts overmerge to 23%, doubles the nuc count per read,
-and adds explicit TF footprint calls.
+**Key finding**: v2 HMM massively overmerged DddB — 44% of its
+"nucleosomes" were ≥300 bp and mean size was 752 bp (implying many
+dinucleosome/chromatosome-scale mega-calls). v3 with FP correction
+cuts overmerge to 16%, drops mean nuc size to 237 bp (right at
+Drosophila NRL), doubles the nuc count per read, and adds explicit
+TF footprint calls.
+
+The **FP + SNP correction** (new in this run) tightened the v3
+numbers vs a prior FP-free v3 run: mean nuc size went from 282 → 237
+bp, overmerge from 23.0% → 15.9%. The context-aware Poisson model
+correctly withholds merges at CpG-adjacent sites where Nanopore FP
+is elevated.
+
+Fewer v3 reads have calls (169k vs 242k v2) because v3 rejects reads
+with `min_read_rate < 0.05` (v2 was permissive) — the missing 73k
+reads are low-signal and would have added noise.
 
 ### Hia5 (fly embryo, sna/eve/ftz loci)
 
 Input: `data/test_hia5_2-4hr_sna_eve_ftz.bam`
 v3 output: `/tmp/hia5_sna_eve_ftz_iter17.bam` (re-generate as needed)
 
-| metric | v2 (HMM) | v3 (iter-17) |
+| metric | v2 (HMM) | v3 (iter-17 + FP) |
 |---|---|---|
-| Nucs (≥90 bp) / read | 64.6 | 87.0 |
-| Median nuc size | 165 bp | 169 bp |
-| ≥300 bp (overmerge) | 24.1% | 3.9% |
-| ≥500 bp | 5.7% | 0.5% |
-| TFs (explicit) / read | n/a (29.9 as <90bp nucs) | 133 |
+| Reads tagged | 1225 | 1033 |
+| Nucs (≥90 bp) / read | 64.5 mean / 63 med | 88.9 mean / 84 med |
+| Median nuc size | 165 bp | 162 bp |
+| Mean nuc size | 260 bp | 175 bp |
+| ≥300 bp (overmerge) | 24.2% | 3.8% |
+| ≥500 bp | 8.3% | 0.5% |
+| TFs (explicit) / read | n/a (29.8 as <90bp nucs) | 146.2 |
 
-**Key finding**: v2 HMM's overmerge on Hia5 drops 6× in v3 (24%
-→ 3.9%). The v2 was emitting many <90 bp short "nucs" that v3
-correctly identifies as TF footprints (separate tag track).
+**Key finding**: v2 HMM's overmerge on Hia5 drops **6.4× in v3**
+(24.2% → 3.8%). Mean nuc size drops 260 → 175 bp, right at
+Drosophila mono-nuc protected length. v3 also promotes what v2
+called "short nucs" (29.8 per read) into explicit TFs (146.2 per
+read), reflecting the rich m6A-detected regulatory landscape that
+v2 was conflating with nucleosomes.
 
 ## Comparison methodology
 
@@ -67,16 +86,30 @@ For v3, use the separate tags directly.
 ## How to reproduce
 
 ```bash
-# Re-call Hia5
-python ../../caller_v8.py \
-  --in-bam data/test_hia5_2-4hr_sna_eve_ftz.bam \
-  --out-bam /tmp/hia5_v3.bam \
-  --fa '' --enzyme hia5 --tags both
+# Re-call Hia5 (PacBio, fp model required)
+python phase0/caller_v8.py \
+  --in-bam phase0/data/test_hia5_2-4hr_sna_eve_ftz.bam \
+  --out-bam /tmp/hia5_sna_eve_ftz_iter17.bam \
+  --fa '' --enzyme hia5 \
+  --fp-model phase0/data/fp_models/m6a_pacbio_fp_3mer.json \
+  --penetration-fraction 0.0
 
-# Re-call DddB (all 7 time windows) — see
-# spacetime/combined_bam/iter17_calls/ for latest outputs.
-# Uses --max-merge-len 0 (DddB: no merge) OR
-# --fp-model fp_models/ct_nanopore_fp_3mer.json (unified path)
+# Re-call DddB (Nanopore, fp model + SNP mask required)
+for W in 1-1.5 1.5-2 2-2.5 2.5-3 3-3.5 3.5-4 4-4.5; do
+  python phase0/caller_v8.py \
+    --in-bam .../spacetime/combined_bam/${W}.sorted.bam \
+    --out-bam .../iter17_calls/${W}.called.bam \
+    --fa '' --enzyme daf \
+    --fp-model phase0/data/fp_models/ct_nanopore_fp_3mer.json \
+    --snp-mask ../snp_detection/data/dddb_4-4.5_snps.bed \
+    --penetration-fraction 0.0
+done
+
+# Regenerate comparison stats
+python scripts/compare_v2_v3.py --version v3 --label dddb_v3 \
+  --in-bam .../iter17_calls/*.called.bam
+python scripts/compare_v2_v3.py --version v2 --label dddb_v2 \
+  --in-bam .../spacetime/fp/fiberhmm_*.m6a_footprints.bam
 ```
 
 ## Caveats

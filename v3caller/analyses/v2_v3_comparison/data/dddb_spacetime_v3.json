@@ -1,0 +1,109 @@
+{
+  "label": "dddb_spacetime_v3",
+  "version": "v3",
+  "per_bam": [
+    {
+      "n_reads_tagged": 5444,
+      "total_nucs": 127101,
+      "nucs_per_read_mean": 23.35,
+      "nucs_per_read_median": 13,
+      "nuc_len_mean": 260.6,
+      "nuc_len_median": 203,
+      "pct_ge_300bp": 19.7,
+      "pct_ge_500bp": 6.9,
+      "tfs_per_read_mean": 7.4,
+      "n_reads": 14734,
+      "bam": "/Users/tt7739/Dropbox/Fiber-NET-seq/Drosophila_phase2/Datasets/DAF-seq/spacetime/combined_bam/iter17_calls/1-1.5.called.bam"
+    },
+    {
+      "n_reads_tagged": 28607,
+      "total_nucs": 746779,
+      "nucs_per_read_mean": 26.1,
+      "nucs_per_read_median": 26,
+      "nuc_len_mean": 238.2,
+      "nuc_len_median": 198,
+      "pct_ge_300bp": 16.5,
+      "pct_ge_500bp": 5.3,
+      "tfs_per_read_mean": 8.6,
+      "n_reads": 63286,
+      "bam": "/Users/tt7739/Dropbox/Fiber-NET-seq/Drosophila_phase2/Datasets/DAF-seq/spacetime/combined_bam/iter17_calls/1.5-2.called.bam"
+    },
+    {
+      "n_reads_tagged": 34358,
+      "total_nucs": 769175,
+      "nucs_per_read_mean": 22.39,
+      "nucs_per_read_median": 19,
+      "nuc_len_mean": 232.5,
+      "nuc_len_median": 193,
+      "pct_ge_300bp": 14.9,
+      "pct_ge_500bp": 4.7,
+      "tfs_per_read_mean": 7.5,
+      "n_reads": 62359,
+      "bam": "/Users/tt7739/Dropbox/Fiber-NET-seq/Drosophila_phase2/Datasets/DAF-seq/spacetime/combined_bam/iter17_calls/2-2.5.called.bam"
+    },
+    {
+      "n_reads_tagged": 31082,
+      "total_nucs": 693707,
+      "nucs_per_read_mean": 22.32,
+      "nucs_per_read_median": 18,
+      "nuc_len_mean": 230.8,
+      "nuc_len_median": 189,
+      "pct_ge_300bp": 14.4,
+      "pct_ge_500bp": 4.7,
+      "tfs_per_read_mean": 8.7,
+      "n_reads": 58978,
+      "bam": "/Users/tt7739/Dropbox/Fiber-NET-seq/Drosophila_phase2/Datasets/DAF-seq/spacetime/combined_bam/iter17_calls/2.5-3.called.bam"
+    },
+    {
+      "n_reads_tagged": 30393,
+      "total_nucs": 696983,
+      "nucs_per_read_mean": 22.93,
+      "nucs_per_read_median": 21,
+      "nuc_len_mean": 240.6,
+      "nuc_len_median": 195,
+      "pct_ge_300bp": 16.7,
+      "pct_ge_500bp": 5.5,
+      "tfs_per_read_mean": 7.9,
+      "n_reads": 60256,
+      "bam": "/Users/tt7739/Dropbox/Fiber-NET-seq/Drosophila_phase2/Datasets/DAF-seq/spacetime/combined_bam/iter17_calls/3-3.5.called.bam"
+    },
+    {
+      "n_reads_tagged": 33596,
+      "total_nucs": 807281,
+      "nucs_per_read_mean": 24.03,
+      "nucs_per_read_median": 23,
+      "nuc_len_mean": 236.8,
+      "nuc_len_median": 195,
+      "pct_ge_300bp": 15.9,
+      "pct_ge_500bp": 5.1,
+      "tfs_per_read_mean": 8.1,
+      "n_reads": 61990,
+      "bam": "/Users/tt7739/Dropbox/Fiber-NET-seq/Drosophila_phase2/Datasets/DAF-seq/spacetime/combined_bam/iter17_calls/3.5-4.called.bam"
+    },
+    {
+      "n_reads_tagged": 5652,
+      "total_nucs": 125100,
+      "nucs_per_read_mean": 22.13,
+      "nucs_per_read_median": 9,
+      "nuc_len_mean": 256.2,
+      "nuc_len_median": 203,
+      "pct_ge_300bp": 19.9,
+      "pct_ge_500bp": 6.9,
+      "tfs_per_read_mean": 6.9,
+      "n_reads": 14815,
+      "bam": "/Users/tt7739/Dropbox/Fiber-NET-seq/Drosophila_phase2/Datasets/DAF-seq/spacetime/combined_bam/iter17_calls/4-4.5.called.bam"
+    }
+  ],
+  "combined": {
+    "n_reads_tagged": 169132,
+    "total_nucs": 3966126,
+    "nucs_per_read_mean": 23.45,
+    "nucs_per_read_median": 21,
+    "nuc_len_mean": 237.2,
+    "nuc_len_median": 194,
+    "pct_ge_300bp": 15.9,
+    "pct_ge_500bp": 5.2,
+    "tfs_per_read_mean": 8.1,
+    "n_reads": 336418
+  }
+}

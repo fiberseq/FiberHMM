@@ -1,0 +1,31 @@
+{
+  "label": "hia5_v3",
+  "version": "v3",
+  "per_bam": [
+    {
+      "n_reads_tagged": 1033,
+      "total_nucs": 91876,
+      "nucs_per_read_mean": 88.94,
+      "nucs_per_read_median": 84,
+      "nuc_len_mean": 175.0,
+      "nuc_len_median": 162,
+      "pct_ge_300bp": 3.8,
+      "pct_ge_500bp": 0.5,
+      "tfs_per_read_mean": 146.2,
+      "n_reads": 1225,
+      "bam": "/tmp/hia5_sna_eve_ftz_iter17.bam"
+    }
+  ],
+  "combined": {
+    "n_reads_tagged": 1033,
+    "total_nucs": 91876,
+    "nucs_per_read_mean": 88.94,
+    "nucs_per_read_median": 84,
+    "nuc_len_mean": 175.0,
+    "nuc_len_median": 162,
+    "pct_ge_300bp": 3.8,
+    "pct_ge_500bp": 0.5,
+    "tfs_per_read_mean": 146.2,
+    "n_reads": 1225
+  }
+}
