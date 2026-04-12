@@ -1,0 +1,27 @@
+{
+  "label": "dddb_spacetime_all",
+  "n_reads": 168967,
+  "n_v2_footprints": 2291035,
+  "v2_fates": {
+    "preserved_nuc": 1366164,
+    "weak_overlap": 254211,
+    "lost": 137637,
+    "split": 340986,
+    "preserved_tf": 115384,
+    "reclassified": 76653
+  },
+  "v3_fates": {
+    "nuc_new": 1504790,
+    "tf_new": 1233215,
+    "nuc_shared": 1662135,
+    "nuc_weak_shared": 798294,
+    "tf_shared": 117289,
+    "tf_weak_shared": 15262
+  },
+  "per_read_means": {
+    "v2": 13.559067746956506,
+    "v3_nuc": 23.46741671450638,
+    "v3_tf": 8.083033965212142,
+    "v3_msp": 23.629850799268496
+  }
+}

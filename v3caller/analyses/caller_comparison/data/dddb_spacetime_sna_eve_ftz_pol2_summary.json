@@ -1,0 +1,49 @@
+{
+  "label": "dddb_spacetime_sna_eve_ftz",
+  "n_reads_with_tss": 38041,
+  "paused": {
+    "v2_total_calls": 506,
+    "v3_total_calls": 253,
+    "v2_positive_reads": 506,
+    "v3_positive_reads": 253,
+    "both_positive": 105,
+    "v3_only": 148,
+    "v2_only": 401
+  },
+  "elong": {
+    "v2_total_calls": 76294,
+    "v3_total_calls": 49812,
+    "v2_positive_reads": 26457,
+    "v3_positive_reads": 25764,
+    "both_positive": 19641,
+    "v3_only": 6123,
+    "v2_only": 6816
+  },
+  "pic": {
+    "v2_total_calls": 1485,
+    "v3_total_calls": 2793,
+    "v2_positive_reads": 1458,
+    "v3_positive_reads": 2558,
+    "both_positive": 658,
+    "v3_only": 1900,
+    "v2_only": 800
+  },
+  "accessible": {
+    "v2_total_calls": 4952,
+    "v3_total_calls": 3139,
+    "v2_positive_reads": 4952,
+    "v3_positive_reads": 3139,
+    "both_positive": 2744,
+    "v3_only": 395,
+    "v2_only": 2208
+  },
+  "hyperburst": {
+    "v2_total_calls": 6285,
+    "v3_total_calls": 6450,
+    "v2_positive_reads": 6285,
+    "v3_positive_reads": 6450,
+    "both_positive": 5284,
+    "v3_only": 1166,
+    "v2_only": 1001
+  }
+}

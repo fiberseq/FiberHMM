@@ -1,0 +1,49 @@
+{
+  "label": "hia5_sna_eve_ftz",
+  "n_reads_with_tss": 509,
+  "paused": {
+    "v2_total_calls": 3,
+    "v3_total_calls": 5,
+    "v2_positive_reads": 3,
+    "v3_positive_reads": 5,
+    "both_positive": 1,
+    "v3_only": 4,
+    "v2_only": 2
+  },
+  "elong": {
+    "v2_total_calls": 2963,
+    "v3_total_calls": 4254,
+    "v2_positive_reads": 490,
+    "v3_positive_reads": 495,
+    "both_positive": 482,
+    "v3_only": 13,
+    "v2_only": 8
+  },
+  "pic": {
+    "v2_total_calls": 22,
+    "v3_total_calls": 24,
+    "v2_positive_reads": 22,
+    "v3_positive_reads": 20,
+    "both_positive": 1,
+    "v3_only": 19,
+    "v2_only": 21
+  },
+  "accessible": {
+    "v2_total_calls": 79,
+    "v3_total_calls": 62,
+    "v2_positive_reads": 79,
+    "v3_positive_reads": 62,
+    "both_positive": 40,
+    "v3_only": 22,
+    "v2_only": 39
+  },
+  "hyperburst": {
+    "v2_total_calls": 91,
+    "v3_total_calls": 103,
+    "v2_positive_reads": 91,
+    "v3_positive_reads": 103,
+    "both_positive": 90,
+    "v3_only": 13,
+    "v2_only": 1
+  }
+}

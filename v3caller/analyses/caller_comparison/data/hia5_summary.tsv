@@ -1,0 +1,13 @@
+category	fate	count
+v2	lost	24735
+v2	preserved_nuc	42557
+v2	split	8799
+v2	preserved_tf	9401
+v2	weak_overlap	21357
+v2	reclassified	769
+v3_nuc	shared	47415
+v3_nuc	weak_shared	29856
+v3_tf	new	134340
+v3_tf	shared	9771
+v3_tf	weak_shared	6868
+v3_nuc	new	14605
