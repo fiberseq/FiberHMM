@@ -651,7 +651,8 @@ def call_read(read, ref_seq, extractor, W,
               first_pass='gap_cdf',
               gap_radius=10,
               min_tf_bp=5, min_tf_tq=10,
-              fp_model=None):
+              fp_model=None,
+              snp_mask=None):
     """Run v8 pipeline on one read; return dict of ns/nl/as/al/nq
     or None if no calls.
 
@@ -669,6 +670,17 @@ def call_read(read, ref_seq, extractor, W,
         return None
 
     opp, hit = extractor.read_to_arrays(read, ref_seq)
+
+    # Apply SNP mask: zero out opp and hit at known SNP positions
+    # so the caller treats them as if no opportunity exists there.
+    if snp_mask is not None:
+        chrom = read.reference_name
+        ref_start = read.reference_start
+        for rel in range(L):
+            if (chrom, ref_start + rel) in snp_mask:
+                opp[rel] = 0
+                hit[rel] = 0
+
     n_opp = int(opp.sum())
     if n_opp < 50:
         return None
@@ -1008,6 +1020,13 @@ def main():
                          'uses per-position FP rates instead of a '
                          'flat baseline for the Poisson test. '
                          'Recommended for Hia5 / m6A enzymes.')
+    ap.add_argument('--snp-mask', default=None,
+                    help='BED file of probable SNP positions (from '
+                         'snp_mask.py). Positions in this file are '
+                         'excluded from the opp/hit arrays before '
+                         'calling — they are treated as if they have '
+                         'no opportunity and no hit. Recommended for '
+                         'amplicon data with high coverage.')
     ap.add_argument('--strip-mods', action='store_true',
                     help='drop MM/ML tags to shrink output')
     ap.add_argument('--ml-threshold', type=int, default=128,
@@ -1038,6 +1057,13 @@ def main():
         from context_fp_model import ContextFPModel
         fp_model = ContextFPModel.load(args.fp_model)
         print(f'Loaded FP model: {fp_model.summary()}', flush=True)
+
+    # Load SNP mask if provided
+    snp_mask = None
+    if args.snp_mask:
+        from snp_mask import load_snp_mask
+        snp_mask = load_snp_mask(args.snp_mask)
+        print(f'Loaded SNP mask: {len(snp_mask)} positions', flush=True)
 
     out_dir = os.path.dirname(args.out_bam) or '.'
     os.makedirs(out_dir, exist_ok=True)
@@ -1105,7 +1131,8 @@ def main():
                             gap_radius=args.gap_radius,
                             min_tf_bp=args.min_tf_bp,
                             min_tf_tq=args.min_tf_tq,
-                            fp_model=fp_model)
+                            fp_model=fp_model,
+                            snp_mask=snp_mask)
 
         # Clear BOTH legacy and MA tags whether or not we call —
         # ensures a re-run doesn't leave stale output from either
