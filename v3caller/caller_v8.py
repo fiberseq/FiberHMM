@@ -485,7 +485,9 @@ def poisson_merge_evidence(atoms, opp, hit, baseline,
                             low_quantile=0.05,
                             high_quantile=0.95,
                             return_merge_quality=False,
-                            return_gap_records=False):
+                            return_gap_records=False,
+                            fp_model=None,
+                            query_seq=None):
     """Two-sided evidence-based merge.
 
     For each adjacent pair of atoms:
@@ -598,12 +600,21 @@ def poisson_merge_evidence(atoms, opp, hit, baseline,
             _record(0, False)
             continue
 
-        lam = gap_opp * baseline
+        # Lambda for the Poisson test. If a per-context FP model is
+        # available, use the SUM of per-position FP rates in the gap
+        # (accounts for CpG-adjacent bias). Otherwise fall back to
+        # the uniform baseline * gap_opp.
+        if fp_model is not None and query_seq is not None:
+            # Per-position FP rates for opp positions in the gap
+            gap_opp_positions = np.where(opp[gap_s:gap_e] > 0)[0] + gap_s
+            lam = fp_model.expected_fp_hits(gap_opp_positions, query_seq)
+        else:
+            lam = gap_opp * baseline
+        lam = max(0.01, lam)  # floor to avoid degenerate Poisson at λ=0
         lo = float(poisson.ppf(low_quantile, lam))
         hi = float(poisson.ppf(high_quantile, lam))
         if lo <= gap_hit <= hi:
-            # Hit count compatible with baseline -> merge. Compute mq
-            # from the CDF distance from the median.
+            # Hit count compatible with expected FP rate -> merge.
             cdf_val = float(poisson.cdf(gap_hit, lam))
             center_dist = abs(cdf_val - 0.5)
             mq = int(round(255 * (1 - 2 * center_dist)))
@@ -639,7 +650,8 @@ def call_read(read, ref_seq, extractor, W,
               max_merge_len, min_footprint,
               first_pass='gap_cdf',
               gap_radius=10,
-              min_tf_bp=5, min_tf_tq=10):
+              min_tf_bp=5, min_tf_tq=10,
+              fp_model=None):
     """Run v8 pipeline on one read; return dict of ns/nl/as/al/nq
     or None if no calls.
 
@@ -682,12 +694,17 @@ def call_read(read, ref_seq, extractor, W,
     # let us compute "confident" MSPs (gaps NOT absorbed by high-mq
     # merges) for the legacy as/al tag, while still running the TF
     # caller on the fully permissive pre-merge accessible surface.
+    # Query sequence for per-context FP model (if available)
+    q_seq = read.query_sequence if fp_model is not None else None
+
     merged, merged_mqs, gap_records = poisson_merge_evidence(
         atoms, opp, hit, baseline,
         merge_alpha=merge_alpha,
         max_merge_len=max_merge_len,
         return_merge_quality=True,
         return_gap_records=True,
+        fp_model=fp_model,
+        query_seq=q_seq,
     )
     if not merged:
         return None
@@ -984,6 +1001,13 @@ def main():
                          '— cuts the weakest ~5%% of candidates that '
                          'are indistinguishable from baseline noise). '
                          'Set to 0 to emit everything.')
+    ap.add_argument('--fp-model', default=None,
+                    help='path to a per-context FP model JSON (from '
+                         'ContextFPModel.from_bam on an untreated '
+                         'control). When provided, the merge step '
+                         'uses per-position FP rates instead of a '
+                         'flat baseline for the Poisson test. '
+                         'Recommended for Hia5 / m6A enzymes.')
     ap.add_argument('--strip-mods', action='store_true',
                     help='drop MM/ML tags to shrink output')
     ap.add_argument('--ml-threshold', type=int, default=128,
@@ -1007,6 +1031,13 @@ def main():
     if args.enzyme == 'hia5':
         extractor_kwargs['ml_threshold'] = args.ml_threshold
     extractor = get_extractor(args.enzyme, **extractor_kwargs)
+
+    # Load per-context FP model if provided
+    fp_model = None
+    if args.fp_model:
+        from context_fp_model import ContextFPModel
+        fp_model = ContextFPModel.load(args.fp_model)
+        print(f'Loaded FP model: {fp_model.summary()}', flush=True)
 
     out_dir = os.path.dirname(args.out_bam) or '.'
     os.makedirs(out_dir, exist_ok=True)
@@ -1073,7 +1104,8 @@ def main():
                             first_pass=args.first_pass,
                             gap_radius=args.gap_radius,
                             min_tf_bp=args.min_tf_bp,
-                            min_tf_tq=args.min_tf_tq)
+                            min_tf_tq=args.min_tf_tq,
+                            fp_model=fp_model)
 
         # Clear BOTH legacy and MA tags whether or not we call —
         # ensures a re-run doesn't leave stale output from either
