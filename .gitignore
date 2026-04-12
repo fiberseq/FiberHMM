@@ -68,6 +68,10 @@ test_datasets/
 *.png
 *.pdf
 
+# Allow figures in organized analyses (defensible for paper)
+!v3caller/analyses/**/figures/*.png
+!v3caller/analyses/**/figures/*.pdf
+
 # Archives
 *.zip
 
