@@ -1,0 +1,28 @@
+{
+  "label": "dddb_spacetime",
+  "n_nucs": 3965219,
+  "n_merged": 2170767,
+  "pct_merged": 54.75,
+  "size_buckets": {
+    "\u2264180 (mono-nuc)": {
+      "count": 1650674,
+      "pct": 41.63,
+      "pct_merged": 61.77
+    },
+    "181-300 (di-nuc)": {
+      "count": 1687522,
+      "pct": 42.56,
+      "pct_merged": 68.14
+    },
+    "301-500 (tri-nuc)": {
+      "count": 422928,
+      "pct": 10.67,
+      "pct_merged": 0.19
+    },
+    ">500 (mega)": {
+      "count": 204095,
+      "pct": 5.15,
+      "pct_merged": 0.23
+    }
+  }
+}

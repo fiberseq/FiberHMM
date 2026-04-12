@@ -146,7 +146,71 @@ HMM emitted many short (30–90 bp) "footprints" via its single
 ns/nl track. v3's stricter Pass 1 + merge produces cleaner but
 sparser small-call output.
 
-## Where v3 needs work — three concrete gaps
+## Tuning result: `--max-merge-len 0` for DddB
+
+The v3 merge audit revealed **55% of DddB nucs were fused from ≥2
+Pass-1 atoms**, even with the FP model enabled:
+
+| bucket | count | % merged |
+|---|---|---|
+| ≤180 bp (mono-nuc) | 1.65M | 62% |
+| 181–300 (di-nuc) | 1.69M | 68% |
+| 301–500 (tri-nuc) | 423k | 0.2% |
+
+![merge audit — default](figures/dddb_spacetime_merge_audit.png)
+
+The mono/di-nuc range is dominated by fused small atoms.
+Philosophically this is wrong for DddB: the per-site deamination
+rate on accessible DNA is 50–60%, so even a short hit-free stretch
+between two atoms is *more likely* to be a Pol II / TF footprint
+than a breathing-gap across an intact nucleosome.
+
+**Fix: `--max-merge-len 0` for DddB** (never merge atoms). Rerun
+shows 100% single-atom nucs:
+
+![merge audit — nomerge](figures/dddb_spacetime_NOMERGE_merge_audit.png)
+
+### Result on Pol II state counts (DddB, 38,036 reads w/TSS)
+
+| State | v2 (reads) | v3 **merged** | v3 **nomerge** | v3 vs v2 |
+|---|---|---|---|---|
+| Paused | 506 | 253 | **1,815** | +259% |
+| Elongating | 26,457 | 25,764 | **37,225** | +41% |
+| PIC | 1,458 | 2,558 | **6,617** | +354% |
+| Accessible promoter | 4,952 | 3,139 | **7,437** | +50% |
+| Hyperburst | 6,285 | 6,450 | **9,688** | +54% |
+
+**v3 no-merge exceeds v2 on every state.**
+
+![](figures/dddb_spacetime_NOMERGE_pol2_agreement.png)
+
+### Hia5 kept with merge ON
+
+For Hia5 (PacBio m6A), `--max-merge-len 0` also boosts counts but
+overshoots biologically (elongating reaches 100% of all reads,
+hyperburst 3× v2). The PacBio FP profile creates more "fake zero"
+gaps that legitimately benefit from the merge step. Recommendation:
+keep default `--max-merge-len 250` for Hia5.
+
+| State | v2 | v3 merged | v3 nomerge |
+|---|---|---|---|
+| Elongating | 490 | 495 | 509 (100% of reads) |
+| Accessible | 79 | 62 | 155 |
+| Hyperburst | 91 | 103 | 283 |
+
+## Final recommended parameters
+
+```bash
+# DddB (Nanopore, amplicons)
+--fp-model ct_nanopore_fp_3mer.json --snp-mask ... \
+  --penetration-fraction 0.0 --max-merge-len 0
+
+# Hia5 (PacBio, amplicons)
+--fp-model m6a_pacbio_fp_3mer.json \
+  --penetration-fraction 0.0  # keep default --max-merge-len 250
+```
+
+## Where v3 still has work (formerly: "three concrete gaps")
 
 1. **Accessible-promoter on both Hia5 and DddB** is lower in v3.
    v3 calls more/larger nucs at TSS windows than v2. Open questions:

@@ -1,0 +1,49 @@
+{
+  "label": "hia5_sna_eve_ftz_NOMERGE",
+  "n_reads_with_tss": 509,
+  "paused": {
+    "v2_total_calls": 3,
+    "v3_total_calls": 34,
+    "v2_positive_reads": 3,
+    "v3_positive_reads": 34,
+    "both_positive": 1,
+    "v3_only": 33,
+    "v2_only": 2
+  },
+  "elong": {
+    "v2_total_calls": 2963,
+    "v3_total_calls": 19286,
+    "v2_positive_reads": 490,
+    "v3_positive_reads": 509,
+    "both_positive": 490,
+    "v3_only": 19,
+    "v2_only": 0
+  },
+  "pic": {
+    "v2_total_calls": 22,
+    "v3_total_calls": 120,
+    "v2_positive_reads": 22,
+    "v3_positive_reads": 100,
+    "both_positive": 6,
+    "v3_only": 94,
+    "v2_only": 16
+  },
+  "accessible": {
+    "v2_total_calls": 79,
+    "v3_total_calls": 155,
+    "v2_positive_reads": 79,
+    "v3_positive_reads": 155,
+    "both_positive": 56,
+    "v3_only": 99,
+    "v2_only": 23
+  },
+  "hyperburst": {
+    "v2_total_calls": 91,
+    "v3_total_calls": 283,
+    "v2_positive_reads": 91,
+    "v3_positive_reads": 283,
+    "both_positive": 91,
+    "v3_only": 192,
+    "v2_only": 0
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "label": "dddb_spacetime_NOMERGE",
+  "n_reads_with_tss": 38036,
+  "paused": {
+    "v2_total_calls": 506,
+    "v3_total_calls": 1815,
+    "v2_positive_reads": 506,
+    "v3_positive_reads": 1815,
+    "both_positive": 237,
+    "v3_only": 1578,
+    "v2_only": 269
+  },
+  "elong": {
+    "v2_total_calls": 76294,
+    "v3_total_calls": 284971,
+    "v2_positive_reads": 26457,
+    "v3_positive_reads": 37225,
+    "both_positive": 26308,
+    "v3_only": 10917,
+    "v2_only": 149
+  },
+  "pic": {
+    "v2_total_calls": 1485,
+    "v3_total_calls": 7412,
+    "v2_positive_reads": 1458,
+    "v3_positive_reads": 6617,
+    "both_positive": 1260,
+    "v3_only": 5357,
+    "v2_only": 198
+  },
+  "accessible": {
+    "v2_total_calls": 4947,
+    "v3_total_calls": 7437,
+    "v2_positive_reads": 4947,
+    "v3_positive_reads": 7437,
+    "both_positive": 4905,
+    "v3_only": 2532,
+    "v2_only": 42
+  },
+  "hyperburst": {
+    "v2_total_calls": 6280,
+    "v3_total_calls": 9688,
+    "v2_positive_reads": 6280,
+    "v3_positive_reads": 9688,
+    "both_positive": 6280,
+    "v3_only": 3408,
+    "v2_only": 0
+  }
+}
