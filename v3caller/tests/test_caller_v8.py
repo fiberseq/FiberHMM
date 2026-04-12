@@ -235,10 +235,10 @@ class TestMATags(unittest.TestCase):
         s = format_ma_tag(500, [(10, 100)], [], nuc_qual_spec='QQ')
         self.assertEqual(s, '500;nuc+QQ:11-100')
 
-    def test_format_ma_tag_default_qqqq(self):
+    def test_format_ma_tag_default_qqq(self):
         from ma_tags import format_ma_tag
         s = format_ma_tag(1000, [(50, 147)], [(0, 50)])
-        self.assertEqual(s, '1000;nuc+QQQQ:51-147;msp+:1-50')
+        self.assertEqual(s, '1000;nuc+QQQ:51-147;msp+:1-50')
 
     def test_format_ma_tag_with_tfs(self):
         from ma_tags import format_ma_tag
@@ -252,32 +252,48 @@ class TestMATags(unittest.TestCase):
         s = format_ma_tag(1000, [], [], tf_intervals=[(100, 20)])
         self.assertEqual(s, '1000;tf+QQQ:101-20')
 
-    def test_format_aq_array_qqqq(self):
+    def test_format_ma_tag_v2_footprints(self):
+        from ma_tags import format_ma_tag
+        s = format_ma_tag(1000, [(50, 147)], [(0, 50)],
+                            v2_intervals=[(40, 200), (70, 45)])
+        # fp_v2+ is the custom type for v2 HMM footprints; no quality
+        self.assertEqual(
+            s,
+            '1000;nuc+QQQ:51-147;msp+:1-50;fp_v2+:41-200,71-45')
+
+    def test_format_aq_array_qqq(self):
         from ma_tags import format_aq_array
         aq = format_aq_array(
             nq_values=[200, 180],
-            mq_values=[255, 80],
             lq_values=[240, 100],
             rq_values=[200, 150],
-            tf_q_values=[128, 200])
-        # Layout: per-nuc [nq, mq, lq, rq], then per-tf [q]
+            tf_q_values=[128, 200],
+            tf_lq_values=[100, 120],
+            tf_rq_values=[80, 90])
+        # Layout: per-nuc [nq, lq, rq], then per-tf [tq, el, er]
         self.assertEqual(list(aq),
-                          [200, 255, 240, 200,  # nuc 0
-                           180, 80, 100, 150,   # nuc 1
-                           128, 200])           # tfs
+                          [200, 240, 200,  # nuc 0
+                           180, 100, 150,  # nuc 1
+                           128, 100, 80,   # tf 0
+                           200, 120, 90])  # tf 1
 
-    def test_format_aq_array_order(self):
+    def test_format_aq_array_no_tfs(self):
         from ma_tags import format_aq_array
-        nq = [200, 180, 150]
-        mq = [255, 80, 100]
-        aq = format_aq_array(nq, mq)
-        # Quality values interleaved: nq[0], mq[0], nq[1], mq[1], ...
-        self.assertEqual(list(aq), [200, 255, 180, 80, 150, 100])
+        aq = format_aq_array(
+            nq_values=[200, 180, 150],
+            lq_values=[255, 80, 100],
+            rq_values=[220, 40, 180])
+        # Per-nuc [nq, lq, rq]
+        self.assertEqual(list(aq),
+                          [200, 255, 220, 180, 80, 40, 150, 100, 180])
 
     def test_format_aq_array_clips(self):
         from ma_tags import format_aq_array
-        aq = format_aq_array([300, -5, 128], [-10, 256, 50])
-        self.assertEqual(list(aq), [255, 0, 0, 255, 128, 50])
+        aq = format_aq_array([300, -5, 128], [-10, 256, 50], [100, 100, 100])
+        self.assertEqual(list(aq),
+                          [255, 0, 100,  # clipped nq, lq, rq
+                           0, 255, 100,
+                           128, 50, 100])
 
     def test_parse_ma_tag_roundtrip(self):
         from ma_tags import format_ma_tag, parse_ma_tag

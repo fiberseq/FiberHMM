@@ -34,26 +34,26 @@ def format_ma_tag(read_length: int,
                     nuc_intervals: Sequence[Tuple[int, int]],
                     msp_intervals: Sequence[Tuple[int, int]],
                     tf_intervals: Sequence[Tuple[int, int]] = (),
-                    nuc_qual_spec: str = 'QQQQ',
+                    v2_intervals: Sequence[Tuple[int, int]] = (),
+                    nuc_qual_spec: str = 'QQQ',
                     tf_qual_spec: str = 'QQQ') -> str:
-    """Build the MA:Z string.
+    """Build the MA:Z string per the fiberseq Molecular-annotation
+    spec (https://github.com/fiberseq/Molecular-annotation-spec).
 
-    Args:
-        read_length: full query length (at annotation time).
-        nuc_intervals: list of (start_0based, length) for each
-            nucleosome, in ascending order.
-        msp_intervals: list of (start_0based, length) for each
-            MSP (accessible region), in ascending order.
-        tf_intervals: list of (start_0based, length) for each
-            TF footprint, in ascending order.
-        nuc_qual_spec: quality indicator for the nuc type. Default
-            `QQQQ` means four linear quality values per nucleosome
-            (nq, mq, lq, rq). Use 'QQ' for just (nq, mq) or '' for
-            no qualities.
+    Emitted annotation types:
+      - `nuc+{nuc_qual_spec}`: v3 nucleosome calls, default QQQ =
+        (nq, lq, rq). Drop mq from MA (kept in the legacy mq tag
+        for merge diagnostics).
+      - `msp+`: MSPs between non-merged nucs, no quality.
+      - `tf+{tf_qual_spec}`: v3 TF footprints, default QQQ =
+        (tq, el, er).
+      - `fp_v2+`: v2 HMM all-footprints overlay (from the input
+        BAM's ns/nl tags), no quality. This is a CUSTOM type per
+        the spec's allowance for user-defined annotations.
 
     Returns:
         MA tag string like
-            "4521;nuc+QQQQ:43-147,216-155;msp+:1-42;tf+Q:50-20"
+            "4521;nuc+QQQ:43-147,216-155;msp+:1-42;tf+QQQ:50-20;fp_v2+:40-200"
     """
     parts = [str(int(read_length))]
     if nuc_intervals:
@@ -67,53 +67,40 @@ def format_ma_tag(read_length: int,
         tfs = ','.join(f'{int(s) + 1}-{int(l)}' for s, l in tf_intervals)
         parts.append(f'tf+{tf_qual_spec}:{tfs}' if tf_qual_spec
                       else f'tf+:{tfs}')
+    if v2_intervals:
+        v2s = ','.join(f'{int(s) + 1}-{int(l)}' for s, l in v2_intervals)
+        parts.append(f'fp_v2+:{v2s}')
     return ';'.join(parts)
 
 
 def format_aq_array(nq_values: Sequence[int],
-                     mq_values: Sequence[int],
-                     lq_values: Sequence[int] = None,
-                     rq_values: Sequence[int] = None,
-                     tf_q_values: Sequence[int] = None,
-                     tf_lq_values: Sequence[int] = None,
-                     tf_rq_values: Sequence[int] = None) -> array.array:
+                     lq_values: Sequence[int],
+                     rq_values: Sequence[int],
+                     tf_q_values: Sequence[int] = (),
+                     tf_lq_values: Sequence[int] = (),
+                     tf_rq_values: Sequence[int] = ()) -> array.array:
     """Build the AQ:B:C array, interleaved per annotation.
 
-    Layout (matching the MA spec per-annotation grouping):
-      - For each nucleosome (nuc+QQQQ): append [nq, mq, lq, rq] if
-        all four are provided; otherwise fall back to [nq, mq] (QQ).
-      - MSPs contribute nothing (unqualified).
-      - For each TF (tf+QQQ): append [tfp, tel, ter] if all three are
-        provided; otherwise fall back to [tfp] (tf+Q).
+    Layout matches the default MA spec emitted by format_ma_tag:
+      - For each nuc (nuc+QQQ): (nq, lq, rq)
+      - MSPs contribute nothing (unqualified)
+      - For each TF (tf+QQQ): (tq, el, er)
+      - fp_v2 contributes nothing (unqualified)
 
-    Callers should pass the SAME quality-spec to format_ma_tag as
-    implied by what they pass here.
+    Lengths must match — format_aq_array trusts the caller has
+    already aligned the arrays.
     """
+    def clamp(v):
+        return max(0, min(255, int(v)))
+
     out = array.array('B')
-    # Nuc block
-    if lq_values is not None and rq_values is not None:
-        assert len(nq_values) == len(mq_values) == len(lq_values) == len(rq_values)
-        for nq, mq, lq, rq in zip(nq_values, mq_values, lq_values, rq_values):
-            out.append(max(0, min(255, int(nq))))
-            out.append(max(0, min(255, int(mq))))
-            out.append(max(0, min(255, int(lq))))
-            out.append(max(0, min(255, int(rq))))
-    else:
-        assert len(nq_values) == len(mq_values)
-        for nq, mq in zip(nq_values, mq_values):
-            out.append(max(0, min(255, int(nq))))
-            out.append(max(0, min(255, int(mq))))
-    # TF block
+    assert len(nq_values) == len(lq_values) == len(rq_values)
+    for nq, lq, rq in zip(nq_values, lq_values, rq_values):
+        out.append(clamp(nq)); out.append(clamp(lq)); out.append(clamp(rq))
     if tf_q_values:
-        if tf_lq_values is not None and tf_rq_values is not None:
-            assert len(tf_q_values) == len(tf_lq_values) == len(tf_rq_values)
-            for tfp, tel, ter in zip(tf_q_values, tf_lq_values, tf_rq_values):
-                out.append(max(0, min(255, int(tfp))))
-                out.append(max(0, min(255, int(tel))))
-                out.append(max(0, min(255, int(ter))))
-        else:
-            for q in tf_q_values:
-                out.append(max(0, min(255, int(q))))
+        assert len(tf_q_values) == len(tf_lq_values) == len(tf_rq_values)
+        for tq, el, er in zip(tf_q_values, tf_lq_values, tf_rq_values):
+            out.append(clamp(tq)); out.append(clamp(el)); out.append(clamp(er))
     return out
 
 
