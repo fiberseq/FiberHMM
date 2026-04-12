@@ -146,6 +146,53 @@ HMM emitted many short (30–90 bp) "footprints" via its single
 ns/nl track. v3's stricter Pass 1 + merge produces cleaner but
 sparser small-call output.
 
+## Tuning: where the merges actually come from
+
+Root cause of DddB's 55% merge rate: a **"structural bridge" shortcut**
+in `poisson_merge_evidence` that auto-merges any gap ≤ 8 bp between
+Pass-1 atoms, bypassing the Poisson test entirely.
+
+```python
+# In phase0/caller_v8.py, poisson_merge_evidence():
+if gap_len <= short_gap_bp:  # default 8
+    # Too short to be a real linker — always merge...
+    result[-1] = (ps, max(pe, e))   # AUTO-MERGE
+    continue
+# (Poisson test only runs for gap_len > short_gap_bp)
+```
+
+The comment rationale: "a 1-bp gap with 1 hit is still a bridge we
+want to cross structurally." But as you pointed out, at DddB's 50-60%
+per-site deamination rate on accessible DNA, **a short hit-positive
+gap is real evidence of accessibility, not noise**. Auto-merging on
+any gap with hits is philosophically wrong for DddB.
+
+### Fix: expose `--short-gap-bp` as a CLI flag, set to 0 for DddB
+
+When `--short-gap-bp 0`, every gap (including 1–8 bp) goes through
+the Poisson + FP test. On DddB the test correctly rejects merges
+that the shortcut was auto-approving.
+
+**Equivalent to `--max-merge-len 0` on DddB (in terms of output):**
+both produce 0% merged nucs and identical Pol II state counts. But
+`--short-gap-bp 0` is more principled — it doesn't disable merging
+globally, it just refuses the un-tested shortcut. On reads where the
+Poisson test would legitimately support a merge (large gap, 0 hits,
+plenty of opps), `--short-gap-bp 0` would still merge. The current
+Poisson+FP formulation on DddB rarely allows that, so the output
+matches `--max-merge-len 0` — but the config is more defensible.
+
+### Before vs after (DddB spacetime, merge audit)
+
+Default `short_gap_bp=8`: **55% of nucs** were merged fusions
+(62% of mono-nucs, 68% of di-nucs).
+
+![merge audit — default](figures/dddb_spacetime_merge_audit.png)
+
+`--short-gap-bp 0`: **0% merged** — all nucs are single Pass-1 atoms.
+
+![merge audit — short_gap=0](figures/dddb_spacetime_NOMERGE_merge_audit.png)
+
 ## Tuning result: `--max-merge-len 0` for DddB
 
 The v3 merge audit revealed **55% of DddB nucs were fused from ≥2
@@ -201,13 +248,17 @@ keep default `--max-merge-len 250` for Hia5.
 ## Final recommended parameters
 
 ```bash
-# DddB (Nanopore, amplicons)
+# DddB (Nanopore) — disable the short-gap shortcut so all merges are
+# Poisson-tested. Keep normal merge length cap.
 --fp-model ct_nanopore_fp_3mer.json --snp-mask ... \
-  --penetration-fraction 0.0 --max-merge-len 0
+  --penetration-fraction 0.0 --short-gap-bp 0
 
-# Hia5 (PacBio, amplicons)
+# Hia5 (PacBio) — keep default short-gap bridging. The 8 bp threshold
+# works because Hia5 can leave isolated m6A calls inside true nucs
+# (transient breathing) that the Poisson-FP test would otherwise
+# mistakenly flag as accessible evidence.
 --fp-model m6a_pacbio_fp_3mer.json \
-  --penetration-fraction 0.0  # keep default --max-merge-len 250
+  --penetration-fraction 0.0  # defaults: --short-gap-bp 8 --max-merge-len 250
 ```
 
 ## Where v3 still has work (formerly: "three concrete gaps")
