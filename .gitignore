@@ -71,6 +71,9 @@ test_datasets/
 # Allow figures in organized analyses (defensible for paper)
 !v3caller/analyses/**/figures/*.png
 !v3caller/analyses/**/figures/*.pdf
+# Also allow figures in subdirectories of figures/
+!v3caller/analyses/**/figures/**/*.png
+!v3caller/analyses/**/figures/**/*.pdf
 
 # Archives
 *.zip
