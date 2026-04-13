@@ -212,7 +212,7 @@ fiberhmm-run -i input.bam -o - --enzyme dddb | samtools sort -o sorted.bam
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-i/--in-bam` | required | Input BAM (aligned). Use `-` for stdin. |
+| `-i/--in-bam` | required | Input BAM. Alignment required for `dddb`/`ddda` (MD tag); unaligned BAMs work for `hia5`. Use `-` for stdin. |
 | `-o/--out-bam` | required | Output BAM. Use `-` for stdout (unsorted). |
 | `--enzyme` | required | `dddb`, `ddda`, or `hia5` |
 | `--seq` | auto | `nanopore` or `pacbio` (required for `hia5`) |

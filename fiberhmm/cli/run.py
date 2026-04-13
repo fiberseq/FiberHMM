@@ -118,7 +118,9 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument('-i', '--in-bam', required=True,
-                   help='Input BAM (aligned). Use "-" for stdin.')
+                   help='Input BAM. Alignment required for dddb/ddda (MD tag '
+                        'needed by daf-encode); unaligned BAMs work for hia5. '
+                        'Use "-" for stdin.')
     p.add_argument('-o', '--out-bam', required=True,
                    help='Output BAM. Use "-" for stdout (unsorted; pipe to '
                         'samtools sort for a sorted file).')
