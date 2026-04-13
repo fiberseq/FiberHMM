@@ -32,14 +32,18 @@ Output:
   Use extract_tags.py to convert to BED12/bigBed for visualization.
 
 Examples:
-  # Basic (BAM output)
-  fiberhmm-apply -i data.bam -m model.json -o output/
+  # Hia5 PacBio -- bundled model, no -m needed
+  fiberhmm-apply -i data.bam --enzyme hia5 --seq pacbio -o output/
 
-  # With QC stats
-  fiberhmm-apply -i data.bam -m model.json -o output/ --stats
+  # DddB Nanopore DAF-seq
+  fiberhmm-apply -i data.bam --enzyme dddb -o output/
 
-  # Multi-core processing
-  fiberhmm-apply -i data.bam -m model.json -o output/ -c 8
+  # DddA amplicons (two-pass: nuc pass then TF recaller)
+  fiberhmm-apply -i data.bam --enzyme ddda -o tmp/
+  fiberhmm-recall-tfs -i tmp/data_footprints.bam -o recalled.bam --enzyme ddda
+
+  # Override with a custom model
+  fiberhmm-apply -i data.bam -m custom.json -o output/ -c 8
 
   # Extract to bigBed for browser visualization
   fiberhmm-extract-tags -i output/data_footprints.bam --footprint --bigbed
@@ -51,10 +55,20 @@ Examples:
     # Required
     parser.add_argument('-i', '--input', required=True,
                         help='Input BAM file with modification calls (must be indexed)')
-    parser.add_argument('-m', '--model', required=True,
-                        help='Path to trained HMM model (.json, .npz, or .pickle)')
+    parser.add_argument('-m', '--model', default=None,
+                        help='Path to trained HMM model (.json, .npz, or .pickle). '
+                             'If omitted, the bundled model for --enzyme/--seq is used.')
     parser.add_argument('-o', '--outdir', required=True,
                         help='Output directory, or "-" to write BAM to stdout (for piping)')
+
+    # Enzyme / platform (bundled model selection)
+    from fiberhmm.models import SUPPORTED_ENZYMES as _ENZYMES
+    parser.add_argument('--enzyme', choices=_ENZYMES, default=None,
+                        help='Auto-select bundled model: hia5, dddb, or ddda. '
+                             'Use with --seq pacbio|nanopore for Hia5.')
+    parser.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
+                        help='Sequencing platform. Required for hia5 '
+                             '(pacbio or nanopore); ignored for dddb/ddda.')
 
     # Mode
     add_mode_args(parser, default=None)
@@ -142,9 +156,28 @@ def main():
     if not stdout_mode:
         os.makedirs(args.outdir, exist_ok=True)
 
+    # Resolve model path: explicit -m wins; else use bundled model for --enzyme
+    model_path = args.model
+    if model_path is None:
+        if args.enzyme is None:
+            print(
+                "error: one of --model or --enzyme must be provided.\n"
+                "  Use --enzyme hia5/dddb/ddda to pick a bundled model, or\n"
+                "  use --model /path/to/model.json for a custom model.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        from fiberhmm.models import get_model_path as _get_bundled
+        try:
+            model_path = _get_bundled(args.enzyme, tool='apply', seq=args.seq)
+        except (KeyError, FileNotFoundError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Using bundled model: {model_path}")
+
     # Load model with metadata
-    print(f"Loading model from {args.model}")
-    model, model_context_size, model_mode = load_model_with_metadata(args.model)
+    print(f"Loading model from {model_path}")
+    model, model_context_size, model_mode = load_model_with_metadata(model_path)
     print(f"Model loaded successfully")
     print(f"  Start probs: {model.startprob_}")
     print(f"  Transition matrix:\n{model.transmat_}")
@@ -153,8 +186,8 @@ def main():
     # ddda_nuc.json deliberately does NOT emit sub-nucleosomal TF calls;
     # users unaware of fiberhmm-recall-tfs will think their data just has
     # no TFs. Print a prominent notice (stderr so BAM streams stay clean).
-    _model_basename = os.path.basename(args.model).lower()
-    if 'ddda' in _model_basename:
+    _model_basename = os.path.basename(model_path).lower()
+    if 'ddda' in _model_basename or getattr(args, 'enzyme', None) == 'ddda':
         import sys as _sys
         print(
             "\n"
@@ -163,8 +196,7 @@ def main():
             "  This model calls NUCLEOSOMES only. To recover TF / Pol II\n"
             "  footprints, run the beta 2nd-pass recaller after this step:\n"
             "\n"
-            "    fiberhmm-recall-tfs -i <output.bam> -o <recalled.bam> \\\n"
-            "                        -m models/ddda_TF.json --enzyme ddda\n"
+            "    fiberhmm-recall-tfs -i <output.bam> -o <recalled.bam> --enzyme ddda\n"
             "\n"
             "  fiberhmm-recall-tfs is a beta feature, first in fiberhmm 2.6.0.\n"
             "------------------------------------------------------------------------\n",
@@ -300,7 +332,7 @@ def main():
     total_reads, reads_with_footprints = process_bam_for_footprints(
         input_bam=args.input,
         output_bam=output_bam,
-        model_or_path=args.model,
+        model_or_path=model_path,
         train_rids=train_rids,
         edge_trim=args.edge_trim,
         circular=args.circular,

@@ -24,15 +24,18 @@ recaller version (with proper LLR + edge-ambiguity scoring) replaces
 them in the ``tf+`` annotation.
 
 Examples:
-  # DddA amplicon BAM (two-pass workflow)
-  fiberhmm-apply -i input.bam -m models/ddda_nuc.json -o tmp/ --mode daf
+  # DddA amplicon BAM (two-pass workflow) -- bundled models, no -m needed
+  fiberhmm-apply -i input.bam --enzyme ddda -o tmp/
   fiberhmm-recall-tfs -i tmp/input_footprints.bam -o recalled.bam \\
-                       -m models/ddda_TF.json --enzyme ddda -c 8
+                       --enzyme ddda -c 8
 
-  # Streaming composition
-  fiberhmm-apply -i input.bam -m models/hia5_pacbio.json -o - | \\
-      fiberhmm-recall-tfs -i - -o recalled.bam -m models/hia5_pacbio.json \\
-                            --enzyme hia5 -c 8
+  # Hia5 streaming composition
+  fiberhmm-apply -i input.bam --enzyme hia5 -o - | \\
+      fiberhmm-recall-tfs -i - -o recalled.bam --enzyme hia5 -c 8
+
+  # Override with a custom model
+  fiberhmm-recall-tfs -i input.bam -o recalled.bam \\
+                       -m /path/to/custom.json --min-llr 4.0
 """
 import argparse
 import json
@@ -45,6 +48,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.model_io import load_model_with_metadata
+from fiberhmm.models import SUPPORTED_ENZYMES, get_model_path as _get_bundled_model
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
     HAS_NUMBA,
@@ -210,12 +214,17 @@ def parse_args():
     p.add_argument('-o', '--out-bam', required=True,
                    help='Output BAM with MA/AQ + refreshed legacy tags. '
                         'Use "-" for stdout (for piping to ft fire, samtools, etc).')
-    p.add_argument('-m', '--model', required=True,
-                   help='FiberHMM model JSON')
+    p.add_argument('-m', '--model', default=None,
+                   help='FiberHMM model JSON. If omitted, the bundled model '
+                        'for --enzyme/--seq is used automatically.')
     p.add_argument('--enzyme', choices=sorted(ENZYME_PRESETS.keys()),
                    default=None,
-                   help='Auto-pick min-llr + emission-uplift defaults '
+                   help='Enzyme preset: auto-selects the bundled model and '
+                        f'min-llr/emission-uplift defaults '
                         f'({", ".join(sorted(ENZYME_PRESETS))}).')
+    p.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
+                   help='Sequencing platform. Required for hia5 '
+                        '(pacbio or nanopore); ignored for dddb/ddda.')
     p.add_argument('--min-llr', type=float, default=None,
                    help='Override min LLR (nats). Default: enzyme preset.')
     p.add_argument('--min-opps', type=int, default=3,
@@ -273,6 +282,25 @@ def main():
         # Redirect informational prints to stderr so BAM stream on stdout stays clean
         sys.stdout = sys.stderr
 
+    # Resolve model path: explicit -m wins; else use bundled model for --enzyme
+    model_path = args.model
+    if model_path is None:
+        if args.enzyme is None:
+            print(
+                "error: one of --model or --enzyme must be provided.\n"
+                "  Use --enzyme hia5/dddb/ddda to pick a bundled model, or\n"
+                "  use --model /path/to/model.json for a custom model.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        from fiberhmm.models import get_model_path as _get_bundled
+        try:
+            model_path = _get_bundled(args.enzyme, tool='recall', seq=args.seq)
+        except (KeyError, FileNotFoundError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"[recall_tfs] using bundled model: {model_path}", file=sys.stderr)
+
     # Prominent beta banner: this feature is new, expect rough edges.
     # Mode line varies based on --downstream-compat.
     if args.downstream_compat:
@@ -316,9 +344,9 @@ def main():
     uplift = args.emission_uplift if args.emission_uplift is not None \
         else preset.get('emission_uplift', 1.0)
 
-    model, model_k, model_mode = load_model_with_metadata(args.model)
+    model, model_k, model_mode = load_model_with_metadata(model_path)
     if not model_mode or not model_k:
-        fb_mode, fb_k = _resolve_model_metadata(args.model)
+        fb_mode, fb_k = _resolve_model_metadata(model_path)
         model_mode = model_mode or fb_mode
         model_k = model_k or fb_k
     mode = args.mode or model_mode

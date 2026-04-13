@@ -91,6 +91,9 @@ py-modules = [
 [tool.setuptools.packages.find]
 include = ["fiberhmm*"]
 
+[tool.setuptools.package-data]
+"fiberhmm.models" = ["*.json", "legacy/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py", "bench_*.py"]
