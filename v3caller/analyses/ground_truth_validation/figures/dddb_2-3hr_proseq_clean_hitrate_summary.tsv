@@ -1,0 +1,13 @@
+bigwig	call_type	category	n_calls	n_hits_above_rand_p95	hit_rate_pct	fold_over_random	rand_p95_threshold
+GSM6454906_wt_naive_PRO_mean_F	v2_tf	shared	118179	23556	19.93	3.99	114.7415
+GSM6454906_wt_naive_PRO_mean_F	v2_tf	v2_only	19136	2643	13.81	2.76	114.7415
+GSM6454906_wt_naive_PRO_mean_F	v2_tf	weak	8789	1661	18.9	3.78	114.7415
+GSM6454906_wt_naive_PRO_mean_F	v3_tf	shared	155274	28130	18.12	3.62	114.7415
+GSM6454906_wt_naive_PRO_mean_F	v3_tf	v3_only	583396	75226	12.89	2.58	114.7415
+GSM6454906_wt_naive_PRO_mean_F	v3_tf	weak	90853	12187	13.41	2.68	114.7415
+GSM6454906_wt_naive_PRO_mean_R	v2_tf	shared	118179	21886	18.52	3.7	137.4724
+GSM6454906_wt_naive_PRO_mean_R	v2_tf	v2_only	19136	2959	15.46	3.09	137.4724
+GSM6454906_wt_naive_PRO_mean_R	v2_tf	weak	8789	1480	16.84	3.37	137.4724
+GSM6454906_wt_naive_PRO_mean_R	v3_tf	shared	155274	27342	17.61	3.52	137.4724
+GSM6454906_wt_naive_PRO_mean_R	v3_tf	v3_only	583396	69488	11.91	2.38	137.4724
+GSM6454906_wt_naive_PRO_mean_R	v3_tf	weak	90853	13388	14.74	2.95	137.4724

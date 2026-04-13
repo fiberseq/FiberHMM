@@ -733,6 +733,47 @@ state-duration prior was folding boundary TFs into nuc calls
 (avoiding the transition cost), erasing them. v3's atom-wise "find
 nucs then scan the sky for TF stars" architecture exposes them.
 
+### 10.3.6 Perturbation validation — Dl- DAF-seq at sna
+
+Dorsal (Dl) is the maternal NF-κB ortholog that activates ventral
+fate genes. In dl- DAF-seq (sna amplicon only, 3 timepoints), we
+predict:
+- sna (Dl target): transcription states should **drop** in Dl-
+- non-targets (eve, ftz): unchanged
+
+| Metric (at sna) | WT 2-3.5hr | Dl- 2.5-3.5hr | Δ |
+|---|---|---|---|
+| Accessible promoter | 11.8% | 13.2% | +1.4% |
+| Paused Pol II | 5.4% | 6.5% | +1.1% |
+| PIC | 14.1% | 18.4% | +4.4% |
+| Elong (fiberCNN 35-65 bp) | 68.0% | 65.3% | −2.7% |
+| **Hyperburst** | **15.9%** | **3.5%** | **−12.4% (−78%)** |
+
+| Metric (at sna) | WT 3.5-4.5hr | Dl- 3.5-4.5hr | Δ |
+|---|---|---|---|
+| Accessible | 12.7% | 17.2% | +4.5% |
+| Paused | 5.6% | 8.0% | +2.4% |
+| PIC | 14.4% | 19.9% | +5.4% |
+| Elong | 66.3% | 61.1% | −5.2% |
+| **Hyperburst** | **12.1%** | **3.5%** | **−8.6% (−71%)** |
+
+**Hyperburst is the state that responds most strongly to Dl loss**
+(~70-80% drop in the Dl target locus across both timepoints).
+Elongating barely moves — the fiberCNN 35-65 bp size-band
+heuristic fires on many small footprints that aren't transcription-
+dependent.
+
+This validates v3's hyperburst calls as genuinely measuring active
+transcription: the open-chromatin state requires the upstream
+activator.
+
+(eve/ftz show 0% in Dl- because the Dl- DAF-seq was sna-amplicon
+only — they weren't sampled.)
+
+Figures:
+- `ground_truth_validation/figures/dddb_wt_vs_dl_minus_2-3.5hr_dl_minus_validation.png`
+- `ground_truth_validation/figures/dddb_wt_vs_dl_minus_3.5-4.5hr_dl_minus_validation.png`
+
 ### 10.4 Validation plan (has ground truth)
 
 For the outside reviewer's prediction that v3 will align with
