@@ -517,6 +517,58 @@ Notes:
 
 ---
 
+## 8.5. Final resolution (end-of-review) — v3 is for DddA only
+
+After the outside review + validation work (§10 below), the answer
+to Goals 1 and 2 is clear but different from what I initially
+claimed:
+
+**Goal 1 (DddA)**: v3 is the right tool. HMM is mathematically
+doomed because DddA breathing (~15-20% per-opp) destroys the
+emission separation between nuc and linker states. v3's Poisson
++ per-context FP + penetration_fraction + size prior is the only
+viable architecture.
+
+**Goal 2 (DddB / Hia5 improvement)**: **v3 is NOT the answer.**
+The v2 HMM is better-suited for these enzymes at every Pol II-
+relevant task. V-plots centered on sna/eve/ftz TSS (`figures/
+hia5_tss_vplot_tq*.png`) show v2 produces clean position-specific
+bands (TSS+30 pause peak, nuc-dyad phasing) while v3 smears the
+same signal spatially because its Pass-1 atom boundaries are
+determined by individual hit locations, not learned transition
+priors. The earlier "v3 recovers 4× more Zld/GAF/Twi binding sites"
+finding is real but doesn't translate into fiberCNN-compatible
+position calls — the 4× extra calls have ~same per-call quality
+as v2 but at different algorithmic-idiosyncratic positions.
+
+### What v3 contributes on DddB / Hia5
+
+Nothing that v2 doesn't do better, except:
+- **Nuc-level overmerge fix**: v3 correctly splits v2's 14.9%
+  dinuc-fusion calls on DddB. If your analysis cares about
+  mononucleosome positioning or size distributions, v3 nucs beat
+  v2 nucs.
+- **Co-annotation in MA**: v3 output BAMs carry `fp_v2+` alongside
+  v3 nucs/tfs so downstream can pick per-analysis. Specifically:
+  - Use `fp_v2+` for paused/elongating Pol II, fiberCNN-style
+    state calling, anything HMM-calibrated.
+  - Use `nuc+` (v3) for nucleosome-level analyses.
+  - `tf+` (v3) carries the extra pioneer-factor footprints at
+    ChIP-nexus-validated sites, useful for discovery but not for
+    position-sensitive per-call analyses.
+
+### Practical recommendations
+
+- **DddA**: use v3 with tuned parameters (§10.2). This is the
+  production caller.
+- **DddB**: use v2 HMM output directly for everything position-
+  sensitive. Optionally run v3 on top for the nuc-split + `fp_v2+`
+  co-annotation.
+- **Hia5**: same as DddB.
+
+The rest of this document (§9, §10) captures the full analysis
+path that led to this conclusion.
+
 ## 9. Bottom-line asks for outside advice
 
 ### For Goal 1 (DddA caller)

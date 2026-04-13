@@ -2,32 +2,83 @@
 
 Spec: https://github.com/fiberseq/Molecular-annotation-spec
 
-We implement the subset we need: `nuc+QQ` and `msp+` annotation types
-on the forward strand. Coordinates in the tag string are 1-based
-closed (start, length) — our caller_v8 output is 0-based half-open
-query coords (ns = start, ns + nl = end_exclusive), so we add 1 to
-starts and keep lengths unchanged.
+Emitted annotation types and their quality encodings:
+  - nuc+QQQ: per-nuc (nq, lq, rq) = (core, left-edge, right-edge)
+  - msp+:    no quality
+  - tf+QQQ:  per-TF (tq, el, er) = (significance, left-edge, right-edge)
+  - fp_v2+:  v2 HMM footprint overlay, no quality
 
-Quality convention: the MA spec's `Q` modifier stores one linear
-0-255 value per annotation; `QQ` stores two. For nucleosomes we use
-`nuc+QQ` with:
-  - first value  = nq (core tightness, same as the legacy nq tag)
-  - second value = mq (merge quality, minimum Poisson-interval
-    center distance across internal gaps fused into this call;
-    255 = pure Pass-1 atom with no merges)
+Significance score (tq) encoding
+--------------------------------
 
-MSPs get `msp+` (no quality).
+  tq = clip(255 * -log10(P) / 3.0, 0, 255)
+
+Reversing:
+
+  -log10(P) = tq * 3 / 255
+  P         = 10 ** (-tq / 85)
+  confidence = 1 - P
+  phred_Q   = 10 * -log10(P) = tq * 30 / 255 = tq / 8.5
+
+Mapping table (approximate):
+
+  tq     |   P       | Confidence | Phred-Q
+  -------+-----------+------------+--------
+    30   | 0.44      |   56%      | 3.5
+    60   | 0.20      |   80%      | 7
+    85   | 0.10      |   90%      | 10
+   100   | 0.067     |   93%      | 12
+   150   | 0.017     |   98%      | 18
+   170   | 0.010     |   99%      | 20
+   200   | 0.004     | 99.6%      | 24
+   255   | 0.001     | 99.9%      | 30 (saturated)
+
+Mnemonic: every 85 tq points = 1 order of magnitude of P.
+
+Recommended thresholds:
+  - tq ≥ 80: general quality filter (~88% confidence) for TF calls
+    that should drive downstream state-calling like fiberCNN
+    paused/elongating Pol II detection.
+  - tq ≥ 170: high-confidence (99%) for publication-quality
+    per-call claims.
 
 This module is pure-Python and has no dependency on the Rust
-`molecular-annotation` package. Output is byte-identical to what
-that library would produce for the same inputs, so downstream
-tools parsing the official spec will handle our BAMs correctly.
+`molecular-annotation` package.
 """
 
 from __future__ import annotations
 
 import array
 from typing import Iterable, List, Sequence, Tuple
+
+
+# Scaling constant: tq = 255 * -log10(P) / TFP_MAX_NEG_LOG10
+# saturates at P = 10^-TFP_MAX_NEG_LOG10 (= P < 0.001 at 3.0)
+TFP_MAX_NEG_LOG10 = 3.0
+
+
+def tq_to_pvalue(tq: int) -> float:
+    """Inverse of the tq encoding. Returns P(footprint | null)."""
+    return 10 ** (-tq * TFP_MAX_NEG_LOG10 / 255)
+
+
+def tq_to_confidence(tq: int) -> float:
+    """Returns 1 - P, the confidence that this call is real."""
+    return 1 - tq_to_pvalue(tq)
+
+
+def tq_to_phred(tq: int) -> float:
+    """Returns the phred-scaled quality: Q = -10*log10(P).
+    At tq=85 → Q10 (P=0.1), tq=170 → Q20 (P=0.01), tq=255 → Q30."""
+    return tq * 10 * TFP_MAX_NEG_LOG10 / 255
+
+
+def pvalue_to_tq(p: float) -> int:
+    """Inverse: given a desired P-value, returns the tq threshold."""
+    import math
+    if p <= 0: return 255
+    if p >= 1: return 0
+    return max(0, min(255, int(round(255 * -math.log10(p) / TFP_MAX_NEG_LOG10))))
 
 
 def format_ma_tag(read_length: int,

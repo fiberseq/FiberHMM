@@ -46,7 +46,8 @@ from parse_ma_calls import parse_ma
 
 
 def load_bed(bed_path):
-    """Parse enhancer/anchor BED. Each row → (chrom, center, name, category)."""
+    """Parse enhancer/anchor BED. Each row → (chrom, center, name, category, start, end, strand).
+    center is the midpoint; strand may come from BED col 6."""
     entries = []
     with open(bed_path) as f:
         for line in f:
@@ -57,8 +58,9 @@ def load_bed(bed_path):
             end = int(parts[2])
             name = parts[3] if len(parts) > 3 else f'{chrom}:{start}'
             category = parts[4] if len(parts) > 4 else 'all'
+            strand = parts[5] if len(parts) > 5 else '+'
             center = (start + end) // 2
-            entries.append((chrom, center, name, category, start, end))
+            entries.append((chrom, center, name, category, start, end, strand))
     return entries
 
 
@@ -118,6 +120,9 @@ def main():
     ap.add_argument('--chipnexus', action='append', default=[],
                     help='optional ChIP-nexus bigwig to overlay as '
                          'metaprofile (repeatable)')
+    ap.add_argument('--min-tf-tq', type=int, default=0,
+                    help='only include v3 TFs with tq >= this. '
+                         'Lets you visualize high-confidence v3 subsets.')
     args = ap.parse_args()
     os.makedirs(os.path.dirname(args.out_prefix) or '.', exist_ok=True)
 
@@ -149,7 +154,9 @@ def main():
         bam = pysam.AlignmentFile(bam_path, 'rb', check_sq=False)
         for chrom, chrom_a_list in chrom_anchors.items():
             for anchor in chrom_a_list:
-                _, center, _, _, _, _ = anchor
+                _, center, _, _, _, _, strand = anchor
+                # flip sign for minus-strand genes so +x = downstream/gene body
+                sign = 1 if strand == '+' else -1
                 lo = center - W
                 hi = center + W + 1
                 try:
@@ -172,23 +179,50 @@ def main():
                         pr = project_footprint(qr_map, s, l)
                         if pr is None: continue
                         rs, re = pr
+                        rel_s = sign * (rs - center)
+                        rel_e = sign * (re - center)
+                        if sign < 0: rel_s, rel_e = rel_e, rel_s
                         track = 'v3_tf' if l <= args.tf_size_max else 'v3_nuc'
                         accumulate_vplot(counts[track],
-                                          rs - center, re - center, l, W, MS)
-                    for s, l in ma['tf']:
+                                          rel_s, rel_e, l, W, MS)
+                    # Extract tq per v3 TF so we can stratify
+                    from parse_ma_calls import split_aq
+                    aq = r.get_tag('AQ') if r.has_tag('AQ') else []
+                    aq_list = list(aq) if aq is not None else []
+                    # Walk raw annotations to assign tq per tf entry
+                    tf_with_tq = []
+                    idx = 0
+                    import sys
+                    from parse_ma_calls import parse_ma as _pm
+                    parsed = _pm(r.get_tag('MA'))
+                    for name, strand, qspec, intervals in parsed['raw']:
+                        n_q = len(qspec)
+                        for s, l in intervals:
+                            vals = aq_list[idx:idx + n_q]
+                            idx += n_q
+                            if name == 'tf' and n_q >= 1:
+                                tf_with_tq.append((s, l, int(vals[0])))
+                    for s, l, tq in tf_with_tq:
+                        if tq < args.min_tf_tq: continue
                         pr = project_footprint(qr_map, s, l)
                         if pr is None: continue
                         rs, re = pr
+                        rel_s = sign * (rs - center)
+                        rel_e = sign * (re - center)
+                        if sign < 0: rel_s, rel_e = rel_e, rel_s
                         track = 'v3_tf' if l <= args.tf_size_max else 'v3_nuc'
                         accumulate_vplot(counts[track],
-                                          rs - center, re - center, l, W, MS)
+                                          rel_s, rel_e, l, W, MS)
                     for s, l in ma['fp_v2']:
                         pr = project_footprint(qr_map, s, l)
                         if pr is None: continue
                         rs, re = pr
+                        rel_s = sign * (rs - center)
+                        rel_e = sign * (re - center)
+                        if sign < 0: rel_s, rel_e = rel_e, rel_s
                         track = 'v2_tf' if l <= args.tf_size_max else 'v2_nuc'
                         accumulate_vplot(counts[track],
-                                          rs - center, re - center, l, W, MS)
+                                          rel_s, rel_e, l, W, MS)
         bam.close()
 
     print(f'Processed {n_reads:,} reads, {n_overlap:,} with MA tags')
@@ -210,7 +244,8 @@ def main():
             bw = pyBigWig.open(bw_path)
             profile = np.zeros(2 * W + 1)
             n_used = 0
-            for chrom, center, *_ in anchors:
+            for anchor in anchors:
+                chrom, center, name, cat, start, end, strand = anchor
                 try:
                     vals = bw.values(chrom, center - W, center + W + 1,
                                       numpy=True)
@@ -219,6 +254,8 @@ def main():
                 if vals is None or np.all(np.isnan(vals)):
                     continue
                 vals = np.nan_to_num(vals, nan=0.0)
+                if strand == '-':
+                    vals = vals[::-1]  # flip so +x is downstream
                 if len(vals) == 2 * W + 1:
                     profile += vals
                     n_used += 1
