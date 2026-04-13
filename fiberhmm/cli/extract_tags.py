@@ -2,6 +2,15 @@
 """
 extract_tags.py - Extract tags from FiberHMM-tagged BAMs to BED12/bigBed.
 
+Supported annotation types:
+  - footprint: Nucleosome footprints (ns/nl) -> BED12 (one line per read)
+  - msp: Methylase-sensitive patches (as/al) -> BED12 (one line per read)
+  - tf:  TF/Pol II footprints (MA/AQ tf+QQQ) -> BED12 (one line per read).
+         Quality filter: --min-tq (default 50 = LLR >= 5 nats,
+         matches fiberhmm-recall-tfs's default emission floor).
+  - m6a: m6A modification positions (MM/ML) -> BED12 (one line per read)
+  - m5c: 5mC modification positions (for DAF-seq) -> BED12
+
 Extracts various tag types from tagged BAM files using region-parallel processing:
   - footprint: Nucleosome footprints (ns/nl tags) -> BED12 (one line per read)
   - msp: Methylase-sensitive patches (as/al tags) -> BED12 (one line per read)
@@ -86,6 +95,7 @@ def _extract_region_worker(args) -> Tuple[str, int, int]:
 
         params = _worker_params
         extract_type = params['extract_type']
+        min_tq = int(params.get('min_tq', 50))
         min_mapq = params['min_mapq']
         prob_threshold = params['prob_threshold']
         with_scores = params['with_scores']
@@ -120,6 +130,8 @@ def _extract_region_worker(args) -> Tuple[str, int, int]:
                         n_features += _extract_footprints(read, bed_out, with_scores)
                     elif extract_type == 'msp':
                         n_features += _extract_msps(read, bed_out, with_scores)
+                    elif extract_type == 'tf':
+                        n_features += _extract_tfs(read, bed_out, with_scores, min_tq)
                     elif extract_type == 'm6a':
                         n_features += _extract_m6a(read, bed_out, prob_threshold)
                     elif extract_type == 'm5c':
@@ -201,6 +213,97 @@ def _extract_footprints(read, bed_out, with_scores: bool) -> int:
     # BED12: chrom, chromStart, chromEnd, name, score, strand, thickStart, thickEnd, itemRgb, blockCount, blockSizes, blockStarts
     bed_out.write(f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}\n")
 
+    return len(blocks)
+
+
+def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int) -> int:
+    """Extract TF footprints from MA/AQ tags (tf+QQQ annotations) as BED12.
+
+    Reads the spec-compliant MA/AQ tags written by ``fiberhmm-recall-tfs``
+    in default (spec) mode. One BED12 row per read with all TF calls as
+    blocks; BED score = mean tq across the read's TFs.
+
+    Filters out calls with ``tq < min_tq``. Default ``min_tq = 50`` (LLR
+    >= 5 nats) matches ``fiberhmm-recall-tfs``'s default emission floor;
+    set to 0 to extract every call, or 100+ for high-confidence only.
+
+    Returns the number of TF blocks written.
+    """
+    from fiberhmm.io.ma_tags import parse_ma_tag, parse_aq_array
+
+    try:
+        ma_str = read.get_tag('MA')
+    except KeyError:
+        return 0
+    try:
+        aq = list(read.get_tag('AQ'))
+    except KeyError:
+        aq = []
+
+    try:
+        parsed = parse_ma_tag(ma_str)
+    except ValueError:
+        return 0
+
+    # Walk raw_types to find tf+ annotations and their quality bytes
+    qual_specs = [rt[2] for rt in parsed['raw_types']]
+    n_per_type = [len(rt[3]) for rt in parsed['raw_types']]
+    per_annotation = parse_aq_array(aq, qual_specs, n_per_type)
+
+    # Map annotations back to their (name, intervals) groups
+    tfs_with_quality = []  # (start_0based, length, tq)
+    idx = 0
+    for name, _strand, qspec, intervals in parsed['raw_types']:
+        for i, (s, l) in enumerate(intervals):
+            quals = per_annotation[idx]
+            idx += 1
+            if name != 'tf':
+                continue
+            tq = int(quals[0]) if len(quals) >= 1 else 0
+            if tq < min_tq:
+                continue
+            tfs_with_quality.append((s, l, tq))
+
+    if not tfs_with_quality:
+        return 0
+
+    ref_name = read.reference_name
+    strand = '-' if read.is_reverse else '+'
+    read_id = read.query_name
+
+    # Map query coords -> ref coords
+    query_to_ref = {}
+    for qp, rp in read.get_aligned_pairs(matches_only=False):
+        if qp is not None and rp is not None:
+            query_to_ref[qp] = rp
+
+    blocks = []  # (ref_start, ref_end, tq)
+    for qstart, length, tq in tfs_with_quality:
+        qend = qstart + length
+        ref_start = query_to_ref.get(qstart)
+        ref_end = query_to_ref.get(qend - 1)
+        if ref_start is None or ref_end is None:
+            continue
+        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
+        blocks.append((ref_start, ref_end, tq))
+
+    if not blocks:
+        return 0
+
+    blocks.sort(key=lambda x: x[0])
+
+    chrom_start = blocks[0][0]
+    chrom_end = blocks[-1][1]
+    block_count = len(blocks)
+    block_sizes = ','.join(str(e - s) for s, e, _ in blocks)
+    block_starts = ','.join(str(s - chrom_start) for s, _, _ in blocks)
+    mean_score = int(sum(tq for _, _, tq in blocks) / len(blocks)) if with_scores else 0
+
+    # BED12: chrom, chromStart, chromEnd, name, score, strand, thickStart, thickEnd, itemRgb, blockCount, blockSizes, blockStarts
+    bed_out.write(
+        f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
+        f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}\n"
+    )
     return len(blocks)
 
 
@@ -391,6 +494,7 @@ def extract_tags_parallel(input_bam: str, output_bed: str, extract_type: str,
                           n_cores: int = 1, region_size: int = 10_000_000,
                           min_mapq: int = 0, prob_threshold: int = 125,
                           with_scores: bool = True,
+                          min_tq: int = 50,
                           skip_scaffolds: bool = False,
                           chroms: Optional[Set[str]] = None) -> Tuple[int, int]:
     """
@@ -418,6 +522,7 @@ def extract_tags_parallel(input_bam: str, output_bed: str, extract_type: str,
             'min_mapq': min_mapq,
             'prob_threshold': prob_threshold,
             'with_scores': with_scores,
+            'min_tq': min_tq,
         }
 
         # Work items
@@ -554,6 +659,16 @@ Examples:
     # Tag types (default: all)
     parser.add_argument('--footprint', action='store_true', help='Extract footprints (ns/nl tags)')
     parser.add_argument('--msp', action='store_true', help='Extract MSPs (as/al tags)')
+    parser.add_argument('--tf', action='store_true',
+                        help='Extract TF/Pol II footprints from MA/AQ tag (tf+QQQ). '
+                             'Requires a BAM produced by fiberhmm-recall-tfs in '
+                             'default (spec) mode. See --min-tq for the quality floor.')
+    parser.add_argument('--min-tq', type=int, default=50,
+                        help='Minimum TF quality (tq) to extract. 0-255 scale where '
+                             'tq = round(LLR * 10). Default 50 (LLR >= 5 nats, ~148:1 '
+                             'likelihood ratio) matches fiberhmm-recall-tfs\'s default '
+                             'emission floor. Set to 0 for every call, 100+ for '
+                             'high-confidence only.')
     parser.add_argument('--m6a', action='store_true', help='Extract m6A positions')
     parser.add_argument('--m5c', action='store_true', help='Extract 5mC positions (DAF-seq)')
     parser.add_argument('--all', action='store_true', help='Extract all tag types (default if none specified)')
@@ -590,13 +705,16 @@ Examples:
 
     # Determine what to extract (default: all)
     extract_types = []
-    if args.all or not (args.footprint or args.msp or args.m6a or args.m5c):
-        extract_types = ['footprint', 'msp', 'm6a', 'm5c']
+    any_selected = args.footprint or args.msp or args.tf or args.m6a or args.m5c
+    if args.all or not any_selected:
+        extract_types = ['footprint', 'msp', 'tf', 'm6a', 'm5c']
     else:
         if args.footprint:
             extract_types.append('footprint')
         if args.msp:
             extract_types.append('msp')
+        if args.tf:
+            extract_types.append('tf')
         if args.m6a:
             extract_types.append('m6a')
         if args.m5c:
@@ -641,6 +759,7 @@ Examples:
             min_mapq=args.min_mapq,
             prob_threshold=args.prob_threshold,
             with_scores=not args.no_scores,
+            min_tq=args.min_tq,
             skip_scaffolds=args.skip_scaffolds,
             chroms=chroms
         )
