@@ -566,6 +566,27 @@ Nothing that v2 doesn't do better, except:
   co-annotation.
 - **Hia5**: same as DddB.
 
+### Possible supplementary role for v3 on DddB / Hia5
+
+The ChIP-nexus validation (§10.3.5) showed v3's "extra" TF calls
+(90% of which have no v2 partner) ARE enriched at real pioneer-
+factor binding sites at the same per-call rate as v2 (~5× random
+background for Zld/GAF/Twi). So v3's low-confidence TF calls are
+not noise — they're real but at algorithmically-different positions
+than v2 picks.
+
+That makes v3 a potentially useful **supplementary TF-discovery
+pass** on top of v2 for:
+- Analyses that want higher recall on pioneer-factor binding
+- Motif enrichment studies where the full pool of v3 TFs adds
+  power
+- "Novel binding events v2 HMM folded into its nucs" analyses
+
+For such use: filter v3 TFs to tq ≥ 40-60 (removes the lowest-
+confidence calls), intersect with v2 to find the v3-only subset,
+and treat as candidate low-confidence TFs. Not for position-
+sensitive state calling.
+
 The rest of this document (§9, §10) captures the full analysis
 path that led to this conclusion.
 
