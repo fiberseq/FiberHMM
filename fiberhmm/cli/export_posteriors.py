@@ -723,11 +723,19 @@ def main():
     )
 
     parser.add_argument('-i', '--input', required=True, help='Input BAM file')
-    parser.add_argument('-m', '--model', required=True, help='FiberHMM model file')
+    parser.add_argument('-m', '--model', default=None,
+                       help='FiberHMM model file. If omitted, uses the bundled model '
+                            'for --enzyme/--seq.')
     parser.add_argument('-o', '--output', required=True,
                        help='Output file (.tsv.gz for TSV, .h5/.hdf5 for HDF5)')
     parser.add_argument('--format', choices=['auto', 'hdf5', 'tsv'], default='auto',
                        help="Output format (default: auto-detect from extension)")
+
+    from fiberhmm.models import SUPPORTED_ENZYMES as _ENZYMES
+    parser.add_argument('--enzyme', choices=_ENZYMES, default=None,
+                       help='Auto-select bundled model: hia5, dddb, or ddda.')
+    parser.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
+                       help='Sequencing platform. Required for hia5; ignored for dddb/ddda.')
 
     add_mode_args(parser, required=False)
     add_edge_trim_args(parser, default=100)
@@ -741,11 +749,22 @@ def main():
 
     args = parser.parse_args()
 
+    model_path = args.model
+    if model_path is None:
+        if args.enzyme is None:
+            parser.error("one of --model or --enzyme must be provided.")
+        from fiberhmm.models import get_model_path as _get_bundled
+        try:
+            model_path = _get_bundled(args.enzyme, tool='apply', seq=args.seq)
+        except (KeyError, FileNotFoundError) as e:
+            parser.error(str(e))
+        print(f"Using bundled model: {model_path}")
+
     chroms = set(args.chroms) if args.chroms else None
 
     export_posteriors(
         input_bam=args.input,
-        model_path=args.model,
+        model_path=model_path,
         output_path=args.output,
         format=args.format,
         chroms=chroms,

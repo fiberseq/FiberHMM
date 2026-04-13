@@ -565,10 +565,13 @@ Export per-position HMM posterior probabilities for downstream analysis (e.g., C
 
 ```bash
 # Export to gzipped TSV (no extra deps)
-fiberhmm-posteriors -i experiment.bam -m model.json -o posteriors.tsv.gz -c 4
+fiberhmm-posteriors -i experiment.bam --enzyme hia5 --seq pacbio -o posteriors.tsv.gz -c 4
 
 # Export to HDF5 (requires: pip install h5py)
-fiberhmm-posteriors -i experiment.bam -m model.json -o posteriors.h5 -c 4
+fiberhmm-posteriors -i experiment.bam --enzyme hia5 --seq pacbio -o posteriors.h5 -c 4
+
+# Custom model override
+fiberhmm-posteriors -i experiment.bam -m custom.json -o posteriors.tsv.gz -c 4
 ```
 
 ### fiberhmm-utils
