@@ -12,7 +12,7 @@ FiberHMM identifies protected regions (footprints) and accessible regions (methy
 - **Streaming pipeline** -- scales linearly with cores; supports stdin/stdout piping for composable workflows
 - **Multi-platform** -- supports PacBio fiber-seq, Nanopore fiber-seq, and DAF-seq
 - **DAF-seq preprocessing** -- `fiberhmm-daf-encode` converts plain aligned BAMs to IUPAC R/Y encoded BAMs
-- **TF footprint recaller** -- `fiberhmm-recall-tfs` runs an LLR-based 2nd pass on top of the HMM output to resolve sub-nucleosomal TF/Pol II footprints with proper per-context scoring; spec-compliant `MA`/`AQ` tags
+- **TF footprint recaller (BETA)** -- `fiberhmm-recall-tfs` runs an LLR-based 2nd pass on top of the HMM output to resolve sub-nucleosomal TF/Pol II footprints with proper per-context scoring. Output follows the [fiberseq Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec) (`MA`/`AQ` tags with `tf+QQQ` entries). Beta: defaults validated on Hia5 PacBio, DddB DAF, DddA amplicons; FiberBrowser support shipping in the next release.
 - **Legacy model support** -- loads old hmmlearn-trained pickle/NPZ models seamlessly
 
 ## Installation
@@ -94,7 +94,13 @@ Or pass the reference FASTA directly to `fiberhmm-daf-encode` (slower):
 fiberhmm-daf-encode -i aligned.bam -o encoded.bam --reference ref.fa
 ```
 
-### Recall TF/Pol II footprints
+### Recall TF/Pol II footprints (BETA)
+
+> **Beta feature (new in fiberhmm 2.6.0).** The algorithm, tag schema, and
+> per-enzyme defaults are stable, but this is a newer code path than the
+> core `fiberhmm-apply`. Validated on Hia5 PacBio embryo, DddB DAF
+> time-course, and DddA amplicons. Please file issues if you hit edge
+> cases.
 
 After `fiberhmm-apply` produces nucleosome and MSP calls, run the TF
 recaller to resolve sub-nucleosomal footprints with proper LLR scoring
@@ -294,7 +300,17 @@ fiberhmm-extract -i output/sample_footprints.bam --footprint
 fiberhmm-extract -i output/sample_footprints.bam --keep-bed
 ```
 
-### fiberhmm-recall-tfs
+### fiberhmm-recall-tfs (BETA)
+
+> **Beta feature.** First shipped in fiberhmm 2.6.0. Algorithm and tag
+> schema are stable; defaults are validated on Hia5 PacBio, DddB DAF,
+> and DddA amplicons.
+>
+> Tag output follows the [fiberseq Molecular-annotation
+> spec](https://github.com/fiberseq/Molecular-annotation-spec). FiberBrowser
+> support for the `tf+QQQ` annotation type is shipping in the next
+> release. File issues at
+> https://github.com/fiberseq/FiberHMM/issues
 
 LLR-based TF footprint recaller. Runs as an optional second pass on a BAM
 already tagged by `fiberhmm-apply`. The HMM is excellent at calling
@@ -304,6 +320,10 @@ MSP/short-nuc tracks. The recaller scans those regions with a per-context
 log-likelihood ratio test using the **same emission table the HMM was
 trained with**, and emits sub-nucleosomal calls with proper statistical
 scoring + boundary-ambiguity quality bytes.
+
+For DddA users this pass is **required** (not optional): the shipped
+`ddda_nuc.json` model deliberately does not emit TF calls. Running
+`fiberhmm-apply` with any DddA model prints a reminder about this step.
 
 ```bash
 fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m model.json --enzyme hia5
@@ -319,7 +339,8 @@ fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m model.json --enzyme hia5
 | `--min-opps` | 3 | Min informative target positions per call |
 | `--emission-uplift` | 1.0 | Power transform on emission probabilities. Rarely needed -- use a pre-uplifted model file (e.g. `ddda_TF.json`) instead. |
 | `--unify-threshold` | 90 | v2 footprints with `nl < this` may be demoted to `tf+`; ≥ this stay as nucleosomes |
-| `--no-legacy-tags` | off | Skip refreshed `ns/nl/as/al` -- emit only `MA`/`AQ` |
+| `--no-legacy-tags` | off | Skip refreshed `ns/nl/as/al` -- emit only `MA`/`AQ` (spec mode) |
+| `--downstream-compat` | off | **Downstream-compat mode**: write TF calls into legacy `ns/nl` alongside nucleosomes; skip `MA`/`AQ` entirely. Use for tools that don't speak the Molecular-annotation spec. |
 | `-c/--cores` | 1 | Worker processes. 0 = auto-detect |
 | `--chunk-size` | 256 | Reads per worker chunk |
 | `--io-threads` | 4 | htslib BAM compression threads |
@@ -331,6 +352,52 @@ fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m model.json --enzyme hia5
 available (`pip install numba`) and parallelizes per-read work across
 `--cores` workers. Typical throughput: ~5k reads/sec single-core with
 JIT; ~15k reads/sec with 4 cores (scaling is I/O bound above that).
+
+#### Output modes: spec (default) vs downstream-compat
+
+The recaller supports two mutually-exclusive output modes. Pick based on
+what your downstream tooling can read.
+
+**Spec mode (default)** -- write `MA`/`AQ` tags per the
+[fiberseq Molecular-annotation
+spec](https://github.com/fiberseq/Molecular-annotation-spec):
+
+```bash
+fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m model.json --enzyme hia5
+```
+
+- `MA`/`AQ` tags carry `nuc+Q`, `msp+`, `tf+QQQ` annotations with full
+  LLR + edge-ambiguity scoring.
+- Legacy `ns`/`nl` is also refreshed, but contains **nucleosomes only** --
+  TF calls live exclusively in `MA`/`AQ`.
+- Required tooling: an MA/AQ-aware consumer (FiberBrowser ≥ the release
+  that ships alongside fiberhmm 2.6.0; future fibertools-rs). Tools that
+  only read `ns`/`nl` will NOT see TF calls in this mode -- they appear
+  blind to the sub-nucleosomal track.
+- Recommended if you are the primary author of your downstream pipeline
+  and can update the reader.
+
+**Downstream-compat mode** -- put TF calls into legacy `ns`/`nl` alongside
+nucleosomes, no `MA`/`AQ` written:
+
+```bash
+fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m model.json --enzyme hia5 \
+                    --downstream-compat
+```
+
+- Legacy `ns`/`nl` contains **all footprints** (nucleosomes + TFs), sorted
+  by start position. Entries < `--unify-threshold` (default 90 bp) are
+  the TF calls; entries ≥ that threshold are nucleosomes. Downstream
+  tools filter by size.
+- `MA`/`AQ` tags are NOT written. Any pre-existing `MA`/`AQ` on the input
+  is stripped so consumers that check both don't see a stale view.
+- Per-TF quality (tq, el, er) is **lost** in this mode -- only positions
+  and lengths are preserved.
+- Recommended when your downstream pipeline (fibertools-rs, custom
+  scripts, older FiberBrowser) reads only `ns`/`nl`.
+
+The runtime banner makes the current mode explicit. Switching modes is a
+pure re-run of the recaller on the same HMM-tagged input BAM.
 
 #### Per-enzyme presets
 
@@ -462,6 +529,11 @@ fiberhmm-apply -i input.bam -m models/hia5_pacbio.json -o - -c 8 | \
     fiberhmm-recall-tfs -i - -o - \
                         -m models/hia5_pacbio.json --enzyme hia5 -c 8 | \
     ft fire - - | samtools sort -o output.bam && samtools index output.bam
+
+# Downstream-compat mode for tools that only read ns/nl
+fiberhmm-recall-tfs -i tagged.bam -o recalled.bam \
+                    -m models/hia5_pacbio.json --enzyme hia5 -c 8 \
+                    --downstream-compat
 ```
 
 For DddA, the recall pass is **required** (the nucleosome model

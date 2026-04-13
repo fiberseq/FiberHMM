@@ -149,6 +149,28 @@ def main():
     print(f"  Start probs: {model.startprob_}")
     print(f"  Transition matrix:\n{model.transmat_}")
 
+    # Surface the DddA two-pass workflow whenever a DddA model is detected.
+    # ddda_nuc.json deliberately does NOT emit sub-nucleosomal TF calls;
+    # users unaware of fiberhmm-recall-tfs will think their data just has
+    # no TFs. Print a prominent notice (stderr so BAM streams stay clean).
+    _model_basename = os.path.basename(args.model).lower()
+    if 'ddda' in _model_basename:
+        import sys as _sys
+        print(
+            "\n"
+            "------------------------------------------------------------------------\n"
+            "  NOTE: DddA model detected.\n"
+            "  This model calls NUCLEOSOMES only. To recover TF / Pol II\n"
+            "  footprints, run the beta 2nd-pass recaller after this step:\n"
+            "\n"
+            "    fiberhmm-recall-tfs -i <output.bam> -o <recalled.bam> \\\n"
+            "                        -m models/ddda_TF.json --enzyme ddda\n"
+            "\n"
+            "  fiberhmm-recall-tfs is a beta feature, first in fiberhmm 2.6.0.\n"
+            "------------------------------------------------------------------------\n",
+            file=_sys.stderr,
+        )
+
     # Show optimization status
     from fiberhmm.core.hmm import HAS_NUMBA
     if HAS_NUMBA:

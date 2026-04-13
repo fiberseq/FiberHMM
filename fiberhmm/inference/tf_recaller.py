@@ -467,13 +467,41 @@ def write_ma_tags(read, read_length: int,
                   kept_nucs: Sequence[Tuple[int, int]],
                   msps: Sequence[Tuple[int, int]],
                   nq_for_kept_nucs: Optional[Sequence[int]] = None,
-                  also_write_legacy: bool = True) -> None:
-    """Set MA + AQ tags on the read in place.
+                  also_write_legacy: bool = True,
+                  downstream_compat: bool = False) -> None:
+    """Set MA/AQ (and optionally legacy ns/nl/as/al) tags on the read in place.
 
-    If ``also_write_legacy=True``, also rewrite the legacy ns/nl/as/al
-    tags so that older consumers see the unified call set.
+    Three output modes:
+
+    - **Default** (``also_write_legacy=True, downstream_compat=False``):
+      Write MA/AQ per the Molecular-annotation spec. Also refresh legacy
+      ns/nl/as/al to reflect the unified call set (v2 short-nucs demoted
+      to tf+ in MA are removed from ns/nl). TF calls live ONLY in
+      MA/AQ. This is the preferred output for tools that understand the
+      spec (FiberBrowser, future fibertools-rs releases).
+
+    - ``downstream_compat=True``: **Skip MA/AQ entirely**. Write TF calls
+      INTO the legacy ns/nl tag alongside nucleosomes, with entries
+      sorted by start position. Any tool that reads ns/nl (legacy
+      fibertools-rs, custom scripts) will see the full call set as
+      "footprints" with a mix of sizes. No TF-specific scoring is
+      preserved -- only positions and lengths. Use this only when you
+      need to feed older downstream tools.
+
+    - ``also_write_legacy=False``: Write MA/AQ only; leave existing
+      ns/nl/as/al in place (they will be stale vs. the unified set but
+      preserved unchanged for reference).
+
+    ``downstream_compat=True`` and ``also_write_legacy=False`` are mutually
+    exclusive; compat mode always writes the legacy track.
     """
     import array as pyarray
+
+    if downstream_compat and not also_write_legacy:
+        raise ValueError(
+            "downstream_compat=True requires also_write_legacy=True "
+            "(compat mode writes TF calls into the legacy ns/nl track)."
+        )
 
     # Default nq for kept nucs to 0 (sentinel for "unverified") if not provided.
     nq_values = list(nq_for_kept_nucs) if nq_for_kept_nucs is not None \
@@ -486,26 +514,44 @@ def write_ma_tags(read, read_length: int,
     el_vals = [ambiguity_to_edge(c.left_ambiguity) for c in tf_calls]
     er_vals = [ambiguity_to_edge(c.right_ambiguity) for c in tf_calls]
 
-    ma = format_ma_tag(
-        read_length=read_length,
-        nuc_intervals=kept_nucs,
-        msp_intervals=msps,
-        tf_intervals=tf_intervals,
-    )
-    aq = format_aq_array(
-        nq_values=nq_values,
-        tf_q_values=tq_vals,
-        tf_lq_values=el_vals,
-        tf_rq_values=er_vals,
-    )
-    read.set_tag('MA', ma, value_type='Z')
-    read.set_tag('AQ', aq)
+    if not downstream_compat:
+        # Spec mode: write MA + AQ
+        ma = format_ma_tag(
+            read_length=read_length,
+            nuc_intervals=kept_nucs,
+            msp_intervals=msps,
+            tf_intervals=tf_intervals,
+        )
+        aq = format_aq_array(
+            nq_values=nq_values,
+            tf_q_values=tq_vals,
+            tf_lq_values=el_vals,
+            tf_rq_values=er_vals,
+        )
+        read.set_tag('MA', ma, value_type='Z')
+        read.set_tag('AQ', aq)
+    else:
+        # Compat mode: strip any stale MA/AQ so consumers that see both
+        # tags don't get out-of-sync views.
+        for tag in ('MA', 'AQ'):
+            if read.has_tag(tag):
+                try: read.set_tag(tag, None)
+                except Exception: pass
 
     if also_write_legacy:
-        ns = [s for s, l in kept_nucs]
-        nl = [l for s, l in kept_nucs]
-        a_s = [s for s, l in msps]
-        a_l = [l for s, l in msps]
+        # Build the ns/nl track. In default mode it's nucleosomes only.
+        # In downstream_compat mode, TF calls are merged in, sorted by start.
+        if downstream_compat and tf_intervals:
+            combined = list(kept_nucs) + list(tf_intervals)
+            combined.sort(key=lambda t: (int(t[0]), int(t[1])))
+            ns = [int(s) for s, _ in combined]
+            nl = [int(l) for _, l in combined]
+        else:
+            ns = [int(s) for s, _ in kept_nucs]
+            nl = [int(l) for _, l in kept_nucs]
+        a_s = [int(s) for s, _ in msps]
+        a_l = [int(l) for _, l in msps]
+
         if ns:
             read.set_tag('ns', pyarray.array('I', ns))
             read.set_tag('nl', pyarray.array('I', nl))

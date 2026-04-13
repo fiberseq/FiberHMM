@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""fiberhmm-recall-tfs CLI -- LLR-based TF footprint recaller.
+"""fiberhmm-recall-tfs CLI  --  [BETA]  LLR-based TF footprint recaller.
+
+*** BETA FEATURE ***
+This tool ships as beta: the algorithm, tag schema, and per-enzyme
+defaults are stable enough to use, but downstream integrations (fibertools,
+FiberBrowser) may still be catching up and calibration outside the
+validated enzymes (Hia5 PacBio, DddB DAF, DddA amplicons) has not been
+exhaustively tested. Please report surprises on the FiberHMM issue tracker.
 
 Runs as a 2nd pass on a BAM already tagged by ``fiberhmm-apply``.
 Writes spec-compliant ``MA``/``AQ`` Molecular-annotation tags
@@ -57,7 +64,7 @@ _WORKER = {}
 
 def _worker_init(llr_hit, llr_miss, mode, k,
                  min_llr, min_opps, unify_threshold,
-                 also_write_legacy, header_text):
+                 also_write_legacy, downstream_compat, header_text):
     """Set per-process globals once per worker."""
     _WORKER['llr_hit'] = llr_hit
     _WORKER['llr_miss'] = llr_miss
@@ -67,6 +74,7 @@ def _worker_init(llr_hit, llr_miss, mode, k,
     _WORKER['min_opps'] = min_opps
     _WORKER['unify_threshold'] = unify_threshold
     _WORKER['also_write_legacy'] = also_write_legacy
+    _WORKER['downstream_compat'] = downstream_compat
     _WORKER['header'] = pysam.AlignmentHeader.from_text(header_text)
 
 
@@ -118,6 +126,7 @@ def _process_record(record_str):
         msps=msps,
         nq_for_kept_nucs=nq_for_kept,
         also_write_legacy=_WORKER['also_write_legacy'],
+        downstream_compat=_WORKER['downstream_compat'],
     )
     return read.to_string(), stats
 
@@ -137,10 +146,11 @@ def _process_chunk(records):
 def _single_thread_loop(bam_in, bam_out, header_text,
                        llr_hit, llr_miss, mode, k,
                        min_llr, min_opps, unify_threshold,
-                       also_write_legacy, max_reads):
+                       also_write_legacy, downstream_compat, max_reads):
     """Single-threaded fallback path (also used when cores=1)."""
     _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps,
-                 unify_threshold, also_write_legacy, header_text)
+                 unify_threshold, also_write_legacy, downstream_compat,
+                 header_text)
     n_reads = n_v2 = n_tf = n_demoted = 0
     for read in bam_in:
         if max_reads and n_reads >= max_reads:
@@ -156,7 +166,8 @@ def _single_thread_loop(bam_in, bam_out, header_text,
 def _parallel_loop(bam_in, bam_out, header_text,
                    llr_hit, llr_miss, mode, k,
                    min_llr, min_opps, unify_threshold,
-                   also_write_legacy, max_reads, n_cores, chunk_size):
+                   also_write_legacy, downstream_compat,
+                   max_reads, n_cores, chunk_size):
     """Multi-core path using multiprocessing.Pool.imap (preserves order)."""
     def _chunk_iter():
         buf = []
@@ -177,7 +188,8 @@ def _parallel_loop(bam_in, bam_out, header_text,
         processes=n_cores,
         initializer=_worker_init,
         initargs=(llr_hit, llr_miss, mode, k, min_llr, min_opps,
-                  unify_threshold, also_write_legacy, header_text),
+                  unify_threshold, also_write_legacy, downstream_compat,
+                  header_text),
     ) as pool:
         for out_lines, stats in pool.imap(_process_chunk, _chunk_iter()):
             for line in out_lines:
@@ -217,6 +229,13 @@ def parse_args():
                         'to tf+ if overlapped by a recaller call (default 90)')
     p.add_argument('--no-legacy-tags', action='store_true',
                    help='Skip refreshed ns/nl/as/al -- emit only MA/AQ.')
+    p.add_argument('--downstream-compat', action='store_true',
+                   help='Downstream-compatibility mode: skip MA/AQ entirely '
+                        'and write TF calls INTO the legacy ns/nl tag '
+                        'alongside nucleosomes (sorted by start). Use for '
+                        'older tools that do not understand the '
+                        'Molecular-annotation spec. Loses per-TF quality '
+                        'scoring (tq/el/er) -- positions and lengths only.')
     p.add_argument('-c', '--cores', type=int, default=1,
                    help='Worker processes. 0 = auto-detect (default 1).')
     p.add_argument('--chunk-size', type=int, default=256,
@@ -253,6 +272,37 @@ def main():
     if stdout_mode:
         # Redirect informational prints to stderr so BAM stream on stdout stays clean
         sys.stdout = sys.stderr
+
+    # Prominent beta banner: this feature is new, expect rough edges.
+    # Mode line varies based on --downstream-compat.
+    if args.downstream_compat:
+        mode_banner = (
+            "  MODE: DOWNSTREAM-COMPAT -- TF calls written into legacy ns/nl.\n"
+            "  MA/AQ spec tags are NOT emitted. Per-TF quality scoring is lost.\n"
+            "  Use this only for older tools that cannot read the MA/AQ spec.\n"
+        )
+    else:
+        mode_banner = (
+            "  MODE: SPEC -- MA/AQ tags emitted per the fiberseq Molecular-\n"
+            "  annotation spec (tf+QQQ carries LLR + edge-ambiguity scores).\n"
+            "  -> Update FiberBrowser to the MA/AQ-aware release to visualize.\n"
+            "  -> Read the spec: https://github.com/fiberseq/Molecular-annotation-spec\n"
+            "  -> For tools that do not yet speak MA/AQ, re-run with\n"
+            "     --downstream-compat to put TF calls into legacy ns/nl instead.\n"
+        )
+    print(
+        "\n"
+        "========================================================================\n"
+        "  fiberhmm-recall-tfs  [BETA]\n"
+        "  LLR TF footprint recaller -- beta feature shipped in fiberhmm 2.6.0.\n"
+        "  Defaults validated on Hia5 PacBio, DddB DAF, and DddA amplicons.\n"
+        "\n"
+        + mode_banner +
+        "\n"
+        "  File issues at https://github.com/fiberseq/FiberHMM/issues\n"
+        "========================================================================",
+        file=sys.stderr,
+    )
 
     # Resolve cores
     if args.cores == 0:
@@ -295,19 +345,22 @@ def main():
                                    threads=args.io_threads)
     header_text = str(bam_in.header)
 
+    # Compat mode always writes legacy tags (TFs live in ns/nl there).
+    also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
+
     if n_cores == 1:
         n_reads, n_v2, n_tf, n_demoted = _single_thread_loop(
             bam_in, bam_out, header_text,
             llr_hit, llr_miss, mode, k,
             min_llr, args.min_opps, args.unify_threshold,
-            not args.no_legacy_tags, args.max_reads,
+            also_write_legacy, args.downstream_compat, args.max_reads,
         )
     else:
         n_reads, n_v2, n_tf, n_demoted = _parallel_loop(
             bam_in, bam_out, header_text,
             llr_hit, llr_miss, mode, k,
             min_llr, args.min_opps, args.unify_threshold,
-            not args.no_legacy_tags, args.max_reads,
+            also_write_legacy, args.downstream_compat, args.max_reads,
             n_cores, args.chunk_size,
         )
 

@@ -18,10 +18,12 @@ from fiberhmm.io.ma_tags import (
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
     N_CTX,
+    TFCall,
     UNMETH_OFFSET,
     build_scan_intervals,
     call_tfs_in_interval,
     merge_intervals,
+    write_ma_tags,
 )
 
 
@@ -167,6 +169,91 @@ def test_kadane_ambiguous_edges():
 
 
 # ------------------- enzyme presets --------------------------------
+
+# ------------------- write_ma_tags downstream-compat mode ---------
+
+class _FakeRead:
+    """Minimal pysam-like stand-in for unit-testing write_ma_tags."""
+    def __init__(self):
+        self._tags = {}
+        self.query_sequence = 'A' * 200
+
+    def has_tag(self, t):
+        return t in self._tags
+
+    def get_tag(self, t):
+        if t not in self._tags:
+            raise KeyError(t)
+        return self._tags[t]
+
+    def set_tag(self, t, v, value_type=None):
+        if v is None:
+            self._tags.pop(t, None)
+        else:
+            self._tags[t] = v
+
+
+def test_spec_mode_emits_ma_aq_and_clean_legacy():
+    read = _FakeRead()
+    nucs = [(50, 120)]
+    msps = [(180, 20)]
+    tfs = [TFCall(start=10, length=30, llr=7.5, n_opps=8,
+                  left_ambiguity=2, right_ambiguity=0)]
+    write_ma_tags(read, 200, tfs, nucs, msps, nq_for_kept_nucs=[200],
+                  also_write_legacy=True, downstream_compat=False)
+    # MA + AQ present
+    assert read.has_tag('MA')
+    assert read.has_tag('AQ')
+    ma = read.get_tag('MA')
+    assert 'nuc+' in ma and 'tf+' in ma
+    # Legacy ns/nl has only nucs, NOT TFs (spec mode)
+    ns = list(read.get_tag('ns'))
+    nl = list(read.get_tag('nl'))
+    assert ns == [50]
+    assert nl == [120]
+
+
+def test_downstream_compat_merges_tfs_into_ns_nl():
+    read = _FakeRead()
+    nucs = [(50, 120)]
+    msps = [(180, 20)]
+    tfs = [
+        TFCall(start=10, length=30, llr=7.5, n_opps=8,
+               left_ambiguity=2, right_ambiguity=0),
+        TFCall(start=300, length=15, llr=6.0, n_opps=5,
+               left_ambiguity=1, right_ambiguity=3),
+    ]
+    write_ma_tags(read, 500, tfs, nucs, msps, nq_for_kept_nucs=[200],
+                  also_write_legacy=True, downstream_compat=True)
+    # MA + AQ must NOT be present in compat mode
+    assert not read.has_tag('MA')
+    assert not read.has_tag('AQ')
+    # Legacy ns/nl contains nuc + both TFs, sorted by start
+    ns = list(read.get_tag('ns'))
+    nl = list(read.get_tag('nl'))
+    assert ns == [10, 50, 300]
+    assert nl == [30, 120, 15]
+
+
+def test_compat_mode_strips_stale_ma_aq():
+    read = _FakeRead()
+    # Simulate a BAM that already had MA/AQ from a prior spec-mode run
+    read.set_tag('MA', 'stale content', value_type='Z')
+    read.set_tag('AQ', [1, 2, 3])
+    write_ma_tags(read, 200, tf_calls=[], kept_nucs=[(0, 100)], msps=[],
+                  nq_for_kept_nucs=[128],
+                  also_write_legacy=True, downstream_compat=True)
+    assert not read.has_tag('MA')
+    assert not read.has_tag('AQ')
+
+
+def test_compat_requires_legacy():
+    import pytest
+    read = _FakeRead()
+    with pytest.raises(ValueError):
+        write_ma_tags(read, 200, tf_calls=[], kept_nucs=[(0, 100)], msps=[],
+                      also_write_legacy=False, downstream_compat=True)
+
 
 def test_enzyme_presets_present():
     for enz in ('hia5', 'dddb', 'ddda'):
