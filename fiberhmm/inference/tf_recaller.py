@@ -515,21 +515,44 @@ def write_ma_tags(read, read_length: int,
     er_vals = [ambiguity_to_edge(c.right_ambiguity) for c in tf_calls]
 
     if not downstream_compat:
-        # Spec mode: write MA + AQ
-        ma = format_ma_tag(
-            read_length=read_length,
-            nuc_intervals=kept_nucs,
-            msp_intervals=msps,
-            tf_intervals=tf_intervals,
-        )
-        aq = format_aq_array(
-            nq_values=nq_values,
-            tf_q_values=tq_vals,
-            tf_lq_values=el_vals,
-            tf_rq_values=er_vals,
-        )
-        read.set_tag('MA', ma, value_type='Z')
-        read.set_tag('AQ', aq)
+        # Spec mode: write MA + AQ. The fiberseq Molecular-annotation spec
+        # (https://github.com/fiberseq/Molecular-annotation-spec) requires:
+        #   - the MA string to contain >= 1 annotation (regex
+        #     ^\d+;(...annotation...;?)+$), so don't emit MA for reads with
+        #     no nucs/msps/tfs at all
+        #   - AQ to only be present if SOME annotation type specifies P or Q
+        #     (we use Q on nuc+ and tf+; if neither has any annotations and
+        #     only msp+ is emitted, AQ stays unwritten)
+        has_any_annotation = bool(kept_nucs or msps or tf_intervals)
+        if not has_any_annotation:
+            # Strip any stale tags, leave the read with no MA/AQ
+            for tag in ('MA', 'AQ'):
+                if read.has_tag(tag):
+                    try: read.set_tag(tag, None)
+                    except Exception: pass
+        else:
+            ma = format_ma_tag(
+                read_length=read_length,
+                nuc_intervals=kept_nucs,
+                msp_intervals=msps,
+                tf_intervals=tf_intervals,
+            )
+            read.set_tag('MA', ma, value_type='Z')
+            # AQ only carries values for nuc+Q and tf+QQQ. If neither is
+            # present in this read, no quality type is in MA -> spec says
+            # AQ must not be written.
+            has_quality = bool(kept_nucs or tf_intervals)
+            if has_quality:
+                aq = format_aq_array(
+                    nq_values=nq_values,
+                    tf_q_values=tq_vals,
+                    tf_lq_values=el_vals,
+                    tf_rq_values=er_vals,
+                )
+                read.set_tag('AQ', aq)
+            elif read.has_tag('AQ'):
+                try: read.set_tag('AQ', None)
+                except Exception: pass
     else:
         # Compat mode: strip any stale MA/AQ so consumers that see both
         # tags don't get out-of-sync views.

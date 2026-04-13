@@ -46,6 +46,37 @@ def test_ambiguity_to_edge():
     assert 0 < ambiguity_to_edge(15) < 255
 
 
+def test_ma_tag_matches_spec_regex():
+    """Every MA string we emit must match the official spec regex
+    (https://github.com/fiberseq/Molecular-annotation-spec)."""
+    import re
+    SPEC_REGEX = re.compile(
+        r'^\d+;(([a-zA-Z0-9_]+)[+-.][PQ]*:((\d+-\d+)(,\d+-\d+)*);?)+$'
+    )
+    cases = [
+        # (description, kwargs)
+        ('typical', dict(read_length=4521,
+                         nuc_intervals=[(43, 147), (200, 100)],
+                         msp_intervals=[(1, 42)],
+                         tf_intervals=[(50, 20), (300, 15)])),
+        ('only nucs', dict(read_length=1000,
+                           nuc_intervals=[(0, 100)],
+                           msp_intervals=[],
+                           tf_intervals=[])),
+        ('only msps', dict(read_length=1000,
+                           nuc_intervals=[],
+                           msp_intervals=[(50, 100)],
+                           tf_intervals=[])),
+        ('only tfs', dict(read_length=1000,
+                          nuc_intervals=[],
+                          msp_intervals=[],
+                          tf_intervals=[(0, 30)])),
+    ]
+    for desc, kw in cases:
+        ma = format_ma_tag(**kw)
+        assert SPEC_REGEX.match(ma), f'{desc}: MA={ma!r} fails spec regex'
+
+
 def test_format_and_parse_ma_tag():
     nucs = [(43, 147), (216, 155)]
     msps = [(1, 42)]
@@ -243,6 +274,42 @@ def test_compat_mode_strips_stale_ma_aq():
     write_ma_tags(read, 200, tf_calls=[], kept_nucs=[(0, 100)], msps=[],
                   nq_for_kept_nucs=[128],
                   also_write_legacy=True, downstream_compat=True)
+    assert not read.has_tag('MA')
+    assert not read.has_tag('AQ')
+
+
+def test_spec_skips_ma_when_no_annotations():
+    """fiberseq MA spec requires >=1 annotation in the MA string;
+    we must not write MA when nothing was called."""
+    read = _FakeRead()
+    write_ma_tags(read, 200, tf_calls=[], kept_nucs=[], msps=[],
+                  also_write_legacy=True, downstream_compat=False)
+    assert not read.has_tag('MA')
+    assert not read.has_tag('AQ')
+
+
+def test_spec_skips_aq_when_only_unqualified_types():
+    """spec: AQ is only present if any annotation type specifies P or Q.
+    msp+ has no quality; if only MSPs are emitted, AQ must not appear."""
+    read = _FakeRead()
+    write_ma_tags(read, 200, tf_calls=[], kept_nucs=[],
+                  msps=[(10, 80)],
+                  also_write_legacy=True, downstream_compat=False)
+    assert read.has_tag('MA')
+    ma = read.get_tag('MA')
+    assert 'msp+' in ma
+    assert 'nuc+' not in ma and 'tf+' not in ma
+    assert not read.has_tag('AQ')
+
+
+def test_spec_strips_stale_ma_aq_when_no_annotations():
+    """If a prior run left MA/AQ on a read that now has no calls,
+    we should clear those stale tags."""
+    read = _FakeRead()
+    read.set_tag('MA', 'stale', value_type='Z')
+    read.set_tag('AQ', [1, 2, 3])
+    write_ma_tags(read, 200, tf_calls=[], kept_nucs=[], msps=[],
+                  also_write_legacy=True, downstream_compat=False)
     assert not read.has_tag('MA')
     assert not read.has_tag('AQ')
 
