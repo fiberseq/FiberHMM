@@ -11,6 +11,7 @@ FiberHMM identifies protected regions (footprints) and accessible regions (methy
 - **Native HMM implementation** -- no hmmlearn dependency; Numba JIT optional for ~10x speedup
 - **Streaming pipeline** -- scales linearly with cores; supports stdin/stdout piping for composable workflows
 - **Multi-platform** -- supports PacBio fiber-seq, Nanopore fiber-seq, and DAF-seq
+- **One-command pipeline** -- `fiberhmm-run` chains encode → apply → recall-tfs → ft fire → sort into a single streaming command; composable tools still available individually
 - **DAF-seq preprocessing** -- `fiberhmm-daf-encode` converts plain aligned BAMs to IUPAC R/Y encoded BAMs
 - **TF footprint recaller (BETA)** -- `fiberhmm-recall-tfs` runs an LLR-based 2nd pass on top of the HMM output to resolve sub-nucleosomal TF/Pol II footprints with proper per-context scoring. Output follows the [fiberseq Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec) (`MA`/`AQ` tags with `tf+QQQ` entries). Beta: defaults validated on Hia5 PacBio, DddB DAF, DddA amplicons; FiberBrowser support shipping in the next release.
 - **Legacy model support** -- loads old hmmlearn-trained pickle/NPZ models seamlessly
@@ -211,6 +212,40 @@ fiberhmm-daf-encode -i aligned.bam -o encoded.bam
 | `--strand` | auto | Force strand: `CT`, `GA`, or `auto` (per-read consensus) |
 
 The encoder determines conversion strand per read by counting which mismatch type (C→T vs G→A) dominates. Reads with no mismatches or equal counts are skipped. All C→T or G→A mismatches are encoded (the HMM handles noise via emission probabilities). Existing tags (including MM/ML for dual-labeling) are preserved.
+
+### fiberhmm-run
+
+**One-command full pipeline.** Chains `fiberhmm-daf-encode → fiberhmm-apply → fiberhmm-recall-tfs [→ ft fire] → samtools sort+index` into a single streaming command with no intermediate files.
+
+```bash
+# DddB DAF-seq, full pipeline with FIRE scoring
+fiberhmm-run -i aligned.bam -o recalled.bam --enzyme dddb --fire -c 8
+
+# DddA amplicons
+fiberhmm-run -i aligned.bam -o recalled.bam --enzyme ddda -c 8
+
+# Hia5 PacBio, skip recall (HMM only)
+fiberhmm-run -i input.bam -o output.bam --enzyme hia5 --seq pacbio --no-recall
+
+# Stream to stdout for custom downstream
+fiberhmm-run -i input.bam -o - --enzyme dddb | samtools sort -o sorted.bam
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i/--in-bam` | required | Input BAM (aligned). Use `-` for stdin. |
+| `-o/--out-bam` | required | Output BAM. Use `-` for stdout (unsorted). |
+| `--enzyme` | required | `dddb`, `ddda`, or `hia5` |
+| `--seq` | auto | `nanopore` or `pacbio` (required for `hia5`) |
+| `-c/--cores` | 4 | CPU cores per pipeline stage |
+| `--no-recall` | off | Skip `fiberhmm-recall-tfs` (HMM tags only) |
+| `--fire` | off | Add `ft fire` scoring (requires fibertools-rs) |
+| `--ft-path` | PATH/~/.cargo/bin | Explicit path to `ft` binary |
+| `--min-llr` | enzyme preset | Override recall-tfs LLR threshold |
+| `--downstream-compat` | off | Write TF calls into legacy `ns`/`nl` tags |
+| `--io-threads` | 4 | htslib I/O threads per stage |
+
+For custom parameters, posteriors export, or non-standard workflows, run the individual tools (`fiberhmm-daf-encode`, `fiberhmm-apply`, `fiberhmm-recall-tfs`) directly — `fiberhmm-run` does nothing they cannot do.
 
 ### fiberhmm-apply
 
