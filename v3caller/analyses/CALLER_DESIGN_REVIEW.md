@@ -483,25 +483,37 @@ python scripts/snapshot_paused.py \
   --label dddb --out-dir figures/snapshots/ --per-category 10
 ```
 
-Recommended caller flags per enzyme:
+Recommended caller flags per enzyme (post-review defaults):
 
 ```bash
-# DddA (PacBio, breathing, amplicons)
+# Defaults: --max-merge-len 180 (steric cap, biophysical),
+#           --short-gap-bp 0 (no bypass),
+#           --use-v2-nucs off (pure v3, deprecated),
+#           --penetration-fraction 0, --nuc-size-breathing-max 0
+
+# DddA (PacBio, substantial breathing, amplicons)
 --enzyme daf --fp-model fp_models/ct_pacbio_fp_3mer.json \
-  --penetration-fraction 0.15
+  --penetration-fraction 0.15 \
+  --nuc-size-breathing-max 0.05
 
-# DddB (Nanopore, one-strand access)
+# DddB (Nanopore, one-strand access, minimal breathing)
 --enzyme daf --fp-model fp_models/ct_nanopore_fp_3mer.json \
-  --snp-mask <amplicon_snps.bed> --penetration-fraction 0.0 \
-  --short-gap-bp 0
+  --snp-mask <amplicon_snps.bed> \
+  --nuc-size-breathing-max 0.05  # optional; permits mono-nuc breathing merges only
 
-# Hia5 (PacBio m6A)
+# Hia5 (PacBio m6A, minimal breathing)
 --enzyme hia5 --fp-model fp_models/m6a_pacbio_fp_3mer.json \
-  --penetration-fraction 0.0
-
-# Any of the above, with hybrid HMM-nuc mode if input has v2 tags:
---use-v2-nucs auto
+  --nuc-size-breathing-max 0.02
 ```
+
+Notes:
+- `--use-v2-nucs` deprecated; pure v3 is the recommended path.
+  `fp_v2+` MA annotation still preserves v2 calls for back-compat.
+- `--penetration-fraction` kept for API continuity but its
+  linear-breathing formula under-parameterizes DddB (see §10.3).
+  The `--nuc-size-breathing-max` flag is the principled replacement.
+- `--short-gap-bp` is a deprecated no-op (was the source of the
+  55% merge bug).
 
 ---
 
@@ -559,3 +571,145 @@ Recommended caller flags per enzyme:
    sna/eve/ftz to adjudicate. If you have this or can point us at
    it, the merge question (and the "are v3 TFs real?" question)
    becomes solvable empirically.
+
+---
+
+## 10. Addendum (after outside review)
+
+### 10.1 Received feedback
+
+Key points from outside reviewer:
+
+- **Reframing**: we were evaluating v3 (a sharper microscope) by
+  asking whether it matches v2 (the blurry pictures) via fiberCNN
+  (heuristics calibrated to the blur). Wrong direction.
+- **Steric guardrail is biophysics, not HMM reinvention.** A single
+  octamer protects ~147 bp + breathing ~30 bp per side. Any merge
+  producing ≥ 180 bp is necessarily a dinucleosome fusion. Cap
+  `--max-merge-len` at 180 — this alone solves the §4.4 finding
+  that 1–3 bp gaps fuse into 276 bp di-nuc calls.
+- **Kill the `short_gap_bp` bypass**. (Already done — commit
+  `25c72d1`.)
+- **Goal 2 answer**: commit to pure v3 for DddB/Hia5, don't go
+  hybrid. v2's overmerge + boundary-TF-folding is exactly what
+  v3 fixes; using v2 nucs as authoritative locks in v2's bugs.
+  Output `fp_v2+` in MA for back-compat and downstream consumers,
+  but run the analytical engine on the v3 track.
+- **Goal 1 answer**: v3's Poisson + penetration is the only
+  mathematically-viable approach for DddA (HMMs require separable
+  emissions which DddA breathing destroys). Ship `pen=0.15` as
+  documented default, expose CLI for per-locus tuning.
+- **v3 TF undercall is v2 overcall**: an HMM's geometric state-
+  duration prior penalizes rapid transitions (Nuc→Linker→TF→Linker
+  →Nuc) enough that it folds boundary TFs into nucs to avoid the
+  transition cost. v3's "find nucs then scan the sky for TF stars"
+  architecture exposes these correctly. Trust v3.
+- **Ground truth is accessible**: *Drosophila* sna/eve/ftz have
+  published PRO-seq / NET-seq (paused Pol II base-pair resolution)
+  and ChIP-nexus / CUT&RUN (pioneer factor binding at sna shadow
+  enhancer, eve stripe 2). Validate v3 novel TFs against known
+  Zelda / Twist / GAF sites; validate paused Pol II calls against
+  PRO-seq peaks. We have this data in-house.
+
+### 10.2 Implementation delta
+
+Committed as part of this review:
+
+- `--max-merge-len` default **250 → 180 bp** (steric cap on fused
+  atom size). Kills dinuc fusions without requiring the old
+  `short_gap_bp` bypass. Per the reviewer: 147 bp octamer + 30 bp
+  breathing each side is a biophysical constant; merges producing
+  ≥ 180 bp are necessarily dinuc fusions.
+- `short_gap_bp` bypass **confirmed removed** (was commit 25c72d1).
+  All gaps now route through the Poisson test + size-prior.
+- `--use-v2-nucs` hybrid mode **changed default from `auto` to
+  `off`** and marked DEPRECATED in the CLI help. Per the reviewer:
+  the hybrid locks in v2's overmerge AND loses boundary-fused TFs
+  (v3 only scans MSPs, never inside v2 nucs). The `fp_v2+` MA
+  annotation is still written for back-compat consumers.
+- **New CLI flag `--nuc-size-breathing-max`** implementing
+  reviewer's option D (size-dependent prior). Gaussian peak at
+  147 bp merged size, sigma 50, zero outside 80–220 bp. Adds a
+  per-opp breathing rate to the Poisson null that relaxes the
+  test ONLY when the merged output would be a plausible mono-
+  nucleosome. Does NOT permit di-nuc-sized merges. Default 0
+  (strict Poisson).
+
+### 10.2.1 Empirical test of the size prior on DddB 4-4.5
+
+Pure v3 with `short_gap_bp=0`, `max_merge_len=180`, pen=0,
+sweep `--nuc-size-breathing-max`:
+
+| `nuc_size_breathing_max` | % nucs merged | Note |
+|---|---|---|
+| 0.00 | 0.00% | Strict Poisson, no prior |
+| 0.02 | 0.00% | Below Poisson threshold still |
+| 0.05 | 0.03% | 39 nucs merge in 4-4.5 window |
+| 0.10 | 0.69% | 799 nucs; still << 55% w/ old shortcut |
+
+All merges under the size prior are (by design) nuc-sized objects
+— zero dinucleosome fusions. The 0.7% merge rate at nbm=0.10 is
+far below the old 55% from the buggy bypass, but it's directed:
+only breathing-in-mono-nuc merges, never boundary-fusion.
+
+### 10.3 Empirical finding that still needs resolution
+
+Our pen-sweep on DddB 4-4.5 (pure v3, `short_gap_bp=0`,
+max-merge-len=180):
+
+| `pen_frac` | % nucs merged (mq<255) | Δ called nucs vs pen=0 |
+|---|---|---|
+| 0.0 | 0.00% | baseline |
+| 0.1 | 0.00% | 0 |
+| 0.3 | 0.02% | +14 |
+| 0.5 | 0.16% | +121 |
+| 1.0 | 1.03% | +752 |
+
+The advisor suggested `pen = 0.02–0.05` for DddB to allow ~15 bp
+/ 3-hit gap merges. **That range produces zero merges on DddB.**
+
+Diagnosis: the linear-breathing formula
+```
+lam_bio = gap_opp × (baseline − global_FP) × penetration_fraction
+```
+parameterizes breathing as a fraction of the *per-read* (baseline
+− FP). For DddB, baseline ≈ 0.06, FP ≈ 0.008, so `(baseline − FP)
+= 0.052`. At pen=0.05, breathing-per-site contribution = 0.0026 —
+well below FP itself, so adding it to `lam_fp` barely moves
+Poisson upper bound.
+
+The reviewer's implicit intent seems to have been: "~3% per-site
+absolute breathing rate inside a nuc body" — which in the current
+formulation would require pen ≈ 0.6. That's not how the parameter
+reads in CLI/docs.
+
+**Proposal we'd like the advisor to react to:** replace
+`penetration_fraction` (fraction of per-read excess) with
+`--breathing-rate` (absolute per-site hit rate inside a nuc body).
+For DddB ~0.03, Hia5 ~0.01, DddA ~0.10. `lam = lam_fp + gap_opp
+× breathing_rate`. Cleaner semantics, direct biological meaning.
+Is that the right reformulation?
+
+### 10.4 Validation plan (has ground truth)
+
+For the outside reviewer's prediction that v3 will align with
+known regulators where v2 does not:
+
+1. **Pull PRO-seq / NET-seq** at sna / eve / ftz in 2–4 hr embryos.
+   Build a BED of Pol II engagement peaks.
+2. **Pull ChIP-nexus** for Zelda (Zld), GAF (Trl), Twist (Twi)
+   at the same loci. Build a BED of known pioneer/TF binding.
+3. **For each v3 TF call** (v3-only, v2-only, shared): compute
+   overlap with (a) PRO-seq peaks (paused Pol II), (b) ChIP-nexus
+   peaks (specific factors).
+4. **Success criterion**: v3-only TFs should show *higher*
+   enrichment at Zld/GAF sites than v2-only calls. Per the
+   reviewer: v2 "swallows" these into nuc boundaries; v3 exposes
+   them.
+5. **Also**: v3 paused Pol II reads (fiberCNN heuristic) should
+   concentrate at PRO-seq peaks. If they do, the +259% paused
+   count on DddB over v2 is real biology, not noise.
+
+This moves the whole discussion from "what's the right merge
+model" to "which caller's output best predicts orthogonal ground
+truth." Which is the only honest way to resolve it.
