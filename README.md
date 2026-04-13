@@ -45,39 +45,44 @@ For bigBed output, install [`bedToBigBed`](https://hgdownload.soe.ucsc.edu/admin
 
 ### Fiber-seq (PacBio or Nanopore)
 
-If you have a BAM with m6A modification tags (MM/ML), you can call footprints directly with a pre-trained model:
+If you have a BAM with m6A modification tags (MM/ML), you can call footprints directly.
+Pre-trained models ship with the package — no separate download needed.
 
 ```bash
-fiberhmm-apply -i experiment.bam -m models/hia5_pacbio.json -o output/ -c 8
+# PacBio Hia5
+fiberhmm-apply -i experiment.bam --enzyme hia5 --seq pacbio -o output/ -c 8
+
+# Nanopore Hia5
+fiberhmm-apply -i experiment.bam --enzyme hia5 --seq nanopore -o output/ -c 8
 ```
 
 ### DAF-seq
 
-DAF-seq BAMs from minimap2 contain deamination events as C→T / G→A mismatches but lack the IUPAC encoding and strand tags that FiberHMM expects. Use `fiberhmm-daf-encode` to preprocess, then call footprints with the right model for your enzyme.
+DAF-seq BAMs from minimap2 contain deamination events as C→T / G→A mismatches but lack the IUPAC encoding and strand tags that FiberHMM expects. Use `fiberhmm-daf-encode` to preprocess, then call footprints with the right enzyme flag.
 
 **DddB:**
 ```bash
 fiberhmm-daf-encode -i aligned.bam -o encoded.bam
-fiberhmm-apply --mode daf -i encoded.bam -m models/dddb_nanopore.json -o output/ -c 8
+fiberhmm-apply --mode daf -i encoded.bam --enzyme dddb -o output/ -c 8
 # Optional TF refinement
 fiberhmm-recall-tfs -i output/encoded_footprints.bam -o output/recalled.bam \
-                    -m models/dddb_nanopore.json --enzyme dddb
+                    --enzyme dddb
 ```
 
 **DddA (two-pass workflow REQUIRED):**
 ```bash
 fiberhmm-daf-encode -i aligned.bam -o encoded.bam
 # Step 1: nucleosomes
-fiberhmm-apply --mode daf -i encoded.bam -m models/ddda_nuc.json -o output/ -c 8
+fiberhmm-apply --mode daf -i encoded.bam --enzyme ddda -o output/ -c 8
 # Step 2: TF/Pol II recall (REQUIRED -- ddda_nuc.json does not emit TFs)
 fiberhmm-recall-tfs -i output/encoded_footprints.bam -o output/recalled.bam \
-                    -m models/ddda_TF.json --enzyme ddda
+                    --enzyme ddda
 ```
 
 **Streaming pipeline (DddB example):**
 ```bash
 fiberhmm-daf-encode -i aligned.bam -o - | \
-    fiberhmm-apply --mode daf -i - -m models/dddb_nanopore.json -o output/
+    fiberhmm-apply --mode daf -i - --enzyme dddb -o output/
 ```
 
 If your BAM is missing MD tags (minimap2 wasn't run with `--MD`), add them first:
@@ -85,7 +90,7 @@ If your BAM is missing MD tags (minimap2 wasn't run with `--MD`), add them first
 ```bash
 samtools calmd -b aligned.bam ref.fa | \
     fiberhmm-daf-encode -i - -o - | \
-    fiberhmm-apply --mode daf -i - -m models/dddb_nanopore.json -o output/
+    fiberhmm-apply --mode daf -i - --enzyme dddb -o output/
 ```
 
 Or pass the reference FASTA directly to `fiberhmm-daf-encode` (slower):
@@ -110,12 +115,12 @@ and edge-ambiguity quality bytes:
 # Hia5 / DddB: optional refinement (single-pass model already covers TFs)
 fiberhmm-recall-tfs -i output/experiment_footprints.bam \
                     -o output/experiment_recalled.bam \
-                    -m models/hia5_pacbio.json --enzyme hia5
+                    --enzyme hia5 --seq pacbio
 
 # DddA: REQUIRED -- the nuc model deliberately does not emit TF calls
-fiberhmm-apply -i input.bam -m models/ddda_nuc.json -o tmp/ --mode daf
+fiberhmm-apply -i input.bam --enzyme ddda -o tmp/ --mode daf
 fiberhmm-recall-tfs -i tmp/input_footprints.bam -o output/recalled.bam \
-                    -m models/ddda_TF.json --enzyme ddda
+                    --enzyme ddda
 ```
 
 The recaller writes spec-compliant
@@ -133,18 +138,18 @@ fiberhmm-extract -i output/experiment_footprints.bam
 
 ## Pre-trained Models
 
-FiberHMM ships with pre-trained models in `models/` ready for immediate use:
+Pre-trained models are **bundled with the pip package** — no separate download.
+Select the right one with `--enzyme` (+ `--seq` for Hia5); `-m` is only needed for custom models.
 
-| Model | File | Enzyme | Platform | Mode | Used by |
-|-------|------|--------|----------|------|---------|
-| **Hia5 PacBio** | `hia5_pacbio.json` | Hia5 (m6A) | PacBio | `pacbio-fiber` | `fiberhmm-apply` (one-pass, all sizes) |
-| **Hia5 Nanopore** | `hia5_nanopore.json` | Hia5 (m6A) | Nanopore | `nanopore-fiber` | `fiberhmm-apply` (one-pass, all sizes) |
-| **DddA nuc** | `ddda_nuc.json` | DddA (deamination) | PacBio | `daf` | `fiberhmm-apply` -- **nucleosomes only** |
-| **DddA TF** | `ddda_TF.json` | DddA (deamination) | PacBio | `daf` | `fiberhmm-recall-tfs --enzyme ddda` -- **REQUIRED 2nd pass** |
-| **DddB Nanopore** | `dddb_nanopore.json` | DddB (deamination) | Nanopore | `daf` | `fiberhmm-apply` (one-pass, all sizes) |
+| Model | `--enzyme` | `--seq` | Enzyme | Platform | Mode | Used by |
+|-------|-----------|---------|--------|----------|------|---------|
+| `hia5_pacbio.json` | `hia5` | `pacbio` | Hia5 (m6A) | PacBio | `pacbio-fiber` | `fiberhmm-apply` / `fiberhmm-recall-tfs` |
+| `hia5_nanopore.json` | `hia5` | `nanopore` | Hia5 (m6A) | Nanopore | `nanopore-fiber` | `fiberhmm-apply` / `fiberhmm-recall-tfs` |
+| `ddda_nuc.json` | `ddda` | — | DddA (deamination) | — | `daf` | `fiberhmm-apply` — **nucleosomes only** |
+| `ddda_TF.json` | `ddda` | — | DddA (deamination) | — | `daf` | `fiberhmm-recall-tfs` — **REQUIRED 2nd pass** |
+| `dddb_nanopore.json` | `dddb` | — | DddB (deamination) | Nanopore | `daf` | `fiberhmm-apply` / `fiberhmm-recall-tfs` |
 
-Older models live in `models/legacy/` and are kept for reproducibility
-of previously-published analyses; see `models/legacy/README.md`.
+Older models are in `models/legacy/` (reproducibility only). Custom models can always be specified with `-m /path/to/model.json`.
 
 ### DddA workflow -- two passes, two models
 
@@ -164,11 +169,11 @@ TF/Pol II footprints:
 
 ```bash
 # Step 1: nucleosomes (DddA)
-fiberhmm-apply -i tagged.bam -m models/ddda_nuc.json -o out/ --mode daf
+fiberhmm-apply -i tagged.bam --enzyme ddda -o out/ --mode daf
 
 # Step 2: TF/Pol II recall (REQUIRED for DddA)
 fiberhmm-recall-tfs -i out/tagged_footprints.bam -o out/recalled.bam \
-                    -m models/ddda_TF.json --enzyme ddda
+                    --enzyme ddda
 ```
 
 For Hia5 and DddB, the single trained model already captures both nucs
@@ -212,17 +217,22 @@ The encoder determines conversion strand per read by counting which mismatch typ
 Apply a trained HMM to call footprints. Uses a streaming pipeline that scales with `-c` cores and supports stdin/stdout piping.
 
 ```bash
-# Multi-core (streaming is the default)
-fiberhmm-apply -i experiment.bam -m model.json -o output/ -c 8
+# Bundled model (recommended)
+fiberhmm-apply -i experiment.bam --enzyme hia5 --seq pacbio -o output/ -c 8
+
+# Custom model override
+fiberhmm-apply -i experiment.bam -m custom.json -o output/ -c 8
 
 # Stdin/stdout piping
-fiberhmm-apply -i - -m model.json -o output/
+fiberhmm-apply -i - --enzyme dddb -o output/
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-i/--input` | required | Input BAM, or `-` for stdin |
-| `-m/--model` | required | Trained HMM model (.json, .npz, or .pickle) |
+| `-m/--model` | optional | Custom HMM model (.json, .npz, or .pickle). If omitted, uses the bundled model for `--enzyme`/`--seq`. |
+| `--enzyme` | optional | Select bundled model: `hia5`, `dddb`, or `ddda`. Required unless `-m` is given. |
+| `--seq` | optional | Sequencing platform: `pacbio` or `nanopore`. Required for `--enzyme hia5`; ignored for dddb/ddda. |
 | `-o/--outdir` | required | Output directory, or `-` for stdout BAM |
 | `--mode` | from model | Analysis mode (see table above) |
 | `-c/--cores` | 1 | CPU cores (0 = auto-detect) |
@@ -326,15 +336,20 @@ For DddA users this pass is **required** (not optional): the shipped
 `fiberhmm-apply` with any DddA model prints a reminder about this step.
 
 ```bash
-fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m model.json --enzyme hia5
+# Bundled model (recommended)
+fiberhmm-recall-tfs -i tagged.bam -o recalled.bam --enzyme hia5 --seq pacbio
+
+# Custom model override
+fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m custom.json --enzyme hia5
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-i/--in-bam` | required | Input BAM tagged by `fiberhmm-apply` (carries `ns`/`nl`/`as`/`al`). Use `-` for stdin. |
 | `-o/--out-bam` | required | Output BAM with `MA`/`AQ` tags + refreshed legacy tags. Use `-` for stdout (pipe-friendly). |
-| `-m/--model` | required | FiberHMM model JSON (the same one passed to `fiberhmm-apply`, or a closely related one for `--emission-uplift` use) |
-| `--enzyme` | none | Pick a tuned preset: `hia5`, `dddb`, or `ddda`. Sets `--min-llr` and `--emission-uplift` defaults. |
+| `-m/--model` | optional | Custom FiberHMM model JSON. If omitted, uses the bundled model for `--enzyme`/`--seq`. |
+| `--enzyme` | optional | Select bundled model + tuned preset: `hia5`, `dddb`, or `ddda`. Required unless `-m` is given. Sets `--min-llr` defaults. |
+| `--seq` | optional | Sequencing platform: `pacbio` or `nanopore`. Required for `--enzyme hia5`; ignored for dddb/ddda. |
 | `--min-llr` | enzyme preset | Min cumulative LLR (nats) per call |
 | `--min-opps` | 3 | Min informative target positions per call |
 | `--emission-uplift` | 1.0 | Power transform on emission probabilities. Rarely needed -- use a pre-uplifted model file (e.g. `ddda_TF.json`) instead. |
@@ -363,7 +378,7 @@ what your downstream tooling can read.
 spec](https://github.com/fiberseq/Molecular-annotation-spec):
 
 ```bash
-fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m model.json --enzyme hia5
+fiberhmm-recall-tfs -i tagged.bam -o recalled.bam --enzyme hia5 --seq pacbio
 ```
 
 - `MA`/`AQ` tags carry `nuc+Q`, `msp+`, `tf+QQQ` annotations with full
@@ -381,8 +396,8 @@ fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m model.json --enzyme hia5
 nucleosomes, no `MA`/`AQ` written:
 
 ```bash
-fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m model.json --enzyme hia5 \
-                    --downstream-compat
+fiberhmm-recall-tfs -i tagged.bam -o recalled.bam \
+                    --enzyme hia5 --seq pacbio --downstream-compat
 ```
 
 - Legacy `ns`/`nl` contains **all footprints** (nucleosomes + TFs), sorted
@@ -404,11 +419,11 @@ pure re-run of the recaller on the same HMM-tagged input BAM.
 The `--enzyme` flag picks tuned defaults validated on the FiberHMM
 benchmark BAMs (Hia5 PacBio embryo, DddB DAF time-course, DddA amplicons):
 
-| `--enzyme` | `--min-llr` | Recommended `--model` | Why |
-|---|---|---|---|
-| `hia5` | 5.0 | `models/hia5_pacbio.json` (or `hia5_nanopore.json`) | Trained Hia5 model is already calibrated |
-| `dddb` | 4.0 | `models/dddb_nanopore.json` | DAF uses one strand only -> ~3× sparser per-position evidence; lower threshold |
-| `ddda` | 5.0 | `models/ddda_TF.json` | DddB-Nanopore emissions with a baked-in 2.0× efficiency uplift to match DddA's higher per-position deamination rate |
+| `--enzyme` | `--seq` needed? | `--min-llr` | Bundled model | Why |
+|---|---|---|---|---|
+| `hia5` | yes (`pacbio` or `nanopore`) | 5.0 | `hia5_pacbio.json` / `hia5_nanopore.json` | Trained Hia5 model is already calibrated |
+| `dddb` | no | 4.0 | `dddb_nanopore.json` | DAF uses one strand only → ~3× sparser per-position evidence; lower threshold |
+| `ddda` | no | 5.0 | `ddda_TF.json` (recall) / `ddda_nuc.json` (apply) | DddB-Nanopore emissions with a baked-in 2.0× efficiency uplift for DddA |
 
 Override `--min-llr` if your data needs different calibration.
 For cross-enzyme experimentation, `--emission-uplift` applies a power
@@ -515,34 +530,31 @@ design (avoids inventing non-spec tag names).
 
 ```bash
 # Two-step (most common)
-fiberhmm-apply -i input.bam -m models/hia5_pacbio.json -o tmp/ -c 8
+fiberhmm-apply -i input.bam --enzyme hia5 --seq pacbio -o tmp/ -c 8
 fiberhmm-recall-tfs -i tmp/input_footprints.bam -o output/recalled.bam \
-                    -m models/hia5_pacbio.json --enzyme hia5 -c 8
+                    --enzyme hia5 --seq pacbio -c 8
 
 # Stream apply -> recall (no intermediate file)
-fiberhmm-apply -i input.bam -m models/hia5_pacbio.json -o - -c 8 | \
+fiberhmm-apply -i input.bam --enzyme hia5 --seq pacbio -o - -c 8 | \
     fiberhmm-recall-tfs -i - -o recalled.bam \
-                        -m models/hia5_pacbio.json --enzyme hia5 -c 8
+                        --enzyme hia5 --seq pacbio -c 8
 
 # Full chain: apply -> recall -> fire -> sort
-fiberhmm-apply -i input.bam -m models/hia5_pacbio.json -o - -c 8 | \
-    fiberhmm-recall-tfs -i - -o - \
-                        -m models/hia5_pacbio.json --enzyme hia5 -c 8 | \
+fiberhmm-apply -i input.bam --enzyme hia5 --seq pacbio -o - -c 8 | \
+    fiberhmm-recall-tfs -i - -o - --enzyme hia5 --seq pacbio -c 8 | \
     ft fire - - | samtools sort -o output.bam && samtools index output.bam
 
 # Downstream-compat mode for tools that only read ns/nl
 fiberhmm-recall-tfs -i tagged.bam -o recalled.bam \
-                    -m models/hia5_pacbio.json --enzyme hia5 -c 8 \
-                    --downstream-compat
+                    --enzyme hia5 --seq pacbio -c 8 --downstream-compat
 ```
 
 For DddA, the recall pass is **required** (the nucleosome model
-`ddda_nuc.json` does not emit sub-nuc TF calls). Use `ddda_TF.json`
-which has the DddA efficiency adjustment baked in:
+`ddda_nuc.json` does not emit sub-nuc TF calls). The bundled `ddda_TF.json`
+with the DddA efficiency adjustment is selected automatically:
 
 ```bash
-fiberhmm-recall-tfs -i tagged.bam -o recalled.bam \
-                    -m models/ddda_TF.json --enzyme ddda
+fiberhmm-recall-tfs -i tagged.bam -o recalled.bam --enzyme ddda
 ```
 
 ### fiberhmm-posteriors
@@ -632,24 +644,24 @@ All FiberHMM tools support `-` for stdin/stdout, enabling Unix-style piping with
 # DAF-seq: align → encode → call footprints
 minimap2 --MD -a ref.fa reads.fq | samtools view -b | \
     fiberhmm-daf-encode -i - -o - | \
-    fiberhmm-apply --mode daf -i - -m models/dddb_nanopore.json -o output/
+    fiberhmm-apply --mode daf -i - --enzyme dddb -o output/
 
 # Fiber-seq: call footprints from stdin
 samtools view -b -h input.bam chr1 | \
-    fiberhmm-apply -i - -m model.json -o output/
+    fiberhmm-apply -i - --enzyme hia5 --seq pacbio -o output/
 ```
 
 When writing to stdout (`-o -`), the output is unsorted BAM. Sort and index downstream if needed:
 
 ```bash
-fiberhmm-apply -i input.bam -m model.json -o - | \
+fiberhmm-apply -i input.bam --enzyme hia5 --seq pacbio -o - | \
     samtools sort -o sorted.bam && samtools index sorted.bam
 ```
 
 Pipe FiberHMM footprints directly to `ft fire` for FIRE element calling with no intermediate files:
 
 ```bash
-fiberhmm-apply -i input.bam -m model.json -o - -c 8 | \
+fiberhmm-apply -i input.bam --enzyme hia5 --seq pacbio -o - -c 8 | \
     ft fire - output_fire.bam
 ```
 
