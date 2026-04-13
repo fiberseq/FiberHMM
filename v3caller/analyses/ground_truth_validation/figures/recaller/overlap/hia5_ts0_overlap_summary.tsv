@@ -1,0 +1,10 @@
+metric	value
+n_reads	1227
+n_v2_short	36649
+n_recaller_total	44978
+recall	0.9253
+precision	0.7480
+iou_median	0.8444444444444444
+length_pearson	0.20571515480690114
+coverage_pearson	0.8941882826107383
+coverage_spearman	0.8955318643971776
