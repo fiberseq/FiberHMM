@@ -753,8 +753,8 @@ Examples:
     # Get dataset name
     dataset = os.path.basename(args.input).replace('.bam', '').replace('_footprints', '')
 
-    # Get chrom sizes for bigBed
-    chrom_sizes = get_chrom_sizes(args.input)
+    # Get chrom sizes — only required for bigBed conversion
+    chrom_sizes = get_chrom_sizes(args.input) if make_bigbed else {}
 
     print(f"Input: {args.input}")
     print(f"Output: {args.outdir}")

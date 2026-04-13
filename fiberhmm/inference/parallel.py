@@ -8,6 +8,7 @@ import array as pyarray
 import base64
 import json
 import gzip
+import multiprocessing
 import shutil
 import subprocess
 import tempfile
@@ -15,6 +16,13 @@ import numpy as np
 import pysam
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import List, Dict, Optional, Tuple, Set
+
+# Force spawn on Linux: pysam/htslib file handles are not fork-safe and
+# reliably segfault in workers under Python ≥3.14 (and occasionally earlier).
+# spawn is ~10-20 ms slower per worker launch but avoids the crash entirely.
+_MP_CONTEXT = multiprocessing.get_context(
+    'fork' if sys.platform == 'darwin' else 'spawn'
+)
 
 from fiberhmm.core.model_io import load_model
 from fiberhmm.core.bam_reader import encode_from_query_sequence, detect_daf_strand
@@ -866,6 +874,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
         with ProcessPoolExecutor(
             max_workers=n_cores,
+            mp_context=_MP_CONTEXT,
             initializer=_init_region_worker,
             initargs=(model_path, params)
         ) as executor:
@@ -1171,6 +1180,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
 
         with ProcessPoolExecutor(
             max_workers=n_cores,
+            mp_context=_MP_CONTEXT,
             initializer=_init_region_worker,
             initargs=(model_path, params)
         ) as executor:
@@ -1499,6 +1509,7 @@ def _process_bam_streaming_pipeline(
             # Create worker pool
             executor = ProcessPoolExecutor(
                 max_workers=n_cores,
+                mp_context=_MP_CONTEXT,
                 initializer=_init_bam_worker,
                 initargs=(model_path, debug_timing)
             )
@@ -1832,6 +1843,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 # Parallel processing with ProcessPoolExecutor
                 executor = ProcessPoolExecutor(
                     max_workers=n_cores,
+                    mp_context=_MP_CONTEXT,
                     initializer=_init_bam_worker,
                     initargs=(model_path, debug_timing)
                 )
