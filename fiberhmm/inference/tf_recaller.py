@@ -46,6 +46,16 @@ from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
+try:
+    from numba import jit as _numba_jit
+    HAS_NUMBA = True
+except ImportError:
+    HAS_NUMBA = False
+    def _numba_jit(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
 from fiberhmm.core.bam_reader import (
     detect_daf_strand,
     encode_from_query_sequence,
@@ -192,85 +202,57 @@ def _is_miss_code(code: int) -> bool:
     return UNMETH_OFFSET <= code < UNMETH_OFFSET + N_CTX
 
 
-def _scan_left_ambiguity(obs: np.ndarray, lo: int, conservative_left: int) -> int:
-    """Bp from the conservative left boundary to the previous hit before it.
+@_numba_jit(nopython=True, cache=True)
+def _call_tfs_numba(obs, lo, hi, llr_hit, llr_miss,
+                    min_llr, min_opps):
+    """Numba-JIT Kadane local-maximum scan with edge-ambiguity scoring.
 
-    Walks left from ``conservative_left - 1`` until a hit is found; ambiguity
-    is the count of intervening positions. If no hit is found within the
-    interval (or the read), ambiguity is unbounded and we return a large
-    sentinel (>= EDGE_AMBIGUITY_SAT, so el = 0).
+    Returns five equal-length 1D numpy arrays:
+      (starts, ends, llrs, opps, left_amb, right_amb)
+    where ends is exclusive (call spans [start, end)).
+
+    Observation code layout (must match encode_from_query_sequence, k=3):
+      0 <= code < 4096         -> hit with hexamer context code
+      code == 4096              -> non-target methylated (unused in practice)
+      4097 <= code < 4097+4096  -> miss with context (code - 4097)
+      other                     -> non-target (neutral)
+
+    Constants inlined because numba dislikes reading module globals.
     """
-    i = conservative_left - 1
-    amb = 0
-    while i >= lo:
-        if _is_hit_code(int(obs[i])):
-            return amb
-        amb += 1
-        i -= 1
-    return amb  # ran off the start of the scan interval -> ambiguous
+    N_CTX = 4096
+    UNMETH_OFFSET = 4097
 
+    # Preallocate result buffers; worst-case per position is unlikely
+    # to produce more than (hi-lo)//3 calls.
+    max_calls = max(4, (hi - lo) // 2 + 1)
+    starts = np.empty(max_calls, dtype=np.int64)
+    ends = np.empty(max_calls, dtype=np.int64)
+    llrs = np.empty(max_calls, dtype=np.float64)
+    opps_out = np.empty(max_calls, dtype=np.int64)
+    left_amb = np.empty(max_calls, dtype=np.int64)
+    right_amb = np.empty(max_calls, dtype=np.int64)
+    n_calls = 0
 
-def _scan_right_ambiguity(obs: np.ndarray, hi: int, conservative_right: int) -> int:
-    """Bp from the conservative right boundary to the terminating hit.
-
-    The conservative right boundary is exclusive (= last_miss_position + 1).
-    We walk right starting at ``conservative_right``; ambiguity is the count
-    of non-target positions before the first hit.
-    """
-    i = conservative_right
-    amb = 0
-    while i < hi:
-        if _is_hit_code(int(obs[i])):
-            return amb
-        amb += 1
-        i += 1
-    return amb  # ran off the end of the scan interval -> ambiguous
-
-
-def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
-                         llr_hit: np.ndarray, llr_miss: np.ndarray,
-                         min_llr: float, min_opps: int) -> List[TFCall]:
-    """Kadane local-maximum scan on obs[lo:hi]."""
-    calls: List[TFCall] = []
-    cur_start: Optional[int] = None
+    cur_start = -1  # sentinel for "not in a run"
     running = 0.0
     opps = 0
     peak_llr = 0.0
-    peak_end = lo  # exclusive; advances only on misses
+    peak_end = lo
     peak_opps = 0
 
-    def _flush():
-        # peak_end is exclusive and points to one past the last miss
-        # that contributed positively to the peak.
-        if cur_start is None:
-            return
-        if peak_llr < min_llr or peak_opps < min_opps:
-            return
-        l_amb = _scan_left_ambiguity(obs, lo, cur_start)
-        r_amb = _scan_right_ambiguity(obs, hi, peak_end)
-        calls.append(TFCall(
-            start=cur_start,
-            length=peak_end - cur_start,
-            llr=peak_llr,
-            n_opps=peak_opps,
-            left_ambiguity=l_amb,
-            right_ambiguity=r_amb,
-        ))
-
     for i in range(lo, hi):
-        code = int(obs[i])
-        if _is_hit_code(code):
+        code = obs[i]
+        is_opp = False
+        step = 0.0
+        if 0 <= code < N_CTX:
             step = llr_hit[code]
             is_opp = True
-        elif _is_miss_code(code):
+        elif UNMETH_OFFSET <= code < UNMETH_OFFSET + N_CTX:
             step = llr_miss[code - UNMETH_OFFSET]
             is_opp = True
-        else:
-            step = 0.0
-            is_opp = False
 
-        if cur_start is None:
-            if step > 0:
+        if cur_start < 0:
+            if step > 0.0:
                 cur_start = i
                 running = step
                 opps = 1 if is_opp else 0
@@ -282,23 +264,92 @@ def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
         running += step
         if is_opp:
             opps += 1
-
         if running > peak_llr:
             peak_llr = running
             peak_end = i + 1
             peak_opps = opps
 
-        if running <= 0:
-            _flush()
-            cur_start = None
+        if running <= 0.0:
+            if peak_llr >= min_llr and peak_opps >= min_opps and n_calls < max_calls:
+                starts[n_calls] = cur_start
+                ends[n_calls] = peak_end
+                llrs[n_calls] = peak_llr
+                opps_out[n_calls] = peak_opps
+                n_calls += 1
+            cur_start = -1
             running = 0.0
             opps = 0
             peak_llr = 0.0
             peak_end = i + 1
             peak_opps = 0
 
-    if cur_start is not None:
-        _flush()
+    # End-of-interval flush
+    if cur_start >= 0 and peak_llr >= min_llr and peak_opps >= min_opps \
+            and n_calls < max_calls:
+        starts[n_calls] = cur_start
+        ends[n_calls] = peak_end
+        llrs[n_calls] = peak_llr
+        opps_out[n_calls] = peak_opps
+        n_calls += 1
+
+    # Edge ambiguity: walk left from each start to find nearest hit (or lo),
+    # walk right from each end to find nearest hit (or hi).
+    for ci in range(n_calls):
+        s = starts[ci]
+        e = ends[ci]
+        # Left
+        amb = 0
+        j = s - 1
+        while j >= lo:
+            c = obs[j]
+            if 0 <= c < N_CTX:
+                break
+            amb += 1
+            j -= 1
+        left_amb[ci] = amb
+        # Right
+        amb = 0
+        j = e
+        while j < hi:
+            c = obs[j]
+            if 0 <= c < N_CTX:
+                break
+            amb += 1
+            j += 1
+        right_amb[ci] = amb
+
+    return (starts[:n_calls], ends[:n_calls], llrs[:n_calls],
+            opps_out[:n_calls], left_amb[:n_calls], right_amb[:n_calls])
+
+
+def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
+                         llr_hit: np.ndarray, llr_miss: np.ndarray,
+                         min_llr: float, min_opps: int) -> List[TFCall]:
+    """Kadane local-maximum scan on obs[lo:hi].
+
+    Thin Python wrapper around ``_call_tfs_numba``; builds TFCall objects
+    from the numpy result arrays.
+    """
+    if hi <= lo:
+        return []
+    # Ensure dtypes numba can bind to cleanly
+    obs_arr = np.ascontiguousarray(obs, dtype=np.int32)
+    hit_arr = np.ascontiguousarray(llr_hit, dtype=np.float64)
+    miss_arr = np.ascontiguousarray(llr_miss, dtype=np.float64)
+    starts, ends, llrs, opps_arr, l_amb, r_amb = _call_tfs_numba(
+        obs_arr, int(lo), int(hi), hit_arr, miss_arr,
+        float(min_llr), int(min_opps),
+    )
+    calls: List[TFCall] = []
+    for i in range(len(starts)):
+        calls.append(TFCall(
+            start=int(starts[i]),
+            length=int(ends[i] - starts[i]),
+            llr=float(llrs[i]),
+            n_opps=int(opps_arr[i]),
+            left_ambiguity=int(l_amb[i]),
+            right_ambiguity=int(r_amb[i]),
+        ))
     return calls
 
 

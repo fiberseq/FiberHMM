@@ -311,8 +311,8 @@ fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m model.json --enzyme hia5
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-i/--in-bam` | required | Input BAM tagged by `fiberhmm-apply` (carries `ns`/`nl`/`as`/`al`) |
-| `-o/--out-bam` | required | Output BAM with `MA`/`AQ` tags + refreshed legacy tags |
+| `-i/--in-bam` | required | Input BAM tagged by `fiberhmm-apply` (carries `ns`/`nl`/`as`/`al`). Use `-` for stdin. |
+| `-o/--out-bam` | required | Output BAM with `MA`/`AQ` tags + refreshed legacy tags. Use `-` for stdout (pipe-friendly). |
 | `-m/--model` | required | FiberHMM model JSON (the same one passed to `fiberhmm-apply`, or a closely related one for `--emission-uplift` use) |
 | `--enzyme` | none | Pick a tuned preset: `hia5`, `dddb`, or `ddda`. Sets `--min-llr` and `--emission-uplift` defaults. |
 | `--min-llr` | enzyme preset | Min cumulative LLR (nats) per call |
@@ -320,9 +320,17 @@ fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m model.json --enzyme hia5
 | `--emission-uplift` | 1.0 | Power transform on emission probabilities. Rarely needed -- use a pre-uplifted model file (e.g. `ddda_TF.json`) instead. |
 | `--unify-threshold` | 90 | v2 footprints with `nl < this` may be demoted to `tf+`; ≥ this stay as nucleosomes |
 | `--no-legacy-tags` | off | Skip refreshed `ns/nl/as/al` -- emit only `MA`/`AQ` |
+| `-c/--cores` | 1 | Worker processes. 0 = auto-detect |
+| `--chunk-size` | 256 | Reads per worker chunk |
+| `--io-threads` | 4 | htslib BAM compression threads |
 | `--mode` | from model | Override observation mode (`pacbio-fiber` / `nanopore-fiber` / `daf`) |
 | `--context-size` | from model | Override context size (default: read from model JSON) |
 | `--max-reads` | 0 | 0 = no limit |
+
+`fiberhmm-recall-tfs` JIT-compiles the Kadane scoring loop via Numba when
+available (`pip install numba`) and parallelizes per-read work across
+`--cores` workers. Typical throughput: ~5k reads/sec single-core with
+JIT; ~15k reads/sec with 4 cores (scaling is I/O bound above that).
 
 #### Per-enzyme presets
 
@@ -440,14 +448,20 @@ design (avoids inventing non-spec tag names).
 
 ```bash
 # Two-step (most common)
-fiberhmm-apply -i input.bam -m models/hia5_pacbio.json -o tmp/
+fiberhmm-apply -i input.bam -m models/hia5_pacbio.json -o tmp/ -c 8
 fiberhmm-recall-tfs -i tmp/input_footprints.bam -o output/recalled.bam \
-                    -m models/hia5_pacbio.json --enzyme hia5
+                    -m models/hia5_pacbio.json --enzyme hia5 -c 8
 
-# Stream apply -> recall
-fiberhmm-apply -i input.bam -m models/hia5_pacbio.json -o - | \
+# Stream apply -> recall (no intermediate file)
+fiberhmm-apply -i input.bam -m models/hia5_pacbio.json -o - -c 8 | \
     fiberhmm-recall-tfs -i - -o recalled.bam \
-                        -m models/hia5_pacbio.json --enzyme hia5
+                        -m models/hia5_pacbio.json --enzyme hia5 -c 8
+
+# Full chain: apply -> recall -> fire -> sort
+fiberhmm-apply -i input.bam -m models/hia5_pacbio.json -o - -c 8 | \
+    fiberhmm-recall-tfs -i - -o - \
+                        -m models/hia5_pacbio.json --enzyme hia5 -c 8 | \
+    ft fire - - | samtools sort -o output.bam && samtools index output.bam
 ```
 
 For DddA, the recall pass is **required** (the nucleosome model
