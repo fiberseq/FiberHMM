@@ -589,26 +589,42 @@ def extract_tags_parallel(input_bam: str, output_bed: str, extract_type: str,
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int], bed_type: str = 'bed12') -> bool:
+def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
+                   bed_type: str = 'bed12',
+                   extract_type: Optional[str] = None) -> bool:
     """Convert BED to bigBed using bedToBigBed.
+
+    If ``extract_type`` matches a FiberHMM autoSQL schema
+    (footprint/msp/tf/m6a/m5c), embed the schema via ``-as=`` so the
+    bigBed is self-identifying -- browsers will see the table name
+    (e.g. ``fiberhmm_tf``) and description when the file is loaded.
 
     Args:
         bed_path: Input BED file
         bigbed_path: Output bigBed file
         chrom_sizes: Dict of chromosome sizes
         bed_type: 'bed12' for all FiberHMM outputs
+        extract_type: One of footprint/msp/tf/m6a/m5c to embed the
+            matching autoSQL schema; None to skip schema embedding.
     """
+    from fiberhmm.io.autosql import write_autosql_for
+
     # Write chrom sizes file
     sizes_file = bed_path + '.sizes'
     with open(sizes_file, 'w') as f:
         for chrom, size in sorted(chrom_sizes.items()):
             f.write(f"{chrom}\t{size}\n")
 
+    # Write autoSQL schema to a temp file (if we have one for this type)
+    as_file = write_autosql_for(extract_type) if extract_type else None
+
     try:
         # Run bedToBigBed
         cmd = ['bedToBigBed']
+        if as_file:
+            cmd.append(f'-as={as_file}')
         if bed_type == 'bed12':
-            cmd.extend(['-type=bed12'])
+            cmd.append('-type=bed12')
         cmd.extend([bed_path, sizes_file, bigbed_path])
 
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -625,6 +641,9 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int], 
         return False
 
     finally:
+        if as_file and os.path.exists(as_file):
+            try: os.remove(as_file)
+            except Exception: pass
         if os.path.exists(sizes_file):
             try:
                 os.remove(sizes_file)
@@ -779,7 +798,8 @@ Examples:
         if make_bigbed:
             print("  Converting to bigBed...")
             # All outputs are BED12 format
-            if bed_to_bigbed(bed_path, bb_path, chrom_sizes, 'bed12'):
+            if bed_to_bigbed(bed_path, bb_path, chrom_sizes, 'bed12',
+                              extract_type=extract_type):
                 print(f"  bigBed: {bb_path}")
                 if not args.keep_bed:
                     try:
