@@ -44,92 +44,71 @@ For bigBed output, install [`bedToBigBed`](https://hgdownload.soe.ucsc.edu/admin
 
 ## Quick Start
 
-### Fiber-seq (PacBio or Nanopore)
+### The preferred way: `fiberhmm-run`
 
-If you have a BAM with m6A modification tags (MM/ML), you can call footprints directly.
-Pre-trained models ship with the package — no separate download needed.
+`fiberhmm-run` runs the complete pipeline in a single command — no intermediate files, no manual piping. Pass your aligned BAM and an enzyme flag; everything else is automatic.
 
 ```bash
-# PacBio Hia5
-fiberhmm-apply -i experiment.bam --enzyme hia5 --seq pacbio -o output/ -c 8
+# DddB DAF-seq — encode → apply → recall-tfs → sort+index
+fiberhmm-run -i aligned.bam -o recalled.bam --enzyme dddb -c 8
 
-# Nanopore Hia5
-fiberhmm-apply -i experiment.bam --enzyme hia5 --seq nanopore -o output/ -c 8
+# DddA amplicons (same command; correct models selected automatically)
+fiberhmm-run -i aligned.bam -o recalled.bam --enzyme ddda -c 8
+
+# Hia5 PacBio
+fiberhmm-run -i experiment.bam -o recalled.bam --enzyme hia5 --seq pacbio -c 8
+
+# Add FIRE scoring (requires fibertools-rs ft in PATH)
+fiberhmm-run -i aligned.bam -o recalled.bam --enzyme dddb --fire -c 8
 ```
 
-### DAF-seq
+Pre-trained models are **bundled with the package** — no separate download. `--enzyme` selects the right model automatically. Run `fiberhmm-run --help` for all options.
 
-DAF-seq BAMs from minimap2 contain deamination events as C→T / G→A mismatches but lack the IUPAC encoding and strand tags that FiberHMM expects. Use `fiberhmm-daf-encode` to preprocess, then call footprints with the right enzyme flag.
+Then extract BED12 / bigBed tracks:
 
-**DddB:**
 ```bash
-fiberhmm-daf-encode -i aligned.bam -o encoded.bam
-fiberhmm-apply --mode daf -i encoded.bam --enzyme dddb -o output/ -c 8
-# Optional TF refinement
-fiberhmm-recall-tfs -i output/encoded_footprints.bam -o output/recalled.bam \
-                    --enzyme dddb
+fiberhmm-extract -i recalled.bam --footprint --msp --tf --bigbed
+```
+
+---
+
+### Running tools individually
+
+For custom parameters, posteriors export, or non-standard workflows, the individual tools are fully composable:
+
+**Fiber-seq (Hia5 / PacBio or Nanopore):**
+```bash
+# Apply HMM
+fiberhmm-apply -i experiment.bam --enzyme hia5 --seq pacbio -o output/ -c 8
+# Optional TF recall
+fiberhmm-recall-tfs -i output/experiment_footprints.bam \
+                    -o output/experiment_recalled.bam \
+                    --enzyme hia5 --seq pacbio
+```
+
+**DddB DAF-seq (streaming):**
+```bash
+fiberhmm-daf-encode -i aligned.bam -o - | \
+    fiberhmm-apply --mode daf -i - --enzyme dddb -o - -c 8 | \
+    fiberhmm-recall-tfs -i - -o recalled.bam --enzyme dddb
 ```
 
 **DddA (two-pass workflow REQUIRED):**
 ```bash
-fiberhmm-daf-encode -i aligned.bam -o encoded.bam
-# Step 1: nucleosomes
-fiberhmm-apply --mode daf -i encoded.bam --enzyme ddda -o output/ -c 8
-# Step 2: TF/Pol II recall (REQUIRED -- ddda_nuc.json does not emit TFs)
-fiberhmm-recall-tfs -i output/encoded_footprints.bam -o output/recalled.bam \
-                    --enzyme ddda
-```
-
-**Streaming pipeline (DddB example):**
-```bash
+# Step 1: nucleosome model
 fiberhmm-daf-encode -i aligned.bam -o - | \
-    fiberhmm-apply --mode daf -i - --enzyme dddb -o output/
+    fiberhmm-apply --mode daf -i - --enzyme ddda -o - -c 8 | \
+# Step 2: TF/Pol II recall (required — ddda_nuc.json does not emit TF calls)
+    fiberhmm-recall-tfs -i - -o recalled.bam --enzyme ddda
 ```
 
 If your BAM is missing MD tags (minimap2 wasn't run with `--MD`), add them first:
-
 ```bash
-samtools calmd -b aligned.bam ref.fa | \
-    fiberhmm-daf-encode -i - -o - | \
-    fiberhmm-apply --mode daf -i - --enzyme dddb -o output/
+samtools calmd -b aligned.bam ref.fa | fiberhmm-daf-encode -i - -o - --enzyme dddb ...
 ```
+Or pass the reference FASTA directly to `fiberhmm-daf-encode --reference ref.fa` (slower).
 
-Or pass the reference FASTA directly to `fiberhmm-daf-encode` (slower):
-
-```bash
-fiberhmm-daf-encode -i aligned.bam -o encoded.bam --reference ref.fa
-```
-
-### Recall TF/Pol II footprints (BETA)
-
-> **Beta feature (new in fiberhmm 2.6.0).** The algorithm, tag schema, and
-> per-enzyme defaults are stable, but this is a newer code path than the
-> core `fiberhmm-apply`. Validated on Hia5 PacBio embryo, DddB DAF
-> time-course, and DddA amplicons. Please file issues if you hit edge
-> cases.
-
-After `fiberhmm-apply` produces nucleosome and MSP calls, run the TF
-recaller to resolve sub-nucleosomal footprints with proper LLR scoring
-and edge-ambiguity quality bytes:
-
-```bash
-# Hia5 / DddB: optional refinement (single-pass model already covers TFs)
-fiberhmm-recall-tfs -i output/experiment_footprints.bam \
-                    -o output/experiment_recalled.bam \
-                    --enzyme hia5 --seq pacbio
-
-# DddA: REQUIRED -- the nuc model deliberately does not emit TF calls
-fiberhmm-apply -i input.bam --enzyme ddda -o tmp/ --mode daf
-fiberhmm-recall-tfs -i tmp/input_footprints.bam -o output/recalled.bam \
-                    --enzyme ddda
-```
-
-The recaller writes spec-compliant
-[Molecular-annotation](https://github.com/fiberseq/Molecular-annotation-spec)
-`MA`/`AQ` tags with three annotation types: `nuc+Q`, `msp+`, `tf+QQQ`.
-By default it also keeps the legacy `ns`/`nl`/`as`/`al` tags in sync
-(small v2 footprints absorbed into TF calls are demoted to `tf+`).
-See [fiberhmm-recall-tfs](#fiberhmm-recall-tfs) below for full details.
+**TF recaller output:** spec-compliant [Molecular-annotation](https://github.com/fiberseq/Molecular-annotation-spec) `MA`/`AQ` tags (`nuc+Q`, `msp+`, `tf+QQQ`), with legacy `ns`/`nl`/`as`/`al` tags kept in sync. See [fiberhmm-recall-tfs](#fiberhmm-recall-tfs-beta) for full details.
 
 ### Extract to BED12/bigBed
 
