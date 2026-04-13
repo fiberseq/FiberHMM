@@ -1306,17 +1306,27 @@ def _process_chunk_worker(chunk_reads: list, edge_trim: int, circular: bool,
                            nuc_min_size: int = 85,
                            with_scores: bool = False,
                            return_posteriors: bool = False) -> list:
-    """Worker function to process a chunk of reads."""
+    """Worker function to process a chunk of reads.
+
+    Per-read errors are caught and converted to None results so a single bad
+    read can never bring down the entire worker process (and with it the whole
+    chunk of ~500 reads). Reads that fail are written through to the output
+    unchanged without footprint tags.
+    """
     global _worker_model
 
     results = []
     for fiber_read in chunk_reads:
-        result = _process_single_read(
-            fiber_read, _worker_model, edge_trim, circular,
-            mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
-            with_scores=with_scores,
-            return_posteriors=return_posteriors
-        )
+        try:
+            result = _process_single_read(
+                fiber_read, _worker_model, edge_trim, circular,
+                mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+                with_scores=with_scores,
+                return_posteriors=return_posteriors
+            )
+        except Exception:
+            # Per-read failure: skip this read but keep the worker alive
+            result = None
         results.append(result)
 
     return results

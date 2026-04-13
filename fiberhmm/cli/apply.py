@@ -67,7 +67,7 @@ Examples:
     add_parallel_args(parser, default_cores=1, default_region_size=10_000_000)
 
     # Filtering
-    add_filter_args(parser, min_mapq=20, prob_threshold=128, min_read_length=1000)
+    add_filter_args(parser, min_mapq=0, prob_threshold=128, min_read_length=1000)
     parser.add_argument('-t', '--train-reads', default=None,
                         help='TSV file of read IDs used in training (to exclude)')
     parser.add_argument('-l', '--min-footprints', type=int, default=0,
@@ -88,8 +88,11 @@ Examples:
                         help='Compute per-footprint confidence scores (slower but more informative)')
     parser.add_argument('--scores-db', action='store_true',
                         help='Output SQLite database with detailed per-footprint scores')
-    parser.add_argument('--msp-min-size', type=int, default=None,
-                        help='Minimum size for MSP regions (default: 60)')
+    parser.add_argument('--msp-min-size', type=int, default=0,
+                        help='Minimum size for MSP regions in bp. Default 0 '
+                             '(emit every accessible run; matches fibertools, '
+                             'which does not impose an MSP size filter at this '
+                             'stage). Pass a positive value to filter.')
     parser.add_argument('--nuc-min-size', type=int, default=85,
                         help='Minimum footprint size (bp) to count as nucleosome-sized '
                              'for MSP boundary detection. Only footprints >= this size '
@@ -177,7 +180,7 @@ def main():
     args.mode = mode
 
     # Determine MSP minimum size (default 60bp for all modes)
-    msp_min_size = args.msp_min_size if args.msp_min_size is not None else 60
+    msp_min_size = args.msp_min_size if args.msp_min_size is not None else 0
 
     # Load training read IDs to exclude
     train_rids = set()

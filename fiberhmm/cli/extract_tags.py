@@ -41,8 +41,24 @@ from fiberhmm.inference.parallel import _get_genome_regions
 
 def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
     """Extract chromosome sizes from BAM header."""
-    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
-        return {sq['SN']: sq['LN'] for sq in bam.header['SQ']}
+    if not os.path.exists(bam_path):
+        raise FileNotFoundError(f"BAM file not found: {bam_path}")
+    if os.path.getsize(bam_path) == 0:
+        raise ValueError(
+            f"BAM file is empty: {bam_path}\n"
+            f"  This usually means the upstream tool (e.g. fiberhmm-apply) "
+            f"failed mid-stream. Re-run with -c 1 to surface the underlying error."
+        )
+    try:
+        with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
+            return {sq['SN']: sq['LN'] for sq in bam.header['SQ']}
+    except ValueError as e:
+        raise ValueError(
+            f"Could not read BAM {bam_path}: {e}\n"
+            f"  The file may be truncated or header-only. If it was produced "
+            f"by fiberhmm-apply, that run likely failed mid-stream — re-run "
+            f"with -c 1 to surface the underlying error."
+        ) from e
 
 
 # Global worker state

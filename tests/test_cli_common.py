@@ -54,7 +54,9 @@ class TestAddFilterArgs:
         parser = argparse.ArgumentParser()
         add_filter_args(parser)
         args = parser.parse_args([])
-        assert args.min_mapq == 20
+        # min_mapq default is 0 (call on all mapped reads). Per-tool overrides
+        # via add_filter_args(parser, min_mapq=...) are the way to filter.
+        assert args.min_mapq == 0
         assert args.prob_threshold == 128
         assert args.min_read_length == 1000
 

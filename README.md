@@ -12,6 +12,7 @@ FiberHMM identifies protected regions (footprints) and accessible regions (methy
 - **Streaming pipeline** -- scales linearly with cores; supports stdin/stdout piping for composable workflows
 - **Multi-platform** -- supports PacBio fiber-seq, Nanopore fiber-seq, and DAF-seq
 - **DAF-seq preprocessing** -- `fiberhmm-daf-encode` converts plain aligned BAMs to IUPAC R/Y encoded BAMs
+- **TF footprint recaller** -- `fiberhmm-recall-tfs` runs an LLR-based 2nd pass on top of the HMM output to resolve sub-nucleosomal TF/Pol II footprints with proper per-context scoring; spec-compliant `MA`/`AQ` tags
 - **Legacy model support** -- loads old hmmlearn-trained pickle/NPZ models seamlessly
 
 ## Installation
@@ -52,16 +53,31 @@ fiberhmm-apply -i experiment.bam -m models/hia5_pacbio.json -o output/ -c 8
 
 ### DAF-seq
 
-DAF-seq BAMs from minimap2 contain deamination events as C→T / G→A mismatches but lack the IUPAC encoding and strand tags that FiberHMM expects. Use `fiberhmm-daf-encode` to preprocess, then call footprints:
+DAF-seq BAMs from minimap2 contain deamination events as C→T / G→A mismatches but lack the IUPAC encoding and strand tags that FiberHMM expects. Use `fiberhmm-daf-encode` to preprocess, then call footprints with the right model for your enzyme.
 
+**DddB:**
 ```bash
-# Two-step
 fiberhmm-daf-encode -i aligned.bam -o encoded.bam
-fiberhmm-apply --mode daf -i encoded.bam -m models/ddda_pacbio.json -o output/ -c 8
+fiberhmm-apply --mode daf -i encoded.bam -m models/dddb_nanopore.json -o output/ -c 8
+# Optional TF refinement
+fiberhmm-recall-tfs -i output/encoded_footprints.bam -o output/recalled.bam \
+                    -m models/dddb_nanopore.json --enzyme dddb
+```
 
-# Or as a streaming pipeline (no intermediate file)
+**DddA (two-pass workflow REQUIRED):**
+```bash
+fiberhmm-daf-encode -i aligned.bam -o encoded.bam
+# Step 1: nucleosomes
+fiberhmm-apply --mode daf -i encoded.bam -m models/ddda_nuc.json -o output/ -c 8
+# Step 2: TF/Pol II recall (REQUIRED -- ddda_nuc.json does not emit TFs)
+fiberhmm-recall-tfs -i output/encoded_footprints.bam -o output/recalled.bam \
+                    -m models/ddda_TF.json --enzyme ddda
+```
+
+**Streaming pipeline (DddB example):**
+```bash
 fiberhmm-daf-encode -i aligned.bam -o - | \
-    fiberhmm-apply --mode daf -i - -m models/ddda_pacbio.json -o output/
+    fiberhmm-apply --mode daf -i - -m models/dddb_nanopore.json -o output/
 ```
 
 If your BAM is missing MD tags (minimap2 wasn't run with `--MD`), add them first:
@@ -69,14 +85,39 @@ If your BAM is missing MD tags (minimap2 wasn't run with `--MD`), add them first
 ```bash
 samtools calmd -b aligned.bam ref.fa | \
     fiberhmm-daf-encode -i - -o - | \
-    fiberhmm-apply --mode daf -i - -m models/ddda_pacbio.json -o output/
+    fiberhmm-apply --mode daf -i - -m models/dddb_nanopore.json -o output/
 ```
 
-Or pass the reference FASTA directly (slower):
+Or pass the reference FASTA directly to `fiberhmm-daf-encode` (slower):
 
 ```bash
 fiberhmm-daf-encode -i aligned.bam -o encoded.bam --reference ref.fa
 ```
+
+### Recall TF/Pol II footprints
+
+After `fiberhmm-apply` produces nucleosome and MSP calls, run the TF
+recaller to resolve sub-nucleosomal footprints with proper LLR scoring
+and edge-ambiguity quality bytes:
+
+```bash
+# Hia5 / DddB: optional refinement (single-pass model already covers TFs)
+fiberhmm-recall-tfs -i output/experiment_footprints.bam \
+                    -o output/experiment_recalled.bam \
+                    -m models/hia5_pacbio.json --enzyme hia5
+
+# DddA: REQUIRED -- the nuc model deliberately does not emit TF calls
+fiberhmm-apply -i input.bam -m models/ddda_nuc.json -o tmp/ --mode daf
+fiberhmm-recall-tfs -i tmp/input_footprints.bam -o output/recalled.bam \
+                    -m models/ddda_TF.json --enzyme ddda
+```
+
+The recaller writes spec-compliant
+[Molecular-annotation](https://github.com/fiberseq/Molecular-annotation-spec)
+`MA`/`AQ` tags with three annotation types: `nuc+Q`, `msp+`, `tf+QQQ`.
+By default it also keeps the legacy `ns`/`nl`/`as`/`al` tags in sync
+(small v2 footprints absorbed into TF calls are demoted to `tf+`).
+See [fiberhmm-recall-tfs](#fiberhmm-recall-tfs) below for full details.
 
 ### Extract to BED12/bigBed
 
@@ -88,12 +129,45 @@ fiberhmm-extract -i output/experiment_footprints.bam
 
 FiberHMM ships with pre-trained models in `models/` ready for immediate use:
 
-| Model | File | Enzyme | Platform | Mode |
-|-------|------|--------|----------|------|
-| **Hia5 PacBio** | `hia5_pacbio.json` | Hia5 (m6A) | PacBio | `pacbio-fiber` |
-| **Hia5 Nanopore** | `hia5_nanopore.json` | Hia5 (m6A) | Nanopore | `nanopore-fiber` |
-| **DddA PacBio** | `ddda_pacbio.json` | DddA (deamination) | PacBio | `daf` |
-| **DddB Nanopore** | `dddb_nanopore.json` | DddB (deamination) | Nanopore | `daf` |
+| Model | File | Enzyme | Platform | Mode | Used by |
+|-------|------|--------|----------|------|---------|
+| **Hia5 PacBio** | `hia5_pacbio.json` | Hia5 (m6A) | PacBio | `pacbio-fiber` | `fiberhmm-apply` (one-pass, all sizes) |
+| **Hia5 Nanopore** | `hia5_nanopore.json` | Hia5 (m6A) | Nanopore | `nanopore-fiber` | `fiberhmm-apply` (one-pass, all sizes) |
+| **DddA nuc** | `ddda_nuc.json` | DddA (deamination) | PacBio | `daf` | `fiberhmm-apply` -- **nucleosomes only** |
+| **DddA TF** | `ddda_TF.json` | DddA (deamination) | PacBio | `daf` | `fiberhmm-recall-tfs --enzyme ddda` -- **REQUIRED 2nd pass** |
+| **DddB Nanopore** | `dddb_nanopore.json` | DddB (deamination) | Nanopore | `daf` | `fiberhmm-apply` (one-pass, all sizes) |
+
+Older models live in `models/legacy/` and are kept for reproducibility
+of previously-published analyses; see `models/legacy/README.md`.
+
+### DddA workflow -- two passes, two models
+
+DddA requires a two-step workflow to get clean nucleosomes AND well-scored
+TF/Pol II footprints:
+
+1. **`ddda_nuc.json`** -- HMM nucleosome caller (`fiberhmm-apply`). Uses
+   DddB-Nanopore transitions plus biophysics-derived emissions (linker
+   P(meth)=0.5 from DddA's kinetic limit; nucleosome P(meth | ctx) =
+   per-context FP rate + 0.05 breathing). Deliberately tuned to call
+   only nucleosomes cleanly.
+
+2. **`ddda_TF.json`** -- LLR TF recaller (`fiberhmm-recall-tfs`). The
+   DddB-Nanopore emission table with a baked-in 2.0× efficiency uplift
+   to match DddA's higher per-position deamination rate. **Without this
+   2nd pass, sub-nucleosomal calls (TFs, Pol II) are not emitted.**
+
+```bash
+# Step 1: nucleosomes (DddA)
+fiberhmm-apply -i tagged.bam -m models/ddda_nuc.json -o out/ --mode daf
+
+# Step 2: TF/Pol II recall (REQUIRED for DddA)
+fiberhmm-recall-tfs -i out/tagged_footprints.bam -o out/recalled.bam \
+                    -m models/ddda_TF.json --enzyme ddda
+```
+
+For Hia5 and DddB, the single trained model already captures both nucs
+and small footprints, so the recall pass is optional refinement rather
+than required.
 
 ## Analysis Modes
 
@@ -220,6 +294,171 @@ fiberhmm-extract -i output/sample_footprints.bam --footprint
 fiberhmm-extract -i output/sample_footprints.bam --keep-bed
 ```
 
+### fiberhmm-recall-tfs
+
+LLR-based TF footprint recaller. Runs as an optional second pass on a BAM
+already tagged by `fiberhmm-apply`. The HMM is excellent at calling
+nucleosomes (≥90 bp protected stretches), but its global transition
+penalty leaves smaller TF/Pol II footprints scored only as part of the
+MSP/short-nuc tracks. The recaller scans those regions with a per-context
+log-likelihood ratio test using the **same emission table the HMM was
+trained with**, and emits sub-nucleosomal calls with proper statistical
+scoring + boundary-ambiguity quality bytes.
+
+```bash
+fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m model.json --enzyme hia5
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i/--in-bam` | required | Input BAM tagged by `fiberhmm-apply` (carries `ns`/`nl`/`as`/`al`) |
+| `-o/--out-bam` | required | Output BAM with `MA`/`AQ` tags + refreshed legacy tags |
+| `-m/--model` | required | FiberHMM model JSON (the same one passed to `fiberhmm-apply`, or a closely related one for `--emission-uplift` use) |
+| `--enzyme` | none | Pick a tuned preset: `hia5`, `dddb`, or `ddda`. Sets `--min-llr` and `--emission-uplift` defaults. |
+| `--min-llr` | enzyme preset | Min cumulative LLR (nats) per call |
+| `--min-opps` | 3 | Min informative target positions per call |
+| `--emission-uplift` | 1.0 | Power transform on emission probabilities. Rarely needed -- use a pre-uplifted model file (e.g. `ddda_TF.json`) instead. |
+| `--unify-threshold` | 90 | v2 footprints with `nl < this` may be demoted to `tf+`; ≥ this stay as nucleosomes |
+| `--no-legacy-tags` | off | Skip refreshed `ns/nl/as/al` -- emit only `MA`/`AQ` |
+| `--mode` | from model | Override observation mode (`pacbio-fiber` / `nanopore-fiber` / `daf`) |
+| `--context-size` | from model | Override context size (default: read from model JSON) |
+| `--max-reads` | 0 | 0 = no limit |
+
+#### Per-enzyme presets
+
+The `--enzyme` flag picks tuned defaults validated on the FiberHMM
+benchmark BAMs (Hia5 PacBio embryo, DddB DAF time-course, DddA amplicons):
+
+| `--enzyme` | `--min-llr` | Recommended `--model` | Why |
+|---|---|---|---|
+| `hia5` | 5.0 | `models/hia5_pacbio.json` (or `hia5_nanopore.json`) | Trained Hia5 model is already calibrated |
+| `dddb` | 4.0 | `models/dddb_nanopore.json` | DAF uses one strand only -> ~3× sparser per-position evidence; lower threshold |
+| `ddda` | 5.0 | `models/ddda_TF.json` | DddB-Nanopore emissions with a baked-in 2.0× efficiency uplift to match DddA's higher per-position deamination rate |
+
+Override `--min-llr` if your data needs different calibration.
+For cross-enzyme experimentation, `--emission-uplift` applies a power
+transform to the loaded model's emissions at runtime (default 1.0).
+
+#### MA/AQ tag schema
+
+The recaller writes one MA tag and one AQ tag per processed read, per the
+[fiberseq Molecular-annotation
+spec](https://github.com/fiberseq/Molecular-annotation-spec).
+
+```
+MA:Z:<read_length>;nuc+Q:s1-l1,s2-l2,...;msp+:s1-l1,...;tf+QQQ:s1-l1,...
+AQ:B:C: nq, nq, ..., tq, el, er, tq, el, er, ...
+```
+
+Coordinates are 1-based (per the spec); internal storage stays 0-based.
+
+| Annotation | Quality bytes | Meaning |
+|---|---|---|
+| `nuc+Q` | `nq` | Nucleosomes (`nl ≥ unify_threshold` or v2 short-nucs the recaller did not match). `nq` carries v2's posterior mean (0 sentinel for unverified entries). |
+| `msp+` | none | Methylase-sensitive patches (v2 MSPs unchanged) |
+| `tf+QQQ` | `tq, el, er` | Recaller TF calls. See encoding table below. |
+
+##### `tq` -- LLR-based confidence (0-255)
+
+```
+tq = clip(round(LLR_nats * 10), 0, 255)
+```
+
+Mnemonic: every **23 tq points = one order of magnitude** of likelihood
+ratio. Recommended thresholds:
+- `tq ≥ 50`  (LLR ≥ 5 nats, LR ≈ 148:1) -- soft floor
+- `tq ≥ 100` (LLR ≥ 10 nats, LR ≈ 22,000:1) -- high confidence
+- `tq = 255` -- saturated (LLR ≥ 25.5, LR ≥ 1.2e11)
+
+##### `el` / `er` -- edge sharpness (0-255)
+
+The recaller emits a **conservative** boundary at each edge (immediately
+past the last informative miss). The true boundary may extend up to the
+terminating hit. `el` and `er` encode that ambiguity:
+
+```
+el = round(255 * max(0, 1 - left_ambiguity_bp / 30))
+er = round(255 * max(0, 1 - right_ambiguity_bp / 30))
+```
+
+- `255` -- a hit sits immediately adjacent (sharp edge, size estimate is exact)
+- `0` -- the bracketing hit is ≥30 bp away (edge could extend further; size is a lower bound)
+
+Use these to flag calls whose endpoints might shift in browser
+visualization or downstream size analysis.
+
+#### Default behavior: `--unify` (always on)
+
+By default, the recaller produces a clean partition: every v2 short-nuc
+(`nl < --unify-threshold`) overlapped by a recaller call is **dropped**
+from `nuc+`. The recaller version, with proper `tq`/`el`/`er` scoring,
+replaces it in `tf+`. v2 short-nucs the recaller did *not* match are kept
+in `nuc+` as fallback entries with `nq=0` (sentinel for "unverified").
+v2 nucleosomes (`nl ≥ --unify-threshold`) are always preserved untouched.
+
+This preserves the full information content while giving you a clean
+1:1 partition between nucleosomes (`nuc+`) and TF/Pol II calls (`tf+`).
+
+#### Reading the output
+
+```python
+import pysam
+from fiberhmm.io.ma_tags import parse_ma_tag, parse_aq_array, tq_to_llr
+
+bam = pysam.AlignmentFile('recalled.bam', 'rb', check_sq=False)
+for read in bam:
+    if not read.has_tag('MA'):
+        continue
+    parsed = parse_ma_tag(read.get_tag('MA'))
+    aq = read.get_tag('AQ')
+    qual_specs = [rt[2] for rt in parsed['raw_types']]
+    n_per_type  = [len(rt[3]) for rt in parsed['raw_types']]
+    per_ann = parse_aq_array(aq, qual_specs, n_per_type)
+    # parsed['nuc'] = [(start, length), ...]   -- 0-based query coords
+    # parsed['msp'] = [(start, length), ...]
+    # parsed['tf']  = [(start, length), ...]
+    # per_ann is a flat list, one sublist per annotation in MA order:
+    #   first len(nucs) sublists are [nq]
+    #   next  len(msps) sublists are []
+    #   next  len(tfs)  sublists are [tq, el, er]
+```
+
+Or use the legacy tags directly (refreshed by the recaller to reflect the
+unified call set):
+
+```python
+ns = list(read.get_tag('ns'))   # nuc starts (only nucs >=90bp + unmatched short)
+nl = list(read.get_tag('nl'))
+as_ = list(read.get_tag('as'))  # MSPs
+al = list(read.get_tag('al'))
+```
+
+TF calls live only in MA/AQ -- legacy tags do not carry them, by
+design (avoids inventing non-spec tag names).
+
+#### Pipeline patterns
+
+```bash
+# Two-step (most common)
+fiberhmm-apply -i input.bam -m models/hia5_pacbio.json -o tmp/
+fiberhmm-recall-tfs -i tmp/input_footprints.bam -o output/recalled.bam \
+                    -m models/hia5_pacbio.json --enzyme hia5
+
+# Stream apply -> recall
+fiberhmm-apply -i input.bam -m models/hia5_pacbio.json -o - | \
+    fiberhmm-recall-tfs -i - -o recalled.bam \
+                        -m models/hia5_pacbio.json --enzyme hia5
+```
+
+For DddA, the recall pass is **required** (the nucleosome model
+`ddda_nuc.json` does not emit sub-nuc TF calls). Use `ddda_TF.json`
+which has the DddA efficiency adjustment baked in:
+
+```bash
+fiberhmm-recall-tfs -i tagged.bam -o recalled.bam \
+                    -m models/ddda_TF.json --enzyme ddda
+```
+
 ### fiberhmm-posteriors
 
 Export per-position HMM posterior probabilities for downstream analysis (e.g., CNN training, custom scoring). Runs the HMM forward-backward algorithm on each read to produce P(footprint) at every position.
@@ -279,6 +518,20 @@ fiberhmm-utils adjust model.json --state accessible --scale 1.1 -o adjusted.json
 | `nq` | B,C | Footprint quality scores (0-255, with `--scores`) |
 | `aq` | B,C | MSP quality scores (0-255, with `--scores`) |
 
+`fiberhmm-recall-tfs` (optional 2nd pass) adds Molecular-annotation
+spec-compliant tags carrying TF/Pol II footprints with proper LLR scoring:
+
+| Tag | Type | Description |
+|-----|------|-------------|
+| `MA` | Z   | Annotation string: `<readlen>;nuc+Q:...;msp+:...;tf+QQQ:...` (1-based coords per spec) |
+| `AQ` | B,C | Quality bytes interleaved per annotation: `nq` for nucs; `tq, el, er` for TFs (no bytes for MSPs) |
+
+Legacy `ns`/`nl`/`as`/`al` are also rewritten to reflect the unified
+call set (v2 short-nucs absorbed into TF calls are removed). TF calls
+live only in `MA`/`AQ` -- by design we do not invent non-spec
+nucleosome-track tag names. Use `--no-legacy-tags` to skip the legacy
+refresh and emit only `MA`/`AQ`.
+
 For DAF-seq, `fiberhmm-daf-encode` also adds:
 
 | Tag | Type | Description |
@@ -293,7 +546,7 @@ All FiberHMM tools support `-` for stdin/stdout, enabling Unix-style piping with
 # DAF-seq: align → encode → call footprints
 minimap2 --MD -a ref.fa reads.fq | samtools view -b | \
     fiberhmm-daf-encode -i - -o - | \
-    fiberhmm-apply --mode daf -i - -m models/ddda_pacbio.json -o output/
+    fiberhmm-apply --mode daf -i - -m models/dddb_nanopore.json -o output/
 
 # Fiber-seq: call footprints from stdin
 samtools view -b -h input.bam chr1 | \
