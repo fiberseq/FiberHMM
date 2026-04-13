@@ -40,9 +40,8 @@ def open_maybe_gz(path):
     return gzip.open(path, 'rt') if path.endswith('.gz') else open(path, 'r')
 
 
-def load_pol2_tsv(path):
-    """Returns list of dicts with keys: gene, paused_v3, elong_v3, pic_v3,
-    accessible_v3, hyperburst_v3 (taking v3 columns)."""
+def load_pol2_tsv(path, caller='v3'):
+    """caller: 'v2' or 'v3' selects which columns to read."""
     rows = []
     with open_maybe_gz(path) as f:
         header = f.readline().rstrip('\n').split('\t')
@@ -52,11 +51,11 @@ def load_pol2_tsv(path):
             d = dict(zip(header, vals))
             rows.append({
                 'gene': d['gene'],
-                'paused': int(d['paused_v3']),
-                'elong': int(d['elong_v3']),
-                'pic': int(d['pic_v3']),
-                'accessible': int(d['accessible_v3']),
-                'hyperburst': int(d['hyperburst_v3']),
+                'paused': int(d[f'paused_{caller}']),
+                'elong': int(d[f'elong_{caller}']),
+                'pic': int(d[f'pic_{caller}']),
+                'accessible': int(d[f'accessible_{caller}']),
+                'hyperburst': int(d[f'hyperburst_{caller}']),
             })
     return rows
 
@@ -89,11 +88,13 @@ def main():
     ap.add_argument('--out-prefix', required=True)
     ap.add_argument('--wt-label', default='WT')
     ap.add_argument('--dl-label', default='Dl-')
+    ap.add_argument('--caller', default='v3', choices=['v2', 'v3'])
     args = ap.parse_args()
     os.makedirs(os.path.dirname(args.out_prefix) or '.', exist_ok=True)
 
-    wt_rows = load_pol2_tsv(args.wt_tsv)
-    dl_rows = load_pol2_tsv(args.dl_tsv)
+    caller = getattr(args, 'caller', 'v3')
+    wt_rows = load_pol2_tsv(args.wt_tsv, caller=caller)
+    dl_rows = load_pol2_tsv(args.dl_tsv, caller=caller)
     print(f'{args.wt_label}: {len(wt_rows)} pol2 rows')
     print(f'{args.dl_label}: {len(dl_rows)} pol2 rows')
 

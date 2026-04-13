@@ -757,15 +757,59 @@ predict:
 | Elong | 66.3% | 61.1% | −5.2% |
 | **Hyperburst** | **12.1%** | **3.5%** | **−8.6% (−71%)** |
 
-**Hyperburst is the state that responds most strongly to Dl loss**
-(~70-80% drop in the Dl target locus across both timepoints).
-Elongating barely moves — the fiberCNN 35-65 bp size-band
-heuristic fires on many small footprints that aren't transcription-
-dependent.
+**Follow-up comparison to v2 HMM elong — v2 IS specific, v3 is NOT.**
 
-This validates v3's hyperburst calls as genuinely measuring active
-transcription: the open-chromatin state requires the upstream
-activator.
+At sna, 2-3.5hr WT vs Dl-:
+
+| State | v2 HMM | v3 |
+|---|---|---|
+| Elongating | 21.7% → 12.4% (−43%) | 68.0% → 65.3% (−4%) |
+| Hyperburst | 8.1% → 1.0% (−88%) | 15.9% → 3.5% (−78%) |
+
+**v2 elong drops 43% in Dl- — the HMM's elong signature IS
+transcription-specific.** v3 elong barely moves (−4%) because v3
+saturates the 35-65 bp size band with **~3× volume of non-Pol-II
+footprints**. The real Pol II drop is swamped by non-specific calls.
+
+v3 hyperburst drops 78% (vs v2's 88%) — **the nucleosome caller
+works correctly**. The problem is localized to the TF caller's
+overcalling in the TF size range.
+
+**This reframes the earlier "v3 captures 4× more TFs at same
+ChIP-nexus hit-rate" finding**: yes, v3 TFs are at real binding
+sites at the same per-call rate as v2. But the absolute volume
+means v3 also emits 4× more calls that aren't transcription-
+specific, and binary state-positive rates saturate. Need to
+tighten the TF caller or apply a post-hoc `tq` filter before
+downstream state calling.
+
+#### tq-filter sweep — v3 elongation recovers specificity above tq≥60
+
+Sweep of `tq` (TF quality = −log₁₀(P) × scale factor) on sna elong
+rate:
+
+| tq_min | WT % | Dl- % | Dl- drop (relative) |
+|---|---|---|---|
+| 0 (default, permissive) | 68.8% | 65.4% | −5% (no signal) |
+| 40 | 45.3% | 34.1% | −25% |
+| 60 | 28.2% | 14.4% | −49% |
+| **80** | **17.7%** | **6.1%** | **−65%** ← matches v2 elong |
+| 100 | 10.8% | 3.0% | −72% ← matches v2 hyperburst |
+| 120 | 6.9% | 1.8% | −74% |
+| 150 | 3.5% | 0.7% | −80% |
+
+**v3 has the specificity — it's buried under ~3-4× low-quality
+permissive TF calls.** Per-read mean elong count: 1.61 at tq≥0
+(noisy) → 0.20 at tq≥100 (sparse, specific) — 8× volume
+reduction, Dl- drop goes from 5% to 72%.
+
+**Recommendation**: downstream state-calling analyses should apply
+`tq ≥ 80` filter on v3 TFs before counting. The caller itself can
+stay permissive (low default min-tf-tq) so the full atom space is
+emitted for consumers who do their own filtering. This is
+documented in:
+- `caller_comparison/scripts/pol2_states.py` (filter flag added)
+- `ground_truth_validation/scripts/tq_filter_elong.py` (the sweep)
 
 (eve/ftz show 0% in Dl- because the Dl- DAF-seq was sna-amplicon
 only — they weren't sampled.)
