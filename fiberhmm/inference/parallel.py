@@ -17,12 +17,13 @@ import pysam
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import List, Dict, Optional, Tuple, Set
 
-# Force spawn on Linux: pysam/htslib file handles are not fork-safe and
-# reliably segfault in workers under Python ≥3.14 (and occasionally earlier).
-# spawn is ~10-20 ms slower per worker launch but avoids the crash entirely.
-_MP_CONTEXT = multiprocessing.get_context(
-    'fork' if sys.platform == 'darwin' else 'spawn'
-)
+# Always use spawn: forked workers inherit all open file descriptors including
+# stdout pipes in streaming pipelines (fiberhmm-run).  When fiberhmm-apply
+# finishes but its pool workers are still alive, the pipe to fiberhmm-recall-tfs
+# never receives EOF → deadlock.  spawn workers start clean with no inherited FDs.
+# spawn is ~10-20 ms slower per worker launch but avoids both this deadlock and
+# pysam/htslib segfaults on Linux Python ≥3.14.
+_MP_CONTEXT = multiprocessing.get_context('spawn')
 
 from fiberhmm.core.model_io import load_model
 from fiberhmm.core.bam_reader import encode_from_query_sequence, detect_daf_strand

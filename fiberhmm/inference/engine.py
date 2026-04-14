@@ -426,6 +426,16 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int) -> Opti
     # Legacy MM/ML path
     m6a_query_positions = []
 
+    # Guard: pysam segfaults on modified_bases when MM tag has base-type spec
+    # entries but the ML array is empty (some reads have 0 detected modifications).
+    # Check ML length before calling modified_bases to avoid the crash.
+    try:
+        ml_len = len(list(read.get_tag('ML'))) if read.has_tag('ML') else 0
+        if ml_len == 0:
+            return None   # no modification data — skip this read
+    except Exception:
+        pass  # no ML tag or unreadable — proceed; modified_bases may return {}
+
     try:
         mod_bases = read.modified_bases
         if mod_bases:
