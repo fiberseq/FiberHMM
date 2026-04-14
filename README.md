@@ -116,6 +116,25 @@ Or pass the reference FASTA directly to `fiberhmm-daf-encode --reference ref.fa`
 fiberhmm-extract -i output/experiment_footprints.bam
 ```
 
+### TF consensus size BED (EXPERIMENTAL — untested)
+
+> ⚠️ **This tool is experimental and largely untested.** Output format and
+> defaults may change without notice. Do not use in production pipelines or
+> cite results from it without independent validation.
+
+`fiberhmm-consensus-tfs` sweeps a recalled BAM and outputs one line per TF
+locus with consensus footprint size and single-molecule occupancy statistics.
+Designed to feed into motif discovery tools (MEME) and occupancy analyses.
+
+```bash
+fiberhmm-consensus-tfs -i recalled.bam -o consensus_tfs.bed --min-tq 50
+```
+
+Output columns: `chr start end consensus_len MAD read_count spanning_reads fwd_reads rev_reads`
+
+Single-molecule occupancy = `read_count / spanning_reads`. For DAF-seq,
+`fwd_reads` / `rev_reads` expose strand bias at C-poor motifs.
+
 ## Pre-trained Models
 
 Pre-trained models are **bundled with the pip package** — no separate download.
@@ -570,6 +589,28 @@ with the DddA efficiency adjustment is selected automatically:
 ```bash
 fiberhmm-recall-tfs -i tagged.bam -o recalled.bam --enzyme ddda
 ```
+
+### fiberhmm-consensus-tfs (EXPERIMENTAL — untested)
+
+> ⚠️ **Experimental and largely untested.** Output format and defaults subject to change.
+
+Sweeps a recalled BAM (output of `fiberhmm-recall-tfs`) and outputs one line per TF locus with consensus footprint size and occupancy statistics.
+
+```bash
+fiberhmm-consensus-tfs -i recalled.bam -o consensus_tfs.bed --min-tq 50 --min-cov 5
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i/--input` | required | Recalled BAM (sorted + indexed, must have MA/AQ tags) |
+| `-o/--output` | required | Output BED file, or `-` for stdout |
+| `-q/--min-mapq` | 20 | Min mapping quality |
+| `--min-tq` | 0 | Min TF quality score (0–255); 50 ≈ LLR 5 nats |
+| `--min-cov` | 5 | Min TF-calling reads per locus to emit a line |
+| `--kde-sigma` | 3.0 | Gaussian smoothing sigma for center KDE (bp) |
+| `--peak-distance` | 15 | Min distance between adjacent peaks (bp) |
+
+Output columns: `chr start end consensus_len MAD read_count spanning_reads fwd_reads rev_reads`
 
 ### fiberhmm-posteriors
 
