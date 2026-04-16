@@ -564,8 +564,14 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int) -> Opti
 def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,
                           mode: str, context_size: int, msp_min_size: int,
                           with_scores: bool, return_posteriors: bool = False,
-                          nuc_min_size: int = 85) -> Optional[dict]:
-    """Process a single read through HMM. Returns footprint data or None."""
+                          nuc_min_size: int = 85,
+                          include_encoded: bool = False) -> Optional[dict]:
+    """Process a single read through HMM. Returns footprint data or None.
+
+    When include_encoded=True the encoded observation array and strand are
+    attached to the result as 'encoded' and 'strand'.  Used by the fused
+    apply+recall worker to avoid re-encoding the sequence for the TF scan.
+    """
 
     query_sequence = fiber_read['query_sequence']
     m6a_positions = fiber_read['m6a_query_positions']
@@ -592,9 +598,9 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
                                              return_posteriors=return_posteriors,
                                              nuc_min_size=nuc_min_size)
 
-    # If no footprints and we don't need posteriors, skip
+    # If no footprints and we don't need posteriors or encoded, skip
     if len(fp_result['footprint_starts']) == 0 and len(fp_result['msp_starts']) == 0:
-        if not return_posteriors:
+        if not return_posteriors and not include_encoded:
             return None
 
     result = {
@@ -609,6 +615,11 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     # Include posteriors data if requested
     if return_posteriors and fp_result.get('posteriors') is not None:
         result['posteriors'] = fp_result['posteriors']
+        result['strand'] = strand
+
+    # Include encoded obs for the fused recall pass (no re-encoding cost)
+    if include_encoded:
+        result['encoded'] = encoded
         result['strand'] = strand
 
     return result

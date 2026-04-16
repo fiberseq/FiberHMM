@@ -99,6 +99,51 @@ def _init_bam_worker(model_path, debug_timing=False):
         raise
 
 
+# Per-worker recall state: LLR tables for the TF Kadane scan.  Lives
+# alongside _worker_model (set by _init_fused_worker).
+_worker_recall_state = {}
+
+
+def _init_fused_worker(apply_model_path, recall_model_path=None,
+                       emission_uplift=1.0, debug_timing=False):
+    """Initialize worker process for the fused apply+recall pipeline.
+
+    Loads the apply HMM model plus the LLR tables used for the TF Kadane
+    scan.  recall_model_path=None means reuse the apply model's emissions
+    (the common case — same model file drives both passes).
+    """
+    global _worker_model, _worker_debug_timing, _worker_recall_state
+    import os
+    os.environ['NUMBA_CACHE_DIR'] = ''
+
+    _worker_model = load_model(apply_model_path)
+    _worker_debug_timing = debug_timing
+
+    # Build TF-recall LLR tables from the recall model (or reuse apply model).
+    from fiberhmm.core.model_io import load_model_with_metadata
+    from fiberhmm.inference.tf_recaller import (
+        build_llr_tables, apply_emission_uplift,
+    )
+    r_path = recall_model_path or apply_model_path
+    r_model, _, _ = load_model_with_metadata(r_path)
+    llr_hit, llr_miss = build_llr_tables(r_model)
+    if abs(emission_uplift - 1.0) > 1e-9:
+        llr_hit, llr_miss = apply_emission_uplift(llr_hit, llr_miss, r_model, emission_uplift)
+    _worker_recall_state['llr_hit'] = llr_hit
+    _worker_recall_state['llr_miss'] = llr_miss
+
+    # Warmup: apply Viterbi + TF Kadane scan
+    from fiberhmm.core.hmm import HAS_NUMBA
+    if HAS_NUMBA:
+        dummy_obs = np.array([0, 1, 2, 3], dtype=np.int64)
+        _ = _worker_model.predict(dummy_obs)
+        from fiberhmm.inference.tf_recaller import call_tfs_in_interval
+        _ = call_tfs_in_interval(
+            np.zeros(16, dtype=np.int32), 0, 16,
+            llr_hit, llr_miss, min_llr=4.0, min_opps=3,
+        )
+
+
 def _is_main_chromosome(chrom: str) -> bool:
     """
     Check if a chromosome name is a main chromosome (not a scaffold/contig).
@@ -1371,6 +1416,144 @@ def _process_chunk_worker(chunk_reads: list, edge_trim: int, circular: bool,
     return results
 
 
+# ---------------------------------------------------------------------------
+# Fused apply+recall worker — eliminates the streaming pipe serialization
+# that costs ~2-7× throughput on chained pipelines.  Main process sends one
+# slim payload per read; worker runs extract → HMM → TF scan → unify in a
+# single call, keeping the encoded obs array in cache between apply and
+# recall passes.
+# ---------------------------------------------------------------------------
+
+def _process_fused_payload_chunk_worker(
+    chunk_payloads: list,
+    edge_trim: int, circular: bool,
+    mode: str, context_size: int, msp_min_size: int,
+    nuc_min_size: int = 85,
+    with_scores: bool = False,
+    prob_threshold: int = 125,
+    # Recall params
+    recall_mode: str = None,            # mode for the TF LLR tables (usually same as apply mode)
+    recall_context_size: int = None,    # k for TF LLR tables (usually same)
+    min_llr: float = 4.0,
+    min_opps: int = 3,
+    unify_threshold: int = 90,
+) -> list:
+    """Slim-IPC worker: apply HMM + TF recall in a single call per read.
+
+    Returns one entry per payload.  Each entry is either None (no usable
+    modification data) or a dict with:
+        'ns', 'nl':  numpy int arrays of unified nucleosome footprints
+                     (post-unification: short nucs overlapping TF calls are
+                     demoted into the tf+ annotation track)
+        'as', 'al':  numpy int arrays of MSPs (unchanged from apply)
+        'tf_calls':  list of TFCall objects
+        'ns_scores', 'as_scores': optional nq/aq scores if with_scores
+    """
+    global _worker_model, _worker_recall_state
+    # tf_recaller imports are worker-side only (heavy numba modules)
+    from fiberhmm.inference.engine import extract_fiber_read_from_payload
+    from fiberhmm.inference.tf_recaller import (
+        build_scan_intervals, call_tfs_in_interval,
+    )
+
+    # Model/params set once per worker; TF LLR tables attached to the
+    # worker globals via _init_fused_worker.
+    llr_hit = _worker_recall_state['llr_hit']
+    llr_miss = _worker_recall_state['llr_miss']
+    rmode = recall_mode or mode
+    rk = recall_context_size or context_size
+
+    results = []
+    for payload in chunk_payloads:
+        try:
+            fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
+            if fiber_read is None:
+                results.append(None)
+                continue
+
+            apply_result = _process_single_read(
+                fiber_read, _worker_model,
+                edge_trim, circular, mode, context_size, msp_min_size,
+                nuc_min_size=nuc_min_size,
+                with_scores=with_scores,
+                return_posteriors=False,
+                include_encoded=True,    # reuse obs for TF scan
+            )
+            if apply_result is None:
+                results.append(None)
+                continue
+
+            ns = apply_result['ns']
+            nl = apply_result['nl']
+            as_ = apply_result['as']
+            al = apply_result['al']
+            obs = apply_result['encoded']
+
+            # Match streaming semantics: if apply produced no footprints and
+            # no MSPs, treat as "nothing to annotate" — return None so the
+            # drain pass-throughs the read unchanged (preserving any
+            # pre-existing tags on the input).  With include_encoded=True
+            # _process_single_read does NOT early-return on empty output.
+            if len(ns) == 0 and len(as_) == 0:
+                results.append(None)
+                continue
+
+            # Build scan intervals (all MSPs + v2 nucs shorter than unify_threshold)
+            ns_list = ns.tolist() if hasattr(ns, 'tolist') else list(ns)
+            nl_list = nl.tolist() if hasattr(nl, 'tolist') else list(nl)
+            as_list = as_.tolist() if hasattr(as_, 'tolist') else list(as_)
+            al_list = al.tolist() if hasattr(al, 'tolist') else list(al)
+            read_len = len(fiber_read['query_sequence'])
+            intervals = build_scan_intervals(
+                ns_list, nl_list, as_list, al_list,
+                read_len, unify_threshold=unify_threshold,
+            )
+
+            # TF Kadane scan within every interval
+            tf_calls = []
+            for lo, hi in intervals:
+                tf_calls.extend(call_tfs_in_interval(
+                    obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps,
+                ))
+
+            # Unify: drop v2 short nucs that overlap any TF call
+            tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
+            kept_nucs_starts = []
+            kept_nucs_sizes = []
+            for s, l in zip(ns_list, nl_list):
+                s = int(s); l = int(l)
+                if l <= 0:
+                    continue
+                if l >= unify_threshold:
+                    kept_nucs_starts.append(s)
+                    kept_nucs_sizes.append(l)
+                    continue
+                nuc_end = s + l
+                overlapped = False
+                for ts, te in tf_intervals:
+                    if ts < nuc_end and te > s:
+                        overlapped = True
+                        break
+                if not overlapped:
+                    kept_nucs_starts.append(s)
+                    kept_nucs_sizes.append(l)
+
+            results.append({
+                'ns': np.asarray(kept_nucs_starts, dtype=np.int32),
+                'nl': np.asarray(kept_nucs_sizes, dtype=np.int32),
+                'as': as_,
+                'al': al,
+                'ns_scores': apply_result.get('ns_scores') if with_scores else None,
+                'as_scores': apply_result.get('as_scores') if with_scores else None,
+                'tf_calls': tf_calls,
+            })
+        except Exception:
+            # Per-read failure must not kill the worker (or the whole chunk).
+            results.append(None)
+
+    return results
+
+
 def _process_payload_chunk_worker(chunk_payloads: list, edge_trim: int, circular: bool,
                                     mode: str, context_size: int, msp_min_size: int,
                                     nuc_min_size: int = 85,
@@ -1489,6 +1672,240 @@ def _drain_oldest_chunk(inflight, outbam, with_scores, write_msps,
 
         outbam.write(read_obj)
         counters['written'] += 1
+
+
+def _drain_oldest_fused_chunk(inflight, outbam, with_scores,
+                              also_write_legacy, downstream_compat, counters):
+    """Fused apply+recall drain: applies ns/nl/as/al AND MA/AQ tags via
+    write_ma_tags from tf_recaller.
+
+    Skipped reads (is_skipped=True) are passed through unchanged at their
+    original stream position so coordinate-sorted input stays coordinate
+    sorted.  results is shorter than chunk_read_objs by the number of
+    skipped reads.
+    """
+    from fiberhmm.inference.tf_recaller import write_ma_tags
+
+    future, chunk_read_objs, chunk_payloads, chunk_skip_flags = inflight.popleft()
+    results = future.result()
+    result_iter = iter(results)
+    payload_iter = iter(chunk_payloads)
+
+    for read_obj, is_skipped in zip(chunk_read_objs, chunk_skip_flags):
+        if is_skipped:
+            outbam.write(read_obj)
+            counters['written'] += 1
+            continue
+
+        _ = next(payload_iter)       # discard paired payload
+        result = next(result_iter)
+        if result is not None:
+            ns_arr = result['ns']
+            nl_arr = result['nl']
+            as_arr = result['as']
+            al_arr = result['al']
+            tf_calls = result['tf_calls']
+
+            kept_nucs = list(zip(
+                [int(x) for x in ns_arr.tolist()],
+                [int(x) for x in nl_arr.tolist()],
+            ))
+            msps = list(zip(
+                [int(x) for x in as_arr.tolist()],
+                [int(x) for x in al_arr.tolist()],
+            ))
+
+            write_ma_tags(
+                read_obj,
+                read_length=len(read_obj.query_sequence) if read_obj.query_sequence else 0,
+                tf_calls=tf_calls,
+                kept_nucs=kept_nucs,
+                msps=msps,
+                nq_for_kept_nucs=None,  # fused path doesn't compute nq scores
+                also_write_legacy=also_write_legacy,
+                downstream_compat=downstream_compat,
+            )
+            counters['reads_with_footprints'] += 1
+        else:
+            counters['no_footprints'] += 1
+
+        outbam.write(read_obj)
+        counters['written'] += 1
+
+
+def _process_bam_streaming_pipeline_fused(
+    input_bam: str, output_bam: str,
+    model_path: str, recall_model_path: str,
+    train_rids,
+    edge_trim: int, circular: bool,
+    mode: str, context_size: int,
+    msp_min_size: int, nuc_min_size: int,
+    min_mapq: int, prob_threshold: int, min_read_length: int,
+    with_scores: bool,
+    min_llr: float, min_opps: int, unify_threshold: int,
+    emission_uplift: float,
+    also_write_legacy: bool, downstream_compat: bool,
+    max_reads: int, n_cores: int, chunk_size: int,
+    io_threads: int,
+    process_unmapped: bool = False,
+    primary_only: bool = False,
+):
+    """Fused apply+recall streaming pipeline: one worker pool does both
+    the HMM nucleosome/MSP calls and the TF Kadane scan per read.
+
+    Eliminates the apply→recall pipe serialization (which was
+    ~2-7× slower than the sum of the two stages run alone on this Mac
+    benchmark) and the duplicate MM/ML parse + encode done by the
+    streaming recall stage.
+    """
+    pysam.set_verbosity(0)
+    max_inflight = n_cores + 2
+    start_time = time.time()
+    counters = {'reads_with_footprints': 0, 'no_footprints': 0, 'written': 0}
+
+    total_reads = 0
+    skipped = 0
+    skip_reasons = {
+        'unmapped': 0, 'secondary_supplementary': 0, 'low_mapq': 0,
+        'too_short': 0, 'training_excluded': 0, 'no_modifications': 0,
+        'extraction_failed': 0,
+    }
+
+    _log = sys.stderr if output_bam == '-' else sys.stdout
+
+    _output_target = output_bam
+    if output_bam == '-':
+        _output_target = os.fdopen(1, 'wb', closefd=False)
+
+    with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
+        with pysam.AlignmentFile(_output_target, "wb", header=inbam.header, threads=io_threads) as outbam:
+            executor = ProcessPoolExecutor(
+                max_workers=n_cores,
+                mp_context=_MP_CONTEXT,
+                initializer=_init_fused_worker,
+                initargs=(model_path, recall_model_path, emission_uplift, False),
+            )
+
+            inflight = deque()
+            chunk_payloads = []
+            chunk_read_objs = []
+            chunk_skip_flags = []
+            last_progress_reads = 0
+            last_progress_time = time.time()
+
+            def _buffer_skip(rd, reason):
+                nonlocal skipped
+                chunk_read_objs.append(rd)
+                chunk_skip_flags.append(True)
+                skipped += 1
+                skip_reasons[reason] += 1
+
+            try:
+                for read in inbam.fetch(until_eof=True):
+                    if read.is_unmapped:
+                        if not process_unmapped or read.query_sequence is None:
+                            _buffer_skip(read, 'unmapped')
+                            continue
+                    if primary_only and (read.is_secondary or read.is_supplementary):
+                        _buffer_skip(read, 'secondary_supplementary')
+                        continue
+                    if not read.is_unmapped and read.mapping_quality < min_mapq:
+                        _buffer_skip(read, 'low_mapq')
+                        continue
+                    read_len = (read.query_length or 0) if read.is_unmapped else read.query_alignment_length
+                    if read_len < min_read_length:
+                        _buffer_skip(read, 'too_short')
+                        continue
+                    if train_rids and read.query_name in train_rids:
+                        _buffer_skip(read, 'training_excluded')
+                        continue
+
+                    payload = make_apply_payload(read)
+                    if payload is None:
+                        _buffer_skip(read, 'no_modifications')
+                        continue
+
+                    chunk_payloads.append(payload)
+                    chunk_read_objs.append(read)
+                    chunk_skip_flags.append(False)
+                    total_reads += 1
+
+                    if max_reads and total_reads >= max_reads:
+                        break
+
+                    if len(chunk_read_objs) >= chunk_size:
+                        if len(inflight) >= max_inflight:
+                            _drain_oldest_fused_chunk(
+                                inflight, outbam, with_scores,
+                                also_write_legacy, downstream_compat, counters,
+                            )
+                        future = executor.submit(
+                            _process_fused_payload_chunk_worker,
+                            chunk_payloads, edge_trim, circular, mode,
+                            context_size, msp_min_size, nuc_min_size,
+                            with_scores, prob_threshold,
+                            mode, context_size,
+                            min_llr, min_opps, unify_threshold,
+                        )
+                        inflight.append((future, chunk_read_objs, chunk_payloads, chunk_skip_flags))
+                        chunk_payloads = []
+                        chunk_read_objs = []
+                        chunk_skip_flags = []
+
+                        now = time.time()
+                        elapsed = now - start_time
+                        avg = total_reads / elapsed if elapsed > 0 else 0
+                        dt = now - last_progress_time
+                        inst = (total_reads - last_progress_reads) / dt if dt > 0 else 0
+                        last_progress_reads = total_reads
+                        last_progress_time = now
+                        print(f"\r  Fused: {total_reads:,} | Skipped: {skipped:,} | "
+                              f"Inflight: {len(inflight)} | {inst:.0f} r/s (avg {avg:.0f})",
+                              end='', file=_log)
+                        _log.flush()
+
+                # Final partial chunk
+                if chunk_read_objs:
+                    if len(inflight) >= max_inflight:
+                        _drain_oldest_fused_chunk(
+                            inflight, outbam, with_scores,
+                            also_write_legacy, downstream_compat, counters,
+                        )
+                    if chunk_payloads:
+                        future = executor.submit(
+                            _process_fused_payload_chunk_worker,
+                            chunk_payloads, edge_trim, circular, mode,
+                            context_size, msp_min_size, nuc_min_size,
+                            with_scores, prob_threshold,
+                            mode, context_size,
+                            min_llr, min_opps, unify_threshold,
+                        )
+                    else:
+                        future = Future()
+                        future.set_result([])
+                    inflight.append((future, chunk_read_objs, chunk_payloads, chunk_skip_flags))
+
+                while inflight:
+                    _drain_oldest_fused_chunk(
+                        inflight, outbam, with_scores,
+                        also_write_legacy, downstream_compat, counters,
+                    )
+            finally:
+                executor.shutdown(wait=True)
+
+    elapsed = time.time() - start_time
+    rate = total_reads / elapsed if elapsed > 0 else 0
+    reads_with_fp = counters['reads_with_footprints']
+    print(f"\r  Fused: {total_reads:,} | Skipped: {skipped:,} | "
+          f"With footprints: {reads_with_fp:,} | {rate:.1f} r/s", file=_log)
+    if skipped > 0:
+        print("  Skip reasons:", file=_log)
+        for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+            if count > 0:
+                pct = 100 * count / (total_reads + skipped)
+                print(f"    {reason}: {count:,} ({pct:.1f}%)", file=_log)
+
+    return total_reads, reads_with_fp
 
 
 def _process_bam_streaming_pipeline(
