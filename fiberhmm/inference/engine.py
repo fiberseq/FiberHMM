@@ -404,6 +404,94 @@ def detect_mode_from_bam(bam_path: str, n_sample: int = 100) -> str:
         return 'unknown'
 
 
+# ---------------------------------------------------------------------------
+# Slim IPC support for fiberhmm-apply (mirrors the recall_tfs pattern).
+#
+# The serial main process used to call _extract_fiber_read_from_pysam per
+# read — which decodes the query sequence (1-2 ms for a 20 kb PacBio read)
+# AND parses MM/ML (1-2 ms).  At ~3-7 ms/read serial in main, the apply
+# pipeline ceiling was ~150-300 r/s regardless of worker count, leaving
+# -c 4 workers at ~38% CPU instead of 400%.
+#
+# The slim-IPC path moves the MM/ML parse into the workers: main does
+# only the cheap pysam tag access + sequence decode, builds a slim
+# payload, ships it.  Workers parse + encode + Viterbi + decode.  This
+# shifts ~1-3 ms/read off the main-process critical path.
+# ---------------------------------------------------------------------------
+
+
+class _ApplyPayloadRead:
+    """Minimal duck-type for pysam.AlignedSegment used inside apply workers.
+
+    _extract_fiber_read_from_pysam only reads .query_name, .query_sequence,
+    .is_reverse, .has_tag(t), .get_tag(t) — the same surface this class
+    exposes — so it works unchanged on either a real pysam segment (in main)
+    or this slim payload wrapper (in worker).
+    """
+    __slots__ = ('query_name', 'query_sequence', 'is_reverse', '_tags')
+
+    def __init__(self, query_name, query_sequence, is_reverse, tags):
+        self.query_name = query_name
+        self.query_sequence = query_sequence
+        self.is_reverse = is_reverse
+        self._tags = tags
+
+    def has_tag(self, t):
+        return t in self._tags
+
+    def get_tag(self, t):
+        return self._tags[t]
+
+
+def make_apply_payload(read) -> Optional[dict]:
+    """Extract slim payload from a pysam read for the apply slim-IPC path.
+
+    Runs in the *main* process.  Does NOT parse MM/ML — that moves to the
+    worker via extract_fiber_read_from_payload().  Returns None only if
+    the read has no sequence (caller treats as skip).
+    """
+    seq = read.query_sequence
+    if not seq:
+        return None
+
+    tags = {}
+    for t in ('MM', 'Mm', 'ML', 'Ml', 'st'):
+        if read.has_tag(t):
+            val = read.get_tag(t)
+            if t in ('ML', 'Ml'):
+                # array.array('B', ...) → bytes via buffer protocol: fast memcpy,
+                # avoids ~5000 PyInt allocations per Hia5 PacBio read.
+                try:
+                    val = bytes(val)
+                except TypeError:
+                    pass
+            tags[t] = val
+
+    return {
+        'query_name': read.query_name,
+        'query_sequence': seq,
+        'is_reverse': read.is_reverse,
+        'tags': tags,
+    }
+
+
+def extract_fiber_read_from_payload(payload: dict, mode: str, prob_threshold: int) -> Optional[dict]:
+    """Worker-side: turn a slim payload into a fiber_read dict.
+
+    Equivalent to _extract_fiber_read_from_pysam(real_read, mode, prob_threshold)
+    but takes the slim payload built by make_apply_payload().  Returns None
+    on read with no usable modification data (no MM/ML, no IUPAC codes,
+    extraction failure) — caller treats result=None as 'no footprints'.
+    """
+    return _extract_fiber_read_from_pysam(
+        _ApplyPayloadRead(
+            payload['query_name'], payload['query_sequence'],
+            payload['is_reverse'], payload['tags'],
+        ),
+        mode, prob_threshold,
+    )
+
+
 def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int) -> Optional[dict]:
     """Extract minimal data needed for HMM processing from a pysam read."""
     query_sequence = read.query_sequence

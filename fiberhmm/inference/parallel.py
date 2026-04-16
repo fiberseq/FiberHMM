@@ -56,6 +56,8 @@ from fiberhmm.core.bam_reader import encode_from_query_sequence, detect_daf_stra
 from fiberhmm.inference.engine import (
     predict_footprints_and_msps,
     _extract_fiber_read_from_pysam,
+    extract_fiber_read_from_payload,
+    make_apply_payload,
     _process_single_read,
 )
 from fiberhmm.inference.bam_output import _sort_and_index_bam
@@ -1369,6 +1371,42 @@ def _process_chunk_worker(chunk_reads: list, edge_trim: int, circular: bool,
     return results
 
 
+def _process_payload_chunk_worker(chunk_payloads: list, edge_trim: int, circular: bool,
+                                    mode: str, context_size: int, msp_min_size: int,
+                                    nuc_min_size: int = 85,
+                                    with_scores: bool = False,
+                                    return_posteriors: bool = False,
+                                    prob_threshold: int = 125) -> list:
+    """Slim-IPC worker: parses MM/ML payloads then runs HMM.
+
+    The streaming pipeline ships slim payloads (built by make_apply_payload
+    in main) instead of pre-parsed fiber_read dicts.  Each worker does the
+    MM/ML parse + HMM in parallel rather than serializing the parse on the
+    main process.  Returns one entry per payload, with None for reads that
+    have no usable modification data.
+    """
+    global _worker_model
+
+    results = []
+    for payload in chunk_payloads:
+        try:
+            fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
+            if fiber_read is None:
+                results.append(None)
+                continue
+            result = _process_single_read(
+                fiber_read, _worker_model, edge_trim, circular,
+                mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+                with_scores=with_scores,
+                return_posteriors=return_posteriors
+            )
+        except Exception:
+            result = None
+        results.append(result)
+
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Streaming pipeline: sliding-window producer-consumer architecture
 # ---------------------------------------------------------------------------
@@ -1614,18 +1652,21 @@ def _process_bam_streaming_pipeline(
                         _buffer_skip(read, 'training_excluded')
                         continue
 
-                    # --- Extract phase ---
-                    try:
-                        fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
-                        if fiber_read is None:
-                            _buffer_skip(read, 'no_modifications')
-                            continue
-                    except Exception:
-                        _buffer_skip(read, 'extraction_failed')
+                    # --- Build slim payload (fast — no MM/ML parsing) ---
+                    # The MM/ML parse is now done inside the worker (see
+                    # _process_payload_chunk_worker) which lifts the apply
+                    # throughput ceiling from ~150-300 r/s (serial main parse
+                    # bottleneck) to whatever the worker pool can sustain.
+                    # Reads with no usable modification data come back from
+                    # the worker as result=None and are written through
+                    # without footprint tags (handled in _drain_oldest_chunk).
+                    payload = make_apply_payload(read)
+                    if payload is None:
+                        _buffer_skip(read, 'no_modifications')
                         continue
 
                     # --- Buffer into chunk ---
-                    chunk_reads.append(fiber_read)
+                    chunk_reads.append(payload)
                     chunk_read_objs.append(read)
                     chunk_skip_flags.append(False)
                     total_reads += 1
@@ -1646,11 +1687,12 @@ def _process_bam_streaming_pipeline(
                                 posterior_writer, counters
                             )
 
-                        # Submit chunk to workers (only the to-process subset)
+                        # Submit chunk of slim payloads to slim-IPC workers
                         future = executor.submit(
-                            _process_chunk_worker,
+                            _process_payload_chunk_worker,
                             chunk_reads, edge_trim, circular, mode, context_size,
-                            msp_min_size, nuc_min_size, with_scores, return_posteriors
+                            msp_min_size, nuc_min_size, with_scores, return_posteriors,
+                            prob_threshold,
                         )
                         inflight.append((future, chunk_read_objs, chunk_reads, chunk_skip_flags))
                         chunk_reads = []
@@ -1683,9 +1725,10 @@ def _process_bam_streaming_pipeline(
 
                     if chunk_reads:
                         future = executor.submit(
-                            _process_chunk_worker,
+                            _process_payload_chunk_worker,
                             chunk_reads, edge_trim, circular, mode, context_size,
-                            msp_min_size, nuc_min_size, with_scores, return_posteriors
+                            msp_min_size, nuc_min_size, with_scores, return_posteriors,
+                            prob_threshold,
                         )
                     else:
                         # All-skipped tail: no worker call needed, fake a
