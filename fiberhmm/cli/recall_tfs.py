@@ -132,10 +132,14 @@ def _make_payload(read) -> dict:
                 except TypeError:
                     pass  # scalar or already bytes
             else:
-                try:
-                    val = list(val)
-                except TypeError:
-                    pass  # scalar (str, int, …) — keep as-is
+                # MM/st are strings, ns/nl/as/al/nq are array.array.
+                # CRITICAL: do NOT list() a string — list('A+a,0,5;...') gives
+                # ['A','+','a',',','0',...] and breaks parse_mm_tag_query_positions.
+                if not isinstance(val, (str, bytes)):
+                    try:
+                        val = list(val)
+                    except TypeError:
+                        pass  # scalar — keep as-is
             tags[t] = val
     return {
         'seq': read.query_sequence,
