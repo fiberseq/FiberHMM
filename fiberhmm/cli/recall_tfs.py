@@ -42,6 +42,7 @@ import json
 import multiprocessing as mp
 import os
 import sys
+from collections import deque
 from typing import Iterable, List, Optional, Tuple
 
 import numpy as np
@@ -234,53 +235,68 @@ def _parallel_loop(bam_in, bam_out, _header_text,
                    min_llr, min_opps, unify_threshold,
                    also_write_legacy, downstream_compat,
                    max_reads, n_cores, chunk_size):
-    """Multi-core path using Pool.imap with slim IPC (no SAM serialization).
+    """Multi-core path with slim IPC and bounded in-flight queue.
 
-    Main process keeps pysam reads in memory per chunk, sends compact payloads
-    to workers, receives compact results, then applies write_ma_tags locally.
-    Eliminates four to_string()/fromstring() calls per read vs. the old
-    SAM-text round-trip protocol.
+    Uses apply_async + a bounded deque instead of imap to cap how many chunks
+    are held in memory simultaneously.  When downstream (disk write, sort
+    backpressure) is slow, the submission loop blocks on the oldest pending
+    result before submitting another chunk, so RSS stays bounded regardless
+    of downstream speed.
 
-    Pool.imap processes the generator in order so reads_chunks is populated
-    strictly before each corresponding result is consumed.
+    In-flight cap: n_cores + 2 chunks.  At chunk_size=1024 and n_cores=4,
+    the worst-case working set is ~6 * 1024 pysam reads ≈ 180 MB, not 52 GB.
     """
-    reads_chunks: list = []   # each entry is a list of pysam reads for one chunk
+    MAX_INFLIGHT = n_cores + 2   # workers + small head-start headroom
+    pending: deque = deque()     # deque of (reads_chunk, AsyncResult)
 
-    def _payload_chunk_gen():
-        buf_reads, buf_payloads = [], []
+    n_reads = n_v2 = n_tf = n_demoted = 0
+
+    def _drain_one():
+        nonlocal n_reads, n_v2, n_tf, n_demoted
+        reads_chunk, fut = pending.popleft()
+        out_results, stats = fut.get()   # blocks until result is ready
+        for read, result in zip(reads_chunk, out_results):
+            _apply_result(read, result, also_write_legacy, downstream_compat)
+            bam_out.write(read)
+        n_reads += len(reads_chunk)
+        n_v2 += stats['v2']
+        n_tf += stats['tf']
+        n_demoted += stats['demoted']
+
+    with mp.Pool(
+        processes=n_cores,
+        initializer=_worker_init,
+        initargs=(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold),
+    ) as pool:
+        buf_reads: list = []
+        buf_payloads: list = []
         n = 0
+
         for read in bam_in:
             if max_reads and n >= max_reads:
                 break
             buf_reads.append(read)
             buf_payloads.append(_make_payload(read))
             n += 1
-            if len(buf_reads) >= chunk_size:
-                reads_chunks.append(buf_reads)    # save before yielding
-                yield buf_payloads
-                buf_reads, buf_payloads = [], []
-        if buf_reads:
-            reads_chunks.append(buf_reads)
-            yield buf_payloads
 
-    n_reads = n_v2 = n_tf = n_demoted = 0
-    chunk_idx = 0
-    with mp.Pool(
-        processes=n_cores,
-        initializer=_worker_init,
-        initargs=(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold),
-    ) as pool:
-        for out_results, stats in pool.imap(_process_payload_chunk,
-                                            _payload_chunk_gen()):
-            reads = reads_chunks[chunk_idx]
-            chunk_idx += 1
-            for read, result in zip(reads, out_results):
-                _apply_result(read, result, also_write_legacy, downstream_compat)
-                bam_out.write(read)
-            n_reads += len(reads)
-            n_v2 += stats['v2']
-            n_tf += stats['tf']
-            n_demoted += stats['demoted']
+            if len(buf_reads) >= chunk_size:
+                future = pool.apply_async(_process_payload_chunk, (buf_payloads,))
+                pending.append((buf_reads, future))
+                buf_reads, buf_payloads = [], []
+
+                # Backpressure: drain the oldest result before submitting more
+                if len(pending) >= MAX_INFLIGHT:
+                    _drain_one()
+
+        # Submit last partial chunk
+        if buf_reads:
+            future = pool.apply_async(_process_payload_chunk, (buf_payloads,))
+            pending.append((buf_reads, future))
+
+        # Drain all remaining results
+        while pending:
+            _drain_one()
+
     return n_reads, n_v2, n_tf, n_demoted
 
 
