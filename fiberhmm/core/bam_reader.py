@@ -15,6 +15,15 @@ from dataclasses import dataclass
 from typing import Iterator, List, Optional, Tuple, Dict, Set
 import pysam
 
+try:
+    from numba import njit as _numba_njit
+    _HAS_NUMBA = True
+except ImportError:
+    _HAS_NUMBA = False
+    def _numba_njit(*args, **kwargs):  # type: ignore[misc]
+        def _wrap(fn): return fn
+        return _wrap
+
 
 # =============================================================================
 # Context encoding with variable sizes
@@ -502,70 +511,65 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
     
     # Determine target base based on mode
     if mode == 'pacbio-fiber':
-        target_base = 'A'
-        include_rc = True
-        
-        # Get context codes for A positions (and T via RC)
-        at_encode = _encode_vectorized(
-            sequence, target_base, context_size, edge_trim, 
-            non_target_code, include_rc
-        )
-        
-        # Build final encoding (VECTORIZED):
-        # - A/T positions: methylated code if in mod_positions, else unmethylated code
-        # - C/G positions: non-target code 8193 (neutral)
-        
-        # Initialize all to non-target unmethylated (8193)
+        # Encode context codes for A (forward) and T (RC) positions.
+        # Numba single-pass kernel avoids the N×k intermediate arrays that
+        # the numpy broadcasting approach allocates (~2 MB per 20 kb read).
+        seq_bytes = np.frombuffer(sequence.encode('ascii'), dtype=np.uint8)
+        seq_int_enc = _BASE_TO_INT[seq_bytes]
+        if _HAS_NUMBA:
+            at_encode = _context_codes_numba(
+                seq_int_enc, context_size, edge_trim, non_target_code,
+                0, 2, True,   # target_int=A=0, rc_target_int=T=2, do_rc=True
+            )
+        else:
+            at_encode = _encode_vectorized(
+                sequence, 'A', context_size, edge_trim, non_target_code, True,
+            )
+
         result = np.full(seq_len, non_target_code + unmethylated_offset, dtype=np.int32)
-        
-        # Find positions with valid context codes (A/T positions)
         valid_mask = at_encode != non_target_code
-        
-        # Create modification mask (vectorized)
+
+        # Build mod mask: fromiter avoids creating a Python list from the set
         mod_mask = np.zeros(seq_len, dtype=bool)
-        mod_arr = np.array(list(mod_positions), dtype=np.int64)
-        valid_mods = mod_arr[(mod_arr >= 0) & (mod_arr < seq_len)]
-        mod_mask[valid_mods] = True
-        
-        # Apply codes: methylated where modified, unmethylated where not
-        # Methylated (accessible): positions with valid context AND modification
+        if mod_positions:
+            mod_arr = np.fromiter(mod_positions, dtype=np.int64,
+                                  count=len(mod_positions))
+            valid_mods = mod_arr[(mod_arr >= 0) & (mod_arr < seq_len)]
+            mod_mask[valid_mods] = True
+
         meth_mask = valid_mask & mod_mask
         result[meth_mask] = at_encode[meth_mask]
-        
-        # Unmethylated (footprint): positions with valid context but NO modification
         unmeth_mask = valid_mask & ~mod_mask
         result[unmeth_mask] = at_encode[unmeth_mask] + unmethylated_offset
-        
         return result
-        
+
     elif mode == 'nanopore-fiber':
-        # Nanopore fiber-seq: only A-centered (single strand sequencing)
-        # No T positions since nanopore only reports A+a modifications
-        target_base = 'A'
-        include_rc = False  # No RC - nanopore only sequences one strand
-        
-        # Get context codes for A positions only
-        a_encode = _encode_vectorized(
-            sequence, target_base, context_size, edge_trim, 
-            non_target_code, include_rc
-        )
-        
-        # Build final encoding (VECTORIZED)
+        seq_bytes = np.frombuffer(sequence.encode('ascii'), dtype=np.uint8)
+        seq_int_enc = _BASE_TO_INT[seq_bytes]
+        if _HAS_NUMBA:
+            a_encode = _context_codes_numba(
+                seq_int_enc, context_size, edge_trim, non_target_code,
+                0, 0, False,  # target_int=A=0, do_rc=False
+            )
+        else:
+            a_encode = _encode_vectorized(
+                sequence, 'A', context_size, edge_trim, non_target_code, False,
+            )
+
         result = np.full(seq_len, non_target_code + unmethylated_offset, dtype=np.int32)
-        
         valid_mask = a_encode != non_target_code
-        
+
         mod_mask = np.zeros(seq_len, dtype=bool)
-        mod_arr = np.array(list(mod_positions), dtype=np.int64)
-        valid_mods = mod_arr[(mod_arr >= 0) & (mod_arr < seq_len)]
-        mod_mask[valid_mods] = True
-        
+        if mod_positions:
+            mod_arr = np.fromiter(mod_positions, dtype=np.int64,
+                                  count=len(mod_positions))
+            valid_mods = mod_arr[(mod_arr >= 0) & (mod_arr < seq_len)]
+            mod_mask[valid_mods] = True
+
         meth_mask = valid_mask & mod_mask
         result[meth_mask] = a_encode[meth_mask]
-        
         unmeth_mask = valid_mask & ~mod_mask
         result[unmeth_mask] = a_encode[unmeth_mask] + unmethylated_offset
-        
         return result
         
     elif mode == 'daf':
@@ -701,6 +705,72 @@ _BASE_TO_INT[ord('g')] = 3
 
 # Must match _BASE_TO_INT encoding: A=0, C=1, T=2, G=3
 _TARGET_BASE_INT = {'A': 0, 'C': 1, 'T': 2, 'G': 3}
+
+
+@_numba_njit(cache=True)
+def _context_codes_numba(seq_int, k, edge_trim, non_target_code,
+                          target_int, rc_target_int, do_rc):
+    """Numba single-pass context code encoder — replaces _encode_vectorized.
+
+    Encoding (A=0, C=1, T=2, G=3, matches _BASE_TO_INT):
+      code = left_k_code * 4^k + right_k_code
+      left_k_code  = seq[i-k]*4^(k-1) + ... + seq[i-1]*4^0  (big-endian)
+      right_k_code = seq[i+1]*4^(k-1) + ... + seq[i+k]*4^0
+
+    RC complement: XOR 2  (A(0)<->T(2), C(1)<->G(3))
+    RC code for T: left = reverse+complement of right context;
+                   right = reverse+complement of left context.
+
+    Returns int32 array of length len(seq_int).
+    Positions with N in context or outside [boundary, N-boundary) get
+    non_target_code.
+    """
+    N = len(seq_int)
+    result = np.full(N, non_target_code, dtype=np.int32)
+
+    boundary = k if k > edge_trim else edge_trim
+    four_k = 1
+    for _ in range(k):
+        four_k *= 4
+
+    for i in range(boundary, N - boundary):
+        b = int(seq_int[i])
+        is_fwd = b == target_int
+        is_rc_ = do_rc and b == rc_target_int
+        if not (is_fwd or is_rc_):
+            continue
+
+        # N check: left context
+        ok = True
+        for j in range(i - k, i):
+            if seq_int[j] > 3:
+                ok = False
+                break
+        # N check: right context (only if left was clean)
+        if ok:
+            for j in range(i + 1, i + k + 1):
+                if seq_int[j] > 3:
+                    ok = False
+                    break
+        if not ok:
+            continue
+
+        left = 0
+        right = 0
+        if is_fwd:
+            for j in range(i - k, i):
+                left = left * 4 + int(seq_int[j])
+            for j in range(i + 1, i + k + 1):
+                right = right * 4 + int(seq_int[j])
+        else:  # RC: complement(reverse(right)) as left, complement(reverse(left)) as right
+            for j in range(i + k, i, -1):
+                left = left * 4 + (int(seq_int[j]) ^ 2)
+            for j in range(i - 1, i - k - 1, -1):
+                right = right * 4 + (int(seq_int[j]) ^ 2)
+
+        result[i] = left * four_k + right
+
+    return result
 
 
 def _encode_vectorized(sequence: str, target_base: str, context_size: int,
