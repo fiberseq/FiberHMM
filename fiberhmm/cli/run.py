@@ -148,6 +148,18 @@ def parse_args() -> argparse.Namespace:
                         'calls into legacy ns/nl instead of MA/AQ spec tags.')
     p.add_argument('--io-threads', type=int, default=4,
                    help='htslib I/O compression threads per stage (default: 4).')
+    p.add_argument('--sort-threads', type=int, default=2,
+                   help='samtools sort threads (default: 2). '
+                        'Each thread uses --sort-memory RAM. '
+                        'Increase to 4 only when system RAM is not constrained.')
+    p.add_argument('--sort-memory', default='512M',
+                   help='RAM per samtools sort thread (default: 512M). '
+                        'Total sort RAM = sort-threads × sort-memory. '
+                        'Reduce to 256M to save memory during peak balloon phase.')
+    p.add_argument('--sort-tmp', default=None, metavar='DIR',
+                   help='Directory for samtools sort temporary shard files. '
+                        'Route to a different physical drive from the input BAM '
+                        'to avoid I/O contention (e.g. --sort-tmp /scratch/sort_tmp).')
     return p.parse_args()
 
 
@@ -245,7 +257,13 @@ def main() -> None:
 
     # Stage 5: sort (when writing to a file; stdout mode skips sort)
     if not stdout_mode:
-        stages.append([samtools, 'sort', '-@', '4', '-o', args.out_bam, '-'])
+        sort_cmd = [samtools, 'sort',
+                    '-@', str(args.sort_threads),
+                    '-m', args.sort_memory,
+                    '-o', args.out_bam, '-']
+        if args.sort_tmp:
+            sort_cmd += ['-T', args.sort_tmp]
+        stages.append(sort_cmd)
 
     # ── Run ───────────────────────────────────────────────────────────────────
     if stdout_mode:

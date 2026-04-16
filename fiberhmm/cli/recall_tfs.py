@@ -66,10 +66,12 @@ from fiberhmm.inference.tf_recaller import (
 _WORKER = {}
 
 
-def _worker_init(llr_hit, llr_miss, mode, k,
-                 min_llr, min_opps, unify_threshold,
-                 also_write_legacy, downstream_compat, header_text):
-    """Set per-process globals once per worker."""
+def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold):
+    """Set per-process globals once per worker.
+
+    Slim version: workers receive compact payloads and return compact results —
+    no pysam header, no SAM serialization inside the worker.
+    """
     _WORKER['llr_hit'] = llr_hit
     _WORKER['llr_miss'] = llr_miss
     _WORKER['mode'] = mode
@@ -77,22 +79,78 @@ def _worker_init(llr_hit, llr_miss, mode, k,
     _WORKER['min_llr'] = min_llr
     _WORKER['min_opps'] = min_opps
     _WORKER['unify_threshold'] = unify_threshold
-    _WORKER['also_write_legacy'] = also_write_legacy
-    _WORKER['downstream_compat'] = downstream_compat
-    _WORKER['header'] = pysam.AlignmentHeader.from_text(header_text)
 
 
-def _process_record(record_str):
-    """Process one BAM record (as SAM text) and return (new_sam_line, stats)."""
-    read = pysam.AlignedSegment.fromstring(record_str, _WORKER['header'])
+# ---------------------------------------------------------------------------
+# Slim IPC: compact payload helpers (no SAM text serialization in the hot path)
+# ---------------------------------------------------------------------------
+
+class _PayloadRead:
+    """Minimal duck-type for pysam.AlignedSegment used inside worker processes.
+
+    Workers receive a compact dict extracted by _make_payload() in the main
+    process instead of a full SAM string.  This avoids four
+    to_string()/fromstring() calls per read (two in the main process, two in
+    the worker) and the associated MM/ML base64 encoding overhead.
+    """
+    __slots__ = ('query_sequence', 'is_reverse', '_tags')
+
+    def __init__(self, seq, is_reverse, tags):
+        self.query_sequence = seq
+        self.is_reverse = is_reverse
+        self._tags = tags
+
+    def has_tag(self, t):
+        return t in self._tags
+
+    def get_tag(self, t):
+        return self._tags[t]
+
+
+def _make_payload(read) -> dict:
+    """Extract only the tag data workers need from a pysam read.
+
+    Runs in the main process.  The resulting dict is ~5–30 KB (sequence
+    string + small tag arrays) versus ~50–100 KB for a full SAM string with
+    MM/ML for a 20 kb PacBio read.
+    """
+    tags = {}
+    for t in ('MM', 'Mm', 'ML', 'Ml', 'ns', 'nl', 'as', 'al', 'nq', 'st'):
+        if read.has_tag(t):
+            val = read.get_tag(t)
+            # pysam returns array.array for array tags; convert to list so
+            # pickle doesn't have to handle array.array cross-process.
+            try:
+                val = list(val)
+            except TypeError:
+                pass  # scalar (str, int, …) — keep as-is
+            tags[t] = val
+    return {
+        'seq': read.query_sequence,
+        'is_reverse': read.is_reverse,
+        'tags': tags,
+    }
+
+
+def _process_payload_record(payload) -> tuple:
+    """Worker: compute TF calls from a compact payload.
+
+    Returns ((tf_calls, kept_nucs, msps, nq_for_kept), stats).
+    No pysam SAM serialization — only recall_read() + Python arithmetic.
+    write_ma_tags() is intentionally left to the main process so the
+    serialized return value stays small (<1 KB for typical call counts).
+    """
+    read = _PayloadRead(payload['seq'], payload['is_reverse'], payload['tags'])
+    tags = payload['tags']
     stats = {'v2': 0, 'tf': 0, 'demoted': 0}
+    unify_threshold = _WORKER['unify_threshold']
 
-    if read.has_tag('ns') and read.has_tag('nl'):
+    has_ns = 'ns' in tags and 'nl' in tags
+    if has_ns:
         stats['v2'] = 1
-        nl_list = list(read.get_tag('nl'))
-        v2_short_count = sum(1 for l in nl_list
-                              if 0 < int(l) < _WORKER['unify_threshold'])
-        v2_nq = list(read.get_tag('nq')) if read.has_tag('nq') else None
+        nl_list = tags['nl']
+        v2_short_count = sum(1 for l in nl_list if 0 < int(l) < unify_threshold)
+        v2_nq = tags.get('nq', None)
     else:
         v2_short_count = 0
         v2_nq = None
@@ -103,18 +161,17 @@ def _process_record(record_str):
         _WORKER['mode'], _WORKER['k'],
         min_llr=_WORKER['min_llr'],
         min_opps=_WORKER['min_opps'],
-        unify_threshold=_WORKER['unify_threshold'],
+        unify_threshold=unify_threshold,
     )
     stats['tf'] = len(tf_calls)
-    survived_short = sum(1 for _, l in kept_nucs
-                          if l < _WORKER['unify_threshold'])
+    survived_short = sum(1 for _, l in kept_nucs if l < unify_threshold)
     stats['demoted'] = max(0, v2_short_count - survived_short)
 
     nq_for_kept = None
-    if v2_nq is not None and read.has_tag('ns'):
+    if v2_nq is not None and has_ns:
         try:
-            ns_old = list(read.get_tag('ns'))
-            nl_old = list(read.get_tag('nl'))
+            ns_old = tags['ns']
+            nl_old = tags['nl']
             old_to_nq = {(int(s), int(l)): int(v2_nq[i])
                          for i, (s, l) in enumerate(zip(ns_old, nl_old))
                          if i < len(v2_nq)}
@@ -122,6 +179,24 @@ def _process_record(record_str):
         except Exception:
             nq_for_kept = None
 
+    return (tf_calls, kept_nucs, msps, nq_for_kept), stats
+
+
+def _process_payload_chunk(payloads):
+    """Worker: process a list of compact payloads."""
+    out = []
+    total = {'v2': 0, 'tf': 0, 'demoted': 0}
+    for payload in payloads:
+        result, stats = _process_payload_record(payload)
+        out.append(result)
+        for k in total:
+            total[k] += stats[k]
+    return out, total
+
+
+def _apply_result(read, result, also_write_legacy, downstream_compat):
+    """Apply compact worker result to a pysam read in place (main process)."""
+    tf_calls, kept_nucs, msps, nq_for_kept = result
     write_ma_tags(
         read,
         read_length=len(read.query_sequence) if read.query_sequence else 0,
@@ -129,77 +204,83 @@ def _process_record(record_str):
         kept_nucs=kept_nucs,
         msps=msps,
         nq_for_kept_nucs=nq_for_kept,
-        also_write_legacy=_WORKER['also_write_legacy'],
-        downstream_compat=_WORKER['downstream_compat'],
+        also_write_legacy=also_write_legacy,
+        downstream_compat=downstream_compat,
     )
-    return read.to_string(), stats
 
 
-def _process_chunk(records):
-    """Worker: process a list of SAM text records."""
-    out = []
-    total = {'v2': 0, 'tf': 0, 'demoted': 0}
-    for rec in records:
-        line, stats = _process_record(rec)
-        out.append(line)
-        for k in total:
-            total[k] += stats[k]
-    return out, total
-
-
-def _single_thread_loop(bam_in, bam_out, header_text,
-                       llr_hit, llr_miss, mode, k,
-                       min_llr, min_opps, unify_threshold,
-                       also_write_legacy, downstream_compat, max_reads):
-    """Single-threaded fallback path (also used when cores=1)."""
-    _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps,
-                 unify_threshold, also_write_legacy, downstream_compat,
-                 header_text)
+def _single_thread_loop(bam_in, bam_out, _header_text,
+                        llr_hit, llr_miss, mode, k,
+                        min_llr, min_opps, unify_threshold,
+                        also_write_legacy, downstream_compat, max_reads):
+    """Single-threaded path.  No IPC — process reads directly."""
+    _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold)
     n_reads = n_v2 = n_tf = n_demoted = 0
     for read in bam_in:
         if max_reads and n_reads >= max_reads:
             break
-        line, stats = _process_record(read.to_string())
-        out = pysam.AlignedSegment.fromstring(line, bam_out.header)
-        bam_out.write(out)
+        result, stats = _process_payload_record(_make_payload(read))
+        _apply_result(read, result, also_write_legacy, downstream_compat)
+        bam_out.write(read)
         n_reads += 1
-        n_v2 += stats['v2']; n_tf += stats['tf']; n_demoted += stats['demoted']
+        n_v2 += stats['v2']
+        n_tf += stats['tf']
+        n_demoted += stats['demoted']
     return n_reads, n_v2, n_tf, n_demoted
 
 
-def _parallel_loop(bam_in, bam_out, header_text,
+def _parallel_loop(bam_in, bam_out, _header_text,
                    llr_hit, llr_miss, mode, k,
                    min_llr, min_opps, unify_threshold,
                    also_write_legacy, downstream_compat,
                    max_reads, n_cores, chunk_size):
-    """Multi-core path using multiprocessing.Pool.imap (preserves order)."""
-    def _chunk_iter():
-        buf = []
+    """Multi-core path using Pool.imap with slim IPC (no SAM serialization).
+
+    Main process keeps pysam reads in memory per chunk, sends compact payloads
+    to workers, receives compact results, then applies write_ma_tags locally.
+    Eliminates four to_string()/fromstring() calls per read vs. the old
+    SAM-text round-trip protocol.
+
+    Pool.imap processes the generator in order so reads_chunks is populated
+    strictly before each corresponding result is consumed.
+    """
+    reads_chunks: list = []   # each entry is a list of pysam reads for one chunk
+
+    def _payload_chunk_gen():
+        buf_reads, buf_payloads = [], []
         n = 0
         for read in bam_in:
             if max_reads and n >= max_reads:
                 break
-            buf.append(read.to_string())
+            buf_reads.append(read)
+            buf_payloads.append(_make_payload(read))
             n += 1
-            if len(buf) >= chunk_size:
-                yield buf
-                buf = []
-        if buf:
-            yield buf
+            if len(buf_reads) >= chunk_size:
+                reads_chunks.append(buf_reads)    # save before yielding
+                yield buf_payloads
+                buf_reads, buf_payloads = [], []
+        if buf_reads:
+            reads_chunks.append(buf_reads)
+            yield buf_payloads
 
     n_reads = n_v2 = n_tf = n_demoted = 0
+    chunk_idx = 0
     with mp.Pool(
         processes=n_cores,
         initializer=_worker_init,
-        initargs=(llr_hit, llr_miss, mode, k, min_llr, min_opps,
-                  unify_threshold, also_write_legacy, downstream_compat,
-                  header_text),
+        initargs=(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold),
     ) as pool:
-        for out_lines, stats in pool.imap(_process_chunk, _chunk_iter()):
-            for line in out_lines:
-                bam_out.write(pysam.AlignedSegment.fromstring(line, bam_out.header))
-            n_reads += len(out_lines)
-            n_v2 += stats['v2']; n_tf += stats['tf']; n_demoted += stats['demoted']
+        for out_results, stats in pool.imap(_process_payload_chunk,
+                                            _payload_chunk_gen()):
+            reads = reads_chunks[chunk_idx]
+            chunk_idx += 1
+            for read, result in zip(reads, out_results):
+                _apply_result(read, result, also_write_legacy, downstream_compat)
+                bam_out.write(read)
+            n_reads += len(reads)
+            n_v2 += stats['v2']
+            n_tf += stats['tf']
+            n_demoted += stats['demoted']
     return n_reads, n_v2, n_tf, n_demoted
 
 
@@ -247,8 +328,10 @@ def parse_args():
                         'scoring (tq/el/er) -- positions and lengths only.')
     p.add_argument('-c', '--cores', type=int, default=1,
                    help='Worker processes. 0 = auto-detect (default 1).')
-    p.add_argument('--chunk-size', type=int, default=256,
-                   help='Reads per worker chunk (default 256).')
+    p.add_argument('--chunk-size', type=int, default=1024,
+                   help='Reads per worker chunk (default 1024). '
+                        'Larger values reduce IPC overhead; decrease if RAM '
+                        'is constrained (each chunk holds reads in memory).')
     p.add_argument('--io-threads', type=int, default=4,
                    help='htslib BAM compression threads (default 4).')
     p.add_argument('--mode', default=None,
