@@ -65,8 +65,8 @@ def parse_args():
                    help='Min mapping quality (default 0)')
     p.add_argument('--prob-threshold', type=int, default=128,
                    help='Min modification probability 0-255 (default 128)')
-    p.add_argument('--min-read-length', type=int, default=0,
-                   help='Min aligned read length (default 0)')
+    p.add_argument('--min-read-length', type=int, default=1000,
+                   help='Min aligned read length (default 1000 — matches fiberhmm-apply)')
     p.add_argument('--msp-min-size', type=int, default=0,
                    help='Min MSP size (default 0)')
     p.add_argument('--nuc-min-size', type=int, default=85,
