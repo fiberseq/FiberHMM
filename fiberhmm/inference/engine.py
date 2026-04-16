@@ -10,6 +10,7 @@ from fiberhmm.core.bam_reader import (
     detect_daf_strand,
     has_iupac_encoding,
     extract_daf_iupac_positions,
+    parse_mm_tag_query_positions,
 )
 
 
@@ -423,52 +424,51 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int) -> Opti
             '_daf_strand': strand,            # pre-computed from st tag
         }
 
-    # Legacy MM/ML path
-    m6a_query_positions = []
-
-    # Guard: pysam segfaults on modified_bases when MM tag has base-type spec
-    # entries but the ML array is empty (some reads have 0 detected modifications).
-    # Check ML length before calling modified_bases to avoid the crash.
-    # IMPORTANT: len() on array.array is O(1) — do NOT wrap in list(), which
-    # materializes N PyInt objects (~1-2 ms per Hia5 PacBio read with 5000+ ML).
+    # Legacy MM/ML path: use the fast vectorized parser instead of
+    # read.modified_bases.  pysam's modified_bases returns a dict of
+    # (base, strand, mod_code) -> [(pos, qual), ...] which forces a Python
+    # iteration over every modification (~5000 per Hia5 PacBio read =
+    # ~5-10 ms/read).  parse_mm_tag_query_positions does the same parse in
+    # vectorized numpy and accepts ML as bytes (no PyInt materialization).
     try:
-        if read.has_tag('ML'):
-            if len(read.get_tag('ML')) == 0:
-                return None   # no modification data — skip this read
-    except Exception:
-        pass  # no ML tag or unreadable — proceed; modified_bases may return {}
+        mm_tag = read.get_tag('MM') if read.has_tag('MM') else (
+                  read.get_tag('Mm') if read.has_tag('Mm') else '')
+    except KeyError:
+        mm_tag = ''
+    try:
+        ml_raw = read.get_tag('ML') if read.has_tag('ML') else (
+                  read.get_tag('Ml') if read.has_tag('Ml') else None)
+    except KeyError:
+        ml_raw = None
+
+    if not mm_tag or ml_raw is None:
+        return None
+
+    # Empty-ML guard (also avoids the parser doing real work for nothing).
+    try:
+        if len(ml_raw) == 0:
+            return None
+    except TypeError:
+        pass
+
+    # Convert ML to bytes once (fast memcpy, no PyInt allocations).
+    try:
+        ml_bytes = bytes(ml_raw)
+    except TypeError:
+        ml_bytes = ml_raw
 
     try:
-        mod_bases = read.modified_bases
-        if mod_bases:
-            for (base, strand, mod_code), positions in mod_bases.items():
-                if mode == 'daf':
-                    # DAF-seq: deamination converts C->T (+ strand) or G->A (- strand)
-                    # Accept T or A bases
-                    if base not in ('T', 'A'):
-                        continue
-                    for pos, qual in positions:
-                        if qual == -1 or qual >= prob_threshold:
-                            m6a_query_positions.append(pos)
-                else:
-                    # m6a or nanopore mode:
-                    # A positions = m6A on forward strand
-                    # T positions = m6A on reverse strand (T in read is A on template)
-                    # mod_code 'a' = m6A, 21839 = ChEBI code for m6A
-                    if base not in ('A', 'T'):
-                        continue
-                    if mod_code not in ('a', 21839):
-                        continue
-                    for pos, qual in positions:
-                        if qual == -1 or qual >= prob_threshold:
-                            m6a_query_positions.append(pos)
+        mod_pos_set = parse_mm_tag_query_positions(
+            mm_tag, ml_bytes, query_sequence, read.is_reverse,
+            prob_threshold=prob_threshold, mode=mode,
+        )
     except Exception:
         return None
 
     return {
         'read_id': read.query_name,
         'query_sequence': query_sequence,
-        'm6a_query_positions': set(m6a_query_positions),
+        'm6a_query_positions': mod_pos_set,
         'query_length': len(query_sequence)
     }
 
