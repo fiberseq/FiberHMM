@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 import numpy as np
 import pysam
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from typing import List, Dict, Optional, Tuple, Set
 
 # Multiprocessing start method:
@@ -1381,18 +1381,35 @@ def _drain_oldest_chunk(inflight, outbam, with_scores, write_msps,
     """
     Block on the oldest in-flight chunk, apply tags, write to BAM.
 
+    Walks chunk_read_objs in original stream order so that skipped reads
+    (which the worker doesn't see) are interleaved with processed reads at
+    their correct positions — preserves coordinate-sortedness of an already
+    coordinate-sorted input BAM.  results is shorter than chunk_read_objs
+    by exactly the number of skipped reads in this chunk.
+
     Args:
-        inflight: deque of (future, chunk_read_objs, chunk_reads)
+        inflight: deque of (future, chunk_read_objs, chunk_reads, chunk_skip_flags)
         outbam: pysam.AlignmentFile for writing
         with_scores: whether to write nq/aq score tags
         write_msps: whether to write as/al/aq MSP tags
         posterior_writer: PosteriorWriter instance or None
         counters: mutable dict with 'reads_with_footprints', 'no_footprints', 'written'
     """
-    future, chunk_read_objs, chunk_reads = inflight.popleft()
+    future, chunk_read_objs, chunk_reads, chunk_skip_flags = inflight.popleft()
     results = future.result()
+    result_iter = iter(results)
+    fiber_iter = iter(chunk_reads)
 
-    for read_obj, fiber_read, result in zip(chunk_read_objs, chunk_reads, results):
+    for read_obj, is_skipped in zip(chunk_read_objs, chunk_skip_flags):
+        if is_skipped:
+            # Pass-through: write at original stream position to preserve
+            # coordinate sort order.
+            outbam.write(read_obj)
+            counters['written'] += 1
+            continue
+
+        fiber_read = next(fiber_iter)
+        result = next(result_iter)
         if result is not None:
             # Add footprint tags (same logic as _process_and_write_chunk)
             if len(result['ns']) > 0:
@@ -1542,40 +1559,44 @@ def _process_bam_streaming_pipeline(
             )
 
             inflight = deque()
-            chunk_reads = []
-            chunk_read_objs = []
+            chunk_reads = []           # only fiber_reads to be processed
+            chunk_read_objs = []       # ALL reads in stream order (skipped + processed)
+            chunk_skip_flags = []      # bool per chunk_read_objs entry: True = pass-through
             skipped = 0
             last_progress_reads = 0
             last_progress_time = time.time()
 
+            def _buffer_skip(rd, reason):
+                """Buffer a skipped read at its stream position to preserve sort order."""
+                nonlocal skipped
+                chunk_read_objs.append(rd)
+                chunk_skip_flags.append(True)
+                skipped += 1
+                skip_reasons[reason] += 1
+
             try:
                 for read in inbam.fetch(until_eof=True):
                     # --- Filter phase ---
+                    # Skipped reads are buffered into the chunk (with skip_flag=True)
+                    # rather than written immediately — the drain step writes them
+                    # at their original stream position so a coordinate-sorted
+                    # input BAM produces a coordinate-sorted output BAM.
 
                     # Handle unmapped reads
                     if read.is_unmapped:
                         if not process_unmapped or read.query_sequence is None:
-                            outbam.write(read)
-                            counters['written'] += 1
-                            skipped += 1
-                            skip_reasons['unmapped'] += 1
+                            _buffer_skip(read, 'unmapped')
                             continue
                         # else: fall through to process unmapped read with sequence
 
                     # Skip secondary/supplementary if primary_only
                     if primary_only and (read.is_secondary or read.is_supplementary):
-                        outbam.write(read)
-                        counters['written'] += 1
-                        skipped += 1
-                        skip_reasons['secondary_supplementary'] += 1
+                        _buffer_skip(read, 'secondary_supplementary')
                         continue
 
                     # MAPQ filter (skip for unmapped reads being processed)
                     if not read.is_unmapped and read.mapping_quality < min_mapq:
-                        outbam.write(read)
-                        counters['written'] += 1
-                        skipped += 1
-                        skip_reasons['low_mapq'] += 1
+                        _buffer_skip(read, 'low_mapq')
                         continue
 
                     # Length filter (use query_length for unmapped, query_alignment_length for mapped)
@@ -1584,40 +1605,29 @@ def _process_bam_streaming_pipeline(
                     else:
                         read_len = read.query_alignment_length
                     if read_len < min_read_length:
-                        outbam.write(read)
-                        counters['written'] += 1
-                        skipped += 1
-                        skip_reasons['too_short'] += 1
+                        _buffer_skip(read, 'too_short')
                         continue
 
                     # Training exclusion
                     read_id = read.query_name
                     if train_rids and read_id in train_rids:
-                        outbam.write(read)
-                        counters['written'] += 1
-                        skipped += 1
-                        skip_reasons['training_excluded'] += 1
+                        _buffer_skip(read, 'training_excluded')
                         continue
 
                     # --- Extract phase ---
                     try:
                         fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
                         if fiber_read is None:
-                            outbam.write(read)
-                            counters['written'] += 1
-                            skipped += 1
-                            skip_reasons['no_modifications'] += 1
+                            _buffer_skip(read, 'no_modifications')
                             continue
                     except Exception:
-                        outbam.write(read)
-                        counters['written'] += 1
-                        skipped += 1
-                        skip_reasons['extraction_failed'] += 1
+                        _buffer_skip(read, 'extraction_failed')
                         continue
 
                     # --- Buffer into chunk ---
                     chunk_reads.append(fiber_read)
                     chunk_read_objs.append(read)
+                    chunk_skip_flags.append(False)
                     total_reads += 1
 
                     # Check max reads limit
@@ -1625,7 +1635,10 @@ def _process_bam_streaming_pipeline(
                         break
 
                     # --- Submit when chunk is full ---
-                    if len(chunk_reads) >= chunk_size:
+                    # Use chunk_read_objs length so skipped reads also count toward
+                    # the chunk size (otherwise pure-skip stretches would buffer
+                    # unboundedly waiting for processable reads).
+                    if len(chunk_read_objs) >= chunk_size:
                         # Drain oldest if at capacity
                         if len(inflight) >= max_inflight:
                             _drain_oldest_chunk(
@@ -1633,15 +1646,16 @@ def _process_bam_streaming_pipeline(
                                 posterior_writer, counters
                             )
 
-                        # Submit chunk to workers
+                        # Submit chunk to workers (only the to-process subset)
                         future = executor.submit(
                             _process_chunk_worker,
                             chunk_reads, edge_trim, circular, mode, context_size,
                             msp_min_size, nuc_min_size, with_scores, return_posteriors
                         )
-                        inflight.append((future, chunk_read_objs, chunk_reads))
+                        inflight.append((future, chunk_read_objs, chunk_reads, chunk_skip_flags))
                         chunk_reads = []
                         chunk_read_objs = []
+                        chunk_skip_flags = []
 
                         # Progress update
                         now = time.time()
@@ -1657,20 +1671,28 @@ def _process_bam_streaming_pipeline(
                               f"{inst_rate:.0f} reads/s (avg {avg_rate:.0f})", end='', file=_log)
                         _log.flush()
 
-                # Submit final partial chunk
-                if chunk_reads:
+                # Submit final partial chunk (if it has any reads — skipped or not).
+                # Pass-through-only tail (e.g. unmapped reads at end) still needs
+                # to be flushed in order through the drain mechanism.
+                if chunk_read_objs:
                     if len(inflight) >= max_inflight:
                         _drain_oldest_chunk(
                             inflight, outbam, with_scores, write_msps,
                             posterior_writer, counters
                         )
 
-                    future = executor.submit(
-                        _process_chunk_worker,
-                        chunk_reads, edge_trim, circular, mode, context_size,
-                        msp_min_size, nuc_min_size, with_scores, return_posteriors
-                    )
-                    inflight.append((future, chunk_read_objs, chunk_reads))
+                    if chunk_reads:
+                        future = executor.submit(
+                            _process_chunk_worker,
+                            chunk_reads, edge_trim, circular, mode, context_size,
+                            msp_min_size, nuc_min_size, with_scores, return_posteriors
+                        )
+                    else:
+                        # All-skipped tail: no worker call needed, fake a
+                        # completed future returning [].
+                        future = Future()
+                        future.set_result([])
+                    inflight.append((future, chunk_read_objs, chunk_reads, chunk_skip_flags))
 
                 # Drain all remaining in-flight chunks (in order)
                 while inflight:
