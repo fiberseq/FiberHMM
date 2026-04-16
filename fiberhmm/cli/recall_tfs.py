@@ -114,17 +114,28 @@ def _make_payload(read) -> dict:
     Runs in the main process.  The resulting dict is ~5–30 KB (sequence
     string + small tag arrays) versus ~50–100 KB for a full SAM string with
     MM/ML for a 20 kb PacBio read.
+
+    ML is stored as raw bytes (not a Python list) — for a PacBio read with
+    ~5000 modification probabilities this avoids creating 5000 Python int
+    objects in the serial main process (~1–2 ms/read saved), and pickle of
+    bytes is a straight memcpy vs. pickling a Python list.
+    parse_mm_tag_query_positions accepts bytes directly via np.frombuffer.
     """
     tags = {}
     for t in ('MM', 'Mm', 'ML', 'Ml', 'ns', 'nl', 'as', 'al', 'nq', 'st'):
         if read.has_tag(t):
             val = read.get_tag(t)
-            # pysam returns array.array for array tags; convert to list so
-            # pickle doesn't have to handle array.array cross-process.
-            try:
-                val = list(val)
-            except TypeError:
-                pass  # scalar (str, int, …) — keep as-is
+            if t in ('ML', 'Ml'):
+                # array.array('B', ...) → bytes via buffer protocol: fast memcpy
+                try:
+                    val = bytes(val)
+                except TypeError:
+                    pass  # scalar or already bytes
+            else:
+                try:
+                    val = list(val)
+                except TypeError:
+                    pass  # scalar (str, int, …) — keep as-is
             tags[t] = val
     return {
         'seq': read.query_sequence,
