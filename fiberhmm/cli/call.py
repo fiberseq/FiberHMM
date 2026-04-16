@@ -27,7 +27,10 @@ import sys
 
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.models import SUPPORTED_ENZYMES, get_model_path as _get_bundled_model
-from fiberhmm.inference.parallel import _process_bam_streaming_pipeline_fused
+from fiberhmm.inference.parallel import (
+    _process_bam_streaming_pipeline_fused,
+    _process_bam_region_parallel_fused,
+)
 from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
 
 
@@ -93,11 +96,24 @@ def parse_args():
     p.add_argument('-c', '--cores', type=int, default=4,
                    help='Worker processes (default 4).')
     p.add_argument('--chunk-size', type=int, default=500,
-                   help='Reads per worker chunk (default 500).')
+                   help='Reads per worker chunk (default 500; streaming mode only).')
     p.add_argument('--io-threads', type=int, default=8,
                    help='htslib I/O threads per stage (default 8).')
     p.add_argument('--max-reads', type=int, default=0,
-                   help='0 = no limit (default)')
+                   help='0 = no limit (default; streaming mode only)')
+
+    # --- Region-parallel mode ---
+    p.add_argument('--region-parallel', action='store_true',
+                   help='Process genomic regions in parallel (one worker per region). '
+                        'Scales linearly with --cores up to chromosome count. '
+                        'Requires coordinate-sorted + indexed input BAM. '
+                        'Recommended for full-genome runs; use streaming for stdin/unaligned.')
+    p.add_argument('--region-size', type=int, default=10_000_000,
+                   help='Region size in bp for --region-parallel (default 10 Mb).')
+    p.add_argument('--skip-scaffolds', action='store_true',
+                   help='Skip scaffold/contig chromosomes in region-parallel mode.')
+    p.add_argument('--chroms', nargs='+', default=None,
+                   help='Only process these chromosomes (region-parallel mode).')
 
     return p.parse_args()
 
@@ -144,54 +160,91 @@ def main():
     uplift = args.emission_uplift if args.emission_uplift is not None \
              else preset.get('emission_uplift', 1.0)
 
+    mode_label = 'region-parallel' if args.region_parallel else 'streaming'
     print(
         "\n=========================================================================\n"
-        "  fiberhmm-call [BETA] — fused apply + recall-tfs in one pass\n"
+        f"  fiberhmm-call [BETA] — fused apply + recall-tfs ({mode_label})\n"
         f"  apply model:  {apply_model_path}\n"
         f"  recall model: {recall_model_path or '(reuse apply model)'}\n"
         f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'}\n"
         f"  min_llr={min_llr} min_opps={args.min_opps} "
         f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
-        f"  cores={args.cores} io-threads={args.io_threads} chunk={args.chunk_size}\n"
+        f"  cores={args.cores} io-threads={args.io_threads}\n"
         "=========================================================================\n",
         file=sys.stderr,
     )
 
     also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
 
-    n_reads, n_fp = _process_bam_streaming_pipeline_fused(
-        input_bam=args.input,
-        output_bam=args.output,
-        model_path=apply_model_path,
-        recall_model_path=recall_model_path,
-        train_rids=set(),
-        edge_trim=args.edge_trim,
-        circular=False,
-        mode=mode,
-        context_size=k,
-        msp_min_size=args.msp_min_size,
-        nuc_min_size=args.nuc_min_size,
-        min_mapq=args.min_mapq,
-        prob_threshold=args.prob_threshold,
-        min_read_length=args.min_read_length,
-        with_scores=args.with_scores,
-        min_llr=min_llr,
-        min_opps=args.min_opps,
-        unify_threshold=args.unify_threshold,
-        emission_uplift=uplift,
-        also_write_legacy=also_write_legacy,
-        downstream_compat=args.downstream_compat,
-        max_reads=args.max_reads,
-        n_cores=args.cores,
-        chunk_size=args.chunk_size,
-        io_threads=args.io_threads,
-        process_unmapped=args.process_unmapped,
-        primary_only=args.primary,
-    )
+    if args.region_parallel:
+        if args.input == '-' or args.output == '-':
+            print("error: --region-parallel requires file I/O "
+                  "(input must be indexed BAM, not stdin; output cannot be stdout).",
+                  file=sys.stderr)
+            sys.exit(1)
+        chroms_set = set(args.chroms) if args.chroms else None
+        n_reads, n_fp = _process_bam_region_parallel_fused(
+            input_bam=args.input,
+            output_bam=args.output,
+            apply_model_path=apply_model_path,
+            recall_model_path=recall_model_path,
+            train_rids=set(),
+            edge_trim=args.edge_trim,
+            circular=False,
+            mode=mode,
+            context_size=k,
+            msp_min_size=args.msp_min_size,
+            nuc_min_size=args.nuc_min_size,
+            min_mapq=args.min_mapq,
+            prob_threshold=args.prob_threshold,
+            min_read_length=args.min_read_length,
+            with_scores=args.with_scores,
+            min_llr=min_llr,
+            min_opps=args.min_opps,
+            unify_threshold=args.unify_threshold,
+            emission_uplift=uplift,
+            also_write_legacy=also_write_legacy,
+            downstream_compat=args.downstream_compat,
+            n_cores=args.cores,
+            region_size=args.region_size,
+            skip_scaffolds=args.skip_scaffolds,
+            chroms=chroms_set,
+            io_threads=args.io_threads,
+            primary_only=args.primary,
+        )
+    else:
+        n_reads, n_fp = _process_bam_streaming_pipeline_fused(
+            input_bam=args.input,
+            output_bam=args.output,
+            model_path=apply_model_path,
+            recall_model_path=recall_model_path,
+            train_rids=set(),
+            edge_trim=args.edge_trim,
+            circular=False,
+            mode=mode,
+            context_size=k,
+            msp_min_size=args.msp_min_size,
+            nuc_min_size=args.nuc_min_size,
+            min_mapq=args.min_mapq,
+            prob_threshold=args.prob_threshold,
+            min_read_length=args.min_read_length,
+            with_scores=args.with_scores,
+            min_llr=min_llr,
+            min_opps=args.min_opps,
+            unify_threshold=args.unify_threshold,
+            emission_uplift=uplift,
+            also_write_legacy=also_write_legacy,
+            downstream_compat=args.downstream_compat,
+            max_reads=args.max_reads,
+            n_cores=args.cores,
+            chunk_size=args.chunk_size,
+            io_threads=args.io_threads,
+            process_unmapped=args.process_unmapped,
+            primary_only=args.primary,
+        )
 
-    if not stdout_mode:
-        # Index directly — output is coordinate-sorted if input was (thanks to
-        # the sort-order-preserving skip buffer from 2.6.8).
+    if not stdout_mode and not args.region_parallel:
+        # region-parallel already indexes.  Streaming mode needs an index pass.
         import pysam
         try:
             pysam.index(args.output)

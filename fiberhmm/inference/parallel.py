@@ -1674,6 +1674,373 @@ def _drain_oldest_chunk(inflight, outbam, with_scores, write_msps,
         counters['written'] += 1
 
 
+def _init_fused_region_worker(apply_model_path: str, recall_model_path: Optional[str],
+                              emission_uplift: float, params: dict):
+    """Per-worker init for region-parallel fused apply+recall.
+
+    Loads the apply HMM model, builds the TF LLR tables (from the recall
+    model or by reusing the apply model), warms up numba JIT, and stashes
+    params for the region worker to pick up.
+    """
+    global _worker_model, _worker_region_params, _worker_recall_state
+    import os
+    os.environ['NUMBA_CACHE_DIR'] = ''
+
+    _worker_model = load_model(apply_model_path)
+    _worker_region_params = params
+
+    from fiberhmm.core.model_io import load_model_with_metadata
+    from fiberhmm.inference.tf_recaller import build_llr_tables, apply_emission_uplift
+    r_path = recall_model_path or apply_model_path
+    r_model, _, _ = load_model_with_metadata(r_path)
+    llr_hit, llr_miss = build_llr_tables(r_model)
+    if abs(emission_uplift - 1.0) > 1e-9:
+        llr_hit, llr_miss = apply_emission_uplift(llr_hit, llr_miss, r_model, emission_uplift)
+    _worker_recall_state['llr_hit'] = llr_hit
+    _worker_recall_state['llr_miss'] = llr_miss
+
+    # Warmup
+    from fiberhmm.core.hmm import HAS_NUMBA
+    if HAS_NUMBA:
+        dummy_obs = np.array([0, 1, 2, 3], dtype=np.int64)
+        _ = _worker_model.predict(dummy_obs)
+        from fiberhmm.inference.tf_recaller import call_tfs_in_interval
+        _ = call_tfs_in_interval(
+            np.zeros(16, dtype=np.int32), 0, 16,
+            llr_hit, llr_miss, min_llr=4.0, min_opps=3,
+        )
+
+
+def _process_region_to_bam_fused(args: Tuple) -> Tuple:
+    """Region worker: fetch reads in one genomic region, run fused
+    apply+recall per read, write in-order to a coordinate-sorted temp BAM.
+
+    Because pysam.fetch(chrom,start,end) yields reads in coordinate order
+    AND we only process reads that START in this region (the reference_start
+    filter), each temp BAM is coordinate-sorted within itself.  Concatenating
+    temp BAMs in region order gives a coordinate-sorted final BAM without
+    any sort pass.
+
+    Returns (temp_bam_path, n_reads, n_with_fp, n_written, None, skip_reasons).
+    """
+    import traceback
+    from fiberhmm.inference.engine import (
+        extract_fiber_read_from_payload, make_apply_payload, _process_single_read,
+    )
+    from fiberhmm.inference.tf_recaller import (
+        build_scan_intervals, call_tfs_in_interval, write_ma_tags,
+    )
+    global _worker_model, _worker_region_params, _worker_recall_state
+
+    try:
+        if len(args) == 3:
+            (chrom, start, end), input_bam, temp_bam_path = args
+        else:
+            (chrom, start, end), input_bam, temp_bam_path, _unused = args
+        start = int(start); end = int(end)
+
+        params = _worker_region_params
+        model = _worker_model
+        llr_hit = _worker_recall_state['llr_hit']
+        llr_miss = _worker_recall_state['llr_miss']
+
+        edge_trim = int(params['edge_trim'])
+        circular = params['circular']
+        mode = params['mode']
+        context_size = int(params['context_size'])
+        msp_min_size = int(params['msp_min_size'])
+        nuc_min_size = int(params.get('nuc_min_size', 85))
+        min_mapq = int(params['min_mapq'])
+        prob_threshold = int(params['prob_threshold'])
+        min_read_length = int(params['min_read_length'])
+        with_scores = params.get('with_scores', False)
+        train_rids = params.get('train_rids') or set()
+        primary_only = params.get('primary_only', False)
+        io_threads = int(params.get('io_threads', 4))
+        min_llr = float(params['min_llr'])
+        min_opps = int(params['min_opps'])
+        unify_threshold = int(params['unify_threshold'])
+        also_write_legacy = params['also_write_legacy']
+        downstream_compat = params['downstream_compat']
+
+        pysam.set_verbosity(0)
+
+        total_reads = 0
+        reads_with_fp = 0
+        written = 0
+        skipped = 0
+        skip_reasons = {
+            'unmapped': 0, 'secondary_supplementary': 0, 'low_mapq': 0,
+            'too_short': 0, 'training_excluded': 0, 'no_modifications': 0,
+            'extraction_failed': 0, 'no_footprints': 0,
+        }
+
+        with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
+            with pysam.AlignmentFile(temp_bam_path, "wb", header=inbam.header, threads=io_threads) as outbam:
+                try:
+                    read_iter = inbam.fetch(chrom, start, end)
+                except ValueError:
+                    return (temp_bam_path, 0, 0, 0, None, {})
+
+                for read in read_iter:
+                    if read.is_unmapped:
+                        outbam.write(read); written += 1; skipped += 1
+                        skip_reasons['unmapped'] += 1
+                        continue
+                    if primary_only and (read.is_secondary or read.is_supplementary):
+                        outbam.write(read); written += 1; skipped += 1
+                        skip_reasons['secondary_supplementary'] += 1
+                        continue
+                    # Only process reads starting in this region (fetch is overlap-based).
+                    if read.reference_start < start or read.reference_start >= end:
+                        continue
+                    if read.mapping_quality < min_mapq:
+                        outbam.write(read); written += 1; skipped += 1
+                        skip_reasons['low_mapq'] += 1
+                        continue
+                    if (read.query_alignment_length is None
+                            or read.query_alignment_length < min_read_length):
+                        outbam.write(read); written += 1; skipped += 1
+                        skip_reasons['too_short'] += 1
+                        continue
+                    if train_rids and read.query_name in train_rids:
+                        outbam.write(read); written += 1; skipped += 1
+                        skip_reasons['training_excluded'] += 1
+                        continue
+
+                    payload = make_apply_payload(read)
+                    if payload is None:
+                        outbam.write(read); written += 1; skipped += 1
+                        skip_reasons['no_modifications'] += 1
+                        continue
+
+                    try:
+                        fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
+                        if fiber_read is None:
+                            outbam.write(read); written += 1; skipped += 1
+                            skip_reasons['no_modifications'] += 1
+                            continue
+                        apply_result = _process_single_read(
+                            fiber_read, model, edge_trim, circular,
+                            mode, context_size, msp_min_size,
+                            nuc_min_size=nuc_min_size,
+                            with_scores=with_scores,
+                            return_posteriors=False,
+                            include_encoded=True,
+                        )
+                    except Exception:
+                        outbam.write(read); written += 1; skipped += 1
+                        skip_reasons['extraction_failed'] += 1
+                        continue
+
+                    total_reads += 1
+
+                    if apply_result is None or (len(apply_result['ns']) == 0
+                                                and len(apply_result['as']) == 0):
+                        outbam.write(read); written += 1
+                        skip_reasons['no_footprints'] += 1
+                        continue
+
+                    ns = apply_result['ns']; nl = apply_result['nl']
+                    as_ = apply_result['as']; al = apply_result['al']
+                    obs = apply_result['encoded']
+
+                    ns_list = ns.tolist() if hasattr(ns, 'tolist') else list(ns)
+                    nl_list = nl.tolist() if hasattr(nl, 'tolist') else list(nl)
+                    as_list = as_.tolist() if hasattr(as_, 'tolist') else list(as_)
+                    al_list = al.tolist() if hasattr(al, 'tolist') else list(al)
+
+                    intervals = build_scan_intervals(
+                        ns_list, nl_list, as_list, al_list,
+                        len(fiber_read['query_sequence']),
+                        unify_threshold=unify_threshold,
+                    )
+                    tf_calls = []
+                    for lo, hi in intervals:
+                        tf_calls.extend(call_tfs_in_interval(
+                            obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps,
+                        ))
+
+                    # Unify: drop short nucs overlapping TF calls
+                    tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
+                    kept_nucs = []
+                    for s, l in zip(ns_list, nl_list):
+                        s = int(s); l = int(l)
+                        if l <= 0:
+                            continue
+                        if l >= unify_threshold:
+                            kept_nucs.append((s, l))
+                            continue
+                        nuc_end = s + l
+                        overlapped = any(ts < nuc_end and te > s for ts, te in tf_intervals)
+                        if not overlapped:
+                            kept_nucs.append((s, l))
+
+                    msps = [(int(s), int(l)) for s, l in zip(as_list, al_list) if int(l) > 0]
+
+                    write_ma_tags(
+                        read,
+                        read_length=len(fiber_read['query_sequence']),
+                        tf_calls=tf_calls,
+                        kept_nucs=kept_nucs,
+                        msps=msps,
+                        nq_for_kept_nucs=None,
+                        also_write_legacy=also_write_legacy,
+                        downstream_compat=downstream_compat,
+                    )
+                    outbam.write(read)
+                    written += 1
+                    reads_with_fp += 1
+
+        return (temp_bam_path, total_reads, reads_with_fp, written, None, skip_reasons)
+
+    except Exception as e:
+        traceback.print_exc()
+        raise
+
+
+def _process_bam_region_parallel_fused(
+    input_bam: str, output_bam: str,
+    apply_model_path: str, recall_model_path: Optional[str],
+    train_rids: Set[str],
+    edge_trim: int, circular: bool,
+    mode: str, context_size: int,
+    msp_min_size: int, nuc_min_size: int,
+    min_mapq: int, prob_threshold: int, min_read_length: int,
+    with_scores: bool,
+    min_llr: float, min_opps: int, unify_threshold: int,
+    emission_uplift: float,
+    also_write_legacy: bool, downstream_compat: bool,
+    n_cores: int, region_size: int, skip_scaffolds: bool,
+    chroms: Optional[Set[str]], io_threads: int,
+    primary_only: bool = False,
+):
+    """Region-parallel fused apply+recall.
+
+    Splits the BAM into genomic regions, runs fused apply+recall in each
+    region as an independent worker, then concatenates sorted temp BAMs
+    in region order.  Input BAM must be coordinate-sorted + indexed.
+
+    Output is coordinate-sorted with no sort pass needed.
+    """
+    start_time = time.time()
+
+    regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
+    print(f"Processing {len(regions)} regions with {n_cores} cores (fused apply+recall)...")
+    sys.stdout.flush()
+
+    output_dir = os.path.dirname(os.path.abspath(output_bam))
+    temp_dir = os.path.join(output_dir, '.fiberhmm_call_tmp')
+    os.makedirs(temp_dir, exist_ok=True)
+
+    params = {
+        'edge_trim': edge_trim, 'circular': circular,
+        'mode': mode, 'context_size': context_size,
+        'msp_min_size': msp_min_size, 'nuc_min_size': nuc_min_size,
+        'min_mapq': min_mapq, 'prob_threshold': prob_threshold,
+        'min_read_length': min_read_length, 'with_scores': with_scores,
+        'train_rids': train_rids, 'primary_only': primary_only,
+        'io_threads': io_threads,
+        'min_llr': min_llr, 'min_opps': min_opps,
+        'unify_threshold': unify_threshold,
+        'also_write_legacy': also_write_legacy,
+        'downstream_compat': downstream_compat,
+    }
+
+    work_items = [
+        ((r[0], r[1], r[2]), input_bam, os.path.join(temp_dir, f'region_{i:06d}.bam'), None)
+        for i, r in enumerate(regions)
+    ]
+
+    try:
+        total_reads = 0
+        reads_with_fp = 0
+        total_skipped = 0
+        all_skip_reasons: Dict[str, int] = {}
+        temp_bams: List[Tuple[int, str]] = []
+
+        print(f"  Initializing {n_cores} workers (loading apply model + LLR tables)...")
+        sys.stdout.flush()
+        pool_start = time.time()
+        first_result = None
+
+        with ProcessPoolExecutor(
+            max_workers=n_cores,
+            mp_context=_MP_CONTEXT,
+            initializer=_init_fused_region_worker,
+            initargs=(apply_model_path, recall_model_path, emission_uplift, params),
+        ) as executor:
+            futures = {executor.submit(_process_region_to_bam_fused, item): i
+                       for i, item in enumerate(work_items)}
+
+            for future in as_completed(futures):
+                res = future.result()
+                temp_bam, n_reads, n_fp, n_written, _, region_skip = res
+                for reason, count in (region_skip or {}).items():
+                    all_skip_reasons[reason] = all_skip_reasons.get(reason, 0) + count
+                    total_skipped += count
+                if first_result is None:
+                    first_result = time.time()
+                    print(f"  Workers ready ({first_result - pool_start:.1f}s). Processing...")
+                    sys.stdout.flush()
+                total_reads += n_reads
+                reads_with_fp += n_fp
+                temp_bams.append((futures[future], temp_bam))
+                elapsed = time.time() - start_time
+                rate = total_reads / elapsed if elapsed > 0 else 0
+                print(f"\r  Regions: {len(temp_bams)}/{len(regions)} | "
+                      f"Reads: {total_reads:,} | With FP: {reads_with_fp:,} | "
+                      f"{rate:.0f} r/s", end='')
+                sys.stdout.flush()
+        print()
+
+        if total_skipped > 0:
+            total_enc = total_reads + total_skipped
+            print(f"  Processed: {total_reads:,} | Skipped: {total_skipped:,} | With FP: {reads_with_fp:,}")
+            print("  Skip reasons:")
+            for reason, count in sorted(all_skip_reasons.items(), key=lambda x: -x[1]):
+                if count > 0:
+                    print(f"    {reason}: {count:,} ({100*count/total_enc:.1f}%)")
+
+        # Concat region BAMs in region-index order — preserves coord sort.
+        temp_bams.sort(key=lambda x: x[0])
+        non_empty = [bam for _, bam in temp_bams
+                     if os.path.exists(bam) and os.path.getsize(bam) > 0]
+        total_mb = sum(os.path.getsize(b) for b in non_empty) / (1024**2)
+        print(f"Concatenating {len(non_empty)} region BAMs ({total_mb:.1f} MB total)...")
+        if not non_empty:
+            with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as ib:
+                pysam.AlignmentFile(output_bam, "wb", header=ib.header).close()
+        elif len(non_empty) == 1:
+            shutil.copy(non_empty[0], output_bam)
+        else:
+            bam_list = os.path.join(temp_dir, 'bam_list.txt')
+            with open(bam_list, 'w') as f:
+                for bp in non_empty:
+                    f.write(bp + '\n')
+            r = subprocess.run(
+                ['samtools', 'cat', '-b', bam_list, '-o', output_bam],
+                capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                raise subprocess.CalledProcessError(r.returncode, 'samtools cat', r.stderr)
+
+        # Index directly (input sorted → each region sorted → concat sorted).
+        try:
+            pysam.index(output_bam)
+        except pysam.SamtoolsError:
+            pass
+
+        elapsed = time.time() - start_time
+        rate = total_reads / elapsed if elapsed > 0 else 0
+        print(f"  Total: {total_reads:,} reads, {reads_with_fp:,} with footprints, {rate:.1f} r/s")
+
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return total_reads, reads_with_fp
+
+
 def _drain_oldest_fused_chunk(inflight, outbam, with_scores,
                               also_write_legacy, downstream_compat, counters):
     """Fused apply+recall drain: applies ns/nl/as/al AND MA/AQ tags via
