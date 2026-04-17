@@ -245,18 +245,16 @@ def get_modified_positions_pysam(read, prob_threshold: int = 125, mode: str = 'p
 
 def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
                                sequence: str, is_reverse: bool) -> Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]]:
-    """Parse MM/ML into per-mod-type position + quality arrays.
+    """Parse MM/ML into per-mod-type position + quality arrays (SEQ frame).
 
-    ⚠️ EXPERIMENTAL — does not replicate pysam's reverse-strand position
-    flip exactly.  Positions returned are query_sequence-based (SEQ frame),
-    which matches pysam for FORWARD-strand reads but differs for
-    reverse-strand reads where pysam applies an extra RC flip.
+    Produces positions in the same frame as ``pysam.modified_bases``: stored
+    query_sequence (SEQ) frame, accounting for the SAM spec's requirement
+    that MM walks in the ORIGINAL sequencing direction for reverse-aligned
+    reads.  Validated against pysam on both strands (see
+    ``tests/test_mm_parser_vs_pysam.py``).
 
-    For apply+recall usage this is fine (the HMM treats A+a and T-a as
-    equivalent), but don't use for coordinate-exact downstream analysis
-    (e.g. BED extraction) — use pysam's read.modified_bases there.
-
-    Returns dict mapping (target_base, mod_code) -> (positions, qualities).
+    Returns dict mapping ``(target_base, mod_code)`` -> ``(positions, qualities)``
+    with positions in SEQ frame, unfiltered (caller applies prob_threshold).
     """
     result: Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]] = {}
 
@@ -276,7 +274,15 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
         ml_arr_all = np.asarray(ml_tag, dtype=np.uint8)
 
     seq_upper = sequence.upper()
-    seq_bytes = np.frombuffer(seq_upper.encode('ascii'), dtype=np.uint8)
+    q_len = len(seq_upper)
+
+    # For reverse-aligned reads, MM walks in the RC of SEQ (original
+    # sequencing direction).  See SAM specs on MM/ML orientation.
+    if is_reverse:
+        search_seq = seq_upper.translate(_COMPLEMENT_TABLE)[::-1]
+    else:
+        search_seq = seq_upper
+    seq_bytes = np.frombuffer(search_seq.encode('ascii'), dtype=np.uint8)
     base_positions_cache: Dict[str, np.ndarray] = {}
 
     ml_idx = 0
@@ -337,6 +343,10 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
         positions = base_positions[base_indices[valid]]
         qualities = ml_slice[valid] if len(ml_slice) >= n_mods \
             else ml_slice[valid[:len(ml_slice)]]
+
+        # Flip from ORIGINAL frame back to SEQ frame for reverse reads.
+        if is_reverse:
+            positions = q_len - 1 - positions
 
         key = (target_base, mod_code)
         if key in result:
@@ -415,38 +425,58 @@ def cigar_to_query_ref(read) -> np.ndarray:
     return _cigar_walk_numba(cigar_ops, cigar_lens, int(ref_start), int(q_len))
 
 
+_COMPLEMENT_TABLE = str.maketrans('ACGTacgtNn', 'TGCAtgcaNn')
+
+
 def parse_mm_tag_query_positions(mm_tag: str, ml_tag: List[int],
                                   sequence: str, is_reverse: bool,
                                   prob_threshold: int = 125,
                                   mode: str = 'pacbio-fiber',
                                   debug: bool = False) -> Set[int]:
-    """
-    Parse MM/ML tags to extract modification query positions passing probability threshold.
-    
-    MM tag format: "A+a,0,5,3;C+m,1,2,4"
-    - Base type, modification code, then comma-separated skip counts
-    
-    ML tag: List of probabilities (0-255) for each modification call
-    
+    """Parse MM/ML tags to extract modification query positions (SEQ frame).
+
+    Produces the same positions as ``pysam.AlignedSegment.modified_bases`` —
+    i.e., positions in the stored query_sequence (SEQ) frame of reference,
+    accounting for the SAM spec's requirement that MM skip-counts walk in
+    the ORIGINAL sequencing direction (= reverse complement of SEQ for
+    reverse-aligned reads).
+
+    Validated against pysam ``modified_bases`` on both forward and reverse
+    reads (see ``tests/test_mm_parser_vs_pysam.py``).
+
+    MM tag format: ``"A+a.,0,5,3;C+m?,1,2,4;"`` — base+strand+mod_code
+    followed by comma-separated skip counts.
+
     Args:
-        mm_tag: MM tag string from BAM
-        ml_tag: ML tag values
-        sequence: Query sequence
-        is_reverse: Whether read is reverse strand
-        prob_threshold: Minimum probability to call modification
-        mode: 'pacbio-fiber' for adenine methylation, 'daf' for deamination
-              For 'daf', modifications at C/G positions are used for strand detection
-        debug: If True, print diagnostic info
-    
-    Returns set of query positions with confident modification calls.
+        mm_tag: MM tag string from BAM.
+        ml_tag: ML tag values (bytes, array.array, numpy uint8, or int list).
+        sequence: Query sequence in stored SEQ direction (pysam.query_sequence).
+        is_reverse: Whether read is reverse-aligned.  Triggers the RC walk.
+        prob_threshold: Minimum ML probability (0-255) to call modification.
+        mode: 'pacbio-fiber' (A/T both accepted), 'nanopore-fiber' (A only),
+              or 'daf' (C/G + deamination products T/A).
+
+    Returns:
+        Set of query positions (in SEQ frame) with modification calls at or
+        above prob_threshold.
     """
-    mod_positions = set()
+    mod_positions: Set[int] = set()
 
     if not mm_tag or not ml_tag:
         return mod_positions
 
-    ml_idx = 0
     seq_upper = sequence.upper()
+    q_len = len(seq_upper)
+
+    # CORRECTNESS: MM walks positions in the ORIGINAL sequencing direction,
+    # which equals SEQ for forward-aligned reads and equals the reverse
+    # complement of SEQ for reverse-aligned reads.  We do the walk on
+    # ``search_seq`` (== ORIGINAL) and flip positions back to SEQ frame at
+    # the end via ``q_len - 1 - pos``.
+    if is_reverse:
+        search_seq = seq_upper.translate(_COMPLEMENT_TABLE)[::-1]
+    else:
+        search_seq = seq_upper
 
     # Convert ml_tag to a numpy uint8 array once.  Accepts raw bytes (fastest
     # IPC format), array.array (what pysam returns), or Python list (legacy
@@ -465,6 +495,12 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag: List[int],
         print(f"  [DAF DEBUG] Seq len={len(sequence)}, bases: A={base_counts['A']} C={base_counts['C']} G={base_counts['G']} T={base_counts['T']}")
         print(f"  [DAF DEBUG] MM tag: {mm_tag[:200]}...")
         print(f"  [DAF DEBUG] ML tag len: {ml_len_total}, first 10 values: {ml_arr_all[:10].tolist()}")
+        print(f"  [DAF DEBUG] is_reverse: {is_reverse}, walking on {'RC(SEQ)' if is_reverse else 'SEQ'}")
+
+    ml_idx = 0
+    # Pre-compute base position arrays per target base (cached within one call)
+    base_pos_cache: Dict[str, np.ndarray] = {}
+    search_bytes = np.frombuffer(search_seq.encode('ascii'), dtype=np.uint8)
 
     for mod_spec in mm_tag.split(';'):
         if not mod_spec:
@@ -475,10 +511,6 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag: List[int],
             continue
 
         base_mod = parts[0]
-        # Fast path: numpy's C-level string->int parser handles the whole skip
-        # list in a single pass.  For 5000-element MM skip counts this is
-        # ~10× faster than the Python int() loop.  Fallback handles
-        # malformed entries (rare in practice).
         try:
             skip_arr = np.asarray(parts[1:], dtype=np.int64)
         except (ValueError, TypeError):
@@ -490,56 +522,42 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag: List[int],
                     except ValueError:
                         continue
             skip_arr = np.asarray(skip_counts, dtype=np.int64)
-        
+
         n_mods = len(skip_arr)
 
-        # Determine target base from modification specification
-        # Format is typically "X+y" where X is the base
         if len(base_mod) > 0:
             target_base = base_mod[0].upper()
         else:
             ml_idx += n_mods
             continue
 
-        # For m6A mode, process BOTH A and T modifications
-        # A = m6A on sequenced strand, T = m6A on opposite strand
         if mode == 'pacbio-fiber':
             if target_base not in ('A', 'T'):
                 ml_idx += n_mods
                 continue
-        # For nanopore mode, only process A (m6A only at A positions)
         elif mode == 'nanopore-fiber':
             if target_base != 'A':
                 ml_idx += n_mods
                 continue
-        # For DAF mode, deamination shows as T (from C) or A (from G) in read sequence
-        # BUT the MM tag may encode using EITHER:
-        # 1. The converted base (T or A) - what we're looking for
-        # 2. The original base (C or G) - what some aligners use
-        # We need to handle both cases
         elif mode == 'daf':
             if target_base not in ('T', 'A', 'C', 'G'):
                 ml_idx += n_mods
                 continue
 
-        # Find all target base positions in the query sequence (vectorized)
-        seq_bytes = np.frombuffer(seq_upper.encode('ascii'), dtype=np.uint8)
-        base_positions = np.where(seq_bytes == ord(target_base))[0]
+        if target_base not in base_pos_cache:
+            base_pos_cache[target_base] = np.where(search_bytes == ord(target_base))[0]
+        base_positions = base_pos_cache[target_base]
 
         if n_mods == 0 or len(base_positions) == 0:
             ml_idx += n_mods
             continue
 
-        # Vectorized skip-count walk: base_indices[i] = sum(skips[0:i+1]) + i
         base_indices = np.cumsum(skip_arr) + np.arange(n_mods)
 
-        # Slice ML values for this mod spec — O(1) numpy view on the
-        # pre-converted ml_arr_all.
         ml_end = ml_idx + n_mods
         ml_slice_arr = ml_arr_all[ml_idx:ml_end]
         ml_idx = ml_end
 
-        # Filter: valid index into base_positions AND above threshold
         valid = base_indices < len(base_positions)
         if len(ml_slice_arr) < n_mods:
             valid[len(ml_slice_arr):] = False
@@ -549,8 +567,12 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag: List[int],
 
         keep = valid & above_thresh
         if np.any(keep):
-            mod_positions.update(base_positions[base_indices[keep]].tolist())
-    
+            hit_positions = base_positions[base_indices[keep]]
+            # Flip from ORIGINAL frame back to SEQ frame for reverse reads.
+            if is_reverse:
+                hit_positions = q_len - 1 - hit_positions
+            mod_positions.update(hit_positions.tolist())
+
     return mod_positions
 
 
