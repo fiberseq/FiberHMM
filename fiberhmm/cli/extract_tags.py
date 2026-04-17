@@ -46,6 +46,7 @@ import pysam
 import numpy as np
 
 from fiberhmm.inference.parallel import _get_genome_regions
+from fiberhmm.core.bam_reader import cigar_to_query_ref
 
 
 def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
@@ -79,14 +80,30 @@ def _init_extract_worker(params: dict):
     _worker_params = params
 
 
-def _build_query_to_ref(read) -> dict:
-    """Build query->reference position dict from one pass over aligned_pairs.
+def _build_query_to_ref(read):
+    """Build query->reference position lookup from CIGAR (numpy int64 array).
 
-    Computed once per read and shared across all extraction types — avoids
-    recomputing O(read_length) Python tuples from pysam on each extractor.
+    Returns a numpy int64 array indexed by query position.  ``-1`` means
+    the query position has no reference mapping (insertion, soft-clip,
+    or out-of-range).  Computed once per read and shared across all
+    extraction types.
+
+    Use ``_q2r_lookup(arr, qpos)`` to do bounds-checked lookup returning
+    None for unmapped positions (drop-in for the old dict.get()).
+
+    ~10× faster than get_aligned_pairs() + dict construction on long reads:
+    avoids the 20k+ Python tuple allocations pysam emits per read.
     """
-    return {q: r for q, r in read.get_aligned_pairs(matches_only=False)
-            if q is not None and r is not None}
+    return cigar_to_query_ref(read)
+
+
+def _q2r_lookup(query_to_ref, qpos):
+    """Dict.get()-compatible lookup on the numpy array returned by
+    _build_query_to_ref.  Returns None for unmapped / out-of-range."""
+    if 0 <= qpos < len(query_to_ref):
+        r = int(query_to_ref[qpos])
+        return r if r >= 0 else None
+    return None
 
 
 def _extract_region_worker(args) -> Tuple[dict, int, dict]:
@@ -225,9 +242,9 @@ def _extract_footprints(read, bed_out, with_scores: bool, query_to_ref: Optional
     for i, (qstart, length) in enumerate(zip(ns, nl)):
         qend = qstart + length
 
-        # Get reference positions
-        ref_start = query_to_ref.get(qstart)
-        ref_end = query_to_ref.get(qend - 1)
+        # Get reference positions (numpy-backed O(1) lookup)
+        ref_start = _q2r_lookup(query_to_ref, qstart)
+        ref_end = _q2r_lookup(query_to_ref, qend - 1)
 
         if ref_start is None or ref_end is None:
             continue
@@ -324,8 +341,8 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int, query_to_ref: Op
     blocks = []  # (ref_start, ref_end, tq)
     for qstart, length, tq in tfs_with_quality:
         qend = qstart + length
-        ref_start = query_to_ref.get(qstart)
-        ref_end = query_to_ref.get(qend - 1)
+        ref_start = _q2r_lookup(query_to_ref, qstart)
+        ref_end = _q2r_lookup(query_to_ref, qend - 1)
         if ref_start is None or ref_end is None:
             continue
         ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
@@ -383,9 +400,9 @@ def _extract_msps(read, bed_out, with_scores: bool, query_to_ref: Optional[dict]
     for i, (qstart, length) in enumerate(zip(as_starts, al_lengths)):
         qend = qstart + length
 
-        # Get reference positions
-        ref_start = query_to_ref.get(qstart)
-        ref_end = query_to_ref.get(qend - 1)
+        # Get reference positions (numpy-backed O(1) lookup)
+        ref_start = _q2r_lookup(query_to_ref, qstart)
+        ref_end = _q2r_lookup(query_to_ref, qend - 1)
 
         if ref_start is None or ref_end is None:
             continue
@@ -420,10 +437,9 @@ def _extract_msps(read, bed_out, with_scores: bool, query_to_ref: Optional[dict]
     return len(blocks)
 
 
-def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref: Optional[dict] = None) -> int:
+def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None) -> int:
     """Extract m6A positions from MM/ML tags as BED12 format (one line per read)."""
     # Guard against pysam segfault on reads with MM header but empty ML array.
-    # len() on array.array is O(1) — does NOT materialize a PyInt list.
     try:
         if read.has_tag('ML') and len(read.get_tag('ML')) == 0:
             return 0
@@ -440,27 +456,22 @@ def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref: Optional[dict
     strand = '-' if read.is_reverse else '+'
     read_id = read.query_name
 
-    # Coordinate conversion (use caller's cache if provided)
     aligned_pairs = query_to_ref if query_to_ref is not None else _build_query_to_ref(read)
+    n = len(aligned_pairs)
 
-    # Collect all m6A positions for this read
     positions_list = []  # list of (ref_pos, score)
-
-    # Look for m6A modifications
     for (base, strand_code, mod_type), positions in mod_bases.items():
-        if mod_type != 'a':  # m6A
+        if mod_type != 'a':
             continue
-
         for query_pos, prob in positions:
             if prob < prob_threshold:
                 continue
-
-            ref_pos = aligned_pairs.get(query_pos)
-            if ref_pos is None:
+            if query_pos < 0 or query_pos >= n:
                 continue
-
-            score = int(prob)  # Keep as 0-255
-            positions_list.append((ref_pos, score))
+            ref_pos = int(aligned_pairs[query_pos])
+            if ref_pos < 0:
+                continue
+            positions_list.append((ref_pos, int(prob)))
 
     if not positions_list:
         return 0
@@ -483,7 +494,7 @@ def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref: Optional[dict
     return len(positions_list)
 
 
-def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref: Optional[dict] = None) -> int:
+def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None) -> int:
     """Extract 5mC positions from MM/ML tags as BED12 format (one line per read)."""
     # Guard against pysam segfault on reads with MM header but empty ML array.
     try:
@@ -502,27 +513,22 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref: Optional[dict
     strand = '-' if read.is_reverse else '+'
     read_id = read.query_name
 
-    # Coordinate conversion (use caller's cache if provided)
     aligned_pairs = query_to_ref if query_to_ref is not None else _build_query_to_ref(read)
+    n = len(aligned_pairs)
 
-    # Collect all 5mC positions for this read
-    positions_list = []  # list of (ref_pos, score)
-
-    # Look for 5mC modifications
+    positions_list = []
     for (base, strand_code, mod_type), positions in mod_bases.items():
-        if mod_type != 'm':  # 5mC
+        if mod_type != 'm':
             continue
-
         for query_pos, prob in positions:
             if prob < prob_threshold:
                 continue
-
-            ref_pos = aligned_pairs.get(query_pos)
-            if ref_pos is None:
+            if query_pos < 0 or query_pos >= n:
                 continue
-
-            score = int(prob)  # Keep as 0-255
-            positions_list.append((ref_pos, score))
+            ref_pos = int(aligned_pairs[query_pos])
+            if ref_pos < 0:
+                continue
+            positions_list.append((ref_pos, int(prob)))
 
     if not positions_list:
         return 0

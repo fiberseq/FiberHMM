@@ -243,7 +243,179 @@ def get_modified_positions_pysam(read, prob_threshold: int = 125, mode: str = 'p
     return mod_positions
 
 
-def parse_mm_tag_query_positions(mm_tag: str, ml_tag: List[int], 
+def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
+                               sequence: str, is_reverse: bool) -> Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]]:
+    """Parse MM/ML into per-mod-type position + quality arrays.
+
+    ⚠️ EXPERIMENTAL — does not replicate pysam's reverse-strand position
+    flip exactly.  Positions returned are query_sequence-based (SEQ frame),
+    which matches pysam for FORWARD-strand reads but differs for
+    reverse-strand reads where pysam applies an extra RC flip.
+
+    For apply+recall usage this is fine (the HMM treats A+a and T-a as
+    equivalent), but don't use for coordinate-exact downstream analysis
+    (e.g. BED extraction) — use pysam's read.modified_bases there.
+
+    Returns dict mapping (target_base, mod_code) -> (positions, qualities).
+    """
+    result: Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]] = {}
+
+    if not mm_tag or not ml_tag:
+        return result
+    try:
+        if len(ml_tag) == 0:
+            return result
+    except TypeError:
+        pass
+
+    if isinstance(ml_tag, (bytes, bytearray, memoryview)):
+        ml_arr_all = np.frombuffer(ml_tag, dtype=np.uint8)
+    elif isinstance(ml_tag, np.ndarray):
+        ml_arr_all = ml_tag
+    else:
+        ml_arr_all = np.asarray(ml_tag, dtype=np.uint8)
+
+    seq_upper = sequence.upper()
+    seq_bytes = np.frombuffer(seq_upper.encode('ascii'), dtype=np.uint8)
+    base_positions_cache: Dict[str, np.ndarray] = {}
+
+    ml_idx = 0
+    for mod_spec in mm_tag.split(';'):
+        if not mod_spec:
+            continue
+        parts = mod_spec.split(',')
+        if len(parts) < 2:
+            continue
+
+        base_mod = parts[0]  # e.g. "A+a" or "A+a." or "C+m?"
+        try:
+            skip_arr = np.asarray(parts[1:], dtype=np.int64)
+        except (ValueError, TypeError):
+            skip_counts = []
+            for x in parts[1:]:
+                if x.strip():
+                    try:
+                        skip_counts.append(int(x))
+                    except ValueError:
+                        continue
+            skip_arr = np.asarray(skip_counts, dtype=np.int64)
+        n_mods = len(skip_arr)
+
+        # Parse "X+y" or "X+y." or "X-y?" into (target_base, mod_code)
+        if len(base_mod) < 3:
+            ml_idx += n_mods
+            continue
+        target_base = base_mod[0].upper()
+        # mod_code is the 3rd char (2 chars in: after base + strand)
+        mod_code = base_mod[2]
+
+        if n_mods == 0:
+            continue
+        # Target positions in the sequence (cached per base)
+        if target_base not in base_positions_cache:
+            base_positions_cache[target_base] = np.where(
+                seq_bytes == ord(target_base))[0]
+        base_positions = base_positions_cache[target_base]
+
+        if len(base_positions) == 0:
+            ml_idx += n_mods
+            continue
+
+        # Vectorized skip-count walk
+        base_indices = np.cumsum(skip_arr) + np.arange(n_mods)
+        valid = base_indices < len(base_positions)
+
+        ml_end = ml_idx + n_mods
+        ml_slice = ml_arr_all[ml_idx:ml_end]
+        ml_idx = ml_end
+        if len(ml_slice) < n_mods:
+            valid[len(ml_slice):] = False
+
+        if not np.any(valid):
+            continue
+
+        positions = base_positions[base_indices[valid]]
+        qualities = ml_slice[valid] if len(ml_slice) >= n_mods \
+            else ml_slice[valid[:len(ml_slice)]]
+
+        key = (target_base, mod_code)
+        if key in result:
+            # Multiple mod specs for same (base, mod_code) — concatenate
+            prev_pos, prev_qual = result[key]
+            result[key] = (
+                np.concatenate([prev_pos, positions]),
+                np.concatenate([prev_qual, qualities]),
+            )
+        else:
+            result[key] = (positions, qualities)
+
+    return result
+
+
+@_numba_njit(cache=True)
+def _cigar_walk_numba(cigar_ops, cigar_lens, ref_start, q_len):
+    """Numba-JIT CIGAR walker: build query_pos -> ref_pos mapping array.
+
+    Returns int64 array of length q_len where result[q] = ref_pos for
+    matched positions and -1 for insertions / soft-clips / query positions
+    that aren't aligned to a reference base.
+
+    Matches pysam's get_aligned_pairs(matches_only=False) query_pos→ref_pos
+    layout but ~10× faster because it skips Python tuple allocation entirely.
+
+    Op codes (BAM standard):
+      0 = M (match), 7 = = (match-eq), 8 = X (match-diff): q and r both advance
+      1 = I (insertion),  4 = S (soft-clip):               only q advances
+      2 = D (deletion),   3 = N (skip):                    only r advances
+      5 = H (hard-clip),  6 = P (pad):                     neither (skip)
+    """
+    result = np.full(q_len, -1, dtype=np.int64)
+    q = 0
+    r = ref_start
+    for i in range(len(cigar_ops)):
+        op = cigar_ops[i]
+        length = cigar_lens[i]
+        if op == 0 or op == 7 or op == 8:
+            for j in range(length):
+                if q + j < q_len:
+                    result[q + j] = r + j
+            q += length
+            r += length
+        elif op == 1 or op == 4:
+            q += length
+        elif op == 2 or op == 3:
+            r += length
+    return result
+
+
+def cigar_to_query_ref(read) -> np.ndarray:
+    """Build query_pos -> ref_pos numpy array for a pysam read.
+
+    Faster replacement for:
+        {q: r for q, r in read.get_aligned_pairs(matches_only=False)
+         if q is not None and r is not None}
+
+    pysam's get_aligned_pairs allocates ~N Python tuples for an N-base
+    read (40 KB+ per 20 kb PacBio read).  This function walks CIGAR tuples
+    in a numba-compiled kernel and returns a numpy int64 array indexed
+    by query position — ``-1`` means the query position has no reference
+    mapping (insertion, soft-clip, unmapped).
+
+    Returns an empty array if cigartuples is None (unmapped read).
+    """
+    cigar = read.cigartuples
+    if cigar is None or not cigar:
+        return np.array([], dtype=np.int64)
+    ref_start = read.reference_start
+    q_len = read.query_length or 0
+    if q_len == 0:
+        return np.array([], dtype=np.int64)
+    cigar_ops = np.asarray([c[0] for c in cigar], dtype=np.int64)
+    cigar_lens = np.asarray([c[1] for c in cigar], dtype=np.int64)
+    return _cigar_walk_numba(cigar_ops, cigar_lens, int(ref_start), int(q_len))
+
+
+def parse_mm_tag_query_positions(mm_tag: str, ml_tag: List[int],
                                   sequence: str, is_reverse: bool,
                                   prob_threshold: int = 125,
                                   mode: str = 'pacbio-fiber',
