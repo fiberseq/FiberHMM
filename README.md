@@ -8,13 +8,11 @@ FiberHMM identifies protected regions (footprints) and accessible regions (methy
 
 > ## ⚠️ Upgrade to v2.9.0 or later — reverse-strand MM/ML parsing bug fix
 >
-> **All versions from v2.0.0 through v2.8.2** had a parser bug that placed m6A/m5C modifications at the wrong query positions on reverse-aligned reads (positions shifted by ~24 bp median). This shifted footprint/MSP/TF calls on reverse reads relative to where they should be.
+> **Versions 2.6 – 2.8.2** had a parser bug that placed m6A/m5C modifications at the wrong query positions on reverse-aligned reads (positions shifted by ~24 bp median). This shifted footprint/MSP/TF calls on reverse reads relative to where they should be. Forward reads (~50% of data) unaffected. **DAF with IUPAC (`R`/`Y`) encoding unaffected** at all versions — it bypasses the buggy code path.
 >
-> **v2.9.0 (released 2026-04-17) fixes this.** Forward-read output is unchanged; reverse-read output is now correct (validated byte-for-byte against `pysam.modified_bases` on both strands, 500+ real reads).
+> **v2.9.0 fixes this.** Validated byte-for-byte against `pysam.modified_bases` on both strands across 500+ real reads.
 >
-> **Affected output:** Any BAM produced by `fiberhmm-apply` (or `fiberhmm-call`) on v2.7.0 – v2.8.2, or any BAM produced by `fiberhmm-recall-tfs` on v2.6.0 – v2.8.2, has shifted reverse-read modification positions. Forward reads (~50% of data) are unaffected. **DAF with IUPAC (`R`/`Y`) encoding is unaffected** at all versions — it bypasses the buggy code path.
->
-> **Action:** `pip install --upgrade fiberhmm`. Re-run samples if you need position-correct reverse-read calls. See the [v2.9.0 release notes](https://github.com/fiberseq/FiberHMM/releases/tag/v2.9.0) for full details.
+> **Action:** `pip install --upgrade fiberhmm`. Re-run samples if you need position-correct reverse-read calls. See the [v2.9.0 release notes](https://github.com/fiberseq/FiberHMM/releases/tag/v2.9.0) for details.
 
 ---
 
