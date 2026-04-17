@@ -439,6 +439,10 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
                                     # nq:B:C - unsigned 8-bit per fiberseq spec (0-255)
                                     scores_u8 = np.clip(np.array(result['ns_scores']) * 255, 0, 255).astype(np.uint8)
                                     read.set_tag('nq', scores_u8.tolist())
+                                elif read.has_tag('nq'):
+                                    # Stale nq from input would mismatch new ns — fibertools asserts len(nq)==len(ns)
+                                    try: read.set_tag('nq', None)
+                                    except Exception: pass
 
                             if write_msps and len(result['as']) > 0:
                                 read.set_tag('as', pyarray.array('I', result['as'].astype(np.uint32).tolist()))
@@ -447,6 +451,9 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
                                     # aq:B:C - unsigned 8-bit per fiberseq spec (0-255)
                                     scores_u8 = np.clip(np.array(result['as_scores']) * 255, 0, 255).astype(np.uint8)
                                     read.set_tag('aq', scores_u8.tolist())
+                                elif read.has_tag('aq'):
+                                    try: read.set_tag('aq', None)
+                                    except Exception: pass
 
                             # Stream posteriors to TSV immediately (no memory accumulation)
                             if tsv_file and result.get('posteriors') is not None:
@@ -1365,6 +1372,9 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                 if with_scores and result.get('ns_scores') is not None:
                     nq_scores = np.clip(result['ns_scores'] * 255, 0, 255).astype(np.uint8)
                     read_obj.set_tag('nq', nq_scores.tolist())
+                elif read_obj.has_tag('nq'):
+                    try: read_obj.set_tag('nq', None)
+                    except Exception: pass
 
             if write_msps and len(result['as']) > 0:
                 read_obj.set_tag('as', pyarray.array('I', result['as'].astype(np.uint32).tolist()))
@@ -1372,6 +1382,9 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                 if with_scores and result.get('as_scores') is not None:
                     aq_scores = np.clip(result['as_scores'] * 255, 0, 255).astype(np.uint8)
                     read_obj.set_tag('aq', aq_scores.tolist())
+                elif read_obj.has_tag('aq'):
+                    try: read_obj.set_tag('aq', None)
+                    except Exception: pass
 
             reads_with_footprints += 1
         else:
@@ -1639,6 +1652,9 @@ def _drain_oldest_chunk(inflight, outbam, with_scores, write_msps,
                 if with_scores and result.get('ns_scores') is not None:
                     nq_scores = np.clip(result['ns_scores'] * 255, 0, 255).astype(np.uint8)
                     read_obj.set_tag('nq', nq_scores.tolist())
+                elif read_obj.has_tag('nq'):
+                    try: read_obj.set_tag('nq', None)
+                    except Exception: pass
 
             if write_msps and len(result['as']) > 0:
                 read_obj.set_tag('as', pyarray.array('I', result['as'].astype(np.uint32).tolist()))
@@ -1646,6 +1662,9 @@ def _drain_oldest_chunk(inflight, outbam, with_scores, write_msps,
                 if with_scores and result.get('as_scores') is not None:
                     aq_scores = np.clip(result['as_scores'] * 255, 0, 255).astype(np.uint8)
                     read_obj.set_tag('aq', aq_scores.tolist())
+                elif read_obj.has_tag('aq'):
+                    try: read_obj.set_tag('aq', None)
+                    except Exception: pass
 
             counters['reads_with_footprints'] += 1
 

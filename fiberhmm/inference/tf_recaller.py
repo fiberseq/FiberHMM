@@ -591,6 +591,18 @@ def write_ma_tags(read, read_length: int,
                 if read.has_tag(tag):
                     try: read.set_tag(tag, None)
                     except Exception: pass
-        if nq_for_kept_nucs is not None and ns:
+        # nq must have len == len(ns) per fibertools invariant. If we wrote
+        # new ns/nl without fresh scores, drop any stale nq from the input BAM
+        # to avoid len(nq) != len(ns) failing ft validate (see fibertools-rs
+        # bamannotations.rs set_qual assert).
+        if ns and nq_for_kept_nucs is not None:
             read.set_tag('nq', pyarray.array('B',
                           [max(0, min(255, int(v))) for v in nq_values]))
+        elif ns and read.has_tag('nq'):
+            try: read.set_tag('nq', None)
+            except Exception: pass
+        # Same for aq: stale per-msp qualities from input would mismatch
+        # the refreshed as/al length.
+        if a_s and read.has_tag('aq'):
+            try: read.set_tag('aq', None)
+            except Exception: pass

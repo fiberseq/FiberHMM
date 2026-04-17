@@ -322,6 +322,84 @@ def test_compat_requires_legacy():
                       also_write_legacy=False, downstream_compat=True)
 
 
+def test_stale_nq_aq_cleared_when_refreshing_legacy_tags():
+    """Regression for ft-validate panic reported by Shane Neph:
+    input BAM pre-tagged by ft/modkit with ns+nl+nq (and as+al+aq) at
+    one length; fiberhmm-call overwrites ns+nl to a different length
+    without fresh scores. The stale nq/aq would then mismatch the new
+    ns/as length and trigger fibertools-rs
+      assert_eq!(forward_qual.len(), self.annotations.len())
+    at bamannotations.rs:28. We must drop stale nq/aq whenever we refresh
+    legacy tags without providing new scores.
+    """
+    import array as pyarray
+    read = _FakeRead()
+    # Pre-existing ft/modkit tags: 84 nucs + 84 msps, all quality-scored.
+    read.set_tag('ns', pyarray.array('I', list(range(0, 840, 10))))
+    read.set_tag('nl', pyarray.array('I', [8] * 84))
+    read.set_tag('nq', pyarray.array('B', [200] * 84))
+    read.set_tag('as', pyarray.array('I', list(range(0, 840, 10))))
+    read.set_tag('al', pyarray.array('I', [8] * 84))
+    read.set_tag('aq', pyarray.array('B', [150] * 84))
+    assert len(list(read.get_tag('nq'))) == 84
+    assert len(list(read.get_tag('aq'))) == 84
+
+    # Refresh with 65 nucs + 65 msps, no scores passed.
+    new_nucs = [(i * 10, 90) for i in range(65)]
+    new_msps = [(i * 10 + 5, 85) for i in range(65)]
+    write_ma_tags(read, 2000, tf_calls=[], kept_nucs=new_nucs, msps=new_msps,
+                  nq_for_kept_nucs=None,
+                  also_write_legacy=True, downstream_compat=False)
+
+    # New ns/nl/as/al at length 65.
+    assert len(list(read.get_tag('ns'))) == 65
+    assert len(list(read.get_tag('nl'))) == 65
+    assert len(list(read.get_tag('as'))) == 65
+    assert len(list(read.get_tag('al'))) == 65
+    # Stale nq + aq MUST be cleared to satisfy fibertools invariant
+    # len(nq) == len(ns), len(aq) == len(as).
+    assert not read.has_tag('nq'), "stale nq must be deleted when refreshing ns without scores"
+    assert not read.has_tag('aq'), "stale aq must be deleted when refreshing as without scores"
+
+
+def test_stale_aq_cleared_when_nucs_empty_but_msps_refresh():
+    """If the new call produces MSPs but no nucs, stale aq from the input
+    must still be cleared."""
+    import array as pyarray
+    read = _FakeRead()
+    read.set_tag('as', pyarray.array('I', list(range(0, 840, 10))))
+    read.set_tag('al', pyarray.array('I', [8] * 84))
+    read.set_tag('aq', pyarray.array('B', [150] * 84))
+
+    write_ma_tags(read, 2000, tf_calls=[], kept_nucs=[],
+                  msps=[(0, 100), (200, 150)],
+                  nq_for_kept_nucs=None,
+                  also_write_legacy=True, downstream_compat=False)
+
+    assert len(list(read.get_tag('as'))) == 2
+    assert len(list(read.get_tag('al'))) == 2
+    assert not read.has_tag('aq')
+
+
+def test_fresh_nq_preserved_when_scores_provided():
+    """Sanity: when caller DOES provide fresh nq, it gets written at the
+    new length — we must not accidentally delete it."""
+    import array as pyarray
+    read = _FakeRead()
+    read.set_tag('ns', pyarray.array('I', [0, 100]))
+    read.set_tag('nl', pyarray.array('I', [50, 50]))
+    read.set_tag('nq', pyarray.array('B', [200, 200]))
+
+    write_ma_tags(read, 500, tf_calls=[],
+                  kept_nucs=[(10, 80), (200, 80), (400, 80)],
+                  msps=[],
+                  nq_for_kept_nucs=[128, 255, 0],
+                  also_write_legacy=True, downstream_compat=False)
+
+    assert list(read.get_tag('ns')) == [10, 200, 400]
+    assert list(read.get_tag('nq')) == [128, 255, 0]
+
+
 def test_enzyme_presets_present():
     for enz in ('hia5', 'dddb', 'ddda'):
         assert enz in ENZYME_PRESETS

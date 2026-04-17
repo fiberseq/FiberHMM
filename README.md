@@ -6,13 +6,15 @@ FiberHMM identifies protected regions (footprints) and accessible regions (methy
 
 ---
 
-> ## ⚠️ Upgrade to v2.9.0 or later — reverse-strand MM/ML parsing bug fix
+> ## ⚠️ Upgrade to v2.9.1 or later
 >
-> **Versions 2.6 – 2.8.2** had a parser bug that placed m6A/m5C modifications at the wrong query positions on reverse-aligned reads (positions shifted by ~24 bp median). This shifted footprint/MSP/TF calls on reverse reads relative to where they should be. Forward reads (~50% of data) unaffected. **DAF with IUPAC (`R`/`Y`) encoding unaffected** at all versions — it bypasses the buggy code path.
+> **Versions 2.6 – 2.8.2** had a parser bug that placed m6A/m5C modifications at the wrong query positions on reverse-aligned reads (positions shifted by ~24 bp median). This shifted footprint/MSP/TF calls on reverse reads relative to where they should be. Forward reads (~50% of data) unaffected. **DAF with IUPAC (`R`/`Y`) encoding unaffected** at all versions — it bypasses the buggy code path. **v2.9.0** fixed the parser, validated byte-for-byte against `pysam.modified_bases` on both strands across 500+ real reads.
 >
-> **v2.9.0 fixes this.** Validated byte-for-byte against `pysam.modified_bases` on both strands across 500+ real reads.
+> **v2.9.1 adds two fixes on top of 2.9.0:**
+> 1. **`ft validate` compatibility** — `fiberhmm-apply`/`fiberhmm-call` now drop stale `nq`/`aq` quality arrays when refreshing `ns/nl`/`as/al` on BAMs that already carry ft/modkit footprint tags. Without this, fibertools-rs asserts on `len(nq) != len(ns)`.
+> 2. **Refreshed Hia5 Nanopore emissions** — the bundled `hia5_nanopore.json` model was refit from naked/untreated controls with the fixed parser. Accessible-state per-hexamer P(meth) dropped from ~0.61 → ~0.32 (the old emissions were systematically over-calling accessibility on Nanopore Hia5). Transitions and startprob preserved.
 >
-> **Action:** `pip install --upgrade fiberhmm`. Re-run samples if you need position-correct reverse-read calls. See the [v2.9.0 release notes](https://github.com/fiberseq/FiberHMM/releases/tag/v2.9.0) for details.
+> **Action:** `pip install --upgrade fiberhmm`. Re-run samples if you need position-correct reverse-read calls or if your input BAM was pre-tagged by ft/modkit. See the [v2.9.1 release notes](https://github.com/fiberseq/FiberHMM/releases/tag/v2.9.1) for details.
 
 ---
 
