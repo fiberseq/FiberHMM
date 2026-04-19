@@ -135,6 +135,7 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
         min_mapq = params['min_mapq']
         prob_threshold = params['prob_threshold']
         with_scores = params['with_scores']
+        block_scores = bool(params.get('block_scores', False))
 
         n_reads = 0
         n_features = {t: 0 for t in extract_types}
@@ -177,27 +178,32 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['footprint'] += _extract_footprints(
-                            read, bed_outs['footprint'], with_scores, query_to_ref)
+                            read, bed_outs['footprint'], with_scores, query_to_ref,
+                            block_scores=block_scores)
                     if 'msp' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['msp'] += _extract_msps(
-                            read, bed_outs['msp'], with_scores, query_to_ref)
+                            read, bed_outs['msp'], with_scores, query_to_ref,
+                            block_scores=block_scores)
                     if 'tf' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['tf'] += _extract_tfs(
-                            read, bed_outs['tf'], with_scores, min_tq, query_to_ref)
+                            read, bed_outs['tf'], with_scores, min_tq, query_to_ref,
+                            block_scores=block_scores)
                     if 'm6a' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['m6a'] += _extract_m6a(
-                            read, bed_outs['m6a'], prob_threshold, query_to_ref)
+                            read, bed_outs['m6a'], prob_threshold, query_to_ref,
+                            block_scores=block_scores)
                     if 'm5c' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['m5c'] += _extract_m5c(
-                            read, bed_outs['m5c'], prob_threshold, query_to_ref)
+                            read, bed_outs['m5c'], prob_threshold, query_to_ref,
+                            block_scores=block_scores)
         finally:
             for f in bed_outs.values():
                 f.close()
@@ -210,8 +216,14 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
         return (temp_bed_paths, 0, {t: 0 for t in (params or {}).get('extract_types', [])})
 
 
-def _extract_footprints(read, bed_out, with_scores: bool, query_to_ref: Optional[dict] = None) -> int:
-    """Extract footprint intervals from ns/nl tags as BED12 format (one line per read)."""
+def _extract_footprints(read, bed_out, with_scores: bool,
+                        query_to_ref: Optional[dict] = None,
+                        block_scores: bool = False) -> int:
+    """Extract footprint intervals from ns/nl tags as BED12 (one line per read).
+
+    When ``block_scores=True``, appends a 13th column of comma-separated
+    per-block nq values (int[blockCount] blockNq in the autoSQL schema).
+    """
     try:
         ns = read.get_tag('ns')  # Footprint starts (query coords)
         nl = read.get_tag('nl')  # Footprint lengths
@@ -221,11 +233,12 @@ def _extract_footprints(read, bed_out, with_scores: bool, query_to_ref: Optional
     if len(ns) == 0:
         return 0
 
-    # Get scores if available
+    # Need per-block nq if we're emitting the blockNq column even when
+    # with_scores is False (the mean-score column 5 still uses 0).
     scores = None
-    if with_scores:
+    if with_scores or block_scores:
         try:
-            scores = read.get_tag('nq')  # Footprint quality scores
+            scores = read.get_tag('nq')
         except KeyError:
             pass
 
@@ -233,16 +246,13 @@ def _extract_footprints(read, bed_out, with_scores: bool, query_to_ref: Optional
     strand = '-' if read.is_reverse else '+'
     read_id = read.query_name
 
-    # Convert query positions to reference positions (use caller's cache if provided)
     if query_to_ref is None:
         query_to_ref = _build_query_to_ref(read)
 
-    # Collect all footprint blocks
     blocks = []  # list of (ref_start, ref_end, score)
     for i, (qstart, length) in enumerate(zip(ns, nl)):
         qend = qstart + length
 
-        # Get reference positions (numpy-backed O(1) lookup)
         ref_start = _q2r_lookup(query_to_ref, qstart)
         ref_end = _q2r_lookup(query_to_ref, qend - 1)
 
@@ -260,26 +270,29 @@ def _extract_footprints(read, bed_out, with_scores: bool, query_to_ref: Optional
     if not blocks:
         return 0
 
-    # Sort blocks by position
     blocks.sort(key=lambda x: x[0])
 
-    # BED12 format
     chrom_start = blocks[0][0]
     chrom_end = blocks[-1][1]
     block_count = len(blocks)
     block_sizes = ','.join(str(e - s) for s, e, _ in blocks)
     block_starts = ','.join(str(s - chrom_start) for s, _, _ in blocks)
 
-    # Use mean score for the read
-    mean_score = int(sum(sc for _, _, sc in blocks) / len(blocks)) if blocks else 0
+    mean_score = int(sum(sc for _, _, sc in blocks) / len(blocks)) if with_scores else 0
 
-    # BED12: chrom, chromStart, chromEnd, name, score, strand, thickStart, thickEnd, itemRgb, blockCount, blockSizes, blockStarts
-    bed_out.write(f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}\n")
+    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
+           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
+    if block_scores:
+        block_nq = ','.join(str(sc) for _, _, sc in blocks)
+        row += f"\t{block_nq}"
+    bed_out.write(row + "\n")
 
     return len(blocks)
 
 
-def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int, query_to_ref: Optional[dict] = None) -> int:
+def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
+                 query_to_ref: Optional[dict] = None,
+                 block_scores: bool = False) -> int:
     """Extract TF footprints from MA/AQ tags (tf+QQQ annotations) as BED12.
 
     Reads the spec-compliant MA/AQ tags written by ``fiberhmm-recall-tfs``
@@ -290,7 +303,8 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int, query_to_ref: Op
     >= 5 nats) matches ``fiberhmm-recall-tfs``'s default emission floor;
     set to 0 to extract every call, or 100+ for high-confidence only.
 
-    Returns the number of TF blocks written.
+    When ``block_scores=True``, appends three columns after blockStarts:
+    blockTq, blockEl, blockEr -- the full tf+QQQ quality triplet per call.
     """
     from fiberhmm.io.ma_tags import parse_ma_tag, parse_aq_array
 
@@ -308,13 +322,12 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int, query_to_ref: Op
     except ValueError:
         return 0
 
-    # Walk raw_types to find tf+ annotations and their quality bytes
     qual_specs = [rt[2] for rt in parsed['raw_types']]
     n_per_type = [len(rt[3]) for rt in parsed['raw_types']]
     per_annotation = parse_aq_array(aq, qual_specs, n_per_type)
 
-    # Map annotations back to their (name, intervals) groups
-    tfs_with_quality = []  # (start_0based, length, tq)
+    # Grab full tf+QQQ triplet (tq, el, er) per call.
+    tfs_with_quality = []  # (start_0based, length, tq, el, er)
     idx = 0
     for name, _strand, qspec, intervals in parsed['raw_types']:
         for i, (s, l) in enumerate(intervals):
@@ -323,9 +336,11 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int, query_to_ref: Op
             if name != 'tf':
                 continue
             tq = int(quals[0]) if len(quals) >= 1 else 0
+            el = int(quals[1]) if len(quals) >= 2 else 0
+            er = int(quals[2]) if len(quals) >= 3 else 0
             if tq < min_tq:
                 continue
-            tfs_with_quality.append((s, l, tq))
+            tfs_with_quality.append((s, l, tq, el, er))
 
     if not tfs_with_quality:
         return 0
@@ -334,19 +349,18 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int, query_to_ref: Op
     strand = '-' if read.is_reverse else '+'
     read_id = read.query_name
 
-    # Map query coords -> ref coords (use caller's cache if provided)
     if query_to_ref is None:
         query_to_ref = _build_query_to_ref(read)
 
-    blocks = []  # (ref_start, ref_end, tq)
-    for qstart, length, tq in tfs_with_quality:
+    blocks = []  # (ref_start, ref_end, tq, el, er)
+    for qstart, length, tq, el, er in tfs_with_quality:
         qend = qstart + length
         ref_start = _q2r_lookup(query_to_ref, qstart)
         ref_end = _q2r_lookup(query_to_ref, qend - 1)
         if ref_start is None or ref_end is None:
             continue
         ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
-        blocks.append((ref_start, ref_end, tq))
+        blocks.append((ref_start, ref_end, tq, el, er))
 
     if not blocks:
         return 0
@@ -356,20 +370,29 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int, query_to_ref: Op
     chrom_start = blocks[0][0]
     chrom_end = blocks[-1][1]
     block_count = len(blocks)
-    block_sizes = ','.join(str(e - s) for s, e, _ in blocks)
-    block_starts = ','.join(str(s - chrom_start) for s, _, _ in blocks)
-    mean_score = int(sum(tq for _, _, tq in blocks) / len(blocks)) if with_scores else 0
+    block_sizes = ','.join(str(e - s) for s, e, _, _, _ in blocks)
+    block_starts = ','.join(str(s - chrom_start) for s, _, _, _, _ in blocks)
+    mean_score = int(sum(tq for _, _, tq, _, _ in blocks) / len(blocks)) if with_scores else 0
 
-    # BED12: chrom, chromStart, chromEnd, name, score, strand, thickStart, thickEnd, itemRgb, blockCount, blockSizes, blockStarts
-    bed_out.write(
-        f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
-        f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}\n"
-    )
+    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
+           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
+    if block_scores:
+        block_tq = ','.join(str(b[2]) for b in blocks)
+        block_el = ','.join(str(b[3]) for b in blocks)
+        block_er = ','.join(str(b[4]) for b in blocks)
+        row += f"\t{block_tq}\t{block_el}\t{block_er}"
+    bed_out.write(row + "\n")
     return len(blocks)
 
 
-def _extract_msps(read, bed_out, with_scores: bool, query_to_ref: Optional[dict] = None) -> int:
-    """Extract MSP intervals from as/al tags as BED12 format (one line per read)."""
+def _extract_msps(read, bed_out, with_scores: bool,
+                  query_to_ref: Optional[dict] = None,
+                  block_scores: bool = False) -> int:
+    """Extract MSP intervals from as/al tags as BED12 (one line per read).
+
+    When ``block_scores=True``, appends a 13th column of comma-separated
+    per-block aq values (int[blockCount] blockAq).
+    """
     try:
         as_starts = read.get_tag('as')  # MSP starts (query coords)
         al_lengths = read.get_tag('al')  # MSP lengths
@@ -379,11 +402,10 @@ def _extract_msps(read, bed_out, with_scores: bool, query_to_ref: Optional[dict]
     if len(as_starts) == 0:
         return 0
 
-    # Get scores if available
     scores = None
-    if with_scores:
+    if with_scores or block_scores:
         try:
-            scores = read.get_tag('aq')  # MSP quality scores
+            scores = read.get_tag('aq')
         except KeyError:
             pass
 
@@ -391,16 +413,13 @@ def _extract_msps(read, bed_out, with_scores: bool, query_to_ref: Optional[dict]
     strand = '-' if read.is_reverse else '+'
     read_id = read.query_name
 
-    # Convert query positions to reference positions (use caller's cache if provided)
     if query_to_ref is None:
         query_to_ref = _build_query_to_ref(read)
 
-    # Collect all MSP blocks
     blocks = []  # list of (ref_start, ref_end, score)
     for i, (qstart, length) in enumerate(zip(as_starts, al_lengths)):
         qend = qstart + length
 
-        # Get reference positions (numpy-backed O(1) lookup)
         ref_start = _q2r_lookup(query_to_ref, qstart)
         ref_end = _q2r_lookup(query_to_ref, qend - 1)
 
@@ -418,28 +437,33 @@ def _extract_msps(read, bed_out, with_scores: bool, query_to_ref: Optional[dict]
     if not blocks:
         return 0
 
-    # Sort blocks by position
     blocks.sort(key=lambda x: x[0])
 
-    # BED12 format
     chrom_start = blocks[0][0]
     chrom_end = blocks[-1][1]
     block_count = len(blocks)
     block_sizes = ','.join(str(e - s) for s, e, _ in blocks)
     block_starts = ','.join(str(s - chrom_start) for s, _, _ in blocks)
 
-    # Use mean score for the read
-    mean_score = int(sum(sc for _, _, sc in blocks) / len(blocks)) if blocks else 0
+    mean_score = int(sum(sc for _, _, sc in blocks) / len(blocks)) if with_scores else 0
 
-    # BED12: chrom, chromStart, chromEnd, name, score, strand, thickStart, thickEnd, itemRgb, blockCount, blockSizes, blockStarts
-    bed_out.write(f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}\n")
+    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
+           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
+    if block_scores:
+        block_aq = ','.join(str(sc) for _, _, sc in blocks)
+        row += f"\t{block_aq}"
+    bed_out.write(row + "\n")
 
     return len(blocks)
 
 
-def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None) -> int:
-    """Extract m6A positions from MM/ML tags as BED12 format (one line per read)."""
-    # Guard against pysam segfault on reads with MM header but empty ML array.
+def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None,
+                 block_scores: bool = False) -> int:
+    """Extract m6A positions from MM/ML tags as BED12 (one line per read).
+
+    When ``block_scores=True``, appends a 13th column of comma-separated
+    per-position ML values (int[blockCount] blockMl).
+    """
     try:
         if read.has_tag('ML') and len(read.get_tag('ML')) == 0:
             return 0
@@ -476,27 +500,33 @@ def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None) -> int:
     if not positions_list:
         return 0
 
-    # Sort by position
     positions_list.sort(key=lambda x: x[0])
 
-    # BED12 format - each modification is a 1bp block
     chrom_start = positions_list[0][0]
     chrom_end = positions_list[-1][0] + 1
     block_count = len(positions_list)
     block_sizes = ','.join('1' for _ in positions_list)
     block_starts = ','.join(str(pos - chrom_start) for pos, _ in positions_list)
 
-    # Use mean score
     mean_score = int(sum(sc for _, sc in positions_list) / len(positions_list))
 
-    bed_out.write(f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}\n")
+    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
+           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
+    if block_scores:
+        block_ml = ','.join(str(sc) for _, sc in positions_list)
+        row += f"\t{block_ml}"
+    bed_out.write(row + "\n")
 
     return len(positions_list)
 
 
-def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None) -> int:
-    """Extract 5mC positions from MM/ML tags as BED12 format (one line per read)."""
-    # Guard against pysam segfault on reads with MM header but empty ML array.
+def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
+                 block_scores: bool = False) -> int:
+    """Extract 5mC positions from MM/ML tags as BED12 (one line per read).
+
+    When ``block_scores=True``, appends a 13th column of comma-separated
+    per-position ML values (int[blockCount] blockMl).
+    """
     try:
         if read.has_tag('ML') and len(read.get_tag('ML')) == 0:
             return 0
@@ -533,20 +563,22 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None) -> int:
     if not positions_list:
         return 0
 
-    # Sort by position
     positions_list.sort(key=lambda x: x[0])
 
-    # BED12 format - each modification is a 1bp block
     chrom_start = positions_list[0][0]
     chrom_end = positions_list[-1][0] + 1
     block_count = len(positions_list)
     block_sizes = ','.join('1' for _ in positions_list)
     block_starts = ','.join(str(pos - chrom_start) for pos, _ in positions_list)
 
-    # Use mean score
     mean_score = int(sum(sc for _, sc in positions_list) / len(positions_list))
 
-    bed_out.write(f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}\n")
+    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
+           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
+    if block_scores:
+        block_ml = ','.join(str(sc) for _, sc in positions_list)
+        row += f"\t{block_ml}"
+    bed_out.write(row + "\n")
 
     return len(positions_list)
 
@@ -556,6 +588,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           min_mapq: int = 0, prob_threshold: int = 125,
                           with_scores: bool = True,
                           min_tq: int = 50,
+                          block_scores: bool = False,
                           skip_scaffolds: bool = False,
                           chroms: Optional[Set[str]] = None):
     """Extract one or more tag types from BAM in a single region-parallel pass.
@@ -603,6 +636,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
             'prob_threshold': prob_threshold,
             'with_scores': with_scores,
             'min_tq': min_tq,
+            'block_scores': block_scores,
         }
 
         # Work items: per region, a dict of {type: temp_bed_path}
@@ -675,13 +709,18 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
 
 def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
                    bed_type: str = 'bed12',
-                   extract_type: Optional[str] = None) -> bool:
+                   extract_type: Optional[str] = None,
+                   block_scores: bool = False) -> bool:
     """Convert BED to bigBed using bedToBigBed.
 
     If ``extract_type`` matches a FiberHMM autoSQL schema
     (footprint/msp/tf/m6a/m5c), embed the schema via ``-as=`` so the
     bigBed is self-identifying -- browsers will see the table name
     (e.g. ``fiberhmm_tf``) and description when the file is loaded.
+
+    When ``block_scores=True`` the matching BED12+N schema is used and
+    the bedToBigBed ``-type`` flag is set to ``bed12+N`` (N depends on
+    extract_type; see fiberhmm.io.autosql.EXTRA_FIELD_COUNTS).
 
     Args:
         bed_path: Input BED file
@@ -690,25 +729,28 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
         bed_type: 'bed12' for all FiberHMM outputs
         extract_type: One of footprint/msp/tf/m6a/m5c to embed the
             matching autoSQL schema; None to skip schema embedding.
+        block_scores: If True, expect BED12+N input (per-block quality
+            columns appended) and use the matching autoSQL variant.
     """
-    from fiberhmm.io.autosql import write_autosql_for
+    from fiberhmm.io.autosql import write_autosql_for, EXTRA_FIELD_COUNTS
 
-    # Write chrom sizes file
     sizes_file = bed_path + '.sizes'
     with open(sizes_file, 'w') as f:
         for chrom, size in sorted(chrom_sizes.items()):
             f.write(f"{chrom}\t{size}\n")
 
-    # Write autoSQL schema to a temp file (if we have one for this type)
-    as_file = write_autosql_for(extract_type) if extract_type else None
+    as_file = (write_autosql_for(extract_type, block_scores=block_scores)
+               if extract_type else None)
+
+    n_extra = EXTRA_FIELD_COUNTS.get(extract_type, 0) if block_scores else 0
 
     try:
-        # Run bedToBigBed
         cmd = ['bedToBigBed']
         if as_file:
             cmd.append(f'-as={as_file}')
         if bed_type == 'bed12':
-            cmd.append('-type=bed12')
+            type_flag = f'-type=bed12+{n_extra}' if n_extra > 0 else '-type=bed12'
+            cmd.append(type_flag)
         cmd.extend([bed_path, sizes_file, bigbed_path])
 
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -787,6 +829,12 @@ Examples:
     parser.add_argument('-p', '--prob-threshold', type=int, default=125,
                         help='Min probability for m6a/m5c (0-255)')
     parser.add_argument('--no-scores', action='store_true', help='Omit scores from output')
+    parser.add_argument('--block-scores', action='store_true',
+                        help='Append per-block quality as extra BED column(s) (BED12+N). '
+                             'footprint -> blockNq, msp -> blockAq, m6a/m5c -> blockMl, '
+                             'tf -> blockTq/blockEl/blockEr. bigBed uses -type=bed12+N and '
+                             'the matching autoSQL schema so FiberBrowser/UCSC can surface '
+                             'per-feature quality without a sidecar database.')
 
     # Region options
     parser.add_argument('--region-size', type=int, default=10_000_000, help='Region size for parallel')
@@ -867,6 +915,7 @@ Examples:
         prob_threshold=args.prob_threshold,
         with_scores=not args.no_scores,
         min_tq=args.min_tq,
+        block_scores=args.block_scores,
         skip_scaffolds=args.skip_scaffolds,
         chroms=chroms,
     )
@@ -891,7 +940,8 @@ Examples:
         if make_bigbed:
             print(f"  [{extract_type}] converting to bigBed...")
             if bed_to_bigbed(bed_path, bb_path, chrom_sizes, 'bed12',
-                              extract_type=extract_type):
+                              extract_type=extract_type,
+                              block_scores=args.block_scores):
                 print(f"  [{extract_type}] bigBed: {bb_path}")
                 if not args.keep_bed:
                     try:
