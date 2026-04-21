@@ -213,7 +213,8 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['deam'] += _extract_deam(
                             read, bed_outs['deam'], query_to_ref,
-                            block_scores=block_scores)
+                            block_scores=block_scores,
+                            prob_threshold=prob_threshold)
         finally:
             for f in bed_outs.values():
                 f.close()
@@ -594,34 +595,26 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
 
 
 def _extract_deam(read, bed_out, query_to_ref=None,
-                  block_scores: bool = False) -> int:
-    """Extract DAF-seq deamination calls from R/Y IUPAC codes in the
-    query sequence as BED12 (one row per read).
+                  block_scores: bool = False,
+                  prob_threshold: int = 0) -> int:
+    """Extract DAF-seq deamination calls as BED12 (one row per read).
 
-    ``fiberhmm-daf-encode`` writes Y (at C->T positions on the CT strand)
-    and R (at G->A positions on the GA strand) into the stored sequence
-    as IUPAC ambiguity codes, without emitting MM/ML. So on a DAF BAM
-    produced by that tool, scanning the sequence for R/Y gives the exact
-    set of per-base deamination calls.
+    Matches FiberBrowser's BAM parsing priority: first the MM/ML-native
+    ``u`` (single-letter dU) or ChEBI 55797 numeric mod code, then the
+    IUPAC R/Y fallback written by ``fiberhmm-daf-encode``. First
+    non-empty source wins so events never get double-counted.
 
-    When ``block_scores=True`` appends ``blockMod`` -- one byte per
-    block carrying 0 for R and 1 for Y so downstream tools can
-    disambiguate the two strands without re-reading the sequence.
+    ``blockMod`` flavor convention (matches FiberBrowser):
+      0 = R (G -> U on the GA strand)
+      1 = Y (C -> U on the CT strand)
 
-    BED score column 5 is a constant 255 (deamination calls from IUPAC
-    encoding are deterministic; there is no per-position probability).
+    For the MM/ML-native path, ``prob_threshold`` (default 0 = accept
+    everything) filters by the per-call ML probability, same knob as
+    ``-p/--prob-threshold`` on m6a/m5c.
+
+    BED score column 5 is constant ``255`` (IUPAC calls are deterministic;
+    MM/ML calls can be filtered up front via prob_threshold).
     """
-    seq = read.query_sequence
-    if not seq:
-        return 0
-
-    arr = np.frombuffer(seq.encode('ascii'), dtype=np.uint8)
-    r_mask = (arr == ord('R'))
-    y_mask = (arr == ord('Y'))
-    mod_mask = r_mask | y_mask
-    if not mod_mask.any():
-        return 0
-
     ref_name = read.reference_name
     strand = '-' if read.is_reverse else '+'
     read_id = read.query_name
@@ -630,15 +623,57 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     n = len(aligned_pairs)
 
     positions_list = []  # (ref_pos, code) where code: 0=R, 1=Y
-    for q_pos in np.where(mod_mask)[0]:
-        qi = int(q_pos)
-        if qi >= n:
+
+    # --- Priority 1: MM/ML-native 'u' or ChEBI 55797 --------------------
+    try:
+        if read.has_tag('ML') and len(read.get_tag('ML')) == 0:
+            mod_bases = {}
+        else:
+            mod_bases = read.modified_bases or {}
+    except (KeyError, TypeError, Exception):
+        mod_bases = {}
+
+    for (base, _strand_code, mod_type), positions in mod_bases.items():
+        # Single-letter 'u' (SAM spec) OR numeric 55797 (ChEBI for dU).
+        if mod_type != 'u' and mod_type != 55797:
             continue
-        ref_pos = int(aligned_pairs[qi])
-        if ref_pos < 0:
+        # Flavor from the canonical base: C->U = 1 (Y/CT-dea),
+        # G->U = 0 (R/GA-dea).  pysam uppercases; be defensive anyway.
+        b = base.upper() if isinstance(base, str) else chr(base).upper()
+        if b == 'C':
+            flavor = 1
+        elif b == 'G':
+            flavor = 0
+        else:
             continue
-        code = 1 if y_mask[qi] else 0
-        positions_list.append((ref_pos, code))
+        for query_pos, prob in positions:
+            if prob < prob_threshold:
+                continue
+            if query_pos < 0 or query_pos >= n:
+                continue
+            ref_pos = int(aligned_pairs[query_pos])
+            if ref_pos < 0:
+                continue
+            positions_list.append((ref_pos, flavor))
+
+    # --- Priority 2: IUPAC R/Y in the query sequence --------------------
+    if not positions_list:
+        seq = read.query_sequence
+        if seq:
+            arr = np.frombuffer(seq.encode('ascii'), dtype=np.uint8)
+            r_mask = (arr == ord('R'))
+            y_mask = (arr == ord('Y'))
+            mod_mask = r_mask | y_mask
+            if mod_mask.any():
+                for q_pos in np.where(mod_mask)[0]:
+                    qi = int(q_pos)
+                    if qi >= n:
+                        continue
+                    ref_pos = int(aligned_pairs[qi])
+                    if ref_pos < 0:
+                        continue
+                    flavor = 1 if y_mask[qi] else 0
+                    positions_list.append((ref_pos, flavor))
 
     if not positions_list:
         return 0
@@ -897,9 +932,12 @@ Examples:
     parser.add_argument('--m6a', action='store_true', help='Extract m6A positions')
     parser.add_argument('--m5c', action='store_true', help='Extract 5mC positions (DAF-seq)')
     parser.add_argument('--deam', action='store_true',
-                        help='Extract DAF-seq deamination calls from R/Y IUPAC codes '
-                             'in the query sequence (for BAMs encoded by '
-                             'fiberhmm-daf-encode). No-op on BAMs without R/Y codes.')
+                        help='Extract DAF-seq deamination calls. Priority-1 source: '
+                             'MM/ML-native dU calls (mod code "u" or ChEBI 55797). '
+                             'Priority-2 fallback: IUPAC R/Y codes in the query '
+                             'sequence (fiberhmm-daf-encode output). First '
+                             'non-empty source wins per read. blockMod: 0 = R/GA-dea, '
+                             '1 = Y/CT-dea, matching FiberBrowser flavor codes.')
     parser.add_argument('--all', action='store_true', help='Extract all tag types (default if none specified)')
 
     # Output options (default: bigbed)

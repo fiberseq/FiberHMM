@@ -390,6 +390,117 @@ def test_deam_extra_field_count_is_one():
     assert EXTRA_FIELD_COUNTS['deam'] == 1
 
 
+# ------------------- deam MM/ML-native path (priority 1) -----------
+
+class _FakeReadWithModBases(_FakeReadWithSeq):
+    """FakeRead that exposes a canned modified_bases dict so the
+    MM/ML-native code path in _extract_deam can be exercised without
+    constructing a real pysam MM/ML string.
+
+    Dict shape matches pysam.AlignedSegment.modified_bases:
+      {(canonical_base, strand_code, mod_type): [(query_pos, prob), ...]}
+    """
+    def __init__(self, seq, modified_bases, **kw):
+        super().__init__(seq, **kw)
+        self.modified_bases = modified_bases
+
+
+def test_deam_priority1_mm_ml_u_code_wins_over_ry():
+    """If MM/ML carries dU 'u' calls, they must win over R/Y in the
+    sequence -- matches FiberBrowser's first-non-empty-source rule."""
+    # Sequence also has R/Y at q=10,20; MM/ML 'u' at q=100,200.
+    seq = list('A' * 300)
+    seq[10] = 'R'
+    seq[20] = 'Y'
+    read = _FakeReadWithModBases(
+        seq=''.join(seq),
+        modified_bases={
+            ('C', 0, 'u'): [(100, 200), (200, 150)],
+        },
+        ref_start=5000,
+    )
+
+    buf = io.StringIO()
+    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
+                      block_scores=True)
+    # MM/ML path picks up 2 positions; R/Y in sequence ignored.
+    assert n == 2
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    assert int(cols[9]) == 2
+    # Both were canonical base C -> flavor 1 (Y / CT-dea).
+    assert [int(v) for v in cols[12].split(',')] == [1, 1]
+
+
+def test_deam_priority1_g_base_is_flavor_0():
+    """Canonical base G -> flavor 0 (R / GA-dea) per FiberBrowser."""
+    read = _FakeReadWithModBases(
+        seq='A' * 100,
+        modified_bases={
+            ('G', 0, 'u'): [(50, 200)],
+        },
+        ref_start=1000,
+    )
+    buf = io.StringIO()
+    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
+                      block_scores=True)
+    assert n == 1
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    assert [int(v) for v in cols[12].split(',')] == [0]
+
+
+def test_deam_priority1_accepts_chebi_55797_numeric_code():
+    """Numeric ChEBI 55797 is the alternative encoding for dU in MM/ML."""
+    read = _FakeReadWithModBases(
+        seq='A' * 100,
+        modified_bases={
+            ('C', 0, 55797): [(30, 180)],
+        },
+        ref_start=2000,
+    )
+    buf = io.StringIO()
+    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
+                      block_scores=True)
+    assert n == 1
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    assert [int(v) for v in cols[12].split(',')] == [1]
+
+
+def test_deam_priority1_respects_prob_threshold():
+    """prob_threshold filters MM/ML dU calls below the cutoff."""
+    read = _FakeReadWithModBases(
+        seq='A' * 100,
+        modified_bases={
+            ('C', 0, 'u'): [(10, 100), (20, 200)],  # only the second passes at 125
+        },
+        ref_start=100,
+    )
+    buf = io.StringIO()
+    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
+                      block_scores=True, prob_threshold=125)
+    assert n == 1
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    assert int(cols[1]) == 120   # chromStart = ref of q=20 = ref_start(100) + 20
+
+
+def test_deam_priority2_ry_fallback_when_mm_ml_absent():
+    """When MM/ML has no 'u'/55797 entries, we must fall back to the
+    R/Y sequence scan -- the existing v2.9.3/4 behavior."""
+    read = _FakeReadWithModBases(
+        seq='ACRYT',
+        modified_bases={
+            ('A', 0, 'a'): [(0, 200)],  # m6A present but no dU; should be ignored
+        },
+        ref_start=0,
+    )
+    buf = io.StringIO()
+    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
+                      block_scores=True)
+    # R at q=2, Y at q=3 -> 2 blocks, flavors [0, 1].
+    assert n == 2
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    assert [int(v) for v in cols[12].split(',')] == [0, 1]
+
+
 # ------------------- sample_name in autoSQL --------------------------
 
 def test_sample_name_prepended_to_description():
