@@ -482,6 +482,72 @@ def test_deam_priority1_respects_prob_threshold():
     assert int(cols[1]) == 120   # chromStart = ref of q=20 = ref_start(100) + 20
 
 
+class _FakeReadWithMD(_FakeReadWithSeq):
+    """FakeRead with get_aligned_pairs(with_seq=True) returning a canned
+    list, letting us exercise the path-3 MD mismatch branch of
+    _extract_deam without building a real BAM."""
+    def __init__(self, seq, pairs, has_md=True, **kw):
+        super().__init__(seq, **kw)
+        self._pairs = pairs
+        self._has_md = has_md
+
+    def has_tag(self, t):
+        if t == 'MD' and self._has_md:
+            return True
+        return super().has_tag(t)
+
+    def get_aligned_pairs(self, with_seq=False):
+        return self._pairs if with_seq else [(p[0], p[1]) for p in self._pairs]
+
+
+def test_deam_priority3_md_mismatch_extracts_c_to_t_and_g_to_a():
+    """When MM/ML has no dU and the sequence has no R/Y, path-3 falls
+    back to walking get_aligned_pairs(with_seq=True) and picks out
+    deamination-direction mismatches."""
+    # Ref sequence: A C G T A C G T ; Read: A T G A A T G A
+    # Mismatches: pos 1 C->T (Y, flavor 1), pos 3 T->A (not dea),
+    #             pos 6 G->G (match), pos 7 T->A (not dea).
+    # Actually make it cleaner: pos 1 C->T, pos 2 G->A, pos 5 C->T.
+    read_seq = 'ATAGTACG'
+    ref_for_pairs = 'ACGGTACG'
+    # ref_start=100; pairs: (qpos, rpos, ref_base)
+    pairs = [(i, 100 + i, ref_for_pairs[i]) for i in range(len(read_seq))]
+    read = _FakeReadWithMD(seq=read_seq, pairs=pairs, ref_start=100)
+
+    buf = io.StringIO()
+    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
+                      block_scores=True)
+    # Mismatches: q=1 C->T (flavor 1), q=2 G->A (flavor 0). Other
+    # positions are either matches or non-dea mismatches.
+    assert n == 2
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    flavors = [int(v) for v in cols[12].split(',')]
+    assert flavors == [1, 0]
+
+
+def test_deam_priority3_skipped_when_no_md_tag():
+    read = _FakeReadWithMD(seq='ATCG', pairs=[], has_md=False, ref_start=0)
+    buf = io.StringIO()
+    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
+                      block_scores=True)
+    assert n == 0  # no MD -> no path-3 fallback
+
+
+def test_deam_priority3_ignored_when_priority2_populates():
+    """If R/Y are present in the sequence, path-3 must never be consulted
+    (priority ordering: MM/ML > R/Y > MD)."""
+    read_seq = 'ACYGT'   # Y at q=2 -> path 2 finds it
+    pairs = [(i, i, 'ACGGT'[i]) for i in range(5)]  # would also produce a C->Y mismatch
+    read = _FakeReadWithMD(seq=read_seq, pairs=pairs, ref_start=0)
+    buf = io.StringIO()
+    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
+                      block_scores=True)
+    # Only the R/Y path should run (1 call, flavor 1 for Y), not the MD path.
+    assert n == 1
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    assert [int(v) for v in cols[12].split(',')] == [1]
+
+
 def test_deam_priority2_ry_fallback_when_mm_ml_absent():
     """When MM/ML has no 'u'/55797 entries, we must fall back to the
     R/Y sequence scan -- the existing v2.9.3/4 behavior."""

@@ -675,6 +675,31 @@ def _extract_deam(read, bed_out, query_to_ref=None,
                     flavor = 1 if y_mask[qi] else 0
                     positions_list.append((ref_pos, flavor))
 
+    # --- Priority 3: ref mismatch via MD tag ----------------------------
+    # Fallback for raw DAF BAMs that were neither MM/ML-tagged nor IUPAC-
+    # encoded. C->T mismatch on the ref = flavor 1 (Y/CT-dea),
+    # G->A mismatch = flavor 0 (R/GA-dea). Slow (scans whole alignment)
+    # so we only run it when the cheaper paths are empty and the read
+    # actually carries an MD tag.
+    if not positions_list and read.has_tag('MD'):
+        seq = read.query_sequence
+        if seq:
+            try:
+                pairs = read.get_aligned_pairs(with_seq=True)
+            except (ValueError, AttributeError):
+                pairs = None
+            if pairs:
+                for qpos, rpos, ref_base in pairs:
+                    if qpos is None or rpos is None or ref_base is None:
+                        continue
+                    ref_up = ref_base.upper()
+                    q_up = seq[qpos].upper() if qpos < len(seq) else ''
+                    # Only deamination-direction mismatches qualify.
+                    if ref_up == 'C' and q_up == 'T':
+                        positions_list.append((int(rpos), 1))
+                    elif ref_up == 'G' and q_up == 'A':
+                        positions_list.append((int(rpos), 0))
+
     if not positions_list:
         return 0
 
@@ -892,6 +917,141 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
                 print(f"  Warning: Could not remove temp file {sizes_file}: {e}")
 
 
+def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
+    """Sniff the first N mapped reads and report which sources each
+    extract type can work from. Reports per-source presence counts
+    plus a ``summary`` string for immediate user feedback.
+
+    Matches FiberBrowser's diagnose_bam_tags detection priority so
+    the user can predict which tracks will populate before the heavy
+    pass runs.
+    """
+    import re
+    counts = {
+        'reads_scanned': 0,
+        # Footprint / MSP / TF tags
+        'has_ns_nl': 0, 'has_as_al': 0, 'has_MA_AQ': 0,
+        # Modified-base tags
+        'has_MM': 0, 'has_ML': 0,
+        'mm_subtypes': set(),
+        # DAF-specific
+        'has_ry_in_seq': 0, 'has_md_only': 0,
+    }
+    mm_re = re.compile(r'([ACGTUN])([+-])([a-z0-9]+|\d+)', re.IGNORECASE)
+
+    try:
+        with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+            for read in bam:
+                if read.is_unmapped or read.is_secondary or read.is_supplementary:
+                    continue
+                counts['reads_scanned'] += 1
+
+                if read.has_tag('ns') and read.has_tag('nl'):
+                    counts['has_ns_nl'] += 1
+                if read.has_tag('as') and read.has_tag('al'):
+                    counts['has_as_al'] += 1
+                if read.has_tag('MA') and read.has_tag('AQ'):
+                    counts['has_MA_AQ'] += 1
+
+                mm_present = read.has_tag('MM') or read.has_tag('Mm')
+                ml_present = read.has_tag('ML') or read.has_tag('Ml')
+                if mm_present:
+                    counts['has_MM'] += 1
+                    try:
+                        mm_str = (read.get_tag('MM') if read.has_tag('MM')
+                                  else read.get_tag('Mm'))
+                        for m in mm_re.finditer(mm_str):
+                            counts['mm_subtypes'].add(
+                                f"{m.group(1).upper()}{m.group(2)}{m.group(3)}")
+                    except Exception:
+                        pass
+                if ml_present:
+                    counts['has_ML'] += 1
+
+                seq = read.query_sequence
+                if seq and ('R' in seq or 'Y' in seq):
+                    counts['has_ry_in_seq'] += 1
+
+                has_md = read.has_tag('MD')
+                has_mod_source = mm_present or (seq and ('R' in seq or 'Y' in seq))
+                if has_md and not has_mod_source:
+                    counts['has_md_only'] += 1
+
+                if counts['reads_scanned'] >= n_reads:
+                    break
+    except (ValueError, OSError):
+        pass
+
+    n = counts['reads_scanned']
+    counts['mm_subtypes'] = sorted(counts['mm_subtypes'])
+
+    if n == 0:
+        counts['summary'] = "no mapped reads in first sniff — extract will be empty"
+        return counts
+
+    def frac(k):
+        return f"{k}/{n}"
+
+    parts = []
+    if counts['has_ns_nl']:
+        parts.append(f"ns/nl={frac(counts['has_ns_nl'])}")
+    if counts['has_as_al']:
+        parts.append(f"as/al={frac(counts['has_as_al'])}")
+    if counts['has_MA_AQ']:
+        parts.append(f"MA/AQ={frac(counts['has_MA_AQ'])}")
+    if counts['has_MM']:
+        sub = (' [' + ','.join(counts['mm_subtypes']) + ']'
+               if counts['mm_subtypes'] else '')
+        parts.append(f"MM/ML={frac(counts['has_MM'])}{sub}")
+    if counts['has_ry_in_seq']:
+        parts.append(f"R/Y-in-seq={frac(counts['has_ry_in_seq'])}")
+    if counts['has_md_only']:
+        parts.append(f"MD-only={frac(counts['has_md_only'])}")
+
+    counts['summary'] = (', '.join(parts) if parts
+                         else 'no FiberHMM / modification tags detected '
+                              f'in first {n} mapped reads')
+    return counts
+
+
+def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
+    """Print a short summary of detected tags + the tracks they'll populate."""
+    print(f"Tag scan (first {diag['reads_scanned']} mapped reads): {diag['summary']}")
+
+    # Predict which tracks will have content.
+    predicted = {}
+    if diag['has_ns_nl']: predicted['footprint'] = 'ns/nl'
+    if diag['has_as_al']: predicted['msp'] = 'as/al'
+    if diag['has_MA_AQ']: predicted['tf'] = 'MA/AQ tf+ annotations'
+    if diag['has_MM'] and any('a' in s.lower() for s in diag['mm_subtypes']):
+        predicted['m6a'] = 'MM/ML (A+a)'
+    if diag['has_MM'] and any('+m' in s.lower() or '-m' in s.lower()
+                               for s in diag['mm_subtypes']):
+        predicted['m5c'] = 'MM/ML (C+m)'
+    # deam: any of MM/ML u, R/Y in seq, or MD-only
+    mm_has_u = any(('+u' in s.lower() or '+55797' in s)
+                   for s in diag['mm_subtypes'])
+    if mm_has_u:
+        predicted['deam'] = 'MM/ML (u / 55797)'
+    elif diag['has_ry_in_seq']:
+        predicted['deam'] = 'R/Y in sequence'
+    elif diag['has_md_only']:
+        predicted['deam'] = 'MD-only (path-3 fallback)'
+
+    expected = []
+    empty = []
+    for t in extract_types:
+        if t in predicted:
+            expected.append(f"{t}[{predicted[t]}]")
+        else:
+            empty.append(t)
+    if expected:
+        print(f"  will populate: {', '.join(expected)}")
+    if empty:
+        print(f"  will be empty: {', '.join(empty)}")
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Extract tags from FiberHMM-tagged BAMs to BED12/bigBed',
@@ -932,12 +1092,13 @@ Examples:
     parser.add_argument('--m6a', action='store_true', help='Extract m6A positions')
     parser.add_argument('--m5c', action='store_true', help='Extract 5mC positions (DAF-seq)')
     parser.add_argument('--deam', action='store_true',
-                        help='Extract DAF-seq deamination calls. Priority-1 source: '
-                             'MM/ML-native dU calls (mod code "u" or ChEBI 55797). '
-                             'Priority-2 fallback: IUPAC R/Y codes in the query '
-                             'sequence (fiberhmm-daf-encode output). First '
-                             'non-empty source wins per read. blockMod: 0 = R/GA-dea, '
-                             '1 = Y/CT-dea, matching FiberBrowser flavor codes.')
+                        help='Extract DAF-seq deamination calls. Priority: '
+                             '(1) MM/ML-native dU calls (mod code "u" or ChEBI 55797); '
+                             '(2) IUPAC R/Y codes in the query sequence '
+                             '(fiberhmm-daf-encode output); '
+                             '(3) MD-tag ref mismatches as a fallback for raw DAF BAMs. '
+                             'First non-empty source wins per read. blockMod: '
+                             '0 = R/GA-dea, 1 = Y/CT-dea, matching FiberBrowser flavor codes.')
     parser.add_argument('--all', action='store_true', help='Extract all tag types (default if none specified)')
 
     # Output options (default: bigbed)
@@ -1024,6 +1185,10 @@ Examples:
     print(f"Extract types: {', '.join(extract_types)}")
     print(f"Cores: {args.cores}")
     print()
+
+    # Quick tag sniff so the user knows which tracks will populate.
+    diag = diagnose_bam_tags(args.input, n_reads=20)
+    _print_tag_diagnostic(diag, extract_types)
 
     # Single region-parallel pass for ALL requested types.  Each worker
     # opens the BAM once, iterates once, builds the query->ref mapping
