@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fiberhmm"
-version = "2.9.2"
+version = "2.9.3"
 description = "Hidden Markov Model for calling chromatin footprints from fiber-seq and DAF-seq data"
 readme = "README.md"
 license = {text = "MIT"}

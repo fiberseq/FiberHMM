@@ -23,6 +23,7 @@ from fiberhmm.io.autosql import (
 from fiberhmm.cli.extract_tags import (
     _extract_footprints,
     _extract_msps,
+    _extract_ry,
     _extract_tfs,
 )
 
@@ -299,3 +300,91 @@ def test_tf_bed12_only_unchanged_when_flag_off():
     assert n == 2
     cols = buf.getvalue().rstrip('\n').split('\t')
     assert len(cols) == 12
+
+
+# ------------------- ry (DAF IUPAC R/Y) -----------------------------
+
+class _FakeReadWithSeq(_FakeRead):
+    """_FakeRead with a mutable query_sequence attribute so we can test
+    the R/Y scan against known IUPAC-encoded strings."""
+    def __init__(self, seq, **kw):
+        super().__init__(**kw)
+        self.query_sequence = seq
+        self._query_len = len(seq)
+
+
+def test_ry_extracts_both_codes_and_sorts_by_ref_position():
+    """A read with interleaved R and Y should produce one BED row per
+    read, with each R/Y as a 1 bp block sorted by reference position."""
+    # query: ACGYRTAYR  -> R/Y at positions 3,4,7,8
+    seq = 'ACGYRTAYR'
+    read = _FakeReadWithSeq(seq, ref_start=1000)
+
+    buf = io.StringIO()
+    n = _extract_ry(read, buf, query_to_ref=_identity_map(read),
+                    block_scores=False)
+    assert n == 4
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    assert len(cols) == 12
+    # chromStart = first mod position = 1003 ; chromEnd = last + 1 = 1009
+    assert int(cols[1]) == 1003
+    assert int(cols[2]) == 1009
+    # score is the 255 sentinel (not probability)
+    assert int(cols[4]) == 255
+    assert int(cols[9]) == 4  # blockCount
+    assert cols[10] == '1,1,1,1'
+    assert cols[11] == '0,1,4,5'  # offsets relative to chromStart=1003
+
+
+def test_ry_block_scores_disambiguates_r_vs_y():
+    """With block_scores=True, the blockMod column must encode
+    0 for R (GA-strand) and 1 for Y (CT-strand)."""
+    seq = 'ACGYYRRYN'   # R/Y at 3,4,5,6,7 -> Y,Y,R,R,Y
+    read = _FakeReadWithSeq(seq, ref_start=500)
+
+    buf = io.StringIO()
+    n = _extract_ry(read, buf, query_to_ref=_identity_map(read),
+                    block_scores=True)
+    assert n == 5
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    assert len(cols) == 13
+    assert [int(v) for v in cols[12].split(',')] == [1, 1, 0, 0, 1]
+
+
+def test_ry_empty_sequence_returns_zero():
+    read = _FakeReadWithSeq('ACGT' * 50, ref_start=1_000_000)
+    buf = io.StringIO()
+    n = _extract_ry(read, buf, query_to_ref=_identity_map(read),
+                    block_scores=True)
+    assert n == 0
+    assert buf.getvalue() == ''
+
+
+def test_ry_skips_positions_with_no_ref_mapping():
+    """Insertion bases (query position with no ref mapping) must not
+    produce BED rows with negative or None coordinates."""
+    seq = 'ACYGR'  # Y at 2, R at 4
+    read = _FakeReadWithSeq(seq, ref_start=2000)
+    # Force query position 2 (the Y) to be an insertion (-1).
+    q2r = _identity_map(read).copy()
+    q2r[2] = -1
+    buf = io.StringIO()
+    n = _extract_ry(read, buf, query_to_ref=q2r, block_scores=True)
+    # Only the R at q=4 should survive.
+    assert n == 1
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    assert int(cols[9]) == 1
+    assert cols[12] == '0'  # code 0 = R
+
+
+def test_ry_schema_has_blockmod_with_block_scores():
+    schema = get_schema('ry', block_scores=True)
+    # Check for the field declaration specifically, not a substring in the
+    # description (which references the field name in prose).
+    assert 'int[blockCount] blockMod' in schema
+    classic = get_schema('ry', block_scores=False)
+    assert 'int[blockCount] blockMod' not in classic
+
+
+def test_ry_extra_field_count_is_one():
+    assert EXTRA_FIELD_COUNTS['ry'] == 1

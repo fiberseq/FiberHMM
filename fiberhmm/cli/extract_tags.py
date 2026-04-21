@@ -10,6 +10,10 @@ Supported annotation types:
          matches fiberhmm-recall-tfs's default emission floor).
   - m6a: m6A modification positions (MM/ML) -> BED12 (one line per read)
   - m5c: 5mC modification positions (for DAF-seq) -> BED12
+  - ry:  DAF-seq deamination calls from R/Y IUPAC codes in the query
+         sequence (written by fiberhmm-daf-encode) -> BED12 (one line per
+         read). The DAF analogue of --m6a for IUPAC-encoded BAMs that
+         don't carry MM/ML.
 
 Extracts various tag types from tagged BAM files using region-parallel processing:
   - footprint: Nucleosome footprints (ns/nl tags) -> BED12 (one line per read)
@@ -153,10 +157,10 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                     return (temp_bed_paths, 0, n_features)
 
                 # Which extract types need aligned_pairs?  All of them except
-                # pure tag-presence checks — footprint, msp, tf, m6a, m5c all
-                # need query->ref mapping.
+                # pure tag-presence checks — footprint, msp, tf, m6a, m5c, ry
+                # all need query->ref mapping.
                 need_mapping = any(t in extract_types for t in
-                                   ('footprint', 'msp', 'tf', 'm6a', 'm5c'))
+                                   ('footprint', 'msp', 'tf', 'm6a', 'm5c', 'ry'))
 
                 for read in read_iter:
                     if read.is_unmapped or read.is_secondary or read.is_supplementary:
@@ -203,6 +207,12 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['m5c'] += _extract_m5c(
                             read, bed_outs['m5c'], prob_threshold, query_to_ref,
+                            block_scores=block_scores)
+                    if 'ry' in extract_types:
+                        if query_to_ref is None:
+                            query_to_ref = _build_query_to_ref(read)
+                        n_features['ry'] += _extract_ry(
+                            read, bed_outs['ry'], query_to_ref,
                             block_scores=block_scores)
         finally:
             for f in bed_outs.values():
@@ -583,6 +593,74 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
     return len(positions_list)
 
 
+def _extract_ry(read, bed_out, query_to_ref=None,
+                block_scores: bool = False) -> int:
+    """Extract DAF-seq deamination calls from R/Y IUPAC codes in the
+    query sequence as BED12 (one row per read).
+
+    ``fiberhmm-daf-encode`` writes Y (at C->T positions on the CT strand)
+    and R (at G->A positions on the GA strand) into the stored sequence
+    as IUPAC ambiguity codes, without emitting MM/ML. So on a DAF BAM
+    produced by that tool, scanning the sequence for R/Y gives the exact
+    set of per-base deamination calls.
+
+    When ``block_scores=True`` appends ``blockMod`` -- one byte per
+    block carrying 0 for R and 1 for Y so downstream tools can
+    disambiguate the two strands without re-reading the sequence.
+
+    BED score column 5 is a constant 255 (deamination calls from IUPAC
+    encoding are deterministic; there is no per-position probability).
+    """
+    seq = read.query_sequence
+    if not seq:
+        return 0
+
+    arr = np.frombuffer(seq.encode('ascii'), dtype=np.uint8)
+    r_mask = (arr == ord('R'))
+    y_mask = (arr == ord('Y'))
+    mod_mask = r_mask | y_mask
+    if not mod_mask.any():
+        return 0
+
+    ref_name = read.reference_name
+    strand = '-' if read.is_reverse else '+'
+    read_id = read.query_name
+
+    aligned_pairs = query_to_ref if query_to_ref is not None else _build_query_to_ref(read)
+    n = len(aligned_pairs)
+
+    positions_list = []  # (ref_pos, code) where code: 0=R, 1=Y
+    for q_pos in np.where(mod_mask)[0]:
+        qi = int(q_pos)
+        if qi >= n:
+            continue
+        ref_pos = int(aligned_pairs[qi])
+        if ref_pos < 0:
+            continue
+        code = 1 if y_mask[qi] else 0
+        positions_list.append((ref_pos, code))
+
+    if not positions_list:
+        return 0
+
+    positions_list.sort(key=lambda x: x[0])
+
+    chrom_start = positions_list[0][0]
+    chrom_end = positions_list[-1][0] + 1
+    block_count = len(positions_list)
+    block_sizes = ','.join('1' for _ in positions_list)
+    block_starts = ','.join(str(pos - chrom_start) for pos, _ in positions_list)
+
+    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t255\t{strand}\t"
+           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
+    if block_scores:
+        block_mod = ','.join(str(code) for _, code in positions_list)
+        row += f"\t{block_mod}"
+    bed_out.write(row + "\n")
+
+    return len(positions_list)
+
+
 def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           n_cores: int = 1, region_size: int = 10_000_000,
                           min_mapq: int = 0, prob_threshold: int = 125,
@@ -816,6 +894,10 @@ Examples:
                              'high-confidence only.')
     parser.add_argument('--m6a', action='store_true', help='Extract m6A positions')
     parser.add_argument('--m5c', action='store_true', help='Extract 5mC positions (DAF-seq)')
+    parser.add_argument('--ry', action='store_true',
+                        help='Extract DAF-seq R/Y IUPAC deamination calls from the '
+                             'query sequence (for BAMs encoded by fiberhmm-daf-encode). '
+                             'No-op on BAMs without R/Y codes.')
     parser.add_argument('--all', action='store_true', help='Extract all tag types (default if none specified)')
 
     # Output options (default: bigbed)
@@ -856,9 +938,10 @@ Examples:
 
     # Determine what to extract (default: all)
     extract_types = []
-    any_selected = args.footprint or args.msp or args.tf or args.m6a or args.m5c
+    any_selected = (args.footprint or args.msp or args.tf or
+                    args.m6a or args.m5c or args.ry)
     if args.all or not any_selected:
-        extract_types = ['footprint', 'msp', 'tf', 'm6a', 'm5c']
+        extract_types = ['footprint', 'msp', 'tf', 'm6a', 'm5c', 'ry']
     else:
         if args.footprint:
             extract_types.append('footprint')
@@ -870,6 +953,8 @@ Examples:
             extract_types.append('m6a')
         if args.m5c:
             extract_types.append('m5c')
+        if args.ry:
+            extract_types.append('ry')
 
     # Default to bigbed unless --bed-only specified
     make_bigbed = not args.bed_only

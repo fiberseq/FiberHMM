@@ -77,6 +77,10 @@ _BLOCK_SCORE_FIELDS = {
         '    int[blockCount] blockMl; '
         '"Per-position ML (modified-base probability), 0-255"\n'
     ),
+    'ry': (
+        '    int[blockCount] blockMod; '
+        '"0 = R (G->A, GA-strand deamination), 1 = Y (C->T, CT-strand deamination)"\n'
+    ),
 }
 
 
@@ -129,6 +133,14 @@ _DESCRIPTIONS = {
         'FiberHMM per-position 5mC / DAF-seq deamination calls (from '
         'MM/ML tags). One BED12 row per read; each block is a 1 bp '
         'modified/deaminated position passing --prob-threshold.'
+    ),
+    'ry': (
+        'FiberHMM DAF-seq IUPAC deamination calls (R/Y codes written into '
+        'the query sequence by fiberhmm-daf-encode). Each block is a 1 bp '
+        'deaminated base (Y = C->T on the CT strand, R = G->A on the GA '
+        'strand). BED score = 255 (deamination calls are deterministic, '
+        'not probabilistic). Use --block-scores to carry the R/Y '
+        'disambiguation in a blockMod per-block column.'
     ),
 }
 
