@@ -77,7 +77,7 @@ _BLOCK_SCORE_FIELDS = {
         '    int[blockCount] blockMl; '
         '"Per-position ML (modified-base probability), 0-255"\n'
     ),
-    'ry': (
+    'deam': (
         '    int[blockCount] blockMod; '
         '"0 = R (G->A, GA-strand deamination), 1 = Y (C->T, CT-strand deamination)"\n'
     ),
@@ -91,10 +91,16 @@ EXTRA_FIELD_COUNTS = {t: f.count('int[blockCount]')
 
 def _make_schema(table_name: str, description: str,
                  extract_type: Optional[str] = None,
-                 block_scores: bool = False) -> str:
+                 block_scores: bool = False,
+                 sample_name: Optional[str] = None) -> str:
     fields = _BED12_FIELDS
     if block_scores and extract_type in _BLOCK_SCORE_FIELDS:
         fields = fields + _BLOCK_SCORE_FIELDS[extract_type]
+    if sample_name:
+        # Prepend a machine-parseable "Sample: <name>." marker. The autoSQL
+        # description is a free-form string so we stay format-compatible;
+        # bigBedInfo -as surfaces this to downstream tools.
+        description = f'Sample: {sample_name}. {description}'
     return (
         f'table {table_name}\n'
         f'"{description}"\n'
@@ -134,8 +140,8 @@ _DESCRIPTIONS = {
         'MM/ML tags). One BED12 row per read; each block is a 1 bp '
         'modified/deaminated position passing --prob-threshold.'
     ),
-    'ry': (
-        'FiberHMM DAF-seq IUPAC deamination calls (R/Y codes written into '
+    'deam': (
+        'FiberHMM DAF-seq deamination calls (R/Y IUPAC codes written into '
         'the query sequence by fiberhmm-daf-encode). Each block is a 1 bp '
         'deaminated base (Y = C->T on the CT strand, R = G->A on the GA '
         'strand). BED score = 255 (deamination calls are deterministic, '
@@ -151,24 +157,33 @@ AUTOSQL_SCHEMAS = {
 }
 
 
-def get_schema(extract_type: str, block_scores: bool = False) -> Optional[str]:
+def get_schema(extract_type: str, block_scores: bool = False,
+               sample_name: Optional[str] = None) -> Optional[str]:
     """Return the autoSQL schema string for ``extract_type``, optionally
-    with the per-block score columns appended."""
+    with the per-block score columns appended and/or a ``Sample: <name>.``
+    marker prepended to the description."""
     desc = _DESCRIPTIONS.get(extract_type)
     if desc is None:
         return None
     return _make_schema(f'fiberhmm_{extract_type}', desc,
-                        extract_type=extract_type, block_scores=block_scores)
+                        extract_type=extract_type,
+                        block_scores=block_scores,
+                        sample_name=sample_name)
 
 
 def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
-                      block_scores: bool = False) -> Optional[str]:
+                      block_scores: bool = False,
+                      sample_name: Optional[str] = None) -> Optional[str]:
     """Write the autoSQL file for a given extract_type to disk.
 
     Returns the path to the written file, or None if no schema exists
     for that type (caller should skip ``-as=`` in that case).
+
+    Pass ``sample_name`` to embed a machine-parseable ``Sample: <name>.``
+    prefix in the autoSQL description (visible via ``bigBedInfo -as``).
     """
-    schema = get_schema(extract_type, block_scores=block_scores)
+    schema = get_schema(extract_type, block_scores=block_scores,
+                        sample_name=sample_name)
     if schema is None:
         return None
     suffix = '.bs.as' if block_scores else '.as'

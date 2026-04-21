@@ -23,7 +23,7 @@ from fiberhmm.io.autosql import (
 from fiberhmm.cli.extract_tags import (
     _extract_footprints,
     _extract_msps,
-    _extract_ry,
+    _extract_deam,
     _extract_tfs,
 )
 
@@ -302,7 +302,7 @@ def test_tf_bed12_only_unchanged_when_flag_off():
     assert len(cols) == 12
 
 
-# ------------------- ry (DAF IUPAC R/Y) -----------------------------
+# ------------------- deam (DAF IUPAC R/Y) ---------------------------
 
 class _FakeReadWithSeq(_FakeRead):
     """_FakeRead with a mutable query_sequence attribute so we can test
@@ -313,7 +313,7 @@ class _FakeReadWithSeq(_FakeRead):
         self._query_len = len(seq)
 
 
-def test_ry_extracts_both_codes_and_sorts_by_ref_position():
+def test_deam_extracts_both_codes_and_sorts_by_ref_position():
     """A read with interleaved R and Y should produce one BED row per
     read, with each R/Y as a 1 bp block sorted by reference position."""
     # query: ACGYRTAYR  -> R/Y at positions 3,4,7,8
@@ -321,7 +321,7 @@ def test_ry_extracts_both_codes_and_sorts_by_ref_position():
     read = _FakeReadWithSeq(seq, ref_start=1000)
 
     buf = io.StringIO()
-    n = _extract_ry(read, buf, query_to_ref=_identity_map(read),
+    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
                     block_scores=False)
     assert n == 4
     cols = buf.getvalue().rstrip('\n').split('\t')
@@ -336,14 +336,14 @@ def test_ry_extracts_both_codes_and_sorts_by_ref_position():
     assert cols[11] == '0,1,4,5'  # offsets relative to chromStart=1003
 
 
-def test_ry_block_scores_disambiguates_r_vs_y():
+def test_deam_block_scores_disambiguates_r_vs_y():
     """With block_scores=True, the blockMod column must encode
     0 for R (GA-strand) and 1 for Y (CT-strand)."""
     seq = 'ACGYYRRYN'   # R/Y at 3,4,5,6,7 -> Y,Y,R,R,Y
     read = _FakeReadWithSeq(seq, ref_start=500)
 
     buf = io.StringIO()
-    n = _extract_ry(read, buf, query_to_ref=_identity_map(read),
+    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
                     block_scores=True)
     assert n == 5
     cols = buf.getvalue().rstrip('\n').split('\t')
@@ -351,16 +351,16 @@ def test_ry_block_scores_disambiguates_r_vs_y():
     assert [int(v) for v in cols[12].split(',')] == [1, 1, 0, 0, 1]
 
 
-def test_ry_empty_sequence_returns_zero():
+def test_deam_empty_sequence_returns_zero():
     read = _FakeReadWithSeq('ACGT' * 50, ref_start=1_000_000)
     buf = io.StringIO()
-    n = _extract_ry(read, buf, query_to_ref=_identity_map(read),
+    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
                     block_scores=True)
     assert n == 0
     assert buf.getvalue() == ''
 
 
-def test_ry_skips_positions_with_no_ref_mapping():
+def test_deam_skips_positions_with_no_ref_mapping():
     """Insertion bases (query position with no ref mapping) must not
     produce BED rows with negative or None coordinates."""
     seq = 'ACYGR'  # Y at 2, R at 4
@@ -369,7 +369,7 @@ def test_ry_skips_positions_with_no_ref_mapping():
     q2r = _identity_map(read).copy()
     q2r[2] = -1
     buf = io.StringIO()
-    n = _extract_ry(read, buf, query_to_ref=q2r, block_scores=True)
+    n = _extract_deam(read, buf, query_to_ref=q2r, block_scores=True)
     # Only the R at q=4 should survive.
     assert n == 1
     cols = buf.getvalue().rstrip('\n').split('\t')
@@ -377,14 +377,45 @@ def test_ry_skips_positions_with_no_ref_mapping():
     assert cols[12] == '0'  # code 0 = R
 
 
-def test_ry_schema_has_blockmod_with_block_scores():
-    schema = get_schema('ry', block_scores=True)
+def test_deam_schema_has_blockmod_with_block_scores():
+    schema = get_schema('deam', block_scores=True)
     # Check for the field declaration specifically, not a substring in the
     # description (which references the field name in prose).
     assert 'int[blockCount] blockMod' in schema
-    classic = get_schema('ry', block_scores=False)
+    classic = get_schema('deam', block_scores=False)
     assert 'int[blockCount] blockMod' not in classic
 
 
-def test_ry_extra_field_count_is_one():
-    assert EXTRA_FIELD_COUNTS['ry'] == 1
+def test_deam_extra_field_count_is_one():
+    assert EXTRA_FIELD_COUNTS['deam'] == 1
+
+
+# ------------------- sample_name in autoSQL --------------------------
+
+def test_sample_name_prepended_to_description():
+    schema = get_schema('footprint', block_scores=False,
+                        sample_name='Dl_recalled')
+    assert 'Sample: Dl_recalled. ' in schema
+    # The schema still has the classic description afterwards.
+    assert 'FiberHMM nucleosome footprint calls' in schema
+
+
+def test_sample_name_absent_by_default():
+    schema = get_schema('footprint', block_scores=False)
+    assert 'Sample:' not in schema
+
+
+def test_sample_name_with_block_scores():
+    schema = get_schema('deam', block_scores=True, sample_name='yw_2-4')
+    assert 'Sample: yw_2-4. ' in schema
+    # extra block score column still present
+    assert 'int[blockCount] blockMod' in schema
+
+
+def test_write_autosql_for_with_sample_name(tmp_path):
+    p = write_autosql_for('tf', out_dir=str(tmp_path),
+                          block_scores=True, sample_name='Dl_recalled')
+    with open(p) as f:
+        content = f.read()
+    assert 'Sample: Dl_recalled. ' in content
+    assert 'int[blockCount] blockTq' in content

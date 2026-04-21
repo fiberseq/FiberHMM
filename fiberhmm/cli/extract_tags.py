@@ -8,12 +8,12 @@ Supported annotation types:
   - tf:  TF/Pol II footprints (MA/AQ tf+QQQ) -> BED12 (one line per read).
          Quality filter: --min-tq (default 50 = LLR >= 5 nats,
          matches fiberhmm-recall-tfs's default emission floor).
-  - m6a: m6A modification positions (MM/ML) -> BED12 (one line per read)
-  - m5c: 5mC modification positions (for DAF-seq) -> BED12
-  - ry:  DAF-seq deamination calls from R/Y IUPAC codes in the query
-         sequence (written by fiberhmm-daf-encode) -> BED12 (one line per
-         read). The DAF analogue of --m6a for IUPAC-encoded BAMs that
-         don't carry MM/ML.
+  - m6a:  m6A modification positions (MM/ML) -> BED12 (one line per read)
+  - m5c:  5mC modification positions (for DAF-seq) -> BED12
+  - deam: DAF-seq deamination calls from R/Y IUPAC codes in the query
+          sequence (written by fiberhmm-daf-encode) -> BED12 (one line per
+          read). The DAF analogue of --m6a for IUPAC-encoded BAMs that
+          don't carry MM/ML.
 
 Extracts various tag types from tagged BAM files using region-parallel processing:
   - footprint: Nucleosome footprints (ns/nl tags) -> BED12 (one line per read)
@@ -157,10 +157,10 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                     return (temp_bed_paths, 0, n_features)
 
                 # Which extract types need aligned_pairs?  All of them except
-                # pure tag-presence checks — footprint, msp, tf, m6a, m5c, ry
+                # pure tag-presence checks — footprint, msp, tf, m6a, m5c, deam
                 # all need query->ref mapping.
                 need_mapping = any(t in extract_types for t in
-                                   ('footprint', 'msp', 'tf', 'm6a', 'm5c', 'ry'))
+                                   ('footprint', 'msp', 'tf', 'm6a', 'm5c', 'deam'))
 
                 for read in read_iter:
                     if read.is_unmapped or read.is_secondary or read.is_supplementary:
@@ -208,11 +208,11 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                         n_features['m5c'] += _extract_m5c(
                             read, bed_outs['m5c'], prob_threshold, query_to_ref,
                             block_scores=block_scores)
-                    if 'ry' in extract_types:
+                    if 'deam' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
-                        n_features['ry'] += _extract_ry(
-                            read, bed_outs['ry'], query_to_ref,
+                        n_features['deam'] += _extract_deam(
+                            read, bed_outs['deam'], query_to_ref,
                             block_scores=block_scores)
         finally:
             for f in bed_outs.values():
@@ -593,8 +593,8 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
     return len(positions_list)
 
 
-def _extract_ry(read, bed_out, query_to_ref=None,
-                block_scores: bool = False) -> int:
+def _extract_deam(read, bed_out, query_to_ref=None,
+                  block_scores: bool = False) -> int:
     """Extract DAF-seq deamination calls from R/Y IUPAC codes in the
     query sequence as BED12 (one row per read).
 
@@ -788,7 +788,8 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
 def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
                    bed_type: str = 'bed12',
                    extract_type: Optional[str] = None,
-                   block_scores: bool = False) -> bool:
+                   block_scores: bool = False,
+                   sample_name: Optional[str] = None) -> bool:
     """Convert BED to bigBed using bedToBigBed.
 
     If ``extract_type`` matches a FiberHMM autoSQL schema
@@ -817,7 +818,8 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
         for chrom, size in sorted(chrom_sizes.items()):
             f.write(f"{chrom}\t{size}\n")
 
-    as_file = (write_autosql_for(extract_type, block_scores=block_scores)
+    as_file = (write_autosql_for(extract_type, block_scores=block_scores,
+                                  sample_name=sample_name)
                if extract_type else None)
 
     n_extra = EXTRA_FIELD_COUNTS.get(extract_type, 0) if block_scores else 0
@@ -894,10 +896,10 @@ Examples:
                              'high-confidence only.')
     parser.add_argument('--m6a', action='store_true', help='Extract m6A positions')
     parser.add_argument('--m5c', action='store_true', help='Extract 5mC positions (DAF-seq)')
-    parser.add_argument('--ry', action='store_true',
-                        help='Extract DAF-seq R/Y IUPAC deamination calls from the '
-                             'query sequence (for BAMs encoded by fiberhmm-daf-encode). '
-                             'No-op on BAMs without R/Y codes.')
+    parser.add_argument('--deam', action='store_true',
+                        help='Extract DAF-seq deamination calls from R/Y IUPAC codes '
+                             'in the query sequence (for BAMs encoded by '
+                             'fiberhmm-daf-encode). No-op on BAMs without R/Y codes.')
     parser.add_argument('--all', action='store_true', help='Extract all tag types (default if none specified)')
 
     # Output options (default: bigbed)
@@ -917,6 +919,11 @@ Examples:
                              'tf -> blockTq/blockEl/blockEr. bigBed uses -type=bed12+N and '
                              'the matching autoSQL schema so FiberBrowser/UCSC can surface '
                              'per-feature quality without a sidecar database.')
+    parser.add_argument('--sample-name', default=None,
+                        help='Sample/dataset identifier to embed in the autoSQL '
+                             'description of every output bigBed ("Sample: <name>. ..."). '
+                             'Default: BAM basename stem. Lets downstream tools match '
+                             'a bigBed to its source without filename parsing.')
 
     # Region options
     parser.add_argument('--region-size', type=int, default=10_000_000, help='Region size for parallel')
@@ -939,9 +946,9 @@ Examples:
     # Determine what to extract (default: all)
     extract_types = []
     any_selected = (args.footprint or args.msp or args.tf or
-                    args.m6a or args.m5c or args.ry)
+                    args.m6a or args.m5c or args.deam)
     if args.all or not any_selected:
-        extract_types = ['footprint', 'msp', 'tf', 'm6a', 'm5c', 'ry']
+        extract_types = ['footprint', 'msp', 'tf', 'm6a', 'm5c', 'deam']
     else:
         if args.footprint:
             extract_types.append('footprint')
@@ -953,8 +960,8 @@ Examples:
             extract_types.append('m6a')
         if args.m5c:
             extract_types.append('m5c')
-        if args.ry:
-            extract_types.append('ry')
+        if args.deam:
+            extract_types.append('deam')
 
     # Default to bigbed unless --bed-only specified
     make_bigbed = not args.bed_only
@@ -967,8 +974,9 @@ Examples:
     if args.chroms:
         chroms = set(args.chroms.split(','))
 
-    # Get dataset name
+    # Get dataset name (file prefix + default sample_name).
     dataset = os.path.basename(args.input).replace('.bam', '').replace('_footprints', '')
+    sample_name = args.sample_name or dataset
 
     # Get chrom sizes — only required for bigBed conversion
     chrom_sizes = get_chrom_sizes(args.input) if make_bigbed else {}
@@ -1026,7 +1034,8 @@ Examples:
             print(f"  [{extract_type}] converting to bigBed...")
             if bed_to_bigbed(bed_path, bb_path, chrom_sizes, 'bed12',
                               extract_type=extract_type,
-                              block_scores=args.block_scores):
+                              block_scores=args.block_scores,
+                              sample_name=sample_name):
                 print(f"  [{extract_type}] bigBed: {bb_path}")
                 if not args.keep_bed:
                     try:
