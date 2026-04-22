@@ -20,8 +20,13 @@ from fiberhmm.inference.bam_output import _sort_and_index_bam
 # Per-read encoding
 # ---------------------------------------------------------------------------
 
-def encode_read_daf(read, force_strand=None, ref_fasta=None):
-    """Identify deamination mismatches and encode as IUPAC R/Y.
+def get_daf_positions(read, force_strand=None, ref_fasta=None):
+    """Collect C->T and G->A mismatch positions for a DAF-seq read.
+
+    Pure position-collection helper used by both ``encode_read_daf``
+    (which rewrites the query sequence with R/Y IUPAC codes) and the
+    in-memory fallback inside ``fiberhmm-call --mode daf`` (which
+    consumes positions directly without touching the stored sequence).
 
     Parameters
     ----------
@@ -35,9 +40,15 @@ def encode_read_daf(read, force_strand=None, ref_fasta=None):
     Returns
     -------
     tuple or None
-        ``(new_sequence, st_tag, n_deaminations)`` on success.
+        ``(ct_positions, ga_positions, strand)`` where ``strand`` is
+        ``"CT"`` or ``"GA"`` and the two lists are the full sets of
+        C->T and G->A query-position mismatches (both populated even
+        though only the selected-strand list is used downstream -- the
+        other is returned for diagnostics and future use).
+
         ``None`` if the read should be skipped (unmapped, secondary,
-        supplementary, no mismatches, or ambiguous strand).
+        supplementary, no mismatches, or ambiguous strand with
+        no ``force_strand``).
     """
     # Skip unmapped / secondary / supplementary
     if read.is_unmapped or read.is_secondary or read.is_supplementary:
@@ -66,8 +77,8 @@ def encode_read_daf(read, force_strand=None, ref_fasta=None):
             return None
 
     # Collect mismatch positions
-    ct_positions = []  # C→T (+ strand deamination)
-    ga_positions = []  # G→A (− strand deamination)
+    ct_positions = []  # C->T (+ strand deamination)
+    ga_positions = []  # G->A (- strand deamination)
 
     for query_pos, ref_pos, ref_base in pairs:
         if query_pos is None or ref_pos is None or ref_base is None:
@@ -93,19 +104,42 @@ def encode_read_daf(read, force_strand=None, ref_fasta=None):
         elif n_ga > n_ct:
             strand = "GA"
         else:
-            # Equal and nonzero – ambiguous, skip
+            # Equal and nonzero -- ambiguous, skip
             return None
 
+    return (ct_positions, ga_positions, strand)
+
+
+def encode_read_daf(read, force_strand=None, ref_fasta=None):
+    """Identify deamination mismatches and encode as IUPAC R/Y.
+
+    Thin wrapper over ``get_daf_positions`` that adds the IUPAC
+    sequence rewrite. Preserves the original ``encode_read_daf`` return
+    contract exactly so ``fiberhmm-daf-encode`` output is bit-for-bit
+    unchanged after the refactor.
+
+    Returns
+    -------
+    tuple or None
+        ``(new_sequence, st_tag, n_deaminations)`` on success.
+        ``None`` if the read should be skipped.
+    """
+    res = get_daf_positions(read, force_strand=force_strand, ref_fasta=ref_fasta)
+    if res is None:
+        return None
+    ct_positions, ga_positions, strand = res
+
+    seq = read.query_sequence
     # Build new sequence with IUPAC encoding
     seq_list = list(seq)
     if strand == "CT":
         for pos in ct_positions:
             seq_list[pos] = "Y"  # Y = C or T
-        n_deam = n_ct
+        n_deam = len(ct_positions)
     else:  # GA
         for pos in ga_positions:
             seq_list[pos] = "R"  # R = A or G
-        n_deam = n_ga
+        n_deam = len(ga_positions)
 
     new_seq = "".join(seq_list)
     st_tag = strand  # "CT" or "GA"

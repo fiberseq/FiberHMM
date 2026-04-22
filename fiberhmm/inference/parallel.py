@@ -299,6 +299,7 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
         edge_trim = int(params['edge_trim'])
         circular = params['circular']
         mode = params['mode']
+        ref_fasta = params.get('ref_fasta')   # opened FastaFile or None; --reference path
         context_size = int(params['context_size'])
         msp_min_size = int(params['msp_min_size'])
         nuc_min_size = int(params.get('nuc_min_size', 85))
@@ -605,6 +606,7 @@ def _process_region_to_bed(args: Tuple) -> Tuple[str, int, int]:
         edge_trim = int(params['edge_trim'])
         circular = params['circular']
         mode = params['mode']
+        ref_fasta = params.get('ref_fasta')   # opened FastaFile or None; --reference path
         context_size = int(params['context_size'])
         msp_min_size = int(params['msp_min_size'])
         nuc_min_size = int(params.get('nuc_min_size', 85))
@@ -1706,6 +1708,14 @@ def _init_fused_region_worker(apply_model_path: str, recall_model_path: Optional
     os.environ['NUMBA_CACHE_DIR'] = ''
 
     _worker_model = load_model(apply_model_path)
+    # Open the reference FASTA *after* fork: pysam.FastaFile is not
+    # fork-safe. Stash the live handle on params so the region worker
+    # can pass it through to get_daf_positions.
+    ref_path = params.get('ref_fasta_path')
+    if ref_path:
+        import pysam as _pysam
+        params = dict(params)   # don't mutate the shared-across-workers dict
+        params['ref_fasta'] = _pysam.FastaFile(ref_path)
     _worker_region_params = params
 
     from fiberhmm.core.model_io import load_model_with_metadata
@@ -1766,6 +1776,7 @@ def _process_region_to_bam_fused(args: Tuple) -> Tuple:
         edge_trim = int(params['edge_trim'])
         circular = params['circular']
         mode = params['mode']
+        ref_fasta = params.get('ref_fasta')   # opened FastaFile or None; --reference path
         context_size = int(params['context_size'])
         msp_min_size = int(params['msp_min_size'])
         nuc_min_size = int(params.get('nuc_min_size', 85))
@@ -1827,7 +1838,7 @@ def _process_region_to_bam_fused(args: Tuple) -> Tuple:
                         skip_reasons['training_excluded'] += 1
                         continue
 
-                    payload = make_apply_payload(read)
+                    payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
                     if payload is None:
                         outbam.write(read); written += 1; skipped += 1
                         skip_reasons['no_modifications'] += 1
@@ -1933,6 +1944,7 @@ def _process_bam_region_parallel_fused(
     n_cores: int, region_size: int, skip_scaffolds: bool,
     chroms: Optional[Set[str]], io_threads: int,
     primary_only: bool = False,
+    ref_fasta_path: Optional[str] = None,
 ):
     """Region-parallel fused apply+recall.
 
@@ -1964,6 +1976,9 @@ def _process_bam_region_parallel_fused(
         'unify_threshold': unify_threshold,
         'also_write_legacy': also_write_legacy,
         'downstream_compat': downstream_compat,
+        # Path string, NOT an open handle: pysam.FastaFile is not fork-safe,
+        # so each worker opens it lazily in _init_fused_region_worker.
+        'ref_fasta_path': ref_fasta_path,
     }
 
     work_items = [
@@ -2135,6 +2150,7 @@ def _process_bam_streaming_pipeline_fused(
     io_threads: int,
     process_unmapped: bool = False,
     primary_only: bool = False,
+    ref_fasta_path: Optional[str] = None,
 ):
     """Fused apply+recall streaming pipeline: one worker pool does both
     the HMM nucleosome/MSP calls and the TF Kadane scan per read.
@@ -2144,6 +2160,12 @@ def _process_bam_streaming_pipeline_fused(
     benchmark) and the duplicate MM/ML parse + encode done by the
     streaming recall stage.
     """
+    # Streaming mode reads the BAM sequentially in the main process, so we
+    # can open the FastaFile here (no fork yet) and hand the live handle
+    # to make_apply_payload for on-the-fly MD fallback on raw DAF BAMs.
+    ref_fasta = None
+    if ref_fasta_path:
+        ref_fasta = pysam.FastaFile(ref_fasta_path)
     pysam.set_verbosity(0)
     max_inflight = n_cores + 2
     start_time = time.time()
@@ -2206,7 +2228,7 @@ def _process_bam_streaming_pipeline_fused(
                         _buffer_skip(read, 'training_excluded')
                         continue
 
-                    payload = make_apply_payload(read)
+                    payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
                     if payload is None:
                         _buffer_skip(read, 'no_modifications')
                         continue
@@ -2319,6 +2341,10 @@ def _process_bam_streaming_pipeline(
     """
     Streaming producer-consumer pipeline for BAM processing.
 
+    Note: ``ref_fasta`` for the DAF MD-only fallback is set to None here;
+    --reference CLI plumbing is Step 4 of the daf-md fallback work.
+    MD-only DAF BAMs work without it.
+
     Uses a sliding window of in-flight futures to overlap I/O and compute.
     Works with unaligned/unindexed BAMs and stdin. Order-preserving.
 
@@ -2340,6 +2366,9 @@ def _process_bam_streaming_pipeline(
         max_inflight = 2 * n_cores
 
     pysam.set_verbosity(0)
+
+    ref_fasta = None    # placeholder; --reference plumbing is Step 4 of the
+                        # daf-md fallback work. MD-only DAF BAMs work without it.
 
     total_reads = 0
     skip_reasons = {
@@ -2463,7 +2492,7 @@ def _process_bam_streaming_pipeline(
                     # Reads with no usable modification data come back from
                     # the worker as result=None and are written through
                     # without footprint tags (handled in _drain_oldest_chunk).
-                    payload = make_apply_payload(read)
+                    payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
                     if payload is None:
                         _buffer_skip(read, 'no_modifications')
                         continue

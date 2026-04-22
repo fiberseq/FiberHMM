@@ -124,7 +124,8 @@ fiberhmm-extract -i recalled.bam --footprint --msp --tf --bigbed
 | Unaligned / unsorted BAM, or reading from stdin | `fiberhmm-call` (streaming mode, no `--region-parallel`) |
 | Only want nucleosome/MSP calls, no TF recall | `fiberhmm-apply` |
 | Already have apply-tagged BAM, want to add TF calls | `fiberhmm-recall-tfs` |
-| DddB/DddA that hasn't been IUPAC-encoded yet | `fiberhmm-daf-encode \| fiberhmm-call` |
+| DddB/DddA raw aligned BAM (no R/Y encoding) | `fiberhmm-call --mode daf` — auto-detects MD tags, no encode step needed (v2.10.0+) |
+| DddB/DddA, want R/Y in stored sequence too | `fiberhmm-daf-encode \| fiberhmm-call` (classic two-pass) |
 
 > **Note:** `fiberhmm-run` was removed in v2.8.0 — it ran apply + recall + fire as separate subprocess stages connected by pipes (slow, per-read BAM serialization at every hop). `fiberhmm-call` fuses those Python stages in-process and is 2–9× faster. If you had scripts using `fiberhmm-run`, replace with `fiberhmm-call [| ft fire]`.
 
@@ -132,14 +133,27 @@ fiberhmm-extract -i recalled.bam --footprint --msp --tf --bigbed
 
 DddA uses distinct models for nucleosomes (`ddda_nuc.json`) and TF recall (`ddda_TF.json`) — `fiberhmm-call --enzyme ddda` handles this automatically. If you want to run them separately (e.g., for QC), use `fiberhmm-apply --enzyme ddda` followed by `fiberhmm-recall-tfs --enzyme ddda`. Without the recall pass, sub-nucleosomal TF/Pol II calls are not emitted.
 
-### If your BAM is missing MD tags (DAF only)
+### DAF-seq input options (v2.10.0+)
+
+`fiberhmm-call --mode daf` auto-detects per read. Priority:
+
+1. **R/Y IUPAC codes in the stored sequence** (from `fiberhmm-daf-encode`) — fast path
+2. **MD tag** on a raw aligned BAM — parsed on the fly, skips the encode step entirely
+3. **`--reference ref.fa`** — fallback when the BAM has neither R/Y nor MD
 
 ```bash
-samtools calmd -b aligned.bam ref.fa | fiberhmm-daf-encode -i - -o - --enzyme dddb -
-fiberhmm-call -i encoded.bam -o recalled.bam --enzyme dddb --region-parallel
+# Raw DAF BAM, MD tags present (produced by minimap2 --MD or samtools calmd)
+fiberhmm-call --mode daf --enzyme dddb --region-parallel \
+    -i aligned.bam -o recalled.bam
+
+# Raw DAF BAM, no MD tags
+fiberhmm-call --mode daf --enzyme dddb --region-parallel \
+    -i aligned.bam -o recalled.bam --reference ref.fa
 ```
 
-Or pass the reference FASTA directly to `fiberhmm-daf-encode --reference ref.fa` (slower but single-pass).
+Output is byte-identical to the classic two-pass `fiberhmm-daf-encode | fiberhmm-call` pipeline (verified on 3,929 real reads, 0 diffs on ns/nl/as/al/nq/aq/MA/AQ tags).
+
+`fiberhmm-daf-encode` remains available and produces the same recalled output if you also want R/Y stamped into the stored sequence for downstream R/Y-aware tools. Fast-fail on startup: if the BAM has none of R/Y, MD, or `--reference`, `fiberhmm-call` errors out in under a second instead of silently skipping every read.
 
 ### Extract to BED12/bigBed
 

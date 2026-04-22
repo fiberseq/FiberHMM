@@ -53,6 +53,12 @@ def parse_args():
                    help='Enzyme preset (hia5/dddb/ddda).')
     p.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
                    help='Platform (required for hia5).')
+    p.add_argument('--reference', default=None,
+                   help='Reference FASTA for --mode daf on raw BAMs that lack '
+                        'both R/Y IUPAC encoding and MD tags. When present, acts '
+                        'as a fallback source for deamination-site detection. '
+                        'Ignored for BAMs that already have R/Y in the sequence '
+                        'or have MD tags.')
 
     # --- Apply params ---
     p.add_argument('--mode', default=None,
@@ -139,6 +145,61 @@ def _resolve_recall_model(args):
     return None  # reuse apply model
 
 
+def _check_daf_inputs(input_bam: str, reference: str = None,
+                       n_sniff: int = 10) -> None:
+    """Sniff the first ~N mapped reads of a DAF-mode input BAM and confirm
+    at least one deamination source is available: R/Y IUPAC in the stored
+    sequence, an MD tag, or a user-supplied ``--reference`` FASTA.
+
+    Exits with an actionable error if none is available -- otherwise
+    every read would be silently skipped and the run would produce an
+    empty output BAM.
+    """
+    import pysam
+
+    # Reference FASTA is sufficient by itself (we can always reconstruct
+    # mismatches from it regardless of MD tag presence).
+    has_ref = reference is not None
+
+    has_ry = False
+    has_md = False
+    checked = 0
+    try:
+        with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+            for read in bam:
+                if read.is_unmapped or read.is_secondary or read.is_supplementary:
+                    continue
+                seq = read.query_sequence
+                if seq and ('R' in seq or 'Y' in seq):
+                    has_ry = True
+                if read.has_tag('MD'):
+                    has_md = True
+                checked += 1
+                if has_ry or has_md or checked >= n_sniff:
+                    break
+    except (ValueError, OSError):
+        # Let downstream error handling report a clear message about the BAM.
+        return
+
+    if has_ry or has_md or has_ref:
+        return
+
+    print(
+        "error: --mode daf needs deamination calls, and none of the supported\n"
+        f"  sources were found in the first {checked} mapped reads of {input_bam}:\n"
+        "    - R/Y IUPAC codes in the stored query sequence\n"
+        "      (produced by fiberhmm-daf-encode), or\n"
+        "    - MD tags on aligned reads\n"
+        "      (set by 'minimap2 --MD' or 'samtools calmd'), or\n"
+        "    - a reference FASTA via --reference ref.fa\n"
+        "\n"
+        "  One of these is required for fiberhmm-call to locate C->T / G->A\n"
+        "  deamination sites. Without it every read would be silently skipped.\n",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
 def main():
     args = parse_args()
     stdout_mode = (args.output == '-')
@@ -176,6 +237,13 @@ def main():
 
     also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
 
+    # Fast-fail sniff for --mode daf: the DAF path needs one of R/Y in the
+    # stored sequence, MD tags, or --reference. If none are available,
+    # every read will be silently skipped -- error out in under a second
+    # with an actionable message instead.
+    if mode == 'daf' and args.input != '-':
+        _check_daf_inputs(args.input, args.reference)
+
     if args.region_parallel:
         if args.input == '-' or args.output == '-':
             print("error: --region-parallel requires file I/O "
@@ -211,6 +279,7 @@ def main():
             chroms=chroms_set,
             io_threads=args.io_threads,
             primary_only=args.primary,
+            ref_fasta_path=args.reference,
         )
     else:
         n_reads, n_fp = _process_bam_streaming_pipeline_fused(
@@ -241,6 +310,7 @@ def main():
             io_threads=args.io_threads,
             process_unmapped=args.process_unmapped,
             primary_only=args.primary,
+            ref_fasta_path=args.reference,
         )
 
     if not stdout_mode and not args.region_parallel:
