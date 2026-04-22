@@ -686,7 +686,10 @@ def _extract_deam(read, bed_out, query_to_ref=None,
         if seq:
             try:
                 pairs = read.get_aligned_pairs(with_seq=True)
-            except (ValueError, AttributeError):
+            except Exception:
+                # pysam raises AssertionError (not ValueError) on malformed
+                # MD/CIGAR mismatches, plus ValueError on bad MD strings. Skip
+                # the read entirely instead of crashing the worker.
                 pairs = None
             if pairs:
                 for qpos, rpos, ref_base in pairs:

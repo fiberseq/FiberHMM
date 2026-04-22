@@ -525,6 +525,33 @@ def test_deam_priority3_md_mismatch_extracts_c_to_t_and_g_to_a():
     assert flavors == [1, 0]
 
 
+def test_deam_priority3_skips_read_on_pysam_assertion_error():
+    """pysam raises AssertionError (not ValueError) when the MD tag length
+    disagrees with the CIGAR — seen in the wild on malformed BAMs. The
+    path-3 walker must swallow it and skip the read, not crash the worker.
+    Regression for Christy LaFlamme's report:
+      AssertionError: Invalid MD tag: MD length 37729 mismatch with CIGAR
+      length 43799 and 9742 insertions
+    """
+    class _ReadWithBrokenMD(_FakeReadWithMD):
+        def get_aligned_pairs(self, with_seq=False):
+            if with_seq:
+                raise AssertionError(
+                    "Invalid MD tag: MD length 37729 mismatch with "
+                    "CIGAR length 43799 and 9742 insertions"
+                )
+            return []
+
+    read = _ReadWithBrokenMD(seq='ACGT' * 10, pairs=[], has_md=True,
+                              ref_start=1_000)
+    buf = io.StringIO()
+    # Must not raise; just return 0 (read skipped).
+    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
+                      block_scores=True)
+    assert n == 0
+    assert buf.getvalue() == ''
+
+
 def test_deam_priority3_skipped_when_no_md_tag():
     read = _FakeReadWithMD(seq='ATCG', pairs=[], has_md=False, ref_start=0)
     buf = io.StringIO()
