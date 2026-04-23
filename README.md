@@ -238,7 +238,9 @@ than required.
 
 ### fiberhmm-daf-encode
 
-Preprocess plain aligned DAF-seq BAMs for FiberHMM. Identifies C→T and G→A deamination mismatches via the MD tag, encodes them as IUPAC Y/R in the query sequence, and adds `st:Z` strand tags.
+> **Optional in v2.10.0+.** `fiberhmm-call --mode daf` now reads MD tags directly, so most users don't need to run this step. Use `fiberhmm-daf-encode` only if you want R/Y IUPAC codes written into the stored sequence for downstream R/Y-aware tools, or if your BAM has neither MD tags nor a reference FASTA.
+
+Preprocess plain aligned DAF-seq BAMs by identifying C→T and G→A deamination mismatches via the MD tag, encoding them as IUPAC Y/R in the query sequence, and adding an `st:Z` strand tag.
 
 ```bash
 fiberhmm-daf-encode -i aligned.bam -o encoded.bam
@@ -745,25 +747,28 @@ live only in `MA`/`AQ` -- by design we do not invent non-spec
 nucleosome-track tag names. Use `--no-legacy-tags` to skip the legacy
 refresh and emit only `MA`/`AQ`.
 
-For DAF-seq, `fiberhmm-daf-encode` also adds:
+For DAF-seq, if you run `fiberhmm-daf-encode` (optional in v2.10.0+), it also adds:
 
 | Tag | Type | Description |
 |-----|------|-------------|
 | `st` | Z | Conversion strand: `CT` (+ strand, C→T) or `GA` (- strand, G→A) |
+
+The `--mode daf` one-pass path on `fiberhmm-call` does **not** write `st:Z` (it derives strand internally from MD and doesn't modify the stored sequence).
 
 ## Streaming Pipelines
 
 All FiberHMM tools support `-` for stdin/stdout, enabling Unix-style piping with no intermediate files:
 
 ```bash
-# DAF-seq: align → encode → call footprints
+# DAF-seq: align → call footprints in one pass (v2.10.0+; --mode daf
+# auto-detects MD tags, no separate encode step)
 minimap2 --MD -a ref.fa reads.fq | samtools view -b | \
-    fiberhmm-daf-encode -i - -o - | \
-    fiberhmm-apply --mode daf -i - --enzyme dddb -o output/
+    fiberhmm-call --mode daf --enzyme dddb -i - -o - | \
+    ft fire - final.bam
 
 # Fiber-seq: call footprints from stdin
 samtools view -b -h input.bam chr1 | \
-    fiberhmm-apply -i - --enzyme hia5 --seq pacbio -o output/
+    fiberhmm-call -i - --enzyme hia5 --seq pacbio -o output.bam
 ```
 
 When writing to stdout (`-o -`), the output is unsorted BAM. Sort and index downstream if needed:
