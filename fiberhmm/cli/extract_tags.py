@@ -937,6 +937,7 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
     pass runs.
     """
     import re
+    from fiberhmm.daf.encoder import md_matches_cigar
     counts = {
         'reads_scanned': 0,
         # Footprint / MSP / TF tags
@@ -946,6 +947,11 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
         'mm_subtypes': set(),
         # DAF-specific
         'has_ry_in_seq': 0, 'has_md_only': 0,
+        # MD/CIGAR consistency: reads where the MD tag disagrees with
+        # the CIGAR's reference-consuming op total (common on stale
+        # consensus BAMs). Affected reads are silently skipped for
+        # --deam path-3 extraction.
+        'md_bad_cigar': 0,
     }
     mm_re = re.compile(r'([ACGTUN])([+-])([a-z0-9]+|\d+)', re.IGNORECASE)
 
@@ -981,6 +987,9 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
                 seq = read.query_sequence
                 if seq and ('R' in seq or 'Y' in seq):
                     counts['has_ry_in_seq'] += 1
+
+                if read.has_tag('MD') and not md_matches_cigar(read):
+                    counts['md_bad_cigar'] += 1
 
                 has_md = read.has_tag('MD')
                 has_mod_source = mm_present or (seq and ('R' in seq or 'Y' in seq))
@@ -1059,6 +1068,28 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
         print(f"  will populate: {', '.join(expected)}")
     if empty:
         print(f"  will be empty: {', '.join(empty)}")
+
+    # Warn about stale MD tags (common on consensus BAMs). Only flag when
+    # --deam actually depends on MD (i.e. no MM/ML u code and no R/Y in
+    # sequence) AND we saw bad MD in the sniff. The reads themselves are
+    # fine; this is just a stale annotation that silently drops --deam
+    # extraction on affected reads.
+    md_bad = diag.get('md_bad_cigar', 0)
+    if md_bad and 'deam' in extract_types and not any(
+        p for p in (predicted.get('deam'), )
+        if p and ('MM/ML' in p or 'R/Y' in p)
+    ):
+        n = diag.get('reads_scanned', 0)
+        print(
+            f"\n  NOTE: {md_bad}/{n} of the sniffed reads have MD tags that\n"
+            f"  disagree with their CIGAR (typical of consensus BAMs where\n"
+            f"  MD was inherited stale after CIGAR was recomputed).\n"
+            f"  These reads will be SKIPPED for --deam only; other tracks\n"
+            f"  extract normally. The reads themselves are not corrupt --\n"
+            f"  the CIGAR is still correct, only the MD annotation is stale.\n"
+            f"  To recover --deam calls for those reads, regenerate MD with:\n"
+            f"    samtools calmd -b aligned.bam ref.fa > fixed.bam"
+        )
     print()
 
 

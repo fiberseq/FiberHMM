@@ -161,8 +161,12 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
     # mismatches from it regardless of MD tag presence).
     has_ref = reference is not None
 
+    from fiberhmm.daf.encoder import md_matches_cigar
+
     has_ry = False
     has_md = False
+    md_bad = 0
+    md_total = 0
     checked = 0
     try:
         with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
@@ -174,14 +178,31 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
                     has_ry = True
                 if read.has_tag('MD'):
                     has_md = True
+                    md_total += 1
+                    if not md_matches_cigar(read):
+                        md_bad += 1
                 checked += 1
-                if has_ry or has_md or checked >= n_sniff:
+                if checked >= n_sniff:
                     break
     except (ValueError, OSError):
         # Let downstream error handling report a clear message about the BAM.
         return
 
     if has_ry or has_md or has_ref:
+        # Warn about stale MD only when we'll actually be relying on it
+        # (no R/Y fast path available for these reads) AND some were bad.
+        if md_bad and not has_ry and not has_ref:
+            print(
+                f"  NOTE: {md_bad}/{md_total} of the sniffed reads with MD tags\n"
+                f"  have MD/CIGAR length mismatches (typical of consensus BAMs\n"
+                f"  where MD is stale after CIGAR was recomputed). Those reads\n"
+                f"  will be skipped in DAF mode. The reads themselves are fine;\n"
+                f"  only the MD annotation is stale. To recover calls on those\n"
+                f"  reads, regenerate MD with:\n"
+                f"    samtools calmd -b aligned.bam ref.fa > fixed.bam\n"
+                f"  or pass --reference ref.fa to fiberhmm-call.",
+                file=sys.stderr,
+            )
         return
 
     print(
