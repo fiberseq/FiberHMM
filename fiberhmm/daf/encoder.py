@@ -16,6 +16,81 @@ from tqdm import tqdm
 from fiberhmm.inference.bam_output import _sort_and_index_bam
 
 
+# CIGAR op codes (from the BAM spec) that consume reference:
+#   M=0, D=2, N=3, =7, X=8. Of these, MD describes M/=/X/D only
+#   (N = skipped reference, no MD coverage), so we exclude N when
+#   comparing against MD.
+_CIGAR_REF_CONSUMING_FOR_MD = {0, 2, 7, 8}
+
+
+def _md_tag_ref_length(md_string: str) -> int:
+    """Return the reference length encoded by an MD tag.
+
+    MD is a sequence of: runs of digits (ref positions matched), single-base
+    mismatches (one ref base consumed each), and ``^<SEQ>`` deletions
+    (len(<SEQ>) ref bases consumed). See SAM spec section 1.4.11.
+    """
+    n = 0
+    i = 0
+    L = len(md_string)
+    while i < L:
+        c = md_string[i]
+        if c.isdigit():
+            j = i
+            while j < L and md_string[j].isdigit():
+                j += 1
+            n += int(md_string[i:j])
+            i = j
+        elif c == '^':
+            # ^<seq> deletion; each letter is one ref base consumed.
+            j = i + 1
+            while j < L and md_string[j].isalpha():
+                j += 1
+            n += j - (i + 1)
+            i = j
+        elif c.isalpha():
+            # Single-base mismatch, one ref base consumed.
+            n += 1
+            i += 1
+        else:
+            # Skip any stray punctuation (the spec doesn't allow it but
+            # be permissive on read-side).
+            i += 1
+    return n
+
+
+def md_matches_cigar(read) -> bool:
+    """Cheap pre-validation: does the MD tag's encoded reference length
+    match the CIGAR's reference-consuming operations?
+
+    Returns True if the read has no MD tag (caller should handle that
+    case separately), True if the lengths match, False if they disagree.
+
+    Motivation: ``pysam.AlignedSegment.get_aligned_pairs(with_seq=True)``
+    raises AssertionError on mismatch AND, in at least some pysam
+    versions, corrupts internal malloc state before the exception
+    propagates — which then manifests as ``malloc(): invalid size``
+    somewhere later in the worker. Skipping the call on obviously-bad
+    MD avoids triggering the crash path at all.
+    """
+    try:
+        md = read.get_tag('MD') if read.has_tag('MD') else None
+    except Exception:
+        return True
+    if md is None:
+        return True
+    try:
+        md_len = _md_tag_ref_length(md)
+    except Exception:
+        return False
+    cigar = read.cigartuples
+    if cigar is None:
+        return True
+    cigar_ref_len = sum(length for op, length in cigar
+                        if op in _CIGAR_REF_CONSUMING_FOR_MD)
+    return md_len == cigar_ref_len
+
+
 # ---------------------------------------------------------------------------
 # Per-read encoding
 # ---------------------------------------------------------------------------
@@ -58,14 +133,23 @@ def get_daf_positions(read, force_strand=None, ref_fasta=None):
     if seq is None:
         return None
 
-    # Get aligned pairs with reference bases
-    try:
-        pairs = read.get_aligned_pairs(with_seq=True)
-    except Exception:
-        # MD tag missing and no way to get ref bases without it
-        if ref_fasta is None:
-            return None
-        pairs = None
+    # Get aligned pairs with reference bases.
+    # Pre-validate MD vs CIGAR to avoid pysam's AssertionError path on
+    # malformed BAMs — that path can corrupt malloc state in some pysam
+    # versions, crashing the worker later with "malloc(): invalid size".
+    pairs = None
+    if md_matches_cigar(read):
+        try:
+            pairs = read.get_aligned_pairs(with_seq=True)
+        except Exception:
+            # MD tag missing and no way to get ref bases without it.
+            if ref_fasta is None:
+                return None
+            pairs = None
+    elif ref_fasta is None:
+        # MD disagrees with CIGAR and no reference available — can't
+        # safely get ref bases. Skip this read.
+        return None
 
     # Fallback: build pairs from reference FASTA when MD tag is absent
     if pairs is None or all(p[2] is None for p in pairs if p[0] is not None and p[1] is not None):

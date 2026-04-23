@@ -525,6 +525,87 @@ def test_deam_priority3_md_mismatch_extracts_c_to_t_and_g_to_a():
     assert flavors == [1, 0]
 
 
+def test_md_tag_ref_length_parser():
+    """Parser should correctly sum matches, mismatches, and deletions."""
+    from fiberhmm.daf.encoder import _md_tag_ref_length
+    # 10 matches
+    assert _md_tag_ref_length("10") == 10
+    # mismatch in the middle: 3 match + C + 2 match = 6 ref bases
+    assert _md_tag_ref_length("3C2") == 6
+    # deletion: 5 match + ^ACG (3-base deletion) + 2 match = 10 ref bases
+    assert _md_tag_ref_length("5^ACG2") == 10
+    # combined
+    assert _md_tag_ref_length("5A3^T10G2") == 5 + 1 + 3 + 1 + 10 + 1 + 2
+
+
+def test_md_matches_cigar_catches_mismatch():
+    """Regression for Christy LaFlamme's malloc crash: pre-validation
+    should return False for the BAM she reported, which had an MD tag
+    whose ref length (37729) disagreed with the CIGAR's
+    reference-consuming op total (43799 - 9742 insertions = 34057).
+    """
+    from fiberhmm.daf.encoder import md_matches_cigar
+
+    class _FakeReadMD:
+        def __init__(self, md, cigartuples):
+            self._md = md
+            self.cigartuples = cigartuples
+        def has_tag(self, t): return t == 'MD'
+        def get_tag(self, t):
+            if t == 'MD': return self._md
+            raise KeyError(t)
+
+    # Matching: CIGAR ref_len = 10 (10M), MD = 10 matches.
+    r_ok = _FakeReadMD("10", [(0, 10)])
+    assert md_matches_cigar(r_ok) is True
+
+    # Mismatching: CIGAR says 20 ref bases, MD only accounts for 10.
+    r_bad = _FakeReadMD("10", [(0, 20)])
+    assert md_matches_cigar(r_bad) is False
+
+    # No MD tag at all -> treat as "nothing to validate", caller falls back.
+    class _NoMD:
+        cigartuples = [(0, 10)]
+        def has_tag(self, t): return False
+        def get_tag(self, t): raise KeyError(t)
+    assert md_matches_cigar(_NoMD()) is True
+
+
+def test_deam_priority3_skips_malformed_md_without_calling_pysam():
+    """Regression for Christy's malloc crash: when MD length disagrees
+    with CIGAR, _extract_deam must skip path-3 without calling
+    get_aligned_pairs(with_seq=True) at all -- that call corrupts
+    pysam's internal state and crashes the worker later.
+    """
+    class _ReadBadMD(_FakeReadWithMD):
+        # MD says 5 ref bases; CIGAR says 100. Real mismatch.
+        cigartuples = [(0, 100)]   # 100M
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self._bad_md = "5"
+            self._get_aligned_pairs_called = False
+        def has_tag(self, t):
+            return t == 'MD' or super().has_tag(t)
+        def get_tag(self, t):
+            if t == 'MD':
+                return self._bad_md
+            return super().get_tag(t)
+        def get_aligned_pairs(self, with_seq=False):
+            # If this fires, pre-validation failed us.
+            self._get_aligned_pairs_called = True
+            raise AssertionError("should not be reached on malformed MD")
+
+    read = _ReadBadMD(seq='A' * 100, pairs=[], has_md=True, ref_start=0)
+    buf = io.StringIO()
+    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
+                      block_scores=True)
+    assert n == 0
+    assert buf.getvalue() == ''
+    assert read._get_aligned_pairs_called is False, (
+        "pre-validation should have skipped the call; it fired -> bug"
+    )
+
+
 def test_deam_priority3_skips_read_on_pysam_assertion_error():
     """pysam raises AssertionError (not ValueError) when the MD tag length
     disagrees with the CIGAR — seen in the wild on malformed BAMs. The

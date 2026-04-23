@@ -684,13 +684,20 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     if not positions_list and read.has_tag('MD'):
         seq = read.query_sequence
         if seq:
-            try:
-                pairs = read.get_aligned_pairs(with_seq=True)
-            except Exception:
-                # pysam raises AssertionError (not ValueError) on malformed
-                # MD/CIGAR mismatches, plus ValueError on bad MD strings. Skip
-                # the read entirely instead of crashing the worker.
-                pairs = None
+            # Pre-validate MD vs CIGAR so we never trigger pysam's
+            # AssertionError path -- that path corrupts malloc state in
+            # some pysam versions and crashes the worker later with
+            # "malloc(): invalid size". Cheap check in pure Python.
+            from fiberhmm.daf.encoder import md_matches_cigar
+            pairs = None
+            if md_matches_cigar(read):
+                try:
+                    pairs = read.get_aligned_pairs(with_seq=True)
+                except Exception:
+                    # Belt-and-suspenders: even with matching lengths pysam
+                    # can raise on malformed inner MD (e.g. negative skips).
+                    # Skip the read rather than risk corrupted state.
+                    pairs = None
             if pairs:
                 for qpos, rpos, ref_base in pairs:
                     if qpos is None or rpos is None or ref_base is None:
