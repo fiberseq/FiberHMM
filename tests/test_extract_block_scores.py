@@ -405,39 +405,60 @@ class _FakeReadWithModBases(_FakeReadWithSeq):
         self.modified_bases = modified_bases
 
 
+# v2.10.5 note: the deam priority-1 MM/ML path now uses our safe MM/ML
+# parser (parse_mm_ml_per_mod_type) instead of pysam.modified_bases, which
+# segfaults on unusual MM/ML layouts (surjected fiber-seq, etc.). Tests
+# below construct real MM/ML tag strings instead of fake modified_bases
+# dicts. The ChEBI 55797 numeric mod-code test was intentionally removed
+# because the safe parser is single-char only; users needing numeric
+# encodings should run through the R/Y or MD fallbacks.
+
+def _read_with_mm_ml(seq, mm_tag, ml_bytes, ref_start=0, is_reverse=False):
+    """Build a _FakeReadWithSeq that exposes real MM/ML tags."""
+    read = _FakeReadWithSeq(seq=seq, ref_start=ref_start, is_reverse=is_reverse)
+    read.set_tag('MM', mm_tag, value_type='Z')
+    # ML is a bytes-like array of per-call probability bytes.
+    import array as pyarr
+    read.set_tag('ML', pyarr.array('B', ml_bytes))
+    return read
+
+
 def test_deam_priority1_mm_ml_u_code_wins_over_ry():
     """If MM/ML carries dU 'u' calls, they must win over R/Y in the
     sequence -- matches FiberBrowser's first-non-empty-source rule."""
-    # Sequence also has R/Y at q=10,20; MM/ML 'u' at q=100,200.
+    # Sequence has R/Y at q=10,20 (should be ignored), and C's at q=100,200
+    # which MM/ML marks as dU.
     seq = list('A' * 300)
     seq[10] = 'R'
     seq[20] = 'Y'
-    read = _FakeReadWithModBases(
+    seq[100] = 'C'
+    seq[200] = 'C'
+    # MM: "C+u,0,0;" = 0 skip to first C (q=100), then 0 skip to next (q=200)
+    # ML: two probability bytes (200, 150).
+    read = _read_with_mm_ml(
         seq=''.join(seq),
-        modified_bases={
-            ('C', 0, 'u'): [(100, 200), (200, 150)],
-        },
+        mm_tag='C+u,0,0;',
+        ml_bytes=[200, 150],
         ref_start=5000,
     )
 
     buf = io.StringIO()
     n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
                       block_scores=True)
-    # MM/ML path picks up 2 positions; R/Y in sequence ignored.
     assert n == 2
     cols = buf.getvalue().rstrip('\n').split('\t')
     assert int(cols[9]) == 2
-    # Both were canonical base C -> flavor 1 (Y / CT-dea).
     assert [int(v) for v in cols[12].split(',')] == [1, 1]
 
 
 def test_deam_priority1_g_base_is_flavor_0():
     """Canonical base G -> flavor 0 (R / GA-dea) per FiberBrowser."""
-    read = _FakeReadWithModBases(
-        seq='A' * 100,
-        modified_bases={
-            ('G', 0, 'u'): [(50, 200)],
-        },
+    seq = list('A' * 100)
+    seq[50] = 'G'
+    read = _read_with_mm_ml(
+        seq=''.join(seq),
+        mm_tag='G+u,0;',
+        ml_bytes=[200],
         ref_start=1000,
     )
     buf = io.StringIO()
@@ -448,30 +469,17 @@ def test_deam_priority1_g_base_is_flavor_0():
     assert [int(v) for v in cols[12].split(',')] == [0]
 
 
-def test_deam_priority1_accepts_chebi_55797_numeric_code():
-    """Numeric ChEBI 55797 is the alternative encoding for dU in MM/ML."""
-    read = _FakeReadWithModBases(
-        seq='A' * 100,
-        modified_bases={
-            ('C', 0, 55797): [(30, 180)],
-        },
-        ref_start=2000,
-    )
-    buf = io.StringIO()
-    n = _extract_deam(read, buf, query_to_ref=_identity_map(read),
-                      block_scores=True)
-    assert n == 1
-    cols = buf.getvalue().rstrip('\n').split('\t')
-    assert [int(v) for v in cols[12].split(',')] == [1]
-
-
 def test_deam_priority1_respects_prob_threshold():
     """prob_threshold filters MM/ML dU calls below the cutoff."""
-    read = _FakeReadWithModBases(
-        seq='A' * 100,
-        modified_bases={
-            ('C', 0, 'u'): [(10, 100), (20, 200)],  # only the second passes at 125
-        },
+    # Two C's in the sequence at q=10 and q=20, with ML = [100, 200].
+    # At threshold 125, only the q=20 entry should survive.
+    seq = list('A' * 100)
+    seq[10] = 'C'
+    seq[20] = 'C'
+    read = _read_with_mm_ml(
+        seq=''.join(seq),
+        mm_tag='C+u,0,0;',
+        ml_bytes=[100, 200],
         ref_start=100,
     )
     buf = io.StringIO()

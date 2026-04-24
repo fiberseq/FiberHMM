@@ -222,8 +222,16 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
         return (temp_bed_paths, n_reads, n_features)
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        import traceback, sys
+        # Surface the actual traceback to stderr (multiprocessing can otherwise
+        # swallow worker-side errors — was invisible during the v2.10.4 debug).
+        sys.stderr.write(
+            f"\n=== WORKER EXCEPTION ({locals().get('chrom','?')}:"
+            f"{locals().get('start','?')}-{locals().get('end','?')}, "
+            f"n_reads={locals().get('n_reads',0)}): {type(e).__name__}: {e}\n"
+            f"{traceback.format_exc()}\n"
+        )
+        sys.stderr.flush()
         return (temp_bed_paths, 0, {t: 0 for t in (params or {}).get('extract_types', [])})
 
 
@@ -468,6 +476,58 @@ def _extract_msps(read, bed_out, with_scores: bool,
     return len(blocks)
 
 
+def _parse_mod_positions_safe(read, target_mod_codes):
+    """Safe replacement for pysam's ``read.modified_bases``.
+
+    pysam's ``modified_bases`` segfaults on certain reads (e.g. vg-surjected
+    fiber-seq reads with unusual MM/ML layouts) -- see Christy LaFlamme's
+    v2.10.4 crash report. We already have a bulletproof numpy parser that
+    v2.9.0 adopted for apply/call, so use the same here.
+
+    Returns a list of (query_position, ml_probability) tuples across all
+    mod types whose single-letter code is in ``target_mod_codes``
+    (e.g. ``{'a'}`` for m6A, ``{'m'}`` for 5mC, ``{'u'}`` for dU).
+    Empty list on any failure (missing tags, parse error, etc.).
+    """
+    from fiberhmm.core.bam_reader import parse_mm_ml_per_mod_type
+    try:
+        mm_tag = read.get_tag('MM') if read.has_tag('MM') else (
+            read.get_tag('Mm') if read.has_tag('Mm') else '')
+    except (KeyError, ValueError):
+        mm_tag = ''
+    try:
+        ml_raw = read.get_tag('ML') if read.has_tag('ML') else (
+            read.get_tag('Ml') if read.has_tag('Ml') else None)
+    except (KeyError, ValueError):
+        ml_raw = None
+    if not mm_tag or ml_raw is None:
+        return []
+    try:
+        if len(ml_raw) == 0:
+            return []
+    except TypeError:
+        pass
+    try:
+        ml_bytes = bytes(ml_raw)
+    except TypeError:
+        ml_bytes = ml_raw
+    seq = read.query_sequence
+    if seq is None:
+        return []
+    try:
+        per_mod = parse_mm_ml_per_mod_type(mm_tag, ml_bytes, seq, read.is_reverse)
+    except Exception:
+        return []
+    out = []
+    for (base, mod_code), (pos_arr, qual_arr) in per_mod.items():
+        if mod_code not in target_mod_codes:
+            continue
+        # Convert to plain list of tuples to match the pysam.modified_bases
+        # call sites below.
+        out.extend(zip(pos_arr.tolist(), qual_arr.tolist()))
+    return out
+
+
 def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None,
                  block_scores: bool = False) -> int:
     """Extract m6A positions from MM/ML tags as BED12 (one line per read).
@@ -475,16 +535,8 @@ def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None,
     When ``block_scores=True``, appends a 13th column of comma-separated
     per-position ML values (int[blockCount] blockMl).
     """
-    try:
-        if read.has_tag('ML') and len(read.get_tag('ML')) == 0:
-            return 0
-    except Exception:
-        pass
-    try:
-        mod_bases = read.modified_bases
-        if not mod_bases:
-            return 0
-    except (KeyError, TypeError):
+    positions = _parse_mod_positions_safe(read, {'a'})
+    if not positions:
         return 0
 
     ref_name = read.reference_name
@@ -495,18 +547,15 @@ def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None,
     n = len(aligned_pairs)
 
     positions_list = []  # list of (ref_pos, score)
-    for (base, strand_code, mod_type), positions in mod_bases.items():
-        if mod_type != 'a':
+    for query_pos, prob in positions:
+        if prob < prob_threshold:
             continue
-        for query_pos, prob in positions:
-            if prob < prob_threshold:
-                continue
-            if query_pos < 0 or query_pos >= n:
-                continue
-            ref_pos = int(aligned_pairs[query_pos])
-            if ref_pos < 0:
-                continue
-            positions_list.append((ref_pos, int(prob)))
+        if query_pos < 0 or query_pos >= n:
+            continue
+        ref_pos = int(aligned_pairs[query_pos])
+        if ref_pos < 0:
+            continue
+        positions_list.append((ref_pos, int(prob)))
 
     if not positions_list:
         return 0
@@ -538,16 +587,8 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
     When ``block_scores=True``, appends a 13th column of comma-separated
     per-position ML values (int[blockCount] blockMl).
     """
-    try:
-        if read.has_tag('ML') and len(read.get_tag('ML')) == 0:
-            return 0
-    except Exception:
-        pass
-    try:
-        mod_bases = read.modified_bases
-        if not mod_bases:
-            return 0
-    except (KeyError, TypeError):
+    positions = _parse_mod_positions_safe(read, {'m'})
+    if not positions:
         return 0
 
     ref_name = read.reference_name
@@ -558,18 +599,15 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
     n = len(aligned_pairs)
 
     positions_list = []
-    for (base, strand_code, mod_type), positions in mod_bases.items():
-        if mod_type != 'm':
+    for query_pos, prob in positions:
+        if prob < prob_threshold:
             continue
-        for query_pos, prob in positions:
-            if prob < prob_threshold:
-                continue
-            if query_pos < 0 or query_pos >= n:
-                continue
-            ref_pos = int(aligned_pairs[query_pos])
-            if ref_pos < 0:
-                continue
-            positions_list.append((ref_pos, int(prob)))
+        if query_pos < 0 or query_pos >= n:
+            continue
+        ref_pos = int(aligned_pairs[query_pos])
+        if ref_pos < 0:
+            continue
+        positions_list.append((ref_pos, int(prob)))
 
     if not positions_list:
         return 0
@@ -624,21 +662,38 @@ def _extract_deam(read, bed_out, query_to_ref=None,
 
     positions_list = []  # (ref_pos, code) where code: 0=R, 1=Y
 
-    # --- Priority 1: MM/ML-native 'u' or ChEBI 55797 --------------------
+    # --- Priority 1: MM/ML-native 'u' dU calls --------------------------
+    # Uses our safe MM/ML parser rather than pysam's modified_bases (which
+    # can segfault on unusual MM/ML layouts). Note: parse_mm_ml_per_mod_type
+    # is single-char-code-only, so the rare ChEBI 55797 numeric encoding
+    # isn't detected here -- users with modkit-style numeric codes should
+    # run `samtools calmd` + standard encode or rely on R/Y fallback.
+    from fiberhmm.core.bam_reader import parse_mm_ml_per_mod_type
     try:
-        if read.has_tag('ML') and len(read.get_tag('ML')) == 0:
-            mod_bases = {}
-        else:
-            mod_bases = read.modified_bases or {}
-    except (KeyError, TypeError, Exception):
-        mod_bases = {}
+        mm_tag = read.get_tag('MM') if read.has_tag('MM') else (
+            read.get_tag('Mm') if read.has_tag('Mm') else '')
+    except (KeyError, ValueError):
+        mm_tag = ''
+    try:
+        ml_raw = read.get_tag('ML') if read.has_tag('ML') else (
+            read.get_tag('Ml') if read.has_tag('Ml') else None)
+    except (KeyError, ValueError):
+        ml_raw = None
+    per_mod = {}
+    if mm_tag and ml_raw is not None:
+        try:
+            if len(ml_raw) > 0:
+                ml_bytes = bytes(ml_raw) if not isinstance(ml_raw, (bytes, bytearray, memoryview)) else ml_raw
+                seq = read.query_sequence
+                if seq is not None:
+                    per_mod = parse_mm_ml_per_mod_type(mm_tag, ml_bytes, seq, read.is_reverse)
+        except Exception:
+            per_mod = {}
 
-    for (base, _strand_code, mod_type), positions in mod_bases.items():
-        # Single-letter 'u' (SAM spec) OR numeric 55797 (ChEBI for dU).
-        if mod_type != 'u' and mod_type != 55797:
+    for (base, mod_code), (pos_arr, qual_arr) in per_mod.items():
+        if mod_code != 'u':
             continue
-        # Flavor from the canonical base: C->U = 1 (Y/CT-dea),
-        # G->U = 0 (R/GA-dea).  pysam uppercases; be defensive anyway.
+        # Flavor: C->U = 1 (Y/CT-dea), G->U = 0 (R/GA-dea).
         b = base.upper() if isinstance(base, str) else chr(base).upper()
         if b == 'C':
             flavor = 1
@@ -646,7 +701,7 @@ def _extract_deam(read, bed_out, query_to_ref=None,
             flavor = 0
         else:
             continue
-        for query_pos, prob in positions:
+        for query_pos, prob in zip(pos_arr.tolist(), qual_arr.tolist()):
             if prob < prob_threshold:
                 continue
             if query_pos < 0 or query_pos >= n:
