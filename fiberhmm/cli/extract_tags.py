@@ -927,6 +927,29 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
                 print(f"  Warning: Could not remove temp file {sizes_file}: {e}")
 
 
+def _looks_like_fiber_seq(diag: Dict[str, object]) -> bool:
+    """Return True when the BAM sniff looks like a fiber-seq BAM and
+    therefore has no deamination signal to extract (Hia5 is a
+    methyltransferase). Used to auto-skip --deam in --all mode.
+
+    Fiber-seq signature: MM/ML carries m6A (``A+a`` / ``T-a``) or 5mC
+    (``C+m``) subtypes, AND no dU code (``+u`` / ``+55797``), AND no
+    R/Y IUPAC in the sequence, AND no ``st`` strand tag.
+    """
+    subs = diag.get('mm_subtypes') or []
+    # Normalize subtypes: strip '.' / '?' mode suffixes that some
+    # tools append (SAM 1.7+ spec). We only care about the base/mod letters.
+    cores = set()
+    for s in subs:
+        cores.add(s.rstrip('.?').upper())
+    has_m6a = any(c in ('A+A', 'T-A') for c in cores)
+    has_m5c = any(c in ('C+M', 'C-M') for c in cores)
+    has_u_code = any(('+U' in c) or ('+55797' in c) for c in cores)
+    has_ry = bool(diag.get('has_ry_in_seq'))
+    # Note: `st` tag not currently tracked in diag; treated as absent.
+    return (has_m6a or has_m5c) and not has_u_code and not has_ry
+
+
 def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
     """Sniff the first N mapped reads and report which sources each
     extract type can work from. Reports per-source presence counts
@@ -1229,6 +1252,23 @@ Examples:
 
     # Quick tag sniff so the user knows which tracks will populate.
     diag = diagnose_bam_tags(args.input, n_reads=20)
+
+    # Auto-skip --deam on fiber-seq BAMs (m6A/5mC tags, no deaminase signature).
+    # Hia5/m6A fiber-seq has no deaminations to extract, and on surjected or
+    # otherwise MD-weird BAMs the path-3 MD walker can segfault the worker
+    # (pysam AssertionError → heap corruption → lost m6a/m5c writes). If the
+    # user explicitly passed --deam we honor their intent; if --deam was
+    # swept in by --all / default we drop it here.
+    if ('deam' in extract_types and not args.deam
+            and _looks_like_fiber_seq(diag)):
+        extract_types.remove('deam')
+        print(
+            "Auto-skipping --deam: BAM looks like fiber-seq (MM/ML has "
+            "m6A/5mC subtypes, no dU code, no R/Y). Hia5 is a methyltransferase, "
+            "not a deaminase -- no deamination calls to extract. Pass --deam "
+            "explicitly to override."
+        )
+
     _print_tag_diagnostic(diag, extract_types)
 
     # Single region-parallel pass for ALL requested types.  Each worker

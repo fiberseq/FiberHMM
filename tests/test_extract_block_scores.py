@@ -525,6 +525,62 @@ def test_deam_priority3_md_mismatch_extracts_c_to_t_and_g_to_a():
     assert flavors == [1, 0]
 
 
+def test_looks_like_fiber_seq_detects_hia5_bams():
+    """Regression for Christy LaFlamme's crash on surjected fiber-seq
+    CRAMs: --deam should auto-skip on fiber-seq BAMs in --all mode to
+    avoid triggering the path-3 MD walker (which can segfault workers
+    on malformed MD from vg surject and take m6a/m5c writes with it).
+    """
+    from fiberhmm.cli.extract_tags import _looks_like_fiber_seq
+
+    # Classic PacBio fiber-seq CRAM: A+a + C+m, no u code, no R/Y.
+    fiber_diag = {
+        'mm_subtypes': ['A+a', 'C+m', 'T-a'],
+        'has_ry_in_seq': 0,
+    }
+    assert _looks_like_fiber_seq(fiber_diag) is True
+
+    # SAM 1.7 suffixes on subtypes should still be recognized.
+    fiber_diag_17 = {
+        'mm_subtypes': ['A+a.', 'C+m?', 'T-a.'],
+        'has_ry_in_seq': 0,
+    }
+    assert _looks_like_fiber_seq(fiber_diag_17) is True
+
+    # DAF with IUPAC encoding -> NOT fiber-seq (run --deam normally).
+    daf_iupac = {
+        'mm_subtypes': [],
+        'has_ry_in_seq': 50,
+    }
+    assert _looks_like_fiber_seq(daf_iupac) is False
+
+    # DAF with modkit-style u code -> NOT fiber-seq.
+    daf_u = {
+        'mm_subtypes': ['C+u'],
+        'has_ry_in_seq': 0,
+    }
+    assert _looks_like_fiber_seq(daf_u) is False
+
+    # DAF with 55797 numeric code -> NOT fiber-seq.
+    daf_chebi = {
+        'mm_subtypes': ['C+55797'],
+        'has_ry_in_seq': 0,
+    }
+    assert _looks_like_fiber_seq(daf_chebi) is False
+
+    # Empty BAM (no tags detected at all) -> NOT fiber-seq (can't
+    # safely assume). Let the caller decide whether to run --deam.
+    assert _looks_like_fiber_seq({'mm_subtypes': [], 'has_ry_in_seq': 0}) is False
+
+    # Mixed (fiber-seq + deaminase on same read somehow): has u code ->
+    # NOT fiber-seq (run --deam because the deaminase signal is real).
+    mixed = {
+        'mm_subtypes': ['A+a', 'C+m', 'C+u'],
+        'has_ry_in_seq': 0,
+    }
+    assert _looks_like_fiber_seq(mixed) is False
+
+
 def test_md_tag_ref_length_parser():
     """Parser should correctly sum matches, mismatches, and deletions."""
     from fiberhmm.daf.encoder import _md_tag_ref_length
