@@ -5,12 +5,17 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pysam
 import pytest
 
 from conftest import make_synthetic_bam, make_synthetic_iupac_bam
-from fiberhmm.cli.call import _check_daf_inputs
+from fiberhmm.cli.call import (
+    _check_daf_inputs,
+    _resolve_apply_model,
+    _resolve_recall_model,
+)
 
 
 def test_fiberhmm_call_stdout_is_clean_bam_stream(benchmark_model_path, tmp_path):
@@ -105,3 +110,36 @@ def test_daf_input_sniff_rejects_missing_deamination_source(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "--mode daf needs deamination calls" in err
     assert "--reference ref.fa" in err
+
+
+def test_call_model_resolution_uses_custom_paths():
+    args = SimpleNamespace(
+        model="/tmp/custom_apply.json",
+        recall_model="/tmp/custom_recall.json",
+        enzyme=None,
+        seq=None,
+    )
+
+    assert _resolve_apply_model(args) == "/tmp/custom_apply.json"
+    assert _resolve_recall_model(args) == "/tmp/custom_recall.json"
+
+
+def test_call_model_resolution_uses_separate_ddda_models():
+    args = SimpleNamespace(model=None, recall_model=None, enzyme="ddda", seq=None)
+
+    apply_model = _resolve_apply_model(args)
+    recall_model = _resolve_recall_model(args)
+
+    assert apply_model.endswith("ddda_nuc.json")
+    assert recall_model.endswith("ddda_TF.json")
+    assert apply_model != recall_model
+
+
+def test_call_model_resolution_requires_model_or_enzyme(capsys):
+    args = SimpleNamespace(model=None, recall_model=None, enzyme=None, seq=None)
+
+    with pytest.raises(SystemExit) as exc:
+        _resolve_apply_model(args)
+
+    assert exc.value.code == 1
+    assert "one of --model or --enzyme required" in capsys.readouterr().err
