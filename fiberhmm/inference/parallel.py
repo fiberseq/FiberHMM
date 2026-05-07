@@ -61,6 +61,13 @@ from fiberhmm.inference.engine import (
     _process_single_read,
 )
 from fiberhmm.inference.bam_output import _sort_and_index_bam
+from fiberhmm.inference.tagging import (
+    intervals_from_arrays,
+    set_legacy_apply_tags,
+    split_intervals,
+    unify_nucs_with_tf_calls,
+    write_fused_recall_tags,
+)
 
 # Optional: inline posteriors export
 try:
@@ -910,8 +917,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
     # Create temp directory in output folder for easier cleanup
     output_dir = os.path.dirname(os.path.abspath(output_bam))
-    temp_dir = os.path.join(output_dir, '.fiberhmm_tmp')
-    os.makedirs(temp_dir, exist_ok=True)
+    temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_tmp_', dir=output_dir)
 
     try:
         # Prepare parameters (will be passed to initializer)
@@ -1226,8 +1232,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
 
     # Create temp directory for BED files (small compared to BAMs)
     output_dir = os.path.dirname(os.path.abspath(output_bed))
-    temp_dir = os.path.join(output_dir, '.fiberhmm_tmp')
-    os.makedirs(temp_dir, exist_ok=True)
+    temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_bed_tmp_', dir=output_dir)
 
     try:
         params = {
@@ -1365,29 +1370,7 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
     no_footprints = 0
     for read_obj, result in zip(chunk_read_objs, results):
         if result is not None:
-            # Add footprint tags
-            # Use array.array('I', ...) to force B:I (unsigned 32-bit)
-            # per Fiber-seq BAM format spec
-            if len(result['ns']) > 0:
-                read_obj.set_tag('ns', pyarray.array('I', result['ns'].astype(np.uint32).tolist()))
-                read_obj.set_tag('nl', pyarray.array('I', result['nl'].astype(np.uint32).tolist()))
-                if with_scores and result.get('ns_scores') is not None:
-                    nq_scores = np.clip(result['ns_scores'] * 255, 0, 255).astype(np.uint8)
-                    read_obj.set_tag('nq', nq_scores.tolist())
-                elif read_obj.has_tag('nq'):
-                    try: read_obj.set_tag('nq', None)
-                    except Exception: pass
-
-            if write_msps and len(result['as']) > 0:
-                read_obj.set_tag('as', pyarray.array('I', result['as'].astype(np.uint32).tolist()))
-                read_obj.set_tag('al', pyarray.array('I', result['al'].astype(np.uint32).tolist()))
-                if with_scores and result.get('as_scores') is not None:
-                    aq_scores = np.clip(result['as_scores'] * 255, 0, 255).astype(np.uint8)
-                    read_obj.set_tag('aq', aq_scores.tolist())
-                elif read_obj.has_tag('aq'):
-                    try: read_obj.set_tag('aq', None)
-                    except Exception: pass
-
+            set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
             reads_with_footprints += 1
         else:
             no_footprints += 1
@@ -1531,35 +1514,20 @@ def _process_fused_payload_chunk_worker(
                     obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps,
                 ))
 
-            # Unify: drop v2 short nucs that overlap any TF call
-            tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
-            kept_nucs_starts = []
-            kept_nucs_sizes = []
-            for s, l in zip(ns_list, nl_list):
-                s = int(s); l = int(l)
-                if l <= 0:
-                    continue
-                if l >= unify_threshold:
-                    kept_nucs_starts.append(s)
-                    kept_nucs_sizes.append(l)
-                    continue
-                nuc_end = s + l
-                overlapped = False
-                for ts, te in tf_intervals:
-                    if ts < nuc_end and te > s:
-                        overlapped = True
-                        break
-                if not overlapped:
-                    kept_nucs_starts.append(s)
-                    kept_nucs_sizes.append(l)
+            kept_nucs, nq_for_kept = unify_nucs_with_tf_calls(
+                ns_list, nl_list, tf_calls, unify_threshold,
+                apply_result.get('ns_scores') if with_scores else None,
+            )
+            kept_starts, kept_lengths = split_intervals(kept_nucs)
 
             results.append({
-                'ns': np.asarray(kept_nucs_starts, dtype=np.int32),
-                'nl': np.asarray(kept_nucs_sizes, dtype=np.int32),
+                'ns': kept_starts,
+                'nl': kept_lengths,
                 'as': as_,
                 'al': al,
                 'ns_scores': apply_result.get('ns_scores') if with_scores else None,
                 'as_scores': apply_result.get('as_scores') if with_scores else None,
+                'nq_for_kept_nucs': nq_for_kept,
                 'tf_calls': tf_calls,
             })
         except Exception:
@@ -1647,26 +1615,7 @@ def _drain_oldest_chunk(inflight, outbam, with_scores, write_msps,
         fiber_read = next(fiber_iter)
         result = next(result_iter)
         if result is not None:
-            # Add footprint tags (same logic as _process_and_write_chunk)
-            if len(result['ns']) > 0:
-                read_obj.set_tag('ns', pyarray.array('I', result['ns'].astype(np.uint32).tolist()))
-                read_obj.set_tag('nl', pyarray.array('I', result['nl'].astype(np.uint32).tolist()))
-                if with_scores and result.get('ns_scores') is not None:
-                    nq_scores = np.clip(result['ns_scores'] * 255, 0, 255).astype(np.uint8)
-                    read_obj.set_tag('nq', nq_scores.tolist())
-                elif read_obj.has_tag('nq'):
-                    try: read_obj.set_tag('nq', None)
-                    except Exception: pass
-
-            if write_msps and len(result['as']) > 0:
-                read_obj.set_tag('as', pyarray.array('I', result['as'].astype(np.uint32).tolist()))
-                read_obj.set_tag('al', pyarray.array('I', result['al'].astype(np.uint32).tolist()))
-                if with_scores and result.get('as_scores') is not None:
-                    aq_scores = np.clip(result['as_scores'] * 255, 0, 255).astype(np.uint8)
-                    read_obj.set_tag('aq', aq_scores.tolist())
-                elif read_obj.has_tag('aq'):
-                    try: read_obj.set_tag('aq', None)
-                    except Exception: pass
+            set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
 
             counters['reads_with_footprints'] += 1
 
@@ -1891,22 +1840,11 @@ def _process_region_to_bam_fused(args: Tuple) -> Tuple:
                             obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps,
                         ))
 
-                    # Unify: drop short nucs overlapping TF calls
-                    tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
-                    kept_nucs = []
-                    for s, l in zip(ns_list, nl_list):
-                        s = int(s); l = int(l)
-                        if l <= 0:
-                            continue
-                        if l >= unify_threshold:
-                            kept_nucs.append((s, l))
-                            continue
-                        nuc_end = s + l
-                        overlapped = any(ts < nuc_end and te > s for ts, te in tf_intervals)
-                        if not overlapped:
-                            kept_nucs.append((s, l))
-
-                    msps = [(int(s), int(l)) for s, l in zip(as_list, al_list) if int(l) > 0]
+                    kept_nucs, nq_for_kept = unify_nucs_with_tf_calls(
+                        ns_list, nl_list, tf_calls, unify_threshold,
+                        apply_result.get('ns_scores') if with_scores else None,
+                    )
+                    msps = intervals_from_arrays(as_list, al_list)
 
                     write_ma_tags(
                         read,
@@ -1914,7 +1852,7 @@ def _process_region_to_bam_fused(args: Tuple) -> Tuple:
                         tf_calls=tf_calls,
                         kept_nucs=kept_nucs,
                         msps=msps,
-                        nq_for_kept_nucs=None,
+                        nq_for_kept_nucs=nq_for_kept,
                         also_write_legacy=also_write_legacy,
                         downstream_compat=downstream_compat,
                     )
@@ -1961,8 +1899,7 @@ def _process_bam_region_parallel_fused(
     sys.stdout.flush()
 
     output_dir = os.path.dirname(os.path.abspath(output_bam))
-    temp_dir = os.path.join(output_dir, '.fiberhmm_call_tmp')
-    os.makedirs(temp_dir, exist_ok=True)
+    temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_call_tmp_', dir=output_dir)
 
     params = {
         'edge_trim': edge_trim, 'circular': circular,
@@ -2085,8 +2022,6 @@ def _drain_oldest_fused_chunk(inflight, outbam, with_scores,
     sorted.  results is shorter than chunk_read_objs by the number of
     skipped reads.
     """
-    from fiberhmm.inference.tf_recaller import write_ma_tags
-
     future, chunk_read_objs, chunk_payloads, chunk_skip_flags = inflight.popleft()
     results = future.result()
     result_iter = iter(results)
@@ -2101,28 +2036,10 @@ def _drain_oldest_fused_chunk(inflight, outbam, with_scores,
         _ = next(payload_iter)       # discard paired payload
         result = next(result_iter)
         if result is not None:
-            ns_arr = result['ns']
-            nl_arr = result['nl']
-            as_arr = result['as']
-            al_arr = result['al']
-            tf_calls = result['tf_calls']
-
-            kept_nucs = list(zip(
-                [int(x) for x in ns_arr.tolist()],
-                [int(x) for x in nl_arr.tolist()],
-            ))
-            msps = list(zip(
-                [int(x) for x in as_arr.tolist()],
-                [int(x) for x in al_arr.tolist()],
-            ))
-
-            write_ma_tags(
+            write_fused_recall_tags(
                 read_obj,
                 read_length=len(read_obj.query_sequence) if read_obj.query_sequence else 0,
-                tf_calls=tf_calls,
-                kept_nucs=kept_nucs,
-                msps=msps,
-                nq_for_kept_nucs=None,  # fused path doesn't compute nq scores
+                result=result,
                 also_write_legacy=also_write_legacy,
                 downstream_compat=downstream_compat,
             )
@@ -2889,7 +2806,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                         model, executor, edge_trim, circular,
                         mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
                         with_scores=with_scores,
-                        return_posteriors=return_posteriors
+                        return_posteriors=return_posteriors,
+                        write_msps=write_msps,
                     )
                     reads_with_footprints += n_fp
                     skip_reasons['no_footprints'] += n_nofp

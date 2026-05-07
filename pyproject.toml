@@ -101,9 +101,9 @@ include = ["fiberhmm*"]
 testpaths = ["tests"]
 python_files = ["test_*.py", "bench_*.py"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -m 'not benchmark'"
 markers = [
-    "benchmark: performance benchmark (deselect with '-m \"not benchmark\"')",
+    "benchmark: performance benchmark (run with '-m benchmark tests/benchmarks')",
     "slow: slow test (deselect with '-m \"not slow\"')",
 ]
 
