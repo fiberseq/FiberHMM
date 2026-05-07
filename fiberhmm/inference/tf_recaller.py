@@ -430,6 +430,7 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
     obs = encode_from_query_sequence(
         seq, mod_pos, edge_trim=10, mode=mode, strand=strand,
         context_size=context_size,
+        is_reverse=bool(read.is_reverse),
     )
     read_len = len(seq)
 

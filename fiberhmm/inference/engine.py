@@ -619,7 +619,8 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         'read_id': read.query_name,
         'query_sequence': query_sequence,
         'm6a_query_positions': mod_pos_set,
-        'query_length': len(query_sequence)
+        'query_length': len(query_sequence),
+        'is_reverse': bool(read.is_reverse),
     }
 
 
@@ -646,10 +647,12 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     else:
         strand = '.'
 
-    # Encode
+    # Encode — pass is_reverse so nanopore mode handles strand correctly
+    is_reverse = fiber_read.get('is_reverse', False)
     encoded = encode_from_query_sequence(
         query_sequence, m6a_positions, edge_trim,
-        mode=mode, strand=strand, context_size=context_size
+        mode=mode, strand=strand, context_size=context_size,
+        is_reverse=is_reverse,
     )
 
     if len(encoded) == 0:

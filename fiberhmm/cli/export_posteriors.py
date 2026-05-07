@@ -89,7 +89,8 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
     # Encode read
     encoded = encode_from_query_sequence(
         sequence, mod_positions, edge_trim,
-        mode=mode, strand=strand, context_size=context_size
+        mode=mode, strand=strand, context_size=context_size,
+        is_reverse=bool(read.is_reverse),
     )
 
     if len(encoded) == 0:

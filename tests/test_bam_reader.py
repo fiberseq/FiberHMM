@@ -348,5 +348,126 @@ class TestEncodingConsistency:
         assert lookup1 == lookup2
 
 
+class TestNanoporeReverseStrand:
+    """Regression tests for the nanopore reverse-strand bug.
+
+    Bug: nanopore-fiber mode silently dropped all m6A on reverse-aligned
+    reads because the encoder only looked at A positions in SAM SEQ.
+    For reverse-aligned reads, basecalled A's are stored as T's (RC),
+    so all m6A positions fell on non-target bases and were ignored.
+
+    The fix: for is_reverse=True in nanopore mode, encode T positions
+    with RC context to recover basecalled-forward emission space.
+    """
+
+    def _make_complement(self, seq):
+        return seq.translate(str.maketrans('ACGT', 'TGCA'))
+
+    def test_nanopore_forward_has_targets(self):
+        """Forward nanopore read: A positions should be encoded as targets."""
+        seq = "ACGTACGTACGTACGTACGTACGTACGT"  # 28 bp, A at 0,4,8,...
+        mods = {0, 8, 16, 24}  # m6A at some A positions
+        enc = encode_from_query_sequence(
+            seq, mods, mode='nanopore-fiber', context_size=3,
+            edge_trim=0, is_reverse=False)
+        n_codes = 4096
+        non_target = n_codes
+        # A positions should be target (not non_target)
+        a_positions = [i for i, b in enumerate(seq) if b == 'A']
+        for p in a_positions:
+            if 3 <= p < len(seq) - 3:  # skip edge-trimmed
+                assert enc[p] != non_target and enc[p] != non_target + non_target + 1, \
+                    f"Forward A at pos {p} should be a valid target"
+
+    def test_nanopore_reverse_has_targets(self):
+        """Reverse nanopore read: T positions (basecalled A→SEQ T) should
+        be encoded as targets. This was the core bug — without the fix,
+        ALL T positions get non_target_code and the read encodes as
+        entirely non-informative."""
+        seq = "ACGTACGTACGTACGTACGTACGTACGT"
+        # For a reverse read, m6A positions point at T's in SEQ
+        t_positions = [i for i, b in enumerate(seq) if b == 'T']
+        mods = set(t_positions[:4])  # m6A at first 4 T positions
+        enc = encode_from_query_sequence(
+            seq, mods, mode='nanopore-fiber', context_size=3,
+            edge_trim=0, is_reverse=True)
+        n_codes = 4096
+        non_target = n_codes
+        # T positions should now be valid targets (not skipped)
+        for p in t_positions:
+            if 3 <= p < len(seq) - 3:
+                assert enc[p] != non_target and enc[p] != non_target + non_target + 1, \
+                    f"Reverse T at pos {p} should be a valid target (bug: was non_target)"
+
+    def test_nanopore_reverse_without_fix_would_fail(self):
+        """Demonstrate that is_reverse=False on a reverse read drops m6A."""
+        seq = "ACGTACGTACGTACGTACGTACGTACGT"
+        t_positions = [i for i, b in enumerate(seq) if b == 'T']
+        mods = set(t_positions[:4])
+        # Simulate the BUG: is_reverse=False on a reverse read
+        enc_buggy = encode_from_query_sequence(
+            seq, mods, mode='nanopore-fiber', context_size=3,
+            edge_trim=0, is_reverse=False)
+        n_codes = 4096
+        non_target = n_codes
+        unmeth_offset = n_codes + 1
+        # With the bug, T positions are non_target → mods at T's are invisible
+        for p in t_positions:
+            if 3 <= p < len(seq) - 3:
+                assert enc_buggy[p] == non_target + unmeth_offset, \
+                    f"Bug: T at pos {p} should be non_target when is_reverse=False"
+
+    def test_nanopore_strand_symmetry(self):
+        """A forward read and its RC (as a reverse read) should produce
+        equivalent encoding patterns at corresponding positions."""
+        fwd_seq = "AACGATCGAACGATCGAACGATCG"  # 24 bp
+        fwd_mods = {0, 1, 8, 9, 16, 17}  # m6A at some A positions
+
+        # Simulate reverse read: RC the sequence, flip mod positions
+        rev_seq = self._make_complement(fwd_seq)[::-1]
+        q_len = len(fwd_seq)
+        rev_mods = {q_len - 1 - p for p in fwd_mods}
+
+        enc_fwd = encode_from_query_sequence(
+            fwd_seq, fwd_mods, mode='nanopore-fiber', context_size=3,
+            edge_trim=0, is_reverse=False)
+        enc_rev = encode_from_query_sequence(
+            rev_seq, rev_mods, mode='nanopore-fiber', context_size=3,
+            edge_trim=0, is_reverse=True)
+
+        n_codes = 4096
+        non_target = n_codes
+        unmeth_offset = n_codes + 1
+
+        # Count how many positions are valid targets in each
+        fwd_valid = np.sum((enc_fwd != non_target + unmeth_offset) &
+                            (enc_fwd != non_target))
+        rev_valid = np.sum((enc_rev != non_target + unmeth_offset) &
+                            (enc_rev != non_target))
+        # Should have similar number of valid target positions
+        assert rev_valid > 0, "Reverse read must have valid targets"
+        assert abs(fwd_valid - rev_valid) <= 2, \
+            f"Strand asymmetry: fwd={fwd_valid} rev={rev_valid} valid targets"
+
+        # Count methylated targets
+        fwd_meth = np.sum(enc_fwd < n_codes)
+        rev_meth = np.sum(enc_rev < n_codes)
+        assert fwd_meth == rev_meth, \
+            f"Methylated count mismatch: fwd={fwd_meth} rev={rev_meth}"
+
+    def test_pacbio_mode_unaffected(self):
+        """PacBio mode should not change behavior with is_reverse flag."""
+        seq = "ACGTACGTACGTACGTACGTACGTACGT"
+        mods = {0, 8, 16, 24}
+        enc_fwd = encode_from_query_sequence(
+            seq, mods, mode='pacbio-fiber', context_size=3,
+            edge_trim=0, is_reverse=False)
+        enc_rev = encode_from_query_sequence(
+            seq, mods, mode='pacbio-fiber', context_size=3,
+            edge_trim=0, is_reverse=True)
+        # PacBio already handles both A and T → is_reverse shouldn't matter
+        np.testing.assert_array_equal(enc_fwd, enc_rev)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

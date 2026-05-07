@@ -133,6 +133,7 @@ class FiberRead:
     query_sequence: str
     m6a_query_positions: Set[int]  # Query positions with m6A
     query_to_ref: List[Optional[int]]  # Maps query pos -> ref pos
+    is_reverse: bool  # Whether read is reverse-aligned
     
     @property
     def query_length(self) -> int:
@@ -696,12 +697,13 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
                                 edge_trim: int = 10,
                                 mode: str = 'pacbio-fiber',
                                 strand: str = '.',
-                                context_size: int = 3) -> np.ndarray:
+                                context_size: int = 3,
+                                is_reverse: bool = False) -> np.ndarray:
     """
     Encode a read for HMM using context from the query sequence.
-    
+
     Vectorized implementation for speed.
-    
+
     Args:
         sequence: Query sequence from BAM read
         mod_positions: Set of query positions with modifications
@@ -709,10 +711,16 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
         mode: 'pacbio-fiber' for PacBio, 'nanopore-fiber' for Nanopore, 'daf' for DAF-seq
         strand: For daf mode, '+' or '-' (auto-detected if '.')
         context_size: Bases on each side of center (3 = 7-mer hexamer, 5 = 11-mer, etc.)
-        
+        is_reverse: Whether this read is reverse-aligned. Critical for
+            nanopore-fiber mode: reverse-aligned reads store SAM SEQ as
+            the reverse-complement of the basecalled-forward strand, so
+            basecalled A's (the m6A target) appear as T's in SEQ. The
+            encoder must look at T positions with RC context to recover
+            strand-symmetric behavior.
+
     Returns:
         Encoded observation array for HMM (length = len(sequence))
-        
+
     Encoding scheme (for context_size k):
         0 to 4^(2k)-1: Modified base with specific context
         4^(2k): Non-target position (0% probability)
@@ -761,16 +769,41 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
         return result
 
     elif mode == 'nanopore-fiber':
+        # Nanopore strand handling:
+        #   Forward-aligned: SAM SEQ == basecalled-forward. m6A targets are
+        #     A positions. Encode A's with forward context.
+        #   Reverse-aligned: SAM SEQ == RC(basecalled-forward). Basecalled
+        #     A's are now T's in SEQ. The MM/ML parser already flipped mod
+        #     positions to SEQ frame (v2.9 fix), so they point at T positions.
+        #     Encode T's with RC context to map back to basecalled-forward
+        #     emission space.
+        #
+        # Without this, reverse reads have zero valid target positions and
+        # the HMM sees an all-non-target observation → calls one whole-read
+        # nucleosome regardless of actual m6A density.
         seq_bytes = np.frombuffer(sequence.encode('ascii'), dtype=np.uint8)
         seq_int_enc = _BASE_TO_INT[seq_bytes]
+        if is_reverse:
+            # T positions with RC context (basecalled-A stored as SEQ-T)
+            _target = 99  # dummy: no forward-context matches
+            _rc_target = 2  # T
+            _do_rc = True
+            _target_base = 'T'
+        else:
+            # A positions with forward context
+            _target = 0  # A
+            _rc_target = 0
+            _do_rc = False
+            _target_base = 'A'
         if _HAS_NUMBA:
             a_encode = _context_codes_numba(
                 seq_int_enc, context_size, edge_trim, non_target_code,
-                0, 0, False,  # target_int=A=0, do_rc=False
+                _target, _rc_target, _do_rc,
             )
         else:
             a_encode = _encode_vectorized(
-                sequence, 'A', context_size, edge_trim, non_target_code, False,
+                sequence, _target_base, context_size, edge_trim,
+                non_target_code, _do_rc,
             )
 
         result = np.full(seq_len, non_target_code + unmethylated_offset, dtype=np.int32)
@@ -1177,7 +1210,8 @@ def read_bam(bam_path: str,
                 strand='-' if read.is_reverse else '+',
                 query_sequence=read.query_sequence,
                 m6a_query_positions=mod_query_pos,
-                query_to_ref=query_to_ref
+                query_to_ref=query_to_ref,
+                is_reverse=read.is_reverse,
             )
 
 

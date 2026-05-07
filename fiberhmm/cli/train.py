@@ -379,7 +379,8 @@ def generate_training_arrays(reads: list, edge_trim: int,
             edge_trim,
             mode=mode,
             strand=strand,
-            context_size=context_size
+            context_size=context_size,
+            is_reverse=getattr(fiber_read, 'is_reverse', False),
         )
 
         if len(encoded) > 0:
