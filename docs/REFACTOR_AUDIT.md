@@ -28,6 +28,7 @@ Date: 2026-05-07
 - Added fused DAF streaming output characterization proving raw-MD BAMs and raw BAMs with `--reference` produce the same output tags as matched IUPAC-encoded BAMs.
 - Extracted shared streaming read skip/filter policy into `fiberhmm/inference/read_filters.py` and reused it in the legacy and fused streaming paths.
 - Removed shell-based BED sorting from bigBed conversion helpers; sorting now uses list-form subprocess calls and has fake-command fallback tests.
+- Removed unused private BAM merge helpers from `fiberhmm/inference/parallel.py`; active region merge paths remain unchanged.
 
 ## Current Verification
 
@@ -35,7 +36,7 @@ Date: 2026-05-07
 - `python -m pytest tests/test_call_pipeline.py`: 4 passed in 4.54s.
 - `python -m pytest tests/test_bam_output.py tests/test_call_cli.py`: 6 passed in 1.75s.
 - `python -m pytest tests/test_call_pipeline.py tests/test_call_cli.py tests/test_daf_iupac.py tests/test_extract_block_scores.py`: 62 passed in 5.67s.
-- `python -m pytest`: 294 passed, 20 deselected in 11.08s.
+- `python -m pytest`: 294 passed, 20 deselected in 11.21s.
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 59.37s.
 - `python -m ruff check fiberhmm tests`: not runnable in this environment because `ruff` is not installed.
@@ -44,7 +45,7 @@ Date: 2026-05-07
 
 Largest tracked Python files:
 
-- `fiberhmm/inference/parallel.py`: 2832 lines.
+- `fiberhmm/inference/parallel.py`: 2698 lines.
 - `fiberhmm/cli/extract_tags.py`: 1389 lines.
 - `fiberhmm/core/bam_reader.py`: 1246 lines.
 - `fiberhmm/core/hmm.py`: 1089 lines.
