@@ -5,6 +5,7 @@ import os
 import pysam
 
 from conftest import make_synthetic_bam
+from fiberhmm.models import get_model_path
 from fiberhmm.inference.parallel import (
     _process_bam_region_parallel_fused,
     _process_bam_streaming_pipeline_fused,
@@ -72,6 +73,37 @@ def _run_fused_region(input_bam, output_bam, model_path, *, with_scores=False):
     )
 
 
+def _run_daf_fused_streaming(input_bam, output_bam, *, ref_fasta_path=None):
+    return _process_bam_streaming_pipeline_fused(
+        input_bam=input_bam,
+        output_bam=output_bam,
+        model_path=get_model_path("ddda", tool="apply"),
+        recall_model_path=get_model_path("ddda", tool="recall"),
+        train_rids=set(),
+        edge_trim=10,
+        circular=False,
+        mode="daf",
+        context_size=3,
+        msp_min_size=0,
+        nuc_min_size=85,
+        min_mapq=0,
+        prob_threshold=0,
+        min_read_length=0,
+        with_scores=True,
+        min_llr=1000.0,
+        min_opps=3,
+        unify_threshold=90,
+        emission_uplift=1.0,
+        also_write_legacy=True,
+        downstream_compat=False,
+        max_reads=0,
+        n_cores=1,
+        chunk_size=10,
+        io_threads=1,
+        ref_fasta_path=ref_fasta_path,
+    )
+
+
 def _read_tags_by_name(bam_path):
     tags_by_name = {}
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
@@ -84,6 +116,66 @@ def _read_tags_by_name(bam_path):
                 tags[tag] = value if isinstance(value, str) else list(value)
             tags_by_name[read.query_name] = tags
     return tags_by_name
+
+
+def _md_for_ct_mismatches(read_length, mismatch_positions):
+    parts = []
+    previous = -1
+    for pos in mismatch_positions:
+        parts.append(str(pos - previous - 1))
+        parts.append("C")
+        previous = pos
+    parts.append(str(read_length - previous - 1))
+    return "".join(parts)
+
+
+def _write_ct_daf_fixture_bams(tmp_path):
+    """Write matched raw-MD, raw-reference, and IUPAC DAF BAMs."""
+    read_length = 500
+    chrom_length = 5_000
+    n_reads = 6
+    deam_positions = list(range(50, read_length - 50, 25))
+
+    ref_fasta = tmp_path / "ct_ref.fa"
+    ref_fasta.write_text(">chr1\n" + ("C" * chrom_length) + "\n")
+    pysam.faidx(str(ref_fasta))
+
+    header = pysam.AlignmentHeader.from_dict({
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": "chr1", "LN": chrom_length}],
+    })
+    paths = {
+        "raw_md": tmp_path / "raw_md.bam",
+        "raw_ref": tmp_path / "raw_ref.bam",
+        "iupac": tmp_path / "iupac.bam",
+    }
+
+    for flavor, path in paths.items():
+        with pysam.AlignmentFile(path, "wb", header=header) as out:
+            for i in range(n_reads):
+                seq = ["C"] * read_length
+                for pos in deam_positions:
+                    seq[pos] = "Y" if flavor == "iupac" else "T"
+
+                read = pysam.AlignedSegment()
+                read.query_name = f"daf_ct_{i:03d}"
+                read.query_sequence = "".join(seq)
+                read.query_qualities = pysam.qualitystring_to_array(
+                    "I" * read_length
+                )
+                read.flag = 0
+                read.reference_id = 0
+                read.reference_start = i * (read_length + 10)
+                read.mapping_quality = 60
+                read.cigar = [(0, read_length)]
+                if flavor == "raw_md":
+                    read.set_tag("MD", _md_for_ct_mismatches(read_length, deam_positions))
+                if flavor == "iupac":
+                    read.set_tag("st", "CT", value_type="Z")
+                out.write(read)
+        pysam.index(str(path))
+
+    return paths["raw_md"], paths["raw_ref"], paths["iupac"], ref_fasta
 
 
 def test_fused_streaming_emits_spec_and_legacy_tags(
@@ -144,3 +236,24 @@ def test_fused_region_matches_streaming_on_single_region(benchmark_model_path, t
         for p in tmp_path.iterdir()
         if os.path.isdir(p)
     )
+
+
+def test_daf_raw_md_and_reference_streaming_match_iupac_output(tmp_path):
+    raw_md, raw_ref, iupac, ref_fasta = _write_ct_daf_fixture_bams(tmp_path)
+    md_out = str(tmp_path / "raw_md_out.bam")
+    ref_out = str(tmp_path / "raw_ref_out.bam")
+    iupac_out = str(tmp_path / "iupac_out.bam")
+
+    md_counts = _run_daf_fused_streaming(str(raw_md), md_out)
+    ref_counts = _run_daf_fused_streaming(
+        str(raw_ref), ref_out, ref_fasta_path=str(ref_fasta)
+    )
+    iupac_counts = _run_daf_fused_streaming(str(iupac), iupac_out)
+
+    assert md_counts == iupac_counts
+    assert ref_counts == iupac_counts
+
+    iupac_tags = _read_tags_by_name(iupac_out)
+    assert any("ns" in tag_set for tag_set in iupac_tags.values())
+    assert _read_tags_by_name(md_out) == iupac_tags
+    assert _read_tags_by_name(ref_out) == iupac_tags

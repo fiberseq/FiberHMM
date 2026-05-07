@@ -25,17 +25,17 @@ Date: 2026-05-07
 - Preserved the legacy `write_msps=False` behavior for the final partial chunk in the legacy apply pipeline.
 - Added a CLI stdout characterization test proving `fiberhmm-call -o -` keeps logs on stderr and produces a readable BAM stream on stdout.
 - Added DAF CLI input-source characterization tests for IUPAC-encoded BAMs, explicit `--reference` fallback, and actionable failure when no deamination source is present.
+- Added fused DAF streaming output characterization proving raw-MD BAMs and raw BAMs with `--reference` produce the same output tags as matched IUPAC-encoded BAMs.
 - Extracted shared streaming read skip/filter policy into `fiberhmm/inference/read_filters.py` and reused it in the legacy and fused streaming paths.
 - Removed shell-based BED sorting from bigBed conversion helpers; sorting now uses list-form subprocess calls and has fake-command fallback tests.
 
 ## Current Verification
 
-- `python -m pytest tests/test_call_pipeline.py`: 3 passed in 3.11s.
-- `python -m pytest tests/test_streaming_pipeline.py tests/test_mode_equivalence.py tests/test_tf_recaller.py tests/test_call_pipeline.py`: 45 passed in 11.35s.
+- `python -m pytest tests/test_call_pipeline.py::test_daf_raw_md_and_reference_streaming_match_iupac_output`: 1 passed in 2.72s.
+- `python -m pytest tests/test_call_pipeline.py`: 4 passed in 4.54s.
 - `python -m pytest tests/test_bam_output.py tests/test_call_cli.py`: 6 passed in 1.75s.
-- `python -m pytest tests/test_call_cli.py tests/test_call_pipeline.py tests/test_daf_iupac.py tests/test_extract_block_scores.py`: 61 passed in 3.65s.
-- `python -m pytest tests/test_read_filters.py tests/test_streaming_pipeline.py tests/test_mode_equivalence.py tests/test_call_pipeline.py tests/test_call_cli.py tests/test_bam_output.py`: 33 passed in 12.30s.
-- `python -m pytest`: 293 passed, 20 deselected in 9.16s.
+- `python -m pytest tests/test_call_pipeline.py tests/test_call_cli.py tests/test_daf_iupac.py tests/test_extract_block_scores.py`: 62 passed in 5.67s.
+- `python -m pytest`: 294 passed, 20 deselected in 11.08s.
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 59.37s.
 - `python -m ruff check fiberhmm tests`: not runnable in this environment because `ruff` is not installed.
@@ -66,7 +66,7 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 3. Add remaining `fiberhmm-call` characterization tests.
 
-   The fused streaming, fused region-parallel, legacy tags, `MA`/`AQ`, stdout/stderr behavior, DAF input-source sniffing, and `--with-scores` nucleosome quality behavior now have direct tests. Remaining gaps are full DAF raw MD/reference pipeline output, CLI-level option parsing around default models, and broader fake-failure tests for external tools.
+   The fused streaming, fused region-parallel, legacy tags, `MA`/`AQ`, stdout/stderr behavior, DAF input-source sniffing, DAF raw MD/reference streaming output, and `--with-scores` nucleosome quality behavior now have direct tests. Remaining gaps are CLI-level option parsing around default models and broader fake-failure tests for external tools.
 
 4. Mode-specific encoding should be split.
 
@@ -108,7 +108,7 @@ Before moving code:
   - fused region-parallel matches fused streaming on synthetic BAMs; done.
   - `--with-scores` behavior writes aligned `nq` for kept nucleosomes; done.
   - stdout mode keeps BAM bytes on stdout and logs on stderr; done.
-  - DAF IUPAC and reference-source input sniffing are covered; full raw MD/reference output tests remain.
+  - DAF IUPAC, raw MD, and raw `--reference` output paths are covered in fused streaming.
 - Add golden-tag comparison helpers that hash/read `ns`, `nl`, `as`, `al`, `nq`, `aq`, `MA`, and `AQ` per read.
 - Add tests for temporary directory uniqueness and external-tool fallback behavior.
 
