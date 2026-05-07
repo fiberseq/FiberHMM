@@ -141,6 +141,14 @@ def write_bed12_records_direct(records: List[dict], filepath: str, with_scores: 
             f.write(line + '\n')
 
 
+def _sort_bed_for_bigbed(bed_file: str, sorted_bed: str) -> None:
+    """Sort BED records by chrom/start before UCSC bigBed conversion."""
+    subprocess.run(
+        ['sort', '-k1,1', '-k2,2n', '-o', sorted_bed, bed_file],
+        check=True,
+    )
+
+
 def convert_to_bigbed(bed_file: str, chrom_sizes: str, output_bb: str) -> bool:
     """Convert BED12 to bigBed format."""
     if not shutil.which('bedToBigBed'):
@@ -151,10 +159,7 @@ def convert_to_bigbed(bed_file: str, chrom_sizes: str, output_bb: str) -> bool:
     sorted_bed = bed_file + '.sorted'
     try:
         # Sort BED file
-        subprocess.run(
-            f"sort -k1,1 -k2,2n {bed_file} > {sorted_bed}",
-            shell=True, check=True
-        )
+        _sort_bed_for_bigbed(bed_file, sorted_bed)
 
         # Convert
         result = subprocess.run(
@@ -168,7 +173,7 @@ def convert_to_bigbed(bed_file: str, chrom_sizes: str, output_bb: str) -> bool:
 
         return True
 
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"Error during bigBed conversion: {e}")
         return False
     finally:
@@ -229,10 +234,7 @@ def convert_to_bigbed_with_schema(bed_file: str, chrom_sizes: str,
     sorted_bed = bed_file + '.sorted'
     try:
         # Sort BED file
-        subprocess.run(
-            f"sort -k1,1 -k2,2n {bed_file} > {sorted_bed}",
-            shell=True, check=True
-        )
+        _sort_bed_for_bigbed(bed_file, sorted_bed)
 
         # Build command - use BED12+ type if we have scores
         bed_type = 'bed12+1' if with_scores else 'bed12'
@@ -257,7 +259,7 @@ def convert_to_bigbed_with_schema(bed_file: str, chrom_sizes: str,
 
         return True
 
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"Error during bigBed conversion: {e}")
         return False
     finally:

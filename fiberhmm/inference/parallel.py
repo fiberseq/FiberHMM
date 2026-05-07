@@ -61,6 +61,7 @@ from fiberhmm.inference.engine import (
     _process_single_read,
 )
 from fiberhmm.inference.bam_output import _sort_and_index_bam
+from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.tagging import (
     intervals_from_arrays,
     set_legacy_apply_tags,
@@ -2095,6 +2096,13 @@ def _process_bam_streaming_pipeline_fused(
         'too_short': 0, 'training_excluded': 0, 'no_modifications': 0,
         'extraction_failed': 0,
     }
+    filter_config = ReadFilterConfig(
+        min_mapq=min_mapq,
+        min_read_length=min_read_length,
+        primary_only=primary_only,
+        process_unmapped=process_unmapped,
+        train_rids=train_rids,
+    )
 
     _log = sys.stderr if output_bam == '-' else sys.stdout
 
@@ -2127,22 +2135,9 @@ def _process_bam_streaming_pipeline_fused(
 
             try:
                 for read in inbam.fetch(until_eof=True):
-                    if read.is_unmapped:
-                        if not process_unmapped or read.query_sequence is None:
-                            _buffer_skip(read, 'unmapped')
-                            continue
-                    if primary_only and (read.is_secondary or read.is_supplementary):
-                        _buffer_skip(read, 'secondary_supplementary')
-                        continue
-                    if not read.is_unmapped and read.mapping_quality < min_mapq:
-                        _buffer_skip(read, 'low_mapq')
-                        continue
-                    read_len = (read.query_length or 0) if read.is_unmapped else read.query_alignment_length
-                    if read_len < min_read_length:
-                        _buffer_skip(read, 'too_short')
-                        continue
-                    if train_rids and read.query_name in train_rids:
-                        _buffer_skip(read, 'training_excluded')
+                    skip_reason = streaming_skip_reason(read, filter_config)
+                    if skip_reason:
+                        _buffer_skip(read, skip_reason)
                         continue
 
                     payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
@@ -2298,6 +2293,13 @@ def _process_bam_streaming_pipeline(
         'extraction_failed': 0,
         'no_footprints': 0,
     }
+    filter_config = ReadFilterConfig(
+        min_mapq=min_mapq,
+        min_read_length=min_read_length,
+        primary_only=primary_only,
+        process_unmapped=process_unmapped,
+        train_rids=train_rids,
+    )
 
     counters = {
         'reads_with_footprints': 0,
@@ -2368,37 +2370,9 @@ def _process_bam_streaming_pipeline(
                     # rather than written immediately — the drain step writes them
                     # at their original stream position so a coordinate-sorted
                     # input BAM produces a coordinate-sorted output BAM.
-
-                    # Handle unmapped reads
-                    if read.is_unmapped:
-                        if not process_unmapped or read.query_sequence is None:
-                            _buffer_skip(read, 'unmapped')
-                            continue
-                        # else: fall through to process unmapped read with sequence
-
-                    # Skip secondary/supplementary if primary_only
-                    if primary_only and (read.is_secondary or read.is_supplementary):
-                        _buffer_skip(read, 'secondary_supplementary')
-                        continue
-
-                    # MAPQ filter (skip for unmapped reads being processed)
-                    if not read.is_unmapped and read.mapping_quality < min_mapq:
-                        _buffer_skip(read, 'low_mapq')
-                        continue
-
-                    # Length filter (use query_length for unmapped, query_alignment_length for mapped)
-                    if read.is_unmapped:
-                        read_len = read.query_length or 0
-                    else:
-                        read_len = read.query_alignment_length
-                    if read_len < min_read_length:
-                        _buffer_skip(read, 'too_short')
-                        continue
-
-                    # Training exclusion
-                    read_id = read.query_name
-                    if train_rids and read_id in train_rids:
-                        _buffer_skip(read, 'training_excluded')
+                    skip_reason = streaming_skip_reason(read, filter_config)
+                    if skip_reason:
+                        _buffer_skip(read, skip_reason)
                         continue
 
                     # --- Build slim payload (fast — no MM/ML parsing) ---

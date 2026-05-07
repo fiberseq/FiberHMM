@@ -23,21 +23,26 @@ Date: 2026-05-07
 - Fixed fused `--with-scores` output so kept nucleosome calls carry `nq` values through the unification step.
 - Changed region-parallel temporary directories to unique per-run directories under the output directory to avoid concurrent-run collisions.
 - Preserved the legacy `write_msps=False` behavior for the final partial chunk in the legacy apply pipeline.
+- Added a CLI stdout characterization test proving `fiberhmm-call -o -` keeps logs on stderr and produces a readable BAM stream on stdout.
+- Extracted shared streaming read skip/filter policy into `fiberhmm/inference/read_filters.py` and reused it in the legacy and fused streaming paths.
+- Removed shell-based BED sorting from bigBed conversion helpers; sorting now uses list-form subprocess calls and has fake-command fallback tests.
 
 ## Current Verification
 
 - `python -m pytest tests/test_call_pipeline.py`: 3 passed in 3.11s.
 - `python -m pytest tests/test_streaming_pipeline.py tests/test_mode_equivalence.py tests/test_tf_recaller.py tests/test_call_pipeline.py`: 45 passed in 11.35s.
-- `python -m pytest`: 280 passed, 20 deselected in 9.22s.
+- `python -m pytest tests/test_bam_output.py tests/test_call_cli.py`: 3 passed in 1.87s.
+- `python -m pytest tests/test_read_filters.py tests/test_streaming_pipeline.py tests/test_mode_equivalence.py tests/test_call_pipeline.py tests/test_call_cli.py tests/test_bam_output.py`: 33 passed in 12.30s.
+- `python -m pytest`: 290 passed, 20 deselected in 9.52s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 61.05s.
+- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 59.37s.
 - `python -m ruff check fiberhmm tests`: not runnable in this environment because `ruff` is not installed.
 
 ## Current Shape
 
 Largest tracked Python files:
 
-- `fiberhmm/inference/parallel.py`: 2858 lines.
+- `fiberhmm/inference/parallel.py`: 2832 lines.
 - `fiberhmm/cli/extract_tags.py`: 1389 lines.
 - `fiberhmm/core/bam_reader.py`: 1246 lines.
 - `fiberhmm/core/hmm.py`: 1089 lines.
@@ -55,11 +60,11 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 2. Continue shrinking `fiberhmm/inference/parallel.py`.
 
-   The first shared tagging/unification slice is complete, but the module still mixes skip/filter logic, process lifecycle, output merge/indexing, posterior export, and orchestration. The next low-risk slices are a read-filter module, BAM output helpers, and typed payload/result containers.
+   The first shared tagging/unification slice and streaming read-filter slice are complete, but the module still mixes process lifecycle, output merge/indexing, posterior export, and orchestration. The next low-risk slices are BAM output helpers and typed payload/result containers.
 
 3. Add remaining `fiberhmm-call` characterization tests.
 
-   The fused streaming, fused region-parallel, legacy tags, `MA`/`AQ`, and `--with-scores` nucleosome quality behavior now have direct tests. Remaining gaps are stdout/stderr behavior, DAF `--reference`, DAF raw MD/reference paths, CLI-level option parsing around default models, and fake-failure tests for external tools.
+   The fused streaming, fused region-parallel, legacy tags, `MA`/`AQ`, stdout/stderr behavior, and `--with-scores` nucleosome quality behavior now have direct tests. Remaining gaps are DAF `--reference`, DAF raw MD/reference paths, CLI-level option parsing around default models, and broader fake-failure tests for external tools.
 
 4. Mode-specific encoding should be split.
 
@@ -79,7 +84,7 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 8. External-tool wrappers need hardening.
 
-   BAM sort/index and bigBed conversion call `samtools`, `sort`, and `bedToBigBed`. Some calls already use argument lists, but `convert_to_bigbed` and `convert_to_bigbed_with_schema` use `shell=True` for sorting. This should move to list-form subprocess calls and get tests with fake command failures.
+   BAM sort/index and bigBed conversion call `samtools`, `sort`, and `bedToBigBed`. Known shell-based sorting has been removed, and `rg "shell=True" fiberhmm tests` currently returns no matches. Remaining work is broader fake-failure coverage and tighter cleanup tests around output helpers.
 
 9. Temporary output paths are unique in the main region-parallel paths.
 
@@ -100,7 +105,7 @@ Before moving code:
   - fused streaming output has expected `MA`/`AQ` plus legacy tags; done.
   - fused region-parallel matches fused streaming on synthetic BAMs; done.
   - `--with-scores` behavior writes aligned `nq` for kept nucleosomes; done.
-  - stdout mode keeps BAM bytes on stdout and logs on stderr;
+  - stdout mode keeps BAM bytes on stdout and logs on stderr; done.
   - DAF IUPAC and raw MD/reference paths are covered.
 - Add golden-tag comparison helpers that hash/read `ns`, `nl`, `as`, `al`, `nq`, `aq`, `MA`, and `AQ` per read.
 - Add tests for temporary directory uniqueness and external-tool fallback behavior.

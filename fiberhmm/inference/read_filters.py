@@ -1,0 +1,42 @@
+"""Shared read skip/filter policy for inference pipelines."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import AbstractSet, Optional
+
+
+@dataclass(frozen=True)
+class ReadFilterConfig:
+    """Filtering options shared by streaming inference paths."""
+
+    min_mapq: int = 0
+    min_read_length: int = 0
+    primary_only: bool = False
+    process_unmapped: bool = False
+    train_rids: AbstractSet[str] = field(default_factory=frozenset)
+
+
+def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
+    """Return the skip reason for a streaming read, or None if processable."""
+    if read.is_unmapped:
+        if not config.process_unmapped or read.query_sequence is None:
+            return "unmapped"
+
+    if config.primary_only and (read.is_secondary or read.is_supplementary):
+        return "secondary_supplementary"
+
+    if not read.is_unmapped and read.mapping_quality < config.min_mapq:
+        return "low_mapq"
+
+    if read.is_unmapped:
+        read_len = read.query_length or 0
+    else:
+        read_len = read.query_alignment_length
+    if read_len is None or read_len < config.min_read_length:
+        return "too_short"
+
+    if config.train_rids and read.query_name in config.train_rids:
+        return "training_excluded"
+
+    return None
