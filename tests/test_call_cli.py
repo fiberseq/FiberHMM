@@ -7,8 +7,10 @@ import sys
 from pathlib import Path
 
 import pysam
+import pytest
 
-from conftest import make_synthetic_bam
+from conftest import make_synthetic_bam, make_synthetic_iupac_bam
+from fiberhmm.cli.call import _check_daf_inputs
 
 
 def test_fiberhmm_call_stdout_is_clean_bam_stream(benchmark_model_path, tmp_path):
@@ -55,3 +57,51 @@ def test_fiberhmm_call_stdout_is_clean_bam_stream(benchmark_model_path, tmp_path
         reads = list(bam.fetch(until_eof=True))
 
     assert len(reads) == 4
+
+
+def test_daf_input_sniff_accepts_iupac_encoding(tmp_path):
+    input_bam = str(tmp_path / "iupac.bam")
+    make_synthetic_iupac_bam(
+        input_bam,
+        n_reads=4,
+        read_length=200,
+        n_chroms=1,
+        chrom_length=5_000,
+        seed=11,
+    )
+
+    _check_daf_inputs(input_bam, n_sniff=4)
+
+
+def test_daf_input_sniff_accepts_reference_fallback(tmp_path):
+    input_bam = str(tmp_path / "raw.bam")
+    make_synthetic_bam(
+        input_bam,
+        n_reads=4,
+        read_length=200,
+        n_chroms=1,
+        chrom_length=5_000,
+        seed=12,
+    )
+
+    _check_daf_inputs(input_bam, reference="ref.fa", n_sniff=4)
+
+
+def test_daf_input_sniff_rejects_missing_deamination_source(tmp_path, capsys):
+    input_bam = str(tmp_path / "raw.bam")
+    make_synthetic_bam(
+        input_bam,
+        n_reads=4,
+        read_length=200,
+        n_chroms=1,
+        chrom_length=5_000,
+        seed=13,
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _check_daf_inputs(input_bam, n_sniff=4)
+
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "--mode daf needs deamination calls" in err
+    assert "--reference ref.fa" in err
