@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 from typing import Set, Tuple
 
-
 # Reverse complement lookup
 _RC_TABLE = str.maketrans('ACGT', 'TGCA')
 

@@ -1,15 +1,15 @@
 """
 Tests for fiberhmm.core.model_io module.
 """
-import pytest
-import numpy as np
 import json
 import os
 import warnings
-import tempfile
+
+import numpy as np
+import pytest
 
 from fiberhmm.core.hmm import FiberHMM
-from fiberhmm.core.model_io import load_model, save_model, load_model_with_metadata
+from fiberhmm.core.model_io import load_model, load_model_with_metadata, save_model
 
 
 @pytest.fixture

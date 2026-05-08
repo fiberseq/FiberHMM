@@ -14,8 +14,7 @@ Usage:
         writer.write_fiber(...)
 """
 
-import numpy as np
-from typing import Optional
+
 
 
 def create_writer(output_path: str, format: str = 'auto',

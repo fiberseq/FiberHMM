@@ -9,8 +9,8 @@ from types import SimpleNamespace
 
 import pysam
 import pytest
-
 from conftest import make_synthetic_bam, make_synthetic_iupac_bam
+
 from fiberhmm.cli.call import (
     _check_daf_inputs,
     _resolve_apply_model,

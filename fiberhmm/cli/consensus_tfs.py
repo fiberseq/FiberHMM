@@ -39,8 +39,7 @@ import pysam
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 
-from fiberhmm.io.ma_tags import parse_ma_tag, parse_aq_array
-
+from fiberhmm.io.ma_tags import parse_aq_array, parse_ma_tag
 
 # ── Query → reference coordinate conversion ──────────────────────────────────
 
@@ -186,8 +185,10 @@ def _process_chrom(chrom: str, chrom_len: int,
             continue
         idx = int(np.searchsorted(peak_pos, center))
         candidates: list[tuple[int, int]] = []
-        if idx > 0:              candidates.append((int(peaks_arr[idx - 1]), idx - 1))
-        if idx < len(peaks_arr): candidates.append((int(peaks_arr[idx]),     idx))
+        if idx > 0:
+            candidates.append((int(peaks_arr[idx - 1]), idx - 1))
+        if idx < len(peaks_arr):
+            candidates.append((int(peaks_arr[idx]), idx))
         if not candidates:
             continue
         closest_val, closest_idx = min(candidates, key=lambda x: abs(x[0] - center))
@@ -269,7 +270,9 @@ def main() -> None:
         bed_out = open(args.output, 'w')
 
     try:
-        _banner = lambda msg: print(f"[fiberhmm-consensus-tfs] {msg}", file=sys.stderr)
+        def _banner(msg):
+            print(f"[fiberhmm-consensus-tfs] {msg}", file=sys.stderr)
+
         _banner(f"input:         {args.input}")
         _banner(f"min-mapq:      {args.min_mapq}")
         _banner(f"min-tq:        {args.min_tq}")

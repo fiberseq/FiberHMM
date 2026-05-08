@@ -10,12 +10,10 @@ import numpy as np
 import pytest
 
 from fiberhmm.core.bam_reader import (
-    has_iupac_encoding,
-    extract_daf_iupac_positions,
     encode_from_query_sequence,
-    detect_daf_strand,
+    extract_daf_iupac_positions,
+    has_iupac_encoding,
 )
-
 
 # =========================================================================
 # TestHasIupacEncoding

@@ -16,9 +16,10 @@ Usage:
 """
 
 import os
-import numpy as np
+from typing import Dict, List
+
 import h5py
-from typing import Dict, List, Optional
+import numpy as np
 
 
 class PosteriorWriter:

@@ -4,9 +4,18 @@ fiberhmm.io.ma_tags).
 import numpy as np
 import pytest
 
+from fiberhmm.inference.tf_recaller import (
+    ENZYME_PRESETS,
+    N_CTX,
+    UNMETH_OFFSET,
+    TFCall,
+    build_scan_intervals,
+    call_tfs_in_interval,
+    merge_intervals,
+    write_ma_tags,
+)
 from fiberhmm.io.ma_tags import (
     EDGE_AMBIGUITY_SAT,
-    TQ_SCALE,
     ambiguity_to_edge,
     format_aq_array,
     format_ma_tag,
@@ -15,17 +24,6 @@ from fiberhmm.io.ma_tags import (
     parse_ma_tag,
     tq_to_llr,
 )
-from fiberhmm.inference.tf_recaller import (
-    ENZYME_PRESETS,
-    N_CTX,
-    TFCall,
-    UNMETH_OFFSET,
-    build_scan_intervals,
-    call_tfs_in_interval,
-    merge_intervals,
-    write_ma_tags,
-)
-
 
 # ------------------- ma_tags ---------------------------------------
 
@@ -98,7 +96,9 @@ def test_format_and_parse_ma_tag():
 
 def test_aq_layout():
     nq = [200, 180]
-    tq = [45]; el = [180]; er = [220]
+    tq = [45]
+    el = [180]
+    er = [220]
     aq = format_aq_array(nq, tq, el, er)
     # 2 bytes (nucs) + 3 bytes (tf) = 5 bytes total
     assert list(aq) == [200, 180, 45, 180, 220]
@@ -135,9 +135,12 @@ def _make_obs(seq):
     to an obs np.ndarray."""
     arr = []
     for c in seq:
-        if c == 'h': arr.append(0)
-        elif c == 'm': arr.append(UNMETH_OFFSET)
-        else: arr.append(N_CTX)  # non-target
+        if c == 'h':
+            arr.append(0)
+        elif c == 'm':
+            arr.append(UNMETH_OFFSET)
+        else:
+            arr.append(N_CTX)  # non-target
     return np.array(arr, dtype=np.int32)
 
 

@@ -1,8 +1,9 @@
 """
 Core-count scaling benchmarks.
 """
-import time
 import multiprocessing
+import time
+
 import pytest
 
 from fiberhmm.inference.parallel import process_bam_for_footprints
@@ -68,7 +69,7 @@ class TestScaling:
             elapsed = time.perf_counter() - start
             results[n] = {'reads': total, 'time': elapsed, 'rate': total / elapsed}
 
-        print(f"\n  Region-parallel scaling:")
+        print("\n  Region-parallel scaling:")
         for n in core_counts:
             print(f"    {n} cores: {results[n]['rate']:.1f} reads/s ({results[n]['time']:.1f}s)")
 

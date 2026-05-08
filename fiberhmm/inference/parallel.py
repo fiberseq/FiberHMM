@@ -1,20 +1,60 @@
 """FiberHMM region-parallel processing and worker management."""
 
-import os
-import sys
-import re
-import time
 import array as pyarray
 import base64
-import json
 import gzip
+import json
 import multiprocessing
+import os
+import re
 import shutil
+import sys
 import tempfile
+import time
+from collections import deque
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
+from typing import List, Optional, Set, Tuple
+
 import numpy as np
 import pysam
-from concurrent.futures import Future, ProcessPoolExecutor, as_completed
-from typing import List, Dict, Optional, Tuple, Set
+
+from fiberhmm.core.model_io import load_model
+from fiberhmm.inference.bam_output import (
+    _concatenate_region_bams,
+    _sort_and_index_bam,
+)
+from fiberhmm.inference.engine import (
+    _extract_fiber_read_from_pysam,
+    _process_single_read,
+    extract_fiber_read_from_payload,
+    make_apply_payload,
+)
+from fiberhmm.inference.fused_stages import (
+    apply_result_has_footprints,
+    build_fused_recall_result,
+    run_hmm_apply_stage,
+)
+from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
+from fiberhmm.inference.region_types import (
+    RegionBamAggregation,
+    RegionBamResult,
+    RegionBamWorkItem,
+    RegionBedAggregation,
+    RegionBedResult,
+    RegionBedWorkItem,
+)
+from fiberhmm.inference.tagging import (
+    set_legacy_apply_tags,
+    write_fused_recall_tags,
+)
+
+# Optional: inline posteriors export
+try:
+    from fiberhmm.posteriors.hdf5_backend import PosteriorWriter, get_ref_positions_from_read
+    HAS_POSTERIOR_WRITER = True
+except ImportError:
+    HAS_POSTERIOR_WRITER = False
+
 
 # Multiprocessing start method:
 #
@@ -48,46 +88,8 @@ def _select_mp_context() -> 'multiprocessing.context.BaseContext':
     # Linux, Python <3.14: fork is much faster and segfaults are rare.
     return multiprocessing.get_context('fork')
 
+
 _MP_CONTEXT = _select_mp_context()
-
-from fiberhmm.core.model_io import load_model
-from fiberhmm.core.bam_reader import encode_from_query_sequence, detect_daf_strand
-from fiberhmm.inference.engine import (
-    predict_footprints_and_msps,
-    _extract_fiber_read_from_pysam,
-    extract_fiber_read_from_payload,
-    make_apply_payload,
-    _process_single_read,
-)
-from fiberhmm.inference.bam_output import (
-    _concatenate_region_bams,
-    _sort_and_index_bam,
-)
-from fiberhmm.inference.fused_stages import (
-    apply_result_has_footprints,
-    build_fused_recall_result,
-    run_hmm_apply_stage,
-)
-from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
-from fiberhmm.inference.region_types import (
-    RegionBamAggregation,
-    RegionBamResult,
-    RegionBamWorkItem,
-    RegionBedAggregation,
-    RegionBedResult,
-    RegionBedWorkItem,
-)
-from fiberhmm.inference.tagging import (
-    set_legacy_apply_tags,
-    write_fused_recall_tags,
-)
-
-# Optional: inline posteriors export
-try:
-    from fiberhmm.posteriors.hdf5_backend import PosteriorWriter, get_ref_positions_from_read
-    HAS_POSTERIOR_WRITER = True
-except ImportError:
-    HAS_POSTERIOR_WRITER = False
 
 
 # Global for worker processes
@@ -142,7 +144,8 @@ def _init_fused_worker(apply_model_path, recall_model_path=None,
     # Build TF-recall LLR tables from the recall model (or reuse apply model).
     from fiberhmm.core.model_io import load_model_with_metadata
     from fiberhmm.inference.tf_recaller import (
-        build_llr_tables, apply_emission_uplift,
+        apply_emission_uplift,
+        build_llr_tables,
     )
     r_path = recall_model_path or apply_model_path
     r_model, _, _ = load_model_with_metadata(r_path)
@@ -176,7 +179,6 @@ def _is_main_chromosome(chrom: str) -> bool:
     Returns False for:
     - *_random, chrUn_*, scaffolds, contigs, etc.
     """
-    import re
 
     # Normalize to uppercase for comparison
     c = chrom.upper()
@@ -256,6 +258,7 @@ def _init_region_worker(model_path: str, params: dict):
     """Initialize worker for region-parallel processing."""
     global _worker_model, _worker_region_params
     import os
+
     import numpy as np
 
     try:
@@ -294,9 +297,9 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
     Returns:
         RegionBamResult with temp BAM, counts, optional TSV path, and skip reasons.
     """
-    import numpy as np  # Ensure numpy is available in worker
     import traceback
-    import base64
+
+    import numpy as np  # Ensure numpy is available in worker
     global _worker_model, _worker_region_params
 
     try:
@@ -318,7 +321,6 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         edge_trim = int(params['edge_trim'])
         circular = params['circular']
         mode = params['mode']
-        ref_fasta = params.get('ref_fasta')   # opened FastaFile or None; --reference path
         context_size = int(params['context_size'])
         msp_min_size = int(params['msp_min_size'])
         nuc_min_size = int(params.get('nuc_min_size', 85))
@@ -461,8 +463,10 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                                     read.set_tag('nq', scores_u8.tolist())
                                 elif read.has_tag('nq'):
                                     # Stale nq from input would mismatch new ns — fibertools asserts len(nq)==len(ns)
-                                    try: read.set_tag('nq', None)
-                                    except Exception: pass
+                                    try:
+                                        read.set_tag('nq', None)
+                                    except Exception:
+                                        pass
 
                             if write_msps and len(result['as']) > 0:
                                 read.set_tag('as', pyarray.array('I', result['as'].astype(np.uint32).tolist()))
@@ -472,8 +476,10 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                                     scores_u8 = np.clip(np.array(result['as_scores']) * 255, 0, 255).astype(np.uint8)
                                     read.set_tag('aq', scores_u8.tolist())
                                 elif read.has_tag('aq'):
-                                    try: read.set_tag('aq', None)
-                                    except Exception: pass
+                                    try:
+                                        read.set_tag('aq', None)
+                                    except Exception:
+                                        pass
 
                             # Stream posteriors to TSV immediately (no memory accumulation)
                             if tsv_file and result.get('posteriors') is not None:
@@ -521,7 +527,6 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
 
 def _write_region_posteriors_tsv(tsv_path: str, posteriors_data: list):
     """Write posteriors data from a single region to TSV (simple append-friendly format)."""
-    import base64
 
     with open(tsv_path, 'w') as f:
         for fiber in posteriors_data:
@@ -559,8 +564,6 @@ def _merge_region_posteriors_tsv(temp_tsv_files: list, output_path: str,
     Returns:
         Total number of fibers merged
     """
-    import json
-    import gzip
 
     # Sort by region index to maintain genomic order
     temp_tsv_files.sort(key=lambda x: x[0])
@@ -634,7 +637,6 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
         edge_trim = int(params['edge_trim'])
         circular = params['circular']
         mode = params['mode']
-        ref_fasta = params.get('ref_fasta')   # opened FastaFile or None; --reference path
         context_size = int(params['context_size'])
         msp_min_size = int(params['msp_min_size'])
         nuc_min_size = int(params.get('nuc_min_size', 85))
@@ -705,7 +707,7 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
                         ns = result['ns']
                         nl = result['nl']
                         block_starts_list = [int(s - ref_start) for s in ns]
-                        block_sizes_list = [int(l) for l in nl]
+                        block_sizes_list = [int(length) for length in nl]
 
                         # Get scores if available
                         score_list = None
@@ -783,9 +785,9 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
     Returns:
         (total_reads_processed, reads_with_footprints)
     """
+    import shutil
     import tempfile
     import time
-    import shutil
 
     start_time = time.time()
     return_posteriors = output_posteriors is not None
@@ -1304,8 +1306,6 @@ def _process_payload_chunk_worker(chunk_payloads: list, edge_trim: int, circular
 # Streaming pipeline: sliding-window producer-consumer architecture
 # ---------------------------------------------------------------------------
 
-from collections import deque
-
 
 def _drain_oldest_chunk(inflight, outbam, with_scores, write_msps,
                         posterior_writer, counters):
@@ -1339,7 +1339,7 @@ def _drain_oldest_chunk(inflight, outbam, with_scores, write_msps,
             counters['written'] += 1
             continue
 
-        fiber_read = next(fiber_iter)
+        next(fiber_iter)
         result = next(result_iter)
         if result is not None:
             set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
@@ -1395,7 +1395,7 @@ def _init_fused_region_worker(apply_model_path: str, recall_model_path: Optional
     _worker_region_params = params
 
     from fiberhmm.core.model_io import load_model_with_metadata
-    from fiberhmm.inference.tf_recaller import build_llr_tables, apply_emission_uplift
+    from fiberhmm.inference.tf_recaller import apply_emission_uplift, build_llr_tables
     r_path = recall_model_path or apply_model_path
     r_model, _, _ = load_model_with_metadata(r_path)
     llr_hit, llr_miss = build_llr_tables(r_model)
@@ -1429,6 +1429,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
     Returns a RegionBamResult with temp BAM, counts, and skip reasons.
     """
     import traceback
+
     from fiberhmm.inference.engine import extract_fiber_read_from_payload, make_apply_payload
     global _worker_model, _worker_region_params, _worker_recall_state
 
@@ -1437,7 +1438,8 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         chrom, start, end = work_item.region
         input_bam = work_item.input_bam
         temp_bam_path = work_item.temp_bam_path
-        start = int(start); end = int(end)
+        start = int(start)
+        end = int(end)
 
         params = _worker_region_params
         model = _worker_model
@@ -1485,40 +1487,54 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
 
                 for read in read_iter:
                     if read.is_unmapped:
-                        outbam.write(read); written += 1; skipped += 1
+                        outbam.write(read)
+                        written += 1
+                        skipped += 1
                         skip_reasons['unmapped'] += 1
                         continue
                     if primary_only and (read.is_secondary or read.is_supplementary):
-                        outbam.write(read); written += 1; skipped += 1
+                        outbam.write(read)
+                        written += 1
+                        skipped += 1
                         skip_reasons['secondary_supplementary'] += 1
                         continue
                     # Only process reads starting in this region (fetch is overlap-based).
                     if read.reference_start < start or read.reference_start >= end:
                         continue
                     if read.mapping_quality < min_mapq:
-                        outbam.write(read); written += 1; skipped += 1
+                        outbam.write(read)
+                        written += 1
+                        skipped += 1
                         skip_reasons['low_mapq'] += 1
                         continue
                     if (read.query_alignment_length is None
                             or read.query_alignment_length < min_read_length):
-                        outbam.write(read); written += 1; skipped += 1
+                        outbam.write(read)
+                        written += 1
+                        skipped += 1
                         skip_reasons['too_short'] += 1
                         continue
                     if train_rids and read.query_name in train_rids:
-                        outbam.write(read); written += 1; skipped += 1
+                        outbam.write(read)
+                        written += 1
+                        skipped += 1
                         skip_reasons['training_excluded'] += 1
                         continue
 
                     payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
                     if payload is None:
-                        outbam.write(read); written += 1; skipped += 1
+                        outbam.write(read)
+                        written += 1
+                        skipped += 1
                         skip_reasons['no_modifications'] += 1
                         continue
 
                     try:
                         fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
                         if fiber_read is None:
-                            outbam.write(read); written += 1; skipped += 1
+                            outbam.write(read)
+                            written += 1
+                            skipped += 1
                             skip_reasons['no_modifications'] += 1
                             continue
                         apply_result = run_hmm_apply_stage(
@@ -1533,14 +1549,17 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                             with_scores,
                         )
                     except Exception:
-                        outbam.write(read); written += 1; skipped += 1
+                        outbam.write(read)
+                        written += 1
+                        skipped += 1
                         skip_reasons['extraction_failed'] += 1
                         continue
 
                     total_reads += 1
 
                     if not apply_result_has_footprints(apply_result):
-                        outbam.write(read); written += 1
+                        outbam.write(read)
+                        written += 1
                         skip_reasons['no_footprints'] += 1
                         continue
 
@@ -1570,7 +1589,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
             written, None, skip_reasons,
         )
 
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
         raise
 

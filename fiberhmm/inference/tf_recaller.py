@@ -39,8 +39,6 @@ underestimate the true signal.
 """
 from __future__ import annotations
 
-import math
-from collections import defaultdict
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
@@ -69,7 +67,6 @@ from fiberhmm.io.ma_tags import (
     format_ma_tag,
     llr_to_tq,
 )
-
 
 # Observation-code constants (must match encode_from_query_sequence with k=3)
 N_CTX = 4096           # 4^(2*3) hexamer contexts
@@ -177,14 +174,16 @@ def build_scan_intervals(ns: Sequence[int], nl: Sequence[int],
       - all v2 nucs with ``nl < unify_threshold``
     """
     iv: List[Tuple[int, int]] = []
-    for s, l in zip(as_, al):
-        s = int(s); l = int(l)
-        if l > 0:
-            iv.append((s, s + l))
-    for s, l in zip(ns, nl):
-        s = int(s); l = int(l)
-        if 0 < l < unify_threshold:
-            iv.append((s, s + l))
+    for s, length in zip(as_, al):
+        s = int(s)
+        length = int(length)
+        if length > 0:
+            iv.append((s, s + length))
+    for s, length in zip(ns, nl):
+        s = int(s)
+        length = int(length)
+        if 0 < length < unify_threshold:
+            iv.append((s, s + length))
     iv = [(max(0, a), min(read_len, b)) for a, b in iv]
     iv = [(a, b) for a, b in iv if b > a]
     return merge_intervals(iv)
@@ -422,8 +421,16 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
     extracted = extract_modifications(read, mode, context_size)
     if extracted is None:
         # Pass through v2 calls unchanged
-        nucs = [(int(s), int(l)) for s, l in zip(ns_raw, nl_raw) if int(l) > 0]
-        msps = [(int(s), int(l)) for s, l in zip(as_raw, al_raw) if int(l) > 0]
+        nucs = [
+            (int(s), int(length))
+            for s, length in zip(ns_raw, nl_raw)
+            if int(length) > 0
+        ]
+        msps = [
+            (int(s), int(length))
+            for s, length in zip(as_raw, al_raw)
+            if int(length) > 0
+        ]
         return [], nucs, msps
 
     mod_pos, strand, seq = extracted
@@ -444,21 +451,26 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
         ))
 
     # Unify: drop v2 short-nucs (nl < threshold) that overlap any TF call.
-    msps = [(int(s), int(l)) for s, l in zip(as_raw, al_raw) if int(l) > 0]
+    msps = [
+        (int(s), int(length))
+        for s, length in zip(as_raw, al_raw)
+        if int(length) > 0
+    ]
     kept_nucs: List[Tuple[int, int]] = []
     tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
-    for s, l in zip(ns_raw, nl_raw):
-        s = int(s); l = int(l)
-        if l <= 0:
+    for s, length in zip(ns_raw, nl_raw):
+        s = int(s)
+        length = int(length)
+        if length <= 0:
             continue
-        if l >= unify_threshold:
-            kept_nucs.append((s, l))
+        if length >= unify_threshold:
+            kept_nucs.append((s, length))
             continue
         # Short v2 nuc -- drop if overlapped by any TF call
-        nuc_end = s + l
+        nuc_end = s + length
         if any(ts < nuc_end and te > s for ts, te in tf_intervals):
             continue
-        kept_nucs.append((s, l))
+        kept_nucs.append((s, length))
 
     return tf_calls, kept_nucs, msps
 
@@ -529,8 +541,10 @@ def write_ma_tags(read, read_length: int,
             # Strip any stale tags, leave the read with no MA/AQ
             for tag in ('MA', 'AQ'):
                 if read.has_tag(tag):
-                    try: read.set_tag(tag, None)
-                    except Exception: pass
+                    try:
+                        read.set_tag(tag, None)
+                    except Exception:
+                        pass
         else:
             ma = format_ma_tag(
                 read_length=read_length,
@@ -552,15 +566,19 @@ def write_ma_tags(read, read_length: int,
                 )
                 read.set_tag('AQ', aq)
             elif read.has_tag('AQ'):
-                try: read.set_tag('AQ', None)
-                except Exception: pass
+                try:
+                    read.set_tag('AQ', None)
+                except Exception:
+                    pass
     else:
         # Compat mode: strip any stale MA/AQ so consumers that see both
         # tags don't get out-of-sync views.
         for tag in ('MA', 'AQ'):
             if read.has_tag(tag):
-                try: read.set_tag(tag, None)
-                except Exception: pass
+                try:
+                    read.set_tag(tag, None)
+                except Exception:
+                    pass
 
     if also_write_legacy:
         # Build the ns/nl track. In default mode it's nucleosomes only.
@@ -569,12 +587,12 @@ def write_ma_tags(read, read_length: int,
             combined = list(kept_nucs) + list(tf_intervals)
             combined.sort(key=lambda t: (int(t[0]), int(t[1])))
             ns = [int(s) for s, _ in combined]
-            nl = [int(l) for _, l in combined]
+            nl = [int(length) for _, length in combined]
         else:
             ns = [int(s) for s, _ in kept_nucs]
-            nl = [int(l) for _, l in kept_nucs]
+            nl = [int(length) for _, length in kept_nucs]
         a_s = [int(s) for s, _ in msps]
-        a_l = [int(l) for _, l in msps]
+        a_l = [int(length) for _, length in msps]
 
         if ns:
             read.set_tag('ns', pyarray.array('I', ns))
@@ -582,16 +600,20 @@ def write_ma_tags(read, read_length: int,
         else:
             for tag in ('ns', 'nl', 'nq'):
                 if read.has_tag(tag):
-                    try: read.set_tag(tag, None)
-                    except Exception: pass
+                    try:
+                        read.set_tag(tag, None)
+                    except Exception:
+                        pass
         if a_s:
             read.set_tag('as', pyarray.array('I', a_s))
             read.set_tag('al', pyarray.array('I', a_l))
         else:
             for tag in ('as', 'al', 'aq'):
                 if read.has_tag(tag):
-                    try: read.set_tag(tag, None)
-                    except Exception: pass
+                    try:
+                        read.set_tag(tag, None)
+                    except Exception:
+                        pass
         # nq must have len == len(ns) per fibertools invariant. If we wrote
         # new ns/nl without fresh scores, drop any stale nq from the input BAM
         # to avoid len(nq) != len(ns) failing ft validate (see fibertools-rs
@@ -600,10 +622,14 @@ def write_ma_tags(read, read_length: int,
             read.set_tag('nq', pyarray.array('B',
                           [max(0, min(255, int(v))) for v in nq_values]))
         elif ns and read.has_tag('nq'):
-            try: read.set_tag('nq', None)
-            except Exception: pass
+            try:
+                read.set_tag('nq', None)
+            except Exception:
+                pass
         # Same for aq: stale per-msp qualities from input would mismatch
         # the refreshed as/al length.
         if a_s and read.has_tag('aq'):
-            try: read.set_tag('aq', None)
-            except Exception: pass
+            try:
+                read.set_tag('aq', None)
+            except Exception:
+                pass

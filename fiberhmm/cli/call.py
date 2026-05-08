@@ -22,16 +22,16 @@ Examples:
   fiberhmm-call -i in.bam -o - --enzyme hia5 --seq pacbio | ft fire - -
 """
 import argparse
-import os
 import sys
 
 from fiberhmm.core.model_io import load_model_with_metadata
-from fiberhmm.models import SUPPORTED_ENZYMES, get_model_path as _get_bundled_model
 from fiberhmm.inference.parallel import (
-    _process_bam_streaming_pipeline_fused,
     _process_bam_region_parallel_fused,
+    _process_bam_streaming_pipeline_fused,
 )
 from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
+from fiberhmm.models import SUPPORTED_ENZYMES
+from fiberhmm.models import get_model_path as _get_bundled_model
 
 
 def parse_args():

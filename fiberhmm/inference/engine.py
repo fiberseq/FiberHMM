@@ -1,17 +1,18 @@
 """FiberHMM core per-read HMM inference engine."""
 
+from typing import Optional, Tuple
+
 import numpy as np
 import pysam
-from typing import Optional, Tuple, Set
 
-from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.bam_reader import (
-    encode_from_query_sequence,
     detect_daf_strand,
-    has_iupac_encoding,
+    encode_from_query_sequence,
     extract_daf_iupac_positions,
+    has_iupac_encoding,
     parse_mm_tag_query_positions,
 )
+from fiberhmm.core.hmm import FiberHMM
 
 
 def predict_footprints(model: FiberHMM, encoded_read: np.ndarray,

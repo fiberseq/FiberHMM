@@ -1,10 +1,8 @@
 """FiberHMM footprint statistics and QC plotting."""
 
-import os
-import sys
+
 import numpy as np
 import pysam
-from typing import Optional
 
 
 class FootprintStats:

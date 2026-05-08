@@ -11,12 +11,12 @@ Contains:
 
 import os
 import pickle
-import pandas as pd
-import numpy as np
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Set, Tuple, List, Optional
+from typing import Dict, List, Set, Tuple
 
+import numpy as np
+import pandas as pd
 
 # Reverse complement lookup
 _RC_TABLE = str.maketrans('ACGT', 'TGCA')

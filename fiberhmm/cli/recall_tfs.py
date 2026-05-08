@@ -40,16 +40,12 @@ Examples:
 import argparse
 import json
 import multiprocessing as mp
-import os
 import sys
 from collections import deque
-from typing import Iterable, List, Optional, Tuple
 
-import numpy as np
 import pysam
 
 from fiberhmm.core.model_io import load_model_with_metadata
-from fiberhmm.models import SUPPORTED_ENZYMES, get_model_path as _get_bundled_model
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
     HAS_NUMBA,
@@ -58,7 +54,6 @@ from fiberhmm.inference.tf_recaller import (
     recall_read,
     write_ma_tags,
 )
-
 
 # ---------------------------------------------------------------------------
 # Per-worker global state (set by the initializer; avoids repickling arrays)
@@ -165,7 +160,7 @@ def _process_payload_record(payload) -> tuple:
     if has_ns:
         stats['v2'] = 1
         nl_list = tags['nl']
-        v2_short_count = sum(1 for l in nl_list if 0 < int(l) < unify_threshold)
+        v2_short_count = sum(1 for length in nl_list if 0 < int(length) < unify_threshold)
         v2_nq = tags.get('nq', None)
     else:
         v2_short_count = 0
@@ -180,7 +175,7 @@ def _process_payload_record(payload) -> tuple:
         unify_threshold=unify_threshold,
     )
     stats['tf'] = len(tf_calls)
-    survived_short = sum(1 for _, l in kept_nucs if l < unify_threshold)
+    survived_short = sum(1 for _, length in kept_nucs if length < unify_threshold)
     stats['demoted'] = max(0, v2_short_count - survived_short)
 
     nq_for_kept = None
@@ -188,10 +183,10 @@ def _process_payload_record(payload) -> tuple:
         try:
             ns_old = tags['ns']
             nl_old = tags['nl']
-            old_to_nq = {(int(s), int(l)): int(v2_nq[i])
-                         for i, (s, l) in enumerate(zip(ns_old, nl_old))
+            old_to_nq = {(int(s), int(length)): int(v2_nq[i])
+                         for i, (s, length) in enumerate(zip(ns_old, nl_old))
                          if i < len(v2_nq)}
-            nq_for_kept = [old_to_nq.get((s, l), 0) for s, l in kept_nucs]
+            nq_for_kept = [old_to_nq.get((s, length), 0) for s, length in kept_nucs]
         except Exception:
             nq_for_kept = None
 

@@ -1,14 +1,14 @@
 """
 Tests for fiberhmm.inference.engine module.
 """
-import pytest
 import numpy as np
+import pytest
 
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.inference.engine import (
+    _extract_footprints_from_states,
     predict_footprints,
     predict_footprints_and_msps,
-    _extract_footprints_from_states,
 )
 
 

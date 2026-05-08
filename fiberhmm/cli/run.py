@@ -9,7 +9,6 @@ meaningful use case where fiberhmm-run is preferable.
 """
 import sys
 
-
 _MESSAGE = """\
 fiberhmm-run has been removed.  Use fiberhmm-call instead.
 

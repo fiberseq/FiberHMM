@@ -1,12 +1,13 @@
 """FiberHMM BAM/BED output utilities."""
 
 import os
-import sys
-import subprocess
 import shutil
+import subprocess
+import sys
+from typing import List
+
 import numpy as np
 import pysam
-from typing import List, Dict, Optional
 
 from fiberhmm.core.bam_reader import get_bam_chrom_sizes
 
@@ -63,7 +64,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
         # samtools failed - check if it's a sort issue
         if 'not sorted' in result.stderr.lower() or 'coordinate' in result.stderr.lower():
             if verbose:
-                print(f"  ✗ Direct index failed - BAM is NOT sorted")
+                print("  ✗ Direct index failed - BAM is NOT sorted")
                 print(f"    Error: {result.stderr.strip()}")
             # Fall through to sorting
         else:
@@ -95,7 +96,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
     # Indexing failed - BAM is not sorted, need to sort first
     if verbose:
         print(f"  Sorting BAM ({bam_size_gb:.1f}GB) with samtools sort -@ {threads}...")
-        print(f"    (This means samtools cat did not preserve sort order)")
+        print("    (This means samtools cat did not preserve sort order)")
         sys.stdout.flush()
 
     # Sort using samtools (faster than pysam for large files)
@@ -119,7 +120,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
     os.replace(sorted_bam, output_bam)
 
     if verbose:
-        print(f"  Indexing sorted BAM...")
+        print("  Indexing sorted BAM...")
         sys.stdout.flush()
 
     # Index the sorted BAM

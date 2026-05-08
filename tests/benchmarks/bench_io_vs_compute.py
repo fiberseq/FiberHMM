@@ -2,9 +2,9 @@
 I/O vs compute breakdown: identify bottlenecks.
 """
 import time
-import pytest
+
 import pysam
-import numpy as np
+import pytest
 
 pytestmark = pytest.mark.benchmark
 
@@ -19,8 +19,8 @@ class TestIOvsCompute:
         2. HMM compute only (CPU bound)
         3. Full pipeline
         """
-        from fiberhmm.inference.engine import _extract_fiber_read_from_pysam, _process_single_read
         from fiberhmm.core.model_io import load_model
+        from fiberhmm.inference.engine import _extract_fiber_read_from_pysam, _process_single_read
 
         # Step 1: Read-only timing (iterate + extract fiber reads)
         start = time.perf_counter()
@@ -70,8 +70,8 @@ class TestSlowIOSimulation:
 
         This test measures the components and reports the theoretical advantage.
         """
-        from fiberhmm.inference.engine import _extract_fiber_read_from_pysam, _process_single_read
         from fiberhmm.core.model_io import load_model
+        from fiberhmm.inference.engine import _extract_fiber_read_from_pysam, _process_single_read
 
         # Measure read speed
         start = time.perf_counter()

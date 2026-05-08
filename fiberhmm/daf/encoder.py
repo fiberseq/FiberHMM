@@ -15,7 +15,6 @@ from tqdm import tqdm
 
 from fiberhmm.inference.bam_output import _sort_and_index_bam
 
-
 # CIGAR op codes (from the BAM spec) that consume reference:
 #   M=0, D=2, N=3, =7, X=8. Of these, MD describes M/=/X/D only
 #   (N = skipped reference, no MD coverage), so we exclude N when
@@ -418,7 +417,7 @@ def process_bam_daf_encode(
     }
 
     print(f"\n{'=' * 60}", file=_log)
-    print(f"fiberhmm-daf-encode summary", file=_log)
+    print("fiberhmm-daf-encode summary", file=_log)
     print(f"{'=' * 60}", file=_log)
     print(f"  Total reads:       {total:>12,}", file=_log)
     print(f"  Encoded:           {encoded:>12,}", file=_log)
@@ -434,7 +433,7 @@ def process_bam_daf_encode(
 
     # Sort + index if writing to a file (not stdout)
     if output_bam != "-" and os.path.isfile(output_bam):
-        print(f"\nFinalizing output BAM...", file=_log)
+        print("\nFinalizing output BAM...", file=_log)
         _sort_and_index_bam(output_bam, verbose=True, threads=io_threads)
 
     return summary

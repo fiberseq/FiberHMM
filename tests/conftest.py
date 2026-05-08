@@ -1,11 +1,12 @@
 """
 Shared pytest fixtures for FiberHMM tests.
 """
-import pytest
+import os
+import tempfile
+
 import numpy as np
 import pysam
-import tempfile
-import os
+import pytest
 
 
 @pytest.fixture

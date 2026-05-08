@@ -5,7 +5,6 @@ Reads a plain aligned BAM, identifies C->T / G->A deamination mismatches,
 and encodes them as IUPAC Y/R with an st:Z tag for fiberhmm-apply --mode daf.
 """
 
-import sys
 import argparse
 
 from fiberhmm.cli.common import add_version_args

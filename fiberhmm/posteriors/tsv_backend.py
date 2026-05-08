@@ -16,14 +16,15 @@ Usage:
     from fiberhmm.posteriors.tsv_backend import PosteriorsTSVWriter, tsv_to_h5
 """
 
+import argparse
+import base64
+import gzip
+import json
 import os
 import sys
-import gzip
-import base64
-import argparse
+from typing import Optional
+
 import numpy as np
-from typing import Optional, BinaryIO, TextIO, Union
-import json
 
 
 class PosteriorsTSVWriter:

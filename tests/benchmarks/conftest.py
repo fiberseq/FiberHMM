@@ -2,11 +2,13 @@
 Benchmark-specific fixtures: larger synthetic BAMs and shared config.
 """
 import os
-import tempfile
-import pytest
 
 # Import from parent conftest
 import sys
+import tempfile
+
+import pytest
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from conftest import make_synthetic_bam
 

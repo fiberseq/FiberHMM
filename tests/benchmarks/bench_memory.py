@@ -1,8 +1,8 @@
 """
 Memory usage benchmarks: verify bounded memory for streaming mode.
 """
-import time
 import tracemalloc
+
 import pytest
 
 from fiberhmm.inference.parallel import process_bam_for_footprints
@@ -66,7 +66,7 @@ class TestMemoryUsage:
             peaks[label] = peak
 
         ratio = peaks["5k"] / peaks["1k"]
-        print(f"\n  Memory scaling:")
+        print("\n  Memory scaling:")
         print(f"    1k reads: {peaks['1k'] / 1024 / 1024:.1f} MB")
         print(f"    5k reads: {peaks['5k'] / 1024 / 1024:.1f} MB")
         print(f"    Ratio (5k/1k): {ratio:.2f}x (linear would be 5.0x)")

@@ -21,26 +21,31 @@ Usage:
 
 import argparse
 import os
-import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
+from typing import Dict, List, Optional, Set, Tuple
+
 import numpy as np
-from typing import Dict, List, Optional, Tuple, Set
-from concurrent.futures import ProcessPoolExecutor, as_completed
 import pysam
 from tqdm import tqdm
 
+from fiberhmm.cli.common import (
+    add_edge_trim_args,
+    add_mode_args,
+    add_parallel_args,
+    add_verbose_args,
+    add_version_args,
+)
+
 # Package imports
 from fiberhmm.core.bam_reader import (
-    encode_from_query_sequence, detect_daf_strand,
-    get_reference_positions, ContextEncoder
+    detect_daf_strand,
+    encode_from_query_sequence,
+    get_reference_positions,
 )
-from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.core.hmm import FiberHMM
+from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.inference.parallel import _get_genome_regions
-from fiberhmm.cli.common import (
-    add_mode_args, add_parallel_args, add_edge_trim_args,
-    add_verbose_args, add_version_args,
-)
 
 
 def _detect_format(output_path: str, format_arg: str) -> str:
@@ -161,7 +166,7 @@ def _init_worker(model_path: str, params: dict):
     try:
         _worker_model.predict(dummy)
         _worker_model.predict_proba(dummy)
-    except:
+    except Exception:
         pass  # OK if warmup fails
 
 
@@ -603,7 +608,6 @@ class PosteriorReader:
         return self._load_fibers(chrom, indices)
 
     def _load_fibers(self, chrom: str, indices: np.ndarray) -> List['FiberPosterior']:
-        import h5py
         grp = self.h5[chrom]
         ids = grp['fiber_ids']
         starts = grp['fiber_starts']

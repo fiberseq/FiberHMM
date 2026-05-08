@@ -7,36 +7,35 @@ Tests cover:
 - DAF strand detection
 - Sequence encoding functions
 """
-import pytest
-import numpy as np
 import os
 import sys
+
+import numpy as np
+import pytest
 
 # Try package imports first, fall back to flat imports
 try:
     import fiberhmm.core.bam_reader as bam_reader
     from fiberhmm.core.bam_reader import (
+        HEXAMER_LOOKUP_A,
         ContextEncoder,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
-        parse_mm_tag_query_positions,
         detect_daf_strand,
         encode_from_query_sequence,
-        HEXAMER_LOOKUP_A,
-        NON_TARGET_CODE,
+        parse_mm_tag_query_positions,
     )
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
     import bam_reader as bam_reader
     from bam_reader import (
+        HEXAMER_LOOKUP_A,
         ContextEncoder,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
-        parse_mm_tag_query_positions,
         detect_daf_strand,
         encode_from_query_sequence,
-        HEXAMER_LOOKUP_A,
-        NON_TARGET_CODE,
+        parse_mm_tag_query_positions,
     )
 
 

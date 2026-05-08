@@ -4,22 +4,23 @@ FiberHMM apply_model CLI entry point.
 Applies trained HMM to call chromatin footprints from fiber-seq BAM files.
 """
 
+import argparse
 import os
 import sys
-import glob
-import shutil
-import tempfile
-import argparse
-import numpy as np
+
 import pandas as pd
 
+from fiberhmm.cli.common import (
+    add_edge_trim_args,
+    add_filter_args,
+    add_mode_args,
+    add_parallel_args,
+    add_stats_args,
+    add_version_args,
+)
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.inference.parallel import process_bam_for_footprints
-from fiberhmm.inference.stats import FootprintStats, collect_stats_from_bam
-from fiberhmm.cli.common import (
-    add_mode_args, add_filter_args, add_edge_trim_args,
-    add_parallel_args, add_stats_args, add_version_args,
-)
+from fiberhmm.inference.stats import collect_stats_from_bam
 
 
 def parse_args():
@@ -178,7 +179,7 @@ def main():
     # Load model with metadata
     print(f"Loading model from {model_path}")
     model, model_context_size, model_mode = load_model_with_metadata(model_path)
-    print(f"Model loaded successfully")
+    print("Model loaded successfully")
     print(f"  Start probs: {model.startprob_}")
     print(f"  Transition matrix:\n{model.transmat_}")
 
@@ -206,9 +207,9 @@ def main():
     # Show optimization status
     from fiberhmm.core.hmm import HAS_NUMBA
     if HAS_NUMBA:
-        print(f"  Numba JIT: enabled (fast)")
+        print("  Numba JIT: enabled (fast)")
     else:
-        print(f"  Numba JIT: disabled (pip install numba for ~10x speedup)")
+        print("  Numba JIT: disabled (pip install numba for ~10x speedup)")
 
     # Determine context size (command line overrides model)
     if args.context_size is not None:
@@ -274,21 +275,21 @@ def main():
     print(f"  Min MAPQ: {args.min_mapq}")
     print(f"  Mod prob threshold: {args.prob_threshold}/255")
     if args.circular:
-        print(f"  Circular mode: enabled")
+        print("  Circular mode: enabled")
     if with_scores:
-        print(f"  Confidence scores: enabled")
+        print("  Confidence scores: enabled")
     if args.scores_db:
         print(f"  Scores database: {db_path}")
     if mode == 'daf':
-        print(f"  Strand detection: automatic (C=+, G=-)")
+        print("  Strand detection: automatic (C=+, G=-)")
     elif mode == 'nanopore-fiber':
-        print(f"  Strand detection: none (A-centered only)")
+        print("  Strand detection: none (A-centered only)")
     if args.no_msps:
-        print(f"  MSP output: disabled (--no-msps)")
+        print("  MSP output: disabled (--no-msps)")
     else:
         print(f"  MSP min size: {msp_min_size} bp")
     if args.stats:
-        print(f"  Stats: enabled")
+        print("  Stats: enabled")
     print()
 
     # Parse chromosomes
@@ -394,7 +395,7 @@ def main():
         print("\nDone!", file=sys.stderr)
     else:
         print("\nDone!")
-        print(f"\nTo extract BED12/bigBed for browser visualization:")
+        print("\nTo extract BED12/bigBed for browser visualization:")
         print(f"  fiberhmm-extract-tags -i {output_bam}")
 
 

@@ -39,18 +39,19 @@ Usage:
 
 import argparse
 import os
-import sys
-import time
-import tempfile
 import shutil
 import subprocess
+import sys
+import tempfile
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import List, Dict, Optional, Tuple, Set
-import pysam
-import numpy as np
+from typing import Dict, Optional, Set, Tuple
 
-from fiberhmm.inference.parallel import _get_genome_regions
+import numpy as np
+import pysam
+
 from fiberhmm.core.bam_reader import cigar_to_query_ref
+from fiberhmm.inference.parallel import _get_genome_regions
 
 
 def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
@@ -222,7 +223,8 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
         return (temp_bed_paths, n_reads, n_features)
 
     except Exception as e:
-        import traceback, sys
+        import sys
+        import traceback
         # Surface the actual traceback to stderr (multiprocessing can otherwise
         # swallow worker-side errors — was invisible during the v2.10.4 debug).
         sys.stderr.write(
@@ -325,7 +327,7 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
     When ``block_scores=True``, appends three columns after blockStarts:
     blockTq, blockEl, blockEr -- the full tf+QQQ quality triplet per call.
     """
-    from fiberhmm.io.ma_tags import parse_ma_tag, parse_aq_array
+    from fiberhmm.io.ma_tags import parse_aq_array, parse_ma_tag
 
     try:
         ma_str = read.get_tag('MA')
@@ -349,7 +351,7 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
     tfs_with_quality = []  # (start_0based, length, tq, el, er)
     idx = 0
     for name, _strand, qspec, intervals in parsed['raw_types']:
-        for i, (s, l) in enumerate(intervals):
+        for i, (s, length) in enumerate(intervals):
             quals = per_annotation[idx]
             idx += 1
             if name != 'tf':
@@ -359,7 +361,7 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
             er = int(quals[2]) if len(quals) >= 3 else 0
             if tq < min_tq:
                 continue
-            tfs_with_quality.append((s, l, tq, el, er))
+            tfs_with_quality.append((s, length, tq, el, er))
 
     if not tfs_with_quality:
         return 0
@@ -936,7 +938,7 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
         block_scores: If True, expect BED12+N input (per-block quality
             columns appended) and use the matching autoSQL variant.
     """
-    from fiberhmm.io.autosql import write_autosql_for, EXTRA_FIELD_COUNTS
+    from fiberhmm.io.autosql import EXTRA_FIELD_COUNTS, write_autosql_for
 
     sizes_file = bed_path + '.sizes'
     with open(sizes_file, 'w') as f:
@@ -973,8 +975,10 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
 
     finally:
         if as_file and os.path.exists(as_file):
-            try: os.remove(as_file)
-            except Exception: pass
+            try:
+                os.remove(as_file)
+            except Exception:
+                pass
         if os.path.exists(sizes_file):
             try:
                 os.remove(sizes_file)
@@ -1015,6 +1019,7 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
     pass runs.
     """
     import re
+
     from fiberhmm.daf.encoder import md_matches_cigar
     counts = {
         'reads_scanned': 0,
@@ -1117,9 +1122,12 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
 
     # Predict which tracks will have content.
     predicted = {}
-    if diag['has_ns_nl']: predicted['footprint'] = 'ns/nl'
-    if diag['has_as_al']: predicted['msp'] = 'as/al'
-    if diag['has_MA_AQ']: predicted['tf'] = 'MA/AQ tf+ annotations'
+    if diag['has_ns_nl']:
+        predicted['footprint'] = 'ns/nl'
+    if diag['has_as_al']:
+        predicted['msp'] = 'as/al'
+    if diag['has_MA_AQ']:
+        predicted['tf'] = 'MA/AQ tf+ annotations'
     if diag['has_MM'] and any('a' in s.lower() for s in diag['mm_subtypes']):
         predicted['m6a'] = 'MM/ML (A+a)'
     if diag['has_MM'] and any('+m' in s.lower() or '-m' in s.lower()

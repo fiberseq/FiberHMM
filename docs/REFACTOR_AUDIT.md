@@ -10,7 +10,7 @@ Date: 2026-05-07
 - `python -m pytest`: 297 passed in 68.91s.
 - `python -m pytest -m "not benchmark"`: 277 passed, 20 deselected in 6.89s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m ruff check fiberhmm tests`: not runnable in this environment because `ruff` is not installed.
+- `python -m ruff check fiberhmm tests`: initially not runnable because `ruff` was not installed; `ruff` is now installed from the existing `dev` optional dependency and part of the current gate.
 - Coverage with pytest-cov is not currently a reliable full-suite command in this sandbox. A coverage run produced 268 passes and 29 failures, mostly in multiprocessing paths with `PermissionError: os.sysconf("SC_SEM_NSEMS_MAX")`, plus benchmark-memory failures under coverage overhead. The normal non-coverage suite passed.
 
 ## Implemented In This Branch
@@ -41,6 +41,7 @@ Date: 2026-05-07
 - Avoided per-read Python list copies in the fused TF recall stage and removed a redundant score-byte cast in shared tag writing.
 - Added a single-pass numba DAF context encoder with vectorized-fallback equivalence tests for CT and GA strands.
 - Added an explicit DAF encoder benchmark that compares the single-pass fast path to the vectorized fallback oracle.
+- Installed `ruff` and cleared the configured lint gate across `fiberhmm` and `tests` with import sorting, whitespace cleanup, unused-import cleanup, protected package re-exports, and scoped style fixes.
 
 ## Current Verification
 
@@ -63,10 +64,11 @@ Date: 2026-05-07
 - `python -m pytest -m benchmark tests/benchmarks/bench_encoding.py`: 1 passed in 0.68s.
 - `python -m pytest tests/test_call_pipeline.py tests/test_call_cli.py tests/test_daf_iupac.py tests/test_extract_block_scores.py`: 62 passed in 5.67s.
 - `python -m pytest tests/test_package_consistency.py`: 19 passed in 1.50s.
-- `python -m pytest`: 327 passed, 21 deselected in 10.84s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m pytest tests/test_package_consistency.py tests/test_bam_reader.py tests/test_call_pipeline.py tests/test_tf_recaller.py tests/test_extract_block_scores.py tests/test_streaming_pipeline.py`: 123 passed in 12.03s.
+- `python -m pytest`: 327 passed, 21 deselected in 11.53s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m pytest -m benchmark tests/benchmarks`: 21 passed in 59.43s.
-- `python -m ruff check fiberhmm tests`: not runnable in this environment because `ruff` is not installed.
+- `python -m pytest -m benchmark tests/benchmarks`: 21 passed in 67.45s.
 
 ## Current Shape
 
@@ -129,6 +131,7 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 Before moving code:
 
 - Keep `python -m pytest` green.
+- Keep `python -m ruff check fiberhmm tests` green.
 - Use `python -m pytest` as the fast non-benchmark correctness gate.
 - Use `python -m pytest -m benchmark tests/benchmarks` as the explicit performance gate.
 - Add `fiberhmm-call` characterization tests:

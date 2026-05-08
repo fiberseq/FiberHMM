@@ -6,3 +6,8 @@ try:
     from fiberhmm.posteriors.hdf5_backend import PosteriorWriter
 except ImportError:
     PosteriorWriter = None
+
+__all__ = [
+    "PosteriorWriter",
+    "PosteriorsTSVWriter",
+]

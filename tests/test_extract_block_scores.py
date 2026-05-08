@@ -12,19 +12,18 @@ import io
 from array import array
 
 import numpy as np
-import pytest
 
+from fiberhmm.cli.extract_tags import (
+    _extract_deam,
+    _extract_footprints,
+    _extract_msps,
+    _extract_tfs,
+)
 from fiberhmm.io.autosql import (
     AUTOSQL_SCHEMAS,
     EXTRA_FIELD_COUNTS,
     get_schema,
     write_autosql_for,
-)
-from fiberhmm.cli.extract_tags import (
-    _extract_footprints,
-    _extract_msps,
-    _extract_deam,
-    _extract_tfs,
 )
 
 
@@ -213,7 +212,7 @@ def _build_ma_aq(nuc_intervals, tf_intervals, nq_values, tf_qqqs,
 
     ``tf_qqqs`` is a list of (tq, el, er) triplets, one per tf interval.
     """
-    from fiberhmm.io.ma_tags import format_ma_tag, format_aq_array
+    from fiberhmm.io.ma_tags import format_aq_array, format_ma_tag
     ma = format_ma_tag(read_length=read_length,
                        nuc_intervals=nuc_intervals,
                        msp_intervals=(),
@@ -614,9 +613,13 @@ def test_md_matches_cigar_catches_mismatch():
         def __init__(self, md, cigartuples):
             self._md = md
             self.cigartuples = cigartuples
-        def has_tag(self, t): return t == 'MD'
+
+        def has_tag(self, t):
+            return t == 'MD'
+
         def get_tag(self, t):
-            if t == 'MD': return self._md
+            if t == 'MD':
+                return self._md
             raise KeyError(t)
 
     # Matching: CIGAR ref_len = 10 (10M), MD = 10 matches.

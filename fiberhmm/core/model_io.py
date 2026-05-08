@@ -15,12 +15,11 @@ import json
 import os
 import pickle
 import warnings
-from typing import Any, Dict, Tuple
+from typing import Tuple
 
 import numpy as np
 
 from fiberhmm.core.hmm import FiberHMM
-
 
 # =============================================================================
 # Loading functions (all formats supported for backward compatibility)

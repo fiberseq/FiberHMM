@@ -9,7 +9,6 @@ import numpy as np
 
 from fiberhmm.inference.tf_recaller import TFCall, write_ma_tags
 
-
 Interval = Tuple[int, int]
 
 
@@ -24,9 +23,9 @@ def _array_to_ints(values) -> list[int]:
 def intervals_from_arrays(starts, lengths) -> list[Interval]:
     """Convert parallel start/length arrays to positive-length intervals."""
     return [
-        (int(s), int(l))
-        for s, l in zip(_array_to_ints(starts), _array_to_ints(lengths))
-        if int(l) > 0
+        (int(s), int(length))
+        for s, length in zip(_array_to_ints(starts), _array_to_ints(lengths))
+        if int(length) > 0
     ]
 
 
@@ -89,17 +88,17 @@ def unify_nucs_with_tf_calls(
     kept: list[Interval] = []
     kept_scores: Optional[list[int]] = [] if score_values is not None else None
 
-    for idx, (s_raw, l_raw) in enumerate(zip(ns, nl)):
+    for idx, (s_raw, length_raw) in enumerate(zip(ns, nl)):
         s = int(s_raw)
-        l = int(l_raw)
-        if l <= 0:
+        length = int(length_raw)
+        if length <= 0:
             continue
-        keep = l >= unify_threshold
+        keep = length >= unify_threshold
         if not keep:
-            nuc_end = s + l
+            nuc_end = s + length
             keep = not any(ts < nuc_end and te > s for ts, te in tf_intervals)
         if keep:
-            kept.append((s, l))
+            kept.append((s, length))
             if kept_scores is not None:
                 kept_scores.append(score_values[idx] if idx < len(score_values) else 0)
 
@@ -111,7 +110,7 @@ def split_intervals(intervals: Sequence[Interval]) -> tuple[np.ndarray, np.ndarr
     if not intervals:
         return np.asarray([], dtype=np.int32), np.asarray([], dtype=np.int32)
     starts = np.asarray([s for s, _ in intervals], dtype=np.int32)
-    lengths = np.asarray([l for _, l in intervals], dtype=np.int32)
+    lengths = np.asarray([length for _, length in intervals], dtype=np.int32)
     return starts, lengths
 
 

@@ -34,7 +34,6 @@ import os
 import tempfile
 from typing import Optional
 
-
 _BED12_FIELDS = """    string  chrom;       "Reference chromosome / contig"
     uint    chromStart;  "Start position on the reference (0-based)"
     uint    chromEnd;    "End position on the reference (exclusive)"

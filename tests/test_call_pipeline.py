@@ -3,13 +3,13 @@
 import os
 
 import pysam
-
 from conftest import make_synthetic_bam
-from fiberhmm.models import get_model_path
+
 from fiberhmm.inference.parallel import (
     _process_bam_region_parallel_fused,
     _process_bam_streaming_pipeline_fused,
 )
+from fiberhmm.models import get_model_path
 
 
 def _run_fused_streaming(input_bam, output_bam, model_path, *, with_scores=False):
