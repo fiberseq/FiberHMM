@@ -60,7 +60,11 @@ from fiberhmm.inference.engine import (
     make_apply_payload,
     _process_single_read,
 )
-from fiberhmm.inference.bam_output import _samtools_cat_bams, _sort_and_index_bam
+from fiberhmm.inference.bam_output import (
+    _samtools_cat_bams,
+    _samtools_merge_bams,
+    _sort_and_index_bam,
+)
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.tagging import (
     intervals_from_arrays,
@@ -988,25 +992,12 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
                     # Last resort: use samtools merge instead of cat
                     try:
-                        # samtools merge can be more robust than cat
-                        with open(bam_list_file, 'w') as f:
-                            for bam_path in non_empty_bams:
-                                f.write(bam_path + '\n')
-                        result = subprocess.run(
-                            ['samtools', 'merge', '-f', '-b', bam_list_file, output_bam],
-                            capture_output=True, text=True
-                        )
-                        if result.returncode == 0:
-                            concat_time = time.time() - concat_start
-                            print(f"  Concatenated with samtools merge in {concat_time:.1f}s")
-                        else:
-                            raise Exception(f"samtools merge failed: {result.stderr}")
+                        _samtools_merge_bams(non_empty_bams, output_bam, bam_list_file)
+                        concat_time = time.time() - concat_start
+                        print(f"  Concatenated with samtools merge in {concat_time:.1f}s")
                     except Exception as merge_err:
                         print(f"  ERROR: All concatenation methods failed: {merge_err}")
                         raise
-                    finally:
-                        if os.path.exists(bam_list_file):
-                            os.remove(bam_list_file)
 
         sys.stdout.flush()
 

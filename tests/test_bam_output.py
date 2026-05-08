@@ -129,3 +129,54 @@ def test_samtools_cat_bams_cleans_list_when_samtools_missing(monkeypatch, tmp_pa
         bam_output._samtools_cat_bams(inputs, output_bam, list_file)
 
     assert not Path(list_file).exists()
+
+
+def test_samtools_merge_bams_writes_list_and_cleans_on_success(monkeypatch, tmp_path):
+    inputs = [str(tmp_path / f"region_{i}.bam") for i in range(3)]
+    output_bam = str(tmp_path / "out.bam")
+    list_file = str(tmp_path / "bam_list.txt")
+
+    def fake_run(cmd, *args, **kwargs):
+        assert cmd == ["samtools", "merge", "-f", "-b", list_file, output_bam]
+        assert kwargs == {"capture_output": True, "text": True}
+        assert Path(list_file).read_text().splitlines() == inputs
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
+
+    bam_output._samtools_merge_bams(inputs, output_bam, list_file)
+
+    assert not Path(list_file).exists()
+
+
+def test_samtools_merge_bams_cleans_list_on_command_failure(monkeypatch, tmp_path):
+    inputs = [str(tmp_path / "a.bam"), str(tmp_path / "b.bam")]
+    output_bam = str(tmp_path / "out.bam")
+    list_file = str(tmp_path / "bam_list.txt")
+
+    def fake_run(cmd, *args, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, stdout="partial", stderr="merge failed")
+
+    monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError) as exc:
+        bam_output._samtools_merge_bams(inputs, output_bam, list_file)
+
+    assert exc.value.stderr == "merge failed"
+    assert not Path(list_file).exists()
+
+
+def test_samtools_merge_bams_cleans_list_when_samtools_missing(monkeypatch, tmp_path):
+    inputs = [str(tmp_path / "a.bam"), str(tmp_path / "b.bam")]
+    output_bam = str(tmp_path / "out.bam")
+    list_file = str(tmp_path / "bam_list.txt")
+
+    def fake_run(cmd, *args, **kwargs):
+        raise FileNotFoundError("samtools")
+
+    monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
+
+    with pytest.raises(FileNotFoundError):
+        bam_output._samtools_merge_bams(inputs, output_bam, list_file)
+
+    assert not Path(list_file).exists()

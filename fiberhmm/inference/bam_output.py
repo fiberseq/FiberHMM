@@ -147,6 +147,24 @@ def _samtools_cat_bams(bam_files: List[str], output_bam: str, list_file: str) ->
             os.remove(list_file)
 
 
+def _samtools_merge_bams(bam_files: List[str], output_bam: str, list_file: str) -> None:
+    """Merge BAMs with `samtools merge -b`, cleaning the list file."""
+    _write_bam_list_file(bam_files, list_file)
+    try:
+        result = subprocess.run(
+            ['samtools', 'merge', '-f', '-b', list_file, output_bam],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode, 'samtools merge',
+                output=result.stdout, stderr=result.stderr,
+            )
+    finally:
+        if os.path.exists(list_file):
+            os.remove(list_file)
+
+
 def write_bed12_records_direct(records: List[dict], filepath: str, with_scores: bool = False):
     """
     Write BED12 records directly to file without DataFrame overhead.
