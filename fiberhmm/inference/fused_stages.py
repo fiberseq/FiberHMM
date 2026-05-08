@@ -9,12 +9,6 @@ from fiberhmm.inference.tagging import split_intervals, unify_nucs_with_tf_calls
 from fiberhmm.inference.tf_recaller import build_scan_intervals, call_tfs_in_interval
 
 
-def _as_list(values: Any) -> list:
-    if hasattr(values, "tolist"):
-        return values.tolist()
-    return list(values)
-
-
 def apply_result_has_footprints(apply_result: Optional[Mapping[str, Any]]) -> bool:
     """Return whether an HMM apply result has annotations worth writing."""
     if apply_result is None:
@@ -95,17 +89,12 @@ def build_fused_recall_result(
     msps = apply_result["as"]
     msp_lengths = apply_result["al"]
 
-    ns_list = _as_list(ns)
-    nl_list = _as_list(nl)
-    msp_list = _as_list(msps)
-    msp_length_list = _as_list(msp_lengths)
-
     tf_calls = run_tf_recall_stage(
         apply_result["encoded"],
-        ns_list,
-        nl_list,
-        msp_list,
-        msp_length_list,
+        ns,
+        nl,
+        msps,
+        msp_lengths,
         len(fiber_read["query_sequence"]),
         llr_hit,
         llr_miss,
@@ -114,8 +103,8 @@ def build_fused_recall_result(
         unify_threshold,
     )
     kept_nucs, nq_for_kept = unify_nucs_with_tf_calls(
-        ns_list,
-        nl_list,
+        ns,
+        nl,
         tf_calls,
         unify_threshold,
         apply_result.get("ns_scores") if with_scores else None,

@@ -79,7 +79,12 @@ def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatc
         with_scores=True,
     )
 
-    assert seen["interval_args"] == ([5, 100], [20, 100], [12], [8], 150, 90)
+    interval_args = seen["interval_args"]
+    assert interval_args[0] is apply_result["ns"]
+    assert interval_args[1] is apply_result["nl"]
+    assert interval_args[2] is msps
+    assert interval_args[3] is msp_lengths
+    assert interval_args[4:] == (150, 90)
     scan_args = seen["scan_args"]
     assert len(scan_args) == 2
     assert scan_args[0][0] is obs

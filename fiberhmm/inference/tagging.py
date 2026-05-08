@@ -37,7 +37,7 @@ def scores_to_u8(scores: Optional[Sequence[float]]) -> Optional[list[int]]:
     arr = np.asarray(scores, dtype=np.float64)
     if arr.size == 0:
         return []
-    return np.clip(arr * 255, 0, 255).astype(np.uint8).astype(int).tolist()
+    return np.clip(arr * 255, 0, 255).astype(np.uint8).tolist()
 
 
 def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True) -> None:

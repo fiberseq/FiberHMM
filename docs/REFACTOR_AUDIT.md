@@ -38,6 +38,7 @@ Date: 2026-05-07
 - Removed unused private BAM merge helpers from `fiberhmm/inference/parallel.py`; active merge fallback coverage now lives with the shared BAM output helper tests.
 - Added higher-level region worker failure cleanup tests covering apply BAM, BED, and fused BAM temp-directory cleanup after executor/future failures.
 - Extracted fused HMM apply, TF recall scan, and nucleosome/TF unification stage helpers into `fiberhmm/inference/fused_stages.py`; fused streaming and region-parallel workers now share those stage boundaries.
+- Avoided per-read Python list copies in the fused TF recall stage and removed a redundant score-byte cast in shared tag writing.
 
 ## Current Verification
 
@@ -53,11 +54,12 @@ Date: 2026-05-07
 - `python -m pytest tests/test_region_cleanup.py tests/test_region_types.py tests/test_mode_equivalence.py tests/test_call_pipeline.py`: 17 passed in 4.72s.
 - `python -m pytest tests/test_fused_stages.py tests/test_call_pipeline.py`: 6 passed in 4.45s.
 - `python -m pytest tests/test_fused_stages.py tests/test_call_pipeline.py tests/test_mode_equivalence.py tests/test_region_cleanup.py`: 13 passed in 6.58s.
+- `python -m pytest tests/test_tagging.py tests/test_fused_stages.py tests/test_call_pipeline.py tests/test_tf_recaller.py`: 29 passed in 4.57s.
 - `python -m pytest tests/test_call_pipeline.py tests/test_call_cli.py tests/test_daf_iupac.py tests/test_extract_block_scores.py`: 62 passed in 5.67s.
 - `python -m pytest tests/test_package_consistency.py`: 19 passed in 1.50s.
-- `python -m pytest`: 324 passed, 20 deselected in 10.70s.
+- `python -m pytest`: 325 passed, 20 deselected in 10.62s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 59.41s.
+- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 59.04s.
 - `python -m ruff check fiberhmm tests`: not runnable in this environment because `ruff` is not installed.
 
 ## Current Shape
