@@ -490,10 +490,9 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
     """
     import pysam
 
-    bam = pysam.AlignmentFile(input_bam, "rb", check_sq=False)
     count = 0
 
-    with open(output_bed, 'w') as out:
+    with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as bam, open(output_bed, 'w') as out:
         for read in bam:
             # Skip unmapped and secondary/supplementary (BED should have one row per molecule)
             if read.is_unmapped or read.is_secondary or read.is_supplementary:
@@ -654,7 +653,6 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
             out.write(line + '\n')
             count += 1
 
-    bam.close()
     return count
 
 

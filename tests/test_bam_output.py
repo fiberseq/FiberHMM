@@ -80,6 +80,42 @@ def test_convert_to_bigbed_with_schema_falls_back_without_shell(monkeypatch, tmp
     assert not sorted_bed.exists()
 
 
+def test_extract_bed_from_tagged_bam_closes_bam_when_output_open_fails(
+    monkeypatch, tmp_path
+):
+    opened = []
+
+    class FakeAlignmentFile:
+        def __init__(self, *args, **kwargs):
+            self.closed = False
+            opened.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.close()
+            return False
+
+        def __iter__(self):
+            return iter(())
+
+        def close(self):
+            self.closed = True
+
+    def fail_open(*args, **kwargs):
+        raise OSError("bed open failed")
+
+    monkeypatch.setattr(bam_output.pysam, "AlignmentFile", FakeAlignmentFile)
+    monkeypatch.setattr(bam_output, "open", fail_open, raising=False)
+
+    with pytest.raises(OSError, match="bed open failed"):
+        bam_output.extract_bed_from_tagged_bam("input.bam", str(tmp_path / "out.bed"))
+
+    assert len(opened) == 1
+    assert opened[0].closed
+
+
 def test_samtools_cat_bams_writes_list_and_cleans_on_success(monkeypatch, tmp_path):
     inputs = [str(tmp_path / f"region_{i}.bam") for i in range(3)]
     output_bam = str(tmp_path / "out.bam")

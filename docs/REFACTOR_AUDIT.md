@@ -69,6 +69,7 @@ Date: 2026-05-07
 - Made extract-tag region workers close already-opened temporary BED handles if a later per-type output open fails, with worker-level failure coverage.
 - Made QC stats BAM sampling use context-managed BAM handles across both passes, with failure-path coverage for second-pass cleanup.
 - Made DAF BAM encoding close input BAM and reference FASTA handles when pre-output MD validation fails, with direct lifecycle coverage.
+- Made tagged-BAM BED extraction close its input BAM if output BED opening fails, with direct shared-helper coverage.
 
 ## Current Verification
 
@@ -230,6 +231,12 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 364 passed, 26 deselected in 10.00s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 50.51s.
+- `python -m ruff check fiberhmm/inference/bam_output.py tests/test_bam_output.py`: passed.
+- `python -m pytest tests/test_bam_output.py tests/test_package_consistency.py`: 38 passed in 1.24s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 365 passed, 26 deselected in 9.80s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.44s.
 
 ## Current Shape
 
