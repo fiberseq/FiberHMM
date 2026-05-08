@@ -10,7 +10,6 @@ import json
 import gzip
 import multiprocessing
 import shutil
-import subprocess
 import tempfile
 import numpy as np
 import pysam
@@ -61,8 +60,7 @@ from fiberhmm.inference.engine import (
     _process_single_read,
 )
 from fiberhmm.inference.bam_output import (
-    _samtools_cat_bams,
-    _samtools_merge_bams,
+    _concatenate_region_bams,
     _sort_and_index_bam,
 )
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
@@ -902,102 +900,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         non_empty_bams = [bam for _, bam in temp_bams
                          if os.path.exists(bam) and os.path.getsize(bam) > 0]
 
-        # Calculate total size of temp BAMs
-        total_temp_size = sum(os.path.getsize(b) for b in non_empty_bams)
-        total_temp_size_gb = total_temp_size / (1024**3)
-
-        # Concatenate BAMs using samtools cat (fast - copies raw BGZF blocks)
-        print(f"Concatenating {len(non_empty_bams)} region BAMs ({total_temp_size_gb:.1f}GB total)...")
-        sys.stdout.flush()
-        concat_start = time.time()
-
-        if len(non_empty_bams) == 0:
-            with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as inbam:
-                with pysam.AlignmentFile(output_bam, "wb", header=inbam.header) as outbam:
-                    pass
-        elif len(non_empty_bams) == 1:
-            shutil.copy(non_empty_bams[0], output_bam)
-        else:
-            # Use samtools cat for fast concatenation
-            # Files are already sorted by region index (region_000000.bam, region_000001.bam, etc.)
-            bam_list_file = os.path.join(temp_dir, 'bam_list.txt')
-            try:
-                _samtools_cat_bams(non_empty_bams, output_bam, bam_list_file)
-
-                concat_time = time.time() - concat_start
-                output_size_gb = os.path.getsize(output_bam) / (1024**3)
-                speed_gbs = output_size_gb / concat_time if concat_time > 0 else 0
-                print(f"  Concatenated with samtools cat in {concat_time:.1f}s ({output_size_gb:.1f}GB, {speed_gbs:.2f} GB/s)")
-
-            except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                # Fallback to pysam if samtools not available or failed
-                # Print the actual error message including stderr
-                if hasattr(e, 'stderr') and e.stderr:
-                    print(f"  WARNING: samtools cat failed: {e.stderr.strip()}")
-                else:
-                    print(f"  WARNING: samtools cat failed: {e}")
-                print(f"  Falling back to pysam (slower, reads each record)...")
-
-                # Remove any partial output file from failed samtools
-                if os.path.exists(output_bam):
-                    try:
-                        os.remove(output_bam)
-                        print(f"    Removed partial output file")
-                    except Exception as rm_err:
-                        print(f"    Warning: Could not remove partial file: {rm_err}")
-
-                # Ensure output directory exists and is writable
-                output_dir_path = os.path.dirname(output_bam)
-                if output_dir_path:
-                    if not os.path.exists(output_dir_path):
-                        print(f"    Creating output directory: {output_dir_path}")
-                        os.makedirs(output_dir_path, exist_ok=True)
-
-                    # Test that we can write to this directory
-                    test_file = os.path.join(output_dir_path, '.write_test')
-                    try:
-                        with open(test_file, 'w') as f:
-                            f.write('test')
-                        os.remove(test_file)
-                    except Exception as write_err:
-                        print(f"    ERROR: Cannot write to output directory: {write_err}")
-                        print(f"    Directory: {output_dir_path}")
-                        print(f"    Directory exists: {os.path.exists(output_dir_path)}")
-                        raise
-
-                try:
-                    print(f"    Reading header from: {non_empty_bams[0]}")
-                    with pysam.AlignmentFile(non_empty_bams[0], "rb", check_sq=False) as first_bam:
-                        header = first_bam.header
-
-                    print(f"    Opening output file: {output_bam}")
-                    with pysam.AlignmentFile(output_bam, "wb", header=header) as outbam:
-                        for i, bam_path in enumerate(non_empty_bams):
-                            with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as inbam:
-                                for read in inbam:
-                                    outbam.write(read)
-                            if (i + 1) % 10 == 0:
-                                print(f"\r    Concatenated {i+1}/{len(non_empty_bams)} BAMs...", end='')
-                                sys.stdout.flush()
-                    print()
-
-                    concat_time = time.time() - concat_start
-                    print(f"  Concatenated with pysam in {concat_time:.1f}s")
-
-                except Exception as pysam_err:
-                    print(f"  ERROR: pysam fallback also failed: {pysam_err}")
-                    print(f"    Output path: {output_bam}")
-                    print(f"    Output dir exists: {os.path.exists(os.path.dirname(output_bam))}")
-                    print(f"  Attempting manual BAM concatenation via samtools merge...")
-
-                    # Last resort: use samtools merge instead of cat
-                    try:
-                        _samtools_merge_bams(non_empty_bams, output_bam, bam_list_file)
-                        concat_time = time.time() - concat_start
-                        print(f"  Concatenated with samtools merge in {concat_time:.1f}s")
-                    except Exception as merge_err:
-                        print(f"  ERROR: All concatenation methods failed: {merge_err}")
-                        raise
+        _concatenate_region_bams(input_bam, output_bam, non_empty_bams, temp_dir)
 
         sys.stdout.flush()
 
@@ -1831,16 +1734,7 @@ def _process_bam_region_parallel_fused(
         temp_bams.sort(key=lambda x: x[0])
         non_empty = [bam for _, bam in temp_bams
                      if os.path.exists(bam) and os.path.getsize(bam) > 0]
-        total_mb = sum(os.path.getsize(b) for b in non_empty) / (1024**2)
-        print(f"Concatenating {len(non_empty)} region BAMs ({total_mb:.1f} MB total)...")
-        if not non_empty:
-            with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as ib:
-                pysam.AlignmentFile(output_bam, "wb", header=ib.header).close()
-        elif len(non_empty) == 1:
-            shutil.copy(non_empty[0], output_bam)
-        else:
-            bam_list = os.path.join(temp_dir, 'bam_list.txt')
-            _samtools_cat_bams(non_empty, output_bam, bam_list)
+        _concatenate_region_bams(input_bam, output_bam, non_empty, temp_dir)
 
         # Index directly (input sorted → each region sorted → concat sorted).
         try:

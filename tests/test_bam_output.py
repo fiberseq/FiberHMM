@@ -182,6 +182,164 @@ def test_samtools_merge_bams_cleans_list_when_samtools_missing(monkeypatch, tmp_
     assert not Path(list_file).exists()
 
 
+def test_concatenate_region_bams_writes_empty_bam_from_input_header(monkeypatch, tmp_path):
+    input_bam = str(tmp_path / "input.bam")
+    output_bam = str(tmp_path / "out.bam")
+    opened = []
+    header = {"HD": {"VN": "1.6"}}
+
+    class FakeAlignmentFile:
+        def __init__(self, path, mode, *args, **kwargs):
+            opened.append((path, mode, kwargs))
+            self.header = header
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(bam_output.pysam, "AlignmentFile", FakeAlignmentFile)
+
+    bam_output._concatenate_region_bams(input_bam, output_bam, [], str(tmp_path), verbose=False)
+
+    assert opened == [
+        (input_bam, "rb", {"check_sq": False}),
+        (output_bam, "wb", {"header": header}),
+    ]
+
+
+def test_concatenate_region_bams_copies_single_bam(tmp_path):
+    input_bam = str(tmp_path / "input.bam")
+    source_bam = tmp_path / "region_0.bam"
+    output_bam = tmp_path / "out.bam"
+    source_bam.write_bytes(b"region")
+
+    bam_output._concatenate_region_bams(
+        input_bam, str(output_bam), [str(source_bam)], str(tmp_path), verbose=False
+    )
+
+    assert output_bam.read_bytes() == b"region"
+
+
+def test_concatenate_region_bams_uses_samtools_cat_first(monkeypatch, tmp_path):
+    input_bam = str(tmp_path / "input.bam")
+    output_bam = str(tmp_path / "out.bam")
+    bam_files = []
+    cat_calls = []
+
+    for i in range(2):
+        bam_path = tmp_path / f"region_{i}.bam"
+        bam_path.write_bytes(b"region")
+        bam_files.append(str(bam_path))
+
+    def fake_cat(inputs, output, list_file):
+        cat_calls.append((inputs, output, list_file))
+        Path(output).write_bytes(b"cat")
+
+    monkeypatch.setattr(bam_output, "_samtools_cat_bams", fake_cat)
+    monkeypatch.setattr(
+        bam_output, "_concatenate_bams_with_pysam",
+        lambda *args, **kwargs: pytest.fail("unexpected pysam fallback")
+    )
+    monkeypatch.setattr(
+        bam_output, "_samtools_merge_bams",
+        lambda *args, **kwargs: pytest.fail("unexpected merge fallback")
+    )
+
+    bam_output._concatenate_region_bams(input_bam, output_bam, bam_files, str(tmp_path), verbose=False)
+
+    assert output_bam and Path(output_bam).read_bytes() == b"cat"
+    assert cat_calls == [(bam_files, output_bam, str(tmp_path / "bam_list.txt"))]
+
+
+def test_concatenate_region_bams_removes_partial_before_pysam_fallback(monkeypatch, tmp_path):
+    input_bam = str(tmp_path / "input.bam")
+    output_bam = str(tmp_path / "out.bam")
+    bam_files = []
+
+    for i in range(2):
+        bam_path = tmp_path / f"region_{i}.bam"
+        bam_path.write_bytes(b"region")
+        bam_files.append(str(bam_path))
+
+    def fake_cat(inputs, output, list_file):
+        Path(output).write_bytes(b"partial")
+        raise subprocess.CalledProcessError(1, "samtools cat", stderr="cat failed")
+
+    def fake_pysam(inputs, output, *args, **kwargs):
+        assert inputs == bam_files
+        assert not Path(output).exists()
+        Path(output).write_bytes(b"pysam")
+
+    monkeypatch.setattr(bam_output, "_samtools_cat_bams", fake_cat)
+    monkeypatch.setattr(bam_output, "_concatenate_bams_with_pysam", fake_pysam)
+    monkeypatch.setattr(
+        bam_output, "_samtools_merge_bams",
+        lambda *args, **kwargs: pytest.fail("unexpected merge fallback")
+    )
+
+    bam_output._concatenate_region_bams(input_bam, output_bam, bam_files, str(tmp_path), verbose=False)
+
+    assert Path(output_bam).read_bytes() == b"pysam"
+
+
+def test_concatenate_region_bams_creates_output_dir_for_pysam_fallback(monkeypatch, tmp_path):
+    input_bam = str(tmp_path / "input.bam")
+    output_bam = str(tmp_path / "missing" / "out.bam")
+    bam_files = []
+
+    for i in range(2):
+        bam_path = tmp_path / f"region_{i}.bam"
+        bam_path.write_bytes(b"region")
+        bam_files.append(str(bam_path))
+
+    def fake_cat(inputs, output, list_file):
+        raise FileNotFoundError("samtools")
+
+    def fake_pysam(inputs, output, *args, **kwargs):
+        assert Path(output).parent.exists()
+        Path(output).write_bytes(b"pysam")
+
+    monkeypatch.setattr(bam_output, "_samtools_cat_bams", fake_cat)
+    monkeypatch.setattr(bam_output, "_concatenate_bams_with_pysam", fake_pysam)
+
+    bam_output._concatenate_region_bams(input_bam, output_bam, bam_files, str(tmp_path), verbose=False)
+
+    assert Path(output_bam).read_bytes() == b"pysam"
+
+
+def test_concatenate_region_bams_uses_merge_after_pysam_failure(monkeypatch, tmp_path):
+    input_bam = str(tmp_path / "input.bam")
+    output_bam = str(tmp_path / "out.bam")
+    bam_files = []
+    merge_calls = []
+
+    for i in range(2):
+        bam_path = tmp_path / f"region_{i}.bam"
+        bam_path.write_bytes(b"region")
+        bam_files.append(str(bam_path))
+
+    def fake_cat(inputs, output, list_file):
+        raise subprocess.CalledProcessError(1, "samtools cat", stderr="cat failed")
+
+    def fake_pysam(inputs, output, *args, **kwargs):
+        raise RuntimeError("pysam failed")
+
+    def fake_merge(inputs, output, list_file):
+        merge_calls.append((inputs, output, list_file))
+        Path(output).write_bytes(b"merge")
+
+    monkeypatch.setattr(bam_output, "_samtools_cat_bams", fake_cat)
+    monkeypatch.setattr(bam_output, "_concatenate_bams_with_pysam", fake_pysam)
+    monkeypatch.setattr(bam_output, "_samtools_merge_bams", fake_merge)
+
+    bam_output._concatenate_region_bams(input_bam, output_bam, bam_files, str(tmp_path), verbose=False)
+
+    assert Path(output_bam).read_bytes() == b"merge"
+    assert merge_calls == [(bam_files, output_bam, str(tmp_path / "bam_list.txt"))]
+
+
 def test_sort_and_index_bam_direct_samtools_index_success(monkeypatch, tmp_path):
     output_bam = tmp_path / "out.bam"
     output_bam.write_bytes(b"bam")

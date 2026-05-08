@@ -178,6 +178,152 @@ def _samtools_merge_bams(bam_files: List[str], output_bam: str, list_file: str) 
             os.remove(list_file)
 
 
+def _remove_partial_output_bam(output_bam: str, verbose: bool = True) -> None:
+    """Remove a partial output BAM left by a failed external tool."""
+    if not os.path.exists(output_bam):
+        return
+    try:
+        os.remove(output_bam)
+        if verbose:
+            print("    Removed partial output file")
+    except Exception as rm_err:
+        if verbose:
+            print(f"    Warning: Could not remove partial file: {rm_err}")
+
+
+def _ensure_output_dir_writable(output_bam: str, verbose: bool = True) -> None:
+    """Create and probe the output directory before slow fallback writes."""
+    output_dir_path = os.path.dirname(output_bam)
+    if not output_dir_path:
+        return
+
+    if not os.path.exists(output_dir_path):
+        if verbose:
+            print(f"    Creating output directory: {output_dir_path}")
+        os.makedirs(output_dir_path, exist_ok=True)
+
+    test_file = os.path.join(output_dir_path, '.write_test')
+    try:
+        with open(test_file, 'w') as f:
+            f.write('test')
+        os.remove(test_file)
+    except Exception as write_err:
+        if verbose:
+            print(f"    ERROR: Cannot write to output directory: {write_err}")
+            print(f"    Directory: {output_dir_path}")
+            print(f"    Directory exists: {os.path.exists(output_dir_path)}")
+        raise
+
+
+def _write_empty_bam_from_input_header(input_bam: str, output_bam: str) -> None:
+    """Create an empty BAM using the input BAM header."""
+    with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as inbam:
+        with pysam.AlignmentFile(output_bam, "wb", header=inbam.header):
+            pass
+
+
+def _concatenate_bams_with_pysam(
+    bam_files: List[str],
+    output_bam: str,
+    progress_every: int = 10,
+    verbose: bool = True,
+) -> None:
+    """Concatenate BAMs by reading and writing records with pysam."""
+    if verbose:
+        print(f"    Reading header from: {bam_files[0]}")
+    with pysam.AlignmentFile(bam_files[0], "rb", check_sq=False) as first_bam:
+        header = first_bam.header
+
+    if verbose:
+        print(f"    Opening output file: {output_bam}")
+    with pysam.AlignmentFile(output_bam, "wb", header=header) as outbam:
+        for i, bam_path in enumerate(bam_files):
+            with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as inbam:
+                for read in inbam:
+                    outbam.write(read)
+            if verbose and progress_every > 0 and (i + 1) % progress_every == 0:
+                print(f"\r    Concatenated {i+1}/{len(bam_files)} BAMs...", end='')
+                sys.stdout.flush()
+    if verbose:
+        print()
+
+
+def _concatenate_region_bams(
+    input_bam: str,
+    output_bam: str,
+    bam_files: List[str],
+    temp_dir: str,
+    verbose: bool = True,
+) -> None:
+    """Concatenate sorted region BAMs with fast external tools and fallbacks."""
+    import time
+
+    total_temp_size = sum(os.path.getsize(bam_path) for bam_path in bam_files)
+    total_temp_size_gb = total_temp_size / (1024**3)
+
+    if verbose:
+        print(f"Concatenating {len(bam_files)} region BAMs ({total_temp_size_gb:.1f}GB total)...")
+        sys.stdout.flush()
+
+    concat_start = time.time()
+
+    if len(bam_files) == 0:
+        _write_empty_bam_from_input_header(input_bam, output_bam)
+        return
+    if len(bam_files) == 1:
+        shutil.copy(bam_files[0], output_bam)
+        return
+
+    bam_list_file = os.path.join(temp_dir, 'bam_list.txt')
+    try:
+        _samtools_cat_bams(bam_files, output_bam, bam_list_file)
+
+        if verbose:
+            concat_time = time.time() - concat_start
+            output_size_gb = os.path.getsize(output_bam) / (1024**3)
+            speed_gbs = output_size_gb / concat_time if concat_time > 0 else 0
+            print(
+                f"  Concatenated with samtools cat in {concat_time:.1f}s "
+                f"({output_size_gb:.1f}GB, {speed_gbs:.2f} GB/s)"
+            )
+        return
+
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        if verbose:
+            if hasattr(e, 'stderr') and e.stderr:
+                print(f"  WARNING: samtools cat failed: {e.stderr.strip()}")
+            else:
+                print(f"  WARNING: samtools cat failed: {e}")
+            print("  Falling back to pysam (slower, reads each record)...")
+
+        _remove_partial_output_bam(output_bam, verbose=verbose)
+        _ensure_output_dir_writable(output_bam, verbose=verbose)
+
+    try:
+        _concatenate_bams_with_pysam(bam_files, output_bam, verbose=verbose)
+        if verbose:
+            concat_time = time.time() - concat_start
+            print(f"  Concatenated with pysam in {concat_time:.1f}s")
+
+    except Exception as pysam_err:
+        if verbose:
+            output_dir_path = os.path.dirname(output_bam)
+            print(f"  ERROR: pysam fallback also failed: {pysam_err}")
+            print(f"    Output path: {output_bam}")
+            print(f"    Output dir exists: {os.path.exists(output_dir_path)}")
+            print("  Attempting manual BAM concatenation via samtools merge...")
+
+        try:
+            _samtools_merge_bams(bam_files, output_bam, bam_list_file)
+            if verbose:
+                concat_time = time.time() - concat_start
+                print(f"  Concatenated with samtools merge in {concat_time:.1f}s")
+        except Exception as merge_err:
+            if verbose:
+                print(f"  ERROR: All concatenation methods failed: {merge_err}")
+            raise
+
+
 def write_bed12_records_direct(records: List[dict], filepath: str, with_scores: bool = False):
     """
     Write BED12 records directly to file without DataFrame overhead.

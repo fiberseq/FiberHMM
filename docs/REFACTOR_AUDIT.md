@@ -32,6 +32,7 @@ Date: 2026-05-07
 - Extracted active region BAM `samtools cat -b` list-file handling into `fiberhmm/inference/bam_output.py`; both apply and fused region paths now clean list files on success and failure.
 - Extracted the active `samtools merge -b` last-resort fallback into the shared BAM output helpers with list-file cleanup tests.
 - Extracted `samtools index`/`samtools sort` command wrappers and added fake-command tests for direct indexing, unsorted BAM sorting, missing `samtools`, and pysam sort fallback.
+- Extracted the full region BAM concatenation fallback ladder into `fiberhmm/inference/bam_output.py`; apply and fused region paths now share empty-output, single-copy, `samtools cat`, pysam fallback, partial-output cleanup, output-dir probing, and final `samtools merge` behavior.
 - Removed unused private BAM merge helpers from `fiberhmm/inference/parallel.py`; active merge fallback coverage now lives with the shared BAM output helper tests.
 
 ## Current Verification
@@ -39,20 +40,20 @@ Date: 2026-05-07
 - `python -m pytest tests/test_call_pipeline.py::test_daf_raw_md_and_reference_streaming_match_iupac_output`: 1 passed in 2.72s.
 - `python -m pytest tests/test_call_pipeline.py`: 4 passed in 4.54s.
 - `python -m pytest tests/test_call_cli.py`: 7 passed in 1.95s.
-- `python -m pytest tests/test_bam_output.py`: 12 passed in 0.70s.
+- `python -m pytest tests/test_bam_output.py`: 18 passed in 0.90s.
 - `python -m pytest tests/test_bam_output.py tests/test_call_cli.py`: 9 passed in 1.61s.
-- `python -m pytest tests/test_bam_output.py tests/test_mode_equivalence.py tests/test_call_pipeline.py`: 20 passed in 4.53s.
+- `python -m pytest tests/test_bam_output.py tests/test_mode_equivalence.py tests/test_call_pipeline.py`: 26 passed in 4.60s.
 - `python -m pytest tests/test_call_pipeline.py tests/test_call_cli.py tests/test_daf_iupac.py tests/test_extract_block_scores.py`: 62 passed in 5.67s.
-- `python -m pytest`: 307 passed, 20 deselected in 10.82s.
+- `python -m pytest`: 313 passed, 20 deselected in 10.70s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 59.20s.
+- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 60.88s.
 - `python -m ruff check fiberhmm tests`: not runnable in this environment because `ruff` is not installed.
 
 ## Current Shape
 
 Largest tracked Python files:
 
-- `fiberhmm/inference/parallel.py`: 2677 lines.
+- `fiberhmm/inference/parallel.py`: 2571 lines.
 - `fiberhmm/cli/extract_tags.py`: 1389 lines.
 - `fiberhmm/core/bam_reader.py`: 1246 lines.
 - `fiberhmm/core/hmm.py`: 1089 lines.
@@ -70,11 +71,11 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 2. Continue shrinking `fiberhmm/inference/parallel.py`.
 
-   The first shared tagging/unification slice, streaming read-filter slice, and active BAM output helper extractions are complete, but the module still mixes process lifecycle, posterior export, and orchestration. The next low-risk slices are typed payload/result containers and higher-level output cleanup tests.
+   The first shared tagging/unification slice, streaming read-filter slice, and active BAM output helper extractions are complete, but the module still mixes process lifecycle, posterior export, and orchestration. The next low-risk slices are typed payload/result containers and higher-level worker cleanup tests.
 
 3. Add remaining `fiberhmm-call` characterization tests.
 
-   The fused streaming, fused region-parallel, legacy tags, `MA`/`AQ`, stdout/stderr behavior, DAF input-source sniffing, DAF raw MD/reference streaming output, model resolution, and `--with-scores` nucleosome quality behavior now have direct tests. Remaining gaps are higher-level output failure and cleanup tests.
+   The fused streaming, fused region-parallel, legacy tags, `MA`/`AQ`, stdout/stderr behavior, DAF input-source sniffing, DAF raw MD/reference streaming output, model resolution, and `--with-scores` nucleosome quality behavior now have direct tests. Remaining gaps are higher-level worker failure and cleanup tests.
 
 4. Mode-specific encoding should be split.
 
@@ -94,7 +95,7 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 8. External-tool wrappers need hardening.
 
-   BAM sort/index and bigBed conversion call `samtools`, `sort`, and `bedToBigBed`. Known shell-based sorting has been removed, and `rg "shell=True" fiberhmm tests` currently returns no matches. BAM-list cleanup, merge fallback cleanup, and sort/index fallbacks now have fake-command coverage; remaining work is higher-level failure coverage around partial output files and worker failures.
+   BAM sort/index and bigBed conversion call `samtools`, `sort`, and `bedToBigBed`. Known shell-based sorting has been removed, and `rg "shell=True" fiberhmm tests` currently returns no matches. BAM-list cleanup, merge fallback cleanup, partial-output cleanup, output-dir probing, and sort/index fallbacks now have fake-command coverage; remaining work is higher-level failure coverage around worker failures.
 
 9. Temporary output paths are unique in the main region-parallel paths.
 
