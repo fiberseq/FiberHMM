@@ -11,6 +11,27 @@ from typing import List, Dict, Optional
 from fiberhmm.core.bam_reader import get_bam_chrom_sizes
 
 
+def _run_samtools_index(output_bam: str, threads: int, check: bool = False) -> subprocess.CompletedProcess:
+    """Run `samtools index` with the shared command shape."""
+    return subprocess.run(
+        ['samtools', 'index', '-@', str(threads), output_bam],
+        check=check, capture_output=True, text=True
+    )
+
+
+def _run_samtools_sort(output_bam: str, sorted_bam: str, threads: int) -> None:
+    """Run `samtools sort` and raise with stderr preserved on failure."""
+    result = subprocess.run(
+        ['samtools', 'sort', '-@', str(threads), '-o', sorted_bam, output_bam],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, 'samtools sort',
+            output=result.stdout, stderr=result.stderr,
+        )
+
+
 def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4):
     """
     Index a BAM file, sorting first only if needed.
@@ -31,10 +52,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
             sys.stdout.flush()
 
         idx_start = time.time()
-        result = subprocess.run(
-            ['samtools', 'index', '-@', str(threads), output_bam],
-            capture_output=True, text=True
-        )
+        result = _run_samtools_index(output_bam, threads)
         if result.returncode == 0:
             if verbose:
                 idx_time = time.time() - idx_start
@@ -84,12 +102,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
     sorted_bam = output_bam.replace('.bam', '.sorted.bam')
     sort_start = time.time()
     try:
-        result = subprocess.run(
-            ['samtools', 'sort', '-@', str(threads), '-o', sorted_bam, output_bam],
-            capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            raise subprocess.CalledProcessError(result.returncode, 'samtools sort', result.stderr)
+        _run_samtools_sort(output_bam, sorted_bam, threads)
         if verbose:
             sort_time = time.time() - sort_start
             speed = bam_size_gb / sort_time if sort_time > 0 else 0
@@ -112,7 +125,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
     # Index the sorted BAM
     idx_start = time.time()
     try:
-        subprocess.run(['samtools', 'index', '-@', str(threads), output_bam], check=True, capture_output=True)
+        _run_samtools_index(output_bam, threads, check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         pysam.index(output_bam)
 

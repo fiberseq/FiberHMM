@@ -180,3 +180,99 @@ def test_samtools_merge_bams_cleans_list_when_samtools_missing(monkeypatch, tmp_
         bam_output._samtools_merge_bams(inputs, output_bam, list_file)
 
     assert not Path(list_file).exists()
+
+
+def test_sort_and_index_bam_direct_samtools_index_success(monkeypatch, tmp_path):
+    output_bam = tmp_path / "out.bam"
+    output_bam.write_bytes(b"bam")
+    calls = []
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
+    monkeypatch.setattr(bam_output.pysam, "index", lambda *args, **kwargs: pytest.fail("unexpected pysam.index"))
+    monkeypatch.setattr(bam_output.pysam, "sort", lambda *args, **kwargs: pytest.fail("unexpected pysam.sort"))
+
+    bam_output._sort_and_index_bam(str(output_bam), verbose=False, threads=3)
+
+    assert calls == [
+        (["samtools", "index", "-@", "3", str(output_bam)],
+         {"check": False, "capture_output": True, "text": True})
+    ]
+
+
+def test_sort_and_index_bam_sorts_when_direct_index_reports_unsorted(monkeypatch, tmp_path):
+    output_bam = tmp_path / "out.bam"
+    sorted_bam = tmp_path / "out.sorted.bam"
+    output_bam.write_bytes(b"bam")
+    calls = []
+    replacements = []
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append((cmd, kwargs))
+        if cmd[1] == "index" and len(calls) == 1:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="not sorted")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
+    monkeypatch.setattr(bam_output.os, "replace", lambda src, dst: replacements.append((src, dst)))
+    monkeypatch.setattr(bam_output.pysam, "index", lambda *args, **kwargs: pytest.fail("unexpected pysam.index"))
+    monkeypatch.setattr(bam_output.pysam, "sort", lambda *args, **kwargs: pytest.fail("unexpected pysam.sort"))
+
+    bam_output._sort_and_index_bam(str(output_bam), verbose=False, threads=2)
+
+    assert calls == [
+        (["samtools", "index", "-@", "2", str(output_bam)],
+         {"check": False, "capture_output": True, "text": True}),
+        (["samtools", "sort", "-@", "2", "-o", str(sorted_bam), str(output_bam)],
+         {"capture_output": True, "text": True}),
+        (["samtools", "index", "-@", "2", str(output_bam)],
+         {"check": True, "capture_output": True, "text": True}),
+    ]
+    assert replacements == [(str(sorted_bam), str(output_bam))]
+
+
+def test_sort_and_index_bam_falls_back_to_pysam_when_samtools_missing(monkeypatch, tmp_path):
+    output_bam = tmp_path / "out.bam"
+    output_bam.write_bytes(b"bam")
+    indexed = []
+
+    def fake_run(cmd, *args, **kwargs):
+        raise FileNotFoundError("samtools")
+
+    monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
+    monkeypatch.setattr(bam_output.pysam, "index", lambda path: indexed.append(path))
+    monkeypatch.setattr(bam_output.pysam, "sort", lambda *args, **kwargs: pytest.fail("unexpected pysam.sort"))
+
+    bam_output._sort_and_index_bam(str(output_bam), verbose=False, threads=4)
+
+    assert indexed == [str(output_bam)]
+
+
+def test_sort_and_index_bam_uses_pysam_sort_when_samtools_sort_fails(monkeypatch, tmp_path):
+    output_bam = tmp_path / "out.bam"
+    sorted_bam = tmp_path / "out.sorted.bam"
+    output_bam.write_bytes(b"bam")
+    calls = []
+    pysam_sorts = []
+    replacements = []
+
+    def fake_run(cmd, *args, **kwargs):
+        calls.append((cmd, kwargs))
+        if cmd[1] == "index" and len(calls) == 1:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="coordinate not sorted")
+        if cmd[1] == "sort":
+            return subprocess.CompletedProcess(cmd, 1, stdout="partial", stderr="sort failed")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
+    monkeypatch.setattr(bam_output.pysam, "sort", lambda *args: pysam_sorts.append(args))
+    monkeypatch.setattr(bam_output.pysam, "index", lambda *args, **kwargs: pytest.fail("unexpected pysam.index"))
+    monkeypatch.setattr(bam_output.os, "replace", lambda src, dst: replacements.append((src, dst)))
+
+    bam_output._sort_and_index_bam(str(output_bam), verbose=False, threads=2)
+
+    assert pysam_sorts == [("-o", str(sorted_bam), str(output_bam))]
+    assert replacements == [(str(sorted_bam), str(output_bam))]
