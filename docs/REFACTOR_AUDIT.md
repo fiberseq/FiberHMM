@@ -29,6 +29,7 @@ Date: 2026-05-07
 - Added `fiberhmm-call` model-resolution tests, including DddA's separate nuc/apply and TF/recall bundled models.
 - Extracted shared streaming read skip/filter policy into `fiberhmm/inference/read_filters.py` and reused it in the legacy and fused streaming paths.
 - Removed shell-based BED sorting from bigBed conversion helpers; sorting now uses list-form subprocess calls and has fake-command fallback tests.
+- Extracted active region BAM `samtools cat -b` list-file handling into `fiberhmm/inference/bam_output.py`; both apply and fused region paths now clean list files on success and failure.
 - Removed unused private BAM merge helpers from `fiberhmm/inference/parallel.py`; active region merge paths remain unchanged.
 
 ## Current Verification
@@ -36,18 +37,20 @@ Date: 2026-05-07
 - `python -m pytest tests/test_call_pipeline.py::test_daf_raw_md_and_reference_streaming_match_iupac_output`: 1 passed in 2.72s.
 - `python -m pytest tests/test_call_pipeline.py`: 4 passed in 4.54s.
 - `python -m pytest tests/test_call_cli.py`: 7 passed in 1.95s.
+- `python -m pytest tests/test_bam_output.py`: 5 passed in 0.80s.
 - `python -m pytest tests/test_bam_output.py tests/test_call_cli.py`: 9 passed in 1.61s.
+- `python -m pytest tests/test_bam_output.py tests/test_mode_equivalence.py tests/test_call_pipeline.py`: 13 passed in 4.72s.
 - `python -m pytest tests/test_call_pipeline.py tests/test_call_cli.py tests/test_daf_iupac.py tests/test_extract_block_scores.py`: 62 passed in 5.67s.
-- `python -m pytest`: 297 passed, 20 deselected in 10.49s.
+- `python -m pytest`: 300 passed, 20 deselected in 11.13s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 59.37s.
+- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 61.24s.
 - `python -m ruff check fiberhmm tests`: not runnable in this environment because `ruff` is not installed.
 
 ## Current Shape
 
 Largest tracked Python files:
 
-- `fiberhmm/inference/parallel.py`: 2698 lines.
+- `fiberhmm/inference/parallel.py`: 2686 lines.
 - `fiberhmm/cli/extract_tags.py`: 1389 lines.
 - `fiberhmm/core/bam_reader.py`: 1246 lines.
 - `fiberhmm/core/hmm.py`: 1089 lines.
@@ -65,7 +68,7 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 2. Continue shrinking `fiberhmm/inference/parallel.py`.
 
-   The first shared tagging/unification slice and streaming read-filter slice are complete, but the module still mixes process lifecycle, output merge/indexing, posterior export, and orchestration. The next low-risk slices are BAM output helpers and typed payload/result containers.
+   The first shared tagging/unification slice, streaming read-filter slice, and active `samtools cat` helper extraction are complete, but the module still mixes process lifecycle, output merge/indexing fallback behavior, posterior export, and orchestration. The next low-risk slices are additional BAM output helpers and typed payload/result containers.
 
 3. Add remaining `fiberhmm-call` characterization tests.
 
@@ -89,7 +92,7 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 8. External-tool wrappers need hardening.
 
-   BAM sort/index and bigBed conversion call `samtools`, `sort`, and `bedToBigBed`. Known shell-based sorting has been removed, and `rg "shell=True" fiberhmm tests` currently returns no matches. Remaining work is broader fake-failure coverage and tighter cleanup tests around output helpers.
+   BAM sort/index and bigBed conversion call `samtools`, `sort`, and `bedToBigBed`. Known shell-based sorting has been removed, and `rg "shell=True" fiberhmm tests` currently returns no matches. BAM-list cleanup is covered for `samtools cat`; remaining work is broader fake-failure coverage around sort/index and merge fallback paths.
 
 9. Temporary output paths are unique in the main region-parallel paths.
 

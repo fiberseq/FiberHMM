@@ -122,6 +122,31 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
         print(f"  ✓ Index created in {idx_time:.1f}s ({speed:.2f} GB/s)")
 
 
+def _write_bam_list_file(bam_files: List[str], list_file: str) -> None:
+    """Write a samtools-compatible BAM list file."""
+    with open(list_file, 'w') as f:
+        for bam_path in bam_files:
+            f.write(bam_path + '\n')
+
+
+def _samtools_cat_bams(bam_files: List[str], output_bam: str, list_file: str) -> None:
+    """Concatenate BAMs with `samtools cat -b`, cleaning the list file."""
+    _write_bam_list_file(bam_files, list_file)
+    try:
+        result = subprocess.run(
+            ['samtools', 'cat', '-b', list_file, '-o', output_bam],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode, 'samtools cat',
+                output=result.stdout, stderr=result.stderr,
+            )
+    finally:
+        if os.path.exists(list_file):
+            os.remove(list_file)
+
+
 def write_bed12_records_direct(records: List[dict], filepath: str, with_scores: bool = False):
     """
     Write BED12 records directly to file without DataFrame overhead.

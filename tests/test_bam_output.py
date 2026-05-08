@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from fiberhmm.inference import bam_output
 
 
@@ -76,3 +78,54 @@ def test_convert_to_bigbed_with_schema_falls_back_without_shell(monkeypatch, tmp
     )
     assert bed_to_bigbed_types == ["-type=bed12+1", "-type=bed12"]
     assert not sorted_bed.exists()
+
+
+def test_samtools_cat_bams_writes_list_and_cleans_on_success(monkeypatch, tmp_path):
+    inputs = [str(tmp_path / f"region_{i}.bam") for i in range(3)]
+    output_bam = str(tmp_path / "out.bam")
+    list_file = str(tmp_path / "bam_list.txt")
+
+    def fake_run(cmd, *args, **kwargs):
+        assert cmd == ["samtools", "cat", "-b", list_file, "-o", output_bam]
+        assert kwargs == {"capture_output": True, "text": True}
+        assert Path(list_file).read_text().splitlines() == inputs
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
+
+    bam_output._samtools_cat_bams(inputs, output_bam, list_file)
+
+    assert not Path(list_file).exists()
+
+
+def test_samtools_cat_bams_cleans_list_on_command_failure(monkeypatch, tmp_path):
+    inputs = [str(tmp_path / "a.bam"), str(tmp_path / "b.bam")]
+    output_bam = str(tmp_path / "out.bam")
+    list_file = str(tmp_path / "bam_list.txt")
+
+    def fake_run(cmd, *args, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, stdout="partial", stderr="cat failed")
+
+    monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError) as exc:
+        bam_output._samtools_cat_bams(inputs, output_bam, list_file)
+
+    assert exc.value.stderr == "cat failed"
+    assert not Path(list_file).exists()
+
+
+def test_samtools_cat_bams_cleans_list_when_samtools_missing(monkeypatch, tmp_path):
+    inputs = [str(tmp_path / "a.bam"), str(tmp_path / "b.bam")]
+    output_bam = str(tmp_path / "out.bam")
+    list_file = str(tmp_path / "bam_list.txt")
+
+    def fake_run(cmd, *args, **kwargs):
+        raise FileNotFoundError("samtools")
+
+    monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
+
+    with pytest.raises(FileNotFoundError):
+        bam_output._samtools_cat_bams(inputs, output_bam, list_file)
+
+    assert not Path(list_file).exists()

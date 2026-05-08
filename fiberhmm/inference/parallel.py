@@ -60,7 +60,7 @@ from fiberhmm.inference.engine import (
     make_apply_payload,
     _process_single_read,
 )
-from fiberhmm.inference.bam_output import _sort_and_index_bam
+from fiberhmm.inference.bam_output import _samtools_cat_bams, _sort_and_index_bam
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.tagging import (
     intervals_from_arrays,
@@ -916,19 +916,9 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         else:
             # Use samtools cat for fast concatenation
             # Files are already sorted by region index (region_000000.bam, region_000001.bam, etc.)
+            bam_list_file = os.path.join(temp_dir, 'bam_list.txt')
             try:
-                # Write BAM list to file for samtools cat -b
-                bam_list_file = os.path.join(temp_dir, 'bam_list.txt')
-                with open(bam_list_file, 'w') as f:
-                    for bam_path in non_empty_bams:
-                        f.write(bam_path + '\n')
-
-                result = subprocess.run(
-                    ['samtools', 'cat', '-b', bam_list_file, '-o', output_bam],
-                    capture_output=True, text=True
-                )
-                if result.returncode != 0:
-                    raise subprocess.CalledProcessError(result.returncode, 'samtools cat', result.stderr)
+                _samtools_cat_bams(non_empty_bams, output_bam, bam_list_file)
 
                 concat_time = time.time() - concat_start
                 output_size_gb = os.path.getsize(output_bam) / (1024**3)
@@ -999,6 +989,9 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                     # Last resort: use samtools merge instead of cat
                     try:
                         # samtools merge can be more robust than cat
+                        with open(bam_list_file, 'w') as f:
+                            for bam_path in non_empty_bams:
+                                f.write(bam_path + '\n')
                         result = subprocess.run(
                             ['samtools', 'merge', '-f', '-b', bam_list_file, output_bam],
                             capture_output=True, text=True
@@ -1011,6 +1004,9 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                     except Exception as merge_err:
                         print(f"  ERROR: All concatenation methods failed: {merge_err}")
                         raise
+                    finally:
+                        if os.path.exists(bam_list_file):
+                            os.remove(bam_list_file)
 
         sys.stdout.flush()
 
@@ -1853,15 +1849,7 @@ def _process_bam_region_parallel_fused(
             shutil.copy(non_empty[0], output_bam)
         else:
             bam_list = os.path.join(temp_dir, 'bam_list.txt')
-            with open(bam_list, 'w') as f:
-                for bp in non_empty:
-                    f.write(bp + '\n')
-            r = subprocess.run(
-                ['samtools', 'cat', '-b', bam_list, '-o', output_bam],
-                capture_output=True, text=True,
-            )
-            if r.returncode != 0:
-                raise subprocess.CalledProcessError(r.returncode, 'samtools cat', r.stderr)
+            _samtools_cat_bams(non_empty, output_bam, bam_list)
 
         # Index directly (input sorted → each region sorted → concat sorted).
         try:
