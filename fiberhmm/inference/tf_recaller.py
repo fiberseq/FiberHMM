@@ -375,7 +375,7 @@ def extract_modifications(read, mode: str, context_size: int = 3
     except KeyError:
         mm_tag = ''
     try:
-        ml_tag = list(read.get_tag('ML')) if read.has_tag('ML') else list(read.get_tag('Ml'))
+        ml_tag = read.get_tag('ML') if read.has_tag('ML') else read.get_tag('Ml')
     except KeyError:
         ml_tag = []
     if not mm_tag or not ml_tag:

@@ -4,6 +4,7 @@ fiberhmm.io.ma_tags).
 import numpy as np
 import pytest
 
+from fiberhmm.inference import tf_recaller
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
     N_CTX,
@@ -323,6 +324,29 @@ def test_compat_requires_legacy():
     with pytest.raises(ValueError):
         write_ma_tags(read, 200, tf_calls=[], kept_nucs=[(0, 100)], msps=[],
                       also_write_legacy=False, downstream_compat=True)
+
+
+def test_extract_modifications_keeps_raw_ml_container(monkeypatch):
+    import array as pyarray
+
+    read = _FakeRead()
+    read.query_sequence = 'A' * 20
+    read.is_reverse = False
+    raw_ml = pyarray.array('B', [255])
+    read.set_tag('MM', 'A+a,0;')
+    read.set_tag('ML', raw_ml)
+    captured = {}
+
+    def fake_parse(mm_tag, ml_tag, sequence, is_reverse, prob_threshold, mode):
+        captured['ml_tag'] = ml_tag
+        return {0}
+
+    monkeypatch.setattr(tf_recaller, 'parse_mm_tag_query_positions', fake_parse)
+
+    assert tf_recaller.extract_modifications(read, 'pacbio-fiber', 3) == (
+        {0}, '.', read.query_sequence,
+    )
+    assert captured['ml_tag'] is raw_ml
 
 
 def test_stale_nq_aq_cleared_when_refreshing_legacy_tags():

@@ -430,7 +430,7 @@ def cigar_to_query_ref(read) -> np.ndarray:
 _COMPLEMENT_TABLE = str.maketrans('ACGTacgtNn', 'TGCAtgcaNn')
 
 
-def parse_mm_tag_query_positions(mm_tag: str, ml_tag: List[int],
+def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
                                   sequence: str, is_reverse: bool,
                                   prob_threshold: int = 125,
                                   mode: str = 'pacbio-fiber',
@@ -1278,9 +1278,9 @@ def read_bam(bam_path: str,
                         mm_tag = read.get_tag('Mm')
 
                     if read.has_tag('ML'):
-                        ml_tag = list(read.get_tag('ML'))
+                        ml_tag = read.get_tag('ML')
                     elif read.has_tag('Ml'):
-                        ml_tag = list(read.get_tag('Ml'))
+                        ml_tag = read.get_tag('Ml')
 
                 except KeyError:
                     mm_tag = None
