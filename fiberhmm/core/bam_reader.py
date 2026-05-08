@@ -742,26 +742,23 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
         # the numpy broadcasting approach allocates (~2 MB per 20 kb read).
         seq_bytes = np.frombuffer(sequence.encode('ascii'), dtype=np.uint8)
         seq_int_enc = _BASE_TO_INT[seq_bytes]
-        if _HAS_NUMBA:
-            at_encode = _context_codes_numba(
-                seq_int_enc, context_size, edge_trim, non_target_code,
-                0, 2, True,   # target_int=A=0, rc_target_int=T=2, do_rc=True
-            )
-        else:
-            at_encode = _encode_vectorized(
-                sequence, 'A', context_size, edge_trim, non_target_code, True,
-            )
-
-        result = np.full(seq_len, non_target_code + unmethylated_offset, dtype=np.int32)
-        valid_mask = at_encode != non_target_code
-
-        # Build mod mask: fromiter avoids creating a Python list from the set
         mod_mask = np.zeros(seq_len, dtype=bool)
         if mod_positions:
             mod_arr = np.fromiter(mod_positions, dtype=np.int64,
                                   count=len(mod_positions))
             valid_mods = mod_arr[(mod_arr >= 0) & (mod_arr < seq_len)]
             mod_mask[valid_mods] = True
+        if _HAS_NUMBA:
+            return _m6a_context_codes_numba(
+                seq_int_enc, mod_mask, context_size, edge_trim, non_target_code,
+                unmethylated_offset, 0, 2, True,
+            )
+
+        result = np.full(seq_len, non_target_code + unmethylated_offset, dtype=np.int32)
+        at_encode = _encode_vectorized(
+            sequence, 'A', context_size, edge_trim, non_target_code, True,
+        )
+        valid_mask = at_encode != non_target_code
 
         meth_mask = valid_mask & mod_mask
         result[meth_mask] = at_encode[meth_mask]
@@ -796,26 +793,24 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
             _rc_target = 0
             _do_rc = False
             _target_base = 'A'
-        if _HAS_NUMBA:
-            a_encode = _context_codes_numba(
-                seq_int_enc, context_size, edge_trim, non_target_code,
-                _target, _rc_target, _do_rc,
-            )
-        else:
-            a_encode = _encode_vectorized(
-                sequence, _target_base, context_size, edge_trim,
-                non_target_code, _do_rc,
-            )
-
-        result = np.full(seq_len, non_target_code + unmethylated_offset, dtype=np.int32)
-        valid_mask = a_encode != non_target_code
-
         mod_mask = np.zeros(seq_len, dtype=bool)
         if mod_positions:
             mod_arr = np.fromiter(mod_positions, dtype=np.int64,
                                   count=len(mod_positions))
             valid_mods = mod_arr[(mod_arr >= 0) & (mod_arr < seq_len)]
             mod_mask[valid_mods] = True
+        if _HAS_NUMBA:
+            return _m6a_context_codes_numba(
+                seq_int_enc, mod_mask, context_size, edge_trim, non_target_code,
+                unmethylated_offset, _target, _rc_target, _do_rc,
+            )
+
+        result = np.full(seq_len, non_target_code + unmethylated_offset, dtype=np.int32)
+        a_encode = _encode_vectorized(
+            sequence, _target_base, context_size, edge_trim,
+            non_target_code, _do_rc,
+        )
+        valid_mask = a_encode != non_target_code
 
         meth_mask = valid_mask & mod_mask
         result[meth_mask] = a_encode[meth_mask]
@@ -964,25 +959,11 @@ _TARGET_BASE_INT = {'A': 0, 'C': 1, 'T': 2, 'G': 3}
 
 
 @_numba_njit(cache=True)
-def _context_codes_numba(seq_int, k, edge_trim, non_target_code,
-                          target_int, rc_target_int, do_rc):
-    """Numba single-pass context code encoder — replaces _encode_vectorized.
-
-    Encoding (A=0, C=1, T=2, G=3, matches _BASE_TO_INT):
-      code = left_k_code * 4^k + right_k_code
-      left_k_code  = seq[i-k]*4^(k-1) + ... + seq[i-1]*4^0  (big-endian)
-      right_k_code = seq[i+1]*4^(k-1) + ... + seq[i+k]*4^0
-
-    RC complement: XOR 2  (A(0)<->T(2), C(1)<->G(3))
-    RC code for T: left = reverse+complement of right context;
-                   right = reverse+complement of left context.
-
-    Returns int32 array of length len(seq_int).
-    Positions with N in context or outside [boundary, N-boundary) get
-    non_target_code.
-    """
+def _m6a_context_codes_numba(seq_int, mod_mask, k, edge_trim, non_target_code,
+                             unmethylated_offset, target_int, rc_target_int, do_rc):
+    """Single-pass m6A context encoder with final methylated/unmethylated codes."""
     N = len(seq_int)
-    result = np.full(N, non_target_code, dtype=np.int32)
+    result = np.full(N, non_target_code + unmethylated_offset, dtype=np.int32)
 
     boundary = k if k > edge_trim else edge_trim
     four_k = 1
@@ -996,35 +977,46 @@ def _context_codes_numba(seq_int, k, edge_trim, non_target_code,
         if not (is_fwd or is_rc_):
             continue
 
-        # N check: left context
         ok = True
-        for j in range(i - k, i):
-            if seq_int[j] > 3:
-                ok = False
-                break
-        # N check: right context (only if left was clean)
-        if ok:
-            for j in range(i + 1, i + k + 1):
-                if seq_int[j] > 3:
-                    ok = False
-                    break
-        if not ok:
-            continue
-
         left = 0
         right = 0
         if is_fwd:
             for j in range(i - k, i):
-                left = left * 4 + int(seq_int[j])
-            for j in range(i + 1, i + k + 1):
-                right = right * 4 + int(seq_int[j])
-        else:  # RC: complement(reverse(right)) as left, complement(reverse(left)) as right
+                base = int(seq_int[j])
+                if base > 3:
+                    ok = False
+                    break
+                left = left * 4 + base
+            if ok:
+                for j in range(i + 1, i + k + 1):
+                    base = int(seq_int[j])
+                    if base > 3:
+                        ok = False
+                        break
+                    right = right * 4 + base
+        else:
             for j in range(i + k, i, -1):
-                left = left * 4 + (int(seq_int[j]) ^ 2)
-            for j in range(i - 1, i - k - 1, -1):
-                right = right * 4 + (int(seq_int[j]) ^ 2)
+                base = int(seq_int[j])
+                if base > 3:
+                    ok = False
+                    break
+                left = left * 4 + (base ^ 2)
+            if ok:
+                for j in range(i - 1, i - k - 1, -1):
+                    base = int(seq_int[j])
+                    if base > 3:
+                        ok = False
+                        break
+                    right = right * 4 + (base ^ 2)
 
-        result[i] = left * four_k + right
+        if not ok:
+            continue
+
+        code = left * four_k + right
+        if mod_mask[i]:
+            result[i] = code
+        else:
+            result[i] = code + unmethylated_offset
 
     return result
 

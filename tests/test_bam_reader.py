@@ -348,6 +348,48 @@ class TestEncodingConsistency:
         # Same keys and values
         assert lookup1 == lookup2
 
+    @pytest.mark.parametrize(
+        ("mode", "is_reverse"),
+        [
+            ("pacbio-fiber", False),
+            ("nanopore-fiber", False),
+            ("nanopore-fiber", True),
+        ],
+    )
+    def test_m6a_numba_fast_path_matches_vectorized(self, monkeypatch, mode, is_reverse):
+        """The m6A single-pass encoder must match the vectorized fallback."""
+        sequence = "ACGTCCGTAAGGTTCCGGAANACGTCCGTAAGGTTCCGGAA" * 3
+        target_base = "T" if mode == "nanopore-fiber" and is_reverse else "A"
+        mod_positions = {
+            i
+            for i, base in enumerate(sequence)
+            if base == target_base and 6 <= i < len(sequence) - 6 and i % 4 == 0
+        }
+
+        monkeypatch.setattr(bam_reader, "_HAS_NUMBA", False)
+        expected = bam_reader.encode_from_query_sequence(
+            sequence,
+            mod_positions,
+            edge_trim=5,
+            mode=mode,
+            strand=".",
+            context_size=3,
+            is_reverse=is_reverse,
+        )
+
+        monkeypatch.setattr(bam_reader, "_HAS_NUMBA", True)
+        actual = bam_reader.encode_from_query_sequence(
+            sequence,
+            mod_positions,
+            edge_trim=5,
+            mode=mode,
+            strand=".",
+            context_size=3,
+            is_reverse=is_reverse,
+        )
+
+        np.testing.assert_array_equal(actual, expected)
+
     @pytest.mark.parametrize(("strand", "deam_base"), [("+", "T"), ("-", "A")])
     def test_daf_numba_fast_path_matches_vectorized(self, monkeypatch, strand, deam_base):
         """The DAF single-pass encoder must match the vectorized fallback."""
