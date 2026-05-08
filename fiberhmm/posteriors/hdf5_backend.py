@@ -211,9 +211,13 @@ class PosteriorWriter:
         if self._closed:
             return self.total_written, 0
 
-        self.finalize()
-        self.h5.close()
-        self._closed = True
+        try:
+            self.finalize()
+        finally:
+            try:
+                self.h5.close()
+            finally:
+                self._closed = True
 
         # Return stats
         file_size = os.path.getsize(self.output_path) / (1024 * 1024)

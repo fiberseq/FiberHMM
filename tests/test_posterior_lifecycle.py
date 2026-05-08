@@ -3,6 +3,7 @@
 import pytest
 
 from fiberhmm.inference import parallel
+from fiberhmm.posteriors import hdf5_backend
 
 
 def _install_fake_posterior_writer(monkeypatch):
@@ -147,3 +148,41 @@ def test_fused_streaming_reference_fasta_closes_when_drain_fails(
         )
 
     assert closed_paths == [ref_fasta]
+
+
+def test_hdf5_posterior_writer_closes_file_when_finalize_fails(monkeypatch, tmp_path):
+    class FakeH5:
+        def __init__(self):
+            self.attrs = {}
+            self.closed = False
+            self.close_count = 0
+
+        def close(self):
+            self.closed = True
+            self.close_count += 1
+
+    fake_h5 = FakeH5()
+    monkeypatch.setattr(hdf5_backend.h5py, "File", lambda *args, **kwargs: fake_h5)
+
+    writer = hdf5_backend.PosteriorWriter(
+        str(tmp_path / "posteriors.h5"),
+        mode="pacbio-fiber",
+        context_size=3,
+        edge_trim=10,
+        source_bam="input.bam",
+    )
+
+    def fail_finalize():
+        raise RuntimeError("finalize failed")
+
+    monkeypatch.setattr(writer, "finalize", fail_finalize)
+
+    with pytest.raises(RuntimeError, match="finalize failed"):
+        writer.close()
+
+    assert fake_h5.closed
+    assert fake_h5.close_count == 1
+    assert writer._closed
+
+    assert writer.close() == (0, 0)
+    assert fake_h5.close_count == 1
