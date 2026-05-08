@@ -1,9 +1,161 @@
 """
 Tests for fiberhmm.inference.parallel module — region splitting and chromosome filtering.
 """
+from collections import deque
+from concurrent.futures import Future
+
 import pytest
 
-from fiberhmm.inference.parallel import _is_main_chromosome
+import fiberhmm.inference.parallel as parallel
+from fiberhmm.inference.parallel import (
+    _drain_oldest_chunk,
+    _drain_oldest_fused_chunk,
+    _is_main_chromosome,
+)
+from fiberhmm.inference.worker_results import WorkerChunkResult, coerce_worker_chunk_result
+
+
+class _OutBam:
+    def __init__(self):
+        self.written = []
+
+    def write(self, read):
+        self.written.append(read)
+
+
+def _done_future(value):
+    future = Future()
+    future.set_result(value)
+    return future
+
+
+def test_worker_chunk_result_coerces_legacy_lists():
+    assert coerce_worker_chunk_result([None]) == ([None], 0)
+    assert coerce_worker_chunk_result(WorkerChunkResult([None], 2)) == ([None], 2)
+
+
+def test_payload_worker_counts_per_read_failures(monkeypatch):
+    def fake_extract(payload, mode, prob_threshold):
+        if payload == "extract-bad":
+            raise RuntimeError("bad payload")
+        if payload == "empty":
+            return None
+        return {"payload": payload}
+
+    def fake_process(fiber_read, *args, **kwargs):
+        if fiber_read["payload"] == "process-bad":
+            raise ValueError("bad read")
+        return {"payload": fiber_read["payload"]}
+
+    monkeypatch.setattr(parallel, "extract_fiber_read_from_payload", fake_extract)
+    monkeypatch.setattr(parallel, "_process_single_read", fake_process)
+    monkeypatch.setattr(parallel, "_worker_model", object())
+
+    chunk_result = parallel._process_payload_chunk_worker(
+        ["ok", "empty", "process-bad", "extract-bad"],
+        edge_trim=0,
+        circular=False,
+        mode="pacbio-fiber",
+        context_size=3,
+        msp_min_size=60,
+    )
+
+    assert isinstance(chunk_result, WorkerChunkResult)
+    assert chunk_result.read_failures == 2
+    assert chunk_result.results == [{"payload": "ok"}, None, None, None]
+
+
+def test_fused_payload_worker_counts_per_read_failures(monkeypatch):
+    def fake_extract(payload, mode, prob_threshold):
+        if payload == "extract-bad":
+            raise RuntimeError("bad payload")
+        return {"payload": payload, "query_sequence": "ACGT"}
+
+    def fake_apply(fiber_read, *args, **kwargs):
+        if fiber_read["payload"] == "apply-bad":
+            raise ValueError("bad apply")
+        return {"payload": fiber_read["payload"]}
+
+    def fake_has_footprints(apply_result):
+        return apply_result["payload"] != "empty"
+
+    def fake_build(fiber_read, *args, **kwargs):
+        if fiber_read["payload"] == "build-bad":
+            raise RuntimeError("bad recall")
+        return {"payload": fiber_read["payload"], "tf_calls": []}
+
+    monkeypatch.setattr(parallel, "extract_fiber_read_from_payload", fake_extract)
+    monkeypatch.setattr(parallel, "run_hmm_apply_stage", fake_apply)
+    monkeypatch.setattr(parallel, "apply_result_has_footprints", fake_has_footprints)
+    monkeypatch.setattr(parallel, "build_fused_recall_result", fake_build)
+    monkeypatch.setattr(parallel, "_worker_model", object())
+    monkeypatch.setattr(parallel, "_worker_recall_state", {
+        "llr_hit": object(),
+        "llr_miss": object(),
+    })
+
+    chunk_result = parallel._process_fused_payload_chunk_worker(
+        ["ok", "empty", "apply-bad", "build-bad", "extract-bad"],
+        edge_trim=0,
+        circular=False,
+        mode="pacbio-fiber",
+        context_size=3,
+        msp_min_size=60,
+    )
+
+    assert isinstance(chunk_result, WorkerChunkResult)
+    assert chunk_result.read_failures == 3
+    assert chunk_result.results == [
+        {"payload": "ok", "tf_calls": []},
+        None,
+        None,
+        None,
+        None,
+    ]
+
+
+def test_streaming_drain_counts_worker_failures_and_passes_read_through():
+    read = object()
+    outbam = _OutBam()
+    counters = {"reads_with_footprints": 0, "no_footprints": 0, "written": 0}
+    inflight = deque([(
+        _done_future(WorkerChunkResult([None], read_failures=1)),
+        [read],
+        [{"payload": "bad"}],
+        [False],
+    )])
+
+    _drain_oldest_chunk(inflight, outbam, False, True, None, counters)
+
+    assert counters == {
+        "reads_with_footprints": 0,
+        "no_footprints": 1,
+        "worker_failures": 1,
+        "written": 1,
+    }
+    assert outbam.written == [read]
+
+
+def test_fused_drain_counts_worker_failures_and_passes_read_through():
+    read = object()
+    outbam = _OutBam()
+    counters = {"reads_with_footprints": 0, "no_footprints": 0, "written": 0}
+    inflight = deque([(
+        _done_future(WorkerChunkResult([None], read_failures=1)),
+        [read],
+        [{"payload": "bad"}],
+        [False],
+    )])
+
+    _drain_oldest_fused_chunk(inflight, outbam, False, True, True, counters)
+
+    assert counters == {
+        "reads_with_footprints": 0,
+        "no_footprints": 1,
+        "worker_failures": 1,
+        "written": 1,
+    }
+    assert outbam.written == [read]
 
 
 class TestIsMainChromosome:

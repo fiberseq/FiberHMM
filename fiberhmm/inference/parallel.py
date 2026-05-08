@@ -47,6 +47,7 @@ from fiberhmm.inference.tagging import (
     set_legacy_apply_tags,
     write_fused_recall_tags,
 )
+from fiberhmm.inference.worker_results import WorkerChunkResult, coerce_worker_chunk_result
 
 # Optional: inline posteriors export
 try:
@@ -1100,12 +1101,13 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                               msp_min_size: int, nuc_min_size: int = 85,
                               with_scores: bool = False,
                               return_posteriors: bool = False,
-                              write_msps: bool = True) -> Tuple[int, int, Optional[list]]:
+                              write_msps: bool = True) -> Tuple[int, int, int, Optional[list]]:
     """
     Process a chunk of reads and write to BAM.
 
     Returns:
-        (reads_with_footprints, results_with_posteriors or None)
+        (reads_with_footprints, no_footprints, worker_failures,
+         results_with_posteriors or None)
 
         If return_posteriors=True, returns results list for caller to write posteriors.
     """
@@ -1117,10 +1119,11 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
             chunk_reads, edge_trim, circular, mode, context_size, msp_min_size,
             nuc_min_size, with_scores, return_posteriors
         )
-        results = future.result()
+        results, worker_failures = coerce_worker_chunk_result(future.result())
     else:
         # Single-threaded: process directly
         results = []
+        worker_failures = 0
         for fiber_read in chunk_reads:
             result = _process_single_read(
                 fiber_read, model, edge_trim, circular,
@@ -1144,8 +1147,13 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
 
     # Return results for posteriors if requested
     if return_posteriors:
-        return reads_with_footprints, no_footprints, list(zip(chunk_read_objs, chunk_reads, results))
-    return reads_with_footprints, no_footprints, None
+        return (
+            reads_with_footprints,
+            no_footprints,
+            worker_failures,
+            list(zip(chunk_read_objs, chunk_reads, results)),
+        )
+    return reads_with_footprints, no_footprints, worker_failures, None
 
 
 def _process_chunk_worker(chunk_reads: list, edge_trim: int, circular: bool,
@@ -1158,11 +1166,13 @@ def _process_chunk_worker(chunk_reads: list, edge_trim: int, circular: bool,
     Per-read errors are caught and converted to None results so a single bad
     read can never bring down the entire worker process (and with it the whole
     chunk of ~500 reads). Reads that fail are written through to the output
-    unchanged without footprint tags.
+    unchanged without footprint tags, with the failure count reported
+    separately in WorkerChunkResult.
     """
     global _worker_model
 
     results = []
+    read_failures = 0
     for fiber_read in chunk_reads:
         try:
             result = _process_single_read(
@@ -1174,9 +1184,10 @@ def _process_chunk_worker(chunk_reads: list, edge_trim: int, circular: bool,
         except Exception:
             # Per-read failure: skip this read but keep the worker alive
             result = None
+            read_failures += 1
         results.append(result)
 
-    return results
+    return WorkerChunkResult(results, read_failures)
 
 
 # ---------------------------------------------------------------------------
@@ -1203,8 +1214,9 @@ def _process_fused_payload_chunk_worker(
 ) -> list:
     """Slim-IPC worker: apply HMM + TF recall in a single call per read.
 
-    Returns one entry per payload.  Each entry is either None (no usable
-    modification data) or a dict with:
+    Returns WorkerChunkResult with one result entry per payload.  Each entry
+    is either None (no usable modification data or per-read worker failure)
+    or a dict with:
         'ns', 'nl':  numpy int arrays of unified nucleosome footprints
                      (post-unification: short nucs overlapping TF calls are
                      demoted into the tf+ annotation track)
@@ -1213,7 +1225,6 @@ def _process_fused_payload_chunk_worker(
         'ns_scores', 'as_scores': optional nq/aq scores if with_scores
     """
     global _worker_model, _worker_recall_state
-    from fiberhmm.inference.engine import extract_fiber_read_from_payload
 
     # Model/params set once per worker; TF LLR tables attached to the
     # worker globals via _init_fused_worker.
@@ -1221,6 +1232,7 @@ def _process_fused_payload_chunk_worker(
     llr_miss = _worker_recall_state['llr_miss']
 
     results = []
+    read_failures = 0
     for payload in chunk_payloads:
         try:
             fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
@@ -1261,9 +1273,10 @@ def _process_fused_payload_chunk_worker(
             ))
         except Exception:
             # Per-read failure must not kill the worker (or the whole chunk).
+            read_failures += 1
             results.append(None)
 
-    return results
+    return WorkerChunkResult(results, read_failures)
 
 
 def _process_payload_chunk_worker(chunk_payloads: list, edge_trim: int, circular: bool,
@@ -1277,12 +1290,14 @@ def _process_payload_chunk_worker(chunk_payloads: list, edge_trim: int, circular
     The streaming pipeline ships slim payloads (built by make_apply_payload
     in main) instead of pre-parsed fiber_read dicts.  Each worker does the
     MM/ML parse + HMM in parallel rather than serializing the parse on the
-    main process.  Returns one entry per payload, with None for reads that
-    have no usable modification data.
+    main process.  Returns WorkerChunkResult with one entry per payload, with
+    None for reads that have no usable modification data or hit a per-read
+    worker failure.
     """
     global _worker_model
 
     results = []
+    read_failures = 0
     for payload in chunk_payloads:
         try:
             fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
@@ -1297,9 +1312,10 @@ def _process_payload_chunk_worker(chunk_payloads: list, edge_trim: int, circular
             )
         except Exception:
             result = None
+            read_failures += 1
         results.append(result)
 
-    return results
+    return WorkerChunkResult(results, read_failures)
 
 
 # ---------------------------------------------------------------------------
@@ -1327,7 +1343,9 @@ def _drain_oldest_chunk(inflight, outbam, with_scores, write_msps,
         counters: mutable dict with 'reads_with_footprints', 'no_footprints', 'written'
     """
     future, chunk_read_objs, chunk_reads, chunk_skip_flags = inflight.popleft()
-    results = future.result()
+    results, worker_failures = coerce_worker_chunk_result(future.result())
+    if worker_failures:
+        counters['worker_failures'] = counters.get('worker_failures', 0) + worker_failures
     result_iter = iter(results)
     fiber_iter = iter(chunk_reads)
 
@@ -1737,7 +1755,9 @@ def _drain_oldest_fused_chunk(inflight, outbam, with_scores,
     skipped reads.
     """
     future, chunk_read_objs, chunk_payloads, chunk_skip_flags = inflight.popleft()
-    results = future.result()
+    results, worker_failures = coerce_worker_chunk_result(future.result())
+    if worker_failures:
+        counters['worker_failures'] = counters.get('worker_failures', 0) + worker_failures
     result_iter = iter(results)
     payload_iter = iter(chunk_payloads)
 
@@ -1800,7 +1820,12 @@ def _process_bam_streaming_pipeline_fused(
     pysam.set_verbosity(0)
     max_inflight = n_cores + 2
     start_time = time.time()
-    counters = {'reads_with_footprints': 0, 'no_footprints': 0, 'written': 0}
+    counters = {
+        'reads_with_footprints': 0,
+        'no_footprints': 0,
+        'worker_failures': 0,
+        'written': 0,
+    }
 
     total_reads = 0
     skipped = 0
@@ -1931,6 +1956,12 @@ def _process_bam_streaming_pipeline_fused(
     reads_with_fp = counters['reads_with_footprints']
     print(f"\r  Fused: {total_reads:,} | Skipped: {skipped:,} | "
           f"With footprints: {reads_with_fp:,} | {rate:.1f} r/s", file=_log)
+    if counters['worker_failures']:
+        print(
+            f"  Worker read failures: {counters['worker_failures']:,} "
+            f"(passed through unchanged)",
+            file=_log,
+        )
     if skipped > 0:
         print("  Skip reasons:", file=_log)
         for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
@@ -2017,6 +2048,7 @@ def _process_bam_streaming_pipeline(
     counters = {
         'reads_with_footprints': 0,
         'no_footprints': 0,
+        'worker_failures': 0,
         'written': 0,
     }
 
@@ -2093,8 +2125,8 @@ def _process_bam_streaming_pipeline(
                     # _process_payload_chunk_worker) which lifts the apply
                     # throughput ceiling from ~150-300 r/s (serial main parse
                     # bottleneck) to whatever the worker pool can sustain.
-                    # Reads with no usable modification data come back from
-                    # the worker as result=None and are written through
+                    # Reads with no usable modification data or per-read worker
+                    # failures come back as result=None and are written through
                     # without footprint tags (handled in _drain_oldest_chunk).
                     payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
                     if payload is None:
@@ -2188,6 +2220,12 @@ def _process_bam_streaming_pipeline(
     reads_with_footprints = counters['reads_with_footprints']
     print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | "
           f"With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s", file=_log)
+    if counters['worker_failures']:
+        print(
+            f"  Worker read failures: {counters['worker_failures']:,} "
+            f"(passed through unchanged)",
+            file=_log,
+        )
 
     # Print skip reasons
     if skipped > 0:
@@ -2327,6 +2365,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
     reads_with_footprints = 0
     written = 0
     skipped = 0
+    worker_failures = 0
 
     # Track skip reasons
     skip_reasons = {
@@ -2446,7 +2485,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
 
                     # Process chunk when full
                     if len(chunk_reads) >= chunk_size:
-                        n_fp, n_nofp, chunk_results = _process_and_write_chunk(
+                        n_fp, n_nofp, n_failed, chunk_results = _process_and_write_chunk(
                             chunk_reads, chunk_read_objs, outbam,
                             model, executor, edge_trim, circular,
                             mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
@@ -2456,6 +2495,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                         )
                         reads_with_footprints += n_fp
                         skip_reasons['no_footprints'] += n_nofp
+                        worker_failures += n_failed
                         written += len(chunk_read_objs)
 
                         # Write posteriors if requested
@@ -2488,7 +2528,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
 
                 # Process final partial chunk
                 if chunk_reads:
-                    n_fp, n_nofp, chunk_results = _process_and_write_chunk(
+                    n_fp, n_nofp, n_failed, chunk_results = _process_and_write_chunk(
                         chunk_reads, chunk_read_objs, outbam,
                         model, executor, edge_trim, circular,
                         mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
@@ -2498,6 +2538,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                     )
                     reads_with_footprints += n_fp
                     skip_reasons['no_footprints'] += n_nofp
+                    worker_failures += n_failed
                     written += len(chunk_read_objs)
 
                     # Write posteriors if requested
@@ -2525,6 +2566,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
     elapsed = time.time() - start_time
     rate = total_reads / elapsed if elapsed > 0 else 0
     print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s")
+    if worker_failures:
+        print(f"  Worker read failures: {worker_failures:,} (passed through unchanged)")
 
     # Print skip reasons summary
     if skipped > 0:

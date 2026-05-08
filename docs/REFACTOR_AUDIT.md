@@ -42,6 +42,7 @@ Date: 2026-05-07
 - Added a single-pass numba DAF context encoder with vectorized-fallback equivalence tests for CT and GA strands.
 - Added an explicit DAF encoder benchmark that compares the single-pass fast path to the vectorized fallback oracle.
 - Installed `ruff` and cleared the configured lint gate across `fiberhmm` and `tests` with import sorting, whitespace cleanup, unused-import cleanup, protected package re-exports, and scoped style fixes.
+- Added structured worker chunk results so streaming apply and fused apply+recall workers still pass failed reads through unchanged but now report per-read worker failure counts to the drain/final summary.
 
 ## Current Verification
 
@@ -65,16 +66,16 @@ Date: 2026-05-07
 - `python -m pytest tests/test_call_pipeline.py tests/test_call_cli.py tests/test_daf_iupac.py tests/test_extract_block_scores.py`: 62 passed in 5.67s.
 - `python -m pytest tests/test_package_consistency.py`: 19 passed in 1.50s.
 - `python -m ruff check fiberhmm tests`: passed.
-- `python -m pytest tests/test_package_consistency.py tests/test_bam_reader.py tests/test_call_pipeline.py tests/test_tf_recaller.py tests/test_extract_block_scores.py tests/test_streaming_pipeline.py`: 123 passed in 12.03s.
-- `python -m pytest`: 327 passed, 21 deselected in 11.53s.
+- `python -m pytest tests/test_inference_parallel.py tests/test_streaming_pipeline.py tests/test_call_pipeline.py tests/test_fused_stages.py`: 69 passed in 11.32s.
+- `python -m pytest`: 332 passed, 21 deselected in 11.23s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m pytest -m benchmark tests/benchmarks`: 21 passed in 67.45s.
+- `python -m pytest -m benchmark tests/benchmarks`: 21 passed in 60.07s.
 
 ## Current Shape
 
 Largest tracked Python files:
 
-- `fiberhmm/inference/parallel.py`: 2526 lines.
+- `fiberhmm/inference/parallel.py`: 2588 lines.
 - `fiberhmm/cli/extract_tags.py`: 1389 lines.
 - `fiberhmm/core/bam_reader.py`: 1327 lines.
 - `fiberhmm/core/hmm.py`: 1089 lines.
@@ -102,9 +103,9 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
    `encode_from_query_sequence` handles PacBio, Nanopore, and DAF in one long function. PacBio, Nanopore, and DAF now have single-pass numba encoders, with DAF retaining a vectorized fallback as an oracle. Splitting these into mode strategy functions would make future performance work safer.
 
-5. Per-read exception handling hides regressions.
+5. Per-read exception handling should stay visible.
 
-   Worker functions intentionally catch broad exceptions and return `None` so production runs continue. That is reasonable operational behavior, but tests need counters or debug diagnostics that prove exceptions are not silently increasing after refactors.
+   Streaming worker functions intentionally catch broad exceptions and return `None` so production runs continue. They now return structured chunk results with per-read failure counts, and the streaming drain paths report those counts while preserving pass-through behavior. Continue extending the same pattern if region worker internals add per-read recovery paths.
 
 6. CLI coverage remains weak.
 
@@ -149,7 +150,7 @@ Phase 1: safety and characterization.
 
 - Split benchmark execution from correctness execution without deleting benchmarks.
 - Add missing `fiberhmm-call` tests and score/DAF characterization.
-- Add debug-visible per-read failure counters.
+- Add debug-visible per-read failure counters; done for streaming apply and fused apply+recall workers.
 
 Phase 2: mechanical modularization.
 
