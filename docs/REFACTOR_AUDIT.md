@@ -54,6 +54,7 @@ Date: 2026-05-07
 - Added a numba-backed footprint run scanner that avoids per-read padded state-array and diff allocations while preserving a numpy fallback when numba is unavailable.
 - Added direct footprint-run oracle coverage for empty, all-accessible, all-footprint, edge, and dtype-varied state arrays.
 - Reused the shared legacy apply tag writer in the region BAM worker and changed unsigned 32-bit BAM tag-array construction to avoid materializing Python integer lists.
+- Removed the extra state-path scan in public `predict_footprints`; the centralized run extractor now handles the no-footprint case directly.
 
 ## Current Verification
 
@@ -126,6 +127,11 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 346 passed, 26 deselected in 11.37s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.78s.
+- `python -m pytest tests/test_inference_engine.py tests/test_fused_stages.py tests/test_call_pipeline.py tests/test_streaming_pipeline.py tests/test_mode_equivalence.py`: 48 passed in 8.88s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 346 passed, 26 deselected in 10.78s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 52.11s.
 
 ## Current Shape
 

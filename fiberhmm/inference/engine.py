@@ -93,10 +93,6 @@ def predict_footprints(model: FiberHMM, encoded_read: np.ndarray,
         states = model.predict(encoded_read)
         confidence = None
 
-    # Count footprint positions (state 0)
-    if np.sum(states == 0) == 0:
-        return np.array([]), np.array([]), 0, None
-
     starts, ends = _footprint_runs(states)
 
     if len(starts) == 0:
