@@ -530,7 +530,7 @@ class FiberHMM:
         """
         self._compute_log_probs()
 
-        obs = X.flatten().astype(int)
+        obs = _as_observation_array(X)
         path, _ = self._viterbi(obs)
         return path
 
@@ -549,7 +549,7 @@ class FiberHMM:
         """
         self._compute_log_probs()
 
-        obs = X.flatten().astype(int)
+        obs = _as_observation_array(X)
 
         # Forward-backward
         alpha, log_prob = self._forward(obs)
@@ -582,7 +582,7 @@ class FiberHMM:
         """
         self._compute_log_probs()
 
-        obs = X.flatten().astype(int)
+        obs = _as_observation_array(X)
 
         # Get Viterbi path
         path, _ = self._viterbi(obs)
@@ -617,7 +617,7 @@ class FiberHMM:
         """
         self._compute_log_probs()
 
-        obs = X.flatten().astype(int)
+        obs = _as_observation_array(X)
 
         # Get Viterbi path
         path, _ = self._viterbi(obs)
@@ -643,7 +643,7 @@ class FiberHMM:
             Log probability
         """
         self._compute_log_probs()
-        obs = X.flatten().astype(int)
+        obs = _as_observation_array(X)
         _, log_prob = self._forward(obs)
         return log_prob
 
@@ -666,7 +666,7 @@ class FiberHMM:
         """
         self._compute_log_probs()
 
-        obs = X.flatten().astype(int)
+        obs = _as_observation_array(X)
 
         if lengths is None:
             lengths = [len(obs)]
@@ -910,6 +910,14 @@ def _logsumexp_axis1(a: np.ndarray) -> np.ndarray:
     a_max = np.max(a, axis=1, keepdims=True)
     a_max = np.where(np.isfinite(a_max), a_max, 0)
     return np.log(np.sum(np.exp(a - a_max), axis=1)) + a_max.flatten()
+
+
+def _as_observation_array(X: np.ndarray) -> np.ndarray:
+    """Return flat integer observations, avoiding copies for encoded reads."""
+    obs = np.asarray(X).ravel()
+    if np.issubdtype(obs.dtype, np.integer):
+        return obs
+    return obs.astype(np.int64)
 
 
 # =============================================================================

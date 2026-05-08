@@ -45,6 +45,7 @@ Date: 2026-05-07
 - Installed `ruff` and cleared the configured lint gate across `fiberhmm` and `tests` with import sorting, whitespace cleanup, unused-import cleanup, protected package re-exports, and scoped style fixes.
 - Added structured worker chunk results so streaming apply and fused apply+recall workers still pass failed reads through unchanged but now report per-read worker failure counts to the drain/final summary.
 - Reduced Viterbi memory traffic by keeping only rolling state scores plus backpointers instead of full per-state score arrays, with a dedicated warm prediction benchmark.
+- Avoided per-call observation copies for integer HMM input arrays and warmed worker numba Viterbi signatures with int32 observations to match encoder output.
 
 ## Current Verification
 
@@ -76,9 +77,11 @@ Date: 2026-05-07
 - Warm Viterbi local timing on 2,000 synthetic 5 kb reads: 0.1350s, 14,811 reads/s.
 - `python -m pytest -s -m benchmark tests/benchmarks/bench_hmm.py`: 1 passed in 0.94s; warm Viterbi benchmark reported 12,990 reads/s for 5 kb observations.
 - `python -m pytest tests/test_hmm.py tests/test_inference_engine.py tests/test_bam_reader.py tests/test_call_pipeline.py tests/test_mode_equivalence.py`: 85 passed in 5.42s.
-- `python -m pytest`: 335 passed, 25 deselected in 10.87s.
+- `python -m pytest tests/test_hmm.py tests/test_inference_engine.py tests/test_streaming_pipeline.py tests/test_call_pipeline.py`: 65 passed in 8.19s.
+- `python -m pytest -s -m benchmark tests/benchmarks/bench_hmm.py`: 1 passed in 0.80s; warm Viterbi benchmark reported 12,947 reads/s for 5 kb observations.
+- `python -m pytest`: 335 passed, 25 deselected in 11.24s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m pytest -m benchmark tests/benchmarks`: 25 passed in 55.32s.
+- `python -m pytest -m benchmark tests/benchmarks`: 25 passed in 56.22s.
 
 ## Current Shape
 
@@ -87,7 +90,7 @@ Largest tracked Python files:
 - `fiberhmm/inference/parallel.py`: 2588 lines.
 - `fiberhmm/cli/extract_tags.py`: 1389 lines.
 - `fiberhmm/core/bam_reader.py`: 1316 lines.
-- `fiberhmm/core/hmm.py`: 1086 lines.
+- `fiberhmm/core/hmm.py`: 1094 lines.
 - `fiberhmm/cli/train.py`: 1024 lines.
 - `fiberhmm/cli/utils.py`: 894 lines.
 - `fiberhmm/cli/export_posteriors.py`: 811 lines.

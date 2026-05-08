@@ -113,7 +113,7 @@ def _init_bam_worker(model_path, debug_timing=False):
         # Warmup numba JIT compilation in this worker
         from fiberhmm.core.hmm import HAS_NUMBA
         if HAS_NUMBA:
-            dummy_obs = np.array([0, 1, 2, 3], dtype=np.int64)
+            dummy_obs = np.array([0, 1, 2, 3], dtype=np.int32)
             _ = _worker_model.predict(dummy_obs)
     except Exception as e:
         import traceback
@@ -159,7 +159,7 @@ def _init_fused_worker(apply_model_path, recall_model_path=None,
     # Warmup: apply Viterbi + TF Kadane scan
     from fiberhmm.core.hmm import HAS_NUMBA
     if HAS_NUMBA:
-        dummy_obs = np.array([0, 1, 2, 3], dtype=np.int64)
+        dummy_obs = np.array([0, 1, 2, 3], dtype=np.int32)
         _ = _worker_model.predict(dummy_obs)
         from fiberhmm.inference.tf_recaller import call_tfs_in_interval
         _ = call_tfs_in_interval(
@@ -273,7 +273,7 @@ def _init_region_worker(model_path: str, params: dict):
         # Warmup numba JIT (just the basic predict, posteriors will warmup on first use)
         from fiberhmm.core.hmm import HAS_NUMBA
         if HAS_NUMBA:
-            dummy_obs = np.array([0, 1, 2, 3], dtype=np.int64)
+            dummy_obs = np.array([0, 1, 2, 3], dtype=np.int32)
             _ = _worker_model.predict(dummy_obs)
 
     except Exception as e:
@@ -1425,7 +1425,7 @@ def _init_fused_region_worker(apply_model_path: str, recall_model_path: Optional
     # Warmup
     from fiberhmm.core.hmm import HAS_NUMBA
     if HAS_NUMBA:
-        dummy_obs = np.array([0, 1, 2, 3], dtype=np.int64)
+        dummy_obs = np.array([0, 1, 2, 3], dtype=np.int32)
         _ = _worker_model.predict(dummy_obs)
         from fiberhmm.inference.tf_recaller import call_tfs_in_interval
         _ = call_tfs_in_interval(
