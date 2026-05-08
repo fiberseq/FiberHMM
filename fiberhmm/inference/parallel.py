@@ -64,6 +64,12 @@ from fiberhmm.inference.bam_output import (
     _sort_and_index_bam,
 )
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
+from fiberhmm.inference.region_types import (
+    RegionBamResult,
+    RegionBamWorkItem,
+    RegionBedResult,
+    RegionBedWorkItem,
+)
 from fiberhmm.inference.tagging import (
     intervals_from_arrays,
     set_legacy_apply_tags,
@@ -269,7 +275,7 @@ def _init_region_worker(model_path: str, params: dict):
         raise
 
 
-def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[str], Dict[str, int]]:
+def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
     """
     Worker function: process one genomic region and write to temp BAM.
 
@@ -279,10 +285,10 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
     Uses global _worker_model and _worker_region_params (set by _init_region_worker).
 
     Args:
-        args: Tuple of (region, input_bam, temp_bam_path, temp_tsv_path or None)
+        args: RegionBamWorkItem, or the legacy tuple shape.
 
     Returns:
-        (temp_bam_path, total_reads, reads_with_footprints, written, temp_tsv_path or None)
+        RegionBamResult with temp BAM, counts, optional TSV path, and skip reasons.
     """
     import numpy as np  # Ensure numpy is available in worker
     import traceback
@@ -290,12 +296,11 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
     global _worker_model, _worker_region_params
 
     try:
-        # Handle both old (3-tuple) and new (4-tuple) args
-        if len(args) == 3:
-            (chrom, start, end), input_bam, temp_bam_path = args
-            temp_tsv_path = None
-        else:
-            (chrom, start, end), input_bam, temp_bam_path, temp_tsv_path = args
+        work_item = RegionBamWorkItem.from_value(args)
+        chrom, start, end = work_item.region
+        input_bam = work_item.input_bam
+        temp_bam_path = work_item.temp_bam_path
+        temp_tsv_path = work_item.temp_tsv_path
 
         # Ensure start/end are Python ints (not numpy)
         start = int(start)
@@ -363,7 +368,7 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
                         # Region not in BAM (e.g., unplaced contigs)
                         if tsv_file:
                             tsv_file.close()
-                        return (temp_bam_path, 0, 0, 0, None, {})
+                        return RegionBamResult(temp_bam_path, 0, 0, 0)
 
                     for read in read_iter:
                         # Pass through unmapped reads (no sequence to process)
@@ -493,9 +498,15 @@ def _process_region_to_bam(args: Tuple) -> Tuple[str, int, int, int, Optional[st
 
         # Return TSV path if we wrote any posteriors
         if return_posteriors and posteriors_written > 0 and temp_tsv_path:
-            return (temp_bam_path, total_reads, reads_with_footprints, written, temp_tsv_path, skip_reasons)
+            return RegionBamResult(
+                temp_bam_path, total_reads, reads_with_footprints,
+                written, temp_tsv_path, skip_reasons,
+            )
 
-        return (temp_bam_path, total_reads, reads_with_footprints, written, None, skip_reasons)
+        return RegionBamResult(
+            temp_bam_path, total_reads, reads_with_footprints,
+            written, None, skip_reasons,
+        )
 
     except Exception as e:
         import traceback
@@ -590,7 +601,7 @@ def _merge_region_posteriors_tsv(temp_tsv_files: list, output_path: str,
     return n_fibers
 
 
-def _process_region_to_bed(args: Tuple) -> Tuple[str, int, int]:
+def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
     """
     Process a genomic region and write BED output directly (no temp BAM).
 
@@ -598,12 +609,15 @@ def _process_region_to_bed(args: Tuple) -> Tuple[str, int, int]:
     BED/bigBed output is needed.
 
     Args:
-        args: Tuple of (region, input_bam, temp_bed_path)
+        args: RegionBedWorkItem, or the legacy tuple shape.
 
     Returns:
-        (temp_bed_path, total_reads, reads_with_footprints)
+        RegionBedResult with temp BED path and counts.
     """
-    region, input_bam, temp_bed_path = args
+    work_item = RegionBedWorkItem.from_value(args)
+    region = work_item.region
+    input_bam = work_item.input_bam
+    temp_bed_path = work_item.temp_bed_path
     chrom, start, end = region
 
     try:
@@ -637,7 +651,7 @@ def _process_region_to_bed(args: Tuple) -> Tuple[str, int, int]:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)
                 except ValueError:
-                    return (temp_bed_path, 0, 0)
+                    return RegionBedResult(temp_bed_path, 0, 0)
 
                 for read in read_iter:
                     # Skip unmapped/secondary/supplementary
@@ -721,7 +735,7 @@ def _process_region_to_bed(args: Tuple) -> Tuple[str, int, int]:
                             bed_out.write(f"{ref_name}\t{ref_start}\t{ref_end}\t{read_id}\t0\t{strand}\t"
                                         f"{ref_start}\t{ref_end}\t0,0,0\t{block_count}\t{block_sizes}\t{block_starts}\n")
 
-        return (temp_bed_path, total_reads, reads_with_footprints)
+        return RegionBedResult(temp_bed_path, total_reads, reads_with_footprints)
 
     except Exception as e:
         import traceback
@@ -813,7 +827,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         for i, region in enumerate(regions):
             temp_bam = os.path.join(temp_dir, f'region_{i:06d}.bam')
             temp_h5 = os.path.join(temp_dir, f'region_{i:06d}.tsv') if return_posteriors else None
-            work_items.append((region, input_bam, temp_bam, temp_h5))
+            work_items.append(RegionBamWorkItem(region, input_bam, temp_bam, temp_h5))
 
         # Process regions in parallel
         total_reads = 0
@@ -841,16 +855,8 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
             for future in as_completed(futures):
                 try:
-                    result = future.result()
-                    # Handle return tuples (4/5/6 elements)
-                    region_skip = {}
-                    if len(result) == 6:
-                        temp_bam, n_reads, n_fp, n_written, temp_h5, region_skip = result
-                    elif len(result) == 5:
-                        temp_bam, n_reads, n_fp, n_written, temp_h5 = result
-                    else:
-                        temp_bam, n_reads, n_fp, n_written = result
-                        temp_h5 = None
+                    result = RegionBamResult.from_value(future.result())
+                    region_skip = result.skip_reasons
 
                     # Aggregate skip reasons across regions
                     for reason, count in region_skip.items():
@@ -864,11 +870,11 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                         print(f"  Workers ready ({init_time:.1f}s). Processing regions...")
                         sys.stdout.flush()
 
-                    total_reads += n_reads
-                    reads_with_footprints += n_fp
-                    temp_bams.append((futures[future], temp_bam))
-                    if temp_h5 and os.path.exists(temp_h5):
-                        temp_h5s.append((futures[future], temp_h5))
+                    total_reads += result.total_reads
+                    reads_with_footprints += result.reads_with_footprints
+                    temp_bams.append((futures[future], result.temp_bam_path))
+                    if result.temp_tsv_path and os.path.exists(result.temp_tsv_path):
+                        temp_h5s.append((futures[future], result.temp_tsv_path))
                     completed += 1
 
                     elapsed = time.time() - start_time
@@ -1011,7 +1017,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
         work_items = []
         for i, region in enumerate(regions):
             temp_bed = os.path.join(temp_dir, f'region_{i:06d}.bed')
-            work_items.append((region, input_bam, temp_bed))
+            work_items.append(RegionBedWorkItem(region, input_bam, temp_bed))
 
         total_reads = 0
         reads_with_footprints = 0
@@ -1034,7 +1040,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
 
             for future in as_completed(futures):
                 try:
-                    temp_bed, n_reads, n_fp = future.result()
+                    result = RegionBedResult.from_value(future.result())
 
                     # Track first result
                     if first_result_time is None:
@@ -1043,9 +1049,9 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
                         print(f"  Workers ready ({init_time:.1f}s). Processing regions...")
                         sys.stdout.flush()
 
-                    total_reads += n_reads
-                    reads_with_footprints += n_fp
-                    temp_beds.append((futures[future], temp_bed))
+                    total_reads += result.total_reads
+                    reads_with_footprints += result.reads_with_footprints
+                    temp_beds.append((futures[future], result.temp_bed_path))
                     completed += 1
 
                     elapsed = time.time() - start_time
@@ -1446,7 +1452,7 @@ def _init_fused_region_worker(apply_model_path: str, recall_model_path: Optional
         )
 
 
-def _process_region_to_bam_fused(args: Tuple) -> Tuple:
+def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
     """Region worker: fetch reads in one genomic region, run fused
     apply+recall per read, write in-order to a coordinate-sorted temp BAM.
 
@@ -1456,7 +1462,7 @@ def _process_region_to_bam_fused(args: Tuple) -> Tuple:
     temp BAMs in region order gives a coordinate-sorted final BAM without
     any sort pass.
 
-    Returns (temp_bam_path, n_reads, n_with_fp, n_written, None, skip_reasons).
+    Returns a RegionBamResult with temp BAM, counts, and skip reasons.
     """
     import traceback
     from fiberhmm.inference.engine import (
@@ -1468,10 +1474,10 @@ def _process_region_to_bam_fused(args: Tuple) -> Tuple:
     global _worker_model, _worker_region_params, _worker_recall_state
 
     try:
-        if len(args) == 3:
-            (chrom, start, end), input_bam, temp_bam_path = args
-        else:
-            (chrom, start, end), input_bam, temp_bam_path, _unused = args
+        work_item = RegionBamWorkItem.from_value(args)
+        chrom, start, end = work_item.region
+        input_bam = work_item.input_bam
+        temp_bam_path = work_item.temp_bam_path
         start = int(start); end = int(end)
 
         params = _worker_region_params
@@ -1516,7 +1522,7 @@ def _process_region_to_bam_fused(args: Tuple) -> Tuple:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)
                 except ValueError:
-                    return (temp_bam_path, 0, 0, 0, None, {})
+                    return RegionBamResult(temp_bam_path, 0, 0, 0)
 
                 for read in read_iter:
                     if read.is_unmapped:
@@ -1617,7 +1623,10 @@ def _process_region_to_bam_fused(args: Tuple) -> Tuple:
                     written += 1
                     reads_with_fp += 1
 
-        return (temp_bam_path, total_reads, reads_with_fp, written, None, skip_reasons)
+        return RegionBamResult(
+            temp_bam_path, total_reads, reads_with_fp,
+            written, None, skip_reasons,
+        )
 
     except Exception as e:
         traceback.print_exc()
@@ -1676,7 +1685,10 @@ def _process_bam_region_parallel_fused(
     }
 
     work_items = [
-        ((r[0], r[1], r[2]), input_bam, os.path.join(temp_dir, f'region_{i:06d}.bam'), None)
+        RegionBamWorkItem(
+            (r[0], r[1], r[2]), input_bam,
+            os.path.join(temp_dir, f'region_{i:06d}.bam'),
+        )
         for i, r in enumerate(regions)
     ]
 
@@ -1702,8 +1714,8 @@ def _process_bam_region_parallel_fused(
                        for i, item in enumerate(work_items)}
 
             for future in as_completed(futures):
-                res = future.result()
-                temp_bam, n_reads, n_fp, n_written, _, region_skip = res
+                result = RegionBamResult.from_value(future.result())
+                region_skip = result.skip_reasons
                 for reason, count in (region_skip or {}).items():
                     all_skip_reasons[reason] = all_skip_reasons.get(reason, 0) + count
                     total_skipped += count
@@ -1711,9 +1723,9 @@ def _process_bam_region_parallel_fused(
                     first_result = time.time()
                     print(f"  Workers ready ({first_result - pool_start:.1f}s). Processing...")
                     sys.stdout.flush()
-                total_reads += n_reads
-                reads_with_fp += n_fp
-                temp_bams.append((futures[future], temp_bam))
+                total_reads += result.total_reads
+                reads_with_fp += result.reads_with_footprints
+                temp_bams.append((futures[future], result.temp_bam_path))
                 elapsed = time.time() - start_time
                 rate = total_reads / elapsed if elapsed > 0 else 0
                 print(f"\r  Regions: {len(temp_bams)}/{len(regions)} | "
