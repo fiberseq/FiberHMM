@@ -41,3 +41,32 @@ def test_daf_encode_closes_input_and_reference_when_md_check_fails(monkeypatch):
 
     assert handles["bam"].closed
     assert handles["fasta"].closed
+
+
+def test_aligned_pairs_from_fasta_fetches_reference_span_once():
+    class FakeRead:
+        reference_name = "chr1"
+        reference_start = 100
+        reference_end = 105
+
+        def get_aligned_pairs(self):
+            return [(0, 100), (1, 101), (2, None), (3, 104)]
+
+    class FakeFasta:
+        def __init__(self):
+            self.fetches = []
+
+        def fetch(self, chrom, start, end):
+            self.fetches.append((chrom, start, end))
+            assert (chrom, start, end) == ("chr1", 100, 105)
+            return "ACGTA"
+
+    fasta = FakeFasta()
+
+    assert encoder._aligned_pairs_from_fasta(FakeRead(), fasta) == [
+        (0, 100, "A"),
+        (1, 101, "C"),
+        (2, None, None),
+        (3, 104, "A"),
+    ]
+    assert fasta.fetches == [("chr1", 100, 105)]

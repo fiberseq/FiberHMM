@@ -70,6 +70,7 @@ Date: 2026-05-07
 - Made QC stats BAM sampling use context-managed BAM handles across both passes, with failure-path coverage for second-pass cleanup.
 - Made DAF BAM encoding close input BAM and reference FASTA handles when pre-output MD validation fails, with direct lifecycle coverage.
 - Made tagged-BAM BED extraction close its input BAM if output BED opening fails, with direct shared-helper coverage.
+- Reduced DAF reference-fallback FASTA calls by fetching each read's reference span once instead of fetching one base per aligned position, with direct helper coverage.
 
 ## Current Verification
 
@@ -237,6 +238,13 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 365 passed, 26 deselected in 9.80s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.44s.
+- `python -m ruff check fiberhmm/daf/encoder.py tests/test_daf_encoder_lifecycle.py`: passed.
+- `python -m pytest tests/test_daf_encoder_lifecycle.py tests/test_daf_iupac.py tests/test_call_pipeline.py::test_daf_raw_md_and_reference_streaming_match_iupac_output`: 24 passed in 1.97s.
+- `python -m pytest -m benchmark tests/benchmarks/bench_encoding.py`: 4 passed in 0.61s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 366 passed, 26 deselected in 9.77s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.60s.
 
 ## Current Shape
 

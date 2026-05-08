@@ -233,10 +233,19 @@ def _aligned_pairs_from_fasta(read, ref_fasta):
     """Build (query_pos, ref_pos, ref_base) tuples using the reference FASTA."""
     chrom = read.reference_name
     pairs_no_seq = read.get_aligned_pairs()
+    ref_start = read.reference_start
+    ref_end = read.reference_end
+    ref_seq = None
+    if ref_start is not None and ref_end is not None and ref_end > ref_start:
+        ref_seq = ref_fasta.fetch(chrom, ref_start, ref_end)
+
     result = []
     for query_pos, ref_pos in pairs_no_seq:
         if ref_pos is not None:
-            ref_base = ref_fasta.fetch(chrom, ref_pos, ref_pos + 1)
+            if ref_seq is not None and ref_start <= ref_pos < ref_end:
+                ref_base = ref_seq[ref_pos - ref_start]
+            else:
+                ref_base = ref_fasta.fetch(chrom, ref_pos, ref_pos + 1)
         else:
             ref_base = None
         result.append((query_pos, ref_pos, ref_base))
