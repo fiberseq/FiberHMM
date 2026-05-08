@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 GenomicRegion = Tuple[str, int, int]
 SkipReasons = Dict[str, int]
@@ -74,6 +74,42 @@ class RegionBamResult:
         )
 
 
+@dataclass
+class RegionBamAggregation:
+    """Running totals for region BAM worker results."""
+
+    total_reads: int = 0
+    reads_with_footprints: int = 0
+    total_skipped: int = 0
+    skip_reasons: SkipReasons = field(default_factory=dict)
+    temp_bams: List[Tuple[int, str]] = field(default_factory=list)
+    temp_tsvs: List[Tuple[int, str]] = field(default_factory=list)
+
+    @property
+    def completed(self) -> int:
+        return len(self.temp_bams)
+
+    def add_result(
+        self,
+        region_index: int,
+        result: Union[RegionBamResult, tuple],
+        include_tsv: bool = False,
+    ) -> RegionBamResult:
+        result = RegionBamResult.from_value(result)
+        self.total_reads += result.total_reads
+        self.reads_with_footprints += result.reads_with_footprints
+        self.temp_bams.append((region_index, result.temp_bam_path))
+
+        for reason, count in result.skip_reasons.items():
+            self.skip_reasons[reason] = self.skip_reasons.get(reason, 0) + count
+            self.total_skipped += count
+
+        if include_tsv and result.temp_tsv_path:
+            self.temp_tsvs.append((region_index, result.temp_tsv_path))
+
+        return result
+
+
 @dataclass(frozen=True)
 class RegionBedWorkItem:
     """Input payload for a region worker that writes a temporary BED."""
@@ -108,6 +144,28 @@ class RegionBedResult:
             return value
         temp_bed_path, total_reads, reads_with_footprints = value
         return cls(temp_bed_path, total_reads, reads_with_footprints)
+
+
+@dataclass
+class RegionBedAggregation:
+    """Running totals for region BED worker results."""
+
+    total_reads: int = 0
+    reads_with_footprints: int = 0
+    temp_beds: List[Tuple[int, str]] = field(default_factory=list)
+
+    @property
+    def completed(self) -> int:
+        return len(self.temp_beds)
+
+    def add_result(
+        self, region_index: int, result: Union[RegionBedResult, tuple]
+    ) -> RegionBedResult:
+        result = RegionBedResult.from_value(result)
+        self.total_reads += result.total_reads
+        self.reads_with_footprints += result.reads_with_footprints
+        self.temp_beds.append((region_index, result.temp_bed_path))
+        return result
 
 
 def _coerce_region(region: tuple) -> GenomicRegion:

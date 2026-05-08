@@ -34,6 +34,7 @@ Date: 2026-05-07
 - Extracted `samtools index`/`samtools sort` command wrappers and added fake-command tests for direct indexing, unsorted BAM sorting, missing `samtools`, and pysam sort fallback.
 - Extracted the full region BAM concatenation fallback ladder into `fiberhmm/inference/bam_output.py`; apply and fused region paths now share empty-output, single-copy, `samtools cat`, pysam fallback, partial-output cleanup, output-dir probing, and final `samtools merge` behavior.
 - Added typed region-parallel worker contracts in `fiberhmm/inference/region_types.py`; apply BAM, fused BAM, and BED region workers now use named work-item/result containers while preserving legacy tuple coercion at private boundaries.
+- Added shared region result aggregation containers for BAM and BED workers; apply BAM, fused BAM, and BED region-parallel loops now share count/skip/temp-path accumulation behavior.
 - Removed unused private BAM merge helpers from `fiberhmm/inference/parallel.py`; active merge fallback coverage now lives with the shared BAM output helper tests.
 
 ## Current Verification
@@ -42,22 +43,22 @@ Date: 2026-05-07
 - `python -m pytest tests/test_call_pipeline.py`: 4 passed in 4.54s.
 - `python -m pytest tests/test_call_cli.py`: 7 passed in 1.95s.
 - `python -m pytest tests/test_bam_output.py`: 18 passed in 0.90s.
-- `python -m pytest tests/test_region_types.py`: 4 passed in 0.73s.
+- `python -m pytest tests/test_region_types.py`: 6 passed in 0.67s.
 - `python -m pytest tests/test_bam_output.py tests/test_call_cli.py`: 9 passed in 1.61s.
 - `python -m pytest tests/test_bam_output.py tests/test_mode_equivalence.py tests/test_call_pipeline.py`: 26 passed in 4.60s.
-- `python -m pytest tests/test_region_types.py tests/test_mode_equivalence.py tests/test_call_pipeline.py`: 12 passed in 5.12s.
+- `python -m pytest tests/test_region_types.py tests/test_mode_equivalence.py tests/test_call_pipeline.py`: 14 passed in 4.74s.
 - `python -m pytest tests/test_call_pipeline.py tests/test_call_cli.py tests/test_daf_iupac.py tests/test_extract_block_scores.py`: 62 passed in 5.67s.
 - `python -m pytest tests/test_package_consistency.py`: 19 passed in 1.68s.
-- `python -m pytest`: 317 passed, 20 deselected in 10.73s.
+- `python -m pytest`: 319 passed, 20 deselected in 10.81s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 61.66s.
+- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 59.92s.
 - `python -m ruff check fiberhmm tests`: not runnable in this environment because `ruff` is not installed.
 
 ## Current Shape
 
 Largest tracked Python files:
 
-- `fiberhmm/inference/parallel.py`: 2580 lines.
+- `fiberhmm/inference/parallel.py`: 2582 lines.
 - `fiberhmm/cli/extract_tags.py`: 1389 lines.
 - `fiberhmm/core/bam_reader.py`: 1246 lines.
 - `fiberhmm/core/hmm.py`: 1089 lines.
@@ -75,7 +76,7 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 2. Continue shrinking `fiberhmm/inference/parallel.py`.
 
-   The first shared tagging/unification slice, streaming read-filter slice, active BAM output helper extractions, and region worker contracts are complete, but the module still mixes process lifecycle, posterior export, and orchestration. The next low-risk slices are higher-level worker cleanup tests and explicit pipeline stage boundaries.
+   The first shared tagging/unification slice, streaming read-filter slice, active BAM output helper extractions, region worker contracts, and aggregation helpers are complete, but the module still mixes process lifecycle, posterior export, and orchestration. The next low-risk slices are higher-level worker cleanup tests and explicit pipeline stage boundaries.
 
 3. Add remaining `fiberhmm-call` characterization tests.
 

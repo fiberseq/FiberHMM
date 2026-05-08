@@ -65,8 +65,10 @@ from fiberhmm.inference.bam_output import (
 )
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.region_types import (
+    RegionBamAggregation,
     RegionBamResult,
     RegionBamWorkItem,
+    RegionBedAggregation,
     RegionBedResult,
     RegionBedWorkItem,
 )
@@ -830,13 +832,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             work_items.append(RegionBamWorkItem(region, input_bam, temp_bam, temp_h5))
 
         # Process regions in parallel
-        total_reads = 0
-        reads_with_footprints = 0
-        total_skipped = 0
-        all_skip_reasons = {}
-        temp_bams = []
-        temp_h5s = []  # Collect temp H5 files for posteriors
-        completed = 0
+        aggregation = RegionBamAggregation()
         first_result_time = None
 
         # Use initializer to load model once per worker
@@ -856,12 +852,10 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             for future in as_completed(futures):
                 try:
                     result = RegionBamResult.from_value(future.result())
-                    region_skip = result.skip_reasons
-
-                    # Aggregate skip reasons across regions
-                    for reason, count in region_skip.items():
-                        all_skip_reasons[reason] = all_skip_reasons.get(reason, 0) + count
-                    total_skipped += sum(region_skip.values())
+                    include_tsv = bool(
+                        result.temp_tsv_path and os.path.exists(result.temp_tsv_path)
+                    )
+                    aggregation.add_result(futures[future], result, include_tsv=include_tsv)
 
                     # Track first result
                     if first_result_time is None:
@@ -870,18 +864,11 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                         print(f"  Workers ready ({init_time:.1f}s). Processing regions...")
                         sys.stdout.flush()
 
-                    total_reads += result.total_reads
-                    reads_with_footprints += result.reads_with_footprints
-                    temp_bams.append((futures[future], result.temp_bam_path))
-                    if result.temp_tsv_path and os.path.exists(result.temp_tsv_path):
-                        temp_h5s.append((futures[future], result.temp_tsv_path))
-                    completed += 1
-
                     elapsed = time.time() - start_time
-                    rate = total_reads / elapsed if elapsed > 0 else 0
-                    print(f"\r  Regions: {completed}/{len(regions)} | "
-                          f"Reads: {total_reads:,} | "
-                          f"With footprints: {reads_with_footprints:,} | "
+                    rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
+                    print(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
+                          f"Reads: {aggregation.total_reads:,} | "
+                          f"With footprints: {aggregation.reads_with_footprints:,} | "
                           f"{rate:.1f} reads/s", end='')
                     sys.stdout.flush()
 
@@ -892,18 +879,24 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         print()  # Newline after progress
 
         # Print skip reasons summary
-        if total_skipped > 0:
-            total_encountered = total_reads + total_skipped
-            print(f"  Processed: {total_reads:,} | Skipped: {total_skipped:,} | With footprints: {reads_with_footprints:,}")
+        if aggregation.total_skipped > 0:
+            total_encountered = aggregation.total_reads + aggregation.total_skipped
+            print(
+                f"  Processed: {aggregation.total_reads:,} | "
+                f"Skipped: {aggregation.total_skipped:,} | "
+                f"With footprints: {aggregation.reads_with_footprints:,}"
+            )
             print("  Skip reasons:")
-            for reason, count in sorted(all_skip_reasons.items(), key=lambda x: -x[1]):
+            for reason, count in sorted(
+                aggregation.skip_reasons.items(), key=lambda x: -x[1]
+            ):
                 if count > 0:
                     pct = 100 * count / total_encountered
                     print(f"    {reason}: {count:,} ({pct:.1f}%)")
 
         # Sort temp BAMs by region order and filter to non-empty
-        temp_bams.sort(key=lambda x: x[0])
-        non_empty_bams = [bam for _, bam in temp_bams
+        aggregation.temp_bams.sort(key=lambda x: x[0])
+        non_empty_bams = [bam for _, bam in aggregation.temp_bams
                          if os.path.exists(bam) and os.path.getsize(bam) > 0]
 
         _concatenate_region_bams(input_bam, output_bam, non_empty_bams, temp_dir)
@@ -920,11 +913,12 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         _sort_and_index_bam(output_bam, threads=n_cores)
 
         # Merge temp TSV files if posteriors were requested
-        if return_posteriors and temp_h5s:
-            print(f"Merging {len(temp_h5s)} posterior files...")
+        if return_posteriors and aggregation.temp_tsvs:
+            print(f"Merging {len(aggregation.temp_tsvs)} posterior files...")
             merge_start = time.time()
             n_fibers = _merge_region_posteriors_tsv(
-                temp_h5s, output_posteriors, mode, context_size, edge_trim, input_bam
+                aggregation.temp_tsvs, output_posteriors,
+                mode, context_size, edge_trim, input_bam,
             )
             merge_time = time.time() - merge_start
 
@@ -940,15 +934,22 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
             if os.path.exists(tsv_path):
                 file_size = os.path.getsize(tsv_path) / (1024 * 1024)
-                print(f"Posteriors: {n_fibers:,} fibers -> {tsv_path} ({file_size:.1f} MB, {merge_time:.1f}s)")
+                print(
+                    f"Posteriors: {n_fibers:,} fibers -> {tsv_path} "
+                    f"({file_size:.1f} MB, {merge_time:.1f}s)"
+                )
                 if output_posteriors.endswith('.h5'):
                     print(f"  To convert to H5: python posteriors_io.py tsv2h5 {tsv_path} {output_posteriors}")
 
         elapsed = time.time() - start_time
-        rate = total_reads / elapsed if elapsed > 0 else 0
-        print(f"Completed: {total_reads:,} reads | {reads_with_footprints:,} with footprints | {rate:.1f} reads/s | {elapsed:.1f}s")
+        rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
+        print(
+            f"Completed: {aggregation.total_reads:,} reads | "
+            f"{aggregation.reads_with_footprints:,} with footprints | "
+            f"{rate:.1f} reads/s | {elapsed:.1f}s"
+        )
 
-        return total_reads, reads_with_footprints
+        return aggregation.total_reads, aggregation.reads_with_footprints
 
     finally:
         # Clean up temp directory
@@ -1019,10 +1020,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
             temp_bed = os.path.join(temp_dir, f'region_{i:06d}.bed')
             work_items.append(RegionBedWorkItem(region, input_bam, temp_bed))
 
-        total_reads = 0
-        reads_with_footprints = 0
-        temp_beds = []
-        completed = 0
+        aggregation = RegionBedAggregation()
         first_result_time = None
 
         print(f"  Initializing {n_cores} worker processes (loading HMM model in each)...")
@@ -1041,6 +1039,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
             for future in as_completed(futures):
                 try:
                     result = RegionBedResult.from_value(future.result())
+                    aggregation.add_result(futures[future], result)
 
                     # Track first result
                     if first_result_time is None:
@@ -1049,16 +1048,11 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
                         print(f"  Workers ready ({init_time:.1f}s). Processing regions...")
                         sys.stdout.flush()
 
-                    total_reads += result.total_reads
-                    reads_with_footprints += result.reads_with_footprints
-                    temp_beds.append((futures[future], result.temp_bed_path))
-                    completed += 1
-
                     elapsed = time.time() - start_time
-                    rate = total_reads / elapsed if elapsed > 0 else 0
-                    print(f"\r  Regions: {completed}/{len(regions)} | "
-                          f"Reads: {total_reads:,} | "
-                          f"With footprints: {reads_with_footprints:,} | "
+                    rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
+                    print(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
+                          f"Reads: {aggregation.total_reads:,} | "
+                          f"With footprints: {aggregation.reads_with_footprints:,} | "
                           f"{rate:.1f} reads/s", end='')
                     sys.stdout.flush()
 
@@ -1069,8 +1063,8 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
         print()  # Newline after progress
 
         # Sort temp BEDs by region order and concatenate
-        temp_beds.sort(key=lambda x: x[0])
-        non_empty_beds = [bed for _, bed in temp_beds
+        aggregation.temp_beds.sort(key=lambda x: x[0])
+        non_empty_beds = [bed for _, bed in aggregation.temp_beds
                          if os.path.exists(bed) and os.path.getsize(bed) > 0]
 
         print(f"Concatenating {len(non_empty_beds)} region BED files...")
@@ -1082,10 +1076,14 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
                     shutil.copyfileobj(fin, fout)
 
         elapsed = time.time() - start_time
-        rate = total_reads / elapsed if elapsed > 0 else 0
-        print(f"Completed: {total_reads:,} reads | {reads_with_footprints:,} with footprints | {rate:.1f} reads/s | {elapsed:.1f}s")
+        rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
+        print(
+            f"Completed: {aggregation.total_reads:,} reads | "
+            f"{aggregation.reads_with_footprints:,} with footprints | "
+            f"{rate:.1f} reads/s | {elapsed:.1f}s"
+        )
 
-        return total_reads, reads_with_footprints
+        return aggregation.total_reads, aggregation.reads_with_footprints
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -1693,11 +1691,7 @@ def _process_bam_region_parallel_fused(
     ]
 
     try:
-        total_reads = 0
-        reads_with_fp = 0
-        total_skipped = 0
-        all_skip_reasons: Dict[str, int] = {}
-        temp_bams: List[Tuple[int, str]] = []
+        aggregation = RegionBamAggregation()
 
         print(f"  Initializing {n_cores} workers (loading apply model + LLR tables)...")
         sys.stdout.flush()
@@ -1715,36 +1709,37 @@ def _process_bam_region_parallel_fused(
 
             for future in as_completed(futures):
                 result = RegionBamResult.from_value(future.result())
-                region_skip = result.skip_reasons
-                for reason, count in (region_skip or {}).items():
-                    all_skip_reasons[reason] = all_skip_reasons.get(reason, 0) + count
-                    total_skipped += count
+                aggregation.add_result(futures[future], result)
                 if first_result is None:
                     first_result = time.time()
                     print(f"  Workers ready ({first_result - pool_start:.1f}s). Processing...")
                     sys.stdout.flush()
-                total_reads += result.total_reads
-                reads_with_fp += result.reads_with_footprints
-                temp_bams.append((futures[future], result.temp_bam_path))
                 elapsed = time.time() - start_time
-                rate = total_reads / elapsed if elapsed > 0 else 0
-                print(f"\r  Regions: {len(temp_bams)}/{len(regions)} | "
-                      f"Reads: {total_reads:,} | With FP: {reads_with_fp:,} | "
+                rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
+                print(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
+                      f"Reads: {aggregation.total_reads:,} | "
+                      f"With FP: {aggregation.reads_with_footprints:,} | "
                       f"{rate:.0f} r/s", end='')
                 sys.stdout.flush()
         print()
 
-        if total_skipped > 0:
-            total_enc = total_reads + total_skipped
-            print(f"  Processed: {total_reads:,} | Skipped: {total_skipped:,} | With FP: {reads_with_fp:,}")
+        if aggregation.total_skipped > 0:
+            total_enc = aggregation.total_reads + aggregation.total_skipped
+            print(
+                f"  Processed: {aggregation.total_reads:,} | "
+                f"Skipped: {aggregation.total_skipped:,} | "
+                f"With FP: {aggregation.reads_with_footprints:,}"
+            )
             print("  Skip reasons:")
-            for reason, count in sorted(all_skip_reasons.items(), key=lambda x: -x[1]):
+            for reason, count in sorted(
+                aggregation.skip_reasons.items(), key=lambda x: -x[1]
+            ):
                 if count > 0:
                     print(f"    {reason}: {count:,} ({100*count/total_enc:.1f}%)")
 
         # Concat region BAMs in region-index order — preserves coord sort.
-        temp_bams.sort(key=lambda x: x[0])
-        non_empty = [bam for _, bam in temp_bams
+        aggregation.temp_bams.sort(key=lambda x: x[0])
+        non_empty = [bam for _, bam in aggregation.temp_bams
                      if os.path.exists(bam) and os.path.getsize(bam) > 0]
         _concatenate_region_bams(input_bam, output_bam, non_empty, temp_dir)
 
@@ -1755,13 +1750,17 @@ def _process_bam_region_parallel_fused(
             pass
 
         elapsed = time.time() - start_time
-        rate = total_reads / elapsed if elapsed > 0 else 0
-        print(f"  Total: {total_reads:,} reads, {reads_with_fp:,} with footprints, {rate:.1f} r/s")
+        rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
+        print(
+            f"  Total: {aggregation.total_reads:,} reads, "
+            f"{aggregation.reads_with_footprints:,} with footprints, "
+            f"{rate:.1f} r/s"
+        )
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-    return total_reads, reads_with_fp
+    return aggregation.total_reads, aggregation.reads_with_footprints
 
 
 def _drain_oldest_fused_chunk(inflight, outbam, with_scores,
