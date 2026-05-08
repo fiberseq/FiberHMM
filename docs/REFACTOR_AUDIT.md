@@ -36,6 +36,7 @@ Date: 2026-05-07
 - Added typed region-parallel worker contracts in `fiberhmm/inference/region_types.py`; apply BAM, fused BAM, and BED region workers now use named work-item/result containers while preserving legacy tuple coercion at private boundaries.
 - Added shared region result aggregation containers for BAM and BED workers; apply BAM, fused BAM, and BED region-parallel loops now share count/skip/temp-path accumulation behavior.
 - Removed unused private BAM merge helpers from `fiberhmm/inference/parallel.py`; active merge fallback coverage now lives with the shared BAM output helper tests.
+- Added higher-level region worker failure cleanup tests covering apply BAM, BED, and fused BAM temp-directory cleanup after executor/future failures.
 
 ## Current Verification
 
@@ -47,11 +48,13 @@ Date: 2026-05-07
 - `python -m pytest tests/test_bam_output.py tests/test_call_cli.py`: 9 passed in 1.61s.
 - `python -m pytest tests/test_bam_output.py tests/test_mode_equivalence.py tests/test_call_pipeline.py`: 26 passed in 4.60s.
 - `python -m pytest tests/test_region_types.py tests/test_mode_equivalence.py tests/test_call_pipeline.py`: 14 passed in 4.74s.
+- `python -m pytest tests/test_region_cleanup.py`: 3 passed in 0.68s.
+- `python -m pytest tests/test_region_cleanup.py tests/test_region_types.py tests/test_mode_equivalence.py tests/test_call_pipeline.py`: 17 passed in 4.72s.
 - `python -m pytest tests/test_call_pipeline.py tests/test_call_cli.py tests/test_daf_iupac.py tests/test_extract_block_scores.py`: 62 passed in 5.67s.
-- `python -m pytest tests/test_package_consistency.py`: 19 passed in 1.68s.
-- `python -m pytest`: 319 passed, 20 deselected in 10.81s.
+- `python -m pytest tests/test_package_consistency.py`: 19 passed in 1.50s.
+- `python -m pytest`: 322 passed, 20 deselected in 10.66s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 59.92s.
+- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 60.68s.
 - `python -m ruff check fiberhmm tests`: not runnable in this environment because `ruff` is not installed.
 
 ## Current Shape
@@ -76,11 +79,11 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 2. Continue shrinking `fiberhmm/inference/parallel.py`.
 
-   The first shared tagging/unification slice, streaming read-filter slice, active BAM output helper extractions, region worker contracts, and aggregation helpers are complete, but the module still mixes process lifecycle, posterior export, and orchestration. The next low-risk slices are higher-level worker cleanup tests and explicit pipeline stage boundaries.
+   The first shared tagging/unification slice, streaming read-filter slice, active BAM output helper extractions, region worker contracts, aggregation helpers, and higher-level worker cleanup tests are complete, but the module still mixes process lifecycle, posterior export, and orchestration. The next low-risk slice is explicit pipeline stage boundaries.
 
 3. Add remaining `fiberhmm-call` characterization tests.
 
-   The fused streaming, fused region-parallel, legacy tags, `MA`/`AQ`, stdout/stderr behavior, DAF input-source sniffing, DAF raw MD/reference streaming output, model resolution, and `--with-scores` nucleosome quality behavior now have direct tests. Remaining gaps are higher-level worker failure and cleanup tests.
+   The fused streaming, fused region-parallel, legacy tags, `MA`/`AQ`, stdout/stderr behavior, DAF input-source sniffing, DAF raw MD/reference streaming output, model resolution, `--with-scores` nucleosome quality behavior, and higher-level worker failure cleanup behavior now have direct tests.
 
 4. Mode-specific encoding should be split.
 
@@ -104,7 +107,7 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 9. Temporary output paths are unique in the main region-parallel paths.
 
-   Apply BAM, BED, and fused region-parallel modes now use per-run temp directories under the output directory. Future output helpers should keep this property and add direct tests around cleanup after worker failures.
+   Apply BAM, BED, and fused region-parallel modes now use per-run temp directories under the output directory, and higher-level worker-failure tests verify cleanup. Future output helpers should keep this property.
 
 10. Public compatibility surfaces must stay stable.
 
@@ -124,7 +127,7 @@ Before moving code:
   - stdout mode keeps BAM bytes on stdout and logs on stderr; done.
   - DAF IUPAC, raw MD, and raw `--reference` output paths are covered in fused streaming.
 - Add golden-tag comparison helpers that hash/read `ns`, `nl`, `as`, `al`, `nq`, `aq`, `MA`, and `AQ` per read.
-- Add tests for temporary directory uniqueness and external-tool fallback behavior.
+- Add tests for temporary directory uniqueness and external-tool fallback behavior; direct external-tool fallback coverage and worker-failure cleanup coverage are in place.
 
 ## Refactor Plan
 
