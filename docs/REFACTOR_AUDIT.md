@@ -60,6 +60,7 @@ Date: 2026-05-07
 - Extracted genome region planning helpers into `fiberhmm/inference/region_planning.py`, keeping compatibility re-exports from `parallel.py` and adding direct region splitting/filtering coverage.
 - Extracted order-preserving streaming drain helpers into `fiberhmm/inference/streaming_drain.py`; streaming apply and fused apply+recall now share drain behavior outside `parallel.py`.
 - Closed inline posterior writers from apply processing `finally` blocks in both streaming and legacy paths, with failure-path regression coverage.
+- Closed fused DAF streaming reference FASTA handles from the processing `finally` block, including failure-path coverage.
 
 ## Current Verification
 
@@ -165,6 +166,13 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 351 passed, 26 deselected in 9.62s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 48.75s.
+- `python -m ruff check fiberhmm/inference/parallel.py tests/test_posterior_lifecycle.py`: passed.
+- `python -m pytest tests/test_posterior_lifecycle.py`: 3 passed in 0.57s.
+- `python -m pytest tests/test_posterior_lifecycle.py tests/test_streaming_pipeline.py tests/test_call_pipeline.py tests/test_mode_equivalence.py tests/test_inference_parallel.py`: 75 passed in 11.78s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 352 passed, 26 deselected in 9.76s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.31s.
 
 ## Current Shape
 

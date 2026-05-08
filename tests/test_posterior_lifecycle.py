@@ -1,4 +1,4 @@
-"""Failure-path coverage for inline posterior writer lifetimes."""
+"""Failure-path coverage for apply-pipeline resource lifetimes."""
 
 import pytest
 
@@ -90,3 +90,60 @@ def test_legacy_posterior_writer_closes_when_chunk_processing_fails(
     assert instances
     assert instances[0].closed
     assert instances[0].close_count == 1
+
+
+def test_fused_streaming_reference_fasta_closes_when_drain_fails(
+    monkeypatch, synthetic_bam_small, benchmark_model_path, tmp_path
+):
+    closed_paths = []
+
+    class FakeFastaFile:
+        def __init__(self, path):
+            self.path = path
+
+        def close(self):
+            closed_paths.append(self.path)
+
+    def fail_drain(*args, **kwargs):
+        raise RuntimeError("fused drain failed")
+
+    monkeypatch.setattr(parallel.pysam, "FastaFile", FakeFastaFile)
+    monkeypatch.setattr(parallel, "_drain_oldest_fused_chunk", fail_drain)
+    monkeypatch.setattr(
+        parallel,
+        "streaming_skip_reason",
+        lambda read, filter_config: "low_mapq",
+    )
+
+    ref_fasta = str(tmp_path / "fake_reference.fa")
+    with pytest.raises(RuntimeError, match="fused drain failed"):
+        parallel._process_bam_streaming_pipeline_fused(
+            input_bam=synthetic_bam_small,
+            output_bam=str(tmp_path / "fused_failure.bam"),
+            model_path=benchmark_model_path,
+            recall_model_path=None,
+            train_rids=set(),
+            edge_trim=10,
+            circular=False,
+            mode="daf",
+            context_size=3,
+            msp_min_size=60,
+            nuc_min_size=85,
+            min_mapq=0,
+            prob_threshold=0,
+            min_read_length=0,
+            with_scores=False,
+            min_llr=1000.0,
+            min_opps=3,
+            unify_threshold=90,
+            emission_uplift=1.0,
+            also_write_legacy=True,
+            downstream_compat=False,
+            max_reads=0,
+            n_cores=1,
+            chunk_size=1000,
+            io_threads=1,
+            ref_fasta_path=ref_fasta,
+        )
+
+    assert closed_paths == [ref_fasta]

@@ -1594,12 +1594,11 @@ def _process_bam_streaming_pipeline_fused(
     benchmark) and the duplicate MM/ML parse + encode done by the
     streaming recall stage.
     """
-    # Streaming mode reads the BAM sequentially in the main process, so we
-    # can open the FastaFile here (no fork yet) and hand the live handle
-    # to make_apply_payload for on-the-fly MD fallback on raw DAF BAMs.
+    # Streaming mode reads the BAM sequentially in the main process, so it can
+    # hand a live FastaFile to make_apply_payload for on-the-fly MD fallback on
+    # raw DAF BAMs. The handle is opened after BAM output setup and closed from
+    # the processing finally block so failures do not leak it.
     ref_fasta = None
-    if ref_fasta_path:
-        ref_fasta = pysam.FastaFile(ref_fasta_path)
     pysam.set_verbosity(0)
     max_inflight = n_cores + 2
     start_time = time.time()
@@ -1633,6 +1632,9 @@ def _process_bam_streaming_pipeline_fused(
 
     with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
         with pysam.AlignmentFile(_output_target, "wb", header=inbam.header, threads=io_threads) as outbam:
+            if ref_fasta_path:
+                ref_fasta = pysam.FastaFile(ref_fasta_path)
+
             executor = ProcessPoolExecutor(
                 max_workers=n_cores,
                 mp_context=_MP_CONTEXT,
@@ -1732,10 +1734,12 @@ def _process_bam_streaming_pipeline_fused(
                         also_write_legacy, downstream_compat, counters,
                     )
             finally:
-                executor.shutdown(wait=True)
-
-    if ref_fasta is not None:
-        ref_fasta.close()
+                try:
+                    executor.shutdown(wait=True)
+                finally:
+                    if ref_fasta is not None:
+                        ref_fasta.close()
+                        ref_fasta = None
 
     elapsed = time.time() - start_time
     rate = total_reads / elapsed if elapsed > 0 else 0
