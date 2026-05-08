@@ -63,6 +63,11 @@ from fiberhmm.inference.bam_output import (
     _concatenate_region_bams,
     _sort_and_index_bam,
 )
+from fiberhmm.inference.fused_stages import (
+    apply_result_has_footprints,
+    build_fused_recall_result,
+    run_hmm_apply_stage,
+)
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.region_types import (
     RegionBamAggregation,
@@ -73,10 +78,7 @@ from fiberhmm.inference.region_types import (
     RegionBedWorkItem,
 )
 from fiberhmm.inference.tagging import (
-    intervals_from_arrays,
     set_legacy_apply_tags,
-    split_intervals,
-    unify_nucs_with_tf_calls,
     write_fused_recall_tags,
 )
 
@@ -1209,18 +1211,12 @@ def _process_fused_payload_chunk_worker(
         'ns_scores', 'as_scores': optional nq/aq scores if with_scores
     """
     global _worker_model, _worker_recall_state
-    # tf_recaller imports are worker-side only (heavy numba modules)
     from fiberhmm.inference.engine import extract_fiber_read_from_payload
-    from fiberhmm.inference.tf_recaller import (
-        build_scan_intervals, call_tfs_in_interval,
-    )
 
     # Model/params set once per worker; TF LLR tables attached to the
     # worker globals via _init_fused_worker.
     llr_hit = _worker_recall_state['llr_hit']
     llr_miss = _worker_recall_state['llr_miss']
-    rmode = recall_mode or mode
-    rk = recall_context_size or context_size
 
     results = []
     for payload in chunk_payloads:
@@ -1230,67 +1226,37 @@ def _process_fused_payload_chunk_worker(
                 results.append(None)
                 continue
 
-            apply_result = _process_single_read(
-                fiber_read, _worker_model,
-                edge_trim, circular, mode, context_size, msp_min_size,
-                nuc_min_size=nuc_min_size,
-                with_scores=with_scores,
-                return_posteriors=False,
-                include_encoded=True,    # reuse obs for TF scan
+            apply_result = run_hmm_apply_stage(
+                fiber_read,
+                _worker_model,
+                edge_trim,
+                circular,
+                mode,
+                context_size,
+                msp_min_size,
+                nuc_min_size,
+                with_scores,
             )
-            if apply_result is None:
-                results.append(None)
-                continue
-
-            ns = apply_result['ns']
-            nl = apply_result['nl']
-            as_ = apply_result['as']
-            al = apply_result['al']
-            obs = apply_result['encoded']
 
             # Match streaming semantics: if apply produced no footprints and
             # no MSPs, treat as "nothing to annotate" — return None so the
             # drain pass-throughs the read unchanged (preserving any
             # pre-existing tags on the input).  With include_encoded=True
             # _process_single_read does NOT early-return on empty output.
-            if len(ns) == 0 and len(as_) == 0:
+            if not apply_result_has_footprints(apply_result):
                 results.append(None)
                 continue
 
-            # Build scan intervals (all MSPs + v2 nucs shorter than unify_threshold)
-            ns_list = ns.tolist() if hasattr(ns, 'tolist') else list(ns)
-            nl_list = nl.tolist() if hasattr(nl, 'tolist') else list(nl)
-            as_list = as_.tolist() if hasattr(as_, 'tolist') else list(as_)
-            al_list = al.tolist() if hasattr(al, 'tolist') else list(al)
-            read_len = len(fiber_read['query_sequence'])
-            intervals = build_scan_intervals(
-                ns_list, nl_list, as_list, al_list,
-                read_len, unify_threshold=unify_threshold,
-            )
-
-            # TF Kadane scan within every interval
-            tf_calls = []
-            for lo, hi in intervals:
-                tf_calls.extend(call_tfs_in_interval(
-                    obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps,
-                ))
-
-            kept_nucs, nq_for_kept = unify_nucs_with_tf_calls(
-                ns_list, nl_list, tf_calls, unify_threshold,
-                apply_result.get('ns_scores') if with_scores else None,
-            )
-            kept_starts, kept_lengths = split_intervals(kept_nucs)
-
-            results.append({
-                'ns': kept_starts,
-                'nl': kept_lengths,
-                'as': as_,
-                'al': al,
-                'ns_scores': apply_result.get('ns_scores') if with_scores else None,
-                'as_scores': apply_result.get('as_scores') if with_scores else None,
-                'nq_for_kept_nucs': nq_for_kept,
-                'tf_calls': tf_calls,
-            })
+            results.append(build_fused_recall_result(
+                fiber_read,
+                apply_result,
+                llr_hit,
+                llr_miss,
+                min_llr,
+                min_opps,
+                unify_threshold,
+                with_scores,
+            ))
         except Exception:
             # Per-read failure must not kill the worker (or the whole chunk).
             results.append(None)
@@ -1463,12 +1429,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
     Returns a RegionBamResult with temp BAM, counts, and skip reasons.
     """
     import traceback
-    from fiberhmm.inference.engine import (
-        extract_fiber_read_from_payload, make_apply_payload, _process_single_read,
-    )
-    from fiberhmm.inference.tf_recaller import (
-        build_scan_intervals, call_tfs_in_interval, write_ma_tags,
-    )
+    from fiberhmm.inference.engine import extract_fiber_read_from_payload, make_apply_payload
     global _worker_model, _worker_region_params, _worker_recall_state
 
     try:
@@ -1560,13 +1521,16 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                             outbam.write(read); written += 1; skipped += 1
                             skip_reasons['no_modifications'] += 1
                             continue
-                        apply_result = _process_single_read(
-                            fiber_read, model, edge_trim, circular,
-                            mode, context_size, msp_min_size,
-                            nuc_min_size=nuc_min_size,
-                            with_scores=with_scores,
-                            return_posteriors=False,
-                            include_encoded=True,
+                        apply_result = run_hmm_apply_stage(
+                            fiber_read,
+                            model,
+                            edge_trim,
+                            circular,
+                            mode,
+                            context_size,
+                            msp_min_size,
+                            nuc_min_size,
+                            with_scores,
                         )
                     except Exception:
                         outbam.write(read); written += 1; skipped += 1
@@ -1575,45 +1539,25 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
 
                     total_reads += 1
 
-                    if apply_result is None or (len(apply_result['ns']) == 0
-                                                and len(apply_result['as']) == 0):
+                    if not apply_result_has_footprints(apply_result):
                         outbam.write(read); written += 1
                         skip_reasons['no_footprints'] += 1
                         continue
 
-                    ns = apply_result['ns']; nl = apply_result['nl']
-                    as_ = apply_result['as']; al = apply_result['al']
-                    obs = apply_result['encoded']
-
-                    ns_list = ns.tolist() if hasattr(ns, 'tolist') else list(ns)
-                    nl_list = nl.tolist() if hasattr(nl, 'tolist') else list(nl)
-                    as_list = as_.tolist() if hasattr(as_, 'tolist') else list(as_)
-                    al_list = al.tolist() if hasattr(al, 'tolist') else list(al)
-
-                    intervals = build_scan_intervals(
-                        ns_list, nl_list, as_list, al_list,
-                        len(fiber_read['query_sequence']),
-                        unify_threshold=unify_threshold,
+                    fused_result = build_fused_recall_result(
+                        fiber_read,
+                        apply_result,
+                        llr_hit,
+                        llr_miss,
+                        min_llr,
+                        min_opps,
+                        unify_threshold,
+                        with_scores,
                     )
-                    tf_calls = []
-                    for lo, hi in intervals:
-                        tf_calls.extend(call_tfs_in_interval(
-                            obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps,
-                        ))
-
-                    kept_nucs, nq_for_kept = unify_nucs_with_tf_calls(
-                        ns_list, nl_list, tf_calls, unify_threshold,
-                        apply_result.get('ns_scores') if with_scores else None,
-                    )
-                    msps = intervals_from_arrays(as_list, al_list)
-
-                    write_ma_tags(
+                    write_fused_recall_tags(
                         read,
                         read_length=len(fiber_read['query_sequence']),
-                        tf_calls=tf_calls,
-                        kept_nucs=kept_nucs,
-                        msps=msps,
-                        nq_for_kept_nucs=nq_for_kept,
+                        result=fused_result,
                         also_write_legacy=also_write_legacy,
                         downstream_compat=downstream_compat,
                     )
@@ -1766,7 +1710,7 @@ def _process_bam_region_parallel_fused(
 def _drain_oldest_fused_chunk(inflight, outbam, with_scores,
                               also_write_legacy, downstream_compat, counters):
     """Fused apply+recall drain: applies ns/nl/as/al AND MA/AQ tags via
-    write_ma_tags from tf_recaller.
+    the shared fused recall tag writer.
 
     Skipped reads (is_skipped=True) are passed through unchanged at their
     original stream position so coordinate-sorted input stays coordinate

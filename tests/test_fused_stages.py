@@ -1,0 +1,94 @@
+"""Tests for fused apply/recall stage boundaries."""
+
+from __future__ import annotations
+
+import numpy as np
+
+from fiberhmm.inference import fused_stages
+from fiberhmm.inference.tf_recaller import TFCall
+
+
+def test_apply_result_has_footprints_detects_nucs_or_msps():
+    empty = {
+        "ns": np.asarray([], dtype=np.int32),
+        "as": np.asarray([], dtype=np.int32),
+    }
+    nuc_only = {
+        "ns": np.asarray([10], dtype=np.int32),
+        "as": np.asarray([], dtype=np.int32),
+    }
+    msp_only = {
+        "ns": np.asarray([], dtype=np.int32),
+        "as": np.asarray([20], dtype=np.int32),
+    }
+
+    assert fused_stages.apply_result_has_footprints(None) is False
+    assert fused_stages.apply_result_has_footprints(empty) is False
+    assert fused_stages.apply_result_has_footprints(nuc_only) is True
+    assert fused_stages.apply_result_has_footprints(msp_only) is True
+
+
+def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatch):
+    seen = {"interval_args": None, "scan_args": []}
+
+    def fake_build_scan_intervals(
+        ns, nl, msps, msp_lengths, read_length, unify_threshold
+    ):
+        seen["interval_args"] = (ns, nl, msps, msp_lengths, read_length, unify_threshold)
+        return [(10, 30), (100, 130)]
+
+    def fake_call_tfs_in_interval(obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps):
+        seen["scan_args"].append((obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps))
+        if lo == 10:
+            return [
+                TFCall(
+                    start=8,
+                    length=10,
+                    llr=6.0,
+                    n_opps=4,
+                    left_ambiguity=1,
+                    right_ambiguity=2,
+                )
+            ]
+        return []
+
+    monkeypatch.setattr(fused_stages, "build_scan_intervals", fake_build_scan_intervals)
+    monkeypatch.setattr(fused_stages, "call_tfs_in_interval", fake_call_tfs_in_interval)
+
+    obs = np.asarray([0, 1, 2, 3], dtype=np.int64)
+    msps = np.asarray([12], dtype=np.int32)
+    msp_lengths = np.asarray([8], dtype=np.int32)
+    apply_result = {
+        "ns": np.asarray([5, 100], dtype=np.int32),
+        "nl": np.asarray([20, 100], dtype=np.int32),
+        "as": msps,
+        "al": msp_lengths,
+        "encoded": obs,
+        "ns_scores": np.asarray([0.25, 1.0]),
+        "as_scores": np.asarray([0.5]),
+    }
+
+    result = fused_stages.build_fused_recall_result(
+        {"query_sequence": "A" * 150},
+        apply_result,
+        llr_hit="hit",
+        llr_miss="miss",
+        min_llr=4.0,
+        min_opps=3,
+        unify_threshold=90,
+        with_scores=True,
+    )
+
+    assert seen["interval_args"] == ([5, 100], [20, 100], [12], [8], 150, 90)
+    scan_args = seen["scan_args"]
+    assert len(scan_args) == 2
+    assert scan_args[0][0] is obs
+    assert scan_args[0][1:] == (10, 30, "hit", "miss", 4.0, 3)
+    assert scan_args[1][0] is obs
+    assert scan_args[1][1:] == (100, 130, "hit", "miss", 4.0, 3)
+    assert result["ns"].tolist() == [100]
+    assert result["nl"].tolist() == [100]
+    assert result["as"] is msps
+    assert result["al"] is msp_lengths
+    assert result["nq_for_kept_nucs"] == [255]
+    assert len(result["tf_calls"]) == 1

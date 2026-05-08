@@ -37,6 +37,7 @@ Date: 2026-05-07
 - Added shared region result aggregation containers for BAM and BED workers; apply BAM, fused BAM, and BED region-parallel loops now share count/skip/temp-path accumulation behavior.
 - Removed unused private BAM merge helpers from `fiberhmm/inference/parallel.py`; active merge fallback coverage now lives with the shared BAM output helper tests.
 - Added higher-level region worker failure cleanup tests covering apply BAM, BED, and fused BAM temp-directory cleanup after executor/future failures.
+- Extracted fused HMM apply, TF recall scan, and nucleosome/TF unification stage helpers into `fiberhmm/inference/fused_stages.py`; fused streaming and region-parallel workers now share those stage boundaries.
 
 ## Current Verification
 
@@ -50,18 +51,20 @@ Date: 2026-05-07
 - `python -m pytest tests/test_region_types.py tests/test_mode_equivalence.py tests/test_call_pipeline.py`: 14 passed in 4.74s.
 - `python -m pytest tests/test_region_cleanup.py`: 3 passed in 0.68s.
 - `python -m pytest tests/test_region_cleanup.py tests/test_region_types.py tests/test_mode_equivalence.py tests/test_call_pipeline.py`: 17 passed in 4.72s.
+- `python -m pytest tests/test_fused_stages.py tests/test_call_pipeline.py`: 6 passed in 4.45s.
+- `python -m pytest tests/test_fused_stages.py tests/test_call_pipeline.py tests/test_mode_equivalence.py tests/test_region_cleanup.py`: 13 passed in 6.58s.
 - `python -m pytest tests/test_call_pipeline.py tests/test_call_cli.py tests/test_daf_iupac.py tests/test_extract_block_scores.py`: 62 passed in 5.67s.
 - `python -m pytest tests/test_package_consistency.py`: 19 passed in 1.50s.
-- `python -m pytest`: 322 passed, 20 deselected in 10.66s.
+- `python -m pytest`: 324 passed, 20 deselected in 10.70s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 60.68s.
+- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 59.41s.
 - `python -m ruff check fiberhmm tests`: not runnable in this environment because `ruff` is not installed.
 
 ## Current Shape
 
 Largest tracked Python files:
 
-- `fiberhmm/inference/parallel.py`: 2582 lines.
+- `fiberhmm/inference/parallel.py`: 2526 lines.
 - `fiberhmm/cli/extract_tags.py`: 1389 lines.
 - `fiberhmm/core/bam_reader.py`: 1246 lines.
 - `fiberhmm/core/hmm.py`: 1089 lines.
@@ -79,7 +82,7 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 2. Continue shrinking `fiberhmm/inference/parallel.py`.
 
-   The first shared tagging/unification slice, streaming read-filter slice, active BAM output helper extractions, region worker contracts, aggregation helpers, and higher-level worker cleanup tests are complete, but the module still mixes process lifecycle, posterior export, and orchestration. The next low-risk slice is explicit pipeline stage boundaries.
+   The first shared tagging/unification slice, streaming read-filter slice, active BAM output helper extractions, region worker contracts, aggregation helpers, higher-level worker cleanup tests, and fused stage-boundary extraction are complete, but the module still mixes process lifecycle, posterior export, and orchestration. The next work should shift toward measured speed/stability improvements while continuing to keep `parallel.py` shrinking.
 
 3. Add remaining `fiberhmm-call` characterization tests.
 
@@ -95,7 +98,7 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 6. CLI coverage remains weak.
 
-   Most CLI modules have little or no direct coverage. The package has good parser-helper tests and core integration tests, but there are no end-to-end `fiberhmm-call` CLI tests for fused streaming, fused region-parallel, stdout/stderr behavior, DAF `--reference`, or `--with-scores`.
+   Most CLI modules have little or no direct coverage. `fiberhmm-call` now has direct coverage for stdout/stderr behavior, DAF input-source handling, model resolution, fused streaming/region-parallel output, and `--with-scores`, but other CLI entry points still need focused tests.
 
 7. Benchmarks are now explicit.
 
@@ -103,7 +106,7 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 8. External-tool wrappers need hardening.
 
-   BAM sort/index and bigBed conversion call `samtools`, `sort`, and `bedToBigBed`. Known shell-based sorting has been removed, and `rg "shell=True" fiberhmm tests` currently returns no matches. BAM-list cleanup, merge fallback cleanup, partial-output cleanup, output-dir probing, and sort/index fallbacks now have fake-command coverage; remaining work is higher-level failure coverage around worker failures.
+   BAM sort/index and bigBed conversion call `samtools`, `sort`, and `bedToBigBed`. Known shell-based sorting has been removed, and `rg "shell=True" fiberhmm tests` currently returns no matches. BAM-list cleanup, merge fallback cleanup, partial-output cleanup, output-dir probing, sort/index fallbacks, and higher-level worker-failure cleanup now have coverage.
 
 9. Temporary output paths are unique in the main region-parallel paths.
 
@@ -143,6 +146,7 @@ Phase 2: mechanical modularization.
 - Extract shared skip/filter logic into a small read-filter module.
 - Extract BAM merge/sort/index helpers into one output module.
 - Introduce typed payload/result containers for apply, fused, and recall paths.
+- Extract explicit fused HMM apply, TF recall, and label-writing stage boundaries.
 
 Phase 3: pipeline split.
 
