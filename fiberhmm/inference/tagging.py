@@ -39,6 +39,20 @@ def scores_to_u8(scores: Optional[Sequence[float]]) -> Optional[list[int]]:
     return np.clip(arr * 255, 0, 255).astype(np.uint8).tolist()
 
 
+def _u32_bam_array(values) -> pyarray.array:
+    """Build a BAM B:I-compatible array without materializing Python ints."""
+    arr = pyarray.array("I")
+    values_u32 = np.asarray(values, dtype=np.uint32)
+    if values_u32.size == 0:
+        return arr
+    values_u32 = np.ascontiguousarray(values_u32)
+    if arr.itemsize == values_u32.dtype.itemsize:
+        arr.frombytes(values_u32.tobytes())
+    else:
+        arr.extend(int(v) for v in values_u32)
+    return arr
+
+
 def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True) -> None:
     """Write legacy apply tags (`ns/nl/as/al`, optional `nq/aq`) in place.
 
@@ -47,8 +61,8 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     are passed through by callers.
     """
     if len(result["ns"]) > 0:
-        read.set_tag("ns", pyarray.array("I", result["ns"].astype(np.uint32).tolist()))
-        read.set_tag("nl", pyarray.array("I", result["nl"].astype(np.uint32).tolist()))
+        read.set_tag("ns", _u32_bam_array(result["ns"]))
+        read.set_tag("nl", _u32_bam_array(result["nl"]))
         if with_scores and result.get("ns_scores") is not None:
             read.set_tag("nq", scores_to_u8(result["ns_scores"]))
         elif read.has_tag("nq"):
@@ -58,8 +72,8 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
                 pass
 
     if write_msps and len(result["as"]) > 0:
-        read.set_tag("as", pyarray.array("I", result["as"].astype(np.uint32).tolist()))
-        read.set_tag("al", pyarray.array("I", result["al"].astype(np.uint32).tolist()))
+        read.set_tag("as", _u32_bam_array(result["as"]))
+        read.set_tag("al", _u32_bam_array(result["al"]))
         if with_scores and result.get("as_scores") is not None:
             read.set_tag("aq", scores_to_u8(result["as_scores"]))
         elif read.has_tag("aq"):

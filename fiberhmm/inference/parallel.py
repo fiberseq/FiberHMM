@@ -1,6 +1,5 @@
 """FiberHMM region-parallel processing and worker management."""
 
-import array as pyarray
 import base64
 import gzip
 import json
@@ -452,35 +451,7 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         if result is not None:
                             reads_with_footprints += 1
 
-                            # Only set tags if arrays are non-empty
-                            # Use array.array('I', ...) to force B:I (unsigned 32-bit)
-                            # per Fiber-seq BAM format spec
-                            if len(result['ns']) > 0:
-                                read.set_tag('ns', pyarray.array('I', result['ns'].astype(np.uint32).tolist()))
-                                read.set_tag('nl', pyarray.array('I', result['nl'].astype(np.uint32).tolist()))
-                                if result['ns_scores'] is not None:
-                                    # nq:B:C - unsigned 8-bit per fiberseq spec (0-255)
-                                    scores_u8 = np.clip(np.array(result['ns_scores']) * 255, 0, 255).astype(np.uint8)
-                                    read.set_tag('nq', scores_u8.tolist())
-                                elif read.has_tag('nq'):
-                                    # Stale nq from input would mismatch new ns — fibertools asserts len(nq)==len(ns)
-                                    try:
-                                        read.set_tag('nq', None)
-                                    except Exception:
-                                        pass
-
-                            if write_msps and len(result['as']) > 0:
-                                read.set_tag('as', pyarray.array('I', result['as'].astype(np.uint32).tolist()))
-                                read.set_tag('al', pyarray.array('I', result['al'].astype(np.uint32).tolist()))
-                                if result['as_scores'] is not None:
-                                    # aq:B:C - unsigned 8-bit per fiberseq spec (0-255)
-                                    scores_u8 = np.clip(np.array(result['as_scores']) * 255, 0, 255).astype(np.uint8)
-                                    read.set_tag('aq', scores_u8.tolist())
-                                elif read.has_tag('aq'):
-                                    try:
-                                        read.set_tag('aq', None)
-                                    except Exception:
-                                        pass
+                            set_legacy_apply_tags(read, result, with_scores, write_msps)
 
                             # Stream posteriors to TSV immediately (no memory accumulation)
                             if tsv_file and result.get('posteriors') is not None:

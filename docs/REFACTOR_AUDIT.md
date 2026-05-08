@@ -53,6 +53,7 @@ Date: 2026-05-07
 - Aligned the I/O-vs-compute benchmark with the frozen inference model path used by apply workers.
 - Added a numba-backed footprint run scanner that avoids per-read padded state-array and diff allocations while preserving a numpy fallback when numba is unavailable.
 - Added direct footprint-run oracle coverage for empty, all-accessible, all-footprint, edge, and dtype-varied state arrays.
+- Reused the shared legacy apply tag writer in the region BAM worker and changed unsigned 32-bit BAM tag-array construction to avoid materializing Python integer lists.
 
 ## Current Verification
 
@@ -118,6 +119,13 @@ Date: 2026-05-07
 - `python -m ruff check fiberhmm tests`: passed.
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 344 passed, 26 deselected in 11.04s.
+- Streaming tuning check on 12,000 synthetic reads with 4 cores: `chunk_size=500` remained the best default among 250/500/1000/2000 at fixed `max_inflight=8`; raising in-flight depth from 8 to 12 only improved 9,973 reads/s to 10,119 reads/s, so no default change was made.
+- `python -m pytest tests/test_tagging.py tests/test_call_pipeline.py tests/test_mode_equivalence.py tests/test_streaming_pipeline.py`: 27 passed in 7.83s.
+- `python -m pytest -s -m benchmark tests/benchmarks/bench_io_vs_compute.py tests/benchmarks/bench_throughput.py`: 8 passed in 11.69s; frozen compute-only timing was 0.70s for 5,000 reads (7,135 reads/s), streaming throughput was 7,181 reads/s (1-core), 10,535 reads/s (2-core), 12,947 reads/s (4-core), region-parallel throughput was 10,348 reads/s (2-core) and 14,825 reads/s (4-core), legacy 1-core was 5,798 reads/s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 346 passed, 26 deselected in 11.37s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.78s.
 
 ## Current Shape
 
