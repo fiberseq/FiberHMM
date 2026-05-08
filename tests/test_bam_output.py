@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -114,6 +115,41 @@ def test_extract_bed_from_tagged_bam_closes_bam_when_output_open_fails(
 
     assert len(opened) == 1
     assert opened[0].closed
+
+
+@pytest.mark.parametrize(
+    "write_scores",
+    [bam_output.create_scores_database, bam_output.append_to_scores_database],
+)
+def test_scores_database_closes_connection_when_record_parsing_fails(
+    monkeypatch, write_scores
+):
+    class FakeCursor:
+        def execute(self, *args, **kwargs):
+            return None
+
+    class FakeConnection:
+        def __init__(self):
+            self.closed = False
+            self.committed = False
+
+        def cursor(self):
+            return FakeCursor()
+
+        def commit(self):
+            self.committed = True
+
+        def close(self):
+            self.closed = True
+
+    connection = FakeConnection()
+    monkeypatch.setattr(sqlite3, "connect", lambda *args, **kwargs: connection)
+
+    with pytest.raises(KeyError):
+        write_scores([{}], "scores.db")
+
+    assert connection.closed
+    assert not connection.committed
 
 
 def test_samtools_cat_bams_writes_list_and_cleans_on_success(monkeypatch, tmp_path):

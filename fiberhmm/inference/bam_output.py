@@ -669,76 +669,78 @@ def create_scores_database(records: List[dict], db_path: str):
     import sqlite3
 
     conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    try:
+        cursor = conn.cursor()
 
-    # Create tables
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS reads (
-            read_id TEXT PRIMARY KEY,
-            chrom TEXT,
-            start INTEGER,
-            end INTEGER,
-            strand TEXT,
-            n_footprints INTEGER,
-            mean_score REAL
-        )
-    ''')
-
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS footprints (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            read_id TEXT,
-            footprint_idx INTEGER,
-            rel_start INTEGER,
-            size INTEGER,
-            score INTEGER,
-            FOREIGN KEY (read_id) REFERENCES reads(read_id)
-        )
-    ''')
-
-    # Create indices for fast lookup
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_footprints_read_id ON footprints(read_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_reads_chrom_start ON reads(chrom, start)')
-
-    # Insert data
-    for record in records:
-        # Parse block data
-        block_sizes = [int(x) for x in record['blockSizes'].split(',') if x]
-        block_starts = [int(x) for x in record['blockStarts'].split(',') if x]
-
-        if 'blockScores' in record:
-            block_scores = [int(x) for x in record['blockScores'].split(',') if x]
-        else:
-            block_scores = [0] * len(block_sizes)
-
-        # Calculate mean score
-        mean_score = np.mean(block_scores) if block_scores else 0
-
-        # Insert read record
+        # Create tables
         cursor.execute('''
-            INSERT OR REPLACE INTO reads
-            (read_id, chrom, start, end, strand, n_footprints, mean_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            record['name'],
-            record['chrom'],
-            record['chromStart'],
-            record['chromEnd'],
-            record['strand'],
-            record['blockCount'],
-            mean_score
-        ))
+            CREATE TABLE IF NOT EXISTS reads (
+                read_id TEXT PRIMARY KEY,
+                chrom TEXT,
+                start INTEGER,
+                end INTEGER,
+                strand TEXT,
+                n_footprints INTEGER,
+                mean_score REAL
+            )
+        ''')
 
-        # Insert footprint records
-        for i, (start, size, score) in enumerate(zip(block_starts, block_sizes, block_scores)):
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS footprints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                read_id TEXT,
+                footprint_idx INTEGER,
+                rel_start INTEGER,
+                size INTEGER,
+                score INTEGER,
+                FOREIGN KEY (read_id) REFERENCES reads(read_id)
+            )
+        ''')
+
+        # Create indices for fast lookup
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_footprints_read_id ON footprints(read_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_reads_chrom_start ON reads(chrom, start)')
+
+        # Insert data
+        for record in records:
+            # Parse block data
+            block_sizes = [int(x) for x in record['blockSizes'].split(',') if x]
+            block_starts = [int(x) for x in record['blockStarts'].split(',') if x]
+
+            if 'blockScores' in record:
+                block_scores = [int(x) for x in record['blockScores'].split(',') if x]
+            else:
+                block_scores = [0] * len(block_sizes)
+
+            # Calculate mean score
+            mean_score = np.mean(block_scores) if block_scores else 0
+
+            # Insert read record
             cursor.execute('''
-                INSERT INTO footprints
-                (read_id, footprint_idx, rel_start, size, score)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (record['name'], i, start, size, score))
+                INSERT OR REPLACE INTO reads
+                (read_id, chrom, start, end, strand, n_footprints, mean_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                record['name'],
+                record['chrom'],
+                record['chromStart'],
+                record['chromEnd'],
+                record['strand'],
+                record['blockCount'],
+                mean_score
+            ))
 
-    conn.commit()
-    conn.close()
+            # Insert footprint records
+            for i, (start, size, score) in enumerate(zip(block_starts, block_sizes, block_scores)):
+                cursor.execute('''
+                    INSERT INTO footprints
+                    (read_id, footprint_idx, rel_start, size, score)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (record['name'], i, start, size, score))
+
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def append_to_scores_database(records: List[dict], db_path: str):
@@ -746,39 +748,41 @@ def append_to_scores_database(records: List[dict], db_path: str):
     import sqlite3
 
     conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
+    try:
+        cursor = conn.cursor()
 
-    for record in records:
-        block_sizes = [int(x) for x in record['blockSizes'].split(',') if x]
-        block_starts = [int(x) for x in record['blockStarts'].split(',') if x]
+        for record in records:
+            block_sizes = [int(x) for x in record['blockSizes'].split(',') if x]
+            block_starts = [int(x) for x in record['blockStarts'].split(',') if x]
 
-        if 'blockScores' in record:
-            block_scores = [int(x) for x in record['blockScores'].split(',') if x]
-        else:
-            block_scores = [0] * len(block_sizes)
+            if 'blockScores' in record:
+                block_scores = [int(x) for x in record['blockScores'].split(',') if x]
+            else:
+                block_scores = [0] * len(block_sizes)
 
-        mean_score = np.mean(block_scores) if block_scores else 0
+            mean_score = np.mean(block_scores) if block_scores else 0
 
-        cursor.execute('''
-            INSERT OR REPLACE INTO reads
-            (read_id, chrom, start, end, strand, n_footprints, mean_score)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            record['name'],
-            record['chrom'],
-            record['chromStart'],
-            record['chromEnd'],
-            record['strand'],
-            record['blockCount'],
-            mean_score
-        ))
-
-        for i, (start, size, score) in enumerate(zip(block_starts, block_sizes, block_scores)):
             cursor.execute('''
-                INSERT INTO footprints
-                (read_id, footprint_idx, rel_start, size, score)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (record['name'], i, start, size, score))
+                INSERT OR REPLACE INTO reads
+                (read_id, chrom, start, end, strand, n_footprints, mean_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                record['name'],
+                record['chrom'],
+                record['chromStart'],
+                record['chromEnd'],
+                record['strand'],
+                record['blockCount'],
+                mean_score
+            ))
 
-    conn.commit()
-    conn.close()
+            for i, (start, size, score) in enumerate(zip(block_starts, block_sizes, block_scores)):
+                cursor.execute('''
+                    INSERT INTO footprints
+                    (read_id, footprint_idx, rel_start, size, score)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (record['name'], i, start, size, score))
+
+        conn.commit()
+    finally:
+        conn.close()

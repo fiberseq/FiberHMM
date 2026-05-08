@@ -71,6 +71,7 @@ Date: 2026-05-07
 - Made DAF BAM encoding close input BAM and reference FASTA handles when pre-output MD validation fails, with direct lifecycle coverage.
 - Made tagged-BAM BED extraction close its input BAM if output BED opening fails, with direct shared-helper coverage.
 - Reduced DAF reference-fallback FASTA calls by fetching each read's reference span once instead of fetching one base per aligned position, with direct helper coverage.
+- Made score-database creation and append helpers close SQLite connections on record parsing failures, with shared-helper coverage.
 
 ## Current Verification
 
@@ -245,6 +246,12 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 366 passed, 26 deselected in 9.77s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.60s.
+- `python -m ruff check fiberhmm/inference/bam_output.py tests/test_bam_output.py`: passed.
+- `python -m pytest tests/test_bam_output.py tests/test_package_consistency.py`: 40 passed in 1.25s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 368 passed, 26 deselected in 9.73s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.52s.
 
 ## Current Shape
 
