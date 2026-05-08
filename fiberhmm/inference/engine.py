@@ -14,6 +14,60 @@ from fiberhmm.core.bam_reader import (
 )
 from fiberhmm.core.hmm import FiberHMM
 
+try:
+    from numba import njit as _numba_njit
+    _HAS_NUMBA = True
+except ImportError:
+    _HAS_NUMBA = False
+
+    def _numba_njit(*args, **kwargs):  # type: ignore[misc]
+        def _wrap(fn):
+            return fn
+        return _wrap
+
+
+@_numba_njit(cache=True)
+def _footprint_runs_numba(states: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    n = len(states)
+    count = 0
+    in_run = False
+    for i in range(n):
+        if int(states[i]) == 0:
+            if not in_run:
+                count += 1
+                in_run = True
+        else:
+            in_run = False
+
+    starts = np.empty(count, dtype=np.int64)
+    ends = np.empty(count, dtype=np.int64)
+    idx = 0
+    in_run = False
+    for i in range(n):
+        if int(states[i]) == 0:
+            if not in_run:
+                starts[idx] = i
+                in_run = True
+        else:
+            if in_run:
+                ends[idx] = i
+                idx += 1
+                in_run = False
+
+    if in_run:
+        ends[idx] = n
+
+    return starts, ends
+
+
+def _footprint_runs(states: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    if _HAS_NUMBA:
+        return _footprint_runs_numba(states)
+
+    states_padded = np.concatenate([[1], states, [1]])
+    diff = np.diff(states_padded)
+    return np.where(diff == -1)[0], np.where(diff == 1)[0]
+
 
 def predict_footprints(model: FiberHMM, encoded_read: np.ndarray,
                        with_scores: bool = False) -> Tuple[np.ndarray, np.ndarray, int, Optional[np.ndarray]]:
@@ -43,15 +97,7 @@ def predict_footprints(model: FiberHMM, encoded_read: np.ndarray,
     if np.sum(states == 0) == 0:
         return np.array([]), np.array([]), 0, None
 
-    # Find transitions (pad with 1s = accessible at edges)
-    # State 0 = footprint, State 1 = accessible
-    states_padded = np.concatenate([[1], states, [1]])
-    diff = np.diff(states_padded)
-
-    # Footprint starts where we transition from 1 (accessible) to 0 (footprint): diff == -1
-    # Footprint ends where we transition from 0 (footprint) to 1 (accessible): diff == 1
-    starts = np.where(diff == -1)[0]
-    ends = np.where(diff == 1)[0]
+    starts, ends = _footprint_runs(states)
 
     if len(starts) == 0:
         return np.array([]), np.array([]), 0, None
@@ -94,15 +140,7 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
     if len(states) == 0:
         return result
 
-    # Find footprints (state 0 regions)
-    # Pad with 1 (accessible) at edges
-    states_padded = np.concatenate([[1], states, [1]])
-    diff = np.diff(states_padded)
-
-    # Footprint starts: transition from 1 to 0 (diff == -1)
-    # Footprint ends: transition from 0 to 1 (diff == 1)
-    fp_starts = np.where(diff == -1)[0]
-    fp_ends = np.where(diff == 1)[0]
+    fp_starts, fp_ends = _footprint_runs(states)
 
     if len(fp_starts) > 0:
         result['footprint_starts'] = fp_starts.astype(np.int32)

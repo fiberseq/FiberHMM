@@ -51,6 +51,8 @@ Date: 2026-05-07
 - Added model-load safeguards so legacy pickled models always return with dynamic log recomputation unless an inference worker explicitly freezes them again.
 - Reused the shared footprint/MSP extraction helper inside `predict_footprints_and_msps`, removing duplicate state-to-region post-processing logic.
 - Aligned the I/O-vs-compute benchmark with the frozen inference model path used by apply workers.
+- Added a numba-backed footprint run scanner that avoids per-read padded state-array and diff allocations while preserving a numpy fallback when numba is unavailable.
+- Added direct footprint-run oracle coverage for empty, all-accessible, all-footprint, edge, and dtype-varied state arrays.
 
 ## Current Verification
 
@@ -105,6 +107,17 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 339 passed, 26 deselected in 10.97s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 52.64s.
+- `python -m ruff check fiberhmm/inference/engine.py tests/test_inference_engine.py`: passed.
+- `python -m pytest tests/test_inference_engine.py tests/test_fused_stages.py tests/test_call_pipeline.py tests/test_streaming_pipeline.py tests/test_mode_equivalence.py`: 43 passed in 8.92s.
+- `python -m pytest -s -m benchmark tests/benchmarks/bench_io_vs_compute.py tests/benchmarks/bench_throughput.py`: 8 passed in 12.31s; frozen compute-only timing was 0.71s for 5,000 reads (6,995 reads/s), streaming throughput was 6,974 reads/s (1-core), 9,522 reads/s (2-core), 12,517 reads/s (4-core), region-parallel throughput was 9,785 reads/s (2-core) and 13,694 reads/s (4-core), legacy 1-core was 5,722 reads/s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 339 passed, 26 deselected in 11.15s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.90s.
+- `python -m pytest tests/test_inference_engine.py`: 22 passed in 1.48s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 344 passed, 26 deselected in 11.04s.
 
 ## Current Shape
 
