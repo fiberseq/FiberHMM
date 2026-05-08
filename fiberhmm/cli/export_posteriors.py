@@ -351,9 +351,10 @@ def export_posteriors_tsv(
                 fp_sizes=fiber['footprint_sizes'],
             )
 
-    _process_regions(regions, input_bam, model_path, params, n_cores, verbose, on_results)
-
-    total = writer.close()
+    try:
+        _process_regions(regions, input_bam, model_path, params, n_cores, verbose, on_results)
+    finally:
+        total = writer.close()
 
     if verbose:
         out_file = writer.output_path

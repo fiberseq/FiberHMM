@@ -63,6 +63,7 @@ Date: 2026-05-07
 - Closed fused DAF streaming reference FASTA handles from the processing `finally` block, including failure-path coverage.
 - Extracted region-parallel posterior TSV formatting, output-path resolution, and merge ordering into `fiberhmm/posteriors/region_tsv.py` with direct coverage.
 - Avoided per-read Python list materialization for ML BAM tags in legacy BAM reading and TF recall extraction; the shared manual MM/ML parser now receives raw tag containers directly.
+- Made TSV posterior export close its writer from a `finally` block when region processing fails, with CLI helper coverage.
 
 ## Current Verification
 
@@ -188,6 +189,12 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 357 passed, 26 deselected in 10.49s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 50.49s.
+- `python -m ruff check fiberhmm/cli/export_posteriors.py tests/test_export_posteriors_cli.py`: passed.
+- `python -m pytest tests/test_export_posteriors_cli.py tests/test_package_consistency.py`: 20 passed in 1.16s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 358 passed, 26 deselected in 9.92s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.30s.
 
 ## Current Shape
 
