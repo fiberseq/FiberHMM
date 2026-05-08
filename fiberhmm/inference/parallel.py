@@ -1,8 +1,5 @@
 """FiberHMM region-parallel processing and worker management."""
 
-import base64
-import gzip
-import json
 import multiprocessing
 import os
 import shutil
@@ -56,6 +53,13 @@ from fiberhmm.inference.tagging import (
     write_fused_recall_tags,
 )
 from fiberhmm.inference.worker_results import WorkerChunkResult, coerce_worker_chunk_result
+from fiberhmm.posteriors.region_tsv import (
+    format_region_posterior_line,
+    region_posteriors_tsv_output_path,
+)
+from fiberhmm.posteriors.region_tsv import (
+    merge_region_posteriors_tsv as _merge_region_posteriors_tsv,
+)
 
 _is_main_chromosome = _region_is_main_chromosome
 
@@ -223,7 +227,6 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
     """
     import traceback
 
-    import numpy as np  # Ensure numpy is available in worker
     global _worker_model, _worker_region_params
 
     try:
@@ -380,15 +383,18 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                             # Stream posteriors to TSV immediately (no memory accumulation)
                             if tsv_file and result.get('posteriors') is not None:
                                 try:
-                                    post_u8 = np.clip(result['posteriors'] * 255, 0, 255).astype(np.uint8)
-                                    post_b64 = base64.b64encode(post_u8.tobytes()).decode('ascii')
-                                    fp_starts_str = ','.join(map(str, result['ns'])) if len(result['ns']) > 0 else ''
-                                    fp_sizes_str = ','.join(map(str, result['nl'])) if len(result['nl']) > 0 else ''
-                                    strand = result.get('strand', '.')
-
-                                    tsv_file.write(f"{read.query_name}\t{read.reference_name}\t"
-                                                  f"{read.reference_start}\t{read.reference_end}\t"
-                                                  f"{strand}\t{post_b64}\t{fp_starts_str}\t{fp_sizes_str}\n")
+                                    tsv_file.write(
+                                        format_region_posterior_line(
+                                            read_name=read.query_name,
+                                            chrom=read.reference_name,
+                                            ref_start=read.reference_start,
+                                            ref_end=read.reference_end,
+                                            strand=result.get('strand', '.'),
+                                            posteriors=result['posteriors'],
+                                            footprint_starts=result['ns'],
+                                            footprint_sizes=result['nl'],
+                                        )
+                                    )
                                     posteriors_written += 1
                                 except Exception:
                                     pass  # Don't crash on posteriors write failure
@@ -419,90 +425,6 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         print(f"\nWorker error in region {chrom}:{start}-{end}: {e}")
         traceback.print_exc()
         raise
-
-
-def _write_region_posteriors_tsv(tsv_path: str, posteriors_data: list):
-    """Write posteriors data from a single region to TSV (simple append-friendly format)."""
-
-    with open(tsv_path, 'w') as f:
-        for fiber in posteriors_data:
-            # Quantize posteriors to uint8 and base64 encode
-            post_u8 = np.clip(fiber['posteriors'] * 255, 0, 255).astype(np.uint8)
-            post_b64 = base64.b64encode(post_u8.tobytes()).decode('ascii')
-
-            # Encode footprint arrays
-            fp_starts = fiber['footprint_starts']
-            fp_sizes = fiber['footprint_sizes']
-            fp_starts_str = ','.join(map(str, fp_starts)) if len(fp_starts) > 0 else ''
-            fp_sizes_str = ','.join(map(str, fp_sizes)) if len(fp_sizes) > 0 else ''
-
-            f.write(f"{fiber['read_name']}\t{fiber['chrom']}\t{fiber['ref_start']}\t"
-                   f"{fiber['ref_end']}\t{fiber['strand']}\t{post_b64}\t"
-                   f"{fp_starts_str}\t{fp_sizes_str}\n")
-
-
-def _merge_region_posteriors_tsv(temp_tsv_files: list, output_path: str,
-                                  mode: str, context_size: int, edge_trim: int,
-                                  source_bam: str) -> int:
-    """
-    Merge multiple region TSV files into a single gzipped TSV.
-
-    H5 conversion is left as a separate step to avoid memory/parallel issues.
-
-    Args:
-        temp_tsv_files: List of (region_idx, tsv_path) tuples
-        output_path: Output path (will produce .tsv.gz regardless of extension)
-        mode: HMM mode
-        context_size: HMM context size
-        edge_trim: Edge trim setting
-        source_bam: Source BAM filename for metadata
-
-    Returns:
-        Total number of fibers merged
-    """
-
-    # Sort by region index to maintain genomic order
-    temp_tsv_files.sort(key=lambda x: x[0])
-
-    # Filter to existing files
-    valid_files = [(idx, path) for idx, path in temp_tsv_files
-                   if os.path.exists(path) and os.path.getsize(path) > 0]
-
-    if not valid_files:
-        return 0
-
-    # Always output as gzipped TSV
-    if output_path.endswith('.h5'):
-        tsv_output = output_path.replace('.h5', '.tsv.gz')
-    elif output_path.endswith('.tsv'):
-        tsv_output = output_path + '.gz'
-    elif output_path.endswith('.tsv.gz'):
-        tsv_output = output_path
-    else:
-        tsv_output = output_path + '.tsv.gz'
-
-    # Simple concatenation with gzip compression
-    with gzip.open(tsv_output, 'wt', compresslevel=4) as outfile:
-        # Write header
-        metadata = {
-            'mode': mode,
-            'context_size': context_size,
-            'edge_trim': edge_trim,
-            'source_bam': os.path.basename(source_bam),
-            'format_version': 1,
-        }
-        outfile.write(f"#metadata:{json.dumps(metadata)}\n")
-        outfile.write("#read_id\tchrom\tstart\tend\tstrand\tposteriors_b64\tfp_starts\tfp_sizes\n")
-
-        n_fibers = 0
-        for region_idx, tsv_path in valid_files:
-            with open(tsv_path, 'r') as infile:
-                for line in infile:
-                    outfile.write(line)
-                    n_fibers += 1
-
-    return n_fibers
-
 
 def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
     """
@@ -823,14 +745,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             merge_time = time.time() - merge_start
 
             # Figure out actual output path (always .tsv.gz)
-            if output_posteriors.endswith('.h5'):
-                tsv_path = output_posteriors.replace('.h5', '.tsv.gz')
-            elif output_posteriors.endswith('.tsv'):
-                tsv_path = output_posteriors + '.gz'
-            elif output_posteriors.endswith('.tsv.gz'):
-                tsv_path = output_posteriors
-            else:
-                tsv_path = output_posteriors + '.tsv.gz'
+            tsv_path = region_posteriors_tsv_output_path(output_posteriors)
 
             if os.path.exists(tsv_path):
                 file_size = os.path.getsize(tsv_path) / (1024 * 1024)

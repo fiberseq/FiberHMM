@@ -61,6 +61,7 @@ Date: 2026-05-07
 - Extracted order-preserving streaming drain helpers into `fiberhmm/inference/streaming_drain.py`; streaming apply and fused apply+recall now share drain behavior outside `parallel.py`.
 - Closed inline posterior writers from apply processing `finally` blocks in both streaming and legacy paths, with failure-path regression coverage.
 - Closed fused DAF streaming reference FASTA handles from the processing `finally` block, including failure-path coverage.
+- Extracted region-parallel posterior TSV formatting, output-path resolution, and merge ordering into `fiberhmm/posteriors/region_tsv.py` with direct coverage.
 
 ## Current Verification
 
@@ -173,6 +174,13 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 352 passed, 26 deselected in 9.76s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.31s.
+- `python -m ruff check fiberhmm/inference/parallel.py fiberhmm/posteriors/region_tsv.py tests/test_region_posteriors.py`: passed.
+- `python -m pytest tests/test_region_posteriors.py tests/test_package_consistency.py`: 22 passed in 1.00s.
+- `python -m pytest tests/test_region_posteriors.py tests/test_package_consistency.py tests/test_region_types.py tests/test_call_pipeline.py`: 33 passed in 3.67s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 355 passed, 26 deselected in 9.44s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 48.85s.
 
 ## Current Shape
 
