@@ -68,6 +68,7 @@ Date: 2026-05-07
 - Made the HDF5 posterior writer close its underlying file handle even when finalization fails, with direct failure-path coverage.
 - Made extract-tag region workers close already-opened temporary BED handles if a later per-type output open fails, with worker-level failure coverage.
 - Made QC stats BAM sampling use context-managed BAM handles across both passes, with failure-path coverage for second-pass cleanup.
+- Made DAF BAM encoding close input BAM and reference FASTA handles when pre-output MD validation fails, with direct lifecycle coverage.
 
 ## Current Verification
 
@@ -223,6 +224,12 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 363 passed, 26 deselected in 9.63s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.23s.
+- `python -m ruff check fiberhmm/daf/encoder.py tests/test_daf_encoder_lifecycle.py`: passed.
+- `python -m pytest tests/test_daf_encoder_lifecycle.py tests/test_daf_iupac.py tests/test_call_cli.py`: 29 passed in 1.42s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 364 passed, 26 deselected in 10.00s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 50.51s.
 
 ## Current Shape
 

@@ -283,27 +283,6 @@ def process_bam_daf_encode(
     # When writing to stdout, all logging goes to stderr
     _log = sys.stderr if output_bam == "-" else sys.stderr
 
-    ref_fasta = None
-    if reference:
-        ref_fasta = pysam.FastaFile(reference)
-
-    # Open input
-    inbam = pysam.AlignmentFile(
-        input_bam, "rb", threads=io_threads, check_sq=False
-    )
-
-    # Check MD tag on the first mapped read
-    _check_md_tag(inbam, ref_fasta, _log)
-
-    # Open output — handle stdout specially
-    _output_target = output_bam
-    if output_bam == "-":
-        _output_target = os.fdopen(1, "wb", closefd=False)
-
-    outbam = pysam.AlignmentFile(
-        _output_target, "wb", header=inbam.header, threads=io_threads
-    )
-
     # Counters
     total = 0
     encoded = 0
@@ -316,15 +295,40 @@ def process_bam_daf_encode(
     start_time = time.time()
     last_progress = start_time
 
-    pbar = tqdm(
-        desc="Encoding",
-        unit=" reads",
-        file=_log,
-        mininterval=2.0,
-        disable=(output_bam == "-"),
-    )
+    ref_fasta = None
+    inbam = None
+    outbam = None
+    pbar = None
 
     try:
+        if reference:
+            ref_fasta = pysam.FastaFile(reference)
+
+        # Open input
+        inbam = pysam.AlignmentFile(
+            input_bam, "rb", threads=io_threads, check_sq=False
+        )
+
+        # Check MD tag on the first mapped read
+        _check_md_tag(inbam, ref_fasta, _log)
+
+        # Open output — handle stdout specially
+        _output_target = output_bam
+        if output_bam == "-":
+            _output_target = os.fdopen(1, "wb", closefd=False)
+
+        outbam = pysam.AlignmentFile(
+            _output_target, "wb", header=inbam.header, threads=io_threads
+        )
+
+        pbar = tqdm(
+            desc="Encoding",
+            unit=" reads",
+            file=_log,
+            mininterval=2.0,
+            disable=(output_bam == "-"),
+        )
+
         for read in inbam.fetch(until_eof=True):
             total += 1
 
@@ -396,9 +400,12 @@ def process_bam_daf_encode(
                 last_progress = now
 
     finally:
-        pbar.close()
-        outbam.close()
-        inbam.close()
+        if pbar:
+            pbar.close()
+        if outbam:
+            outbam.close()
+        if inbam:
+            inbam.close()
         if ref_fasta:
             ref_fasta.close()
 
