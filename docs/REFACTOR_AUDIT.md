@@ -56,6 +56,7 @@ Date: 2026-05-07
 - Reused the shared legacy apply tag writer in the region BAM worker and changed unsigned 32-bit BAM tag-array construction to avoid materializing Python integer lists.
 - Removed the extra state-path scan in public `predict_footprints`; the centralized run extractor now handles the no-footprint case directly.
 - Closed the fused streaming DAF reference FASTA handle after reference-backed raw DAF processing and added a regression test for the close call.
+- Made `fiberhmm-recall-tfs` close input and output BAM handles in a `finally` block, with CLI-level coverage for processing failures.
 
 ## Current Verification
 
@@ -138,6 +139,11 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 347 passed, 26 deselected in 10.78s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 50.98s.
+- `python -m pytest tests/test_recall_tfs_cli.py tests/test_tf_recaller.py`: 23 passed in 0.83s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 348 passed, 26 deselected in 11.04s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.63s.
 
 ## Current Shape
 

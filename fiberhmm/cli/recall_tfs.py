@@ -477,32 +477,35 @@ def main():
     bam_in = pysam.AlignmentFile(args.in_bam, 'rb',
                                   check_sq=False,
                                   threads=args.io_threads)
-    bam_out = pysam.AlignmentFile(args.out_bam, 'wb',
-                                   template=bam_in,
-                                   threads=args.io_threads)
-    header_text = str(bam_in.header)
+    bam_out = None
+    try:
+        bam_out = pysam.AlignmentFile(args.out_bam, 'wb',
+                                       template=bam_in,
+                                       threads=args.io_threads)
+        header_text = str(bam_in.header)
 
-    # Compat mode always writes legacy tags (TFs live in ns/nl there).
-    also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
+        # Compat mode always writes legacy tags (TFs live in ns/nl there).
+        also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
 
-    if n_cores == 1:
-        n_reads, n_v2, n_tf, n_demoted = _single_thread_loop(
-            bam_in, bam_out, header_text,
-            llr_hit, llr_miss, mode, k,
-            min_llr, args.min_opps, args.unify_threshold,
-            also_write_legacy, args.downstream_compat, args.max_reads,
-        )
-    else:
-        n_reads, n_v2, n_tf, n_demoted = _parallel_loop(
-            bam_in, bam_out, header_text,
-            llr_hit, llr_miss, mode, k,
-            min_llr, args.min_opps, args.unify_threshold,
-            also_write_legacy, args.downstream_compat, args.max_reads,
-            n_cores, args.chunk_size,
-        )
-
-    bam_in.close()
-    bam_out.close()
+        if n_cores == 1:
+            n_reads, n_v2, n_tf, n_demoted = _single_thread_loop(
+                bam_in, bam_out, header_text,
+                llr_hit, llr_miss, mode, k,
+                min_llr, args.min_opps, args.unify_threshold,
+                also_write_legacy, args.downstream_compat, args.max_reads,
+            )
+        else:
+            n_reads, n_v2, n_tf, n_demoted = _parallel_loop(
+                bam_in, bam_out, header_text,
+                llr_hit, llr_miss, mode, k,
+                min_llr, args.min_opps, args.unify_threshold,
+                also_write_legacy, args.downstream_compat, args.max_reads,
+                n_cores, args.chunk_size,
+            )
+    finally:
+        bam_in.close()
+        if bam_out is not None:
+            bam_out.close()
 
     print(
         f"[recall_tfs] processed {n_reads} reads; {n_v2} carried v2 tags; "
