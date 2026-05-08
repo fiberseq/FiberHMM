@@ -40,6 +40,7 @@ Date: 2026-05-07
 - Extracted fused HMM apply, TF recall scan, and nucleosome/TF unification stage helpers into `fiberhmm/inference/fused_stages.py`; fused streaming and region-parallel workers now share those stage boundaries.
 - Avoided per-read Python list copies in the fused TF recall stage and removed a redundant score-byte cast in shared tag writing.
 - Added a single-pass numba DAF context encoder with vectorized-fallback equivalence tests for CT and GA strands.
+- Added an explicit DAF encoder benchmark that compares the single-pass fast path to the vectorized fallback oracle.
 
 ## Current Verification
 
@@ -59,11 +60,12 @@ Date: 2026-05-07
 - DAF encoder local timing check on synthetic CT sequence: vectorized fallback 0.0318s, single-pass fast path 0.0061s, 5.24x speedup.
 - `python -m pytest tests/test_bam_reader.py::TestEncodingConsistency::test_daf_numba_fast_path_matches_vectorized tests/test_daf_iupac.py`: 23 passed in 1.01s.
 - `python -m pytest tests/test_bam_reader.py tests/test_daf_iupac.py tests/test_call_pipeline.py tests/test_call_cli.py`: 61 passed in 5.07s.
+- `python -m pytest -m benchmark tests/benchmarks/bench_encoding.py`: 1 passed in 0.68s.
 - `python -m pytest tests/test_call_pipeline.py tests/test_call_cli.py tests/test_daf_iupac.py tests/test_extract_block_scores.py`: 62 passed in 5.67s.
 - `python -m pytest tests/test_package_consistency.py`: 19 passed in 1.50s.
-- `python -m pytest`: 327 passed, 20 deselected in 10.60s.
+- `python -m pytest`: 327 passed, 21 deselected in 10.84s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 60.09s.
+- `python -m pytest -m benchmark tests/benchmarks`: 21 passed in 59.43s.
 - `python -m ruff check fiberhmm tests`: not runnable in this environment because `ruff` is not installed.
 
 ## Current Shape
