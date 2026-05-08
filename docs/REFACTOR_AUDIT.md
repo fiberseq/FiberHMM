@@ -67,6 +67,7 @@ Date: 2026-05-07
 - Made posterior TSV conversion and concatenation use context-managed plain/gzip handles, with failure-path coverage for conversion and concatenation cleanup.
 - Made the HDF5 posterior writer close its underlying file handle even when finalization fails, with direct failure-path coverage.
 - Made extract-tag region workers close already-opened temporary BED handles if a later per-type output open fails, with worker-level failure coverage.
+- Made QC stats BAM sampling use context-managed BAM handles across both passes, with failure-path coverage for second-pass cleanup.
 
 ## Current Verification
 
@@ -216,6 +217,12 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 362 passed, 26 deselected in 10.00s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.61s.
+- `python -m ruff check fiberhmm/inference/stats.py tests/test_stats.py`: passed.
+- `python -m pytest tests/test_stats.py tests/test_package_consistency.py`: 20 passed in 1.09s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 363 passed, 26 deselected in 9.63s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.23s.
 
 ## Current Shape
 
