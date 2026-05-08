@@ -58,6 +58,7 @@ Date: 2026-05-07
 - Closed the fused streaming DAF reference FASTA handle after reference-backed raw DAF processing and added a regression test for the close call.
 - Made `fiberhmm-recall-tfs` close input and output BAM handles in a `finally` block, with CLI-level coverage for processing failures.
 - Extracted genome region planning helpers into `fiberhmm/inference/region_planning.py`, keeping compatibility re-exports from `parallel.py` and adding direct region splitting/filtering coverage.
+- Extracted order-preserving streaming drain helpers into `fiberhmm/inference/streaming_drain.py`; streaming apply and fused apply+recall now share drain behavior outside `parallel.py`.
 
 ## Current Verification
 
@@ -150,6 +151,12 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 349 passed, 26 deselected in 9.88s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.21s.
+- `python -m ruff check fiberhmm/inference/parallel.py fiberhmm/inference/streaming_drain.py tests/test_inference_parallel.py`: passed.
+- `python -m pytest tests/test_inference_parallel.py tests/test_streaming_pipeline.py tests/test_call_pipeline.py tests/test_mode_equivalence.py`: 72 passed in 11.54s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 349 passed, 26 deselected in 9.76s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.08s.
 
 ## Current Shape
 

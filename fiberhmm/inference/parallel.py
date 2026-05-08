@@ -47,6 +47,10 @@ from fiberhmm.inference.region_types import (
     RegionBedResult,
     RegionBedWorkItem,
 )
+from fiberhmm.inference.streaming_drain import (
+    _drain_oldest_chunk,
+    _drain_oldest_fused_chunk,
+)
 from fiberhmm.inference.tagging import (
     set_legacy_apply_tags,
     write_fused_recall_tags,
@@ -1209,77 +1213,6 @@ def _process_payload_chunk_worker(chunk_payloads: list, edge_trim: int, circular
     return WorkerChunkResult(results, read_failures)
 
 
-# ---------------------------------------------------------------------------
-# Streaming pipeline: sliding-window producer-consumer architecture
-# ---------------------------------------------------------------------------
-
-
-def _drain_oldest_chunk(inflight, outbam, with_scores, write_msps,
-                        posterior_writer, counters):
-    """
-    Block on the oldest in-flight chunk, apply tags, write to BAM.
-
-    Walks chunk_read_objs in original stream order so that skipped reads
-    (which the worker doesn't see) are interleaved with processed reads at
-    their correct positions — preserves coordinate-sortedness of an already
-    coordinate-sorted input BAM.  results is shorter than chunk_read_objs
-    by exactly the number of skipped reads in this chunk.
-
-    Args:
-        inflight: deque of (future, chunk_read_objs, chunk_reads, chunk_skip_flags)
-        outbam: pysam.AlignmentFile for writing
-        with_scores: whether to write nq/aq score tags
-        write_msps: whether to write as/al/aq MSP tags
-        posterior_writer: PosteriorWriter instance or None
-        counters: mutable dict with 'reads_with_footprints', 'no_footprints', 'written'
-    """
-    future, chunk_read_objs, chunk_reads, chunk_skip_flags = inflight.popleft()
-    results, worker_failures = coerce_worker_chunk_result(future.result())
-    if worker_failures:
-        counters['worker_failures'] = counters.get('worker_failures', 0) + worker_failures
-    result_iter = iter(results)
-    fiber_iter = iter(chunk_reads)
-
-    for read_obj, is_skipped in zip(chunk_read_objs, chunk_skip_flags):
-        if is_skipped:
-            # Pass-through: write at original stream position to preserve
-            # coordinate sort order.
-            outbam.write(read_obj)
-            counters['written'] += 1
-            continue
-
-        next(fiber_iter)
-        result = next(result_iter)
-        if result is not None:
-            set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
-
-            counters['reads_with_footprints'] += 1
-
-            # Posteriors export
-            if posterior_writer and result.get('posteriors') is not None:
-                chrom = read_obj.reference_name
-                if chrom:
-                    try:
-                        ref_positions = get_ref_positions_from_read(read_obj) if HAS_POSTERIOR_WRITER else np.array([], dtype=np.int32)
-                    except Exception:
-                        ref_positions = np.array([], dtype=np.int32)
-                    posterior_writer.add_fiber(chrom, {
-                        'read_name': read_obj.query_name,
-                        'ref_start': read_obj.reference_start,
-                        'ref_end': read_obj.reference_end,
-                        'strand': result.get('strand', '.'),
-                        'posteriors': result['posteriors'],
-                        'ref_positions': ref_positions,
-                        'footprint_starts': result['ns'],
-                        'footprint_sizes': result['nl'],
-                    })
-        else:
-            counters['no_footprints'] += 1
-
-        outbam.write(read_obj)
-        counters['written'] += 1
-
-
 def _init_fused_region_worker(apply_model_path: str, recall_model_path: Optional[str],
                               emission_uplift: float, params: dict):
     """Per-worker init for region-parallel fused apply+recall.
@@ -1633,47 +1566,6 @@ def _process_bam_region_parallel_fused(
         shutil.rmtree(temp_dir, ignore_errors=True)
 
     return aggregation.total_reads, aggregation.reads_with_footprints
-
-
-def _drain_oldest_fused_chunk(inflight, outbam, with_scores,
-                              also_write_legacy, downstream_compat, counters):
-    """Fused apply+recall drain: applies ns/nl/as/al AND MA/AQ tags via
-    the shared fused recall tag writer.
-
-    Skipped reads (is_skipped=True) are passed through unchanged at their
-    original stream position so coordinate-sorted input stays coordinate
-    sorted.  results is shorter than chunk_read_objs by the number of
-    skipped reads.
-    """
-    future, chunk_read_objs, chunk_payloads, chunk_skip_flags = inflight.popleft()
-    results, worker_failures = coerce_worker_chunk_result(future.result())
-    if worker_failures:
-        counters['worker_failures'] = counters.get('worker_failures', 0) + worker_failures
-    result_iter = iter(results)
-    payload_iter = iter(chunk_payloads)
-
-    for read_obj, is_skipped in zip(chunk_read_objs, chunk_skip_flags):
-        if is_skipped:
-            outbam.write(read_obj)
-            counters['written'] += 1
-            continue
-
-        _ = next(payload_iter)       # discard paired payload
-        result = next(result_iter)
-        if result is not None:
-            write_fused_recall_tags(
-                read_obj,
-                read_length=len(read_obj.query_sequence) if read_obj.query_sequence else 0,
-                result=result,
-                also_write_legacy=also_write_legacy,
-                downstream_compat=downstream_compat,
-            )
-            counters['reads_with_footprints'] += 1
-        else:
-            counters['no_footprints'] += 1
-
-        outbam.write(read_obj)
-        counters['written'] += 1
 
 
 def _process_bam_streaming_pipeline_fused(
