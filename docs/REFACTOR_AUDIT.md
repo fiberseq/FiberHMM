@@ -47,6 +47,8 @@ Date: 2026-05-07
 - Reduced Viterbi memory traffic by keeping only rolling state scores plus backpointers instead of full per-state score arrays, with a dedicated warm prediction benchmark.
 - Avoided per-call observation copies for integer HMM input arrays and warmed worker numba Viterbi signatures with int32 observations to match encoder output.
 - Split `encode_from_query_sequence` into mode-specific PacBio m6A, Nanopore m6A, and DAF helpers while preserving the public API and keeping vectorized fallbacks as numba equivalence oracles.
+- Added explicit read-only HMM log-probability freezing for inference workers, while keeping default public `predict()` behavior dynamic for direct in-place model mutations.
+- Added model-load safeguards so legacy pickled models always return with dynamic log recomputation unless an inference worker explicitly freezes them again.
 
 ## Current Verification
 
@@ -88,6 +90,13 @@ Date: 2026-05-07
 - `python -m pytest -s -m benchmark tests/benchmarks/bench_encoding.py`: 4 passed in 0.77s; m6A single-pass speedups vs vectorized fallback were 9.62x PacBio, 6.29x Nanopore forward, 11.28x Nanopore reverse, and DAF speedup was 5.34x.
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest -m benchmark tests/benchmarks`: 25 passed in 55.25s.
+- `python -m pytest tests/test_hmm.py tests/test_model_io.py tests/test_inference_engine.py tests/test_streaming_pipeline.py tests/test_call_pipeline.py tests/test_fused_stages.py tests/test_package_consistency.py`: 100 passed in 8.56s.
+- `python -m pytest -s -m benchmark tests/benchmarks/bench_hmm.py`: 2 passed in 0.94s; dynamic repeated Viterbi prediction was 0.0160s, frozen read-only prediction was 0.0074s, 2.16x faster for 200 x 5 kb observations.
+- `python -m pytest -s -m benchmark tests/benchmarks/bench_hmm.py tests/benchmarks/bench_throughput.py`: 8 passed in 12.36s; streaming throughput was 5,955 reads/s (1-core), 7,550 reads/s (2-core), 9,063 reads/s (4-core), region-parallel throughput was 7,834 reads/s (2-core) and 10,250 reads/s (4-core), legacy 1-core was 4,773 reads/s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 339 passed, 26 deselected in 11.29s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 52.75s.
 
 ## Current Shape
 
@@ -96,10 +105,10 @@ Largest tracked Python files:
 - `fiberhmm/inference/parallel.py`: 2588 lines.
 - `fiberhmm/cli/extract_tags.py`: 1389 lines.
 - `fiberhmm/core/bam_reader.py`: 1340 lines.
-- `fiberhmm/core/hmm.py`: 1094 lines.
+- `fiberhmm/core/hmm.py`: 1123 lines.
 - `fiberhmm/cli/train.py`: 1024 lines.
 - `fiberhmm/cli/utils.py`: 894 lines.
-- `fiberhmm/cli/export_posteriors.py`: 811 lines.
+- `fiberhmm/cli/export_posteriors.py`: 816 lines.
 
 Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not tracked.
 
@@ -188,6 +197,7 @@ Phase 4: performance work.
 
 - Keep DAF and m6A single-pass context encoding compared against the vectorized fallback byte-for-byte.
 - Keep HMM state-path changes benchmarked and covered by mode-equivalence tests.
+- Use explicit read-only HMM log freezing only in inference paths so public mutable-model semantics remain intact.
 - Reduce repeated list/array conversions in fused unification and tag writing.
 - Benchmark chunk size, inflight depth, multiprocessing context, and I/O threads with the existing benchmark suite.
 

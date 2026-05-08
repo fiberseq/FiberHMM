@@ -333,6 +333,7 @@ class FiberHMM:
         self._log_startprob: Optional[np.ndarray] = None
         self._log_transmat: Optional[np.ndarray] = None
         self._log_emissionprob: Optional[np.ndarray] = None
+        self._log_probs_frozen: bool = False
 
         # Training metadata
         self.n_iter: int = 1000  # Max EM iterations (usually converges much faster)
@@ -341,6 +342,14 @@ class FiberHMM:
 
     def _compute_log_probs(self):
         """Convert probabilities to log space."""
+        if (
+            self._log_probs_frozen
+            and self._log_startprob is not None
+            and self._log_transmat is not None
+            and self._log_emissionprob is not None
+        ):
+            return
+
         with np.errstate(divide='ignore'):  # Handle log(0) gracefully
             if self.startprob_ is not None:
                 self._log_startprob = np.log(self.startprob_)
@@ -348,6 +357,24 @@ class FiberHMM:
                 self._log_transmat = np.log(self.transmat_)
             if self.emissionprob_ is not None:
                 self._log_emissionprob = np.log(self.emissionprob_)
+
+    def freeze_log_probs(self) -> 'FiberHMM':
+        """Cache log-probability arrays for read-only inference workloads.
+
+        Normal prediction calls recompute logs so direct in-place mutations of
+        public probability arrays remain visible. Worker initializers call this
+        after model loading because inference workers do not mutate model
+        parameters between reads.
+        """
+        self._log_probs_frozen = False
+        self._compute_log_probs()
+        self._log_probs_frozen = True
+        return self
+
+    def unfreeze_log_probs(self) -> 'FiberHMM':
+        """Return to dynamic log-probability recomputation."""
+        self._log_probs_frozen = False
+        return self
 
     def _forward(self, obs: np.ndarray) -> Tuple[np.ndarray, float]:
         """
@@ -664,6 +691,7 @@ class FiberHMM:
         Returns:
             self
         """
+        self.unfreeze_log_probs()
         self._compute_log_probs()
 
         obs = _as_observation_array(X)
@@ -827,6 +855,7 @@ class FiberHMM:
         self._log_startprob = None
         self._log_transmat = None
         self._log_emissionprob = None
+        self._log_probs_frozen = False
 
         if verbose:
             new_mean_0 = np.mean(self.emissionprob_[0, :n_methylated])

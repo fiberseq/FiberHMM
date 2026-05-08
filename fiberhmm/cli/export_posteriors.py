@@ -44,7 +44,7 @@ from fiberhmm.core.bam_reader import (
     get_reference_positions,
 )
 from fiberhmm.core.hmm import FiberHMM
-from fiberhmm.core.model_io import load_model_with_metadata
+from fiberhmm.core.model_io import freeze_model_for_inference, load_model_with_metadata
 from fiberhmm.inference.parallel import _get_genome_regions
 
 
@@ -159,6 +159,7 @@ def _init_worker(model_path: str, params: dict):
     os.environ['NUMBA_CACHE_DIR'] = ''
 
     _worker_model, _, _ = load_model_with_metadata(model_path, normalize=True)
+    _worker_model = freeze_model_for_inference(_worker_model)
     _worker_params = params
 
     # Warmup numba JIT with a dummy sequence

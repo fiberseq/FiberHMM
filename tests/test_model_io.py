@@ -3,6 +3,7 @@ Tests for fiberhmm.core.model_io module.
 """
 import json
 import os
+import pickle
 import warnings
 
 import numpy as np
@@ -58,6 +59,45 @@ class TestLoadSaveRoundTrip:
         assert 'emissionprob' in data
         assert data['context_size'] == 3
         assert data['mode'] == 'pacbio-fiber'
+
+    def test_legacy_pickle_load_unfreezes_log_cache(self, tmp_path):
+        """Loaded public models should recompute logs unless workers re-freeze them."""
+        model = FiberHMM(n_states=2)
+        model.startprob_ = np.array([0.5, 0.5])
+        model.transmat_ = np.array([[0.5, 0.5], [0.5, 0.5]])
+        model.emissionprob_ = np.array([[0.9, 0.1], [0.1, 0.9]])
+        model.freeze_log_probs()
+
+        filepath = str(tmp_path / "legacy.pkl")
+        with open(filepath, "wb") as f:
+            pickle.dump(model, f)
+
+        loaded = load_model(filepath, normalize=False)
+        obs = np.zeros(4, dtype=np.int64)
+        before = loaded.predict(obs)
+        loaded.emissionprob_[:] = np.array([[0.1, 0.9], [0.9, 0.1]])
+        after = loaded.predict(obs)
+
+        assert not loaded._log_probs_frozen
+        np.testing.assert_array_equal(before, np.zeros(4, dtype=np.int8))
+        np.testing.assert_array_equal(after, np.ones(4, dtype=np.int8))
+
+    def test_legacy_metadata_pickle_load_unfreezes_log_cache(self, tmp_path):
+        model = FiberHMM(n_states=2)
+        model.startprob_ = np.array([0.5, 0.5])
+        model.transmat_ = np.array([[0.5, 0.5], [0.5, 0.5]])
+        model.emissionprob_ = np.array([[0.9, 0.1], [0.1, 0.9]])
+        model.freeze_log_probs()
+
+        filepath = str(tmp_path / "legacy_with_metadata.pkl")
+        with open(filepath, "wb") as f:
+            pickle.dump({"model": model, "context_size": 5, "mode": "nanopore"}, f)
+
+        loaded, context_size, mode = load_model_with_metadata(filepath, normalize=False)
+
+        assert context_size == 5
+        assert mode == "nanopore-fiber"
+        assert not loaded._log_probs_frozen
 
 
 class TestModeAliases:

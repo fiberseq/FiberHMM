@@ -57,6 +57,21 @@ def load_model(filepath: str, normalize: bool = True) -> FiberHMM:
     if normalize:
         model.normalize_states()
 
+    return _unfreeze_model_logs(model)
+
+
+def _unfreeze_model_logs(model: FiberHMM) -> FiberHMM:
+    unfreeze = getattr(model, 'unfreeze_log_probs', None)
+    if unfreeze is not None:
+        unfreeze()
+    return model
+
+
+def freeze_model_for_inference(model: FiberHMM) -> FiberHMM:
+    """Prepare a loaded model for read-only inference loops."""
+    freeze = getattr(model, 'freeze_log_probs', None)
+    if freeze is not None:
+        freeze()
     return model
 
 
@@ -263,4 +278,4 @@ def load_model_with_metadata(filepath: str, normalize: bool = True) -> Tuple[Fib
     if mode in mode_aliases:
         mode = mode_aliases[mode]
 
-    return model, context_size, mode
+    return _unfreeze_model_logs(model), context_size, mode

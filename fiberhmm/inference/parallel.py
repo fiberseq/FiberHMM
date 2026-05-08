@@ -18,7 +18,7 @@ from typing import List, Optional, Set, Tuple
 import numpy as np
 import pysam
 
-from fiberhmm.core.model_io import load_model
+from fiberhmm.core.model_io import freeze_model_for_inference, load_model
 from fiberhmm.inference.bam_output import (
     _concatenate_region_bams,
     _sort_and_index_bam,
@@ -107,7 +107,7 @@ def _init_bam_worker(model_path, debug_timing=False):
         import os
         os.environ['NUMBA_CACHE_DIR'] = ''
 
-        _worker_model = load_model(model_path)
+        _worker_model = freeze_model_for_inference(load_model(model_path))
         _worker_debug_timing = debug_timing
 
         # Warmup numba JIT compilation in this worker
@@ -139,7 +139,7 @@ def _init_fused_worker(apply_model_path, recall_model_path=None,
     import os
     os.environ['NUMBA_CACHE_DIR'] = ''
 
-    _worker_model = load_model(apply_model_path)
+    _worker_model = freeze_model_for_inference(load_model(apply_model_path))
     _worker_debug_timing = debug_timing
 
     # Build TF-recall LLR tables from the recall model (or reuse apply model).
@@ -267,7 +267,7 @@ def _init_region_worker(model_path: str, params: dict):
         os.environ['NUMBA_CACHE_DIR'] = ''
 
         # Load model once per worker
-        _worker_model = load_model(model_path)
+        _worker_model = freeze_model_for_inference(load_model(model_path))
         _worker_region_params = params
 
         # Warmup numba JIT (just the basic predict, posteriors will warmup on first use)
@@ -1401,7 +1401,7 @@ def _init_fused_region_worker(apply_model_path: str, recall_model_path: Optional
     import os
     os.environ['NUMBA_CACHE_DIR'] = ''
 
-    _worker_model = load_model(apply_model_path)
+    _worker_model = freeze_model_for_inference(load_model(apply_model_path))
     # Open the reference FASTA *after* fork: pysam.FastaFile is not
     # fork-safe. Stash the live handle on params so the region worker
     # can pass it through to get_daf_positions.
@@ -2295,7 +2295,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
     # Get model path for workers
     if isinstance(model_or_path, str):
         model_path = model_or_path
-        model = load_model(model_path)
+        model = freeze_model_for_inference(load_model(model_path))
     else:
         model = model_or_path
         model_path = None
