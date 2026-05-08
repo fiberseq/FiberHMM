@@ -5,14 +5,13 @@ import gzip
 import json
 import multiprocessing
 import os
-import re
 import shutil
 import sys
 import tempfile
 import time
 from collections import deque
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
-from typing import List, Optional, Set, Tuple
+from typing import Optional, Set, Tuple
 
 import numpy as np
 import pysam
@@ -34,6 +33,12 @@ from fiberhmm.inference.fused_stages import (
     run_hmm_apply_stage,
 )
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
+from fiberhmm.inference.region_planning import (
+    _get_genome_regions,
+)
+from fiberhmm.inference.region_planning import (
+    _is_main_chromosome as _region_is_main_chromosome,
+)
 from fiberhmm.inference.region_types import (
     RegionBamAggregation,
     RegionBamResult,
@@ -47,6 +52,8 @@ from fiberhmm.inference.tagging import (
     write_fused_recall_tags,
 )
 from fiberhmm.inference.worker_results import WorkerChunkResult, coerce_worker_chunk_result
+
+_is_main_chromosome = _region_is_main_chromosome
 
 # Optional: inline posteriors export
 try:
@@ -165,93 +172,6 @@ def _init_fused_worker(apply_model_path, recall_model_path=None,
             np.zeros(16, dtype=np.int32), 0, 16,
             llr_hit, llr_miss, min_llr=4.0, min_opps=3,
         )
-
-
-def _is_main_chromosome(chrom: str) -> bool:
-    """
-    Check if a chromosome name is a main chromosome (not a scaffold/contig).
-
-    Returns True for:
-    - chr1-chr22, chrX, chrY, chrM, chrMT (human with chr prefix)
-    - 1-22, X, Y, M, MT (human without chr prefix)
-    - 2L, 2R, 3L, 3R, 4, X, Y (Drosophila)
-
-    Returns False for:
-    - *_random, chrUn_*, scaffolds, contigs, etc.
-    """
-
-    # Normalize to uppercase for comparison
-    c = chrom.upper()
-
-    # Skip obvious scaffolds/contigs
-    skip_patterns = [
-        '_RANDOM', '_ALT', '_FIX', '_HAP',
-        'CHRUN_', 'UN_', 'SCAFFOLD', 'CONTIG',
-        '_GL', '_KI', '_JH', '_KB'  # Common GenBank accession prefixes
-    ]
-    for pattern in skip_patterns:
-        if pattern in c:
-            return False
-
-    # Strip chr prefix if present
-    if c.startswith('CHR'):
-        c = c[3:]
-
-    # Accept numbered chromosomes 1-22 (or more for other organisms)
-    if c.isdigit():
-        return True
-
-    # Accept X, Y, M, MT, W, Z (sex chromosomes and mitochondrial)
-    if c in ('X', 'Y', 'M', 'MT', 'W', 'Z'):
-        return True
-
-    # Accept Drosophila chromosomes: 2L, 2R, 3L, 3R, 4
-    if re.match(r'^[234][LR]?$', c):
-        return True
-
-    # Accept C. elegans chromosomes: I, II, III, IV, V, X
-    if c in ('I', 'II', 'III', 'IV', 'V', 'VI'):
-        return True
-
-    return False
-
-
-def _get_genome_regions(bam_path: str, region_size: int = 10_000_000,
-                        skip_scaffolds: bool = False,
-                        chroms: Optional[Set[str]] = None) -> List[Tuple[str, int, int]]:
-    """
-    Split genome into regions for parallel processing.
-
-    Args:
-        bam_path: Path to indexed BAM file
-        region_size: Target size of each region in bp (default 10MB)
-        skip_scaffolds: If True, skip scaffold/contig chromosomes
-        chroms: If provided, only include these chromosomes
-
-    Returns:
-        List of (chrom, start, end) tuples
-    """
-    regions = []
-    region_size = int(region_size)  # Ensure Python int
-
-    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
-        for chrom in bam.references:
-            # Filter by explicit chromosome list
-            if chroms is not None and chrom not in chroms:
-                continue
-
-            # Filter scaffolds if requested
-            if skip_scaffolds and not _is_main_chromosome(chrom):
-                continue
-
-            chrom_len = int(bam.get_reference_length(chrom))
-
-            # Split chromosome into regions
-            for start in range(0, chrom_len, region_size):
-                end = min(start + region_size, chrom_len)
-                regions.append((chrom, int(start), int(end)))
-
-    return regions
 
 
 def _init_region_worker(model_path: str, params: dict):

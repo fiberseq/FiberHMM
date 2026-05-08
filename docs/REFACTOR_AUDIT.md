@@ -57,6 +57,7 @@ Date: 2026-05-07
 - Removed the extra state-path scan in public `predict_footprints`; the centralized run extractor now handles the no-footprint case directly.
 - Closed the fused streaming DAF reference FASTA handle after reference-backed raw DAF processing and added a regression test for the close call.
 - Made `fiberhmm-recall-tfs` close input and output BAM handles in a `finally` block, with CLI-level coverage for processing failures.
+- Extracted genome region planning helpers into `fiberhmm/inference/region_planning.py`, keeping compatibility re-exports from `parallel.py` and adding direct region splitting/filtering coverage.
 
 ## Current Verification
 
@@ -144,6 +145,11 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 348 passed, 26 deselected in 11.04s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.63s.
+- `python -m pytest tests/test_region_planning.py tests/test_inference_parallel.py tests/test_region_types.py tests/test_region_cleanup.py tests/test_call_pipeline.py tests/test_mode_equivalence.py`: 66 passed in 6.02s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 349 passed, 26 deselected in 9.88s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.21s.
 
 ## Current Shape
 
