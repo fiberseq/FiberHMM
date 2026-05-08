@@ -728,8 +728,6 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
         4^(2k)+1 to 2*4^(2k): Unmodified target base with context
         2*4^(2k)+1: Non-target position (unmodified version)
     """
-    seq_len = len(sequence)
-
     # Calculate code offsets based on context size
     n_codes = ContextEncoder.get_n_codes(context_size)
     non_target_code = n_codes  # 4^(2k)
@@ -737,208 +735,234 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
 
     # Determine target base based on mode
     if mode == 'pacbio-fiber':
-        # Encode context codes for A (forward) and T (RC) positions.
-        # Numba single-pass kernel avoids the N×k intermediate arrays that
-        # the numpy broadcasting approach allocates (~2 MB per 20 kb read).
-        seq_bytes = np.frombuffer(sequence.encode('ascii'), dtype=np.uint8)
-        seq_int_enc = _BASE_TO_INT[seq_bytes]
-        mod_mask = np.zeros(seq_len, dtype=bool)
-        if mod_positions:
-            mod_arr = np.fromiter(mod_positions, dtype=np.int64,
-                                  count=len(mod_positions))
-            valid_mods = mod_arr[(mod_arr >= 0) & (mod_arr < seq_len)]
-            mod_mask[valid_mods] = True
-        if _HAS_NUMBA:
-            return _m6a_context_codes_numba(
-                seq_int_enc, mod_mask, context_size, edge_trim, non_target_code,
-                unmethylated_offset, 0, 2, True,
-            )
-
-        result = np.full(seq_len, non_target_code + unmethylated_offset, dtype=np.int32)
-        at_encode = _encode_vectorized(
-            sequence, 'A', context_size, edge_trim, non_target_code, True,
+        return _encode_pacbio_m6a_observations(
+            sequence, mod_positions, edge_trim, context_size,
+            non_target_code, unmethylated_offset,
         )
-        valid_mask = at_encode != non_target_code
-
-        meth_mask = valid_mask & mod_mask
-        result[meth_mask] = at_encode[meth_mask]
-        unmeth_mask = valid_mask & ~mod_mask
-        result[unmeth_mask] = at_encode[unmeth_mask] + unmethylated_offset
-        return result
 
     elif mode == 'nanopore-fiber':
-        # Nanopore strand handling:
-        #   Forward-aligned: SAM SEQ == basecalled-forward. m6A targets are
-        #     A positions. Encode A's with forward context.
-        #   Reverse-aligned: SAM SEQ == RC(basecalled-forward). Basecalled
-        #     A's are now T's in SEQ. The MM/ML parser already flipped mod
-        #     positions to SEQ frame (v2.9 fix), so they point at T positions.
-        #     Encode T's with RC context to map back to basecalled-forward
-        #     emission space.
-        #
-        # Without this, reverse reads have zero valid target positions and
-        # the HMM sees an all-non-target observation → calls one whole-read
-        # nucleosome regardless of actual m6A density.
-        seq_bytes = np.frombuffer(sequence.encode('ascii'), dtype=np.uint8)
-        seq_int_enc = _BASE_TO_INT[seq_bytes]
-        if is_reverse:
-            # T positions with RC context (basecalled-A stored as SEQ-T)
-            _target = 99  # dummy: no forward-context matches
-            _rc_target = 2  # T
-            _do_rc = True
-            _target_base = 'T'
-        else:
-            # A positions with forward context
-            _target = 0  # A
-            _rc_target = 0
-            _do_rc = False
-            _target_base = 'A'
-        mod_mask = np.zeros(seq_len, dtype=bool)
-        if mod_positions:
-            mod_arr = np.fromiter(mod_positions, dtype=np.int64,
-                                  count=len(mod_positions))
-            valid_mods = mod_arr[(mod_arr >= 0) & (mod_arr < seq_len)]
-            mod_mask[valid_mods] = True
-        if _HAS_NUMBA:
-            return _m6a_context_codes_numba(
-                seq_int_enc, mod_mask, context_size, edge_trim, non_target_code,
-                unmethylated_offset, _target, _rc_target, _do_rc,
-            )
-
-        result = np.full(seq_len, non_target_code + unmethylated_offset, dtype=np.int32)
-        a_encode = _encode_vectorized(
-            sequence, _target_base, context_size, edge_trim,
-            non_target_code, _do_rc,
+        return _encode_nanopore_m6a_observations(
+            sequence, mod_positions, edge_trim, context_size,
+            is_reverse, non_target_code, unmethylated_offset,
         )
-        valid_mask = a_encode != non_target_code
-
-        meth_mask = valid_mask & mod_mask
-        result[meth_mask] = a_encode[meth_mask]
-        unmeth_mask = valid_mask & ~mod_mask
-        result[unmeth_mask] = a_encode[unmeth_mask] + unmethylated_offset
-        return result
 
     elif mode == 'daf':
-        # DAF-seq: deamination modifies the sequence
-        # + strand: C→T deamination, emission probs trained on C-centered hexamers
-        # - strand: G→A deamination, MUST apply RC to get C-centered equivalent codes
-        #
-        # The model has ONE set of emission probs (C-centered). For - strand reads,
-        # we apply reverse complement to G-centered contexts to map them to equivalent
-        # C-centered codes. This is analogous to how PacBio mode handles A/T.
-
-        if strand == '.':
-            strand = detect_daf_strand(sequence, mod_positions)
-
-        # Determine bases and whether RC is needed
-        if strand == '+':
-            deam_int = 2      # T = 2
-            orig_int = 1      # C = 1
-            use_rc = False    # + strand: use codes directly
-        else:
-            deam_int = 0      # A = 0
-            orig_int = 3      # G = 3
-            use_rc = True     # - strand: apply RC to get C-centered codes
-
-        # Convert sequence to int array
-        seq_bytes = np.frombuffer(sequence.upper().encode('ascii'), dtype=np.uint8)
-        seq_int = _BASE_TO_INT[seq_bytes].copy()  # Make a copy for reconstruction
-
-        # Create modification mask (vectorized)
-        mod_mask = np.zeros(seq_len, dtype=bool)
-        if mod_positions:
-            mod_arr = np.fromiter(mod_positions, dtype=np.int64,
-                                  count=len(mod_positions))
-            valid_mods = mod_arr[(mod_arr >= 0) & (mod_arr < seq_len)]
-            mod_mask[valid_mods] = True
-
-        if _HAS_NUMBA:
-            return _daf_context_codes_numba(
-                seq_int, mod_mask, context_size, edge_trim,
-                non_target_code, unmethylated_offset,
-                deam_int, orig_int, use_rc,
-            )
-
-        # Identify target positions in original sequence
-        is_deam_base = seq_int == deam_int  # T or A positions
-        is_orig_base = seq_int == orig_int  # C or G positions
-
-        # Deaminated: T/A with MM tag (was C/G, now accessible)
-        is_deaminated = is_deam_base & mod_mask
-        # Non-deaminated: C/G without MM tag (still C/G, footprint)
-        is_non_deaminated = is_orig_base & ~mod_mask
-
-        # Reconstruct sequence: replace deaminated positions with original base
-        recon_int = seq_int.copy()
-        recon_int[is_deaminated] = orig_int  # T→C or A→G
-
-        # Now compute context codes using reconstructed sequence
-        # We need codes for positions that are EITHER deaminated OR non-deaminated
-        result = np.full(seq_len, non_target_code + unmethylated_offset, dtype=np.int32)
-
-        k = context_size
-        if seq_len < 2 * k + 1:
-            return result
-
-        start = max(edge_trim, k)
-        end = seq_len - max(edge_trim, k)
-
-        if start >= end:
-            return result
-
-        # Target positions (need context codes)
-        target_mask = is_deaminated | is_non_deaminated
-        positions = np.arange(start, end)
-        target_positions = positions[target_mask[start:end]]
-
-        if len(target_positions) == 0:
-            return result
-
-        # Compute context codes vectorized
-        powers = 4 ** np.arange(k - 1, -1, -1, dtype=np.int64)
-        left_offsets = np.arange(-k, 0)
-        right_offsets = np.arange(1, k + 1)
-
-        left_indices = target_positions[:, np.newaxis] + left_offsets
-        right_indices = target_positions[:, np.newaxis] + right_offsets
-
-        left_contexts = recon_int[left_indices]
-        right_contexts = recon_int[right_indices]
-
-        # Check for invalid bases (N, etc.)
-        valid_context = ~(np.any(left_contexts > 3, axis=1) |
-                          np.any(right_contexts > 3, axis=1))
-
-        if not np.any(valid_context):
-            return result
-
-        valid_positions = target_positions[valid_context]
-        valid_left = left_contexts[valid_context].astype(np.int64)
-        valid_right = right_contexts[valid_context].astype(np.int64)
-
-        # Compute codes - apply RC for - strand to map G-centered to C-centered
-        if use_rc:
-            # RC mapping: A(0)<->T(2), C(1)<->G(3) using XOR with 2
-            # For G-centered context L[G]R, RC gives RC(R)[C]RC(L)
-            rc_left = valid_right[:, ::-1] ^ 2   # RC of right becomes new left
-            rc_right = valid_left[:, ::-1] ^ 2   # RC of left becomes new right
-            codes = np.sum(rc_left * powers, axis=1) * (4 ** k) + np.sum(rc_right * powers, axis=1)
-        else:
-            # + strand: use forward codes directly
-            codes = np.sum(valid_left * powers, axis=1) * (4 ** k) + np.sum(valid_right * powers, axis=1)
-
-        # Apply methylated codes to deaminated positions
-        deam_at_valid = is_deaminated[valid_positions]
-        result[valid_positions[deam_at_valid]] = codes[deam_at_valid].astype(np.int32)
-
-        # Apply unmethylated codes to non-deaminated positions
-        non_deam_at_valid = is_non_deaminated[valid_positions]
-        result[valid_positions[non_deam_at_valid]] = (codes[non_deam_at_valid] + unmethylated_offset).astype(np.int32)
-
-        return result
+        return _encode_daf_observations(
+            sequence, mod_positions, edge_trim, strand, context_size,
+            non_target_code, unmethylated_offset,
+        )
 
     else:
         raise ValueError(f"Unknown mode: {mode}")
+
+
+def _sequence_base_int_array(sequence: str, *, uppercase: bool = False,
+                             copy: bool = False) -> np.ndarray:
+    seq = sequence.upper() if uppercase else sequence
+    seq_bytes = np.frombuffer(seq.encode('ascii'), dtype=np.uint8)
+    seq_int = _BASE_TO_INT[seq_bytes]
+    if copy:
+        return seq_int.copy()
+    return seq_int
+
+
+def _mod_positions_mask(mod_positions: Set[int], seq_len: int) -> np.ndarray:
+    mod_mask = np.zeros(seq_len, dtype=bool)
+    if mod_positions:
+        mod_arr = np.fromiter(mod_positions, dtype=np.int64,
+                              count=len(mod_positions))
+        valid_mods = mod_arr[(mod_arr >= 0) & (mod_arr < seq_len)]
+        mod_mask[valid_mods] = True
+    return mod_mask
+
+
+def _empty_observation_array(seq_len: int, non_target_code: int,
+                             unmethylated_offset: int) -> np.ndarray:
+    return np.full(seq_len, non_target_code + unmethylated_offset, dtype=np.int32)
+
+
+def _apply_m6a_mod_status(context_codes: np.ndarray, mod_mask: np.ndarray,
+                          non_target_code: int, unmethylated_offset: int) -> np.ndarray:
+    result = _empty_observation_array(len(context_codes), non_target_code,
+                                      unmethylated_offset)
+    valid_mask = context_codes != non_target_code
+
+    meth_mask = valid_mask & mod_mask
+    result[meth_mask] = context_codes[meth_mask]
+    unmeth_mask = valid_mask & ~mod_mask
+    result[unmeth_mask] = context_codes[unmeth_mask] + unmethylated_offset
+    return result
+
+
+def _encode_pacbio_m6a_observations(sequence: str, mod_positions: Set[int],
+                                    edge_trim: int, context_size: int,
+                                    non_target_code: int,
+                                    unmethylated_offset: int) -> np.ndarray:
+    # Encode A positions with forward context and T positions with RC context.
+    # The numba path emits final HMM symbols directly and avoids N x k
+    # intermediate arrays from the numpy broadcasting fallback.
+    seq_len = len(sequence)
+    mod_mask = _mod_positions_mask(mod_positions, seq_len)
+    if _HAS_NUMBA:
+        return _m6a_context_codes_numba(
+            _sequence_base_int_array(sequence), mod_mask,
+            context_size, edge_trim, non_target_code, unmethylated_offset,
+            0, 2, True,
+        )
+
+    context_codes = _encode_vectorized(
+        sequence, 'A', context_size, edge_trim, non_target_code, True,
+    )
+    return _apply_m6a_mod_status(context_codes, mod_mask, non_target_code,
+                                 unmethylated_offset)
+
+
+def _nanopore_m6a_targets(is_reverse: bool) -> Tuple[int, int, bool, str]:
+    if is_reverse:
+        # Basecalled A's are stored as T's in SAM SEQ for reverse-aligned reads.
+        return 99, 2, True, 'T'
+    return 0, 0, False, 'A'
+
+
+def _encode_nanopore_m6a_observations(sequence: str, mod_positions: Set[int],
+                                      edge_trim: int, context_size: int,
+                                      is_reverse: bool, non_target_code: int,
+                                      unmethylated_offset: int) -> np.ndarray:
+    # Forward reads use A-centered forward context. Reverse reads use T
+    # positions with RC context to recover basecalled-forward emission space.
+    seq_len = len(sequence)
+    mod_mask = _mod_positions_mask(mod_positions, seq_len)
+    target_int, rc_target_int, do_rc, target_base = _nanopore_m6a_targets(is_reverse)
+    if _HAS_NUMBA:
+        return _m6a_context_codes_numba(
+            _sequence_base_int_array(sequence), mod_mask,
+            context_size, edge_trim, non_target_code, unmethylated_offset,
+            target_int, rc_target_int, do_rc,
+        )
+
+    context_codes = _encode_vectorized(
+        sequence, target_base, context_size, edge_trim, non_target_code, do_rc,
+    )
+    return _apply_m6a_mod_status(context_codes, mod_mask, non_target_code,
+                                 unmethylated_offset)
+
+
+def _daf_strand_params(sequence: str, mod_positions: Set[int],
+                       strand: str) -> Tuple[int, int, bool]:
+    if strand == '.':
+        strand = detect_daf_strand(sequence, mod_positions)
+    if strand == '+':
+        return 2, 1, False  # T->C on + strand; use C-centered codes directly.
+    return 0, 3, True      # A->G on -/unknown strand; RC to C-centered codes.
+
+
+def _encode_daf_observations(sequence: str, mod_positions: Set[int],
+                             edge_trim: int, strand: str, context_size: int,
+                             non_target_code: int,
+                             unmethylated_offset: int) -> np.ndarray:
+    # DAF modifies sequence bases: + strand C->T, - strand G->A. The model has
+    # one C-centered emission table, so - strand G contexts are reverse
+    # complemented into equivalent C-centered codes.
+    seq_len = len(sequence)
+    deam_int, orig_int, use_rc = _daf_strand_params(sequence, mod_positions, strand)
+    seq_int = _sequence_base_int_array(sequence, uppercase=True, copy=True)
+    mod_mask = _mod_positions_mask(mod_positions, seq_len)
+
+    if _HAS_NUMBA:
+        return _daf_context_codes_numba(
+            seq_int, mod_mask, context_size, edge_trim,
+            non_target_code, unmethylated_offset,
+            deam_int, orig_int, use_rc,
+        )
+
+    return _encode_daf_vectorized_observations(
+        seq_int, mod_mask, context_size, edge_trim,
+        non_target_code, unmethylated_offset, deam_int, orig_int, use_rc,
+    )
+
+
+def _encode_daf_vectorized_observations(seq_int: np.ndarray, mod_mask: np.ndarray,
+                                        context_size: int, edge_trim: int,
+                                        non_target_code: int,
+                                        unmethylated_offset: int,
+                                        deam_int: int, orig_int: int,
+                                        use_rc: bool) -> np.ndarray:
+    seq_len = len(seq_int)
+
+    # Identify target positions in original sequence
+    is_deam_base = seq_int == deam_int  # T or A positions
+    is_orig_base = seq_int == orig_int  # C or G positions
+
+    # Deaminated: T/A with MM tag (was C/G, now accessible)
+    is_deaminated = is_deam_base & mod_mask
+    # Non-deaminated: C/G without MM tag (still C/G, footprint)
+    is_non_deaminated = is_orig_base & ~mod_mask
+
+    # Reconstruct sequence: replace deaminated positions with original base
+    recon_int = seq_int.copy()
+    recon_int[is_deaminated] = orig_int  # T->C or A->G
+
+    result = _empty_observation_array(seq_len, non_target_code,
+                                      unmethylated_offset)
+
+    k = context_size
+    if seq_len < 2 * k + 1:
+        return result
+
+    start = max(edge_trim, k)
+    end = seq_len - max(edge_trim, k)
+
+    if start >= end:
+        return result
+
+    # Target positions (need context codes)
+    target_mask = is_deaminated | is_non_deaminated
+    positions = np.arange(start, end)
+    target_positions = positions[target_mask[start:end]]
+
+    if len(target_positions) == 0:
+        return result
+
+    powers = 4 ** np.arange(k - 1, -1, -1, dtype=np.int64)
+    left_offsets = np.arange(-k, 0)
+    right_offsets = np.arange(1, k + 1)
+
+    left_indices = target_positions[:, np.newaxis] + left_offsets
+    right_indices = target_positions[:, np.newaxis] + right_offsets
+
+    left_contexts = recon_int[left_indices]
+    right_contexts = recon_int[right_indices]
+
+    # Check for invalid bases (N, etc.)
+    valid_context = ~(np.any(left_contexts > 3, axis=1) |
+                      np.any(right_contexts > 3, axis=1))
+
+    if not np.any(valid_context):
+        return result
+
+    valid_positions = target_positions[valid_context]
+    valid_left = left_contexts[valid_context].astype(np.int64)
+    valid_right = right_contexts[valid_context].astype(np.int64)
+
+    if use_rc:
+        # For G-centered context L[G]R, RC gives RC(R)[C]RC(L).
+        rc_left = valid_right[:, ::-1] ^ 2
+        rc_right = valid_left[:, ::-1] ^ 2
+        codes = np.sum(rc_left * powers, axis=1) * (4 ** k) + np.sum(rc_right * powers, axis=1)
+    else:
+        codes = np.sum(valid_left * powers, axis=1) * (4 ** k) + np.sum(valid_right * powers, axis=1)
+
+    # Apply methylated codes to deaminated positions.
+    deam_at_valid = is_deaminated[valid_positions]
+    result[valid_positions[deam_at_valid]] = codes[deam_at_valid].astype(np.int32)
+
+    # Apply unmethylated codes to non-deaminated positions.
+    non_deam_at_valid = is_non_deaminated[valid_positions]
+    result[valid_positions[non_deam_at_valid]] = (
+        codes[non_deam_at_valid] + unmethylated_offset
+    ).astype(np.int32)
+
+    return result
 
 
 # Pre-computed base-to-int lookup (A=0, C=1, T=2, G=3)

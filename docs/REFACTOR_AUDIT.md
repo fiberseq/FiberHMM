@@ -46,6 +46,7 @@ Date: 2026-05-07
 - Added structured worker chunk results so streaming apply and fused apply+recall workers still pass failed reads through unchanged but now report per-read worker failure counts to the drain/final summary.
 - Reduced Viterbi memory traffic by keeping only rolling state scores plus backpointers instead of full per-state score arrays, with a dedicated warm prediction benchmark.
 - Avoided per-call observation copies for integer HMM input arrays and warmed worker numba Viterbi signatures with int32 observations to match encoder output.
+- Split `encode_from_query_sequence` into mode-specific PacBio m6A, Nanopore m6A, and DAF helpers while preserving the public API and keeping vectorized fallbacks as numba equivalence oracles.
 
 ## Current Verification
 
@@ -82,6 +83,11 @@ Date: 2026-05-07
 - `python -m pytest`: 335 passed, 25 deselected in 11.24s.
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest -m benchmark tests/benchmarks`: 25 passed in 56.22s.
+- `python -m pytest tests/test_bam_reader.py tests/test_daf_iupac.py tests/test_call_pipeline.py tests/test_call_cli.py tests/test_streaming_pipeline.py`: 80 passed in 10.55s.
+- `python -m pytest`: 335 passed, 25 deselected in 11.41s.
+- `python -m pytest -s -m benchmark tests/benchmarks/bench_encoding.py`: 4 passed in 0.77s; m6A single-pass speedups vs vectorized fallback were 9.62x PacBio, 6.29x Nanopore forward, 11.28x Nanopore reverse, and DAF speedup was 5.34x.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest -m benchmark tests/benchmarks`: 25 passed in 55.25s.
 
 ## Current Shape
 
@@ -89,7 +95,7 @@ Largest tracked Python files:
 
 - `fiberhmm/inference/parallel.py`: 2588 lines.
 - `fiberhmm/cli/extract_tags.py`: 1389 lines.
-- `fiberhmm/core/bam_reader.py`: 1316 lines.
+- `fiberhmm/core/bam_reader.py`: 1340 lines.
 - `fiberhmm/core/hmm.py`: 1094 lines.
 - `fiberhmm/cli/train.py`: 1024 lines.
 - `fiberhmm/cli/utils.py`: 894 lines.
@@ -111,9 +117,9 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
    The fused streaming, fused region-parallel, legacy tags, `MA`/`AQ`, stdout/stderr behavior, DAF input-source sniffing, DAF raw MD/reference streaming output, model resolution, `--with-scores` nucleosome quality behavior, and higher-level worker failure cleanup behavior now have direct tests.
 
-4. Mode-specific encoding should be split.
+4. Mode-specific encoding has explicit helper boundaries.
 
-   `encode_from_query_sequence` handles PacBio, Nanopore, and DAF in one long function. PacBio, Nanopore, and DAF now have single-pass numba encoders that emit final HMM observation codes, with vectorized fallbacks retained as equivalence oracles. Splitting these into mode strategy functions would make future performance work safer.
+   `encode_from_query_sequence` now dispatches to PacBio, Nanopore, and DAF private helpers. PacBio, Nanopore, and DAF have single-pass numba encoders that emit final HMM observation codes, with vectorized fallbacks retained as equivalence oracles. Future performance work can stay mode-local.
 
 5. Per-read exception handling should stay visible.
 
@@ -171,6 +177,7 @@ Phase 2: mechanical modularization.
 - Extract BAM merge/sort/index helpers into one output module.
 - Introduce typed payload/result containers for apply, fused, and recall paths.
 - Extract explicit fused HMM apply, TF recall, and label-writing stage boundaries.
+- Split mode-specific read encoding behind private strategy helpers.
 
 Phase 3: pipeline split.
 
