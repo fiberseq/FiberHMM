@@ -1922,6 +1922,9 @@ def _process_bam_streaming_pipeline_fused(
             finally:
                 executor.shutdown(wait=True)
 
+    if ref_fasta is not None:
+        ref_fasta.close()
+
     elapsed = time.time() - start_time
     rate = total_reads / elapsed if elapsed > 0 else 0
     reads_with_fp = counters['reads_with_footprints']

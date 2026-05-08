@@ -55,6 +55,7 @@ Date: 2026-05-07
 - Added direct footprint-run oracle coverage for empty, all-accessible, all-footprint, edge, and dtype-varied state arrays.
 - Reused the shared legacy apply tag writer in the region BAM worker and changed unsigned 32-bit BAM tag-array construction to avoid materializing Python integer lists.
 - Removed the extra state-path scan in public `predict_footprints`; the centralized run extractor now handles the no-footprint case directly.
+- Closed the fused streaming DAF reference FASTA handle after reference-backed raw DAF processing and added a regression test for the close call.
 
 ## Current Verification
 
@@ -132,6 +133,11 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 346 passed, 26 deselected in 10.78s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 52.11s.
+- `python -m pytest tests/test_call_pipeline.py tests/test_call_cli.py tests/test_fused_stages.py tests/test_mode_equivalence.py`: 18 passed in 7.85s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 347 passed, 26 deselected in 10.78s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 50.98s.
 
 ## Current Shape
 

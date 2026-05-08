@@ -257,3 +257,28 @@ def test_daf_raw_md_and_reference_streaming_match_iupac_output(tmp_path):
     assert any("ns" in tag_set for tag_set in iupac_tags.values())
     assert _read_tags_by_name(md_out) == iupac_tags
     assert _read_tags_by_name(ref_out) == iupac_tags
+
+
+def test_daf_reference_fasta_is_closed_after_streaming(tmp_path, monkeypatch):
+    _, raw_ref, _, ref_fasta = _write_ct_daf_fixture_bams(tmp_path)
+    output = str(tmp_path / "raw_ref_out.bam")
+    real_fasta_file = pysam.FastaFile
+    closed_paths = []
+
+    class TrackingFastaFile:
+        def __init__(self, path):
+            self.path = path
+            self._inner = real_fasta_file(path)
+
+        def fetch(self, *args, **kwargs):
+            return self._inner.fetch(*args, **kwargs)
+
+        def close(self):
+            closed_paths.append(self.path)
+            self._inner.close()
+
+    monkeypatch.setattr(pysam, "FastaFile", TrackingFastaFile)
+
+    _run_daf_fused_streaming(str(raw_ref), output, ref_fasta_path=str(ref_fasta))
+
+    assert closed_paths == [str(ref_fasta)]
