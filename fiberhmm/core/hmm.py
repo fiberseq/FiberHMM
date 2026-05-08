@@ -69,53 +69,50 @@ if HAS_NUMBA:
         log_trans_10 = log_transmat[1, 0]
         log_trans_11 = log_transmat[1, 1]
 
-        # Viterbi arrays
-        viterbi_0 = np.empty(T)
-        viterbi_1 = np.empty(T)
         backpointer_0 = np.zeros(T, dtype=np.int8)
         backpointer_1 = np.zeros(T, dtype=np.int8)
 
         # Initialize
-        viterbi_0[0] = log_startprob[0] + log_emissionprob[0, obs[0]]
-        viterbi_1[0] = log_startprob[1] + log_emissionprob[1, obs[0]]
+        v0 = log_startprob[0] + log_emissionprob[0, obs[0]]
+        v1 = log_startprob[1] + log_emissionprob[1, obs[0]]
 
         # Forward pass
         for t in range(1, T):
             o = obs[t]
-            v0_prev = viterbi_0[t-1]
-            v1_prev = viterbi_1[t-1]
-
             emit_0 = log_emissionprob[0, o]
             emit_1 = log_emissionprob[1, o]
 
             # State 0
-            from_0_to_0 = v0_prev + log_trans_00
-            from_1_to_0 = v1_prev + log_trans_10
+            from_0_to_0 = v0 + log_trans_00
+            from_1_to_0 = v1 + log_trans_10
             if from_0_to_0 >= from_1_to_0:
-                viterbi_0[t] = from_0_to_0 + emit_0
+                next_v0 = from_0_to_0 + emit_0
                 backpointer_0[t] = 0
             else:
-                viterbi_0[t] = from_1_to_0 + emit_0
+                next_v0 = from_1_to_0 + emit_0
                 backpointer_0[t] = 1
 
             # State 1
-            from_0_to_1 = v0_prev + log_trans_01
-            from_1_to_1 = v1_prev + log_trans_11
+            from_0_to_1 = v0 + log_trans_01
+            from_1_to_1 = v1 + log_trans_11
             if from_0_to_1 >= from_1_to_1:
-                viterbi_1[t] = from_0_to_1 + emit_1
+                next_v1 = from_0_to_1 + emit_1
                 backpointer_1[t] = 0
             else:
-                viterbi_1[t] = from_1_to_1 + emit_1
+                next_v1 = from_1_to_1 + emit_1
                 backpointer_1[t] = 1
+
+            v0 = next_v0
+            v1 = next_v1
 
         # Backtrack
         path = np.zeros(T, dtype=np.int8)
-        if viterbi_0[T-1] >= viterbi_1[T-1]:
+        if v0 >= v1:
             path[T-1] = 0
-            log_prob = viterbi_0[T-1]
+            log_prob = v0
         else:
             path[T-1] = 1
-            log_prob = viterbi_1[T-1]
+            log_prob = v1
 
         for t in range(T - 2, -1, -1):
             if path[t + 1] == 0:
@@ -475,44 +472,43 @@ class FiberHMM:
         log_trans_11 = self._log_transmat[1, 1]
         log_emit = self._log_emissionprob
 
-        viterbi_0 = np.empty(T)
-        viterbi_1 = np.empty(T)
         backpointer_0 = np.zeros(T, dtype=np.int8)
         backpointer_1 = np.zeros(T, dtype=np.int8)
 
-        viterbi_0[0] = self._log_startprob[0] + log_emit[0, obs[0]]
-        viterbi_1[0] = self._log_startprob[1] + log_emit[1, obs[0]]
+        v0 = self._log_startprob[0] + log_emit[0, obs[0]]
+        v1 = self._log_startprob[1] + log_emit[1, obs[0]]
 
         for t in range(1, T):
             o = obs[t]
-            v0_prev = viterbi_0[t-1]
-            v1_prev = viterbi_1[t-1]
 
-            from_0_to_0 = v0_prev + log_trans_00
-            from_1_to_0 = v1_prev + log_trans_10
+            from_0_to_0 = v0 + log_trans_00
+            from_1_to_0 = v1 + log_trans_10
             if from_0_to_0 >= from_1_to_0:
-                viterbi_0[t] = from_0_to_0 + log_emit[0, o]
+                next_v0 = from_0_to_0 + log_emit[0, o]
                 backpointer_0[t] = 0
             else:
-                viterbi_0[t] = from_1_to_0 + log_emit[0, o]
+                next_v0 = from_1_to_0 + log_emit[0, o]
                 backpointer_0[t] = 1
 
-            from_0_to_1 = v0_prev + log_trans_01
-            from_1_to_1 = v1_prev + log_trans_11
+            from_0_to_1 = v0 + log_trans_01
+            from_1_to_1 = v1 + log_trans_11
             if from_0_to_1 >= from_1_to_1:
-                viterbi_1[t] = from_0_to_1 + log_emit[1, o]
+                next_v1 = from_0_to_1 + log_emit[1, o]
                 backpointer_1[t] = 0
             else:
-                viterbi_1[t] = from_1_to_1 + log_emit[1, o]
+                next_v1 = from_1_to_1 + log_emit[1, o]
                 backpointer_1[t] = 1
 
+            v0 = next_v0
+            v1 = next_v1
+
         path = np.zeros(T, dtype=np.int8)
-        if viterbi_0[-1] >= viterbi_1[-1]:
+        if v0 >= v1:
             path[-1] = 0
-            log_prob = viterbi_0[-1]
+            log_prob = v0
         else:
             path[-1] = 1
-            log_prob = viterbi_1[-1]
+            log_prob = v1
 
         for t in range(T - 2, -1, -1):
             if path[t + 1] == 0:

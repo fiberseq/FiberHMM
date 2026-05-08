@@ -44,6 +44,7 @@ Date: 2026-05-07
 - Added a single-pass numba m6A context encoder for PacBio and Nanopore modes that emits final methylated/unmethylated HMM observation codes directly, with vectorized-fallback equivalence tests and benchmarks.
 - Installed `ruff` and cleared the configured lint gate across `fiberhmm` and `tests` with import sorting, whitespace cleanup, unused-import cleanup, protected package re-exports, and scoped style fixes.
 - Added structured worker chunk results so streaming apply and fused apply+recall workers still pass failed reads through unchanged but now report per-read worker failure counts to the drain/final summary.
+- Reduced Viterbi memory traffic by keeping only rolling state scores plus backpointers instead of full per-state score arrays, with a dedicated warm prediction benchmark.
 
 ## Current Verification
 
@@ -72,9 +73,12 @@ Date: 2026-05-07
 - `python -m pytest tests/test_bam_reader.py::TestEncodingConsistency`: 7 passed in 1.22s.
 - `python -m pytest -s -m benchmark tests/benchmarks/bench_encoding.py`: 4 passed in 0.92s; m6A single-pass speedups vs vectorized fallback were 9.86x PacBio, 6.35x Nanopore forward, 11.69x Nanopore reverse.
 - `python -m pytest tests/test_bam_reader.py tests/test_daf_iupac.py tests/test_call_pipeline.py tests/test_call_cli.py tests/test_streaming_pipeline.py`: 80 passed in 11.16s.
-- `python -m pytest`: 335 passed, 24 deselected in 11.37s.
+- Warm Viterbi local timing on 2,000 synthetic 5 kb reads: 0.1350s, 14,811 reads/s.
+- `python -m pytest -s -m benchmark tests/benchmarks/bench_hmm.py`: 1 passed in 0.94s; warm Viterbi benchmark reported 12,990 reads/s for 5 kb observations.
+- `python -m pytest tests/test_hmm.py tests/test_inference_engine.py tests/test_bam_reader.py tests/test_call_pipeline.py tests/test_mode_equivalence.py`: 85 passed in 5.42s.
+- `python -m pytest`: 335 passed, 25 deselected in 10.87s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m pytest -m benchmark tests/benchmarks`: 24 passed in 56.19s.
+- `python -m pytest -m benchmark tests/benchmarks`: 25 passed in 55.32s.
 
 ## Current Shape
 
@@ -83,7 +87,7 @@ Largest tracked Python files:
 - `fiberhmm/inference/parallel.py`: 2588 lines.
 - `fiberhmm/cli/extract_tags.py`: 1389 lines.
 - `fiberhmm/core/bam_reader.py`: 1316 lines.
-- `fiberhmm/core/hmm.py`: 1089 lines.
+- `fiberhmm/core/hmm.py`: 1086 lines.
 - `fiberhmm/cli/train.py`: 1024 lines.
 - `fiberhmm/cli/utils.py`: 894 lines.
 - `fiberhmm/cli/export_posteriors.py`: 811 lines.
@@ -173,6 +177,7 @@ Phase 3: pipeline split.
 Phase 4: performance work.
 
 - Keep DAF and m6A single-pass context encoding compared against the vectorized fallback byte-for-byte.
+- Keep HMM state-path changes benchmarked and covered by mode-equivalence tests.
 - Reduce repeated list/array conversions in fused unification and tag writing.
 - Benchmark chunk size, inflight depth, multiprocessing context, and I/O threads with the existing benchmark suite.
 
