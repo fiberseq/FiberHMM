@@ -854,9 +854,18 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
         
         # Create modification mask (vectorized)
         mod_mask = np.zeros(seq_len, dtype=bool)
-        mod_arr = np.array(list(mod_positions), dtype=np.int64)
-        valid_mods = mod_arr[(mod_arr >= 0) & (mod_arr < seq_len)]
-        mod_mask[valid_mods] = True
+        if mod_positions:
+            mod_arr = np.fromiter(mod_positions, dtype=np.int64,
+                                  count=len(mod_positions))
+            valid_mods = mod_arr[(mod_arr >= 0) & (mod_arr < seq_len)]
+            mod_mask[valid_mods] = True
+
+        if _HAS_NUMBA:
+            return _daf_context_codes_numba(
+                seq_int, mod_mask, context_size, edge_trim,
+                non_target_code, unmethylated_offset,
+                deam_int, orig_int, use_rc,
+            )
         
         # Identify target positions in original sequence
         is_deam_base = seq_int == deam_int  # T or A positions
@@ -1019,6 +1028,78 @@ def _context_codes_numba(seq_int, k, edge_trim, non_target_code,
                 right = right * 4 + (int(seq_int[j]) ^ 2)
 
         result[i] = left * four_k + right
+
+    return result
+
+
+@_numba_njit(cache=True)
+def _daf_context_codes_numba(seq_int, mod_mask, k, edge_trim, non_target_code,
+                             unmethylated_offset, deam_int, orig_int, use_rc):
+    """Single-pass DAF context encoder with on-the-fly sequence reconstruction."""
+    N = len(seq_int)
+    result = np.full(N, non_target_code + unmethylated_offset, dtype=np.int32)
+
+    boundary = k if k > edge_trim else edge_trim
+    four_k = 1
+    for _ in range(k):
+        four_k *= 4
+
+    for i in range(boundary, N - boundary):
+        center = int(seq_int[i])
+        is_deaminated = center == deam_int and mod_mask[i]
+        is_non_deaminated = center == orig_int and not mod_mask[i]
+        if not (is_deaminated or is_non_deaminated):
+            continue
+
+        ok = True
+        left = 0
+        right = 0
+
+        if use_rc:
+            for j in range(i + k, i, -1):
+                base = int(seq_int[j])
+                if base == deam_int and mod_mask[j]:
+                    base = orig_int
+                if base > 3:
+                    ok = False
+                    break
+                left = left * 4 + (base ^ 2)
+            if ok:
+                for j in range(i - 1, i - k - 1, -1):
+                    base = int(seq_int[j])
+                    if base == deam_int and mod_mask[j]:
+                        base = orig_int
+                    if base > 3:
+                        ok = False
+                        break
+                    right = right * 4 + (base ^ 2)
+        else:
+            for j in range(i - k, i):
+                base = int(seq_int[j])
+                if base == deam_int and mod_mask[j]:
+                    base = orig_int
+                if base > 3:
+                    ok = False
+                    break
+                left = left * 4 + base
+            if ok:
+                for j in range(i + 1, i + k + 1):
+                    base = int(seq_int[j])
+                    if base == deam_int and mod_mask[j]:
+                        base = orig_int
+                    if base > 3:
+                        ok = False
+                        break
+                    right = right * 4 + base
+
+        if not ok:
+            continue
+
+        code = left * four_k + right
+        if is_deaminated:
+            result[i] = code
+        else:
+            result[i] = code + unmethylated_offset
 
     return result
 

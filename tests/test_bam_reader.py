@@ -14,6 +14,7 @@ import sys
 
 # Try package imports first, fall back to flat imports
 try:
+    import fiberhmm.core.bam_reader as bam_reader
     from fiberhmm.core.bam_reader import (
         ContextEncoder,
         _build_hexamer_lookup,
@@ -26,6 +27,7 @@ try:
     )
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+    import bam_reader as bam_reader
     from bam_reader import (
         ContextEncoder,
         _build_hexamer_lookup,
@@ -346,6 +348,38 @@ class TestEncodingConsistency:
 
         # Same keys and values
         assert lookup1 == lookup2
+
+    @pytest.mark.parametrize(("strand", "deam_base"), [("+", "T"), ("-", "A")])
+    def test_daf_numba_fast_path_matches_vectorized(self, monkeypatch, strand, deam_base):
+        """The DAF single-pass encoder must match the vectorized fallback."""
+        sequence = "ACGTCCGTAAGGTTCCGGAANCGTCCGTAAGGTTCCGGAA" * 3
+        mod_positions = {
+            i
+            for i, base in enumerate(sequence)
+            if base == deam_base and 6 <= i < len(sequence) - 6 and i % 3 == 0
+        }
+
+        monkeypatch.setattr(bam_reader, "_HAS_NUMBA", False)
+        expected = bam_reader.encode_from_query_sequence(
+            sequence,
+            mod_positions,
+            edge_trim=5,
+            mode="daf",
+            strand=strand,
+            context_size=3,
+        )
+
+        monkeypatch.setattr(bam_reader, "_HAS_NUMBA", True)
+        actual = bam_reader.encode_from_query_sequence(
+            sequence,
+            mod_positions,
+            edge_trim=5,
+            mode="daf",
+            strand=strand,
+            context_size=3,
+        )
+
+        np.testing.assert_array_equal(actual, expected)
 
 
 class TestNanoporeReverseStrand:

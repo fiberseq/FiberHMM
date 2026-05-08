@@ -39,6 +39,7 @@ Date: 2026-05-07
 - Added higher-level region worker failure cleanup tests covering apply BAM, BED, and fused BAM temp-directory cleanup after executor/future failures.
 - Extracted fused HMM apply, TF recall scan, and nucleosome/TF unification stage helpers into `fiberhmm/inference/fused_stages.py`; fused streaming and region-parallel workers now share those stage boundaries.
 - Avoided per-read Python list copies in the fused TF recall stage and removed a redundant score-byte cast in shared tag writing.
+- Added a single-pass numba DAF context encoder with vectorized-fallback equivalence tests for CT and GA strands.
 
 ## Current Verification
 
@@ -55,11 +56,14 @@ Date: 2026-05-07
 - `python -m pytest tests/test_fused_stages.py tests/test_call_pipeline.py`: 6 passed in 4.45s.
 - `python -m pytest tests/test_fused_stages.py tests/test_call_pipeline.py tests/test_mode_equivalence.py tests/test_region_cleanup.py`: 13 passed in 6.58s.
 - `python -m pytest tests/test_tagging.py tests/test_fused_stages.py tests/test_call_pipeline.py tests/test_tf_recaller.py`: 29 passed in 4.57s.
+- DAF encoder local timing check on synthetic CT sequence: vectorized fallback 0.0318s, single-pass fast path 0.0061s, 5.24x speedup.
+- `python -m pytest tests/test_bam_reader.py::TestEncodingConsistency::test_daf_numba_fast_path_matches_vectorized tests/test_daf_iupac.py`: 23 passed in 1.01s.
+- `python -m pytest tests/test_bam_reader.py tests/test_daf_iupac.py tests/test_call_pipeline.py tests/test_call_cli.py`: 61 passed in 5.07s.
 - `python -m pytest tests/test_call_pipeline.py tests/test_call_cli.py tests/test_daf_iupac.py tests/test_extract_block_scores.py`: 62 passed in 5.67s.
 - `python -m pytest tests/test_package_consistency.py`: 19 passed in 1.50s.
-- `python -m pytest`: 325 passed, 20 deselected in 10.62s.
+- `python -m pytest`: 327 passed, 20 deselected in 10.60s.
 - `python -m compileall -q fiberhmm tests`: passed.
-- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 59.04s.
+- `python -m pytest -m benchmark tests/benchmarks`: 20 passed in 60.09s.
 - `python -m ruff check fiberhmm tests`: not runnable in this environment because `ruff` is not installed.
 
 ## Current Shape
@@ -68,7 +72,7 @@ Largest tracked Python files:
 
 - `fiberhmm/inference/parallel.py`: 2526 lines.
 - `fiberhmm/cli/extract_tags.py`: 1389 lines.
-- `fiberhmm/core/bam_reader.py`: 1246 lines.
+- `fiberhmm/core/bam_reader.py`: 1327 lines.
 - `fiberhmm/core/hmm.py`: 1089 lines.
 - `fiberhmm/cli/train.py`: 1024 lines.
 - `fiberhmm/cli/utils.py`: 894 lines.
@@ -92,7 +96,7 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 4. Mode-specific encoding should be split.
 
-   `encode_from_query_sequence` handles PacBio, Nanopore, and DAF in one long function. The PacBio/Nanopore path has a numba single-pass encoder; the DAF path still builds context index matrices for target positions. Splitting into mode strategy functions would make performance changes safer and make a DAF numba encoder feasible.
+   `encode_from_query_sequence` handles PacBio, Nanopore, and DAF in one long function. PacBio, Nanopore, and DAF now have single-pass numba encoders, with DAF retaining a vectorized fallback as an oracle. Splitting these into mode strategy functions would make future performance work safer.
 
 5. Per-read exception handling hides regressions.
 
@@ -157,7 +161,7 @@ Phase 3: pipeline split.
 
 Phase 4: performance work.
 
-- Implement a DAF single-pass context encoder and compare against current vectorized output byte-for-byte.
+- Keep DAF single-pass context encoding compared against the vectorized fallback byte-for-byte.
 - Reduce repeated list/array conversions in fused unification and tag writing.
 - Benchmark chunk size, inflight depth, multiprocessing context, and I/O threads with the existing benchmark suite.
 
