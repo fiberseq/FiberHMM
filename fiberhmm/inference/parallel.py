@@ -1838,19 +1838,11 @@ def _process_bam_streaming_pipeline(
         'written': 0,
     }
 
-    # Initialize posteriors writer
+    # Initialized after BAM handles open so failure cleanup is centralized in
+    # the processing finally block.
     posterior_writer = None
+    posterior_stats = None
     return_posteriors = False
-    if output_posteriors:
-        if HAS_POSTERIOR_WRITER:
-            posterior_writer = PosteriorWriter(
-                output_posteriors, mode, context_size,
-                edge_trim, input_bam, batch_size=1000
-            )
-            return_posteriors = True
-            print(f"Posteriors will be written to: {output_posteriors}")
-        else:
-            print("WARNING: posterior_writer.py not found, skipping posteriors export")
 
     # When writing to stdout, send progress to stderr to avoid corrupting BAM
     _log = sys.stderr if output_bam == '-' else sys.stdout
@@ -1869,6 +1861,20 @@ def _process_bam_streaming_pipeline(
 
     with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
         with pysam.AlignmentFile(_output_target, "wb", header=inbam.header, threads=io_threads) as outbam:
+
+            if output_posteriors:
+                if HAS_POSTERIOR_WRITER:
+                    posterior_writer = PosteriorWriter(
+                        output_posteriors, mode, context_size,
+                        edge_trim, input_bam, batch_size=1000
+                    )
+                    return_posteriors = True
+                    print(f"Posteriors will be written to: {output_posteriors}", file=_log)
+                else:
+                    print(
+                        "WARNING: posterior_writer.py not found, skipping posteriors export",
+                        file=_log,
+                    )
 
             # Create worker pool
             executor = ProcessPoolExecutor(
@@ -1999,7 +2005,12 @@ def _process_bam_streaming_pipeline(
                     )
 
             finally:
-                executor.shutdown(wait=True)
+                try:
+                    executor.shutdown(wait=True)
+                finally:
+                    if posterior_writer:
+                        posterior_stats = posterior_writer.close()
+                        posterior_writer = None
 
     elapsed = time.time() - start_time
     rate = total_reads / elapsed if elapsed > 0 else 0
@@ -2025,9 +2036,9 @@ def _process_bam_streaming_pipeline(
     if output_bam != '-' and not process_unmapped:
         _sort_and_index_bam(output_bam, threads=n_cores)
 
-    # Close posteriors writer
-    if posterior_writer:
-        n_fibers, file_size = posterior_writer.close()
+    # Report posteriors after the writer has been closed by the processing finally block.
+    if posterior_stats:
+        n_fibers, file_size = posterior_stats
         print(f"Posteriors: {n_fibers:,} fibers -> {output_posteriors} ({file_size:.1f} MB)", file=_log)
 
     return total_reads, reads_with_footprints
@@ -2168,19 +2179,11 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
     chunk_size = 2000  # Reads per chunk
     start_time = time.time()
 
-    # Initialize posteriors writer if requested
+    # Initialized after BAM handles open so failure cleanup is centralized in
+    # the processing finally block.
     posterior_writer = None
+    posterior_stats = None
     return_posteriors = False
-    if output_posteriors:
-        if HAS_POSTERIOR_WRITER:
-            posterior_writer = PosteriorWriter(
-                output_posteriors, mode, context_size,
-                edge_trim, input_bam, batch_size=1000
-            )
-            return_posteriors = True
-            print(f"Posteriors will be written to: {output_posteriors}")
-        else:
-            print("WARNING: posterior_writer.py not found, skipping posteriors export")
 
     print("Processing and writing BAM (streaming)...")
     sys.stdout.flush()
@@ -2188,6 +2191,17 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
     # Open input and output BAMs
     with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
         with pysam.AlignmentFile(output_bam, "wb", header=inbam.header, threads=io_threads) as outbam:
+
+            if output_posteriors:
+                if HAS_POSTERIOR_WRITER:
+                    posterior_writer = PosteriorWriter(
+                        output_posteriors, mode, context_size,
+                        edge_trim, input_bam, batch_size=1000
+                    )
+                    return_posteriors = True
+                    print(f"Posteriors will be written to: {output_posteriors}")
+                else:
+                    print("WARNING: posterior_writer.py not found, skipping posteriors export")
 
             chunk_reads = []  # Buffer for current chunk
             chunk_read_objs = []  # Corresponding pysam read objects
@@ -2346,8 +2360,13 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                                     })
 
             finally:
-                if executor:
-                    executor.shutdown(wait=True)
+                try:
+                    if executor:
+                        executor.shutdown(wait=True)
+                finally:
+                    if posterior_writer:
+                        posterior_stats = posterior_writer.close()
+                        posterior_writer = None
 
     elapsed = time.time() - start_time
     rate = total_reads / elapsed if elapsed > 0 else 0
@@ -2366,9 +2385,9 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
     # Index the output BAM (sort first if needed)
     _sort_and_index_bam(output_bam, threads=n_cores)
 
-    # Close posteriors writer and report
-    if posterior_writer:
-        n_fibers, file_size = posterior_writer.close()
+    # Report posteriors after the writer has been closed by the processing finally block.
+    if posterior_stats:
+        n_fibers, file_size = posterior_stats
         print(f"Posteriors: {n_fibers:,} fibers -> {output_posteriors} ({file_size:.1f} MB)")
 
     return total_reads, reads_with_footprints
