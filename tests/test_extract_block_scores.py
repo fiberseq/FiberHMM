@@ -13,6 +13,7 @@ from array import array
 
 import numpy as np
 
+from fiberhmm.cli import extract_tags
 from fiberhmm.cli.extract_tags import (
     _extract_deam,
     _extract_footprints,
@@ -63,6 +64,64 @@ def _identity_map(read):
     """
     return np.arange(read._ref_start, read._ref_start + read._query_len,
                      dtype=np.int64)
+
+
+class _FakeOutput:
+    def __init__(self):
+        self.closed = False
+        self.writes = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+        return False
+
+    def write(self, text):
+        self.writes.append(text)
+
+    def close(self):
+        self.closed = True
+
+
+def test_extract_region_worker_closes_temp_beds_when_partial_open_fails(
+    monkeypatch, tmp_path
+):
+    params = {
+        "extract_types": ["footprint", "msp"],
+        "min_tq": 50,
+        "min_mapq": 0,
+        "prob_threshold": 0,
+        "with_scores": False,
+        "block_scores": False,
+    }
+    monkeypatch.setattr(extract_tags, "_worker_params", params)
+
+    opened = []
+
+    def fake_open(path, mode):
+        if opened:
+            raise OSError("open failed")
+        handle = _FakeOutput()
+        opened.append(handle)
+        return handle
+
+    monkeypatch.setattr(extract_tags, "open", fake_open, raising=False)
+
+    temp_bed_paths = {
+        "footprint": str(tmp_path / "footprint.bed"),
+        "msp": str(tmp_path / "msp.bed"),
+    }
+
+    returned_paths, n_reads, n_features = extract_tags._extract_region_worker(
+        (("chr1", 0, 100), "input.bam", temp_bed_paths)
+    )
+
+    assert returned_paths == temp_bed_paths
+    assert n_reads == 0
+    assert n_features == {"footprint": 0, "msp": 0}
+    assert opened[0].closed
 
 
 # ------------------- autoSQL schemas --------------------------------

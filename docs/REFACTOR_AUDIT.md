@@ -66,6 +66,7 @@ Date: 2026-05-07
 - Made TSV posterior export close its writer from a `finally` block when region processing fails, with CLI helper coverage.
 - Made posterior TSV conversion and concatenation use context-managed plain/gzip handles, with failure-path coverage for conversion and concatenation cleanup.
 - Made the HDF5 posterior writer close its underlying file handle even when finalization fails, with direct failure-path coverage.
+- Made extract-tag region workers close already-opened temporary BED handles if a later per-type output open fails, with worker-level failure coverage.
 
 ## Current Verification
 
@@ -209,6 +210,12 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 361 passed, 26 deselected in 10.06s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.99s.
+- `python -m ruff check fiberhmm/cli/extract_tags.py tests/test_extract_block_scores.py`: passed.
+- `python -m pytest tests/test_extract_block_scores.py tests/test_package_consistency.py`: 53 passed in 1.19s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 362 passed, 26 deselected in 10.00s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.61s.
 
 ## Current Shape
 

@@ -45,6 +45,7 @@ import sys
 import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import ExitStack
 from typing import Dict, Optional, Set, Tuple
 
 import numpy as np
@@ -147,10 +148,10 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
 
         pysam.set_verbosity(0)
 
-        # Open per-type output files
-        bed_outs = {t: open(temp_bed_paths[t], 'w') for t in extract_types}
-
-        try:
+        with ExitStack() as stack:
+            bed_outs = {
+                t: stack.enter_context(open(temp_bed_paths[t], 'w')) for t in extract_types
+            }
             with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as inbam:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)
@@ -216,9 +217,6 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                             read, bed_outs['deam'], query_to_ref,
                             block_scores=block_scores,
                             prob_threshold=prob_threshold)
-        finally:
-            for f in bed_outs.values():
-                f.close()
 
         return (temp_bed_paths, n_reads, n_features)
 
