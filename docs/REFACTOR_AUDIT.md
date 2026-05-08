@@ -64,6 +64,7 @@ Date: 2026-05-07
 - Extracted region-parallel posterior TSV formatting, output-path resolution, and merge ordering into `fiberhmm/posteriors/region_tsv.py` with direct coverage.
 - Avoided per-read Python list materialization for ML BAM tags in legacy BAM reading and TF recall extraction; the shared manual MM/ML parser now receives raw tag containers directly.
 - Made TSV posterior export close its writer from a `finally` block when region processing fails, with CLI helper coverage.
+- Made posterior TSV conversion and concatenation use context-managed plain/gzip handles, with failure-path coverage for conversion and concatenation cleanup.
 
 ## Current Verification
 
@@ -195,6 +196,12 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 358 passed, 26 deselected in 9.92s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.30s.
+- `python -m ruff check fiberhmm/posteriors/tsv_backend.py tests/test_tsv_backend.py`: passed.
+- `python -m pytest tests/test_tsv_backend.py tests/test_region_posteriors.py tests/test_export_posteriors_cli.py`: 6 passed in 0.67s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 360 passed, 26 deselected in 10.45s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.52s.
 
 ## Current Shape
 
