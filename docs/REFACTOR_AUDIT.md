@@ -62,6 +62,7 @@ Date: 2026-05-07
 - Extracted streaming worker initializers and chunk worker entry points into `fiberhmm/inference/streaming_workers.py`, while keeping compatibility imports in `parallel.py`.
 - Extracted region-parallel worker initializers and BAM/BED/fused region worker entry points into `fiberhmm/inference/region_workers.py`, while keeping compatibility imports in `parallel.py`.
 - Extracted multiprocessing start-method selection into `fiberhmm/inference/mp_context.py`, while keeping compatibility imports in `parallel.py`.
+- Extracted streaming apply and fused apply/recall pipeline coordinators into `fiberhmm/inference/streaming_pipeline.py`, while keeping compatibility imports in `parallel.py`.
 - Closed inline posterior writers from apply processing `finally` blocks in both streaming and legacy paths, with failure-path regression coverage.
 - Closed fused DAF streaming reference FASTA handles from the processing `finally` block, including failure-path coverage.
 - Extracted region-parallel posterior TSV formatting, output-path resolution, and merge ordering into `fiberhmm/posteriors/region_tsv.py` with direct coverage.
@@ -277,16 +278,23 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 371 passed, 26 deselected in 11.91s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 53.07s.
+- `python -m ruff check fiberhmm/inference/parallel.py fiberhmm/inference/streaming_pipeline.py tests/test_inference_parallel.py tests/test_posterior_lifecycle.py tests/test_call_pipeline.py`: passed.
+- `python -m compileall -q fiberhmm/inference/parallel.py fiberhmm/inference/streaming_pipeline.py tests/test_inference_parallel.py tests/test_posterior_lifecycle.py`: passed.
+- `python -m pytest tests/test_inference_parallel.py tests/test_posterior_lifecycle.py tests/test_streaming_pipeline.py tests/test_call_pipeline.py tests/test_mode_equivalence.py`: 80 passed in 14.16s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 372 passed, 26 deselected in 12.67s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 52.33s.
 
 ## Current Shape
 
 Largest tracked Python files:
 
-- `fiberhmm/inference/parallel.py`: 1436 lines.
 - `fiberhmm/cli/extract_tags.py`: 1395 lines.
 - `fiberhmm/core/bam_reader.py`: 1340 lines.
 - `fiberhmm/core/hmm.py`: 1123 lines.
 - `fiberhmm/cli/train.py`: 1032 lines.
+- `fiberhmm/inference/parallel.py`: 961 lines.
 - `fiberhmm/cli/utils.py`: 894 lines.
 - `fiberhmm/cli/export_posteriors.py`: 817 lines.
 
@@ -296,11 +304,11 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 1. `fiberhmm/inference/parallel.py` is the main refactor target.
 
-   It mixes multiprocessing context selection, worker initialization, region partitioning, BAM concatenation, streaming pipelines, legacy chunk mode, fused apply/recall, posterior export, tag writing, progress reporting, and skip accounting. This makes performance work risky because small behavior changes can affect output order, pass-through reads, tag semantics, or process lifetime.
+   It mixes legacy chunk mode, region-parallel orchestration, BAM concatenation, fused apply/recall, posterior export, tag writing, progress reporting, and skip accounting. This makes performance work risky because small behavior changes can affect output order, pass-through reads, tag semantics, or process lifetime.
 
 2. Continue shrinking `fiberhmm/inference/parallel.py`.
 
-   The first shared tagging/unification slice, streaming read-filter slice, active BAM output helper extractions, region worker contracts, aggregation helpers, higher-level worker cleanup tests, fused stage-boundary extraction, streaming drain extraction, streaming worker extraction, region worker extraction, and multiprocessing context extraction are complete, but the module still mixes process lifecycle, posterior export, and orchestration. The next work should shift toward measured speed/stability improvements while continuing to keep `parallel.py` shrinking.
+   The first shared tagging/unification slice, streaming read-filter slice, active BAM output helper extractions, region worker contracts, aggregation helpers, higher-level worker cleanup tests, fused stage-boundary extraction, streaming drain extraction, streaming worker extraction, region worker extraction, multiprocessing context extraction, and streaming pipeline extraction are complete, but the module still mixes process lifecycle, posterior export, legacy chunking, and region orchestration. The next work should shift toward measured speed/stability improvements while continuing to keep `parallel.py` shrinking.
 
 3. Add remaining `fiberhmm-call` characterization tests.
 
@@ -374,6 +382,7 @@ Phase 3: pipeline split.
 - Extract streaming worker initialization and chunk worker entry points; done for the streaming apply and fused apply+recall worker functions.
 - Extract region worker initialization and per-region worker entry points; done for apply BAM, BED, and fused BAM workers.
 - Extract shared multiprocessing context selection; done.
+- Extract streaming pipeline coordinators; done for apply streaming and fused apply/recall streaming.
 - Keep old import paths re-exporting during the transition.
 
 Phase 4: performance work.

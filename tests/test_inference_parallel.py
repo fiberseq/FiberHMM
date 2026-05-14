@@ -9,6 +9,7 @@ import pytest
 import fiberhmm.inference.mp_context as mp_context
 import fiberhmm.inference.parallel as parallel
 import fiberhmm.inference.region_workers as region_workers
+import fiberhmm.inference.streaming_pipeline as streaming_pipeline
 import fiberhmm.inference.streaming_workers as streaming_workers
 from fiberhmm.inference.parallel import (
     _drain_oldest_chunk,
@@ -53,6 +54,17 @@ def test_parallel_reexports_streaming_worker_entry_points():
     assert (
         parallel._process_fused_payload_chunk_worker
         is streaming_workers._process_fused_payload_chunk_worker
+    )
+
+
+def test_parallel_reexports_streaming_pipeline_entry_points():
+    assert (
+        parallel._process_bam_streaming_pipeline
+        is streaming_pipeline._process_bam_streaming_pipeline
+    )
+    assert (
+        parallel._process_bam_streaming_pipeline_fused
+        is streaming_pipeline._process_bam_streaming_pipeline_fused
     )
 
 

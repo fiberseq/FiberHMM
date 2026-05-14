@@ -2,7 +2,7 @@
 
 import pytest
 
-from fiberhmm.inference import parallel
+from fiberhmm.inference import parallel, streaming_pipeline
 from fiberhmm.posteriors import hdf5_backend
 
 
@@ -22,6 +22,8 @@ def _install_fake_posterior_writer(monkeypatch):
 
     monkeypatch.setattr(parallel, "HAS_POSTERIOR_WRITER", True)
     monkeypatch.setattr(parallel, "PosteriorWriter", FakePosteriorWriter, raising=False)
+    monkeypatch.setattr(streaming_pipeline, "HAS_POSTERIOR_WRITER", True)
+    monkeypatch.setattr(streaming_pipeline, "PosteriorWriter", FakePosteriorWriter, raising=False)
     return instances
 
 
@@ -33,9 +35,9 @@ def test_streaming_posterior_writer_closes_when_drain_fails(
     def fail_drain(*args, **kwargs):
         raise RuntimeError("drain failed")
 
-    monkeypatch.setattr(parallel, "_drain_oldest_chunk", fail_drain)
+    monkeypatch.setattr(streaming_pipeline, "_drain_oldest_chunk", fail_drain)
     monkeypatch.setattr(
-        parallel,
+        streaming_pipeline,
         "streaming_skip_reason",
         lambda read, filter_config: "low_mapq",
     )
@@ -108,10 +110,10 @@ def test_fused_streaming_reference_fasta_closes_when_drain_fails(
     def fail_drain(*args, **kwargs):
         raise RuntimeError("fused drain failed")
 
-    monkeypatch.setattr(parallel.pysam, "FastaFile", FakeFastaFile)
-    monkeypatch.setattr(parallel, "_drain_oldest_fused_chunk", fail_drain)
+    monkeypatch.setattr(streaming_pipeline.pysam, "FastaFile", FakeFastaFile)
+    monkeypatch.setattr(streaming_pipeline, "_drain_oldest_fused_chunk", fail_drain)
     monkeypatch.setattr(
-        parallel,
+        streaming_pipeline,
         "streaming_skip_reason",
         lambda read, filter_config: "low_mapq",
     )
