@@ -8,6 +8,7 @@ import pytest
 
 import fiberhmm.inference.mp_context as mp_context
 import fiberhmm.inference.parallel as parallel
+import fiberhmm.inference.region_pipeline as region_pipeline
 import fiberhmm.inference.region_workers as region_workers
 import fiberhmm.inference.streaming_pipeline as streaming_pipeline
 import fiberhmm.inference.streaming_workers as streaming_workers
@@ -77,6 +78,15 @@ def test_parallel_reexports_region_worker_entry_points():
         parallel._process_region_to_bam_fused
         is region_workers._process_region_to_bam_fused
     )
+
+
+def test_parallel_reexports_region_pipeline_entry_points():
+    assert parallel._process_bam_region_parallel is region_pipeline._process_bam_region_parallel
+    assert (
+        parallel._process_bam_region_parallel_fused
+        is region_pipeline._process_bam_region_parallel_fused
+    )
+    assert parallel._process_bed_region_parallel is region_pipeline._process_bed_region_parallel
 
 
 def test_payload_worker_counts_per_read_failures(monkeypatch):

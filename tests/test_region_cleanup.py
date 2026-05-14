@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from fiberhmm.inference import parallel
+from fiberhmm.inference import parallel, region_pipeline
 
 
 class _FailingFuture:
@@ -36,10 +36,14 @@ def _install_failing_region_pool(monkeypatch, tmp_path):
         temp_dirs.append(temp_dir)
         return str(temp_dir)
 
-    monkeypatch.setattr(parallel, "_get_genome_regions", lambda *args, **kwargs: [("chr1", 0, 100)])
-    monkeypatch.setattr(parallel, "ProcessPoolExecutor", _FailingExecutor)
-    monkeypatch.setattr(parallel, "as_completed", lambda futures: list(futures))
-    monkeypatch.setattr(parallel.tempfile, "mkdtemp", fake_mkdtemp)
+    monkeypatch.setattr(
+        region_pipeline,
+        "_get_genome_regions",
+        lambda *args, **kwargs: [("chr1", 0, 100)],
+    )
+    monkeypatch.setattr(region_pipeline, "ProcessPoolExecutor", _FailingExecutor)
+    monkeypatch.setattr(region_pipeline, "as_completed", lambda futures: list(futures))
+    monkeypatch.setattr(region_pipeline.tempfile, "mkdtemp", fake_mkdtemp)
 
     return temp_dirs
 
