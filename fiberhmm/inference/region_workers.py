@@ -19,6 +19,7 @@ from fiberhmm.inference.fused_stages import (
     build_fused_recall_result,
     run_hmm_apply_stage,
 )
+from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.region_types import (
     RegionBamResult,
     RegionBamWorkItem,
@@ -34,6 +35,15 @@ from fiberhmm.posteriors.region_tsv import format_region_posterior_line
 _worker_model = None
 _worker_region_params = None
 _worker_recall_state = {}
+
+_PRE_OWNERSHIP_SKIP_REASONS = {"unmapped", "secondary_supplementary"}
+
+
+def _write_skipped_region_read(outbam, read, skip_reasons: dict, reason: str) -> int:
+    """Pass through a skipped BAM read and count its reason."""
+    outbam.write(read)
+    skip_reasons[reason] += 1
+    return 1
 
 
 def _init_region_worker(model_path: str, params: dict):
@@ -131,6 +141,13 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
             'extraction_failed': 0,
             'no_footprints': 0,
         }
+        filter_config = ReadFilterConfig(
+            min_mapq=min_mapq,
+            min_read_length=min_read_length,
+            primary_only=primary_only,
+            process_unmapped=False,
+            train_rids=train_rids,
+        )
 
         pysam.set_verbosity(0)
 
@@ -156,19 +173,12 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         return RegionBamResult(temp_bam_path, 0, 0, 0)
 
                     for read in read_iter:
-                        # Pass through unmapped reads (no sequence to process).
-                        if read.is_unmapped:
-                            outbam.write(read)
-                            written += 1
+                        skip_reason = streaming_skip_reason(read, filter_config)
+                        if skip_reason in _PRE_OWNERSHIP_SKIP_REASONS:
+                            written += _write_skipped_region_read(
+                                outbam, read, skip_reasons, skip_reason
+                            )
                             skipped += 1
-                            skip_reasons['unmapped'] += 1
-                            continue
-
-                        if primary_only and (read.is_secondary or read.is_supplementary):
-                            outbam.write(read)
-                            written += 1
-                            skipped += 1
-                            skip_reasons['secondary_supplementary'] += 1
                             continue
 
                         # Only process reads that START in this region to avoid duplicates.
@@ -176,26 +186,11 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         if read.reference_start < start or read.reference_start >= end:
                             continue
 
-                        if read.mapping_quality < min_mapq:
-                            outbam.write(read)
-                            written += 1
+                        if skip_reason:
+                            written += _write_skipped_region_read(
+                                outbam, read, skip_reasons, skip_reason
+                            )
                             skipped += 1
-                            skip_reasons['low_mapq'] += 1
-                            continue
-
-                        if read.query_alignment_length is None or read.query_alignment_length < min_read_length:
-                            outbam.write(read)
-                            written += 1
-                            skipped += 1
-                            skip_reasons['too_short'] += 1
-                            continue
-
-                        read_id = read.query_name
-                        if train_rids and read_id in train_rids:
-                            outbam.write(read)
-                            written += 1
-                            skipped += 1
-                            skip_reasons['training_excluded'] += 1
                             continue
 
                         try:
@@ -521,6 +516,13 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
             'too_short': 0, 'training_excluded': 0, 'no_modifications': 0,
             'extraction_failed': 0, 'no_footprints': 0,
         }
+        filter_config = ReadFilterConfig(
+            min_mapq=min_mapq,
+            min_read_length=min_read_length,
+            primary_only=primary_only,
+            process_unmapped=False,
+            train_rids=train_rids,
+        )
 
         with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
             with pysam.AlignmentFile(temp_bam_path, "wb", header=inbam.header, threads=io_threads) as outbam:
@@ -530,38 +532,20 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                     return RegionBamResult(temp_bam_path, 0, 0, 0)
 
                 for read in read_iter:
-                    if read.is_unmapped:
-                        outbam.write(read)
-                        written += 1
+                    skip_reason = streaming_skip_reason(read, filter_config)
+                    if skip_reason in _PRE_OWNERSHIP_SKIP_REASONS:
+                        written += _write_skipped_region_read(
+                            outbam, read, skip_reasons, skip_reason
+                        )
                         skipped += 1
-                        skip_reasons['unmapped'] += 1
-                        continue
-                    if primary_only and (read.is_secondary or read.is_supplementary):
-                        outbam.write(read)
-                        written += 1
-                        skipped += 1
-                        skip_reasons['secondary_supplementary'] += 1
                         continue
                     if read.reference_start < start or read.reference_start >= end:
                         continue
-                    if read.mapping_quality < min_mapq:
-                        outbam.write(read)
-                        written += 1
+                    if skip_reason:
+                        written += _write_skipped_region_read(
+                            outbam, read, skip_reasons, skip_reason
+                        )
                         skipped += 1
-                        skip_reasons['low_mapq'] += 1
-                        continue
-                    if (read.query_alignment_length is None
-                            or read.query_alignment_length < min_read_length):
-                        outbam.write(read)
-                        written += 1
-                        skipped += 1
-                        skip_reasons['too_short'] += 1
-                        continue
-                    if train_rids and read.query_name in train_rids:
-                        outbam.write(read)
-                        written += 1
-                        skipped += 1
-                        skip_reasons['training_excluded'] += 1
                         continue
 
                     payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
