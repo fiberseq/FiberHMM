@@ -16,6 +16,7 @@ from fiberhmm.inference.engine import (
     _process_single_read,
 )
 from fiberhmm.inference.mp_context import _MP_CONTEXT
+from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.streaming_workers import (
     _init_bam_worker,
     _process_chunk_worker,
@@ -145,7 +146,6 @@ def _process_bam_legacy_pipeline(
     """Process a BAM through the legacy chunked apply path."""
     total_reads = 0
     reads_with_footprints = 0
-    written = 0
     skipped = 0
     worker_failures = 0
 
@@ -160,6 +160,13 @@ def _process_bam_legacy_pipeline(
         'extraction_failed': 0,
         'no_footprints': 0,
     }
+    filter_config = ReadFilterConfig(
+        min_mapq=min_mapq,
+        min_read_length=min_read_length,
+        primary_only=primary_only,
+        process_unmapped=False,
+        train_rids=train_rids,
+    )
 
     chunk_size = 2000  # Reads per chunk
     start_time = time.time()
@@ -204,43 +211,11 @@ def _process_bam_legacy_pipeline(
 
             try:
                 for read in inbam:
-                    # Pass through unmapped reads (no sequence to process)
-                    if read.is_unmapped:
+                    skip_reason = streaming_skip_reason(read, filter_config)
+                    if skip_reason:
                         outbam.write(read)
-                        written += 1
                         skipped += 1
-                        skip_reasons['unmapped'] += 1
-                        continue
-
-                    # Skip secondary/supplementary if primary_only mode
-                    if primary_only and (read.is_secondary or read.is_supplementary):
-                        outbam.write(read)
-                        written += 1
-                        skipped += 1
-                        skip_reasons['secondary_supplementary'] += 1
-                        continue
-
-                    # Check filters (apply to all alignments)
-                    if read.mapping_quality < min_mapq:
-                        outbam.write(read)
-                        written += 1
-                        skipped += 1
-                        skip_reasons['low_mapq'] += 1
-                        continue
-
-                    if read.query_alignment_length < min_read_length:
-                        outbam.write(read)
-                        written += 1
-                        skipped += 1
-                        skip_reasons['too_short'] += 1
-                        continue
-
-                    read_id = read.query_name
-                    if train_rids and read_id in train_rids:
-                        outbam.write(read)
-                        written += 1
-                        skipped += 1
-                        skip_reasons['training_excluded'] += 1
+                        skip_reasons[skip_reason] += 1
                         continue
 
                     # Extract data needed for processing
@@ -248,13 +223,11 @@ def _process_bam_legacy_pipeline(
                         fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
                         if fiber_read is None:
                             outbam.write(read)
-                            written += 1
                             skipped += 1
                             skip_reasons['no_modifications'] += 1
                             continue
                     except Exception:
                         outbam.write(read)
-                        written += 1
                         skipped += 1
                         skip_reasons['extraction_failed'] += 1
                         continue
@@ -281,7 +254,6 @@ def _process_bam_legacy_pipeline(
                         reads_with_footprints += n_fp
                         skip_reasons['no_footprints'] += n_nofp
                         worker_failures += n_failed
-                        written += len(chunk_read_objs)
 
                         _write_chunk_posteriors(posterior_writer, chunk_results)
 
@@ -307,7 +279,6 @@ def _process_bam_legacy_pipeline(
                     reads_with_footprints += n_fp
                     skip_reasons['no_footprints'] += n_nofp
                     worker_failures += n_failed
-                    written += len(chunk_read_objs)
 
                     _write_chunk_posteriors(posterior_writer, chunk_results)
 

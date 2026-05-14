@@ -78,6 +78,7 @@ Date: 2026-05-07
 - Made tagged-BAM BED extraction close its input BAM if output BED opening fails, with direct shared-helper coverage.
 - Reduced DAF reference-fallback FASTA calls by fetching each read's reference span once instead of fetching one base per aligned position, with direct helper coverage.
 - Made score-database creation and append helpers close SQLite connections on record parsing failures, with shared-helper coverage.
+- Reused the shared read-filter policy in the legacy chunked apply loop and removed its unused write counter, preserving mode-equivalence coverage while adding the same `None` read-length guard used by streaming paths.
 
 ## Current Verification
 
@@ -301,6 +302,13 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 374 passed, 26 deselected in 11.45s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.62s.
+- `python -m ruff check fiberhmm/inference/legacy_pipeline.py tests/test_mode_equivalence.py tests/test_streaming_pipeline.py tests/test_inference_parallel.py`: passed.
+- `python -m compileall -q fiberhmm/inference/legacy_pipeline.py tests/test_mode_equivalence.py tests/test_streaming_pipeline.py tests/test_inference_parallel.py`: passed.
+- `python -m pytest tests/test_mode_equivalence.py tests/test_streaming_pipeline.py tests/test_inference_parallel.py tests/test_posterior_lifecycle.py`: 77 passed in 5.02s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 374 passed, 26 deselected in 11.49s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.35s.
 
 ## Current Shape
 
