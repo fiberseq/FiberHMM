@@ -82,6 +82,7 @@ Date: 2026-05-07
 - Reused the shared read-filter policy for owned reads in apply and fused region BAM workers while preserving pre-ownership pass-through behavior for unmapped and secondary/supplementary reads.
 - Deferred dispatcher-side model loading for streaming, region-parallel, and legacy multi-core model-path runs so worker initializers own model loading; legacy single-core dispatch still loads the model directly before processing.
 - Made `fiberhmm-consensus-tfs` build each read's query-to-reference position map at most once while extracting TF calls, with direct coverage for repeated annotations, quality-filtered skips, insertion-only calls, and malformed MA tags.
+- Made MA/AQ parsing consume quality bytes directly from indexable BAM tag containers instead of materializing the whole `AQ` array up front, preserving short-array behavior with direct parser coverage.
 
 ## Current Verification
 
@@ -333,6 +334,13 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 382 passed, 26 deselected in 12.31s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.52s.
+- `python -m ruff check fiberhmm/io/ma_tags.py tests/test_tf_recaller.py tests/test_consensus_tfs.py`: passed.
+- `python -m compileall -q fiberhmm/io/ma_tags.py tests/test_tf_recaller.py tests/test_consensus_tfs.py`: passed.
+- `python -m pytest tests/test_tf_recaller.py tests/test_consensus_tfs.py tests/test_call_pipeline.py`: 34 passed in 5.09s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 384 passed, 26 deselected in 11.79s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.60s.
 
 ## Current Shape
 

@@ -184,13 +184,17 @@ def parse_aq_array(aq, qual_spec_per_type: Sequence[str],
     """
     result: List[List[int]] = []
     idx = 0
-    aq_list = list(aq) if aq is not None else []
+    aq_values = aq if aq is not None else ()
+    if not (hasattr(aq_values, "__len__") and hasattr(aq_values, "__getitem__")):
+        aq_values = tuple(aq_values)
+    aq_len = len(aq_values)
     for spec, n in zip(qual_spec_per_type, n_annotations_per_type):
         n_q = len(spec)
         for _ in range(n):
             if n_q == 0:
                 result.append([])
             else:
-                result.append(aq_list[idx:idx + n_q])
+                end = min(idx + n_q, aq_len)
+                result.append([int(aq_values[i]) for i in range(idx, end)])
                 idx += n_q
     return result

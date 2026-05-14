@@ -107,6 +107,32 @@ def test_aq_layout():
     assert parsed == [[200], [180], [45, 180, 220]]
 
 
+class _CountingAq:
+    def __init__(self, values):
+        self.values = values
+        self.accessed = []
+
+    def __len__(self):
+        return len(self.values)
+
+    def __getitem__(self, index):
+        self.accessed.append(index)
+        return self.values[index]
+
+
+def test_parse_aq_array_reads_only_consumed_quality_bytes():
+    aq = _CountingAq([200, 180, 45, 180, 220, 99, 88, 77])
+
+    parsed = parse_aq_array(aq, ['Q', '', 'QQQ'], [1, 2, 1])
+
+    assert parsed == [[200], [], [], [180, 45, 180]]
+    assert aq.accessed == [0, 1, 2, 3]
+
+
+def test_parse_aq_array_preserves_short_quality_arrays():
+    assert parse_aq_array([7], ['QQQ'], [1]) == [[7]]
+
+
 # ------------------- merge_intervals -------------------------------
 
 def test_merge_intervals():
