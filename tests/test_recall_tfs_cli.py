@@ -9,6 +9,66 @@ import pytest
 import fiberhmm.cli.recall_tfs as recall_tfs
 
 
+def test_recall_tfs_payload_chunk_counts_per_read_failures(monkeypatch):
+    def fake_process(payload):
+        if payload == "bad":
+            raise RuntimeError("bad read")
+        return payload.upper(), {"v2": 1, "tf": 2, "demoted": 3, "failed": 0}
+
+    monkeypatch.setattr(recall_tfs, "_process_payload_record", fake_process)
+
+    results, stats = recall_tfs._process_payload_chunk(["ok", "bad", "next"])
+
+    assert results == ["OK", None, "NEXT"]
+    assert stats == {"v2": 2, "tf": 4, "demoted": 6, "failed": 1}
+
+
+def test_recall_tfs_single_thread_passes_failed_reads_through(monkeypatch):
+    reads = [
+        SimpleNamespace(query_name="ok", query_sequence="AAAA"),
+        SimpleNamespace(query_name="bad", query_sequence="CCCC"),
+    ]
+    written = []
+    applied = []
+
+    class FakeOut:
+        def write(self, read):
+            written.append(read)
+
+    def fake_process(payload):
+        if payload == "bad":
+            raise RuntimeError("bad read")
+        return "result", {"v2": 1, "tf": 2, "demoted": 3, "failed": 0}
+
+    monkeypatch.setattr(recall_tfs, "_make_payload", lambda read: read.query_name)
+    monkeypatch.setattr(recall_tfs, "_process_payload_record", fake_process)
+    monkeypatch.setattr(
+        recall_tfs,
+        "_apply_result",
+        lambda read, result, also_write_legacy, downstream_compat: applied.append(
+            (read.query_name, result)
+        ),
+    )
+
+    assert recall_tfs._single_thread_loop(
+        reads,
+        FakeOut(),
+        None,
+        None,
+        None,
+        "pacbio-fiber",
+        3,
+        5.0,
+        3,
+        90,
+        True,
+        False,
+        0,
+    ) == (2, 1, 2, 3, 1)
+    assert written == reads
+    assert applied == [("ok", "result")]
+
+
 def test_recall_tfs_closes_bams_when_processing_fails(monkeypatch):
     opened = []
 

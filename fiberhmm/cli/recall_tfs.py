@@ -60,6 +60,7 @@ from fiberhmm.inference.tf_recaller import (
 # ---------------------------------------------------------------------------
 
 _WORKER = {}
+_STATS_KEYS = ('v2', 'tf', 'demoted', 'failed')
 
 
 def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold):
@@ -153,7 +154,7 @@ def _process_payload_record(payload) -> tuple:
     """
     read = _PayloadRead(payload['seq'], payload['is_reverse'], payload['tags'])
     tags = payload['tags']
-    stats = {'v2': 0, 'tf': 0, 'demoted': 0}
+    stats = {key: 0 for key in _STATS_KEYS}
     unify_threshold = _WORKER['unify_threshold']
 
     has_ns = 'ns' in tags and 'nl' in tags
@@ -196,12 +197,17 @@ def _process_payload_record(payload) -> tuple:
 def _process_payload_chunk(payloads):
     """Worker: process a list of compact payloads."""
     out = []
-    total = {'v2': 0, 'tf': 0, 'demoted': 0}
+    total = {key: 0 for key in _STATS_KEYS}
     for payload in payloads:
-        result, stats = _process_payload_record(payload)
+        try:
+            result, stats = _process_payload_record(payload)
+        except Exception:
+            result = None
+            stats = {key: 0 for key in _STATS_KEYS}
+            stats['failed'] = 1
         out.append(result)
-        for k in total:
-            total[k] += stats[k]
+        for key in _STATS_KEYS:
+            total[key] += stats[key]
     return out, total
 
 
@@ -226,18 +232,25 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
                         also_write_legacy, downstream_compat, max_reads):
     """Single-threaded path.  No IPC — process reads directly."""
     _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold)
-    n_reads = n_v2 = n_tf = n_demoted = 0
+    n_reads = n_v2 = n_tf = n_demoted = n_failed = 0
     for read in bam_in:
         if max_reads and n_reads >= max_reads:
             break
-        result, stats = _process_payload_record(_make_payload(read))
-        _apply_result(read, result, also_write_legacy, downstream_compat)
+        try:
+            result, stats = _process_payload_record(_make_payload(read))
+        except Exception:
+            result = None
+            stats = {key: 0 for key in _STATS_KEYS}
+            stats['failed'] = 1
+        if result is not None:
+            _apply_result(read, result, also_write_legacy, downstream_compat)
         bam_out.write(read)
         n_reads += 1
         n_v2 += stats['v2']
         n_tf += stats['tf']
         n_demoted += stats['demoted']
-    return n_reads, n_v2, n_tf, n_demoted
+        n_failed += stats['failed']
+    return n_reads, n_v2, n_tf, n_demoted, n_failed
 
 
 def _parallel_loop(bam_in, bam_out, _header_text,
@@ -260,18 +273,21 @@ def _parallel_loop(bam_in, bam_out, _header_text,
     pending: deque = deque()     # deque of (reads_chunk, AsyncResult)
 
     n_reads = n_v2 = n_tf = n_demoted = 0
+    n_failed = 0
 
     def _drain_one():
-        nonlocal n_reads, n_v2, n_tf, n_demoted
+        nonlocal n_reads, n_v2, n_tf, n_demoted, n_failed
         reads_chunk, fut = pending.popleft()
         out_results, stats = fut.get()   # blocks until result is ready
         for read, result in zip(reads_chunk, out_results):
-            _apply_result(read, result, also_write_legacy, downstream_compat)
+            if result is not None:
+                _apply_result(read, result, also_write_legacy, downstream_compat)
             bam_out.write(read)
         n_reads += len(reads_chunk)
         n_v2 += stats['v2']
         n_tf += stats['tf']
         n_demoted += stats['demoted']
+        n_failed += stats['failed']
 
     with mp.Pool(
         processes=n_cores,
@@ -307,7 +323,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         while pending:
             _drain_one()
 
-    return n_reads, n_v2, n_tf, n_demoted
+    return n_reads, n_v2, n_tf, n_demoted, n_failed
 
 
 def parse_args():
@@ -488,14 +504,14 @@ def main():
         also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
 
         if n_cores == 1:
-            n_reads, n_v2, n_tf, n_demoted = _single_thread_loop(
+            n_reads, n_v2, n_tf, n_demoted, n_failed = _single_thread_loop(
                 bam_in, bam_out, header_text,
                 llr_hit, llr_miss, mode, k,
                 min_llr, args.min_opps, args.unify_threshold,
                 also_write_legacy, args.downstream_compat, args.max_reads,
             )
         else:
-            n_reads, n_v2, n_tf, n_demoted = _parallel_loop(
+            n_reads, n_v2, n_tf, n_demoted, n_failed = _parallel_loop(
                 bam_in, bam_out, header_text,
                 llr_hit, llr_miss, mode, k,
                 min_llr, args.min_opps, args.unify_threshold,
@@ -512,6 +528,12 @@ def main():
         f"{n_tf} TF calls emitted; {n_demoted} v2 short nucs demoted to tf+",
         file=sys.stderr,
     )
+    if n_failed:
+        print(
+            f"[recall_tfs] warning: {n_failed} reads passed through unchanged "
+            "after recall errors",
+            file=sys.stderr,
+        )
 
 
 if __name__ == '__main__':

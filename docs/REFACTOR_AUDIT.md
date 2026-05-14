@@ -83,6 +83,7 @@ Date: 2026-05-07
 - Deferred dispatcher-side model loading for streaming, region-parallel, and legacy multi-core model-path runs so worker initializers own model loading; legacy single-core dispatch still loads the model directly before processing.
 - Made `fiberhmm-consensus-tfs` build each read's query-to-reference position map at most once while extracting TF calls, with direct coverage for repeated annotations, quality-filtered skips, insertion-only calls, and malformed MA tags.
 - Made MA/AQ parsing consume quality bytes directly from indexable BAM tag containers instead of materializing the whole `AQ` array up front, preserving short-array behavior with direct parser coverage.
+- Made `fiberhmm-recall-tfs` count per-read recall failures and pass failed records through unchanged in both single-thread and worker-chunk paths, with direct coverage for failure accounting and pass-through writes.
 
 ## Current Verification
 
@@ -341,6 +342,13 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 384 passed, 26 deselected in 11.79s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.60s.
+- `python -m ruff check fiberhmm/cli/recall_tfs.py tests/test_recall_tfs_cli.py`: passed.
+- `python -m compileall -q fiberhmm/cli/recall_tfs.py tests/test_recall_tfs_cli.py`: passed.
+- `python -m pytest tests/test_recall_tfs_cli.py tests/test_tf_recaller.py tests/test_call_pipeline.py`: 33 passed in 4.73s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 386 passed, 26 deselected in 12.20s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 53.47s.
 
 ## Current Shape
 
