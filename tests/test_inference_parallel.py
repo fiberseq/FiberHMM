@@ -7,6 +7,7 @@ from concurrent.futures import Future
 import pytest
 
 import fiberhmm.inference.parallel as parallel
+import fiberhmm.inference.region_workers as region_workers
 import fiberhmm.inference.streaming_workers as streaming_workers
 from fiberhmm.inference.parallel import (
     _drain_oldest_chunk,
@@ -46,6 +47,17 @@ def test_parallel_reexports_streaming_worker_entry_points():
     assert (
         parallel._process_fused_payload_chunk_worker
         is streaming_workers._process_fused_payload_chunk_worker
+    )
+
+
+def test_parallel_reexports_region_worker_entry_points():
+    assert parallel._init_region_worker is region_workers._init_region_worker
+    assert parallel._init_fused_region_worker is region_workers._init_fused_region_worker
+    assert parallel._process_region_to_bam is region_workers._process_region_to_bam
+    assert parallel._process_region_to_bed is region_workers._process_region_to_bed
+    assert (
+        parallel._process_region_to_bam_fused
+        is region_workers._process_region_to_bam_fused
     )
 
 
