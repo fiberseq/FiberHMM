@@ -43,6 +43,14 @@ from fiberhmm.io.ma_tags import parse_aq_array, parse_ma_tag
 
 # ── Query → reference coordinate conversion ──────────────────────────────────
 
+def _ref_interval_from_map(ref_map, q_start: int, length: int) -> Tuple[int, int] | Tuple[None, None]:
+    """Return half-open reference coordinates for a query interval."""
+    mapped = [p for p in ref_map[q_start: q_start + length] if p is not None]
+    if not mapped:
+        return None, None
+    return mapped[0], mapped[-1] + 1   # half-open [start, end)
+
+
 def _ref_interval(read: pysam.AlignedSegment,
                   q_start: int, length: int) -> Tuple[int, int] | Tuple[None, None]:
     """Return (ref_start, ref_end) in half-open BED format for a query interval.
@@ -51,11 +59,7 @@ def _ref_interval(read: pysam.AlignedSegment,
     and takes min/max of non-None entries.  Returns (None, None) if the entire
     footprint falls inside an insertion relative to the reference (rare).
     """
-    ref_map = read.get_reference_positions(full_length=True)
-    mapped = [p for p in ref_map[q_start: q_start + length] if p is not None]
-    if not mapped:
-        return None, None
-    return mapped[0], mapped[-1] + 1   # half-open [start, end)
+    return _ref_interval_from_map(read.get_reference_positions(full_length=True), q_start, length)
 
 
 # ── TF call extraction ────────────────────────────────────────────────────────
@@ -72,7 +76,7 @@ def _iter_tf_calls(read: pysam.AlignedSegment,
     except KeyError:
         return
     try:
-        aq = list(read.get_tag('AQ'))
+        aq = read.get_tag('AQ')
     except KeyError:
         aq = []
 
@@ -90,6 +94,7 @@ def _iter_tf_calls(read: pysam.AlignedSegment,
     # ann_idx must increment for ALL annotations (nuc, msp, tf) to stay
     # in sync with the flat per_ann list built by parse_aq_array.
     ann_idx = 0
+    ref_map = None
     for name, _strand_field, _qspec, intervals in parsed['raw_types']:
         for (q_start, length) in intervals:
             quals = per_ann[ann_idx] if ann_idx < len(per_ann) else []
@@ -99,7 +104,9 @@ def _iter_tf_calls(read: pysam.AlignedSegment,
             tq = int(quals[0]) if len(quals) >= 1 else 0
             if tq < min_tq:
                 continue
-            ref_start, ref_end = _ref_interval(read, q_start, length)
+            if ref_map is None:
+                ref_map = read.get_reference_positions(full_length=True)
+            ref_start, ref_end = _ref_interval_from_map(ref_map, q_start, length)
             if ref_start is None:
                 continue
             yield ref_start, ref_end, strand, tq

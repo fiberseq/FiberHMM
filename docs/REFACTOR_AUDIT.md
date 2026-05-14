@@ -81,6 +81,7 @@ Date: 2026-05-07
 - Reused the shared read-filter policy in the legacy chunked apply loop and removed its unused write counter, preserving mode-equivalence coverage while adding the same `None` read-length guard used by streaming paths.
 - Reused the shared read-filter policy for owned reads in apply and fused region BAM workers while preserving pre-ownership pass-through behavior for unmapped and secondary/supplementary reads.
 - Deferred dispatcher-side model loading for streaming, region-parallel, and legacy multi-core model-path runs so worker initializers own model loading; legacy single-core dispatch still loads the model directly before processing.
+- Made `fiberhmm-consensus-tfs` build each read's query-to-reference position map at most once while extracting TF calls, with direct coverage for repeated annotations, quality-filtered skips, insertion-only calls, and malformed MA tags.
 
 ## Current Verification
 
@@ -325,6 +326,13 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 378 passed, 26 deselected in 11.45s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.18s.
+- `python -m ruff check fiberhmm/cli/consensus_tfs.py tests/test_consensus_tfs.py`: passed.
+- `python -m compileall -q fiberhmm/cli/consensus_tfs.py tests/test_consensus_tfs.py`: passed.
+- `python -m pytest tests/test_consensus_tfs.py tests/test_tf_recaller.py`: 27 passed in 1.34s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 382 passed, 26 deselected in 12.31s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.52s.
 
 ## Current Shape
 
