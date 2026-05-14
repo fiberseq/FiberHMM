@@ -6,6 +6,7 @@ from concurrent.futures import Future
 
 import pytest
 
+import fiberhmm.inference.legacy_pipeline as legacy_pipeline
 import fiberhmm.inference.mp_context as mp_context
 import fiberhmm.inference.parallel as parallel
 import fiberhmm.inference.region_pipeline as region_pipeline
@@ -42,6 +43,11 @@ def test_worker_chunk_result_coerces_legacy_lists():
 def test_parallel_reexports_multiprocessing_context():
     assert parallel._select_mp_context is mp_context._select_mp_context
     assert parallel._MP_CONTEXT is mp_context._MP_CONTEXT
+
+
+def test_parallel_reexports_legacy_pipeline_entry_points():
+    assert parallel._process_and_write_chunk is legacy_pipeline._process_and_write_chunk
+    assert parallel._process_bam_legacy_pipeline is legacy_pipeline._process_bam_legacy_pipeline
 
 
 def test_parallel_reexports_streaming_worker_entry_points():

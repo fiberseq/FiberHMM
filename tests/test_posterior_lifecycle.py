@@ -2,7 +2,7 @@
 
 import pytest
 
-from fiberhmm.inference import parallel, streaming_pipeline
+from fiberhmm.inference import legacy_pipeline, parallel, streaming_pipeline
 from fiberhmm.posteriors import hdf5_backend
 
 
@@ -20,8 +20,8 @@ def _install_fake_posterior_writer(monkeypatch):
             self.close_count += 1
             return 0, 0.0
 
-    monkeypatch.setattr(parallel, "HAS_POSTERIOR_WRITER", True)
-    monkeypatch.setattr(parallel, "PosteriorWriter", FakePosteriorWriter, raising=False)
+    monkeypatch.setattr(legacy_pipeline, "HAS_POSTERIOR_WRITER", True)
+    monkeypatch.setattr(legacy_pipeline, "PosteriorWriter", FakePosteriorWriter, raising=False)
     monkeypatch.setattr(streaming_pipeline, "HAS_POSTERIOR_WRITER", True)
     monkeypatch.setattr(streaming_pipeline, "PosteriorWriter", FakePosteriorWriter, raising=False)
     return instances
@@ -72,7 +72,7 @@ def test_legacy_posterior_writer_closes_when_chunk_processing_fails(
     def fail_process_chunk(*args, **kwargs):
         raise RuntimeError("chunk failed")
 
-    monkeypatch.setattr(parallel, "_process_and_write_chunk", fail_process_chunk)
+    monkeypatch.setattr(legacy_pipeline, "_process_and_write_chunk", fail_process_chunk)
 
     with pytest.raises(RuntimeError, match="chunk failed"):
         parallel.process_bam_for_footprints(
