@@ -47,8 +47,7 @@ is ambiguous to the upper end of that 30 bp range).
 from __future__ import annotations
 
 import array
-from typing import Iterable, List, Sequence, Tuple
-
+from typing import List, Sequence, Tuple
 
 TQ_SCALE = 10.0          # tq = round(LLR * TQ_SCALE); saturates at LLR=25.5 nats
 EDGE_AMBIGUITY_SAT = 30  # bp; el/er = 0 at ambiguity >= this
@@ -85,14 +84,14 @@ def format_ma_tag(read_length: int,
     """
     parts = [str(int(read_length))]
     if nuc_intervals:
-        nucs = ','.join(f'{int(s) + 1}-{int(l)}' for s, l in nuc_intervals)
+        nucs = ','.join(f'{int(s) + 1}-{int(end)}' for s, end in nuc_intervals)
         parts.append(f'nuc+{nuc_qual_spec}:{nucs}' if nuc_qual_spec
                      else f'nuc+:{nucs}')
     if msp_intervals:
-        msps = ','.join(f'{int(s) + 1}-{int(l)}' for s, l in msp_intervals)
+        msps = ','.join(f'{int(s) + 1}-{int(end)}' for s, end in msp_intervals)
         parts.append(f'msp+:{msps}')
     if tf_intervals:
-        tfs = ','.join(f'{int(s) + 1}-{int(l)}' for s, l in tf_intervals)
+        tfs = ','.join(f'{int(s) + 1}-{int(end)}' for s, end in tf_intervals)
         parts.append(f'tf+{tf_qual_spec}:{tfs}' if tf_qual_spec
                      else f'tf+:{tfs}')
     return ';'.join(parts)
@@ -185,13 +184,17 @@ def parse_aq_array(aq, qual_spec_per_type: Sequence[str],
     """
     result: List[List[int]] = []
     idx = 0
-    aq_list = list(aq) if aq is not None else []
+    aq_values = aq if aq is not None else ()
+    if not (hasattr(aq_values, "__len__") and hasattr(aq_values, "__getitem__")):
+        aq_values = tuple(aq_values)
+    aq_len = len(aq_values)
     for spec, n in zip(qual_spec_per_type, n_annotations_per_type):
         n_q = len(spec)
         for _ in range(n):
             if n_q == 0:
                 result.append([])
             else:
-                result.append(aq_list[idx:idx + n_q])
+                end = min(idx + n_q, aq_len)
+                result.append([int(aq_values[i]) for i in range(idx, end)])
                 idx += n_q
     return result

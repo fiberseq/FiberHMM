@@ -20,21 +20,21 @@ Features:
 - Supports pacbio-fiber, nanopore-fiber, and daf modes
 """
 
-import pandas as pd
-import numpy as np
 import argparse
-import sys
 import os
 from collections import defaultdict
-from tqdm import tqdm
-from typing import Dict, Set, Tuple, List
+from typing import Dict, List, Tuple
+
+import numpy as np
+import pandas as pd
 import pysam
+from tqdm import tqdm
 
 # Package imports
 from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
 from fiberhmm.probabilities.context_counter import ContextCounter
-from fiberhmm.probabilities.utils import detect_strand_and_base, setup_output_dirs, get_base_name
 from fiberhmm.probabilities.stats import generate_probability_stats
+from fiberhmm.probabilities.utils import detect_strand_and_base
 
 
 def parse_args():
@@ -226,10 +226,10 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
 
     # Print filter stats in verbose mode
     if verbose:
-        print(f"\n    Filter Statistics:")
+        print("\n    Filter Statistics:")
         print(f"      Total scanned:      {filter_stats['scanned']:>10,}")
         print(f"      Passed all filters: {filter_stats['processed']:>10,} ({100*filter_stats['processed']/max(1,filter_stats['scanned']):.1f}%)")
-        print(f"      ─────────────────────────────────")
+        print("      ─────────────────────────────────")
         print(f"      Unmapped:           {filter_stats['unmapped']:>10,}")
         print(f"      Secondary:          {filter_stats['secondary']:>10,}")
         print(f"      Supplementary:      {filter_stats['supplementary']:>10,}")
@@ -241,10 +241,10 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
 
     # Print MM tag diagnostics for daf mode (to show C vs G strand detection)
     if mode == 'daf':
-        print(f"\n    MM tag modification types found:")
+        print("\n    MM tag modification types found:")
         for tag_type, count in sorted(mm_tag_types.items(), key=lambda x: -x[1]):
             print(f"      {tag_type}: {count:,}")
-        print(f"\n    Strand assignments:")
+        print("\n    Strand assignments:")
         for assignment, count in sorted(strand_assignments.items(), key=lambda x: -x[1]):
             print(f"      {assignment}: {count:,}")
 
@@ -325,7 +325,7 @@ def main():
               f"({2*min(args.context_sizes) + 1}-mer to {2*max(args.context_sizes) + 1}-mer)")
     print(f"Max reads per sample: {args.max_reads if args.max_reads > 0 else 'all'}")
 
-    print(f"\nFilter thresholds:")
+    print("\nFilter thresholds:")
     print(f"  Min MAPQ:           {args.min_mapq}")
     print(f"  Min read length:    {args.min_read_length} bp")
     print(f"  Edge trim:          {args.edge_trim} bp")
@@ -377,10 +377,10 @@ def main():
     print("Results Summary")
     print("=" * 60)
 
-    print(f"\nAccessible (naked DNA):")
+    print("\nAccessible (naked DNA):")
     print(f"  Reads processed: {accessible_reads:,} (scanned {accessible_scanned:,}, "
           f"{100*accessible_reads/max(1,accessible_scanned):.1f}% pass rate)")
-    print(f"Inaccessible (native):")
+    print("Inaccessible (native):")
     print(f"  Reads processed: {inaccessible_reads:,} (scanned {inaccessible_scanned:,}, "
           f"{100*inaccessible_reads/max(1,inaccessible_scanned):.1f}% pass rate)")
 
@@ -389,13 +389,13 @@ def main():
         inacc = inaccessible_counters[base]
 
         print(f"\n{base}-centered contexts:")
-        print(f"  Accessible:")
+        print("  Accessible:")
         print(f"    Positions: {acc.total_positions:,}")
         print(f"    Modified: {acc.total_modified:,}")
         print(f"    Rate: {acc.total_modified / max(1, acc.total_positions):.4f}")
         print(f"    Unique contexts: {len(acc.counts):,}")
 
-        print(f"  Inaccessible:")
+        print("  Inaccessible:")
         print(f"    Positions: {inacc.total_positions:,}")
         print(f"    Modified: {inacc.total_modified:,}")
         print(f"    Rate: {inacc.total_modified / max(1, inacc.total_positions):.4f}")

@@ -7,35 +7,91 @@ Tests cover:
 - DAF strand detection
 - Sequence encoding functions
 """
-import pytest
-import numpy as np
 import os
 import sys
 
+import numpy as np
+import pytest
+
 # Try package imports first, fall back to flat imports
 try:
+    import fiberhmm.core.bam_reader as bam_reader
     from fiberhmm.core.bam_reader import (
+        HEXAMER_LOOKUP_A,
         ContextEncoder,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
-        parse_mm_tag_query_positions,
         detect_daf_strand,
         encode_from_query_sequence,
-        HEXAMER_LOOKUP_A,
-        NON_TARGET_CODE,
+        parse_mm_tag_query_positions,
     )
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+    import bam_reader as bam_reader
     from bam_reader import (
+        HEXAMER_LOOKUP_A,
         ContextEncoder,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
-        parse_mm_tag_query_positions,
         detect_daf_strand,
         encode_from_query_sequence,
-        HEXAMER_LOOKUP_A,
-        NON_TARGET_CODE,
+        parse_mm_tag_query_positions,
     )
+
+
+def test_read_bam_keeps_raw_ml_container_for_manual_parser(monkeypatch):
+    import array as pyarray
+
+    raw_ml = pyarray.array('B', [255])
+
+    class FakeRead:
+        is_unmapped = False
+        is_secondary = False
+        is_supplementary = False
+        mapping_quality = 60
+        query_sequence = 'A' * 20
+        reference_start = 0
+        reference_end = 20
+        query_name = 'read1'
+        reference_name = 'chr1'
+        is_reverse = False
+
+        def has_tag(self, tag):
+            return tag in {'MM', 'ML'}
+
+        def get_tag(self, tag):
+            if tag == 'MM':
+                return 'A+a,0;'
+            if tag == 'ML':
+                return raw_ml
+            raise KeyError(tag)
+
+    class FakeBam:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def fetch(self, region=None):
+            return iter([FakeRead()])
+
+    captured = {}
+
+    def fake_parse(mm_tag, ml_tag, sequence, is_reverse, prob_threshold, mode):
+        captured['ml_tag'] = ml_tag
+        return {0}
+
+    monkeypatch.setattr(bam_reader.pysam, 'AlignmentFile', lambda *args, **kwargs: FakeBam())
+    monkeypatch.setattr(bam_reader, 'get_modified_positions_pysam', lambda *args, **kwargs: set())
+    monkeypatch.setattr(bam_reader, 'get_reference_positions', lambda read: [])
+    monkeypatch.setattr(bam_reader, 'parse_mm_tag_query_positions', fake_parse)
+
+    reads = list(bam_reader.read_bam('fake.bam', min_mapq=0, min_read_length=0))
+
+    assert len(reads) == 1
+    assert reads[0].m6a_query_positions == {0}
+    assert captured['ml_tag'] is raw_ml
 
 
 class TestContextEncoder:
@@ -346,6 +402,80 @@ class TestEncodingConsistency:
 
         # Same keys and values
         assert lookup1 == lookup2
+
+    @pytest.mark.parametrize(
+        ("mode", "is_reverse"),
+        [
+            ("pacbio-fiber", False),
+            ("nanopore-fiber", False),
+            ("nanopore-fiber", True),
+        ],
+    )
+    def test_m6a_numba_fast_path_matches_vectorized(self, monkeypatch, mode, is_reverse):
+        """The m6A single-pass encoder must match the vectorized fallback."""
+        sequence = "ACGTCCGTAAGGTTCCGGAANACGTCCGTAAGGTTCCGGAA" * 3
+        target_base = "T" if mode == "nanopore-fiber" and is_reverse else "A"
+        mod_positions = {
+            i
+            for i, base in enumerate(sequence)
+            if base == target_base and 6 <= i < len(sequence) - 6 and i % 4 == 0
+        }
+
+        monkeypatch.setattr(bam_reader, "_HAS_NUMBA", False)
+        expected = bam_reader.encode_from_query_sequence(
+            sequence,
+            mod_positions,
+            edge_trim=5,
+            mode=mode,
+            strand=".",
+            context_size=3,
+            is_reverse=is_reverse,
+        )
+
+        monkeypatch.setattr(bam_reader, "_HAS_NUMBA", True)
+        actual = bam_reader.encode_from_query_sequence(
+            sequence,
+            mod_positions,
+            edge_trim=5,
+            mode=mode,
+            strand=".",
+            context_size=3,
+            is_reverse=is_reverse,
+        )
+
+        np.testing.assert_array_equal(actual, expected)
+
+    @pytest.mark.parametrize(("strand", "deam_base"), [("+", "T"), ("-", "A")])
+    def test_daf_numba_fast_path_matches_vectorized(self, monkeypatch, strand, deam_base):
+        """The DAF single-pass encoder must match the vectorized fallback."""
+        sequence = "ACGTCCGTAAGGTTCCGGAANCGTCCGTAAGGTTCCGGAA" * 3
+        mod_positions = {
+            i
+            for i, base in enumerate(sequence)
+            if base == deam_base and 6 <= i < len(sequence) - 6 and i % 3 == 0
+        }
+
+        monkeypatch.setattr(bam_reader, "_HAS_NUMBA", False)
+        expected = bam_reader.encode_from_query_sequence(
+            sequence,
+            mod_positions,
+            edge_trim=5,
+            mode="daf",
+            strand=strand,
+            context_size=3,
+        )
+
+        monkeypatch.setattr(bam_reader, "_HAS_NUMBA", True)
+        actual = bam_reader.encode_from_query_sequence(
+            sequence,
+            mod_positions,
+            edge_trim=5,
+            mode="daf",
+            strand=strand,
+            context_size=3,
+        )
+
+        np.testing.assert_array_equal(actual, expected)
 
 
 class TestNanoporeReverseStrand:

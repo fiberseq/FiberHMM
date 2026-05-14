@@ -2,8 +2,9 @@
 pysam threading benchmarks: impact of htslib decompression threads.
 """
 import time
-import pytest
+
 import pysam
+import pytest
 
 pytestmark = pytest.mark.benchmark
 

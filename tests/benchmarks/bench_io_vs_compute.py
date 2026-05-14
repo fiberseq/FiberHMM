@@ -2,9 +2,9 @@
 I/O vs compute breakdown: identify bottlenecks.
 """
 import time
-import pytest
+
 import pysam
-import numpy as np
+import pytest
 
 pytestmark = pytest.mark.benchmark
 
@@ -19,8 +19,8 @@ class TestIOvsCompute:
         2. HMM compute only (CPU bound)
         3. Full pipeline
         """
+        from fiberhmm.core.model_io import freeze_model_for_inference, load_model
         from fiberhmm.inference.engine import _extract_fiber_read_from_pysam, _process_single_read
-        from fiberhmm.core.model_io import load_model
 
         # Step 1: Read-only timing (iterate + extract fiber reads)
         start = time.perf_counter()
@@ -35,7 +35,7 @@ class TestIOvsCompute:
         read_time = time.perf_counter() - start
 
         # Step 2: Compute-only timing (HMM inference on cached reads)
-        model = load_model(bench_model_path)
+        model = freeze_model_for_inference(load_model(bench_model_path))
         start = time.perf_counter()
         for fr in fiber_reads:
             _process_single_read(
@@ -70,8 +70,8 @@ class TestSlowIOSimulation:
 
         This test measures the components and reports the theoretical advantage.
         """
+        from fiberhmm.core.model_io import freeze_model_for_inference, load_model
         from fiberhmm.inference.engine import _extract_fiber_read_from_pysam, _process_single_read
-        from fiberhmm.core.model_io import load_model
 
         # Measure read speed
         start = time.perf_counter()
@@ -85,7 +85,7 @@ class TestSlowIOSimulation:
         io_time = time.perf_counter() - start
 
         # Measure compute speed (sample)
-        model = load_model(bench_model_path)
+        model = freeze_model_for_inference(load_model(bench_model_path))
         sample_size = min(100, n_reads)
         fiber_reads = []
         with pysam.AlignmentFile(bench_bam_medium, "rb") as bam:

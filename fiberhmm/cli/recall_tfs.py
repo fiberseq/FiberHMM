@@ -40,16 +40,12 @@ Examples:
 import argparse
 import json
 import multiprocessing as mp
-import os
 import sys
 from collections import deque
-from typing import Iterable, List, Optional, Tuple
 
-import numpy as np
 import pysam
 
 from fiberhmm.core.model_io import load_model_with_metadata
-from fiberhmm.models import SUPPORTED_ENZYMES, get_model_path as _get_bundled_model
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
     HAS_NUMBA,
@@ -59,12 +55,12 @@ from fiberhmm.inference.tf_recaller import (
     write_ma_tags,
 )
 
-
 # ---------------------------------------------------------------------------
 # Per-worker global state (set by the initializer; avoids repickling arrays)
 # ---------------------------------------------------------------------------
 
 _WORKER = {}
+_STATS_KEYS = ('v2', 'tf', 'demoted', 'failed')
 
 
 def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold):
@@ -94,12 +90,13 @@ class _PayloadRead:
     to_string()/fromstring() calls per read (two in the main process, two in
     the worker) and the associated MM/ML base64 encoding overhead.
     """
-    __slots__ = ('query_sequence', 'is_reverse', '_tags')
+    __slots__ = ('query_sequence', 'is_reverse', '_tags', '_daf_md_result')
 
-    def __init__(self, seq, is_reverse, tags):
+    def __init__(self, seq, is_reverse, tags, daf_md_result=None):
         self.query_sequence = seq
         self.is_reverse = is_reverse
         self._tags = tags
+        self._daf_md_result = daf_md_result
 
     def has_tag(self, t):
         return t in self._tags
@@ -108,7 +105,7 @@ class _PayloadRead:
         return self._tags[t]
 
 
-def _make_payload(read) -> dict:
+def _make_payload(read, mode=None) -> dict:
     """Extract only the tag data workers need from a pysam read.
 
     Runs in the main process.  The resulting dict is ~5–30 KB (sequence
@@ -131,21 +128,24 @@ def _make_payload(read) -> dict:
                     val = bytes(val)
                 except TypeError:
                     pass  # scalar or already bytes
-            else:
-                # MM/st are strings, ns/nl/as/al/nq are array.array.
-                # CRITICAL: do NOT list() a string — list('A+a,0,5;...') gives
-                # ['A','+','a',',','0',...] and breaks parse_mm_tag_query_positions.
-                if not isinstance(val, (str, bytes)):
-                    try:
-                        val = list(val)
-                    except TypeError:
-                        pass  # scalar — keep as-is
             tags[t] = val
-    return {
+
+    payload = {
         'seq': read.query_sequence,
         'is_reverse': read.is_reverse,
         'tags': tags,
     }
+    if mode == 'daf' and read.query_sequence:
+        from fiberhmm.core.bam_reader import has_iupac_encoding
+        if (
+            not has_iupac_encoding(read.query_sequence)
+            and not (('MM' in tags or 'Mm' in tags) and ('ML' in tags or 'Ml' in tags))
+        ):
+            from fiberhmm.daf.encoder import get_daf_positions
+            md_result = get_daf_positions(read)
+            if md_result is not None:
+                payload['_daf_md_result'] = md_result
+    return payload
 
 
 def _process_payload_record(payload) -> tuple:
@@ -156,16 +156,21 @@ def _process_payload_record(payload) -> tuple:
     write_ma_tags() is intentionally left to the main process so the
     serialized return value stays small (<1 KB for typical call counts).
     """
-    read = _PayloadRead(payload['seq'], payload['is_reverse'], payload['tags'])
+    read = _PayloadRead(
+        payload['seq'],
+        payload['is_reverse'],
+        payload['tags'],
+        payload.get('_daf_md_result'),
+    )
     tags = payload['tags']
-    stats = {'v2': 0, 'tf': 0, 'demoted': 0}
+    stats = {key: 0 for key in _STATS_KEYS}
     unify_threshold = _WORKER['unify_threshold']
 
     has_ns = 'ns' in tags and 'nl' in tags
     if has_ns:
         stats['v2'] = 1
         nl_list = tags['nl']
-        v2_short_count = sum(1 for l in nl_list if 0 < int(l) < unify_threshold)
+        v2_short_count = sum(1 for length in nl_list if 0 < int(length) < unify_threshold)
         v2_nq = tags.get('nq', None)
     else:
         v2_short_count = 0
@@ -180,7 +185,7 @@ def _process_payload_record(payload) -> tuple:
         unify_threshold=unify_threshold,
     )
     stats['tf'] = len(tf_calls)
-    survived_short = sum(1 for _, l in kept_nucs if l < unify_threshold)
+    survived_short = sum(1 for _, length in kept_nucs if length < unify_threshold)
     stats['demoted'] = max(0, v2_short_count - survived_short)
 
     nq_for_kept = None
@@ -188,10 +193,10 @@ def _process_payload_record(payload) -> tuple:
         try:
             ns_old = tags['ns']
             nl_old = tags['nl']
-            old_to_nq = {(int(s), int(l)): int(v2_nq[i])
-                         for i, (s, l) in enumerate(zip(ns_old, nl_old))
+            old_to_nq = {(int(s), int(length)): int(v2_nq[i])
+                         for i, (s, length) in enumerate(zip(ns_old, nl_old))
                          if i < len(v2_nq)}
-            nq_for_kept = [old_to_nq.get((s, l), 0) for s, l in kept_nucs]
+            nq_for_kept = [old_to_nq.get((s, length), 0) for s, length in kept_nucs]
         except Exception:
             nq_for_kept = None
 
@@ -201,12 +206,17 @@ def _process_payload_record(payload) -> tuple:
 def _process_payload_chunk(payloads):
     """Worker: process a list of compact payloads."""
     out = []
-    total = {'v2': 0, 'tf': 0, 'demoted': 0}
+    total = {key: 0 for key in _STATS_KEYS}
     for payload in payloads:
-        result, stats = _process_payload_record(payload)
+        try:
+            result, stats = _process_payload_record(payload)
+        except Exception:
+            result = None
+            stats = {key: 0 for key in _STATS_KEYS}
+            stats['failed'] = 1
         out.append(result)
-        for k in total:
-            total[k] += stats[k]
+        for key in _STATS_KEYS:
+            total[key] += stats[key]
     return out, total
 
 
@@ -231,18 +241,25 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
                         also_write_legacy, downstream_compat, max_reads):
     """Single-threaded path.  No IPC — process reads directly."""
     _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold)
-    n_reads = n_v2 = n_tf = n_demoted = 0
+    n_reads = n_v2 = n_tf = n_demoted = n_failed = 0
     for read in bam_in:
         if max_reads and n_reads >= max_reads:
             break
-        result, stats = _process_payload_record(_make_payload(read))
-        _apply_result(read, result, also_write_legacy, downstream_compat)
+        try:
+            result, stats = _process_payload_record(_make_payload(read, mode))
+        except Exception:
+            result = None
+            stats = {key: 0 for key in _STATS_KEYS}
+            stats['failed'] = 1
+        if result is not None:
+            _apply_result(read, result, also_write_legacy, downstream_compat)
         bam_out.write(read)
         n_reads += 1
         n_v2 += stats['v2']
         n_tf += stats['tf']
         n_demoted += stats['demoted']
-    return n_reads, n_v2, n_tf, n_demoted
+        n_failed += stats['failed']
+    return n_reads, n_v2, n_tf, n_demoted, n_failed
 
 
 def _parallel_loop(bam_in, bam_out, _header_text,
@@ -265,18 +282,21 @@ def _parallel_loop(bam_in, bam_out, _header_text,
     pending: deque = deque()     # deque of (reads_chunk, AsyncResult)
 
     n_reads = n_v2 = n_tf = n_demoted = 0
+    n_failed = 0
 
     def _drain_one():
-        nonlocal n_reads, n_v2, n_tf, n_demoted
+        nonlocal n_reads, n_v2, n_tf, n_demoted, n_failed
         reads_chunk, fut = pending.popleft()
         out_results, stats = fut.get()   # blocks until result is ready
         for read, result in zip(reads_chunk, out_results):
-            _apply_result(read, result, also_write_legacy, downstream_compat)
+            if result is not None:
+                _apply_result(read, result, also_write_legacy, downstream_compat)
             bam_out.write(read)
         n_reads += len(reads_chunk)
         n_v2 += stats['v2']
         n_tf += stats['tf']
         n_demoted += stats['demoted']
+        n_failed += stats['failed']
 
     with mp.Pool(
         processes=n_cores,
@@ -291,7 +311,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
             if max_reads and n >= max_reads:
                 break
             buf_reads.append(read)
-            buf_payloads.append(_make_payload(read))
+            buf_payloads.append(_make_payload(read, mode))
             n += 1
 
             if len(buf_reads) >= chunk_size:
@@ -312,7 +332,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         while pending:
             _drain_one()
 
-    return n_reads, n_v2, n_tf, n_demoted
+    return n_reads, n_v2, n_tf, n_demoted, n_failed
 
 
 def parse_args():
@@ -482,38 +502,47 @@ def main():
     bam_in = pysam.AlignmentFile(args.in_bam, 'rb',
                                   check_sq=False,
                                   threads=args.io_threads)
-    bam_out = pysam.AlignmentFile(args.out_bam, 'wb',
-                                   template=bam_in,
-                                   threads=args.io_threads)
-    header_text = str(bam_in.header)
+    bam_out = None
+    try:
+        bam_out = pysam.AlignmentFile(args.out_bam, 'wb',
+                                       template=bam_in,
+                                       threads=args.io_threads)
+        header_text = str(bam_in.header)
 
-    # Compat mode always writes legacy tags (TFs live in ns/nl there).
-    also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
+        # Compat mode always writes legacy tags (TFs live in ns/nl there).
+        also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
 
-    if n_cores == 1:
-        n_reads, n_v2, n_tf, n_demoted = _single_thread_loop(
-            bam_in, bam_out, header_text,
-            llr_hit, llr_miss, mode, k,
-            min_llr, args.min_opps, args.unify_threshold,
-            also_write_legacy, args.downstream_compat, args.max_reads,
-        )
-    else:
-        n_reads, n_v2, n_tf, n_demoted = _parallel_loop(
-            bam_in, bam_out, header_text,
-            llr_hit, llr_miss, mode, k,
-            min_llr, args.min_opps, args.unify_threshold,
-            also_write_legacy, args.downstream_compat, args.max_reads,
-            n_cores, args.chunk_size,
-        )
-
-    bam_in.close()
-    bam_out.close()
+        if n_cores == 1:
+            n_reads, n_v2, n_tf, n_demoted, n_failed = _single_thread_loop(
+                bam_in, bam_out, header_text,
+                llr_hit, llr_miss, mode, k,
+                min_llr, args.min_opps, args.unify_threshold,
+                also_write_legacy, args.downstream_compat, args.max_reads,
+            )
+        else:
+            n_reads, n_v2, n_tf, n_demoted, n_failed = _parallel_loop(
+                bam_in, bam_out, header_text,
+                llr_hit, llr_miss, mode, k,
+                min_llr, args.min_opps, args.unify_threshold,
+                also_write_legacy, args.downstream_compat, args.max_reads,
+                n_cores, args.chunk_size,
+            )
+    finally:
+        bam_in.close()
+        if bam_out is not None:
+            bam_out.close()
 
     print(
         f"[recall_tfs] processed {n_reads} reads; {n_v2} carried v2 tags; "
         f"{n_tf} TF calls emitted; {n_demoted} v2 short nucs demoted to tf+",
         file=sys.stderr,
     )
+    if n_failed:
+        print(
+            f"[recall_tfs] warning: {n_failed} reads passed through unchanged "
+            "after recall errors",
+            file=sys.stderr,
+        )
 
 
 if __name__ == '__main__':

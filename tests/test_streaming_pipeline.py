@@ -1,11 +1,8 @@
 """
 Correctness tests for the streaming producer-consumer pipeline.
 """
-import os
-import pytest
+
 import pysam
-import numpy as np
-import tempfile
 
 from fiberhmm.inference.parallel import process_bam_for_footprints
 
@@ -115,10 +112,10 @@ class TestStreamingBasic:
                     starts = list(read.get_tag('ns'))
                     lengths = list(read.get_tag('nl'))
                     assert len(starts) == len(lengths)
-                    for s, l in zip(starts, lengths):
+                    for s, length in zip(starts, lengths):
                         assert s >= 0
-                        assert l > 0
-                        assert s + l <= read.query_length
+                        assert length > 0
+                        assert s + length <= read.query_length
 
     def test_scores_when_requested(self, synthetic_bam_small, benchmark_model_path, tmp_path):
         """nq tags present when with_scores=True."""

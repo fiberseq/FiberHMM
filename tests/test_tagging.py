@@ -1,0 +1,73 @@
+"""Tests for shared inference tagging helpers."""
+
+from __future__ import annotations
+
+import array as pyarray
+
+import numpy as np
+
+from fiberhmm.inference.tagging import scores_to_u8, set_legacy_apply_tags
+
+
+class RecordingRead:
+    def __init__(self):
+        self.tags = {}
+
+    def set_tag(self, tag, value, value_type=None):
+        if value is None:
+            self.tags.pop(tag, None)
+        else:
+            self.tags[tag] = value
+
+    def has_tag(self, tag):
+        return tag in self.tags
+
+
+def test_scores_to_u8_clips_and_returns_python_ints():
+    values = scores_to_u8(np.asarray([-1.0, 0.0, 0.5, 1.0, 2.0]))
+
+    assert values == [0, 0, 127, 255, 255]
+    assert all(type(value) is int for value in values)
+
+
+def test_set_legacy_apply_tags_writes_unsigned_bam_arrays():
+    read = RecordingRead()
+    result = {
+        "ns": np.asarray([10, 50], dtype=np.int32),
+        "nl": np.asarray([30, 40], dtype=np.int32),
+        "ns_scores": np.asarray([0.0, 1.0]),
+        "as": np.asarray([100], dtype=np.int64),
+        "al": np.asarray([200], dtype=np.int64),
+        "as_scores": np.asarray([0.5]),
+    }
+
+    set_legacy_apply_tags(read, result, with_scores=True, write_msps=True)
+
+    for tag in ("ns", "nl", "as", "al"):
+        assert isinstance(read.tags[tag], pyarray.array)
+        assert read.tags[tag].typecode == "I"
+    assert read.tags["ns"].tolist() == [10, 50]
+    assert read.tags["nl"].tolist() == [30, 40]
+    assert read.tags["as"].tolist() == [100]
+    assert read.tags["al"].tolist() == [200]
+    assert read.tags["nq"] == [0, 255]
+    assert read.tags["aq"] == [127]
+
+
+def test_set_legacy_apply_tags_clears_stale_scores_when_scores_not_written():
+    read = RecordingRead()
+    read.tags["nq"] = [1]
+    read.tags["aq"] = [2]
+    result = {
+        "ns": np.asarray([10], dtype=np.int32),
+        "nl": np.asarray([30], dtype=np.int32),
+        "ns_scores": None,
+        "as": np.asarray([100], dtype=np.int32),
+        "al": np.asarray([200], dtype=np.int32),
+        "as_scores": None,
+    }
+
+    set_legacy_apply_tags(read, result, with_scores=False, write_msps=True)
+
+    assert "nq" not in read.tags
+    assert "aq" not in read.tags

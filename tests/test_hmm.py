@@ -8,25 +8,25 @@ Tests cover:
 - Model serialization (JSON, NPZ, pickle)
 - State normalization
 """
-import pytest
-import numpy as np
-import tempfile
 import os
 import sys
+
+import numpy as np
+import pytest
 
 # Try package imports first, fall back to flat imports
 try:
     from fiberhmm.core.hmm import FiberHMM, _logsumexp, _logsumexp_axis1
-    from fiberhmm.core.model_io import load_model, save_model, load_model_with_metadata
+    from fiberhmm.core.model_io import load_model, load_model_with_metadata, save_model
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
     from hmm import (
         FiberHMM,
-        load_model,
-        save_model,
-        load_model_with_metadata,
         _logsumexp,
         _logsumexp_axis1,
+        load_model,
+        load_model_with_metadata,
+        save_model,
     )
 
 
@@ -209,7 +209,7 @@ class TestStateNormalization:
         model.transmat_ = np.array([[0.9, 0.1], [0.1, 0.9]])
 
         # Normalize
-        swapped = model.normalize_states()
+        model.normalize_states()
 
         # After normalization, State 0 should have lower mean emission for methylated positions
         n_contexts = model.emissionprob_.shape[1] // 2
@@ -338,6 +338,40 @@ class TestPredictionMethods:
 
         assert np.isfinite(score)
         assert score < 0  # Log probability should be negative
+
+    def test_predict_recomputes_logs_after_in_place_mutation(self):
+        """Default predict() keeps existing public in-place mutation semantics."""
+        model = FiberHMM()
+        model.startprob_ = np.array([0.5, 0.5])
+        model.transmat_ = np.array([[0.5, 0.5], [0.5, 0.5]])
+        model.emissionprob_ = np.array([[0.9, 0.1], [0.1, 0.9]])
+        obs = np.zeros(4, dtype=np.int64)
+
+        before = model.predict(obs)
+        model.emissionprob_[:] = np.array([[0.1, 0.9], [0.9, 0.1]])
+        after = model.predict(obs)
+
+        np.testing.assert_array_equal(before, np.zeros(4, dtype=np.int8))
+        np.testing.assert_array_equal(after, np.ones(4, dtype=np.int8))
+
+    def test_freeze_log_probs_is_explicit_read_only_cache(self):
+        """Frozen logs stay stable until explicitly unfrozen."""
+        model = FiberHMM()
+        model.startprob_ = np.array([0.5, 0.5])
+        model.transmat_ = np.array([[0.5, 0.5], [0.5, 0.5]])
+        model.emissionprob_ = np.array([[0.9, 0.1], [0.1, 0.9]])
+        obs = np.zeros(4, dtype=np.int64)
+
+        model.freeze_log_probs()
+        before = model.predict(obs)
+        model.emissionprob_[:] = np.array([[0.1, 0.9], [0.9, 0.1]])
+        frozen = model.predict(obs)
+        model.unfreeze_log_probs()
+        after = model.predict(obs)
+
+        np.testing.assert_array_equal(before, np.zeros(4, dtype=np.int8))
+        np.testing.assert_array_equal(frozen, before)
+        np.testing.assert_array_equal(after, np.ones(4, dtype=np.int8))
 
 
 class TestLogsumexp:

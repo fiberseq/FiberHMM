@@ -1,12 +1,24 @@
 """Tests for the LLR TF recaller (fiberhmm.inference.tf_recaller +
 fiberhmm.io.ma_tags).
 """
+import array
+
 import numpy as np
 import pytest
 
+from fiberhmm.inference import tf_recaller
+from fiberhmm.inference.tf_recaller import (
+    ENZYME_PRESETS,
+    N_CTX,
+    UNMETH_OFFSET,
+    TFCall,
+    build_scan_intervals,
+    call_tfs_in_interval,
+    merge_intervals,
+    write_ma_tags,
+)
 from fiberhmm.io.ma_tags import (
     EDGE_AMBIGUITY_SAT,
-    TQ_SCALE,
     ambiguity_to_edge,
     format_aq_array,
     format_ma_tag,
@@ -15,17 +27,6 @@ from fiberhmm.io.ma_tags import (
     parse_ma_tag,
     tq_to_llr,
 )
-from fiberhmm.inference.tf_recaller import (
-    ENZYME_PRESETS,
-    N_CTX,
-    TFCall,
-    UNMETH_OFFSET,
-    build_scan_intervals,
-    call_tfs_in_interval,
-    merge_intervals,
-    write_ma_tags,
-)
-
 
 # ------------------- ma_tags ---------------------------------------
 
@@ -98,12 +99,40 @@ def test_format_and_parse_ma_tag():
 
 def test_aq_layout():
     nq = [200, 180]
-    tq = [45]; el = [180]; er = [220]
+    tq = [45]
+    el = [180]
+    er = [220]
     aq = format_aq_array(nq, tq, el, er)
     # 2 bytes (nucs) + 3 bytes (tf) = 5 bytes total
     assert list(aq) == [200, 180, 45, 180, 220]
     parsed = parse_aq_array(aq, ['Q', '', 'QQQ'], [2, 0, 1])
     assert parsed == [[200], [180], [45, 180, 220]]
+
+
+class _CountingAq:
+    def __init__(self, values):
+        self.values = values
+        self.accessed = []
+
+    def __len__(self):
+        return len(self.values)
+
+    def __getitem__(self, index):
+        self.accessed.append(index)
+        return self.values[index]
+
+
+def test_parse_aq_array_reads_only_consumed_quality_bytes():
+    aq = _CountingAq([200, 180, 45, 180, 220, 99, 88, 77])
+
+    parsed = parse_aq_array(aq, ['Q', '', 'QQQ'], [1, 2, 1])
+
+    assert parsed == [[200], [], [], [180, 45, 180]]
+    assert aq.accessed == [0, 1, 2, 3]
+
+
+def test_parse_aq_array_preserves_short_quality_arrays():
+    assert parse_aq_array([7], ['QQQ'], [1]) == [[7]]
 
 
 # ------------------- merge_intervals -------------------------------
@@ -135,9 +164,12 @@ def _make_obs(seq):
     to an obs np.ndarray."""
     arr = []
     for c in seq:
-        if c == 'h': arr.append(0)
-        elif c == 'm': arr.append(UNMETH_OFFSET)
-        else: arr.append(N_CTX)  # non-target
+        if c == 'h':
+            arr.append(0)
+        elif c == 'm':
+            arr.append(UNMETH_OFFSET)
+        else:
+            arr.append(N_CTX)  # non-target
     return np.array(arr, dtype=np.int32)
 
 
@@ -322,6 +354,29 @@ def test_compat_requires_legacy():
                       also_write_legacy=False, downstream_compat=True)
 
 
+def test_extract_modifications_keeps_raw_ml_container(monkeypatch):
+    import array as pyarray
+
+    read = _FakeRead()
+    read.query_sequence = 'A' * 20
+    read.is_reverse = False
+    raw_ml = pyarray.array('B', [255])
+    read.set_tag('MM', 'A+a,0;')
+    read.set_tag('ML', raw_ml)
+    captured = {}
+
+    def fake_parse(mm_tag, ml_tag, sequence, is_reverse, prob_threshold, mode):
+        captured['ml_tag'] = ml_tag
+        return {0}
+
+    monkeypatch.setattr(tf_recaller, 'parse_mm_tag_query_positions', fake_parse)
+
+    assert tf_recaller.extract_modifications(read, 'pacbio-fiber', 3) == (
+        {0}, '.', read.query_sequence,
+    )
+    assert captured['ml_tag'] is raw_ml
+
+
 def test_stale_nq_aq_cleared_when_refreshing_legacy_tags():
     """Regression for ft-validate panic reported by Shane Neph:
     input BAM pre-tagged by ft/modkit with ns+nl+nq (and as+al+aq) at
@@ -411,3 +466,38 @@ def test_enzyme_presets_present():
         assert ENZYME_PRESETS[enz]['emission_uplift'] == 1.0
     # DddB uses lower min_llr than Hia5 (single-strand evidence)
     assert ENZYME_PRESETS['dddb']['min_llr'] < ENZYME_PRESETS['hia5']['min_llr']
+
+
+def test_recall_read_accepts_compact_array_tag_sequences_without_modifications():
+    class FakeRead:
+        query_sequence = "A" * 300
+        is_reverse = False
+        _tags = {
+            "ns": array.array("I", [10, 200]),
+            "nl": array.array("I", [80, 120]),
+            "as": array.array("I", [0]),
+            "al": array.array("I", [50]),
+        }
+
+        def has_tag(self, tag):
+            return tag in self._tags
+
+        def get_tag(self, tag):
+            if tag not in self._tags:
+                raise KeyError(tag)
+            return self._tags[tag]
+
+    tf_calls, kept_nucs, msps = tf_recaller.recall_read(
+        FakeRead(),
+        np.zeros(N_CTX),
+        np.zeros(N_CTX),
+        mode="pacbio-fiber",
+        context_size=3,
+        min_llr=5.0,
+        min_opps=3,
+        unify_threshold=90,
+    )
+
+    assert tf_calls == []
+    assert kept_nucs == [(10, 80), (200, 120)]
+    assert msps == [(0, 50)]

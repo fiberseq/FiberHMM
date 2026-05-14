@@ -15,7 +15,6 @@ from tqdm import tqdm
 
 from fiberhmm.inference.bam_output import _sort_and_index_bam
 
-
 # CIGAR op codes (from the BAM spec) that consume reference:
 #   M=0, D=2, N=3, =7, X=8. Of these, MD describes M/=/X/D only
 #   (N = skipped reference, no MD coverage), so we exclude N when
@@ -234,10 +233,19 @@ def _aligned_pairs_from_fasta(read, ref_fasta):
     """Build (query_pos, ref_pos, ref_base) tuples using the reference FASTA."""
     chrom = read.reference_name
     pairs_no_seq = read.get_aligned_pairs()
+    ref_start = read.reference_start
+    ref_end = read.reference_end
+    ref_seq = None
+    if ref_start is not None and ref_end is not None and ref_end > ref_start:
+        ref_seq = ref_fasta.fetch(chrom, ref_start, ref_end)
+
     result = []
     for query_pos, ref_pos in pairs_no_seq:
         if ref_pos is not None:
-            ref_base = ref_fasta.fetch(chrom, ref_pos, ref_pos + 1)
+            if ref_seq is not None and ref_start <= ref_pos < ref_end:
+                ref_base = ref_seq[ref_pos - ref_start]
+            else:
+                ref_base = ref_fasta.fetch(chrom, ref_pos, ref_pos + 1)
         else:
             ref_base = None
         result.append((query_pos, ref_pos, ref_base))
@@ -284,27 +292,6 @@ def process_bam_daf_encode(
     # When writing to stdout, all logging goes to stderr
     _log = sys.stderr if output_bam == "-" else sys.stderr
 
-    ref_fasta = None
-    if reference:
-        ref_fasta = pysam.FastaFile(reference)
-
-    # Open input
-    inbam = pysam.AlignmentFile(
-        input_bam, "rb", threads=io_threads, check_sq=False
-    )
-
-    # Check MD tag on the first mapped read
-    _check_md_tag(inbam, ref_fasta, _log)
-
-    # Open output — handle stdout specially
-    _output_target = output_bam
-    if output_bam == "-":
-        _output_target = os.fdopen(1, "wb", closefd=False)
-
-    outbam = pysam.AlignmentFile(
-        _output_target, "wb", header=inbam.header, threads=io_threads
-    )
-
     # Counters
     total = 0
     encoded = 0
@@ -317,15 +304,40 @@ def process_bam_daf_encode(
     start_time = time.time()
     last_progress = start_time
 
-    pbar = tqdm(
-        desc="Encoding",
-        unit=" reads",
-        file=_log,
-        mininterval=2.0,
-        disable=(output_bam == "-"),
-    )
+    ref_fasta = None
+    inbam = None
+    outbam = None
+    pbar = None
 
     try:
+        if reference:
+            ref_fasta = pysam.FastaFile(reference)
+
+        # Open input
+        inbam = pysam.AlignmentFile(
+            input_bam, "rb", threads=io_threads, check_sq=False
+        )
+
+        # Check MD tag on the first mapped read
+        _check_md_tag(inbam, ref_fasta, _log)
+
+        # Open output — handle stdout specially
+        _output_target = output_bam
+        if output_bam == "-":
+            _output_target = os.fdopen(1, "wb", closefd=False)
+
+        outbam = pysam.AlignmentFile(
+            _output_target, "wb", header=inbam.header, threads=io_threads
+        )
+
+        pbar = tqdm(
+            desc="Encoding",
+            unit=" reads",
+            file=_log,
+            mininterval=2.0,
+            disable=(output_bam == "-"),
+        )
+
         for read in inbam.fetch(until_eof=True):
             total += 1
 
@@ -397,9 +409,12 @@ def process_bam_daf_encode(
                 last_progress = now
 
     finally:
-        pbar.close()
-        outbam.close()
-        inbam.close()
+        if pbar is not None:
+            pbar.close()
+        if outbam:
+            outbam.close()
+        if inbam:
+            inbam.close()
         if ref_fasta:
             ref_fasta.close()
 
@@ -418,7 +433,7 @@ def process_bam_daf_encode(
     }
 
     print(f"\n{'=' * 60}", file=_log)
-    print(f"fiberhmm-daf-encode summary", file=_log)
+    print("fiberhmm-daf-encode summary", file=_log)
     print(f"{'=' * 60}", file=_log)
     print(f"  Total reads:       {total:>12,}", file=_log)
     print(f"  Encoded:           {encoded:>12,}", file=_log)
@@ -434,7 +449,7 @@ def process_bam_daf_encode(
 
     # Sort + index if writing to a file (not stdout)
     if output_bam != "-" and os.path.isfile(output_bam):
-        print(f"\nFinalizing output BAM...", file=_log)
+        print("\nFinalizing output BAM...", file=_log)
         _sort_and_index_bam(output_bam, verbose=True, threads=io_threads)
 
     return summary

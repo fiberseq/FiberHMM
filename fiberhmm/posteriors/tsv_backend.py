@@ -16,14 +16,26 @@ Usage:
     from fiberhmm.posteriors.tsv_backend import PosteriorsTSVWriter, tsv_to_h5
 """
 
+import argparse
+import base64
+import gzip
+import json
 import os
 import sys
-import gzip
-import base64
-import argparse
+from typing import Optional, TextIO
+
 import numpy as np
-from typing import Optional, BinaryIO, TextIO, Union
-import json
+
+
+def _open_text_file(path: str, mode: str) -> TextIO:
+    """Open plain or gzip-compressed text files with consistent settings."""
+    path = os.fspath(path)
+    if path.endswith('.gz'):
+        kwargs = {}
+        if any(flag in mode for flag in ('w', 'a', 'x')):
+            kwargs['compresslevel'] = 4
+        return gzip.open(path, mode, **kwargs)
+    return open(path, mode)
 
 
 class PosteriorsTSVWriter:
@@ -53,9 +65,9 @@ class PosteriorsTSVWriter:
         if self.compress:
             if not output_path.endswith('.gz'):
                 self.output_path = output_path + '.gz'
-            self._file = gzip.open(self.output_path, 'wt', compresslevel=4)
         else:
-            self._file = open(output_path, 'w')
+            self.output_path = output_path
+        self._file = _open_text_file(self.output_path, 'wt')
 
         # Write header with metadata
         metadata = {
@@ -167,47 +179,27 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
     if verbose:
         print(f"  Scanning {tsv_path}...")
 
-    # Open input
-    if tsv_path.endswith('.gz'):
-        infile = gzip.open(tsv_path, 'rt')
-    else:
-        infile = open(tsv_path, 'r')
-
-    # Parse metadata from header
     metadata = {}
-    first_line = infile.readline()
-    if first_line.startswith('#metadata:'):
-        metadata = json.loads(first_line.split(':', 1)[1])
-
-    # Skip column header
-    for line in infile:
-        if not line.startswith('#'):
-            break
-
-    # Count fibers per chromosome
     chrom_counts = {}
     n_total = 0
 
-    # We already consumed one data line, process it
-    if line and not line.startswith('#'):
-        parts = line.strip().split('\t')
-        if len(parts) >= 2:
-            chrom = parts[1]
-            chrom_counts[chrom] = chrom_counts.get(chrom, 0) + 1
-            n_total += 1
+    with _open_text_file(tsv_path, 'rt') as infile:
+        for line in infile:
+            if line.startswith('#metadata:'):
+                metadata = json.loads(line.split(':', 1)[1])
+                continue
+            if line.startswith('#'):
+                continue
 
-    for line in infile:
-        parts = line.strip().split('\t')
-        if len(parts) >= 2:
-            chrom = parts[1]
-            chrom_counts[chrom] = chrom_counts.get(chrom, 0) + 1
-            n_total += 1
+            parts = line.strip().split('\t')
+            if len(parts) >= 2:
+                chrom = parts[1]
+                chrom_counts[chrom] = chrom_counts.get(chrom, 0) + 1
+                n_total += 1
 
-        if verbose and n_total % 500000 == 0:
-            print(f"\r    Counted {n_total:,} fibers...", end='')
-            sys.stdout.flush()
-
-    infile.close()
+                if verbose and n_total % 500000 == 0:
+                    print(f"\r    Counted {n_total:,} fibers...", end='')
+                    sys.stdout.flush()
 
     if verbose:
         print(f"\r    Found {n_total:,} fibers across {len(chrom_counts)} chromosomes")
@@ -242,20 +234,8 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
             grp.create_dataset('fiber_ends', shape=(count,), dtype=np.int32)
             grp.create_dataset('strands', shape=(count,), dtype=dt)
 
-        # Second pass: stream data into H5
-        if tsv_path.endswith('.gz'):
-            infile = gzip.open(tsv_path, 'rt')
-        else:
-            infile = open(tsv_path, 'r')
-
-        # Skip headers
-        for line in infile:
-            if not line.startswith('#'):
-                break
-
         n_written = 0
 
-        # Process first data line
         def process_line(line):
             nonlocal n_written
             parts = line.strip().split('\t')
@@ -304,19 +284,16 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
 
             n_written += 1
 
-        # Process the first line we already read
-        if line and not line.startswith('#'):
-            process_line(line)
+        with _open_text_file(tsv_path, 'rt') as infile:
+            for line in infile:
+                if line.startswith('#'):
+                    continue
 
-        # Process rest
-        for line in infile:
-            process_line(line)
+                process_line(line)
 
-            if verbose and n_written % 100000 == 0:
-                print(f"\r    Written {n_written:,} / {n_total:,} fibers...", end='')
-                sys.stdout.flush()
-
-        infile.close()
+                if verbose and n_written % 100000 == 0:
+                    print(f"\r    Written {n_written:,} / {n_total:,} fibers...", end='')
+                    sys.stdout.flush()
 
     file_size = os.path.getsize(h5_path) / (1024 * 1024)
     if verbose:
@@ -338,41 +315,29 @@ def concatenate_tsvs(input_files: list, output_path: str,
     Returns:
         Total number of fibers
     """
-    compress = output_path.endswith('.gz')
-
-    if compress:
-        outfile = gzip.open(output_path, 'wt', compresslevel=4)
-    else:
-        outfile = open(output_path, 'w')
-
     n_fibers = 0
     header_written = False
 
-    for i, inpath in enumerate(input_files):
-        if not os.path.exists(inpath):
-            continue
+    with _open_text_file(output_path, 'wt') as outfile:
+        for inpath in input_files:
+            if not os.path.exists(inpath):
+                continue
 
-        if inpath.endswith('.gz'):
-            infile = gzip.open(inpath, 'rt')
-        else:
-            infile = open(inpath, 'r')
+            with _open_text_file(inpath, 'rt') as infile:
+                for line in infile:
+                    if line.startswith('#'):
+                        # Only write header from first file
+                        if not header_written:
+                            outfile.write(line)
+                    else:
+                        outfile.write(line)
+                        n_fibers += 1
 
-        for line in infile:
-            if line.startswith('#'):
-                # Only write header from first file
-                if not header_written:
-                    outfile.write(line)
-            else:
-                outfile.write(line)
-                n_fibers += 1
+            header_written = True
 
-        infile.close()
-        header_written = True
+            if delete_inputs:
+                os.remove(inpath)
 
-        if delete_inputs:
-            os.remove(inpath)
-
-    outfile.close()
     return n_fibers
 
 

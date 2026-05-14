@@ -1,14 +1,15 @@
 """
 Tests for fiberhmm.inference.engine module.
 """
-import pytest
 import numpy as np
+import pytest
 
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.inference.engine import (
+    _extract_footprints_from_states,
+    _footprint_runs,
     predict_footprints,
     predict_footprints_and_msps,
-    _extract_footprints_from_states,
 )
 
 
@@ -110,6 +111,27 @@ class TestPredictFootprintsAndMsps:
 
 
 class TestExtractFootprintsFromStates:
+    @pytest.mark.parametrize(
+        "states",
+        [
+            np.array([], dtype=np.int32),
+            np.ones(5, dtype=np.int32),
+            np.zeros(5, dtype=np.int32),
+            np.array([1, 0, 0, 1, 0, 1], dtype=np.int32),
+            np.array([0, 1, 0, 0, 1, 0], dtype=np.int64),
+        ],
+    )
+    def test_footprint_runs_matches_padded_diff_oracle(self, states):
+        states_padded = np.concatenate([[1], states, [1]])
+        diff = np.diff(states_padded)
+        expected_starts = np.where(diff == -1)[0]
+        expected_ends = np.where(diff == 1)[0]
+
+        starts, ends = _footprint_runs(states)
+
+        np.testing.assert_array_equal(starts, expected_starts)
+        np.testing.assert_array_equal(ends, expected_ends)
+
     def test_empty_states(self):
         result = _extract_footprints_from_states(np.array([]), None, 147, False)
         assert len(result['footprint_starts']) == 0
