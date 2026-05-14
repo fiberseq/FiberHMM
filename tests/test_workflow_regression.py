@@ -5,9 +5,51 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pysam
+import pytest
 
 from fiberhmm.cli import extract_tags, recall_tfs
 from fiberhmm.inference.parallel import process_bam_for_footprints
+from fiberhmm.models import get_model_path
+
+WORKFLOW_READ_LENGTH = 600
+PROTECTED_START = 250
+PROTECTED_END = 290
+
+
+WORKFLOW_CASES = [
+    pytest.param(
+        "hia5_pacbio",
+        "m6a",
+        "hia5",
+        "pacbio",
+        "pacbio-fiber",
+        id="hia5-pacbio",
+    ),
+    pytest.param(
+        "hia5_nanopore",
+        "m6a",
+        "hia5",
+        "nanopore",
+        "nanopore-fiber",
+        id="hia5-nanopore",
+    ),
+    pytest.param(
+        "dddb",
+        "daf_iupac",
+        "dddb",
+        None,
+        "daf",
+        id="dddb-daf",
+    ),
+    pytest.param(
+        "ddda",
+        "daf_iupac",
+        "ddda",
+        None,
+        "daf",
+        id="ddda-daf",
+    ),
+]
 
 
 def _make_mm_tag(sequence: str, mod_positions: list[int]) -> str:
@@ -23,38 +65,79 @@ def _make_mm_tag(sequence: str, mod_positions: list[int]) -> str:
     return "A+a," + ",".join(str(skip) for skip in skips) + ";"
 
 
-def _write_hia5_workflow_input(path) -> str:
-    """Write a tiny Hia5-like BAM with one protected A-run."""
-    read_length = 600
-    sequence = "A" * read_length
-    protected_positions = set(range(250, 290))
-    mod_positions = [
+def _workflow_mod_positions() -> list[int]:
+    protected_positions = set(range(PROTECTED_START, PROTECTED_END))
+    return [
         pos
-        for pos in range(20, read_length - 20)
+        for pos in range(20, WORKFLOW_READ_LENGTH - 20)
         if pos not in protected_positions
     ]
 
-    header = pysam.AlignmentHeader.from_dict({
+
+def _workflow_header() -> pysam.AlignmentHeader:
+    return pysam.AlignmentHeader.from_dict({
         "HD": {"VN": "1.6", "SO": "coordinate"},
         "SQ": [{"SN": "chr1", "LN": 10_000}],
     })
 
-    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+
+def _write_m6a_workflow_input(path, query_name: str) -> str:
+    """Write a tiny Hia5-like BAM with one protected A-run."""
+    sequence = "A" * WORKFLOW_READ_LENGTH
+    mod_positions = _workflow_mod_positions()
+
+    with pysam.AlignmentFile(str(path), "wb", header=_workflow_header()) as out:
         read = pysam.AlignedSegment()
-        read.query_name = "workflow_read"
+        read.query_name = query_name
         read.query_sequence = sequence
-        read.query_qualities = pysam.qualitystring_to_array("I" * read_length)
+        read.query_qualities = pysam.qualitystring_to_array(
+            "I" * WORKFLOW_READ_LENGTH
+        )
         read.flag = 0
         read.reference_id = 0
         read.reference_start = 1_000
         read.mapping_quality = 60
-        read.cigar = [(0, read_length)]
+        read.cigar = [(0, WORKFLOW_READ_LENGTH)]
         read.set_tag("MM", _make_mm_tag(sequence, mod_positions))
         read.set_tag("ML", [240] * len(mod_positions))
         out.write(read)
 
     pysam.index(str(path))
     return str(path)
+
+
+def _write_daf_iupac_workflow_input(path, query_name: str) -> str:
+    """Write a tiny CT-strand DAF BAM with one protected C-run."""
+    sequence = ["C"] * WORKFLOW_READ_LENGTH
+    mod_positions = _workflow_mod_positions()
+    for pos in mod_positions:
+        sequence[pos] = "Y"
+
+    with pysam.AlignmentFile(str(path), "wb", header=_workflow_header()) as out:
+        read = pysam.AlignedSegment()
+        read.query_name = query_name
+        read.query_sequence = "".join(sequence)
+        read.query_qualities = pysam.qualitystring_to_array(
+            "I" * WORKFLOW_READ_LENGTH
+        )
+        read.flag = 0
+        read.reference_id = 0
+        read.reference_start = 1_000
+        read.mapping_quality = 60
+        read.cigar = [(0, WORKFLOW_READ_LENGTH)]
+        read.set_tag("st", "CT", value_type="Z")
+        out.write(read)
+
+    pysam.index(str(path))
+    return str(path)
+
+
+def _write_workflow_input(path, input_kind: str, query_name: str) -> str:
+    if input_kind == "m6a":
+        return _write_m6a_workflow_input(path, query_name)
+    if input_kind == "daf_iupac":
+        return _write_daf_iupac_workflow_input(path, query_name)
+    raise ValueError(f"unknown workflow input kind: {input_kind}")
 
 
 def _read_only_record(path):
@@ -82,23 +165,38 @@ def _extract_recalled_labels(recalled_bam: str, tmp_path):
     )
 
 
-def test_hmm_apply_to_tf_recall_to_label_extraction_workflow(
-    benchmark_model_path,
+@pytest.mark.parametrize(
+    ("case_name", "input_kind", "enzyme", "seq", "mode"),
+    WORKFLOW_CASES,
+)
+def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
+    case_name,
+    input_kind,
+    enzyme,
+    seq,
+    mode,
     tmp_path,
     monkeypatch,
 ):
-    input_bam = _write_hia5_workflow_input(tmp_path / "workflow_input.bam")
-    applied_bam = str(tmp_path / "workflow_applied.bam")
-    recalled_bam = str(tmp_path / "workflow_recalled.bam")
+    query_name = f"{case_name}_workflow_read"
+    input_bam = _write_workflow_input(
+        tmp_path / f"{case_name}_input.bam",
+        input_kind,
+        query_name,
+    )
+    applied_bam = str(tmp_path / f"{case_name}_applied.bam")
+    recalled_bam = str(tmp_path / f"{case_name}_recalled.bam")
+    apply_model_path = get_model_path(enzyme, tool="apply", seq=seq)
+    recall_model_path = get_model_path(enzyme, tool="recall", seq=seq)
 
     assert process_bam_for_footprints(
         input_bam=input_bam,
         output_bam=applied_bam,
-        model_or_path=benchmark_model_path,
+        model_or_path=apply_model_path,
         train_rids=set(),
         edge_trim=10,
         circular=False,
-        mode="pacbio-fiber",
+        mode=mode,
         context_size=3,
         msp_min_size=0,
         nuc_min_size=85,
@@ -126,7 +224,7 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow(
         lambda: SimpleNamespace(
             in_bam=applied_bam,
             out_bam=recalled_bam,
-            model=benchmark_model_path,
+            model=recall_model_path,
             enzyme=None,
             seq=None,
             downstream_compat=False,
@@ -147,6 +245,7 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow(
     pysam.index(recalled_bam)
 
     recalled_read = _read_only_record(recalled_bam)
+    assert recalled_read.query_name == query_name
     assert recalled_read.has_tag("MA")
     assert recalled_read.has_tag("AQ")
     assert "tf+QQQ" in recalled_read.get_tag("MA")
@@ -170,5 +269,6 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow(
     assert tf_lines
     tf_cols = tf_lines[0].split("\t")
     assert len(tf_cols) == 15
+    assert tf_cols[3] == query_name
     assert int(tf_cols[9]) == n_features["tf"]
     assert all(tf_cols[idx] for idx in (12, 13, 14))
