@@ -19,6 +19,7 @@ from fiberhmm.cli.extract_tags import (
     _extract_footprints,
     _extract_msps,
     _extract_tfs,
+    _parse_mod_positions_safe,
 )
 from fiberhmm.io.autosql import (
     AUTOSQL_SCHEMAS,
@@ -83,6 +84,30 @@ class _FakeOutput:
 
     def close(self):
         self.closed = True
+
+
+class _CountingSequence:
+    def __init__(self, values):
+        self.values = values
+        self.accessed = []
+
+    def __len__(self):
+        return len(self.values)
+
+    def __getitem__(self, index):
+        self.accessed.append(index)
+        return self.values[index]
+
+
+class _NoToListSequence:
+    def __init__(self, values):
+        self.values = values
+
+    def __iter__(self):
+        return iter(self.values)
+
+    def tolist(self):
+        raise AssertionError("tolist should not be called")
 
 
 def test_extract_region_worker_closes_temp_beds_when_partial_open_fails(
@@ -360,6 +385,33 @@ def test_tf_bed12_only_unchanged_when_flag_off():
     assert len(cols) == 12
 
 
+def test_tf_extractor_consumes_aq_without_upfront_list_copy():
+    read = _FakeRead()
+    ma, _aq = _build_ma_aq(
+        nuc_intervals=[],
+        tf_intervals=[(100, 30)],
+        nq_values=[],
+        tf_qqqs=[(150, 30, 25)],
+    )
+    aq = _CountingSequence([150, 30, 25, 99, 88])
+    read.set_tag('MA', ma)
+    read.set_tag('AQ', aq)
+
+    buf = io.StringIO()
+    n = _extract_tfs(
+        read,
+        buf,
+        with_scores=True,
+        min_tq=0,
+        query_to_ref=_identity_map(read),
+        block_scores=True,
+    )
+
+    assert n == 1
+    assert aq.accessed == [0, 1, 2]
+    assert buf.getvalue().rstrip('\n').split('\t')[12:15] == ["150", "30", "25"]
+
+
 # ------------------- deam (DAF IUPAC R/Y) ---------------------------
 
 class _FakeReadWithSeq(_FakeRead):
@@ -507,6 +559,29 @@ def test_deam_priority1_mm_ml_u_code_wins_over_ry():
     cols = buf.getvalue().rstrip('\n').split('\t')
     assert int(cols[9]) == 2
     assert [int(v) for v in cols[12].split(',')] == [1, 1]
+
+
+def test_parse_mod_positions_safe_avoids_numpy_tolist(monkeypatch):
+    def fake_parse_mm_ml_per_mod_type(mm_tag, ml_bytes, seq, is_reverse):
+        return {
+            ("A", "a"): (
+                _NoToListSequence([2, 5]),
+                _NoToListSequence([200, 180]),
+            )
+        }
+
+    monkeypatch.setattr(
+        "fiberhmm.core.bam_reader.parse_mm_ml_per_mod_type",
+        fake_parse_mm_ml_per_mod_type,
+    )
+
+    read = _read_with_mm_ml(
+        seq="A" * 20,
+        mm_tag="A+a,0,0;",
+        ml_bytes=[200, 180],
+    )
+
+    assert _parse_mod_positions_safe(read, {"a"}) == [(2, 200), (5, 180)]
 
 
 def test_deam_priority1_g_base_is_flavor_0():

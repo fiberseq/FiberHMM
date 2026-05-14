@@ -332,7 +332,7 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
     except KeyError:
         return 0
     try:
-        aq = list(read.get_tag('AQ'))
+        aq = read.get_tag('AQ')
     except KeyError:
         aq = []
 
@@ -522,9 +522,9 @@ def _parse_mod_positions_safe(read, target_mod_codes):
     for (base, mod_code), (pos_arr, qual_arr) in per_mod.items():
         if mod_code not in target_mod_codes:
             continue
-        # Convert to plain list of tuples to match the pysam.modified_bases
-        # call sites below.
-        out.extend(zip(pos_arr.tolist(), qual_arr.tolist()))
+        # Convert to plain Python ints to match the pysam.modified_bases
+        # call sites below without materializing full intermediate lists.
+        out.extend((int(pos), int(qual)) for pos, qual in zip(pos_arr, qual_arr))
     return out
 
 

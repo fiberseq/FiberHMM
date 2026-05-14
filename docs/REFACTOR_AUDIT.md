@@ -85,6 +85,7 @@ Date: 2026-05-07
 - Made MA/AQ parsing consume quality bytes directly from indexable BAM tag containers instead of materializing the whole `AQ` array up front, preserving short-array behavior with direct parser coverage.
 - Made `fiberhmm-recall-tfs` count per-read recall failures and pass failed records through unchanged in both single-thread and worker-chunk paths, with direct coverage for failure accounting and pass-through writes.
 - Kept legacy recall payload tag arrays compact through `_make_payload` and let `recall_read` consume array-backed tag sequences directly, avoiding redundant Python list materialization in the TF recall path.
+- Removed extra full-list materialization from `fiberhmm-extract` TF `AQ` parsing and MM/ML modified-position extraction, with regression tests that exercise indexable `AQ` containers and parser arrays without `.tolist()`.
 
 ## Current Verification
 
@@ -357,6 +358,13 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 388 passed, 26 deselected in 12.57s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 52.18s.
+- `python -m ruff check fiberhmm/cli/extract_tags.py tests/test_extract_block_scores.py`: passed.
+- `python -m compileall -q fiberhmm/cli/extract_tags.py tests/test_extract_block_scores.py`: passed.
+- `python -m pytest tests/test_extract_block_scores.py tests/test_tf_recaller.py tests/test_call_pipeline.py`: 67 passed in 4.47s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 390 passed, 26 deselected in 12.13s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 52.00s.
 
 ## Current Shape
 
