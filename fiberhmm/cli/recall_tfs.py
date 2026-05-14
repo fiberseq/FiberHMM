@@ -90,12 +90,13 @@ class _PayloadRead:
     to_string()/fromstring() calls per read (two in the main process, two in
     the worker) and the associated MM/ML base64 encoding overhead.
     """
-    __slots__ = ('query_sequence', 'is_reverse', '_tags')
+    __slots__ = ('query_sequence', 'is_reverse', '_tags', '_daf_md_result')
 
-    def __init__(self, seq, is_reverse, tags):
+    def __init__(self, seq, is_reverse, tags, daf_md_result=None):
         self.query_sequence = seq
         self.is_reverse = is_reverse
         self._tags = tags
+        self._daf_md_result = daf_md_result
 
     def has_tag(self, t):
         return t in self._tags
@@ -104,7 +105,7 @@ class _PayloadRead:
         return self._tags[t]
 
 
-def _make_payload(read) -> dict:
+def _make_payload(read, mode=None) -> dict:
     """Extract only the tag data workers need from a pysam read.
 
     Runs in the main process.  The resulting dict is ~5–30 KB (sequence
@@ -128,11 +129,23 @@ def _make_payload(read) -> dict:
                 except TypeError:
                     pass  # scalar or already bytes
             tags[t] = val
-    return {
+
+    payload = {
         'seq': read.query_sequence,
         'is_reverse': read.is_reverse,
         'tags': tags,
     }
+    if mode == 'daf' and read.query_sequence:
+        from fiberhmm.core.bam_reader import has_iupac_encoding
+        if (
+            not has_iupac_encoding(read.query_sequence)
+            and not (('MM' in tags or 'Mm' in tags) and ('ML' in tags or 'Ml' in tags))
+        ):
+            from fiberhmm.daf.encoder import get_daf_positions
+            md_result = get_daf_positions(read)
+            if md_result is not None:
+                payload['_daf_md_result'] = md_result
+    return payload
 
 
 def _process_payload_record(payload) -> tuple:
@@ -143,7 +156,12 @@ def _process_payload_record(payload) -> tuple:
     write_ma_tags() is intentionally left to the main process so the
     serialized return value stays small (<1 KB for typical call counts).
     """
-    read = _PayloadRead(payload['seq'], payload['is_reverse'], payload['tags'])
+    read = _PayloadRead(
+        payload['seq'],
+        payload['is_reverse'],
+        payload['tags'],
+        payload.get('_daf_md_result'),
+    )
     tags = payload['tags']
     stats = {key: 0 for key in _STATS_KEYS}
     unify_threshold = _WORKER['unify_threshold']
@@ -228,7 +246,7 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
         if max_reads and n_reads >= max_reads:
             break
         try:
-            result, stats = _process_payload_record(_make_payload(read))
+            result, stats = _process_payload_record(_make_payload(read, mode))
         except Exception:
             result = None
             stats = {key: 0 for key in _STATS_KEYS}
@@ -293,7 +311,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
             if max_reads and n >= max_reads:
                 break
             buf_reads.append(read)
-            buf_payloads.append(_make_payload(read))
+            buf_payloads.append(_make_payload(read, mode))
             n += 1
 
             if len(buf_reads) >= chunk_size:

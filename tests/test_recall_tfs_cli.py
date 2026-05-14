@@ -70,7 +70,11 @@ def test_recall_tfs_single_thread_passes_failed_reads_through(monkeypatch):
             raise RuntimeError("bad read")
         return "result", {"v2": 1, "tf": 2, "demoted": 3, "failed": 0}
 
-    monkeypatch.setattr(recall_tfs, "_make_payload", lambda read: read.query_name)
+    monkeypatch.setattr(
+        recall_tfs,
+        "_make_payload",
+        lambda read, mode=None: read.query_name,
+    )
     monkeypatch.setattr(recall_tfs, "_process_payload_record", fake_process)
     monkeypatch.setattr(
         recall_tfs,

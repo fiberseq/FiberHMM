@@ -19,50 +19,68 @@ PROTECTED_END = 290
 WORKFLOW_CASES = [
     pytest.param(
         "hia5_pacbio",
-        "m6a",
+        "m6a_forward",
+        None,
         "hia5",
         "pacbio",
         "pacbio-fiber",
         id="hia5-pacbio",
     ),
     pytest.param(
-        "hia5_nanopore",
-        "m6a",
+        "hia5_nanopore_forward",
+        "m6a_forward",
+        None,
         "hia5",
         "nanopore",
         "nanopore-fiber",
-        id="hia5-nanopore",
+        id="hia5-nanopore-forward",
     ),
     pytest.param(
-        "dddb",
-        "daf_iupac",
-        "dddb",
+        "hia5_nanopore_reverse",
+        "m6a_reverse",
         None,
-        "daf",
-        id="dddb-daf",
-    ),
-    pytest.param(
-        "ddda",
-        "daf_iupac",
-        "ddda",
-        None,
-        "daf",
-        id="ddda-daf",
+        "hia5",
+        "nanopore",
+        "nanopore-fiber",
+        id="hia5-nanopore-reverse",
     ),
 ]
 
+for _enzyme in ("dddb", "ddda"):
+    for _input_kind in ("daf_iupac", "daf_md", "daf_mmml"):
+        for _strand in ("ct", "ga"):
+            WORKFLOW_CASES.append(
+                pytest.param(
+                    f"{_enzyme}_{_input_kind}_{_strand}",
+                    _input_kind,
+                    _strand,
+                    _enzyme,
+                    None,
+                    "daf",
+                    id=f"{_enzyme}-{_input_kind}-{_strand}",
+                )
+            )
 
-def _make_mm_tag(sequence: str, mod_positions: list[int]) -> str:
-    """Build a simple A+a MM tag for sorted query positions."""
-    a_positions = [idx for idx, base in enumerate(sequence) if base == "A"]
-    a_to_idx = {pos: idx for idx, pos in enumerate(a_positions)}
+
+def _make_mm_tag(
+    sequence: str,
+    mod_positions: list[int],
+    *,
+    base: str = "A",
+    mod_code: str = "a",
+) -> str:
+    """Build a simple MM tag for sorted query positions."""
+    base_positions = [
+        idx for idx, seq_base in enumerate(sequence) if seq_base == base
+    ]
+    base_to_idx = {pos: idx for idx, pos in enumerate(base_positions)}
     skips = []
-    previous_a_idx = -1
+    previous_base_idx = -1
     for pos in mod_positions:
-        current_a_idx = a_to_idx[pos]
-        skips.append(current_a_idx - previous_a_idx - 1)
-        previous_a_idx = current_a_idx
-    return "A+a," + ",".join(str(skip) for skip in skips) + ";"
+        current_base_idx = base_to_idx[pos]
+        skips.append(current_base_idx - previous_base_idx - 1)
+        previous_base_idx = current_base_idx
+    return f"{base}+{mod_code}," + ",".join(str(skip) for skip in skips) + ";"
 
 
 def _workflow_mod_positions() -> list[int]:
@@ -81,10 +99,73 @@ def _workflow_header() -> pysam.AlignmentHeader:
     })
 
 
-def _write_m6a_workflow_input(path, query_name: str) -> str:
-    """Write a tiny Hia5-like BAM with one protected A-run."""
-    sequence = "A" * WORKFLOW_READ_LENGTH
+def _md_for_mismatches(read_length: int, mismatch_positions: list[int], ref_base: str) -> str:
+    parts = []
+    previous = -1
+    for pos in mismatch_positions:
+        parts.append(str(pos - previous - 1))
+        parts.append(ref_base)
+        previous = pos
+    parts.append(str(read_length - previous - 1))
+    return "".join(parts)
+
+
+def _write_m6a_workflow_input(path, query_name: str, *, is_reverse: bool) -> str:
+    """Write a tiny Hia5-like BAM with one protected m6A target run."""
+    if is_reverse:
+        sequence = "T" * WORKFLOW_READ_LENGTH
+        mm_walk_sequence = "A" * WORKFLOW_READ_LENGTH
+        mod_positions = sorted(
+            WORKFLOW_READ_LENGTH - 1 - pos for pos in _workflow_mod_positions()
+        )
+    else:
+        sequence = "A" * WORKFLOW_READ_LENGTH
+        mm_walk_sequence = sequence
+        mod_positions = _workflow_mod_positions()
+
+    with pysam.AlignmentFile(str(path), "wb", header=_workflow_header()) as out:
+        read = pysam.AlignedSegment()
+        read.query_name = query_name
+        read.query_sequence = sequence
+        read.query_qualities = pysam.qualitystring_to_array(
+            "I" * WORKFLOW_READ_LENGTH
+        )
+        read.flag = 16 if is_reverse else 0
+        read.reference_id = 0
+        read.reference_start = 1_000
+        read.mapping_quality = 60
+        read.cigar = [(0, WORKFLOW_READ_LENGTH)]
+        read.set_tag("MM", _make_mm_tag(mm_walk_sequence, mod_positions))
+        read.set_tag("ML", [240] * len(mod_positions))
+        out.write(read)
+
+    pysam.index(str(path))
+    return str(path)
+
+
+def _daf_bases(strand: str, input_kind: str) -> tuple[str, str, str, str, str | None]:
+    if strand == "ct":
+        ref_base, deam_base, iupac_base, st_tag = "C", "T", "Y", "CT"
+    elif strand == "ga":
+        ref_base, deam_base, iupac_base, st_tag = "G", "A", "R", "GA"
+    else:
+        raise ValueError(f"unknown DAF strand: {strand}")
+
+    observed_base = iupac_base if input_kind == "daf_iupac" else deam_base
+    mm_base = deam_base
+    return ref_base, deam_base, observed_base, mm_base, st_tag
+
+
+def _write_daf_workflow_input(path, query_name: str, input_kind: str, strand: str) -> str:
+    """Write a tiny DAF BAM using IUPAC, raw MD, or MM/ML encoding."""
+    ref_base, _deam_base, observed_base, mm_base, st_tag = _daf_bases(
+        strand, input_kind
+    )
+    sequence = [ref_base] * WORKFLOW_READ_LENGTH
     mod_positions = _workflow_mod_positions()
+    for pos in mod_positions:
+        sequence[pos] = observed_base
+    sequence = "".join(sequence)
 
     with pysam.AlignmentFile(str(path), "wb", header=_workflow_header()) as out:
         read = pysam.AlignedSegment()
@@ -98,46 +179,78 @@ def _write_m6a_workflow_input(path, query_name: str) -> str:
         read.reference_start = 1_000
         read.mapping_quality = 60
         read.cigar = [(0, WORKFLOW_READ_LENGTH)]
-        read.set_tag("MM", _make_mm_tag(sequence, mod_positions))
-        read.set_tag("ML", [240] * len(mod_positions))
+        if input_kind == "daf_iupac":
+            read.set_tag("st", st_tag, value_type="Z")
+        elif input_kind == "daf_md":
+            read.set_tag(
+                "MD",
+                _md_for_mismatches(WORKFLOW_READ_LENGTH, mod_positions, ref_base),
+                value_type="Z",
+            )
+        elif input_kind == "daf_mmml":
+            read.set_tag(
+                "MM",
+                _make_mm_tag(
+                    sequence,
+                    mod_positions,
+                    base=mm_base,
+                    mod_code="u",
+                ),
+            )
+            read.set_tag("ML", [240] * len(mod_positions))
+        else:
+            raise ValueError(f"unknown DAF input kind: {input_kind}")
         out.write(read)
 
     pysam.index(str(path))
     return str(path)
 
 
-def _write_daf_iupac_workflow_input(path, query_name: str) -> str:
-    """Write a tiny CT-strand DAF BAM with one protected C-run."""
-    sequence = ["C"] * WORKFLOW_READ_LENGTH
-    mod_positions = _workflow_mod_positions()
-    for pos in mod_positions:
-        sequence[pos] = "Y"
-
-    with pysam.AlignmentFile(str(path), "wb", header=_workflow_header()) as out:
-        read = pysam.AlignedSegment()
-        read.query_name = query_name
-        read.query_sequence = "".join(sequence)
-        read.query_qualities = pysam.qualitystring_to_array(
-            "I" * WORKFLOW_READ_LENGTH
-        )
-        read.flag = 0
-        read.reference_id = 0
-        read.reference_start = 1_000
-        read.mapping_quality = 60
-        read.cigar = [(0, WORKFLOW_READ_LENGTH)]
-        read.set_tag("st", "CT", value_type="Z")
-        out.write(read)
-
-    pysam.index(str(path))
-    return str(path)
-
-
-def _write_workflow_input(path, input_kind: str, query_name: str) -> str:
-    if input_kind == "m6a":
-        return _write_m6a_workflow_input(path, query_name)
-    if input_kind == "daf_iupac":
-        return _write_daf_iupac_workflow_input(path, query_name)
+def _write_workflow_input(path, input_kind: str, strand: str | None, query_name: str) -> str:
+    if input_kind == "m6a_forward":
+        return _write_m6a_workflow_input(path, query_name, is_reverse=False)
+    if input_kind == "m6a_reverse":
+        return _write_m6a_workflow_input(path, query_name, is_reverse=True)
+    if input_kind in {"daf_iupac", "daf_md", "daf_mmml"}:
+        if strand is None:
+            raise ValueError(f"{input_kind} needs a DAF strand")
+        return _write_daf_workflow_input(path, query_name, input_kind, strand)
     raise ValueError(f"unknown workflow input kind: {input_kind}")
+
+
+def _assert_workflow_input_shape(path, input_kind: str, strand: str | None) -> None:
+    read = _read_only_record(path)
+    mod_positions = _workflow_mod_positions()
+    protected_positions = range(PROTECTED_START, PROTECTED_END)
+
+    if input_kind.startswith("m6a"):
+        assert read.has_tag("MM")
+        assert read.has_tag("ML")
+        assert read.is_reverse is (input_kind == "m6a_reverse")
+        target_base = "T" if input_kind == "m6a_reverse" else "A"
+        assert set(read.query_sequence) == {target_base}
+        return
+
+    assert strand is not None
+    ref_base, _deam_base, observed_base, _mm_base, st_tag = _daf_bases(
+        strand, input_kind
+    )
+    assert all(read.query_sequence[pos] == observed_base for pos in mod_positions)
+    assert all(read.query_sequence[pos] == ref_base for pos in protected_positions)
+
+    if input_kind == "daf_iupac":
+        assert read.get_tag("st") == st_tag
+        assert not read.has_tag("MD")
+        assert not read.has_tag("MM")
+    elif input_kind == "daf_md":
+        assert read.has_tag("MD")
+        assert not read.has_tag("st")
+        assert not read.has_tag("MM")
+    elif input_kind == "daf_mmml":
+        assert read.has_tag("MM")
+        assert read.has_tag("ML")
+        assert not read.has_tag("MD")
+        assert not read.has_tag("st")
 
 
 def _read_only_record(path):
@@ -166,12 +279,13 @@ def _extract_recalled_labels(recalled_bam: str, tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("case_name", "input_kind", "enzyme", "seq", "mode"),
+    ("case_name", "input_kind", "strand", "enzyme", "seq", "mode"),
     WORKFLOW_CASES,
 )
 def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
     case_name,
     input_kind,
+    strand,
     enzyme,
     seq,
     mode,
@@ -182,8 +296,10 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
     input_bam = _write_workflow_input(
         tmp_path / f"{case_name}_input.bam",
         input_kind,
+        strand,
         query_name,
     )
+    _assert_workflow_input_shape(input_bam, input_kind, strand)
     applied_bam = str(tmp_path / f"{case_name}_applied.bam")
     recalled_bam = str(tmp_path / f"{case_name}_recalled.bam")
     apply_model_path = get_model_path(enzyme, tool="apply", seq=seq)

@@ -379,6 +379,16 @@ def extract_modifications(read, mode: str, context_size: int = 3
     except KeyError:
         ml_tag = []
     if not mm_tag or not ml_tag:
+        if mode == 'daf':
+            md_result = getattr(read, '_daf_md_result', None)
+            if md_result is None and hasattr(read, 'get_aligned_pairs'):
+                from fiberhmm.daf.encoder import get_daf_positions
+                md_result = get_daf_positions(read)
+            if md_result is not None:
+                ct_pos, ga_pos, strand_tag = md_result
+                if strand_tag == 'CT':
+                    return set(ct_pos), '+', seq.upper()
+                return set(ga_pos), '-', seq.upper()
         return None
     mod_pos = parse_mm_tag_query_positions(
         mm_tag, ml_tag, seq, read.is_reverse,
