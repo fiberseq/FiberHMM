@@ -84,6 +84,7 @@ Date: 2026-05-07
 - Made `fiberhmm-consensus-tfs` build each read's query-to-reference position map at most once while extracting TF calls, with direct coverage for repeated annotations, quality-filtered skips, insertion-only calls, and malformed MA tags.
 - Made MA/AQ parsing consume quality bytes directly from indexable BAM tag containers instead of materializing the whole `AQ` array up front, preserving short-array behavior with direct parser coverage.
 - Made `fiberhmm-recall-tfs` count per-read recall failures and pass failed records through unchanged in both single-thread and worker-chunk paths, with direct coverage for failure accounting and pass-through writes.
+- Kept legacy recall payload tag arrays compact through `_make_payload` and let `recall_read` consume array-backed tag sequences directly, avoiding redundant Python list materialization in the TF recall path.
 
 ## Current Verification
 
@@ -349,6 +350,13 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 386 passed, 26 deselected in 12.20s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 53.47s.
+- `python -m ruff check fiberhmm/cli/recall_tfs.py fiberhmm/inference/tf_recaller.py tests/test_recall_tfs_cli.py tests/test_tf_recaller.py`: passed.
+- `python -m compileall -q fiberhmm/cli/recall_tfs.py fiberhmm/inference/tf_recaller.py tests/test_recall_tfs_cli.py tests/test_tf_recaller.py`: passed.
+- `python -m pytest tests/test_recall_tfs_cli.py tests/test_tf_recaller.py tests/test_call_pipeline.py`: 35 passed in 5.19s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 388 passed, 26 deselected in 12.57s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 52.18s.
 
 ## Current Shape
 

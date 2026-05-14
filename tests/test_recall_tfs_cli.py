@@ -2,11 +2,41 @@
 
 from __future__ import annotations
 
+import array
 from types import SimpleNamespace
 
 import pytest
 
 import fiberhmm.cli.recall_tfs as recall_tfs
+
+
+def test_recall_tfs_make_payload_keeps_legacy_tag_arrays_compact():
+    tags = {
+        "MM": "A+a,0;",
+        "ML": array.array("B", [200]),
+        "ns": array.array("I", [10, 200]),
+        "nl": array.array("I", [80, 120]),
+        "as": array.array("I", [0]),
+        "al": array.array("I", [50]),
+        "nq": array.array("B", [180, 190]),
+        "st": "CT",
+    }
+
+    class FakeRead:
+        query_sequence = "A" * 300
+        is_reverse = False
+
+        def has_tag(self, tag):
+            return tag in tags
+
+        def get_tag(self, tag):
+            return tags[tag]
+
+    payload = recall_tfs._make_payload(FakeRead())
+
+    assert payload["tags"]["ML"] == bytes(tags["ML"])
+    for tag in ("ns", "nl", "as", "al", "nq"):
+        assert payload["tags"][tag] is tags[tag]
 
 
 def test_recall_tfs_payload_chunk_counts_per_read_failures(monkeypatch):

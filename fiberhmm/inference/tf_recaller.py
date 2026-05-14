@@ -405,17 +405,17 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
         - msp_intervals: v2 MSPs unchanged
     """
     try:
-        ns_raw = list(read.get_tag('ns'))
-        nl_raw = list(read.get_tag('nl'))
+        ns_raw = read.get_tag('ns')
+        nl_raw = read.get_tag('nl')
     except KeyError:
-        ns_raw, nl_raw = [], []
+        ns_raw, nl_raw = (), ()
     try:
-        as_raw = list(read.get_tag('as'))
-        al_raw = list(read.get_tag('al'))
+        as_raw = read.get_tag('as')
+        al_raw = read.get_tag('al')
     except KeyError:
-        as_raw, al_raw = [], []
+        as_raw, al_raw = (), ()
 
-    if not (ns_raw or as_raw):
+    if len(ns_raw) == 0 and len(as_raw) == 0:
         return [], [], []
 
     extracted = extract_modifications(read, mode, context_size)

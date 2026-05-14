@@ -1,6 +1,8 @@
 """Tests for the LLR TF recaller (fiberhmm.inference.tf_recaller +
 fiberhmm.io.ma_tags).
 """
+import array
+
 import numpy as np
 import pytest
 
@@ -464,3 +466,38 @@ def test_enzyme_presets_present():
         assert ENZYME_PRESETS[enz]['emission_uplift'] == 1.0
     # DddB uses lower min_llr than Hia5 (single-strand evidence)
     assert ENZYME_PRESETS['dddb']['min_llr'] < ENZYME_PRESETS['hia5']['min_llr']
+
+
+def test_recall_read_accepts_compact_array_tag_sequences_without_modifications():
+    class FakeRead:
+        query_sequence = "A" * 300
+        is_reverse = False
+        _tags = {
+            "ns": array.array("I", [10, 200]),
+            "nl": array.array("I", [80, 120]),
+            "as": array.array("I", [0]),
+            "al": array.array("I", [50]),
+        }
+
+        def has_tag(self, tag):
+            return tag in self._tags
+
+        def get_tag(self, tag):
+            if tag not in self._tags:
+                raise KeyError(tag)
+            return self._tags[tag]
+
+    tf_calls, kept_nucs, msps = tf_recaller.recall_read(
+        FakeRead(),
+        np.zeros(N_CTX),
+        np.zeros(N_CTX),
+        mode="pacbio-fiber",
+        context_size=3,
+        min_llr=5.0,
+        min_opps=3,
+        unify_threshold=90,
+    )
+
+    assert tf_calls == []
+    assert kept_nucs == [(10, 80), (200, 120)]
+    assert msps == [(0, 50)]
