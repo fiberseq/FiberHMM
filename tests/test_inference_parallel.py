@@ -6,6 +6,7 @@ from concurrent.futures import Future
 
 import pytest
 
+import fiberhmm.inference.mp_context as mp_context
 import fiberhmm.inference.parallel as parallel
 import fiberhmm.inference.region_workers as region_workers
 import fiberhmm.inference.streaming_workers as streaming_workers
@@ -34,6 +35,11 @@ def _done_future(value):
 def test_worker_chunk_result_coerces_legacy_lists():
     assert coerce_worker_chunk_result([None]) == ([None], 0)
     assert coerce_worker_chunk_result(WorkerChunkResult([None], 2)) == ([None], 2)
+
+
+def test_parallel_reexports_multiprocessing_context():
+    assert parallel._select_mp_context is mp_context._select_mp_context
+    assert parallel._MP_CONTEXT is mp_context._MP_CONTEXT
 
 
 def test_parallel_reexports_streaming_worker_entry_points():
