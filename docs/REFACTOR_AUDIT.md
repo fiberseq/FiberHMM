@@ -80,6 +80,7 @@ Date: 2026-05-07
 - Made score-database creation and append helpers close SQLite connections on record parsing failures, with shared-helper coverage.
 - Reused the shared read-filter policy in the legacy chunked apply loop and removed its unused write counter, preserving mode-equivalence coverage while adding the same `None` read-length guard used by streaming paths.
 - Reused the shared read-filter policy for owned reads in apply and fused region BAM workers while preserving pre-ownership pass-through behavior for unmapped and secondary/supplementary reads.
+- Deferred dispatcher-side model loading for streaming, region-parallel, and legacy multi-core model-path runs so worker initializers own model loading; legacy single-core dispatch still loads the model directly before processing.
 
 ## Current Verification
 
@@ -317,6 +318,13 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 374 passed, 26 deselected in 11.44s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.85s.
+- `python -m ruff check fiberhmm/inference/parallel.py tests/test_inference_parallel.py tests/test_streaming_pipeline.py tests/test_mode_equivalence.py`: passed.
+- `python -m compileall -q fiberhmm/inference/parallel.py tests/test_inference_parallel.py tests/test_streaming_pipeline.py tests/test_mode_equivalence.py`: passed.
+- `python -m pytest tests/test_inference_parallel.py tests/test_streaming_pipeline.py tests/test_call_pipeline.py tests/test_mode_equivalence.py tests/test_posterior_lifecycle.py`: 86 passed in 14.18s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 378 passed, 26 deselected in 11.45s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.18s.
 
 ## Current Shape
 

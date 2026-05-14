@@ -95,6 +95,108 @@ def test_parallel_reexports_region_pipeline_entry_points():
     assert parallel._process_bed_region_parallel is region_pipeline._process_bed_region_parallel
 
 
+def test_streaming_dispatch_does_not_load_model_in_parent(monkeypatch):
+    monkeypatch.setattr(
+        parallel,
+        "load_model",
+        lambda path: (_ for _ in ()).throw(AssertionError("parent load")),
+    )
+    monkeypatch.setattr(
+        parallel,
+        "_process_bam_streaming_pipeline",
+        lambda **kwargs: ("streaming", kwargs["model_path"]),
+    )
+
+    assert parallel.process_bam_for_footprints(
+        input_bam="in.bam",
+        output_bam="out.bam",
+        model_or_path="model.json",
+        train_rids=set(),
+        edge_trim=0,
+        circular=False,
+        mode="pacbio-fiber",
+        context_size=3,
+        msp_min_size=60,
+        streaming_pipeline=True,
+    ) == ("streaming", "model.json")
+
+
+def test_region_dispatch_does_not_load_model_in_parent(monkeypatch):
+    monkeypatch.setattr(
+        parallel,
+        "load_model",
+        lambda path: (_ for _ in ()).throw(AssertionError("parent load")),
+    )
+    monkeypatch.setattr(
+        parallel,
+        "_process_bam_region_parallel",
+        lambda **kwargs: ("region", kwargs["model_path"]),
+    )
+
+    assert parallel.process_bam_for_footprints(
+        input_bam="in.bam",
+        output_bam="out.bam",
+        model_or_path="model.json",
+        train_rids=set(),
+        edge_trim=0,
+        circular=False,
+        mode="pacbio-fiber",
+        context_size=3,
+        msp_min_size=60,
+        region_parallel=True,
+    ) == ("region", "model.json")
+
+
+def test_legacy_single_core_dispatch_loads_model_for_direct_processing(monkeypatch):
+    loaded_model = object()
+    monkeypatch.setattr(parallel, "load_model", lambda path: loaded_model)
+    monkeypatch.setattr(parallel, "freeze_model_for_inference", lambda model: model)
+    monkeypatch.setattr(
+        parallel,
+        "_process_bam_legacy_pipeline",
+        lambda **kwargs: ("legacy", kwargs["model"], kwargs["model_path"]),
+    )
+
+    assert parallel.process_bam_for_footprints(
+        input_bam="in.bam",
+        output_bam="out.bam",
+        model_or_path="model.json",
+        train_rids=set(),
+        edge_trim=0,
+        circular=False,
+        mode="pacbio-fiber",
+        context_size=3,
+        msp_min_size=60,
+        n_cores=1,
+    ) == ("legacy", loaded_model, "model.json")
+
+
+def test_legacy_multicore_dispatch_defers_model_to_worker_initializer(monkeypatch):
+    monkeypatch.setattr(
+        parallel,
+        "load_model",
+        lambda path: (_ for _ in ()).throw(AssertionError("parent load")),
+    )
+    monkeypatch.setattr(
+        parallel,
+        "_process_bam_legacy_pipeline",
+        lambda **kwargs: ("legacy", kwargs["model"], kwargs["model_path"]),
+    )
+
+    assert parallel.process_bam_for_footprints(
+        input_bam="in.bam",
+        output_bam="out.bam",
+        model_or_path="model.json",
+        train_rids=set(),
+        edge_trim=0,
+        circular=False,
+        mode="pacbio-fiber",
+        context_size=3,
+        msp_min_size=60,
+        n_cores=2,
+    ) == ("legacy", None, "model.json")
+
+
 def test_payload_worker_counts_per_read_failures(monkeypatch):
     def fake_extract(payload, mode, prob_threshold):
         if payload == "extract-bad":

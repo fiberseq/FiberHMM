@@ -97,7 +97,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
     # Get model path for workers
     if isinstance(model_or_path, str):
         model_path = model_or_path
-        model = freeze_model_for_inference(load_model(model_path))
+        model = None
     else:
         model = model_or_path
         model_path = None
@@ -162,6 +162,9 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 debug_timing=debug_timing,
                 process_unmapped=process_unmapped,
             )
+
+    if model is None and model_path is not None and n_cores <= 1:
+        model = freeze_model_for_inference(load_model(model_path))
 
     return _process_bam_legacy_pipeline(
         input_bam=input_bam,
