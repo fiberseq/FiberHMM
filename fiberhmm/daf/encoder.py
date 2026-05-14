@@ -409,7 +409,7 @@ def process_bam_daf_encode(
                 last_progress = now
 
     finally:
-        if pbar:
+        if pbar is not None:
             pbar.close()
         if outbam:
             outbam.close()
