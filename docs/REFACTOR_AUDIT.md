@@ -59,6 +59,7 @@ Date: 2026-05-07
 - Made `fiberhmm-recall-tfs` close input and output BAM handles in a `finally` block, with CLI-level coverage for processing failures.
 - Extracted genome region planning helpers into `fiberhmm/inference/region_planning.py`, keeping compatibility re-exports from `parallel.py` and adding direct region splitting/filtering coverage.
 - Extracted order-preserving streaming drain helpers into `fiberhmm/inference/streaming_drain.py`; streaming apply and fused apply+recall now share drain behavior outside `parallel.py`.
+- Extracted streaming worker initializers and chunk worker entry points into `fiberhmm/inference/streaming_workers.py`, while keeping compatibility imports in `parallel.py`.
 - Closed inline posterior writers from apply processing `finally` blocks in both streaming and legacy paths, with failure-path regression coverage.
 - Closed fused DAF streaming reference FASTA handles from the processing `finally` block, including failure-path coverage.
 - Extracted region-parallel posterior TSV formatting, output-path resolution, and merge ordering into `fiberhmm/posteriors/region_tsv.py` with direct coverage.
@@ -252,18 +253,26 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 368 passed, 26 deselected in 9.73s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 49.52s.
+- `python -m ruff check fiberhmm/inference/parallel.py fiberhmm/inference/streaming_workers.py tests/test_inference_parallel.py`: passed.
+- `python -m compileall -q fiberhmm/inference/parallel.py fiberhmm/inference/streaming_workers.py tests/test_inference_parallel.py`: passed.
+- `python -m pytest tests/test_inference_parallel.py`: 48 passed in 0.77s.
+- `python -m pytest tests/test_streaming_pipeline.py tests/test_call_pipeline.py tests/test_mode_equivalence.py`: 25 passed in 18.45s.
+- `python -m ruff check fiberhmm tests`: passed.
+- `python -m compileall -q fiberhmm tests`: passed.
+- `python -m pytest`: 369 passed, 26 deselected in 11.84s.
+- `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 53.89s.
 
 ## Current Shape
 
 Largest tracked Python files:
 
-- `fiberhmm/inference/parallel.py`: 2588 lines.
-- `fiberhmm/cli/extract_tags.py`: 1389 lines.
+- `fiberhmm/inference/parallel.py`: 2087 lines.
+- `fiberhmm/cli/extract_tags.py`: 1395 lines.
 - `fiberhmm/core/bam_reader.py`: 1340 lines.
 - `fiberhmm/core/hmm.py`: 1123 lines.
-- `fiberhmm/cli/train.py`: 1024 lines.
+- `fiberhmm/cli/train.py`: 1032 lines.
 - `fiberhmm/cli/utils.py`: 894 lines.
-- `fiberhmm/cli/export_posteriors.py`: 816 lines.
+- `fiberhmm/cli/export_posteriors.py`: 817 lines.
 
 Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not tracked.
 
@@ -275,7 +284,7 @@ Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not
 
 2. Continue shrinking `fiberhmm/inference/parallel.py`.
 
-   The first shared tagging/unification slice, streaming read-filter slice, active BAM output helper extractions, region worker contracts, aggregation helpers, higher-level worker cleanup tests, and fused stage-boundary extraction are complete, but the module still mixes process lifecycle, posterior export, and orchestration. The next work should shift toward measured speed/stability improvements while continuing to keep `parallel.py` shrinking.
+   The first shared tagging/unification slice, streaming read-filter slice, active BAM output helper extractions, region worker contracts, aggregation helpers, higher-level worker cleanup tests, fused stage-boundary extraction, streaming drain extraction, and streaming worker extraction are complete, but the module still mixes process lifecycle, posterior export, and orchestration. The next work should shift toward measured speed/stability improvements while continuing to keep `parallel.py` shrinking.
 
 3. Add remaining `fiberhmm-call` characterization tests.
 
@@ -346,6 +355,7 @@ Phase 2: mechanical modularization.
 Phase 3: pipeline split.
 
 - Split `parallel.py` into streaming, region, workers, and orchestration modules while preserving `process_bam_for_footprints` as the public compatibility wrapper.
+- Extract streaming worker initialization and chunk worker entry points; done for the streaming apply and fused apply+recall worker functions.
 - Keep old import paths re-exporting during the transition.
 
 Phase 4: performance work.

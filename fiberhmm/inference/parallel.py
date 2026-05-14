@@ -21,7 +21,6 @@ from fiberhmm.inference.bam_output import (
 from fiberhmm.inference.engine import (
     _extract_fiber_read_from_pysam,
     _process_single_read,
-    extract_fiber_read_from_payload,
     make_apply_payload,
 )
 from fiberhmm.inference.fused_stages import (
@@ -48,11 +47,18 @@ from fiberhmm.inference.streaming_drain import (
     _drain_oldest_chunk,
     _drain_oldest_fused_chunk,
 )
+from fiberhmm.inference.streaming_workers import (
+    _init_bam_worker,
+    _init_fused_worker,
+    _process_chunk_worker,
+    _process_fused_payload_chunk_worker,
+    _process_payload_chunk_worker,
+)
 from fiberhmm.inference.tagging import (
     set_legacy_apply_tags,
     write_fused_recall_tags,
 )
-from fiberhmm.inference.worker_results import WorkerChunkResult, coerce_worker_chunk_result
+from fiberhmm.inference.worker_results import coerce_worker_chunk_result
 from fiberhmm.posteriors.region_tsv import (
     format_region_posterior_line,
     region_posteriors_tsv_output_path,
@@ -109,77 +115,8 @@ _MP_CONTEXT = _select_mp_context()
 
 # Global for worker processes
 _worker_model = None
-_worker_debug_timing = False
 _worker_region_params = None
-
-
-def _init_bam_worker(model_path, debug_timing=False):
-    """Initialize worker process with model."""
-    global _worker_model, _worker_debug_timing
-    try:
-        # Disable numba caching to avoid file lock contention between workers
-        import os
-        os.environ['NUMBA_CACHE_DIR'] = ''
-
-        _worker_model = freeze_model_for_inference(load_model(model_path))
-        _worker_debug_timing = debug_timing
-
-        # Warmup numba JIT compilation in this worker
-        from fiberhmm.core.hmm import HAS_NUMBA
-        if HAS_NUMBA:
-            dummy_obs = np.array([0, 1, 2, 3], dtype=np.int32)
-            _ = _worker_model.predict(dummy_obs)
-    except Exception as e:
-        import traceback
-        print(f"Worker init error: {e}")
-        traceback.print_exc()
-        raise
-
-
-# Per-worker recall state: LLR tables for the TF Kadane scan.  Lives
-# alongside _worker_model (set by _init_fused_worker).
 _worker_recall_state = {}
-
-
-def _init_fused_worker(apply_model_path, recall_model_path=None,
-                       emission_uplift=1.0, debug_timing=False):
-    """Initialize worker process for the fused apply+recall pipeline.
-
-    Loads the apply HMM model plus the LLR tables used for the TF Kadane
-    scan.  recall_model_path=None means reuse the apply model's emissions
-    (the common case — same model file drives both passes).
-    """
-    global _worker_model, _worker_debug_timing, _worker_recall_state
-    import os
-    os.environ['NUMBA_CACHE_DIR'] = ''
-
-    _worker_model = freeze_model_for_inference(load_model(apply_model_path))
-    _worker_debug_timing = debug_timing
-
-    # Build TF-recall LLR tables from the recall model (or reuse apply model).
-    from fiberhmm.core.model_io import load_model_with_metadata
-    from fiberhmm.inference.tf_recaller import (
-        apply_emission_uplift,
-        build_llr_tables,
-    )
-    r_path = recall_model_path or apply_model_path
-    r_model, _, _ = load_model_with_metadata(r_path)
-    llr_hit, llr_miss = build_llr_tables(r_model)
-    if abs(emission_uplift - 1.0) > 1e-9:
-        llr_hit, llr_miss = apply_emission_uplift(llr_hit, llr_miss, r_model, emission_uplift)
-    _worker_recall_state['llr_hit'] = llr_hit
-    _worker_recall_state['llr_miss'] = llr_miss
-
-    # Warmup: apply Viterbi + TF Kadane scan
-    from fiberhmm.core.hmm import HAS_NUMBA
-    if HAS_NUMBA:
-        dummy_obs = np.array([0, 1, 2, 3], dtype=np.int32)
-        _ = _worker_model.predict(dummy_obs)
-        from fiberhmm.inference.tf_recaller import call_tfs_in_interval
-        _ = call_tfs_in_interval(
-            np.zeros(16, dtype=np.int32), 0, 16,
-            llr_hit, llr_miss, min_llr=4.0, min_opps=3,
-        )
 
 
 def _init_region_worker(model_path: str, params: dict):
@@ -964,168 +901,6 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
             list(zip(chunk_read_objs, chunk_reads, results)),
         )
     return reads_with_footprints, no_footprints, worker_failures, None
-
-
-def _process_chunk_worker(chunk_reads: list, edge_trim: int, circular: bool,
-                           mode: str, context_size: int, msp_min_size: int,
-                           nuc_min_size: int = 85,
-                           with_scores: bool = False,
-                           return_posteriors: bool = False) -> list:
-    """Worker function to process a chunk of reads.
-
-    Per-read errors are caught and converted to None results so a single bad
-    read can never bring down the entire worker process (and with it the whole
-    chunk of ~500 reads). Reads that fail are written through to the output
-    unchanged without footprint tags, with the failure count reported
-    separately in WorkerChunkResult.
-    """
-    global _worker_model
-
-    results = []
-    read_failures = 0
-    for fiber_read in chunk_reads:
-        try:
-            result = _process_single_read(
-                fiber_read, _worker_model, edge_trim, circular,
-                mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
-                with_scores=with_scores,
-                return_posteriors=return_posteriors
-            )
-        except Exception:
-            # Per-read failure: skip this read but keep the worker alive
-            result = None
-            read_failures += 1
-        results.append(result)
-
-    return WorkerChunkResult(results, read_failures)
-
-
-# ---------------------------------------------------------------------------
-# Fused apply+recall worker — eliminates the streaming pipe serialization
-# that costs ~2-7× throughput on chained pipelines.  Main process sends one
-# slim payload per read; worker runs extract → HMM → TF scan → unify in a
-# single call, keeping the encoded obs array in cache between apply and
-# recall passes.
-# ---------------------------------------------------------------------------
-
-def _process_fused_payload_chunk_worker(
-    chunk_payloads: list,
-    edge_trim: int, circular: bool,
-    mode: str, context_size: int, msp_min_size: int,
-    nuc_min_size: int = 85,
-    with_scores: bool = False,
-    prob_threshold: int = 125,
-    # Recall params
-    recall_mode: str = None,            # mode for the TF LLR tables (usually same as apply mode)
-    recall_context_size: int = None,    # k for TF LLR tables (usually same)
-    min_llr: float = 4.0,
-    min_opps: int = 3,
-    unify_threshold: int = 90,
-) -> list:
-    """Slim-IPC worker: apply HMM + TF recall in a single call per read.
-
-    Returns WorkerChunkResult with one result entry per payload.  Each entry
-    is either None (no usable modification data or per-read worker failure)
-    or a dict with:
-        'ns', 'nl':  numpy int arrays of unified nucleosome footprints
-                     (post-unification: short nucs overlapping TF calls are
-                     demoted into the tf+ annotation track)
-        'as', 'al':  numpy int arrays of MSPs (unchanged from apply)
-        'tf_calls':  list of TFCall objects
-        'ns_scores', 'as_scores': optional nq/aq scores if with_scores
-    """
-    global _worker_model, _worker_recall_state
-
-    # Model/params set once per worker; TF LLR tables attached to the
-    # worker globals via _init_fused_worker.
-    llr_hit = _worker_recall_state['llr_hit']
-    llr_miss = _worker_recall_state['llr_miss']
-
-    results = []
-    read_failures = 0
-    for payload in chunk_payloads:
-        try:
-            fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
-            if fiber_read is None:
-                results.append(None)
-                continue
-
-            apply_result = run_hmm_apply_stage(
-                fiber_read,
-                _worker_model,
-                edge_trim,
-                circular,
-                mode,
-                context_size,
-                msp_min_size,
-                nuc_min_size,
-                with_scores,
-            )
-
-            # Match streaming semantics: if apply produced no footprints and
-            # no MSPs, treat as "nothing to annotate" — return None so the
-            # drain pass-throughs the read unchanged (preserving any
-            # pre-existing tags on the input).  With include_encoded=True
-            # _process_single_read does NOT early-return on empty output.
-            if not apply_result_has_footprints(apply_result):
-                results.append(None)
-                continue
-
-            results.append(build_fused_recall_result(
-                fiber_read,
-                apply_result,
-                llr_hit,
-                llr_miss,
-                min_llr,
-                min_opps,
-                unify_threshold,
-                with_scores,
-            ))
-        except Exception:
-            # Per-read failure must not kill the worker (or the whole chunk).
-            read_failures += 1
-            results.append(None)
-
-    return WorkerChunkResult(results, read_failures)
-
-
-def _process_payload_chunk_worker(chunk_payloads: list, edge_trim: int, circular: bool,
-                                    mode: str, context_size: int, msp_min_size: int,
-                                    nuc_min_size: int = 85,
-                                    with_scores: bool = False,
-                                    return_posteriors: bool = False,
-                                    prob_threshold: int = 125) -> list:
-    """Slim-IPC worker: parses MM/ML payloads then runs HMM.
-
-    The streaming pipeline ships slim payloads (built by make_apply_payload
-    in main) instead of pre-parsed fiber_read dicts.  Each worker does the
-    MM/ML parse + HMM in parallel rather than serializing the parse on the
-    main process.  Returns WorkerChunkResult with one entry per payload, with
-    None for reads that have no usable modification data or hit a per-read
-    worker failure.
-    """
-    global _worker_model
-
-    results = []
-    read_failures = 0
-    for payload in chunk_payloads:
-        try:
-            fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
-            if fiber_read is None:
-                results.append(None)
-                continue
-            result = _process_single_read(
-                fiber_read, _worker_model, edge_trim, circular,
-                mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
-                with_scores=with_scores,
-                return_posteriors=return_posteriors
-            )
-        except Exception:
-            result = None
-            read_failures += 1
-        results.append(result)
-
-    return WorkerChunkResult(results, read_failures)
 
 
 def _init_fused_region_worker(apply_model_path: str, recall_model_path: Optional[str],

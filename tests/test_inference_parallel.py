@@ -7,6 +7,7 @@ from concurrent.futures import Future
 import pytest
 
 import fiberhmm.inference.parallel as parallel
+import fiberhmm.inference.streaming_workers as streaming_workers
 from fiberhmm.inference.parallel import (
     _drain_oldest_chunk,
     _drain_oldest_fused_chunk,
@@ -34,6 +35,20 @@ def test_worker_chunk_result_coerces_legacy_lists():
     assert coerce_worker_chunk_result(WorkerChunkResult([None], 2)) == ([None], 2)
 
 
+def test_parallel_reexports_streaming_worker_entry_points():
+    assert parallel._init_bam_worker is streaming_workers._init_bam_worker
+    assert parallel._init_fused_worker is streaming_workers._init_fused_worker
+    assert parallel._process_chunk_worker is streaming_workers._process_chunk_worker
+    assert (
+        parallel._process_payload_chunk_worker
+        is streaming_workers._process_payload_chunk_worker
+    )
+    assert (
+        parallel._process_fused_payload_chunk_worker
+        is streaming_workers._process_fused_payload_chunk_worker
+    )
+
+
 def test_payload_worker_counts_per_read_failures(monkeypatch):
     def fake_extract(payload, mode, prob_threshold):
         if payload == "extract-bad":
@@ -47,11 +62,11 @@ def test_payload_worker_counts_per_read_failures(monkeypatch):
             raise ValueError("bad read")
         return {"payload": fiber_read["payload"]}
 
-    monkeypatch.setattr(parallel, "extract_fiber_read_from_payload", fake_extract)
-    monkeypatch.setattr(parallel, "_process_single_read", fake_process)
-    monkeypatch.setattr(parallel, "_worker_model", object())
+    monkeypatch.setattr(streaming_workers, "extract_fiber_read_from_payload", fake_extract)
+    monkeypatch.setattr(streaming_workers, "_process_single_read", fake_process)
+    monkeypatch.setattr(streaming_workers, "_worker_model", object())
 
-    chunk_result = parallel._process_payload_chunk_worker(
+    chunk_result = streaming_workers._process_payload_chunk_worker(
         ["ok", "empty", "process-bad", "extract-bad"],
         edge_trim=0,
         circular=False,
@@ -84,17 +99,17 @@ def test_fused_payload_worker_counts_per_read_failures(monkeypatch):
             raise RuntimeError("bad recall")
         return {"payload": fiber_read["payload"], "tf_calls": []}
 
-    monkeypatch.setattr(parallel, "extract_fiber_read_from_payload", fake_extract)
-    monkeypatch.setattr(parallel, "run_hmm_apply_stage", fake_apply)
-    monkeypatch.setattr(parallel, "apply_result_has_footprints", fake_has_footprints)
-    monkeypatch.setattr(parallel, "build_fused_recall_result", fake_build)
-    monkeypatch.setattr(parallel, "_worker_model", object())
-    monkeypatch.setattr(parallel, "_worker_recall_state", {
+    monkeypatch.setattr(streaming_workers, "extract_fiber_read_from_payload", fake_extract)
+    monkeypatch.setattr(streaming_workers, "run_hmm_apply_stage", fake_apply)
+    monkeypatch.setattr(streaming_workers, "apply_result_has_footprints", fake_has_footprints)
+    monkeypatch.setattr(streaming_workers, "build_fused_recall_result", fake_build)
+    monkeypatch.setattr(streaming_workers, "_worker_model", object())
+    monkeypatch.setattr(streaming_workers, "_worker_recall_state", {
         "llr_hit": object(),
         "llr_miss": object(),
     })
 
-    chunk_result = parallel._process_fused_payload_chunk_worker(
+    chunk_result = streaming_workers._process_fused_payload_chunk_worker(
         ["ok", "empty", "apply-bad", "build-bad", "extract-bad"],
         edge_trim=0,
         circular=False,
