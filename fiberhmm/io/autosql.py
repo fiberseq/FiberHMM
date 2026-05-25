@@ -82,6 +82,16 @@ _BLOCK_SCORE_FIELDS = {
     ),
 }
 
+_CIRCULAR_FIELDS = (
+    '    string circId; "Shared circular feature ID for clipped pieces, or ."\n'
+    '    uint   circPart; "1-based clipped-piece index for circId, or 1"\n'
+    '    uint   circParts; "Number of clipped pieces in circId, or 1"\n'
+    '    uint   molStart; "0-based molecular start of fused circular feature"\n'
+    '    uint   molLength; "Molecular length of fused circular feature"\n'
+)
+
+CIRCULAR_FIELD_COUNT = 5
+
 
 # Number of extra int[blockCount] columns per type when block_scores=True.
 EXTRA_FIELD_COUNTS = {t: f.count('int[blockCount]')
@@ -91,10 +101,13 @@ EXTRA_FIELD_COUNTS = {t: f.count('int[blockCount]')
 def _make_schema(table_name: str, description: str,
                  extract_type: Optional[str] = None,
                  block_scores: bool = False,
-                 sample_name: Optional[str] = None) -> str:
+                 sample_name: Optional[str] = None,
+                 circular_groups: bool = False) -> str:
     fields = _BED12_FIELDS
     if block_scores and extract_type in _BLOCK_SCORE_FIELDS:
         fields = fields + _BLOCK_SCORE_FIELDS[extract_type]
+    if circular_groups:
+        fields = fields + _CIRCULAR_FIELDS
     if sample_name:
         # Prepend a machine-parseable "Sample: <name>." marker. The autoSQL
         # description is a free-form string so we stay format-compatible;
@@ -157,7 +170,8 @@ AUTOSQL_SCHEMAS = {
 
 
 def get_schema(extract_type: str, block_scores: bool = False,
-               sample_name: Optional[str] = None) -> Optional[str]:
+               sample_name: Optional[str] = None,
+               circular_groups: bool = False) -> Optional[str]:
     """Return the autoSQL schema string for ``extract_type``, optionally
     with the per-block score columns appended and/or a ``Sample: <name>.``
     marker prepended to the description."""
@@ -167,12 +181,14 @@ def get_schema(extract_type: str, block_scores: bool = False,
     return _make_schema(f'fiberhmm_{extract_type}', desc,
                         extract_type=extract_type,
                         block_scores=block_scores,
-                        sample_name=sample_name)
+                        sample_name=sample_name,
+                        circular_groups=circular_groups)
 
 
 def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
                       block_scores: bool = False,
-                      sample_name: Optional[str] = None) -> Optional[str]:
+                      sample_name: Optional[str] = None,
+                      circular_groups: bool = False) -> Optional[str]:
     """Write the autoSQL file for a given extract_type to disk.
 
     Returns the path to the written file, or None if no schema exists
@@ -182,17 +198,23 @@ def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
     prefix in the autoSQL description (visible via ``bigBedInfo -as``).
     """
     schema = get_schema(extract_type, block_scores=block_scores,
-                        sample_name=sample_name)
+                        sample_name=sample_name,
+                        circular_groups=circular_groups)
     if schema is None:
         return None
-    suffix = '.bs.as' if block_scores else '.as'
+    variant = ''
+    if block_scores:
+        variant += '.bs'
+    if circular_groups:
+        variant += '.circ'
+    suffix = f'{variant}.as' if variant else '.as'
     if out_dir is None:
         fd, path = tempfile.mkstemp(prefix=f'fiberhmm_{extract_type}_',
                                      suffix=suffix)
         os.close(fd)
     else:
         os.makedirs(out_dir, exist_ok=True)
-        fname = f'fiberhmm_{extract_type}{".bs" if block_scores else ""}.as'
+        fname = f'fiberhmm_{extract_type}{variant}.as'
         path = os.path.join(out_dir, fname)
     with open(path, 'w') as f:
         f.write(schema)

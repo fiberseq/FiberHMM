@@ -297,6 +297,7 @@ Key flags:
 | `--skip-scaffolds` | off | Drop small scaffolds in region-parallel mode. |
 | `--chroms chr1 chr2 …` | all | Restrict to specific chromosomes (region-parallel). |
 | `--min-llr` | enzyme preset | Override TF LLR threshold. |
+| `-r/--circular` | off | Circular molecule mode: tiles reads internally and emits wrapped features as clipped `MA/AQ/AN` annotations. |
 | `--no-legacy-tags` | off | Emit only MA/AQ spec tags, skip `ns/nl/as/al`. |
 | `--downstream-compat` | off | Write TF calls into legacy `ns/nl` (skip MA/AQ). |
 
@@ -332,6 +333,7 @@ fiberhmm-apply -i - --enzyme dddb -o output/
 | `-q/--min-mapq` | 20 | Min mapping quality |
 | `--min-read-length` | 1000 | Min aligned read length (bp) |
 | `-e/--edge-trim` | 10 | Edge masking (bp) |
+| `-r/--circular` | false | Circular molecule mode: tiles reads internally before footprint calling. |
 | `--scores` | false | Compute per-footprint confidence scores |
 | `--skip-scaffolds` | false | Skip scaffold/contig chromosomes |
 | `--chroms` | all | Process only these chromosomes |
@@ -400,6 +402,9 @@ fiberhmm-extract -i output/sample_footprints.bam --footprint
 
 # Keep BED files alongside bigBed
 fiberhmm-extract -i output/sample_footprints.bam --keep-bed
+
+# Preserve circular wrapped-feature grouping fields for FiberBrowser
+fiberhmm-extract -i output/sample_footprints.bam --tf --msp --circular-groups
 ```
 
 ### fiberhmm-recall-tfs (BETA)
@@ -539,6 +544,31 @@ Coordinates are 1-based (per the spec); internal storage stays 0-based.
 | `nuc+Q` | `nq` | Nucleosomes (`nl ≥ unify_threshold` or v2 short-nucs the recaller did not match). `nq` carries v2's posterior mean (0 sentinel for unverified entries). |
 | `msp+` | none | Methylase-sensitive patches (v2 MSPs unchanged) |
 | `tf+QQQ` | `tq, el, er` | Recaller TF calls. See encoding table below. |
+
+##### Circular molecules
+
+`--circular` is intended for plasmids, mitochondrial genomes, and other
+circular molecules where a biological feature can cross the arbitrary read
+origin. FiberHMM tiles each read 3x internally for calling, then projects
+features back to the original molecule before writing output. The tiled
+coordinates are never written to BAM.
+
+Wrapped features are serialized as two spec-valid clipped `MA` intervals,
+one at the beginning and one at the end of the read. The optional `AN:Z` tag
+gives both clipped pieces the same annotation name so circular-aware tools can
+fuse them:
+
+```
+MA:Z:1000;tf+QQQ:1-45,971-30
+AQ:B:C:180,20,30,180,20,30
+AN:Z:fhw_tf_0,fhw_tf_0
+```
+
+Tools that ignore `AN` still see valid linear `MA/AQ` intervals at both ends.
+FiberBrowser and `fiberhmm-extract --circular-groups` can use `AN` to
+reconstruct the single wrapped feature. Legacy `ns/nl` and `as/al` tags are
+also split to stay coordinate-valid, but they do not carry the fused feature
+identity.
 
 ##### `tq` -- LLR-based confidence (0-255)
 

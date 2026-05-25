@@ -13,6 +13,12 @@ from fiberhmm.core.bam_reader import (
     parse_mm_tag_query_positions,
 )
 from fiberhmm.core.hmm import FiberHMM
+from fiberhmm.inference.circular import (
+    project_center_runs,
+    project_center_scores,
+    split_intervals_for_legacy,
+    tile_sequence_and_mods,
+)
 
 try:
     from numba import njit as _numba_njit
@@ -202,11 +208,86 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
     return result
 
 
+def _extract_footprints_from_states_circular(
+    states: np.ndarray,
+    confidence: Optional[np.ndarray],
+    read_length: int,
+    msp_min_size: int,
+    with_scores: bool,
+    nuc_min_size: int = 85,
+) -> dict:
+    """Extract circular intervals from 3x-tiled HMM states.
+
+    The public legacy arrays are split into valid linear pieces. The unsplit
+    circular intervals are retained for MA/AN emission and circular TF recall.
+    """
+    tiled_result = _extract_footprints_from_states(
+        states,
+        confidence,
+        msp_min_size=msp_min_size,
+        with_scores=with_scores,
+        nuc_min_size=nuc_min_size,
+    )
+
+    fp_starts = np.asarray(tiled_result['footprint_starts'], dtype=np.int64)
+    fp_ends = fp_starts + np.asarray(tiled_result['footprint_sizes'], dtype=np.int64)
+    circular_nucs = project_center_runs(fp_starts, fp_ends, read_length)
+    circular_nuc_scores = project_center_scores(
+        fp_starts,
+        fp_ends,
+        tiled_result.get('footprint_scores'),
+        read_length,
+    )
+
+    msp_starts = np.asarray(tiled_result['msp_starts'], dtype=np.int64)
+    msp_ends = msp_starts + np.asarray(tiled_result['msp_sizes'], dtype=np.int64)
+    circular_msps = project_center_runs(msp_starts, msp_ends, read_length)
+    circular_msp_scores = project_center_scores(
+        msp_starts,
+        msp_ends,
+        tiled_result.get('msp_scores'),
+        read_length,
+    )
+
+    ns, nl, ns_scores = split_intervals_for_legacy(
+        circular_nucs,
+        read_length,
+        circular_nuc_scores,
+    )
+    msp_s, msp_l, msp_scores = split_intervals_for_legacy(
+        circular_msps,
+        read_length,
+        circular_msp_scores,
+    )
+
+    return {
+        'footprint_starts': ns,
+        'footprint_sizes': nl,
+        'footprint_scores': ns_scores,
+        'msp_starts': msp_s,
+        'msp_sizes': msp_l,
+        'msp_scores': msp_scores,
+        'states': states[read_length:2 * read_length].astype(np.int8, copy=False),
+        'posteriors': None,
+        'circular': True,
+        'circular_read_length': read_length,
+        'circular_ns': circular_nucs,
+        'circular_as': circular_msps,
+        'circular_ns_scores': circular_nuc_scores,
+        'circular_as_scores': circular_msp_scores,
+        'tiled_ns': fp_starts.astype(np.int32),
+        'tiled_nl': (fp_ends - fp_starts).astype(np.int32),
+        'tiled_as': msp_starts.astype(np.int32),
+        'tiled_al': (msp_ends - msp_starts).astype(np.int32),
+    }
+
+
 def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
                                  msp_min_size: int = 147,
                                  with_scores: bool = False,
                                  return_posteriors: bool = False,
-                                 nuc_min_size: int = 85) -> dict:
+                                 nuc_min_size: int = 85,
+                                 circular_read_length: Optional[int] = None) -> dict:
     """
     Run HMM prediction to call both footprints (ns/nl) and MSPs (as/al).
 
@@ -262,6 +343,22 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
     else:
         states = model.predict(encoded_read)
         confidence = None
+
+    if circular_read_length is not None:
+        result.update(
+            _extract_footprints_from_states_circular(
+                states,
+                confidence,
+                circular_read_length,
+                msp_min_size,
+                with_scores,
+                nuc_min_size=nuc_min_size,
+            )
+        )
+        if return_posteriors and posteriors_full is not None:
+            n = int(circular_read_length)
+            result['posteriors'] = posteriors_full[n:2 * n, 0].astype(np.float16)
+        return result
 
     result['states'] = states
 
@@ -610,10 +707,19 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     else:
         strand = '.'
 
-    # Encode — pass is_reverse so nanopore mode handles strand correctly
+    # Encode — pass is_reverse so nanopore mode handles strand correctly.
+    # Circular mode keeps the 3x tiling private to inference and projects the
+    # middle copy back to molecule coordinates before anything is written.
     is_reverse = fiber_read.get('is_reverse', False)
+    encode_sequence = query_sequence
+    encode_mods = m6a_positions
+    circular_read_length = None
+    if circular and len(query_sequence) > 0:
+        encode_sequence, encode_mods = tile_sequence_and_mods(query_sequence, m6a_positions)
+        circular_read_length = len(query_sequence)
+
     encoded = encode_from_query_sequence(
-        query_sequence, m6a_positions, edge_trim,
+        encode_sequence, encode_mods, edge_trim,
         mode=mode, strand=strand, context_size=context_size,
         is_reverse=is_reverse,
     )
@@ -624,7 +730,8 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     # Predict
     fp_result = predict_footprints_and_msps(model, encoded, msp_min_size, with_scores,
                                              return_posteriors=return_posteriors,
-                                             nuc_min_size=nuc_min_size)
+                                             nuc_min_size=nuc_min_size,
+                                             circular_read_length=circular_read_length)
 
     # If no footprints and we don't need posteriors or encoded, skip
     if len(fp_result['footprint_starts']) == 0 and len(fp_result['msp_starts']) == 0:
@@ -639,6 +746,19 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
         'al': fp_result['msp_sizes'],
         'as_scores': fp_result.get('msp_scores')
     }
+    if fp_result.get('circular'):
+        result.update({
+            'circular': True,
+            'circular_read_length': fp_result['circular_read_length'],
+            'circular_ns': fp_result['circular_ns'],
+            'circular_as': fp_result['circular_as'],
+            'circular_ns_scores': fp_result.get('circular_ns_scores'),
+            'circular_as_scores': fp_result.get('circular_as_scores'),
+            'tiled_ns': fp_result['tiled_ns'],
+            'tiled_nl': fp_result['tiled_nl'],
+            'tiled_as': fp_result['tiled_as'],
+            'tiled_al': fp_result['tiled_al'],
+        })
 
     # Include posteriors data if requested
     if return_posteriors and fp_result.get('posteriors') is not None:

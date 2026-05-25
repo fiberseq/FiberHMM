@@ -23,6 +23,7 @@ from fiberhmm.cli.extract_tags import (
 )
 from fiberhmm.io.autosql import (
     AUTOSQL_SCHEMAS,
+    CIRCULAR_FIELD_COUNT,
     EXTRA_FIELD_COUNTS,
     get_schema,
     write_autosql_for,
@@ -181,6 +182,16 @@ def test_autosql_block_scores_adds_per_type_columns():
         assert 'blockMl' in schema
 
 
+def test_autosql_circular_groups_adds_group_columns():
+    schema = get_schema('tf', block_scores=True, circular_groups=True)
+
+    assert CIRCULAR_FIELD_COUNT == 5
+    assert 'circId' in schema
+    assert 'circPart' in schema
+    assert 'molLength' in schema
+    assert schema.count('int[blockCount]') == 5  # BED12 arrays + tf QQQ arrays
+
+
 def test_extra_field_counts_match_written_arrays():
     """EXTRA_FIELD_COUNTS must match the number of int[blockCount] fields
     in the block_scores schema -- this is the number passed as
@@ -201,7 +212,11 @@ def test_extra_field_counts_match_written_arrays():
 def test_write_autosql_for_writes_both_variants(tmp_path):
     classic = write_autosql_for('tf', out_dir=str(tmp_path), block_scores=False)
     bs = write_autosql_for('tf', out_dir=str(tmp_path), block_scores=True)
+    circ = write_autosql_for(
+        'tf', out_dir=str(tmp_path), block_scores=True, circular_groups=True,
+    )
     assert classic != bs
+    assert circ != bs
     with open(classic) as f:
         assert 'blockTq' not in f.read()
     with open(bs) as f:
@@ -209,6 +224,8 @@ def test_write_autosql_for_writes_both_variants(tmp_path):
         assert 'blockTq' in content
         assert 'blockEl' in content
         assert 'blockEr' in content
+    with open(circ) as f:
+        assert 'circId' in f.read()
 
 
 # ------------------- footprint --------------------------------------
@@ -410,6 +427,63 @@ def test_tf_extractor_consumes_aq_without_upfront_list_copy():
     assert n == 1
     assert aq.accessed == [0, 1, 2]
     assert buf.getvalue().rstrip('\n').split('\t')[12:15] == ["150", "30", "25"]
+
+
+def test_tf_circular_groups_emit_one_row_per_clipped_piece():
+    read = _FakeRead(query_len=1000, ref_start=0)
+    read.set_tag('MA', '1000;tf+QQQ:1-45,971-30')
+    read.set_tag('AQ', array('B', [180, 20, 30, 180, 20, 30]))
+    read.set_tag('AN', 'fhw_tf_0,fhw_tf_0')
+
+    buf = io.StringIO()
+    n = _extract_tfs(
+        read,
+        buf,
+        with_scores=True,
+        min_tq=0,
+        query_to_ref=_identity_map(read),
+        block_scores=True,
+        circular_groups=True,
+    )
+
+    assert n == 2
+    rows = [line.split('\t') for line in buf.getvalue().rstrip('\n').splitlines()]
+    assert len(rows) == 2
+    assert [int(row[1]) for row in rows] == [0, 970]
+    assert all(len(row) == 20 for row in rows)  # BED12 + tf QQQ + circular fields
+    assert rows[0][15:] == ['fhw_tf_0', '1', '2', '970', '75']
+    assert rows[1][15:] == ['fhw_tf_0', '2', '2', '970', '75']
+
+
+def test_footprint_and_msp_extractors_prefer_ma_an_when_present():
+    read = _FakeRead(query_len=1000, ref_start=0)
+    read.set_tag('MA', '1000;nuc+Q:1-10,991-10;msp+:1-20,981-20')
+    read.set_tag('AQ', array('B', [222, 222]))
+    read.set_tag('AN', 'fhw_nuc_0,fhw_nuc_0,fhw_msp_0,fhw_msp_0')
+    # Stale legacy tags should not win when MA is available.
+    read.set_tag('ns', array('I', [100]))
+    read.set_tag('nl', array('I', [10]))
+    read.set_tag('as', array('I', [200]))
+    read.set_tag('al', array('I', [10]))
+
+    nuc_buf = io.StringIO()
+    msp_buf = io.StringIO()
+
+    assert _extract_footprints(
+        read, nuc_buf, with_scores=True, query_to_ref=_identity_map(read),
+        block_scores=True, circular_groups=True,
+    ) == 2
+    assert _extract_msps(
+        read, msp_buf, with_scores=True, query_to_ref=_identity_map(read),
+        block_scores=True, circular_groups=True,
+    ) == 2
+
+    nuc_rows = [line.split('\t') for line in nuc_buf.getvalue().rstrip('\n').splitlines()]
+    msp_rows = [line.split('\t') for line in msp_buf.getvalue().rstrip('\n').splitlines()]
+    assert [int(row[1]) for row in nuc_rows] == [0, 990]
+    assert [int(row[1]) for row in msp_rows] == [0, 980]
+    assert nuc_rows[0][13:] == ['fhw_nuc_0', '1', '2', '990', '20']
+    assert msp_rows[0][13:] == ['fhw_msp_0', '1', '2', '980', '40']
 
 
 # ------------------- deam (DAF IUPAC R/Y) ---------------------------

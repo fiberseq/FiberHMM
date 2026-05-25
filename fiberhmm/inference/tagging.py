@@ -7,6 +7,7 @@ from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
+from fiberhmm.inference.circular import circular_intervals_overlap
 from fiberhmm.inference.tf_recaller import TFCall, write_ma_tags
 
 Interval = Tuple[int, int]
@@ -119,6 +120,36 @@ def unify_nucs_with_tf_calls(
     return kept, kept_scores
 
 
+def unify_circular_nucs_with_tf_calls(
+    nucs: Sequence[Interval],
+    tf_calls: Sequence[TFCall],
+    unify_threshold: int,
+    read_length: int,
+    ns_scores: Optional[Sequence[float]] = None,
+) -> tuple[list[Interval], Optional[list[int]]]:
+    """Drop short circular nucleosome calls that overlap circular TF calls."""
+    tf_intervals = [(c.start, c.length) for c in tf_calls]
+    score_values = scores_to_u8(ns_scores)
+    kept: list[Interval] = []
+    kept_scores: Optional[list[int]] = [] if score_values is not None else None
+
+    for idx, (s_raw, length_raw) in enumerate(nucs):
+        interval = (int(s_raw), int(length_raw))
+        if interval[1] <= 0:
+            continue
+        keep = interval[1] >= unify_threshold
+        if not keep:
+            keep = not any(
+                circular_intervals_overlap(interval, tf_interval, read_length)
+                for tf_interval in tf_intervals
+            )
+        if keep:
+            kept.append(interval)
+            if kept_scores is not None:
+                kept_scores.append(score_values[idx] if idx < len(score_values) else 0)
+    return kept, kept_scores
+
+
 def split_intervals(intervals: Sequence[Interval]) -> tuple[np.ndarray, np.ndarray]:
     """Return int32 start and length arrays for an interval list."""
     if not intervals:
@@ -136,8 +167,8 @@ def write_fused_recall_tags(
     downstream_compat: bool,
 ) -> None:
     """Apply a fused apply+TF-recall result to a pysam read."""
-    kept_nucs = intervals_from_arrays(result["ns"], result["nl"])
-    msps = intervals_from_arrays(result["as"], result["al"])
+    kept_nucs = result.get("circular_ns") or intervals_from_arrays(result["ns"], result["nl"])
+    msps = result.get("circular_as") or intervals_from_arrays(result["as"], result["al"])
     write_ma_tags(
         read,
         read_length=read_length,

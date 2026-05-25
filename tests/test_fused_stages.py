@@ -97,3 +97,68 @@ def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatc
     assert result["al"] is msp_lengths
     assert result["nq_for_kept_nucs"] == [255]
     assert len(result["tf_calls"]) == 1
+
+
+def test_build_fused_recall_result_projects_circular_tf_calls(monkeypatch):
+    def fake_build_scan_intervals(ns, nl, msps, msp_lengths, read_length, unify_threshold):
+        assert read_length == 300
+        assert list(ns) == [195]
+        assert list(nl) == [20]
+        assert list(msps) == [190]
+        assert list(msp_lengths) == [40]
+        return [(190, 230)]
+
+    def fake_call_tfs_in_interval(obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps):
+        return [
+            TFCall(
+                start=195,
+                length=20,
+                llr=6.0,
+                n_opps=4,
+                left_ambiguity=1,
+                right_ambiguity=2,
+            )
+        ]
+
+    monkeypatch.setattr(fused_stages, "build_scan_intervals", fake_build_scan_intervals)
+    monkeypatch.setattr(fused_stages, "call_tfs_in_interval", fake_call_tfs_in_interval)
+
+    apply_result = {
+        "ns": np.asarray([0, 95], dtype=np.int32),
+        "nl": np.asarray([15, 5], dtype=np.int32),
+        "as": np.asarray([0, 90], dtype=np.int32),
+        "al": np.asarray([30, 10], dtype=np.int32),
+        "encoded": np.zeros(300, dtype=np.int32),
+        "circular": True,
+        "circular_read_length": 100,
+        "circular_ns": [(95, 20)],
+        "circular_as": [(90, 40)],
+        "circular_ns_scores": np.asarray([0.75], dtype=np.float32),
+        "circular_as_scores": np.asarray([0.25], dtype=np.float32),
+        "tiled_ns": np.asarray([195], dtype=np.int32),
+        "tiled_nl": np.asarray([20], dtype=np.int32),
+        "tiled_as": np.asarray([190], dtype=np.int32),
+        "tiled_al": np.asarray([40], dtype=np.int32),
+    }
+
+    result = fused_stages.build_fused_recall_result(
+        {"query_sequence": "A" * 100},
+        apply_result,
+        llr_hit="hit",
+        llr_miss="miss",
+        min_llr=4.0,
+        min_opps=3,
+        unify_threshold=90,
+        with_scores=True,
+    )
+
+    assert result["circular"] is True
+    assert result["tf_calls"] == [
+        TFCall(start=95, length=20, llr=6.0, n_opps=4,
+               left_ambiguity=1, right_ambiguity=2)
+    ]
+    assert result["circular_ns"] == []
+    assert result["circular_as"] == [(90, 40)]
+    assert result["ns"].tolist() == []
+    assert result["nl"].tolist() == []
+    assert result["nq_for_kept_nucs"] == []

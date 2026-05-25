@@ -346,6 +346,53 @@ def test_spec_strips_stale_ma_aq_when_no_annotations():
     assert not read.has_tag('AQ')
 
 
+def test_spec_mode_splits_wrapped_annotations_and_writes_an():
+    read = _FakeRead()
+    tfs = [TFCall(start=80, length=30, llr=5.0, n_opps=5,
+                  left_ambiguity=1, right_ambiguity=2)]
+
+    write_ma_tags(
+        read,
+        100,
+        tf_calls=tfs,
+        kept_nucs=[(90, 20)],
+        msps=[(95, 10)],
+        nq_for_kept_nucs=[201],
+        also_write_legacy=True,
+        downstream_compat=False,
+    )
+
+    assert read.get_tag('MA') == (
+        '100;nuc+Q:1-10,91-10;msp+:1-5,96-5;tf+QQQ:1-10,81-20'
+    )
+    assert read.get_tag('AN') == (
+        'fhw_nuc_0,fhw_nuc_0,fhw_msp_0,fhw_msp_0,fhw_tf_0,fhw_tf_0'
+    )
+    # AQ duplicates the nuc quality and TF QQQ triplet for the two clipped pieces.
+    assert list(read.get_tag('AQ')) == [201, 201, 50, 246, 238, 50, 246, 238]
+    assert list(read.get_tag('ns')) == [0, 90]
+    assert list(read.get_tag('nl')) == [10, 10]
+    assert list(read.get_tag('nq')) == [201, 201]
+
+
+def test_spec_mode_strips_stale_an_when_next_read_is_linear():
+    read = _FakeRead()
+    read.set_tag('AN', 'stale', value_type='Z')
+
+    write_ma_tags(
+        read,
+        100,
+        tf_calls=[],
+        kept_nucs=[(10, 20)],
+        msps=[],
+        nq_for_kept_nucs=[99],
+        also_write_legacy=True,
+        downstream_compat=False,
+    )
+
+    assert not read.has_tag('AN')
+
+
 def test_compat_requires_legacy():
     import pytest
     read = _FakeRead()

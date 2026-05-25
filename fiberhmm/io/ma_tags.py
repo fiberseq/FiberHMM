@@ -47,7 +47,7 @@ is ambiguous to the upper end of that 30 bp range).
 from __future__ import annotations
 
 import array
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 TQ_SCALE = 10.0          # tq = round(LLR * TQ_SCALE); saturates at LLR=25.5 nats
 EDGE_AMBIGUITY_SAT = 30  # bp; el/er = 0 at ambiguity >= this
@@ -70,6 +70,40 @@ def ambiguity_to_edge(ambiguity_bp: int) -> int:
     if ambiguity_bp >= EDGE_AMBIGUITY_SAT:
         return 0
     return int(round(255 * (1 - ambiguity_bp / EDGE_AMBIGUITY_SAT)))
+
+
+def split_circular_interval(start: int, length: int,
+                            read_length: int) -> List[Tuple[int, int]]:
+    """Split a molecular interval into MA-valid linear pieces.
+
+    Input intervals are 0-based start + length on a circular molecule. Output
+    pieces are 0-based start + length with every piece contained in
+    ``[0, read_length)``. Non-wrapping intervals return one piece; wrapping
+    intervals return the start-of-read piece first, then the end-of-read piece.
+    """
+    start = int(start)
+    length = int(length)
+    read_length = int(read_length)
+    if length <= 0 or read_length <= 0:
+        return []
+    if length >= read_length:
+        return [(0, read_length)]
+
+    start %= read_length
+    end = start + length
+    if end <= read_length:
+        return [(start, length)]
+
+    return [(0, end - read_length), (start, read_length - start)]
+
+
+def interval_wraps(start: int, length: int, read_length: int) -> bool:
+    """Return whether an interval crosses the circular read origin."""
+    if int(length) <= 0 or int(read_length) <= 0:
+        return False
+    if int(length) >= int(read_length):
+        return False
+    return (int(start) % int(read_length)) + int(length) > int(read_length)
 
 
 def format_ma_tag(read_length: int,
@@ -95,6 +129,23 @@ def format_ma_tag(read_length: int,
         parts.append(f'tf+{tf_qual_spec}:{tfs}' if tf_qual_spec
                      else f'tf+:{tfs}')
     return ';'.join(parts)
+
+
+def format_an_tag(annotation_names: Sequence[Optional[str]]) -> str:
+    """Build an AN:Z tag aligned to MA annotation order.
+
+    FiberHMM uses AN to give both clipped pieces of a circularly wrapped
+    annotation the same feature ID. Non-wrapped annotations receive unique IDs
+    whenever AN is emitted so the tag has one unambiguous name per annotation.
+    """
+    return ','.join(str(name or '.') for name in annotation_names)
+
+
+def parse_an_tag(an_string: str) -> List[str]:
+    """Parse an AN:Z string into names aligned with MA annotations."""
+    if not an_string:
+        return []
+    return [tok if tok != '.' else '' for tok in an_string.split(',')]
 
 
 def format_aq_array(nq_values: Sequence[int],

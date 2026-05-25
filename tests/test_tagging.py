@@ -6,7 +6,12 @@ import array as pyarray
 
 import numpy as np
 
-from fiberhmm.inference.tagging import scores_to_u8, set_legacy_apply_tags
+from fiberhmm.inference.tagging import (
+    scores_to_u8,
+    set_legacy_apply_tags,
+    unify_circular_nucs_with_tf_calls,
+)
+from fiberhmm.inference.tf_recaller import TFCall
 
 
 class RecordingRead:
@@ -71,3 +76,21 @@ def test_set_legacy_apply_tags_clears_stale_scores_when_scores_not_written():
 
     assert "nq" not in read.tags
     assert "aq" not in read.tags
+
+
+def test_unify_circular_nucs_with_tf_calls_handles_origin_overlap():
+    tf_calls = [
+        TFCall(start=5, length=10, llr=5.0, n_opps=3,
+               left_ambiguity=0, right_ambiguity=0)
+    ]
+
+    kept, scores = unify_circular_nucs_with_tf_calls(
+        nucs=[(90, 20), (40, 120)],
+        tf_calls=tf_calls,
+        unify_threshold=90,
+        read_length=100,
+        ns_scores=np.asarray([0.5, 1.0]),
+    )
+
+    assert kept == [(40, 120)]
+    assert scores == [255]

@@ -53,6 +53,7 @@ import pysam
 
 from fiberhmm.core.bam_reader import cigar_to_query_ref
 from fiberhmm.inference.parallel import _get_genome_regions
+from fiberhmm.io.ma_tags import parse_an_tag, parse_aq_array, parse_ma_tag
 
 
 def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
@@ -112,6 +113,217 @@ def _q2r_lookup(query_to_ref, qpos):
     return None
 
 
+def _bed12_row(ref_name, chrom_start, chrom_end, read_id, score, strand,
+               blocks, extra_columns=()):
+    block_count = len(blocks)
+    block_sizes = ','.join(str(e - s) for s, e, *_ in blocks)
+    block_starts = ','.join(str(s - chrom_start) for s, *_ in blocks)
+    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{score}\t{strand}\t"
+           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
+    if extra_columns:
+        row += "\t" + "\t".join(str(c) for c in extra_columns)
+    return row
+
+
+def _parse_ma_annotations(read, target_name: str):
+    """Return target annotations from MA/AQ/AN in positional annotation order."""
+    try:
+        ma_str = read.get_tag('MA')
+    except KeyError:
+        return None
+    try:
+        aq = read.get_tag('AQ')
+    except KeyError:
+        aq = []
+    try:
+        an_names = parse_an_tag(read.get_tag('AN')) if read.has_tag('AN') else []
+    except KeyError:
+        an_names = []
+    try:
+        parsed = parse_ma_tag(ma_str)
+    except ValueError:
+        return None
+
+    qual_specs = [rt[2] for rt in parsed['raw_types']]
+    n_per_type = [len(rt[3]) for rt in parsed['raw_types']]
+    per_annotation = parse_aq_array(aq, qual_specs, n_per_type)
+
+    annotations = []
+    ann_idx = 0
+    for name, _strand, _qspec, intervals in parsed['raw_types']:
+        for s, length in intervals:
+            quals = per_annotation[ann_idx] if ann_idx < len(per_annotation) else []
+            ann_name = an_names[ann_idx] if ann_idx < len(an_names) else ''
+            if name == target_name:
+                annotations.append({
+                    'start': int(s),
+                    'length': int(length),
+                    'quals': [int(q) for q in quals],
+                    'name': ann_name,
+                    'read_length': int(parsed['read_length']),
+                })
+            ann_idx += 1
+    return annotations
+
+
+def _annotate_circular_parts(annotations, read_length: int):
+    """Add circular grouping metadata to parsed MA annotation dicts."""
+    grouped = {}
+    for idx, ann in enumerate(annotations):
+        name = ann.get('name') or ''
+        key = name if name else f'__single_{idx}'
+        grouped.setdefault(key, []).append(ann)
+
+    for idx, ann in enumerate(annotations):
+        name = ann.get('name') or ''
+        group = grouped[name] if name and name in grouped else [ann]
+        pieces = sorted(group, key=lambda a: (a['start'] != 0, a['start']))
+        touches_left = [p for p in pieces if int(p['start']) == 0]
+        touches_right = [
+            p for p in pieces
+            if int(p['start']) + int(p['length']) == int(read_length)
+        ]
+        is_wrapped_group = (
+            bool(name) and len(pieces) > 1
+            and len(touches_left) == 1 and len(touches_right) == 1
+        )
+        circ_parts = len(pieces) if is_wrapped_group else 1
+        circ_part = (
+            next((i for i, piece in enumerate(pieces, start=1) if piece is ann), 1)
+            if is_wrapped_group else 1
+        )
+        mol_start = ann['start']
+        mol_length = ann['length']
+        circ_id = '.'
+        if is_wrapped_group:
+            circ_id = name
+            end_piece = max(pieces, key=lambda a: a['start'])
+            mol_start = end_piece['start']
+            mol_length = min(read_length, sum(p['length'] for p in pieces))
+        ann['circ_id'] = circ_id
+        ann['circ_part'] = circ_part
+        ann['circ_parts'] = circ_parts
+        ann['mol_start'] = mol_start
+        ann['mol_length'] = mol_length
+    return annotations
+
+
+def _annotation_to_ref_block(ann, query_to_ref):
+    qstart = int(ann['start'])
+    qend = qstart + int(ann['length'])
+    ref_start = _q2r_lookup(query_to_ref, qstart)
+    ref_end = _q2r_lookup(query_to_ref, qend - 1)
+    if ref_start is None or ref_end is None:
+        return None
+    ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
+    return ref_start, ref_end
+
+
+def _extract_ma_interval_type(
+    read,
+    bed_out,
+    target_name: str,
+    with_scores: bool,
+    query_to_ref,
+    block_scores: bool,
+    circular_groups: bool,
+    min_tq: int = 0,
+) -> Optional[int]:
+    annotations = _parse_ma_annotations(read, target_name)
+    if annotations is None:
+        return None
+    if not annotations:
+        return 0
+
+    read_length = max((a.get('read_length', 0) for a in annotations), default=0)
+    annotations = _annotate_circular_parts(annotations, read_length)
+
+    ref_name = read.reference_name
+    strand = '-' if read.is_reverse else '+'
+    read_id = read.query_name
+
+    blocks = []
+    for ann in annotations:
+        quals = ann['quals']
+        if target_name == 'tf':
+            tq = int(quals[0]) if len(quals) >= 1 else 0
+            if tq < min_tq:
+                continue
+        block = _annotation_to_ref_block(ann, query_to_ref)
+        if block is None:
+            continue
+        ref_start, ref_end = block
+        if target_name == 'tf':
+            qvals = (
+                int(quals[0]) if len(quals) >= 1 else 0,
+                int(quals[1]) if len(quals) >= 2 else 0,
+                int(quals[2]) if len(quals) >= 3 else 0,
+            )
+            score = qvals[0]
+        elif target_name == 'nuc':
+            qvals = (int(quals[0]) if quals else 0,)
+            score = qvals[0]
+        else:
+            qvals = (0,)
+            score = 0
+        blocks.append((ref_start, ref_end, score, qvals, ann))
+
+    if not blocks:
+        return 0
+
+    if circular_groups:
+        for ref_start, ref_end, score, qvals, ann in sorted(blocks, key=lambda x: x[0]):
+            extra = []
+            if block_scores:
+                extra.extend(str(v) for v in qvals)
+            extra.extend([
+                ann['circ_id'],
+                ann['circ_part'],
+                ann['circ_parts'],
+                ann['mol_start'],
+                ann['mol_length'],
+            ])
+            name = read_id
+            if ann['circ_id'] != '.':
+                name = f"{read_id}|{target_name}|{ann['circ_id']}|{ann['circ_part']}/{ann['circ_parts']}"
+            row = _bed12_row(
+                ref_name, ref_start, ref_end, name,
+                score if with_scores else 0,
+                strand,
+                [(ref_start, ref_end)],
+                extra,
+            )
+            bed_out.write(row + "\n")
+        return len(blocks)
+
+    blocks.sort(key=lambda x: x[0])
+    chrom_start = blocks[0][0]
+    chrom_end = blocks[-1][1]
+    mean_score = int(sum(b[2] for b in blocks) / len(blocks)) if with_scores else 0
+    extra = []
+    if block_scores:
+        if target_name == 'tf':
+            extra.extend([
+                ','.join(str(b[3][0]) for b in blocks),
+                ','.join(str(b[3][1]) for b in blocks),
+                ','.join(str(b[3][2]) for b in blocks),
+            ])
+        else:
+            extra.append(','.join(str(b[3][0]) for b in blocks))
+    row = _bed12_row(
+        ref_name,
+        chrom_start,
+        chrom_end,
+        read_id,
+        mean_score,
+        strand,
+        [(b[0], b[1]) for b in blocks],
+        extra,
+    )
+    bed_out.write(row + "\n")
+    return len(blocks)
+
+
 def _extract_region_worker(args) -> Tuple[dict, int, dict]:
     """Multi-type region worker.
 
@@ -142,6 +354,7 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
         prob_threshold = params['prob_threshold']
         with_scores = params['with_scores']
         block_scores = bool(params.get('block_scores', False))
+        circular_groups = bool(params.get('circular_groups', False))
 
         n_reads = 0
         n_features = {t: 0 for t in extract_types}
@@ -185,19 +398,22 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['footprint'] += _extract_footprints(
                             read, bed_outs['footprint'], with_scores, query_to_ref,
-                            block_scores=block_scores)
+                            block_scores=block_scores,
+                            circular_groups=circular_groups)
                     if 'msp' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['msp'] += _extract_msps(
                             read, bed_outs['msp'], with_scores, query_to_ref,
-                            block_scores=block_scores)
+                            block_scores=block_scores,
+                            circular_groups=circular_groups)
                     if 'tf' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['tf'] += _extract_tfs(
                             read, bed_outs['tf'], with_scores, min_tq, query_to_ref,
-                            block_scores=block_scores)
+                            block_scores=block_scores,
+                            circular_groups=circular_groups)
                     if 'm6a' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
@@ -237,12 +453,22 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
 
 def _extract_footprints(read, bed_out, with_scores: bool,
                         query_to_ref: Optional[dict] = None,
-                        block_scores: bool = False) -> int:
+                        block_scores: bool = False,
+                        circular_groups: bool = False) -> int:
     """Extract footprint intervals from ns/nl tags as BED12 (one line per read).
 
     When ``block_scores=True``, appends a 13th column of comma-separated
     per-block nq values (int[blockCount] blockNq in the autoSQL schema).
     """
+    if query_to_ref is None:
+        query_to_ref = _build_query_to_ref(read)
+    ma_count = _extract_ma_interval_type(
+        read, bed_out, 'nuc', with_scores, query_to_ref,
+        block_scores, circular_groups,
+    )
+    if ma_count is not None:
+        return ma_count
+
     try:
         ns = read.get_tag('ns')  # Footprint starts (query coords)
         nl = read.get_tag('nl')  # Footprint lengths
@@ -264,9 +490,6 @@ def _extract_footprints(read, bed_out, with_scores: bool,
     ref_name = read.reference_name
     strand = '-' if read.is_reverse else '+'
     read_id = read.query_name
-
-    if query_to_ref is None:
-        query_to_ref = _build_query_to_ref(read)
 
     blocks = []  # list of (ref_start, ref_end, score)
     for i, (qstart, length) in enumerate(zip(ns, nl)):
@@ -304,6 +527,8 @@ def _extract_footprints(read, bed_out, with_scores: bool,
     if block_scores:
         block_nq = ','.join(str(sc) for _, _, sc in blocks)
         row += f"\t{block_nq}"
+    if circular_groups:
+        row += "\t.\t1\t1\t0\t0"
     bed_out.write(row + "\n")
 
     return len(blocks)
@@ -311,7 +536,8 @@ def _extract_footprints(read, bed_out, with_scores: bool,
 
 def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
                  query_to_ref: Optional[dict] = None,
-                 block_scores: bool = False) -> int:
+                 block_scores: bool = False,
+                 circular_groups: bool = False) -> int:
     """Extract TF footprints from MA/AQ tags (tf+QQQ annotations) as BED12.
 
     Reads the spec-compliant MA/AQ tags written by ``fiberhmm-recall-tfs``
@@ -325,7 +551,14 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
     When ``block_scores=True``, appends three columns after blockStarts:
     blockTq, blockEl, blockEr -- the full tf+QQQ quality triplet per call.
     """
-    from fiberhmm.io.ma_tags import parse_aq_array, parse_ma_tag
+    if query_to_ref is None:
+        query_to_ref = _build_query_to_ref(read)
+    ma_count = _extract_ma_interval_type(
+        read, bed_out, 'tf', with_scores, query_to_ref,
+        block_scores, circular_groups, min_tq=min_tq,
+    )
+    if ma_count is not None:
+        return ma_count
 
     try:
         ma_str = read.get_tag('MA')
@@ -368,9 +601,6 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
     strand = '-' if read.is_reverse else '+'
     read_id = read.query_name
 
-    if query_to_ref is None:
-        query_to_ref = _build_query_to_ref(read)
-
     blocks = []  # (ref_start, ref_end, tq, el, er)
     for qstart, length, tq, el, er in tfs_with_quality:
         qend = qstart + length
@@ -406,12 +636,22 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
 
 def _extract_msps(read, bed_out, with_scores: bool,
                   query_to_ref: Optional[dict] = None,
-                  block_scores: bool = False) -> int:
+                  block_scores: bool = False,
+                  circular_groups: bool = False) -> int:
     """Extract MSP intervals from as/al tags as BED12 (one line per read).
 
     When ``block_scores=True``, appends a 13th column of comma-separated
     per-block aq values (int[blockCount] blockAq).
     """
+    if query_to_ref is None:
+        query_to_ref = _build_query_to_ref(read)
+    ma_count = _extract_ma_interval_type(
+        read, bed_out, 'msp', with_scores, query_to_ref,
+        block_scores, circular_groups,
+    )
+    if ma_count is not None:
+        return ma_count
+
     try:
         as_starts = read.get_tag('as')  # MSP starts (query coords)
         al_lengths = read.get_tag('al')  # MSP lengths
@@ -431,9 +671,6 @@ def _extract_msps(read, bed_out, with_scores: bool,
     ref_name = read.reference_name
     strand = '-' if read.is_reverse else '+'
     read_id = read.query_name
-
-    if query_to_ref is None:
-        query_to_ref = _build_query_to_ref(read)
 
     blocks = []  # list of (ref_start, ref_end, score)
     for i, (qstart, length) in enumerate(zip(as_starts, al_lengths)):
@@ -471,6 +708,8 @@ def _extract_msps(read, bed_out, with_scores: bool,
     if block_scores:
         block_aq = ','.join(str(sc) for _, _, sc in blocks)
         row += f"\t{block_aq}"
+    if circular_groups:
+        row += "\t.\t1\t1\t0\t0"
     bed_out.write(row + "\n")
 
     return len(blocks)
@@ -792,6 +1031,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           with_scores: bool = True,
                           min_tq: int = 50,
                           block_scores: bool = False,
+                          circular_groups: bool = False,
                           skip_scaffolds: bool = False,
                           chroms: Optional[Set[str]] = None):
     """Extract one or more tag types from BAM in a single region-parallel pass.
@@ -840,6 +1080,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
             'with_scores': with_scores,
             'min_tq': min_tq,
             'block_scores': block_scores,
+            'circular_groups': circular_groups,
         }
 
         # Work items: per region, a dict of {type: temp_bed_path}
@@ -914,7 +1155,8 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
                    bed_type: str = 'bed12',
                    extract_type: Optional[str] = None,
                    block_scores: bool = False,
-                   sample_name: Optional[str] = None) -> bool:
+                   sample_name: Optional[str] = None,
+                   circular_groups: bool = False) -> bool:
     """Convert BED to bigBed using bedToBigBed.
 
     If ``extract_type`` matches a FiberHMM autoSQL schema
@@ -936,7 +1178,11 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
         block_scores: If True, expect BED12+N input (per-block quality
             columns appended) and use the matching autoSQL variant.
     """
-    from fiberhmm.io.autosql import EXTRA_FIELD_COUNTS, write_autosql_for
+    from fiberhmm.io.autosql import (
+        CIRCULAR_FIELD_COUNT,
+        EXTRA_FIELD_COUNTS,
+        write_autosql_for,
+    )
 
     sizes_file = bed_path + '.sizes'
     with open(sizes_file, 'w') as f:
@@ -944,10 +1190,13 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
             f.write(f"{chrom}\t{size}\n")
 
     as_file = (write_autosql_for(extract_type, block_scores=block_scores,
-                                  sample_name=sample_name)
+                                  sample_name=sample_name,
+                                  circular_groups=circular_groups)
                if extract_type else None)
 
     n_extra = EXTRA_FIELD_COUNTS.get(extract_type, 0) if block_scores else 0
+    if circular_groups:
+        n_extra += CIRCULAR_FIELD_COUNT
 
     try:
         cmd = ['bedToBigBed']
@@ -1243,6 +1492,9 @@ Examples:
                              'tf -> blockTq/blockEl/blockEr. bigBed uses -type=bed12+N and '
                              'the matching autoSQL schema so FiberBrowser/UCSC can surface '
                              'per-feature quality without a sidecar database.')
+    parser.add_argument('--circular-groups', action='store_true',
+                        help='Append circId/circPart/circParts/molStart/molLength columns '
+                             'and preserve MA/AN groups for circular wrapped features.')
     parser.add_argument('--sample-name', default=None,
                         help='Sample/dataset identifier to embed in the autoSQL '
                              'description of every output bigBed ("Sample: <name>. ..."). '
@@ -1354,6 +1606,7 @@ Examples:
         with_scores=not args.no_scores,
         min_tq=args.min_tq,
         block_scores=args.block_scores,
+        circular_groups=args.circular_groups,
         skip_scaffolds=args.skip_scaffolds,
         chroms=chroms,
     )
@@ -1377,10 +1630,14 @@ Examples:
 
         if make_bigbed:
             print(f"  [{extract_type}] converting to bigBed...")
+            circular_groups_for_type = (
+                args.circular_groups and extract_type in ('footprint', 'msp', 'tf')
+            )
             if bed_to_bigbed(bed_path, bb_path, chrom_sizes, 'bed12',
                               extract_type=extract_type,
                               block_scores=args.block_scores,
-                              sample_name=sample_name):
+                              sample_name=sample_name,
+                              circular_groups=circular_groups_for_type):
                 print(f"  [{extract_type}] bigBed: {bb_path}")
                 if not args.keep_bed:
                     try:
