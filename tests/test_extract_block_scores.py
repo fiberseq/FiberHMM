@@ -12,19 +12,21 @@ import io
 from array import array
 
 import numpy as np
-import pytest
 
+from fiberhmm.cli import extract_tags
+from fiberhmm.cli.extract_tags import (
+    _extract_deam,
+    _extract_footprints,
+    _extract_msps,
+    _extract_tfs,
+    _parse_mod_positions_safe,
+)
 from fiberhmm.io.autosql import (
     AUTOSQL_SCHEMAS,
+    CIRCULAR_FIELD_COUNT,
     EXTRA_FIELD_COUNTS,
     get_schema,
     write_autosql_for,
-)
-from fiberhmm.cli.extract_tags import (
-    _extract_footprints,
-    _extract_msps,
-    _extract_deam,
-    _extract_tfs,
 )
 
 
@@ -66,6 +68,88 @@ def _identity_map(read):
                      dtype=np.int64)
 
 
+class _FakeOutput:
+    def __init__(self):
+        self.closed = False
+        self.writes = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+        return False
+
+    def write(self, text):
+        self.writes.append(text)
+
+    def close(self):
+        self.closed = True
+
+
+class _CountingSequence:
+    def __init__(self, values):
+        self.values = values
+        self.accessed = []
+
+    def __len__(self):
+        return len(self.values)
+
+    def __getitem__(self, index):
+        self.accessed.append(index)
+        return self.values[index]
+
+
+class _NoToListSequence:
+    def __init__(self, values):
+        self.values = values
+
+    def __iter__(self):
+        return iter(self.values)
+
+    def tolist(self):
+        raise AssertionError("tolist should not be called")
+
+
+def test_extract_region_worker_closes_temp_beds_when_partial_open_fails(
+    monkeypatch, tmp_path
+):
+    params = {
+        "extract_types": ["footprint", "msp"],
+        "min_tq": 50,
+        "min_mapq": 0,
+        "prob_threshold": 0,
+        "with_scores": False,
+        "block_scores": False,
+    }
+    monkeypatch.setattr(extract_tags, "_worker_params", params)
+
+    opened = []
+
+    def fake_open(path, mode):
+        if opened:
+            raise OSError("open failed")
+        handle = _FakeOutput()
+        opened.append(handle)
+        return handle
+
+    monkeypatch.setattr(extract_tags, "open", fake_open, raising=False)
+
+    temp_bed_paths = {
+        "footprint": str(tmp_path / "footprint.bed"),
+        "msp": str(tmp_path / "msp.bed"),
+    }
+
+    returned_paths, n_reads, n_features = extract_tags._extract_region_worker(
+        (("chr1", 0, 100), "input.bam", temp_bed_paths)
+    )
+
+    assert returned_paths == temp_bed_paths
+    assert n_reads == 0
+    assert n_features == {"footprint": 0, "msp": 0}
+    assert opened[0].closed
+
+
 # ------------------- autoSQL schemas --------------------------------
 
 def test_autosql_default_is_bed12_only():
@@ -98,6 +182,16 @@ def test_autosql_block_scores_adds_per_type_columns():
         assert 'blockMl' in schema
 
 
+def test_autosql_circular_groups_adds_group_columns():
+    schema = get_schema('tf', block_scores=True, circular_groups=True)
+
+    assert CIRCULAR_FIELD_COUNT == 5
+    assert 'circId' in schema
+    assert 'circPart' in schema
+    assert 'molLength' in schema
+    assert schema.count('int[blockCount]') == 5  # BED12 arrays + tf QQQ arrays
+
+
 def test_extra_field_counts_match_written_arrays():
     """EXTRA_FIELD_COUNTS must match the number of int[blockCount] fields
     in the block_scores schema -- this is the number passed as
@@ -118,7 +212,11 @@ def test_extra_field_counts_match_written_arrays():
 def test_write_autosql_for_writes_both_variants(tmp_path):
     classic = write_autosql_for('tf', out_dir=str(tmp_path), block_scores=False)
     bs = write_autosql_for('tf', out_dir=str(tmp_path), block_scores=True)
+    circ = write_autosql_for(
+        'tf', out_dir=str(tmp_path), block_scores=True, circular_groups=True,
+    )
     assert classic != bs
+    assert circ != bs
     with open(classic) as f:
         assert 'blockTq' not in f.read()
     with open(bs) as f:
@@ -126,6 +224,8 @@ def test_write_autosql_for_writes_both_variants(tmp_path):
         assert 'blockTq' in content
         assert 'blockEl' in content
         assert 'blockEr' in content
+    with open(circ) as f:
+        assert 'circId' in f.read()
 
 
 # ------------------- footprint --------------------------------------
@@ -213,7 +313,7 @@ def _build_ma_aq(nuc_intervals, tf_intervals, nq_values, tf_qqqs,
 
     ``tf_qqqs`` is a list of (tq, el, er) triplets, one per tf interval.
     """
-    from fiberhmm.io.ma_tags import format_ma_tag, format_aq_array
+    from fiberhmm.io.ma_tags import format_aq_array, format_ma_tag
     ma = format_ma_tag(read_length=read_length,
                        nuc_intervals=nuc_intervals,
                        msp_intervals=(),
@@ -300,6 +400,90 @@ def test_tf_bed12_only_unchanged_when_flag_off():
     assert n == 2
     cols = buf.getvalue().rstrip('\n').split('\t')
     assert len(cols) == 12
+
+
+def test_tf_extractor_consumes_aq_without_upfront_list_copy():
+    read = _FakeRead()
+    ma, _aq = _build_ma_aq(
+        nuc_intervals=[],
+        tf_intervals=[(100, 30)],
+        nq_values=[],
+        tf_qqqs=[(150, 30, 25)],
+    )
+    aq = _CountingSequence([150, 30, 25, 99, 88])
+    read.set_tag('MA', ma)
+    read.set_tag('AQ', aq)
+
+    buf = io.StringIO()
+    n = _extract_tfs(
+        read,
+        buf,
+        with_scores=True,
+        min_tq=0,
+        query_to_ref=_identity_map(read),
+        block_scores=True,
+    )
+
+    assert n == 1
+    assert aq.accessed == [0, 1, 2]
+    assert buf.getvalue().rstrip('\n').split('\t')[12:15] == ["150", "30", "25"]
+
+
+def test_tf_circular_groups_emit_one_row_per_clipped_piece():
+    read = _FakeRead(query_len=1000, ref_start=0)
+    read.set_tag('MA', '1000;tf+QQQ:1-45,971-30')
+    read.set_tag('AQ', array('B', [180, 20, 30, 180, 20, 30]))
+    read.set_tag('AN', 'fhw_tf_0,fhw_tf_0')
+
+    buf = io.StringIO()
+    n = _extract_tfs(
+        read,
+        buf,
+        with_scores=True,
+        min_tq=0,
+        query_to_ref=_identity_map(read),
+        block_scores=True,
+        circular_groups=True,
+    )
+
+    assert n == 2
+    rows = [line.split('\t') for line in buf.getvalue().rstrip('\n').splitlines()]
+    assert len(rows) == 2
+    assert [int(row[1]) for row in rows] == [0, 970]
+    assert all(len(row) == 20 for row in rows)  # BED12 + tf QQQ + circular fields
+    assert rows[0][15:] == ['fhw_tf_0', '1', '2', '970', '75']
+    assert rows[1][15:] == ['fhw_tf_0', '2', '2', '970', '75']
+
+
+def test_footprint_and_msp_extractors_prefer_ma_an_when_present():
+    read = _FakeRead(query_len=1000, ref_start=0)
+    read.set_tag('MA', '1000;nuc+Q:1-10,991-10;msp+:1-20,981-20')
+    read.set_tag('AQ', array('B', [222, 222]))
+    read.set_tag('AN', 'fhw_nuc_0,fhw_nuc_0,fhw_msp_0,fhw_msp_0')
+    # Stale legacy tags should not win when MA is available.
+    read.set_tag('ns', array('I', [100]))
+    read.set_tag('nl', array('I', [10]))
+    read.set_tag('as', array('I', [200]))
+    read.set_tag('al', array('I', [10]))
+
+    nuc_buf = io.StringIO()
+    msp_buf = io.StringIO()
+
+    assert _extract_footprints(
+        read, nuc_buf, with_scores=True, query_to_ref=_identity_map(read),
+        block_scores=True, circular_groups=True,
+    ) == 2
+    assert _extract_msps(
+        read, msp_buf, with_scores=True, query_to_ref=_identity_map(read),
+        block_scores=True, circular_groups=True,
+    ) == 2
+
+    nuc_rows = [line.split('\t') for line in nuc_buf.getvalue().rstrip('\n').splitlines()]
+    msp_rows = [line.split('\t') for line in msp_buf.getvalue().rstrip('\n').splitlines()]
+    assert [int(row[1]) for row in nuc_rows] == [0, 990]
+    assert [int(row[1]) for row in msp_rows] == [0, 980]
+    assert nuc_rows[0][13:] == ['fhw_nuc_0', '1', '2', '990', '20']
+    assert msp_rows[0][13:] == ['fhw_msp_0', '1', '2', '980', '40']
 
 
 # ------------------- deam (DAF IUPAC R/Y) ---------------------------
@@ -449,6 +633,29 @@ def test_deam_priority1_mm_ml_u_code_wins_over_ry():
     cols = buf.getvalue().rstrip('\n').split('\t')
     assert int(cols[9]) == 2
     assert [int(v) for v in cols[12].split(',')] == [1, 1]
+
+
+def test_parse_mod_positions_safe_avoids_numpy_tolist(monkeypatch):
+    def fake_parse_mm_ml_per_mod_type(mm_tag, ml_bytes, seq, is_reverse):
+        return {
+            ("A", "a"): (
+                _NoToListSequence([2, 5]),
+                _NoToListSequence([200, 180]),
+            )
+        }
+
+    monkeypatch.setattr(
+        "fiberhmm.core.bam_reader.parse_mm_ml_per_mod_type",
+        fake_parse_mm_ml_per_mod_type,
+    )
+
+    read = _read_with_mm_ml(
+        seq="A" * 20,
+        mm_tag="A+a,0,0;",
+        ml_bytes=[200, 180],
+    )
+
+    assert _parse_mod_positions_safe(read, {"a"}) == [(2, 200), (5, 180)]
 
 
 def test_deam_priority1_g_base_is_flavor_0():
@@ -614,9 +821,13 @@ def test_md_matches_cigar_catches_mismatch():
         def __init__(self, md, cigartuples):
             self._md = md
             self.cigartuples = cigartuples
-        def has_tag(self, t): return t == 'MD'
+
+        def has_tag(self, t):
+            return t == 'MD'
+
         def get_tag(self, t):
-            if t == 'MD': return self._md
+            if t == 'MD':
+                return self._md
             raise KeyError(t)
 
     # Matching: CIGAR ref_len = 10 (10M), MD = 10 matches.
@@ -768,3 +979,97 @@ def test_write_autosql_for_with_sample_name(tmp_path):
         content = f.read()
     assert 'Sample: Dl_recalled. ' in content
     assert 'int[blockCount] blockTq' in content
+
+
+def _write_circular_ma_an_bam(path, *, read_length=1000, ref_start=100_000):
+    """Write a one-read indexed BAM whose MA/AN tags describe a wrapped TF call
+    plus a normal nucleosome. Used as input to extract_tags_parallel."""
+    import pysam
+
+    header = pysam.AlignmentHeader.from_dict({
+        'HD': {'VN': '1.6', 'SO': 'coordinate'},
+        'SQ': [{'SN': 'chr1', 'LN': max(1_000_000, ref_start + read_length + 10)}],
+    })
+    unsorted = str(path) + '.unsorted'
+    with pysam.AlignmentFile(unsorted, 'wb', header=header) as out:
+        read = pysam.AlignedSegment()
+        read.query_name = 'circ_read'
+        read.query_sequence = 'A' * read_length
+        read.query_qualities = pysam.qualitystring_to_array('I' * read_length)
+        read.flag = 0
+        read.reference_id = 0
+        read.reference_start = ref_start
+        read.mapping_quality = 60
+        read.cigar = [(0, read_length)]
+        # tf call wraps the origin: pieces at [0, 15) and [985, 1000). Same AN
+        # name. Standalone nuc at [200, 250). MA prefix is the read length.
+        read.set_tag('MA',
+                     f'{read_length};nuc+Q:201-50;tf+QQQ:1-15,986-15',
+                     value_type='Z')
+        read.set_tag('AN', 'fh_nuc_0,fhw_tf_0,fhw_tf_0', value_type='Z')
+        # AQ: nuc Q (1 value), then 3-tuple for each tf piece.
+        read.set_tag('AQ', array('B', [200, 180, 20, 30, 180, 20, 30]))
+        out.write(read)
+    pysam.sort('-o', str(path), unsorted)
+    import os as _os
+    _os.remove(unsorted)
+    pysam.index(str(path))
+
+
+def test_extract_tags_parallel_circular_groups_end_to_end(tmp_path):
+    """Drive extract_tags_parallel(circular_groups=True) end-to-end on a BAM
+    with hand-crafted wrapped MA/AN tags. Assert BED12+5 rows are emitted
+    with the right circular grouping metadata for both pieces."""
+    bam_path = tmp_path / 'circular.bam'
+    _write_circular_ma_an_bam(bam_path, read_length=1000, ref_start=100_000)
+
+    nuc_bed = tmp_path / 'nuc.bed'
+    tf_bed = tmp_path / 'tf.bed'
+
+    total_reads, n_features = extract_tags.extract_tags_parallel(
+        input_bam=str(bam_path),
+        output_beds={'footprint': str(nuc_bed), 'tf': str(tf_bed)},
+        extract_types=['footprint', 'tf'],
+        n_cores=1,
+        region_size=10_000_000,
+        min_mapq=0,
+        prob_threshold=0,
+        with_scores=True,
+        min_tq=0,
+        block_scores=True,
+        circular_groups=True,
+    )
+
+    assert total_reads == 1
+    assert n_features['footprint'] == 1
+    assert n_features['tf'] == 2
+
+    nuc_rows = [line.split('\t') for line in nuc_bed.read_text().splitlines()]
+    tf_rows = [line.split('\t') for line in tf_bed.read_text().splitlines()]
+
+    # BED12 (12) + footprint block_scores (1 blockNq) + circular (5) = 18 cols.
+    assert all(len(row) == 18 for row in nuc_rows)
+    # BED12 (12) + tf block_scores (3 blockTq/El/Er) + circular (5) = 20 cols.
+    assert all(len(row) == 20 for row in tf_rows)
+
+    # Standalone (non-wrapped) nuc: circId=., circPart/Parts=1, and
+    # molStart/molLength echo the annotation's own coords.
+    assert nuc_rows[0][13:] == ['.', '1', '1', '200', '50']
+
+    # Wrapped TF: both clipped pieces share AN name, have circParts=2, and
+    # their molStart/molLength describe the molecular feature (not the clipped
+    # ref interval). Pieces are ordered by ref start.
+    tf_rows.sort(key=lambda r: int(r[1]))
+    assert [int(r[1]) for r in tf_rows] == [100_000, 100_985]
+    assert [int(r[2]) for r in tf_rows] == [100_015, 101_000]
+    for row in tf_rows:
+        assert row[15] == 'fhw_tf_0'
+        assert row[17] == '2'  # circParts
+        # molStart is the start of the end-piece (the one furthest right on
+        # the molecule); molLength is the fused circular feature length.
+        assert int(row[18]) == 985
+        assert int(row[19]) == 30
+    # circPart numbers cover both pieces.
+    assert sorted(int(r[16]) for r in tf_rows) == [1, 2]
+    # Names encode the wrapped grouping.
+    assert all('|' in row[3] and 'fhw_tf_0' in row[3] for row in tf_rows)

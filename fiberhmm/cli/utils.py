@@ -16,15 +16,14 @@ import json
 import os
 import pickle
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from collections import defaultdict
 from tqdm import tqdm
 
-from fiberhmm.core.model_io import load_model, save_model, load_model_with_metadata
-
+from fiberhmm.core.model_io import load_model_with_metadata, save_model
 
 # =============================================================================
 # convert subcommand
@@ -178,7 +177,7 @@ def cmd_inspect(args):
 
     print("Transition matrix:")
     labels = ["inacc", "acc"]
-    header = "         " + "  ".join(f"{l:>10s}" for l in labels)
+    header = "         " + "  ".join(f"{label:>10s}" for label in labels)
     print(header)
     for i, row in enumerate(model.transmat_):
         row_str = "  ".join(f"{v:10.6f}" for v in row)
@@ -413,6 +412,7 @@ def _process_reference_bam(bam_path, max_context, args):
 def _process_target_bam(bam_path, mode, max_context, args):
     """Process target BAM to get modification rates per context."""
     import pysam
+
     from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
     from fiberhmm.probabilities.context_counter import ContextCounter
     from fiberhmm.probabilities.utils import detect_strand_and_base
@@ -501,16 +501,16 @@ def _generate_regression_stats(regression_data, plots_dir, base_name, context_si
             f.write(f"  Reference observations:        {diag['total_ref_obs']:,}\n")
 
             if 'r_squared' in diag:
-                f.write(f"\n  Regression results:\n")
+                f.write("\n  Regression results:\n")
                 f.write(f"    R-squared: {diag['r_squared']:.4f}\n")
                 f.write(f"    Intercept: {diag['intercept']:.4f} (= P(m|inaccessible))\n")
                 f.write(f"    Slope:     {diag['slope']:.4f} (= P(m|acc) - P(m|inacc))\n")
-                f.write(f"\n  Estimated emission probabilities:\n")
+                f.write("\n  Estimated emission probabilities:\n")
                 f.write(f"    P(m|accessible):   {data['p_acc']:.4f}\n")
                 f.write(f"    P(m|inaccessible): {data['p_inacc']:.4f}\n")
                 f.write(f"    Enrichment ratio:  {data['p_acc']/max(0.001, data['p_inacc']):.1f}x\n")
                 if diag.get('swapped'):
-                    f.write(f"    Warning: Values were swapped (acc < inacc before swap)\n")
+                    f.write("    Warning: Values were swapped (acc < inacc before swap)\n")
             f.write("\n")
 
     print(f"    Summary: {summary_file}")
@@ -619,11 +619,11 @@ def cmd_transfer(args):
         sys.exit(1)
 
     # Step 2: Get target modification rates
-    print(f"\nProcessing target BAM to get modification rates...")
+    print("\nProcessing target BAM to get modification rates...")
     target_counters = _process_target_bam(args.target, args.mode, max_context, args)
 
     # Step 3: Estimate emission probs for each context size
-    print(f"\nEstimating emission probabilities...")
+    print("\nEstimating emission probabilities...")
 
     all_regression_data = {}
 
@@ -698,7 +698,7 @@ def cmd_transfer(args):
 
     # Save accessibility priors if computed
     if accessibility_counters is not None:
-        print(f"\nSaving accessibility priors for reuse:")
+        print("\nSaving accessibility priors for reuse:")
         for base in ['A', 'C', 'G', 'T']:
             if base in accessibility_counters:
                 priors = accessibility_counters[base].get_accessibility_priors(max_context)
@@ -711,7 +711,7 @@ def cmd_transfer(args):
 
     # Generate stats if requested
     if args.stats:
-        print(f"\nGenerating statistics and plots:")
+        print("\nGenerating statistics and plots:")
         for k in args.context_sizes:
             if k in all_regression_data and all_regression_data[k]:
                 print(f"\n  k={k} ({2*k+1}-mer):")
@@ -719,7 +719,7 @@ def cmd_transfer(args):
                     all_regression_data[k], plots_dir, base_name, k
                 )
 
-    print(f"\nDone!")
+    print("\nDone!")
     print("Note: This estimates GLOBAL emission probs (same for all contexts).")
     print("For context-specific probs, use generate_probs.py with proper controls.")
 
@@ -745,7 +745,7 @@ def cmd_adjust(args):
     target_state = state_map[args.state]
     scale = args.scale
 
-    print(f"\nAdjusting emission probabilities:")
+    print("\nAdjusting emission probabilities:")
     print(f"  Target: {args.state} (state {'all' if target_state is None else target_state})")
     print(f"  Scale factor: {scale}")
 

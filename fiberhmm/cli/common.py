@@ -27,9 +27,9 @@ def add_filter_args(parser: argparse.ArgumentParser,
     """Add read filtering arguments (--min-mapq, --prob-threshold, --min-read-length)."""
     parser.add_argument(
         '--min-mapq', '-q', type=int, default=min_mapq,
-        help=f"Minimum mapping quality; reads below this are written to output "
-             f"unchanged without footprint/nucleosome tags. Default 0 (call on "
-             f"all mapped reads). Pass a positive value to filter."
+        help="Minimum mapping quality; reads below this are written to output "
+             "unchanged without footprint/nucleosome tags. Default 0 (call on "
+             "all mapped reads). Pass a positive value to filter."
     )
     parser.add_argument(
         '--prob-threshold', type=int, default=prob_threshold,

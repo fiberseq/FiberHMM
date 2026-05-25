@@ -2,6 +2,7 @@
 Throughput benchmarks: reads/second for each processing mode.
 """
 import time
+
 import pytest
 
 from fiberhmm.inference.parallel import process_bam_for_footprints

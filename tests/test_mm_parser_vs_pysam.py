@@ -16,18 +16,15 @@ disable it — the parser is wrong again.
 from __future__ import annotations
 
 import os
-import random
 
-import numpy as np
 import pytest
 
 pysam = pytest.importorskip("pysam")
 
-from fiberhmm.core.bam_reader import (
-    parse_mm_tag_query_positions,
+from fiberhmm.core.bam_reader import (  # noqa: E402
     parse_mm_ml_per_mod_type,
+    parse_mm_tag_query_positions,
 )
-
 
 # Path to a real hia5 PacBio BAM with MM/ML tags and a mix of forward + reverse
 # reads.  If missing, the integration-style tests skip gracefully.

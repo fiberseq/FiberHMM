@@ -4,18 +4,17 @@ Package consistency regression tests.
 Verify that package imports (fiberhmm.*) produce identical results
 to legacy flat imports.
 """
-import pytest
-import numpy as np
-import os
-import sys
 
-# Package imports
-from fiberhmm.core.hmm import FiberHMM
-from fiberhmm.core.model_io import load_model, save_model, load_model_with_metadata
+import numpy as np
+
 from fiberhmm.core.bam_reader import (
     ContextEncoder,
     encode_from_query_sequence,
 )
+
+# Package imports
+from fiberhmm.core.hmm import FiberHMM
+from fiberhmm.core.model_io import load_model, load_model_with_metadata, save_model
 from fiberhmm.inference.engine import predict_footprints, predict_footprints_and_msps
 
 
@@ -23,7 +22,7 @@ class TestPackageImports:
     """Verify all expected symbols are importable from package."""
 
     def test_core_hmm_imports(self):
-        from fiberhmm.core.hmm import FiberHMM, train_model, HAS_NUMBA
+        from fiberhmm.core.hmm import FiberHMM, train_model
         assert FiberHMM is not None
         assert callable(train_model)
 
@@ -38,15 +37,13 @@ class TestPackageImports:
         assert callable(parse_mm_tag_query_positions)
 
     def test_core_model_io_imports(self):
-        from fiberhmm.core.model_io import load_model, save_model, load_model_with_metadata
+        from fiberhmm.core.model_io import load_model, save_model
         assert callable(load_model)
         assert callable(save_model)
         assert callable(load_model_with_metadata)
 
     def test_inference_engine_imports(self):
         from fiberhmm.inference.engine import (
-            predict_footprints,
-            predict_footprints_and_msps,
             detect_mode_from_bam,
         )
         assert callable(predict_footprints)
@@ -80,7 +77,7 @@ class TestPackageImports:
         assert callable(main)
 
     def test_cli_utils_import(self):
-        from fiberhmm.cli.utils import main, cmd_convert, cmd_inspect, cmd_transfer, cmd_adjust
+        from fiberhmm.cli.utils import cmd_adjust, cmd_convert, cmd_inspect, cmd_transfer, main
         assert callable(main)
         assert callable(cmd_convert)
         assert callable(cmd_inspect)

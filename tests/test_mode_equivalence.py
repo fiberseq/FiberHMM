@@ -1,7 +1,6 @@
 """
 Cross-mode equivalence tests: verify all processing modes produce identical results.
 """
-import pytest
 import pysam
 
 from fiberhmm.inference.parallel import process_bam_for_footprints

@@ -1,17 +1,78 @@
 """FiberHMM core per-read HMM inference engine."""
 
+from typing import Optional, Tuple
+
 import numpy as np
 import pysam
-from typing import Optional, Tuple, Set
 
-from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.bam_reader import (
-    encode_from_query_sequence,
     detect_daf_strand,
-    has_iupac_encoding,
+    encode_from_query_sequence,
     extract_daf_iupac_positions,
+    has_iupac_encoding,
     parse_mm_tag_query_positions,
 )
+from fiberhmm.core.hmm import FiberHMM
+from fiberhmm.inference.circular import (
+    project_center_runs,
+    project_center_scores,
+    split_intervals_for_legacy,
+    tile_sequence_and_mods,
+)
+
+try:
+    from numba import njit as _numba_njit
+    _HAS_NUMBA = True
+except ImportError:
+    _HAS_NUMBA = False
+
+    def _numba_njit(*args, **kwargs):  # type: ignore[misc]
+        def _wrap(fn):
+            return fn
+        return _wrap
+
+
+@_numba_njit(cache=True)
+def _footprint_runs_numba(states: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    n = len(states)
+    count = 0
+    in_run = False
+    for i in range(n):
+        if int(states[i]) == 0:
+            if not in_run:
+                count += 1
+                in_run = True
+        else:
+            in_run = False
+
+    starts = np.empty(count, dtype=np.int64)
+    ends = np.empty(count, dtype=np.int64)
+    idx = 0
+    in_run = False
+    for i in range(n):
+        if int(states[i]) == 0:
+            if not in_run:
+                starts[idx] = i
+                in_run = True
+        else:
+            if in_run:
+                ends[idx] = i
+                idx += 1
+                in_run = False
+
+    if in_run:
+        ends[idx] = n
+
+    return starts, ends
+
+
+def _footprint_runs(states: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    if _HAS_NUMBA:
+        return _footprint_runs_numba(states)
+
+    states_padded = np.concatenate([[1], states, [1]])
+    diff = np.diff(states_padded)
+    return np.where(diff == -1)[0], np.where(diff == 1)[0]
 
 
 def predict_footprints(model: FiberHMM, encoded_read: np.ndarray,
@@ -38,19 +99,7 @@ def predict_footprints(model: FiberHMM, encoded_read: np.ndarray,
         states = model.predict(encoded_read)
         confidence = None
 
-    # Count footprint positions (state 0)
-    if np.sum(states == 0) == 0:
-        return np.array([]), np.array([]), 0, None
-
-    # Find transitions (pad with 1s = accessible at edges)
-    # State 0 = footprint, State 1 = accessible
-    states_padded = np.concatenate([[1], states, [1]])
-    diff = np.diff(states_padded)
-
-    # Footprint starts where we transition from 1 (accessible) to 0 (footprint): diff == -1
-    # Footprint ends where we transition from 0 (footprint) to 1 (accessible): diff == 1
-    starts = np.where(diff == -1)[0]
-    ends = np.where(diff == 1)[0]
+    starts, ends = _footprint_runs(states)
 
     if len(starts) == 0:
         return np.array([]), np.array([]), 0, None
@@ -93,15 +142,7 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
     if len(states) == 0:
         return result
 
-    # Find footprints (state 0 regions)
-    # Pad with 1 (accessible) at edges
-    states_padded = np.concatenate([[1], states, [1]])
-    diff = np.diff(states_padded)
-
-    # Footprint starts: transition from 1 to 0 (diff == -1)
-    # Footprint ends: transition from 0 to 1 (diff == 1)
-    fp_starts = np.where(diff == -1)[0]
-    fp_ends = np.where(diff == 1)[0]
+    fp_starts, fp_ends = _footprint_runs(states)
 
     if len(fp_starts) > 0:
         result['footprint_starts'] = fp_starts.astype(np.int32)
@@ -167,11 +208,86 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
     return result
 
 
+def _extract_footprints_from_states_circular(
+    states: np.ndarray,
+    confidence: Optional[np.ndarray],
+    read_length: int,
+    msp_min_size: int,
+    with_scores: bool,
+    nuc_min_size: int = 85,
+) -> dict:
+    """Extract circular intervals from 3x-tiled HMM states.
+
+    The public legacy arrays are split into valid linear pieces. The unsplit
+    circular intervals are retained for MA/AN emission and circular TF recall.
+    """
+    tiled_result = _extract_footprints_from_states(
+        states,
+        confidence,
+        msp_min_size=msp_min_size,
+        with_scores=with_scores,
+        nuc_min_size=nuc_min_size,
+    )
+
+    fp_starts = np.asarray(tiled_result['footprint_starts'], dtype=np.int64)
+    fp_ends = fp_starts + np.asarray(tiled_result['footprint_sizes'], dtype=np.int64)
+    circular_nucs = project_center_runs(fp_starts, fp_ends, read_length)
+    circular_nuc_scores = project_center_scores(
+        fp_starts,
+        fp_ends,
+        tiled_result.get('footprint_scores'),
+        read_length,
+    )
+
+    msp_starts = np.asarray(tiled_result['msp_starts'], dtype=np.int64)
+    msp_ends = msp_starts + np.asarray(tiled_result['msp_sizes'], dtype=np.int64)
+    circular_msps = project_center_runs(msp_starts, msp_ends, read_length)
+    circular_msp_scores = project_center_scores(
+        msp_starts,
+        msp_ends,
+        tiled_result.get('msp_scores'),
+        read_length,
+    )
+
+    ns, nl, ns_scores = split_intervals_for_legacy(
+        circular_nucs,
+        read_length,
+        circular_nuc_scores,
+    )
+    msp_s, msp_l, msp_scores = split_intervals_for_legacy(
+        circular_msps,
+        read_length,
+        circular_msp_scores,
+    )
+
+    return {
+        'footprint_starts': ns,
+        'footprint_sizes': nl,
+        'footprint_scores': ns_scores,
+        'msp_starts': msp_s,
+        'msp_sizes': msp_l,
+        'msp_scores': msp_scores,
+        'states': states[read_length:2 * read_length].astype(np.int8, copy=False),
+        'posteriors': None,
+        'circular': True,
+        'circular_read_length': read_length,
+        'circular_ns': circular_nucs,
+        'circular_as': circular_msps,
+        'circular_ns_scores': circular_nuc_scores,
+        'circular_as_scores': circular_msp_scores,
+        'tiled_ns': fp_starts.astype(np.int32),
+        'tiled_nl': (fp_ends - fp_starts).astype(np.int32),
+        'tiled_as': msp_starts.astype(np.int32),
+        'tiled_al': (msp_ends - msp_starts).astype(np.int32),
+    }
+
+
 def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
                                  msp_min_size: int = 147,
                                  with_scores: bool = False,
                                  return_posteriors: bool = False,
-                                 nuc_min_size: int = 85) -> dict:
+                                 nuc_min_size: int = 85,
+                                 circular_read_length: Optional[int] = None) -> dict:
     """
     Run HMM prediction to call both footprints (ns/nl) and MSPs (as/al).
 
@@ -228,86 +344,30 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
         states = model.predict(encoded_read)
         confidence = None
 
+    if circular_read_length is not None:
+        result.update(
+            _extract_footprints_from_states_circular(
+                states,
+                confidence,
+                circular_read_length,
+                msp_min_size,
+                with_scores,
+                nuc_min_size=nuc_min_size,
+            )
+        )
+        if return_posteriors and posteriors_full is not None:
+            n = int(circular_read_length)
+            result['posteriors'] = posteriors_full[n:2 * n, 0].astype(np.float16)
+        return result
+
     result['states'] = states
 
-    # Find footprints (state 0 regions)
-    # Pad with 1 (accessible) at edges
-    states_padded = np.concatenate([[1], states, [1]])
-    diff = np.diff(states_padded)
-
-    # Footprint starts: transition from 1 to 0 (diff == -1)
-    # Footprint ends: transition from 0 to 1 (diff == 1)
-    fp_starts = np.where(diff == -1)[0]
-    fp_ends = np.where(diff == 1)[0]
-
-    if len(fp_starts) > 0:
-        result['footprint_starts'] = fp_starts.astype(np.int32)
-        result['footprint_sizes'] = (fp_ends - fp_starts).astype(np.int32)
-
-        if with_scores and confidence is not None:
-            fp_scores = np.zeros(len(fp_starts), dtype=np.float32)
-            for i, (s, e) in enumerate(zip(fp_starts, fp_ends)):
-                fp_scores[i] = np.mean(confidence[s:e])
-            result['footprint_scores'] = fp_scores
-
-    # Find MSPs (accessible regions between nucleosome-sized footprints)
-    # Following fibertools convention: only nucleosome-sized footprints
-    # (>= nuc_min_size) act as MSP boundaries. Small footprints are
-    # absorbed into the surrounding MSP.
-    if len(states) > 0:
-        if len(fp_starts) > 0:
-            fp_sizes_arr = fp_ends - fp_starts
-            nuc_mask = fp_sizes_arr >= nuc_min_size
-            nuc_starts = fp_starts[nuc_mask]
-            nuc_ends = fp_ends[nuc_mask]
-        else:
-            nuc_starts = np.array([], dtype=np.int64)
-            nuc_ends = np.array([], dtype=np.int64)
-
-        # MSP regions are the gaps between nucleosome-sized footprints
-        # (and between read edges and the first/last nucleosome)
-        msp_start_list = []
-        msp_size_list = []
-
-        if len(nuc_starts) > 0:
-            # Gap before first nucleosome
-            if nuc_starts[0] > 0:
-                msp_start_list.append(0)
-                msp_size_list.append(int(nuc_starts[0]))
-            # Gaps between consecutive nucleosomes
-            for i in range(len(nuc_starts) - 1):
-                gap_start = int(nuc_ends[i])
-                gap_size = int(nuc_starts[i + 1]) - gap_start
-                if gap_size > 0:
-                    msp_start_list.append(gap_start)
-                    msp_size_list.append(gap_size)
-            # Gap after last nucleosome
-            if nuc_ends[-1] < len(states):
-                msp_start_list.append(int(nuc_ends[-1]))
-                msp_size_list.append(len(states) - int(nuc_ends[-1]))
-        else:
-            # No nucleosome-sized footprints: entire read is one MSP
-            msp_start_list.append(0)
-            msp_size_list.append(len(states))
-
-        if msp_start_list:
-            msp_starts_arr = np.array(msp_start_list, dtype=np.int32)
-            msp_sizes_arr = np.array(msp_size_list, dtype=np.int32)
-
-            # Filter by minimum size
-            size_mask = msp_sizes_arr >= msp_min_size
-            msp_starts_arr = msp_starts_arr[size_mask]
-            msp_sizes_arr = msp_sizes_arr[size_mask]
-
-            if len(msp_starts_arr) > 0:
-                result['msp_starts'] = msp_starts_arr
-                result['msp_sizes'] = msp_sizes_arr
-
-                if with_scores and confidence is not None:
-                    msp_scores = np.zeros(len(msp_starts_arr), dtype=np.float32)
-                    for i, (s, sz) in enumerate(zip(msp_starts_arr, msp_sizes_arr)):
-                        msp_scores[i] = np.mean(1.0 - confidence[s:s+sz])
-                    result['msp_scores'] = msp_scores
+    result.update(
+        _extract_footprints_from_states(
+            states, confidence, msp_min_size, with_scores,
+            nuc_min_size=nuc_min_size,
+        )
+    )
 
     return result
 
@@ -647,10 +707,19 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     else:
         strand = '.'
 
-    # Encode — pass is_reverse so nanopore mode handles strand correctly
+    # Encode — pass is_reverse so nanopore mode handles strand correctly.
+    # Circular mode keeps the 3x tiling private to inference and projects the
+    # middle copy back to molecule coordinates before anything is written.
     is_reverse = fiber_read.get('is_reverse', False)
+    encode_sequence = query_sequence
+    encode_mods = m6a_positions
+    circular_read_length = None
+    if circular and len(query_sequence) > 0:
+        encode_sequence, encode_mods = tile_sequence_and_mods(query_sequence, m6a_positions)
+        circular_read_length = len(query_sequence)
+
     encoded = encode_from_query_sequence(
-        query_sequence, m6a_positions, edge_trim,
+        encode_sequence, encode_mods, edge_trim,
         mode=mode, strand=strand, context_size=context_size,
         is_reverse=is_reverse,
     )
@@ -661,7 +730,8 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     # Predict
     fp_result = predict_footprints_and_msps(model, encoded, msp_min_size, with_scores,
                                              return_posteriors=return_posteriors,
-                                             nuc_min_size=nuc_min_size)
+                                             nuc_min_size=nuc_min_size,
+                                             circular_read_length=circular_read_length)
 
     # If no footprints and we don't need posteriors or encoded, skip
     if len(fp_result['footprint_starts']) == 0 and len(fp_result['msp_starts']) == 0:
@@ -676,6 +746,19 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
         'al': fp_result['msp_sizes'],
         'as_scores': fp_result.get('msp_scores')
     }
+    if fp_result.get('circular'):
+        result.update({
+            'circular': True,
+            'circular_read_length': fp_result['circular_read_length'],
+            'circular_ns': fp_result['circular_ns'],
+            'circular_as': fp_result['circular_as'],
+            'circular_ns_scores': fp_result.get('circular_ns_scores'),
+            'circular_as_scores': fp_result.get('circular_as_scores'),
+            'tiled_ns': fp_result['tiled_ns'],
+            'tiled_nl': fp_result['tiled_nl'],
+            'tiled_as': fp_result['tiled_as'],
+            'tiled_al': fp_result['tiled_al'],
+        })
 
     # Include posteriors data if requested
     if return_posteriors and fp_result.get('posteriors') is not None:

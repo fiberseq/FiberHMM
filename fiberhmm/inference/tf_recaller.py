@@ -39,8 +39,6 @@ underestimate the true signal.
 """
 from __future__ import annotations
 
-import math
-from collections import defaultdict
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
@@ -65,11 +63,12 @@ from fiberhmm.core.bam_reader import (
 )
 from fiberhmm.io.ma_tags import (
     ambiguity_to_edge,
+    format_an_tag,
     format_aq_array,
     format_ma_tag,
     llr_to_tq,
+    split_circular_interval,
 )
-
 
 # Observation-code constants (must match encode_from_query_sequence with k=3)
 N_CTX = 4096           # 4^(2*3) hexamer contexts
@@ -177,14 +176,16 @@ def build_scan_intervals(ns: Sequence[int], nl: Sequence[int],
       - all v2 nucs with ``nl < unify_threshold``
     """
     iv: List[Tuple[int, int]] = []
-    for s, l in zip(as_, al):
-        s = int(s); l = int(l)
-        if l > 0:
-            iv.append((s, s + l))
-    for s, l in zip(ns, nl):
-        s = int(s); l = int(l)
-        if 0 < l < unify_threshold:
-            iv.append((s, s + l))
+    for s, length in zip(as_, al):
+        s = int(s)
+        length = int(length)
+        if length > 0:
+            iv.append((s, s + length))
+    for s, length in zip(ns, nl):
+        s = int(s)
+        length = int(length)
+        if 0 < length < unify_threshold:
+            iv.append((s, s + length))
     iv = [(max(0, a), min(read_len, b)) for a, b in iv]
     iv = [(a, b) for a, b in iv if b > a]
     return merge_intervals(iv)
@@ -376,10 +377,20 @@ def extract_modifications(read, mode: str, context_size: int = 3
     except KeyError:
         mm_tag = ''
     try:
-        ml_tag = list(read.get_tag('ML')) if read.has_tag('ML') else list(read.get_tag('Ml'))
+        ml_tag = read.get_tag('ML') if read.has_tag('ML') else read.get_tag('Ml')
     except KeyError:
         ml_tag = []
     if not mm_tag or not ml_tag:
+        if mode == 'daf':
+            md_result = getattr(read, '_daf_md_result', None)
+            if md_result is None and hasattr(read, 'get_aligned_pairs'):
+                from fiberhmm.daf.encoder import get_daf_positions
+                md_result = get_daf_positions(read)
+            if md_result is not None:
+                ct_pos, ga_pos, strand_tag = md_result
+                if strand_tag == 'CT':
+                    return set(ct_pos), '+', seq.upper()
+                return set(ga_pos), '-', seq.upper()
         return None
     mod_pos = parse_mm_tag_query_positions(
         mm_tag, ml_tag, seq, read.is_reverse,
@@ -406,24 +417,32 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
         - msp_intervals: v2 MSPs unchanged
     """
     try:
-        ns_raw = list(read.get_tag('ns'))
-        nl_raw = list(read.get_tag('nl'))
+        ns_raw = read.get_tag('ns')
+        nl_raw = read.get_tag('nl')
     except KeyError:
-        ns_raw, nl_raw = [], []
+        ns_raw, nl_raw = (), ()
     try:
-        as_raw = list(read.get_tag('as'))
-        al_raw = list(read.get_tag('al'))
+        as_raw = read.get_tag('as')
+        al_raw = read.get_tag('al')
     except KeyError:
-        as_raw, al_raw = [], []
+        as_raw, al_raw = (), ()
 
-    if not (ns_raw or as_raw):
+    if len(ns_raw) == 0 and len(as_raw) == 0:
         return [], [], []
 
     extracted = extract_modifications(read, mode, context_size)
     if extracted is None:
         # Pass through v2 calls unchanged
-        nucs = [(int(s), int(l)) for s, l in zip(ns_raw, nl_raw) if int(l) > 0]
-        msps = [(int(s), int(l)) for s, l in zip(as_raw, al_raw) if int(l) > 0]
+        nucs = [
+            (int(s), int(length))
+            for s, length in zip(ns_raw, nl_raw)
+            if int(length) > 0
+        ]
+        msps = [
+            (int(s), int(length))
+            for s, length in zip(as_raw, al_raw)
+            if int(length) > 0
+        ]
         return [], nucs, msps
 
     mod_pos, strand, seq = extracted
@@ -444,21 +463,26 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
         ))
 
     # Unify: drop v2 short-nucs (nl < threshold) that overlap any TF call.
-    msps = [(int(s), int(l)) for s, l in zip(as_raw, al_raw) if int(l) > 0]
+    msps = [
+        (int(s), int(length))
+        for s, length in zip(as_raw, al_raw)
+        if int(length) > 0
+    ]
     kept_nucs: List[Tuple[int, int]] = []
     tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
-    for s, l in zip(ns_raw, nl_raw):
-        s = int(s); l = int(l)
-        if l <= 0:
+    for s, length in zip(ns_raw, nl_raw):
+        s = int(s)
+        length = int(length)
+        if length <= 0:
             continue
-        if l >= unify_threshold:
-            kept_nucs.append((s, l))
+        if length >= unify_threshold:
+            kept_nucs.append((s, length))
             continue
         # Short v2 nuc -- drop if overlapped by any TF call
-        nuc_end = s + l
+        nuc_end = s + length
         if any(ts < nuc_end and te > s for ts, te in tf_intervals):
             continue
-        kept_nucs.append((s, l))
+        kept_nucs.append((s, length))
 
     return tf_calls, kept_nucs, msps
 
@@ -515,6 +539,36 @@ def write_ma_tags(read, read_length: int,
     el_vals = [ambiguity_to_edge(c.left_ambiguity) for c in tf_calls]
     er_vals = [ambiguity_to_edge(c.right_ambiguity) for c in tf_calls]
 
+    def split_named_intervals(intervals, prefix, qual_rows=None):
+        split_intervals = []
+        split_names = []
+        split_quals = [] if qual_rows is not None else None
+        any_split = False
+        for idx, (start, length) in enumerate(intervals):
+            pieces = split_circular_interval(start, length, read_length)
+            if len(pieces) > 1:
+                any_split = True
+            name = f"fhw_{prefix}_{idx}" if len(pieces) > 1 else f"fh_{prefix}_{idx}"
+            for piece in pieces:
+                split_intervals.append(piece)
+                split_names.append(name)
+                if split_quals is not None:
+                    split_quals.append(qual_rows[idx])
+        return split_intervals, split_names, split_quals, any_split
+
+    nuc_q_rows = [[q] for q in nq_values]
+    tf_q_rows = [[tq, el, er] for tq, el, er in zip(tq_vals, el_vals, er_vals)]
+    ma_nucs, nuc_names, nuc_q_split, nuc_split = split_named_intervals(
+        kept_nucs, "nuc", nuc_q_rows,
+    )
+    ma_msps, msp_names, _msp_q_split, msp_split = split_named_intervals(
+        msps, "msp", None,
+    )
+    ma_tfs, tf_names, tf_q_split, tf_split = split_named_intervals(
+        tf_intervals, "tf", tf_q_rows,
+    )
+    needs_an = nuc_split or msp_split or tf_split
+
     if not downstream_compat:
         # Spec mode: write MA + AQ. The fiberseq Molecular-annotation spec
         # (https://github.com/fiberseq/Molecular-annotation-spec) requires:
@@ -524,57 +578,86 @@ def write_ma_tags(read, read_length: int,
         #   - AQ to only be present if SOME annotation type specifies P or Q
         #     (we use Q on nuc+ and tf+; if neither has any annotations and
         #     only msp+ is emitted, AQ stays unwritten)
-        has_any_annotation = bool(kept_nucs or msps or tf_intervals)
+        has_any_annotation = bool(ma_nucs or ma_msps or ma_tfs)
         if not has_any_annotation:
             # Strip any stale tags, leave the read with no MA/AQ
-            for tag in ('MA', 'AQ'):
+            for tag in ('MA', 'AQ', 'AN'):
                 if read.has_tag(tag):
-                    try: read.set_tag(tag, None)
-                    except Exception: pass
+                    try:
+                        read.set_tag(tag, None)
+                    except Exception:
+                        pass
         else:
             ma = format_ma_tag(
                 read_length=read_length,
-                nuc_intervals=kept_nucs,
-                msp_intervals=msps,
-                tf_intervals=tf_intervals,
+                nuc_intervals=ma_nucs,
+                msp_intervals=ma_msps,
+                tf_intervals=ma_tfs,
             )
             read.set_tag('MA', ma, value_type='Z')
+            if needs_an:
+                read.set_tag('AN', format_an_tag(nuc_names + msp_names + tf_names),
+                             value_type='Z')
+            elif read.has_tag('AN'):
+                try:
+                    read.set_tag('AN', None)
+                except Exception:
+                    pass
             # AQ only carries values for nuc+Q and tf+QQQ. If neither is
             # present in this read, no quality type is in MA -> spec says
             # AQ must not be written.
-            has_quality = bool(kept_nucs or tf_intervals)
+            has_quality = bool(ma_nucs or ma_tfs)
             if has_quality:
+                split_nq_values = [row[0] for row in (nuc_q_split or [])]
+                split_tq_vals = [row[0] for row in (tf_q_split or [])]
+                split_el_vals = [row[1] for row in (tf_q_split or [])]
+                split_er_vals = [row[2] for row in (tf_q_split or [])]
                 aq = format_aq_array(
-                    nq_values=nq_values,
-                    tf_q_values=tq_vals,
-                    tf_lq_values=el_vals,
-                    tf_rq_values=er_vals,
+                    nq_values=split_nq_values,
+                    tf_q_values=split_tq_vals,
+                    tf_lq_values=split_el_vals,
+                    tf_rq_values=split_er_vals,
                 )
                 read.set_tag('AQ', aq)
             elif read.has_tag('AQ'):
-                try: read.set_tag('AQ', None)
-                except Exception: pass
+                try:
+                    read.set_tag('AQ', None)
+                except Exception:
+                    pass
     else:
         # Compat mode: strip any stale MA/AQ so consumers that see both
         # tags don't get out-of-sync views.
-        for tag in ('MA', 'AQ'):
+        for tag in ('MA', 'AQ', 'AN'):
             if read.has_tag(tag):
-                try: read.set_tag(tag, None)
-                except Exception: pass
+                try:
+                    read.set_tag(tag, None)
+                except Exception:
+                    pass
 
     if also_write_legacy:
         # Build the ns/nl track. In default mode it's nucleosomes only.
         # In downstream_compat mode, TF calls are merged in, sorted by start.
         if downstream_compat and tf_intervals:
             combined = list(kept_nucs) + list(tf_intervals)
-            combined.sort(key=lambda t: (int(t[0]), int(t[1])))
-            ns = [int(s) for s, _ in combined]
-            nl = [int(l) for _, l in combined]
         else:
-            ns = [int(s) for s, _ in kept_nucs]
-            nl = [int(l) for _, l in kept_nucs]
-        a_s = [int(s) for s, _ in msps]
-        a_l = [int(l) for _, l in msps]
+            combined = list(kept_nucs)
+        legacy_nuc_rows = [
+            (piece[0], piece[1], None)
+            for interval in combined
+            for piece in split_circular_interval(interval[0], interval[1], read_length)
+        ]
+        legacy_nuc_rows.sort(key=lambda t: (int(t[0]), int(t[1])))
+        ns = [int(s) for s, _, _ in legacy_nuc_rows]
+        nl = [int(length) for _, length, _ in legacy_nuc_rows]
+
+        legacy_msps = [
+            piece
+            for interval in msps
+            for piece in split_circular_interval(interval[0], interval[1], read_length)
+        ]
+        legacy_msps.sort(key=lambda t: (int(t[0]), int(t[1])))
+        a_s = [int(s) for s, _ in legacy_msps]
+        a_l = [int(length) for _, length in legacy_msps]
 
         if ns:
             read.set_tag('ns', pyarray.array('I', ns))
@@ -582,28 +665,44 @@ def write_ma_tags(read, read_length: int,
         else:
             for tag in ('ns', 'nl', 'nq'):
                 if read.has_tag(tag):
-                    try: read.set_tag(tag, None)
-                    except Exception: pass
+                    try:
+                        read.set_tag(tag, None)
+                    except Exception:
+                        pass
         if a_s:
             read.set_tag('as', pyarray.array('I', a_s))
             read.set_tag('al', pyarray.array('I', a_l))
         else:
             for tag in ('as', 'al', 'aq'):
                 if read.has_tag(tag):
-                    try: read.set_tag(tag, None)
-                    except Exception: pass
+                    try:
+                        read.set_tag(tag, None)
+                    except Exception:
+                        pass
         # nq must have len == len(ns) per fibertools invariant. If we wrote
         # new ns/nl without fresh scores, drop any stale nq from the input BAM
         # to avoid len(nq) != len(ns) failing ft validate (see fibertools-rs
         # bamannotations.rs set_qual assert).
         if ns and nq_for_kept_nucs is not None:
+            legacy_nq_rows = []
+            for interval, q in zip(kept_nucs, nq_values):
+                for piece in split_circular_interval(interval[0], interval[1], read_length):
+                    legacy_nq_rows.append((piece[0], piece[1], max(0, min(255, int(q)))))
+            legacy_nq_rows.sort(key=lambda t: (int(t[0]), int(t[1])))
+            legacy_nq = [q for _, _, q in legacy_nq_rows]
+            if len(legacy_nq) != len(ns):
+                legacy_nq = [0] * len(ns)
             read.set_tag('nq', pyarray.array('B',
-                          [max(0, min(255, int(v))) for v in nq_values]))
+                          legacy_nq))
         elif ns and read.has_tag('nq'):
-            try: read.set_tag('nq', None)
-            except Exception: pass
+            try:
+                read.set_tag('nq', None)
+            except Exception:
+                pass
         # Same for aq: stale per-msp qualities from input would mismatch
         # the refreshed as/al length.
         if a_s and read.has_tag('aq'):
-            try: read.set_tag('aq', None)
-            except Exception: pass
+            try:
+                read.set_tag('aq', None)
+            except Exception:
+                pass

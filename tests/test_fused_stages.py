@@ -1,0 +1,164 @@
+"""Tests for fused apply/recall stage boundaries."""
+
+from __future__ import annotations
+
+import numpy as np
+
+from fiberhmm.inference import fused_stages
+from fiberhmm.inference.tf_recaller import TFCall
+
+
+def test_apply_result_has_footprints_detects_nucs_or_msps():
+    empty = {
+        "ns": np.asarray([], dtype=np.int32),
+        "as": np.asarray([], dtype=np.int32),
+    }
+    nuc_only = {
+        "ns": np.asarray([10], dtype=np.int32),
+        "as": np.asarray([], dtype=np.int32),
+    }
+    msp_only = {
+        "ns": np.asarray([], dtype=np.int32),
+        "as": np.asarray([20], dtype=np.int32),
+    }
+
+    assert fused_stages.apply_result_has_footprints(None) is False
+    assert fused_stages.apply_result_has_footprints(empty) is False
+    assert fused_stages.apply_result_has_footprints(nuc_only) is True
+    assert fused_stages.apply_result_has_footprints(msp_only) is True
+
+
+def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatch):
+    seen = {"interval_args": None, "scan_args": []}
+
+    def fake_build_scan_intervals(
+        ns, nl, msps, msp_lengths, read_length, unify_threshold
+    ):
+        seen["interval_args"] = (ns, nl, msps, msp_lengths, read_length, unify_threshold)
+        return [(10, 30), (100, 130)]
+
+    def fake_call_tfs_in_interval(obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps):
+        seen["scan_args"].append((obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps))
+        if lo == 10:
+            return [
+                TFCall(
+                    start=8,
+                    length=10,
+                    llr=6.0,
+                    n_opps=4,
+                    left_ambiguity=1,
+                    right_ambiguity=2,
+                )
+            ]
+        return []
+
+    monkeypatch.setattr(fused_stages, "build_scan_intervals", fake_build_scan_intervals)
+    monkeypatch.setattr(fused_stages, "call_tfs_in_interval", fake_call_tfs_in_interval)
+
+    obs = np.asarray([0, 1, 2, 3], dtype=np.int64)
+    msps = np.asarray([12], dtype=np.int32)
+    msp_lengths = np.asarray([8], dtype=np.int32)
+    apply_result = {
+        "ns": np.asarray([5, 100], dtype=np.int32),
+        "nl": np.asarray([20, 100], dtype=np.int32),
+        "as": msps,
+        "al": msp_lengths,
+        "encoded": obs,
+        "ns_scores": np.asarray([0.25, 1.0]),
+        "as_scores": np.asarray([0.5]),
+    }
+
+    result = fused_stages.build_fused_recall_result(
+        {"query_sequence": "A" * 150},
+        apply_result,
+        llr_hit="hit",
+        llr_miss="miss",
+        min_llr=4.0,
+        min_opps=3,
+        unify_threshold=90,
+        with_scores=True,
+    )
+
+    interval_args = seen["interval_args"]
+    assert interval_args[0] is apply_result["ns"]
+    assert interval_args[1] is apply_result["nl"]
+    assert interval_args[2] is msps
+    assert interval_args[3] is msp_lengths
+    assert interval_args[4:] == (150, 90)
+    scan_args = seen["scan_args"]
+    assert len(scan_args) == 2
+    assert scan_args[0][0] is obs
+    assert scan_args[0][1:] == (10, 30, "hit", "miss", 4.0, 3)
+    assert scan_args[1][0] is obs
+    assert scan_args[1][1:] == (100, 130, "hit", "miss", 4.0, 3)
+    assert result["ns"].tolist() == [100]
+    assert result["nl"].tolist() == [100]
+    assert result["as"] is msps
+    assert result["al"] is msp_lengths
+    assert result["nq_for_kept_nucs"] == [255]
+    assert len(result["tf_calls"]) == 1
+
+
+def test_build_fused_recall_result_projects_circular_tf_calls(monkeypatch):
+    def fake_build_scan_intervals(ns, nl, msps, msp_lengths, read_length, unify_threshold):
+        assert read_length == 300
+        assert list(ns) == [195]
+        assert list(nl) == [20]
+        assert list(msps) == [190]
+        assert list(msp_lengths) == [40]
+        return [(190, 230)]
+
+    def fake_call_tfs_in_interval(obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps):
+        return [
+            TFCall(
+                start=195,
+                length=20,
+                llr=6.0,
+                n_opps=4,
+                left_ambiguity=1,
+                right_ambiguity=2,
+            )
+        ]
+
+    monkeypatch.setattr(fused_stages, "build_scan_intervals", fake_build_scan_intervals)
+    monkeypatch.setattr(fused_stages, "call_tfs_in_interval", fake_call_tfs_in_interval)
+
+    apply_result = {
+        "ns": np.asarray([0, 95], dtype=np.int32),
+        "nl": np.asarray([15, 5], dtype=np.int32),
+        "as": np.asarray([0, 90], dtype=np.int32),
+        "al": np.asarray([30, 10], dtype=np.int32),
+        "encoded": np.zeros(300, dtype=np.int32),
+        "circular": True,
+        "circular_read_length": 100,
+        "circular_ns": [(95, 20)],
+        "circular_as": [(90, 40)],
+        "circular_ns_scores": np.asarray([0.75], dtype=np.float32),
+        "circular_as_scores": np.asarray([0.25], dtype=np.float32),
+        "tiled_ns": np.asarray([195], dtype=np.int32),
+        "tiled_nl": np.asarray([20], dtype=np.int32),
+        "tiled_as": np.asarray([190], dtype=np.int32),
+        "tiled_al": np.asarray([40], dtype=np.int32),
+    }
+
+    result = fused_stages.build_fused_recall_result(
+        {"query_sequence": "A" * 100},
+        apply_result,
+        llr_hit="hit",
+        llr_miss="miss",
+        min_llr=4.0,
+        min_opps=3,
+        unify_threshold=90,
+        with_scores=True,
+    )
+
+    assert result["circular"] is True
+    assert result["tf_calls"] == [
+        TFCall(start=95, length=20, llr=6.0, n_opps=4,
+               left_ambiguity=1, right_ambiguity=2)
+    ]
+    assert result["circular_ns"] == []
+    assert result["circular_as"] == [(90, 40)]
+    assert result["ns"].tolist() == []
+    assert result["nl"].tolist() == []
+    assert result["nq_for_kept_nucs"] == []

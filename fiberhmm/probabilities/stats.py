@@ -8,9 +8,9 @@ Contains:
 """
 
 import os
+from typing import TYPE_CHECKING, Dict
+
 import numpy as np
-import pandas as pd
-from typing import Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from fiberhmm.probabilities.context_counter import ContextCounter
@@ -49,19 +49,19 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
 
             f.write(f"{base}-centered Contexts\n")
             f.write("-" * 40 + "\n")
-            f.write(f"\nAccessible:\n")
+            f.write("\nAccessible:\n")
             f.write(f"  Total positions:     {acc.total_positions:,}\n")
             f.write(f"  Modified positions:  {acc.total_modified:,}\n")
             f.write(f"  Modification rate:   {acc_rate:.4f} ({acc_rate*100:.2f}%)\n")
             f.write(f"  Unique contexts:     {len(acc.counts):,}\n")
 
-            f.write(f"\nInaccessible:\n")
+            f.write("\nInaccessible:\n")
             f.write(f"  Total positions:     {inacc.total_positions:,}\n")
             f.write(f"  Modified positions:  {inacc.total_modified:,}\n")
             f.write(f"  Modification rate:   {inacc_rate:.4f} ({inacc_rate*100:.2f}%)\n")
             f.write(f"  Unique contexts:     {len(inacc.counts):,}\n")
 
-            f.write(f"\nSeparation:\n")
+            f.write("\nSeparation:\n")
             f.write(f"  Rate difference:     {acc_rate - inacc_rate:.4f}\n")
             f.write(f"  Fold enrichment:     {acc_rate / max(0.001, inacc_rate):.2f}x\n")
 

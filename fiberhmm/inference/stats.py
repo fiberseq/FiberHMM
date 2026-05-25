@@ -1,10 +1,8 @@
 """FiberHMM footprint statistics and QC plotting."""
 
-import os
-import sys
+
 import numpy as np
 import pysam
-from typing import Optional
 
 
 class FootprintStats:
@@ -364,12 +362,11 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
     stats = FootprintStats()
 
     # First pass: count reads
-    bam = pysam.AlignmentFile(bam_path, "rb", check_sq=False)
     total_reads = 0
-    for read in bam:
-        if not read.is_unmapped and not read.is_secondary and not read.is_supplementary:
-            total_reads += 1
-    bam.close()
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
+        for read in bam:
+            if not read.is_unmapped and not read.is_secondary and not read.is_supplementary:
+                total_reads += 1
 
     # Calculate sampling probability
     if total_reads <= n_samples:
@@ -380,54 +377,53 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
     print(f"  Sampling ~{min(n_samples, total_reads):,} reads from {total_reads:,} total ({sample_prob*100:.1f}%)")
 
     # Second pass: collect stats from sampled reads
-    bam = pysam.AlignmentFile(bam_path, "rb", check_sq=False)
     sampled = 0
 
-    for read in bam:
-        if read.is_unmapped or read.is_secondary or read.is_supplementary:
-            continue
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
+        for read in bam:
+            if read.is_unmapped or read.is_secondary or read.is_supplementary:
+                continue
 
-        # Reservoir sampling
-        if random.random() > sample_prob:
-            continue
+            # Reservoir sampling
+            if random.random() > sample_prob:
+                continue
 
-        if sampled >= n_samples:
-            break
+            if sampled >= n_samples:
+                break
 
-        # Get footprint tags
-        try:
-            ns = np.array(read.get_tag('ns'))
-            nl = np.array(read.get_tag('nl'))
-        except KeyError:
-            ns = np.array([])
-            nl = np.array([])
-
-        # Get MSP tags
-        try:
-            as_starts = np.array(read.get_tag('as'))
-            al_lengths = np.array(read.get_tag('al'))
-        except KeyError:
-            as_starts = None
-            al_lengths = None
-
-        # Get scores
-        ns_scores = None
-        as_scores = None
-        if with_scores:
+            # Get footprint tags
             try:
-                nq = np.array(read.get_tag('nq'))
-                ns_scores = nq / 255.0  # Scale back to 0-1
+                ns = np.array(read.get_tag('ns'))
+                nl = np.array(read.get_tag('nl'))
             except KeyError:
-                pass
+                ns = np.array([])
+                nl = np.array([])
+
+            # Get MSP tags
             try:
-                aq = np.array(read.get_tag('aq'))
-                as_scores = aq / 255.0
+                as_starts = np.array(read.get_tag('as'))
+                al_lengths = np.array(read.get_tag('al'))
             except KeyError:
-                pass
+                as_starts = None
+                al_lengths = None
 
-        read_length = read.query_length or 0
-        stats.add_read(read_length, ns, nl, as_starts, al_lengths, ns_scores, as_scores)
-        sampled += 1
+            # Get scores
+            ns_scores = None
+            as_scores = None
+            if with_scores:
+                try:
+                    nq = np.array(read.get_tag('nq'))
+                    ns_scores = nq / 255.0  # Scale back to 0-1
+                except KeyError:
+                    pass
+                try:
+                    aq = np.array(read.get_tag('aq'))
+                    as_scores = aq / 255.0
+                except KeyError:
+                    pass
 
-    bam.close()
+            read_length = read.query_length or 0
+            stats.add_read(read_length, ns, nl, as_starts, al_lengths, ns_scores, as_scores)
+            sampled += 1
+
     return stats

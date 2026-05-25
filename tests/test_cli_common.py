@@ -1,16 +1,17 @@
 """
 Tests for fiberhmm.cli.common argument factories.
 """
-import pytest
 import argparse
 
+import pytest
+
 from fiberhmm.cli.common import (
-    add_mode_args,
-    add_filter_args,
-    add_parallel_args,
     add_context_args,
     add_edge_trim_args,
+    add_filter_args,
+    add_mode_args,
     add_output_args,
+    add_parallel_args,
     add_stats_args,
     add_verbose_args,
 )

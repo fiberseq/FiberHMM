@@ -22,16 +22,16 @@ Examples:
   fiberhmm-call -i in.bam -o - --enzyme hia5 --seq pacbio | ft fire - -
 """
 import argparse
-import os
 import sys
 
 from fiberhmm.core.model_io import load_model_with_metadata
-from fiberhmm.models import SUPPORTED_ENZYMES, get_model_path as _get_bundled_model
 from fiberhmm.inference.parallel import (
-    _process_bam_streaming_pipeline_fused,
     _process_bam_region_parallel_fused,
+    _process_bam_streaming_pipeline_fused,
 )
 from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
+from fiberhmm.models import SUPPORTED_ENZYMES
+from fiberhmm.models import get_model_path as _get_bundled_model
 
 
 def parse_args():
@@ -79,6 +79,9 @@ def parse_args():
                    help='Min footprint size to count as nucleosome (default 85)')
     p.add_argument('--with-scores', action='store_true',
                    help='Compute confidence scores (nq/aq tags).')
+    p.add_argument('-r', '--circular', action='store_true',
+                   help='Enable circular molecule mode (3x tile internally, '
+                        'emit wrapped MA/AQ/AN annotations).')
     p.add_argument('--process-unmapped', action='store_true',
                    help='Process unmapped reads (default: pass through).')
     p.add_argument('--primary', action='store_true',
@@ -251,7 +254,8 @@ def main():
         f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'}\n"
         f"  min_llr={min_llr} min_opps={args.min_opps} "
         f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
-        f"  cores={args.cores} io-threads={args.io_threads}\n"
+        f"  cores={args.cores} io-threads={args.io_threads}"
+        f"{' circular=on' if args.circular else ''}\n"
         "=========================================================================\n",
         file=sys.stderr,
     )
@@ -279,7 +283,7 @@ def main():
             recall_model_path=recall_model_path,
             train_rids=set(),
             edge_trim=args.edge_trim,
-            circular=False,
+            circular=args.circular,
             mode=mode,
             context_size=k,
             msp_min_size=args.msp_min_size,
@@ -310,7 +314,7 @@ def main():
             recall_model_path=recall_model_path,
             train_rids=set(),
             edge_trim=args.edge_trim,
-            circular=False,
+            circular=args.circular,
             mode=mode,
             context_size=k,
             msp_min_size=args.msp_min_size,

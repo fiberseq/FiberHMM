@@ -14,19 +14,23 @@ No genome context H5 file needed - uses read sequences directly.
 Uses native HMM implementation (no hmmlearn dependency).
 """
 
-import pandas as pd
-import numpy as np
 import argparse
-import sys
-import os
-import pickle
 import json
+import os
+import sys
+
+import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
-from fiberhmm.core.bam_reader import (read_bam, FiberRead, encode_from_query_sequence,
-                                       detect_daf_strand, ContextEncoder)
-from fiberhmm.core.hmm import FiberHMM, train_model as train_hmm_models
-from fiberhmm.core.model_io import save_model, load_model
+from fiberhmm.core.bam_reader import (
+    ContextEncoder,
+    detect_daf_strand,
+    encode_from_query_sequence,
+)
+from fiberhmm.core.hmm import FiberHMM
+from fiberhmm.core.hmm import train_model as train_hmm_models
+from fiberhmm.core.model_io import load_model, save_model
 
 pd.options.mode.chained_assignment = None
 
@@ -272,7 +276,11 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                             continue
 
                         # Get modifications
-                        from fiberhmm.core.bam_reader import get_modified_positions_pysam, parse_mm_tag_query_positions, FiberRead
+                        from fiberhmm.core.bam_reader import (
+                            FiberRead,
+                            get_modified_positions_pysam,
+                            parse_mm_tag_query_positions,
+                        )
 
                         mod_query_pos = get_modified_positions_pysam(read, prob_threshold, mode)
 
@@ -419,7 +427,7 @@ def train_hmm(emission_probs: np.ndarray, train_arrays: dict,
         use_legacy=use_legacy
     )
 
-    print(f"\nBest model selected")
+    print("\nBest model selected")
     print(f"Start probabilities: {best_model.startprob_}")
     print(f"Transition matrix:\n{best_model.transmat_}")
 
@@ -446,8 +454,8 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
         from matplotlib.backends.backend_pdf import PdfPages
-        from matplotlib.patches import Rectangle
         from matplotlib.collections import PatchCollection
+        from matplotlib.patches import Rectangle
     except ImportError:
         print("  Warning: matplotlib not installed. Skipping stats plots.")
         return
@@ -498,7 +506,7 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         # 1. Transition matrix
         ax = axes[0, 0]
         trans = model.transmat_
-        im = ax.imshow(trans, cmap='Blues', vmin=0, vmax=1)
+        ax.imshow(trans, cmap='Blues', vmin=0, vmax=1)
         ax.set_xticks([0, 1])
         ax.set_yticks([0, 1])
         ax.set_xticklabels(['Footprint', 'Accessible'])
@@ -882,7 +890,7 @@ def main():
         print(f"  Mode: {args.mode} ({mode_desc})")
         print(f"  Context: k={args.context_size} ({context_mer}-mer, {n_codes:,} codes)")
         print(f"  Base model: {args.base_model}")
-        print(f"  (Transitions from base model, new emissions from prob files)")
+        print("  (Transitions from base model, new emissions from prob files)")
     else:
         print("FiberHMM Model Training v2")
         print(f"  Mode: {args.mode} ({mode_desc})")
@@ -896,7 +904,7 @@ def main():
     os.makedirs(args.outdir, exist_ok=True)
 
     # Generate emission probabilities
-    print(f"\nLoading emission probabilities...")
+    print("\nLoading emission probabilities...")
     emission_probs = make_emission_probs(
         args.probs[0], args.probs[1],
         context_size=args.context_size,
@@ -916,7 +924,7 @@ def main():
 
         # Validate emission dimensions match
         if base_model.emissionprob_.shape[1] != emission_probs.shape[1]:
-            print(f"Error: Emission size mismatch!")
+            print("Error: Emission size mismatch!")
             print(f"  Base model: {base_model.emissionprob_.shape[1]} observations")
             print(f"  New emissions: {emission_probs.shape[1]} observations")
             print(f"  Check that context_size matches (k={args.context_size})")
@@ -965,7 +973,7 @@ def main():
         context_size=args.context_size,
         mode=args.mode
     )
-    print(f"  Saved: best-model.json (recommended)")
+    print("  Saved: best-model.json (recommended)")
 
     # Also save in NPZ for backwards compatibility
     save_model(
@@ -974,7 +982,7 @@ def main():
         context_size=args.context_size,
         mode=args.mode
     )
-    print(f"  Saved: best-model.npz (numpy format)")
+    print("  Saved: best-model.npz (numpy format)")
 
     # Save all models as JSON list
     all_models_data = []
@@ -1009,13 +1017,13 @@ def main():
 
     # Generate stats if requested (only if we have training data)
     if args.stats and valid_reads and encoded_reads:
-        print(f"\nGenerating training statistics...")
+        print("\nGenerating training statistics...")
         generate_training_stats(
             best_model, valid_reads, encoded_reads, emission_probs,
             args.outdir, n_examples=args.n_examples, mode=args.mode
         )
     elif args.stats and args.base_model:
-        print(f"\nNote: --stats skipped (no training data with --base-model)")
+        print("\nNote: --stats skipped (no training data with --base-model)")
 
     print("Done!")
 
