@@ -979,3 +979,97 @@ def test_write_autosql_for_with_sample_name(tmp_path):
         content = f.read()
     assert 'Sample: Dl_recalled. ' in content
     assert 'int[blockCount] blockTq' in content
+
+
+def _write_circular_ma_an_bam(path, *, read_length=1000, ref_start=100_000):
+    """Write a one-read indexed BAM whose MA/AN tags describe a wrapped TF call
+    plus a normal nucleosome. Used as input to extract_tags_parallel."""
+    import pysam
+
+    header = pysam.AlignmentHeader.from_dict({
+        'HD': {'VN': '1.6', 'SO': 'coordinate'},
+        'SQ': [{'SN': 'chr1', 'LN': max(1_000_000, ref_start + read_length + 10)}],
+    })
+    unsorted = str(path) + '.unsorted'
+    with pysam.AlignmentFile(unsorted, 'wb', header=header) as out:
+        read = pysam.AlignedSegment()
+        read.query_name = 'circ_read'
+        read.query_sequence = 'A' * read_length
+        read.query_qualities = pysam.qualitystring_to_array('I' * read_length)
+        read.flag = 0
+        read.reference_id = 0
+        read.reference_start = ref_start
+        read.mapping_quality = 60
+        read.cigar = [(0, read_length)]
+        # tf call wraps the origin: pieces at [0, 15) and [985, 1000). Same AN
+        # name. Standalone nuc at [200, 250). MA prefix is the read length.
+        read.set_tag('MA',
+                     f'{read_length};nuc+Q:201-50;tf+QQQ:1-15,986-15',
+                     value_type='Z')
+        read.set_tag('AN', 'fh_nuc_0,fhw_tf_0,fhw_tf_0', value_type='Z')
+        # AQ: nuc Q (1 value), then 3-tuple for each tf piece.
+        read.set_tag('AQ', array('B', [200, 180, 20, 30, 180, 20, 30]))
+        out.write(read)
+    pysam.sort('-o', str(path), unsorted)
+    import os as _os
+    _os.remove(unsorted)
+    pysam.index(str(path))
+
+
+def test_extract_tags_parallel_circular_groups_end_to_end(tmp_path):
+    """Drive extract_tags_parallel(circular_groups=True) end-to-end on a BAM
+    with hand-crafted wrapped MA/AN tags. Assert BED12+5 rows are emitted
+    with the right circular grouping metadata for both pieces."""
+    bam_path = tmp_path / 'circular.bam'
+    _write_circular_ma_an_bam(bam_path, read_length=1000, ref_start=100_000)
+
+    nuc_bed = tmp_path / 'nuc.bed'
+    tf_bed = tmp_path / 'tf.bed'
+
+    total_reads, n_features = extract_tags.extract_tags_parallel(
+        input_bam=str(bam_path),
+        output_beds={'footprint': str(nuc_bed), 'tf': str(tf_bed)},
+        extract_types=['footprint', 'tf'],
+        n_cores=1,
+        region_size=10_000_000,
+        min_mapq=0,
+        prob_threshold=0,
+        with_scores=True,
+        min_tq=0,
+        block_scores=True,
+        circular_groups=True,
+    )
+
+    assert total_reads == 1
+    assert n_features['footprint'] == 1
+    assert n_features['tf'] == 2
+
+    nuc_rows = [line.split('\t') for line in nuc_bed.read_text().splitlines()]
+    tf_rows = [line.split('\t') for line in tf_bed.read_text().splitlines()]
+
+    # BED12 (12) + footprint block_scores (1 blockNq) + circular (5) = 18 cols.
+    assert all(len(row) == 18 for row in nuc_rows)
+    # BED12 (12) + tf block_scores (3 blockTq/El/Er) + circular (5) = 20 cols.
+    assert all(len(row) == 20 for row in tf_rows)
+
+    # Standalone (non-wrapped) nuc: circId=., circPart/Parts=1, and
+    # molStart/molLength echo the annotation's own coords.
+    assert nuc_rows[0][13:] == ['.', '1', '1', '200', '50']
+
+    # Wrapped TF: both clipped pieces share AN name, have circParts=2, and
+    # their molStart/molLength describe the molecular feature (not the clipped
+    # ref interval). Pieces are ordered by ref start.
+    tf_rows.sort(key=lambda r: int(r[1]))
+    assert [int(r[1]) for r in tf_rows] == [100_000, 100_985]
+    assert [int(r[2]) for r in tf_rows] == [100_015, 101_000]
+    for row in tf_rows:
+        assert row[15] == 'fhw_tf_0'
+        assert row[17] == '2'  # circParts
+        # molStart is the start of the end-piece (the one furthest right on
+        # the molecule); molLength is the fused circular feature length.
+        assert int(row[18]) == 985
+        assert int(row[19]) == 30
+    # circPart numbers cover both pieces.
+    assert sorted(int(r[16]) for r in tf_rows) == [1, 2]
+    # Names encode the wrapped grouping.
+    assert all('|' in row[3] and 'fhw_tf_0' in row[3] for row in tf_rows)

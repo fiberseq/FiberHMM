@@ -88,6 +88,11 @@ Date: 2026-05-07
 - Removed extra full-list materialization from `fiberhmm-extract` TF `AQ` parsing and MM/ML modified-position extraction, with regression tests that exercise indexable `AQ` containers and parser arrays without `.tolist()`.
 - Added a supported-mode workflow regression matrix that drives deterministic Hia5 PacBio, Hia5 Nanopore forward/reverse, DddB DAF, and DddA DAF BAMs through HMM apply, TF recall, and downstream TF/MSP BED extraction. DAF coverage includes IUPAC `Y`/`R`, raw MD `C->T`/`G->A`, and MM/ML `T+u`/`A+u` inputs, asserting legacy HMM tags, `MA/AQ` `tf+QQQ` recall tags, and scored extracted label rows.
 - Made `fiberhmm-recall-tfs` consume precomputed raw-MD DAF positions from its compact payload path so two-pass raw MD DAF workflows can emit TF calls instead of passing only v2 nuc/MSP tags through.
+- Added circular molecule support behind the `-r/--circular` flag on `fiberhmm-call`: a new `fiberhmm/inference/circular.py` 3x-tiles each read internally and projects HMM footprint/TF runs back to molecule coordinates. `predict_footprints_and_msps` takes a `circular_read_length` kwarg and returns split-for-legacy `ns/nl/as/al` plus unsplit `circular_ns/circular_as` for MA/AN emission. Fused stages project circular TF calls and unify against circular nucleosomes via `unify_circular_nucs_with_tf_calls`. Default `circular=False` callers see no behavior change.
+- Extended `write_ma_tags` to split wrapped MA annotations into clipped pieces, emit an `AN:Z` tag that links the two pieces of each wrapped annotation by name, and strip stale `AN` when the read becomes linear. Added `format_an_tag`/`parse_an_tag`/`split_circular_interval`/`interval_wraps` helpers in `fiberhmm/io/ma_tags.py`.
+- Extended `fiberhmm-extract` with `--circular-groups`: shared `_extract_ma_interval_type` parses MA/AQ/AN and emits BED12+5 rows whose final columns are `circId/circPart/circParts/molStart/molLength`. autoSQL gained a 5-column `_CIRCULAR_FIELDS` block and matching `.circ.as` variant naming so generated bigBeds advertise the schema.
+- Made `set_legacy_apply_tags` strip stale `MA/AN/AQ` whenever apply runs over a read. Apply doesn't recompute spec tags and a prior `fiberhmm-call`/`recall-tfs` pass would otherwise leave them pointing at superseded `ns/nl` coordinates.
+- Fixed ruff `I001` import-order regression in `fiberhmm/inference/tf_recaller.py` introduced by the circular `format_an_tag` import.
 
 ## Current Verification
 
@@ -392,12 +397,19 @@ Date: 2026-05-07
 - `python -m compileall -q fiberhmm tests`: passed.
 - `python -m pytest`: 405 passed, 26 deselected in 12.85s.
 - `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.67s.
+- Post-circular audit: `python -m pytest tests/test_call_pipeline.py tests/test_tagging.py tests/test_extract_block_scores.py tests/test_circular_support.py`: 92 passed.
+- Post-circular audit: `python -m pytest`: 427 passed, 26 deselected in 13.62s.
+- Post-circular audit: `python -m pytest -m benchmark tests/benchmarks`: 26 passed in 51.88s.
+- Post-circular audit: `python -m ruff check fiberhmm tests`: passed.
+- Post-circular audit: end-to-end `--circular` covered for both fused streaming (`test_circular_streaming_keeps_coordinates_within_read_length`) and region-parallel (`test_circular_region_parallel_keeps_coordinates_within_read_length`) paths, asserting no 3x-tiled coordinates leak into output `ns/nl/as/al`, that MA prefixes equal the on-disk read length, and that `AN` annotation counts match MA annotation counts.
+- Post-circular audit: `fiberhmm-extract --circular-groups` covered end-to-end by `test_extract_tags_parallel_circular_groups_end_to_end`, which feeds a hand-crafted wrapped MA/AN BAM through `extract_tags_parallel` and asserts BED12+5 rows carry the right `circId/circPart/circParts/molStart/molLength` per piece.
+- Post-circular audit: `set_legacy_apply_tags` stale-MA/AN/AQ stripping covered by `test_set_legacy_apply_tags_strips_stale_ma_an_aq_from_prior_recall` and `test_set_legacy_apply_tags_strips_stale_ma_an_even_when_no_new_calls`.
 
 ## Current Shape
 
 Largest tracked Python files:
 
-- `fiberhmm/cli/extract_tags.py`: 1395 lines.
+- `fiberhmm/cli/extract_tags.py`: 1652 lines (grew with `--circular-groups`).
 - `fiberhmm/core/bam_reader.py`: 1340 lines.
 - `fiberhmm/core/hmm.py`: 1123 lines.
 - `fiberhmm/cli/train.py`: 1032 lines.
@@ -405,7 +417,9 @@ Largest tracked Python files:
 - `fiberhmm/cli/export_posteriors.py`: 817 lines.
 - `fiberhmm/inference/bam_output.py`: 788 lines.
 
-`fiberhmm/inference/parallel.py` is now 189 lines after the streaming, region, and legacy pipeline extractions.
+`fiberhmm/inference/parallel.py` is 192 lines: a thin dispatcher that re-exports every previously-private symbol from the extracted pipeline modules.
+
+`fiberhmm/inference/circular.py` is 176 lines, isolated behind the `--circular` flag with no impact on the linear default path.
 
 Ignored local build artifacts exist (`build/`, `fiberhmm.egg-info/`) but are not tracked.
 

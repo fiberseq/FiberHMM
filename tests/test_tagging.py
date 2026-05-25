@@ -78,6 +78,48 @@ def test_set_legacy_apply_tags_clears_stale_scores_when_scores_not_written():
     assert "aq" not in read.tags
 
 
+def test_set_legacy_apply_tags_strips_stale_ma_an_aq_from_prior_recall():
+    read = RecordingRead()
+    read.tags["MA"] = "100;nuc+Q:1-10;tf+QQQ:30-15"
+    read.tags["AN"] = "fh_nuc_0,fh_tf_0"
+    read.tags["AQ"] = pyarray.array("B", [200, 180, 20, 30])
+    result = {
+        "ns": np.asarray([10], dtype=np.int32),
+        "nl": np.asarray([30], dtype=np.int32),
+        "ns_scores": None,
+        "as": np.asarray([100], dtype=np.int32),
+        "al": np.asarray([200], dtype=np.int32),
+        "as_scores": None,
+    }
+
+    set_legacy_apply_tags(read, result, with_scores=False, write_msps=True)
+
+    assert "MA" not in read.tags
+    assert "AN" not in read.tags
+    assert "AQ" not in read.tags
+    assert read.tags["ns"].tolist() == [10]
+    assert read.tags["nl"].tolist() == [30]
+
+
+def test_set_legacy_apply_tags_strips_stale_ma_an_even_when_no_new_calls():
+    read = RecordingRead()
+    read.tags["MA"] = "100;nuc+Q:1-10"
+    read.tags["AN"] = "fh_nuc_0"
+    result = {
+        "ns": np.asarray([], dtype=np.int32),
+        "nl": np.asarray([], dtype=np.int32),
+        "ns_scores": None,
+        "as": np.asarray([], dtype=np.int32),
+        "al": np.asarray([], dtype=np.int32),
+        "as_scores": None,
+    }
+
+    set_legacy_apply_tags(read, result, with_scores=False, write_msps=True)
+
+    assert "MA" not in read.tags
+    assert "AN" not in read.tags
+
+
 def test_unify_circular_nucs_with_tf_calls_handles_origin_overlap():
     tf_calls = [
         TFCall(start=5, length=10, llr=5.0, n_opps=3,

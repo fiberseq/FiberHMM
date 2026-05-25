@@ -61,6 +61,16 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     result writes only the tag groups that have calls, and skipped/empty reads
     are passed through by callers.
     """
+    # Apply recomputes the read structure, so any pre-existing MA/AN/AQ from a
+    # prior fiberhmm-call/recall pass now refers to stale ns/nl coordinates.
+    # Strip them so the BAM never carries an inconsistent annotation view.
+    for stale_tag in ("MA", "AN", "AQ"):
+        if read.has_tag(stale_tag):
+            try:
+                read.set_tag(stale_tag, None)
+            except Exception:
+                pass
+
     if len(result["ns"]) > 0:
         read.set_tag("ns", _u32_bam_array(result["ns"]))
         read.set_tag("nl", _u32_bam_array(result["nl"]))

@@ -63,8 +63,8 @@ from fiberhmm.core.bam_reader import (
 )
 from fiberhmm.io.ma_tags import (
     ambiguity_to_edge,
-    format_aq_array,
     format_an_tag,
+    format_aq_array,
     format_ma_tag,
     llr_to_tq,
     split_circular_interval,

@@ -12,7 +12,8 @@ from fiberhmm.inference.parallel import (
 from fiberhmm.models import get_model_path
 
 
-def _run_fused_streaming(input_bam, output_bam, model_path, *, with_scores=False):
+def _run_fused_streaming(input_bam, output_bam, model_path, *,
+                          with_scores=False, circular=False, min_llr=1000.0):
     return _process_bam_streaming_pipeline_fused(
         input_bam=input_bam,
         output_bam=output_bam,
@@ -20,7 +21,7 @@ def _run_fused_streaming(input_bam, output_bam, model_path, *, with_scores=False
         recall_model_path=None,
         train_rids=set(),
         edge_trim=10,
-        circular=False,
+        circular=circular,
         mode="pacbio-fiber",
         context_size=3,
         msp_min_size=0,
@@ -29,7 +30,7 @@ def _run_fused_streaming(input_bam, output_bam, model_path, *, with_scores=False
         prob_threshold=0,
         min_read_length=0,
         with_scores=with_scores,
-        min_llr=1000.0,
+        min_llr=min_llr,
         min_opps=3,
         unify_threshold=90,
         emission_uplift=1.0,
@@ -42,7 +43,8 @@ def _run_fused_streaming(input_bam, output_bam, model_path, *, with_scores=False
     )
 
 
-def _run_fused_region(input_bam, output_bam, model_path, *, with_scores=False):
+def _run_fused_region(input_bam, output_bam, model_path, *,
+                       with_scores=False, circular=False, min_llr=1000.0):
     return _process_bam_region_parallel_fused(
         input_bam=input_bam,
         output_bam=output_bam,
@@ -50,7 +52,7 @@ def _run_fused_region(input_bam, output_bam, model_path, *, with_scores=False):
         recall_model_path=None,
         train_rids=set(),
         edge_trim=10,
-        circular=False,
+        circular=circular,
         mode="pacbio-fiber",
         context_size=3,
         msp_min_size=0,
@@ -59,7 +61,7 @@ def _run_fused_region(input_bam, output_bam, model_path, *, with_scores=False):
         prob_threshold=0,
         min_read_length=0,
         with_scores=with_scores,
-        min_llr=1000.0,
+        min_llr=min_llr,
         min_opps=3,
         unify_threshold=90,
         emission_uplift=1.0,
@@ -282,3 +284,102 @@ def test_daf_reference_fasta_is_closed_after_streaming(tmp_path, monkeypatch):
     _run_daf_fused_streaming(str(raw_ref), output, ref_fasta_path=str(ref_fasta))
 
     assert closed_paths == [str(ref_fasta)]
+
+
+def _assert_circular_output_invariants(input_bam, output_bam):
+    """Shared invariants for --circular output: coords stay within read length,
+    MA prefix == on-disk read length (not 3x), AN count matches MA annotation
+    count, and at least one read carries tags."""
+    read_lengths = {}
+    with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as src:
+        for read in src.fetch(until_eof=True):
+            read_lengths[read.query_name] = read.query_length
+
+    tagged = 0
+    with pysam.AlignmentFile(output_bam, "rb", check_sq=False) as out:
+        for read in out.fetch(until_eof=True):
+            rl = read_lengths.get(read.query_name)
+            if rl is None or rl <= 0:
+                continue
+
+            if read.has_tag("ns"):
+                ns = list(read.get_tag("ns"))
+                nl = list(read.get_tag("nl"))
+                assert ns and len(ns) == len(nl)
+                for s, length in zip(ns, nl):
+                    assert 0 <= s < rl, f"ns {s} outside [0, {rl}) — tiled coord leaked"
+                    assert s + length <= rl, (
+                        f"ns+nl {s + length} exceeds read length {rl}"
+                    )
+                tagged += 1
+
+            if read.has_tag("as"):
+                a_s = list(read.get_tag("as"))
+                a_l = list(read.get_tag("al"))
+                assert a_s and len(a_s) == len(a_l)
+                for s, length in zip(a_s, a_l):
+                    assert 0 <= s < rl, f"as {s} outside [0, {rl})"
+                    assert s + length <= rl
+
+            if read.has_tag("MA"):
+                ma = read.get_tag("MA")
+                prefix = int(ma.split(";", 1)[0])
+                assert prefix == rl, (
+                    f"MA prefix {prefix} must equal read length {rl}, not 3x"
+                )
+                if read.has_tag("AN"):
+                    an_count = len(read.get_tag("AN").split(","))
+                    ma_ann_count = sum(
+                        len(seg.split(":", 1)[1].split(","))
+                        for seg in ma.split(";")[1:]
+                        if ":" in seg
+                    )
+                    assert an_count == ma_ann_count, (
+                        f"AN tag has {an_count} names but MA has {ma_ann_count} annotations"
+                    )
+
+    assert tagged > 0, "circular run produced no tagged reads"
+
+
+def test_circular_streaming_keeps_coordinates_within_read_length(
+    synthetic_bam_small, benchmark_model_path, tmp_path
+):
+    """End-to-end check that --circular tiles internally but never leaks
+    3x-tiled coordinates into output tags, and that MA prefixes use the
+    on-disk read length."""
+    output = str(tmp_path / "fused_circular.bam")
+
+    total, with_fp = _run_fused_streaming(
+        synthetic_bam_small, output, benchmark_model_path,
+        circular=True, min_llr=4.0,
+    )
+
+    assert total > 0
+    assert with_fp > 0
+    _assert_circular_output_invariants(synthetic_bam_small, output)
+
+
+def test_circular_region_parallel_keeps_coordinates_within_read_length(
+    benchmark_model_path, tmp_path
+):
+    """Same invariants as the streaming circular test, but via the
+    region-parallel fused worker path."""
+    input_bam = str(tmp_path / "circular_region_input.bam")
+    make_synthetic_bam(
+        input_bam,
+        n_reads=30,
+        read_length=1500,
+        n_chroms=1,
+        chrom_length=100_000,
+        seed=321,
+    )
+    output = str(tmp_path / "fused_circular_region.bam")
+
+    total, with_fp = _run_fused_region(
+        input_bam, output, benchmark_model_path,
+        circular=True, min_llr=4.0,
+    )
+
+    assert total > 0
+    assert with_fp > 0
+    _assert_circular_output_invariants(input_bam, output)
