@@ -316,7 +316,8 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                             strand='-' if read.is_reverse else '+',
                             query_sequence=read.query_sequence,
                             m6a_query_positions=set(mod_query_pos),
-                            query_to_ref=query_to_ref
+                            query_to_ref=query_to_ref,
+                            is_reverse=read.is_reverse,
                         )
 
                         sampled.append(fiber_read)
