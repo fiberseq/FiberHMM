@@ -110,9 +110,11 @@ def parse_args():
     p.add_argument('--split-min-opps', type=int, default=3,
                    help='Min informative positions in a nucleosome-splitting cut '
                         '(default 3).')
-    p.add_argument('--phase-nrl', type=int, default=0,
-                   help='Pass-2 periodicity prior: nucleosome repeat length (bp). '
-                        '0 = off (default). When set (e.g. 185 for DddB), long '
+    p.add_argument('--phase-nrl', default='off',
+                   help='Pass-2 periodicity prior (with --recall-nucs): '
+                        '"off" (default), "auto" (estimate the nucleosome repeat '
+                        'length from this sample after Pass 1, clamped to ~150-215 '
+                        'bp anchored at 185), or a fixed bp value (e.g. 185). Long '
                         'footprints are split at phase-predicted linkers using a '
                         'lowered threshold gated on >=1 local deamination event '
                         '(never splits a signal-desert).')
@@ -174,6 +176,43 @@ def _resolve_recall_model(args):
         except (KeyError, FileNotFoundError):
             pass
     return None  # reuse apply model
+
+
+def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k) -> int:
+    """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off)."""
+    raw = str(args.phase_nrl).strip().lower()
+    if raw in ('off', '', '0', 'none'):
+        return 0
+    if not args.recall_nucs:
+        print("  NOTE: --phase-nrl is ignored without --recall-nucs.",
+              file=sys.stderr)
+        return 0
+    if raw != 'auto':
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            print(f"  WARNING: invalid --phase-nrl {args.phase_nrl!r}; using off.",
+                  file=sys.stderr)
+            return 0
+    # auto-estimate
+    if args.input == '-':
+        print("  NOTE: --phase-nrl auto needs a file input to sample; "
+              "falling back to anchor 185 bp.", file=sys.stderr)
+        return 185
+    from fiberhmm.inference.nrl_estimate import estimate_phase_nrl
+    res = estimate_phase_nrl(
+        args.input, apply_model_path, recall_model_path,
+        mode=mode, context_size=k,
+        split_min_llr=args.split_min_llr, split_min_opps=args.split_min_opps,
+        nuc_min_size=args.nuc_min_size, msp_min_size=args.msp_min_size,
+        prob_threshold=args.prob_threshold, edge_trim=args.edge_trim,
+    )
+    ci = res['ci']
+    ci_str = f" CI[{ci[0]:.0f}-{ci[1]:.0f}]" if ci else ""
+    print(f"  phase NRL: {res['nrl']} bp ({res['source']}, "
+          f"{res['n_pairs']:,} pairs from {res['n_reads']:,} reads{ci_str})",
+          file=sys.stderr)
+    return int(res['nrl'])
 
 
 def _check_daf_inputs(input_bam: str, reference: str = None,
@@ -273,6 +312,9 @@ def main():
     uplift = args.emission_uplift if args.emission_uplift is not None \
              else preset.get('emission_uplift', 1.0)
 
+    # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
+    phase_nrl = _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k)
+
     mode_label = 'region-parallel' if args.region_parallel else 'streaming'
     print(
         "\n=========================================================================\n"
@@ -339,7 +381,7 @@ def main():
             filter_chimeras=not args.keep_chimeras,
             chimera_min_seg=args.chimera_min_seg,
             chimera_purity=args.chimera_purity,
-            phase_nrl=args.phase_nrl,
+            phase_nrl=phase_nrl,
         )
     else:
         n_reads, n_fp = _process_bam_streaming_pipeline_fused(
@@ -377,7 +419,7 @@ def main():
             filter_chimeras=not args.keep_chimeras,
             chimera_min_seg=args.chimera_min_seg,
             chimera_purity=args.chimera_purity,
-            phase_nrl=args.phase_nrl,
+            phase_nrl=phase_nrl,
         )
 
     if not stdout_mode and not args.region_parallel:
