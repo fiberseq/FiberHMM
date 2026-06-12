@@ -111,6 +111,18 @@ def parse_args():
                    help='Min informative positions in a nucleosome-splitting cut '
                         '(default 3).')
 
+    # --- DAF chimera filter (mode=daf only) ---
+    p.add_argument('--keep-chimeras', action='store_true',
+                   help='DAF only: keep strand-swap chimeric reads (C->T in one '
+                        'segment + G->A in another). Default: filter them out and '
+                        'report the count.')
+    p.add_argument('--chimera-min-seg', type=int, default=5,
+                   help='DAF chimera: min same-strand deamination events per '
+                        'segment to call a swap (default 5).')
+    p.add_argument('--chimera-purity', type=float, default=0.8,
+                   help='DAF chimera: min same-strand purity per segment '
+                        '(default 0.8).')
+
     # --- Parallelism ---
     p.add_argument('-c', '--cores', type=int, default=4,
                    help='Worker processes (default 4).')
@@ -318,6 +330,9 @@ def main():
             recall_nucs=args.recall_nucs,
             split_min_llr=args.split_min_llr,
             split_min_opps=args.split_min_opps,
+            filter_chimeras=not args.keep_chimeras,
+            chimera_min_seg=args.chimera_min_seg,
+            chimera_purity=args.chimera_purity,
         )
     else:
         n_reads, n_fp = _process_bam_streaming_pipeline_fused(
@@ -352,6 +367,9 @@ def main():
             recall_nucs=args.recall_nucs,
             split_min_llr=args.split_min_llr,
             split_min_opps=args.split_min_opps,
+            filter_chimeras=not args.keep_chimeras,
+            chimera_min_seg=args.chimera_min_seg,
+            chimera_purity=args.chimera_purity,
         )
 
     if not stdout_mode and not args.region_parallel:

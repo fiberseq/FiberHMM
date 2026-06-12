@@ -53,6 +53,9 @@ def _process_bam_streaming_pipeline_fused(
     recall_nucs: bool = False,
     split_min_llr: float = 4.0,
     split_min_opps: int = 3,
+    filter_chimeras: bool = True,
+    chimera_min_seg: int = 5,
+    chimera_purity: float = 0.8,
 ):
     """Fused apply+recall streaming pipeline."""
     ref_fasta = None
@@ -97,7 +100,8 @@ def _process_bam_streaming_pipeline_fused(
                 mp_context=_MP_CONTEXT,
                 initializer=_init_fused_worker,
                 initargs=(model_path, recall_model_path, emission_uplift, False,
-                          recall_nucs, split_min_llr, split_min_opps),
+                          recall_nucs, split_min_llr, split_min_opps,
+                          filter_chimeras, chimera_min_seg, chimera_purity),
             )
 
             inflight = deque()

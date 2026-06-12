@@ -583,6 +583,22 @@ def extract_fiber_read_from_payload(payload: dict, mode: str, prob_threshold: in
     )
 
 
+# DAF strand-swap chimera filter. Run-constant config, set per worker via
+# configure_daf_chimera_filter() (default: filter ON). CHIMERA_SKIP is a
+# distinct sentinel (vs None) so workers can tally chimeras as their own skip
+# reason rather than folding them into "no_modifications".
+CHIMERA_SKIP = object()
+_DAF_CHIMERA_CFG = {'filter': True, 'min_seg': 5, 'purity': 0.8}
+
+
+def configure_daf_chimera_filter(filter_chimeras: bool = True,
+                                 min_seg: int = 5, purity: float = 0.8) -> None:
+    """Set the DAF chimera-filter policy for this process (worker init)."""
+    _DAF_CHIMERA_CFG['filter'] = bool(filter_chimeras)
+    _DAF_CHIMERA_CFG['min_seg'] = int(min_seg)
+    _DAF_CHIMERA_CFG['purity'] = float(purity)
+
+
 def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
                                     ref_fasta=None) -> Optional[dict]:
     """Extract minimal data needed for HMM processing from a pysam read."""
@@ -621,6 +637,15 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
             md_result = get_daf_positions(read, ref_fasta=ref_fasta)
         if md_result is not None:
             ct_pos, ga_pos, strand_tag = md_result
+            # Strand-swap chimera filter (DAF only): a read deaminated CT in one
+            # segment and GA in another corrupts the single-strand assignment.
+            # Drop it (returns a distinct sentinel so callers can report counts).
+            if _DAF_CHIMERA_CFG['filter']:
+                from fiberhmm.daf.encoder import is_daf_chimera
+                if is_daf_chimera(ct_pos, ga_pos,
+                                  min_seg_events=_DAF_CHIMERA_CFG['min_seg'],
+                                  purity=_DAF_CHIMERA_CFG['purity']):
+                    return CHIMERA_SKIP
             mod_positions = set(ct_pos) if strand_tag == 'CT' else set(ga_pos)
             if not mod_positions:
                 return None
