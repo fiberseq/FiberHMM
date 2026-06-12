@@ -110,6 +110,12 @@ def parse_args():
     p.add_argument('--split-min-opps', type=int, default=3,
                    help='Min informative positions in a nucleosome-splitting cut '
                         '(default 3).')
+    p.add_argument('--phase-nrl', type=int, default=0,
+                   help='Pass-2 periodicity prior: nucleosome repeat length (bp). '
+                        '0 = off (default). When set (e.g. 185 for DddB), long '
+                        'footprints are split at phase-predicted linkers using a '
+                        'lowered threshold gated on >=1 local deamination event '
+                        '(never splits a signal-desert).')
 
     # --- DAF chimera filter (mode=daf only) ---
     p.add_argument('--keep-chimeras', action='store_true',
@@ -333,6 +339,7 @@ def main():
             filter_chimeras=not args.keep_chimeras,
             chimera_min_seg=args.chimera_min_seg,
             chimera_purity=args.chimera_purity,
+            phase_nrl=args.phase_nrl,
         )
     else:
         n_reads, n_fp = _process_bam_streaming_pipeline_fused(
@@ -370,6 +377,7 @@ def main():
             filter_chimeras=not args.keep_chimeras,
             chimera_min_seg=args.chimera_min_seg,
             chimera_purity=args.chimera_purity,
+            phase_nrl=args.phase_nrl,
         )
 
     if not stdout_mode and not args.region_parallel:

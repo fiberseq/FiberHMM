@@ -528,6 +528,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         recall_nucs = bool(params.get('recall_nucs', False))
         split_min_llr = float(params.get('split_min_llr', 4.0))
         split_min_opps = int(params.get('split_min_opps', 3))
+        phase_nrl = int(params.get('phase_nrl', 0))
 
         pysam.set_verbosity(0)
 
@@ -634,6 +635,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         split_min_opps=split_min_opps,
                         nuc_min_size=nuc_min_size,
                         msp_min_size=msp_min_size,
+                        phase_nrl=phase_nrl,
                     )
                     write_fused_recall_tags(
                         read,

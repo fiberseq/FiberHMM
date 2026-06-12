@@ -63,6 +63,7 @@ def _init_fused_worker(
     filter_chimeras=True,
     chimera_min_seg=5,
     chimera_purity=0.8,
+    phase_nrl=0,
 ):
     """Initialize worker process for the fused apply+recall pipeline.
 
@@ -100,6 +101,7 @@ def _init_fused_worker(
     _worker_recall_state['recall_nucs'] = recall_nucs
     _worker_recall_state['split_min_llr'] = split_min_llr
     _worker_recall_state['split_min_opps'] = split_min_opps
+    _worker_recall_state['phase_nrl'] = phase_nrl
     configure_daf_chimera_filter(filter_chimeras, chimera_min_seg, chimera_purity)
 
     # Warmup: apply Viterbi + TF Kadane scan.
@@ -236,6 +238,7 @@ def _process_fused_payload_chunk_worker(
                 split_min_opps=_worker_recall_state.get('split_min_opps', 3),
                 nuc_min_size=nuc_min_size,
                 msp_min_size=msp_min_size,
+                phase_nrl=_worker_recall_state.get('phase_nrl', 0),
             ))
         except Exception:
             # Per-read failure must not kill the worker or the whole chunk.

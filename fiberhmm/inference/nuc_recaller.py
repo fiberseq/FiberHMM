@@ -40,6 +40,95 @@ class NucCall:
     er: int          # right-edge sharpness byte
 
 
+def _refine_fragment(obs, a, b, llr_hit, llr_miss,
+                     nuc_min_size, edge_min_llr, edge_min_opps):
+    """Edge-refine one protected fragment into a NucCall (or demote it).
+
+    Returns ``(nuc_or_None, access_intervals)``. A fragment shorter than
+    ``nuc_min_size``, with no protected evidence, or whose conservative core
+    trims below the floor, is demoted: ``nuc`` is None (signal-desert keeps a
+    quality-0 NucCall) and the residue goes to ``access``.
+    """
+    access: List[Interval] = []
+    if b - a < nuc_min_size:
+        access.append((a, b - a))
+        return None, access
+    prot = call_tfs_in_interval(obs, a, b, llr_hit, llr_miss,
+                                edge_min_llr, edge_min_opps)
+    if not prot:
+        # signal-desert fragment: keep raw extent, unknown quality/edges
+        return NucCall(a, b - a, nq=0, el=0, er=0), access
+    prot = sorted(prot, key=lambda p: p.start)
+    first, last = prot[0], prot[-1]
+    cstart = first.start
+    cend = last.start + last.length
+    if cend - cstart < nuc_min_size:
+        # Edge refinement trimmed the protected core below the floor (a sparse
+        # protected island) -> not a nucleosome, demote the whole fragment.
+        access.append((a, b - a))
+        return None, access
+    total_llr = 0.0
+    for p in prot:
+        total_llr += p.llr
+    nuc = NucCall(
+        start=cstart,
+        length=cend - cstart,
+        nq=llr_to_tq(total_llr),
+        el=ambiguity_to_edge(first.left_ambiguity),
+        er=ambiguity_to_edge(last.right_ambiguity),
+    )
+    if cstart > a:
+        access.append((a, cstart - a))
+    if b > cend:
+        access.append((cend, b - cend))
+    return nuc, access
+
+
+def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
+                        phase_min_llr, phase_min_opps, phase_window):
+    """Evidence-gated periodicity split of a long protected fragment.
+
+    A fragment of length L >= 1.5*nrl is assumed to hold ``n = round(L/nrl)``
+    nucleosomes. At each predicted internal linker (evenly spaced to fit L), scan
+    a +-``phase_window`` bp window for an accessible run with the LOWERED
+    ``phase_min_llr`` threshold; the strongest qualifying run becomes a cut.
+    Returns ``(subfragments, cut_intervals)``; with no qualifying cut the
+    fragment is returned whole (never split into a signal-desert).
+    """
+    L = b - a
+    if L < int(1.5 * nrl):
+        return [(a, b)], []
+    n = int(round(L / float(nrl)))
+    if n < 2:
+        return [(a, b)], []
+    spacing = L / float(n)
+    cut_pairs: List[Interval] = []
+    for i in range(1, n):
+        pred = a + int(round(i * spacing))
+        lo = max(a, pred - phase_window)
+        hi = min(b, pred + phase_window)
+        if hi - lo < 2:
+            continue
+        found = call_tfs_in_interval(obs, lo, hi, nhit, nmiss,
+                                     phase_min_llr, phase_min_opps)
+        if found:
+            best = max(found, key=lambda c: c.llr)
+            cut_pairs.append((best.start, best.start + best.length))
+    if not cut_pairs:
+        return [(a, b)], []
+    cut_pairs.sort()
+    subs: List[Interval] = []
+    cur = a
+    for cs, ce in cut_pairs:
+        if cs > cur:
+            subs.append((cur, cs))
+        cur = max(cur, ce)
+    if cur < b:
+        subs.append((cur, b))
+    cut_intervals = [(cs, ce - cs) for cs, ce in cut_pairs]
+    return subs, cut_intervals
+
+
 def recall_nucs_in_read(
     obs: np.ndarray,
     ns: Sequence[int],
@@ -53,6 +142,10 @@ def recall_nucs_in_read(
     nuc_min_size: int,
     edge_min_llr: float = 2.0,
     edge_min_opps: int = 2,
+    phase_nrl: int = 0,
+    phase_min_llr: float = 1.0,
+    phase_min_opps: int = 1,
+    phase_window: int = 35,
 ) -> Tuple[List[NucCall], List[Interval]]:
     """Split + edge-refine the footprints (``ns``/``nl``) of one read.
 
@@ -61,6 +154,15 @@ def recall_nucs_in_read(
       - ``accessible_intervals``: (start, length) patches freed up by splitting
         (the cuts) or trimming (overshoot residue + sub-min-size fragments).
         These feed the MSP re-derivation.
+
+    Pass 1 (``split_min_llr``/``split_min_opps``) is the evidence-driven split:
+    accessible runs inside a footprint are cuts. Pass 2 (enabled when
+    ``phase_nrl > 0``) is the evidence-gated periodicity prior: a footprint
+    longer than ~1.5x the nucleosome repeat length is examined for cuts at
+    phase-predicted linker positions using a LOWERED threshold
+    (``phase_min_llr`` < ``split_min_llr``). The prior only lowers the bar near
+    a predicted linker -- a cut still requires real local evidence there, so a
+    signal-desert is never split.
     """
     nhit = -llr_hit
     nmiss = -llr_miss
@@ -95,45 +197,23 @@ def recall_nucs_in_read(
         if cur < e:
             frags.append((cur, e))
 
-        # --- EDGES + quality per fragment (protected Kadane, +llr) ---
+        # --- Pass 2 (optional): phase-prior split of long fragments ---
         for a, b in frags:
-            if b - a < nuc_min_size:
-                # too short to be a nucleosome -> accessible residue
-                access.append((a, b - a))
-                continue
-            prot = call_tfs_in_interval(obs, a, b, llr_hit, llr_miss,
-                                        edge_min_llr, edge_min_opps)
-            if not prot:
-                # signal-desert fragment: keep raw extent, unknown quality/edges
-                nucs.append(NucCall(a, b - a, nq=0, el=0, er=0))
-                continue
-            prot = sorted(prot, key=lambda p: p.start)
-            first, last = prot[0], prot[-1]
-            cstart = first.start
-            cend = last.start + last.length
-            if cend - cstart < nuc_min_size:
-                # Edge refinement trimmed the protected core below the floor
-                # (a sparse protected island in a larger fragment, e.g. flanked
-                # by non-target bases). Not a nucleosome -> demote the whole
-                # fragment to accessible. A genuine >= nuc_min_size nucleosome
-                # keeps a contiguous-miss core that the protected scan spans.
-                access.append((a, b - a))
-                continue
-            total_llr = 0.0
-            for p in prot:
-                total_llr += p.llr
-            nucs.append(NucCall(
-                start=cstart,
-                length=cend - cstart,
-                nq=llr_to_tq(total_llr),
-                el=ambiguity_to_edge(first.left_ambiguity),
-                er=ambiguity_to_edge(last.right_ambiguity),
-            ))
-            # trimmed overshoot becomes accessible residue
-            if cstart > a:
-                access.append((a, cstart - a))
-            if b > cend:
-                access.append((cend, b - cend))
+            if phase_nrl > 0:
+                subs, phase_cuts = _phase_subfragments(
+                    obs, a, b, nhit, nmiss, phase_nrl,
+                    phase_min_llr, phase_min_opps, phase_window)
+                access.extend(phase_cuts)
+            else:
+                subs = [(a, b)]
+            # --- EDGES + quality per (sub)fragment (protected Kadane, +llr) ---
+            for sa, sb in subs:
+                nuc, acc = _refine_fragment(
+                    obs, sa, sb, llr_hit, llr_miss,
+                    nuc_min_size, edge_min_llr, edge_min_opps)
+                if nuc is not None:
+                    nucs.append(nuc)
+                access.extend(acc)
 
     return nucs, access
 

@@ -105,6 +105,7 @@ def build_fused_recall_result(
     split_min_opps: int = 3,
     nuc_min_size: int = 85,
     msp_min_size: int = 0,
+    phase_nrl: int = 0,
 ) -> dict:
     """Run TF recall and nucleosome/TF unification after an HMM apply result.
 
@@ -128,11 +129,13 @@ def build_fused_recall_result(
                 fiber_read, apply_result, llr_hit, llr_miss,
                 min_llr, min_opps, unify_threshold,
                 split_min_llr, split_min_opps, nuc_min_size, msp_min_size,
+                phase_nrl,
             )
         return _build_fused_recall_result_with_nucs(
             fiber_read, apply_result, llr_hit, llr_miss,
             min_llr, min_opps, unify_threshold,
             split_min_llr, split_min_opps, nuc_min_size, msp_min_size,
+            phase_nrl,
         )
 
     recall_ns = apply_result.get("tiled_ns", ns) if is_circular else ns
@@ -222,6 +225,7 @@ def _build_fused_recall_result_with_nucs(
     split_min_opps: int,
     nuc_min_size: int,
     msp_min_size: int,
+    phase_nrl: int = 0,
 ) -> dict:
     """nuc recall -> MSP re-derive -> TF recall (non-circular only)."""
     obs = apply_result["encoded"]
@@ -232,11 +236,11 @@ def _build_fused_recall_result_with_nucs(
         zip((int(s) for s in apply_result["as"]), (int(x) for x in apply_result["al"]))
     )
 
-    # 1) split + edge-refine footprints
+    # 1) split + edge-refine footprints (+ optional Pass-2 phase prior)
     nuc_calls, access = recall_nucs_in_read(
         obs, ns, nl, read_length, llr_hit, llr_miss,
         split_min_llr=split_min_llr, split_min_opps=split_min_opps,
-        nuc_min_size=nuc_min_size,
+        nuc_min_size=nuc_min_size, phase_nrl=phase_nrl,
     )
 
     # 2) re-derive MSPs from the new nucleosome boundaries
@@ -283,6 +287,7 @@ def _build_fused_recall_result_with_nucs_circular(
     split_min_opps: int,
     nuc_min_size: int,
     msp_min_size: int,
+    phase_nrl: int = 0,
 ) -> dict:
     """nuc recall for circular reads: split/refine in tiled space, then project
     the refined nucs, MSPs and TF calls back to molecule coordinates."""
@@ -297,11 +302,11 @@ def _build_fused_recall_result_with_nucs_circular(
         (int(x) for x in apply_result.get("tiled_al", apply_result["al"])),
     ))
 
-    # 1) split + edge-refine in tiled coordinates
+    # 1) split + edge-refine in tiled coordinates (+ optional Pass-2 phase prior)
     tiled_nucs, tiled_access = recall_nucs_in_read(
         obs, tiled_ns, tiled_nl, tiled_len, llr_hit, llr_miss,
         split_min_llr=split_min_llr, split_min_opps=split_min_opps,
-        nuc_min_size=nuc_min_size,
+        nuc_min_size=nuc_min_size, phase_nrl=phase_nrl,
     )
 
     # 2) re-derive MSPs (still tiled), then 3) TF recall on the refined structure

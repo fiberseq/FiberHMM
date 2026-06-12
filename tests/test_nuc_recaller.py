@@ -104,6 +104,34 @@ def test_genuine_85bp_nuc_survives_edge_pass():
     assert len(nucs) == 1 and nucs[0].length >= 85
 
 
+def test_phase_prior_splits_long_footprint_at_single_event():
+    # 380bp footprint, all protected except ONE deamination near the predicted
+    # linker (~190). Pass 1 (min_opps=3) can't split a single event; the phase
+    # prior (nrl=185) lowers the bar there and splits into two ~nucleosomes.
+    obs = _obs((MISS, 190), (HIT, 1), (MISS, 189))
+    llr_hit, llr_miss = _llr_tables()
+    kw = dict(ns=[0], nl=[len(obs)], read_length=len(obs),
+              llr_hit=llr_hit, llr_miss=llr_miss,
+              split_min_llr=4.0, split_min_opps=3, nuc_min_size=85)
+    nucs_off, _ = recall_nucs_in_read(obs, phase_nrl=0, **kw)
+    assert len(nucs_off) == 1
+    nucs_on, _ = recall_nucs_in_read(obs, phase_nrl=185, **kw)
+    assert len(nucs_on) == 2
+
+
+def test_phase_prior_never_splits_signal_desert():
+    # long fully-protected footprint with ZERO deamination -> no split even with
+    # the phase prior on (the prior lowers the threshold but evidence is still
+    # required at the predicted linker).
+    obs = _obs((MISS, 380))
+    llr_hit, llr_miss = _llr_tables()
+    nucs, _ = recall_nucs_in_read(
+        obs, ns=[0], nl=[len(obs)], read_length=len(obs),
+        llr_hit=llr_hit, llr_miss=llr_miss,
+        split_min_llr=4.0, split_min_opps=3, nuc_min_size=85, phase_nrl=185)
+    assert len(nucs) == 1
+
+
 def test_rederive_msps_merges_and_filters():
     msps = rederive_msps(
         original_msps=[(0, 10)],
