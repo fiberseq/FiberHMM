@@ -261,7 +261,12 @@ def _extract_ma_interval_type(
             )
             score = qvals[0]
         elif target_name == 'nuc':
-            qvals = (int(quals[0]) if quals else 0,)
+            # nuc+Q (legacy) -> (nq, 0, 0); nuc+QQQ -> (nq, el, er).
+            qvals = (
+                int(quals[0]) if len(quals) >= 1 else 0,
+                int(quals[1]) if len(quals) >= 2 else 0,
+                int(quals[2]) if len(quals) >= 3 else 0,
+            )
             score = qvals[0]
         else:
             qvals = (0,)
@@ -302,7 +307,8 @@ def _extract_ma_interval_type(
     mean_score = int(sum(b[2] for b in blocks) / len(blocks)) if with_scores else 0
     extra = []
     if block_scores:
-        if target_name == 'tf':
+        if target_name in ('tf', 'nuc'):
+            # tf+QQQ / nuc+QQQ: three per-block quality columns
             extra.extend([
                 ','.join(str(b[3][0]) for b in blocks),
                 ','.join(str(b[3][1]) for b in blocks),
@@ -457,8 +463,10 @@ def _extract_footprints(read, bed_out, with_scores: bool,
                         circular_groups: bool = False) -> int:
     """Extract footprint intervals from ns/nl tags as BED12 (one line per read).
 
-    When ``block_scores=True``, appends a 13th column of comma-separated
-    per-block nq values (int[blockCount] blockNq in the autoSQL schema).
+    When ``block_scores=True``, appends three columns of comma-separated
+    per-block values: blockNq (quality) plus blockEl/blockEr (conservative
+    edge sharpness, 0-255). For nuc+QQQ these carry the recaller's edges; for
+    legacy ns/nl or HMM-only nuc+Q, el/er are 0 (edges not refined).
     """
     if query_to_ref is None:
         query_to_ref = _build_query_to_ref(read)
@@ -525,8 +533,11 @@ def _extract_footprints(read, bed_out, with_scores: bool,
     row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
            f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
     if block_scores:
+        # Legacy ns/nl nucs have no edge refinement -> el/er = 0 (unrefined),
+        # matching the footprint schema's blockNq, blockEl, blockEr columns.
         block_nq = ','.join(str(sc) for _, _, sc in blocks)
-        row += f"\t{block_nq}"
+        block_zero = ','.join('0' for _ in blocks)
+        row += f"\t{block_nq}\t{block_zero}\t{block_zero}"
     if circular_groups:
         row += "\t.\t1\t1\t0\t0"
     bed_out.write(row + "\n")

@@ -23,7 +23,8 @@ Two schema flavors:
     so tools that already parse those two arrays only need to split one
     more string. Column count per type:
 
-      - footprint : +1  (blockNq)
+      - footprint : +3  (blockNq, blockEl, blockEr) -- matches MA nuc+QQQ;
+                        el/er are 0 for HMM-only/legacy nucs (edges not refined)
       - msp       : +1  (blockAq)
       - m6a / m5c : +1  (blockMl)
       - tf        : +3  (blockTq, blockEl, blockEr) -- matches MA tf+QQQ
@@ -55,6 +56,12 @@ _BLOCK_SCORE_FIELDS = {
     'footprint': (
         '    int[blockCount] blockNq; '
         '"Per-block nucleosome quality (nq) score, 0-255"\n'
+        '    int[blockCount] blockEl; '
+        '"Per-block left-edge sharpness (el), 0-255; 255=sharp, 0=ambiguous '
+        'or not computed (HMM-only/legacy nucs)"\n'
+        '    int[blockCount] blockEr; '
+        '"Per-block right-edge sharpness (er), 0-255; 255=sharp, 0=ambiguous '
+        'or not computed"\n'
     ),
     'msp': (
         '    int[blockCount] blockAq; '
@@ -124,9 +131,11 @@ def _make_schema(table_name: str, description: str,
 
 _DESCRIPTIONS = {
     'footprint': (
-        'FiberHMM nucleosome footprint calls (ns/nl BAM tags). '
-        'One BED12 row per read; each block is a called nucleosome. '
-        'BED score = mean nq (HMM posterior confidence, 0-255).'
+        'FiberHMM nucleosome footprint calls (MA nuc+QQQ, or legacy ns/nl '
+        'BAM tags). One BED12 row per read; each block is a called nucleosome. '
+        'BED score = mean nq. With --block-scores: per-block quality plus '
+        'left/right conservative-edge sharpness (0-255; 0 = unrefined '
+        'HMM-only nuc).'
     ),
     'msp': (
         'FiberHMM methylase-sensitive patches (as/al BAM tags). '
