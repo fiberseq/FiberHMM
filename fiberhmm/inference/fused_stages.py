@@ -6,11 +6,17 @@ from typing import Any, Mapping, Optional, Sequence
 
 import numpy as np
 
-from fiberhmm.inference.circular import project_center_tf_calls, split_intervals_for_legacy
+from fiberhmm.inference.circular import (
+    project_center_nuc_calls,
+    project_center_runs,
+    project_center_tf_calls,
+    split_intervals_for_legacy,
+)
 from fiberhmm.inference.engine import _process_single_read
 from fiberhmm.inference.nuc_recaller import (
     recall_nucs_in_read,
     rederive_msps,
+    unify_circular_nuc_calls_with_tf_calls,
     unify_nuc_calls_with_tf_calls,
 )
 from fiberhmm.inference.tagging import (
@@ -102,11 +108,12 @@ def build_fused_recall_result(
 ) -> dict:
     """Run TF recall and nucleosome/TF unification after an HMM apply result.
 
-    When ``recall_nucs`` is True (and the read is not circular), the per-read
-    nucleosome recaller runs FIRST: it splits over-merged footprints on
-    accessible evidence and refines each nucleosome's conservative edges +
-    quality (nuc+QQQ). MSPs are then re-derived from the new boundaries, and TF
-    recall runs over the cleaner accessible space. ``recall_nucs=False`` (the
+    When ``recall_nucs`` is True, the per-read nucleosome recaller runs FIRST:
+    it splits over-merged footprints on accessible evidence and refines each
+    nucleosome's conservative edges + quality (nuc+QQQ). MSPs are then re-derived
+    from the new boundaries, and TF recall runs over the cleaner accessible
+    space. Circular reads run the same flow in tiled coordinates and project the
+    refined nucs/MSPs/TFs back to the molecule. ``recall_nucs=False`` (the
     default) is byte-for-byte the original behavior.
     """
     ns = apply_result["ns"]
@@ -115,7 +122,13 @@ def build_fused_recall_result(
     msp_lengths = apply_result["al"]
     is_circular = bool(apply_result.get("circular"))
 
-    if recall_nucs and not is_circular:
+    if recall_nucs:
+        if is_circular:
+            return _build_fused_recall_result_with_nucs_circular(
+                fiber_read, apply_result, llr_hit, llr_miss,
+                min_llr, min_opps, unify_threshold,
+                split_min_llr, split_min_opps, nuc_min_size, msp_min_size,
+            )
         return _build_fused_recall_result_with_nucs(
             fiber_read, apply_result, llr_hit, llr_miss,
             min_llr, min_opps, unify_threshold,
@@ -255,4 +268,82 @@ def _build_fused_recall_result_with_nucs(
         "nuc_el_for_kept": [k.el for k in kept],
         "nuc_er_for_kept": [k.er for k in kept],
         "tf_calls": tf_calls,
+    }
+
+
+def _build_fused_recall_result_with_nucs_circular(
+    fiber_read: Mapping[str, Any],
+    apply_result: Mapping[str, Any],
+    llr_hit,
+    llr_miss,
+    min_llr: float,
+    min_opps: int,
+    unify_threshold: int,
+    split_min_llr: float,
+    split_min_opps: int,
+    nuc_min_size: int,
+    msp_min_size: int,
+) -> dict:
+    """nuc recall for circular reads: split/refine in tiled space, then project
+    the refined nucs, MSPs and TF calls back to molecule coordinates."""
+    obs = apply_result["encoded"]                     # 3x tiled observations
+    tiled_len = len(obs)
+    read_length = int(apply_result.get("circular_read_length")
+                      or len(fiber_read["query_sequence"]))
+    tiled_ns = apply_result.get("tiled_ns", apply_result["ns"])
+    tiled_nl = apply_result.get("tiled_nl", apply_result["nl"])
+    tiled_msps = list(zip(
+        (int(s) for s in apply_result.get("tiled_as", apply_result["as"])),
+        (int(x) for x in apply_result.get("tiled_al", apply_result["al"])),
+    ))
+
+    # 1) split + edge-refine in tiled coordinates
+    tiled_nucs, tiled_access = recall_nucs_in_read(
+        obs, tiled_ns, tiled_nl, tiled_len, llr_hit, llr_miss,
+        split_min_llr=split_min_llr, split_min_opps=split_min_opps,
+        nuc_min_size=nuc_min_size,
+    )
+
+    # 2) re-derive MSPs (still tiled), then 3) TF recall on the refined structure
+    tiled_new_msps = rederive_msps(tiled_msps, tiled_access, tiled_len, msp_min_size)
+    tiled_tf = run_tf_recall_stage(
+        obs,
+        [nc.start for nc in tiled_nucs], [nc.length for nc in tiled_nucs],
+        [s for s, _ in tiled_new_msps], [length for _, length in tiled_new_msps],
+        tiled_len, llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
+    )
+
+    # 4) project everything from tiled -> molecule
+    tf_calls = project_center_tf_calls(tiled_tf, read_length)
+    proj_nucs = project_center_nuc_calls(tiled_nucs, read_length)
+    proj_msps = project_center_runs(
+        [s for s, _ in tiled_new_msps],
+        [s + length for s, length in tiled_new_msps],
+        read_length,
+    )
+
+    # 5) unify (circular-aware) and lay out for emission
+    kept = unify_circular_nuc_calls_with_tf_calls(
+        proj_nucs, tf_calls, unify_threshold, read_length)
+    circular_ns = [(k.start, k.length) for k in kept]
+    kept_starts, kept_lengths, _ = split_intervals_for_legacy(
+        circular_ns, read_length, None)
+    msp_starts, msp_lengths_split, _ = split_intervals_for_legacy(
+        proj_msps, read_length, None)
+
+    return {
+        "ns": kept_starts,
+        "nl": kept_lengths,
+        "as": msp_starts,
+        "al": msp_lengths_split,
+        "ns_scores": None,
+        "as_scores": None,
+        "nq_for_kept_nucs": [k.nq for k in kept],
+        "nuc_el_for_kept": [k.el for k in kept],
+        "nuc_er_for_kept": [k.er for k in kept],
+        "tf_calls": tf_calls,
+        "circular": True,
+        "circular_read_length": read_length,
+        "circular_ns": circular_ns,
+        "circular_as": proj_msps,
     }

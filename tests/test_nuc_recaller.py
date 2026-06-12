@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import numpy as np
 
+from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
     recall_nucs_in_read,
     rederive_msps,
+    unify_circular_nuc_calls_with_tf_calls,
     unify_nuc_calls_with_tf_calls,
 )
 from fiberhmm.inference.tf_recaller import TFCall, N_CTX, UNMETH_OFFSET
@@ -14,6 +16,7 @@ from fiberhmm.io.ma_tags import format_aq_array, parse_aq_array
 
 HIT = 0                 # ctx 0, modified (accessible evidence)
 MISS = UNMETH_OFFSET    # ctx 0, unmodified (protected evidence)
+NONTARGET = N_CTX       # code 4096: not an opportunity (e.g. non-C/G base)
 
 
 def _llr_tables():
@@ -75,6 +78,32 @@ def test_subnucleosome_fragment_demoted_to_accessible():
     assert any(s == 0 and length == 20 for s, length in access)
 
 
+def test_refined_core_below_floor_is_demoted_not_emitted():
+    # 100bp fragment, but only a 20bp protected island (the rest is non-target,
+    # so nothing splits and no nucleosome-sized protected core exists).
+    obs = _obs((NONTARGET, 40), (MISS, 20), (NONTARGET, 40))
+    llr_hit, llr_miss = _llr_tables()
+    nucs, access = recall_nucs_in_read(
+        obs, ns=[0], nl=[len(obs)], read_length=len(obs),
+        llr_hit=llr_hit, llr_miss=llr_miss,
+        split_min_llr=4.0, split_min_opps=3, nuc_min_size=85,
+    )
+    # the 20bp core must NOT be emitted as a nuc; whole fragment -> accessible
+    assert nucs == []
+    assert (0, 100) in access
+
+
+def test_genuine_85bp_nuc_survives_edge_pass():
+    obs = _obs((MISS, 85))
+    llr_hit, llr_miss = _llr_tables()
+    nucs, _ = recall_nucs_in_read(
+        obs, ns=[0], nl=[len(obs)], read_length=len(obs),
+        llr_hit=llr_hit, llr_miss=llr_miss,
+        split_min_llr=4.0, split_min_opps=3, nuc_min_size=85,
+    )
+    assert len(nucs) == 1 and nucs[0].length >= 85
+
+
 def test_rederive_msps_merges_and_filters():
     msps = rederive_msps(
         original_msps=[(0, 10)],
@@ -94,6 +123,34 @@ def test_unify_drops_short_nuc_overlapping_tf():
     # the 30bp nuc overlapping the TF call is dropped; the 50bp one is kept
     # (both are < threshold, so overlap is what decides)
     assert [(k.start, k.length) for k in kept] == [(0, 50)]
+
+
+def test_project_center_nuc_calls_keeps_quality_and_picks_center():
+    n = 100
+    calls = [
+        NucCall(start=110, length=30, nq=200, el=255, er=128),  # center tile -> (10,30)
+        NucCall(start=10, length=30, nq=1, el=1, er=1),         # first tile -> dropped
+        NucCall(start=50, length=200, nq=150, el=64, er=64),    # covers middle -> (0,100)
+    ]
+    proj = project_center_nuc_calls(calls, n)
+    by_start = {p.start: p for p in proj}
+    assert set(by_start) == {10, 0}
+    assert (by_start[10].length, by_start[10].nq, by_start[10].el, by_start[10].er) == (30, 200, 255, 128)
+    assert by_start[0].length == 100  # whole-molecule projection
+
+
+def test_unify_circular_drops_short_nuc_overlapping_wrapped_tf():
+    n = 100
+    # a wrapped TF call near the origin: covers [95,100) and [0,5)
+    tf = [TFCall(start=95, length=10, llr=6.0, n_opps=4,
+                 left_ambiguity=1, right_ambiguity=1)]
+    nucs = [
+        NucCall(start=2, length=20, nq=100, el=0, er=0),    # short, overlaps wrap -> drop
+        NucCall(start=40, length=30, nq=100, el=0, er=0),   # short, no overlap -> keep
+    ]
+    kept = unify_circular_nuc_calls_with_tf_calls(nucs, tf, unify_threshold=85,
+                                                  read_length=n)
+    assert [(k.start, k.length) for k in kept] == [(40, 30)]
 
 
 def test_nuc_qqq_aq_roundtrip():

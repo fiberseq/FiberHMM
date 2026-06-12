@@ -111,6 +111,14 @@ def recall_nucs_in_read(
             first, last = prot[0], prot[-1]
             cstart = first.start
             cend = last.start + last.length
+            if cend - cstart < nuc_min_size:
+                # Edge refinement trimmed the protected core below the floor
+                # (a sparse protected island in a larger fragment, e.g. flanked
+                # by non-target bases). Not a nucleosome -> demote the whole
+                # fragment to accessible. A genuine >= nuc_min_size nucleosome
+                # keeps a contiguous-miss core that the protected scan spans.
+                access.append((a, b - a))
+                continue
             total_llr = 0.0
             for p in prot:
                 total_llr += p.llr
@@ -177,6 +185,36 @@ def unify_nuc_calls_with_tf_calls(
             nuc_end = nc.start + nc.length
             keep = not any(ts < nuc_end and te > nc.start
                            for ts, te in tf_intervals)
+        if keep:
+            kept.append(nc)
+    return kept
+
+
+def unify_circular_nuc_calls_with_tf_calls(
+    nuc_calls: Sequence[NucCall],
+    tf_calls: Sequence,
+    unify_threshold: int,
+    read_length: int,
+) -> List[NucCall]:
+    """Circular counterpart of ``unify_nuc_calls_with_tf_calls``.
+
+    Nuc calls and TF calls are in molecular (circular) coordinates; overlap is
+    tested with circular-aware segment overlap.
+    """
+    from fiberhmm.inference.circular import circular_intervals_overlap
+
+    tf_intervals = [(c.start, c.length) for c in tf_calls]
+    kept: List[NucCall] = []
+    for nc in nuc_calls:
+        if nc.length <= 0:
+            continue
+        keep = nc.length >= unify_threshold
+        if not keep:
+            iv = (nc.start, nc.length)
+            keep = not any(
+                circular_intervals_overlap(iv, tfi, read_length)
+                for tfi in tf_intervals
+            )
         if keep:
             kept.append(nc)
     return kept
