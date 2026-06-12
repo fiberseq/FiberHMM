@@ -1,0 +1,182 @@
+"""Per-read nucleosome recaller.
+
+Splits over-merged HMM footprints on accessible (m6a/deam) evidence, then refines
+each resulting fragment's edges and quality. Reuses the TF recaller's Kadane kernel
+with *inverted* emission tables for splitting and *non-inverted* tables for the
+nucleosome edge + quality pass -- no new scoring code.
+
+  SPLIT:  call_tfs_in_interval(obs, ..., -llr_hit, -llr_miss)  over a footprint
+          interior -> accessible runs == cuts. Footprint is split at the cuts.
+  EDGES:  call_tfs_in_interval(obs, ..., +llr_hit, +llr_miss)  over each resulting
+          fragment -> protected call whose conservative start/length trims the
+          Viterbi overshoot, whose cumulative LLR -> nq, whose left/right
+          ambiguity -> el/er (conservative+loose edge convention, same as tf+QQQ).
+
+Design notes: nuc_recaller_collab/DESIGN.md (esp. §7b). The split is evidence-only
+(no size prior); DddB recovers ~20-30% of buried linkers, which is the accepted
+floor for an under-deaminating enzyme. Fiber-seq / DddA give the kernel much more
+signal per read.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List, Sequence, Tuple
+
+import numpy as np
+
+from fiberhmm.inference.tf_recaller import call_tfs_in_interval, merge_intervals
+from fiberhmm.io.ma_tags import ambiguity_to_edge, llr_to_tq
+
+Interval = Tuple[int, int]
+
+
+@dataclass
+class NucCall:
+    """A refined nucleosome before conversion to MA/AQ (nuc+QQQ) output."""
+    start: int       # query coord, 0-based, inclusive (conservative edge)
+    length: int      # bp (conservative span)
+    nq: int          # quality byte from cumulative protected LLR (0-255)
+    el: int          # left-edge sharpness byte (0-255; 255 = sharp)
+    er: int          # right-edge sharpness byte
+
+
+def recall_nucs_in_read(
+    obs: np.ndarray,
+    ns: Sequence[int],
+    nl: Sequence[int],
+    read_length: int,
+    llr_hit: np.ndarray,
+    llr_miss: np.ndarray,
+    *,
+    split_min_llr: float,
+    split_min_opps: int,
+    nuc_min_size: int,
+    edge_min_llr: float = 2.0,
+    edge_min_opps: int = 2,
+) -> Tuple[List[NucCall], List[Interval]]:
+    """Split + edge-refine the footprints (``ns``/``nl``) of one read.
+
+    Returns ``(nuc_calls, accessible_intervals)``:
+      - ``nuc_calls``: refined nucleosomes (>= ``nuc_min_size``) with nq/el/er.
+      - ``accessible_intervals``: (start, length) patches freed up by splitting
+        (the cuts) or trimming (overshoot residue + sub-min-size fragments).
+        These feed the MSP re-derivation.
+    """
+    nhit = -llr_hit
+    nmiss = -llr_miss
+    nucs: List[NucCall] = []
+    access: List[Interval] = []
+
+    for s_raw, length_raw in zip(ns, nl):
+        s = int(s_raw)
+        length = int(length_raw)
+        if length <= 0:
+            continue
+        e = min(s + length, read_length)
+        if e <= s:
+            continue
+
+        # --- SPLIT: accessible runs inside the footprint are cuts ---
+        cuts = call_tfs_in_interval(obs, s, e, nhit, nmiss,
+                                    split_min_llr, split_min_opps)
+        cuts = sorted(cuts, key=lambda c: c.start)
+        for c in cuts:
+            access.append((c.start, c.length))
+
+        # --- fragments = footprint minus the cut spans ---
+        frags: List[Interval] = []
+        cur = s
+        for c in cuts:
+            cs = c.start
+            ce = c.start + c.length
+            if cs > cur:
+                frags.append((cur, cs))
+            cur = max(cur, ce)
+        if cur < e:
+            frags.append((cur, e))
+
+        # --- EDGES + quality per fragment (protected Kadane, +llr) ---
+        for a, b in frags:
+            if b - a < nuc_min_size:
+                # too short to be a nucleosome -> accessible residue
+                access.append((a, b - a))
+                continue
+            prot = call_tfs_in_interval(obs, a, b, llr_hit, llr_miss,
+                                        edge_min_llr, edge_min_opps)
+            if not prot:
+                # signal-desert fragment: keep raw extent, unknown quality/edges
+                nucs.append(NucCall(a, b - a, nq=0, el=0, er=0))
+                continue
+            prot = sorted(prot, key=lambda p: p.start)
+            first, last = prot[0], prot[-1]
+            cstart = first.start
+            cend = last.start + last.length
+            total_llr = 0.0
+            for p in prot:
+                total_llr += p.llr
+            nucs.append(NucCall(
+                start=cstart,
+                length=cend - cstart,
+                nq=llr_to_tq(total_llr),
+                el=ambiguity_to_edge(first.left_ambiguity),
+                er=ambiguity_to_edge(last.right_ambiguity),
+            ))
+            # trimmed overshoot becomes accessible residue
+            if cstart > a:
+                access.append((a, cstart - a))
+            if b > cend:
+                access.append((cend, b - cend))
+
+    return nucs, access
+
+
+def rederive_msps(
+    original_msps: Sequence[Interval],
+    accessible_from_splits: Sequence[Interval],
+    read_length: int,
+    msp_min_size: int,
+) -> List[Interval]:
+    """Re-derive MSPs from the new nucleosome boundaries.
+
+    MSPs after nuc-recall = the original HMM MSPs unioned with the accessible
+    patches freed by splitting/trimming, merged, and filtered to
+    ``>= msp_min_size``. Returns (start, length) intervals.
+    """
+    iv: List[Interval] = []
+    for s_raw, length_raw in list(original_msps) + list(accessible_from_splits):
+        s = int(s_raw)
+        length = int(length_raw)
+        if length <= 0:
+            continue
+        a = max(0, s)
+        b = min(read_length, s + length)
+        if b > a:
+            iv.append((a, b))
+    merged = merge_intervals(iv)
+    floor = max(1, int(msp_min_size))
+    return [(a, b - a) for a, b in merged if (b - a) >= floor]
+
+
+def unify_nuc_calls_with_tf_calls(
+    nuc_calls: Sequence[NucCall],
+    tf_calls: Sequence,
+    unify_threshold: int,
+) -> List[NucCall]:
+    """Drop short refined nucleosomes overlapped by a TF call (carry nq/el/er).
+
+    Mirrors ``tagging.unify_nucs_with_tf_calls`` but operates on NucCall objects
+    so the per-nuc quality bytes survive unification.
+    """
+    tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
+    kept: List[NucCall] = []
+    for nc in nuc_calls:
+        if nc.length <= 0:
+            continue
+        keep = nc.length >= unify_threshold
+        if not keep:
+            nuc_end = nc.start + nc.length
+            keep = not any(ts < nuc_end and te > nc.start
+                           for ts, te in tf_intervals)
+        if keep:
+            kept.append(nc)
+    return kept

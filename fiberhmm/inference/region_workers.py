@@ -504,6 +504,9 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         unify_threshold = int(params['unify_threshold'])
         also_write_legacy = params['also_write_legacy']
         downstream_compat = params['downstream_compat']
+        recall_nucs = bool(params.get('recall_nucs', False))
+        split_min_llr = float(params.get('split_min_llr', 4.0))
+        split_min_opps = int(params.get('split_min_opps', 3))
 
         pysam.set_verbosity(0)
 
@@ -599,6 +602,11 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         min_opps,
                         unify_threshold,
                         with_scores,
+                        recall_nucs=recall_nucs,
+                        split_min_llr=split_min_llr,
+                        split_min_opps=split_min_opps,
+                        nuc_min_size=nuc_min_size,
+                        msp_min_size=msp_min_size,
                     )
                     write_fused_recall_tags(
                         read,

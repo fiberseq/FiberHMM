@@ -151,20 +151,34 @@ def parse_an_tag(an_string: str) -> List[str]:
 def format_aq_array(nq_values: Sequence[int],
                     tf_q_values: Sequence[int] = (),
                     tf_lq_values: Sequence[int] = (),
-                    tf_rq_values: Sequence[int] = ()) -> array.array:
+                    tf_rq_values: Sequence[int] = (),
+                    nuc_lq_values: Sequence[int] = (),
+                    nuc_rq_values: Sequence[int] = ()) -> array.array:
     """Build the AQ:B:C array, interleaved per annotation in MA order.
 
     Layout for the FiberHMM default schema (nuc+Q, msp+, tf+QQQ):
       - One byte per nuc:    (nq,)
       - MSPs:                (no bytes)
       - Three bytes per TF:  (tq, el, er)
+
+    When ``nuc_lq_values``/``nuc_rq_values`` are supplied (the nuc recaller's
+    nuc+QQQ schema), each nucleosome instead emits three bytes (nq, el, er),
+    mirroring the TF layout. The three nuc arrays must then be equal length.
     """
     def clamp(v):
         return max(0, min(255, int(v)))
 
     out = array.array('B')
-    for nq in nq_values:
-        out.append(clamp(nq))
+    if nuc_lq_values or nuc_rq_values:
+        if not (len(nq_values) == len(nuc_lq_values) == len(nuc_rq_values)):
+            raise ValueError("nuc quality arrays must have equal length")
+        for nq, el, er in zip(nq_values, nuc_lq_values, nuc_rq_values):
+            out.append(clamp(nq))
+            out.append(clamp(el))
+            out.append(clamp(er))
+    else:
+        for nq in nq_values:
+            out.append(clamp(nq))
     if tf_q_values:
         if not (len(tf_q_values) == len(tf_lq_values) == len(tf_rq_values)):
             raise ValueError("TF quality arrays must have equal length")

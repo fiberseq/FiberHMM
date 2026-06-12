@@ -55,6 +55,9 @@ def _init_fused_worker(
     recall_model_path=None,
     emission_uplift=1.0,
     debug_timing=False,
+    recall_nucs=False,
+    split_min_llr=4.0,
+    split_min_opps=3,
 ):
     """Initialize worker process for the fused apply+recall pipeline.
 
@@ -89,6 +92,9 @@ def _init_fused_worker(
         )
     _worker_recall_state['llr_hit'] = llr_hit
     _worker_recall_state['llr_miss'] = llr_miss
+    _worker_recall_state['recall_nucs'] = recall_nucs
+    _worker_recall_state['split_min_llr'] = split_min_llr
+    _worker_recall_state['split_min_opps'] = split_min_opps
 
     # Warmup: apply Viterbi + TF Kadane scan.
     from fiberhmm.core.hmm import HAS_NUMBA
@@ -217,6 +223,11 @@ def _process_fused_payload_chunk_worker(
                 min_opps,
                 unify_threshold,
                 with_scores,
+                recall_nucs=_worker_recall_state.get('recall_nucs', False),
+                split_min_llr=_worker_recall_state.get('split_min_llr', 4.0),
+                split_min_opps=_worker_recall_state.get('split_min_opps', 3),
+                nuc_min_size=nuc_min_size,
+                msp_min_size=msp_min_size,
             ))
         except Exception:
             # Per-read failure must not kill the worker or the whole chunk.

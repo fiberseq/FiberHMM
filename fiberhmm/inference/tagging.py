@@ -188,4 +188,6 @@ def write_fused_recall_tags(
         nq_for_kept_nucs=result.get("nq_for_kept_nucs"),
         also_write_legacy=also_write_legacy,
         downstream_compat=downstream_compat,
+        nuc_el_for_kept=result.get("nuc_el_for_kept"),
+        nuc_er_for_kept=result.get("nuc_er_for_kept"),
     )

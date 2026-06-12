@@ -493,7 +493,9 @@ def write_ma_tags(read, read_length: int,
                   msps: Sequence[Tuple[int, int]],
                   nq_for_kept_nucs: Optional[Sequence[int]] = None,
                   also_write_legacy: bool = True,
-                  downstream_compat: bool = False) -> None:
+                  downstream_compat: bool = False,
+                  nuc_el_for_kept: Optional[Sequence[int]] = None,
+                  nuc_er_for_kept: Optional[Sequence[int]] = None) -> None:
     """Set MA/AQ (and optionally legacy ns/nl/as/al) tags on the read in place.
 
     Three output modes:
@@ -534,6 +536,16 @@ def write_ma_tags(read, read_length: int,
     if len(nq_values) != len(kept_nucs):
         raise ValueError("nq_values length must match kept_nucs length")
 
+    # nuc+QQQ mode: the nuc recaller supplies per-nuc edge-sharpness bytes.
+    # When present, nucleosomes carry (nq, el, er) like tf+QQQ; otherwise the
+    # legacy nuc+Q (single nq byte) layout is used.
+    nuc_qqq = nuc_el_for_kept is not None and nuc_er_for_kept is not None
+    if nuc_qqq:
+        nuc_el_values = list(nuc_el_for_kept)
+        nuc_er_values = list(nuc_er_for_kept)
+        if not (len(nuc_el_values) == len(nuc_er_values) == len(kept_nucs)):
+            raise ValueError("nuc edge arrays must match kept_nucs length")
+
     tf_intervals = [(c.start, c.length) for c in tf_calls]
     tq_vals = [llr_to_tq(c.llr) for c in tf_calls]
     el_vals = [ambiguity_to_edge(c.left_ambiguity) for c in tf_calls]
@@ -556,7 +568,11 @@ def write_ma_tags(read, read_length: int,
                     split_quals.append(qual_rows[idx])
         return split_intervals, split_names, split_quals, any_split
 
-    nuc_q_rows = [[q] for q in nq_values]
+    if nuc_qqq:
+        nuc_q_rows = [[q, el, er]
+                      for q, el, er in zip(nq_values, nuc_el_values, nuc_er_values)]
+    else:
+        nuc_q_rows = [[q] for q in nq_values]
     tf_q_rows = [[tq, el, er] for tq, el, er in zip(tq_vals, el_vals, er_vals)]
     ma_nucs, nuc_names, nuc_q_split, nuc_split = split_named_intervals(
         kept_nucs, "nuc", nuc_q_rows,
@@ -593,6 +609,7 @@ def write_ma_tags(read, read_length: int,
                 nuc_intervals=ma_nucs,
                 msp_intervals=ma_msps,
                 tf_intervals=ma_tfs,
+                nuc_qual_spec='QQQ' if nuc_qqq else 'Q',
             )
             read.set_tag('MA', ma, value_type='Z')
             if needs_an:
@@ -612,11 +629,19 @@ def write_ma_tags(read, read_length: int,
                 split_tq_vals = [row[0] for row in (tf_q_split or [])]
                 split_el_vals = [row[1] for row in (tf_q_split or [])]
                 split_er_vals = [row[2] for row in (tf_q_split or [])]
+                if nuc_qqq:
+                    split_nuc_el = [row[1] for row in (nuc_q_split or [])]
+                    split_nuc_er = [row[2] for row in (nuc_q_split or [])]
+                else:
+                    split_nuc_el = ()
+                    split_nuc_er = ()
                 aq = format_aq_array(
                     nq_values=split_nq_values,
                     tf_q_values=split_tq_vals,
                     tf_lq_values=split_el_vals,
                     tf_rq_values=split_er_vals,
+                    nuc_lq_values=split_nuc_el,
+                    nuc_rq_values=split_nuc_er,
                 )
                 read.set_tag('AQ', aq)
             elif read.has_tag('AQ'):

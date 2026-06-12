@@ -4,8 +4,15 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional, Sequence
 
+import numpy as np
+
 from fiberhmm.inference.circular import project_center_tf_calls, split_intervals_for_legacy
 from fiberhmm.inference.engine import _process_single_read
+from fiberhmm.inference.nuc_recaller import (
+    recall_nucs_in_read,
+    rederive_msps,
+    unify_nuc_calls_with_tf_calls,
+)
 from fiberhmm.inference.tagging import (
     split_intervals,
     unify_circular_nucs_with_tf_calls,
@@ -87,13 +94,33 @@ def build_fused_recall_result(
     min_opps: int,
     unify_threshold: int,
     with_scores: bool,
+    recall_nucs: bool = False,
+    split_min_llr: float = 4.0,
+    split_min_opps: int = 3,
+    nuc_min_size: int = 85,
+    msp_min_size: int = 0,
 ) -> dict:
-    """Run TF recall and nucleosome/TF unification after an HMM apply result."""
+    """Run TF recall and nucleosome/TF unification after an HMM apply result.
+
+    When ``recall_nucs`` is True (and the read is not circular), the per-read
+    nucleosome recaller runs FIRST: it splits over-merged footprints on
+    accessible evidence and refines each nucleosome's conservative edges +
+    quality (nuc+QQQ). MSPs are then re-derived from the new boundaries, and TF
+    recall runs over the cleaner accessible space. ``recall_nucs=False`` (the
+    default) is byte-for-byte the original behavior.
+    """
     ns = apply_result["ns"]
     nl = apply_result["nl"]
     msps = apply_result["as"]
     msp_lengths = apply_result["al"]
     is_circular = bool(apply_result.get("circular"))
+
+    if recall_nucs and not is_circular:
+        return _build_fused_recall_result_with_nucs(
+            fiber_read, apply_result, llr_hit, llr_miss,
+            min_llr, min_opps, unify_threshold,
+            split_min_llr, split_min_opps, nuc_min_size, msp_min_size,
+        )
 
     recall_ns = apply_result.get("tiled_ns", ns) if is_circular else ns
     recall_nl = apply_result.get("tiled_nl", nl) if is_circular else nl
@@ -166,5 +193,66 @@ def build_fused_recall_result(
         "ns_scores": apply_result.get("ns_scores") if with_scores else None,
         "as_scores": apply_result.get("as_scores") if with_scores else None,
         "nq_for_kept_nucs": nq_for_kept,
+        "tf_calls": tf_calls,
+    }
+
+
+def _build_fused_recall_result_with_nucs(
+    fiber_read: Mapping[str, Any],
+    apply_result: Mapping[str, Any],
+    llr_hit,
+    llr_miss,
+    min_llr: float,
+    min_opps: int,
+    unify_threshold: int,
+    split_min_llr: float,
+    split_min_opps: int,
+    nuc_min_size: int,
+    msp_min_size: int,
+) -> dict:
+    """nuc recall -> MSP re-derive -> TF recall (non-circular only)."""
+    obs = apply_result["encoded"]
+    read_length = len(fiber_read["query_sequence"])
+    ns = apply_result["ns"]
+    nl = apply_result["nl"]
+    orig_msps = list(
+        zip((int(s) for s in apply_result["as"]), (int(x) for x in apply_result["al"]))
+    )
+
+    # 1) split + edge-refine footprints
+    nuc_calls, access = recall_nucs_in_read(
+        obs, ns, nl, read_length, llr_hit, llr_miss,
+        split_min_llr=split_min_llr, split_min_opps=split_min_opps,
+        nuc_min_size=nuc_min_size,
+    )
+
+    # 2) re-derive MSPs from the new nucleosome boundaries
+    new_msps = rederive_msps(orig_msps, access, read_length, msp_min_size)
+    msp_starts = [s for s, _ in new_msps]
+    msp_len = [length for _, length in new_msps]
+
+    # 3) TF recall over the cleaner accessible space + short refined nucs
+    refined_ns = [nc.start for nc in nuc_calls]
+    refined_nl = [nc.length for nc in nuc_calls]
+    tf_calls = run_tf_recall_stage(
+        obs, refined_ns, refined_nl, msp_starts, msp_len, read_length,
+        llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
+    )
+
+    # 4) unify: drop short refined nucs overlapped by a TF call (carry nq/el/er)
+    kept = unify_nuc_calls_with_tf_calls(nuc_calls, tf_calls, unify_threshold)
+
+    kept_starts = np.asarray([k.start for k in kept], dtype=np.int32)
+    kept_lengths = np.asarray([k.length for k in kept], dtype=np.int32)
+    return {
+        "ns": kept_starts,
+        "nl": kept_lengths,
+        "as": np.asarray(msp_starts, dtype=np.int32),
+        "al": np.asarray(msp_len, dtype=np.int32),
+        "ns_scores": None,
+        "as_scores": None,
+        "nq_for_kept_nucs": [k.nq for k in kept],
+        "nuc_el_for_kept": [k.el for k in kept],
+        "nuc_er_for_kept": [k.er for k in kept],
         "tf_calls": tf_calls,
     }

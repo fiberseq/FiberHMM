@@ -101,6 +101,16 @@ def parse_args():
     p.add_argument('--downstream-compat', action='store_true',
                    help='Skip MA/AQ; write TF calls into legacy ns/nl track.')
 
+    # --- Nucleosome recall params ---
+    p.add_argument('--recall-nucs', action='store_true',
+                   help='Split over-merged nucleosomes on accessible evidence and '
+                        'refine edges (emits nuc+QQQ). Runs before MSP/TF recall.')
+    p.add_argument('--split-min-llr', type=float, default=4.0,
+                   help='Min accessible-run LLR to split a nucleosome (default 4.0).')
+    p.add_argument('--split-min-opps', type=int, default=3,
+                   help='Min informative positions in a nucleosome-splitting cut '
+                        '(default 3).')
+
     # --- Parallelism ---
     p.add_argument('-c', '--cores', type=int, default=4,
                    help='Worker processes (default 4).')
@@ -305,6 +315,9 @@ def main():
             io_threads=args.io_threads,
             primary_only=args.primary,
             ref_fasta_path=args.reference,
+            recall_nucs=args.recall_nucs,
+            split_min_llr=args.split_min_llr,
+            split_min_opps=args.split_min_opps,
         )
     else:
         n_reads, n_fp = _process_bam_streaming_pipeline_fused(
@@ -336,6 +349,9 @@ def main():
             process_unmapped=args.process_unmapped,
             primary_only=args.primary,
             ref_fasta_path=args.reference,
+            recall_nucs=args.recall_nucs,
+            split_min_llr=args.split_min_llr,
+            split_min_opps=args.split_min_opps,
         )
 
     if not stdout_mode and not args.region_parallel:

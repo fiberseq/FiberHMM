@@ -50,6 +50,9 @@ def _process_bam_streaming_pipeline_fused(
     process_unmapped: bool = False,
     primary_only: bool = False,
     ref_fasta_path: Optional[str] = None,
+    recall_nucs: bool = False,
+    split_min_llr: float = 4.0,
+    split_min_opps: int = 3,
 ):
     """Fused apply+recall streaming pipeline."""
     ref_fasta = None
@@ -93,7 +96,8 @@ def _process_bam_streaming_pipeline_fused(
                 max_workers=n_cores,
                 mp_context=_MP_CONTEXT,
                 initializer=_init_fused_worker,
-                initargs=(model_path, recall_model_path, emission_uplift, False),
+                initargs=(model_path, recall_model_path, emission_uplift, False,
+                          recall_nucs, split_min_llr, split_min_opps),
             )
 
             inflight = deque()
