@@ -339,6 +339,21 @@ def main():
     phase_nrl = _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
                                    recall_nucs)
 
+    # @PG provenance for the output BAM header. The molecular-frame note is the
+    # important bit: it tells downstream tools how to read ns/nl/as/al/MA.
+    import fiberhmm as _fh
+    chimera_state = ('n/a' if mode != 'daf'
+                     else ('off' if args.keep_chimeras else 'on'))
+    pg_record = {
+        'PN': 'fiberhmm-call',
+        'VN': getattr(_fh, '__version__', 'unknown'),
+        'CL': ' '.join(sys.argv),
+        'DS': (f"FiberHMM fused apply+recall; mode={mode}; "
+               f"recall_nucs={recall_nucs} phase_nrl={phase_nrl} "
+               f"chimera_filter={chimera_state}; "
+               f"ns/nl/as/al/MA in molecular (original-fiber) coordinates"),
+    }
+
     mode_label = 'region-parallel' if args.region_parallel else 'streaming'
     print(
         "\n=========================================================================\n"
@@ -399,6 +414,7 @@ def main():
             chimera_min_seg=args.chimera_min_seg,
             chimera_purity=args.chimera_purity,
             phase_nrl=phase_nrl,
+            pg_record=pg_record,
         )
     else:
         n_reads, n_fp = _process_bam_streaming_pipeline_fused(
@@ -437,6 +453,7 @@ def main():
             chimera_min_seg=args.chimera_min_seg,
             chimera_purity=args.chimera_purity,
             phase_nrl=phase_nrl,
+            pg_record=pg_record,
         )
 
     if not stdout_mode and not args.region_parallel:

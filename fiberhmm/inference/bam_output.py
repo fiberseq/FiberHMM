@@ -145,11 +145,17 @@ def _write_bam_list_file(bam_files: List[str], list_file: str) -> None:
 
 
 def _samtools_cat_bams(bam_files: List[str], output_bam: str, list_file: str) -> None:
-    """Concatenate BAMs with `samtools cat -b`, cleaning the list file."""
+    """Concatenate BAMs with `samtools cat -b`, cleaning the list file.
+
+    ``-h bam_files[0]`` forces the output header to the first region BAM's header
+    verbatim. Without it, ``samtools cat`` merges the @PG lines from every input,
+    which would duplicate FiberHMM's @PG provenance line once per region.
+    """
     _write_bam_list_file(bam_files, list_file)
     try:
         result = subprocess.run(
-            ['samtools', 'cat', '-b', list_file, '-o', output_bam],
+            ['samtools', 'cat', '-h', bam_files[0], '-b', list_file,
+             '-o', output_bam],
             capture_output=True, text=True
         )
         if result.returncode != 0:

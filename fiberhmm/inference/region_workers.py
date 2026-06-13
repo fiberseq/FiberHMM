@@ -8,6 +8,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model
+from fiberhmm.io.bam_header import maybe_append_pg
 from fiberhmm.inference.engine import (
     CHIMERA_SKIP,
     _extract_fiber_read_from_pysam,
@@ -550,7 +551,10 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         )
 
         with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
-            with pysam.AlignmentFile(temp_bam_path, "wb", header=inbam.header, threads=io_threads) as outbam:
+            with pysam.AlignmentFile(
+                    temp_bam_path, "wb",
+                    header=maybe_append_pg(inbam.header, params.get('pg_record')),
+                    threads=io_threads) as outbam:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)
                 except ValueError:

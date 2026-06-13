@@ -158,7 +158,9 @@ def test_samtools_cat_bams_writes_list_and_cleans_on_success(monkeypatch, tmp_pa
     list_file = str(tmp_path / "bam_list.txt")
 
     def fake_run(cmd, *args, **kwargs):
-        assert cmd == ["samtools", "cat", "-b", list_file, "-o", output_bam]
+        # -h <first> forces one header (avoids @PG duplication across regions)
+        assert cmd == ["samtools", "cat", "-h", inputs[0], "-b", list_file,
+                       "-o", output_bam]
         assert kwargs == {"capture_output": True, "text": True}
         assert Path(list_file).read_text().splitlines() == inputs
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")

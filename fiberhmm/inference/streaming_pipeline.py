@@ -13,6 +13,7 @@ import pysam
 
 from fiberhmm.inference.bam_output import _sort_and_index_bam
 from fiberhmm.inference.engine import make_apply_payload
+from fiberhmm.io.bam_header import maybe_append_pg
 from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.streaming_drain import (
@@ -57,6 +58,7 @@ def _process_bam_streaming_pipeline_fused(
     chimera_min_seg: int = 5,
     chimera_purity: float = 0.8,
     phase_nrl: int = 0,
+    pg_record: dict = None,
 ):
     """Fused apply+recall streaming pipeline."""
     ref_fasta = None
@@ -93,7 +95,9 @@ def _process_bam_streaming_pipeline_fused(
         _output_target = os.fdopen(1, 'wb', closefd=False)
 
     with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
-        with pysam.AlignmentFile(_output_target, "wb", header=inbam.header, threads=io_threads) as outbam:
+        with pysam.AlignmentFile(_output_target, "wb",
+                                 header=maybe_append_pg(inbam.header, pg_record),
+                                 threads=io_threads) as outbam:
             if ref_fasta_path:
                 ref_fasta = pysam.FastaFile(ref_fasta_path)
 
