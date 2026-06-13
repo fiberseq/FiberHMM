@@ -166,10 +166,16 @@ def _parse_ma_annotations(read, target_name: str):
                 # MA is molecular frame; flip to SEQ (query) for ref mapping.
                 a_start, a_len = (flip_interval_frame(int(s), int(length), read_length)
                                   if is_reverse else (int(s), int(length)))
+                q_out = [int(q) for q in quals]
+                # The BED is genomic, so emit QQQ edge bytes in GENOMIC left/right
+                # order: on a reverse read the molecular 5' edge (el) is the
+                # genomic-right edge, so swap el<->er. (q[0] = nq/tq is unchanged.)
+                if is_reverse and len(q_out) >= 3:
+                    q_out[1], q_out[2] = q_out[2], q_out[1]
                 annotations.append({
                     'start': a_start,
                     'length': a_len,
-                    'quals': [int(q) for q in quals],
+                    'quals': q_out,
                     'name': ann_name,
                     'read_length': read_length,
                 })

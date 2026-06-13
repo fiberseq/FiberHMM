@@ -17,6 +17,33 @@ class _Read:
         self.query_length = query_length
 
 
+class _MARead:
+    """Stub exposing MA/AQ tags for _parse_ma_annotations."""
+    def __init__(self, ma, aq, is_reverse):
+        self._t = {"MA": ma, "AQ": aq}
+        self.is_reverse = is_reverse
+
+    def get_tag(self, k):
+        return self._t[k]
+
+    def has_tag(self, k):
+        return k in self._t
+
+
+def test_extract_emits_genomic_order_edges_on_reverse():
+    # extract-tags must emit blockEl/blockEr in genomic (lower-coordinate-first)
+    # order on both strands: a forward read keeps (el, er); a reverse read swaps
+    # them (molecular-5' el -> genomic-right) and flips the interval.
+    from fiberhmm.cli.extract_tags import _parse_ma_annotations
+    ma = "1000;nuc+QQQ:1-100"        # molecular [0,100), nq=200 el=250 er=50
+    aq = [200, 250, 50]
+    fwd = _parse_ma_annotations(_MARead(ma, aq, False), "nuc")[0]
+    rev = _parse_ma_annotations(_MARead(ma, aq, True), "nuc")[0]
+    assert fwd["quals"] == [200, 250, 50] and fwd["start"] == 0
+    # reverse: el/er swapped (genomic order) + interval flipped to SEQ frame
+    assert rev["quals"] == [200, 50, 250] and rev["start"] == 900
+
+
 def test_flip_interval_frame_is_involution():
     L = 1000
     s, length = 100, 50
