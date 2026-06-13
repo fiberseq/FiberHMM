@@ -101,6 +101,38 @@ def parse_args():
     p.add_argument('--downstream-compat', action='store_true',
                    help='Skip MA/AQ; write TF calls into legacy ns/nl track.')
 
+    # --- Nucleosome recall params ---
+    p.add_argument('--recall-nucs', action=argparse.BooleanOptionalAction, default=None,
+                   help='Split over-merged nucleosomes + refine conservative edges '
+                        '(emits nuc+QQQ), promote nucleosome-sized TF leaks to nuc+, '
+                        'and run the Pass-2 phase prior. ON by default (except DddA). '
+                        'Use --no-recall-nucs for baseline HMM nucleosomes (nuc+Q).')
+    p.add_argument('--split-min-llr', type=float, default=4.0,
+                   help='Min accessible-run LLR to split a nucleosome (default 4.0).')
+    p.add_argument('--split-min-opps', type=int, default=3,
+                   help='Min informative positions in a nucleosome-splitting cut '
+                        '(default 3).')
+    p.add_argument('--phase-nrl', default='auto',
+                   help='Pass-2 periodicity prior (with --recall-nucs): '
+                        '"auto" (default; estimate the nucleosome repeat length from '
+                        'this sample after Pass 1, clamped to ~150-215 bp anchored at '
+                        '185), "off", or a fixed bp value (e.g. 185). Long footprints '
+                        'are split at phase-predicted linkers using a lowered threshold '
+                        'gated on >=1 local deamination event (never splits a '
+                        'signal-desert).')
+
+    # --- DAF chimera filter (mode=daf only) ---
+    p.add_argument('--keep-chimeras', action='store_true',
+                   help='DAF only: keep strand-swap chimeric reads (C->T in one '
+                        'segment + G->A in another). Default: filter them out and '
+                        'report the count.')
+    p.add_argument('--chimera-min-seg', type=int, default=5,
+                   help='DAF chimera: min same-strand deamination events per '
+                        'segment to call a swap (default 5).')
+    p.add_argument('--chimera-purity', type=float, default=0.8,
+                   help='DAF chimera: min same-strand purity per segment '
+                        '(default 0.8).')
+
     # --- Parallelism ---
     p.add_argument('-c', '--cores', type=int, default=4,
                    help='Worker processes (default 4).')
@@ -146,6 +178,43 @@ def _resolve_recall_model(args):
         except (KeyError, FileNotFoundError):
             pass
     return None  # reuse apply model
+
+
+def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
+                       recall_nucs) -> int:
+    """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off)."""
+    raw = str(args.phase_nrl).strip().lower()
+    if raw in ('off', '', '0', 'none'):
+        return 0
+    if not recall_nucs:
+        # phase rides on the nuc recaller; silently off when recall is off.
+        return 0
+    if raw != 'auto':
+        try:
+            return max(0, int(raw))
+        except ValueError:
+            print(f"  WARNING: invalid --phase-nrl {args.phase_nrl!r}; using off.",
+                  file=sys.stderr)
+            return 0
+    # auto-estimate
+    if args.input == '-':
+        print("  NOTE: --phase-nrl auto needs a file input to sample; "
+              "falling back to anchor 185 bp.", file=sys.stderr)
+        return 185
+    from fiberhmm.inference.nrl_estimate import estimate_phase_nrl
+    res = estimate_phase_nrl(
+        args.input, apply_model_path, recall_model_path,
+        mode=mode, context_size=k,
+        split_min_llr=args.split_min_llr, split_min_opps=args.split_min_opps,
+        nuc_min_size=args.nuc_min_size, msp_min_size=args.msp_min_size,
+        prob_threshold=args.prob_threshold, edge_trim=args.edge_trim,
+    )
+    ci = res['ci']
+    ci_str = f" CI[{ci[0]:.0f}-{ci[1]:.0f}]" if ci else ""
+    print(f"  phase NRL: {res['nrl']} bp ({res['source']}, "
+          f"{res['n_pairs']:,} pairs from {res['n_reads']:,} reads{ci_str})",
+          file=sys.stderr)
+    return int(res['nrl'])
 
 
 def _check_daf_inputs(input_bam: str, reference: str = None,
@@ -245,6 +314,49 @@ def main():
     uplift = args.emission_uplift if args.emission_uplift is not None \
              else preset.get('emission_uplift', 1.0)
 
+    # Nucleosome recaller: ON by default, except DddA (the bundled DddA recall
+    # model is the uplifted TF model, too aggressive for nuc splitting). Explicit
+    # --recall-nucs / --no-recall-nucs always wins.
+    if args.recall_nucs is None:
+        recall_nucs = (args.enzyme != 'ddda')
+        if args.enzyme == 'ddda':
+            print("  NOTE: nucleosome recaller is OFF by default for DddA "
+                  "(use --recall-nucs to force it on).", file=sys.stderr)
+    else:
+        recall_nucs = bool(args.recall_nucs)
+        if recall_nucs and args.enzyme == 'ddda':
+            print("  WARNING: --recall-nucs on DddA uses the uplifted TF model for "
+                  "splitting (aggressive) — verify results.", file=sys.stderr)
+
+    # Fast-fail sniff for --mode daf BEFORE any BAM scanning (e.g. --phase-nrl
+    # auto estimation): the DAF path needs R/Y in the stored sequence, MD tags,
+    # or --reference. If none are available every read is silently skipped, so
+    # error out in under a second with an actionable message.
+    if mode == 'daf' and args.input != '-':
+        _check_daf_inputs(args.input, args.reference)
+
+    # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
+    phase_nrl = _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
+                                   recall_nucs)
+
+    # @PG provenance for the output BAM header. The molecular-frame note is the
+    # important bit: it tells downstream tools how to read ns/nl/as/al/MA.
+    import fiberhmm as _fh
+    chimera_state = ('n/a' if mode != 'daf'
+                     else ('off' if args.keep_chimeras else 'on'))
+    pg_record = {
+        'PN': 'fiberhmm-call',
+        'VN': getattr(_fh, '__version__', 'unknown'),
+        'CL': ' '.join(sys.argv),
+        # The `coord=molecular` token is a stable, version-independent contract
+        # for downstream consumers (e.g. FiberBrowser) to detect that ns/nl/as/al
+        # and MA are in molecular (original-fiber) frame -- keep the exact token.
+        'DS': (f"FiberHMM fused apply+recall; coord=molecular "
+               f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
+               f"mode={mode} recall_nucs={recall_nucs} phase_nrl={phase_nrl} "
+               f"chimera_filter={chimera_state}"),
+    }
+
     mode_label = 'region-parallel' if args.region_parallel else 'streaming'
     print(
         "\n=========================================================================\n"
@@ -261,13 +373,6 @@ def main():
     )
 
     also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
-
-    # Fast-fail sniff for --mode daf: the DAF path needs one of R/Y in the
-    # stored sequence, MD tags, or --reference. If none are available,
-    # every read will be silently skipped -- error out in under a second
-    # with an actionable message instead.
-    if mode == 'daf' and args.input != '-':
-        _check_daf_inputs(args.input, args.reference)
 
     if args.region_parallel:
         if args.input == '-' or args.output == '-':
@@ -305,6 +410,14 @@ def main():
             io_threads=args.io_threads,
             primary_only=args.primary,
             ref_fasta_path=args.reference,
+            recall_nucs=recall_nucs,
+            split_min_llr=args.split_min_llr,
+            split_min_opps=args.split_min_opps,
+            filter_chimeras=not args.keep_chimeras,
+            chimera_min_seg=args.chimera_min_seg,
+            chimera_purity=args.chimera_purity,
+            phase_nrl=phase_nrl,
+            pg_record=pg_record,
         )
     else:
         n_reads, n_fp = _process_bam_streaming_pipeline_fused(
@@ -336,6 +449,14 @@ def main():
             process_unmapped=args.process_unmapped,
             primary_only=args.primary,
             ref_fasta_path=args.reference,
+            recall_nucs=recall_nucs,
+            split_min_llr=args.split_min_llr,
+            split_min_opps=args.split_min_opps,
+            filter_chimeras=not args.keep_chimeras,
+            chimera_min_seg=args.chimera_min_seg,
+            chimera_purity=args.chimera_purity,
+            phase_nrl=phase_nrl,
+            pg_record=pg_record,
         )
 
     if not stdout_mode and not args.region_parallel:

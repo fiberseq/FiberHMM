@@ -10,6 +10,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.bam_reader import get_bam_chrom_sizes
+from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 
 def _run_samtools_index(output_bam: str, threads: int, check: bool = False) -> subprocess.CompletedProcess:
@@ -144,11 +145,17 @@ def _write_bam_list_file(bam_files: List[str], list_file: str) -> None:
 
 
 def _samtools_cat_bams(bam_files: List[str], output_bam: str, list_file: str) -> None:
-    """Concatenate BAMs with `samtools cat -b`, cleaning the list file."""
+    """Concatenate BAMs with `samtools cat -b`, cleaning the list file.
+
+    ``-h bam_files[0]`` forces the output header to the first region BAM's header
+    verbatim. Without it, ``samtools cat`` merges the @PG lines from every input,
+    which would duplicate FiberHMM's @PG provenance line once per region.
+    """
     _write_bam_list_file(bam_files, list_file)
     try:
         result = subprocess.run(
-            ['samtools', 'cat', '-b', list_file, '-o', output_bam],
+            ['samtools', 'cat', '-h', bam_files[0], '-b', list_file,
+             '-o', output_bam],
             capture_output=True, text=True
         )
         if result.returncode != 0:
@@ -498,10 +505,10 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
             if read.is_unmapped or read.is_secondary or read.is_supplementary:
                 continue
 
-            # Get footprint tags
+            # Get footprint tags (molecular frame -> flip to SEQ/query coords)
             try:
-                ns = read.get_tag('ns')  # starts (query coords)
-                nl = read.get_tag('nl')  # lengths
+                ns, nl = flip_intervals_to_seq(
+                    read.get_tag('ns'), read.get_tag('nl'), read)
             except KeyError:
                 continue  # No footprint tags
 

@@ -46,6 +46,7 @@ from collections import deque
 import pysam
 
 from fiberhmm.core.model_io import load_model_with_metadata
+from fiberhmm.io.bam_header import append_coord_marker
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
     HAS_NUMBA,
@@ -191,10 +192,15 @@ def _process_payload_record(payload) -> tuple:
     nq_for_kept = None
     if v2_nq is not None and has_ns:
         try:
-            ns_old = tags['ns']
-            nl_old = tags['nl']
+            # kept_nucs come back from recall_read() in SEQ (query) frame, so the
+            # nq lookup must key on SEQ-frame intervals too. The stored ns/nl are
+            # molecular; flip them (order-preserving, so v2_nq[i] stays aligned)
+            # before building the lookup -- otherwise reverse-read nucs miss their
+            # original score and get 0.
+            from fiberhmm.io.ma_tags import flip_intervals_to_seq
+            ns_seq, nl_seq = flip_intervals_to_seq(tags['ns'], tags['nl'], read)
             old_to_nq = {(int(s), int(length)): int(v2_nq[i])
-                         for i, (s, length) in enumerate(zip(ns_old, nl_old))
+                         for i, (s, length) in enumerate(zip(ns_seq, nl_seq))
                          if i < len(v2_nq)}
             nq_for_kept = [old_to_nq.get((s, length), 0) for s, length in kept_nucs]
         except Exception:
@@ -505,7 +511,7 @@ def main():
     bam_out = None
     try:
         bam_out = pysam.AlignmentFile(args.out_bam, 'wb',
-                                       template=bam_in,
+                                       header=append_coord_marker(bam_in.header),
                                        threads=args.io_threads)
         header_text = str(bam_in.header)
 

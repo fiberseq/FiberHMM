@@ -196,7 +196,7 @@ def test_extra_field_counts_match_written_arrays():
     """EXTRA_FIELD_COUNTS must match the number of int[blockCount] fields
     in the block_scores schema -- this is the number passed as
     ``-type=bed12+N`` to bedToBigBed."""
-    assert EXTRA_FIELD_COUNTS['footprint'] == 1
+    assert EXTRA_FIELD_COUNTS['footprint'] == 3  # blockNq, blockEl, blockEr
     assert EXTRA_FIELD_COUNTS['msp'] == 1
     assert EXTRA_FIELD_COUNTS['tf'] == 3
     assert EXTRA_FIELD_COUNTS['m6a'] == 1
@@ -260,7 +260,7 @@ def test_footprint_bed12_plus_nq_when_flag_on():
                             block_scores=True)
     assert n == 3
     cols = buf.getvalue().rstrip('\n').split('\t')
-    assert len(cols) == 13
+    assert len(cols) == 15  # BED12 + blockNq + blockEl + blockEr
     block_count = int(cols[9])
     nq_arr = cols[12].split(',')
     assert len(nq_arr) == block_count == 3
@@ -268,6 +268,9 @@ def test_footprint_bed12_plus_nq_when_flag_on():
     # should still carry real values from the nq tag.
     assert int(cols[4]) == 0
     assert [int(v) for v in nq_arr] == [180, 220, 160]
+    # legacy ns/nl nucs have no edge refinement -> el/er all zero
+    assert [int(v) for v in cols[13].split(',')] == [0, 0, 0]
+    assert [int(v) for v in cols[14].split(',')] == [0, 0, 0]
 
 
 def test_footprint_missing_nq_when_flag_on_writes_zeros():
@@ -283,8 +286,10 @@ def test_footprint_missing_nq_when_flag_on_writes_zeros():
                             block_scores=True)
     assert n == 2
     cols = buf.getvalue().rstrip('\n').split('\t')
-    assert len(cols) == 13
+    assert len(cols) == 15  # BED12 + blockNq + blockEl + blockEr
     assert [int(v) for v in cols[12].split(',')] == [0, 0]
+    assert [int(v) for v in cols[13].split(',')] == [0, 0]
+    assert [int(v) for v in cols[14].split(',')] == [0, 0]
 
 
 # ------------------- msp --------------------------------------------
@@ -482,7 +487,11 @@ def test_footprint_and_msp_extractors_prefer_ma_an_when_present():
     msp_rows = [line.split('\t') for line in msp_buf.getvalue().rstrip('\n').splitlines()]
     assert [int(row[1]) for row in nuc_rows] == [0, 990]
     assert [int(row[1]) for row in msp_rows] == [0, 980]
-    assert nuc_rows[0][13:] == ['fhw_nuc_0', '1', '2', '990', '20']
+    # footprint now carries blockNq, blockEl, blockEr (nuc+Q -> el/er = 0),
+    # so the circular group columns start after those three.
+    assert nuc_rows[0][12] == '222'
+    assert nuc_rows[0][13:15] == ['0', '0']
+    assert nuc_rows[0][15:] == ['fhw_nuc_0', '1', '2', '990', '20']
     assert msp_rows[0][13:] == ['fhw_msp_0', '1', '2', '980', '40']
 
 
@@ -1047,14 +1056,15 @@ def test_extract_tags_parallel_circular_groups_end_to_end(tmp_path):
     nuc_rows = [line.split('\t') for line in nuc_bed.read_text().splitlines()]
     tf_rows = [line.split('\t') for line in tf_bed.read_text().splitlines()]
 
-    # BED12 (12) + footprint block_scores (1 blockNq) + circular (5) = 18 cols.
-    assert all(len(row) == 18 for row in nuc_rows)
+    # BED12 (12) + footprint block_scores (3: blockNq/El/Er) + circular (5) = 20.
+    assert all(len(row) == 20 for row in nuc_rows)
     # BED12 (12) + tf block_scores (3 blockTq/El/Er) + circular (5) = 20 cols.
     assert all(len(row) == 20 for row in tf_rows)
 
-    # Standalone (non-wrapped) nuc: circId=., circPart/Parts=1, and
-    # molStart/molLength echo the annotation's own coords.
-    assert nuc_rows[0][13:] == ['.', '1', '1', '200', '50']
+    # Standalone (non-wrapped) nuc: blockNq=200, blockEl/Er=0 (nuc+Q, unrefined),
+    # then circId=., circPart/Parts=1, molStart/molLength echo its coords.
+    assert nuc_rows[0][12:15] == ['200', '0', '0']
+    assert nuc_rows[0][15:] == ['.', '1', '1', '200', '50']
 
     # Wrapped TF: both clipped pieces share AN name, have circParts=2, and
     # their molStart/molLength describe the molecular feature (not the clipped

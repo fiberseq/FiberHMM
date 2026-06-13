@@ -49,6 +49,9 @@ venv/
 # Development / validation scripts
 phase0/
 
+# Nucleosome recaller collab (Claude <-> Codex testing scratch)
+nuc_recaller_collab/
+
 # Build artifacts
 dist/
 build/

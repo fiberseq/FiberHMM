@@ -137,6 +137,44 @@ def project_center_tf_calls(tf_calls: Sequence, read_length: int) -> list:
     return out
 
 
+def project_center_nuc_calls(nuc_calls: Sequence, read_length: int) -> list:
+    """Project tiled NucCall objects back to circular molecule coordinates.
+
+    Mirrors ``project_center_tf_calls`` but preserves the nuc+QQQ quality bytes
+    (nq/el/er). Uses ``type(call)(...)`` so this module needn't import NucCall.
+    """
+    n = int(read_length)
+    if n <= 0:
+        return []
+
+    center_start = n
+    center_end = 2 * n
+    out = []
+    seen: set[Interval] = set()
+    for call in nuc_calls:
+        s = int(call.start)
+        e = s + int(call.length)
+        if e <= s:
+            continue
+        if center_start <= s < center_end:
+            interval = ((s - center_start) % n, max(0, min(e - s, n)))
+        elif s < center_start and e > center_end:
+            interval = (0, n)
+        else:
+            continue
+        if interval[1] <= 0 or interval in seen:
+            continue
+        seen.add(interval)
+        out.append(type(call)(
+            start=interval[0],
+            length=interval[1],
+            nq=call.nq,
+            el=call.el,
+            er=call.er,
+        ))
+    return out
+
+
 def split_intervals_for_legacy(
     intervals: Sequence[Interval],
     read_length: int,

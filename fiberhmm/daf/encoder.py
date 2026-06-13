@@ -193,6 +193,56 @@ def get_daf_positions(read, force_strand=None, ref_fasta=None):
     return (ct_positions, ga_positions, strand)
 
 
+def is_daf_chimera(ct_positions, ga_positions,
+                   min_seg_events: int = 5, purity: float = 0.8) -> bool:
+    """Detect a DAF-seq strand-swap chimera.
+
+    A clean DAF read is deaminated on ONE strand (C->T XOR G->A). A chimera
+    (template switch / merged molecule) "swaps" mid-read: a contiguous segment
+    of C->T deamination and a separate contiguous segment of G->A deamination.
+
+    Spatial test: order all deamination events by query position (CT=+1, GA=-1);
+    a chimera has a breakpoint splitting them into two segments that are each
+    >= ``purity`` pure for OPPOSITE strands, with >= ``min_seg_events`` dominant
+    events on each side. Scattered minority events (SNPs / sequencing error) do
+    not form a pure segment, so they are not flagged -- robust to the low
+    deamination rate of under-deaminating enzymes like DddB.
+
+    Returns True if the read looks chimeric.
+    """
+    nct = len(ct_positions)
+    nga = len(ga_positions)
+    if min(nct, nga) < min_seg_events:
+        return False
+
+    events = sorted([(int(p), 1) for p in ct_positions]
+                    + [(int(p), -1) for p in ga_positions])
+    n = len(events)
+    if n < 2 * min_seg_events:
+        return False
+
+    ct_left = 0
+    for k in range(1, n):                       # breakpoint: left=[0,k), right=[k,n)
+        if events[k - 1][1] == 1:
+            ct_left += 1
+        left_n = k
+        right_n = n - k
+        if left_n < min_seg_events or right_n < min_seg_events:
+            continue
+        ga_left = left_n - ct_left
+        ct_right = nct - ct_left
+        ga_right = nga - ga_left
+        # orientation A: CT segment then GA segment
+        if (ct_left >= min_seg_events and ga_right >= min_seg_events
+                and ct_left >= purity * left_n and ga_right >= purity * right_n):
+            return True
+        # orientation B: GA segment then CT segment
+        if (ga_left >= min_seg_events and ct_right >= min_seg_events
+                and ga_left >= purity * left_n and ct_right >= purity * right_n):
+            return True
+    return False
+
+
 def encode_read_daf(read, force_strand=None, ref_fasta=None):
     """Identify deamination mismatches and encode as IUPAC R/Y.
 

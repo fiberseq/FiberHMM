@@ -53,7 +53,13 @@ import pysam
 
 from fiberhmm.core.bam_reader import cigar_to_query_ref
 from fiberhmm.inference.parallel import _get_genome_regions
-from fiberhmm.io.ma_tags import parse_an_tag, parse_aq_array, parse_ma_tag
+from fiberhmm.io.ma_tags import (
+    flip_interval_frame,
+    flip_intervals_to_seq,
+    parse_an_tag,
+    parse_aq_array,
+    parse_ma_tag,
+)
 
 
 def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
@@ -150,17 +156,28 @@ def _parse_ma_annotations(read, target_name: str):
 
     annotations = []
     ann_idx = 0
+    read_length = int(parsed['read_length'])
+    is_reverse = bool(getattr(read, 'is_reverse', False))
     for name, _strand, _qspec, intervals in parsed['raw_types']:
         for s, length in intervals:
             quals = per_annotation[ann_idx] if ann_idx < len(per_annotation) else []
             ann_name = an_names[ann_idx] if ann_idx < len(an_names) else ''
             if name == target_name:
+                # MA is molecular frame; flip to SEQ (query) for ref mapping.
+                a_start, a_len = (flip_interval_frame(int(s), int(length), read_length)
+                                  if is_reverse else (int(s), int(length)))
+                q_out = [int(q) for q in quals]
+                # The BED is genomic, so emit QQQ edge bytes in GENOMIC left/right
+                # order: on a reverse read the molecular 5' edge (el) is the
+                # genomic-right edge, so swap el<->er. (q[0] = nq/tq is unchanged.)
+                if is_reverse and len(q_out) >= 3:
+                    q_out[1], q_out[2] = q_out[2], q_out[1]
                 annotations.append({
-                    'start': int(s),
-                    'length': int(length),
-                    'quals': [int(q) for q in quals],
+                    'start': a_start,
+                    'length': a_len,
+                    'quals': q_out,
                     'name': ann_name,
-                    'read_length': int(parsed['read_length']),
+                    'read_length': read_length,
                 })
             ann_idx += 1
     return annotations
@@ -261,7 +278,12 @@ def _extract_ma_interval_type(
             )
             score = qvals[0]
         elif target_name == 'nuc':
-            qvals = (int(quals[0]) if quals else 0,)
+            # nuc+Q (legacy) -> (nq, 0, 0); nuc+QQQ -> (nq, el, er).
+            qvals = (
+                int(quals[0]) if len(quals) >= 1 else 0,
+                int(quals[1]) if len(quals) >= 2 else 0,
+                int(quals[2]) if len(quals) >= 3 else 0,
+            )
             score = qvals[0]
         else:
             qvals = (0,)
@@ -302,7 +324,8 @@ def _extract_ma_interval_type(
     mean_score = int(sum(b[2] for b in blocks) / len(blocks)) if with_scores else 0
     extra = []
     if block_scores:
-        if target_name == 'tf':
+        if target_name in ('tf', 'nuc'):
+            # tf+QQQ / nuc+QQQ: three per-block quality columns
             extra.extend([
                 ','.join(str(b[3][0]) for b in blocks),
                 ','.join(str(b[3][1]) for b in blocks),
@@ -457,8 +480,10 @@ def _extract_footprints(read, bed_out, with_scores: bool,
                         circular_groups: bool = False) -> int:
     """Extract footprint intervals from ns/nl tags as BED12 (one line per read).
 
-    When ``block_scores=True``, appends a 13th column of comma-separated
-    per-block nq values (int[blockCount] blockNq in the autoSQL schema).
+    When ``block_scores=True``, appends three columns of comma-separated
+    per-block values: blockNq (quality) plus blockEl/blockEr (conservative
+    edge sharpness, 0-255). For nuc+QQQ these carry the recaller's edges; for
+    legacy ns/nl or HMM-only nuc+Q, el/er are 0 (edges not refined).
     """
     if query_to_ref is None:
         query_to_ref = _build_query_to_ref(read)
@@ -470,10 +495,12 @@ def _extract_footprints(read, bed_out, with_scores: bool,
         return ma_count
 
     try:
-        ns = read.get_tag('ns')  # Footprint starts (query coords)
-        nl = read.get_tag('nl')  # Footprint lengths
+        ns_raw = read.get_tag('ns')  # molecular-frame starts
+        nl_raw = read.get_tag('nl')
     except KeyError:
         return 0
+    # Tags are molecular frame; flip back to SEQ (query) coords for ref mapping.
+    ns, nl = flip_intervals_to_seq(ns_raw, nl_raw, read)
 
     if len(ns) == 0:
         return 0
@@ -525,8 +552,11 @@ def _extract_footprints(read, bed_out, with_scores: bool,
     row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
            f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
     if block_scores:
+        # Legacy ns/nl nucs have no edge refinement -> el/er = 0 (unrefined),
+        # matching the footprint schema's blockNq, blockEl, blockEr columns.
         block_nq = ','.join(str(sc) for _, _, sc in blocks)
-        row += f"\t{block_nq}"
+        block_zero = ','.join('0' for _ in blocks)
+        row += f"\t{block_nq}\t{block_zero}\t{block_zero}"
     if circular_groups:
         row += "\t.\t1\t1\t0\t0"
     bed_out.write(row + "\n")
@@ -653,10 +683,11 @@ def _extract_msps(read, bed_out, with_scores: bool,
         return ma_count
 
     try:
-        as_starts = read.get_tag('as')  # MSP starts (query coords)
-        al_lengths = read.get_tag('al')  # MSP lengths
+        as_raw = read.get_tag('as')  # molecular-frame MSP starts
+        al_raw = read.get_tag('al')
     except KeyError:
         return 0
+    as_starts, al_lengths = flip_intervals_to_seq(as_raw, al_raw, read)
 
     if len(as_starts) == 0:
         return 0

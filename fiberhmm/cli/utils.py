@@ -24,6 +24,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from fiberhmm.core.model_io import load_model_with_metadata, save_model
+from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 # =============================================================================
 # convert subcommand
@@ -295,6 +296,8 @@ def _parse_footprints_from_bam_read(read):
     if ns_tag is not None and nl_tag is not None:
         starts = list(ns_tag) if hasattr(ns_tag, '__iter__') else [ns_tag]
         lengths = list(nl_tag) if hasattr(nl_tag, '__iter__') else [nl_tag]
+        # molecular frame -> SEQ/query coords for the per-base scan below
+        starts, lengths = flip_intervals_to_seq(starts, lengths, read)
 
         for start, length in zip(starts, lengths):
             end = min(start + length, seq_len)

@@ -6,9 +6,16 @@ import numpy as np
 
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model
 from fiberhmm.inference.engine import (
+    CHIMERA_SKIP,
     _process_single_read,
+    configure_daf_chimera_filter,
     extract_fiber_read_from_payload,
 )
+
+# Picklable per-result marker for a DAF chimera-filtered read (CHIMERA_SKIP is an
+# identity sentinel that does not survive worker IPC, so the worker emits this
+# string instead and the drain tallies it).
+CHIMERA_RESULT = "__fiberhmm_chimera_skip__"
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
@@ -55,6 +62,13 @@ def _init_fused_worker(
     recall_model_path=None,
     emission_uplift=1.0,
     debug_timing=False,
+    recall_nucs=False,
+    split_min_llr=4.0,
+    split_min_opps=3,
+    filter_chimeras=True,
+    chimera_min_seg=5,
+    chimera_purity=0.8,
+    phase_nrl=0,
 ):
     """Initialize worker process for the fused apply+recall pipeline.
 
@@ -89,6 +103,11 @@ def _init_fused_worker(
         )
     _worker_recall_state['llr_hit'] = llr_hit
     _worker_recall_state['llr_miss'] = llr_miss
+    _worker_recall_state['recall_nucs'] = recall_nucs
+    _worker_recall_state['split_min_llr'] = split_min_llr
+    _worker_recall_state['split_min_opps'] = split_min_opps
+    _worker_recall_state['phase_nrl'] = phase_nrl
+    configure_daf_chimera_filter(filter_chimeras, chimera_min_seg, chimera_purity)
 
     # Warmup: apply Viterbi + TF Kadane scan.
     from fiberhmm.core.hmm import HAS_NUMBA
@@ -185,6 +204,13 @@ def _process_fused_payload_chunk_worker(
     for payload in chunk_payloads:
         try:
             fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
+            if fiber_read is CHIMERA_SKIP:
+                # DAF strand-swap chimera filtered out -- distinct marker so the
+                # drain can tally it (vs folding into "no footprints"). The
+                # marker is a picklable string (CHIMERA_SKIP is an identity
+                # sentinel that does not survive the worker IPC boundary).
+                results.append(CHIMERA_RESULT)
+                continue
             if fiber_read is None:
                 results.append(None)
                 continue
@@ -217,6 +243,12 @@ def _process_fused_payload_chunk_worker(
                 min_opps,
                 unify_threshold,
                 with_scores,
+                recall_nucs=_worker_recall_state.get('recall_nucs', False),
+                split_min_llr=_worker_recall_state.get('split_min_llr', 4.0),
+                split_min_opps=_worker_recall_state.get('split_min_opps', 3),
+                nuc_min_size=nuc_min_size,
+                msp_min_size=msp_min_size,
+                phase_nrl=_worker_recall_state.get('phase_nrl', 0),
             ))
         except Exception:
             # Per-read failure must not kill the worker or the whole chunk.
@@ -254,7 +286,9 @@ def _process_payload_chunk_worker(
     for payload in chunk_payloads:
         try:
             fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
-            if fiber_read is None:
+            if fiber_read is None or fiber_read is CHIMERA_SKIP:
+                # CHIMERA_SKIP: DAF strand-swap chimera filtered out (streaming
+                # passes it through unannotated; region-parallel tallies a count).
                 results.append(None)
                 continue
             result = _process_single_read(

@@ -8,9 +8,12 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model
+from fiberhmm.io.bam_header import append_coord_marker, maybe_append_pg
 from fiberhmm.inference.engine import (
+    CHIMERA_SKIP,
     _extract_fiber_read_from_pysam,
     _process_single_read,
+    configure_daf_chimera_filter,
     extract_fiber_read_from_payload,
     make_apply_payload,
 )
@@ -58,6 +61,12 @@ def _init_region_worker(model_path: str, params: dict):
         # Load model once per worker.
         _worker_model = freeze_model_for_inference(load_model(model_path))
         _worker_region_params = params
+
+        configure_daf_chimera_filter(
+            params.get('filter_chimeras', True),
+            params.get('chimera_min_seg', 5),
+            params.get('chimera_purity', 0.8),
+        )
 
         # Warm up numba JIT.
         from fiberhmm.core.hmm import HAS_NUMBA
@@ -140,6 +149,7 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
             'no_modifications': 0,
             'extraction_failed': 0,
             'no_footprints': 0,
+            'chimera': 0,
         }
         filter_config = ReadFilterConfig(
             min_mapq=min_mapq,
@@ -161,7 +171,9 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
 
         try:
             with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
-                with pysam.AlignmentFile(temp_bam_path, "wb", header=inbam.header, threads=io_threads) as outbam:
+                with pysam.AlignmentFile(temp_bam_path, "wb",
+                                         header=append_coord_marker(inbam.header),
+                                         threads=io_threads) as outbam:
 
                     # Fetch reads from this region using the index.
                     try:
@@ -195,6 +207,12 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
 
                         try:
                             fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
+                            if fiber_read is CHIMERA_SKIP:
+                                outbam.write(read)
+                                written += 1
+                                skipped += 1
+                                skip_reasons['chimera'] += 1
+                                continue
                             if fiber_read is None:
                                 outbam.write(read)
                                 written += 1
@@ -338,7 +356,7 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
 
                     try:
                         fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
-                        if fiber_read is None:
+                        if fiber_read is None or fiber_read is CHIMERA_SKIP:
                             continue
                     except Exception:
                         continue
@@ -443,6 +461,12 @@ def _init_fused_region_worker(
     _worker_recall_state['llr_hit'] = llr_hit
     _worker_recall_state['llr_miss'] = llr_miss
 
+    configure_daf_chimera_filter(
+        params.get('filter_chimeras', True),
+        params.get('chimera_min_seg', 5),
+        params.get('chimera_purity', 0.8),
+    )
+
     from fiberhmm.core.hmm import HAS_NUMBA
 
     if HAS_NUMBA:
@@ -504,6 +528,10 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         unify_threshold = int(params['unify_threshold'])
         also_write_legacy = params['also_write_legacy']
         downstream_compat = params['downstream_compat']
+        recall_nucs = bool(params.get('recall_nucs', False))
+        split_min_llr = float(params.get('split_min_llr', 4.0))
+        split_min_opps = int(params.get('split_min_opps', 3))
+        phase_nrl = int(params.get('phase_nrl', 0))
 
         pysam.set_verbosity(0)
 
@@ -514,7 +542,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         skip_reasons = {
             'unmapped': 0, 'secondary_supplementary': 0, 'low_mapq': 0,
             'too_short': 0, 'training_excluded': 0, 'no_modifications': 0,
-            'extraction_failed': 0, 'no_footprints': 0,
+            'extraction_failed': 0, 'no_footprints': 0, 'chimera': 0,
         }
         filter_config = ReadFilterConfig(
             min_mapq=min_mapq,
@@ -525,7 +553,10 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         )
 
         with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
-            with pysam.AlignmentFile(temp_bam_path, "wb", header=inbam.header, threads=io_threads) as outbam:
+            with pysam.AlignmentFile(
+                    temp_bam_path, "wb",
+                    header=maybe_append_pg(inbam.header, params.get('pg_record')),
+                    threads=io_threads) as outbam:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)
                 except ValueError:
@@ -558,6 +589,12 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
 
                     try:
                         fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
+                        if fiber_read is CHIMERA_SKIP:
+                            outbam.write(read)
+                            written += 1
+                            skipped += 1
+                            skip_reasons['chimera'] += 1
+                            continue
                         if fiber_read is None:
                             outbam.write(read)
                             written += 1
@@ -599,6 +636,12 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         min_opps,
                         unify_threshold,
                         with_scores,
+                        recall_nucs=recall_nucs,
+                        split_min_llr=split_min_llr,
+                        split_min_opps=split_min_opps,
+                        nuc_min_size=nuc_min_size,
+                        msp_min_size=msp_min_size,
+                        phase_nrl=phase_nrl,
                     )
                     write_fused_recall_tags(
                         read,

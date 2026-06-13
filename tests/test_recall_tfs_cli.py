@@ -39,6 +39,32 @@ def test_recall_tfs_make_payload_keeps_legacy_tag_arrays_compact():
         assert payload["tags"][tag] is tags[tag]
 
 
+def test_recall_tfs_reverse_read_preserves_nq(monkeypatch):
+    # A reverse read: stored ns/nl/nq are molecular, but recall_read returns kept
+    # nucs in SEQ frame. The nq lookup must be built in SEQ frame too, else the
+    # kept nuc misses its original score and gets 0 (regression guard).
+    import numpy as np
+
+    monkeypatch.setitem(recall_tfs._WORKER, "llr_hit", np.zeros(1))
+    monkeypatch.setitem(recall_tfs._WORKER, "llr_miss", np.zeros(1))
+    monkeypatch.setitem(recall_tfs._WORKER, "mode", "m6a")
+    monkeypatch.setitem(recall_tfs._WORKER, "k", 3)
+    monkeypatch.setitem(recall_tfs._WORKER, "min_llr", 5.0)
+    monkeypatch.setitem(recall_tfs._WORKER, "min_opps", 3)
+    monkeypatch.setitem(recall_tfs._WORKER, "unify_threshold", 85)
+
+    L = 1000
+    payload = {
+        "seq": "A" * L,                       # no MM/ML -> recall_read pass-through
+        "is_reverse": True,
+        "tags": {"ns": [100], "nl": [50], "nq": [77]},   # molecular nuc (100,50)
+    }
+    (tf_calls, kept_nucs, msps, nq_for_kept), _ = recall_tfs._process_payload_record(payload)
+    # molecular (100,50) flips to SEQ (850,50) on a 1000 bp reverse read
+    assert kept_nucs == [(850, 50)]
+    assert nq_for_kept == [77]
+
+
 def test_recall_tfs_payload_chunk_counts_per_read_failures(monkeypatch):
     def fake_process(payload):
         if payload == "bad":
