@@ -328,19 +328,30 @@ def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
     (``start + length > read_length``). Running the linear tiler at a fixed
     origin would derive MSP gaps that overlap a wrapped nucleosome's tail (e.g.
     a nuc covering ``[95,100)+[0,15)`` plus a spurious MSP ``[0,95)`` overlapping
-    ``[0,15)``). Instead rotate the circle to an origin that no nucleosome
-    covers, tile linearly there, then rotate the kept nucs and MSPs back -- they
-    may legitimately wrap the molecular origin, which ``split_intervals_for_legacy``
-    later renders as two linear pieces. Returns ``(kept_nucs, msp_intervals)`` in
+    ``[0,15)``). Instead rotate the circle to an origin, split any call that
+    still wraps that origin into two linear pieces, tile linearly, then rotate
+    the kept nucs and MSPs back. Returns ``(kept_nucs, msp_intervals)`` in
     molecular coordinates.
+
+    Edge cases:
+      - no nucleosomes -> the whole molecule is one accessible MSP;
+      - fully covered (no uncovered cut point, e.g. overlapping nucs that tile
+        the circle): the origin can fall inside a wrapped call, so straddling
+        calls are split at the origin before the linear clip -- otherwise the
+        tiler would emit overlapping/wrapped pieces.
     """
     rl = int(read_length)
+    floor = max(1, int(msp_min_size))
     calls = [n for n in nuc_calls if n.length > 0]
-    if rl <= 0 or not calls:
+    if rl <= 0:
         return list(calls), []
+    if not calls:
+        # no nucleosomes -> the entire molecule tiles as one accessible MSP
+        return [], ([(0, rl)] if rl >= floor else [])
 
-    # Mark covered bases to find a cut point no nucleosome straddles; rotating to
-    # it linearizes every call (none wraps the new origin).
+    # Prefer an uncovered cut point (no call straddles it); fall back to 0 when
+    # the circle is fully covered. Either way, straddlers are split below, so a
+    # fallback origin landing inside a wrapped call is handled correctly.
     covered = np.zeros(rl, dtype=bool)
     for n in calls:
         s = n.start % rl
@@ -348,10 +359,21 @@ def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
         idx = (s + np.arange(span)) % rl
         covered[idx] = True
     uncovered = np.flatnonzero(~covered)
-    cut = int(uncovered[0]) if uncovered.size else int(calls[0].start % rl)
+    cut = int(uncovered[0]) if uncovered.size else 0
 
-    rotated = [NucCall((n.start - cut) % rl, min(n.length, rl), n.nq, n.el, n.er)
-               for n in calls]
+    rotated = []
+    for n in calls:
+        rs = (n.start - cut) % rl
+        length = min(n.length, rl)
+        end = rs + length
+        if end <= rl:
+            rotated.append(NucCall(rs, length, n.nq, n.el, n.er))
+        else:
+            # wraps the rotated origin -> split into [rs, rl) and [0, end-rl);
+            # each piece keeps its real outer edge, the cut edge byte is zeroed
+            # (same convention as split_intervals_for_legacy on a wrapped nuc).
+            rotated.append(NucCall(rs, rl - rs, n.nq, n.el, 0))
+            rotated.append(NucCall(0, end - rl, n.nq, 0, n.er))
     kept_rot, msp_rot = assemble_nuc_msp_tiling(
         rotated, 0, rl, msp_min_size, nuc_min_size)
 

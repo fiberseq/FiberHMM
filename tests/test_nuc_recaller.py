@@ -239,6 +239,28 @@ def test_circular_tiling_no_overlap_for_wrapped_nuc():
     assert all(c == 1 for c in cov)   # exact circular tiling: no overlap, no gap
 
 
+def test_circular_tiling_empty_nucs_gives_whole_molecule_msp():
+    # Codex repro (High): if circular unification drops all nucleosomes, the read
+    # must tile as one accessible MSP over the whole molecule, not lose it.
+    kept, msps = assemble_circular_nuc_msp_tiling([], 200, msp_min_size=0)
+    assert kept == []
+    assert msps == [(0, 200)]
+
+
+def test_circular_tiling_fully_covered_overlap_tiles_exactly():
+    # Codex repro (High): a fully-covered circle (no uncovered cut point) with
+    # overlapping nucs must still tile exactly -- the origin can fall inside a
+    # wrapped call, which previously produced double-covered bases.
+    rl = 200
+    nucs = [NucCall(0, 120, 200, 255, 255), NucCall(100, 120, 200, 255, 255)]
+    kept, msps = assemble_circular_nuc_msp_tiling(nucs, rl, msp_min_size=0)
+    cov = [0] * rl
+    for s, length in [(k.start, k.length) for k in kept] + msps:
+        for off in range(length):
+            cov[(s + off) % rl] += 1
+    assert all(c == 1 for c in cov)   # exact tiling: no base covered twice, none missed
+
+
 def test_nuc_qqq_aq_roundtrip():
     # nuc+QQQ (2 nucs) then tf+QQQ (1 tf): parse back to per-annotation triples
     aq = format_aq_array(
