@@ -368,6 +368,21 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
     assert recalled_read.has_tag("as")
     assert recalled_read.has_tag("al")
 
+    # fibertools-compatibility invariants (must hold on reverse reads too): the
+    # molecular-frame ns/nl and as/al tags must be sorted, non-overlapping, and
+    # in-bounds -- ft's liftover panics otherwise.
+    read_len = recalled_read.query_length
+    for start_tag, len_tag in (("ns", "nl"), ("as", "al")):
+        if not recalled_read.has_tag(start_tag):
+            continue
+        starts = list(recalled_read.get_tag(start_tag))
+        lengths = list(recalled_read.get_tag(len_tag))
+        assert starts == sorted(starts), f"{start_tag} not sorted"
+        assert all(s + length <= read_len for s, length in zip(starts, lengths)), \
+            f"{start_tag} out of bounds"
+        assert all(starts[i] + lengths[i] <= starts[i + 1]
+                   for i in range(len(starts) - 1)), f"{start_tag} overlaps"
+
     returned_paths, n_reads, n_features = _extract_recalled_labels(
         recalled_bam,
         tmp_path,
