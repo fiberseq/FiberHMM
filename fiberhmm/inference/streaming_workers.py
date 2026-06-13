@@ -11,6 +11,11 @@ from fiberhmm.inference.engine import (
     configure_daf_chimera_filter,
     extract_fiber_read_from_payload,
 )
+
+# Picklable per-result marker for a DAF chimera-filtered read (CHIMERA_SKIP is an
+# identity sentinel that does not survive worker IPC, so the worker emits this
+# string instead and the drain tallies it).
+CHIMERA_RESULT = "__fiberhmm_chimera_skip__"
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
@@ -199,9 +204,14 @@ def _process_fused_payload_chunk_worker(
     for payload in chunk_payloads:
         try:
             fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
-            if fiber_read is None or fiber_read is CHIMERA_SKIP:
-                # CHIMERA_SKIP: DAF strand-swap chimera filtered out (streaming
-                # passes it through unannotated; region-parallel tallies a count).
+            if fiber_read is CHIMERA_SKIP:
+                # DAF strand-swap chimera filtered out -- distinct marker so the
+                # drain can tally it (vs folding into "no footprints"). The
+                # marker is a picklable string (CHIMERA_SKIP is an identity
+                # sentinel that does not survive the worker IPC boundary).
+                results.append(CHIMERA_RESULT)
+                continue
+            if fiber_read is None:
                 results.append(None)
                 continue
 

@@ -68,6 +68,7 @@ def _process_bam_streaming_pipeline_fused(
         'no_footprints': 0,
         'worker_failures': 0,
         'written': 0,
+        'chimera': 0,
     }
 
     total_reads = 0
@@ -221,6 +222,9 @@ def _process_bam_streaming_pipeline_fused(
             if count > 0:
                 pct = 100 * count / (total_reads + skipped)
                 print(f"    {reason}: {count:,} ({pct:.1f}%)", file=_log)
+    if counters.get('chimera'):
+        print(f"  DAF strand-swap chimeras filtered: {counters['chimera']:,}",
+              file=_log)
 
     return total_reads, reads_with_fp
 
@@ -279,6 +283,7 @@ def _process_bam_streaming_pipeline(
         'no_footprints': 0,
         'worker_failures': 0,
         'written': 0,
+        'chimera': 0,
     }
 
     posterior_writer = None

@@ -270,20 +270,31 @@ def unify_nuc_calls_with_tf_calls(
     return kept
 
 
-def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size):
+def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
+                            nuc_min_size=85):
     """Produce non-overlapping nucleosomes + complementary MSPs that TILE
     ``[span_lo, span_hi)``.
 
     Splitting, the phase prior and TF->nuc promotion can leave overlapping
     nucleosomes and stale MSPs, but fibertools / FIRE require nucleosomes
     (ns/nl) and MSPs (as/al) to be sorted, non-overlapping, and tiling. This
-    clips any nucleosome overlap (zeroing the edge byte on the clipped side,
-    which is no longer meaningful) and derives MSPs as the gaps between the
-    final nucleosomes. Returns ``(kept_nucs, msp_intervals)``.
+    clips overlaps and derives MSPs as the gaps between the final nucleosomes.
+
+    Ordering/clipping rules:
+      - sort by (start, -end) so the LONGER call at a given start wins; this
+        keeps a promoted full-length nucleosome over a short same-start call
+        (which would otherwise be clipped, splitting the promoted one back into
+        sub-nucleosome pieces).
+      - clip the left of an overlapping call to the previous end (zeroing the
+        now-meaningless left edge byte), and
+      - drop any call that falls below ``nuc_min_size`` after clipping (its span
+        reverts to MSP), so no sub-nucleosome nuc+ calls leak out.
+    Returns ``(kept_nucs, msp_intervals)``.
     """
     floor = max(1, int(msp_min_size))
+    nfloor = max(1, int(nuc_min_size))
     ordered = sorted((n for n in nuc_calls if n.length > 0),
-                     key=lambda n: (n.start, n.start + n.length))
+                     key=lambda n: (n.start, -(n.start + n.length)))
     kept = []
     last_end = span_lo
     for n in ordered:
@@ -293,8 +304,8 @@ def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size):
         if s < last_end:          # overlaps the previous nucleosome
             s = last_end
             el = 0                # clipped left edge is no longer meaningful
-        if e <= s:
-            continue              # fully swallowed
+        if e - s < nfloor:
+            continue              # swallowed, or clipped below the nuc floor
         kept.append(NucCall(s, e - s, n.nq, el, n.er))
         last_end = e
 

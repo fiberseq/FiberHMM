@@ -328,6 +328,13 @@ def main():
             print("  WARNING: --recall-nucs on DddA uses the uplifted TF model for "
                   "splitting (aggressive) — verify results.", file=sys.stderr)
 
+    # Fast-fail sniff for --mode daf BEFORE any BAM scanning (e.g. --phase-nrl
+    # auto estimation): the DAF path needs R/Y in the stored sequence, MD tags,
+    # or --reference. If none are available every read is silently skipped, so
+    # error out in under a second with an actionable message.
+    if mode == 'daf' and args.input != '-':
+        _check_daf_inputs(args.input, args.reference)
+
     # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
     phase_nrl = _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
                                    recall_nucs)
@@ -348,13 +355,6 @@ def main():
     )
 
     also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
-
-    # Fast-fail sniff for --mode daf: the DAF path needs one of R/Y in the
-    # stored sequence, MD tags, or --reference. If none are available,
-    # every read will be silently skipped -- error out in under a second
-    # with an actionable message instead.
-    if mode == 'daf' and args.input != '-':
-        _check_daf_inputs(args.input, args.reference)
 
     if args.region_parallel:
         if args.input == '-' or args.output == '-':

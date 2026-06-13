@@ -43,24 +43,32 @@ def test_flip_intervals_to_seq_reverse_roundtrip():
     assert set(zip(back_s, back_l)) == set(zip(starts, lengths))
 
 
-def test_assemble_tiling_clips_overlaps_and_fills_msps():
-    # overlapping nucleosomes (e.g. a promoted nuc overlapping an existing one)
+def test_assemble_prefers_longer_at_same_start_and_drops_subfloor():
+    # Codex regression: a short same-start nuc must NOT clip the promoted
+    # full-length nuc into sub-nucleosome pieces. Longer wins; the short one is
+    # dropped (its span reverts to MSP), not emitted as a <nuc_min_size call.
     nucs = [
-        NucCall(start=10, length=100, nq=200, el=255, er=255),   # [10,110)
-        NucCall(start=90, length=100, nq=180, el=255, er=255),   # overlaps -> clipped to [110,190)
-        NucCall(start=250, length=80, nq=150, el=255, er=255),   # [250,330)
+        NucCall(start=0, length=30, nq=100, el=255, er=255),    # short
+        NucCall(start=0, length=100, nq=200, el=255, er=255),   # promoted full nuc
     ]
-    kept, msps = assemble_nuc_msp_tiling(nucs, span_lo=0, span_hi=400, msp_min_size=0)
-    iv = [(k.start, k.start + k.length) for k in kept]
-    # non-overlapping, sorted
-    assert iv == sorted(iv)
-    assert all(iv[i][1] <= iv[i + 1][0] for i in range(len(iv) - 1))
-    # clipped nuc lost its (now-meaningless) left edge byte
-    assert kept[1].el == 0
-    # MSPs are the exact complement within [0, 400)
-    msp_iv = [(s, s + l) for s, l in msps]
-    assert msp_iv == [(0, 10), (190, 250), (330, 400)]
-    # nucs + msps tile [0,400) with no gaps or overlaps
-    allspans = sorted(iv + msp_iv)
-    assert allspans[0][0] == 0 and allspans[-1][1] == 400
-    assert all(allspans[i][1] == allspans[i + 1][0] for i in range(len(allspans) - 1))
+    kept, msps = assemble_nuc_msp_tiling(
+        nucs, span_lo=0, span_hi=200, msp_min_size=0, nuc_min_size=85)
+    assert [(k.start, k.length) for k in kept] == [(0, 100)]
+    assert (100, 100) in [(s, l) for s, l in msps]
+
+
+def test_assemble_clips_partial_overlap_above_floor():
+    # two long nucs with a small overlap -> clip to adjacency; both survive.
+    nucs = [
+        NucCall(start=0, length=200, nq=200, el=255, er=255),    # [0,200)
+        NucCall(start=150, length=200, nq=180, el=255, er=255),  # [150,350) -> clip to [200,350)
+    ]
+    kept, msps = assemble_nuc_msp_tiling(
+        nucs, span_lo=0, span_hi=400, msp_min_size=0, nuc_min_size=85)
+    iv = [(k.start, k.length) for k in kept]
+    assert iv == [(0, 200), (200, 150)]
+    assert kept[1].el == 0  # clipped left edge zeroed
+    # tiling: nucs + msps cover [0,400) with no gaps/overlaps
+    spans = sorted([(s, s + l) for s, l in iv] + [(s, s + l) for s, l in msps])
+    assert spans[0][0] == 0 and spans[-1][1] == 400
+    assert all(spans[i][1] == spans[i + 1][0] for i in range(len(spans) - 1))

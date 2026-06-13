@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from fiberhmm.inference.streaming_workers import CHIMERA_RESULT
 from fiberhmm.inference.tagging import set_legacy_apply_tags, write_fused_recall_tags
 from fiberhmm.inference.worker_results import coerce_worker_chunk_result
 
@@ -100,7 +101,9 @@ def _drain_oldest_fused_chunk(
 
         next(payload_iter)
         result = next(result_iter)
-        if result is not None:
+        if result == CHIMERA_RESULT:
+            counters['chimera'] = counters.get('chimera', 0) + 1
+        elif result is not None:
             write_fused_recall_tags(
                 read_obj,
                 read_length=len(read_obj.query_sequence) if read_obj.query_sequence else 0,

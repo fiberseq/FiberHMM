@@ -285,7 +285,8 @@ def _build_fused_recall_result_with_nucs(
     # Clip to non-overlapping nucleosomes and derive complementary MSPs so
     # ns/nl + as/al tile cleanly (required by fibertools / FIRE).
     span_lo, span_hi = _analyzed_span(apply_result, read_length, kept)
-    kept, new_msps = assemble_nuc_msp_tiling(kept, span_lo, span_hi, msp_min_size)
+    kept, new_msps = assemble_nuc_msp_tiling(
+        kept, span_lo, span_hi, msp_min_size, nuc_min_size)
     msp_starts = [s for s, _ in new_msps]
     msp_len = [length for _, length in new_msps]
 
@@ -363,7 +364,8 @@ def _build_fused_recall_result_with_nucs_circular(
     # MSPs), then lay out for emission.
     kept = unify_circular_nuc_calls_with_tf_calls(
         proj_nucs, tf_calls, unify_threshold, read_length)
-    kept, proj_msps = assemble_nuc_msp_tiling(kept, 0, read_length, msp_min_size)
+    kept, proj_msps = assemble_nuc_msp_tiling(
+        kept, 0, read_length, msp_min_size, nuc_min_size)
     circular_ns = [(k.start, k.length) for k in kept]
     kept_starts, kept_lengths, _ = split_intervals_for_legacy(
         circular_ns, read_length, None)
