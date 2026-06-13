@@ -14,6 +14,7 @@ from fiberhmm.inference.circular import (
 )
 from fiberhmm.inference.engine import _process_single_read
 from fiberhmm.inference.nuc_recaller import (
+    assemble_circular_nuc_msp_tiling,
     assemble_nuc_msp_tiling,
     drop_short_nucs_overlapping_promoted,
     promote_large_tf_calls,
@@ -367,8 +368,8 @@ def _build_fused_recall_result_with_nucs_circular(
     # MSPs), then lay out for emission.
     kept = unify_circular_nuc_calls_with_tf_calls(
         proj_nucs, tf_calls, unify_threshold, read_length)
-    kept, proj_msps = assemble_nuc_msp_tiling(
-        kept, 0, read_length, msp_min_size, nuc_min_size)
+    kept, proj_msps = assemble_circular_nuc_msp_tiling(
+        kept, read_length, msp_min_size, nuc_min_size)
     circular_ns = [(k.start, k.length) for k in kept]
     kept_starts, kept_lengths, _ = split_intervals_for_legacy(
         circular_ns, read_length, None)

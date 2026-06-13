@@ -320,6 +320,48 @@ def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
     return kept, msps
 
 
+def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
+                                     nuc_min_size=85):
+    """Circular-aware ``assemble_nuc_msp_tiling``.
+
+    On a circular molecule a nucleosome can wrap the origin
+    (``start + length > read_length``). Running the linear tiler at a fixed
+    origin would derive MSP gaps that overlap a wrapped nucleosome's tail (e.g.
+    a nuc covering ``[95,100)+[0,15)`` plus a spurious MSP ``[0,95)`` overlapping
+    ``[0,15)``). Instead rotate the circle to an origin that no nucleosome
+    covers, tile linearly there, then rotate the kept nucs and MSPs back -- they
+    may legitimately wrap the molecular origin, which ``split_intervals_for_legacy``
+    later renders as two linear pieces. Returns ``(kept_nucs, msp_intervals)`` in
+    molecular coordinates.
+    """
+    rl = int(read_length)
+    calls = [n for n in nuc_calls if n.length > 0]
+    if rl <= 0 or not calls:
+        return list(calls), []
+
+    # Mark covered bases to find a cut point no nucleosome straddles; rotating to
+    # it linearizes every call (none wraps the new origin).
+    covered = np.zeros(rl, dtype=bool)
+    for n in calls:
+        s = n.start % rl
+        span = min(n.length, rl)
+        idx = (s + np.arange(span)) % rl
+        covered[idx] = True
+    uncovered = np.flatnonzero(~covered)
+    cut = int(uncovered[0]) if uncovered.size else int(calls[0].start % rl)
+
+    rotated = [NucCall((n.start - cut) % rl, min(n.length, rl), n.nq, n.el, n.er)
+               for n in calls]
+    kept_rot, msp_rot = assemble_nuc_msp_tiling(
+        rotated, 0, rl, msp_min_size, nuc_min_size)
+
+    kept = sorted(
+        (NucCall((k.start + cut) % rl, k.length, k.nq, k.el, k.er) for k in kept_rot),
+        key=lambda n: n.start)
+    msps = sorted(((s + cut) % rl, length) for s, length in msp_rot)
+    return kept, msps
+
+
 def drop_short_nucs_overlapping_promoted(nuc_calls, promoted, unify_threshold):
     """Drop short (< ``unify_threshold``) nucleosomes that overlap a promoted one.
 

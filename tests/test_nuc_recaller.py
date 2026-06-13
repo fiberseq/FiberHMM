@@ -6,6 +6,7 @@ import numpy as np
 from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
+    assemble_circular_nuc_msp_tiling,
     assemble_nuc_msp_tiling,
     drop_short_nucs_overlapping_promoted,
     promote_large_tf_calls,
@@ -218,6 +219,24 @@ def test_drop_short_nuc_overlapping_promoted():
     assert drop_short_nucs_overlapping_promoted(long_nuc, promoted, 90) == long_nuc
     far = [NucCall(300, 85, 100, 255, 255)]
     assert drop_short_nucs_overlapping_promoted(far, promoted, 90) == far
+
+
+def test_circular_tiling_no_overlap_for_wrapped_nuc():
+    # Codex repro (High): a nucleosome wrapping the origin must not get an MSP gap
+    # derived linearly over its wrapped tail. A nuc [180,200)+[0,80) on a 200 bp
+    # circle should leave a single MSP over the uncovered arc [80,180), with nucs
+    # and MSPs tiling the circle exactly (no overlap, no gap).
+    rl = 200
+    nucs = [NucCall(180, 100, 200, 255, 255)]   # wraps: [180,200) + [0,80)
+    kept, msps = assemble_circular_nuc_msp_tiling(
+        nucs, rl, msp_min_size=1, nuc_min_size=85)
+    assert [(k.start, k.length) for k in kept] == [(180, 100)]
+    assert msps == [(80, 100)]
+    cov = [0] * rl
+    for s, length in [(k.start, k.length) for k in kept] + msps:
+        for off in range(length):
+            cov[(s + off) % rl] += 1
+    assert all(c == 1 for c in cov)   # exact circular tiling: no overlap, no gap
 
 
 def test_nuc_qqq_aq_roundtrip():
