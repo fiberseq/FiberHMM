@@ -348,10 +348,13 @@ def main():
         'PN': 'fiberhmm-call',
         'VN': getattr(_fh, '__version__', 'unknown'),
         'CL': ' '.join(sys.argv),
-        'DS': (f"FiberHMM fused apply+recall; mode={mode}; "
-               f"recall_nucs={recall_nucs} phase_nrl={phase_nrl} "
-               f"chimera_filter={chimera_state}; "
-               f"ns/nl/as/al/MA in molecular (original-fiber) coordinates"),
+        # The `coord=molecular` token is a stable, version-independent contract
+        # for downstream consumers (e.g. FiberBrowser) to detect that ns/nl/as/al
+        # and MA are in molecular (original-fiber) frame -- keep the exact token.
+        'DS': (f"FiberHMM fused apply+recall; coord=molecular "
+               f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
+               f"mode={mode} recall_nucs={recall_nucs} phase_nrl={phase_nrl} "
+               f"chimera_filter={chimera_state}"),
     }
 
     mode_label = 'region-parallel' if args.region_parallel else 'streaming'

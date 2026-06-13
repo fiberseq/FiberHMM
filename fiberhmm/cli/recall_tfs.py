@@ -46,6 +46,7 @@ from collections import deque
 import pysam
 
 from fiberhmm.core.model_io import load_model_with_metadata
+from fiberhmm.io.bam_header import append_coord_marker
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
     HAS_NUMBA,
@@ -505,7 +506,7 @@ def main():
     bam_out = None
     try:
         bam_out = pysam.AlignmentFile(args.out_bam, 'wb',
-                                       template=bam_in,
+                                       header=append_coord_marker(bam_in.header),
                                        threads=args.io_threads)
         header_text = str(bam_in.header)
 

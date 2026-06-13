@@ -11,6 +11,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.inference.bam_output import _sort_and_index_bam
+from fiberhmm.io.bam_header import append_coord_marker
 from fiberhmm.inference.engine import (
     _extract_fiber_read_from_pysam,
     _process_single_read,
@@ -182,7 +183,9 @@ def _process_bam_legacy_pipeline(
 
     # Open input and output BAMs
     with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
-        with pysam.AlignmentFile(output_bam, "wb", header=inbam.header, threads=io_threads) as outbam:
+        with pysam.AlignmentFile(output_bam, "wb",
+                                 header=append_coord_marker(inbam.header),
+                                 threads=io_threads) as outbam:
 
             if output_posteriors:
                 if HAS_POSTERIOR_WRITER:

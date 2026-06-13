@@ -13,7 +13,7 @@ import pysam
 
 from fiberhmm.inference.bam_output import _sort_and_index_bam
 from fiberhmm.inference.engine import make_apply_payload
-from fiberhmm.io.bam_header import maybe_append_pg
+from fiberhmm.io.bam_header import append_coord_marker, maybe_append_pg
 from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.streaming_drain import (
@@ -307,7 +307,9 @@ def _process_bam_streaming_pipeline(
         _output_target = os.fdopen(1, 'wb', closefd=False)
 
     with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
-        with pysam.AlignmentFile(_output_target, "wb", header=inbam.header, threads=io_threads) as outbam:
+        with pysam.AlignmentFile(_output_target, "wb",
+                                 header=append_coord_marker(inbam.header),
+                                 threads=io_threads) as outbam:
 
             if output_posteriors:
                 if HAS_POSTERIOR_WRITER:
