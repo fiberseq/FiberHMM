@@ -342,11 +342,17 @@ def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
     """
     rl = int(read_length)
     floor = max(1, int(msp_min_size))
+    nfloor = max(1, int(nuc_min_size))
     calls = [n for n in nuc_calls if n.length > 0]
     if rl <= 0:
         return list(calls), []
     if not calls:
         # no nucleosomes -> the entire molecule tiles as one accessible MSP
+        return [], ([(0, rl)] if rl >= floor else [])
+    whole = next((n for n in calls if int(n.length) >= rl), None)
+    if whole is not None:
+        if rl >= nfloor:
+            return [NucCall(0, rl, whole.nq, whole.el, whole.er)], []
         return [], ([(0, rl)] if rl >= floor else [])
 
     # Prefer an uncovered cut point (no call straddles it); fall back to 0 when

@@ -261,6 +261,18 @@ def test_circular_tiling_fully_covered_overlap_tiles_exactly():
     assert all(c == 1 for c in cov)   # exact tiling: no base covered twice, none missed
 
 
+def test_circular_tiling_whole_molecule_nuc_normalizes_start():
+    # A projected center-copy run can become a whole-molecule nuc with nonzero
+    # start. It must stay a full nuc, not split at the origin and demote the
+    # short piece to MSP by the nuc_min_size floor.
+    kept, msps = assemble_circular_nuc_msp_tiling(
+        [NucCall(50, 200, 201, 123, 45)], 200, msp_min_size=0, nuc_min_size=85)
+    assert [(k.start, k.length, k.nq, k.el, k.er) for k in kept] == [
+        (0, 200, 201, 123, 45)
+    ]
+    assert msps == []
+
+
 def test_nuc_qqq_aq_roundtrip():
     # nuc+QQQ (2 nucs) then tf+QQQ (1 tf): parse back to per-annotation triples
     aq = format_aq_array(
