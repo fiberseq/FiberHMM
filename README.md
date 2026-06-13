@@ -6,23 +6,12 @@ FiberHMM identifies protected regions (footprints) and accessible regions (methy
 
 ---
 
-> ## ⚠️ Upgrade to v2.9.1 or later
->
-> **Versions 2.6 – 2.8.2** had a parser bug that placed m6A/m5C modifications at the wrong query positions on reverse-aligned reads (positions shifted by ~24 bp median). This shifted footprint/MSP/TF calls on reverse reads relative to where they should be. Forward reads (~50% of data) unaffected. **DAF with IUPAC (`R`/`Y`) encoding unaffected** at all versions — it bypasses the buggy code path. **v2.9.0** fixed the parser, validated byte-for-byte against `pysam.modified_bases` on both strands across 500+ real reads.
->
-> **v2.9.1 adds two fixes on top of 2.9.0:**
-> 1. **`ft validate` compatibility** — `fiberhmm-apply`/`fiberhmm-call` now drop stale `nq`/`aq` quality arrays when refreshing `ns/nl`/`as/al` on BAMs that already carry ft/modkit footprint tags. Without this, fibertools-rs asserts on `len(nq) != len(ns)`.
-> 2. **Refreshed Hia5 Nanopore emissions** — the bundled `hia5_nanopore.json` model was refit from naked/untreated controls with the fixed parser. Accessible-state per-hexamer P(meth) dropped from ~0.61 → ~0.32 (the old emissions were systematically over-calling accessibility on Nanopore Hia5). Transitions and startprob preserved.
->
-> **Action:** `pip install --upgrade fiberhmm`. Re-run samples if you need position-correct reverse-read calls or if your input BAM was pre-tagged by ft/modkit. See the [v2.9.1 release notes](https://github.com/fiberseq/FiberHMM/releases/tag/v2.9.1) for details.
-
----
-
 ## Key Features
 
-- **`fiberhmm-call`** — **recommended**, runs nucleosome/MSP HMM + TF recall fused in one process with region-parallel scaling. Coordinate-sorted input → coordinate-sorted + indexed output, no sort pass needed.
+- **`fiberhmm-call`** — **recommended**, runs nucleosome/MSP HMM + nucleosome recaller + TF recall fused in one process with region-parallel scaling. Coordinate-sorted input → coordinate-sorted + indexed output, no sort pass needed.
+- **Nucleosome recaller (on by default)** — splits over-merged nucleosomes on accessible m6A/deamination evidence, refines conservative edges, and runs an evidence-gated periodicity prior. Emits `nuc+QQQ` (quality + left/right edge sharpness). See [Nucleosome recaller](#nucleosome-recaller).
 - **No genome context files** — hexamer context computed directly from read sequences
-- **Fibertools-compatible output** — tagged BAM with `ns`/`nl`/`as`/`al` legacy tags AND `MA`/`AQ` [Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec) tags with `tf+QQQ` TF scoring
+- **Tagged BAM output** — `ns`/`nl`/`as`/`al` legacy tags AND `MA`/`AQ` [Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec) tags with `nuc+QQQ` / `tf+QQQ` scoring
 - **Native HMM implementation** — no hmmlearn dependency; Numba JIT enabled by default for ~10× speedup
 - **Multi-platform** — PacBio fiber-seq, Nanopore fiber-seq, DAF-seq (DddB, DddA)
 - **Region-parallel** — near-linear scaling with `--cores`, up to chromosome count
@@ -179,6 +168,51 @@ Output columns: `chr start end consensus_len MAD read_count spanning_reads fwd_r
 
 Single-molecule occupancy = `read_count / spanning_reads`. For DAF-seq,
 `fwd_reads` / `rev_reads` expose strand bias at C-poor motifs.
+
+## Nucleosome recaller
+
+The 2-state HMM is smoothed by a sticky transition matrix, which leaves three
+artifacts: fuzzy nucleosome boundaries, **over-merged** adjacent nucleosomes,
+and nearby TF footprints absorbed into nucleosomes. The nucleosome recaller is a
+per-read pass that fixes these by reusing the TF recaller's LLR machinery with
+the hypothesis inverted — an accessible run inside a footprint is a cut.
+
+**`fiberhmm-call` runs it by default** (except DddA — see below). It produces
+`nuc+QQQ` annotations: a quality byte plus left/right **edge-sharpness** bytes
+(the conservative/loose edge convention, same as `tf+QQQ`). The stages, in order:
+
+1. **Split** — over-merged footprints are split wherever accessible (m6A /
+   deamination) evidence supports a linker (`--split-min-llr`, `--split-min-opps`).
+2. **Edge refinement** — each nucleosome gets a conservative edge (last
+   protected base) plus an edge-sharpness score; the Viterbi overshoot is trimmed.
+3. **Periodicity prior (Pass 2)** — long footprints are split at phase-predicted
+   linkers using a *lowered* threshold, **gated on ≥1 local deamination event**
+   so a true signal-desert is never split. The nucleosome repeat length is
+   auto-estimated per sample (`--phase-nrl auto`, clamped to ~150–215 bp).
+4. **MSP re-derivation + TF recall** run over the cleaner accessible space.
+   Nucleosome-sized protected runs (≥ `--unify-threshold`, default 90 bp) the TF
+   scan finds are promoted back to `nuc+`, keeping `tf+` strictly sub-nucleosomal.
+
+```bash
+# Default: full recaller (split + edges + auto phase prior)
+fiberhmm-call -i in.bam -o out.bam --enzyme dddb --region-parallel -c 8
+
+# Baseline HMM nucleosomes (nuc+Q), recaller off
+fiberhmm-call -i in.bam -o out.bam --enzyme dddb --no-recall-nucs --region-parallel -c 8
+
+# Fix the repeat length instead of auto-estimating; disable the phase prior
+fiberhmm-call -i in.bam -o out.bam --enzyme dddb --phase-nrl 185 ...
+fiberhmm-call -i in.bam -o out.bam --enzyme dddb --phase-nrl off ...
+```
+
+**DAF strand-swap chimera filter** (DAF only, on by default): reads deaminated
+C→T in one segment and G→A in another (template-switch / merged molecules) are
+dropped and counted in the run's skip summary. `--keep-chimeras` to disable;
+`--chimera-min-seg` / `--chimera-purity` to tune.
+
+**DddA:** the recaller is **off by default** for DddA — its bundled recall model
+is the uplifted TF model, which is too aggressive for nucleosome splitting. Use
+`--recall-nucs` to force it on at your own risk.
 
 ## Pre-trained Models
 

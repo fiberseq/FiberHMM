@@ -102,22 +102,24 @@ def parse_args():
                    help='Skip MA/AQ; write TF calls into legacy ns/nl track.')
 
     # --- Nucleosome recall params ---
-    p.add_argument('--recall-nucs', action='store_true',
-                   help='Split over-merged nucleosomes on accessible evidence and '
-                        'refine edges (emits nuc+QQQ). Runs before MSP/TF recall.')
+    p.add_argument('--recall-nucs', action=argparse.BooleanOptionalAction, default=None,
+                   help='Split over-merged nucleosomes + refine conservative edges '
+                        '(emits nuc+QQQ), promote nucleosome-sized TF leaks to nuc+, '
+                        'and run the Pass-2 phase prior. ON by default (except DddA). '
+                        'Use --no-recall-nucs for baseline HMM nucleosomes (nuc+Q).')
     p.add_argument('--split-min-llr', type=float, default=4.0,
                    help='Min accessible-run LLR to split a nucleosome (default 4.0).')
     p.add_argument('--split-min-opps', type=int, default=3,
                    help='Min informative positions in a nucleosome-splitting cut '
                         '(default 3).')
-    p.add_argument('--phase-nrl', default='off',
+    p.add_argument('--phase-nrl', default='auto',
                    help='Pass-2 periodicity prior (with --recall-nucs): '
-                        '"off" (default), "auto" (estimate the nucleosome repeat '
-                        'length from this sample after Pass 1, clamped to ~150-215 '
-                        'bp anchored at 185), or a fixed bp value (e.g. 185). Long '
-                        'footprints are split at phase-predicted linkers using a '
-                        'lowered threshold gated on >=1 local deamination event '
-                        '(never splits a signal-desert).')
+                        '"auto" (default; estimate the nucleosome repeat length from '
+                        'this sample after Pass 1, clamped to ~150-215 bp anchored at '
+                        '185), "off", or a fixed bp value (e.g. 185). Long footprints '
+                        'are split at phase-predicted linkers using a lowered threshold '
+                        'gated on >=1 local deamination event (never splits a '
+                        'signal-desert).')
 
     # --- DAF chimera filter (mode=daf only) ---
     p.add_argument('--keep-chimeras', action='store_true',
@@ -178,14 +180,14 @@ def _resolve_recall_model(args):
     return None  # reuse apply model
 
 
-def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k) -> int:
+def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
+                       recall_nucs) -> int:
     """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off)."""
     raw = str(args.phase_nrl).strip().lower()
     if raw in ('off', '', '0', 'none'):
         return 0
-    if not args.recall_nucs:
-        print("  NOTE: --phase-nrl is ignored without --recall-nucs.",
-              file=sys.stderr)
+    if not recall_nucs:
+        # phase rides on the nuc recaller; silently off when recall is off.
         return 0
     if raw != 'auto':
         try:
@@ -312,8 +314,23 @@ def main():
     uplift = args.emission_uplift if args.emission_uplift is not None \
              else preset.get('emission_uplift', 1.0)
 
+    # Nucleosome recaller: ON by default, except DddA (the bundled DddA recall
+    # model is the uplifted TF model, too aggressive for nuc splitting). Explicit
+    # --recall-nucs / --no-recall-nucs always wins.
+    if args.recall_nucs is None:
+        recall_nucs = (args.enzyme != 'ddda')
+        if args.enzyme == 'ddda':
+            print("  NOTE: nucleosome recaller is OFF by default for DddA "
+                  "(use --recall-nucs to force it on).", file=sys.stderr)
+    else:
+        recall_nucs = bool(args.recall_nucs)
+        if recall_nucs and args.enzyme == 'ddda':
+            print("  WARNING: --recall-nucs on DddA uses the uplifted TF model for "
+                  "splitting (aggressive) — verify results.", file=sys.stderr)
+
     # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
-    phase_nrl = _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k)
+    phase_nrl = _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
+                                   recall_nucs)
 
     mode_label = 'region-parallel' if args.region_parallel else 'streaming'
     print(
@@ -375,7 +392,7 @@ def main():
             io_threads=args.io_threads,
             primary_only=args.primary,
             ref_fasta_path=args.reference,
-            recall_nucs=args.recall_nucs,
+            recall_nucs=recall_nucs,
             split_min_llr=args.split_min_llr,
             split_min_opps=args.split_min_opps,
             filter_chimeras=not args.keep_chimeras,
@@ -413,7 +430,7 @@ def main():
             process_unmapped=args.process_unmapped,
             primary_only=args.primary,
             ref_fasta_path=args.reference,
-            recall_nucs=args.recall_nucs,
+            recall_nucs=recall_nucs,
             split_min_llr=args.split_min_llr,
             split_min_opps=args.split_min_opps,
             filter_chimeras=not args.keep_chimeras,
