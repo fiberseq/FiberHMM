@@ -53,7 +53,13 @@ import pysam
 
 from fiberhmm.core.bam_reader import cigar_to_query_ref
 from fiberhmm.inference.parallel import _get_genome_regions
-from fiberhmm.io.ma_tags import parse_an_tag, parse_aq_array, parse_ma_tag
+from fiberhmm.io.ma_tags import (
+    flip_interval_frame,
+    flip_intervals_to_seq,
+    parse_an_tag,
+    parse_aq_array,
+    parse_ma_tag,
+)
 
 
 def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
@@ -150,17 +156,22 @@ def _parse_ma_annotations(read, target_name: str):
 
     annotations = []
     ann_idx = 0
+    read_length = int(parsed['read_length'])
+    is_reverse = bool(getattr(read, 'is_reverse', False))
     for name, _strand, _qspec, intervals in parsed['raw_types']:
         for s, length in intervals:
             quals = per_annotation[ann_idx] if ann_idx < len(per_annotation) else []
             ann_name = an_names[ann_idx] if ann_idx < len(an_names) else ''
             if name == target_name:
+                # MA is molecular frame; flip to SEQ (query) for ref mapping.
+                a_start, a_len = (flip_interval_frame(int(s), int(length), read_length)
+                                  if is_reverse else (int(s), int(length)))
                 annotations.append({
-                    'start': int(s),
-                    'length': int(length),
+                    'start': a_start,
+                    'length': a_len,
                     'quals': [int(q) for q in quals],
                     'name': ann_name,
-                    'read_length': int(parsed['read_length']),
+                    'read_length': read_length,
                 })
             ann_idx += 1
     return annotations
@@ -478,10 +489,12 @@ def _extract_footprints(read, bed_out, with_scores: bool,
         return ma_count
 
     try:
-        ns = read.get_tag('ns')  # Footprint starts (query coords)
-        nl = read.get_tag('nl')  # Footprint lengths
+        ns_raw = read.get_tag('ns')  # molecular-frame starts
+        nl_raw = read.get_tag('nl')
     except KeyError:
         return 0
+    # Tags are molecular frame; flip back to SEQ (query) coords for ref mapping.
+    ns, nl = flip_intervals_to_seq(ns_raw, nl_raw, read)
 
     if len(ns) == 0:
         return 0
@@ -664,10 +677,11 @@ def _extract_msps(read, bed_out, with_scores: bool,
         return ma_count
 
     try:
-        as_starts = read.get_tag('as')  # MSP starts (query coords)
-        al_lengths = read.get_tag('al')  # MSP lengths
+        as_raw = read.get_tag('as')  # molecular-frame MSP starts
+        al_raw = read.get_tag('al')
     except KeyError:
         return 0
+    as_starts, al_lengths = flip_intervals_to_seq(as_raw, al_raw, read)
 
     if len(as_starts) == 0:
         return 0

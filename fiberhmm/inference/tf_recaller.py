@@ -63,6 +63,8 @@ from fiberhmm.core.bam_reader import (
 )
 from fiberhmm.io.ma_tags import (
     ambiguity_to_edge,
+    flip_interval_frame,
+    flip_intervals_to_seq,
     format_an_tag,
     format_aq_array,
     format_ma_tag,
@@ -430,6 +432,11 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
     if len(ns_raw) == 0 and len(as_raw) == 0:
         return [], [], []
 
+    # Tags are stored molecular frame; recall works in SEQ (query) frame, and
+    # write_ma_tags flips back to molecular on output. Flip on read here.
+    ns_raw, nl_raw = flip_intervals_to_seq(ns_raw, nl_raw, read)
+    as_raw, al_raw = flip_intervals_to_seq(as_raw, al_raw, read)
+
     extracted = extract_modifications(read, mode, context_size)
     if extracted is None:
         # Pass through v2 calls unchanged
@@ -550,6 +557,43 @@ def write_ma_tags(read, read_length: int,
     tq_vals = [llr_to_tq(c.llr) for c in tf_calls]
     el_vals = [ambiguity_to_edge(c.left_ambiguity) for c in tf_calls]
     er_vals = [ambiguity_to_edge(c.right_ambiguity) for c in tf_calls]
+
+    # Coordinate frame + ordering for fibertools / Molecular-annotation spec:
+    #  - FiberHMM works in SEQ (query_sequence, forward-reference) coords, but
+    #    ns/nl/as/al and MA must be MOLECULAR (original-fiber) frame. For a
+    #    reverse-mapped read the frames are reverse complements, so flip each
+    #    interval [s,s+l) -> [L-(s+l), L-s) and swap its left/right edge bytes.
+    #  - fibertools requires per-feature positions sorted ascending, so ALWAYS
+    #    re-sort by (molecular) start -- the recaller can append promoted nucs
+    #    out of order even on forward reads.
+    if read_length:
+        rev = bool(getattr(read, 'is_reverse', False))
+
+        def _mol(s, length):
+            return flip_interval_frame(s, length, read_length) if rev else (int(s), int(length))
+
+        nuc_recs = sorted(
+            (_mol(s, length), nq_values[i],
+             (nuc_er_values[i] if rev else nuc_el_values[i]) if nuc_qqq else None,
+             (nuc_el_values[i] if rev else nuc_er_values[i]) if nuc_qqq else None)
+            for i, (s, length) in enumerate(kept_nucs)
+        )
+        kept_nucs = [r[0] for r in nuc_recs]
+        nq_values = [r[1] for r in nuc_recs]
+        if nuc_qqq:
+            nuc_el_values = [r[2] for r in nuc_recs]
+            nuc_er_values = [r[3] for r in nuc_recs]
+        msps = sorted(_mol(s, length) for s, length in msps)
+        tf_recs = sorted(
+            (_mol(s, length), tq_vals[i],
+             er_vals[i] if rev else el_vals[i],
+             el_vals[i] if rev else er_vals[i])
+            for i, (s, length) in enumerate(tf_intervals)
+        )
+        tf_intervals = [r[0] for r in tf_recs]
+        tq_vals = [r[1] for r in tf_recs]
+        el_vals = [r[2] for r in tf_recs]
+        er_vals = [r[3] for r in tf_recs]
 
     def split_named_intervals(intervals, prefix, qual_rows=None):
         split_intervals = []

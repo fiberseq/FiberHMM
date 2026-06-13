@@ -270,6 +270,45 @@ def unify_nuc_calls_with_tf_calls(
     return kept
 
 
+def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size):
+    """Produce non-overlapping nucleosomes + complementary MSPs that TILE
+    ``[span_lo, span_hi)``.
+
+    Splitting, the phase prior and TF->nuc promotion can leave overlapping
+    nucleosomes and stale MSPs, but fibertools / FIRE require nucleosomes
+    (ns/nl) and MSPs (as/al) to be sorted, non-overlapping, and tiling. This
+    clips any nucleosome overlap (zeroing the edge byte on the clipped side,
+    which is no longer meaningful) and derives MSPs as the gaps between the
+    final nucleosomes. Returns ``(kept_nucs, msp_intervals)``.
+    """
+    floor = max(1, int(msp_min_size))
+    ordered = sorted((n for n in nuc_calls if n.length > 0),
+                     key=lambda n: (n.start, n.start + n.length))
+    kept = []
+    last_end = span_lo
+    for n in ordered:
+        s = n.start
+        e = n.start + n.length
+        el = n.el
+        if s < last_end:          # overlaps the previous nucleosome
+            s = last_end
+            el = 0                # clipped left edge is no longer meaningful
+        if e <= s:
+            continue              # fully swallowed
+        kept.append(NucCall(s, e - s, n.nq, el, n.er))
+        last_end = e
+
+    msps = []
+    cur = span_lo
+    for k in kept:
+        if k.start - cur >= floor:
+            msps.append((cur, k.start - cur))
+        cur = max(cur, k.start + k.length)
+    if span_hi - cur >= floor:
+        msps.append((cur, span_hi - cur))
+    return kept, msps
+
+
 def promote_large_tf_calls(tf_calls, obs, llr_hit, llr_miss, threshold,
                            nuc_min_size, edge_min_llr=2.0, edge_min_opps=2):
     """Promote nucleosome-sized TF calls (length >= ``threshold``) to NucCalls.

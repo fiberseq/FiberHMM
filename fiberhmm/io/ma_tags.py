@@ -72,6 +72,59 @@ def ambiguity_to_edge(ambiguity_bp: int) -> int:
     return int(round(255 * (1 - ambiguity_bp / EDGE_AMBIGUITY_SAT)))
 
 
+def flip_interval_frame(start: int, length: int, read_length: int) -> Tuple[int, int]:
+    """Convert a (start, length) interval between the SEQ (forward-reference) and
+    molecular (original-fiber) coordinate frames of a reverse-mapped read.
+
+    pysam ``query_sequence`` / FiberHMM internals work in SEQ frame (the BAM SEQ
+    field, forward-reference). fibertools and the Molecular-annotation spec store
+    ``ns/nl/as/al`` and ``MA`` in molecular frame (original read, 5'->3' as
+    sequenced). For a reverse-mapped read those frames are reverse complements,
+    so an interval ``[s, s+l)`` in one frame is ``[L-(s+l), L-s)`` in the other.
+
+    This mapping is its own inverse (SEQ<->molecular), so the same call converts
+    either direction. Forward reads need no conversion (frames coincide).
+    """
+    return (int(read_length) - (int(start) + int(length)), int(length))
+
+
+def _read_length_of(read) -> int:
+    """Best-effort read (query) length across pysam reads and lightweight stubs."""
+    n = getattr(read, 'query_length', None)
+    if n:
+        return int(n)
+    seq = getattr(read, 'query_sequence', None)
+    if seq:
+        return len(seq)
+    infer = getattr(read, 'infer_read_length', None)
+    if callable(infer):
+        try:
+            v = infer()
+            if v:
+                return int(v)
+        except Exception:
+            pass
+    return 0
+
+
+def flip_intervals_to_seq(starts, lengths, read) -> Tuple[List[int], List[int]]:
+    """Flip molecular-frame ``ns/nl`` (or ``as/al``) read off a FiberHMM-tagged
+    BAM back into SEQ (query_sequence) frame for internal processing / reference
+    mapping. Coordinates only -- order is preserved, so any aligned per-interval
+    quality array (``nq``/``aq``) read in the same order stays aligned. No-op for
+    forward reads (the frames coincide)."""
+    s = [int(x) for x in starts]
+    length_list = [int(x) for x in lengths]
+    if not s or not getattr(read, 'is_reverse', False):
+        return s, length_list
+    read_length = _read_length_of(read)
+    if not read_length:
+        return s, length_list
+    flipped = [flip_interval_frame(a, b, read_length)
+               for a, b in zip(s, length_list)]
+    return [f[0] for f in flipped], [f[1] for f in flipped]
+
+
 def split_circular_interval(start: int, length: int,
                             read_length: int) -> List[Tuple[int, int]]:
     """Split a molecular interval into MA-valid linear pieces.

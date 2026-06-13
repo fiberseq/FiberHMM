@@ -14,12 +14,28 @@ from fiberhmm.inference.circular import (
 )
 from fiberhmm.inference.engine import _process_single_read
 from fiberhmm.inference.nuc_recaller import (
+    assemble_nuc_msp_tiling,
     promote_large_tf_calls,
     recall_nucs_in_read,
     rederive_msps,
     unify_circular_nuc_calls_with_tf_calls,
     unify_nuc_calls_with_tf_calls,
 )
+
+
+def _analyzed_span(apply_result, read_length, kept):
+    """Extent (lo, hi) the read was annotated over -- the union of the original
+    HMM footprints/MSPs and the final nucleosomes -- used to tile MSPs."""
+    starts, ends = [], []
+    for ks, kl in (("ns", "nl"), ("as", "al")):
+        for s, length in zip(apply_result.get(ks, ()), apply_result.get(kl, ())):
+            starts.append(int(s))
+            ends.append(int(s) + int(length))
+    for k in kept:
+        starts.append(int(k.start))
+        ends.append(int(k.start) + int(k.length))
+    return (min(starts) if starts else 0,
+            max(ends) if ends else int(read_length))
 from fiberhmm.inference.tagging import (
     split_intervals,
     unify_circular_nucs_with_tf_calls,
@@ -265,11 +281,17 @@ def _build_fused_recall_result_with_nucs(
     # 4) unify: drop short refined nucs overlapped by a TF call (carry nq/el/er)
     kept = unify_nuc_calls_with_tf_calls(nuc_calls, tf_calls, unify_threshold)
 
-    kept_starts = np.asarray([k.start for k in kept], dtype=np.int32)
-    kept_lengths = np.asarray([k.length for k in kept], dtype=np.int32)
+    # 5) re-tile: split/phase/promotion can leave overlapping nucs + stale MSPs.
+    # Clip to non-overlapping nucleosomes and derive complementary MSPs so
+    # ns/nl + as/al tile cleanly (required by fibertools / FIRE).
+    span_lo, span_hi = _analyzed_span(apply_result, read_length, kept)
+    kept, new_msps = assemble_nuc_msp_tiling(kept, span_lo, span_hi, msp_min_size)
+    msp_starts = [s for s, _ in new_msps]
+    msp_len = [length for _, length in new_msps]
+
     return {
-        "ns": kept_starts,
-        "nl": kept_lengths,
+        "ns": np.asarray([k.start for k in kept], dtype=np.int32),
+        "nl": np.asarray([k.length for k in kept], dtype=np.int32),
         "as": np.asarray(msp_starts, dtype=np.int32),
         "al": np.asarray(msp_len, dtype=np.int32),
         "ns_scores": None,
@@ -337,9 +359,11 @@ def _build_fused_recall_result_with_nucs_circular(
         read_length,
     )
 
-    # 5) unify (circular-aware) and lay out for emission
+    # 5) unify (circular-aware), re-tile (non-overlapping nucs + complementary
+    # MSPs), then lay out for emission.
     kept = unify_circular_nuc_calls_with_tf_calls(
         proj_nucs, tf_calls, unify_threshold, read_length)
+    kept, proj_msps = assemble_nuc_msp_tiling(kept, 0, read_length, msp_min_size)
     circular_ns = [(k.start, k.length) for k in kept]
     kept_starts, kept_lengths, _ = split_intervals_for_legacy(
         circular_ns, read_length, None)

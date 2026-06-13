@@ -4,6 +4,8 @@
 import numpy as np
 import pysam
 
+from fiberhmm.io.ma_tags import flip_intervals_to_seq
+
 
 class FootprintStats:
     """Collects footprint statistics from sampled reads."""
@@ -391,18 +393,22 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
             if sampled >= n_samples:
                 break
 
-            # Get footprint tags
+            # Get footprint tags (molecular frame -> flip to SEQ/query coords)
             try:
-                ns = np.array(read.get_tag('ns'))
-                nl = np.array(read.get_tag('nl'))
+                _ns, _nl = flip_intervals_to_seq(
+                    read.get_tag('ns'), read.get_tag('nl'), read)
+                ns = np.array(_ns)
+                nl = np.array(_nl)
             except KeyError:
                 ns = np.array([])
                 nl = np.array([])
 
             # Get MSP tags
             try:
-                as_starts = np.array(read.get_tag('as'))
-                al_lengths = np.array(read.get_tag('al'))
+                _as, _al = flip_intervals_to_seq(
+                    read.get_tag('as'), read.get_tag('al'), read)
+                as_starts = np.array(_as)
+                al_lengths = np.array(_al)
             except KeyError:
                 as_starts = None
                 al_lengths = None

@@ -10,6 +10,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.bam_reader import get_bam_chrom_sizes
+from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 
 def _run_samtools_index(output_bam: str, threads: int, check: bool = False) -> subprocess.CompletedProcess:
@@ -498,10 +499,10 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
             if read.is_unmapped or read.is_secondary or read.is_supplementary:
                 continue
 
-            # Get footprint tags
+            # Get footprint tags (molecular frame -> flip to SEQ/query coords)
             try:
-                ns = read.get_tag('ns')  # starts (query coords)
-                nl = read.get_tag('nl')  # lengths
+                ns, nl = flip_intervals_to_seq(
+                    read.get_tag('ns'), read.get_tag('nl'), read)
             except KeyError:
                 continue  # No footprint tags
 

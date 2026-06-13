@@ -9,8 +9,32 @@ import numpy as np
 
 from fiberhmm.inference.circular import circular_intervals_overlap
 from fiberhmm.inference.tf_recaller import TFCall, write_ma_tags
+from fiberhmm.io.ma_tags import _read_length_of, flip_interval_frame
 
 Interval = Tuple[int, int]
+
+
+def _to_molecular_legacy(starts, lengths, scores, read, with_scores):
+    """Convert parallel (start, length[, score]) legacy arrays to molecular
+    frame for a reverse-mapped read (no-op for forward reads). Returns lists;
+    scores are reordered to stay aligned with the re-sorted intervals."""
+    s_list = _array_to_ints(starts)
+    l_list = _array_to_ints(lengths)
+    sc = list(scores) if (with_scores and scores is not None) else None
+    if not s_list or not getattr(read, 'is_reverse', False):
+        return s_list, l_list, sc
+    read_length = _read_length_of(read)
+    if not read_length:
+        return s_list, l_list, sc
+    recs = sorted(
+        (flip_interval_frame(s, length, read_length),
+         (sc[i] if sc is not None else None))
+        for i, (s, length) in enumerate(zip(s_list, l_list))
+    )
+    new_s = [r[0][0] for r in recs]
+    new_l = [r[0][1] for r in recs]
+    new_sc = [r[1] for r in recs] if sc is not None else None
+    return new_s, new_l, new_sc
 
 
 def _array_to_ints(values) -> list[int]:
@@ -71,22 +95,32 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
             except Exception:
                 pass
 
-    if len(result["ns"]) > 0:
-        read.set_tag("ns", _u32_bam_array(result["ns"]))
-        read.set_tag("nl", _u32_bam_array(result["nl"]))
-        if with_scores and result.get("ns_scores") is not None:
-            read.set_tag("nq", scores_to_u8(result["ns_scores"]))
+    # FiberHMM works in SEQ (query_sequence) coordinates; ns/nl/as/al must be
+    # written in molecular (original-fiber) frame for fibertools. Flip + re-sort
+    # for reverse-mapped reads (forward reads are unchanged).
+    ns_s, ns_l, ns_sc = _to_molecular_legacy(
+        result["ns"], result["nl"], result.get("ns_scores"),
+        read, with_scores)
+    as_s, as_l, as_sc = _to_molecular_legacy(
+        result["as"], result["al"], result.get("as_scores"),
+        read, with_scores)
+
+    if len(ns_s) > 0:
+        read.set_tag("ns", _u32_bam_array(ns_s))
+        read.set_tag("nl", _u32_bam_array(ns_l))
+        if with_scores and ns_sc is not None:
+            read.set_tag("nq", scores_to_u8(ns_sc))
         elif read.has_tag("nq"):
             try:
                 read.set_tag("nq", None)
             except Exception:
                 pass
 
-    if write_msps and len(result["as"]) > 0:
-        read.set_tag("as", _u32_bam_array(result["as"]))
-        read.set_tag("al", _u32_bam_array(result["al"]))
-        if with_scores and result.get("as_scores") is not None:
-            read.set_tag("aq", scores_to_u8(result["as_scores"]))
+    if write_msps and len(as_s) > 0:
+        read.set_tag("as", _u32_bam_array(as_s))
+        read.set_tag("al", _u32_bam_array(as_l))
+        if with_scores and as_sc is not None:
+            read.set_tag("aq", scores_to_u8(as_sc))
         elif read.has_tag("aq"):
             try:
                 read.set_tag("aq", None)
