@@ -320,6 +320,31 @@ def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
     return kept, msps
 
 
+def drop_short_nucs_overlapping_promoted(nuc_calls, promoted, unify_threshold):
+    """Drop short (< ``unify_threshold``) nucleosomes that overlap a promoted one.
+
+    Promotion moves a nucleosome-sized TF call into the nuc set and removes it
+    from ``tf_calls``, so ``unify_nuc_calls_with_tf_calls`` no longer drops a
+    short nuc that overlapped it. Apply the same rule here against the promoted
+    intervals: a short call overlapping a real (promoted) nucleosome is spurious.
+    Without this, the start-order tiling can keep the short call and clip/drop
+    the promoted one. Returns the filtered nuc list.
+    """
+    if not promoted:
+        return list(nuc_calls)
+    pints = [(p.start, p.start + p.length) for p in promoted]
+    out = []
+    for n in nuc_calls:
+        if n.length >= unify_threshold:
+            out.append(n)
+            continue
+        n_end = n.start + n.length
+        if any(ps < n_end and n.start < pe for ps, pe in pints):
+            continue  # short nuc overlapping a promoted nucleosome -> drop
+        out.append(n)
+    return out
+
+
 def promote_large_tf_calls(tf_calls, obs, llr_hit, llr_miss, threshold,
                            nuc_min_size, edge_min_llr=2.0, edge_min_opps=2):
     """Promote nucleosome-sized TF calls (length >= ``threshold``) to NucCalls.

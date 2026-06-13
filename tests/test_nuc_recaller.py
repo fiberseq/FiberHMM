@@ -6,6 +6,8 @@ import numpy as np
 from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
+    assemble_nuc_msp_tiling,
+    drop_short_nucs_overlapping_promoted,
     promote_large_tf_calls,
     recall_nucs_in_read,
     rederive_msps,
@@ -197,6 +199,25 @@ def test_promote_large_tf_to_nuc():
         tf, obs, llr_hit, llr_miss, threshold=90, nuc_min_size=85)
     assert len(promoted) == 1 and promoted[0].length >= 85
     assert [c.start for c in remaining] == [200]
+
+
+def test_drop_short_nuc_overlapping_promoted():
+    # Codex repro: a short (< unify_threshold) nuc starting slightly BEFORE a
+    # promoted nucleosome must be dropped, so the start-order tiling does not
+    # keep the short one and clip/discard the promoted one.
+    promoted = [NucCall(5, 100, 200, 255, 255)]            # [5,105)
+    short = [NucCall(0, 85, 100, 255, 255)]                # 85 < 90, overlaps
+    assert drop_short_nucs_overlapping_promoted(short, promoted, 90) == []
+    # full path: drop + add promoted, then tile -> promoted survives whole
+    kept, _ = assemble_nuc_msp_tiling(
+        drop_short_nucs_overlapping_promoted(short, promoted, 90) + promoted,
+        span_lo=0, span_hi=300, msp_min_size=0, nuc_min_size=85)
+    assert [(k.start, k.length) for k in kept] == [(5, 100)]
+    # a long (>= threshold) nuc is NOT dropped; a non-overlapping short is kept
+    long_nuc = [NucCall(0, 90, 100, 255, 255)]
+    assert drop_short_nucs_overlapping_promoted(long_nuc, promoted, 90) == long_nuc
+    far = [NucCall(300, 85, 100, 255, 255)]
+    assert drop_short_nucs_overlapping_promoted(far, promoted, 90) == far
 
 
 def test_nuc_qqq_aq_roundtrip():

@@ -15,6 +15,7 @@ from fiberhmm.inference.circular import (
 from fiberhmm.inference.engine import _process_single_read
 from fiberhmm.inference.nuc_recaller import (
     assemble_nuc_msp_tiling,
+    drop_short_nucs_overlapping_promoted,
     promote_large_tf_calls,
     recall_nucs_in_read,
     rederive_msps,
@@ -276,7 +277,8 @@ def _build_fused_recall_result_with_nucs(
     # 3b) promote nucleosome-sized TF leaks (>= unify_threshold) back to nuc+
     tf_calls, promoted = promote_large_tf_calls(
         tf_calls, obs, llr_hit, llr_miss, unify_threshold, nuc_min_size)
-    nuc_calls = nuc_calls + promoted
+    nuc_calls = drop_short_nucs_overlapping_promoted(
+        nuc_calls, promoted, unify_threshold) + promoted
 
     # 4) unify: drop short refined nucs overlapped by a TF call (carry nq/el/er)
     kept = unify_nuc_calls_with_tf_calls(nuc_calls, tf_calls, unify_threshold)
@@ -349,7 +351,8 @@ def _build_fused_recall_result_with_nucs_circular(
     # 3b) promote nucleosome-sized TF leaks back to nuc+ (still tiled)
     tiled_tf, tiled_promoted = promote_large_tf_calls(
         tiled_tf, obs, llr_hit, llr_miss, unify_threshold, nuc_min_size)
-    tiled_nucs = tiled_nucs + tiled_promoted
+    tiled_nucs = drop_short_nucs_overlapping_promoted(
+        tiled_nucs, tiled_promoted, unify_threshold) + tiled_promoted
 
     # 4) project everything from tiled -> molecule
     tf_calls = project_center_tf_calls(tiled_tf, read_length)
