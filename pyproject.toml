@@ -76,7 +76,6 @@ fiberhmm-utils = "fiberhmm.cli.utils:main"
 fiberhmm-posteriors = "fiberhmm.cli.export_posteriors:main"
 fiberhmm-daf-encode = "fiberhmm.cli.daf_encode:main"
 fiberhmm-recall-tfs = "fiberhmm.cli.recall_tfs:main"
-fiberhmm-consensus-tfs = "fiberhmm.cli.consensus_tfs:main"
 fiberhmm-call = "fiberhmm.cli.call:main"
 fiberhmm-run = "fiberhmm.cli.run:main"
 
