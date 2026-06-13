@@ -214,6 +214,54 @@ dropped and counted in the run's skip summary. `--keep-chimeras` to disable;
 is the uplifted TF model, which is too aggressive for nucleosome splitting. Use
 `--recall-nucs` to force it on at your own risk.
 
+### The log-likelihood-ratio recaller
+
+FiberHMM's footprint recallers — both the transcription-factor (TF) recaller and
+the nucleosome recaller — operate within a common likelihood-ratio framework
+derived from the trained two-state emission model.
+
+**Statistical model.** The model distinguishes a *protected* state (φ;
+nucleosome or protein footprint) from an *accessible* state (α; linker or
+methylation-sensitive patch). For each *k*-mer sequence context *c*, the
+emission table specifies the probability of observing a modification — N6-methyl­
+adenine for Fiber-seq, cytosine/guanine deamination for DAF-seq — conditional on
+the state. From these, two per-position log-likelihood ratios are precomputed for
+every context:
+
+> ℓ_hit(*c*)&nbsp; = log P(modified ∣ φ, *c*) − log P(modified ∣ α, *c*)
+> ℓ_miss(*c*) = log P(unmodified ∣ φ, *c*) − log P(unmodified ∣ α, *c*)
+
+where a *hit* denotes an observed modification and a *miss* an unmodified instance
+of the target base. Because the modifying enzyme acts preferentially on
+accessible DNA, hits are evidence for the accessible state (ℓ_hit < 0) and misses
+for the protected state (ℓ_miss > 0).
+
+**Maximal-segment inference.** Over a candidate interval the recaller accumulates
+the per-position log-likelihood ratio and identifies the contiguous sub-interval
+of maximal cumulative score by a linear-time maximum-subarray procedure. A
+sub-interval is reported when its cumulative score exceeds a threshold
+(`min_llr`) over a minimum number of informative positions (`min_opps`). For each
+call the procedure records the distance from the terminal informative position to
+the nearest opposing observation on either flank, yielding a conservative inner
+boundary and a bound on the true (loose) boundary.
+
+**Dual application.** The two recallers correspond to the two signs of the same
+statistic. The TF recaller scans accessible regions for protected segments
+(positive ℓ), reporting sub-nucleosomal footprints. The nucleosome recaller scans
+an over-merged protected footprint for accessible segments (negative ℓ); a
+sufficiently supported accessible segment denotes a buried linker at which the
+footprint is divided, after which the positive-sign scan re-estimates each
+resulting nucleosome's conservative boundaries and confidence.
+
+**Quality encoding.** Each call is summarized by three bytes in the MA/AQ
+molecular-annotation tags: a confidence score *q* = min(255, ⌊10·LLR⌉), in which
+each 23-point increment corresponds to one order of magnitude in the likelihood
+ratio, and two edge-sharpness scores encoding boundary ambiguity (255 when an
+opposing observation abuts the boundary; 0 at an ambiguity of ≥30 bp). The
+interval (`ns`/`nl`) is written at the **conservative (strict) boundary**; the
+edge-sharpness bytes recover the loose boundary. TF footprints are emitted as
+`tf+QQQ` = (tq, eₗ, eᵣ) and recalled nucleosomes as `nuc+QQQ` = (nq, eₗ, eᵣ).
+
 ## Pre-trained Models
 
 Pre-trained models are **bundled with the pip package** — no separate download.
