@@ -6,6 +6,7 @@ import numpy as np
 from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
+    promote_large_tf_calls,
     recall_nucs_in_read,
     rederive_msps,
     unify_circular_nuc_calls_with_tf_calls,
@@ -179,6 +180,23 @@ def test_unify_circular_drops_short_nuc_overlapping_wrapped_tf():
     kept = unify_circular_nuc_calls_with_tf_calls(nucs, tf, unify_threshold=85,
                                                   read_length=n)
     assert [(k.start, k.length) for k in kept] == [(40, 30)]
+
+
+def test_promote_large_tf_to_nuc():
+    # a nucleosome-sized protected TF call (>= threshold) is promoted to nuc+
+    # with edges; a small TF stays in tf+.
+    obs = _obs((MISS, 300))
+    llr_hit, llr_miss = _llr_tables()
+    tf = [
+        TFCall(start=0, length=120, llr=10.0, n_opps=20,
+               left_ambiguity=1, right_ambiguity=1),   # nucleosome-sized
+        TFCall(start=200, length=20, llr=6.0, n_opps=4,
+               left_ambiguity=1, right_ambiguity=1),   # real small footprint
+    ]
+    remaining, promoted = promote_large_tf_calls(
+        tf, obs, llr_hit, llr_miss, threshold=90, nuc_min_size=85)
+    assert len(promoted) == 1 and promoted[0].length >= 85
+    assert [c.start for c in remaining] == [200]
 
 
 def test_nuc_qqq_aq_roundtrip():

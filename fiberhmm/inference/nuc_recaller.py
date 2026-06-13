@@ -270,6 +270,30 @@ def unify_nuc_calls_with_tf_calls(
     return kept
 
 
+def promote_large_tf_calls(tf_calls, obs, llr_hit, llr_miss, threshold,
+                           nuc_min_size, edge_min_llr=2.0, edge_min_opps=2):
+    """Promote nucleosome-sized TF calls (length >= ``threshold``) to NucCalls.
+
+    The TF recaller emits ANY protected run inside an MSP as ``tf+`` with no size
+    cap, so a nucleosome the HMM mis-placed in an MSP leaks into the TF track. A
+    protected run >= ``threshold`` (``unify_threshold``) is a nucleosome by
+    default -- relabel it, computing proper conservative edges via the same
+    protected-Kadane edge pass. Returns ``(remaining_tf_calls, promoted_nucs)``.
+    """
+    remaining = []
+    promoted: List[NucCall] = []
+    for c in tf_calls:
+        if c.length >= threshold:
+            nuc, _ = _refine_fragment(obs, c.start, c.start + c.length,
+                                      llr_hit, llr_miss, nuc_min_size,
+                                      edge_min_llr, edge_min_opps)
+            if nuc is not None:
+                promoted.append(nuc)
+                continue
+        remaining.append(c)
+    return remaining, promoted
+
+
 def unify_circular_nuc_calls_with_tf_calls(
     nuc_calls: Sequence[NucCall],
     tf_calls: Sequence,
