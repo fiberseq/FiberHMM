@@ -2,11 +2,15 @@
 
 Spec: https://github.com/fiberseq/Molecular-annotation-spec
 
-Annotation types emitted by FiberHMM:
-  - ``nuc+Q``    nucleosomes (>= unify_threshold bp). Quality byte = ``nq``
-                 (per-call posterior mean, 0-255).
-  - ``msp+``     methylase-sensitive patches (no quality).
-  - ``tf+QQQ``   recaller TF footprints. Quality bytes per call:
+Annotation types emitted by FiberHMM. All use the ``.`` (unknown) strand
+field, matching fibertools: nucleosomes, MSPs and TF footprints are
+strand-agnostic molecular features. (The parser also accepts ``+``/``-`` so
+tags written by FiberHMM <= 2.13.1, which used ``+``, still read back.)
+  - ``nuc.Q``    nucleosomes (>= unify_threshold bp). Quality byte = ``nq``
+                 (per-call posterior mean, 0-255). The recaller emits
+                 ``nuc.QQQ`` (nq, el, er) instead.
+  - ``msp.``     methylase-sensitive patches (no quality).
+  - ``tf.QQQ``   recaller TF footprints. Quality bytes per call:
                  (``tq``, ``el``, ``er``) = (LLR-derived score,
                  left-edge sharpness, right-edge sharpness).
 
@@ -169,18 +173,21 @@ def format_ma_tag(read_length: int,
 
     Coordinates are converted from 0-based (internal) to 1-based (spec).
     """
+    # Strand field is '.' (unknown): nuc/msp/tf are strand-agnostic molecular
+    # features, matching fibertools. (Versions <= 2.13.1 wrote '+'; the parser
+    # still accepts it.)
     parts = [str(int(read_length))]
     if nuc_intervals:
         nucs = ','.join(f'{int(s) + 1}-{int(end)}' for s, end in nuc_intervals)
-        parts.append(f'nuc+{nuc_qual_spec}:{nucs}' if nuc_qual_spec
-                     else f'nuc+:{nucs}')
+        parts.append(f'nuc.{nuc_qual_spec}:{nucs}' if nuc_qual_spec
+                     else f'nuc.:{nucs}')
     if msp_intervals:
         msps = ','.join(f'{int(s) + 1}-{int(end)}' for s, end in msp_intervals)
-        parts.append(f'msp+:{msps}')
+        parts.append(f'msp.:{msps}')
     if tf_intervals:
         tfs = ','.join(f'{int(s) + 1}-{int(end)}' for s, end in tf_intervals)
-        parts.append(f'tf+{tf_qual_spec}:{tfs}' if tf_qual_spec
-                     else f'tf+:{tfs}')
+        parts.append(f'tf.{tf_qual_spec}:{tfs}' if tf_qual_spec
+                     else f'tf.:{tfs}')
     return ';'.join(parts)
 
 
@@ -209,7 +216,7 @@ def format_aq_array(nq_values: Sequence[int],
                     nuc_rq_values: Sequence[int] = ()) -> array.array:
     """Build the AQ:B:C array, interleaved per annotation in MA order.
 
-    Layout for the FiberHMM default schema (nuc+Q, msp+, tf+QQQ):
+    Layout for the FiberHMM default schema (nuc.Q, msp., tf.QQQ):
       - One byte per nuc:    (nq,)
       - MSPs:                (no bytes)
       - Three bytes per TF:  (tq, el, er)

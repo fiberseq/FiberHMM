@@ -23,11 +23,11 @@ Two schema flavors:
     so tools that already parse those two arrays only need to split one
     more string. Column count per type:
 
-      - footprint : +3  (blockNq, blockEl, blockEr) -- matches MA nuc+QQQ;
+      - footprint : +3  (blockNq, blockEl, blockEr) -- matches MA nuc.QQQ;
                         el/er are 0 for HMM-only/legacy nucs (edges not refined)
       - msp       : +1  (blockAq)
       - m6a / m5c : +1  (blockMl)
-      - tf        : +3  (blockTq, blockEl, blockEr) -- matches MA tf+QQQ
+      - tf        : +3  (blockTq, blockEl, blockEr) -- matches MA tf.QQQ
 """
 from __future__ import annotations
 
@@ -131,7 +131,7 @@ def _make_schema(table_name: str, description: str,
 
 _DESCRIPTIONS = {
     'footprint': (
-        'FiberHMM nucleosome footprint calls (MA nuc+QQQ, or legacy ns/nl '
+        'FiberHMM nucleosome footprint calls (MA nuc.QQQ, or legacy ns/nl '
         'BAM tags). One BED12 row per read; each block is a called nucleosome. '
         'BED score = mean nq. With --block-scores: per-block quality plus '
         'left/right conservative-edge sharpness (0-255; 0 = unrefined '
@@ -143,7 +143,7 @@ _DESCRIPTIONS = {
         'between nucleosomes. BED score = mean aq (0-255 when present).'
     ),
     'tf': (
-        'FiberHMM TF / Pol II footprint recaller calls (MA/AQ tf+QQQ '
+        'FiberHMM TF / Pol II footprint recaller calls (MA/AQ tf.QQQ '
         'annotations per the fiberseq Molecular-annotation spec). '
         'Second-pass LLR-based recaller output. One BED12 row per read; '
         'each block is a TF footprint. BED score = mean tq (LLR-derived '

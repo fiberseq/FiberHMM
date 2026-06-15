@@ -8,8 +8,8 @@ same slim-IPC main→worker payload as `fiberhmm-apply`.
 
 Output BAM has BOTH:
   - Legacy ns/nl/as/al tags (post-unification: short nucs overlapping TF
-    calls are demoted to the tf+ track)
-  - MA/AQ spec tags (Molecular-annotation with tf+QQQ quality scoring)
+    calls are demoted to the tf track)
+  - MA/AQ spec tags (Molecular-annotation with tf.QQQ quality scoring)
 
 Examples:
   # Hia5 PacBio, fused apply+recall (bundled model)
@@ -104,9 +104,9 @@ def parse_args():
     # --- Nucleosome recall params ---
     p.add_argument('--recall-nucs', action=argparse.BooleanOptionalAction, default=None,
                    help='Split over-merged nucleosomes + refine conservative edges '
-                        '(emits nuc+QQQ), promote nucleosome-sized TF leaks to nuc+, '
+                        '(emits nuc.QQQ), promote nucleosome-sized TF leaks to nuc, '
                         'and run the Pass-2 phase prior. ON by default (except DddA). '
-                        'Use --no-recall-nucs for baseline HMM nucleosomes (nuc+Q).')
+                        'Use --no-recall-nucs for baseline HMM nucleosomes (nuc.Q).')
     p.add_argument('--split-min-llr', type=float, default=4.0,
                    help='Min accessible-run LLR to split a nucleosome (default 4.0).')
     p.add_argument('--split-min-opps', type=int, default=3,

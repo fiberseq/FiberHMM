@@ -9,9 +9,9 @@ FiberHMM identifies protected regions (footprints) and accessible regions (methy
 ## Key Features
 
 - **`fiberhmm-call`** — **recommended**, runs nucleosome/MSP HMM + nucleosome recaller + TF recall fused in one process with region-parallel scaling. Coordinate-sorted input → coordinate-sorted + indexed output, no sort pass needed.
-- **Nucleosome recaller (on by default)** — splits over-merged nucleosomes on accessible m6A/deamination evidence, refines conservative edges, and runs an evidence-gated periodicity prior. Emits `nuc+QQQ` (quality + left/right edge sharpness). See [Nucleosome recaller](#nucleosome-recaller).
+- **Nucleosome recaller (on by default)** — splits over-merged nucleosomes on accessible m6A/deamination evidence, refines conservative edges, and runs an evidence-gated periodicity prior. Emits `nuc.QQQ` (quality + left/right edge sharpness). See [Nucleosome recaller](#nucleosome-recaller).
 - **No genome context files** — hexamer context computed directly from read sequences
-- **Tagged BAM output** — `ns`/`nl`/`as`/`al` legacy tags AND `MA`/`AQ` [Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec) tags with `nuc+QQQ` / `tf+QQQ` scoring
+- **Tagged BAM output** — `ns`/`nl`/`as`/`al` legacy tags AND `MA`/`AQ` [Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec) tags with `nuc.QQQ` / `tf.QQQ` scoring
 - **Native HMM implementation** — no hmmlearn dependency; Numba JIT enabled by default for ~10× speedup
 - **Multi-platform** — PacBio fiber-seq, Nanopore fiber-seq, DAF-seq (DddB, DddA)
 - **Region-parallel** — near-linear scaling with `--cores`, up to chromosome count
@@ -159,8 +159,8 @@ per-read pass that fixes these by reusing the TF recaller's LLR machinery with
 the hypothesis inverted — an accessible run inside a footprint is a cut.
 
 **`fiberhmm-call` runs it by default** (except DddA — see below). It produces
-`nuc+QQQ` annotations: a quality byte plus left/right **edge-sharpness** bytes
-(the conservative/loose edge convention, same as `tf+QQQ`). The stages, in order:
+`nuc.QQQ` annotations: a quality byte plus left/right **edge-sharpness** bytes
+(the conservative/loose edge convention, same as `tf.QQQ`). The stages, in order:
 
 1. **Split** — over-merged footprints are split wherever accessible (m6A /
    deamination) evidence supports a linker (`--split-min-llr`, `--split-min-opps`).
@@ -172,13 +172,13 @@ the hypothesis inverted — an accessible run inside a footprint is a cut.
    auto-estimated per sample (`--phase-nrl auto`, clamped to ~150–215 bp).
 4. **MSP re-derivation + TF recall** run over the cleaner accessible space.
    Nucleosome-sized protected runs (≥ `--unify-threshold`, default 90 bp) the TF
-   scan finds are promoted back to `nuc+`, keeping `tf+` strictly sub-nucleosomal.
+   scan finds are promoted back to `nuc.`, keeping `tf.` strictly sub-nucleosomal.
 
 ```bash
 # Default: full recaller (split + edges + auto phase prior)
 fiberhmm-call -i in.bam -o out.bam --enzyme dddb --region-parallel -c 8
 
-# Baseline HMM nucleosomes (nuc+Q), recaller off
+# Baseline HMM nucleosomes (nuc.Q), recaller off
 fiberhmm-call -i in.bam -o out.bam --enzyme dddb --no-recall-nucs --region-parallel -c 8
 
 # Fix the repeat length instead of auto-estimating; disable the phase prior
@@ -241,7 +241,7 @@ ratio, and two edge-sharpness scores encoding boundary ambiguity (255 when an
 opposing observation abuts the boundary; 0 at an ambiguity of ≥30 bp). The
 interval (`ns`/`nl`) is written at the **conservative (strict) boundary**; the
 edge-sharpness bytes recover the loose boundary. TF footprints are emitted as
-`tf+QQQ` = (tq, eₗ, eᵣ) and recalled nucleosomes as `nuc+QQQ` = (nq, eₗ, eᵣ).
+`tf.QQQ` = (tq, eₗ, eᵣ) and recalled nucleosomes as `nuc.QQQ` = (nq, eₗ, eᵣ).
 
 ## Pre-trained Models
 
@@ -478,7 +478,7 @@ fiberhmm-extract -i output/sample_footprints.bam --tf --msp --circular-groups
 >
 > Tag output follows the [fiberseq Molecular-annotation
 > spec](https://github.com/fiberseq/Molecular-annotation-spec). FiberBrowser
-> support for the `tf+QQQ` annotation type is shipping in the next
+> support for the `tf.QQQ` annotation type is shipping in the next
 > release. File issues at
 > https://github.com/fiberseq/FiberHMM/issues
 
@@ -513,7 +513,7 @@ fiberhmm-recall-tfs -i tagged.bam -o recalled.bam -m custom.json --enzyme hia5
 | `--min-llr` | enzyme preset | Min cumulative LLR (nats) per call |
 | `--min-opps` | 3 | Min informative target positions per call |
 | `--emission-uplift` | 1.0 | Power transform on emission probabilities. Rarely needed -- use a pre-uplifted model file (e.g. `ddda_TF.json`) instead. |
-| `--unify-threshold` | 90 | v2 footprints with `nl < this` may be demoted to `tf+`; ≥ this stay as nucleosomes |
+| `--unify-threshold` | 90 | v2 footprints with `nl < this` may be demoted to `tf.`; ≥ this stay as nucleosomes |
 | `--no-legacy-tags` | off | Skip refreshed `ns/nl/as/al` -- emit only `MA`/`AQ` (spec mode) |
 | `--downstream-compat` | off | **Downstream-compat mode**: write TF calls into legacy `ns/nl` alongside nucleosomes; skip `MA`/`AQ` entirely. Use for tools that don't speak the Molecular-annotation spec. |
 | `-c/--cores` | 1 | Worker processes. 0 = auto-detect |
@@ -541,7 +541,7 @@ spec](https://github.com/fiberseq/Molecular-annotation-spec):
 fiberhmm-recall-tfs -i tagged.bam -o recalled.bam --enzyme hia5 --seq pacbio
 ```
 
-- `MA`/`AQ` tags carry `nuc+Q`, `msp+`, `tf+QQQ` annotations with full
+- `MA`/`AQ` tags carry `nuc.Q`, `msp.`, `tf.QQQ` annotations with full
   LLR + edge-ambiguity scoring.
 - Legacy `ns`/`nl` is also refreshed, but contains **nucleosomes only** --
   TF calls live exclusively in `MA`/`AQ`.
@@ -596,7 +596,7 @@ The recaller writes one MA tag and one AQ tag per processed read, per the
 spec](https://github.com/fiberseq/Molecular-annotation-spec).
 
 ```
-MA:Z:<read_length>;nuc+Q:s1-l1,s2-l2,...;msp+:s1-l1,...;tf+QQQ:s1-l1,...
+MA:Z:<read_length>;nuc.Q:s1-l1,s2-l2,...;msp.:s1-l1,...;tf.QQQ:s1-l1,...
 AQ:B:C: nq, nq, ..., tq, el, er, tq, el, er, ...
 ```
 
@@ -604,9 +604,9 @@ Coordinates are 1-based (per the spec); internal storage stays 0-based.
 
 | Annotation | Quality bytes | Meaning |
 |---|---|---|
-| `nuc+Q` | `nq` | Nucleosomes (`nl ≥ unify_threshold` or v2 short-nucs the recaller did not match). `nq` carries v2's posterior mean (0 sentinel for unverified entries). |
-| `msp+` | none | Methylase-sensitive patches (v2 MSPs unchanged) |
-| `tf+QQQ` | `tq, el, er` | Recaller TF calls. See encoding table below. |
+| `nuc.Q` | `nq` | Nucleosomes (`nl ≥ unify_threshold` or v2 short-nucs the recaller did not match). `nq` carries v2's posterior mean (0 sentinel for unverified entries). |
+| `msp.` | none | Methylase-sensitive patches (v2 MSPs unchanged) |
+| `tf.QQQ` | `tq, el, er` | Recaller TF calls. See encoding table below. |
 
 ##### Circular molecules
 
@@ -622,7 +622,7 @@ gives both clipped pieces the same annotation name so circular-aware tools can
 fuse them:
 
 ```
-MA:Z:1000;tf+QQQ:1-45,971-30
+MA:Z:1000;tf.QQQ:1-45,971-30
 AQ:B:C:180,20,30,180,20,30
 AN:Z:fhw_tf_0,fhw_tf_0
 ```
@@ -666,13 +666,13 @@ visualization or downstream size analysis.
 
 By default, the recaller produces a clean partition: every v2 short-nuc
 (`nl < --unify-threshold`) overlapped by a recaller call is **dropped**
-from `nuc+`. The recaller version, with proper `tq`/`el`/`er` scoring,
-replaces it in `tf+`. v2 short-nucs the recaller did *not* match are kept
-in `nuc+` as fallback entries with `nq=0` (sentinel for "unverified").
+from `nuc.`. The recaller version, with proper `tq`/`el`/`er` scoring,
+replaces it in `tf.`. v2 short-nucs the recaller did *not* match are kept
+in `nuc.` as fallback entries with `nq=0` (sentinel for "unverified").
 v2 nucleosomes (`nl ≥ --unify-threshold`) are always preserved untouched.
 
 This preserves the full information content while giving you a clean
-1:1 partition between nucleosomes (`nuc+`) and TF/Pol II calls (`tf+`).
+1:1 partition between nucleosomes (`nuc.`) and TF/Pol II calls (`tf.`).
 
 #### Reading the output
 
@@ -809,7 +809,7 @@ spec-compliant tags carrying TF/Pol II footprints with proper LLR scoring:
 
 | Tag | Type | Description |
 |-----|------|-------------|
-| `MA` | Z   | Annotation string: `<readlen>;nuc+Q:...;msp+:...;tf+QQQ:...` (1-based coords per spec) |
+| `MA` | Z   | Annotation string: `<readlen>;nuc.Q:...;msp.:...;tf.QQQ:...` (1-based coords per spec) |
 | `AQ` | B,C | Quality bytes interleaved per annotation: `nq` for nucs; `tq, el, er` for TFs (no bytes for MSPs) |
 
 Legacy `ns`/`nl`/`as`/`al` are also rewritten to reflect the unified

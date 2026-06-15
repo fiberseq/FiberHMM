@@ -364,7 +364,7 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
     assert recalled_read.query_name == query_name
     assert recalled_read.has_tag("MA")
     assert recalled_read.has_tag("AQ")
-    assert "tf+QQQ" in recalled_read.get_tag("MA")
+    assert "tf.QQQ" in recalled_read.get_tag("MA")
     assert recalled_read.has_tag("as")
     assert recalled_read.has_tag("al")
 

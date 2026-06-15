@@ -78,6 +78,24 @@ def test_ma_tag_matches_spec_regex():
         assert SPEC_REGEX.match(ma), f'{desc}: MA={ma!r} fails spec regex'
 
 
+def test_emits_unknown_strand_and_reads_legacy_plus():
+    # We now emit the '.' (unknown) strand for nuc/msp/tf, matching fibertools.
+    ma = format_ma_tag(read_length=1000,
+                       nuc_intervals=[(0, 100)],
+                       msp_intervals=[(200, 50)],
+                       tf_intervals=[(400, 20)])
+    assert ma == '1000;nuc.Q:1-100;msp.:201-50;tf.QQQ:401-20'
+    # Tags written by FiberHMM <= 2.13.1 used '+'; both must parse identically.
+    legacy = '1000;nuc+Q:1-100;msp+:201-50;tf+QQQ:401-20'
+    p_new, p_old = parse_ma_tag(ma), parse_ma_tag(legacy)
+    for key in ('read_length', 'nuc', 'msp', 'tf'):
+        assert p_new[key] == p_old[key]
+    # strand field differs ('.' vs '+'); qual_spec + intervals are identical.
+    assert [(n, q, iv) for n, _s, q, iv in p_new['raw_types']] == \
+           [(n, q, iv) for n, _s, q, iv in p_old['raw_types']]
+    assert [s for _n, s, _q, _iv in p_new['raw_types']] == ['.', '.', '.']
+
+
 def test_format_and_parse_ma_tag():
     nucs = [(43, 147), (216, 155)]
     msps = [(1, 42)]
@@ -87,9 +105,9 @@ def test_format_and_parse_ma_tag():
                        msp_intervals=msps,
                        tf_intervals=tfs)
     assert ma.startswith('4521;')
-    assert 'nuc+Q:44-147,217-155' in ma
-    assert 'msp+:2-42' in ma
-    assert 'tf+QQQ:51-20' in ma
+    assert 'nuc.Q:44-147,217-155' in ma
+    assert 'msp.:2-42' in ma
+    assert 'tf.QQQ:51-20' in ma
     parsed = parse_ma_tag(ma)
     assert parsed['read_length'] == 4521
     assert parsed['nuc'] == nucs
@@ -268,7 +286,7 @@ def test_spec_mode_emits_ma_aq_and_clean_legacy():
     assert read.has_tag('MA')
     assert read.has_tag('AQ')
     ma = read.get_tag('MA')
-    assert 'nuc+' in ma and 'tf+' in ma
+    assert 'nuc.' in ma and 'tf.' in ma
     # Legacy ns/nl has only nucs, NOT TFs (spec mode)
     ns = list(read.get_tag('ns'))
     nl = list(read.get_tag('nl'))
@@ -322,15 +340,15 @@ def test_spec_skips_ma_when_no_annotations():
 
 def test_spec_skips_aq_when_only_unqualified_types():
     """spec: AQ is only present if any annotation type specifies P or Q.
-    msp+ has no quality; if only MSPs are emitted, AQ must not appear."""
+    msp. has no quality; if only MSPs are emitted, AQ must not appear."""
     read = _FakeRead()
     write_ma_tags(read, 200, tf_calls=[], kept_nucs=[],
                   msps=[(10, 80)],
                   also_write_legacy=True, downstream_compat=False)
     assert read.has_tag('MA')
     ma = read.get_tag('MA')
-    assert 'msp+' in ma
-    assert 'nuc+' not in ma and 'tf+' not in ma
+    assert 'msp.' in ma
+    assert 'nuc.' not in ma and 'tf.' not in ma
     assert not read.has_tag('AQ')
 
 
@@ -363,7 +381,7 @@ def test_spec_mode_splits_wrapped_annotations_and_writes_an():
     )
 
     assert read.get_tag('MA') == (
-        '100;nuc+Q:1-10,91-10;msp+:1-5,96-5;tf+QQQ:1-10,81-20'
+        '100;nuc.Q:1-10,91-10;msp.:1-5,96-5;tf.QQQ:1-10,81-20'
     )
     assert read.get_tag('AN') == (
         'fhw_nuc_0,fhw_nuc_0,fhw_msp_0,fhw_msp_0,fhw_tf_0,fhw_tf_0'
