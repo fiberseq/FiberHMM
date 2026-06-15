@@ -115,7 +115,7 @@ def test_extract_region_worker_closes_temp_beds_when_partial_open_fails(
     monkeypatch, tmp_path
 ):
     params = {
-        "extract_types": ["footprint", "msp"],
+        "extract_types": ["nucleosome", "msp"],
         "min_tq": 50,
         "min_mapq": 0,
         "prob_threshold": 0,
@@ -136,7 +136,7 @@ def test_extract_region_worker_closes_temp_beds_when_partial_open_fails(
     monkeypatch.setattr(extract_tags, "open", fake_open, raising=False)
 
     temp_bed_paths = {
-        "footprint": str(tmp_path / "footprint.bed"),
+        "nucleosome": str(tmp_path / "nucleosome.bed"),
         "msp": str(tmp_path / "msp.bed"),
     }
 
@@ -146,7 +146,7 @@ def test_extract_region_worker_closes_temp_beds_when_partial_open_fails(
 
     assert returned_paths == temp_bed_paths
     assert n_reads == 0
-    assert n_features == {"footprint": 0, "msp": 0}
+    assert n_features == {"nucleosome": 0, "msp": 0}
     assert opened[0].closed
 
 
@@ -164,7 +164,7 @@ def test_autosql_default_is_bed12_only():
 
 
 def test_autosql_block_scores_adds_per_type_columns():
-    foot = get_schema('footprint', block_scores=True)
+    foot = get_schema('nucleosome', block_scores=True)
     assert 'blockNq' in foot
     assert 'blockAq' not in foot
 
@@ -196,11 +196,20 @@ def test_extra_field_counts_match_written_arrays():
     """EXTRA_FIELD_COUNTS must match the number of int[blockCount] fields
     in the block_scores schema -- this is the number passed as
     ``-type=bed12+N`` to bedToBigBed."""
-    assert EXTRA_FIELD_COUNTS['footprint'] == 3  # blockNq, blockEl, blockEr
+    assert EXTRA_FIELD_COUNTS['nucleosome'] == 3  # blockNq, blockEl, blockEr
     assert EXTRA_FIELD_COUNTS['msp'] == 1
     assert EXTRA_FIELD_COUNTS['tf'] == 3
     assert EXTRA_FIELD_COUNTS['m6a'] == 1
     assert EXTRA_FIELD_COUNTS['m5c'] == 1
+
+
+def test_footprint_is_deprecated_alias_for_nucleosome():
+    # 'footprint' was the type name through 2.13.x; it must still resolve to the
+    # nucleosome schema (table fiberhmm_nucleosome), now that the canonical name
+    # is 'nucleosome'.
+    assert get_schema('footprint', block_scores=True) == \
+           get_schema('nucleosome', block_scores=True)
+    assert 'fiberhmm_nucleosome' in get_schema('footprint')
 
     for t, n in EXTRA_FIELD_COUNTS.items():
         schema = get_schema(t, block_scores=True)
@@ -487,8 +496,9 @@ def test_footprint_and_msp_extractors_prefer_ma_an_when_present():
     msp_rows = [line.split('\t') for line in msp_buf.getvalue().rstrip('\n').splitlines()]
     assert [int(row[1]) for row in nuc_rows] == [0, 990]
     assert [int(row[1]) for row in msp_rows] == [0, 980]
-    # footprint now carries blockNq, blockEl, blockEr (nuc+Q -> el/er = 0),
-    # so the circular group columns start after those three.
+    # nucleosome now carries blockNq, blockEl, blockEr (nuc.Q -> el/er = 0),
+    # so the circular group columns start after those three. (Input MA uses the
+    # legacy '+' strand to prove backward-compatible parsing.)
     assert nuc_rows[0][12] == '222'
     assert nuc_rows[0][13:15] == ['0', '0']
     assert nuc_rows[0][15:] == ['fhw_nuc_0', '1', '2', '990', '20']
@@ -962,11 +972,11 @@ def test_deam_priority2_ry_fallback_when_mm_ml_absent():
 # ------------------- sample_name in autoSQL --------------------------
 
 def test_sample_name_prepended_to_description():
-    schema = get_schema('footprint', block_scores=False,
+    schema = get_schema('nucleosome', block_scores=False,
                         sample_name='Dl_recalled')
     assert 'Sample: Dl_recalled. ' in schema
     # The schema still has the classic description afterwards.
-    assert 'FiberHMM nucleosome footprint calls' in schema
+    assert 'FiberHMM nucleosome calls' in schema
 
 
 def test_sample_name_absent_by_default():
@@ -1035,6 +1045,8 @@ def test_extract_tags_parallel_circular_groups_end_to_end(tmp_path):
     nuc_bed = tmp_path / 'nuc.bed'
     tf_bed = tmp_path / 'tf.bed'
 
+    # Pass the deprecated 'footprint' type on purpose: extract_tags_parallel must
+    # normalize it (type + output_beds key) to the canonical 'nucleosome'.
     total_reads, n_features = extract_tags.extract_tags_parallel(
         input_bam=str(bam_path),
         output_beds={'footprint': str(nuc_bed), 'tf': str(tf_bed)},
@@ -1050,18 +1062,18 @@ def test_extract_tags_parallel_circular_groups_end_to_end(tmp_path):
     )
 
     assert total_reads == 1
-    assert n_features['footprint'] == 1
+    assert n_features['nucleosome'] == 1   # 'footprint' alias normalized
     assert n_features['tf'] == 2
 
     nuc_rows = [line.split('\t') for line in nuc_bed.read_text().splitlines()]
     tf_rows = [line.split('\t') for line in tf_bed.read_text().splitlines()]
 
-    # BED12 (12) + footprint block_scores (3: blockNq/El/Er) + circular (5) = 20.
+    # BED12 (12) + nucleosome block_scores (3: blockNq/El/Er) + circular (5) = 20.
     assert all(len(row) == 20 for row in nuc_rows)
     # BED12 (12) + tf block_scores (3 blockTq/El/Er) + circular (5) = 20 cols.
     assert all(len(row) == 20 for row in tf_rows)
 
-    # Standalone (non-wrapped) nuc: blockNq=200, blockEl/Er=0 (nuc+Q, unrefined),
+    # Standalone (non-wrapped) nuc: blockNq=200, blockEl/Er=0 (nuc.Q, unrefined),
     # then circId=., circPart/Parts=1, molStart/molLength echo its coords.
     assert nuc_rows[0][12:15] == ['200', '0', '0']
     assert nuc_rows[0][15:] == ['.', '1', '1', '200', '50']

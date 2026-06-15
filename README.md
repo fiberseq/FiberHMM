@@ -100,7 +100,7 @@ Pre-trained models are **bundled with the package** — `--enzyme` selects autom
 ### Extract BED12 / bigBed
 
 ```bash
-fiberhmm-extract -i recalled.bam --footprint --msp --tf --bigbed
+fiberhmm-extract -i recalled.bam --nucleosome --msp --tf --bigbed
 ```
 
 ---

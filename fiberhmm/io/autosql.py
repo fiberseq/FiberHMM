@@ -23,7 +23,7 @@ Two schema flavors:
     so tools that already parse those two arrays only need to split one
     more string. Column count per type:
 
-      - footprint : +3  (blockNq, blockEl, blockEr) -- matches MA nuc.QQQ;
+      - nucleosome: +3  (blockNq, blockEl, blockEr) -- matches MA nuc.QQQ;
                         el/er are 0 for HMM-only/legacy nucs (edges not refined)
       - msp       : +1  (blockAq)
       - m6a / m5c : +1  (blockMl)
@@ -53,7 +53,7 @@ _BED12_FIELDS = """    string  chrom;       "Reference chromosome / contig"
 # Per-type block-score field definitions. Each key appends N int[blockCount]
 # columns after chromStarts when block_scores=True.
 _BLOCK_SCORE_FIELDS = {
-    'footprint': (
+    'nucleosome': (
         '    int[blockCount] blockNq; '
         '"Per-block nucleosome quality (nq) score, 0-255"\n'
         '    int[blockCount] blockEl; '
@@ -130,8 +130,8 @@ def _make_schema(table_name: str, description: str,
 
 
 _DESCRIPTIONS = {
-    'footprint': (
-        'FiberHMM nucleosome footprint calls (MA nuc.QQQ, or legacy ns/nl '
+    'nucleosome': (
+        'FiberHMM nucleosome calls (MA nuc.QQQ, or legacy ns/nl '
         'BAM tags). One BED12 row per read; each block is a called nucleosome. '
         'BED score = mean nq. With --block-scores: per-block quality plus '
         'left/right conservative-edge sharpness (0-255; 0 = unrefined '
@@ -177,6 +177,9 @@ AUTOSQL_SCHEMAS = {
     for t, desc in _DESCRIPTIONS.items()
 }
 
+# Back-compat: the nucleosome type was named 'footprint' through 2.13.x.
+_TYPE_ALIASES = {'footprint': 'nucleosome'}
+
 
 def get_schema(extract_type: str, block_scores: bool = False,
                sample_name: Optional[str] = None,
@@ -184,6 +187,7 @@ def get_schema(extract_type: str, block_scores: bool = False,
     """Return the autoSQL schema string for ``extract_type``, optionally
     with the per-block score columns appended and/or a ``Sample: <name>.``
     marker prepended to the description."""
+    extract_type = _TYPE_ALIASES.get(extract_type, extract_type)
     desc = _DESCRIPTIONS.get(extract_type)
     if desc is None:
         return None
@@ -206,6 +210,7 @@ def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
     Pass ``sample_name`` to embed a machine-parseable ``Sample: <name>.``
     prefix in the autoSQL description (visible via ``bigBedInfo -as``).
     """
+    extract_type = _TYPE_ALIASES.get(extract_type, extract_type)
     schema = get_schema(extract_type, block_scores=block_scores,
                         sample_name=sample_name,
                         circular_groups=circular_groups)

@@ -3,9 +3,10 @@
 extract_tags.py - Extract tags from FiberHMM-tagged BAMs to BED12/bigBed.
 
 Supported annotation types:
-  - footprint: Nucleosome footprints (ns/nl) -> BED12 (one line per read)
+  - nucleosome: Nucleosomes (ns/nl or MA nuc) -> BED12 (one line per read).
+                ('footprint' is a deprecated alias.)
   - msp: Methylase-sensitive patches (as/al) -> BED12 (one line per read)
-  - tf:  TF/Pol II footprints (MA/AQ tf+QQQ) -> BED12 (one line per read).
+  - tf:  TF/Pol II footprints (MA/AQ tf.QQQ) -> BED12 (one line per read).
          Quality filter: --min-tq (default 50 = LLR >= 5 nats,
          matches fiberhmm-recall-tfs's default emission floor).
   - m6a:  m6A modification positions (MM/ML) -> BED12 (one line per read)
@@ -16,7 +17,7 @@ Supported annotation types:
           don't carry MM/ML.
 
 Extracts various tag types from tagged BAM files using region-parallel processing:
-  - footprint: Nucleosome footprints (ns/nl tags) -> BED12 (one line per read)
+  - nucleosome: Nucleosomes (ns/nl tags) -> BED12 (one line per read)
   - msp: Methylase-sensitive patches (as/al tags) -> BED12 (one line per read)
   - m6a: m6A modification positions (from MM/ML tags) -> BED12 (one line per read)
   - m5c: 5mC modification positions (for DAF-seq) -> BED12 (one line per read)
@@ -27,8 +28,8 @@ Usage:
     # Default: extract all types to bigBed in same directory as input
     python extract_tags.py -i tagged.bam
 
-    # Extract only footprints
-    python extract_tags.py -i tagged.bam --footprint
+    # Extract only nucleosomes
+    python extract_tags.py -i tagged.bam --nucleosome
 
     # Extract to specific directory with 8 cores
     python extract_tags.py -i tagged.bam -o output/ -c 8
@@ -278,7 +279,7 @@ def _extract_ma_interval_type(
             )
             score = qvals[0]
         elif target_name == 'nuc':
-            # nuc+Q (legacy) -> (nq, 0, 0); nuc+QQQ -> (nq, el, er).
+            # nuc.Q (legacy) -> (nq, 0, 0); nuc.QQQ -> (nq, el, er).
             qvals = (
                 int(quals[0]) if len(quals) >= 1 else 0,
                 int(quals[1]) if len(quals) >= 2 else 0,
@@ -325,7 +326,7 @@ def _extract_ma_interval_type(
     extra = []
     if block_scores:
         if target_name in ('tf', 'nuc'):
-            # tf+QQQ / nuc+QQQ: three per-block quality columns
+            # tf.QQQ / nuc.QQQ: three per-block quality columns
             extra.extend([
                 ','.join(str(b[3][0]) for b in blocks),
                 ','.join(str(b[3][1]) for b in blocks),
@@ -395,10 +396,10 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                     return (temp_bed_paths, 0, n_features)
 
                 # Which extract types need aligned_pairs?  All of them except
-                # pure tag-presence checks — footprint, msp, tf, m6a, m5c, deam
+                # pure tag-presence checks — nucleosome, msp, tf, m6a, m5c, deam
                 # all need query->ref mapping.
                 need_mapping = any(t in extract_types for t in
-                                   ('footprint', 'msp', 'tf', 'm6a', 'm5c', 'deam'))
+                                   ('nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam'))
 
                 for read in read_iter:
                     if read.is_unmapped or read.is_secondary or read.is_supplementary:
@@ -416,11 +417,11 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                     # no annotations at all).
                     query_to_ref = None
 
-                    if 'footprint' in extract_types:
+                    if 'nucleosome' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
-                        n_features['footprint'] += _extract_footprints(
-                            read, bed_outs['footprint'], with_scores, query_to_ref,
+                        n_features['nucleosome'] += _extract_footprints(
+                            read, bed_outs['nucleosome'], with_scores, query_to_ref,
                             block_scores=block_scores,
                             circular_groups=circular_groups)
                     if 'msp' in extract_types:
@@ -478,12 +479,16 @@ def _extract_footprints(read, bed_out, with_scores: bool,
                         query_to_ref: Optional[dict] = None,
                         block_scores: bool = False,
                         circular_groups: bool = False) -> int:
-    """Extract footprint intervals from ns/nl tags as BED12 (one line per read).
+    """Extract nucleosome intervals as BED12 (one line per read).
+
+    Prefers the MA ``nuc`` annotation when present; falls back to the legacy
+    ns/nl tags only when the read has no MA tag.
 
     When ``block_scores=True``, appends three columns of comma-separated
     per-block values: blockNq (quality) plus blockEl/blockEr (conservative
-    edge sharpness, 0-255). For nuc+QQQ these carry the recaller's edges; for
-    legacy ns/nl or HMM-only nuc+Q, el/er are 0 (edges not refined).
+    edge sharpness, 0-255). From the recaller's ``nuc.QQQ`` these carry the
+    refined edges; for the legacy ns/nl fallback or HMM-only ``nuc.Q``, el/er
+    are 0 (edges not refined).
     """
     if query_to_ref is None:
         query_to_ref = _build_query_to_ref(read)
@@ -553,7 +558,7 @@ def _extract_footprints(read, bed_out, with_scores: bool,
            f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
     if block_scores:
         # Legacy ns/nl nucs have no edge refinement -> el/er = 0 (unrefined),
-        # matching the footprint schema's blockNq, blockEl, blockEr columns.
+        # matching the nucleosome schema's blockNq, blockEl, blockEr columns.
         block_nq = ','.join(str(sc) for _, _, sc in blocks)
         block_zero = ','.join('0' for _ in blocks)
         row += f"\t{block_nq}\t{block_zero}\t{block_zero}"
@@ -568,7 +573,7 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
                  query_to_ref: Optional[dict] = None,
                  block_scores: bool = False,
                  circular_groups: bool = False) -> int:
-    """Extract TF footprints from MA/AQ tags (tf+QQQ annotations) as BED12.
+    """Extract TF footprints from MA/AQ tags (tf.QQQ annotations) as BED12.
 
     Reads the spec-compliant MA/AQ tags written by ``fiberhmm-recall-tfs``
     in default (spec) mode. One BED12 row per read with all TF calls as
@@ -579,7 +584,7 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
     set to 0 to extract every call, or 100+ for high-confidence only.
 
     When ``block_scores=True``, appends three columns after blockStarts:
-    blockTq, blockEl, blockEr -- the full tf+QQQ quality triplet per call.
+    blockTq, blockEl, blockEr -- the full tf.QQQ quality triplet per call.
     """
     if query_to_ref is None:
         query_to_ref = _build_query_to_ref(read)
@@ -608,7 +613,7 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
     n_per_type = [len(rt[3]) for rt in parsed['raw_types']]
     per_annotation = parse_aq_array(aq, qual_specs, n_per_type)
 
-    # Grab full tf+QQQ triplet (tq, el, er) per call.
+    # Grab full tf.QQQ triplet (tq, el, er) per call.
     tfs_with_quality = []  # (start_0based, length, tq, el, er)
     idx = 0
     for name, _strand, qspec, intervals in parsed['raw_types']:
@@ -1089,6 +1094,10 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
             raise ValueError("output_beds as string requires exactly one extract_type")
         output_beds = {extract_types[0]: output_beds}
     extract_types = list(extract_types)
+    # Back-compat: the nucleosome type was named 'footprint' through 2.13.x.
+    extract_types = ['nucleosome' if t == 'footprint' else t for t in extract_types]
+    output_beds = {('nucleosome' if k == 'footprint' else k): v
+                   for k, v in output_beds.items()}
 
     # Check BAM index
     if not os.path.exists(input_bam + '.bai') and not os.path.exists(input_bam.replace('.bam', '.bai')):
@@ -1191,7 +1200,7 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
     """Convert BED to bigBed using bedToBigBed.
 
     If ``extract_type`` matches a FiberHMM autoSQL schema
-    (footprint/msp/tf/m6a/m5c), embed the schema via ``-as=`` so the
+    (nucleosome/msp/tf/m6a/m5c), embed the schema via ``-as=`` so the
     bigBed is self-identifying -- browsers will see the table name
     (e.g. ``fiberhmm_tf``) and description when the file is loaded.
 
@@ -1204,7 +1213,7 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
         bigbed_path: Output bigBed file
         chrom_sizes: Dict of chromosome sizes
         bed_type: 'bed12' for all FiberHMM outputs
-        extract_type: One of footprint/msp/tf/m6a/m5c to embed the
+        extract_type: One of nucleosome/msp/tf/m6a/m5c to embed the
             matching autoSQL schema; None to skip schema embedding.
         block_scores: If True, expect BED12+N input (per-block quality
             columns appended) and use the matching autoSQL variant.
@@ -1401,11 +1410,11 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
     # Predict which tracks will have content.
     predicted = {}
     if diag['has_ns_nl']:
-        predicted['footprint'] = 'ns/nl'
+        predicted['nucleosome'] = 'ns/nl'
     if diag['has_as_al']:
         predicted['msp'] = 'as/al'
     if diag['has_MA_AQ']:
-        predicted['tf'] = 'MA/AQ tf+ annotations'
+        predicted['tf'] = 'MA/AQ tf. annotations'
     if diag['has_MM'] and any('a' in s.lower() for s in diag['mm_subtypes']):
         predicted['m6a'] = 'MM/ML (A+a)'
     if diag['has_MM'] and any('+m' in s.lower() or '-m' in s.lower()
@@ -1466,8 +1475,8 @@ Examples:
     # Default: extract all types to bigBed in same directory as input
     python extract_tags.py -i tagged.bam
 
-    # Extract only footprints
-    python extract_tags.py -i tagged.bam --footprint
+    # Extract only nucleosomes
+    python extract_tags.py -i tagged.bam --nucleosome
 
     # Extract to specific directory with 8 cores
     python extract_tags.py -i tagged.bam -o output/ -c 8
@@ -1482,10 +1491,13 @@ Examples:
     parser.add_argument('-c', '--cores', type=int, default=1, help='Number of CPU cores')
 
     # Tag types (default: all)
-    parser.add_argument('--footprint', action='store_true', help='Extract footprints (ns/nl tags)')
+    parser.add_argument('--nucleosome', '--footprint', dest='nucleosome',
+                        action='store_true',
+                        help='Extract nucleosomes (ns/nl or MA nuc tags). '
+                             '(--footprint is a deprecated alias.)')
     parser.add_argument('--msp', action='store_true', help='Extract MSPs (as/al tags)')
     parser.add_argument('--tf', action='store_true',
-                        help='Extract TF/Pol II footprints from MA/AQ tag (tf+QQQ). '
+                        help='Extract TF/Pol II footprints from MA/AQ tag (tf.QQQ). '
                              'Requires a BAM produced by fiberhmm-recall-tfs in '
                              'default (spec) mode. See --min-tq for the quality floor.')
     parser.add_argument('--min-tq', type=int, default=50,
@@ -1519,7 +1531,8 @@ Examples:
     parser.add_argument('--no-scores', action='store_true', help='Omit scores from output')
     parser.add_argument('--block-scores', action='store_true',
                         help='Append per-block quality as extra BED column(s) (BED12+N). '
-                             'footprint -> blockNq, msp -> blockAq, m6a/m5c -> blockMl, '
+                             'nucleosome -> blockNq/blockEl/blockEr, msp -> blockAq, '
+                             'm6a/m5c -> blockMl, '
                              'tf -> blockTq/blockEl/blockEr. bigBed uses -type=bed12+N and '
                              'the matching autoSQL schema so FiberBrowser/UCSC can surface '
                              'per-feature quality without a sidecar database.')
@@ -1552,13 +1565,13 @@ Examples:
 
     # Determine what to extract (default: all)
     extract_types = []
-    any_selected = (args.footprint or args.msp or args.tf or
+    any_selected = (args.nucleosome or args.msp or args.tf or
                     args.m6a or args.m5c or args.deam)
     if args.all or not any_selected:
-        extract_types = ['footprint', 'msp', 'tf', 'm6a', 'm5c', 'deam']
+        extract_types = ['nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam']
     else:
-        if args.footprint:
-            extract_types.append('footprint')
+        if args.nucleosome:
+            extract_types.append('nucleosome')
         if args.msp:
             extract_types.append('msp')
         if args.tf:
@@ -1662,7 +1675,7 @@ Examples:
         if make_bigbed:
             print(f"  [{extract_type}] converting to bigBed...")
             circular_groups_for_type = (
-                args.circular_groups and extract_type in ('footprint', 'msp', 'tf')
+                args.circular_groups and extract_type in ('nucleosome', 'msp', 'tf')
             )
             if bed_to_bigbed(bed_path, bb_path, chrom_sizes, 'bed12',
                               extract_type=extract_type,
