@@ -213,22 +213,22 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         try:
                             fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
                             if fiber_read is CHIMERA_SKIP:
-                                outbam.write(read)
-                                written += 1
+                                written += _write_skipped_region_read(
+                                    outbam, read, skip_reasons, 'chimera'
+                                )
                                 skipped += 1
-                                skip_reasons['chimera'] += 1
                                 continue
                             if fiber_read is None:
-                                outbam.write(read)
-                                written += 1
+                                written += _write_skipped_region_read(
+                                    outbam, read, skip_reasons, 'no_modifications'
+                                )
                                 skipped += 1
-                                skip_reasons['no_modifications'] += 1
                                 continue
                         except Exception:
-                            outbam.write(read)
-                            written += 1
+                            written += _write_skipped_region_read(
+                                outbam, read, skip_reasons, 'extraction_failed'
+                            )
                             skipped += 1
-                            skip_reasons['extraction_failed'] += 1
                             continue
 
                         total_reads += 1
@@ -582,25 +582,25 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
 
                     payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
                     if payload is None:
-                        outbam.write(read)
-                        written += 1
+                        written += _write_skipped_region_read(
+                            outbam, read, skip_reasons, 'no_modifications'
+                        )
                         skipped += 1
-                        skip_reasons['no_modifications'] += 1
                         continue
 
                     try:
                         fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
                         if fiber_read is CHIMERA_SKIP:
-                            outbam.write(read)
-                            written += 1
+                            written += _write_skipped_region_read(
+                                outbam, read, skip_reasons, 'chimera'
+                            )
                             skipped += 1
-                            skip_reasons['chimera'] += 1
                             continue
                         if fiber_read is None:
-                            outbam.write(read)
-                            written += 1
+                            written += _write_skipped_region_read(
+                                outbam, read, skip_reasons, 'no_modifications'
+                            )
                             skipped += 1
-                            skip_reasons['no_modifications'] += 1
                             continue
                         apply_result = run_hmm_apply_stage(
                             fiber_read,
@@ -614,10 +614,10 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                             with_scores,
                         )
                     except Exception:
-                        outbam.write(read)
-                        written += 1
+                        written += _write_skipped_region_read(
+                            outbam, read, skip_reasons, 'extraction_failed'
+                        )
                         skipped += 1
-                        skip_reasons['extraction_failed'] += 1
                         continue
 
                     total_reads += 1
