@@ -62,6 +62,25 @@ def test_footprint_reference_intervals_clamps_and_skips_invalid_positions():
     np.testing.assert_array_equal(sizes, np.array([1, 1], dtype=np.int32))
 
 
+def test_modified_base_positions_forward_filters_quality_and_parser_errors():
+    read = SimpleNamespace(
+        modified_bases_forward={
+            ("A", 0, "a"): [(1, 127), (2, 128)],
+            ("C", 0, "m"): [(3, 255)],
+        }
+    )
+
+    assert export_posteriors._modified_base_positions_forward(read) == {2, 3}
+    assert export_posteriors._modified_base_positions_forward(read, min_qual=255) == {3}
+
+    class BadRead:
+        @property
+        def modified_bases_forward(self):
+            raise ValueError("bad MM/ML")
+
+    assert export_posteriors._modified_base_positions_forward(BadRead()) == set()
+
+
 def test_h5_batch_metadata_helpers_append_and_concatenate():
     meta = {"ids": [], "starts": [], "ends": [], "strands": []}
 

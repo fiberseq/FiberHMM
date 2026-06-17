@@ -146,6 +146,20 @@ def _footprint_reference_intervals(
     )
 
 
+def _modified_base_positions_forward(read, min_qual: int = 128) -> Set[int]:
+    try:
+        mod_dict = dict(read.modified_bases_forward)
+    except (TypeError, ValueError):
+        return set()
+
+    mod_positions = set()
+    for positions in mod_dict.values():
+        for pos, qual in positions:
+            if qual >= min_qual:
+                mod_positions.add(pos)
+    return mod_positions
+
+
 def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
                                   context_size: int, edge_trim: int) -> Optional[Dict]:
     """
@@ -160,16 +174,7 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
         return None
 
     # Get modification positions from MM/ML tags
-    try:
-        mod_dict = dict(read.modified_bases_forward)
-    except (TypeError, ValueError):
-        mod_dict = {}
-
-    mod_positions = set()
-    for key, positions in mod_dict.items():
-        for pos, qual in positions:
-            if qual >= 128:
-                mod_positions.add(pos)
+    mod_positions = _modified_base_positions_forward(read)
 
     if len(mod_positions) < 10:
         return None
