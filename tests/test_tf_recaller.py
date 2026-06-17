@@ -19,6 +19,7 @@ from fiberhmm.inference.tf_recaller import (
 )
 from fiberhmm.io.ma_tags import (
     EDGE_AMBIGUITY_SAT,
+    _aq_values_sequence,
     _format_ma_annotation_part,
     _nuc_aq_has_edge_qualities,
     _parse_ma_interval_list,
@@ -231,6 +232,14 @@ def test_parse_aq_array_reads_only_consumed_quality_bytes():
 
 def test_parse_aq_array_preserves_short_quality_arrays():
     assert parse_aq_array([7], ['QQQ'], [1]) == [[7]]
+
+
+def test_aq_values_sequence_normalizes_none_and_generators():
+    values = [1, 2, 3]
+
+    assert _aq_values_sequence(None) == ()
+    assert _aq_values_sequence(values) is values
+    assert _aq_values_sequence(iter(values)) == (1, 2, 3)
 
 
 # ------------------- merge_intervals -------------------------------

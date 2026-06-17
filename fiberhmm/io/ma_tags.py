@@ -329,6 +329,13 @@ def parse_ma_tag(ma_string: str) -> dict:
     return out
 
 
+def _aq_values_sequence(aq):
+    aq_values = aq if aq is not None else ()
+    if not (hasattr(aq_values, "__len__") and hasattr(aq_values, "__getitem__")):
+        aq_values = tuple(aq_values)
+    return aq_values
+
+
 def parse_aq_array(aq, qual_spec_per_type: Sequence[str],
                    n_annotations_per_type: Sequence[int]) -> List[List[int]]:
     """Parse the flat AQ array into per-annotation quality lists.
@@ -338,9 +345,7 @@ def parse_aq_array(aq, qual_spec_per_type: Sequence[str],
     """
     result: List[List[int]] = []
     idx = 0
-    aq_values = aq if aq is not None else ()
-    if not (hasattr(aq_values, "__len__") and hasattr(aq_values, "__getitem__")):
-        aq_values = tuple(aq_values)
+    aq_values = _aq_values_sequence(aq)
     aq_len = len(aq_values)
     for spec, n in zip(qual_spec_per_type, n_annotations_per_type):
         n_q = len(spec)
