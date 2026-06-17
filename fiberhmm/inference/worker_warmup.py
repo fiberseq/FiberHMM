@@ -23,6 +23,10 @@ def _posterior_warmup_obs(length: int) -> np.ndarray:
     return np.zeros(max(1, int(length)), dtype=np.int32)
 
 
+def _tf_warmup_obs() -> np.ndarray:
+    return np.zeros(16, dtype=np.int32)
+
+
 def warm_up_model_posteriors(model, length: int = 100) -> None:
     from fiberhmm.core.hmm import HAS_NUMBA
 
@@ -44,6 +48,6 @@ def warm_up_tf_recaller(llr_hit, llr_miss) -> None:
         from fiberhmm.inference.tf_recaller import call_tfs_in_interval
 
         _ = call_tfs_in_interval(
-            np.zeros(16, dtype=np.int32), 0, 16,
+            _tf_warmup_obs(), 0, 16,
             llr_hit, llr_miss, min_llr=4.0, min_opps=3,
         )
