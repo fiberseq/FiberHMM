@@ -72,6 +72,20 @@ def _write_skipped_region_read(outbam, read, skip_reasons: dict, reason: str) ->
     return 1
 
 
+def _record_skipped_region_read(
+    outbam,
+    read,
+    skip_reasons: dict,
+    reason: str,
+    written: int,
+    skipped: int,
+) -> tuple[int, int]:
+    return (
+        written + _write_skipped_region_read(outbam, read, skip_reasons, reason),
+        skipped + 1,
+    )
+
+
 def _fiber_read_skip_reason(fiber_read) -> Optional[str]:
     if fiber_read is CHIMERA_SKIP:
         return CHIMERA_SKIP_REASON
@@ -398,10 +412,10 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                             read, start, end, filter_config,
                         )
                         if route == _REGION_ROUTE_SKIP:
-                            written += _write_skipped_region_read(
-                                outbam, read, skip_reasons, skip_reason
+                            written, skipped = _record_skipped_region_read(
+                                outbam, read, skip_reasons, skip_reason,
+                                written, skipped,
                             )
-                            skipped += 1
                             continue
                         if route == _REGION_ROUTE_OUTSIDE:
                             continue
@@ -410,10 +424,10 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                             read, mode, prob_threshold,
                         )
                         if skip_reason:
-                            written += _write_skipped_region_read(
-                                outbam, read, skip_reasons, skip_reason
+                            written, skipped = _record_skipped_region_read(
+                                outbam, read, skip_reasons, skip_reason,
+                                written, skipped,
                             )
-                            skipped += 1
                             continue
 
                         total_reads += 1
@@ -665,10 +679,10 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         read, start, end, filter_config,
                     )
                     if route == _REGION_ROUTE_SKIP:
-                        written += _write_skipped_region_read(
-                            outbam, read, skip_reasons, skip_reason
+                        written, skipped = _record_skipped_region_read(
+                            outbam, read, skip_reasons, skip_reason,
+                            written, skipped,
                         )
-                        skipped += 1
                         continue
                     if route == _REGION_ROUTE_OUTSIDE:
                         continue
@@ -678,10 +692,10 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         payload, mode, prob_threshold,
                     )
                     if skip_reason:
-                        written += _write_skipped_region_read(
-                            outbam, read, skip_reasons, skip_reason
+                        written, skipped = _record_skipped_region_read(
+                            outbam, read, skip_reasons, skip_reason,
+                            written, skipped,
                         )
-                        skipped += 1
                         continue
                     try:
                         apply_result = run_hmm_apply_stage(
@@ -696,10 +710,10 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                             with_scores,
                         )
                     except Exception:
-                        written += _write_skipped_region_read(
-                            outbam, read, skip_reasons, 'extraction_failed'
+                        written, skipped = _record_skipped_region_read(
+                            outbam, read, skip_reasons, 'extraction_failed',
+                            written, skipped,
                         )
-                        skipped += 1
                         continue
 
                     total_reads += 1

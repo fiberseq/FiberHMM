@@ -20,6 +20,7 @@ from fiberhmm.inference.region_workers import (
     _region_fused_recall_options,
     _region_read_route,
     _region_result_ns_scores,
+    _record_skipped_region_read,
     _write_region_posterior_record,
 )
 
@@ -56,6 +57,21 @@ def test_region_read_route_preserves_skip_and_ownership_order():
     assert _region_read_route(
         _route_read(is_unmapped=True, reference_start=90), 100, 200, config
     ) == (_REGION_ROUTE_SKIP, "unmapped")
+
+
+def test_record_skipped_region_read_writes_and_updates_counters():
+    read = _route_read()
+    outbam = SimpleNamespace(written=[])
+    outbam.write = outbam.written.append
+    skip_reasons = {"low_mapq": 0}
+
+    written, skipped = _record_skipped_region_read(
+        outbam, read, skip_reasons, "low_mapq", written=3, skipped=2
+    )
+
+    assert outbam.written == [read]
+    assert skip_reasons["low_mapq"] == 1
+    assert (written, skipped) == (4, 3)
 
 
 def test_extract_region_fiber_read_maps_skip_reasons(monkeypatch):
