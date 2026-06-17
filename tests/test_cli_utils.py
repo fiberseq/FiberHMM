@@ -5,7 +5,9 @@ import pytest
 from fiberhmm.core import bam_reader
 from fiberhmm.cli.utils import (
     AccessibilityCounter,
+    _accessibility_prior_row,
     _accessibility_priors_for_base,
+    _accessibility_priors_dataframe,
     _aggregate_accessibility_counts,
     _estimate_emission_probs,
     _passes_transfer_base_filters,
@@ -53,6 +55,35 @@ def test_accessibility_aggregation_trims_and_merges_context_counts():
         "ACA": [3, 8],
         "AGA": [7, 11],
     }
+
+
+def test_accessibility_prior_rows_and_dataframe_are_sorted():
+    assert _accessibility_prior_row("AAA", [0, 0]) == {
+        "context": "AAA",
+        "accessible_bp": 0,
+        "total_bp": 0,
+        "p_accessible": 0.5,
+    }
+
+    df = _accessibility_priors_dataframe({
+        "CCC": [1, 4],
+        "AAA": [3, 6],
+    })
+
+    assert df.to_dict("records") == [
+        {
+            "context": "AAA",
+            "accessible_bp": 3,
+            "total_bp": 6,
+            "p_accessible": 0.5,
+        },
+        {
+            "context": "CCC",
+            "accessible_bp": 1,
+            "total_bp": 4,
+            "p_accessible": 0.25,
+        },
+    ]
 
 
 def test_estimate_emission_probs_falls_back_with_too_few_contexts(capsys):

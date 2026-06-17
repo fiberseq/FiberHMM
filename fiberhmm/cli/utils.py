@@ -244,6 +244,28 @@ def _aggregate_accessibility_counts(
     return dict(aggregated)
 
 
+def _accessibility_prior_row(context: str, counts) -> dict:
+    acc, total = counts
+    p_acc = acc / total if total > 0 else 0.5
+    return {
+        'context': context,
+        'accessible_bp': int(acc),
+        'total_bp': int(total),
+        'p_accessible': p_acc,
+    }
+
+
+def _accessibility_priors_dataframe(aggregated: dict) -> pd.DataFrame:
+    rows = [
+        _accessibility_prior_row(context, counts)
+        for context, counts in sorted(aggregated.items())
+    ]
+    df = pd.DataFrame(rows)
+    if len(df) > 0:
+        df = df.sort_values('context').reset_index(drop=True)
+    return df
+
+
 class AccessibilityCounter:
     """Count bases in accessible vs inaccessible regions per context."""
 
@@ -299,21 +321,7 @@ class AccessibilityCounter:
             self.max_context,
             context_size,
         )
-
-        rows = []
-        for context, (acc, total) in sorted(aggregated.items()):
-            p_acc = acc / total if total > 0 else 0.5
-            rows.append({
-                'context': context,
-                'accessible_bp': int(acc),
-                'total_bp': int(total),
-                'p_accessible': p_acc
-            })
-
-        df = pd.DataFrame(rows)
-        if len(df) > 0:
-            df = df.sort_values('context').reset_index(drop=True)
-        return df
+        return _accessibility_priors_dataframe(aggregated)
 
 
 def _parse_footprints_from_bam_read(read):
