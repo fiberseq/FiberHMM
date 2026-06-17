@@ -57,6 +57,7 @@ from fiberhmm.inference.parallel import _get_genome_regions
 from fiberhmm.inference.reference_mapping import (
     build_query_to_ref as _build_query_to_ref,
     query_interval_to_ref_block as _query_interval_to_ref_block,
+    query_to_ref_lookup as _query_to_ref_lookup,
     scored_interval_blocks as _legacy_interval_blocks,
 )
 from fiberhmm.io.ma_tags import (
@@ -651,15 +652,12 @@ def _parse_mod_positions_safe(read, target_mod_codes):
 
 
 def _mod_positions_to_ref_values(positions, aligned_pairs, prob_threshold: int):
-    n = len(aligned_pairs)
     out = []
     for query_pos, value in positions:
         if value < prob_threshold:
             continue
-        if query_pos < 0 or query_pos >= n:
-            continue
-        ref_pos = int(aligned_pairs[query_pos])
-        if ref_pos < 0:
+        ref_pos = _query_to_ref_lookup(aligned_pairs, query_pos)
+        if ref_pos is None:
             continue
         out.append((ref_pos, int(value)))
     out.sort(key=lambda x: x[0])
