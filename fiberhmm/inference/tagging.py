@@ -292,13 +292,21 @@ def split_intervals(intervals: Sequence[Interval]) -> tuple[np.ndarray, np.ndarr
     return starts, lengths
 
 
+def _result_intervals(
+    result: dict,
+    circular_key: str,
+    start_key: str,
+    length_key: str,
+) -> list[Interval]:
+    return result.get(circular_key) or intervals_from_arrays(
+        result[start_key],
+        result[length_key],
+    )
+
+
 def _fused_recall_tag_intervals(result: dict) -> tuple[list[Interval], list[Interval]]:
-    kept_nucs = result.get("circular_ns") or intervals_from_arrays(
-        result["ns"], result["nl"],
-    )
-    msps = result.get("circular_as") or intervals_from_arrays(
-        result["as"], result["al"],
-    )
+    kept_nucs = _result_intervals(result, "circular_ns", "ns", "nl")
+    msps = _result_intervals(result, "circular_as", "as", "al")
     return kept_nucs, msps
 
 

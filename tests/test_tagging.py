@@ -15,6 +15,7 @@ from fiberhmm.inference.tagging import (
     _legacy_interval_group,
     _linear_intervals_overlap,
     _nuc_overlaps_any_linear_interval,
+    _result_intervals,
     _should_keep_nuc_interval,
     _tf_linear_intervals,
     scores_to_u8,
@@ -221,6 +222,19 @@ def test_fused_recall_tag_intervals_prefer_circular_intervals_when_present():
     result["circular_as"] = [(80, 10)]
 
     assert _fused_recall_tag_intervals(result) == ([(90, 20)], [(80, 10)])
+
+
+def test_result_intervals_prefers_circular_key_before_arrays():
+    result = {
+        "starts": np.asarray([10], dtype=np.int32),
+        "lengths": np.asarray([5], dtype=np.int32),
+    }
+
+    assert _result_intervals(result, "circular", "starts", "lengths") == [(10, 5)]
+
+    result["circular"] = [(90, 20)]
+
+    assert _result_intervals(result, "circular", "starts", "lengths") == [(90, 20)]
 
 
 def test_linear_tf_interval_helpers_use_half_open_overlap():
