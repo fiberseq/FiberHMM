@@ -157,6 +157,20 @@ def test_recall_tfs_record_recall_stats_counts_demoted_short_nucs():
     assert stats["demoted"] == 2
 
 
+def test_recall_tfs_record_v2_input_stats_counts_short_nucs():
+    stats = recall_tfs._new_stats()
+
+    assert recall_tfs._record_v2_input_stats(stats, {}, 90) == 0
+    assert stats["v2"] == 0
+
+    assert recall_tfs._record_v2_input_stats(
+        stats,
+        {"ns": [1, 2, 3], "nl": [10, 90, 0]},
+        90,
+    ) == 1
+    assert stats["v2"] == 1
+
+
 def test_recall_tfs_write_recall_result_passes_through_null_result(monkeypatch):
     reads = [
         SimpleNamespace(query_name="annotated"),

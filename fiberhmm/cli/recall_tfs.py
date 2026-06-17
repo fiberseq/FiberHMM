@@ -190,6 +190,13 @@ def _record_recall_stats(
     stats['demoted'] = max(0, v2_short_count - survived_short)
 
 
+def _record_v2_input_stats(stats: dict, tags: dict, unify_threshold: int) -> int:
+    if 'ns' not in tags or 'nl' not in tags:
+        return 0
+    stats['v2'] = 1
+    return _short_v2_nuc_count(tags, unify_threshold)
+
+
 def _make_payload(read, mode=None) -> dict:
     """Extract only the tag data workers need from a pysam read.
 
@@ -235,12 +242,7 @@ def _process_payload_record(payload) -> tuple:
     stats = _new_stats()
     unify_threshold = _WORKER['unify_threshold']
 
-    has_ns = 'ns' in tags and 'nl' in tags
-    if has_ns:
-        stats['v2'] = 1
-        v2_short_count = _short_v2_nuc_count(tags, unify_threshold)
-    else:
-        v2_short_count = 0
+    v2_short_count = _record_v2_input_stats(stats, tags, unify_threshold)
 
     tf_calls, kept_nucs, msps = recall_read(
         read,
