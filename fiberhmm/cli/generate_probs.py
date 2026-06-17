@@ -226,6 +226,13 @@ def _accumulate_filter_stats(combined_stats, filter_stats: Dict[str, int]) -> No
         combined_stats[key] += value
 
 
+def _record_filter_skip(filter_stats: Dict[str, int], skip_reason) -> bool:
+    if skip_reason is None:
+        return False
+    filter_stats[skip_reason] += 1
+    return True
+
+
 def _process_probability_read(
     read,
     counters: Dict[str, ContextCounter],
@@ -323,13 +330,11 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
             skip_reason = _generate_probs_skip_reason(
                 read, args.min_mapq, args.min_read_length,
             )
-            if skip_reason is not None:
-                filter_stats[skip_reason] += 1
+            if _record_filter_skip(filter_stats, skip_reason):
                 continue
 
             mm_tag, ml_tag, tag_skip_reason = _read_mm_ml_tags_or_skip(read)
-            if tag_skip_reason is not None:
-                filter_stats[tag_skip_reason] += 1
+            if _record_filter_skip(filter_stats, tag_skip_reason):
                 continue
 
             _process_probability_read(

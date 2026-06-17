@@ -20,6 +20,7 @@ from fiberhmm.cli.generate_probs import (
     _read_limit_reached,
     _read_reference_span,
     _read_mm_ml_tags_or_skip,
+    _record_filter_skip,
     _record_mm_tag_types,
     _safe_percent,
     _target_bases_for_mode,
@@ -150,6 +151,15 @@ def test_safe_percent_uses_one_as_zero_denominator_floor():
     assert _safe_percent(25, 100) == 25.0
     assert _safe_percent(0, 0) == 0.0
     assert _safe_percent(1, 0) == 100.0
+
+
+def test_record_filter_skip_increments_when_reason_is_present():
+    stats = defaultdict(int)
+
+    assert not _record_filter_skip(stats, None)
+    assert stats == {}
+    assert _record_filter_skip(stats, "low_mapq")
+    assert stats["low_mapq"] == 1
 
 
 def test_process_probability_read_updates_target_counter(monkeypatch):
