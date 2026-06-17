@@ -95,6 +95,17 @@ def _fused_recall_state(llr_hit, llr_miss, recall_nucs: bool,
     }
 
 
+def _worker_recall_options(nuc_min_size: int, msp_min_size: int) -> dict:
+    return {
+        'recall_nucs': _worker_recall_state.get('recall_nucs', False),
+        'split_min_llr': _worker_recall_state.get('split_min_llr', 4.0),
+        'split_min_opps': _worker_recall_state.get('split_min_opps', 3),
+        'nuc_min_size': nuc_min_size,
+        'msp_min_size': msp_min_size,
+        'phase_nrl': _worker_recall_state.get('phase_nrl', 0),
+    }
+
+
 def _init_bam_worker(model_path, debug_timing=False):
     """Initialize worker process with model."""
     global _worker_model, _worker_debug_timing
@@ -269,12 +280,7 @@ def _process_fused_payload_chunk_worker(
             min_opps,
             unify_threshold,
             with_scores,
-            recall_nucs=_worker_recall_state.get('recall_nucs', False),
-            split_min_llr=_worker_recall_state.get('split_min_llr', 4.0),
-            split_min_opps=_worker_recall_state.get('split_min_opps', 3),
-            nuc_min_size=nuc_min_size,
-            msp_min_size=msp_min_size,
-            phase_nrl=_worker_recall_state.get('phase_nrl', 0),
+            **_worker_recall_options(nuc_min_size, msp_min_size),
         )
 
     return _process_worker_items(chunk_payloads, process_item)

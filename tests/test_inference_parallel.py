@@ -530,6 +530,39 @@ def test_fused_recall_state_preserves_tables_and_thresholds():
     }
 
 
+def test_worker_recall_options_uses_state_with_defaults(monkeypatch):
+    monkeypatch.setattr(streaming_workers, "_worker_recall_state", {})
+    assert streaming_workers._worker_recall_options(
+        nuc_min_size=85,
+        msp_min_size=20,
+    ) == {
+        "recall_nucs": False,
+        "split_min_llr": 4.0,
+        "split_min_opps": 3,
+        "nuc_min_size": 85,
+        "msp_min_size": 20,
+        "phase_nrl": 0,
+    }
+
+    monkeypatch.setattr(streaming_workers, "_worker_recall_state", {
+        "recall_nucs": True,
+        "split_min_llr": 5.5,
+        "split_min_opps": 7,
+        "phase_nrl": 185,
+    })
+    assert streaming_workers._worker_recall_options(
+        nuc_min_size=90,
+        msp_min_size=25,
+    ) == {
+        "recall_nucs": True,
+        "split_min_llr": 5.5,
+        "split_min_opps": 7,
+        "nuc_min_size": 90,
+        "msp_min_size": 25,
+        "phase_nrl": 185,
+    }
+
+
 def test_fused_payload_worker_counts_per_read_failures(monkeypatch):
     def fake_extract(payload, mode, prob_threshold):
         if payload == "extract-bad":
