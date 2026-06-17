@@ -405,6 +405,14 @@ def _rotate_circular_nuc_calls(calls, cut: int, read_length: int) -> List[NucCal
     return rotated
 
 
+def _whole_molecule_msp(read_length: int, floor: int) -> List[Interval]:
+    return [(0, read_length)] if read_length >= floor else []
+
+
+def _whole_molecule_nuc_call(call: NucCall, read_length: int) -> NucCall:
+    return NucCall(0, read_length, call.nq, call.el, call.er)
+
+
 def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
                                      nuc_min_size=85):
     """Circular-aware ``assemble_nuc_msp_tiling``.
@@ -433,12 +441,12 @@ def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
         return list(calls), []
     if not calls:
         # no nucleosomes -> the entire molecule tiles as one accessible MSP
-        return [], ([(0, rl)] if rl >= floor else [])
+        return [], _whole_molecule_msp(rl, floor)
     whole = next((n for n in calls if int(n.length) >= rl), None)
     if whole is not None:
         if rl >= nfloor:
-            return [NucCall(0, rl, whole.nq, whole.el, whole.er)], []
-        return [], ([(0, rl)] if rl >= floor else [])
+            return [_whole_molecule_nuc_call(whole, rl)], []
+        return [], _whole_molecule_msp(rl, floor)
 
     # Prefer an uncovered cut point (no call straddles it); fall back to 0 when
     # the circle is fully covered. Either way, straddlers are split below, so a
