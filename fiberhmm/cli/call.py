@@ -186,6 +186,19 @@ def _resolve_call_mode_context(args, model_k, model_mode):
     return mode, k
 
 
+def _resolve_call_chroms(chroms):
+    return set(chroms) if chroms else None
+
+
+def _check_region_parallel_file_io(args) -> None:
+    if args.input != '-' and args.output != '-':
+        return
+    print("error: --region-parallel requires file I/O "
+          "(input must be indexed BAM, not stdin; output cannot be stdout).",
+          file=sys.stderr)
+    sys.exit(1)
+
+
 def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
                        recall_nucs) -> int:
     """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off)."""
@@ -396,12 +409,8 @@ def main():
     also_write_legacy = should_write_legacy_tags(args)
 
     if args.region_parallel:
-        if args.input == '-' or args.output == '-':
-            print("error: --region-parallel requires file I/O "
-                  "(input must be indexed BAM, not stdin; output cannot be stdout).",
-                  file=sys.stderr)
-            sys.exit(1)
-        chroms_set = set(args.chroms) if args.chroms else None
+        _check_region_parallel_file_io(args)
+        chroms_set = _resolve_call_chroms(args.chroms)
         n_reads, n_fp = _process_bam_region_parallel_fused(
             input_bam=args.input,
             output_bam=args.output,

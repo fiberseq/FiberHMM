@@ -14,7 +14,9 @@ from conftest import make_synthetic_bam, make_synthetic_iupac_bam
 from fiberhmm.cli.call import (
     _build_pg_record,
     _check_daf_inputs,
+    _check_region_parallel_file_io,
     _resolve_apply_model,
+    _resolve_call_chroms,
     _resolve_call_mode_context,
     _resolve_recall_nucs,
     _resolve_recall_model,
@@ -169,6 +171,20 @@ def test_call_mode_context_resolution_uses_overrides_metadata_and_defaults():
         "pacbio-fiber",
         3,
     )
+
+
+def test_call_region_parallel_helpers(capsys):
+    assert _resolve_call_chroms(None) is None
+    assert _resolve_call_chroms([]) is None
+    assert _resolve_call_chroms(["chr2", "chr1", "chr2"]) == {"chr1", "chr2"}
+
+    _check_region_parallel_file_io(SimpleNamespace(input="in.bam", output="out.bam"))
+
+    with pytest.raises(SystemExit) as exc:
+        _check_region_parallel_file_io(SimpleNamespace(input="-", output="out.bam"))
+
+    assert exc.value.code == 1
+    assert "--region-parallel requires file I/O" in capsys.readouterr().err
 
 
 def test_call_recall_nucs_defaults_and_ddda_warnings(capsys):
