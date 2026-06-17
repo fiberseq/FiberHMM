@@ -225,6 +225,15 @@ def _write_probability_table(probs: pd.DataFrame, output_path: str) -> None:
     )
 
 
+def _probability_counter_summary(counter: ContextCounter) -> dict:
+    return {
+        'positions': counter.total_positions,
+        'modified': counter.total_modified,
+        'rate': counter.total_modified / max(1, counter.total_positions),
+        'unique_contexts': len(counter.counts),
+    }
+
+
 def _max_reads_per_file(max_reads: int, n_files: int) -> int:
     return max_reads // n_files if max_reads > 0 else 0
 
@@ -539,19 +548,21 @@ def main():
     for base in target_bases:
         acc = accessible_counters[base]
         inacc = inaccessible_counters[base]
+        acc_summary = _probability_counter_summary(acc)
+        inacc_summary = _probability_counter_summary(inacc)
 
         print(f"\n{base}-centered contexts:")
         print("  Accessible:")
-        print(f"    Positions: {acc.total_positions:,}")
-        print(f"    Modified: {acc.total_modified:,}")
-        print(f"    Rate: {acc.total_modified / max(1, acc.total_positions):.4f}")
-        print(f"    Unique contexts: {len(acc.counts):,}")
+        print(f"    Positions: {acc_summary['positions']:,}")
+        print(f"    Modified: {acc_summary['modified']:,}")
+        print(f"    Rate: {acc_summary['rate']:.4f}")
+        print(f"    Unique contexts: {acc_summary['unique_contexts']:,}")
 
         print("  Inaccessible:")
-        print(f"    Positions: {inacc.total_positions:,}")
-        print(f"    Modified: {inacc.total_modified:,}")
-        print(f"    Rate: {inacc.total_modified / max(1, inacc.total_positions):.4f}")
-        print(f"    Unique contexts: {len(inacc.counts):,}")
+        print(f"    Positions: {inacc_summary['positions']:,}")
+        print(f"    Modified: {inacc_summary['modified']:,}")
+        print(f"    Rate: {inacc_summary['rate']:.4f}")
+        print(f"    Unique contexts: {inacc_summary['unique_contexts']:,}")
 
         # Save full counters (PKL files in output root)
         acc.save(_probability_counter_path(output_dir, base_name, "accessible", base))

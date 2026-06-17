@@ -18,6 +18,7 @@ from fiberhmm.cli.generate_probs import (
     _probability_table_path,
     _print_daf_diagnostics,
     _probability_read_tags_or_skip,
+    _probability_counter_summary,
     _progress_postfix,
     _process_probability_read,
     _read_limit_reached,
@@ -358,6 +359,25 @@ def test_write_probability_table_uses_stable_probability_columns(tmp_path):
         "encode\tcontext\thit\tnohit\tratio\n"
         "7\tAAA\t1\t3\t0.25\n"
     )
+
+
+def test_probability_counter_summary_reports_totals_rate_and_contexts():
+    counter = _Counter()
+    counter.total_positions = 100
+    counter.total_modified = 25
+    counter.counts = {"AAA": [1, 2], "AAC": [3, 4]}
+
+    assert _probability_counter_summary(counter) == {
+        "positions": 100,
+        "modified": 25,
+        "rate": 0.25,
+        "unique_contexts": 2,
+    }
+
+    counter.total_positions = 0
+    counter.total_modified = 1
+    counter.counts = {}
+    assert _probability_counter_summary(counter)["rate"] == 1.0
 
 
 def test_probability_output_path_helpers():
