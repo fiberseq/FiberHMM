@@ -187,6 +187,13 @@ def _posterior_result_record(
     }
 
 
+def _posterior_sequence_or_none(read, min_length: int = 100):
+    sequence = read.query_sequence
+    if sequence is None or len(sequence) < min_length:
+        return None
+    return sequence
+
+
 def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
                                   context_size: int, edge_trim: int) -> Optional[Dict]:
     """
@@ -196,8 +203,8 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
     if not is_primary_mapped_alignment(read):
         return None
 
-    sequence = read.query_sequence
-    if sequence is None or len(sequence) < 100:
+    sequence = _posterior_sequence_or_none(read)
+    if sequence is None:
         return None
 
     # Get modification positions from MM/ML tags

@@ -121,6 +121,18 @@ def test_posterior_result_record_preserves_metadata_and_arrays():
     assert record["footprint_sizes"] is sizes
 
 
+def test_posterior_sequence_or_none_applies_min_length_filter():
+    assert export_posteriors._posterior_sequence_or_none(
+        SimpleNamespace(query_sequence=None),
+    ) is None
+    assert export_posteriors._posterior_sequence_or_none(
+        SimpleNamespace(query_sequence="A" * 99),
+    ) is None
+    assert export_posteriors._posterior_sequence_or_none(
+        SimpleNamespace(query_sequence="A" * 100),
+    ) == "A" * 100
+
+
 def test_h5_batch_metadata_helpers_append_and_concatenate():
     ids, starts, ends, strands = export_posteriors._h5_batch_metadata([
         {"read_name": "read-a", "ref_start": 10, "ref_end": 15, "strand": "+"},
