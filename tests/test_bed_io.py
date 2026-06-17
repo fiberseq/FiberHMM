@@ -1,6 +1,14 @@
 """Tests for shared BED formatting helpers."""
 
-from fiberhmm.io.bed import bed12_row
+from fiberhmm.io.bed import _bed12_block_fields, bed12_row
+
+
+def test_bed12_block_fields_format_count_sizes_and_relative_starts():
+    assert _bed12_block_fields([(100, 110), (140, 150)], 100) == (
+        2,
+        "10,10",
+        "0,40",
+    )
 
 
 def test_bed12_row_formats_standard_and_extra_columns():
