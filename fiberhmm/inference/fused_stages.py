@@ -46,6 +46,10 @@ def _analyzed_span(apply_result, read_length, kept):
             max(ends) if ends else int(read_length))
 
 
+def _interval_pair_lists(intervals):
+    return [s for s, _ in intervals], [length for _, length in intervals]
+
+
 def apply_result_has_footprints(apply_result: Optional[Mapping[str, Any]]) -> bool:
     """Return whether an HMM apply result has annotations worth writing."""
     if apply_result is None:
@@ -307,8 +311,7 @@ def _build_fused_recall_result_with_nucs(
 
     # 2) re-derive MSPs from the new nucleosome boundaries
     new_msps = rederive_msps(orig_msps, access, read_length, msp_min_size)
-    msp_starts = [s for s, _ in new_msps]
-    msp_len = [length for _, length in new_msps]
+    msp_starts, msp_len = _interval_pair_lists(new_msps)
 
     # 3) TF recall over the cleaner accessible space + short refined nucs
     refined_ns = [nc.start for nc in nuc_calls]
@@ -333,8 +336,7 @@ def _build_fused_recall_result_with_nucs(
     span_lo, span_hi = _analyzed_span(apply_result, read_length, kept)
     kept, new_msps = assemble_nuc_msp_tiling(
         kept, span_lo, span_hi, msp_min_size, nuc_min_size)
-    msp_starts = [s for s, _ in new_msps]
-    msp_len = [length for _, length in new_msps]
+    msp_starts, msp_len = _interval_pair_lists(new_msps)
 
     return {
         "ns": np.asarray([k.start for k in kept], dtype=np.int32),
@@ -386,10 +388,11 @@ def _build_fused_recall_result_with_nucs_circular(
 
     # 2) re-derive MSPs (still tiled), then 3) TF recall on the refined structure
     tiled_new_msps = rederive_msps(tiled_msps, tiled_access, tiled_len, msp_min_size)
+    tiled_msp_starts, tiled_msp_lengths = _interval_pair_lists(tiled_new_msps)
     tiled_tf = run_tf_recall_stage(
         obs,
         [nc.start for nc in tiled_nucs], [nc.length for nc in tiled_nucs],
-        [s for s, _ in tiled_new_msps], [length for _, length in tiled_new_msps],
+        tiled_msp_starts, tiled_msp_lengths,
         tiled_len, llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
     )
     # 3b) promote nucleosome-sized TF leaks back to nuc+ (still tiled)
@@ -402,7 +405,7 @@ def _build_fused_recall_result_with_nucs_circular(
     tf_calls = project_center_tf_calls(tiled_tf, read_length)
     proj_nucs = project_center_nuc_calls(tiled_nucs, read_length)
     proj_msps = project_center_runs(
-        [s for s, _ in tiled_new_msps],
+        tiled_msp_starts,
         [s + length for s, length in tiled_new_msps],
         read_length,
     )
