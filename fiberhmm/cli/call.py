@@ -286,6 +286,26 @@ def _build_pg_record(mode, recall_nucs, phase_nrl, keep_chimeras, argv=None):
     }
 
 
+def _call_banner_text(apply_model_path, recall_model_path, mode, k, enzyme,
+                      min_llr, min_opps, unify_threshold, uplift,
+                      cores, io_threads, circular, region_parallel):
+    mode_label = 'region-parallel' if region_parallel else 'streaming'
+    recall_model_label = recall_model_path or '(reuse apply model)'
+    enzyme_label = enzyme or 'custom'
+    circular_label = ' circular=on' if circular else ''
+    return (
+        "\n=========================================================================\n"
+        f"  fiberhmm-call [BETA] — fused apply + recall-tfs ({mode_label})\n"
+        f"  apply model:  {apply_model_path}\n"
+        f"  recall model: {recall_model_label}\n"
+        f"  mode={mode} k={k} enzyme={enzyme_label}\n"
+        f"  min_llr={min_llr} min_opps={min_opps} "
+        f"unify_threshold={unify_threshold} uplift={uplift}\n"
+        f"  cores={cores} io-threads={io_threads}{circular_label}\n"
+        "=========================================================================\n"
+    )
+
+
 def _sniff_daf_input_sources(input_bam: str, n_sniff: int = 10):
     import pysam
 
@@ -414,18 +434,22 @@ def main():
         mode, recall_nucs, phase_nrl, args.keep_chimeras, sys.argv,
     )
 
-    mode_label = 'region-parallel' if args.region_parallel else 'streaming'
     print(
-        "\n=========================================================================\n"
-        f"  fiberhmm-call [BETA] — fused apply + recall-tfs ({mode_label})\n"
-        f"  apply model:  {apply_model_path}\n"
-        f"  recall model: {recall_model_path or '(reuse apply model)'}\n"
-        f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'}\n"
-        f"  min_llr={min_llr} min_opps={args.min_opps} "
-        f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
-        f"  cores={args.cores} io-threads={args.io_threads}"
-        f"{' circular=on' if args.circular else ''}\n"
-        "=========================================================================\n",
+        _call_banner_text(
+            apply_model_path=apply_model_path,
+            recall_model_path=recall_model_path,
+            mode=mode,
+            k=k,
+            enzyme=args.enzyme,
+            min_llr=min_llr,
+            min_opps=args.min_opps,
+            unify_threshold=args.unify_threshold,
+            uplift=uplift,
+            cores=args.cores,
+            io_threads=args.io_threads,
+            circular=args.circular,
+            region_parallel=args.region_parallel,
+        ),
         file=sys.stderr,
     )
 

@@ -13,6 +13,7 @@ from conftest import make_synthetic_bam, make_synthetic_iupac_bam
 
 from fiberhmm.cli.call import (
     _build_pg_record,
+    _call_banner_text,
     _check_daf_inputs,
     _check_region_parallel_file_io,
     _daf_sources_available,
@@ -248,3 +249,29 @@ def test_call_pg_record_documents_molecular_coordinates():
     assert "recall_nucs=True" in record["DS"]
     assert "phase_nrl=185" in record["DS"]
     assert "chimera_filter=on" in record["DS"]
+
+
+def test_call_banner_text_formats_resolved_settings():
+    banner = _call_banner_text(
+        apply_model_path="apply.json",
+        recall_model_path=None,
+        mode="daf",
+        k=4,
+        enzyme=None,
+        min_llr=1.5,
+        min_opps=3,
+        unify_threshold=120,
+        uplift=0.25,
+        cores=8,
+        io_threads=2,
+        circular=True,
+        region_parallel=True,
+    )
+
+    assert "fiberhmm-call [BETA]" in banner
+    assert "fused apply + recall-tfs (region-parallel)" in banner
+    assert "apply model:  apply.json" in banner
+    assert "recall model: (reuse apply model)" in banner
+    assert "mode=daf k=4 enzyme=custom" in banner
+    assert "min_llr=1.5 min_opps=3 unify_threshold=120 uplift=0.25" in banner
+    assert "cores=8 io-threads=2 circular=on" in banner
