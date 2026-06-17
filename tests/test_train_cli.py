@@ -70,6 +70,31 @@ def test_model_json_record_uses_plain_lists():
     }
 
 
+def test_training_sampling_chrom_lengths_filters_scaffolds_and_falls_back():
+    ref_lengths = {
+        "chr1": 1_000_000,
+        "chrUn_random": 2_000_000,
+        "tiny": 10_000,
+    }
+
+    assert train._training_sampling_chrom_lengths(ref_lengths) == {"chr1": 1_000_000}
+    assert train._training_sampling_chrom_lengths({"tiny": 10_000}) == {
+        "tiny": 10_000,
+    }
+
+
+def test_chrom_pos_from_genome_offset_maps_cumulative_lengths():
+    chroms = ["chr1", "chr2", "chr3"]
+    cum_lengths = np.array([100, 250, 300])
+
+    assert train._chrom_pos_from_genome_offset(chroms, cum_lengths, 50) == (
+        "chr1", 50,
+    )
+    assert train._chrom_pos_from_genome_offset(chroms, cum_lengths, 125) == (
+        "chr2", 25,
+    )
+
+
 def test_build_model_from_base_copies_transitions_and_replaces_emissions(monkeypatch):
     base_model = SimpleNamespace(
         startprob_=np.array([0.7, 0.3]),

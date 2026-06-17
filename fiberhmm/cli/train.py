@@ -207,6 +207,34 @@ def _query_to_ref_positions(read) -> list:
         return query_to_ref
 
 
+_TRAINING_SKIP_CHROM_PATTERNS = (
+    'random', 'un_', 'chrun', '_alt', 'hap', 'scaffold',
+)
+
+
+def _training_sampling_chrom_lengths(ref_lengths: dict) -> dict:
+    main_chroms = {}
+    for ref, length in ref_lengths.items():
+        # Skip very short references and obvious scaffolds.
+        if length < 100000:
+            continue
+        if any(pattern in ref.lower() for pattern in _TRAINING_SKIP_CHROM_PATTERNS):
+            continue
+        main_chroms[ref] = length
+    return main_chroms or ref_lengths
+
+
+def _chrom_pos_from_genome_offset(chroms: list, cum_lengths: np.ndarray,
+                                  genome_pos: int):
+    chrom_idx = np.searchsorted(cum_lengths, genome_pos, side='right')
+    chrom = chroms[chrom_idx]
+    if chrom_idx > 0:
+        pos = genome_pos - cum_lengths[chrom_idx - 1]
+    else:
+        pos = genome_pos
+    return chrom, int(pos)
+
+
 def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                          mode: str = 'pacbio-fiber', min_mapq: int = 20,
                          prob_threshold: int = 125, min_read_length: int = 1000) -> list:
@@ -225,20 +253,7 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         # Get reference lengths from header
         ref_lengths = dict(zip(bam.references, bam.lengths))
-
-        # Filter to main chromosomes (skip scaffolds/contigs for efficiency)
-        main_chroms = {}
-        for ref, length in ref_lengths.items():
-            # Skip very short references and obvious scaffolds
-            if length < 100000:
-                continue
-            # Skip common scaffold patterns
-            if any(x in ref.lower() for x in ['random', 'un_', 'chrun', '_alt', 'hap', 'scaffold']):
-                continue
-            main_chroms[ref] = length
-
-        if not main_chroms:
-            main_chroms = ref_lengths  # Fall back to all if filtering removed everything
+        main_chroms = _training_sampling_chrom_lengths(ref_lengths)
 
         # Calculate cumulative lengths for weighted random selection
         chroms = list(main_chroms.keys())
@@ -262,15 +277,9 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
 
                 attempts += 1
 
-                # Find which chromosome this position falls in
-                chrom_idx = np.searchsorted(cum_lengths, genome_pos, side='right')
-                chrom = chroms[chrom_idx]
-
-                # Get position within chromosome
-                if chrom_idx > 0:
-                    pos = genome_pos - cum_lengths[chrom_idx - 1]
-                else:
-                    pos = genome_pos
+                chrom, pos = _chrom_pos_from_genome_offset(
+                    chroms, cum_lengths, int(genome_pos),
+                )
 
                 # Fetch reads overlapping this position
                 try:
