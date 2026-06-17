@@ -847,6 +847,32 @@ def _mean_block_score(block_scores: Sequence[int]):
     return np.mean(block_scores) if block_scores else 0
 
 
+def _score_read_row(record: dict, mean_score):
+    return (
+        record['name'],
+        record['chrom'],
+        record['chromStart'],
+        record['chromEnd'],
+        record['strand'],
+        record['blockCount'],
+        mean_score,
+    )
+
+
+def _footprint_score_rows(
+    read_id: str,
+    block_starts,
+    block_sizes,
+    block_scores,
+) -> List[tuple]:
+    return [
+        (read_id, i, start, size, score)
+        for i, (start, size, score) in enumerate(
+            zip(block_starts, block_sizes, block_scores)
+        )
+    ]
+
+
 def _insert_footprint_score_records(
     cursor,
     read_id: str,
@@ -854,12 +880,14 @@ def _insert_footprint_score_records(
     block_sizes,
     block_scores,
 ) -> None:
-    for i, (start, size, score) in enumerate(zip(block_starts, block_sizes, block_scores)):
+    for row in _footprint_score_rows(
+        read_id, block_starts, block_sizes, block_scores,
+    ):
         cursor.execute('''
             INSERT INTO footprints
             (read_id, footprint_idx, rel_start, size, score)
             VALUES (?, ?, ?, ?, ?)
-        ''', (read_id, i, start, size, score))
+        ''', row)
 
 
 def _insert_score_record(cursor, record: dict) -> None:
@@ -870,15 +898,7 @@ def _insert_score_record(cursor, record: dict) -> None:
         INSERT OR REPLACE INTO reads
         (read_id, chrom, start, end, strand, n_footprints, mean_score)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    ''', (
-        record['name'],
-        record['chrom'],
-        record['chromStart'],
-        record['chromEnd'],
-        record['strand'],
-        record['blockCount'],
-        mean_score
-    ))
+    ''', _score_read_row(record, mean_score))
 
     _insert_footprint_score_records(
         cursor,

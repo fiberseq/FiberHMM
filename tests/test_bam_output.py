@@ -562,6 +562,27 @@ def test_mean_block_score_uses_zero_for_empty_scores():
     assert bam_output._mean_block_score([]) == 0
 
 
+def test_score_database_row_helpers_shape_read_and_footprint_values():
+    record = {
+        "name": "read-a",
+        "chrom": "chr1",
+        "chromStart": 100,
+        "chromEnd": 150,
+        "strand": "+",
+        "blockCount": 2,
+    }
+
+    assert bam_output._score_read_row(record, 150.0) == (
+        "read-a", "chr1", 100, 150, "+", 2, 150.0,
+    )
+    assert bam_output._footprint_score_rows(
+        "read-a", [0, 30], [10, 20], [100, 200],
+    ) == [
+        ("read-a", 0, 0, 10, 100),
+        ("read-a", 1, 30, 20, 200),
+    ]
+
+
 def test_scores_database_create_and_append_write_expected_rows(tmp_path):
     db_path = str(tmp_path / "scores.db")
     first = {
