@@ -181,6 +181,10 @@ def _print_worker_failure_summary(counters: dict, log) -> None:
         )
 
 
+def _streaming_log_for_output(output_bam: str):
+    return sys.stderr if output_bam == '-' else sys.stdout
+
+
 def _print_streaming_skip_summary(skip_reasons: dict, total_reads: int,
                                   skipped: int, log) -> None:
     if skipped <= 0:
@@ -250,7 +254,7 @@ def _process_bam_streaming_pipeline_fused(
         train_rids=train_rids,
     )
 
-    _log = sys.stderr if output_bam == '-' else sys.stdout
+    _log = _streaming_log_for_output(output_bam)
 
     _output_target = output_bam
     if output_bam == '-':
@@ -430,7 +434,7 @@ def _process_bam_streaming_pipeline(
     posterior_stats = None
     return_posteriors = False
 
-    _log = sys.stderr if output_bam == '-' else sys.stdout
+    _log = _streaming_log_for_output(output_bam)
 
     print(f"Processing BAM (streaming pipeline, {n_cores} workers, "
           f"chunk_size={chunk_size}, max_inflight={max_inflight})...", file=_log)
