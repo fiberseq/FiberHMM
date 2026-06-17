@@ -971,6 +971,24 @@ def _extract_region_temp_beds(temp_dir: str, region_index: int, extract_types) -
     }
 
 
+def _canonical_extract_type(extract_type: str) -> str:
+    return 'nucleosome' if extract_type == 'footprint' else extract_type
+
+
+def _normalize_parallel_extract_args(output_beds, extract_types):
+    if isinstance(extract_types, str):
+        extract_types = [extract_types]
+    if isinstance(output_beds, str):
+        if len(extract_types) != 1:
+            raise ValueError("output_beds as string requires exactly one extract_type")
+        output_beds = {extract_types[0]: output_beds}
+    extract_types = [_canonical_extract_type(t) for t in extract_types]
+    output_beds = {
+        _canonical_extract_type(k): v for k, v in output_beds.items()
+    }
+    return output_beds, extract_types
+
+
 def _bed12_type_flag(n_extra: int) -> str:
     return f'-type=bed12+{int(n_extra)}' if int(n_extra) > 0 else '-type=bed12'
 
@@ -1000,18 +1018,9 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
     """
     start_time = time.time()
 
-    # Back-compat: accept single-type string args
-    if isinstance(extract_types, str):
-        extract_types = [extract_types]
-    if isinstance(output_beds, str):
-        if len(extract_types) != 1:
-            raise ValueError("output_beds as string requires exactly one extract_type")
-        output_beds = {extract_types[0]: output_beds}
-    extract_types = list(extract_types)
-    # Back-compat: the nucleosome type was named 'footprint' through 2.13.x.
-    extract_types = ['nucleosome' if t == 'footprint' else t for t in extract_types]
-    output_beds = {('nucleosome' if k == 'footprint' else k): v
-                   for k, v in output_beds.items()}
+    output_beds, extract_types = _normalize_parallel_extract_args(
+        output_beds, extract_types,
+    )
 
     ensure_bam_index(input_bam, "Indexing input BAM...")
 

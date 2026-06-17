@@ -13,6 +13,7 @@ from array import array
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from fiberhmm.cli import extract_tags
 from fiberhmm.cli.extract_tags import (
@@ -269,6 +270,30 @@ def test_extract_region_temp_beds_uses_stable_region_and_type_names(tmp_path):
         "nucleosome": str(tmp_path / "region_000007_nucleosome.bed"),
         "tf": str(tmp_path / "region_000007_tf.bed"),
     }
+
+
+def test_normalize_parallel_extract_args_handles_aliases_and_backcompat_paths():
+    output_beds, extract_types = extract_tags._normalize_parallel_extract_args(
+        "footprints.bed",
+        "footprint",
+    )
+
+    assert output_beds == {"nucleosome": "footprints.bed"}
+    assert extract_types == ["nucleosome"]
+
+    output_beds, extract_types = extract_tags._normalize_parallel_extract_args(
+        {"footprint": "nuc.bed", "tf": "tf.bed"},
+        ["footprint", "tf"],
+    )
+
+    assert output_beds == {"nucleosome": "nuc.bed", "tf": "tf.bed"}
+    assert extract_types == ["nucleosome", "tf"]
+
+    with pytest.raises(ValueError, match="exactly one extract_type"):
+        extract_tags._normalize_parallel_extract_args(
+            "combined.bed",
+            ["nucleosome", "tf"],
+        )
 
 
 def test_bed12_type_flag_formats_extra_column_count():
