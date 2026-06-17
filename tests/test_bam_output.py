@@ -291,6 +291,11 @@ def test_parse_int_csv_skips_empty_fields():
     assert bam_output._parse_int_csv("") == []
 
 
+def test_mean_block_score_uses_zero_for_empty_scores():
+    assert bam_output._mean_block_score([100, 200]) == 150
+    assert bam_output._mean_block_score([]) == 0
+
+
 def test_scores_database_create_and_append_write_expected_rows(tmp_path):
     db_path = str(tmp_path / "scores.db")
     first = {

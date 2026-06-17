@@ -739,9 +739,28 @@ def _parse_score_block_values(record: dict):
     return block_starts, block_sizes, block_scores
 
 
+def _mean_block_score(block_scores: Sequence[int]):
+    return np.mean(block_scores) if block_scores else 0
+
+
+def _insert_footprint_score_records(
+    cursor,
+    read_id: str,
+    block_starts,
+    block_sizes,
+    block_scores,
+) -> None:
+    for i, (start, size, score) in enumerate(zip(block_starts, block_sizes, block_scores)):
+        cursor.execute('''
+            INSERT INTO footprints
+            (read_id, footprint_idx, rel_start, size, score)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (read_id, i, start, size, score))
+
+
 def _insert_score_record(cursor, record: dict) -> None:
     block_starts, block_sizes, block_scores = _parse_score_block_values(record)
-    mean_score = np.mean(block_scores) if block_scores else 0
+    mean_score = _mean_block_score(block_scores)
 
     cursor.execute('''
         INSERT OR REPLACE INTO reads
@@ -757,12 +776,13 @@ def _insert_score_record(cursor, record: dict) -> None:
         mean_score
     ))
 
-    for i, (start, size, score) in enumerate(zip(block_starts, block_sizes, block_scores)):
-        cursor.execute('''
-            INSERT INTO footprints
-            (read_id, footprint_idx, rel_start, size, score)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (record['name'], i, start, size, score))
+    _insert_footprint_score_records(
+        cursor,
+        record['name'],
+        block_starts,
+        block_sizes,
+        block_scores,
+    )
 
 
 def _insert_score_records(cursor, records: List[dict]) -> None:
