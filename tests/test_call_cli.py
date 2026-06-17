@@ -16,6 +16,9 @@ from fiberhmm.cli.call import (
     _check_daf_inputs,
     _check_region_parallel_file_io,
     _daf_sources_available,
+    _is_phase_nrl_off,
+    _normalize_phase_nrl_option,
+    _parse_fixed_phase_nrl,
     _resolve_apply_model,
     _resolve_call_chroms,
     _resolve_call_mode_context,
@@ -202,6 +205,17 @@ def test_call_region_parallel_helpers(capsys):
 
     assert exc.value.code == 1
     assert "--region-parallel requires file I/O" in capsys.readouterr().err
+
+
+def test_call_phase_nrl_literal_helpers():
+    assert _normalize_phase_nrl_option(" Auto ") == "auto"
+    assert _is_phase_nrl_off("off")
+    assert _is_phase_nrl_off("none")
+    assert _is_phase_nrl_off("0")
+    assert not _is_phase_nrl_off("185")
+    assert _parse_fixed_phase_nrl("185") == 185
+    assert _parse_fixed_phase_nrl("-10") == 0
+    assert _parse_fixed_phase_nrl("auto") is None
 
 
 def test_call_recall_nucs_defaults_and_ddda_warnings(capsys):

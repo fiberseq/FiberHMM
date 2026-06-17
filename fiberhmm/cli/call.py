@@ -199,22 +199,37 @@ def _check_region_parallel_file_io(args) -> None:
     sys.exit(1)
 
 
+def _normalize_phase_nrl_option(value) -> str:
+    return str(value).strip().lower()
+
+
+def _is_phase_nrl_off(raw: str) -> bool:
+    return raw in ('off', '', '0', 'none')
+
+
+def _parse_fixed_phase_nrl(raw: str):
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return None
+
+
 def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
                        recall_nucs) -> int:
     """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off)."""
-    raw = str(args.phase_nrl).strip().lower()
-    if raw in ('off', '', '0', 'none'):
+    raw = _normalize_phase_nrl_option(args.phase_nrl)
+    if _is_phase_nrl_off(raw):
         return 0
     if not recall_nucs:
         # phase rides on the nuc recaller; silently off when recall is off.
         return 0
     if raw != 'auto':
-        try:
-            return max(0, int(raw))
-        except ValueError:
+        fixed_nrl = _parse_fixed_phase_nrl(raw)
+        if fixed_nrl is None:
             print(f"  WARNING: invalid --phase-nrl {args.phase_nrl!r}; using off.",
                   file=sys.stderr)
             return 0
+        return fixed_nrl
     # auto-estimate
     if args.input == '-':
         print("  NOTE: --phase-nrl auto needs a file input to sample; "
