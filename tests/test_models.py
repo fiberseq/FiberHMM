@@ -5,6 +5,13 @@ import pytest
 import fiberhmm.models as models
 
 
+def test_bundled_model_key_normalizes_enzyme_and_seq():
+    with pytest.warns(UserWarning, match="defaulting to 'pacbio'"):
+        assert models._bundled_model_key("HIA5", None) == ("hia5", "pacbio")
+
+    assert models._bundled_model_key("DddB", "nanopore") == ("dddb", None)
+
+
 def test_get_model_path_defaults_hia5_seq_with_warning():
     with pytest.warns(UserWarning, match="defaulting to 'pacbio'"):
         path = models.get_model_path("hia5", tool="apply")

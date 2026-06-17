@@ -59,6 +59,11 @@ def _valid_enzyme_seq_choices() -> list[str]:
     return [f"{e}/{s or 'any'}" for e, s in sorted(_BUNDLED)]
 
 
+def _bundled_model_key(enzyme: str, seq: str | None) -> tuple[str, str | None]:
+    enz = enzyme.lower()
+    return enz, _seq_key_for_enzyme(enz, seq)
+
+
 def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) -> str:
     """Return the absolute path to a bundled model.
 
@@ -80,11 +85,9 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
     FileNotFoundError
         If the bundled file is missing from the installation.
     """
-    enz = enzyme.lower()
     t   = tool.lower()
-    seq_key = _seq_key_for_enzyme(enz, seq)
 
-    key = (enz, seq_key)
+    key = _bundled_model_key(enzyme, seq)
     entry = _BUNDLED.get(key)
     if entry is None:
         choices = _valid_enzyme_seq_choices()
