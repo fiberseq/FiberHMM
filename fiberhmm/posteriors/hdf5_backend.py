@@ -96,6 +96,17 @@ def create_posterior_chrom_group(
     return grp
 
 
+def _new_chrom_metadata() -> Dict[str, List]:
+    return {'ids': [], 'starts': [], 'ends': [], 'strands': []}
+
+
+def _append_fiber_metadata(meta: Dict[str, List], fiber: Dict) -> None:
+    meta['ids'].append(fiber['read_name'])
+    meta['starts'].append(fiber['ref_start'])
+    meta['ends'].append(fiber['ref_end'])
+    meta['strands'].append(fiber.get('strand', '.'))
+
+
 class PosteriorWriter:
     """
     Streaming writer for HMM posteriors to HDF5.
@@ -158,9 +169,7 @@ class PosteriorWriter:
             self._chrom_groups[chrom] = grp
             self._chrom_counts[chrom] = 0
             self._chrom_buffers[chrom] = []
-            self._chrom_metadata[chrom] = {
-                'ids': [], 'starts': [], 'ends': [], 'strands': []
-            }
+            self._chrom_metadata[chrom] = _new_chrom_metadata()
 
     def add_fiber(self, chrom: str, fiber_data: Dict):
         """
@@ -224,10 +233,7 @@ class PosteriorWriter:
             _create_gzip_dataset(grp['footprint_sizes'], str(idx), fp_sizes)
 
             # Accumulate metadata for final arrays
-            meta['ids'].append(fiber['read_name'])
-            meta['starts'].append(fiber['ref_start'])
-            meta['ends'].append(fiber['ref_end'])
-            meta['strands'].append(fiber.get('strand', '.'))
+            _append_fiber_metadata(meta, fiber)
 
         self._chrom_counts[chrom] += len(buffer)
         self.total_written += len(buffer)

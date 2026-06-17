@@ -63,6 +63,35 @@ def test_posterior_chrom_group_helper_controls_ref_positions(tmp_path):
         }
 
 
+def test_hdf5_chrom_metadata_helper_appends_default_strand():
+    meta = hdf5_backend._new_chrom_metadata()
+
+    hdf5_backend._append_fiber_metadata(
+        meta,
+        {
+            "read_name": "read-1",
+            "ref_start": 10,
+            "ref_end": 20,
+        },
+    )
+    hdf5_backend._append_fiber_metadata(
+        meta,
+        {
+            "read_name": "read-2",
+            "ref_start": 30,
+            "ref_end": 40,
+            "strand": "-",
+        },
+    )
+
+    assert meta == {
+        "ids": ["read-1", "read-2"],
+        "starts": [10, 30],
+        "ends": [20, 40],
+        "strands": [".", "-"],
+    }
+
+
 def test_hdf5_ref_positions_use_core_mapping_with_insertions():
     class Read:
         is_unmapped = False
