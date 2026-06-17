@@ -345,6 +345,27 @@ def _decode_h5_text(value):
     return value
 
 
+def _fiber_overlap_indices(
+    starts: np.ndarray,
+    ends: np.ndarray,
+    start: int,
+    end: int,
+    min_overlap: int,
+) -> np.ndarray:
+    overlaps = (ends > start + min_overlap) & (starts < end - min_overlap)
+    return np.where(overlaps)[0]
+
+
+def _fiber_spanning_indices(
+    starts: np.ndarray,
+    ends: np.ndarray,
+    start: int,
+    end: int,
+) -> np.ndarray:
+    spans = (starts <= start) & (ends >= end)
+    return np.where(spans)[0]
+
+
 def _flush_h5_chrom_buffer(h5_file, chrom: str, write_buffers: dict,
                            chrom_fiber_counts: dict, chrom_metadata: dict) -> int:
     """Write one chromosome buffer to HDF5 and update metadata sidecars."""
@@ -664,8 +685,13 @@ class PosteriorReader:
             return []
 
         info = self._chrom_info[chrom]
-        overlaps = (info['ends'] > start + min_overlap) & (info['starts'] < end - min_overlap)
-        indices = np.where(overlaps)[0]
+        indices = _fiber_overlap_indices(
+            info['starts'],
+            info['ends'],
+            start,
+            end,
+            min_overlap,
+        )
 
         return self._load_fibers(chrom, indices)
 
@@ -674,8 +700,7 @@ class PosteriorReader:
             return []
 
         info = self._chrom_info[chrom]
-        spans = (info['starts'] <= start) & (info['ends'] >= end)
-        indices = np.where(spans)[0]
+        indices = _fiber_spanning_indices(info['starts'], info['ends'], start, end)
 
         return self._load_fibers(chrom, indices)
 

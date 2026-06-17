@@ -120,6 +120,40 @@ def test_decode_h5_text_accepts_bytes_and_strings():
     assert export_posteriors._decode_h5_text("read-b") == "read-b"
 
 
+def test_fiber_region_index_helpers_select_expected_records():
+    starts = np.array([0, 10, 20, 30], dtype=np.int32)
+    ends = np.array([9, 25, 40, 50], dtype=np.int32)
+
+    np.testing.assert_array_equal(
+        export_posteriors._fiber_overlap_indices(
+            starts,
+            ends,
+            start=15,
+            end=35,
+            min_overlap=1,
+        ),
+        np.array([1, 2, 3]),
+    )
+    np.testing.assert_array_equal(
+        export_posteriors._fiber_spanning_indices(
+            starts,
+            ends,
+            start=15,
+            end=35,
+        ),
+        np.array([], dtype=np.int64),
+    )
+    np.testing.assert_array_equal(
+        export_posteriors._fiber_spanning_indices(
+            starts,
+            ends,
+            start=22,
+            end=24,
+        ),
+        np.array([1, 2], dtype=np.int64),
+    )
+
+
 def test_write_h5_fiber_arrays_uses_backend_dataset_specs(tmp_path):
     with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
         grp = hdf5_backend.create_posterior_chrom_group(h5, "chr1")
