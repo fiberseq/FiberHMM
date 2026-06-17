@@ -154,6 +154,30 @@ def test_processing_strand_for_read_prefers_daf_tag_and_defaults(monkeypatch):
     ) == "."
 
 
+def test_should_skip_empty_prediction_respects_optional_outputs():
+    empty = {
+        "footprint_starts": np.array([]),
+        "msp_starts": np.array([]),
+    }
+    nonempty = {
+        "footprint_starts": np.array([1]),
+        "msp_starts": np.array([]),
+    }
+
+    assert engine._should_skip_empty_prediction(
+        empty, return_posteriors=False, include_encoded=False,
+    )
+    assert not engine._should_skip_empty_prediction(
+        empty, return_posteriors=True, include_encoded=False,
+    )
+    assert not engine._should_skip_empty_prediction(
+        empty, return_posteriors=False, include_encoded=True,
+    )
+    assert not engine._should_skip_empty_prediction(
+        nonempty, return_posteriors=False, include_encoded=False,
+    )
+
+
 class TestPredictFootprints:
     def test_empty_input(self, simple_model):
         starts, sizes, count, scores = predict_footprints(simple_model, np.array([]))

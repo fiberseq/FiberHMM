@@ -831,6 +831,18 @@ def _processing_strand_for_read(
     return '.'
 
 
+def _should_skip_empty_prediction(
+    fp_result: dict,
+    return_posteriors: bool,
+    include_encoded: bool,
+) -> bool:
+    has_intervals = (
+        len(fp_result['footprint_starts']) > 0
+        or len(fp_result['msp_starts']) > 0
+    )
+    return not has_intervals and not return_posteriors and not include_encoded
+
+
 def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,
                           mode: str, context_size: int, msp_min_size: int,
                           with_scores: bool, return_posteriors: bool = False,
@@ -875,9 +887,8 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
                                              circular_read_length=circular_read_length)
 
     # If no footprints and we don't need posteriors or encoded, skip
-    if len(fp_result['footprint_starts']) == 0 and len(fp_result['msp_starts']) == 0:
-        if not return_posteriors and not include_encoded:
-            return None
+    if _should_skip_empty_prediction(fp_result, return_posteriors, include_encoded):
+        return None
 
     return _single_read_result_from_prediction(
         fp_result, strand, encoded, return_posteriors, include_encoded,
