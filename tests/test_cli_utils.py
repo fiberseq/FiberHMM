@@ -21,6 +21,8 @@ from fiberhmm.cli.utils import (
     _trim_accessibility_context,
     _transfer_context_index,
     _transfer_probability_frame,
+    _transfer_progress_postfix,
+    _transfer_read_limit_reached,
     _write_transfer_probability_tables,
 )
 
@@ -290,6 +292,21 @@ def test_target_mod_positions_from_bam_read_uses_mm_ml_tags(monkeypatch):
     read = Read()
     read.tags = {}
     assert _target_mod_positions_from_bam_read(read, 125, "pacbio-fiber") is None
+
+
+def test_transfer_progress_postfix_formats_optional_footprint_counts():
+    assert _transfer_progress_postfix(12345) == {"reads": "12,345"}
+    assert _transfer_progress_postfix(12345, reads_with_footprints=67) == {
+        "reads": "12,345",
+        "w/footprints": "67",
+    }
+
+
+def test_transfer_read_limit_reached_respects_zero_as_unbounded():
+    assert not _transfer_read_limit_reached(100, 0)
+    assert not _transfer_read_limit_reached(99, 100)
+    assert _transfer_read_limit_reached(100, 100)
+    assert _transfer_read_limit_reached(101, 100)
 
 
 def test_scale_emission_probabilities_scales_one_state_and_clips():

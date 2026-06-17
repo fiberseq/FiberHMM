@@ -477,6 +477,17 @@ def _target_mod_positions_from_bam_read(read, prob_threshold: int, mode: str):
     )
 
 
+def _transfer_progress_postfix(total_reads: int, reads_with_footprints=None) -> dict:
+    postfix = {'reads': f'{total_reads:,}'}
+    if reads_with_footprints is not None:
+        postfix['w/footprints'] = f'{reads_with_footprints:,}'
+    return postfix
+
+
+def _transfer_read_limit_reached(total_reads: int, max_reads: int) -> bool:
+    return max_reads > 0 and total_reads >= max_reads
+
+
 def _process_reference_bam(bam_path, max_context, args):
     """Process reference BAM with footprint tags to get accessibility priors."""
     import pysam
@@ -507,12 +518,11 @@ def _process_reference_bam(bam_path, max_context, args):
                 )
 
             if total_reads % 5000 == 0:
-                pbar.set_postfix({
-                    'reads': f'{total_reads:,}',
-                    'w/footprints': f'{reads_with_footprints:,}'
-                })
+                pbar.set_postfix(
+                    _transfer_progress_postfix(total_reads, reads_with_footprints)
+                )
 
-            if args.max_reads > 0 and total_reads >= args.max_reads:
+            if _transfer_read_limit_reached(total_reads, args.max_reads):
                 break
 
     print(f"  Processed {total_reads:,} reads, {reads_with_footprints:,} with footprint tags")
@@ -557,9 +567,9 @@ def _process_target_bam(bam_path, mode, max_context, args):
 
             total_reads += 1
             if total_reads % 5000 == 0:
-                pbar.set_postfix({'reads': f'{total_reads:,}'})
+                pbar.set_postfix(_transfer_progress_postfix(total_reads))
 
-            if args.max_reads > 0 and total_reads >= args.max_reads:
+            if _transfer_read_limit_reached(total_reads, args.max_reads):
                 break
 
     print(f"  Processed {total_reads:,} reads")
