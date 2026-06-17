@@ -19,6 +19,7 @@ from fiberhmm.cli.call import (
     _chimera_filter_state,
     _daf_sources_available,
     _is_phase_nrl_off,
+    _missing_daf_source_message,
     _normalize_phase_nrl_option,
     _parse_fixed_phase_nrl,
     _phase_nrl_estimate_message,
@@ -143,6 +144,15 @@ def test_daf_input_predicates_cover_sources_and_md_warning():
     assert _daf_sources_available(sniff, has_ref=False)
     assert _should_warn_stale_daf_md(sniff, has_ref=False)
     assert not _should_warn_stale_daf_md(sniff, has_ref=True)
+
+
+def test_missing_daf_source_message_mentions_all_recovery_paths():
+    message = _missing_daf_source_message("input.bam", checked_reads=7)
+
+    assert "first 7 mapped reads of input.bam" in message
+    assert "R/Y IUPAC codes" in message
+    assert "MD tags" in message
+    assert "--reference ref.fa" in message
 
 
 def test_call_model_resolution_uses_custom_paths():

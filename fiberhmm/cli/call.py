@@ -359,6 +359,22 @@ def _should_warn_stale_daf_md(sniff: dict, has_ref: bool) -> bool:
     return bool(sniff['md_bad'] and not sniff['has_ry'] and not has_ref)
 
 
+def _missing_daf_source_message(input_bam: str, checked_reads: int) -> str:
+    return (
+        "error: --mode daf needs deamination calls, and none of the supported\n"
+        f"  sources were found in the first {checked_reads} "
+        f"mapped reads of {input_bam}:\n"
+        "    - R/Y IUPAC codes in the stored query sequence\n"
+        "      (produced by fiberhmm-daf-encode), or\n"
+        "    - MD tags on aligned reads\n"
+        "      (set by 'minimap2 --MD' or 'samtools calmd'), or\n"
+        "    - a reference FASTA via --reference ref.fa\n"
+        "\n"
+        "  One of these is required for fiberhmm-call to locate C->T / G->A\n"
+        "  deamination sites. Without it every read would be silently skipped.\n"
+    )
+
+
 def _check_daf_inputs(input_bam: str, reference: str = None,
                        n_sniff: int = 10) -> None:
     """Sniff the first ~N mapped reads of a DAF-mode input BAM and confirm
@@ -396,17 +412,7 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
         return
 
     print(
-        "error: --mode daf needs deamination calls, and none of the supported\n"
-        f"  sources were found in the first {sniff['checked']} "
-        f"mapped reads of {input_bam}:\n"
-        "    - R/Y IUPAC codes in the stored query sequence\n"
-        "      (produced by fiberhmm-daf-encode), or\n"
-        "    - MD tags on aligned reads\n"
-        "      (set by 'minimap2 --MD' or 'samtools calmd'), or\n"
-        "    - a reference FASTA via --reference ref.fa\n"
-        "\n"
-        "  One of these is required for fiberhmm-call to locate C->T / G->A\n"
-        "  deamination sites. Without it every read would be silently skipped.\n",
+        _missing_daf_source_message(input_bam, sniff['checked']),
         file=sys.stderr,
     )
     sys.exit(2)
