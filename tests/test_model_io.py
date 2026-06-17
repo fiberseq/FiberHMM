@@ -17,6 +17,7 @@ from fiberhmm.core.model_io import (
     _model_json_record,
     _normalize_model_if_requested,
     _pickle_payload_has_metadata,
+    _prepare_loaded_model,
     load_model,
     load_model_for_inference,
     load_model_with_metadata,
@@ -58,6 +59,21 @@ class TestLoadSaveRoundTrip:
         assert model.calls == 0
         assert _normalize_model_if_requested(model, True) is model
         assert model.calls == 1
+
+    def test_prepare_loaded_model_normalizes_then_unfreezes(self):
+        calls = []
+
+        class Model:
+            def normalize_states(self):
+                calls.append("normalize")
+
+            def unfreeze_log_probs(self):
+                calls.append("unfreeze")
+
+        model = Model()
+
+        assert _prepare_loaded_model(model, True) is model
+        assert calls == ["normalize", "unfreeze"]
 
     def test_json_round_trip(self, sample_model, tmp_path):
         filepath = str(tmp_path / "model.json")

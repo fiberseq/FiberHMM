@@ -55,10 +55,7 @@ def load_model(filepath: str, normalize: bool = True) -> FiberHMM:
         FiberHMM model instance
     """
     model, _, _ = _load_model_and_metadata_by_extension(filepath)
-
-    _normalize_model_if_requested(model, normalize)
-
-    return _unfreeze_model_logs(model)
+    return _prepare_loaded_model(model, normalize)
 
 
 def _normalize_model_if_requested(model: FiberHMM, normalize: bool) -> FiberHMM:
@@ -72,6 +69,11 @@ def _unfreeze_model_logs(model: FiberHMM) -> FiberHMM:
     if unfreeze is not None:
         unfreeze()
     return model
+
+
+def _prepare_loaded_model(model: FiberHMM, normalize: bool) -> FiberHMM:
+    _normalize_model_if_requested(model, normalize)
+    return _unfreeze_model_logs(model)
 
 
 def freeze_model_for_inference(model: FiberHMM) -> FiberHMM:
@@ -318,9 +320,7 @@ def load_model_with_metadata(filepath: str, normalize: bool = True) -> Tuple[Fib
     """
     model, context_size, mode = _load_model_and_metadata_by_extension(filepath)
 
-    _normalize_model_if_requested(model, normalize)
-
     # Normalize old mode names to new names
     mode = _normalize_mode(mode)
 
-    return _unfreeze_model_logs(model), context_size, mode
+    return _prepare_loaded_model(model, normalize), context_size, mode
