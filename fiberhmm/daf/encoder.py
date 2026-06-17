@@ -21,6 +21,14 @@ from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 #   (N = skipped reference, no MD coverage), so we exclude N when
 #   comparing against MD.
 _CIGAR_REF_CONSUMING_FOR_MD = {0, 2, 7, 8}
+_DAF_ENCODE_STAT_FIELDS = (
+    "encoded",
+    "skipped",
+    "ct",
+    "ga",
+    "total_deam",
+    "total_bases",
+)
 
 
 def _md_tag_ref_length(md_string: str) -> int:
@@ -404,6 +412,31 @@ def _daf_encode_summary(total: int, encoded: int, ct_count: int, ga_count: int,
     }
 
 
+def _new_daf_encode_counts() -> dict:
+    counts = {"total": 0}
+    counts.update({field: 0 for field in _DAF_ENCODE_STAT_FIELDS})
+    return counts
+
+
+def _accumulate_daf_read_stats(counts: dict, read_stats: dict) -> None:
+    counts["total"] += 1
+    for field in _DAF_ENCODE_STAT_FIELDS:
+        counts[field] += read_stats[field]
+
+
+def _daf_encode_summary_from_counts(counts: dict, elapsed: float) -> dict:
+    return _daf_encode_summary(
+        counts["total"],
+        counts["encoded"],
+        counts["ct"],
+        counts["ga"],
+        counts["skipped"],
+        counts["total_deam"],
+        counts["total_bases"],
+        elapsed,
+    )
+
+
 def _daf_encode_throughput(summary: dict):
     elapsed = summary['elapsed']
     if elapsed <= 0:
@@ -547,14 +580,7 @@ def process_bam_daf_encode(
     # When writing to stdout, all logging goes to stderr
     _log = sys.stderr if output_bam == "-" else sys.stderr
 
-    # Counters
-    total = 0
-    encoded = 0
-    ct_count = 0
-    ga_count = 0
-    skipped = 0
-    total_deam = 0
-    total_bases = 0
+    counts = _new_daf_encode_counts()
 
     start_time = time.time()
     last_progress = start_time
@@ -594,8 +620,6 @@ def process_bam_daf_encode(
         )
 
         for read in inbam.fetch(until_eof=True):
-            total += 1
-
             read_stats = _process_daf_encode_read(
                 outbam,
                 pbar,
@@ -605,19 +629,15 @@ def process_bam_daf_encode(
                 force_strand=force_strand,
                 ref_fasta=ref_fasta,
             )
-            encoded += read_stats["encoded"]
-            skipped += read_stats["skipped"]
-            ct_count += read_stats["ct"]
-            ga_count += read_stats["ga"]
-            total_deam += read_stats["total_deam"]
-            total_bases += read_stats["total_bases"]
+            _accumulate_daf_read_stats(counts, read_stats)
 
             # Progress to stderr every 10k reads
-            if total % 10000 == 0:
+            if counts["total"] % 10000 == 0:
                 now = time.time()
                 elapsed = now - last_progress
                 _print_daf_progress(
-                    total, 10000, elapsed, ct_count, ga_count, skipped, _log,
+                    counts["total"], 10000, elapsed,
+                    counts["ct"], counts["ga"], counts["skipped"], _log,
                 )
                 last_progress = now
 
@@ -634,10 +654,7 @@ def process_bam_daf_encode(
     elapsed = time.time() - start_time
 
     # Summary
-    summary = _daf_encode_summary(
-        total, encoded, ct_count, ga_count, skipped,
-        total_deam, total_bases, elapsed,
-    )
+    summary = _daf_encode_summary_from_counts(counts, elapsed)
     _print_daf_encode_summary(summary, _log)
 
     # Sort + index if writing to a file (not stdout)

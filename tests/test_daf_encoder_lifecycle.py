@@ -169,6 +169,41 @@ def test_daf_encode_summary_and_report_format():
     assert "50 reads/sec" in text
 
 
+def test_daf_encode_counts_accumulate_read_stats_and_build_summary():
+    counts = encoder._new_daf_encode_counts()
+    encoder._accumulate_daf_read_stats(
+        counts,
+        {
+            "encoded": 1,
+            "skipped": 0,
+            "ct": 1,
+            "ga": 0,
+            "total_deam": 3,
+            "total_bases": 100,
+        },
+    )
+    encoder._accumulate_daf_read_stats(counts, encoder._daf_skipped_read_stats())
+
+    assert counts == {
+        "total": 2,
+        "encoded": 1,
+        "skipped": 1,
+        "ct": 1,
+        "ga": 0,
+        "total_deam": 3,
+        "total_bases": 100,
+    }
+    assert encoder._daf_encode_summary_from_counts(counts, elapsed=4.0) == {
+        "total": 2,
+        "encoded": 1,
+        "ct": 1,
+        "ga": 0,
+        "skipped": 1,
+        "mean_deam_rate": 0.03,
+        "elapsed": 4.0,
+    }
+
+
 def test_apply_daf_encoding_to_read_preserves_qualities_and_sets_st_tag():
     class FakeRead:
         def __init__(self):
