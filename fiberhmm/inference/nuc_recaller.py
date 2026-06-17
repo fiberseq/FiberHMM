@@ -58,6 +58,18 @@ def _call_interval(call) -> Tuple[int, int]:
     return int(call.start), int(call.start + call.length)
 
 
+def _bounded_interval(start_raw, length_raw, read_length: int, *, clamp_start: bool):
+    start = int(start_raw)
+    length = int(length_raw)
+    if length <= 0:
+        return None
+    a = max(0, start) if clamp_start else start
+    b = min(int(read_length), start + length)
+    if b <= a:
+        return None
+    return a, b
+
+
 def _linear_intervals_overlap(a_start: int, a_end: int,
                               b_start: int, b_end: int) -> bool:
     return int(a_start) < int(b_end) and int(b_start) < int(a_end)
@@ -231,13 +243,12 @@ def recall_nucs_in_read(
     access: List[Interval] = []
 
     for s_raw, length_raw in zip(ns, nl):
-        s = int(s_raw)
-        length = int(length_raw)
-        if length <= 0:
+        span = _bounded_interval(
+            s_raw, length_raw, read_length, clamp_start=False,
+        )
+        if span is None:
             continue
-        e = min(s + length, read_length)
-        if e <= s:
-            continue
+        s, e = span
 
         # --- SPLIT: accessible runs inside the footprint are cuts ---
         frags, cut_access = _split_on_accessible_cuts(
@@ -280,14 +291,11 @@ def rederive_msps(
     """
     iv: List[Interval] = []
     for s_raw, length_raw in list(original_msps) + list(accessible_from_splits):
-        s = int(s_raw)
-        length = int(length_raw)
-        if length <= 0:
-            continue
-        a = max(0, s)
-        b = min(read_length, s + length)
-        if b > a:
-            iv.append((a, b))
+        span = _bounded_interval(
+            s_raw, length_raw, read_length, clamp_start=True,
+        )
+        if span is not None:
+            iv.append(span)
     merged = merge_intervals(iv)
     floor = max(1, int(msp_min_size))
     return [(a, b - a) for a, b in merged if (b - a) >= floor]

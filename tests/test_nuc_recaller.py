@@ -6,6 +6,7 @@ import numpy as np
 from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
+    _bounded_interval,
     _circular_uncovered_cut,
     _keep_nuc_against_circular_intervals,
     _msp_gaps_between_nucs,
@@ -83,6 +84,14 @@ def test_split_on_accessible_cuts_returns_fragments_and_cut_access():
     assert len(frags) == 2
     assert access
     assert any(60 <= s <= 66 for s, _ in access)
+
+
+def test_bounded_interval_handles_clamping_and_invalid_spans():
+    assert _bounded_interval(10, 20, 25, clamp_start=False) == (10, 25)
+    assert _bounded_interval(10, 0, 25, clamp_start=False) is None
+    assert _bounded_interval(30, 5, 25, clamp_start=False) is None
+    assert _bounded_interval(-5, 10, 25, clamp_start=True) == (0, 5)
+    assert _bounded_interval(-5, 10, 25, clamp_start=False) == (-5, 5)
 
 
 def test_subnucleosome_fragment_demoted_to_accessible():
