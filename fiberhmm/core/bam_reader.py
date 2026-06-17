@@ -278,6 +278,16 @@ def _mm_skip_counts(raw_counts) -> np.ndarray:
         return np.asarray(skip_counts, dtype=np.int64)
 
 
+def _target_base_allowed_for_mode(target_base: str, mode: str) -> bool:
+    if mode == 'pacbio-fiber':
+        return target_base in ('A', 'T')
+    if mode == 'nanopore-fiber':
+        return target_base == 'A'
+    if mode == 'daf':
+        return target_base in ('T', 'A', 'C', 'G')
+    return True
+
+
 def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
                                sequence: str, is_reverse: bool) -> Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]]:
     """Parse MM/ML into per-mod-type position + quality arrays (SEQ frame).
@@ -527,18 +537,9 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
             ml_idx += n_mods
             continue
 
-        if mode == 'pacbio-fiber':
-            if target_base not in ('A', 'T'):
-                ml_idx += n_mods
-                continue
-        elif mode == 'nanopore-fiber':
-            if target_base != 'A':
-                ml_idx += n_mods
-                continue
-        elif mode == 'daf':
-            if target_base not in ('T', 'A', 'C', 'G'):
-                ml_idx += n_mods
-                continue
+        if not _target_base_allowed_for_mode(target_base, mode):
+            ml_idx += n_mods
+            continue
 
         if target_base not in base_pos_cache:
             base_pos_cache[target_base] = np.where(search_bytes == ord(target_base))[0]
