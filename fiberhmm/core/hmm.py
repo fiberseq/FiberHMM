@@ -1121,6 +1121,7 @@ def train_model(emission_probs: np.ndarray,
 try:
     from fiberhmm.core.model_io import (  # noqa: F401
         load_model,
+        load_model_for_inference,
         load_model_with_metadata,
         save_model,
     )

@@ -22,8 +22,9 @@ class TestPackageImports:
     """Verify all expected symbols are importable from package."""
 
     def test_core_hmm_imports(self):
-        from fiberhmm.core.hmm import FiberHMM, train_model
+        from fiberhmm.core.hmm import FiberHMM, load_model_for_inference, train_model
         assert FiberHMM is not None
+        assert callable(load_model_for_inference)
         assert callable(train_model)
 
     def test_core_bam_reader_imports(self):
