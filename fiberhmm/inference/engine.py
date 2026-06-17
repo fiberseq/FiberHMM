@@ -712,6 +712,43 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
     return _extract_mm_ml_fiber_read(read, query_sequence, mode, prob_threshold)
 
 
+def _single_read_result_from_prediction(fp_result: dict, strand: str,
+                                        encoded: np.ndarray,
+                                        return_posteriors: bool,
+                                        include_encoded: bool) -> dict:
+    result = {
+        'ns': fp_result['footprint_starts'],
+        'nl': fp_result['footprint_sizes'],
+        'ns_scores': fp_result.get('footprint_scores'),
+        'as': fp_result['msp_starts'],
+        'al': fp_result['msp_sizes'],
+        'as_scores': fp_result.get('msp_scores')
+    }
+    if fp_result.get('circular'):
+        result.update({
+            'circular': True,
+            'circular_read_length': fp_result['circular_read_length'],
+            'circular_ns': fp_result['circular_ns'],
+            'circular_as': fp_result['circular_as'],
+            'circular_ns_scores': fp_result.get('circular_ns_scores'),
+            'circular_as_scores': fp_result.get('circular_as_scores'),
+            'tiled_ns': fp_result['tiled_ns'],
+            'tiled_nl': fp_result['tiled_nl'],
+            'tiled_as': fp_result['tiled_as'],
+            'tiled_al': fp_result['tiled_al'],
+        })
+
+    if return_posteriors and fp_result.get('posteriors') is not None:
+        result['posteriors'] = fp_result['posteriors']
+        result['strand'] = strand
+
+    if include_encoded:
+        result['encoded'] = encoded
+        result['strand'] = strand
+
+    return result
+
+
 def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,
                           mode: str, context_size: int, msp_min_size: int,
                           with_scores: bool, return_posteriors: bool = False,
@@ -766,36 +803,6 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
         if not return_posteriors and not include_encoded:
             return None
 
-    result = {
-        'ns': fp_result['footprint_starts'],
-        'nl': fp_result['footprint_sizes'],
-        'ns_scores': fp_result.get('footprint_scores'),
-        'as': fp_result['msp_starts'],
-        'al': fp_result['msp_sizes'],
-        'as_scores': fp_result.get('msp_scores')
-    }
-    if fp_result.get('circular'):
-        result.update({
-            'circular': True,
-            'circular_read_length': fp_result['circular_read_length'],
-            'circular_ns': fp_result['circular_ns'],
-            'circular_as': fp_result['circular_as'],
-            'circular_ns_scores': fp_result.get('circular_ns_scores'),
-            'circular_as_scores': fp_result.get('circular_as_scores'),
-            'tiled_ns': fp_result['tiled_ns'],
-            'tiled_nl': fp_result['tiled_nl'],
-            'tiled_as': fp_result['tiled_as'],
-            'tiled_al': fp_result['tiled_al'],
-        })
-
-    # Include posteriors data if requested
-    if return_posteriors and fp_result.get('posteriors') is not None:
-        result['posteriors'] = fp_result['posteriors']
-        result['strand'] = strand
-
-    # Include encoded obs for the fused recall pass (no re-encoding cost)
-    if include_encoded:
-        result['encoded'] = encoded
-        result['strand'] = strand
-
-    return result
+    return _single_read_result_from_prediction(
+        fp_result, strand, encoded, return_posteriors, include_encoded,
+    )

@@ -29,6 +29,42 @@ def simple_model():
     return model
 
 
+def test_single_read_result_from_prediction_includes_optional_fields():
+    fp_result = {
+        "footprint_starts": np.array([1]),
+        "footprint_sizes": np.array([10]),
+        "footprint_scores": np.array([0.8]),
+        "msp_starts": np.array([20]),
+        "msp_sizes": np.array([5]),
+        "msp_scores": np.array([0.6]),
+        "circular": True,
+        "circular_read_length": 100,
+        "circular_ns": [(1, 10)],
+        "circular_as": [(20, 5)],
+        "circular_ns_scores": [0.8],
+        "circular_as_scores": [0.6],
+        "tiled_ns": [101],
+        "tiled_nl": [10],
+        "tiled_as": [120],
+        "tiled_al": [5],
+        "posteriors": np.array([0.1, 0.9]),
+    }
+    encoded = np.array([1, 2, 3])
+
+    result = engine._single_read_result_from_prediction(
+        fp_result, strand="+", encoded=encoded,
+        return_posteriors=True, include_encoded=True,
+    )
+
+    np.testing.assert_array_equal(result["ns"], [1])
+    np.testing.assert_array_equal(result["nl"], [10])
+    assert result["circular"] is True
+    assert result["circular_read_length"] == 100
+    assert result["strand"] == "+"
+    np.testing.assert_array_equal(result["posteriors"], [0.1, 0.9])
+    np.testing.assert_array_equal(result["encoded"], [1, 2, 3])
+
+
 class TestPredictFootprints:
     def test_empty_input(self, simple_model):
         starts, sizes, count, scores = predict_footprints(simple_model, np.array([]))
