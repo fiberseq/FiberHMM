@@ -3,6 +3,10 @@
 import os
 
 
+def _probability_filename(*parts, suffix: str) -> str:
+    return "_".join(str(part) for part in parts) + suffix
+
+
 def probability_counter_path(
     output_dir: str,
     base_name: str,
@@ -12,7 +16,10 @@ def probability_counter_path(
     temporary: bool = False,
 ) -> str:
     suffix = ".probs.pkl.tmp" if temporary else ".probs.pkl"
-    return os.path.join(output_dir, f"{base_name}_{sample_name}_{base}{suffix}")
+    return os.path.join(
+        output_dir,
+        _probability_filename(base_name, sample_name, base, suffix=suffix),
+    )
 
 
 def probability_table_path(
@@ -24,7 +31,13 @@ def probability_table_path(
 ) -> str:
     return os.path.join(
         tables_dir,
-        f"{base_name}_{sample_name}_{base}_k{context_size}.tsv",
+        _probability_filename(
+            base_name,
+            sample_name,
+            base,
+            f"k{context_size}",
+            suffix=".tsv",
+        ),
     )
 
 
@@ -34,4 +47,13 @@ def combined_probability_table_path(
     base: str,
     context_size: int,
 ) -> str:
-    return os.path.join(tables_dir, f"{base_name}_{base}_k{context_size}_probs.tsv")
+    return os.path.join(
+        tables_dir,
+        _probability_filename(
+            base_name,
+            base,
+            f"k{context_size}",
+            "probs",
+            suffix=".tsv",
+        ),
+    )
