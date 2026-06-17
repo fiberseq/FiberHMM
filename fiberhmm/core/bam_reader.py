@@ -283,6 +283,17 @@ def _mm_mod_spec_parts(mod_spec: str):
     return parts[0], _mm_skip_counts(parts[1:])
 
 
+def _iter_mm_mod_specs(mm_tag: str) -> Iterator[Tuple[str, np.ndarray, int]]:
+    for mod_spec in mm_tag.split(';'):
+        if not mod_spec:
+            continue
+        parts = _mm_mod_spec_parts(mod_spec)
+        if parts is None:
+            continue
+        base_mod, skip_arr = parts
+        yield base_mod, skip_arr, len(skip_arr)
+
+
 def _mm_target_base(base_mod: str) -> Optional[str]:
     if len(base_mod) == 0:
         return None
@@ -391,16 +402,7 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
     base_positions_cache: Dict[str, np.ndarray] = {}
 
     ml_idx = 0
-    for mod_spec in mm_tag.split(';'):
-        if not mod_spec:
-            continue
-        parts = _mm_mod_spec_parts(mod_spec)
-        if parts is None:
-            continue
-        base_mod, skip_arr = parts
-
-        n_mods = len(skip_arr)
-
+    for base_mod, skip_arr, n_mods in _iter_mm_mod_specs(mm_tag):
         # Parse "X+y" or "X+y." or "X-y?" into (target_base, mod_code)
         base_and_mod = _mm_base_and_mod_code(base_mod)
         if base_and_mod is None:
@@ -566,17 +568,7 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
     base_pos_cache: Dict[str, np.ndarray] = {}
     search_bytes = np.frombuffer(search_seq.encode('ascii'), dtype=np.uint8)
 
-    for mod_spec in mm_tag.split(';'):
-        if not mod_spec:
-            continue
-
-        parts = _mm_mod_spec_parts(mod_spec)
-        if parts is None:
-            continue
-        base_mod, skip_arr = parts
-
-        n_mods = len(skip_arr)
-
+    for base_mod, skip_arr, n_mods in _iter_mm_mod_specs(mm_tag):
         target_base = _mm_target_base(base_mod)
         if target_base is None:
             ml_idx += n_mods

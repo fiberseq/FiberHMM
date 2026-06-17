@@ -22,6 +22,7 @@ try:
         ContextEncoder,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
+        _iter_mm_mod_specs,
         _mm_base_and_mod_code,
         _mm_mod_spec_parts,
         _mm_positions_from_spec,
@@ -39,6 +40,7 @@ except ImportError:
         ContextEncoder,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
+        _iter_mm_mod_specs,
         _mm_base_and_mod_code,
         _mm_mod_spec_parts,
         _mm_positions_from_spec,
@@ -285,6 +287,14 @@ class TestMMTagParsing:
         assert _mm_base_and_mod_code(base_mod) == ("A", "a")
         assert _mm_base_and_mod_code("A") is None
         assert _mm_mod_spec_parts("A+a.") is None
+
+    def test_iter_mm_mod_specs_skips_empty_and_malformed_specs(self):
+        specs = list(_iter_mm_mod_specs("A+a,0,5;;bad;C+m?,2;"))
+
+        assert [base_mod for base_mod, _, _ in specs] == ["A+a", "C+m?"]
+        assert [n_mods for _, _, n_mods in specs] == [2, 1]
+        np.testing.assert_array_equal(specs[0][1], [0, 5])
+        np.testing.assert_array_equal(specs[1][1], [2])
 
     def test_mm_positions_from_spec_filters_quality_bounds_and_reverse(self):
         skip_arr = np.array([0, 1, 1], dtype=np.int64)
