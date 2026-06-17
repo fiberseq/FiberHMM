@@ -821,6 +821,23 @@ def _deam_iupac_positions(seq: str, aligned_pairs) -> list:
     return positions
 
 
+def _deam_mm_ml_ref_position(
+    aligned_pairs,
+    query_pos,
+    prob,
+    flavor: int,
+    prob_threshold: int,
+):
+    query_pos = int(query_pos)
+    prob = int(prob)
+    if prob < prob_threshold:
+        return None
+    ref_pos = _deam_ref_pos_for_query(aligned_pairs, query_pos)
+    if ref_pos is None:
+        return None
+    return ref_pos, flavor
+
+
 def _deam_mm_ml_positions(read, aligned_pairs, prob_threshold: int) -> list:
     # Uses our safe MM/ML parser rather than pysam's modified_bases (which
     # can segfault on unusual MM/ML layouts). Note: parse_mm_ml_per_mod_type
@@ -837,14 +854,11 @@ def _deam_mm_ml_positions(read, aligned_pairs, prob_threshold: int) -> list:
         if flavor is None:
             continue
         for query_pos, prob in zip(pos_arr, qual_arr):
-            query_pos = int(query_pos)
-            prob = int(prob)
-            if prob < prob_threshold:
-                continue
-            ref_pos = _deam_ref_pos_for_query(aligned_pairs, query_pos)
-            if ref_pos is None:
-                continue
-            positions.append((ref_pos, flavor))
+            position = _deam_mm_ml_ref_position(
+                aligned_pairs, query_pos, prob, flavor, prob_threshold,
+            )
+            if position is not None:
+                positions.append(position)
     return positions
 
 

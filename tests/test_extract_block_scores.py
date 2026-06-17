@@ -962,6 +962,11 @@ def test_deam_mm_ml_positions_maps_flavor_and_threshold():
         read, _identity_map(read), prob_threshold=125,
     ) == [(520, 1)]
 
+    q2r = np.array([100, -1, 102])
+    assert extract_tags._deam_mm_ml_ref_position(q2r, 0, 200, 1, 125) == (100, 1)
+    assert extract_tags._deam_mm_ml_ref_position(q2r, 0, 100, 1, 125) is None
+    assert extract_tags._deam_mm_ml_ref_position(q2r, 1, 200, 1, 125) is None
+
 
 def test_deam_base_flavor_maps_supported_canonical_bases():
     assert extract_tags._deam_base_flavor('C') == 1
