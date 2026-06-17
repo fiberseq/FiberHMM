@@ -103,6 +103,22 @@ def _select_daf_strand(n_ct: int, n_ga: int, force_strand=None):
     return None
 
 
+def _daf_mismatch_positions_from_pairs(pairs, seq: str):
+    ct_positions = []  # C->T (+ strand deamination)
+    ga_positions = []  # G->A (- strand deamination)
+
+    for query_pos, ref_pos, ref_base in pairs:
+        if query_pos is None or ref_pos is None or ref_base is None:
+            continue
+        ref_base = ref_base.upper()
+        query_base = seq[query_pos].upper()
+        if ref_base == "C" and query_base == "T":
+            ct_positions.append(query_pos)
+        elif ref_base == "G" and query_base == "A":
+            ga_positions.append(query_pos)
+    return ct_positions, ga_positions
+
+
 # ---------------------------------------------------------------------------
 # Per-read encoding
 # ---------------------------------------------------------------------------
@@ -172,19 +188,7 @@ def get_daf_positions(read, force_strand=None, ref_fasta=None):
         except Exception:
             return None
 
-    # Collect mismatch positions
-    ct_positions = []  # C->T (+ strand deamination)
-    ga_positions = []  # G->A (- strand deamination)
-
-    for query_pos, ref_pos, ref_base in pairs:
-        if query_pos is None or ref_pos is None or ref_base is None:
-            continue
-        ref_base = ref_base.upper()
-        query_base = seq[query_pos].upper()
-        if ref_base == "C" and query_base == "T":
-            ct_positions.append(query_pos)
-        elif ref_base == "G" and query_base == "A":
-            ga_positions.append(query_pos)
+    ct_positions, ga_positions = _daf_mismatch_positions_from_pairs(pairs, seq)
 
     n_ct = len(ct_positions)
     n_ga = len(ga_positions)

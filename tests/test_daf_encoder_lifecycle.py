@@ -61,6 +61,22 @@ def test_select_daf_strand_handles_forced_dominant_and_ambiguous_cases():
     assert encoder._select_daf_strand(0, 0, force_strand="ga") == "GA"
 
 
+def test_daf_mismatch_positions_from_pairs_collects_deamination_directions():
+    pairs = [
+        (0, 100, "C"),     # C->T
+        (1, 101, "G"),     # G->A
+        (2, 102, "A"),     # not a deamination-direction mismatch
+        (None, 103, "C"),
+        (3, None, "G"),
+        (4, 104, None),
+    ]
+
+    assert encoder._daf_mismatch_positions_from_pairs(pairs, "TAGTA") == (
+        [0],
+        [1],
+    )
+
+
 def test_mark_iupac_positions_replaces_selected_bases():
     assert encoder._mark_iupac_positions("ACGT", [1, 3], "Y") == "AYGY"
 
