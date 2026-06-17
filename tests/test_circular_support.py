@@ -14,7 +14,10 @@ from fiberhmm.inference.circular import (
     split_intervals_for_legacy,
     tile_sequence_and_mods,
 )
-from fiberhmm.inference.engine import _extract_footprints_from_states_circular
+from fiberhmm.inference.engine import (
+    _extract_footprints_from_states_circular,
+    _project_circular_result_track,
+)
 from fiberhmm.inference.nuc_recaller import NucCall
 from fiberhmm.inference.tf_recaller import TFCall
 from fiberhmm.io.ma_tags import (
@@ -123,6 +126,22 @@ def test_circular_intervals_overlap_across_origin():
     assert circular_intervals_overlap((90, 20), (5, 5), 100)
     assert circular_intervals_overlap((90, 20), (95, 2), 100)
     assert not circular_intervals_overlap((90, 5), (10, 5), 100)
+
+
+def test_project_circular_result_track_returns_legacy_and_circular_views():
+    track = _project_circular_result_track(
+        starts=np.asarray([195], dtype=np.int32),
+        sizes=np.asarray([20], dtype=np.int32),
+        scores=np.asarray([0.9], dtype=np.float32),
+        read_length=100,
+    )
+
+    assert track["circular_intervals"] == [(95, 20)]
+    assert track["legacy_starts"].tolist() == [0, 95]
+    assert track["legacy_sizes"].tolist() == [15, 5]
+    assert np.allclose(track["legacy_scores"], [0.9, 0.9])
+    assert track["tiled_starts"].tolist() == [195]
+    assert track["tiled_sizes"].tolist() == [20]
 
 
 def test_extract_footprints_from_states_circular_projects_middle_copy():

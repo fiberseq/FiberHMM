@@ -291,6 +291,32 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
     return result
 
 
+def _project_circular_result_track(starts, sizes, scores, read_length: int) -> dict:
+    tiled_starts = np.asarray(starts, dtype=np.int64)
+    tiled_ends = tiled_starts + np.asarray(sizes, dtype=np.int64)
+    circular_intervals = project_center_runs(tiled_starts, tiled_ends, read_length)
+    circular_scores = project_center_scores(
+        tiled_starts,
+        tiled_ends,
+        scores,
+        read_length,
+    )
+    legacy_starts, legacy_sizes, legacy_scores = split_intervals_for_legacy(
+        circular_intervals,
+        read_length,
+        circular_scores,
+    )
+    return {
+        'tiled_starts': tiled_starts,
+        'tiled_sizes': tiled_ends - tiled_starts,
+        'circular_intervals': circular_intervals,
+        'circular_scores': circular_scores,
+        'legacy_starts': legacy_starts,
+        'legacy_sizes': legacy_sizes,
+        'legacy_scores': legacy_scores,
+    }
+
+
 def _extract_footprints_from_states_circular(
     states: np.ndarray,
     confidence: Optional[np.ndarray],
@@ -312,56 +338,38 @@ def _extract_footprints_from_states_circular(
         nuc_min_size=nuc_min_size,
     )
 
-    fp_starts = np.asarray(tiled_result['footprint_starts'], dtype=np.int64)
-    fp_ends = fp_starts + np.asarray(tiled_result['footprint_sizes'], dtype=np.int64)
-    circular_nucs = project_center_runs(fp_starts, fp_ends, read_length)
-    circular_nuc_scores = project_center_scores(
-        fp_starts,
-        fp_ends,
+    nuc_track = _project_circular_result_track(
+        tiled_result['footprint_starts'],
+        tiled_result['footprint_sizes'],
         tiled_result.get('footprint_scores'),
         read_length,
     )
-
-    msp_starts = np.asarray(tiled_result['msp_starts'], dtype=np.int64)
-    msp_ends = msp_starts + np.asarray(tiled_result['msp_sizes'], dtype=np.int64)
-    circular_msps = project_center_runs(msp_starts, msp_ends, read_length)
-    circular_msp_scores = project_center_scores(
-        msp_starts,
-        msp_ends,
+    msp_track = _project_circular_result_track(
+        tiled_result['msp_starts'],
+        tiled_result['msp_sizes'],
         tiled_result.get('msp_scores'),
         read_length,
     )
 
-    ns, nl, ns_scores = split_intervals_for_legacy(
-        circular_nucs,
-        read_length,
-        circular_nuc_scores,
-    )
-    msp_s, msp_l, msp_scores = split_intervals_for_legacy(
-        circular_msps,
-        read_length,
-        circular_msp_scores,
-    )
-
     return {
-        'footprint_starts': ns,
-        'footprint_sizes': nl,
-        'footprint_scores': ns_scores,
-        'msp_starts': msp_s,
-        'msp_sizes': msp_l,
-        'msp_scores': msp_scores,
+        'footprint_starts': nuc_track['legacy_starts'],
+        'footprint_sizes': nuc_track['legacy_sizes'],
+        'footprint_scores': nuc_track['legacy_scores'],
+        'msp_starts': msp_track['legacy_starts'],
+        'msp_sizes': msp_track['legacy_sizes'],
+        'msp_scores': msp_track['legacy_scores'],
         'states': states[read_length:2 * read_length].astype(np.int8, copy=False),
         'posteriors': None,
         'circular': True,
         'circular_read_length': read_length,
-        'circular_ns': circular_nucs,
-        'circular_as': circular_msps,
-        'circular_ns_scores': circular_nuc_scores,
-        'circular_as_scores': circular_msp_scores,
-        'tiled_ns': fp_starts.astype(np.int32),
-        'tiled_nl': (fp_ends - fp_starts).astype(np.int32),
-        'tiled_as': msp_starts.astype(np.int32),
-        'tiled_al': (msp_ends - msp_starts).astype(np.int32),
+        'circular_ns': nuc_track['circular_intervals'],
+        'circular_as': msp_track['circular_intervals'],
+        'circular_ns_scores': nuc_track['circular_scores'],
+        'circular_as_scores': msp_track['circular_scores'],
+        'tiled_ns': nuc_track['tiled_starts'].astype(np.int32),
+        'tiled_nl': nuc_track['tiled_sizes'].astype(np.int32),
+        'tiled_as': msp_track['tiled_starts'].astype(np.int32),
+        'tiled_al': msp_track['tiled_sizes'].astype(np.int32),
     }
 
 
