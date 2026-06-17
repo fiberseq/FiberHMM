@@ -23,6 +23,12 @@ from fiberhmm.inference.nuc_recaller import (
     unify_circular_nuc_calls_with_tf_calls,
     unify_nuc_calls_with_tf_calls,
 )
+from fiberhmm.inference.tagging import (
+    split_intervals,
+    unify_circular_nucs_with_tf_calls,
+    unify_nucs_with_tf_calls,
+)
+from fiberhmm.inference.tf_recaller import build_scan_intervals, call_tfs_in_interval
 
 
 def _analyzed_span(apply_result, read_length, kept):
@@ -38,12 +44,6 @@ def _analyzed_span(apply_result, read_length, kept):
         ends.append(int(k.start) + int(k.length))
     return (min(starts) if starts else 0,
             max(ends) if ends else int(read_length))
-from fiberhmm.inference.tagging import (
-    split_intervals,
-    unify_circular_nucs_with_tf_calls,
-    unify_nucs_with_tf_calls,
-)
-from fiberhmm.inference.tf_recaller import build_scan_intervals, call_tfs_in_interval
 
 
 def apply_result_has_footprints(apply_result: Optional[Mapping[str, Any]]) -> bool:
@@ -157,59 +157,44 @@ def build_fused_recall_result(
             phase_nrl,
         )
 
-    recall_ns = apply_result.get("tiled_ns", ns) if is_circular else ns
-    recall_nl = apply_result.get("tiled_nl", nl) if is_circular else nl
-    recall_msps = apply_result.get("tiled_as", msps) if is_circular else msps
-    recall_msp_lengths = apply_result.get("tiled_al", msp_lengths) if is_circular else msp_lengths
-    recall_read_length = len(apply_result["encoded"]) if is_circular else len(fiber_read["query_sequence"])
+    if is_circular:
+        return _build_fused_recall_result_without_nucs_circular(
+            fiber_read, apply_result, llr_hit, llr_miss,
+            min_llr, min_opps, unify_threshold, with_scores,
+        )
+    return _build_fused_recall_result_without_nucs_linear(
+        fiber_read, apply_result, llr_hit, llr_miss,
+        min_llr, min_opps, unify_threshold, with_scores,
+    )
 
+
+def _build_fused_recall_result_without_nucs_linear(
+    fiber_read: Mapping[str, Any],
+    apply_result: Mapping[str, Any],
+    llr_hit,
+    llr_miss,
+    min_llr: float,
+    min_opps: int,
+    unify_threshold: int,
+    with_scores: bool,
+) -> dict:
+    ns = apply_result["ns"]
+    nl = apply_result["nl"]
+    msps = apply_result["as"]
+    msp_lengths = apply_result["al"]
     tf_calls = run_tf_recall_stage(
         apply_result["encoded"],
-        recall_ns,
-        recall_nl,
-        recall_msps,
-        recall_msp_lengths,
-        recall_read_length,
+        ns,
+        nl,
+        msps,
+        msp_lengths,
+        len(fiber_read["query_sequence"]),
         llr_hit,
         llr_miss,
         min_llr,
         min_opps,
         unify_threshold,
     )
-    if is_circular:
-        read_length = int(apply_result.get("circular_read_length") or len(fiber_read["query_sequence"]))
-        tf_calls = project_center_tf_calls(tf_calls, read_length)
-        kept_nucs, nq_for_kept = unify_circular_nucs_with_tf_calls(
-            apply_result.get("circular_ns", []),
-            tf_calls,
-            unify_threshold,
-            read_length,
-            apply_result.get("circular_ns_scores") if with_scores else None,
-        )
-        kept_starts, kept_lengths, kept_scores = split_intervals_for_legacy(
-            kept_nucs,
-            read_length,
-            apply_result.get("circular_ns_scores") if with_scores else None,
-        )
-        msp_starts, msp_lengths_split, msp_scores = split_intervals_for_legacy(
-            apply_result.get("circular_as", []),
-            read_length,
-            apply_result.get("circular_as_scores") if with_scores else None,
-        )
-        return {
-            "ns": kept_starts,
-            "nl": kept_lengths,
-            "as": msp_starts,
-            "al": msp_lengths_split,
-            "ns_scores": kept_scores,
-            "as_scores": msp_scores,
-            "nq_for_kept_nucs": nq_for_kept,
-            "tf_calls": tf_calls,
-            "circular": True,
-            "circular_read_length": read_length,
-            "circular_ns": kept_nucs,
-            "circular_as": apply_result.get("circular_as", []),
-        }
 
     kept_nucs, nq_for_kept = unify_nucs_with_tf_calls(
         ns,
@@ -229,6 +214,64 @@ def build_fused_recall_result(
         "as_scores": apply_result.get("as_scores") if with_scores else None,
         "nq_for_kept_nucs": nq_for_kept,
         "tf_calls": tf_calls,
+    }
+
+
+def _build_fused_recall_result_without_nucs_circular(
+    fiber_read: Mapping[str, Any],
+    apply_result: Mapping[str, Any],
+    llr_hit,
+    llr_miss,
+    min_llr: float,
+    min_opps: int,
+    unify_threshold: int,
+    with_scores: bool,
+) -> dict:
+    read_length = int(apply_result.get("circular_read_length") or len(fiber_read["query_sequence"]))
+    tf_calls = run_tf_recall_stage(
+        apply_result["encoded"],
+        apply_result.get("tiled_ns", apply_result["ns"]),
+        apply_result.get("tiled_nl", apply_result["nl"]),
+        apply_result.get("tiled_as", apply_result["as"]),
+        apply_result.get("tiled_al", apply_result["al"]),
+        len(apply_result["encoded"]),
+        llr_hit,
+        llr_miss,
+        min_llr,
+        min_opps,
+        unify_threshold,
+    )
+    tf_calls = project_center_tf_calls(tf_calls, read_length)
+    kept_nucs, nq_for_kept = unify_circular_nucs_with_tf_calls(
+        apply_result.get("circular_ns", []),
+        tf_calls,
+        unify_threshold,
+        read_length,
+        apply_result.get("circular_ns_scores") if with_scores else None,
+    )
+    kept_starts, kept_lengths, kept_scores = split_intervals_for_legacy(
+        kept_nucs,
+        read_length,
+        apply_result.get("circular_ns_scores") if with_scores else None,
+    )
+    msp_starts, msp_lengths_split, msp_scores = split_intervals_for_legacy(
+        apply_result.get("circular_as", []),
+        read_length,
+        apply_result.get("circular_as_scores") if with_scores else None,
+    )
+    return {
+        "ns": kept_starts,
+        "nl": kept_lengths,
+        "as": msp_starts,
+        "al": msp_lengths_split,
+        "ns_scores": kept_scores,
+        "as_scores": msp_scores,
+        "nq_for_kept_nucs": nq_for_kept,
+        "tf_calls": tf_calls,
+        "circular": True,
+        "circular_read_length": read_length,
+        "circular_ns": kept_nucs,
+        "circular_as": apply_result.get("circular_as", []),
     }
 
 
