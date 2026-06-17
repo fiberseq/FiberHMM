@@ -40,6 +40,25 @@ def _probability_ratios_with_data(prob_table) -> np.ndarray:
     return ratios[_context_observation_totals(prob_table) > 0]
 
 
+def _counter_rate_summary(counter: 'ContextCounter') -> dict:
+    rate = _modification_rate(counter)
+    return {
+        'total_positions': counter.total_positions,
+        'total_modified': counter.total_modified,
+        'rate': rate,
+        'unique_contexts': len(counter.counts),
+    }
+
+
+def _write_counter_rate_summary(handle, label: str, summary: dict) -> None:
+    handle.write(f"\n{label}:\n")
+    handle.write(f"  Total positions:     {summary['total_positions']:,}\n")
+    handle.write(f"  Modified positions:  {summary['total_modified']:,}\n")
+    rate = summary['rate']
+    handle.write(f"  Modification rate:   {rate:.4f} ({rate*100:.2f}%)\n")
+    handle.write(f"  Unique contexts:     {summary['unique_contexts']:,}\n")
+
+
 def _merged_probability_table(acc_probs, inacc_probs):
     merged = acc_probs[['context', 'ratio', 'hit', 'nohit']].merge(
         inacc_probs[['context', 'ratio', 'hit', 'nohit']],
@@ -115,22 +134,15 @@ def _write_probability_stats_summary(summary_file: str,
             acc = accessible_counters[base]
             inacc = inaccessible_counters[base]
 
-            acc_rate = _modification_rate(acc)
-            inacc_rate = _modification_rate(inacc)
+            acc_summary = _counter_rate_summary(acc)
+            inacc_summary = _counter_rate_summary(inacc)
+            acc_rate = acc_summary['rate']
+            inacc_rate = inacc_summary['rate']
 
             f.write(f"{base}-centered Contexts\n")
             f.write("-" * 40 + "\n")
-            f.write("\nAccessible:\n")
-            f.write(f"  Total positions:     {acc.total_positions:,}\n")
-            f.write(f"  Modified positions:  {acc.total_modified:,}\n")
-            f.write(f"  Modification rate:   {acc_rate:.4f} ({acc_rate*100:.2f}%)\n")
-            f.write(f"  Unique contexts:     {len(acc.counts):,}\n")
-
-            f.write("\nInaccessible:\n")
-            f.write(f"  Total positions:     {inacc.total_positions:,}\n")
-            f.write(f"  Modified positions:  {inacc.total_modified:,}\n")
-            f.write(f"  Modification rate:   {inacc_rate:.4f} ({inacc_rate*100:.2f}%)\n")
-            f.write(f"  Unique contexts:     {len(inacc.counts):,}\n")
+            _write_counter_rate_summary(f, "Accessible", acc_summary)
+            _write_counter_rate_summary(f, "Inaccessible", inacc_summary)
 
             f.write("\nSeparation:\n")
             f.write(f"  Rate difference:     {acc_rate - inacc_rate:.4f}\n")
