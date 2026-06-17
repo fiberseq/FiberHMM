@@ -541,6 +541,29 @@ class TestFiberReadExtraction:
         assert engine._apply_payload_tag_value(read, "MM") == "A+a,0;"
         assert engine._apply_payload_tag_value(read, "ML") == bytes([200])
 
+    def test_apply_payload_daf_md_result_skips_iupac_and_delegates_raw_reads(
+        self, monkeypatch,
+    ):
+        calls = []
+        read = self.FakeRead("AAAA")
+        ref_fasta = object()
+
+        def fake_get_daf_positions(got_read, ref_fasta=None):
+            calls.append((got_read, ref_fasta))
+            return ([1], [], "CT")
+
+        import fiberhmm.daf.encoder as daf_encoder
+
+        monkeypatch.setattr(daf_encoder, "get_daf_positions", fake_get_daf_positions)
+
+        assert engine._apply_payload_daf_md_result(read, "AYAA", ref_fasta) is None
+        assert engine._apply_payload_daf_md_result(read, "AAAA", ref_fasta) == (
+            [1],
+            [],
+            "CT",
+        )
+        assert calls == [(read, ref_fasta)]
+
     def test_extract_fiber_read_mm_ml_branch_preserves_reverse_flag(self):
         read = self.FakeRead(
             "AAAA",

@@ -571,6 +571,13 @@ def _apply_payload_tag_value(read, tag: str):
     return val
 
 
+def _apply_payload_daf_md_result(read, query_sequence: str, ref_fasta=None):
+    if has_iupac_encoding(query_sequence):
+        return None
+    from fiberhmm.daf.encoder import get_daf_positions
+    return get_daf_positions(read, ref_fasta=ref_fasta)
+
+
 def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[dict]:
     """Extract slim payload from a pysam read for the apply slim-IPC path.
 
@@ -602,12 +609,9 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[di
 
     # DAF MD-fallback precomputation (live-read side, before slim-IPC handoff).
     if mode == 'daf':
-        from fiberhmm.core.bam_reader import has_iupac_encoding
-        if not has_iupac_encoding(seq):
-            from fiberhmm.daf.encoder import get_daf_positions
-            md_res = get_daf_positions(read, ref_fasta=ref_fasta)
-            if md_res is not None:
-                payload['_daf_md_result'] = md_res   # (ct_list, ga_list, strand_tag)
+        md_res = _apply_payload_daf_md_result(read, seq, ref_fasta=ref_fasta)
+        if md_res is not None:
+            payload['_daf_md_result'] = md_res   # (ct_list, ga_list, strand_tag)
 
     return payload
 
