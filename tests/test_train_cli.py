@@ -25,6 +25,15 @@ def test_state_run_lengths_splits_footprint_and_msp_lengths():
     assert msp_sizes == [3]
 
 
+def test_state_block_specs_include_plot_widths_and_colors():
+    assert train._state_block_specs([]) == []
+    assert train._state_block_specs([0, 0, 1, 0]) == [
+        (0, 2, "forestgreen"),
+        (2, 1, "white"),
+        (3, 1, "forestgreen"),
+    ]
+
+
 def test_expected_model_durations_from_self_transitions():
     durations = train._expected_model_durations(np.array([[0.8, 0.2], [0.1, 1.0]]))
 

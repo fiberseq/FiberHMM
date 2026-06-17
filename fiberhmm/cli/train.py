@@ -500,6 +500,13 @@ def _state_run_lengths(states):
     return footprint_sizes, msp_sizes
 
 
+def _state_block_specs(states) -> list:
+    return [
+        (start, end - start, 'forestgreen' if state == 0 else 'white')
+        for start, end, state in _state_runs(states)
+    ]
+
+
 def _expected_state_duration(stay_prob: float) -> float:
     if stay_prob >= 1:
         return float('inf')
@@ -748,9 +755,9 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
                 """Draw footprint (green) and accessible (white) blocks."""
                 patches = []
                 colors_list = []
-                for start, end, state in _state_runs(region_states):
-                    patches.append(Rectangle((start, 0), end - start, 1))
-                    colors_list.append('forestgreen' if state == 0 else 'white')
+                for start, width, color in _state_block_specs(region_states):
+                    patches.append(Rectangle((start, 0), width, 1))
+                    colors_list.append(color)
 
                 if patches:
                     collection = PatchCollection(patches, facecolors=colors_list,
@@ -905,9 +912,9 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         ax = axes[1]
         patches = []
         colors = []
-        for start, end, state in _state_runs(states):
-            patches.append(Rectangle((start, 0), end - start, 1))
-            colors.append('forestgreen' if state == 0 else 'white')
+        for start, width, color in _state_block_specs(states):
+            patches.append(Rectangle((start, 0), width, 1))
+            colors.append(color)
         if patches:
             collection = PatchCollection(patches, facecolors=colors, edgecolors='lightgray', linewidths=0.3)
             ax.add_collection(collection)
