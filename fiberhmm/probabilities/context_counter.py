@@ -39,6 +39,16 @@ def _count_ratio(hit, nohit) -> float:
     return hit / total if total > 0 else 0.0
 
 
+def _probability_row(context: str, counts) -> dict:
+    hit, nohit = counts
+    return {
+        'context': context,
+        'hit': int(hit),
+        'nohit': int(nohit),
+        'ratio': _count_ratio(hit, nohit),
+    }
+
+
 def _trim_context(full_context: str, trim: int) -> str:
     if trim == 0:
         return full_context
@@ -251,13 +261,7 @@ class ContextCounter:
         # Build DataFrame
         rows = []
         for context, counts in sorted(aggregated.items()):
-            hit, nohit = counts
-            rows.append({
-                'context': context,
-                'hit': int(hit),
-                'nohit': int(nohit),
-                'ratio': _count_ratio(hit, nohit)
-            })
+            rows.append(_probability_row(context, counts))
 
         df = pd.DataFrame(rows)
         if len(df) > 0:

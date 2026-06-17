@@ -8,6 +8,7 @@ from fiberhmm.probabilities.context_counter import (
     _daf_c_context_from_strand_context,
     _daf_reconstruction_bases,
     _position_weight,
+    _probability_row,
     _reconstruct_deaminated_sequence,
     _trim_context,
 )
@@ -28,6 +29,15 @@ def test_position_weight_defaults_out_of_range_to_zero():
 def test_count_ratio_handles_zero_total():
     assert _count_ratio(2, 6) == 0.25
     assert _count_ratio(0, 0) == 0.0
+
+
+def test_probability_row_casts_counts_and_ratio():
+    assert _probability_row("ACA", np.array([2, 6])) == {
+        "context": "ACA",
+        "hit": 2,
+        "nohit": 6,
+        "ratio": 0.25,
+    }
 
 
 def test_trim_context_extracts_centered_subcontext():
