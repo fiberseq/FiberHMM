@@ -166,6 +166,21 @@ def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
     grp['strands'][idx] = strand
 
 
+def _posterior_tsv_metadata(
+    mode: str,
+    context_size: int,
+    edge_trim: int,
+    source_bam: str,
+) -> dict:
+    return {
+        'mode': mode,
+        'context_size': context_size,
+        'edge_trim': edge_trim,
+        'source_bam': os.path.basename(source_bam),
+        'format_version': 1,
+    }
+
+
 class PosteriorsTSVWriter:
     """
     Simple streaming writer for posteriors in TSV format.
@@ -198,13 +213,7 @@ class PosteriorsTSVWriter:
         self._file = _open_text_file(self.output_path, 'wt')
 
         # Write header with metadata
-        metadata = {
-            'mode': mode,
-            'context_size': context_size,
-            'edge_trim': edge_trim,
-            'source_bam': os.path.basename(source_bam),
-            'format_version': 1,
-        }
+        metadata = _posterior_tsv_metadata(mode, context_size, edge_trim, source_bam)
         self._file.write(f"#metadata:{json.dumps(metadata)}\n")
         self._file.write(REGION_POSTERIORS_HEADER)
 

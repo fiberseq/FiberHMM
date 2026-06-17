@@ -133,6 +133,21 @@ def test_scan_tsv_for_h5_collects_metadata_and_chrom_counts(tmp_path):
     assert n_total == 3
 
 
+def test_posterior_tsv_metadata_uses_source_bam_basename():
+    assert tsv_backend._posterior_tsv_metadata(
+        mode="daf",
+        context_size=5,
+        edge_trim=12,
+        source_bam="/path/to/input.bam",
+    ) == {
+        "mode": "daf",
+        "context_size": 5,
+        "edge_trim": 12,
+        "source_bam": "input.bam",
+        "format_version": 1,
+    }
+
+
 def test_tsv_to_h5_writes_metadata_and_arrays(tmp_path):
     tsv_path = tmp_path / "posteriors.tsv"
     h5_path = tmp_path / "posteriors.h5"
