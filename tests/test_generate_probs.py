@@ -5,10 +5,21 @@ import pandas as pd
 from fiberhmm.cli.generate_probs import (
     FILTER_STAT_KEYS,
     _combined_probability_frame,
+    _generate_probs_skip_reason,
     _new_filter_stats,
     _record_mm_tag_types,
     _target_bases_for_mode,
 )
+
+
+class _Read:
+    is_unmapped = False
+    is_secondary = False
+    is_supplementary = False
+    mapping_quality = 60
+    query_sequence = "A" * 200
+    reference_start = 100
+    reference_end = 300
 
 
 def test_new_filter_stats_returns_zeroed_independent_stats():
@@ -19,6 +30,25 @@ def test_new_filter_stats_returns_zeroed_independent_stats():
 
     stats['scanned'] = 10
     assert _new_filter_stats()['scanned'] == 0
+
+
+def test_generate_probs_skip_reason_filters_in_expected_order():
+    read = _Read()
+    read.is_unmapped = True
+    read.is_secondary = True
+
+    assert _generate_probs_skip_reason(read, 20, 100) == 'unmapped'
+
+    read = _Read()
+    read.mapping_quality = 10
+    assert _generate_probs_skip_reason(read, 20, 100) == 'low_mapq'
+
+    read = _Read()
+    read.reference_end = 150
+    assert _generate_probs_skip_reason(read, 20, 100) == 'short_read'
+
+    read = _Read()
+    assert _generate_probs_skip_reason(read, 20, 100) is None
 
 
 def test_target_bases_for_mode():

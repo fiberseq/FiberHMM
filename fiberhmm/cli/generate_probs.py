@@ -131,6 +131,24 @@ def _print_filter_stats(filter_stats: Dict[str, int], min_mapq: int, min_read_le
     print(f"      No ML tag:          {filter_stats['no_ml_tag']:>10,}")
 
 
+def _generate_probs_skip_reason(read, min_mapq: int, min_read_length: int):
+    if read.is_unmapped:
+        return 'unmapped'
+    if read.is_secondary:
+        return 'secondary'
+    if read.is_supplementary:
+        return 'supplementary'
+    if read.mapping_quality < min_mapq:
+        return 'low_mapq'
+    if read.query_sequence is None:
+        return 'no_sequence'
+    if read.reference_end is None or read.reference_start is None:
+        return 'no_sequence'
+    if read.reference_end - read.reference_start < min_read_length:
+        return 'short_read'
+    return None
+
+
 def _target_bases_for_mode(mode: str) -> List[str]:
     if mode == 'daf':
         return ['C']
@@ -196,27 +214,11 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                     'rate': f'{100*reads_processed/max(1,reads_scanned):.1f}%'
                 })
 
-            # Filters with tracking
-            if read.is_unmapped:
-                filter_stats['unmapped'] += 1
-                continue
-            if read.is_secondary:
-                filter_stats['secondary'] += 1
-                continue
-            if read.is_supplementary:
-                filter_stats['supplementary'] += 1
-                continue
-            if read.mapping_quality < args.min_mapq:
-                filter_stats['low_mapq'] += 1
-                continue
-            if read.query_sequence is None:
-                filter_stats['no_sequence'] += 1
-                continue
-            if read.reference_end is None or read.reference_start is None:
-                filter_stats['no_sequence'] += 1
-                continue
-            if read.reference_end - read.reference_start < args.min_read_length:
-                filter_stats['short_read'] += 1
+            skip_reason = _generate_probs_skip_reason(
+                read, args.min_mapq, args.min_read_length,
+            )
+            if skip_reason is not None:
+                filter_stats[skip_reason] += 1
                 continue
 
             # Get MM/ML tags
