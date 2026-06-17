@@ -21,6 +21,8 @@ from typing import Dict, List, Optional
 import h5py
 import numpy as np
 
+from fiberhmm.core.bam_reader import get_reference_positions
+
 
 def _int32_array(values) -> np.ndarray:
     if values is None or len(values) == 0:
@@ -277,15 +279,7 @@ def get_ref_positions_from_read(read) -> np.ndarray:
     if read.is_unmapped:
         return np.array([], dtype=np.int32)
 
-    # Get aligned pairs: (query_pos, ref_pos)
-    # ref_pos is None for insertions
-    pairs = read.get_aligned_pairs()
-
-    query_len = read.query_length
-    ref_positions = np.full(query_len, -1, dtype=np.int32)
-
-    for query_pos, ref_pos in pairs:
-        if query_pos is not None and ref_pos is not None:
-            ref_positions[query_pos] = ref_pos
-
-    return ref_positions
+    return np.array(
+        [p if p is not None else -1 for p in get_reference_positions(read)],
+        dtype=np.int32,
+    )

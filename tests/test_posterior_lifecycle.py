@@ -1,9 +1,22 @@
 """Failure-path coverage for apply-pipeline resource lifetimes."""
 
+import numpy as np
 import pytest
 
 from fiberhmm.inference import legacy_pipeline, parallel, streaming_pipeline
 from fiberhmm.posteriors import hdf5_backend
+
+
+def test_hdf5_ref_positions_use_core_mapping_with_insertions():
+    class Read:
+        is_unmapped = False
+        reference_start = 10
+        cigartuples = [(0, 2), (1, 1), (0, 1)]
+
+    np.testing.assert_array_equal(
+        hdf5_backend.get_ref_positions_from_read(Read()),
+        np.array([10, 11, -1, 12], dtype=np.int32),
+    )
 
 
 def _install_fake_posterior_writer(monkeypatch):
