@@ -18,6 +18,15 @@ def test_bundled_model_path_uses_models_dir(monkeypatch, tmp_path):
     assert models._bundled_model_path("model.json") == str(tmp_path / "model.json")
 
 
+def test_unknown_bundled_model_message_lists_choices_and_override():
+    message = models._unknown_bundled_model_message("hia5", "unknown", "apply")
+
+    assert "enzyme='hia5'" in message
+    assert "seq='unknown'" in message
+    assert "Valid enzyme/seq combos" in message
+    assert "Use --model" in message
+
+
 def test_get_model_path_defaults_hia5_seq_with_warning():
     with pytest.warns(UserWarning, match="defaulting to 'pacbio'"):
         path = models.get_model_path("hia5", tool="apply")

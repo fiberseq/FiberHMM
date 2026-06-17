@@ -59,6 +59,15 @@ def _valid_enzyme_seq_choices() -> list[str]:
     return [f"{e}/{s or 'any'}" for e, s in sorted(_BUNDLED)]
 
 
+def _unknown_bundled_model_message(enzyme: str, seq: str | None, tool: str) -> str:
+    choices = _valid_enzyme_seq_choices()
+    return (
+        f"No bundled model for enzyme={enzyme!r} seq={seq!r} tool={tool!r}. "
+        f"Valid enzyme/seq combos: {choices}. "
+        f"Use --model to provide a custom JSON file."
+    )
+
+
 def _bundled_model_key(enzyme: str, seq: str | None) -> tuple[str, str | None]:
     enz = enzyme.lower()
     return enz, _seq_key_for_enzyme(enz, seq)
@@ -94,12 +103,7 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
     key = _bundled_model_key(enzyme, seq)
     entry = _BUNDLED.get(key)
     if entry is None:
-        choices = _valid_enzyme_seq_choices()
-        raise KeyError(
-            f"No bundled model for enzyme={enzyme!r} seq={seq!r} tool={tool!r}. "
-            f"Valid enzyme/seq combos: {choices}. "
-            f"Use --model to provide a custom JSON file."
-        )
+        raise KeyError(_unknown_bundled_model_message(enzyme, seq, tool))
 
     fname = entry.get(t)
     if fname is None:
