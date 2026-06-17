@@ -27,6 +27,18 @@ def _has_skip_chromosome_pattern(chrom: str) -> bool:
     return any(pattern in c for pattern in _SKIP_CHROM_PATTERNS)
 
 
+def _is_sex_or_mito_chromosome(chrom: str) -> bool:
+    return chrom in ('X', 'Y', 'M', 'MT', 'W', 'Z')
+
+
+def _is_drosophila_chromosome(chrom: str) -> bool:
+    return re.match(r'^[234][LR]?$', chrom) is not None
+
+
+def _is_c_elegans_chromosome(chrom: str) -> bool:
+    return chrom in ('I', 'II', 'III', 'IV', 'V', 'VI')
+
+
 def _is_main_chromosome(chrom: str) -> bool:
     """
     Check if a chromosome name is a main chromosome (not a scaffold/contig).
@@ -53,15 +65,15 @@ def _is_main_chromosome(chrom: str) -> bool:
         return True
 
     # Accept X, Y, M, MT, W, Z (sex chromosomes and mitochondrial)
-    if c in ('X', 'Y', 'M', 'MT', 'W', 'Z'):
+    if _is_sex_or_mito_chromosome(c):
         return True
 
     # Accept Drosophila chromosomes: 2L, 2R, 3L, 3R, 4
-    if re.match(r'^[234][LR]?$', c):
+    if _is_drosophila_chromosome(c):
         return True
 
     # Accept C. elegans chromosomes: I, II, III, IV, V, X
-    if c in ('I', 'II', 'III', 'IV', 'V', 'VI'):
+    if _is_c_elegans_chromosome(c):
         return True
 
     return False

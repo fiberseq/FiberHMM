@@ -9,6 +9,10 @@ from fiberhmm.inference.region_planning import (
     _get_genome_regions,
     _has_skip_chromosome_pattern,
     _include_chromosome,
+    _is_c_elegans_chromosome,
+    _is_drosophila_chromosome,
+    _is_main_chromosome,
+    _is_sex_or_mito_chromosome,
     _normalized_chromosome_name,
 )
 
@@ -43,6 +47,14 @@ def test_has_skip_chromosome_pattern_detects_scaffold_markers():
     assert _has_skip_chromosome_pattern("chrUn_random")
     assert _has_skip_chromosome_pattern("chr1_KI270706v1_random")
     assert not _has_skip_chromosome_pattern("chr2L")
+
+
+def test_main_chromosome_class_helpers_cover_named_chromosomes():
+    assert _is_sex_or_mito_chromosome("MT")
+    assert _is_drosophila_chromosome("2L")
+    assert _is_c_elegans_chromosome("IV")
+    assert _is_main_chromosome("chr3R")
+    assert not _is_main_chromosome("chrEBV")
 
 
 def test_include_chromosome_applies_allowlist_and_scaffold_filter():
