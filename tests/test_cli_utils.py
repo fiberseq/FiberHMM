@@ -6,12 +6,14 @@ from fiberhmm.core import bam_reader
 from fiberhmm.cli.utils import (
     AccessibilityCounter,
     _accessibility_priors_for_base,
+    _aggregate_accessibility_counts,
     _estimate_emission_probs,
     _passes_transfer_base_filters,
     _passes_transfer_target_filters,
     _scale_emission_probabilities,
     _target_bases_for_transfer_mode,
     _target_mod_positions_from_bam_read,
+    _trim_accessibility_context,
     _transfer_context_index,
     _write_transfer_probability_tables,
 )
@@ -33,6 +35,24 @@ def test_accessibility_counter_records_accessible_and_protected_contexts():
     assert counter.counts["CAC"] == [1, 2]
     assert counter.total_accessible == 1
     assert counter.total_positions == 2
+
+
+def test_accessibility_aggregation_trims_and_merges_context_counts():
+    assert _trim_accessibility_context("AACAA", 1) == "ACA"
+    assert _trim_accessibility_context("AACAA", 0) == "AACAA"
+
+    assert _aggregate_accessibility_counts(
+        {
+            "AACAA": [1, 3],
+            "TACAT": [2, 5],
+            "GAGAG": [7, 11],
+        },
+        max_context=2,
+        context_size=1,
+    ) == {
+        "ACA": [3, 8],
+        "AGA": [7, 11],
+    }
 
 
 def test_estimate_emission_probs_falls_back_with_too_few_contexts(capsys):

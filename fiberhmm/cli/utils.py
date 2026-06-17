@@ -222,6 +222,28 @@ def _target_bases_for_transfer_mode(mode):
     return ['A']
 
 
+def _trim_accessibility_context(full_context: str, trim: int) -> str:
+    if trim > 0:
+        return full_context[trim : len(full_context) - trim]
+    return full_context
+
+
+def _aggregate_accessibility_counts(
+    counts,
+    max_context: int,
+    context_size: int,
+) -> dict:
+    aggregated = defaultdict(lambda: [0, 0])
+    trim = max_context - context_size
+
+    for full_context, context_counts in counts.items():
+        small_context = _trim_accessibility_context(full_context, trim)
+        aggregated[small_context][0] += context_counts[0]
+        aggregated[small_context][1] += context_counts[1]
+
+    return dict(aggregated)
+
+
 class AccessibilityCounter:
     """Count bases in accessible vs inaccessible regions per context."""
 
@@ -272,16 +294,11 @@ class AccessibilityCounter:
         if context_size is None:
             context_size = self.max_context
 
-        aggregated = defaultdict(lambda: [0, 0])
-        trim = self.max_context - context_size
-
-        for full_context, counts in self.counts.items():
-            if trim > 0:
-                small_context = full_context[trim : len(full_context) - trim]
-            else:
-                small_context = full_context
-            aggregated[small_context][0] += counts[0]
-            aggregated[small_context][1] += counts[1]
+        aggregated = _aggregate_accessibility_counts(
+            self.counts,
+            self.max_context,
+            context_size,
+        )
 
         rows = []
         for context, (acc, total) in sorted(aggregated.items()):
