@@ -608,6 +608,17 @@ def detect_daf_strand(sequence: str, mod_positions: Set[int]) -> str:
         return '.'
 
 
+def daf_strand_from_tag(st_tag: Optional[str]) -> str:
+    if st_tag is None:
+        return '.'
+    st = str(st_tag).upper()
+    if st == 'CT':
+        return '+'
+    if st == 'GA':
+        return '-'
+    return '.'
+
+
 def has_iupac_encoding(sequence: str) -> bool:
     """
     Check if a BAM sequence contains IUPAC R/Y ambiguity codes.
@@ -650,15 +661,8 @@ def extract_daf_iupac_positions(sequence: str, st_tag: Optional[str] = None) -> 
     mod_positions: Set[int] = set()
 
     # Determine strand
-    if st_tag is not None:
-        st = st_tag.upper()
-        if st == 'CT':
-            strand = '+'
-        elif st == 'GA':
-            strand = '-'
-        else:
-            strand = '.'
-    else:
+    strand = daf_strand_from_tag(st_tag)
+    if strand == '.' and st_tag is None:
         # Infer from R vs Y counts
         y_count = seq_upper.count('Y')
         r_count = seq_upper.count('R')

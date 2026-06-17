@@ -55,6 +55,7 @@ except ImportError:
         return decorator
 
 from fiberhmm.core.bam_reader import (
+    daf_strand_from_tag,
     detect_daf_strand,
     encode_from_query_sequence,
     extract_daf_iupac_positions,
@@ -482,9 +483,10 @@ def extract_modifications(read, mode: str, context_size: int = 3
                 md_result = get_daf_positions(read)
             if md_result is not None:
                 ct_pos, ga_pos, strand_tag = md_result
-                if strand_tag == 'CT':
-                    return set(ct_pos), '+', seq.upper()
-                return set(ga_pos), '-', seq.upper()
+                strand = daf_strand_from_tag(strand_tag)
+                if strand == '+':
+                    return set(ct_pos), strand, seq.upper()
+                return set(ga_pos), strand if strand != '.' else '-', seq.upper()
         return None
     mod_pos = parse_mm_tag_query_positions(
         mm_tag, ml_tag, seq, read.is_reverse,

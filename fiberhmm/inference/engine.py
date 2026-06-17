@@ -6,6 +6,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.bam_reader import (
+    daf_strand_from_tag,
     detect_daf_strand,
     encode_from_query_sequence,
     extract_daf_iupac_positions,
@@ -633,12 +634,13 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
                 return None
             # query_sequence is already raw ACGT (no R/Y to decode);
             # uppercase to match what extract_daf_iupac_positions emits.
+            daf_strand = daf_strand_from_tag(strand_tag)
             return {
                 'read_id': read.query_name,
                 'query_sequence': query_sequence.upper(),
                 'm6a_query_positions': mod_positions,
                 'query_length': len(query_sequence),
-                '_daf_strand': '+' if strand_tag == 'CT' else '-',
+                '_daf_strand': daf_strand if daf_strand != '.' else '-',
             }
 
     # Legacy MM/ML path: use the fast vectorized parser instead of
