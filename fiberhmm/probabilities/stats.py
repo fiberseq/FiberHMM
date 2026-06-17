@@ -97,6 +97,13 @@ def _top_differentiating_contexts(merged, n: int = 15):
     return ranked.nlargest(n, 'diff')
 
 
+def _contexts_with_min_observations(merged, min_total: int):
+    return (
+        (merged['total_acc'] > min_total)
+        & (merged['total_inacc'] > min_total)
+    )
+
+
 def _cumulative_observation_percentages(totals) -> np.ndarray:
     sorted_totals = np.sort(np.asarray(totals))[::-1]
     total = np.sum(sorted_totals)
@@ -252,7 +259,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
             ax = axes[0, 1]
             merged = _merged_probability_table(acc_probs, inacc_probs)
             # Filter to contexts with data in both
-            mask = (merged['total_acc'] > 10) & (merged['total_inacc'] > 10)
+            mask = _contexts_with_min_observations(merged, 10)
             if mask.sum() > 0:
                 ax.scatter(merged.loc[mask, 'ratio_inacc'], merged.loc[mask, 'ratio_acc'],
                           alpha=0.5, s=10, c='steelblue')
@@ -340,7 +347,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
             # Hit rate comparison - use merged data for alignment
             ax = axes[1, 0]
             if len(merged) > 0:
-                mask = (merged['total_acc'] > 100) & (merged['total_inacc'] > 100)
+                mask = _contexts_with_min_observations(merged, 100)
                 if np.sum(mask) > 0:
                     ax.scatter(merged.loc[mask, 'total_acc'], merged.loc[mask, 'ratio_acc'],
                               alpha=0.5, s=10, c='forestgreen', label='Accessible')
@@ -355,7 +362,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
             # Context frequency comparison - use merged data
             ax = axes[1, 1]
             if len(merged) > 0:
-                mask = (merged['total_acc'] > 0) & (merged['total_inacc'] > 0)
+                mask = _contexts_with_min_observations(merged, 0)
                 if np.sum(mask) > 0:
                     ax.scatter(merged.loc[mask, 'total_inacc'], merged.loc[mask, 'total_acc'],
                               alpha=0.5, s=10, c='steelblue')

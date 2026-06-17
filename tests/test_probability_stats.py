@@ -192,6 +192,19 @@ def test_probability_plot_helpers_filter_log_odds_and_rank_contexts():
     assert "diff" not in merged.columns
 
 
+def test_contexts_with_min_observations_requires_both_totals_above_threshold():
+    merged = pd.DataFrame({
+        "total_acc": [10, 11, 20],
+        "total_inacc": [11, 10, 30],
+    })
+
+    assert stats._contexts_with_min_observations(merged, 10).tolist() == [
+        False,
+        False,
+        True,
+    ]
+
+
 def test_cumulative_observation_percentages_sorts_and_handles_empty_totals():
     percentages = stats._cumulative_observation_percentages([1, 4, 0])
 
