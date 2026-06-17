@@ -25,6 +25,14 @@ def _record_worker_failures(counters, worker_failures: int) -> None:
         _increment_counter(counters, 'worker_failures', worker_failures)
 
 
+def _record_reads_with_footprints(counters) -> None:
+    _increment_counter(counters, 'reads_with_footprints')
+
+
+def _record_no_footprints(counters) -> None:
+    _increment_counter(counters, 'no_footprints')
+
+
 def _write_passthrough(outbam, read_obj, counters) -> None:
     outbam.write(read_obj)
     _increment_counter(counters, 'written')
@@ -60,7 +68,7 @@ def _drain_oldest_chunk(
         result = next(result_iter)
         if result is not None:
             set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
-            _increment_counter(counters, 'reads_with_footprints')
+            _record_reads_with_footprints(counters)
 
             if posterior_writer and result.get('posteriors') is not None:
                 chrom = read_obj.reference_name
@@ -78,7 +86,7 @@ def _drain_oldest_chunk(
                         posterior_fiber_data(read_obj, result, ref_positions),
                     )
         else:
-            _increment_counter(counters, 'no_footprints')
+            _record_no_footprints(counters)
 
         _write_passthrough(outbam, read_obj, counters)
 
@@ -115,8 +123,8 @@ def _drain_oldest_fused_chunk(
                 also_write_legacy=also_write_legacy,
                 downstream_compat=downstream_compat,
             )
-            _increment_counter(counters, 'reads_with_footprints')
+            _record_reads_with_footprints(counters)
         else:
-            _increment_counter(counters, 'no_footprints')
+            _record_no_footprints(counters)
 
         _write_passthrough(outbam, read_obj, counters)
