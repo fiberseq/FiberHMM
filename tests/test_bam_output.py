@@ -467,6 +467,56 @@ def test_read_footprint_tags_for_bed_handles_missing_empty_and_scores(monkeypatc
     ) == ([10], [5], [255])
 
 
+def test_bed12_line_from_tagged_read_filters_and_formats(monkeypatch):
+    read = SimpleNamespace(
+        is_unmapped=False,
+        is_secondary=False,
+        is_supplementary=False,
+    )
+    calls = []
+
+    monkeypatch.setattr(
+        bam_output,
+        "_read_footprint_tags_for_bed",
+        lambda got_read, with_scores: ([10], [5], [255]),
+    )
+
+    def fake_line(got_read, ns, nl, nq, with_scores):
+        calls.append((got_read, ns, nl, nq, with_scores))
+        return "chr1\t0\t5"
+
+    monkeypatch.setattr(bam_output, "_footprint_bed12_line_from_read", fake_line)
+
+    assert bam_output._bed12_line_from_tagged_read(
+        read, with_scores=True,
+    ) == "chr1\t0\t5"
+    assert calls == [(read, [10], [5], [255], True)]
+
+    read.is_secondary = True
+    assert bam_output._bed12_line_from_tagged_read(read, with_scores=True) is None
+
+
+def test_bed12_line_from_tagged_read_returns_none_without_tags(monkeypatch):
+    read = SimpleNamespace(
+        is_unmapped=False,
+        is_secondary=False,
+        is_supplementary=False,
+    )
+
+    monkeypatch.setattr(
+        bam_output,
+        "_read_footprint_tags_for_bed",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        bam_output,
+        "_footprint_bed12_line_from_read",
+        lambda *args, **kwargs: pytest.fail("unexpected formatter call"),
+    )
+
+    assert bam_output._bed12_line_from_tagged_read(read, with_scores=False) is None
+
+
 @pytest.mark.parametrize(
     "write_scores",
     [bam_output.create_scores_database, bam_output.append_to_scores_database],

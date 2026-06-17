@@ -781,6 +781,18 @@ def _read_footprint_tags_for_bed(read, with_scores: bool):
     return ns, nl, nq
 
 
+def _bed12_line_from_tagged_read(read, with_scores: bool) -> Optional[str]:
+    if not is_primary_mapped_alignment(read):
+        return None
+
+    tags = _read_footprint_tags_for_bed(read, with_scores)
+    if tags is None:
+        return None
+    ns, nl, nq = tags
+
+    return _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores)
+
+
 def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
                                   with_scores: bool = False,
                                   n_cores: int = 1) -> int:
@@ -805,17 +817,7 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
 
     with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as bam, open(output_bed, 'w') as out:
         for read in bam:
-            # Skip unmapped and secondary/supplementary (BED should have one row per molecule)
-            if not is_primary_mapped_alignment(read):
-                continue
-
-            # Get footprint tags (molecular frame -> flip to SEQ/query coords)
-            tags = _read_footprint_tags_for_bed(read, with_scores)
-            if tags is None:
-                continue
-            ns, nl, nq = tags
-
-            line = _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores)
+            line = _bed12_line_from_tagged_read(read, with_scores)
             if line is None:
                 continue
 
