@@ -117,6 +117,53 @@ def test_extract_bed_from_tagged_bam_closes_bam_when_output_open_fails(
     assert opened[0].closed
 
 
+def test_format_footprint_bed12_row_preserves_scores_and_item_rgb():
+    row = bam_output._format_footprint_bed12_row(
+        chrom="chr1",
+        chrom_start=100,
+        chrom_end=150,
+        name="read1",
+        strand="+",
+        block_starts=[0, 40],
+        block_sizes=[10, 10],
+        valid_scores=[255, 128],
+        with_scores=True,
+    )
+
+    assert row.split("\t") == [
+        "chr1",
+        "100",
+        "150",
+        "read1",
+        "2",
+        "+",
+        "100",
+        "150",
+        "0,0,0",
+        "2",
+        "10,10",
+        "0,40",
+        "1000,501",
+    ]
+
+
+def test_format_footprint_bed12_row_omits_scores_when_disabled():
+    row = bam_output._format_footprint_bed12_row(
+        chrom="chr1",
+        chrom_start=100,
+        chrom_end=150,
+        name="read1",
+        strand="-",
+        block_starts=[0],
+        block_sizes=[50],
+        valid_scores=[255],
+        with_scores=False,
+    )
+
+    assert len(row.split("\t")) == 12
+    assert row.split("\t")[4] == "1"
+
+
 @pytest.mark.parametrize(
     "write_scores",
     [bam_output.create_scores_database, bam_output.append_to_scores_database],

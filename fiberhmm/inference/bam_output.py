@@ -15,6 +15,7 @@ from fiberhmm.inference.reference_mapping import (
     scored_interval_spans,
 )
 from fiberhmm.inference.read_filters import is_primary_mapped_alignment
+from fiberhmm.io.bed import bed12_row
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 
@@ -509,6 +510,39 @@ def convert_to_bigbed_with_schema(bed_file: str, chrom_sizes: str,
             os.remove(sorted_bed)
 
 
+def _format_footprint_bed12_row(
+    chrom: str,
+    chrom_start: int,
+    chrom_end: int,
+    name: str,
+    strand: str,
+    block_starts,
+    block_sizes,
+    valid_scores,
+    with_scores: bool,
+) -> str:
+    score = len(block_starts)
+    blocks = [
+        (chrom_start + start, chrom_start + start + size)
+        for start, size in zip(block_starts, block_sizes)
+    ]
+    extra = ()
+    if with_scores and valid_scores:
+        scaled_scores = [int(score * 1000 / 255) for score in valid_scores]
+        extra = (','.join(str(score) for score in scaled_scores),)
+    return bed12_row(
+        chrom,
+        chrom_start,
+        chrom_end,
+        name,
+        score,
+        strand,
+        blocks,
+        extra,
+        item_rgb="0,0,0",
+    )
+
+
 def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
                                   with_scores: bool = False,
                                   n_cores: int = 1) -> int:
@@ -636,24 +670,17 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
                 if valid_scores:
                     valid_scores.append(0)
 
-            # BED12 fields
-            thick_start = chrom_start
-            thick_end = chrom_end
-            item_rgb = "0,0,0"
-            block_count = len(block_starts)  # Use merged count
-            score = block_count  # Number of footprints after merging
-            block_sizes_str = ','.join(str(s) for s in block_sizes)
-            block_starts_str = ','.join(str(s) for s in block_starts)
-
-            line = f"{chrom}\t{chrom_start}\t{chrom_end}\t{name}\t{score}\t{strand}\t"
-            line += f"{thick_start}\t{thick_end}\t{item_rgb}\t{block_count}\t"
-            line += f"{block_sizes_str}\t{block_starts_str}"
-
-            if with_scores and valid_scores:
-                # Scale BAM scores (0-255) to BED scores (0-1000)
-                scaled_scores = [int(s * 1000 / 255) for s in valid_scores]
-                scores_str = ','.join(str(s) for s in scaled_scores)
-                line += f"\t{scores_str}"
+            line = _format_footprint_bed12_row(
+                chrom,
+                chrom_start,
+                chrom_end,
+                name,
+                strand,
+                block_starts,
+                block_sizes,
+                valid_scores,
+                with_scores,
+            )
 
             out.write(line + '\n')
             count += 1
