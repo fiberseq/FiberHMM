@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fiberhmm.daf.encoder import (
+    _has_min_daf_chimera_events,
     _has_min_daf_chimera_strand_counts,
     is_daf_chimera,
 )
@@ -10,6 +11,11 @@ from fiberhmm.daf.encoder import (
 def test_chimera_strand_count_gate_requires_both_strands():
     assert not _has_min_daf_chimera_strand_counts(5, 4, 5)
     assert _has_min_daf_chimera_strand_counts(5, 5, 5)
+
+
+def test_chimera_event_count_gate_requires_two_segments():
+    assert not _has_min_daf_chimera_events(9, 5)
+    assert _has_min_daf_chimera_events(10, 5)
 
 
 def test_clean_ct_read_not_chimera():
