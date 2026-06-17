@@ -315,6 +315,28 @@ def _submit_initial_regions(
             break
 
 
+def _completed_region_futures(pending: dict) -> list:
+    return [future for future in pending if future.done()]
+
+
+def _handle_completed_region_future(
+    future,
+    pending: dict,
+    result_callback,
+    pbar,
+) -> None:
+    region_info = pending.pop(future)
+
+    try:
+        chrom, start, end, results = future.result()
+        result_callback(chrom, results)
+        del results
+    except Exception as e:
+        print(f"Error processing {region_info}: {e}")
+
+    pbar.update(1)
+
+
 def _h5_batch_metadata(fibers: List[Dict]):
     n = len(fibers)
     fiber_ids = []
@@ -470,24 +492,16 @@ def _process_regions(regions, input_bam, model_path, params,
             pbar = tqdm(total=len(regions), desc="Processing regions", disable=not verbose)
 
             while pending:
-                done = [fut for fut in pending if fut.done()]
+                done = _completed_region_futures(pending)
 
                 if not done:
                     time.sleep(0.02)
                     continue
 
                 for future in done:
-                    region_info = pending.pop(future)
-
-                    try:
-                        chrom, start, end, results = future.result()
-                        result_callback(chrom, results)
-                        del results
-                    except Exception as e:
-                        print(f"Error processing {region_info}: {e}")
-
-                    pbar.update(1)
-
+                    _handle_completed_region_future(
+                        future, pending, result_callback, pbar,
+                    )
                     _submit_next_region(executor, region_iter, input_bam, pending)
 
             pbar.close()

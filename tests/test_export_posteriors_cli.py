@@ -366,6 +366,61 @@ def test_submit_initial_regions_respects_pending_cap():
     assert list(pending.values()) == [("chr1", 0, 10), ("chr1", 10, 20)]
 
 
+def test_completed_region_future_helpers_callback_and_update_progress(capsys):
+    class Future:
+        def __init__(self, done, result=None, error=None):
+            self._done = done
+            self._result = result
+            self._error = error
+
+        def done(self):
+            return self._done
+
+        def result(self):
+            if self._error:
+                raise self._error
+            return self._result
+
+    class Progress:
+        def __init__(self):
+            self.n = 0
+
+        def update(self, amount):
+            self.n += amount
+
+    complete = Future(True, ("chr1", 0, 10, [{"read_name": "a"}]))
+    waiting = Future(False)
+    pending = {complete: ("chr1", 0, 10), waiting: ("chr2", 0, 10)}
+    pbar = Progress()
+    callbacks = []
+
+    assert export_posteriors._completed_region_futures(pending) == [complete]
+    export_posteriors._handle_completed_region_future(
+        complete,
+        pending,
+        lambda chrom, results: callbacks.append((chrom, results)),
+        pbar,
+    )
+
+    assert pending == {waiting: ("chr2", 0, 10)}
+    assert callbacks == [("chr1", [{"read_name": "a"}])]
+    assert pbar.n == 1
+    assert capsys.readouterr().out == ""
+
+    failing = Future(True, error=RuntimeError("worker failed"))
+    pending = {failing: ("chr3", 5, 15)}
+    export_posteriors._handle_completed_region_future(
+        failing,
+        pending,
+        lambda *_: pytest.fail("unexpected callback"),
+        pbar,
+    )
+
+    assert pending == {}
+    assert pbar.n == 2
+    assert "Error processing ('chr3', 5, 15): worker failed" in capsys.readouterr().out
+
+
 def test_export_posteriors_tsv_closes_writer_when_region_processing_fails(
     monkeypatch, tmp_path
 ):
