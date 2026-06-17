@@ -45,6 +45,7 @@ from fiberhmm.core.bam_reader import (
 )
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model_with_metadata
+from fiberhmm.inference.engine import footprint_runs
 from fiberhmm.inference.worker_warmup import (
     disable_numba_cache_locking,
     warm_up_model_posteriors,
@@ -152,10 +153,7 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
     states = model.predict(encoded)
 
     # Extract footprint intervals
-    states_padded = np.concatenate([[1], states, [1]])
-    diff = np.diff(states_padded)
-    fp_start_idx = np.where(diff == -1)[0]
-    fp_end_idx = np.where(diff == 1)[0]
+    fp_start_idx, fp_end_idx = footprint_runs(states)
 
     fp_starts_ref = []
     fp_sizes_ref = []

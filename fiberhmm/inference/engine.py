@@ -67,13 +67,16 @@ def _footprint_runs_numba(states: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     return starts, ends
 
 
-def _footprint_runs(states: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def footprint_runs(states: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     if _HAS_NUMBA:
         return _footprint_runs_numba(states)
 
     states_padded = np.concatenate([[1], states, [1]])
     diff = np.diff(states_padded)
     return np.where(diff == -1)[0], np.where(diff == 1)[0]
+
+
+_footprint_runs = footprint_runs
 
 
 def _mean_interval_scores(confidence: np.ndarray, starts, ends,
