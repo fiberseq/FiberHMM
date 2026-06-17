@@ -24,12 +24,12 @@ Examples:
 import argparse
 import sys
 
+from fiberhmm.cli.recall_config import resolve_recall_defaults, should_write_legacy_tags
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.inference.parallel import (
     _process_bam_region_parallel_fused,
     _process_bam_streaming_pipeline_fused,
 )
-from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
 from fiberhmm.models import SUPPORTED_ENZYMES
 from fiberhmm.models import get_model_path as _get_bundled_model
 
@@ -308,11 +308,7 @@ def main():
     mode = args.mode or model_mode or 'pacbio-fiber'
     k = args.context_size or int(model_k or 3)
 
-    # Enzyme preset for recall params
-    preset = ENZYME_PRESETS.get(args.enzyme, {}) if args.enzyme else {}
-    min_llr = args.min_llr if args.min_llr is not None else preset.get('min_llr', 5.0)
-    uplift = args.emission_uplift if args.emission_uplift is not None \
-             else preset.get('emission_uplift', 1.0)
+    min_llr, uplift = resolve_recall_defaults(args)
 
     # Nucleosome recaller: ON by default, except DddA (the bundled DddA recall
     # model is the uplifted TF model, too aggressive for nuc splitting). Explicit
@@ -372,7 +368,7 @@ def main():
         file=sys.stderr,
     )
 
-    also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
+    also_write_legacy = should_write_legacy_tags(args)
 
     if args.region_parallel:
         if args.input == '-' or args.output == '-':

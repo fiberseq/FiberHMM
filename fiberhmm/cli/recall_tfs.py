@@ -46,6 +46,10 @@ from collections import deque
 import pysam
 
 from fiberhmm.cli.model_selection import resolve_model_path as _resolve_cli_model_path
+from fiberhmm.cli.recall_config import (
+    resolve_recall_defaults as _shared_resolve_recall_defaults,
+    should_write_legacy_tags,
+)
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.core.tag_access import compact_ml_value
 from fiberhmm.io.bam_header import append_coord_marker
@@ -455,13 +459,7 @@ def _resolve_cores(requested_cores):
 
 
 def _resolve_recall_defaults(args):
-    preset = ENZYME_PRESETS.get(args.enzyme, {}) if args.enzyme else {}
-    min_llr = args.min_llr if args.min_llr is not None else preset.get('min_llr', 5.0)
-    uplift = (
-        args.emission_uplift if args.emission_uplift is not None
-        else preset.get('emission_uplift', 1.0)
-    )
-    return min_llr, uplift
+    return _shared_resolve_recall_defaults(args, ENZYME_PRESETS)
 
 
 def _load_recall_model_config(model_path, args):
@@ -483,8 +481,7 @@ def _build_recall_llr_tables(model, uplift):
 
 
 def _also_write_legacy(args):
-    # Compat mode always writes legacy tags because TFs live in ns/nl there.
-    return True if args.downstream_compat else (not args.no_legacy_tags)
+    return should_write_legacy_tags(args)
 
 
 def main():
