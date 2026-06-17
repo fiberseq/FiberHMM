@@ -185,6 +185,12 @@ def _streaming_log_for_output(output_bam: str):
     return sys.stderr if output_bam == '-' else sys.stdout
 
 
+def _streaming_output_target(output_bam: str):
+    if output_bam == '-':
+        return os.fdopen(1, 'wb', closefd=False)
+    return output_bam
+
+
 def _print_streaming_skip_summary(skip_reasons: dict, total_reads: int,
                                   skipped: int, log) -> None:
     if skipped <= 0:
@@ -260,9 +266,7 @@ def _process_bam_streaming_pipeline_fused(
 
     _log = _streaming_log_for_output(output_bam)
 
-    _output_target = output_bam
-    if output_bam == '-':
-        _output_target = os.fdopen(1, 'wb', closefd=False)
+    _output_target = _streaming_output_target(output_bam)
 
     with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
         with pysam.AlignmentFile(_output_target, "wb",
@@ -446,9 +450,7 @@ def _process_bam_streaming_pipeline(
 
     start_time = time.time()
 
-    _output_target = output_bam
-    if output_bam == '-':
-        _output_target = os.fdopen(1, 'wb', closefd=False)
+    _output_target = _streaming_output_target(output_bam)
 
     with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
         with pysam.AlignmentFile(_output_target, "wb",

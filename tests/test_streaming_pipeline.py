@@ -5,11 +5,13 @@ Correctness tests for the streaming producer-consumer pipeline.
 import pysam
 import sys
 
+from fiberhmm.inference import streaming_pipeline
 from fiberhmm.inference.streaming_pipeline import (
     _apply_worker_args,
     _fused_worker_args,
     _streaming_filter_config,
     _streaming_log_for_output,
+    _streaming_output_target,
     _streaming_progress_rates,
     _streaming_rate,
     _worker_common_args,
@@ -81,6 +83,21 @@ def test_streaming_filter_config_captures_read_filter_settings():
 def test_streaming_log_for_output_uses_stderr_for_stdout_bam():
     assert _streaming_log_for_output("-") is sys.stderr
     assert _streaming_log_for_output("out.bam") is sys.stdout
+
+
+def test_streaming_output_target_resolves_stdout_and_file(monkeypatch):
+    sentinel = object()
+    calls = []
+
+    def fake_fdopen(fd, mode, closefd):
+        calls.append((fd, mode, closefd))
+        return sentinel
+
+    monkeypatch.setattr(streaming_pipeline.os, "fdopen", fake_fdopen)
+
+    assert _streaming_output_target("out.bam") == "out.bam"
+    assert _streaming_output_target("-") is sentinel
+    assert calls == [(1, "wb", False)]
 
 
 def _count_bam_reads(bam_path):
