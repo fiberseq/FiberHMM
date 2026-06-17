@@ -75,6 +75,10 @@ def _file_size_gb(path: str) -> float:
     return os.path.getsize(path) / (1024 ** 3)
 
 
+def _total_file_size_gb(paths: Sequence[str]) -> float:
+    return sum(os.path.getsize(path) for path in paths) / (1024 ** 3)
+
+
 def _throughput_gbs(size_gb: float, elapsed_seconds: float) -> float:
     if elapsed_seconds <= 0:
         return 0.0
@@ -325,8 +329,7 @@ def _concatenate_region_bams(
     """Concatenate sorted region BAMs with fast external tools and fallbacks."""
     import time
 
-    total_temp_size = sum(os.path.getsize(bam_path) for bam_path in bam_files)
-    total_temp_size_gb = total_temp_size / (1024**3)
+    total_temp_size_gb = _total_file_size_gb(bam_files)
 
     if verbose:
         print(f"Concatenating {len(bam_files)} region BAMs ({total_temp_size_gb:.1f}GB total)...")
@@ -347,7 +350,7 @@ def _concatenate_region_bams(
 
         if verbose:
             concat_time = time.time() - concat_start
-            output_size_gb = os.path.getsize(output_bam) / (1024**3)
+            output_size_gb = _file_size_gb(output_bam)
             speed_gbs = _throughput_gbs(output_size_gb, concat_time)
             print(
                 f"  Concatenated with samtools cat in {concat_time:.1f}s "
