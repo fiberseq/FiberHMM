@@ -866,6 +866,27 @@ def test_add_posterior_fiber_if_available_guards_and_writes(monkeypatch):
     )
 
 
+def test_pop_inflight_chunk_coerces_worker_result_and_removes_entry():
+    read = object()
+    chunk_items = [{"payload": "ok"}]
+    skip_flags = [False]
+    inflight = deque([(
+        _done_future(WorkerChunkResult([{"ok": True}], read_failures=2)),
+        [read],
+        chunk_items,
+        skip_flags,
+    )])
+
+    assert streaming_drain._pop_inflight_chunk(inflight) == (
+        [{"ok": True}],
+        2,
+        [read],
+        chunk_items,
+        skip_flags,
+    )
+    assert not inflight
+
+
 def test_streaming_drain_counts_worker_failures_and_passes_read_through():
     read = object()
     outbam = _OutBam()

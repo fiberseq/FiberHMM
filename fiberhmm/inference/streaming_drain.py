@@ -82,6 +82,12 @@ def _add_posterior_fiber_if_available(posterior_writer, read_obj, result: dict) 
     return True
 
 
+def _pop_inflight_chunk(inflight):
+    future, chunk_read_objs, chunk_items, chunk_skip_flags = inflight.popleft()
+    results, worker_failures = coerce_worker_chunk_result(future.result())
+    return results, worker_failures, chunk_read_objs, chunk_items, chunk_skip_flags
+
+
 def _drain_oldest_chunk(
     inflight,
     outbam,
@@ -97,8 +103,13 @@ def _drain_oldest_chunk(
     interleaved with processed reads at their correct positions. This preserves
     coordinate sort order when the input is coordinate sorted.
     """
-    future, chunk_read_objs, chunk_reads, chunk_skip_flags = inflight.popleft()
-    results, worker_failures = coerce_worker_chunk_result(future.result())
+    (
+        results,
+        worker_failures,
+        chunk_read_objs,
+        chunk_reads,
+        chunk_skip_flags,
+    ) = _pop_inflight_chunk(inflight)
     _record_worker_failures(counters, worker_failures)
     result_iter = iter(results)
     fiber_iter = iter(chunk_reads)
@@ -133,8 +144,13 @@ def _drain_oldest_fused_chunk(
     counters,
 ):
     """Drain one fused apply+recall chunk and write reads in input order."""
-    future, chunk_read_objs, chunk_payloads, chunk_skip_flags = inflight.popleft()
-    results, worker_failures = coerce_worker_chunk_result(future.result())
+    (
+        results,
+        worker_failures,
+        chunk_read_objs,
+        chunk_payloads,
+        chunk_skip_flags,
+    ) = _pop_inflight_chunk(inflight)
     _record_worker_failures(counters, worker_failures)
     result_iter = iter(results)
     payload_iter = iter(chunk_payloads)
