@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from fiberhmm.cli.apply import (
+    _context_size_message,
     _dataset_name,
     _ddda_notice_needed,
     _load_training_read_ids,
@@ -131,6 +132,7 @@ def test_apply_ddda_notice_detection_and_output(capsys):
 def test_apply_context_size_override_warns(capsys):
     args = SimpleNamespace(context_size=5)
 
+    assert _context_size_message(5) == "k=5 (11-mer)"
     assert _resolve_context_size(args, model_context_size=3) == 5
     out = capsys.readouterr().out
     assert "Overriding model context size 3 with 5" in out

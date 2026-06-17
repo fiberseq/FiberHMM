@@ -219,6 +219,10 @@ def _print_ddda_two_pass_notice(model_path: str, enzyme: str = None) -> None:
     )
 
 
+def _context_size_message(context_size: int) -> str:
+    return f"k={context_size} ({2*context_size + 1}-mer)"
+
+
 def _resolve_context_size(args, model_context_size: int) -> int:
     if args.context_size is not None:
         context_size = args.context_size
@@ -226,7 +230,7 @@ def _resolve_context_size(args, model_context_size: int) -> int:
             print(f"  WARNING: Overriding model context size {model_context_size} with {context_size}")
     else:
         context_size = model_context_size
-    print(f"  Context size: k={context_size} ({2*context_size + 1}-mer)")
+    print(f"  Context size: {_context_size_message(context_size)}")
     return context_size
 
 
@@ -272,7 +276,7 @@ def _print_processing_settings(
 
     print(f"\nProcessing: {args.input}")
     print(f"  Mode: {mode} ({mode_desc})")
-    print(f"  Context: k={context_size} ({2*context_size + 1}-mer)")
+    print(f"  Context: {_context_size_message(context_size)}")
     print(f"  Output: {args.outdir}")
     print(f"  Cores: {n_cores}")
     print(f"  Edge trim: {args.edge_trim} bp")
