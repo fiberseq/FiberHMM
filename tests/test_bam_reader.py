@@ -23,6 +23,7 @@ try:
         _build_hexamer_lookup_with_rc,
         detect_daf_strand,
         encode_from_query_sequence,
+        get_reference_positions_array,
         parse_mm_tag_query_positions,
     )
 except ImportError:
@@ -35,6 +36,7 @@ except ImportError:
         _build_hexamer_lookup_with_rc,
         detect_daf_strand,
         encode_from_query_sequence,
+        get_reference_positions_array,
         parse_mm_tag_query_positions,
     )
 
@@ -92,6 +94,17 @@ def test_read_bam_keeps_raw_ml_container_for_manual_parser(monkeypatch):
     assert len(reads) == 1
     assert reads[0].m6a_query_positions == {0}
     assert captured['ml_tag'] is raw_ml
+
+
+def test_get_reference_positions_array_uses_minus_one_for_insertions():
+    class FakeRead:
+        reference_start = 10
+        cigartuples = [(0, 2), (1, 1), (0, 1)]
+
+    np.testing.assert_array_equal(
+        get_reference_positions_array(FakeRead()),
+        np.array([10, 11, -1, 12], dtype=np.int32),
+    )
 
 
 class TestContextEncoder:

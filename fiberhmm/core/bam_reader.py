@@ -189,6 +189,14 @@ def get_reference_positions(read: pysam.AlignedSegment) -> List[Optional[int]]:
     return ref_positions
 
 
+def get_reference_positions_array(read: pysam.AlignedSegment) -> np.ndarray:
+    """Return query-to-reference positions as int32, using -1 for insertions."""
+    return np.array(
+        [p if p is not None else -1 for p in get_reference_positions(read)],
+        dtype=np.int32,
+    )
+
+
 def _pysam_modified_base_allowed(base, mod_code, mode: str) -> bool:
     if mode == 'pacbio-fiber':
         # 21839 is the ChEBI code for m6A.

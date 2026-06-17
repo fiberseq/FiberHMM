@@ -21,7 +21,7 @@ from typing import Dict, List, Optional
 import h5py
 import numpy as np
 
-from fiberhmm.core.bam_reader import get_reference_positions
+from fiberhmm.core.bam_reader import get_reference_positions_array
 
 
 def _int32_array(values) -> np.ndarray:
@@ -279,7 +279,4 @@ def get_ref_positions_from_read(read) -> np.ndarray:
     if read.is_unmapped:
         return np.array([], dtype=np.int32)
 
-    return np.array(
-        [p if p is not None else -1 for p in get_reference_positions(read)],
-        dtype=np.int32,
-    )
+    return get_reference_positions_array(read)

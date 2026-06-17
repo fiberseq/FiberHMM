@@ -41,7 +41,7 @@ from fiberhmm.cli.common import (
 from fiberhmm.core.bam_reader import (
     detect_daf_strand,
     encode_from_query_sequence,
-    get_reference_positions,
+    get_reference_positions_array,
 )
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model_with_metadata
@@ -147,8 +147,7 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
     p_footprint = posteriors[:, 0].astype(np.float16)
 
     # Get reference position mapping
-    q2r = get_reference_positions(read)
-    ref_positions = np.array([p if p is not None else -1 for p in q2r], dtype=np.int32)
+    ref_positions = get_reference_positions_array(read)
 
     # Viterbi path for footprint intervals
     states = model.predict(encoded)
