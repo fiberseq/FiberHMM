@@ -68,6 +68,20 @@ def _read_starts_in_region(read, start: int, end: int) -> bool:
     return int(start) <= int(read.reference_start) < int(end)
 
 
+def _region_read_filter_config(params: dict, *, require_train_rids: bool) -> ReadFilterConfig:
+    train_rids = (
+        params['train_rids'] if require_train_rids
+        else params.get('train_rids') or set()
+    )
+    return ReadFilterConfig(
+        min_mapq=int(params['min_mapq']),
+        min_read_length=int(params['min_read_length']),
+        primary_only=params.get('primary_only', False),
+        process_unmapped=False,
+        train_rids=train_rids,
+    )
+
+
 def _init_region_worker(model_path: str, params: dict):
     """Initialize worker for region-parallel processing."""
     global _worker_model, _worker_region_params
@@ -143,12 +157,8 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         context_size = int(params['context_size'])
         msp_min_size = int(params['msp_min_size'])
         nuc_min_size = int(params.get('nuc_min_size', 85))
-        min_mapq = int(params['min_mapq'])
         prob_threshold = int(params['prob_threshold'])
-        min_read_length = int(params['min_read_length'])
         with_scores = params['with_scores']
-        train_rids = params['train_rids']
-        primary_only = params.get('primary_only', False)
         return_posteriors = params.get('return_posteriors', False) and temp_tsv_path is not None
         write_msps = params.get('write_msps', True)
         io_threads = int(params.get('io_threads', 4))
@@ -160,13 +170,7 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         posteriors_written = 0
 
         skip_reasons = _new_region_skip_reasons()
-        filter_config = ReadFilterConfig(
-            min_mapq=min_mapq,
-            min_read_length=min_read_length,
-            primary_only=primary_only,
-            process_unmapped=False,
-            train_rids=train_rids,
-        )
+        filter_config = _region_read_filter_config(params, require_train_rids=True)
 
         pysam.set_verbosity(0)
 
@@ -525,12 +529,8 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         context_size = int(params['context_size'])
         msp_min_size = int(params['msp_min_size'])
         nuc_min_size = int(params.get('nuc_min_size', 85))
-        min_mapq = int(params['min_mapq'])
         prob_threshold = int(params['prob_threshold'])
-        min_read_length = int(params['min_read_length'])
         with_scores = params.get('with_scores', False)
-        train_rids = params.get('train_rids') or set()
-        primary_only = params.get('primary_only', False)
         io_threads = int(params.get('io_threads', 4))
         min_llr = float(params['min_llr'])
         min_opps = int(params['min_opps'])
@@ -549,13 +549,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         written = 0
         skipped = 0
         skip_reasons = _new_region_skip_reasons()
-        filter_config = ReadFilterConfig(
-            min_mapq=min_mapq,
-            min_read_length=min_read_length,
-            primary_only=primary_only,
-            process_unmapped=False,
-            train_rids=train_rids,
-        )
+        filter_config = _region_read_filter_config(params, require_train_rids=False)
 
         with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
             with pysam.AlignmentFile(
