@@ -97,6 +97,29 @@ def _model_from_arrays(n_states, startprob, transmat, emissionprob) -> FiberHMM:
     return model
 
 
+def _model_from_mapping(data) -> FiberHMM:
+    return _model_from_arrays(
+        data['n_states'],
+        data['startprob'],
+        data['transmat'],
+        data['emissionprob'],
+    )
+
+
+def _mapping_value(value):
+    if isinstance(value, np.ndarray) and value.shape == ():
+        return value.item()
+    return value
+
+
+def _metadata_from_mapping(data) -> Tuple[int, str]:
+    context_size = _mapping_value(data.get('context_size', DEFAULT_CONTEXT_SIZE))
+    mode = _mapping_value(data.get('mode', DEFAULT_MODE))
+    if mode is not None:
+        mode = str(mode)
+    return int(context_size), mode
+
+
 def _read_json(filepath: str) -> dict:
     with open(filepath, 'r') as f:
         return json.load(f)
@@ -121,32 +144,46 @@ def _normalize_mode(mode: str) -> str:
 
 def _load_npz(filepath: str) -> FiberHMM:
     """Load model from NPZ format."""
+    model, _, _ = _load_npz_with_metadata(filepath)
+    return model
+
+
+def _load_npz_with_metadata(filepath: str) -> Tuple[FiberHMM, int, str]:
+    """Load model and metadata from NPZ format."""
     with np.load(filepath, allow_pickle=False) as data:
-        return _model_from_arrays(
-            data['n_states'],
-            data['startprob'],
-            data['transmat'],
-            data['emissionprob'],
-        )
+        model = _model_from_mapping(data)
+        context_size, mode = _metadata_from_mapping(data)
+        return model, context_size, mode
 
 
 def _load_json(filepath: str) -> FiberHMM:
     """Load model from JSON format."""
+    model, _, _ = _load_json_with_metadata(filepath)
+    return model
+
+
+def _load_json_with_metadata(filepath: str) -> Tuple[FiberHMM, int, str]:
+    """Load model and metadata from JSON format."""
     data = _read_json(filepath)
-    return _model_from_arrays(
-        data['n_states'],
-        data['startprob'],
-        data['transmat'],
-        data['emissionprob'],
-    )
+    model = _model_from_mapping(data)
+    context_size, mode = _metadata_from_mapping(data)
+    return model, context_size, mode
 
 
 def _load_pickle(filepath: str) -> FiberHMM:
     """Load model from pickle format (legacy)."""
+    model, _, _ = _load_pickle_with_metadata(filepath)
+    return model
+
+
+def _load_pickle_with_metadata(filepath: str) -> Tuple[FiberHMM, int, str]:
+    """Load model and metadata from pickle format (legacy)."""
     obj = _read_pickle(filepath)
     if isinstance(obj, dict) and 'model' in obj:
-        return _coerce_loaded_model(obj['model'])
-    return _coerce_loaded_model(obj)
+        model = _coerce_loaded_model(obj['model'])
+        context_size, mode = _metadata_from_mapping(obj)
+        return model, context_size, mode
+    return _coerce_loaded_model(obj), DEFAULT_CONTEXT_SIZE, DEFAULT_MODE
 
 
 def _convert_hmmlearn_model(hmmlearn_model) -> FiberHMM:
@@ -247,38 +284,11 @@ def load_model_with_metadata(filepath: str, normalize: bool = True) -> Tuple[Fib
         (model, context_size, mode)
     """
     if filepath.endswith('.npz'):
-        with np.load(filepath, allow_pickle=False) as data:
-            model = _model_from_arrays(
-                data['n_states'],
-                data['startprob'],
-                data['transmat'],
-                data['emissionprob'],
-            )
-            context_size = int(data.get('context_size', DEFAULT_CONTEXT_SIZE))
-            mode = str(data.get('mode', DEFAULT_MODE))
-
+        model, context_size, mode = _load_npz_with_metadata(filepath)
     elif filepath.endswith('.json'):
-        data = _read_json(filepath)
-        model = _model_from_arrays(
-            data['n_states'],
-            data['startprob'],
-            data['transmat'],
-            data['emissionprob'],
-        )
-        context_size = data.get('context_size', DEFAULT_CONTEXT_SIZE)
-        mode = data.get('mode', DEFAULT_MODE)
-
+        model, context_size, mode = _load_json_with_metadata(filepath)
     else:
-        # Pickle format
-        obj = _read_pickle(filepath)
-        if isinstance(obj, dict) and 'model' in obj:
-            model = _coerce_loaded_model(obj['model'])
-            context_size = obj.get('context_size', DEFAULT_CONTEXT_SIZE)
-            mode = obj.get('mode', DEFAULT_MODE)
-        else:
-            model = _coerce_loaded_model(obj)
-            context_size = DEFAULT_CONTEXT_SIZE
-            mode = DEFAULT_MODE
+        model, context_size, mode = _load_pickle_with_metadata(filepath)
 
     # Normalize states to ensure correct assignment
     if normalize:

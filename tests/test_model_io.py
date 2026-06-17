@@ -49,6 +49,26 @@ class TestLoadSaveRoundTrip:
         assert ctx == 5
         assert mode == 'daf'
 
+    def test_npz_metadata_preserved(self, sample_model, tmp_path):
+        filepath = str(tmp_path / "legacy.npz")
+        np.savez(
+            filepath,
+            n_states=sample_model.n_states,
+            startprob=sample_model.startprob_,
+            transmat=sample_model.transmat_,
+            emissionprob=sample_model.emissionprob_,
+            context_size=5,
+            mode='m6a',
+        )
+
+        model, ctx, mode = load_model_with_metadata(filepath, normalize=False)
+
+        assert ctx == 5
+        assert mode == 'pacbio-fiber'
+        np.testing.assert_allclose(model.startprob_, sample_model.startprob_, rtol=1e-5)
+        np.testing.assert_allclose(model.transmat_, sample_model.transmat_, rtol=1e-5)
+        np.testing.assert_allclose(model.emissionprob_, sample_model.emissionprob_, rtol=1e-5)
+
     def test_load_model_for_inference_freezes_log_cache(self, sample_model, tmp_path):
         filepath = str(tmp_path / "model.json")
         save_model(sample_model, filepath, context_size=3, mode='pacbio-fiber')
