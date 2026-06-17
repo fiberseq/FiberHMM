@@ -145,6 +145,13 @@ def test_region_work_item_builders_use_stable_temp_names(tmp_path):
         str(tmp_path / "region_000012.bam")
     )
 
+    bam_item = region_pipeline._region_bam_work_item(
+        regions[0],
+        "input.bam",
+        temp_dir,
+        12,
+        include_tsv=True,
+    )
     bam_items = region_pipeline._region_bam_work_items(
         regions,
         "input.bam",
@@ -153,6 +160,9 @@ def test_region_work_item_builders_use_stable_temp_names(tmp_path):
     )
     bed_items = region_pipeline._region_bed_work_items(regions, "input.bam", temp_dir)
 
+    assert bam_item.region == regions[0]
+    assert bam_item.temp_bam_path == str(tmp_path / "region_000012.bam")
+    assert bam_item.temp_tsv_path == str(tmp_path / "region_000012.tsv")
     assert [item.region for item in bam_items] == regions
     assert [item.temp_bam_path for item in bam_items] == [
         str(tmp_path / "region_000000.bam"),
@@ -166,6 +176,22 @@ def test_region_work_item_builders_use_stable_temp_names(tmp_path):
         str(tmp_path / "region_000000.bed"),
         str(tmp_path / "region_000001.bed"),
     ]
+
+
+def test_region_result_has_existing_tsv_requires_path_and_file(tmp_path):
+    missing = tmp_path / "missing.tsv"
+    existing = tmp_path / "region.tsv"
+    existing.write_text("read\tposterior\n")
+
+    assert not region_pipeline._region_result_has_existing_tsv(
+        region_pipeline.RegionBamResult("region.bam", 1, 1, 1)
+    )
+    assert not region_pipeline._region_result_has_existing_tsv(
+        region_pipeline.RegionBamResult("region.bam", 1, 1, 1, str(missing))
+    )
+    assert region_pipeline._region_result_has_existing_tsv(
+        region_pipeline.RegionBamResult("region.bam", 1, 1, 1, str(existing))
+    )
 
 
 def test_ordered_existing_temp_paths_sorts_and_filters_empty(tmp_path):

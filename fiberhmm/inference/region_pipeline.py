@@ -148,20 +148,33 @@ def _region_temp_path(temp_dir: str, index: int, suffix: str) -> str:
     return os.path.join(temp_dir, f'region_{index:06d}.{suffix}')
 
 
+def _region_bam_work_item(
+    region,
+    input_bam: str,
+    temp_dir: str,
+    index: int,
+    include_tsv: bool = False,
+) -> RegionBamWorkItem:
+    temp_bam = _region_temp_path(temp_dir, index, 'bam')
+    temp_tsv = _region_temp_path(temp_dir, index, 'tsv') if include_tsv else None
+    return RegionBamWorkItem(
+        (region[0], region[1], region[2]),
+        input_bam,
+        temp_bam,
+        temp_tsv,
+    )
+
+
 def _region_bam_work_items(
     regions,
     input_bam: str,
     temp_dir: str,
     include_tsv: bool = False,
 ) -> list[RegionBamWorkItem]:
-    work_items = []
-    for i, region in enumerate(regions):
-        temp_bam = _region_temp_path(temp_dir, i, 'bam')
-        temp_tsv = _region_temp_path(temp_dir, i, 'tsv') if include_tsv else None
-        work_items.append(
-            RegionBamWorkItem((region[0], region[1], region[2]), input_bam, temp_bam, temp_tsv)
-        )
-    return work_items
+    return [
+        _region_bam_work_item(region, input_bam, temp_dir, i, include_tsv)
+        for i, region in enumerate(regions)
+    ]
 
 
 def _region_bed_work_items(regions, input_bam: str, temp_dir: str) -> list[RegionBedWorkItem]:
@@ -177,6 +190,10 @@ def _ordered_existing_temp_paths(indexed_paths) -> list:
         for _, path in sorted(indexed_paths, key=lambda x: x[0])
         if os.path.exists(path) and os.path.getsize(path) > 0
     ]
+
+
+def _region_result_has_existing_tsv(result: RegionBamResult) -> bool:
+    return bool(result.temp_tsv_path and os.path.exists(result.temp_tsv_path))
 
 
 def _submit_region_futures(executor, worker, work_items) -> dict:
@@ -292,9 +309,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             for future in as_completed(futures):
                 try:
                     result = RegionBamResult.from_value(future.result())
-                    include_tsv = bool(
-                        result.temp_tsv_path and os.path.exists(result.temp_tsv_path)
-                    )
+                    include_tsv = _region_result_has_existing_tsv(result)
                     aggregation.add_result(futures[future], result, include_tsv=include_tsv)
 
                     # Track first result
