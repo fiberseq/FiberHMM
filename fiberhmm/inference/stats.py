@@ -90,6 +90,15 @@ def _stats_sampling_probability(total_reads: int, n_samples: int) -> float:
     return n_samples / total_reads
 
 
+def _count_primary_mapped_reads(bam_path: str) -> int:
+    total_reads = 0
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
+        for read in bam:
+            if is_primary_mapped_alignment(read):
+                total_reads += 1
+    return total_reads
+
+
 class FootprintStats:
     """Collects footprint statistics from sampled reads."""
 
@@ -441,11 +450,7 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
     stats = FootprintStats()
 
     # First pass: count reads
-    total_reads = 0
-    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
-        for read in bam:
-            if is_primary_mapped_alignment(read):
-                total_reads += 1
+    total_reads = _count_primary_mapped_reads(bam_path)
 
     sample_prob = _stats_sampling_probability(total_reads, n_samples)
 

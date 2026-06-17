@@ -22,6 +22,13 @@ class _FakeRead:
         return self._tags[tag]
 
 
+def _fake_read(**attrs):
+    read = _FakeRead()
+    for name, value in attrs.items():
+        setattr(read, name, value)
+    return read
+
+
 class _FakeBam:
     def __init__(self, reads=(), *, fail_iter: bool = False):
         self._reads = list(reads)
@@ -59,6 +66,23 @@ def test_collect_stats_closes_second_bam_when_sampling_fails(monkeypatch):
 
     assert len(opened) == 2
     assert all(handle.closed for handle in opened)
+
+
+def test_count_primary_mapped_reads_filters_alignments_and_closes(monkeypatch):
+    handle = _FakeBam([
+        _fake_read(),
+        _fake_read(is_unmapped=True),
+        _fake_read(is_secondary=True),
+    ])
+
+    monkeypatch.setattr(
+        stats_module.pysam,
+        "AlignmentFile",
+        lambda *args, **kwargs: handle,
+    )
+
+    assert stats_module._count_primary_mapped_reads("input.bam") == 1
+    assert handle.closed
 
 
 def test_positive_gaps_between_intervals_sorts_and_skips_overlaps():
