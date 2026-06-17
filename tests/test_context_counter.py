@@ -5,6 +5,7 @@ import numpy as np
 from fiberhmm.probabilities.context_counter import (
     ContextCounter,
     _count_ratio,
+    _daf_c_context_from_strand_context,
     _daf_reconstruction_bases,
     _position_weight,
     _reconstruct_deaminated_sequence,
@@ -38,6 +39,12 @@ def test_daf_reconstruction_bases_by_strand():
     assert _daf_reconstruction_bases("+") == ("T", "C")
     assert _daf_reconstruction_bases(".") == ("T", "C")
     assert _daf_reconstruction_bases("-") == ("A", "G")
+
+
+def test_daf_c_context_orientation_by_strand():
+    assert _daf_c_context_from_strand_context("ACA", "+") == "ACA"
+    assert _daf_c_context_from_strand_context("ACA", ".") == "ACA"
+    assert _daf_c_context_from_strand_context("TGA", "-") == "TCA"
 
 
 def test_add_position_records_valid_center_contexts():

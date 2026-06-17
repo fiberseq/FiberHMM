@@ -51,6 +51,12 @@ def _daf_reconstruction_bases(strand: str) -> Tuple[str, str]:
     return 'T', 'C'
 
 
+def _daf_c_context_from_strand_context(context: str, strand: str) -> str:
+    if strand == '-':
+        return reverse_complement(context)
+    return context
+
+
 class ContextCounter:
     """
     Counts modification hits/misses per sequence context.
@@ -181,39 +187,18 @@ class ContextCounter:
         seq_len = len(sequence)
         deam_base, orig_base = _daf_reconstruction_bases(strand)
 
-        if strand == '-':
-            # G→A deamination: process G positions and RC to C-centered
-            # Reconstruct original sequence (replace A back to G at deaminated positions)
-            reconstructed = _reconstruct_deaminated_sequence(
-                seq_upper, mod_positions, deam_base, orig_base,
-            )
-
-            # Process G positions and convert contexts to C-centered via RC
-            for i, g_context in self._iter_contexts(
-                reconstructed,
-                0,
-                seq_len,
-                edge_trim,
-                center_base=orig_base,
-            ):
-                c_context = reverse_complement(g_context)
-                self._record_context(c_context, i in mod_positions)
-        else:
-            # + strand (default): C→T deamination, process directly as C-centered
-            # Reconstruct original sequence (replace T back to C at deaminated positions)
-            reconstructed = _reconstruct_deaminated_sequence(
-                seq_upper, mod_positions, deam_base, orig_base,
-            )
-
-            # Process C positions directly
-            for i, context in self._iter_contexts(
-                reconstructed,
-                0,
-                seq_len,
-                edge_trim,
-                center_base=orig_base,
-            ):
-                self._record_context(context, i in mod_positions)
+        reconstructed = _reconstruct_deaminated_sequence(
+            seq_upper, mod_positions, deam_base, orig_base,
+        )
+        for i, context in self._iter_contexts(
+            reconstructed,
+            0,
+            seq_len,
+            edge_trim,
+            center_base=orig_base,
+        ):
+            c_context = _daf_c_context_from_strand_context(context, strand)
+            self._record_context(c_context, i in mod_positions)
 
     def add_region(self, sequence: str, mod_positions: Set[int],
                    region_start: int, region_end: int, edge_trim: int = 10):
