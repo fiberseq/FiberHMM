@@ -761,11 +761,19 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
                            query_to_ref, block_scores)
 
 
+def _deam_ref_pos_for_query(aligned_pairs, query_pos: int) -> Optional[int]:
+    if query_pos < 0 or query_pos >= len(aligned_pairs):
+        return None
+    ref_pos = int(aligned_pairs[query_pos])
+    if ref_pos < 0:
+        return None
+    return ref_pos
+
+
 def _deam_iupac_positions(seq: str, aligned_pairs) -> list:
     if not seq:
         return []
 
-    n = len(aligned_pairs)
     arr = np.frombuffer(seq.encode('ascii'), dtype=np.uint8)
     r_mask = (arr == ord('R'))
     y_mask = (arr == ord('Y'))
@@ -776,10 +784,8 @@ def _deam_iupac_positions(seq: str, aligned_pairs) -> list:
     positions = []
     for q_pos in np.where(mod_mask)[0]:
         qi = int(q_pos)
-        if qi >= n:
-            continue
-        ref_pos = int(aligned_pairs[qi])
-        if ref_pos < 0:
+        ref_pos = _deam_ref_pos_for_query(aligned_pairs, qi)
+        if ref_pos is None:
             continue
         flavor = 1 if y_mask[qi] else 0
         positions.append((ref_pos, flavor))
@@ -793,7 +799,6 @@ def _deam_mm_ml_positions(read, aligned_pairs, prob_threshold: int) -> list:
     # isn't detected here -- users with modkit-style numeric codes should
     # run `samtools calmd` + standard encode or rely on R/Y fallback.
     per_mod = _safe_mm_ml_per_mod(read)
-    n = len(aligned_pairs)
     positions = []
     for (base, mod_code), (pos_arr, qual_arr) in per_mod.items():
         if mod_code != 'u':
@@ -811,10 +816,8 @@ def _deam_mm_ml_positions(read, aligned_pairs, prob_threshold: int) -> list:
             prob = int(prob)
             if prob < prob_threshold:
                 continue
-            if query_pos < 0 or query_pos >= n:
-                continue
-            ref_pos = int(aligned_pairs[query_pos])
-            if ref_pos < 0:
+            ref_pos = _deam_ref_pos_for_query(aligned_pairs, query_pos)
+            if ref_pos is None:
                 continue
             positions.append((ref_pos, flavor))
     return positions
