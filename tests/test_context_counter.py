@@ -7,6 +7,7 @@ from fiberhmm.probabilities.context_counter import (
     _count_ratio,
     _position_weight,
     _reconstruct_deaminated_sequence,
+    _trim_context,
 )
 
 
@@ -25,6 +26,11 @@ def test_position_weight_defaults_out_of_range_to_zero():
 def test_count_ratio_handles_zero_total():
     assert _count_ratio(2, 6) == 0.25
     assert _count_ratio(0, 0) == 0.0
+
+
+def test_trim_context_extracts_centered_subcontext():
+    assert _trim_context("ACGTA", 0) == "ACGTA"
+    assert _trim_context("AACGTAA", 2) == "CGT"
 
 
 def test_add_position_records_valid_center_contexts():

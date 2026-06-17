@@ -39,6 +39,12 @@ def _count_ratio(hit, nohit) -> float:
     return hit / total if total > 0 else 0.0
 
 
+def _trim_context(full_context: str, trim: int) -> str:
+    if trim == 0:
+        return full_context
+    return full_context[trim:len(full_context) - trim]
+
+
 class ContextCounter:
     """
     Counts modification hits/misses per sequence context.
@@ -252,7 +258,7 @@ class ContextCounter:
 
         for full_context, counts in self.counts.items():
             # Extract the smaller context from center
-            small_context = full_context[trim:len(full_context) - trim]
+            small_context = _trim_context(full_context, trim)
             aggregated[small_context][0] += counts[0]
             aggregated[small_context][1] += counts[1]
 
