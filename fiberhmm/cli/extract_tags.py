@@ -231,6 +231,11 @@ def _is_wrapped_circular_group(name: str, pieces, read_length: int) -> bool:
     )
 
 
+def _wrapped_group_span(pieces, read_length: int) -> Tuple[int, int]:
+    end_piece = max(pieces, key=lambda a: a['start'])
+    return end_piece['start'], min(read_length, sum(p['length'] for p in pieces))
+
+
 def _annotate_circular_parts(annotations, read_length: int):
     """Add circular grouping metadata to parsed MA annotation dicts."""
     grouped = _circular_annotation_groups(annotations)
@@ -250,9 +255,7 @@ def _annotate_circular_parts(annotations, read_length: int):
         circ_id = '.'
         if is_wrapped_group:
             circ_id = name
-            end_piece = max(pieces, key=lambda a: a['start'])
-            mol_start = end_piece['start']
-            mol_length = min(read_length, sum(p['length'] for p in pieces))
+            mol_start, mol_length = _wrapped_group_span(pieces, read_length)
         ann['circ_id'] = circ_id
         ann['circ_part'] = circ_part
         ann['circ_parts'] = circ_parts

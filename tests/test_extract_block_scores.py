@@ -342,6 +342,10 @@ def test_circular_annotation_group_helpers_detect_wrapped_named_pieces():
     assert extract_tags._is_wrapped_circular_group(
         'call-a', [left, right], read_length=100,
     )
+    assert extract_tags._wrapped_group_span([left, right], read_length=100) == (
+        85,
+        30,
+    )
     assert not extract_tags._is_wrapped_circular_group(
         '', [left, right], read_length=100,
     )
