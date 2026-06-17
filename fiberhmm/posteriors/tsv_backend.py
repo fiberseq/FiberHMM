@@ -29,6 +29,7 @@ import numpy as np
 from fiberhmm.posteriors.region_tsv import (
     REGION_POSTERIORS_HEADER,
     format_region_posterior_line,
+    _posterior_tsv_metadata,
 )
 
 
@@ -164,21 +165,6 @@ def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
     grp['fiber_starts'][idx] = start
     grp['fiber_ends'][idx] = end
     grp['strands'][idx] = strand
-
-
-def _posterior_tsv_metadata(
-    mode: str,
-    context_size: int,
-    edge_trim: int,
-    source_bam: str,
-) -> dict:
-    return {
-        'mode': mode,
-        'context_size': context_size,
-        'edge_trim': edge_trim,
-        'source_bam': os.path.basename(source_bam),
-        'format_version': 1,
-    }
 
 
 class PosteriorsTSVWriter:

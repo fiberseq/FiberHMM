@@ -73,7 +73,7 @@ def region_posteriors_needs_h5_conversion(output_path: str) -> bool:
     return _resolve_writer_format(output_path, "auto") == "hdf5"
 
 
-def _region_posteriors_metadata(
+def _posterior_tsv_metadata(
     mode: str,
     context_size: int,
     edge_trim: int,
@@ -115,7 +115,7 @@ def merge_region_posteriors_tsv(
 
     tsv_output = region_posteriors_tsv_output_path(output_path)
     with gzip.open(tsv_output, "wt", compresslevel=4) as outfile:
-        metadata = _region_posteriors_metadata(
+        metadata = _posterior_tsv_metadata(
             mode,
             context_size,
             edge_trim,
