@@ -350,6 +350,21 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
     return n_written
 
 
+def _copy_tsv_records(inpath: str, outfile, header_written: bool) -> tuple[int, bool]:
+    n_fibers = 0
+    with _open_text_file(inpath, 'rt') as infile:
+        for line in infile:
+            if line.startswith('#'):
+                # Only write header from first file
+                if not header_written:
+                    outfile.write(line)
+            else:
+                outfile.write(line)
+                n_fibers += 1
+
+    return n_fibers, True
+
+
 def concatenate_tsvs(input_files: list, output_path: str,
                      delete_inputs: bool = False) -> int:
     """
@@ -371,17 +386,10 @@ def concatenate_tsvs(input_files: list, output_path: str,
             if not os.path.exists(inpath):
                 continue
 
-            with _open_text_file(inpath, 'rt') as infile:
-                for line in infile:
-                    if line.startswith('#'):
-                        # Only write header from first file
-                        if not header_written:
-                            outfile.write(line)
-                    else:
-                        outfile.write(line)
-                        n_fibers += 1
-
-            header_written = True
+            n_copied, header_written = _copy_tsv_records(
+                inpath, outfile, header_written,
+            )
+            n_fibers += n_copied
 
             if delete_inputs:
                 os.remove(inpath)
