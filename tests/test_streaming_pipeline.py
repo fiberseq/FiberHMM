@@ -2,6 +2,7 @@
 Correctness tests for the streaming producer-consumer pipeline.
 """
 
+import io
 import pysam
 import sys
 
@@ -10,6 +11,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _apply_worker_args,
     _buffer_processable_read,
     _fused_worker_args,
+    _print_streaming_progress,
     _streaming_completion_message,
     _streaming_filter_config,
     _streaming_log_for_output,
@@ -72,6 +74,29 @@ def test_streaming_progress_message_formats_counts_and_rates():
         avg_rate=12.3,
         rate_unit="reads/s",
     ) == "\r  Processed: 1,234 | Skipped: 56 | Inflight: 3 | 79 reads/s (avg 12)"
+
+
+def test_print_streaming_progress_writes_message_and_returns_checkpoint():
+    log = io.StringIO()
+
+    checkpoint = _print_streaming_progress(
+        log,
+        label="Processed",
+        total_reads=120,
+        skipped=5,
+        inflight_count=2,
+        last_progress_reads=20,
+        start_time=10.0,
+        last_progress_time=20.0,
+        now=30.0,
+        rate_unit="reads/s",
+    )
+
+    assert checkpoint == (120, 30.0)
+    assert log.getvalue() == (
+        "\r  Processed: 120 | Skipped: 5 | Inflight: 2 | "
+        "10 reads/s (avg 6)"
+    )
 
 
 def test_streaming_rate_handles_zero_elapsed():

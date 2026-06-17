@@ -239,6 +239,38 @@ def _streaming_progress_message(
     )
 
 
+def _print_streaming_progress(
+    log,
+    label: str,
+    total_reads: int,
+    skipped: int,
+    inflight_count: int,
+    last_progress_reads: int,
+    start_time: float,
+    last_progress_time: float,
+    now: float,
+    rate_unit: str,
+) -> tuple[int, float]:
+    inst_rate, avg_rate = _streaming_progress_rates(
+        total_reads, last_progress_reads, start_time, last_progress_time, now,
+    )
+    print(
+        _streaming_progress_message(
+            label,
+            total_reads,
+            skipped,
+            inflight_count,
+            inst_rate,
+            avg_rate,
+            rate_unit,
+        ),
+        end='',
+        file=log,
+    )
+    log.flush()
+    return total_reads, now
+
+
 def _streaming_rate(total_reads: int, elapsed: float) -> float:
     return total_reads / elapsed if elapsed > 0 else 0
 
@@ -375,26 +407,20 @@ def _process_bam_streaming_pipeline_fused(
                         chunk_skip_flags = []
 
                         now = time.time()
-                        inst, avg = _streaming_progress_rates(
-                            total_reads, last_progress_reads,
-                            start_time, last_progress_time, now,
-                        )
-                        last_progress_reads = total_reads
-                        last_progress_time = now
-                        print(
-                            _streaming_progress_message(
+                        last_progress_reads, last_progress_time = (
+                            _print_streaming_progress(
+                                _log,
                                 "Fused",
                                 total_reads,
                                 skipped,
                                 len(inflight),
-                                inst,
-                                avg,
+                                last_progress_reads,
+                                start_time,
+                                last_progress_time,
+                                now,
                                 "r/s",
-                            ),
-                            end='',
-                            file=_log,
+                            )
                         )
-                        _log.flush()
 
                 if chunk_read_objs:
                     if len(inflight) >= max_inflight:
@@ -585,26 +611,20 @@ def _process_bam_streaming_pipeline(
                         chunk_skip_flags = []
 
                         now = time.time()
-                        inst_rate, avg_rate = _streaming_progress_rates(
-                            total_reads, last_progress_reads,
-                            start_time, last_progress_time, now,
-                        )
-                        last_progress_reads = total_reads
-                        last_progress_time = now
-                        print(
-                            _streaming_progress_message(
+                        last_progress_reads, last_progress_time = (
+                            _print_streaming_progress(
+                                _log,
                                 "Processed",
                                 total_reads,
                                 skipped,
                                 len(inflight),
-                                inst_rate,
-                                avg_rate,
+                                last_progress_reads,
+                                start_time,
+                                last_progress_time,
+                                now,
                                 "reads/s",
-                            ),
-                            end='',
-                            file=_log,
+                            )
                         )
-                        _log.flush()
 
                 if chunk_read_objs:
                     if len(inflight) >= max_inflight:
