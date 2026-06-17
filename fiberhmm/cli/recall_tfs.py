@@ -254,6 +254,18 @@ def _apply_result(read, result, also_write_legacy, downstream_compat):
     )
 
 
+def _write_recall_result(
+    read,
+    result,
+    bam_out,
+    also_write_legacy,
+    downstream_compat,
+):
+    if result is not None:
+        _apply_result(read, result, also_write_legacy, downstream_compat)
+    bam_out.write(read)
+
+
 def _single_thread_loop(bam_in, bam_out, _header_text,
                         llr_hit, llr_miss, mode, k,
                         min_llr, min_opps, unify_threshold,
@@ -266,9 +278,9 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
         if max_reads and n_reads >= max_reads:
             break
         result, stats = _process_payload_safely(_make_payload(read, mode))
-        if result is not None:
-            _apply_result(read, result, also_write_legacy, downstream_compat)
-        bam_out.write(read)
+        _write_recall_result(
+            read, result, bam_out, also_write_legacy, downstream_compat
+        )
         n_reads += 1
         _add_stats(total, stats)
     return _stats_tuple(n_reads, total)
@@ -301,9 +313,9 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         reads_chunk, fut = pending.popleft()
         out_results, stats = fut.get()   # blocks until result is ready
         for read, result in zip(reads_chunk, out_results):
-            if result is not None:
-                _apply_result(read, result, also_write_legacy, downstream_compat)
-            bam_out.write(read)
+            _write_recall_result(
+                read, result, bam_out, also_write_legacy, downstream_compat
+            )
         n_reads += len(reads_chunk)
         _add_stats(total, stats)
 

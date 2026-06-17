@@ -104,6 +104,34 @@ def test_recall_tfs_stats_helpers_accumulate_summary():
     assert recall_tfs._stats_tuple(9, total) == (9, 1, 7, 3, 4)
 
 
+def test_recall_tfs_write_recall_result_passes_through_null_result(monkeypatch):
+    reads = [
+        SimpleNamespace(query_name="annotated"),
+        SimpleNamespace(query_name="failed"),
+    ]
+    written = []
+    applied = []
+
+    class FakeOut:
+        def write(self, read):
+            written.append(read.query_name)
+
+    monkeypatch.setattr(
+        recall_tfs,
+        "_apply_result",
+        lambda read, result, also_write_legacy, downstream_compat: applied.append(
+            (read.query_name, result, also_write_legacy, downstream_compat)
+        ),
+    )
+
+    out = FakeOut()
+    recall_tfs._write_recall_result(reads[0], "result", out, True, False)
+    recall_tfs._write_recall_result(reads[1], None, out, True, False)
+
+    assert written == ["annotated", "failed"]
+    assert applied == [("annotated", "result", True, False)]
+
+
 def test_recall_tfs_model_resolution_uses_custom_path():
     args = SimpleNamespace(model="/tmp/custom.json", enzyme=None, seq=None)
 
