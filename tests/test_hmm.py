@@ -438,6 +438,17 @@ class TestPredictionMethods:
             trained_model.predict_proba(obs),
         )
 
+    def test_viterbi_path_matches_predict(self, trained_model, simple_observations):
+        """Private path helper stays aligned with public predict."""
+        obs = simple_observations.ravel()
+
+        trained_model._compute_log_probs()
+
+        np.testing.assert_array_equal(
+            trained_model._viterbi_path(obs),
+            trained_model.predict(obs),
+        )
+
     def test_score_returns_finite(self, trained_model, simple_observations):
         """Test that score() returns a finite value."""
         X = simple_observations.reshape(-1, 1)

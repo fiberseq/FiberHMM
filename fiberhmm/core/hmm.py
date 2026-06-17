@@ -558,6 +558,9 @@ class FiberHMM:
         self._compute_log_probs()
 
         obs = _as_observation_array(X)
+        return self._viterbi_path(obs)
+
+    def _viterbi_path(self, obs: np.ndarray) -> np.ndarray:
         path, _ = self._viterbi(obs)
         return path
 
@@ -607,7 +610,7 @@ class FiberHMM:
         obs = _as_observation_array(X)
 
         # Get Viterbi path
-        path, _ = self._viterbi(obs)
+        path = self._viterbi_path(obs)
 
         # Get posteriors
         gamma = self._posterior_matrix(obs)
@@ -637,7 +640,7 @@ class FiberHMM:
         obs = _as_observation_array(X)
 
         # Get Viterbi path
-        path, _ = self._viterbi(obs)
+        path = self._viterbi_path(obs)
 
         # Get posteriors via forward-backward
         posteriors = self._posterior_matrix(obs)
