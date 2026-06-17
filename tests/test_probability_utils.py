@@ -9,6 +9,7 @@ from fiberhmm.probabilities.output_paths import (
 )
 from fiberhmm.probabilities.utils import (
     _daf_strand_base_from_counts,
+    _is_fiber_probability_mode,
     _standard_output_dirs,
     detect_strand_and_base,
     get_base_name,
@@ -23,6 +24,9 @@ def test_reverse_complement_preserves_existing_base_mapping():
 
 
 def test_detect_strand_and_base_for_fiber_modes():
+    assert _is_fiber_probability_mode("pacbio-fiber")
+    assert _is_fiber_probability_mode("nanopore-fiber")
+    assert not _is_fiber_probability_mode("daf")
     assert detect_strand_and_base("ACGT", {1, 2}, "pacbio-fiber") == (".", "A")
     assert detect_strand_and_base("ACGT", {1, 2}, "nanopore-fiber") == (".", "A")
     assert detect_strand_and_base("ACGT", {1, 2}, "unknown") == (".", "A")

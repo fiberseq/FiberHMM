@@ -10,6 +10,7 @@ from typing import Set, Tuple
 
 # Reverse complement lookup
 _RC_TABLE = str.maketrans('ACGT', 'TGCA')
+_FIBER_PROBABILITY_MODES = ('pacbio-fiber', 'nanopore-fiber')
 
 
 def reverse_complement(seq: str) -> str:
@@ -29,6 +30,10 @@ def _daf_strand_base_from_counts(t_count: int, a_count: int) -> Tuple[str, str]:
     return '.', 'C'
 
 
+def _is_fiber_probability_mode(mode: str) -> bool:
+    return mode in _FIBER_PROBABILITY_MODES
+
+
 def detect_strand_and_base(sequence: str, mod_positions: Set[int], mode: str) -> Tuple[str, str]:
     """
     Detect strand and target base based on mode.
@@ -46,7 +51,7 @@ def detect_strand_and_base(sequence: str, mod_positions: Set[int], mode: str) ->
         - + strand: C→T deamination, MM tag marks T positions → target_base 'C'
         - - strand: G→A deamination, MM tag marks A positions → target_base 'G'
     """
-    if mode in ('pacbio-fiber', 'nanopore-fiber'):
+    if _is_fiber_probability_mode(mode):
         return '.', 'A'
 
     seq_upper = sequence.upper()
