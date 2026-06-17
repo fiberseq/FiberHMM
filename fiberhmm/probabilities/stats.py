@@ -20,9 +20,15 @@ def _modification_rate(counter: 'ContextCounter') -> float:
     return counter.total_modified / max(1, counter.total_positions)
 
 
+def _context_observation_totals(
+    prob_table, hit_col: str = 'hit', nohit_col: str = 'nohit',
+):
+    return prob_table[hit_col] + prob_table[nohit_col]
+
+
 def _probability_ratios_with_data(prob_table) -> np.ndarray:
     ratios = prob_table['ratio'].values
-    return ratios[prob_table['hit'] + prob_table['nohit'] > 0]
+    return ratios[_context_observation_totals(prob_table) > 0]
 
 
 def _merged_probability_table(acc_probs, inacc_probs):
@@ -30,8 +36,12 @@ def _merged_probability_table(acc_probs, inacc_probs):
         inacc_probs[['context', 'ratio', 'hit', 'nohit']],
         on='context', suffixes=('_acc', '_inacc')
     )
-    merged['total_acc'] = merged['hit_acc'] + merged['nohit_acc']
-    merged['total_inacc'] = merged['hit_inacc'] + merged['nohit_inacc']
+    merged['total_acc'] = _context_observation_totals(
+        merged, 'hit_acc', 'nohit_acc',
+    )
+    merged['total_inacc'] = _context_observation_totals(
+        merged, 'hit_inacc', 'nohit_inacc',
+    )
     return merged
 
 
@@ -250,8 +260,8 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
 
             # Total observations per context
             ax = axes[0, 0]
-            acc_total = acc_probs['hit'] + acc_probs['nohit']
-            inacc_total = inacc_probs['hit'] + inacc_probs['nohit']
+            acc_total = _context_observation_totals(acc_probs)
+            inacc_total = _context_observation_totals(inacc_probs)
 
             ax.hist(np.log10(acc_total[acc_total > 0] + 1), bins=50, alpha=0.6,
                    label='Accessible', color='forestgreen')

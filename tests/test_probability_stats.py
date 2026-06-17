@@ -28,7 +28,19 @@ def test_probability_stats_summary_helpers_filter_contexts_with_data(tmp_path):
     })
 
     assert stats._modification_rate(_FakeCounter(0, 5, {}, table)) == 5.0
+    assert stats._context_observation_totals(table).tolist() == [5, 0, 3]
     assert stats._probability_ratios_with_data(table).tolist() == [0.2, 0.9]
+
+
+def test_context_observation_totals_accepts_merged_column_names():
+    table = pd.DataFrame({
+        "hit_acc": [1, 2],
+        "nohit_acc": [3, 4],
+    })
+
+    assert stats._context_observation_totals(
+        table, "hit_acc", "nohit_acc",
+    ).tolist() == [4, 6]
 
 
 def test_write_probability_ratio_summary_formats_nonempty_ratios_only():
