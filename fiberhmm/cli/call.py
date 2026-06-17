@@ -252,6 +252,40 @@ def _build_pg_record(mode, recall_nucs, phase_nrl, keep_chimeras, argv=None):
     }
 
 
+def _sniff_daf_input_sources(input_bam: str, n_sniff: int = 10):
+    import pysam
+
+    from fiberhmm.daf.encoder import md_matches_cigar
+
+    result = {
+        'has_ry': False,
+        'has_md': False,
+        'md_bad': 0,
+        'md_total': 0,
+        'checked': 0,
+    }
+    try:
+        with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+            for read in bam:
+                if read.is_unmapped or read.is_secondary or read.is_supplementary:
+                    continue
+                seq = read.query_sequence
+                if seq and ('R' in seq or 'Y' in seq):
+                    result['has_ry'] = True
+                if read.has_tag('MD'):
+                    result['has_md'] = True
+                    result['md_total'] += 1
+                    if not md_matches_cigar(read):
+                        result['md_bad'] += 1
+                result['checked'] += 1
+                if result['checked'] >= n_sniff:
+                    break
+    except (ValueError, OSError):
+        # Let downstream error handling report a clear message about the BAM.
+        return None
+    return result
+
+
 def _check_daf_inputs(input_bam: str, reference: str = None,
                        n_sniff: int = 10) -> None:
     """Sniff the first ~N mapped reads of a DAF-mode input BAM and confirm
@@ -262,45 +296,21 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
     every read would be silently skipped and the run would produce an
     empty output BAM.
     """
-    import pysam
-
     # Reference FASTA is sufficient by itself (we can always reconstruct
     # mismatches from it regardless of MD tag presence).
     has_ref = reference is not None
 
-    from fiberhmm.daf.encoder import md_matches_cigar
-
-    has_ry = False
-    has_md = False
-    md_bad = 0
-    md_total = 0
-    checked = 0
-    try:
-        with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
-            for read in bam:
-                if read.is_unmapped or read.is_secondary or read.is_supplementary:
-                    continue
-                seq = read.query_sequence
-                if seq and ('R' in seq or 'Y' in seq):
-                    has_ry = True
-                if read.has_tag('MD'):
-                    has_md = True
-                    md_total += 1
-                    if not md_matches_cigar(read):
-                        md_bad += 1
-                checked += 1
-                if checked >= n_sniff:
-                    break
-    except (ValueError, OSError):
-        # Let downstream error handling report a clear message about the BAM.
+    sniff = _sniff_daf_input_sources(input_bam, n_sniff)
+    if sniff is None:
         return
 
-    if has_ry or has_md or has_ref:
+    if sniff['has_ry'] or sniff['has_md'] or has_ref:
         # Warn about stale MD only when we'll actually be relying on it
         # (no R/Y fast path available for these reads) AND some were bad.
-        if md_bad and not has_ry and not has_ref:
+        if sniff['md_bad'] and not sniff['has_ry'] and not has_ref:
             print(
-                f"  NOTE: {md_bad}/{md_total} of the sniffed reads with MD tags\n"
+                f"  NOTE: {sniff['md_bad']}/{sniff['md_total']} "
+                f"of the sniffed reads with MD tags\n"
                 f"  have MD/CIGAR length mismatches (typical of consensus BAMs\n"
                 f"  where MD is stale after CIGAR was recomputed). Those reads\n"
                 f"  will be skipped in DAF mode. The reads themselves are fine;\n"
@@ -314,7 +324,8 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
 
     print(
         "error: --mode daf needs deamination calls, and none of the supported\n"
-        f"  sources were found in the first {checked} mapped reads of {input_bam}:\n"
+        f"  sources were found in the first {sniff['checked']} "
+        f"mapped reads of {input_bam}:\n"
         "    - R/Y IUPAC codes in the stored query sequence\n"
         "      (produced by fiberhmm-daf-encode), or\n"
         "    - MD tags on aligned reads\n"

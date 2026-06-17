@@ -17,6 +17,7 @@ from fiberhmm.cli.call import (
     _resolve_apply_model,
     _resolve_recall_nucs,
     _resolve_recall_model,
+    _sniff_daf_input_sources,
 )
 
 
@@ -76,6 +77,10 @@ def test_daf_input_sniff_accepts_iupac_encoding(tmp_path):
         chrom_length=5_000,
         seed=11,
     )
+
+    sniff = _sniff_daf_input_sources(input_bam, n_sniff=4)
+    assert sniff["has_ry"] is True
+    assert sniff["checked"] == 4
 
     _check_daf_inputs(input_bam, n_sniff=4)
 
