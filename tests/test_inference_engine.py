@@ -116,6 +116,38 @@ class TestPredictFootprintsAndMsps:
         assert len(result['footprint_starts']) == 0
         assert len(result['msp_starts']) == 0
 
+    def test_predict_state_outputs_uses_plain_predict_when_possible(self):
+        class FakeModel:
+            def predict(self, encoded):
+                return np.array([1, 0], dtype=np.int8)
+
+            def predict_with_posteriors(self, encoded):
+                raise AssertionError("posterior path should not run")
+
+        states, confidence, posteriors = engine._predict_state_outputs(
+            FakeModel(), np.array([2, 3]), with_scores=False, return_posteriors=False,
+        )
+
+        np.testing.assert_array_equal(states, [1, 0])
+        assert confidence is None
+        assert posteriors is None
+
+    def test_predict_state_outputs_derives_confidence_from_posteriors(self):
+        class FakeModel:
+            def predict_with_posteriors(self, encoded):
+                return (
+                    np.array([0, 1], dtype=np.int8),
+                    np.array([[0.8, 0.2], [0.1, 0.9]], dtype=np.float32),
+                )
+
+        states, confidence, posteriors = engine._predict_state_outputs(
+            FakeModel(), np.array([2, 3]), with_scores=True, return_posteriors=False,
+        )
+
+        np.testing.assert_array_equal(states, [0, 1])
+        np.testing.assert_allclose(confidence, [0.8, 0.9])
+        np.testing.assert_allclose(posteriors, [[0.8, 0.2], [0.1, 0.9]])
+
     def test_returns_dict_with_correct_keys(self, simple_model):
         obs = np.array([0, 0, 0, 3, 3, 3, 3, 3, 0, 0, 0], dtype=np.int32)
         result = predict_footprints_and_msps(simple_model, obs)

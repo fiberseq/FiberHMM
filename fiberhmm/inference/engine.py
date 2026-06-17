@@ -365,6 +365,17 @@ def _extract_footprints_from_states_circular(
     }
 
 
+def _predict_state_outputs(model: FiberHMM, encoded_read: np.ndarray,
+                           with_scores: bool, return_posteriors: bool):
+    if with_scores or return_posteriors:
+        states, posteriors_full = model.predict_with_posteriors(encoded_read)
+        confidence = posteriors_full[np.arange(len(states)), states]
+        return states, confidence, posteriors_full
+
+    states = model.predict(encoded_read)
+    return states, None, None
+
+
 def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
                                  msp_min_size: int = 147,
                                  with_scores: bool = False,
@@ -407,16 +418,13 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
 
     # Predict states (0 = footprint, 1 = accessible)
     # Use predict_with_posteriors if we need posteriors or scores (shares computation)
-    if with_scores or return_posteriors:
-        states, posteriors_full = model.predict_with_posteriors(encoded_read)
-        confidence = posteriors_full[np.arange(len(states)), states]
+    states, confidence, posteriors_full = _predict_state_outputs(
+        model, encoded_read, with_scores, return_posteriors,
+    )
 
-        if return_posteriors:
-            # P(footprint) = posteriors_full[:, 0]
-            result['posteriors'] = posteriors_full[:, 0].astype(np.float16)
-    else:
-        states = model.predict(encoded_read)
-        confidence = None
+    if return_posteriors:
+        # P(footprint) = posteriors_full[:, 0]
+        result['posteriors'] = posteriors_full[:, 0].astype(np.float16)
 
     if circular_read_length is not None:
         result.update(
