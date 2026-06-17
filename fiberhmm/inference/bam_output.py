@@ -71,6 +71,10 @@ def _sorted_bam_temp_path(output_bam: str) -> str:
     return output_bam + '.sorted.bam'
 
 
+def _file_size_gb(path: str) -> float:
+    return os.path.getsize(path) / (1024 ** 3)
+
+
 def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4):
     """
     Index a BAM file, sorting first only if needed.
@@ -81,8 +85,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
     """
     import time
 
-    bam_size_mb = os.path.getsize(output_bam) / (1024 * 1024)
-    bam_size_gb = bam_size_mb / 1024
+    bam_size_gb = _file_size_gb(output_bam)
 
     # Try indexing directly first (using samtools with threads for speed)
     try:
