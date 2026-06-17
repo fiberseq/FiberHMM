@@ -253,6 +253,53 @@ def test_make_output_temp_dir_places_directory_next_to_output(tmp_path):
     assert os.path.basename(temp_dir).startswith(".fiberhmm_test_")
 
 
+def test_merge_region_posterior_outputs_reports_tsv_and_conversion(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    temp_tsvs = [(0, "region_0.tsv")]
+    output_posteriors = str(tmp_path / "out.h5")
+    tsv_path = tmp_path / "out.tsv.gz"
+    tsv_path.write_bytes(b"x" * 1024)
+    times = iter([10.0, 12.5])
+    merge_calls = []
+
+    def fake_merge(*args):
+        merge_calls.append(args)
+        return 7
+
+    monkeypatch.setattr(region_pipeline.time, "time", lambda: next(times))
+    monkeypatch.setattr(region_pipeline, "_merge_region_posteriors_tsv", fake_merge)
+    monkeypatch.setattr(
+        region_pipeline,
+        "region_posteriors_tsv_output_path",
+        lambda output: str(tsv_path),
+    )
+
+    region_pipeline._merge_region_posterior_outputs(
+        temp_tsvs,
+        output_posteriors,
+        mode="pacbio-fiber",
+        context_size=3,
+        edge_trim=10,
+        input_bam="input.bam",
+    )
+
+    assert merge_calls == [(
+        temp_tsvs,
+        output_posteriors,
+        "pacbio-fiber",
+        3,
+        10,
+        "input.bam",
+    )]
+    out = capsys.readouterr().out
+    assert "Merging 1 posterior files..." in out
+    assert f"Posteriors: 7 fibers -> {tsv_path} (0.0 MB, 2.5s)" in out
+    assert f"tsv2h5 {tsv_path} {output_posteriors}" in out
+
+
 def test_region_parallel_bam_cleans_temp_dir_on_worker_failure(monkeypatch, tmp_path):
     temp_dirs = _install_failing_region_pool(monkeypatch, tmp_path)
     input_bam = _indexed_input_bam(tmp_path)

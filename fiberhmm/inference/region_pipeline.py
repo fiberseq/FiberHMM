@@ -208,6 +208,42 @@ def _make_output_temp_dir(output_path: str, prefix: str) -> str:
     return tempfile.mkdtemp(prefix=prefix, dir=output_dir)
 
 
+def _merge_region_posterior_outputs(
+    temp_tsvs,
+    output_posteriors: str,
+    mode: str,
+    context_size: int,
+    edge_trim: int,
+    input_bam: str,
+) -> None:
+    if not temp_tsvs:
+        return
+
+    print(f"Merging {len(temp_tsvs)} posterior files...")
+    merge_start = time.time()
+    n_fibers = _merge_region_posteriors_tsv(
+        temp_tsvs, output_posteriors,
+        mode, context_size, edge_trim, input_bam,
+    )
+    merge_time = time.time() - merge_start
+
+    # Region posterior export always materializes a compressed TSV first.
+    tsv_path = region_posteriors_tsv_output_path(output_posteriors)
+    if not os.path.exists(tsv_path):
+        return
+
+    file_size = os.path.getsize(tsv_path) / (1024 * 1024)
+    print(
+        f"Posteriors: {n_fibers:,} fibers -> {tsv_path} "
+        f"({file_size:.1f} MB, {merge_time:.1f}s)"
+    )
+    if region_posteriors_needs_h5_conversion(output_posteriors):
+        print(
+            "  To convert to H5: python posteriors_io.py "
+            f"tsv2h5 {tsv_path} {output_posteriors}"
+        )
+
+
 def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    model_path: str, train_rids: Set[str],
                                    edge_trim: int, circular: bool,
@@ -347,28 +383,14 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
         # Merge temp TSV files if posteriors were requested
         if return_posteriors and aggregation.temp_tsvs:
-            print(f"Merging {len(aggregation.temp_tsvs)} posterior files...")
-            merge_start = time.time()
-            n_fibers = _merge_region_posteriors_tsv(
-                aggregation.temp_tsvs, output_posteriors,
-                mode, context_size, edge_trim, input_bam,
+            _merge_region_posterior_outputs(
+                aggregation.temp_tsvs,
+                output_posteriors,
+                mode,
+                context_size,
+                edge_trim,
+                input_bam,
             )
-            merge_time = time.time() - merge_start
-
-            # Figure out actual output path (always .tsv.gz)
-            tsv_path = region_posteriors_tsv_output_path(output_posteriors)
-
-            if os.path.exists(tsv_path):
-                file_size = os.path.getsize(tsv_path) / (1024 * 1024)
-                print(
-                    f"Posteriors: {n_fibers:,} fibers -> {tsv_path} "
-                    f"({file_size:.1f} MB, {merge_time:.1f}s)"
-                )
-                if region_posteriors_needs_h5_conversion(output_posteriors):
-                    print(
-                        "  To convert to H5: python posteriors_io.py "
-                        f"tsv2h5 {tsv_path} {output_posteriors}"
-                    )
 
         elapsed = time.time() - start_time
         print(_region_completion_summary(
