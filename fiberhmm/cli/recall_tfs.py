@@ -178,6 +178,18 @@ def _short_v2_nuc_count(tags: dict, unify_threshold: int) -> int:
     return sum(1 for length in tags['nl'] if 0 < int(length) < unify_threshold)
 
 
+def _record_recall_stats(
+    stats: dict,
+    tf_calls,
+    kept_nucs,
+    v2_short_count: int,
+    unify_threshold: int,
+) -> None:
+    stats['tf'] = len(tf_calls)
+    survived_short = sum(1 for _, length in kept_nucs if length < unify_threshold)
+    stats['demoted'] = max(0, v2_short_count - survived_short)
+
+
 def _make_payload(read, mode=None) -> dict:
     """Extract only the tag data workers need from a pysam read.
 
@@ -238,9 +250,7 @@ def _process_payload_record(payload) -> tuple:
         min_opps=_WORKER['min_opps'],
         unify_threshold=unify_threshold,
     )
-    stats['tf'] = len(tf_calls)
-    survived_short = sum(1 for _, length in kept_nucs if length < unify_threshold)
-    stats['demoted'] = max(0, v2_short_count - survived_short)
+    _record_recall_stats(stats, tf_calls, kept_nucs, v2_short_count, unify_threshold)
 
     nq_for_kept = _kept_nuc_nq_from_legacy(tags, read, kept_nucs)
 

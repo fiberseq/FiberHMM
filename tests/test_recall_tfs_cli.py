@@ -142,6 +142,21 @@ def test_recall_tfs_stats_helpers_accumulate_summary():
     assert recall_tfs._stats_tuple(9, total) == (9, 1, 7, 3, 4)
 
 
+def test_recall_tfs_record_recall_stats_counts_demoted_short_nucs():
+    stats = recall_tfs._new_stats()
+
+    recall_tfs._record_recall_stats(
+        stats,
+        tf_calls=["tf-a", "tf-b"],
+        kept_nucs=[(0, 10), (100, 90)],
+        v2_short_count=3,
+        unify_threshold=90,
+    )
+
+    assert stats["tf"] == 2
+    assert stats["demoted"] == 2
+
+
 def test_recall_tfs_write_recall_result_passes_through_null_result(monkeypatch):
     reads = [
         SimpleNamespace(query_name="annotated"),
