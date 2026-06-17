@@ -137,6 +137,15 @@ def _parse_ma_interval_list(data: str) -> List[Tuple[int, int]]:
     return intervals
 
 
+def _parse_ma_chunk(chunk: str) -> Tuple[str, str, str, List[Tuple[int, int]]]:
+    if ':' not in chunk:
+        raise ValueError(f'MA chunk missing colon: {chunk!r}')
+    head, data = chunk.split(':', 1)
+    name, strand, qual_spec = _parse_ma_head(head)
+    intervals = _parse_ma_interval_list(data)
+    return name, strand, qual_spec, intervals
+
+
 def _parse_ma_read_length(token: str) -> int:
     try:
         return int(token)
@@ -322,11 +331,7 @@ def parse_ma_tag(ma_string: str) -> dict:
     for chunk in pieces[1:]:
         if not chunk:
             continue
-        if ':' not in chunk:
-            raise ValueError(f'MA chunk missing colon: {chunk!r}')
-        head, data = chunk.split(':', 1)
-        name, strand, qual_spec = _parse_ma_head(head)
-        intervals = _parse_ma_interval_list(data)
+        name, strand, qual_spec, intervals = _parse_ma_chunk(chunk)
         out['raw_types'].append((name, strand, qual_spec, intervals))
         if name in out:
             out[name].extend(intervals)

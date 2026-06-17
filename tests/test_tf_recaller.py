@@ -22,6 +22,7 @@ from fiberhmm.io.ma_tags import (
     _aq_values_sequence,
     _format_ma_annotation_part,
     _nuc_aq_has_edge_qualities,
+    _parse_ma_chunk,
     _parse_ma_interval_list,
     _parse_ma_read_length,
     ambiguity_to_edge,
@@ -195,6 +196,15 @@ def test_parse_ma_interval_list_skips_empty_tokens_and_reports_bad_intervals():
 
     with pytest.raises(ValueError, match="missing dash"):
         _parse_ma_interval_list("1-10,bad")
+
+
+def test_parse_ma_chunk_splits_head_and_intervals():
+    assert _parse_ma_chunk("tf.QQQ:1-10,21-5") == (
+        "tf", ".", "QQQ", [(0, 10), (20, 5)],
+    )
+
+    with pytest.raises(ValueError, match="missing colon"):
+        _parse_ma_chunk("tf.QQQ")
 
 
 def test_parse_ma_read_length_reports_bad_token():
