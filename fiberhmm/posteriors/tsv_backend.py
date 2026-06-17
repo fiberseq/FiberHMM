@@ -105,6 +105,14 @@ def _posterior_record_from_fields(fields, dtype) -> dict:
     }
 
 
+def _iter_tsv_posterior_fields(tsv_path: str):
+    with _open_text_file(tsv_path, 'rt') as infile:
+        for line in infile:
+            fields = _split_posteriors_line(line)
+            if fields is not None:
+                yield fields
+
+
 def _scan_tsv_for_h5(tsv_path: str, verbose: bool):
     if verbose:
         print(f"  Scanning {tsv_path}...")
@@ -327,20 +335,13 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
 
         n_written = 0
 
-        with _open_text_file(tsv_path, 'rt') as infile:
-            for line in infile:
-                if line.startswith('#'):
-                    continue
+        for fields in _iter_tsv_posterior_fields(tsv_path):
+            _write_h5_posterior_record(f, chrom_indices, fields)
+            n_written += 1
 
-                fields = _split_posteriors_line(line)
-                if fields is None:
-                    continue
-                _write_h5_posterior_record(f, chrom_indices, fields)
-                n_written += 1
-
-                if verbose and n_written % 100000 == 0:
-                    print(f"\r    Written {n_written:,} / {n_total:,} fibers...", end='')
-                    sys.stdout.flush()
+            if verbose and n_written % 100000 == 0:
+                print(f"\r    Written {n_written:,} / {n_total:,} fibers...", end='')
+                sys.stdout.flush()
 
     file_size = os.path.getsize(h5_path) / (1024 * 1024)
     if verbose:

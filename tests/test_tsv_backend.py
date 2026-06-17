@@ -182,6 +182,22 @@ def test_chrom_from_countable_tsv_line_filters_non_data_rows():
     assert tsv_backend._chrom_from_countable_tsv_line("read1\tchr2L\t0\t3\n") == "chr2L"
 
 
+def test_iter_tsv_posterior_fields_skips_non_records(tmp_path):
+    tsv_path = tmp_path / "posteriors.tsv"
+    tsv_path.write_text(
+        "#metadata:{}\n"
+        + REGION_POSTERIORS_HEADER
+        + "short\trow\n"
+        + "read1\tchr2L\t0\t3\t+\tabc\t\t\n",
+        encoding="utf-8",
+    )
+
+    fields = list(tsv_backend._iter_tsv_posterior_fields(str(tsv_path)))
+
+    assert len(fields) == 1
+    assert fields[0][:5] == ("read1", "chr2L", 0, 3, "+")
+
+
 def test_posterior_tsv_metadata_uses_source_bam_basename():
     assert tsv_backend._posterior_tsv_metadata(
         mode="daf",
