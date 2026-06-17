@@ -106,3 +106,28 @@ def test_footprint_size_bin_counts_use_stable_labels():
         "500+",
     ]
     assert counts.tolist() == [2, 1, 0, 0, 0, 1, 0, 0, 0, 2]
+
+
+def test_add_numeric_summary_writes_requested_keys_and_skips_empty_values():
+    summary = {}
+
+    stats_module._add_numeric_summary(
+        summary,
+        "example",
+        [1, 2, 5],
+        total_key="total_examples",
+        include_std=True,
+        include_minmax=True,
+        include_iqr=True,
+    )
+    stats_module._add_numeric_summary(summary, "empty", [])
+
+    assert summary["total_examples"] == 3
+    assert summary["example_median"] == 2
+    assert summary["example_mean"] == np.mean([1, 2, 5])
+    assert summary["example_std"] == np.std([1, 2, 5])
+    assert summary["example_min"] == 1
+    assert summary["example_max"] == 5
+    assert summary["example_q25"] == np.percentile([1, 2, 5], 25)
+    assert summary["example_q75"] == np.percentile([1, 2, 5], 75)
+    assert "empty_median" not in summary

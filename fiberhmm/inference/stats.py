@@ -54,6 +54,32 @@ def _footprint_size_bin_counts(sizes) -> tuple:
     return _FOOTPRINT_SIZE_BIN_LABELS, counts
 
 
+def _add_numeric_summary(
+    summary: dict,
+    prefix: str,
+    values,
+    *,
+    total_key: str = None,
+    include_std: bool = False,
+    include_minmax: bool = False,
+    include_iqr: bool = False,
+) -> None:
+    if len(values) == 0:
+        return
+    if total_key:
+        summary[total_key] = len(values)
+    summary[f'{prefix}_median'] = np.median(values)
+    summary[f'{prefix}_mean'] = np.mean(values)
+    if include_std:
+        summary[f'{prefix}_std'] = np.std(values)
+    if include_minmax:
+        summary[f'{prefix}_min'] = np.min(values)
+        summary[f'{prefix}_max'] = np.max(values)
+    if include_iqr:
+        summary[f'{prefix}_q25'] = np.percentile(values, 25)
+        summary[f'{prefix}_q75'] = np.percentile(values, 75)
+
+
 class FootprintStats:
     """Collects footprint statistics from sampled reads."""
 
@@ -118,20 +144,22 @@ class FootprintStats:
             'pct_reads_with_footprints': 100 * self.reads_with_footprints / self.total_reads_sampled if self.total_reads_sampled > 0 else 0,
         }
 
-        if self.read_lengths:
-            summary['read_length_median'] = np.median(self.read_lengths)
-            summary['read_length_mean'] = np.mean(self.read_lengths)
-            summary['read_length_std'] = np.std(self.read_lengths)
+        _add_numeric_summary(
+            summary,
+            'read_length',
+            self.read_lengths,
+            include_std=True,
+        )
 
-        if self.footprint_sizes:
-            summary['total_footprints'] = len(self.footprint_sizes)
-            summary['footprint_size_median'] = np.median(self.footprint_sizes)
-            summary['footprint_size_mean'] = np.mean(self.footprint_sizes)
-            summary['footprint_size_std'] = np.std(self.footprint_sizes)
-            summary['footprint_size_min'] = np.min(self.footprint_sizes)
-            summary['footprint_size_max'] = np.max(self.footprint_sizes)
-            summary['footprint_size_q25'] = np.percentile(self.footprint_sizes, 25)
-            summary['footprint_size_q75'] = np.percentile(self.footprint_sizes, 75)
+        _add_numeric_summary(
+            summary,
+            'footprint_size',
+            self.footprint_sizes,
+            total_key='total_footprints',
+            include_std=True,
+            include_minmax=True,
+            include_iqr=True,
+        )
 
         if self.footprints_per_read:
             fp_per_read = [x for x in self.footprints_per_read if x > 0]
@@ -139,25 +167,33 @@ class FootprintStats:
                 summary['footprints_per_read_median'] = np.median(fp_per_read)
                 summary['footprints_per_read_mean'] = np.mean(fp_per_read)
 
-        if self.gap_sizes:
-            summary['total_gaps'] = len(self.gap_sizes)
-            summary['gap_size_median'] = np.median(self.gap_sizes)
-            summary['gap_size_mean'] = np.mean(self.gap_sizes)
-            summary['gap_size_std'] = np.std(self.gap_sizes)
+        _add_numeric_summary(
+            summary,
+            'gap_size',
+            self.gap_sizes,
+            total_key='total_gaps',
+            include_std=True,
+        )
 
-        if self.msp_sizes:
-            summary['total_msps'] = len(self.msp_sizes)
-            summary['msp_size_median'] = np.median(self.msp_sizes)
-            summary['msp_size_mean'] = np.mean(self.msp_sizes)
+        _add_numeric_summary(
+            summary,
+            'msp_size',
+            self.msp_sizes,
+            total_key='total_msps',
+        )
 
-        if self.footprint_coverage:
-            summary['footprint_coverage_median'] = np.median(self.footprint_coverage)
-            summary['footprint_coverage_mean'] = np.mean(self.footprint_coverage)
+        _add_numeric_summary(
+            summary,
+            'footprint_coverage',
+            self.footprint_coverage,
+        )
 
-        if self.footprint_scores:
-            summary['footprint_score_median'] = np.median(self.footprint_scores)
-            summary['footprint_score_mean'] = np.mean(self.footprint_scores)
-            summary['footprint_score_std'] = np.std(self.footprint_scores)
+        _add_numeric_summary(
+            summary,
+            'footprint_score',
+            self.footprint_scores,
+            include_std=True,
+        )
 
         return summary
 
