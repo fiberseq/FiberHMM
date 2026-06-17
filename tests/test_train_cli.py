@@ -185,6 +185,72 @@ def test_chrom_pos_from_genome_offset_maps_cumulative_lengths():
     )
 
 
+def test_training_sample_filter_helper_applies_alignment_filters():
+    def read(**overrides):
+        attrs = {
+            "is_unmapped": False,
+            "is_secondary": False,
+            "is_supplementary": False,
+            "mapping_quality": 30,
+            "query_sequence": "ACGT",
+            "reference_start": 10,
+            "reference_end": 14,
+        }
+        attrs.update(overrides)
+        return SimpleNamespace(**attrs)
+
+    assert train._passes_training_sample_filters(read(), 20, 4) is True
+    assert train._passes_training_sample_filters(
+        read(mapping_quality=19), 20, 4,
+    ) is False
+    assert train._passes_training_sample_filters(
+        read(query_sequence=None), 20, 4,
+    ) is False
+    assert train._passes_training_sample_filters(
+        read(reference_end=13), 20, 4,
+    ) is False
+    assert train._passes_training_sample_filters(
+        read(is_supplementary=True), 20, 4,
+    ) is False
+
+
+def test_training_mod_query_positions_prefers_pysam_then_mm_fallback(monkeypatch):
+    class TaggedRead:
+        query_sequence = "AAAA"
+        is_reverse = False
+
+        def __init__(self, tags):
+            self.tags = tags
+
+        def has_tag(self, tag):
+            return tag in self.tags
+
+        def get_tag(self, tag):
+            return self.tags[tag]
+
+    read = TaggedRead({"MM": "A+a,0;", "ML": b"\xc8"})
+
+    monkeypatch.setattr(bam_reader, "get_modified_positions_pysam", lambda *args: {3})
+    monkeypatch.setattr(
+        bam_reader,
+        "parse_mm_tag_query_positions",
+        lambda *args, **kwargs: pytest.fail("MM/ML fallback should not run"),
+    )
+    assert train._training_mod_query_positions(read, 125, "pacbio-fiber") == {3}
+
+    captured = {}
+
+    def fake_parse(mm_tag, ml_tag, sequence, is_reverse, prob_threshold, mode):
+        captured["ml_tag"] = ml_tag
+        return {1}
+
+    monkeypatch.setattr(bam_reader, "get_modified_positions_pysam", lambda *args: set())
+    monkeypatch.setattr(bam_reader, "parse_mm_tag_query_positions", fake_parse)
+
+    assert train._training_mod_query_positions(read, 125, "pacbio-fiber") == {1}
+    assert captured["ml_tag"] == b"\xc8"
+
+
 def test_build_model_from_base_copies_transitions_and_replaces_emissions(monkeypatch):
     base_model = SimpleNamespace(
         startprob_=np.array([0.7, 0.3]),

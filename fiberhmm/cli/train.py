@@ -235,6 +235,53 @@ def _chrom_pos_from_genome_offset(chroms: list, cum_lengths: np.ndarray,
     return chrom, int(pos)
 
 
+def _passes_training_sample_filters(read, min_mapq: int,
+                                    min_read_length: int) -> bool:
+    if not is_primary_mapped_alignment(read):
+        return False
+    if read.mapping_quality < min_mapq:
+        return False
+    if read.query_sequence is None:
+        return False
+    return (read.reference_end - read.reference_start) >= min_read_length
+
+
+def _training_mod_query_positions(read, prob_threshold: int, mode: str) -> set:
+    from fiberhmm.core.bam_reader import (
+        get_modified_positions_pysam,
+        parse_mm_tag_query_positions,
+    )
+
+    mod_query_pos = get_modified_positions_pysam(read, prob_threshold, mode)
+    if mod_query_pos:
+        return set(mod_query_pos)
+
+    mm_tag = get_preferred_tag(read, 'MM', 'Mm')
+    ml_tag = get_preferred_tag(read, 'ML', 'Ml')
+    if mm_tag and ml_tag is not None:
+        return set(parse_mm_tag_query_positions(
+            mm_tag, ml_tag, read.query_sequence,
+            read.is_reverse, prob_threshold, mode=mode,
+        ))
+    return set()
+
+
+def _training_fiber_read_from_segment(read, mod_query_pos: set):
+    from fiberhmm.core.bam_reader import FiberRead
+
+    return FiberRead(
+        read_id=read.query_name,
+        chrom=read.reference_name,
+        ref_start=read.reference_start,
+        ref_end=read.reference_end,
+        strand='-' if read.is_reverse else '+',
+        query_sequence=read.query_sequence,
+        m6a_query_positions=set(mod_query_pos),
+        query_to_ref=_query_to_ref_positions(read),
+        is_reverse=read.is_reverse,
+    )
+
+
 def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                          mode: str = 'pacbio-fiber', min_mapq: int = 20,
                          prob_threshold: int = 125, min_read_length: int = 1000) -> list:
@@ -284,15 +331,9 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                 # Fetch reads overlapping this position
                 try:
                     for read in bam.fetch(chrom, max(0, pos - 100), pos + 100):
-                        # Apply filters
-                        if not is_primary_mapped_alignment(read):
-                            continue
-                        if read.mapping_quality < min_mapq:
-                            continue
-                        if read.query_sequence is None:
-                            continue
-                        aligned_length = read.reference_end - read.reference_start
-                        if aligned_length < min_read_length:
+                        if not _passes_training_sample_filters(
+                            read, min_mapq, min_read_length,
+                        ):
                             continue
 
                         # Skip if we've already sampled this read
@@ -300,38 +341,14 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                             continue
 
                         # Get modifications
-                        from fiberhmm.core.bam_reader import (
-                            FiberRead,
-                            get_modified_positions_pysam,
-                            parse_mm_tag_query_positions,
+                        mod_query_pos = _training_mod_query_positions(
+                            read, prob_threshold, mode,
                         )
-
-                        mod_query_pos = get_modified_positions_pysam(read, prob_threshold, mode)
-
-                        if not mod_query_pos:
-                            mm_tag = get_preferred_tag(read, 'MM', 'Mm')
-                            ml_raw = get_preferred_tag(read, 'ML', 'Ml')
-                            ml_tag = list(ml_raw) if ml_raw is not None else None
-
-                            if mm_tag and ml_tag:
-                                mod_query_pos = parse_mm_tag_query_positions(
-                                    mm_tag, ml_tag, read.query_sequence,
-                                    read.is_reverse, prob_threshold, mode=mode
-                                )
-
                         if not mod_query_pos:
                             continue
 
-                        fiber_read = FiberRead(
-                            read_id=read.query_name,
-                            chrom=read.reference_name,
-                            ref_start=read.reference_start,
-                            ref_end=read.reference_end,
-                            strand='-' if read.is_reverse else '+',
-                            query_sequence=read.query_sequence,
-                            m6a_query_positions=set(mod_query_pos),
-                            query_to_ref=_query_to_ref_positions(read),
-                            is_reverse=read.is_reverse,
+                        fiber_read = _training_fiber_read_from_segment(
+                            read, mod_query_pos,
                         )
 
                         sampled.append(fiber_read)
