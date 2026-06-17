@@ -79,6 +79,22 @@ def test_recall_tfs_payload_chunk_counts_per_read_failures(monkeypatch):
     assert stats == {"v2": 2, "tf": 4, "demoted": 6, "failed": 1}
 
 
+def test_recall_tfs_model_resolution_uses_custom_path():
+    args = SimpleNamespace(model="/tmp/custom.json", enzyme=None, seq=None)
+
+    assert recall_tfs._resolve_model_path(args) == "/tmp/custom.json"
+
+
+def test_recall_tfs_model_resolution_requires_model_or_enzyme(capsys):
+    args = SimpleNamespace(model=None, enzyme=None, seq=None)
+
+    with pytest.raises(SystemExit) as exc:
+        recall_tfs._resolve_model_path(args)
+
+    assert exc.value.code == 1
+    assert "one of --model or --enzyme must be provided" in capsys.readouterr().err
+
+
 def test_recall_tfs_single_thread_passes_failed_reads_through(monkeypatch):
     reads = [
         SimpleNamespace(query_name="ok", query_sequence="AAAA"),

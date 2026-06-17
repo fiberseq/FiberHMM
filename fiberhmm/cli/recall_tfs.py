@@ -391,6 +391,30 @@ def _resolve_model_metadata(model_path):
     return mode, k
 
 
+def _resolve_model_path(args):
+    """Resolve the recall model path from --model or bundled --enzyme/--seq."""
+    if args.model is not None:
+        return args.model
+
+    if args.enzyme is None:
+        print(
+            "error: one of --model or --enzyme must be provided.\n"
+            "  Use --enzyme hia5/dddb/ddda to pick a bundled model, or\n"
+            "  use --model /path/to/model.json for a custom model.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from fiberhmm.models import get_model_path as _get_bundled
+    try:
+        model_path = _get_bundled(args.enzyme, tool='recall', seq=args.seq)
+    except (KeyError, FileNotFoundError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"[recall_tfs] using bundled model: {model_path}", file=sys.stderr)
+    return model_path
+
+
 def main():
     args = parse_args()
 
@@ -399,24 +423,7 @@ def main():
         # Redirect informational prints to stderr so BAM stream on stdout stays clean
         sys.stdout = sys.stderr
 
-    # Resolve model path: explicit -m wins; else use bundled model for --enzyme
-    model_path = args.model
-    if model_path is None:
-        if args.enzyme is None:
-            print(
-                "error: one of --model or --enzyme must be provided.\n"
-                "  Use --enzyme hia5/dddb/ddda to pick a bundled model, or\n"
-                "  use --model /path/to/model.json for a custom model.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        from fiberhmm.models import get_model_path as _get_bundled
-        try:
-            model_path = _get_bundled(args.enzyme, tool='recall', seq=args.seq)
-        except (KeyError, FileNotFoundError) as e:
-            print(f"error: {e}", file=sys.stderr)
-            sys.exit(1)
-        print(f"[recall_tfs] using bundled model: {model_path}", file=sys.stderr)
+    model_path = _resolve_model_path(args)
 
     # Prominent beta banner: this feature is new, expect rough edges.
     # Mode line varies based on --downstream-compat.
