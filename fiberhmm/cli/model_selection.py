@@ -12,6 +12,12 @@ _MODEL_REQUIRED_MESSAGE = (
 )
 
 
+def _print_model_required_error(error_file=None) -> None:
+    if error_file is None:
+        error_file = sys.stderr
+    print(_MODEL_REQUIRED_MESSAGE, file=error_file)
+
+
 def _print_bundled_model_message(
     model_path: str,
     bundled_message: str | None,
@@ -36,7 +42,7 @@ def resolve_model_path(
         return args.model
 
     if args.enzyme is None:
-        print(_MODEL_REQUIRED_MESSAGE, file=sys.stderr)
+        _print_model_required_error()
         sys.exit(1)
 
     from fiberhmm.models import get_model_path
