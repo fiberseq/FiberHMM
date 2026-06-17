@@ -190,27 +190,43 @@ def _parse_ma_annotations(read, target_name: str):
     return annotations
 
 
-def _annotate_circular_parts(annotations, read_length: int):
-    """Add circular grouping metadata to parsed MA annotation dicts."""
+def _annotation_group_key(index: int, ann) -> str:
+    name = ann.get('name') or ''
+    return name if name else f'__single_{index}'
+
+
+def _circular_annotation_groups(annotations):
     grouped = {}
     for idx, ann in enumerate(annotations):
-        name = ann.get('name') or ''
-        key = name if name else f'__single_{idx}'
-        grouped.setdefault(key, []).append(ann)
+        grouped.setdefault(_annotation_group_key(idx, ann), []).append(ann)
+    return grouped
+
+
+def _sorted_circular_pieces(group):
+    return sorted(group, key=lambda a: (a['start'] != 0, a['start']))
+
+
+def _is_wrapped_circular_group(name: str, pieces, read_length: int) -> bool:
+    touches_left = [p for p in pieces if int(p['start']) == 0]
+    touches_right = [
+        p for p in pieces
+        if int(p['start']) + int(p['length']) == int(read_length)
+    ]
+    return (
+        bool(name) and len(pieces) > 1
+        and len(touches_left) == 1 and len(touches_right) == 1
+    )
+
+
+def _annotate_circular_parts(annotations, read_length: int):
+    """Add circular grouping metadata to parsed MA annotation dicts."""
+    grouped = _circular_annotation_groups(annotations)
 
     for idx, ann in enumerate(annotations):
         name = ann.get('name') or ''
-        group = grouped[name] if name and name in grouped else [ann]
-        pieces = sorted(group, key=lambda a: (a['start'] != 0, a['start']))
-        touches_left = [p for p in pieces if int(p['start']) == 0]
-        touches_right = [
-            p for p in pieces
-            if int(p['start']) + int(p['length']) == int(read_length)
-        ]
-        is_wrapped_group = (
-            bool(name) and len(pieces) > 1
-            and len(touches_left) == 1 and len(touches_right) == 1
-        )
+        group = grouped[_annotation_group_key(idx, ann)]
+        pieces = _sorted_circular_pieces(group)
+        is_wrapped_group = _is_wrapped_circular_group(name, pieces, read_length)
         circ_parts = len(pieces) if is_wrapped_group else 1
         circ_part = (
             next((i for i, piece in enumerate(pieces, start=1) if piece is ann), 1)

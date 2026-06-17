@@ -262,6 +262,28 @@ def test_ma_block_score_columns_match_annotation_shape():
     assert extract_tags._ma_block_score_columns('msp', scalar_blocks) == ['0,0']
 
 
+def test_circular_annotation_group_helpers_detect_wrapped_named_pieces():
+    left = {'name': 'call-a', 'start': 0, 'length': 15}
+    right = {'name': 'call-a', 'start': 85, 'length': 15}
+    unnamed = {'name': '', 'start': 0, 'length': 15}
+
+    assert extract_tags._annotation_group_key(2, unnamed) == '__single_2'
+    assert extract_tags._circular_annotation_groups([right, left, unnamed]) == {
+        'call-a': [right, left],
+        '__single_2': [unnamed],
+    }
+    assert extract_tags._sorted_circular_pieces([right, left]) == [left, right]
+    assert extract_tags._is_wrapped_circular_group(
+        'call-a', [left, right], read_length=100,
+    )
+    assert not extract_tags._is_wrapped_circular_group(
+        '', [left, right], read_length=100,
+    )
+    assert not extract_tags._is_wrapped_circular_group(
+        'call-a', [left], read_length=100,
+    )
+
+
 def test_selected_extract_types_defaults_and_preserves_cli_order():
     def args(**overrides):
         values = {
