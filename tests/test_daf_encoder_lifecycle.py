@@ -14,6 +14,26 @@ class _FakeHandle:
         self.closed = True
 
 
+class _FakeProgress:
+    def __init__(self):
+        self.n = 0
+
+    def update(self, amount):
+        self.n += amount
+
+
+def test_write_skipped_daf_read_writes_updates_and_returns_increment():
+    handle = _FakeHandle()
+    handle.written = []
+    handle.write = handle.written.append
+    progress = _FakeProgress()
+    read = object()
+
+    assert encoder._write_skipped_daf_read(handle, progress, read) == 1
+    assert handle.written == [read]
+    assert progress.n == 1
+
+
 def test_daf_encode_closes_input_and_reference_when_md_check_fails(monkeypatch):
     handles = {
         "fasta": _FakeHandle(),

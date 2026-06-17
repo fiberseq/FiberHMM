@@ -307,6 +307,12 @@ def _aligned_pairs_from_fasta(read, ref_fasta):
 # BAM-level processing
 # ---------------------------------------------------------------------------
 
+def _write_skipped_daf_read(outbam, pbar, read) -> int:
+    outbam.write(read)
+    pbar.update(1)
+    return 1
+
+
 def process_bam_daf_encode(
     input_bam,
     output_bam,
@@ -389,35 +395,29 @@ def process_bam_daf_encode(
             disable=(output_bam == "-"),
         )
 
-        def _write_skipped_read(read):
-            nonlocal skipped
-            outbam.write(read)
-            skipped += 1
-            pbar.update(1)
-
         for read in inbam.fetch(until_eof=True):
             total += 1
 
             # Filter: unmapped / secondary / supplementary pass through
             if not is_primary_mapped_alignment(read):
-                _write_skipped_read(read)
+                skipped += _write_skipped_daf_read(outbam, pbar, read)
                 continue
 
             # MAPQ filter
             if read.mapping_quality < min_mapq:
-                _write_skipped_read(read)
+                skipped += _write_skipped_daf_read(outbam, pbar, read)
                 continue
 
             # Length filter
             read_len = read.query_alignment_length
             if read_len is not None and read_len < min_read_length:
-                _write_skipped_read(read)
+                skipped += _write_skipped_daf_read(outbam, pbar, read)
                 continue
 
             # Encode
             result = encode_read_daf(read, force_strand=force_strand, ref_fasta=ref_fasta)
             if result is None:
-                _write_skipped_read(read)
+                skipped += _write_skipped_daf_read(outbam, pbar, read)
                 continue
 
             new_seq, st_tag, n_deam = result
