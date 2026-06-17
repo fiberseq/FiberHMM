@@ -974,6 +974,9 @@ def test_deam_base_flavor_maps_supported_canonical_bases():
     assert extract_tags._deam_base_flavor(ord('C')) == 1
     assert extract_tags._deam_base_flavor(ord('G')) == 0
     assert extract_tags._deam_base_flavor('A') is None
+    assert extract_tags._deam_md_mismatch_flavor('C', 'T') == 1
+    assert extract_tags._deam_md_mismatch_flavor('G', 'A') == 0
+    assert extract_tags._deam_md_mismatch_flavor('C', 'A') is None
 
 
 def test_deam_priority1_mm_ml_u_code_wins_over_ry():

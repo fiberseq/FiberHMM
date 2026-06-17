@@ -799,6 +799,16 @@ def _deam_base_flavor(base) -> Optional[int]:
     return None
 
 
+def _deam_md_mismatch_flavor(ref_base, query_base) -> Optional[int]:
+    ref_up = ref_base.upper()
+    query_up = query_base.upper()
+    if ref_up == 'C' and query_up == 'T':
+        return 1
+    if ref_up == 'G' and query_up == 'A':
+        return 0
+    return None
+
+
 def _deam_iupac_positions(seq: str, aligned_pairs) -> list:
     if not seq:
         return []
@@ -887,13 +897,10 @@ def _deam_md_mismatch_positions(read) -> list:
     for qpos, rpos, ref_base in pairs:
         if qpos is None or rpos is None or ref_base is None:
             continue
-        ref_up = ref_base.upper()
         q_up = seq[qpos].upper() if qpos < len(seq) else ''
-        # Only deamination-direction mismatches qualify.
-        if ref_up == 'C' and q_up == 'T':
-            positions.append((int(rpos), 1))
-        elif ref_up == 'G' and q_up == 'A':
-            positions.append((int(rpos), 0))
+        flavor = _deam_md_mismatch_flavor(ref_base, q_up)
+        if flavor is not None:
+            positions.append((int(rpos), flavor))
     return positions
 
 
