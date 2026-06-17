@@ -283,6 +283,29 @@ def test_ma_annotation_block_builds_ref_block_or_returns_none():
     assert extract_tags._ma_annotation_block('nuc', ann, {}, 255) is None
 
 
+def test_ma_circular_row_helpers_build_extra_columns_and_names():
+    ann = {
+        'circ_id': 'call-a',
+        'circ_part': 2,
+        'circ_parts': 3,
+        'mol_start': 90,
+        'mol_length': 30,
+    }
+
+    assert extract_tags._ma_circular_extra_columns((10, 20, 30), ann, True) == [
+        '10', '20', '30', 'call-a', 2, 3, 90, 30,
+    ]
+    assert extract_tags._ma_circular_extra_columns((10, 20, 30), ann, False) == [
+        'call-a', 2, 3, 90, 30,
+    ]
+    assert extract_tags._ma_circular_row_name('read1', 'tf', ann) == (
+        'read1|tf|call-a|2/3'
+    )
+
+    ann = {**ann, 'circ_id': '.'}
+    assert extract_tags._ma_circular_row_name('read1', 'tf', ann) == 'read1'
+
+
 def test_circular_annotation_group_helpers_detect_wrapped_named_pieces():
     left = {'name': 'call-a', 'start': 0, 'length': 15}
     right = {'name': 'call-a', 'start': 85, 'length': 15}

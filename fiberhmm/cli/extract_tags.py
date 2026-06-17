@@ -298,6 +298,26 @@ def _ma_annotation_block(target_name: str, ann, query_to_ref, min_tq: int):
     return ref_start, ref_end, score, qvals, ann
 
 
+def _ma_circular_extra_columns(qvals, ann, block_scores: bool) -> list:
+    extra = []
+    if block_scores:
+        extra.extend(str(v) for v in qvals)
+    extra.extend([
+        ann['circ_id'],
+        ann['circ_part'],
+        ann['circ_parts'],
+        ann['mol_start'],
+        ann['mol_length'],
+    ])
+    return extra
+
+
+def _ma_circular_row_name(read_id: str, target_name: str, ann) -> str:
+    if ann['circ_id'] == '.':
+        return read_id
+    return f"{read_id}|{target_name}|{ann['circ_id']}|{ann['circ_part']}/{ann['circ_parts']}"
+
+
 def _mean_block_score(blocks, with_scores: bool) -> int:
     if not with_scores:
         return 0
@@ -357,19 +377,8 @@ def _extract_ma_interval_type(
 
     if circular_groups:
         for ref_start, ref_end, score, qvals, ann in sorted(blocks, key=lambda x: x[0]):
-            extra = []
-            if block_scores:
-                extra.extend(str(v) for v in qvals)
-            extra.extend([
-                ann['circ_id'],
-                ann['circ_part'],
-                ann['circ_parts'],
-                ann['mol_start'],
-                ann['mol_length'],
-            ])
-            name = read_id
-            if ann['circ_id'] != '.':
-                name = f"{read_id}|{target_name}|{ann['circ_id']}|{ann['circ_part']}/{ann['circ_parts']}"
+            extra = _ma_circular_extra_columns(qvals, ann, block_scores)
+            name = _ma_circular_row_name(read_id, target_name, ann)
             row = _bed12_row(
                 ref_name, ref_start, ref_end, name,
                 score if with_scores else 0,
