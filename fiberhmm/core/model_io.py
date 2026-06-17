@@ -64,11 +64,15 @@ def _normalize_model_if_requested(model: FiberHMM, normalize: bool) -> FiberHMM:
     return model
 
 
-def _unfreeze_model_logs(model: FiberHMM) -> FiberHMM:
-    unfreeze = getattr(model, 'unfreeze_log_probs', None)
-    if unfreeze is not None:
-        unfreeze()
+def _call_model_hook_if_present(model: FiberHMM, hook_name: str) -> FiberHMM:
+    hook = getattr(model, hook_name, None)
+    if hook is not None:
+        hook()
     return model
+
+
+def _unfreeze_model_logs(model: FiberHMM) -> FiberHMM:
+    return _call_model_hook_if_present(model, 'unfreeze_log_probs')
 
 
 def _prepare_loaded_model(model: FiberHMM, normalize: bool) -> FiberHMM:
@@ -78,10 +82,7 @@ def _prepare_loaded_model(model: FiberHMM, normalize: bool) -> FiberHMM:
 
 def freeze_model_for_inference(model: FiberHMM) -> FiberHMM:
     """Prepare a loaded model for read-only inference loops."""
-    freeze = getattr(model, 'freeze_log_probs', None)
-    if freeze is not None:
-        freeze()
-    return model
+    return _call_model_hook_if_present(model, 'freeze_log_probs')
 
 
 def load_model_for_inference(filepath: str, normalize: bool = True) -> FiberHMM:

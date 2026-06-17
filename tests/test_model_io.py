@@ -11,6 +11,7 @@ import pytest
 
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.model_io import (
+    _call_model_hook_if_present,
     _json_save_path,
     _json_save_redirect_warning,
     _model_file_format,
@@ -59,6 +60,21 @@ class TestLoadSaveRoundTrip:
         assert model.calls == 0
         assert _normalize_model_if_requested(model, True) is model
         assert model.calls == 1
+
+    def test_call_model_hook_if_present_is_noop_for_missing_hook(self):
+        class Model:
+            def __init__(self):
+                self.calls = []
+
+            def freeze_log_probs(self):
+                self.calls.append("freeze")
+
+        model = Model()
+
+        assert _call_model_hook_if_present(model, "missing") is model
+        assert model.calls == []
+        assert _call_model_hook_if_present(model, "freeze_log_probs") is model
+        assert model.calls == ["freeze"]
 
     def test_prepare_loaded_model_normalizes_then_unfreezes(self):
         calls = []
