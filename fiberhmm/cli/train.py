@@ -469,6 +469,19 @@ def _state_run_lengths(states):
     return footprint_sizes, msp_sizes
 
 
+def _expected_state_duration(stay_prob: float) -> float:
+    if stay_prob >= 1:
+        return float('inf')
+    return 1 / (1 - stay_prob)
+
+
+def _expected_model_durations(transmat: np.ndarray) -> tuple:
+    return (
+        _expected_state_duration(float(transmat[0, 0])),
+        _expected_state_duration(float(transmat[1, 1])),
+    )
+
+
 def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads: list,
                             emission_probs: np.ndarray, output_dir: str,
                             n_examples: int = 5, mode: str = 'pacbio-fiber'):
@@ -539,10 +552,7 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
                        color='white' if trans[i, j] > 0.5 else 'black', fontsize=12)
 
         # Calculate expected durations
-        fp_stay = trans[0, 0]
-        msp_stay = trans[1, 1]
-        expected_fp = 1 / (1 - fp_stay) if fp_stay < 1 else float('inf')
-        expected_msp = 1 / (1 - msp_stay) if msp_stay < 1 else float('inf')
+        expected_fp, expected_msp = _expected_model_durations(trans)
         ax.text(0.5, -0.3, f'Expected durations: Footprint={expected_fp:.0f}bp, MSP={expected_msp:.0f}bp',
                transform=ax.transAxes, ha='center', fontsize=10)
 
@@ -831,8 +841,7 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         f.write(f"  Accessible → Footprint: {model.transmat_[1, 0]:.6f}\n")
         f.write(f"  Accessible → Accessible: {model.transmat_[1, 1]:.6f}\n")
 
-        expected_fp = 1 / (1 - model.transmat_[0, 0]) if model.transmat_[0, 0] < 1 else float('inf')
-        expected_msp = 1 / (1 - model.transmat_[1, 1]) if model.transmat_[1, 1] < 1 else float('inf')
+        expected_fp, expected_msp = _expected_model_durations(model.transmat_)
         f.write(f"\n  Expected footprint duration: {expected_fp:.1f} bp\n")
         f.write(f"  Expected MSP duration: {expected_msp:.1f} bp\n")
 

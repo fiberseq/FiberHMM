@@ -1,4 +1,5 @@
 import pytest
+import numpy as np
 
 from fiberhmm.cli import train
 from fiberhmm.core import bam_reader
@@ -20,6 +21,13 @@ def test_state_run_lengths_splits_footprint_and_msp_lengths():
 
     assert footprint_sizes == [2, 1]
     assert msp_sizes == [3]
+
+
+def test_expected_model_durations_from_self_transitions():
+    durations = train._expected_model_durations(np.array([[0.8, 0.2], [0.1, 1.0]]))
+
+    assert durations[0] == pytest.approx(5.0)
+    assert durations[1] == float('inf')
 
 
 def test_sample_reads_indexed_preserves_reverse_flag(monkeypatch):
