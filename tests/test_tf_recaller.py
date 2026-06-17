@@ -18,6 +18,7 @@ from fiberhmm.inference.tf_recaller import (
     write_ma_tags,
 )
 from fiberhmm.io.ma_tags import (
+    _aq_annotation_values,
     EDGE_AMBIGUITY_SAT,
     _aq_values_sequence,
     _format_ma_annotation_part,
@@ -258,6 +259,14 @@ def test_aq_values_sequence_normalizes_none_and_generators():
     assert _aq_values_sequence(None) == ()
     assert _aq_values_sequence(values) is values
     assert _aq_values_sequence(iter(values)) == (1, 2, 3)
+
+
+def test_aq_annotation_values_advances_by_spec_width():
+    aq = [10, 20, 30]
+
+    assert _aq_annotation_values(aq, 0, 0, len(aq)) == ([], 0)
+    assert _aq_annotation_values(aq, 0, 2, len(aq)) == ([10, 20], 2)
+    assert _aq_annotation_values(aq, 2, 3, len(aq)) == ([30], 5)
 
 
 # ------------------- merge_intervals -------------------------------
