@@ -19,6 +19,20 @@ def warm_up_model_predict(model) -> None:
         _ = model.predict(dummy_obs)
 
 
+def warm_up_model_posteriors(model, length: int = 100) -> None:
+    from fiberhmm.core.hmm import HAS_NUMBA
+
+    if not HAS_NUMBA:
+        return
+
+    dummy_obs = np.zeros(max(1, int(length)), dtype=np.int32)
+    try:
+        _ = model.predict(dummy_obs)
+        _ = model.predict_proba(dummy_obs)
+    except Exception:
+        pass
+
+
 def warm_up_tf_recaller(llr_hit, llr_miss) -> None:
     from fiberhmm.core.hmm import HAS_NUMBA
 

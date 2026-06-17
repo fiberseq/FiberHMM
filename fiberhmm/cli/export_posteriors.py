@@ -45,6 +45,10 @@ from fiberhmm.core.bam_reader import (
 )
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model_with_metadata
+from fiberhmm.inference.worker_warmup import (
+    disable_numba_cache_locking,
+    warm_up_model_posteriors,
+)
 from fiberhmm.inference.parallel import _get_genome_regions
 
 
@@ -154,21 +158,13 @@ def _init_worker(model_path: str, params: dict):
     """Initialize worker with model and warmup numba JIT."""
     global _worker_model, _worker_params
 
-    # Disable numba caching to avoid file lock contention
-    import os
-    os.environ['NUMBA_CACHE_DIR'] = ''
+    disable_numba_cache_locking()
 
     _worker_model, _, _ = load_model_with_metadata(model_path, normalize=True)
     _worker_model = freeze_model_for_inference(_worker_model)
     _worker_params = params
 
-    # Warmup numba JIT with a dummy sequence
-    dummy = np.zeros(100, dtype=np.int32)
-    try:
-        _worker_model.predict(dummy)
-        _worker_model.predict_proba(dummy)
-    except Exception:
-        pass  # OK if warmup fails
+    warm_up_model_posteriors(_worker_model)
 
 
 def _process_region_worker(args) -> Tuple[str, int, int, List[Dict]]:
