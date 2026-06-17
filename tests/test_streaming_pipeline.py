@@ -8,6 +8,7 @@ import sys
 from fiberhmm.inference import streaming_pipeline
 from fiberhmm.inference.streaming_pipeline import (
     _apply_worker_args,
+    _buffer_processable_read,
     _fused_worker_args,
     _streaming_completion_message,
     _streaming_filter_config,
@@ -103,6 +104,21 @@ def test_streaming_filter_config_captures_read_filter_settings():
     assert config.primary_only is True
     assert config.process_unmapped is False
     assert config.train_rids == {"read1"}
+
+
+def test_buffer_processable_read_keeps_chunk_lists_aligned():
+    payloads = []
+    reads = []
+    skip_flags = []
+    read = object()
+    payload = {"read": "read1"}
+
+    added = _buffer_processable_read(payloads, reads, skip_flags, payload, read)
+
+    assert added == 1
+    assert payloads == [payload]
+    assert reads == [read]
+    assert skip_flags == [False]
 
 
 def test_streaming_log_for_output_uses_stderr_for_stdout_bam():

@@ -45,6 +45,13 @@ def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, 
     return 1
 
 
+def _buffer_processable_read(chunk_items, chunk_read_objs, chunk_skip_flags, payload, read) -> int:
+    chunk_items.append(payload)
+    chunk_read_objs.append(read)
+    chunk_skip_flags.append(False)
+    return 1
+
+
 def _streaming_payload_or_skip(read, filter_config: ReadFilterConfig,
                                mode: str, ref_fasta=None):
     skip_reason = streaming_skip_reason(read, filter_config)
@@ -335,10 +342,10 @@ def _process_bam_streaming_pipeline_fused(
                         )
                         continue
 
-                    chunk_payloads.append(payload)
-                    chunk_read_objs.append(read)
-                    chunk_skip_flags.append(False)
-                    total_reads += 1
+                    total_reads += _buffer_processable_read(
+                        chunk_payloads, chunk_read_objs, chunk_skip_flags,
+                        payload, read,
+                    )
 
                     if max_reads and total_reads >= max_reads:
                         break
@@ -545,10 +552,10 @@ def _process_bam_streaming_pipeline(
                         )
                         continue
 
-                    chunk_reads.append(payload)
-                    chunk_read_objs.append(read)
-                    chunk_skip_flags.append(False)
-                    total_reads += 1
+                    total_reads += _buffer_processable_read(
+                        chunk_reads, chunk_read_objs, chunk_skip_flags,
+                        payload, read,
+                    )
 
                     if max_reads and total_reads >= max_reads:
                         break
