@@ -67,6 +67,24 @@ def _daf_c_context_from_strand_context(context: str, strand: str) -> str:
     return context
 
 
+def _context_to_code(contexts) -> Dict[str, int]:
+    return {ctx: i for i, ctx in enumerate(sorted(contexts))}
+
+
+def _missing_probability_rows(all_contexts, existing, context_to_code: dict) -> list[dict]:
+    return [
+        {
+            'context': ctx,
+            'hit': 0,
+            'nohit': 0,
+            'ratio': 0.0,
+            'encode': context_to_code[ctx],
+        }
+        for ctx in all_contexts
+        if ctx not in existing
+    ]
+
+
 class ContextCounter:
     """
     Counts modification hits/misses per sequence context.
@@ -291,23 +309,16 @@ class ContextCounter:
         if fill_missing and context_size <= 5:  # Only allow fill_missing for small k
             # Build deterministic encoding (alphabetical order of ALL possible)
             all_contexts = self._generate_all_contexts(context_size)
-            context_to_code = {ctx: i for i, ctx in enumerate(sorted(all_contexts))}
+            context_to_code = _context_to_code(all_contexts)
 
             # Add encoding to probability table
             probs['encode'] = probs['context'].map(context_to_code)
 
             # Fill missing contexts with zeros
             existing = set(probs['context'])
-            missing = []
-            for ctx in all_contexts:
-                if ctx not in existing:
-                    missing.append({
-                        'context': ctx,
-                        'hit': 0,
-                        'nohit': 0,
-                        'ratio': 0.0,
-                        'encode': context_to_code[ctx]
-                    })
+            missing = _missing_probability_rows(
+                all_contexts, existing, context_to_code,
+            )
 
             if missing:
                 probs = pd.concat([probs, pd.DataFrame(missing)], ignore_index=True)
@@ -315,8 +326,7 @@ class ContextCounter:
             probs = probs.sort_values('encode').reset_index(drop=True)
         else:
             # Fast path: only observed contexts, encode alphabetically
-            observed_contexts = sorted(probs['context'].unique())
-            context_to_code = {ctx: i for i, ctx in enumerate(observed_contexts)}
+            context_to_code = _context_to_code(probs['context'].unique())
             probs['encode'] = probs['context'].map(context_to_code)
             probs = probs.sort_values('encode').reset_index(drop=True)
 

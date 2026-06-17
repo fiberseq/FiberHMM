@@ -4,9 +4,11 @@ import numpy as np
 
 from fiberhmm.probabilities.context_counter import (
     ContextCounter,
+    _context_to_code,
     _count_ratio,
     _daf_c_context_from_strand_context,
     _daf_reconstruction_bases,
+    _missing_probability_rows,
     _position_weight,
     _probability_row,
     _reconstruct_deaminated_sequence,
@@ -55,6 +57,20 @@ def test_daf_c_context_orientation_by_strand():
     assert _daf_c_context_from_strand_context("ACA", "+") == "ACA"
     assert _daf_c_context_from_strand_context("ACA", ".") == "ACA"
     assert _daf_c_context_from_strand_context("TGA", "-") == "TCA"
+
+
+def test_context_encoding_helpers_sort_codes_and_create_missing_rows():
+    context_to_code = _context_to_code(["CCC", "AAA", "AAC"])
+
+    assert context_to_code == {"AAA": 0, "AAC": 1, "CCC": 2}
+    assert _missing_probability_rows(
+        ["CCC", "AAA", "AAC"],
+        {"AAA"},
+        context_to_code,
+    ) == [
+        {"context": "CCC", "hit": 0, "nohit": 0, "ratio": 0.0, "encode": 2},
+        {"context": "AAC", "hit": 0, "nohit": 0, "ratio": 0.0, "encode": 1},
+    ]
 
 
 def test_add_position_records_valid_center_contexts():
