@@ -508,6 +508,13 @@ def _viterbi_state_size_stats(model: FiberHMM, encoded_reads: list) -> tuple:
     return all_footprint_sizes, all_msp_sizes, all_states
 
 
+def _nonzero_emissions_by_state(emission_probs: np.ndarray) -> tuple:
+    return (
+        emission_probs[0, :][emission_probs[0, :] > 0],
+        emission_probs[1, :][emission_probs[1, :] > 0],
+    )
+
+
 def _training_zoom_window_starts(seq_len: int, window_size: int,
                                  n_windows: int, seed: int) -> list:
     np.random.seed(seed)
@@ -554,8 +561,7 @@ def _write_training_stats_summary(summary_path: str, model: FiberHMM,
 
         f.write("\nEmission Probabilities:\n")
         f.write("-" * 40 + "\n")
-        fp_nonzero = emission_probs[0, :][emission_probs[0, :] > 0]
-        msp_nonzero = emission_probs[1, :][emission_probs[1, :] > 0]
+        fp_nonzero, msp_nonzero = _nonzero_emissions_by_state(emission_probs)
         f.write(
             f"  Footprint contexts: {len(fp_nonzero):,} "
             f"(mean={np.mean(fp_nonzero):.4f}, "
@@ -653,13 +659,8 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
 
         # 2. Emission probability distribution
         ax = axes[0, 1]
-        # Get emission probs - matrix is (2, n_codes): row 0=footprint, row 1=accessible
-        fp_emissions = emission_probs[0, :]
-        msp_emissions = emission_probs[1, :]
-
         # Filter to observed contexts (non-zero)
-        fp_nonzero = fp_emissions[fp_emissions > 0]
-        msp_nonzero = msp_emissions[msp_emissions > 0]
+        fp_nonzero, msp_nonzero = _nonzero_emissions_by_state(emission_probs)
 
         bins = np.linspace(0, 1, 51)
         ax.hist(fp_nonzero, bins=bins, alpha=0.6, label=f'Footprint (n={len(fp_nonzero):,})',

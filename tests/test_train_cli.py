@@ -53,6 +53,15 @@ def test_viterbi_state_size_stats_skips_empty_reads():
     np.testing.assert_array_equal(states[1], [1, 0, 0])
 
 
+def test_nonzero_emissions_by_state_filters_zero_entries():
+    fp, msp = train._nonzero_emissions_by_state(
+        np.array([[0.0, 0.2, 0.0, 0.5], [0.1, 0.0, 0.3, 0.0]])
+    )
+
+    np.testing.assert_array_equal(fp, [0.2, 0.5])
+    np.testing.assert_array_equal(msp, [0.1, 0.3])
+
+
 def test_training_zoom_window_starts_are_deterministic_and_bounded():
     assert train._training_zoom_window_starts(
         seq_len=500, window_size=1000, n_windows=3, seed=0,
