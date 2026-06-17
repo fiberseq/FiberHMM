@@ -771,6 +771,41 @@ def _deam_mm_ml_positions(read, aligned_pairs, prob_threshold: int) -> list:
     return positions
 
 
+def _deam_md_mismatch_positions(read) -> list:
+    if not read.has_tag('MD'):
+        return []
+
+    seq = read.query_sequence
+    if not seq:
+        return []
+
+    # Pre-validate MD vs CIGAR so we never trigger pysam's AssertionError
+    # path: some pysam versions can corrupt malloc state after that error.
+    from fiberhmm.daf.encoder import md_matches_cigar
+    if not md_matches_cigar(read):
+        return []
+
+    try:
+        pairs = read.get_aligned_pairs(with_seq=True)
+    except Exception:
+        # Even with matching lengths pysam can raise on malformed inner MD
+        # (e.g. negative skips). Skip the read rather than risk corruption.
+        return []
+
+    positions = []
+    for qpos, rpos, ref_base in pairs:
+        if qpos is None or rpos is None or ref_base is None:
+            continue
+        ref_up = ref_base.upper()
+        q_up = seq[qpos].upper() if qpos < len(seq) else ''
+        # Only deamination-direction mismatches qualify.
+        if ref_up == 'C' and q_up == 'T':
+            positions.append((int(rpos), 1))
+        elif ref_up == 'G' and q_up == 'A':
+            positions.append((int(rpos), 0))
+    return positions
+
+
 def _extract_deam(read, bed_out, query_to_ref=None,
                   block_scores: bool = False,
                   prob_threshold: int = 0) -> int:
@@ -812,34 +847,8 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     # G->A mismatch = flavor 0 (R/GA-dea). Slow (scans whole alignment)
     # so we only run it when the cheaper paths are empty and the read
     # actually carries an MD tag.
-    if not positions_list and read.has_tag('MD'):
-        seq = read.query_sequence
-        if seq:
-            # Pre-validate MD vs CIGAR so we never trigger pysam's
-            # AssertionError path -- that path corrupts malloc state in
-            # some pysam versions and crashes the worker later with
-            # "malloc(): invalid size". Cheap check in pure Python.
-            from fiberhmm.daf.encoder import md_matches_cigar
-            pairs = None
-            if md_matches_cigar(read):
-                try:
-                    pairs = read.get_aligned_pairs(with_seq=True)
-                except Exception:
-                    # Belt-and-suspenders: even with matching lengths pysam
-                    # can raise on malformed inner MD (e.g. negative skips).
-                    # Skip the read rather than risk corrupted state.
-                    pairs = None
-            if pairs:
-                for qpos, rpos, ref_base in pairs:
-                    if qpos is None or rpos is None or ref_base is None:
-                        continue
-                    ref_up = ref_base.upper()
-                    q_up = seq[qpos].upper() if qpos < len(seq) else ''
-                    # Only deamination-direction mismatches qualify.
-                    if ref_up == 'C' and q_up == 'T':
-                        positions_list.append((int(rpos), 1))
-                    elif ref_up == 'G' and q_up == 'A':
-                        positions_list.append((int(rpos), 0))
+    if not positions_list:
+        positions_list.extend(_deam_md_mismatch_positions(read))
 
     if not positions_list:
         return 0

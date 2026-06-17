@@ -827,6 +827,18 @@ class _FakeReadWithMD(_FakeReadWithSeq):
         return self._pairs if with_seq else [(p[0], p[1]) for p in self._pairs]
 
 
+def test_deam_md_mismatch_positions_collects_deamination_flavors():
+    read_seq = 'ATAGTACG'
+    ref_for_pairs = 'ACGGTACG'
+    pairs = [(i, 100 + i, ref_for_pairs[i]) for i in range(len(read_seq))]
+    read = _FakeReadWithMD(seq=read_seq, pairs=pairs, ref_start=100)
+
+    assert extract_tags._deam_md_mismatch_positions(read) == [
+        (101, 1),
+        (102, 0),
+    ]
+
+
 def test_deam_priority3_md_mismatch_extracts_c_to_t_and_g_to_a():
     """When MM/ML has no dU and the sequence has no R/Y, path-3 falls
     back to walking get_aligned_pairs(with_seq=True) and picks out
