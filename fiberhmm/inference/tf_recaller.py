@@ -266,6 +266,15 @@ def merge_intervals(intervals: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
     return [(a, b) for a, b in merged]
 
 
+def _bounded_scan_interval(start, length, read_len: int) -> Optional[Tuple[int, int]]:
+    start = int(start)
+    length = int(length)
+    if length <= 0:
+        return None
+    bounded = (max(0, start), min(int(read_len), start + length))
+    return bounded if bounded[1] > bounded[0] else None
+
+
 def build_scan_intervals(ns: Sequence[int], nl: Sequence[int],
                          as_: Sequence[int], al: Sequence[int],
                          read_len: int, unify_threshold: int = 90
@@ -278,17 +287,15 @@ def build_scan_intervals(ns: Sequence[int], nl: Sequence[int],
     """
     iv: List[Tuple[int, int]] = []
     for s, length in zip(as_, al):
-        s = int(s)
-        length = int(length)
-        if length > 0:
-            iv.append((s, s + length))
+        interval = _bounded_scan_interval(s, length, read_len)
+        if interval is not None:
+            iv.append(interval)
     for s, length in zip(ns, nl):
-        s = int(s)
         length = int(length)
         if 0 < length < unify_threshold:
-            iv.append((s, s + length))
-    iv = [(max(0, a), min(read_len, b)) for a, b in iv]
-    iv = [(a, b) for a, b in iv if b > a]
+            interval = _bounded_scan_interval(s, length, read_len)
+            if interval is not None:
+                iv.append(interval)
     return merge_intervals(iv)
 
 

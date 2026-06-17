@@ -235,6 +235,13 @@ def test_merge_intervals():
     assert merge_intervals([(0, 10), (20, 30)]) == [(0, 10), (20, 30)]
 
 
+def test_bounded_scan_interval_clips_to_read_bounds():
+    assert tf_recaller._bounded_scan_interval(-5, 10, 100) == (0, 5)
+    assert tf_recaller._bounded_scan_interval(95, 10, 100) == (95, 100)
+    assert tf_recaller._bounded_scan_interval(10, 0, 100) is None
+    assert tf_recaller._bounded_scan_interval(120, 5, 100) is None
+
+
 def test_build_scan_intervals_includes_short_nucs():
     # MSPs at [0, 100), short nuc at [200, 240) (nl=40), big nuc at [400, 600)
     iv = build_scan_intervals(
