@@ -277,17 +277,8 @@ def _submit_next_region(executor, region_iter, input_bam: str, pending: dict) ->
     return True
 
 
-def _write_batch_to_h5(grp, fibers: List[Dict], start_idx: int):
-    """
-    Write a batch of fibers to HDF5 efficiently.
-
-    Uses batched dataset creation which is faster than individual creates.
-    """
+def _h5_batch_metadata(fibers: List[Dict]):
     n = len(fibers)
-    if n == 0:
-        return
-
-    # Pre-allocate metadata arrays
     fiber_ids = []
     starts = np.zeros(n, dtype=np.int32)
     ends = np.zeros(n, dtype=np.int32)
@@ -299,6 +290,22 @@ def _write_batch_to_h5(grp, fibers: List[Dict], start_idx: int):
         ends[i] = fiber['ref_end']
         strands.append(fiber['strand'])
 
+    return fiber_ids, starts, ends, strands
+
+
+def _write_batch_to_h5(grp, fibers: List[Dict], start_idx: int):
+    """
+    Write a batch of fibers to HDF5 efficiently.
+
+    Uses batched dataset creation which is faster than individual creates.
+    """
+    n = len(fibers)
+    if n == 0:
+        return
+
+    fiber_ids, starts, ends, strands = _h5_batch_metadata(fibers)
+
+    for i, fiber in enumerate(fibers):
         idx = start_idx + i
 
         # Write variable-length arrays

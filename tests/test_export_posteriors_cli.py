@@ -82,6 +82,16 @@ def test_modified_base_positions_forward_filters_quality_and_parser_errors():
 
 
 def test_h5_batch_metadata_helpers_append_and_concatenate():
+    ids, starts, ends, strands = export_posteriors._h5_batch_metadata([
+        {"read_name": "read-a", "ref_start": 10, "ref_end": 15, "strand": "+"},
+        {"read_name": "read-b", "ref_start": 20, "ref_end": 25, "strand": "-"},
+    ])
+
+    assert ids == ["read-a", "read-b"]
+    assert strands == ["+", "-"]
+    np.testing.assert_array_equal(starts, np.array([10, 20], dtype=np.int32))
+    np.testing.assert_array_equal(ends, np.array([15, 25], dtype=np.int32))
+
     meta = {"ids": [], "starts": [], "ends": [], "strands": []}
 
     export_posteriors._append_h5_batch_metadata(
