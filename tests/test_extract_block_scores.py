@@ -1066,6 +1066,55 @@ def test_deam_priority3_md_mismatch_extracts_c_to_t_and_g_to_a():
     assert flavors == [1, 0]
 
 
+def test_deam_positions_by_priority_stops_at_first_nonempty_source(monkeypatch):
+    read = SimpleNamespace(query_sequence="RY")
+    aligned_pairs = np.array([10, 11])
+    calls = []
+
+    monkeypatch.setattr(
+        extract_tags,
+        "_deam_mm_ml_positions",
+        lambda *_: calls.append("mm") or [(1, 0)],
+    )
+    monkeypatch.setattr(
+        extract_tags,
+        "_deam_iupac_positions",
+        lambda *_: calls.append("iupac") or [(2, 1)],
+    )
+    monkeypatch.setattr(
+        extract_tags,
+        "_deam_md_mismatch_positions",
+        lambda *_: calls.append("md") or [(3, 0)],
+    )
+
+    assert extract_tags._deam_positions_by_priority(
+        read, aligned_pairs, 125,
+    ) == [(1, 0)]
+    assert calls == ["mm"]
+
+    calls.clear()
+    monkeypatch.setattr(
+        extract_tags,
+        "_deam_mm_ml_positions",
+        lambda *_: calls.append("mm") or [],
+    )
+    assert extract_tags._deam_positions_by_priority(
+        read, aligned_pairs, 125,
+    ) == [(2, 1)]
+    assert calls == ["mm", "iupac"]
+
+    calls.clear()
+    monkeypatch.setattr(
+        extract_tags,
+        "_deam_iupac_positions",
+        lambda *_: calls.append("iupac") or [],
+    )
+    assert extract_tags._deam_positions_by_priority(
+        read, aligned_pairs, 125,
+    ) == [(3, 0)]
+    assert calls == ["mm", "iupac", "md"]
+
+
 def test_looks_like_fiber_seq_detects_hia5_bams():
     """Regression for Christy LaFlamme's crash on surjected fiber-seq
     CRAMs: --deam should auto-skip on fiber-seq BAMs in --all mode to

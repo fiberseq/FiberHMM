@@ -863,6 +863,22 @@ def _deam_md_mismatch_positions(read) -> list:
     return positions
 
 
+def _deam_positions_by_priority(read, aligned_pairs, prob_threshold: int) -> list:
+    """Return the first non-empty deam call source in FiberBrowser order."""
+    # Priority 1: MM/ML-native 'u' dU calls.
+    positions = _deam_mm_ml_positions(read, aligned_pairs, prob_threshold)
+    if positions:
+        return positions
+
+    # Priority 2: IUPAC R/Y in the query sequence.
+    positions = _deam_iupac_positions(read.query_sequence, aligned_pairs)
+    if positions:
+        return positions
+
+    # Priority 3: ref mismatch via MD tag. This is slower, so it remains last.
+    return _deam_md_mismatch_positions(read)
+
+
 def _extract_deam(read, bed_out, query_to_ref=None,
                   block_scores: bool = False,
                   prob_threshold: int = 0) -> int:
@@ -885,27 +901,7 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     MM/ML calls can be filtered up front via prob_threshold).
     """
     aligned_pairs = query_to_ref if query_to_ref is not None else _build_query_to_ref(read)
-
-    positions_list = []  # (ref_pos, code) where code: 0=R, 1=Y
-
-    # --- Priority 1: MM/ML-native 'u' dU calls --------------------------
-    positions_list.extend(
-        _deam_mm_ml_positions(read, aligned_pairs, prob_threshold)
-    )
-
-    # --- Priority 2: IUPAC R/Y in the query sequence --------------------
-    if not positions_list:
-        seq = read.query_sequence
-        positions_list.extend(_deam_iupac_positions(seq, aligned_pairs))
-
-    # --- Priority 3: ref mismatch via MD tag ----------------------------
-    # Fallback for raw DAF BAMs that were neither MM/ML-tagged nor IUPAC-
-    # encoded. C->T mismatch on the ref = flavor 1 (Y/CT-dea),
-    # G->A mismatch = flavor 0 (R/GA-dea). Slow (scans whole alignment)
-    # so we only run it when the cheaper paths are empty and the read
-    # actually carries an MD tag.
-    if not positions_list:
-        positions_list.extend(_deam_md_mismatch_positions(read))
+    positions_list = _deam_positions_by_priority(read, aligned_pairs, prob_threshold)
 
     if not positions_list:
         return 0
