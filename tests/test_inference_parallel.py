@@ -629,6 +629,58 @@ def test_run_worker_fused_apply_stage_forwards_arguments(monkeypatch):
     )
 
 
+def test_build_worker_fused_recall_result_forwards_options(monkeypatch):
+    fiber_read = {"query_sequence": "ACGT"}
+    apply_result = {"ns": [1]}
+    hit = object()
+    miss = object()
+    seen = {}
+
+    def fake_build(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return {"recall": True}
+
+    monkeypatch.setattr(streaming_workers, "build_fused_recall_result", fake_build)
+    monkeypatch.setattr(streaming_workers, "_worker_recall_state", {
+        "recall_nucs": True,
+        "split_min_llr": 5.5,
+        "split_min_opps": 7,
+        "phase_nrl": 185,
+    })
+
+    assert streaming_workers._build_worker_fused_recall_result(
+        fiber_read,
+        apply_result,
+        hit,
+        miss,
+        min_llr=4.0,
+        min_opps=3,
+        unify_threshold=90,
+        with_scores=True,
+        nuc_min_size=85,
+        msp_min_size=20,
+    ) == {"recall": True}
+    assert seen["args"] == (
+        fiber_read,
+        apply_result,
+        hit,
+        miss,
+        4.0,
+        3,
+        90,
+        True,
+    )
+    assert seen["kwargs"] == {
+        "recall_nucs": True,
+        "split_min_llr": 5.5,
+        "split_min_opps": 7,
+        "nuc_min_size": 85,
+        "msp_min_size": 20,
+        "phase_nrl": 185,
+    }
+
+
 def test_fused_payload_worker_counts_per_read_failures(monkeypatch):
     def fake_extract(payload, mode, prob_threshold):
         if payload == "extract-bad":

@@ -133,6 +133,31 @@ def _run_worker_fused_apply_stage(
     )
 
 
+def _build_worker_fused_recall_result(
+    fiber_read,
+    apply_result,
+    llr_hit,
+    llr_miss,
+    min_llr: float,
+    min_opps: int,
+    unify_threshold: int,
+    with_scores: bool,
+    nuc_min_size: int,
+    msp_min_size: int,
+):
+    return build_fused_recall_result(
+        fiber_read,
+        apply_result,
+        llr_hit,
+        llr_miss,
+        min_llr,
+        min_opps,
+        unify_threshold,
+        with_scores,
+        **_worker_recall_options(nuc_min_size, msp_min_size),
+    )
+
+
 def _init_bam_worker(model_path, debug_timing=False):
     """Initialize worker process with model."""
     global _worker_model, _worker_debug_timing
@@ -296,7 +321,7 @@ def _process_fused_payload_chunk_worker(
         if not apply_result_has_footprints(apply_result):
             return None
 
-        return build_fused_recall_result(
+        return _build_worker_fused_recall_result(
             fiber_read,
             apply_result,
             llr_hit,
@@ -305,7 +330,8 @@ def _process_fused_payload_chunk_worker(
             min_opps,
             unify_threshold,
             with_scores,
-            **_worker_recall_options(nuc_min_size, msp_min_size),
+            nuc_min_size,
+            msp_min_size,
         )
 
     return _process_worker_items(chunk_payloads, process_item)
