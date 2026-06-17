@@ -209,6 +209,13 @@ def cmd_inspect(args):
 # transfer subcommand
 # =============================================================================
 
+
+def _target_bases_for_transfer_mode(mode):
+    if mode == 'daf':
+        return ['C', 'G']
+    return ['A']
+
+
 class AccessibilityCounter:
     """Count bases in accessible vs inaccessible regions per context."""
 
@@ -421,12 +428,7 @@ def _process_target_bam(bam_path, mode, max_context, args):
     from fiberhmm.probabilities.context_counter import ContextCounter
     from fiberhmm.probabilities.utils import detect_strand_and_base
 
-    if mode in ('pacbio-fiber', 'nanopore-fiber'):
-        target_bases = ['A']
-    elif mode == 'daf':
-        target_bases = ['C', 'G']
-    else:
-        target_bases = ['A']
+    target_bases = _target_bases_for_transfer_mode(mode)
 
     counters = {base: ContextCounter(max_context, base) for base in target_bases}
     total_reads = 0
@@ -579,12 +581,7 @@ def cmd_transfer(args):
     print(f"Target mode: {args.mode}")
     print(f"Context sizes: {args.context_sizes}")
 
-    if args.mode in ('pacbio-fiber', 'nanopore-fiber'):
-        target_bases = ['A']
-    elif args.mode == 'daf':
-        target_bases = ['C', 'G']
-    else:
-        target_bases = ['A']
+    target_bases = _target_bases_for_transfer_mode(args.mode)
 
     print(f"Target bases: {', '.join(target_bases)}")
 
