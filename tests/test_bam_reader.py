@@ -21,6 +21,9 @@ try:
         ContextEncoder,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
+        _mm_base_and_mod_code,
+        _mm_mod_spec_parts,
+        _mm_target_base,
         detect_daf_strand,
         encode_from_query_sequence,
         get_reference_positions_array,
@@ -34,6 +37,9 @@ except ImportError:
         ContextEncoder,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
+        _mm_base_and_mod_code,
+        _mm_mod_spec_parts,
+        _mm_target_base,
         detect_daf_strand,
         encode_from_query_sequence,
         get_reference_positions_array,
@@ -202,6 +208,17 @@ class TestHexamerLookup:
 
 class TestMMTagParsing:
     """Test MM/ML tag parsing functions."""
+
+    def test_mm_mod_spec_helpers_parse_base_mod_and_skips(self):
+        base_mod, skips = _mm_mod_spec_parts("A+a.,0,5,3")
+
+        assert base_mod == "A+a."
+        np.testing.assert_array_equal(skips, [0, 5, 3])
+        assert _mm_target_base(base_mod) == "A"
+        assert _mm_target_base("") is None
+        assert _mm_base_and_mod_code(base_mod) == ("A", "a")
+        assert _mm_base_and_mod_code("A") is None
+        assert _mm_mod_spec_parts("A+a.") is None
 
     def test_parse_mm_tag_basic(self):
         """Test basic MM tag parsing."""

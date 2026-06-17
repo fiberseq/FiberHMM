@@ -276,6 +276,32 @@ def _mm_skip_counts(raw_counts) -> np.ndarray:
         return np.asarray(skip_counts, dtype=np.int64)
 
 
+def _mm_mod_spec_parts(mod_spec: str):
+    parts = mod_spec.split(',')
+    if len(parts) < 2:
+        return None
+    return parts[0], _mm_skip_counts(parts[1:])
+
+
+def _mm_target_base(base_mod: str) -> Optional[str]:
+    if len(base_mod) == 0:
+        return None
+    return base_mod[0].upper()
+
+
+def _mm_base_and_mod_code(base_mod: str) -> Optional[Tuple[str, str]]:
+    if len(base_mod) < 3:
+        return None
+    return base_mod[0].upper(), base_mod[2]
+
+
+def _cached_base_positions(cache: Dict[str, np.ndarray], target_base: str,
+                           seq_bytes: np.ndarray) -> np.ndarray:
+    if target_base not in cache:
+        cache[target_base] = np.where(seq_bytes == ord(target_base))[0]
+    return cache[target_base]
+
+
 def _target_base_allowed_for_mode(target_base: str, mode: str) -> bool:
     if mode == 'pacbio-fiber':
         return target_base in ('A', 'T')
@@ -324,29 +350,26 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
     for mod_spec in mm_tag.split(';'):
         if not mod_spec:
             continue
-        parts = mod_spec.split(',')
-        if len(parts) < 2:
+        parts = _mm_mod_spec_parts(mod_spec)
+        if parts is None:
             continue
+        base_mod, skip_arr = parts
 
-        base_mod = parts[0]  # e.g. "A+a" or "A+a." or "C+m?"
-        skip_arr = _mm_skip_counts(parts[1:])
         n_mods = len(skip_arr)
 
         # Parse "X+y" or "X+y." or "X-y?" into (target_base, mod_code)
-        if len(base_mod) < 3:
+        base_and_mod = _mm_base_and_mod_code(base_mod)
+        if base_and_mod is None:
             ml_idx += n_mods
             continue
-        target_base = base_mod[0].upper()
-        # mod_code is the 3rd char (2 chars in: after base + strand)
-        mod_code = base_mod[2]
+        target_base, mod_code = base_and_mod
 
         if n_mods == 0:
             continue
         # Target positions in the sequence (cached per base)
-        if target_base not in base_positions_cache:
-            base_positions_cache[target_base] = np.where(
-                seq_bytes == ord(target_base))[0]
-        base_positions = base_positions_cache[target_base]
+        base_positions = _cached_base_positions(
+            base_positions_cache, target_base, seq_bytes,
+        )
 
         if len(base_positions) == 0:
             ml_idx += n_mods
@@ -520,18 +543,15 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
         if not mod_spec:
             continue
 
-        parts = mod_spec.split(',')
-        if len(parts) < 2:
+        parts = _mm_mod_spec_parts(mod_spec)
+        if parts is None:
             continue
-
-        base_mod = parts[0]
-        skip_arr = _mm_skip_counts(parts[1:])
+        base_mod, skip_arr = parts
 
         n_mods = len(skip_arr)
 
-        if len(base_mod) > 0:
-            target_base = base_mod[0].upper()
-        else:
+        target_base = _mm_target_base(base_mod)
+        if target_base is None:
             ml_idx += n_mods
             continue
 
@@ -539,9 +559,9 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
             ml_idx += n_mods
             continue
 
-        if target_base not in base_pos_cache:
-            base_pos_cache[target_base] = np.where(search_bytes == ord(target_base))[0]
-        base_positions = base_pos_cache[target_base]
+        base_positions = _cached_base_positions(
+            base_pos_cache, target_base, search_bytes,
+        )
 
         if n_mods == 0 or len(base_positions) == 0:
             ml_idx += n_mods
