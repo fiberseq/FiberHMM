@@ -583,73 +583,57 @@ def configure_daf_chimera_filter(filter_chimeras: bool = True,
     _DAF_CHIMERA_CFG['purity'] = float(purity)
 
 
-def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
-                                    ref_fasta=None) -> Optional[dict]:
-    """Extract minimal data needed for HMM processing from a pysam read."""
-    query_sequence = read.query_sequence
-    if not query_sequence:
+def _extract_daf_iupac_fiber_read(read, query_sequence: str) -> Optional[dict]:
+    st_tag = read.get_tag('st') if read.has_tag('st') else None
+    mod_positions, strand, conv_seq = extract_daf_iupac_positions(query_sequence, st_tag)
+    if not mod_positions:
+        return None
+    return {
+        'read_id': read.query_name,
+        'query_sequence': conv_seq,       # Y->T, R->A (pure ACGT)
+        'm6a_query_positions': mod_positions,
+        'query_length': len(conv_seq),
+        '_daf_strand': strand,            # pre-computed from st tag
+    }
+
+
+def _extract_daf_md_fiber_read(read, query_sequence: str, ref_fasta=None):
+    md_result = getattr(read, '_daf_md_result', None)
+    if md_result is None and hasattr(read, 'get_aligned_pairs'):
+        from fiberhmm.daf.encoder import get_daf_positions
+        md_result = get_daf_positions(read, ref_fasta=ref_fasta)
+    if md_result is None:
         return None
 
-    # IUPAC R/Y branch: DAF-seq reads with deamination encoded in the sequence
-    if mode == 'daf' and has_iupac_encoding(query_sequence):
-        st_tag = read.get_tag('st') if read.has_tag('st') else None
-        mod_positions, strand, conv_seq = extract_daf_iupac_positions(query_sequence, st_tag)
-        if not mod_positions:
-            return None
-        return {
-            'read_id': read.query_name,
-            'query_sequence': conv_seq,       # Y→T, R→A (pure ACGT)
-            'm6a_query_positions': mod_positions,
-            'query_length': len(conv_seq),
-            '_daf_strand': strand,            # pre-computed from st tag
-        }
+    ct_pos, ga_pos, strand_tag = md_result
+    # Strand-swap chimera filter (DAF only): a read deaminated CT in one
+    # segment and GA in another corrupts the single-strand assignment.
+    # Drop it (returns a distinct sentinel so callers can report counts).
+    if _DAF_CHIMERA_CFG['filter']:
+        from fiberhmm.daf.encoder import is_daf_chimera
+        if is_daf_chimera(ct_pos, ga_pos,
+                          min_seg_events=_DAF_CHIMERA_CFG['min_seg'],
+                          purity=_DAF_CHIMERA_CFG['purity']):
+            return CHIMERA_SKIP
 
-    # MD fallback for DAF mode: raw aligned BAM (no R/Y in sequence yet).
-    # Parse MD on the fly into the same (mod_positions, strand) the R/Y
-    # path would have produced, so the HMM emits byte-identical calls vs.
-    # the two-pass `fiberhmm-daf-encode | fiberhmm-call` pipeline.
-    #
-    # Two sources for the MD result:
-    #   (a) Live pysam AlignedSegment with get_aligned_pairs available
-    #       (region-parallel workers fetch reads directly).
-    #   (b) Pre-computed by make_apply_payload and stashed on the slim
-    #       payload stub as ``_daf_md_result`` (slim-IPC path).
-    if mode == 'daf':
-        md_result = getattr(read, '_daf_md_result', None)
-        if md_result is None and hasattr(read, 'get_aligned_pairs'):
-            from fiberhmm.daf.encoder import get_daf_positions
-            md_result = get_daf_positions(read, ref_fasta=ref_fasta)
-        if md_result is not None:
-            ct_pos, ga_pos, strand_tag = md_result
-            # Strand-swap chimera filter (DAF only): a read deaminated CT in one
-            # segment and GA in another corrupts the single-strand assignment.
-            # Drop it (returns a distinct sentinel so callers can report counts).
-            if _DAF_CHIMERA_CFG['filter']:
-                from fiberhmm.daf.encoder import is_daf_chimera
-                if is_daf_chimera(ct_pos, ga_pos,
-                                  min_seg_events=_DAF_CHIMERA_CFG['min_seg'],
-                                  purity=_DAF_CHIMERA_CFG['purity']):
-                    return CHIMERA_SKIP
-            mod_positions = set(ct_pos) if strand_tag == 'CT' else set(ga_pos)
-            if not mod_positions:
-                return None
-            # query_sequence is already raw ACGT (no R/Y to decode);
-            # uppercase to match what extract_daf_iupac_positions emits.
-            daf_strand = daf_strand_from_tag(strand_tag)
-            return {
-                'read_id': read.query_name,
-                'query_sequence': query_sequence.upper(),
-                'm6a_query_positions': mod_positions,
-                'query_length': len(query_sequence),
-                '_daf_strand': daf_strand if daf_strand != '.' else '-',
-            }
+    mod_positions = set(ct_pos) if strand_tag == 'CT' else set(ga_pos)
+    if not mod_positions:
+        return None
 
-    # Legacy MM/ML path: use the fast vectorized parser instead of
-    # read.modified_bases.  pysam's modified_bases returns a dict of
-    # (base, strand, mod_code) -> [(pos, qual), ...] which forces a Python
-    # iteration over every modification (~5000 per Hia5 PacBio read =
-    # ~5-10 ms/read).  parse_mm_tag_query_positions does the same parse in
-    # vectorized numpy and accepts ML as bytes (no PyInt materialization).
+    # query_sequence is already raw ACGT (no R/Y to decode); uppercase to match
+    # what extract_daf_iupac_positions emits.
+    daf_strand = daf_strand_from_tag(strand_tag)
+    return {
+        'read_id': read.query_name,
+        'query_sequence': query_sequence.upper(),
+        'm6a_query_positions': mod_positions,
+        'query_length': len(query_sequence),
+        '_daf_strand': daf_strand if daf_strand != '.' else '-',
+    }
+
+
+def _extract_mm_ml_fiber_read(read, query_sequence: str, mode: str,
+                              prob_threshold: int) -> Optional[dict]:
     mm_tag = get_preferred_tag(read, 'MM', 'Mm', '')
     ml_raw = get_preferred_tag(read, 'ML', 'Ml', None)
 
@@ -681,6 +665,41 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         'query_length': len(query_sequence),
         'is_reverse': bool(read.is_reverse),
     }
+
+
+def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
+                                    ref_fasta=None) -> Optional[dict]:
+    """Extract minimal data needed for HMM processing from a pysam read."""
+    query_sequence = read.query_sequence
+    if not query_sequence:
+        return None
+
+    # IUPAC R/Y branch: DAF-seq reads with deamination encoded in the sequence
+    if mode == 'daf' and has_iupac_encoding(query_sequence):
+        return _extract_daf_iupac_fiber_read(read, query_sequence)
+
+    # MD fallback for DAF mode: raw aligned BAM (no R/Y in sequence yet).
+    # Parse MD on the fly into the same (mod_positions, strand) the R/Y
+    # path would have produced, so the HMM emits byte-identical calls vs.
+    # the two-pass `fiberhmm-daf-encode | fiberhmm-call` pipeline.
+    #
+    # Two sources for the MD result:
+    #   (a) Live pysam AlignedSegment with get_aligned_pairs available
+    #       (region-parallel workers fetch reads directly).
+    #   (b) Pre-computed by make_apply_payload and stashed on the slim
+    #       payload stub as ``_daf_md_result`` (slim-IPC path).
+    if mode == 'daf':
+        md_read = _extract_daf_md_fiber_read(read, query_sequence, ref_fasta)
+        if md_read is not None:
+            return md_read
+
+    # Legacy MM/ML path: use the fast vectorized parser instead of
+    # read.modified_bases.  pysam's modified_bases returns a dict of
+    # (base, strand, mod_code) -> [(pos, qual), ...] which forces a Python
+    # iteration over every modification (~5000 per Hia5 PacBio read =
+    # ~5-10 ms/read).  parse_mm_tag_query_positions does the same parse in
+    # vectorized numpy and accepts ML as bytes (no PyInt materialization).
+    return _extract_mm_ml_fiber_read(read, query_sequence, mode, prob_threshold)
 
 
 def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,

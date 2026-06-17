@@ -7,6 +7,7 @@ import pytest
 from fiberhmm.core.hmm import FiberHMM
 import fiberhmm.inference.engine as engine
 from fiberhmm.inference.engine import (
+    _extract_fiber_read_from_pysam,
     _extract_footprints_from_states,
     _footprint_runs,
     detect_mode_from_bam,
@@ -220,3 +221,60 @@ class TestModeDetection:
         )
 
         assert detect_mode_from_bam("fake.bam", n_sample=1) == "daf"
+
+
+class TestFiberReadExtraction:
+    class FakeRead:
+        query_name = "read1"
+        is_reverse = False
+
+        def __init__(self, sequence, tags=None):
+            self.query_sequence = sequence
+            self._tags = tags or {}
+
+        def has_tag(self, tag):
+            return tag in self._tags
+
+        def get_tag(self, tag):
+            if tag not in self._tags:
+                raise KeyError(tag)
+            return self._tags[tag]
+
+    def test_extract_fiber_read_prefers_daf_iupac_branch(self):
+        read = self.FakeRead("ACYR", {"st": "CT"})
+
+        fiber_read = _extract_fiber_read_from_pysam(
+            read,
+            mode="daf",
+            prob_threshold=125,
+        )
+
+        assert fiber_read == {
+            "read_id": "read1",
+            "query_sequence": "ACTA",
+            "m6a_query_positions": {2, 3},
+            "query_length": 4,
+            "_daf_strand": "+",
+        }
+
+    def test_extract_fiber_read_mm_ml_branch_preserves_reverse_flag(self):
+        read = self.FakeRead(
+            "AAAA",
+            {
+                "MM": "T+a,0;",
+                "ML": bytes([200]),
+            },
+        )
+        read.is_reverse = True
+
+        fiber_read = _extract_fiber_read_from_pysam(
+            read,
+            mode="pacbio-fiber",
+            prob_threshold=125,
+        )
+
+        assert fiber_read["read_id"] == "read1"
+        assert fiber_read["query_sequence"] == "AAAA"
+        assert fiber_read["query_length"] == 4
+        assert fiber_read["is_reverse"] is True
+        assert fiber_read["m6a_query_positions"] == {3}
