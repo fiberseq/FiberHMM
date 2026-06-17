@@ -244,3 +244,9 @@ def test_cumulative_observation_percentages_sorts_and_handles_empty_totals():
 
     assert percentages.tolist() == [80.0, 100.0, 100.0]
     assert stats._cumulative_observation_percentages([0, 0]).tolist() == []
+
+
+def test_positive_log10_observations_filters_zero_totals():
+    logged = stats._positive_log10_observations([0, 9, 99])
+
+    assert logged.round(3).tolist() == [1.0, 2.0]
