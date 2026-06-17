@@ -100,6 +100,33 @@ def test_raise_if_command_failed_preserves_process_output():
     assert exc.value.stderr == "failed"
 
 
+def test_concatenate_trivial_region_bams_handles_empty_single_and_many(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        bam_output,
+        "_write_empty_bam_from_input_header",
+        lambda input_bam, output_bam: calls.append(("empty", input_bam, output_bam)),
+    )
+    monkeypatch.setattr(
+        bam_output.shutil,
+        "copy",
+        lambda source_bam, output_bam: calls.append(("copy", source_bam, output_bam)),
+    )
+
+    assert bam_output._concatenate_trivial_region_bams("input.bam", "out.bam", [])
+    assert bam_output._concatenate_trivial_region_bams(
+        "input.bam", "out.bam", ["region.bam"]
+    )
+    assert not bam_output._concatenate_trivial_region_bams(
+        "input.bam", "out.bam", ["a.bam", "b.bam"]
+    )
+    assert calls == [
+        ("empty", "input.bam", "out.bam"),
+        ("copy", "region.bam", "out.bam"),
+    ]
+
+
 def test_convert_to_bigbed_sorts_without_shell(monkeypatch, tmp_path):
     bed = tmp_path / "calls.bed"
     chrom_sizes = tmp_path / "chrom.sizes"

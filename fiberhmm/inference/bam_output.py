@@ -293,6 +293,20 @@ def _write_empty_bam_from_input_header(input_bam: str, output_bam: str) -> None:
             pass
 
 
+def _concatenate_trivial_region_bams(
+    input_bam: str,
+    output_bam: str,
+    bam_files: List[str],
+) -> bool:
+    if len(bam_files) == 0:
+        _write_empty_bam_from_input_header(input_bam, output_bam)
+        return True
+    if len(bam_files) == 1:
+        shutil.copy(bam_files[0], output_bam)
+        return True
+    return False
+
+
 def _concatenate_bams_with_pysam(
     bam_files: List[str],
     output_bam: str,
@@ -337,11 +351,7 @@ def _concatenate_region_bams(
 
     concat_start = time.time()
 
-    if len(bam_files) == 0:
-        _write_empty_bam_from_input_header(input_bam, output_bam)
-        return
-    if len(bam_files) == 1:
-        shutil.copy(bam_files[0], output_bam)
+    if _concatenate_trivial_region_bams(input_bam, output_bam, bam_files):
         return
 
     bam_list_file = os.path.join(temp_dir, 'bam_list.txt')
