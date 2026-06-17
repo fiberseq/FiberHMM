@@ -347,6 +347,11 @@ def _msp_gaps_between_nucs(
     return msps
 
 
+def _ordered_positive_nuc_calls(nuc_calls) -> List[NucCall]:
+    return sorted((n for n in nuc_calls if n.length > 0),
+                  key=lambda n: (n.start, -(n.start + n.length)))
+
+
 def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
                             nuc_min_size=85):
     """Produce non-overlapping nucleosomes + complementary MSPs that TILE
@@ -370,8 +375,7 @@ def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
     """
     floor = max(1, int(msp_min_size))
     nfloor = max(1, int(nuc_min_size))
-    ordered = sorted((n for n in nuc_calls if n.length > 0),
-                     key=lambda n: (n.start, -(n.start + n.length)))
+    ordered = _ordered_positive_nuc_calls(nuc_calls)
     kept = []
     last_end = span_lo
     for n in ordered:

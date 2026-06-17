@@ -10,6 +10,7 @@ from fiberhmm.inference.nuc_recaller import (
     _circular_uncovered_cut,
     _keep_nuc_against_circular_intervals,
     _msp_gaps_between_nucs,
+    _ordered_positive_nuc_calls,
     _phase_cut_window,
     _promoted_nuc_from_tf_call,
     _rotate_circular_nuc_calls,
@@ -318,6 +319,23 @@ def test_msp_gaps_between_nucs_respects_floor():
     ]
     assert _msp_gaps_between_nucs(kept, span_lo=0, span_hi=70, floor=15) == [
         (30, 20),
+    ]
+
+
+def test_ordered_positive_nuc_calls_drops_empty_and_prefers_longer_same_start():
+    calls = [
+        NucCall(10, 20, 1, 2, 3),
+        NucCall(10, 40, 4, 5, 6),
+        NucCall(5, 0, 7, 8, 9),
+        NucCall(30, 10, 10, 11, 12),
+    ]
+
+    ordered = _ordered_positive_nuc_calls(calls)
+
+    assert [(n.start, n.length) for n in ordered] == [
+        (10, 40),
+        (10, 20),
+        (30, 10),
     ]
 
 
