@@ -185,6 +185,37 @@ def test_extract_read_types_reuses_query_ref_map(monkeypatch):
     assert built_for == [read]
 
 
+def test_ma_annotation_quality_values_pad_triplets_and_ignore_msp_quals():
+    assert extract_tags._ma_annotation_quality_values('tf', [10, 20]) == (
+        10, (10, 20, 0),
+    )
+    assert extract_tags._ma_annotation_quality_values('nuc', []) == (
+        0, (0, 0, 0),
+    )
+    assert extract_tags._ma_annotation_quality_values('msp', [99]) == (
+        0, (0,),
+    )
+
+
+def test_ma_block_score_columns_match_annotation_shape():
+    triplet_blocks = [
+        (100, 110, 5, (5, 6, 7), {}),
+        (120, 130, 8, (8, 9, 10), {}),
+    ]
+    scalar_blocks = [
+        (100, 110, 0, (0,), {}),
+        (120, 130, 0, (0,), {}),
+    ]
+
+    assert extract_tags._ma_block_score_columns('tf', triplet_blocks) == [
+        '5,8', '6,9', '7,10',
+    ]
+    assert extract_tags._ma_block_score_columns('nuc', triplet_blocks) == [
+        '5,8', '6,9', '7,10',
+    ]
+    assert extract_tags._ma_block_score_columns('msp', scalar_blocks) == ['0,0']
+
+
 # ------------------- autoSQL schemas --------------------------------
 
 def test_autosql_default_is_bed12_only():

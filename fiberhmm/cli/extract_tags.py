@@ -215,6 +215,28 @@ def _annotation_to_ref_block(ann, query_to_ref):
     return _query_interval_to_ref_block(ann['start'], ann['length'], query_to_ref)
 
 
+def _ma_annotation_quality_values(target_name: str, quals):
+    if target_name in ('tf', 'nuc'):
+        qvals = (
+            int(quals[0]) if len(quals) >= 1 else 0,
+            int(quals[1]) if len(quals) >= 2 else 0,
+            int(quals[2]) if len(quals) >= 3 else 0,
+        )
+        return qvals[0], qvals
+    return 0, (0,)
+
+
+def _ma_block_score_columns(target_name: str, blocks) -> list:
+    if target_name in ('tf', 'nuc'):
+        # tf.QQQ / nuc.QQQ: three per-block quality columns.
+        return [
+            ','.join(str(b[3][0]) for b in blocks),
+            ','.join(str(b[3][1]) for b in blocks),
+            ','.join(str(b[3][2]) for b in blocks),
+        ]
+    return [','.join(str(b[3][0]) for b in blocks)]
+
+
 def _mean_block_score(blocks, with_scores: bool) -> int:
     if not with_scores:
         return 0
@@ -274,24 +296,8 @@ def _extract_ma_interval_type(
         if block is None:
             continue
         ref_start, ref_end = block
-        if target_name == 'tf':
-            qvals = (
-                int(quals[0]) if len(quals) >= 1 else 0,
-                int(quals[1]) if len(quals) >= 2 else 0,
-                int(quals[2]) if len(quals) >= 3 else 0,
-            )
-            score = qvals[0]
-        elif target_name == 'nuc':
-            # nuc.Q (legacy) -> (nq, 0, 0); nuc.QQQ -> (nq, el, er).
-            qvals = (
-                int(quals[0]) if len(quals) >= 1 else 0,
-                int(quals[1]) if len(quals) >= 2 else 0,
-                int(quals[2]) if len(quals) >= 3 else 0,
-            )
-            score = qvals[0]
-        else:
-            qvals = (0,)
-            score = 0
+        # nuc.Q (legacy) -> (nq, 0, 0); nuc.QQQ/tf.QQQ keep the full triplet.
+        score, qvals = _ma_annotation_quality_values(target_name, quals)
         blocks.append((ref_start, ref_end, score, qvals, ann))
 
     if not blocks:
@@ -328,15 +334,7 @@ def _extract_ma_interval_type(
     mean_score = _mean_block_score(blocks, with_scores)
     extra = []
     if block_scores:
-        if target_name in ('tf', 'nuc'):
-            # tf.QQQ / nuc.QQQ: three per-block quality columns
-            extra.extend([
-                ','.join(str(b[3][0]) for b in blocks),
-                ','.join(str(b[3][1]) for b in blocks),
-                ','.join(str(b[3][2]) for b in blocks),
-            ])
-        else:
-            extra.append(','.join(str(b[3][0]) for b in blocks))
+        extra.extend(_ma_block_score_columns(target_name, blocks))
     row = _bed12_row(
         ref_name,
         chrom_start,
