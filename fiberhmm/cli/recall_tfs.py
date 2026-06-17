@@ -54,11 +54,12 @@ from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.core.tag_access import compact_ml_value
 from fiberhmm.io.bam_header import append_coord_marker
 from fiberhmm.inference.payload_read import PayloadRead
+from fiberhmm.inference.recall_tables import (
+    build_recall_llr_tables as _shared_build_recall_llr_tables,
+)
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
     HAS_NUMBA,
-    apply_emission_uplift,
-    build_llr_tables,
     recall_read,
     write_ma_tags,
 )
@@ -474,10 +475,7 @@ def _load_recall_model_config(model_path, args):
 
 
 def _build_recall_llr_tables(model, uplift):
-    llr_hit, llr_miss = build_llr_tables(model)
-    if abs(uplift - 1.0) > 1e-9:
-        llr_hit, llr_miss = apply_emission_uplift(llr_hit, llr_miss, model, uplift)
-    return llr_hit, llr_miss
+    return _shared_build_recall_llr_tables(model, uplift)
 
 
 def _also_write_legacy(args):

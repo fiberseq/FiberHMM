@@ -21,6 +21,7 @@ from fiberhmm.inference.fused_stages import (
     build_fused_recall_result,
     run_hmm_apply_stage,
 )
+from fiberhmm.inference.recall_tables import load_recall_llr_tables
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.region_types import (
     RegionBamResult,
@@ -470,14 +471,11 @@ def _init_fused_region_worker(
         params['ref_fasta'] = _pysam.FastaFile(ref_path)
     _worker_region_params = params
 
-    from fiberhmm.core.model_io import load_model_with_metadata
-    from fiberhmm.inference.tf_recaller import apply_emission_uplift, build_llr_tables
-
-    r_path = recall_model_path or apply_model_path
-    r_model, _, _ = load_model_with_metadata(r_path)
-    llr_hit, llr_miss = build_llr_tables(r_model)
-    if abs(emission_uplift - 1.0) > 1e-9:
-        llr_hit, llr_miss = apply_emission_uplift(llr_hit, llr_miss, r_model, emission_uplift)
+    llr_hit, llr_miss = load_recall_llr_tables(
+        recall_model_path,
+        apply_model_path,
+        emission_uplift,
+    )
     _worker_recall_state['llr_hit'] = llr_hit
     _worker_recall_state['llr_miss'] = llr_miss
 

@@ -9,6 +9,7 @@ from fiberhmm.inference.engine import (
     configure_daf_chimera_filter,
     extract_fiber_read_from_payload,
 )
+from fiberhmm.inference.recall_tables import load_recall_llr_tables
 
 # Picklable per-result marker for a DAF chimera-filtered read (CHIMERA_SKIP is an
 # identity sentinel that does not survive worker IPC, so the worker emits this
@@ -80,23 +81,11 @@ def _init_fused_worker(
     _worker_model = load_model_for_inference(apply_model_path)
     _worker_debug_timing = debug_timing
 
-    # Build TF-recall LLR tables from the recall model (or reuse apply model).
-    from fiberhmm.core.model_io import load_model_with_metadata
-    from fiberhmm.inference.tf_recaller import (
-        apply_emission_uplift,
-        build_llr_tables,
+    llr_hit, llr_miss = load_recall_llr_tables(
+        recall_model_path,
+        apply_model_path,
+        emission_uplift,
     )
-
-    r_path = recall_model_path or apply_model_path
-    r_model, _, _ = load_model_with_metadata(r_path)
-    llr_hit, llr_miss = build_llr_tables(r_model)
-    if abs(emission_uplift - 1.0) > 1e-9:
-        llr_hit, llr_miss = apply_emission_uplift(
-            llr_hit,
-            llr_miss,
-            r_model,
-            emission_uplift,
-        )
     _worker_recall_state['llr_hit'] = llr_hit
     _worker_recall_state['llr_miss'] = llr_miss
     _worker_recall_state['recall_nucs'] = recall_nucs

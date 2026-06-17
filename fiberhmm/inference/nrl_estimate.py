@@ -14,12 +14,12 @@ from typing import Optional
 import numpy as np
 import pysam
 
-from fiberhmm.core.model_io import load_model_for_inference, load_model_with_metadata
+from fiberhmm.core.model_io import load_model_for_inference
 from fiberhmm.inference.engine import CHIMERA_SKIP, _extract_fiber_read_from_pysam
 from fiberhmm.inference.fused_stages import run_hmm_apply_stage
 from fiberhmm.inference.nuc_recaller import recall_nucs_in_read
+from fiberhmm.inference.recall_tables import load_recall_llr_tables
 from fiberhmm.inference.read_filters import is_primary_mapped_alignment
-from fiberhmm.inference.tf_recaller import build_llr_tables
 
 # Window (bp) for the primary nucleosome-repeat peak: excludes sub-nucleosomal
 # gaps and 2x+ merge spacings so the estimate tracks the single-repeat mode.
@@ -52,8 +52,10 @@ def estimate_phase_nrl(
     (insufficient data).
     """
     model = load_model_for_inference(apply_model_path)
-    r_model, _, _ = load_model_with_metadata(recall_model_path or apply_model_path)
-    llr_hit, llr_miss = build_llr_tables(r_model)
+    llr_hit, llr_miss = load_recall_llr_tables(
+        recall_model_path,
+        apply_model_path,
+    )
 
     spacings = []
     n_reads = 0
