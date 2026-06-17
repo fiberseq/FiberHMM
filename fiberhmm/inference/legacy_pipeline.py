@@ -79,6 +79,32 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
             results.append(result)
 
     # Write annotated reads
+    reads_with_footprints, no_footprints = _write_processed_legacy_reads(
+        chunk_read_objs,
+        results,
+        outbam,
+        with_scores,
+        write_msps,
+    )
+
+    # Return results for posteriors if requested
+    if return_posteriors:
+        return (
+            reads_with_footprints,
+            no_footprints,
+            worker_failures,
+            list(zip(chunk_read_objs, chunk_reads, results)),
+        )
+    return reads_with_footprints, no_footprints, worker_failures, None
+
+
+def _write_processed_legacy_reads(
+    chunk_read_objs: list,
+    results: list,
+    outbam,
+    with_scores: bool,
+    write_msps: bool,
+) -> Tuple[int, int]:
     reads_with_footprints = 0
     no_footprints = 0
     for read_obj, result in zip(chunk_read_objs, results):
@@ -90,15 +116,7 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
 
         outbam.write(read_obj)
 
-    # Return results for posteriors if requested
-    if return_posteriors:
-        return (
-            reads_with_footprints,
-            no_footprints,
-            worker_failures,
-            list(zip(chunk_read_objs, chunk_reads, results)),
-        )
-    return reads_with_footprints, no_footprints, worker_failures, None
+    return reads_with_footprints, no_footprints
 
 
 def _legacy_posterior_ref_positions(read_obj):
