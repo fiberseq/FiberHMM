@@ -225,6 +225,14 @@ def _autosql_variant_suffix(block_scores: bool, circular_groups: bool) -> str:
     return variant
 
 
+def _autosql_file_suffix(variant: str) -> str:
+    return f'{variant}.as' if variant else '.as'
+
+
+def _autosql_file_name(extract_type: str, variant: str) -> str:
+    return f'fiberhmm_{extract_type}{variant}.as'
+
+
 def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
                       block_scores: bool = False,
                       sample_name: Optional[str] = None,
@@ -244,15 +252,14 @@ def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
     if schema is None:
         return None
     variant = _autosql_variant_suffix(block_scores, circular_groups)
-    suffix = f'{variant}.as' if variant else '.as'
+    suffix = _autosql_file_suffix(variant)
     if out_dir is None:
         fd, path = tempfile.mkstemp(prefix=f'fiberhmm_{extract_type}_',
                                      suffix=suffix)
         os.close(fd)
     else:
         os.makedirs(out_dir, exist_ok=True)
-        fname = f'fiberhmm_{extract_type}{variant}.as'
-        path = os.path.join(out_dir, fname)
+        path = os.path.join(out_dir, _autosql_file_name(extract_type, variant))
     with open(path, 'w') as f:
         f.write(schema)
     return path

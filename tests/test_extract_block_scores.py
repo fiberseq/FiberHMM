@@ -27,6 +27,8 @@ from fiberhmm.io.autosql import (
     AUTOSQL_SCHEMAS,
     CIRCULAR_FIELD_COUNT,
     EXTRA_FIELD_COUNTS,
+    _autosql_file_name,
+    _autosql_file_suffix,
     _autosql_variant_suffix,
     _canonical_autosql_type,
     _schema_description,
@@ -488,6 +490,13 @@ def test_write_autosql_for_writes_both_variants(tmp_path):
         assert 'blockEr' in content
     with open(circ) as f:
         assert 'circId' in f.read()
+
+
+def test_autosql_file_name_and_suffix_helpers():
+    assert _autosql_file_suffix('') == '.as'
+    assert _autosql_file_suffix('.bs') == '.bs.as'
+    assert _autosql_file_name('tf', '') == 'fiberhmm_tf.as'
+    assert _autosql_file_name('tf', '.bs.circ') == 'fiberhmm_tf.bs.circ.as'
 
 
 def test_schema_description_prepends_sample_marker_when_present():
