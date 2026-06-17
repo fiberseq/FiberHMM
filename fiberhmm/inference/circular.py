@@ -11,16 +11,19 @@ from fiberhmm.io.ma_tags import split_circular_interval
 Interval = Tuple[int, int]
 
 
+def _tiled_mod_positions(pos, read_length: int) -> tuple[int, ...]:
+    p = int(pos)
+    if 0 <= p < read_length:
+        return p, p + read_length, p + 2 * read_length
+    return ()
+
+
 def tile_sequence_and_mods(sequence: str, mod_positions: Iterable[int]) -> tuple[str, set[int]]:
     """Return 3x tiled sequence and modification positions."""
     read_length = len(sequence)
     tiled_mods: set[int] = set()
     for pos in mod_positions:
-        p = int(pos)
-        if 0 <= p < read_length:
-            tiled_mods.add(p)
-            tiled_mods.add(p + read_length)
-            tiled_mods.add(p + 2 * read_length)
+        tiled_mods.update(_tiled_mod_positions(pos, read_length))
     return sequence * 3, tiled_mods
 
 

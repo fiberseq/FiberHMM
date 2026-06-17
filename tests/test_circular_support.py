@@ -4,6 +4,7 @@ import numpy as np
 
 from fiberhmm.inference.circular import (
     _center_copy_bounds,
+    _tiled_mod_positions,
     circular_intervals_overlap,
     project_center_nuc_calls,
     project_center_runs,
@@ -40,6 +41,12 @@ def test_an_tag_roundtrip_uses_dot_for_empty_names():
     an = format_an_tag(["fhw_tf_0", "", None])
     assert an == "fhw_tf_0,.,."
     assert parse_an_tag(an) == ["fhw_tf_0", "", ""]
+
+
+def test_tiled_mod_positions_filters_invalid_positions():
+    assert _tiled_mod_positions(2, 10) == (2, 12, 22)
+    assert _tiled_mod_positions(-1, 10) == ()
+    assert _tiled_mod_positions(10, 10) == ()
 
 
 def test_tile_sequence_and_mods_replicates_positions_across_three_copies():
