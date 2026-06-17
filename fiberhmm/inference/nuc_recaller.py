@@ -122,6 +122,18 @@ def _refine_fragment(obs, a, b, llr_hit, llr_miss,
     return nuc, access
 
 
+def _split_on_accessible_cuts(obs, a, b, nhit, nmiss,
+                              split_min_llr, split_min_opps):
+    cuts = call_tfs_in_interval(obs, a, b, nhit, nmiss,
+                                split_min_llr, split_min_opps)
+    cuts = sorted(cuts, key=lambda c: c.start)
+    access = [(c.start, c.length) for c in cuts]
+    frags = _fragments_after_cuts(
+        a, b, ((c.start, c.start + c.length) for c in cuts)
+    )
+    return frags, access
+
+
 def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
                         phase_min_llr, phase_min_opps, phase_window):
     """Evidence-gated periodicity split of a long protected fragment.
@@ -210,16 +222,10 @@ def recall_nucs_in_read(
             continue
 
         # --- SPLIT: accessible runs inside the footprint are cuts ---
-        cuts = call_tfs_in_interval(obs, s, e, nhit, nmiss,
-                                    split_min_llr, split_min_opps)
-        cuts = sorted(cuts, key=lambda c: c.start)
-        for c in cuts:
-            access.append((c.start, c.length))
-
-        # --- fragments = footprint minus the cut spans ---
-        frags = _fragments_after_cuts(
-            s, e, ((c.start, c.start + c.length) for c in cuts)
+        frags, cut_access = _split_on_accessible_cuts(
+            obs, s, e, nhit, nmiss, split_min_llr, split_min_opps,
         )
+        access.extend(cut_access)
 
         # --- Pass 2 (optional): phase-prior split of long fragments ---
         for a, b in frags:

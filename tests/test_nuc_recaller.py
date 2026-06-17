@@ -6,6 +6,7 @@ import numpy as np
 from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
+    _split_on_accessible_cuts,
     assemble_circular_nuc_msp_tiling,
     assemble_nuc_msp_tiling,
     drop_short_nucs_overlapping_promoted,
@@ -65,6 +66,19 @@ def test_no_split_when_no_accessible_evidence():
     assert len(nucs) == 1
     assert nucs[0].length == 150
     assert access == []
+
+
+def test_split_on_accessible_cuts_returns_fragments_and_cut_access():
+    obs = _obs((MISS, 60), (HIT, 6), (MISS, 60))
+    llr_hit, llr_miss = _llr_tables()
+    frags, access = _split_on_accessible_cuts(
+        obs, 0, len(obs), -llr_hit, -llr_miss,
+        split_min_llr=4.0, split_min_opps=3,
+    )
+
+    assert len(frags) == 2
+    assert access
+    assert any(60 <= s <= 66 for s, _ in access)
 
 
 def test_subnucleosome_fragment_demoted_to_accessible():
