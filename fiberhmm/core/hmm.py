@@ -762,10 +762,11 @@ class FiberHMM:
 
             # Update progress bar
             if verbose and HAS_TQDM and hasattr(iterator, 'set_postfix'):
-                iterator.set_postfix({'logprob': f'{log_prob_total:.2e}',
-                                     'delta': f'{improvement:.2e}'})
+                iterator.set_postfix(
+                    _training_progress_postfix(log_prob_total, improvement)
+                )
 
-            if iteration > 0 and improvement < self.tol:
+            if _training_has_converged(iteration, improvement, self.tol):
                 break
 
             prev_log_prob = log_prob_total
@@ -1085,6 +1086,17 @@ def _updated_best_training_model(
     if logprob > best_logprob:
         return model, logprob
     return best_model, best_logprob
+
+
+def _training_progress_postfix(log_prob_total: float, improvement: float) -> dict:
+    return {
+        'logprob': f'{log_prob_total:.2e}',
+        'delta': f'{improvement:.2e}',
+    }
+
+
+def _training_has_converged(iteration: int, improvement: float, tol: float) -> bool:
+    return iteration > 0 and improvement < tol
 
 
 def _normalize_trained_models(best_model, all_models) -> None:

@@ -30,7 +30,9 @@ try:
         _normalized_transition_counts,
         _random_training_parameters,
         _training_data_for_iteration,
+        _training_has_converged,
         _training_observation_matrix,
+        _training_progress_postfix,
         _try_create_hmmlearn,
         _updated_best_training_model,
     )
@@ -50,7 +52,9 @@ except ImportError:
         _normalized_transition_counts,
         _random_training_parameters,
         _training_data_for_iteration,
+        _training_has_converged,
         _training_observation_matrix,
+        _training_progress_postfix,
         _try_create_hmmlearn,
         _updated_best_training_model,
         load_model,
@@ -307,6 +311,15 @@ class TestModelTraining:
             "verbose": True,
             "desc": "Init 5 EM",
         }
+
+    def test_training_progress_and_convergence_helpers(self):
+        assert _training_progress_postfix(-1234.0, 0.0123) == {
+            "logprob": "-1.23e+03",
+            "delta": "1.23e-02",
+        }
+        assert not _training_has_converged(0, 0.0, 1e-4)
+        assert not _training_has_converged(2, 1e-3, 1e-4)
+        assert _training_has_converged(2, 1e-5, 1e-4)
 
     def test_fit_updates_parameters(self, simple_emission_probs, simple_observations):
         """Test that fit() updates start and transition probabilities."""
