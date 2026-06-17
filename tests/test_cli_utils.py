@@ -2,13 +2,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from fiberhmm.core import bam_reader
 from fiberhmm.cli.utils import (
     AccessibilityCounter,
     _accessibility_priors_for_base,
     _estimate_emission_probs,
     _passes_transfer_base_filters,
+    _passes_transfer_target_filters,
     _scale_emission_probabilities,
     _target_bases_for_transfer_mode,
+    _target_mod_positions_from_bam_read,
     _write_transfer_probability_tables,
 )
 
@@ -98,6 +101,69 @@ def test_passes_transfer_base_filters_checks_primary_mapq_and_sequence():
     read = Read()
     read.is_secondary = True
     assert not _passes_transfer_base_filters(read, min_mapq=20)
+
+
+def test_passes_transfer_target_filters_checks_reference_span():
+    class Read:
+        is_unmapped = False
+        is_secondary = False
+        is_supplementary = False
+        mapping_quality = 20
+        query_sequence = "ACGT"
+        reference_start = 10
+        reference_end = 14
+
+    assert _passes_transfer_target_filters(Read(), min_mapq=20, min_read_length=4)
+
+    read = Read()
+    read.reference_end = 13
+    assert not _passes_transfer_target_filters(read, min_mapq=20, min_read_length=4)
+
+    read = Read()
+    read.reference_start = None
+    assert not _passes_transfer_target_filters(read, min_mapq=20, min_read_length=4)
+
+
+def test_target_mod_positions_from_bam_read_uses_mm_ml_tags(monkeypatch):
+    class Read:
+        query_sequence = "AAAA"
+        is_reverse = True
+        tags = {"Mm": "A+a,0;", "Ml": b"\xc8"}
+
+        def has_tag(self, tag):
+            return tag in self.tags
+
+        def get_tag(self, tag):
+            return self.tags[tag]
+
+    captured = {}
+
+    def fake_parse(mm_tag, ml_tag, sequence, is_reverse, prob_threshold, mode):
+        captured.update({
+            "mm_tag": mm_tag,
+            "ml_tag": ml_tag,
+            "sequence": sequence,
+            "is_reverse": is_reverse,
+            "prob_threshold": prob_threshold,
+            "mode": mode,
+        })
+        return {2}
+
+    monkeypatch.setattr(bam_reader, "parse_mm_tag_query_positions", fake_parse)
+
+    assert _target_mod_positions_from_bam_read(Read(), 125, "pacbio-fiber") == {2}
+    assert captured == {
+        "mm_tag": "A+a,0;",
+        "ml_tag": [200],
+        "sequence": "AAAA",
+        "is_reverse": True,
+        "prob_threshold": 125,
+        "mode": "pacbio-fiber",
+    }
+
+    read = Read()
+    read.tags = {}
+    assert _target_mod_positions_from_bam_read(read, 125, "pacbio-fiber") is None
 
 
 def test_scale_emission_probabilities_scales_one_state_and_clips():

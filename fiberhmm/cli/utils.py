@@ -406,6 +406,32 @@ def _passes_transfer_base_filters(read, min_mapq: int) -> bool:
     return read.query_sequence is not None
 
 
+def _passes_transfer_target_filters(read, min_mapq: int,
+                                    min_read_length: int) -> bool:
+    if not _passes_transfer_base_filters(read, min_mapq):
+        return False
+    if read.reference_end is None or read.reference_start is None:
+        return False
+    return (read.reference_end - read.reference_start) >= min_read_length
+
+
+def _target_mod_positions_from_bam_read(read, prob_threshold: int, mode: str):
+    from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
+    from fiberhmm.core.tag_access import get_preferred_tag
+
+    mm_tag = get_preferred_tag(read, 'MM', 'Mm')
+    ml_raw = get_preferred_tag(read, 'ML', 'Ml')
+    ml_tag = list(ml_raw) if ml_raw is not None else None
+
+    if mm_tag is None:
+        return None
+
+    return parse_mm_tag_query_positions(
+        mm_tag, ml_tag, read.query_sequence,
+        read.is_reverse, prob_threshold, mode=mode,
+    )
+
+
 def _process_reference_bam(bam_path, max_context, args):
     """Process reference BAM with footprint tags to get accessibility priors."""
     import pysam
@@ -452,8 +478,6 @@ def _process_target_bam(bam_path, mode, max_context, args):
     """Process target BAM to get modification rates per context."""
     import pysam
 
-    from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
-    from fiberhmm.core.tag_access import get_preferred_tag
     from fiberhmm.probabilities.context_counter import ContextCounter
     from fiberhmm.probabilities.utils import detect_strand_and_base
 
@@ -466,24 +490,16 @@ def _process_target_bam(bam_path, mode, max_context, args):
         pbar = tqdm(bam.fetch(), desc="Processing target BAM")
 
         for read in pbar:
-            if not _passes_transfer_base_filters(read, args.min_mapq):
-                continue
-            if read.reference_end is None or read.reference_start is None:
-                continue
-            if read.reference_end - read.reference_start < args.min_read_length:
+            if not _passes_transfer_target_filters(
+                read, args.min_mapq, args.min_read_length,
+            ):
                 continue
 
-            mm_tag = get_preferred_tag(read, 'MM', 'Mm')
-            ml_raw = get_preferred_tag(read, 'ML', 'Ml')
-            ml_tag = list(ml_raw) if ml_raw is not None else None
-
-            if mm_tag is None:
-                continue
-
-            mod_positions = parse_mm_tag_query_positions(
-                mm_tag, ml_tag, read.query_sequence,
-                read.is_reverse, args.prob_threshold, mode=mode
+            mod_positions = _target_mod_positions_from_bam_read(
+                read, args.prob_threshold, mode,
             )
+            if mod_positions is None:
+                continue
 
             strand, target_base = detect_strand_and_base(
                 read.query_sequence, mod_positions, mode
