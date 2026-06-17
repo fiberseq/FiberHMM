@@ -18,6 +18,7 @@ from fiberhmm.cli.call import (
     _check_region_parallel_file_io,
     _chimera_filter_state,
     _daf_sources_available,
+    _invalid_phase_nrl_message,
     _is_phase_nrl_off,
     _missing_daf_source_message,
     _new_daf_sniff_result,
@@ -241,6 +242,9 @@ def test_call_phase_nrl_literal_helpers():
     assert _parse_fixed_phase_nrl("185") == 185
     assert _parse_fixed_phase_nrl("-10") == 0
     assert _parse_fixed_phase_nrl("auto") is None
+    assert _invalid_phase_nrl_message("bad") == (
+        "  WARNING: invalid --phase-nrl 'bad'; using off."
+    )
 
 
 def test_phase_nrl_estimate_message_formats_ci_and_counts():

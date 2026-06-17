@@ -223,6 +223,10 @@ def _phase_nrl_estimate_message(result: dict) -> str:
     )
 
 
+def _invalid_phase_nrl_message(value) -> str:
+    return f"  WARNING: invalid --phase-nrl {value!r}; using off."
+
+
 def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
                        recall_nucs) -> int:
     """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off)."""
@@ -235,8 +239,7 @@ def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
     if raw != 'auto':
         fixed_nrl = _parse_fixed_phase_nrl(raw)
         if fixed_nrl is None:
-            print(f"  WARNING: invalid --phase-nrl {args.phase_nrl!r}; using off.",
-                  file=sys.stderr)
+            print(_invalid_phase_nrl_message(args.phase_nrl), file=sys.stderr)
             return 0
         return fixed_nrl
     # auto-estimate
