@@ -14,9 +14,11 @@ from fiberhmm.inference.tagging import (
     _legacy_apply_interval_groups,
     _legacy_interval_group,
     _linear_intervals_overlap,
+    _nuc_overlaps_any_circular_interval,
     _nuc_overlaps_any_linear_interval,
     _result_intervals,
     _should_keep_nuc_interval,
+    _tf_circular_intervals,
     _tf_linear_intervals,
     scores_to_u8,
     set_legacy_apply_tags,
@@ -247,6 +249,17 @@ def test_linear_tf_interval_helpers_use_half_open_overlap():
     assert _linear_intervals_overlap((10, 20), (20, 30)) is False
     assert _linear_intervals_overlap((19, 20), (20, 30)) is False
     assert _linear_intervals_overlap((19, 21), (20, 30)) is True
+
+
+def test_circular_tf_interval_helpers_use_wrapping_overlap():
+    calls = [
+        TFCall(start=90, length=20, llr=5.0, n_opps=3,
+               left_ambiguity=0, right_ambiguity=0)
+    ]
+
+    assert _tf_circular_intervals(calls) == [(90, 20)]
+    assert _nuc_overlaps_any_circular_interval((5, 5), [(90, 20)], 100)
+    assert _nuc_overlaps_any_circular_interval((80, 10), [(90, 20)], 100) is False
 
 
 def test_nuc_overlaps_any_linear_interval_uses_start_length_interval():

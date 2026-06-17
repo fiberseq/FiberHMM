@@ -157,6 +157,10 @@ def _tf_linear_intervals(tf_calls: Sequence[TFCall]) -> list[Interval]:
     return [(c.start, c.start + c.length) for c in tf_calls]
 
 
+def _tf_circular_intervals(tf_calls: Sequence[TFCall]) -> list[Interval]:
+    return [(c.start, c.length) for c in tf_calls]
+
+
 def _linear_intervals_overlap(left: Interval, right: Interval) -> bool:
     left_start, left_end = left
     right_start, right_end = right
@@ -172,6 +176,17 @@ def _nuc_overlaps_any_linear_interval(
     return any(
         _linear_intervals_overlap(linear_interval, other)
         for other in linear_intervals
+    )
+
+
+def _nuc_overlaps_any_circular_interval(
+    interval: Interval,
+    circular_intervals: Sequence[Interval],
+    read_length: int,
+) -> bool:
+    return any(
+        circular_intervals_overlap(interval, other, read_length)
+        for other in circular_intervals
     )
 
 
@@ -267,12 +282,11 @@ def unify_circular_nucs_with_tf_calls(
     ns_scores: Optional[Sequence[float]] = None,
 ) -> tuple[list[Interval], Optional[list[int]]]:
     """Drop short circular nucleosome calls that overlap circular TF calls."""
-    tf_intervals = [(c.start, c.length) for c in tf_calls]
+    tf_intervals = _tf_circular_intervals(tf_calls)
 
     def overlaps_tf(interval: Interval) -> bool:
-        return any(
-            circular_intervals_overlap(interval, tf_interval, read_length)
-            for tf_interval in tf_intervals
+        return _nuc_overlaps_any_circular_interval(
+            interval, tf_intervals, read_length,
         )
 
     return _filter_nucs_with_tf_overlap(
