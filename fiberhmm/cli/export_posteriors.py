@@ -331,6 +331,31 @@ def _concat_h5_metadata_arrays(arrays) -> np.ndarray:
     return np.concatenate(arrays) if arrays else np.array([], dtype=np.int32)
 
 
+def _flush_h5_chrom_buffer(h5_file, chrom: str, write_buffers: dict,
+                           chrom_fiber_counts: dict, chrom_metadata: dict) -> int:
+    """Write one chromosome buffer to HDF5 and update metadata sidecars."""
+    buffer = write_buffers[chrom]
+    if not buffer:
+        return 0
+
+    grp = h5_file[chrom]
+    start_idx = chrom_fiber_counts[chrom]
+    ids, starts, ends, strands = _write_batch_to_h5(grp, buffer, start_idx)
+
+    _append_h5_batch_metadata(
+        chrom_metadata[chrom],
+        ids,
+        starts,
+        ends,
+        strands,
+    )
+
+    n_written = len(buffer)
+    chrom_fiber_counts[chrom] += n_written
+    write_buffers[chrom] = []
+    return n_written
+
+
 def _process_regions(regions, input_bam, model_path, params,
                      n_cores, verbose, result_callback):
     """Process all regions and call result_callback(chrom, results) for each."""
@@ -491,27 +516,9 @@ def export_posteriors_hdf5(
             create_posterior_chrom_group(f, chrom)
 
         def flush_buffer(chrom):
-            """Write buffered fibers to HDF5."""
-            buffer = write_buffers[chrom]
-            if not buffer:
-                return
-
-            grp = f[chrom]
-            start_idx = chrom_fiber_counts[chrom]
-
-            ids, starts, ends, strands = _write_batch_to_h5(grp, buffer, start_idx)
-
-            # Accumulate metadata
-            _append_h5_batch_metadata(
-                chrom_metadata[chrom],
-                ids,
-                starts,
-                ends,
-                strands,
+            _flush_h5_chrom_buffer(
+                f, chrom, write_buffers, chrom_fiber_counts, chrom_metadata
             )
-
-            chrom_fiber_counts[chrom] += len(buffer)
-            write_buffers[chrom] = []
 
         def on_results(chrom, results):
             write_buffers[chrom].extend(results)

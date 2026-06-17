@@ -104,6 +104,55 @@ def test_h5_batch_metadata_helpers_append_and_concatenate():
     )
 
 
+def test_flush_h5_chrom_buffer_writes_and_clears(monkeypatch):
+    h5_file = {"chr1": object()}
+    buffers = {"chr1": [{"read_name": "a"}, {"read_name": "b"}]}
+    counts = {"chr1": 5}
+    metadata = {"chr1": {"ids": [], "starts": [], "ends": [], "strands": []}}
+    calls = []
+
+    def fake_write_batch(grp, fibers, start_idx):
+        calls.append((grp, list(fibers), start_idx))
+        return (
+            ["read-a", "read-b"],
+            np.array([10, 20], dtype=np.int32),
+            np.array([15, 25], dtype=np.int32),
+            ["+", "-"],
+        )
+
+    monkeypatch.setattr(export_posteriors, "_write_batch_to_h5", fake_write_batch)
+
+    assert export_posteriors._flush_h5_chrom_buffer(
+        h5_file, "chr1", buffers, counts, metadata,
+    ) == 2
+
+    assert calls == [(h5_file["chr1"], [{"read_name": "a"}, {"read_name": "b"}], 5)]
+    assert buffers["chr1"] == []
+    assert counts["chr1"] == 7
+    assert metadata["chr1"]["ids"] == ["read-a", "read-b"]
+    assert metadata["chr1"]["strands"] == ["+", "-"]
+    np.testing.assert_array_equal(
+        export_posteriors._concat_h5_metadata_arrays(metadata["chr1"]["starts"]),
+        np.array([10, 20], dtype=np.int32),
+    )
+
+
+def test_flush_h5_chrom_buffer_skips_empty_buffer(monkeypatch):
+    monkeypatch.setattr(
+        export_posteriors,
+        "_write_batch_to_h5",
+        lambda *_: pytest.fail("unexpected write"),
+    )
+
+    assert export_posteriors._flush_h5_chrom_buffer(
+        {"chr1": object()},
+        "chr1",
+        {"chr1": []},
+        {"chr1": 3},
+        {"chr1": {"ids": [], "starts": [], "ends": [], "strands": []}},
+    ) == 0
+
+
 def test_submit_next_region_records_pending_future():
     class FakeExecutor:
         def __init__(self):
