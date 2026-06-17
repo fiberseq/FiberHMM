@@ -48,6 +48,12 @@ def test_file_size_gb_reports_binary_gigabytes(tmp_path):
     assert bam_output._file_size_gb(str(payload)) == pytest.approx(1024 / (1024 ** 3))
 
 
+def test_throughput_gbs_handles_positive_and_non_positive_elapsed():
+    assert bam_output._throughput_gbs(8.0, 4.0) == pytest.approx(2.0)
+    assert bam_output._throughput_gbs(8.0, 0.0) == 0.0
+    assert bam_output._throughput_gbs(8.0, -1.0) == 0.0
+
+
 def test_sorted_bed_temp_path_appends_sorted_suffix():
     assert bam_output._sorted_bed_temp_path("calls.bed") == "calls.bed.sorted"
 

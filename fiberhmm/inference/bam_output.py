@@ -75,6 +75,12 @@ def _file_size_gb(path: str) -> float:
     return os.path.getsize(path) / (1024 ** 3)
 
 
+def _throughput_gbs(size_gb: float, elapsed_seconds: float) -> float:
+    if elapsed_seconds <= 0:
+        return 0.0
+    return size_gb / elapsed_seconds
+
+
 def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4):
     """
     Index a BAM file, sorting first only if needed.
@@ -98,7 +104,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
         if result.returncode == 0:
             if verbose:
                 idx_time = time.time() - idx_start
-                speed = bam_size_gb / idx_time if idx_time > 0 else 0
+                speed = _throughput_gbs(bam_size_gb, idx_time)
                 print(f"  ✓ Index created in {idx_time:.1f}s ({speed:.2f} GB/s) - BAM was already sorted!")
             return
 
@@ -147,7 +153,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
         _run_samtools_sort(output_bam, sorted_bam, threads)
         if verbose:
             sort_time = time.time() - sort_start
-            speed = bam_size_gb / sort_time if sort_time > 0 else 0
+            speed = _throughput_gbs(bam_size_gb, sort_time)
             print(f"  Sorted in {sort_time:.1f}s ({speed:.2f} GB/s)")
     except (subprocess.CalledProcessError, FileNotFoundError):
         # Fallback to pysam
@@ -173,7 +179,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
 
     if verbose:
         idx_time = time.time() - idx_start
-        speed = bam_size_gb / idx_time if idx_time > 0 else 0
+        speed = _throughput_gbs(bam_size_gb, idx_time)
         print(f"  ✓ Index created in {idx_time:.1f}s ({speed:.2f} GB/s)")
 
 
@@ -342,7 +348,7 @@ def _concatenate_region_bams(
         if verbose:
             concat_time = time.time() - concat_start
             output_size_gb = os.path.getsize(output_bam) / (1024**3)
-            speed_gbs = output_size_gb / concat_time if concat_time > 0 else 0
+            speed_gbs = _throughput_gbs(output_size_gb, concat_time)
             print(
                 f"  Concatenated with samtools cat in {concat_time:.1f}s "
                 f"({output_size_gb:.1f}GB, {speed_gbs:.2f} GB/s)"
