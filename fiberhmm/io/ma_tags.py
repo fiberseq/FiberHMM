@@ -91,6 +91,13 @@ def _append_quality_rows(out: array.array, label: str, *columns: Sequence[int]) 
             out.append(_clamp_byte(value))
 
 
+def _nuc_aq_has_edge_qualities(
+    nuc_lq_values: Sequence[int],
+    nuc_rq_values: Sequence[int],
+) -> bool:
+    return bool(nuc_lq_values or nuc_rq_values)
+
+
 def _format_interval_list(intervals: Sequence[Tuple[int, int]]) -> str:
     return ','.join(f'{int(start) + 1}-{int(length)}'
                     for start, length in intervals)
@@ -276,7 +283,7 @@ def format_aq_array(nq_values: Sequence[int],
     mirroring the TF layout. The three nuc arrays must then be equal length.
     """
     out = array.array('B')
-    if nuc_lq_values or nuc_rq_values:
+    if _nuc_aq_has_edge_qualities(nuc_lq_values, nuc_rq_values):
         _append_quality_rows(out, "nuc", nq_values, nuc_lq_values, nuc_rq_values)
     else:
         _append_quality_rows(out, "nuc", nq_values)

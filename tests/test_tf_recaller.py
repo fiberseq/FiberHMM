@@ -20,6 +20,7 @@ from fiberhmm.inference.tf_recaller import (
 from fiberhmm.io.ma_tags import (
     EDGE_AMBIGUITY_SAT,
     _format_ma_annotation_part,
+    _nuc_aq_has_edge_qualities,
     _parse_ma_interval_list,
     ambiguity_to_edge,
     format_aq_array,
@@ -103,6 +104,12 @@ def test_quality_row_helpers_preserve_aq_layout():
 
     assert list(default_aq) == [7, 10, 11, 12]
     assert list(nuc_qqq_aq) == [7, 8, 9, 10, 11, 12]
+
+
+def test_nuc_aq_has_edge_qualities_detects_schema_mode():
+    assert not _nuc_aq_has_edge_qualities([], [])
+    assert _nuc_aq_has_edge_qualities([1], [])
+    assert _nuc_aq_has_edge_qualities([], [1])
 
 
 def test_ma_tag_matches_spec_regex():
