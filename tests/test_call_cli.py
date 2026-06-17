@@ -20,6 +20,7 @@ from fiberhmm.cli.call import (
     _daf_sources_available,
     _is_phase_nrl_off,
     _missing_daf_source_message,
+    _new_daf_sniff_result,
     _normalize_phase_nrl_option,
     _parse_fixed_phase_nrl,
     _phase_nrl_estimate_message,
@@ -132,6 +133,17 @@ def test_daf_input_sniff_rejects_missing_deamination_source(tmp_path, capsys):
 
 
 def test_daf_input_predicates_cover_sources_and_md_warning():
+    sniff_result = _new_daf_sniff_result()
+    assert sniff_result == {
+        "has_ry": False,
+        "has_md": False,
+        "md_bad": 0,
+        "md_total": 0,
+        "checked": 0,
+    }
+    sniff_result["has_ry"] = True
+    assert _new_daf_sniff_result()["has_ry"] is False
+
     sniff = {"has_ry": False, "has_md": False, "md_bad": 0}
     assert not _daf_sources_available(sniff, has_ref=False)
     assert _daf_sources_available(sniff, has_ref=True)

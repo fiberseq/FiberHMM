@@ -317,18 +317,22 @@ def _call_banner_text(apply_model_path, recall_model_path, mode, k, enzyme,
     )
 
 
-def _sniff_daf_input_sources(input_bam: str, n_sniff: int = 10):
-    import pysam
-
-    from fiberhmm.daf.encoder import md_matches_cigar
-
-    result = {
+def _new_daf_sniff_result() -> dict:
+    return {
         'has_ry': False,
         'has_md': False,
         'md_bad': 0,
         'md_total': 0,
         'checked': 0,
     }
+
+
+def _sniff_daf_input_sources(input_bam: str, n_sniff: int = 10):
+    import pysam
+
+    from fiberhmm.daf.encoder import md_matches_cigar
+
+    result = _new_daf_sniff_result()
     try:
         with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
             for read in bam:
