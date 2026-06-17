@@ -244,6 +244,24 @@ def _merge_region_posterior_outputs(
         )
 
 
+def _finalize_region_bam_output(
+    input_bam: str,
+    output_bam: str,
+    non_empty_bams: list[str],
+    temp_dir: str,
+    n_cores: int,
+) -> None:
+    _concatenate_region_bams(input_bam, output_bam, non_empty_bams, temp_dir)
+    sys.stdout.flush()
+
+    if os.path.exists(output_bam):
+        output_size_gb = os.path.getsize(output_bam) / (1024**3)
+        print(f"Output BAM: {output_size_gb:.2f}GB")
+
+    print("Step: Index/Sort...")
+    _sort_and_index_bam(output_bam, threads=n_cores)
+
+
 def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    model_path: str, train_rids: Set[str],
                                    edge_trim: int, circular: bool,
@@ -368,18 +386,9 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         # Sort temp BAMs by region order and filter to non-empty
         non_empty_bams = _ordered_existing_temp_paths(aggregation.temp_bams)
 
-        _concatenate_region_bams(input_bam, output_bam, non_empty_bams, temp_dir)
-
-        sys.stdout.flush()
-
-        # Verify output was created
-        if os.path.exists(output_bam):
-            output_size_gb = os.path.getsize(output_bam) / (1024**3)
-            print(f"Output BAM: {output_size_gb:.2f}GB")
-
-        # Index the output BAM (sort first if needed)
-        print("Step: Index/Sort...")
-        _sort_and_index_bam(output_bam, threads=n_cores)
+        _finalize_region_bam_output(
+            input_bam, output_bam, non_empty_bams, temp_dir, n_cores,
+        )
 
         # Merge temp TSV files if posteriors were requested
         if return_posteriors and aggregation.temp_tsvs:

@@ -300,6 +300,46 @@ def test_merge_region_posterior_outputs_reports_tsv_and_conversion(
     assert f"tsv2h5 {tsv_path} {output_posteriors}" in out
 
 
+def test_finalize_region_bam_output_concatenates_reports_and_indexes(
+    monkeypatch,
+    capsys,
+):
+    calls = []
+
+    def fake_concatenate(input_bam, output_bam, non_empty_bams, temp_dir):
+        calls.append(("concat", input_bam, output_bam, non_empty_bams, temp_dir))
+
+    def fake_sort(output_bam, threads):
+        calls.append(("sort", output_bam, threads))
+
+    monkeypatch.setattr(
+        region_pipeline, "_concatenate_region_bams", fake_concatenate
+    )
+    monkeypatch.setattr(region_pipeline, "_sort_and_index_bam", fake_sort)
+    monkeypatch.setattr(region_pipeline.os.path, "exists", lambda path: True)
+    monkeypatch.setattr(
+        region_pipeline.os.path,
+        "getsize",
+        lambda path: 2 * 1024**3,
+    )
+
+    region_pipeline._finalize_region_bam_output(
+        "input.bam",
+        "output.bam",
+        ["region_0.bam"],
+        "tmp",
+        n_cores=3,
+    )
+
+    assert calls == [
+        ("concat", "input.bam", "output.bam", ["region_0.bam"], "tmp"),
+        ("sort", "output.bam", 3),
+    ]
+    out = capsys.readouterr().out
+    assert "Output BAM: 2.00GB" in out
+    assert "Step: Index/Sort..." in out
+
+
 def test_region_parallel_bam_cleans_temp_dir_on_worker_failure(monkeypatch, tmp_path):
     temp_dirs = _install_failing_region_pool(monkeypatch, tmp_path)
     input_bam = _indexed_input_bam(tmp_path)
