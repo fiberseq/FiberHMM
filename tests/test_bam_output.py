@@ -26,6 +26,14 @@ def test_samtools_command_builders_preserve_thread_args():
     assert bam_output._samtools_sort_cmd("out.bam", "out.sorted.bam", 4) == [
         "samtools", "sort", "-@", "4", "-o", "out.sorted.bam", "out.bam",
     ]
+    assert bam_output._samtools_cat_cmd(
+        ["a.bam", "b.bam"], "out.bam", "list.txt",
+    ) == [
+        "samtools", "cat", "-h", "a.bam", "-b", "list.txt", "-o", "out.bam",
+    ]
+    assert bam_output._samtools_merge_cmd("out.bam", "list.txt") == [
+        "samtools", "merge", "-f", "-b", "list.txt", "out.bam",
+    ]
 
 
 def test_sorted_bam_temp_path_preserves_bam_suffix_convention():

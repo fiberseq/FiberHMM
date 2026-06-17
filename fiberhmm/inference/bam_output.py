@@ -27,6 +27,18 @@ def _samtools_sort_cmd(output_bam: str, sorted_bam: str, threads: int) -> List[s
     return ['samtools', 'sort', '-@', str(threads), '-o', sorted_bam, output_bam]
 
 
+def _samtools_cat_cmd(
+    bam_files: List[str],
+    output_bam: str,
+    list_file: str,
+) -> List[str]:
+    return ['samtools', 'cat', '-h', bam_files[0], '-b', list_file, '-o', output_bam]
+
+
+def _samtools_merge_cmd(output_bam: str, list_file: str) -> List[str]:
+    return ['samtools', 'merge', '-f', '-b', list_file, output_bam]
+
+
 def _run_samtools_index(output_bam: str, threads: int, check: bool = False) -> subprocess.CompletedProcess:
     """Run `samtools index` with the shared command shape."""
     return subprocess.run(
@@ -202,7 +214,7 @@ def _samtools_cat_bams(bam_files: List[str], output_bam: str, list_file: str) ->
     _run_samtools_list_command(
         bam_files,
         list_file,
-        ['samtools', 'cat', '-h', bam_files[0], '-b', list_file, '-o', output_bam],
+        _samtools_cat_cmd(bam_files, output_bam, list_file),
         'samtools cat',
     )
 
@@ -212,7 +224,7 @@ def _samtools_merge_bams(bam_files: List[str], output_bam: str, list_file: str) 
     _run_samtools_list_command(
         bam_files,
         list_file,
-        ['samtools', 'merge', '-f', '-b', list_file, output_bam],
+        _samtools_merge_cmd(output_bam, list_file),
         'samtools merge',
     )
 
