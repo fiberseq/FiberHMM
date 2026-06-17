@@ -35,6 +35,10 @@ def resolve_chroms_set(chroms):
     return set(chroms) if chroms else None
 
 
+def _context_sizes_default(default) -> list:
+    return default if isinstance(default, list) else [default]
+
+
 def add_mode_args(parser: argparse.ArgumentParser,
                   default: str = 'pacbio-fiber',
                   required: bool = False) -> None:
@@ -81,8 +85,7 @@ def add_context_args(parser: argparse.ArgumentParser,
         multiple: If True, accept multiple values (--context-sizes -k 3 4 5 6)
     """
     if multiple:
-        if not isinstance(default, list):
-            default = [default]
+        default = _context_sizes_default(default)
         parser.add_argument(
             '--context-sizes', '-k', type=int, nargs='+', default=default,
             help=f"Context sizes (k-mer) to compute (default: {default})"

@@ -6,6 +6,7 @@ import argparse
 import pytest
 
 from fiberhmm.cli.common import (
+    _context_sizes_default,
     add_context_args,
     add_edge_trim_args,
     add_filter_args,
@@ -138,6 +139,10 @@ class TestAddParallelArgs:
 
 
 class TestAddContextArgs:
+    def test_context_sizes_default_wraps_scalar_defaults(self):
+        assert _context_sizes_default(3) == [3]
+        assert _context_sizes_default([3, 4]) == [3, 4]
+
     def test_single_default(self):
         parser = argparse.ArgumentParser()
         add_context_args(parser)
