@@ -14,6 +14,7 @@ from fiberhmm.core.model_io import (
     _call_model_hook_if_present,
     _json_save_path,
     _json_save_redirect_warning,
+    _model_attr_array,
     _model_file_format,
     _model_json_record,
     _normalize_model_if_requested,
@@ -223,6 +224,18 @@ class TestLoadSaveRoundTrip:
         assert _pickle_payload_has_metadata({"model": object()})
         assert not _pickle_payload_has_metadata({"model_type": "FiberHMM_native"})
         assert not _pickle_payload_has_metadata(object())
+
+    def test_model_attr_array_returns_first_available_attribute_as_array(self):
+        obj = type("LegacyModel", (), {
+            "emissionprob": [[0.4, 0.6]],
+            "emissionprob_": [[0.7, 0.3]],
+        })()
+
+        np.testing.assert_array_equal(
+            _model_attr_array(obj, "emissionprob_", "emissionprob"),
+            [[0.7, 0.3]],
+        )
+        assert _model_attr_array(obj, "missing") is None
 
 
 class TestModeAliases:

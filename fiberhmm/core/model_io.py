@@ -209,6 +209,13 @@ def _load_pickle_with_metadata(filepath: str) -> Tuple[FiberHMM, int, str]:
     return _coerce_loaded_model(obj), DEFAULT_CONTEXT_SIZE, DEFAULT_MODE
 
 
+def _model_attr_array(obj, *attr_names):
+    for attr_name in attr_names:
+        if hasattr(obj, attr_name):
+            return np.array(getattr(obj, attr_name))
+    return None
+
+
 def _convert_hmmlearn_model(hmmlearn_model) -> FiberHMM:
     """
     Convert an hmmlearn model to native FiberHMM.
@@ -220,17 +227,12 @@ def _convert_hmmlearn_model(hmmlearn_model) -> FiberHMM:
     model = FiberHMM(n_states=2)
 
     # Extract parameters - these attribute names are consistent across versions
-    if hasattr(hmmlearn_model, 'startprob_'):
-        model.startprob_ = np.array(hmmlearn_model.startprob_)
-
-    if hasattr(hmmlearn_model, 'transmat_'):
-        model.transmat_ = np.array(hmmlearn_model.transmat_)
-
+    model.startprob_ = _model_attr_array(hmmlearn_model, 'startprob_')
+    model.transmat_ = _model_attr_array(hmmlearn_model, 'transmat_')
     # Emission probabilities - different names in different versions
-    if hasattr(hmmlearn_model, 'emissionprob_'):
-        model.emissionprob_ = np.array(hmmlearn_model.emissionprob_)
-    elif hasattr(hmmlearn_model, 'emissionprob'):
-        model.emissionprob_ = np.array(hmmlearn_model.emissionprob)
+    model.emissionprob_ = _model_attr_array(
+        hmmlearn_model, 'emissionprob_', 'emissionprob',
+    )
 
     # Validate
     if model.startprob_ is None or model.transmat_ is None or model.emissionprob_ is None:
