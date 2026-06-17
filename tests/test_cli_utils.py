@@ -1,6 +1,7 @@
 import numpy as np
 
 from fiberhmm.cli.utils import (
+    AccessibilityCounter,
     _scale_emission_probabilities,
     _target_bases_for_transfer_mode,
 )
@@ -10,6 +11,18 @@ def test_target_bases_for_transfer_mode():
     assert _target_bases_for_transfer_mode('pacbio-fiber') == ['A']
     assert _target_bases_for_transfer_mode('nanopore-fiber') == ['A']
     assert _target_bases_for_transfer_mode('daf') == ['C', 'G']
+
+
+def test_accessibility_counter_records_accessible_and_protected_contexts():
+    counter = AccessibilityCounter(max_context=1, center_base='A')
+    footprint_mask = np.array([False, False, False, True, False])
+
+    counter.process_read_with_footprints("CACAC", footprint_mask, edge_trim=0)
+    counter.process_read_with_footprints("CANAC", footprint_mask, edge_trim=0)
+
+    assert counter.counts["CAC"] == [1, 2]
+    assert counter.total_accessible == 1
+    assert counter.total_positions == 2
 
 
 def test_scale_emission_probabilities_scales_one_state_and_clips():

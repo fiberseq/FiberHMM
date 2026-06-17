@@ -228,31 +228,41 @@ class AccessibilityCounter:
         self.total_accessible = 0
         self.total_positions = 0
 
+    def _context_at(self, seq_upper, position):
+        seq_len = len(seq_upper)
+        k = self.max_context
+        if position < k or position >= seq_len - k:
+            return None
+        if seq_upper[position] != self.center_base:
+            return None
+        context = seq_upper[position - k : position + k + 1]
+        if len(context) != 2 * k + 1:
+            return None
+        if any(b not in 'ACGT' for b in context):
+            return None
+        return context
+
+    def _record_accessibility(self, context, is_accessible):
+        self.counts[context][1] += 1
+        if is_accessible:
+            self.counts[context][0] += 1
+            self.total_accessible += 1
+        self.total_positions += 1
+
     def process_read_with_footprints(self, sequence, footprint_mask, edge_trim=10):
         seq_len = len(sequence)
         seq_upper = sequence.upper()
-        k = self.max_context
 
         for i in range(edge_trim, seq_len - edge_trim):
-            if seq_upper[i] != self.center_base:
-                continue
-            if i < k or i >= seq_len - k:
-                continue
             if i >= len(footprint_mask):
                 continue
 
-            context = seq_upper[i - k : i + k + 1]
-            if len(context) != 2 * k + 1:
-                continue
-            if any(b not in 'ACGT' for b in context):
+            context = self._context_at(seq_upper, i)
+            if context is None:
                 continue
 
             is_accessible = not footprint_mask[i]
-            self.counts[context][1] += 1
-            if is_accessible:
-                self.counts[context][0] += 1
-                self.total_accessible += 1
-            self.total_positions += 1
+            self._record_accessibility(context, is_accessible)
 
     def get_accessibility_priors(self, context_size=None):
         if context_size is None:
