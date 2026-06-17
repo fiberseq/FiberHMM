@@ -24,6 +24,7 @@ try:
         _build_hexamer_lookup_with_rc,
         _daf_deamination_base_counts,
         _iter_mm_mod_specs,
+        _modified_base_quality_passes,
         _mm_base_and_mod_code,
         _mm_mod_spec_parts,
         _mm_positions_from_spec,
@@ -43,6 +44,7 @@ except ImportError:
         _build_hexamer_lookup_with_rc,
         _daf_deamination_base_counts,
         _iter_mm_mod_specs,
+        _modified_base_quality_passes,
         _mm_base_and_mod_code,
         _mm_mod_spec_parts,
         _mm_positions_from_spec,
@@ -52,6 +54,12 @@ except ImportError:
         get_reference_positions_array,
         parse_mm_tag_query_positions,
     )
+
+
+def test_modified_base_quality_passes_unknown_or_threshold_values():
+    assert _modified_base_quality_passes(-1, 125)
+    assert _modified_base_quality_passes(125, 125)
+    assert not _modified_base_quality_passes(124, 125)
 
 
 def test_read_bam_keeps_raw_ml_container_for_manual_parser(monkeypatch):

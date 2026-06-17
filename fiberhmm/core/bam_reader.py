@@ -201,6 +201,10 @@ def _pysam_modified_base_allowed(base, mod_code, mode: str) -> bool:
     return True
 
 
+def _modified_base_quality_passes(qual: int, prob_threshold: int) -> bool:
+    return qual == -1 or qual >= prob_threshold
+
+
 def get_modified_positions_pysam(read, prob_threshold: int = 125, mode: str = 'pacbio-fiber') -> Set[int]:
     """
     Get modification positions using pysam's built-in modified_bases property.
@@ -233,9 +237,8 @@ def get_modified_positions_pysam(read, prob_threshold: int = 125, mode: str = 'p
             for pos, qual in positions:
                 # qual is 256*prob, threshold is on 0-255 scale
                 # So we compare qual/256*255 >= threshold, or qual >= threshold * 256/255
-                if qual == -1:  # Unknown quality, include it
-                    mod_positions.add(pos)
-                elif qual >= prob_threshold:  # qual is already on ~0-255 scale (actually 0-256)
+                # qual is already on ~0-255 scale (actually 0-256).
+                if _modified_base_quality_passes(qual, prob_threshold):
                     mod_positions.add(pos)
 
     except Exception:
