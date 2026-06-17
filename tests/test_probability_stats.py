@@ -111,6 +111,12 @@ def test_write_probability_stats_summary(tmp_path):
     assert "Prob range:  0.2000 - 0.9000" in text
 
 
+def test_probability_stats_output_path_uses_context_stem():
+    assert stats._probability_stats_output_path("plots", "run", 4, "pdf") == (
+        "plots/run_k4_stats.pdf"
+    )
+
+
 def test_merged_probability_table_aligns_contexts_and_totals():
     acc = pd.DataFrame({
         "context": ["AAA", "AAC"],

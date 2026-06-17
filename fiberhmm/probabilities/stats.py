@@ -143,6 +143,18 @@ def _write_probability_stats_summary(summary_file: str,
             f.write("\n")
 
 
+def _probability_stats_output_path(
+    plots_dir: str,
+    base_name: str,
+    context_size: int,
+    extension: str,
+) -> str:
+    return os.path.join(
+        plots_dir,
+        f"{base_name}_k{context_size}_stats.{extension}",
+    )
+
+
 def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
                                 inaccessible_counters: Dict[str, 'ContextCounter'],
                                 plots_dir: str, base_name: str, context_size: int = 3,
@@ -162,7 +174,9 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
     """
 
     # Write text summary (includes k in filename)
-    summary_file = os.path.join(plots_dir, f"{base_name}_k{context_size}_stats.txt")
+    summary_file = _probability_stats_output_path(
+        plots_dir, base_name, context_size, "txt",
+    )
     _write_probability_stats_summary(
         summary_file, accessible_counters, inaccessible_counters,
         context_size, title_prefix,
@@ -181,7 +195,9 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
         print("  Install with: pip install matplotlib")
         return
 
-    pdf_path = os.path.join(plots_dir, f"{base_name}_k{context_size}_stats.pdf")
+    pdf_path = _probability_stats_output_path(
+        plots_dir, base_name, context_size, "pdf",
+    )
 
     with PdfPages(pdf_path) as pdf:
         for base in accessible_counters.keys():
