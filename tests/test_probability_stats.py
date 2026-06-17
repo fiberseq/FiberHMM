@@ -14,8 +14,10 @@ class _FakeCounter:
         self.total_modified = total_modified
         self.counts = counts
         self._table = table
+        self.context_sizes = []
 
     def get_encoding_table(self, context_size):
+        self.context_sizes.append(context_size)
         return None, self._table
 
 
@@ -41,6 +43,22 @@ def test_context_observation_totals_accepts_merged_column_names():
     assert stats._context_observation_totals(
         table, "hit_acc", "nohit_acc",
     ).tolist() == [4, 6]
+
+
+def test_probability_tables_for_base_fetches_accessible_and_inaccessible_tables():
+    acc_table = pd.DataFrame({"context": ["AAA"], "ratio": [0.8]})
+    inacc_table = pd.DataFrame({"context": ["AAA"], "ratio": [0.2]})
+    acc = _FakeCounter(0, 0, {}, acc_table)
+    inacc = _FakeCounter(0, 0, {}, inacc_table)
+
+    got_acc, got_inacc = stats._probability_tables_for_base(
+        {"A": acc}, {"A": inacc}, "A", context_size=4,
+    )
+
+    assert got_acc is acc_table
+    assert got_inacc is inacc_table
+    assert acc.context_sizes == [4]
+    assert inacc.context_sizes == [4]
 
 
 def test_write_probability_ratio_summary_formats_nonempty_ratios_only():

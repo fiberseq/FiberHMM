@@ -45,6 +45,13 @@ def _merged_probability_table(acc_probs, inacc_probs):
     return merged
 
 
+def _probability_tables_for_base(accessible_counters, inaccessible_counters,
+                                 base: str, context_size: int):
+    _, acc_probs = accessible_counters[base].get_encoding_table(context_size)
+    _, inacc_probs = inaccessible_counters[base].get_encoding_table(context_size)
+    return acc_probs, inacc_probs
+
+
 def _filtered_log_odds(merged, eps: float = 0.001) -> np.ndarray:
     if len(merged) == 0:
         return np.array([])
@@ -112,8 +119,9 @@ def _write_probability_stats_summary(summary_file: str,
             f.write(f"  Rate difference:     {acc_rate - inacc_rate:.4f}\n")
             f.write(f"  Fold enrichment:     {acc_rate / max(0.001, inacc_rate):.2f}x\n")
 
-            _, acc_probs = acc.get_encoding_table(context_size)
-            _, inacc_probs = inacc.get_encoding_table(context_size)
+            acc_probs, inacc_probs = _probability_tables_for_base(
+                accessible_counters, inaccessible_counters, base, context_size,
+            )
             acc_with_data = _probability_ratios_with_data(acc_probs)
             inacc_with_data = _probability_ratios_with_data(inacc_probs)
 
@@ -169,11 +177,9 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
 
     with PdfPages(pdf_path) as pdf:
         for base in accessible_counters.keys():
-            acc = accessible_counters[base]
-            inacc = inaccessible_counters[base]
-
-            _, acc_probs = acc.get_encoding_table(context_size)
-            _, inacc_probs = inacc.get_encoding_table(context_size)
+            acc_probs, inacc_probs = _probability_tables_for_base(
+                accessible_counters, inaccessible_counters, base, context_size,
+            )
 
             # Page: Distribution comparison
             fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
@@ -330,8 +336,9 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
         acc = accessible_counters[base]
         inacc = inaccessible_counters[base]
 
-        _, acc_probs = acc.get_encoding_table(context_size)
-        _, inacc_probs = inacc.get_encoding_table(context_size)
+        acc_probs, inacc_probs = _probability_tables_for_base(
+            accessible_counters, inaccessible_counters, base, context_size,
+        )
 
         fig, ax = plt.subplots(figsize=(8, 5))
 
