@@ -3,9 +3,11 @@
 from types import SimpleNamespace
 
 from fiberhmm.cli.recall_config import (
+    ENZYME_PRESETS,
     _arg_or_preset_value,
     _legacy_tags_enabled,
     _recall_preset_for_args,
+    _recall_presets_or_default,
     resolve_recall_defaults,
     should_write_legacy_tags,
 )
@@ -17,6 +19,13 @@ def test_arg_or_preset_value_uses_override_preset_then_default():
     assert _arg_or_preset_value(8.0, preset, "min_llr", 5.0) == 8.0
     assert _arg_or_preset_value(None, preset, "min_llr", 5.0) == 2.5
     assert _arg_or_preset_value(None, preset, "emission_uplift", 1.0) == 1.0
+
+
+def test_recall_presets_or_default_preserves_explicit_mapping():
+    presets = {"enzyme": {"min_llr": 2.5}}
+
+    assert _recall_presets_or_default(presets) is presets
+    assert _recall_presets_or_default(None) is ENZYME_PRESETS
 
 
 def test_recall_config_resolves_preset_defaults_and_overrides():

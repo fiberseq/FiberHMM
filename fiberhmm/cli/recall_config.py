@@ -11,9 +11,13 @@ def _arg_or_preset_value(arg_value, preset: dict, key: str, default):
     return arg_value if arg_value is not None else preset.get(key, default)
 
 
+def _recall_presets_or_default(presets):
+    return ENZYME_PRESETS if presets is None else presets
+
+
 def resolve_recall_defaults(args, presets=None):
     """Resolve min-LLR and emission-uplift from CLI overrides or enzyme presets."""
-    presets = ENZYME_PRESETS if presets is None else presets
+    presets = _recall_presets_or_default(presets)
     preset = _recall_preset_for_args(args, presets)
     min_llr = _arg_or_preset_value(args.min_llr, preset, 'min_llr', 5.0)
     uplift = _arg_or_preset_value(
