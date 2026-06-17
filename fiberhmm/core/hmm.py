@@ -1065,6 +1065,17 @@ def _model_training_logprob(model, training: np.ndarray) -> float:
     return model.score(training)
 
 
+def _updated_best_training_model(
+    best_model,
+    best_logprob: float,
+    model,
+    logprob: float,
+):
+    if logprob > best_logprob:
+        return model, logprob
+    return best_model, best_logprob
+
+
 def _normalize_trained_models(best_model, all_models) -> None:
     if best_model is not None:
         best_model.normalize_states()
@@ -1116,9 +1127,9 @@ def train_model(emission_probs: np.ndarray,
 
         all_models.append(model)
 
-        if logprob > best_logprob:
-            best_logprob = logprob
-            best_model = model
+        best_model, best_logprob = _updated_best_training_model(
+            best_model, best_logprob, model, logprob,
+        )
 
         # Update progress bar with current best
         if HAS_TQDM:

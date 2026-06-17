@@ -31,6 +31,7 @@ try:
         _training_data_for_iteration,
         _training_observation_matrix,
         _try_create_hmmlearn,
+        _updated_best_training_model,
     )
     from fiberhmm.core.model_io import load_model, load_model_with_metadata, save_model
 except ImportError:
@@ -49,6 +50,7 @@ except ImportError:
         _training_data_for_iteration,
         _training_observation_matrix,
         _try_create_hmmlearn,
+        _updated_best_training_model,
         load_model,
         load_model_with_metadata,
         save_model,
@@ -271,6 +273,17 @@ class TestModelTraining:
             _training_observation_matrix(np.array([1, 2, 3])),
             np.array([[1], [2], [3]]),
         )
+
+    def test_updated_best_training_model_replaces_only_on_improvement(self):
+        old_model = object()
+        new_model = object()
+
+        assert _updated_best_training_model(
+            old_model, -10.0, new_model, -9.0,
+        ) == (new_model, -9.0)
+        assert _updated_best_training_model(
+            old_model, -10.0, new_model, -11.0,
+        ) == (old_model, -10.0)
 
     def test_fit_updates_parameters(self, simple_emission_probs, simple_observations):
         """Test that fit() updates start and transition probabilities."""
