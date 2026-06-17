@@ -40,6 +40,11 @@ def _run_samtools_sort(output_bam: str, sorted_bam: str, threads: int) -> None:
         )
 
 
+def _samtools_index_error_requires_sort(stderr: str) -> bool:
+    error_text = (stderr or '').lower()
+    return 'not sorted' in error_text or 'coordinate' in error_text
+
+
 def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4):
     """
     Index a BAM file, sorting first only if needed.
@@ -69,7 +74,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
             return
 
         # samtools failed - check if it's a sort issue
-        if 'not sorted' in result.stderr.lower() or 'coordinate' in result.stderr.lower():
+        if _samtools_index_error_requires_sort(result.stderr):
             if verbose:
                 print("  ✗ Direct index failed - BAM is NOT sorted")
                 print(f"    Error: {result.stderr.strip()}")

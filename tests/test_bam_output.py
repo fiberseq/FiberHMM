@@ -11,6 +11,13 @@ import pytest
 from fiberhmm.inference import bam_output
 
 
+def test_samtools_index_error_requires_sort_detection():
+    assert bam_output._samtools_index_error_requires_sort("records not sorted")
+    assert bam_output._samtools_index_error_requires_sort("not in coordinate order")
+    assert not bam_output._samtools_index_error_requires_sort("permission denied")
+    assert not bam_output._samtools_index_error_requires_sort("")
+
+
 def test_convert_to_bigbed_sorts_without_shell(monkeypatch, tmp_path):
     bed = tmp_path / "calls.bed"
     chrom_sizes = tmp_path / "chrom.sizes"
