@@ -1,0 +1,58 @@
+"""Tests for probability context counting primitives."""
+
+import numpy as np
+
+from fiberhmm.probabilities.context_counter import ContextCounter
+
+
+def test_add_position_records_valid_center_contexts():
+    counter = ContextCounter(max_context=1, center_base="A")
+
+    counter.add_position("CACAC", 1, True)
+    counter.add_position("CACAC", 3, False)
+    counter.add_position("CANAC", 1, True)
+
+    assert counter.counts["CAC"] == [1, 1]
+    assert counter.total_positions == 2
+    assert counter.total_modified == 1
+
+
+def test_region_and_weighted_region_share_context_accounting():
+    unweighted = ContextCounter(max_context=1, center_base="A")
+    weighted = ContextCounter(max_context=1, center_base="A")
+
+    unweighted.add_region("CACAC", {1}, 0, 5, edge_trim=0)
+    weighted.add_weighted_region(
+        "CACAC",
+        {1},
+        0,
+        5,
+        weights=np.array([0.0, 0.25, 0.0, 0.75, 0.0]),
+        edge_trim=0,
+    )
+
+    assert unweighted.counts["CAC"] == [1, 1]
+    assert unweighted.total_positions == 2
+    assert weighted.counts["CAC"] == [0.25, 0.75]
+    assert weighted.total_positions == 1.0
+    assert weighted.total_modified == 0.25
+
+
+def test_daf_plus_strand_reconstructs_converted_c_contexts():
+    counter = ContextCounter(max_context=1, center_base="C")
+
+    counter.process_read_daf("ATA", {1}, strand="+", edge_trim=0)
+
+    assert counter.counts["ACA"] == [1, 0]
+    assert counter.total_positions == 1
+    assert counter.total_modified == 1
+
+
+def test_daf_minus_strand_reverse_complements_g_contexts():
+    counter = ContextCounter(max_context=1, center_base="C")
+
+    counter.process_read_daf("TAA", {1}, strand="-", edge_trim=0)
+
+    assert counter.counts["TCA"] == [1, 0]
+    assert counter.total_positions == 1
+    assert counter.total_modified == 1

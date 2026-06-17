@@ -3,7 +3,7 @@
 
 import pickle
 from collections import defaultdict
-from typing import Dict, List, Set, Tuple
+from typing import Dict, Iterator, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -42,6 +42,49 @@ class ContextCounter:
         self.total_positions = 0
         self.total_modified = 0
 
+    def _context_from_upper(
+        self,
+        seq_upper: str,
+        position: int,
+        center_base: Optional[str] = None,
+    ) -> Optional[str]:
+        seq_len = len(seq_upper)
+        target_base = self.center_base if center_base is None else center_base
+
+        if position < self.max_context or position >= seq_len - self.max_context:
+            return None
+        if seq_upper[position] != target_base:
+            return None
+
+        context = seq_upper[position - self.max_context : position + self.max_context + 1]
+        if len(context) != 2 * self.max_context + 1:
+            return None
+        if any(b not in 'ACGT' for b in context):
+            return None
+        return context
+
+    def _iter_contexts(
+        self,
+        seq_upper: str,
+        region_start: int,
+        region_end: int,
+        edge_trim: int,
+        center_base: Optional[str] = None,
+    ) -> Iterator[Tuple[int, str]]:
+        seq_len = len(seq_upper)
+        for i in range(max(region_start, edge_trim), min(region_end, seq_len - edge_trim)):
+            context = self._context_from_upper(seq_upper, i, center_base)
+            if context is not None:
+                yield i, context
+
+    def _record_context(self, context: str, is_modified: bool, weight=1):
+        if is_modified:
+            self.counts[context][0] += weight
+            self.total_modified += weight
+        else:
+            self.counts[context][1] += weight
+        self.total_positions += weight
+
     def add_position(self, sequence: str, position: int, is_modified: bool):
         """
         Add a single position observation.
@@ -51,35 +94,9 @@ class ContextCounter:
             position: Position of the base in the sequence
             is_modified: Whether this position was called as modified
         """
-        seq_len = len(sequence)
-
-        # Check bounds
-        if position < self.max_context or position >= seq_len - self.max_context:
-            return
-
-        # Check center base matches
-        if sequence[position].upper() != self.center_base:
-            return
-
-        # Extract context
-        start = position - self.max_context
-        end = position + self.max_context + 1
-        context = sequence[start:end].upper()
-
-        # Skip if contains N or invalid bases
-        if len(context) != 2 * self.max_context + 1:
-            return
-        if any(b not in 'ACGT' for b in context):
-            return
-
-        # Update counts
-        if is_modified:
-            self.counts[context][0] += 1
-            self.total_modified += 1
-        else:
-            self.counts[context][1] += 1
-
-        self.total_positions += 1
+        context = self._context_from_upper(sequence.upper(), position)
+        if context is not None:
+            self._record_context(context, is_modified)
 
     def process_read(self, sequence: str, mod_positions: Set[int], edge_trim: int = 10):
         """
@@ -91,12 +108,8 @@ class ContextCounter:
             edge_trim: Bases to skip at edges
         """
         seq_upper = sequence.upper()
-        seq_len = len(sequence)
-
-        for i in range(edge_trim, seq_len - edge_trim):
-            if seq_upper[i] == self.center_base:
-                is_mod = i in mod_positions
-                self.add_position(sequence, i, is_mod)
+        for i, context in self._iter_contexts(seq_upper, 0, len(sequence), edge_trim):
+            self._record_context(context, i in mod_positions)
 
     def process_read_daf(self, sequence: str, mod_positions: Set[int],
                          strand: str, edge_trim: int = 10):
@@ -145,36 +158,15 @@ class ContextCounter:
             reconstructed = ''.join(seq_list)
 
             # Process G positions and convert contexts to C-centered via RC
-            for i in range(edge_trim, seq_len - edge_trim):
-                if reconstructed[i] == orig_base:
-                    # Check context bounds
-                    if i < self.max_context or i >= seq_len - self.max_context:
-                        continue
-
-                    # Extract G-centered context
-                    start = i - self.max_context
-                    end = i + self.max_context + 1
-                    g_context = reconstructed[start:end]
-
-                    # Skip if contains N or invalid bases
-                    if len(g_context) != 2 * self.max_context + 1:
-                        continue
-                    if any(b not in 'ACGT' for b in g_context):
-                        continue
-
-                    # Reverse complement to get C-centered equivalent
-                    c_context = reverse_complement(g_context)
-
-                    # Was this position deaminated?
-                    is_deaminated = i in mod_positions
-
-                    # Update counts directly (bypass add_position which would check center base)
-                    if is_deaminated:
-                        self.counts[c_context][0] += 1
-                        self.total_modified += 1
-                    else:
-                        self.counts[c_context][1] += 1
-                    self.total_positions += 1
+            for i, g_context in self._iter_contexts(
+                reconstructed,
+                0,
+                seq_len,
+                edge_trim,
+                center_base=orig_base,
+            ):
+                c_context = reverse_complement(g_context)
+                self._record_context(c_context, i in mod_positions)
         else:
             # + strand (default): C→T deamination, process directly as C-centered
             deam_base = 'T'
@@ -188,10 +180,14 @@ class ContextCounter:
             reconstructed = ''.join(seq_list)
 
             # Process C positions directly
-            for i in range(edge_trim, seq_len - edge_trim):
-                if reconstructed[i] == orig_base:
-                    is_deaminated = i in mod_positions
-                    self.add_position(reconstructed, i, is_deaminated)
+            for i, context in self._iter_contexts(
+                reconstructed,
+                0,
+                seq_len,
+                edge_trim,
+                center_base=orig_base,
+            ):
+                self._record_context(context, i in mod_positions)
 
     def add_region(self, sequence: str, mod_positions: Set[int],
                    region_start: int, region_end: int, edge_trim: int = 10):
@@ -207,35 +203,15 @@ class ContextCounter:
             region_end: End of region to count (query coords)
             edge_trim: Skip positions within this many bases of read edges
         """
-        seq_len = len(sequence)
         seq_upper = sequence.upper()
 
-        for i in range(max(region_start, edge_trim),
-                       min(region_end, seq_len - edge_trim)):
-            if seq_upper[i] != self.center_base:
-                continue
-
-            # Check context bounds
-            if i < self.max_context or i >= seq_len - self.max_context:
-                continue
-
-            # Extract context
-            context = seq_upper[i - self.max_context : i + self.max_context + 1]
-
-            if len(context) != 2 * self.max_context + 1:
-                continue
-            if any(b not in 'ACGT' for b in context):
-                continue
-
-            # Record observation
-            is_mod = i in mod_positions
-            if is_mod:
-                self.counts[context][0] += 1
-                self.total_modified += 1
-            else:
-                self.counts[context][1] += 1
-
-            self.total_positions += 1
+        for i, context in self._iter_contexts(
+            seq_upper,
+            region_start,
+            region_end,
+            edge_trim,
+        ):
+            self._record_context(context, i in mod_positions)
 
     def get_probabilities(self, context_size: int = 3) -> pd.DataFrame:
         """
@@ -407,35 +383,9 @@ class ContextCounter:
             is_modified: Whether this position was called as modified
             weight: Weight to apply (e.g., posterior probability for this state)
         """
-        seq_len = len(sequence)
-
-        # Check bounds
-        if position < self.max_context or position >= seq_len - self.max_context:
-            return
-
-        # Check center base matches
-        if sequence[position].upper() != self.center_base:
-            return
-
-        # Extract context
-        start = position - self.max_context
-        end = position + self.max_context + 1
-        context = sequence[start:end].upper()
-
-        # Skip if contains N or invalid bases
-        if len(context) != 2 * self.max_context + 1:
-            return
-        if any(b not in 'ACGT' for b in context):
-            return
-
-        # Update counts with weight (counts stored as floats)
-        if is_modified:
-            self.counts[context][0] += weight
-            self.total_modified += weight
-        else:
-            self.counts[context][1] += weight
-
-        self.total_positions += weight
+        context = self._context_from_upper(sequence.upper(), position)
+        if context is not None:
+            self._record_context(context, is_modified, weight)
 
     def add_weighted_region(self, sequence: str, mod_positions: Set[int],
                             region_start: int, region_end: int,
@@ -453,38 +403,17 @@ class ContextCounter:
             weights: Array of weights (posterior probabilities) for each position
             edge_trim: Skip positions within this many bases of read edges
         """
-        seq_len = len(sequence)
         seq_upper = sequence.upper()
 
-        for i in range(max(region_start, edge_trim),
-                       min(region_end, seq_len - edge_trim)):
-            if seq_upper[i] != self.center_base:
-                continue
-
-            # Check context bounds
-            if i < self.max_context or i >= seq_len - self.max_context:
-                continue
-
-            # Extract context
-            context = seq_upper[i - self.max_context : i + self.max_context + 1]
-
-            if len(context) != 2 * self.max_context + 1:
-                continue
-            if any(b not in 'ACGT' for b in context):
-                continue
-
+        for i, context in self._iter_contexts(
+            seq_upper,
+            region_start,
+            region_end,
+            edge_trim,
+        ):
             # Get weight for this position
             weight = weights[i] if i < len(weights) else 0.0
-
-            # Record weighted observation
-            is_mod = i in mod_positions
-            if is_mod:
-                self.counts[context][0] += weight
-                self.total_modified += weight
-            else:
-                self.counts[context][1] += weight
-
-            self.total_positions += weight
+            self._record_context(context, i in mod_positions, weight)
 
     def reset(self):
         """Reset all counts to zero."""
