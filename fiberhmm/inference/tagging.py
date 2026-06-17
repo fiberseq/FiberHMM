@@ -8,6 +8,7 @@ from typing import Optional, Sequence, Tuple
 import numpy as np
 
 from fiberhmm.inference.circular import circular_intervals_overlap
+from fiberhmm.inference.tag_utils import clear_tags
 from fiberhmm.inference.tf_recaller import TFCall, write_ma_tags
 from fiberhmm.io.ma_tags import _read_length_of, flip_interval_frame
 
@@ -88,12 +89,7 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     # Apply recomputes the read structure, so any pre-existing MA/AN/AQ from a
     # prior fiberhmm-call/recall pass now refers to stale ns/nl coordinates.
     # Strip them so the BAM never carries an inconsistent annotation view.
-    for stale_tag in ("MA", "AN", "AQ"):
-        if read.has_tag(stale_tag):
-            try:
-                read.set_tag(stale_tag, None)
-            except Exception:
-                pass
+    clear_tags(read, ("MA", "AN", "AQ"))
 
     # FiberHMM works in SEQ (query_sequence) coordinates; ns/nl/as/al must be
     # written in molecular (original-fiber) frame for fibertools. Flip + re-sort
@@ -110,22 +106,16 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
         read.set_tag("nl", _u32_bam_array(ns_l))
         if with_scores and ns_sc is not None:
             read.set_tag("nq", scores_to_u8(ns_sc))
-        elif read.has_tag("nq"):
-            try:
-                read.set_tag("nq", None)
-            except Exception:
-                pass
+        else:
+            clear_tags(read, ("nq",))
 
     if write_msps and len(as_s) > 0:
         read.set_tag("as", _u32_bam_array(as_s))
         read.set_tag("al", _u32_bam_array(as_l))
         if with_scores and as_sc is not None:
             read.set_tag("aq", scores_to_u8(as_sc))
-        elif read.has_tag("aq"):
-            try:
-                read.set_tag("aq", None)
-            except Exception:
-                pass
+        else:
+            clear_tags(read, ("aq",))
 
 
 def unify_nucs_with_tf_calls(
