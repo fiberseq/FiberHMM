@@ -144,6 +144,25 @@ def _write_bam_list_file(bam_files: List[str], list_file: str) -> None:
             f.write(bam_path + '\n')
 
 
+def _run_samtools_list_command(
+    bam_files: List[str],
+    list_file: str,
+    cmd: List[str],
+    label: str,
+) -> None:
+    _write_bam_list_file(bam_files, list_file)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode, label,
+                output=result.stdout, stderr=result.stderr,
+            )
+    finally:
+        if os.path.exists(list_file):
+            os.remove(list_file)
+
+
 def _samtools_cat_bams(bam_files: List[str], output_bam: str, list_file: str) -> None:
     """Concatenate BAMs with `samtools cat -b`, cleaning the list file.
 
@@ -151,39 +170,22 @@ def _samtools_cat_bams(bam_files: List[str], output_bam: str, list_file: str) ->
     verbatim. Without it, ``samtools cat`` merges the @PG lines from every input,
     which would duplicate FiberHMM's @PG provenance line once per region.
     """
-    _write_bam_list_file(bam_files, list_file)
-    try:
-        result = subprocess.run(
-            ['samtools', 'cat', '-h', bam_files[0], '-b', list_file,
-             '-o', output_bam],
-            capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            raise subprocess.CalledProcessError(
-                result.returncode, 'samtools cat',
-                output=result.stdout, stderr=result.stderr,
-            )
-    finally:
-        if os.path.exists(list_file):
-            os.remove(list_file)
+    _run_samtools_list_command(
+        bam_files,
+        list_file,
+        ['samtools', 'cat', '-h', bam_files[0], '-b', list_file, '-o', output_bam],
+        'samtools cat',
+    )
 
 
 def _samtools_merge_bams(bam_files: List[str], output_bam: str, list_file: str) -> None:
     """Merge BAMs with `samtools merge -b`, cleaning the list file."""
-    _write_bam_list_file(bam_files, list_file)
-    try:
-        result = subprocess.run(
-            ['samtools', 'merge', '-f', '-b', list_file, output_bam],
-            capture_output=True, text=True
-        )
-        if result.returncode != 0:
-            raise subprocess.CalledProcessError(
-                result.returncode, 'samtools merge',
-                output=result.stdout, stderr=result.stderr,
-            )
-    finally:
-        if os.path.exists(list_file):
-            os.remove(list_file)
+    _run_samtools_list_command(
+        bam_files,
+        list_file,
+        ['samtools', 'merge', '-f', '-b', list_file, output_bam],
+        'samtools merge',
+    )
 
 
 def _remove_partial_output_bam(output_bam: str, verbose: bool = True) -> None:
