@@ -5,6 +5,7 @@ import numpy as np
 from fiberhmm.probabilities.context_counter import (
     ContextCounter,
     _count_ratio,
+    _daf_reconstruction_bases,
     _position_weight,
     _reconstruct_deaminated_sequence,
     _trim_context,
@@ -31,6 +32,12 @@ def test_count_ratio_handles_zero_total():
 def test_trim_context_extracts_centered_subcontext():
     assert _trim_context("ACGTA", 0) == "ACGTA"
     assert _trim_context("AACGTAA", 2) == "CGT"
+
+
+def test_daf_reconstruction_bases_by_strand():
+    assert _daf_reconstruction_bases("+") == ("T", "C")
+    assert _daf_reconstruction_bases(".") == ("T", "C")
+    assert _daf_reconstruction_bases("-") == ("A", "G")
 
 
 def test_add_position_records_valid_center_contexts():

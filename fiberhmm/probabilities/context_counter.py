@@ -45,6 +45,12 @@ def _trim_context(full_context: str, trim: int) -> str:
     return full_context[trim:len(full_context) - trim]
 
 
+def _daf_reconstruction_bases(strand: str) -> Tuple[str, str]:
+    if strand == '-':
+        return 'A', 'G'
+    return 'T', 'C'
+
+
 class ContextCounter:
     """
     Counts modification hits/misses per sequence context.
@@ -173,12 +179,10 @@ class ContextCounter:
 
         seq_upper = sequence.upper()
         seq_len = len(sequence)
+        deam_base, orig_base = _daf_reconstruction_bases(strand)
 
         if strand == '-':
             # G→A deamination: process G positions and RC to C-centered
-            deam_base = 'A'
-            orig_base = 'G'
-
             # Reconstruct original sequence (replace A back to G at deaminated positions)
             reconstructed = _reconstruct_deaminated_sequence(
                 seq_upper, mod_positions, deam_base, orig_base,
@@ -196,9 +200,6 @@ class ContextCounter:
                 self._record_context(c_context, i in mod_positions)
         else:
             # + strand (default): C→T deamination, process directly as C-centered
-            deam_base = 'T'
-            orig_base = 'C'
-
             # Reconstruct original sequence (replace T back to C at deaminated positions)
             reconstructed = _reconstruct_deaminated_sequence(
                 seq_upper, mod_positions, deam_base, orig_base,
