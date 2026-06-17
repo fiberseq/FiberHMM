@@ -63,6 +63,26 @@ def write_fiber_metadata_datasets(
     group.attrs['n_fibers'] = n
 
 
+def _hdf5_file_metadata_attrs(
+    *,
+    mode: str,
+    context_size: int,
+    edge_trim: int,
+    source_bam: str,
+    model_path: str = None,
+) -> dict:
+    attrs = {
+        'mode': mode,
+        'context_size': context_size,
+        'edge_trim': edge_trim,
+        'source_bam': os.path.basename(source_bam),
+        'format_version': 2,
+    }
+    if model_path is not None:
+        attrs['model_path'] = os.path.basename(model_path)
+    return attrs
+
+
 def write_hdf5_file_metadata(
     h5_file,
     *,
@@ -72,13 +92,14 @@ def write_hdf5_file_metadata(
     source_bam: str,
     model_path: str = None,
 ) -> None:
-    h5_file.attrs['mode'] = mode
-    h5_file.attrs['context_size'] = context_size
-    if model_path is not None:
-        h5_file.attrs['model_path'] = os.path.basename(model_path)
-    h5_file.attrs['edge_trim'] = edge_trim
-    h5_file.attrs['source_bam'] = os.path.basename(source_bam)
-    h5_file.attrs['format_version'] = 2
+    for key, value in _hdf5_file_metadata_attrs(
+        mode=mode,
+        context_size=context_size,
+        edge_trim=edge_trim,
+        source_bam=source_bam,
+        model_path=model_path,
+    ).items():
+        h5_file.attrs[key] = value
 
 
 def _posterior_chrom_subgroups(include_ref_positions: bool = True) -> List[str]:

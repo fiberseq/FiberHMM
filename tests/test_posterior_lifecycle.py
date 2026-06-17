@@ -92,6 +92,23 @@ def test_hdf5_chrom_metadata_helper_appends_default_strand():
     }
 
 
+def test_hdf5_file_metadata_attrs_normalizes_paths():
+    assert hdf5_backend._hdf5_file_metadata_attrs(
+        mode="daf",
+        context_size=5,
+        edge_trim=12,
+        source_bam="/data/input.bam",
+        model_path="/models/model.joblib",
+    ) == {
+        "mode": "daf",
+        "context_size": 5,
+        "edge_trim": 12,
+        "source_bam": "input.bam",
+        "format_version": 2,
+        "model_path": "model.joblib",
+    }
+
+
 def test_posterior_chrom_subgroups_respects_ref_position_toggle():
     assert hdf5_backend._posterior_chrom_subgroups(True) == [
         "posteriors",
