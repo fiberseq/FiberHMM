@@ -95,6 +95,43 @@ def _print_skip_reasons_summary(
             print(f"    {reason}: {count:,} ({pct:.1f}%)")
 
 
+def _report_workers_ready_once(
+    first_result_time: Optional[float],
+    pool_start: float,
+    message: str,
+) -> float:
+    if first_result_time is not None:
+        return first_result_time
+
+    first_result_time = time.time()
+    init_time = first_result_time - pool_start
+    print(f"  Workers ready ({init_time:.1f}s). {message}")
+    sys.stdout.flush()
+    return first_result_time
+
+
+def _print_region_progress(
+    aggregation,
+    total_regions: int,
+    start_time: float,
+    *,
+    footprint_label: str = "With footprints",
+    rate_unit: str = "reads/s",
+    rate_precision: int = 1,
+) -> None:
+    elapsed = time.time() - start_time
+    rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
+    rate_text = f"{rate:.{rate_precision}f}"
+    print(
+        f"\r  Regions: {aggregation.completed}/{total_regions} | "
+        f"Reads: {aggregation.total_reads:,} | "
+        f"{footprint_label}: {aggregation.reads_with_footprints:,} | "
+        f"{rate_text} {rate_unit}",
+        end='',
+    )
+    sys.stdout.flush()
+
+
 def _region_bam_work_items(
     regions,
     input_bam: str,
@@ -223,19 +260,12 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                     aggregation.add_result(futures[future], result, include_tsv=include_tsv)
 
                     # Track first result
-                    if first_result_time is None:
-                        first_result_time = time.time()
-                        init_time = first_result_time - pool_start
-                        print(f"  Workers ready ({init_time:.1f}s). Processing regions...")
-                        sys.stdout.flush()
-
-                    elapsed = time.time() - start_time
-                    rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
-                    print(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
-                          f"Reads: {aggregation.total_reads:,} | "
-                          f"With footprints: {aggregation.reads_with_footprints:,} | "
-                          f"{rate:.1f} reads/s", end='')
-                    sys.stdout.flush()
+                    first_result_time = _report_workers_ready_once(
+                        first_result_time,
+                        pool_start,
+                        "Processing regions...",
+                    )
+                    _print_region_progress(aggregation, len(regions), start_time)
 
                 except Exception as e:
                     print(f"\nError processing region: {e}")
@@ -379,19 +409,12 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
                     aggregation.add_result(futures[future], result)
 
                     # Track first result
-                    if first_result_time is None:
-                        first_result_time = time.time()
-                        init_time = first_result_time - pool_start
-                        print(f"  Workers ready ({init_time:.1f}s). Processing regions...")
-                        sys.stdout.flush()
-
-                    elapsed = time.time() - start_time
-                    rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
-                    print(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
-                          f"Reads: {aggregation.total_reads:,} | "
-                          f"With footprints: {aggregation.reads_with_footprints:,} | "
-                          f"{rate:.1f} reads/s", end='')
-                    sys.stdout.flush()
+                    first_result_time = _report_workers_ready_once(
+                        first_result_time,
+                        pool_start,
+                        "Processing regions...",
+                    )
+                    _print_region_progress(aggregation, len(regions), start_time)
 
                 except Exception as e:
                     print(f"\nError processing region: {e}")
@@ -523,17 +546,19 @@ def _process_bam_region_parallel_fused(
             for future in as_completed(futures):
                 result = RegionBamResult.from_value(future.result())
                 aggregation.add_result(futures[future], result)
-                if first_result is None:
-                    first_result = time.time()
-                    print(f"  Workers ready ({first_result - pool_start:.1f}s). Processing...")
-                    sys.stdout.flush()
-                elapsed = time.time() - start_time
-                rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
-                print(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
-                      f"Reads: {aggregation.total_reads:,} | "
-                      f"With FP: {aggregation.reads_with_footprints:,} | "
-                      f"{rate:.0f} r/s", end='')
-                sys.stdout.flush()
+                first_result = _report_workers_ready_once(
+                    first_result,
+                    pool_start,
+                    "Processing...",
+                )
+                _print_region_progress(
+                    aggregation,
+                    len(regions),
+                    start_time,
+                    footprint_label="With FP",
+                    rate_unit="r/s",
+                    rate_precision=0,
+                )
         print()
 
         _print_skip_reasons_summary(aggregation, footprint_label="With FP")

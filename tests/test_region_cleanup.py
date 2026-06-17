@@ -79,6 +79,49 @@ def test_region_skip_summary_formats_counts(capsys):
     assert "empty" not in out
 
 
+def test_region_worker_ready_message_prints_once(monkeypatch, capsys):
+    monkeypatch.setattr(region_pipeline.time, "time", lambda: 12.0)
+
+    first = region_pipeline._report_workers_ready_once(
+        None,
+        pool_start=10.0,
+        message="Processing regions...",
+    )
+
+    assert first == 12.0
+    assert "Workers ready (2.0s). Processing regions..." in capsys.readouterr().out
+
+    second = region_pipeline._report_workers_ready_once(
+        first,
+        pool_start=10.0,
+        message="Ignored",
+    )
+
+    assert second == first
+    assert capsys.readouterr().out == ""
+
+
+def test_region_progress_formats_counts_and_rate(monkeypatch, capsys):
+    monkeypatch.setattr(region_pipeline.time, "time", lambda: 12.0)
+    aggregation = region_pipeline.RegionBamAggregation(
+        total_reads=10,
+        reads_with_footprints=4,
+        temp_bams=[(0, "region_0.bam"), (1, "region_1.bam")],
+    )
+
+    region_pipeline._print_region_progress(
+        aggregation,
+        total_regions=3,
+        start_time=10.0,
+        footprint_label="With FP",
+        rate_unit="r/s",
+        rate_precision=0,
+    )
+
+    out = capsys.readouterr().out
+    assert "Regions: 2/3 | Reads: 10 | With FP: 4 | 5 r/s" in out
+
+
 def test_region_work_item_builders_use_stable_temp_names(tmp_path):
     regions = [("chr1", 0, 100), ("chr2", 5, 25)]
     temp_dir = str(tmp_path)
