@@ -435,6 +435,18 @@ class TestFiberReadExtraction:
         assert payload["tags"]["ML"] == bytes([200])
         assert payload["tags"]["st"] == "CT"
 
+    def test_apply_payload_tag_value_compacts_ml_only(self):
+        read = self.FakeRead(
+            "AAAA",
+            {
+                "MM": "A+a,0;",
+                "ML": array.array("B", [200]),
+            },
+        )
+
+        assert engine._apply_payload_tag_value(read, "MM") == "A+a,0;"
+        assert engine._apply_payload_tag_value(read, "ML") == bytes([200])
+
     def test_extract_fiber_read_mm_ml_branch_preserves_reverse_flag(self):
         read = self.FakeRead(
             "AAAA",

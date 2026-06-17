@@ -550,13 +550,17 @@ def _apply_payload_tags(read) -> dict:
     tags = {}
     for tag in ('MM', 'Mm', 'ML', 'Ml', 'st'):
         if read.has_tag(tag):
-            val = read.get_tag(tag)
-            if tag in ('ML', 'Ml'):
-                # array.array('B', ...) → bytes via buffer protocol: fast memcpy,
-                # avoids ~5000 PyInt allocations per Hia5 PacBio read.
-                val = compact_ml_value(val)
-            tags[tag] = val
+            tags[tag] = _apply_payload_tag_value(read, tag)
     return tags
+
+
+def _apply_payload_tag_value(read, tag: str):
+    val = read.get_tag(tag)
+    if tag in ('ML', 'Ml'):
+        # array.array('B', ...) -> bytes via buffer protocol: fast memcpy,
+        # avoids ~5000 PyInt allocations per Hia5 PacBio read.
+        return compact_ml_value(val)
+    return val
 
 
 def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[dict]:
