@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from fiberhmm.inference import stats as stats_module
@@ -49,3 +50,12 @@ def test_collect_stats_closes_second_bam_when_sampling_fails(monkeypatch):
 
     assert len(opened) == 2
     assert all(handle.closed for handle in opened)
+
+
+def test_positive_gaps_between_intervals_sorts_and_skips_overlaps():
+    gaps = stats_module._positive_gaps_between_intervals(
+        np.array([50, 0, 20]),
+        np.array([10, 15, 40]),
+    )
+
+    assert gaps == [5]

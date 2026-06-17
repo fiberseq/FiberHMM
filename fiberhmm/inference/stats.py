@@ -8,6 +8,24 @@ from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 
+def _positive_gaps_between_intervals(starts: np.ndarray, lengths: np.ndarray) -> list:
+    if len(starts) <= 1:
+        return []
+
+    sorted_idx = np.argsort(starts)
+    sorted_starts = starts[sorted_idx]
+    sorted_lengths = lengths[sorted_idx]
+
+    gaps = []
+    for i in range(len(sorted_starts) - 1):
+        gap_start = sorted_starts[i] + sorted_lengths[i]
+        gap_end = sorted_starts[i + 1]
+        gap = gap_end - gap_start
+        if gap > 0:
+            gaps.append(gap)
+    return gaps
+
+
 class FootprintStats:
     """Collects footprint statistics from sampled reads."""
 
@@ -53,17 +71,7 @@ class FootprintStats:
 
             # Gap sizes (accessible regions between footprints)
             if n_footprints > 1:
-                # Sort by start position
-                sorted_idx = np.argsort(ns)
-                sorted_starts = ns[sorted_idx]
-                sorted_lengths = nl[sorted_idx]
-
-                for i in range(len(sorted_starts) - 1):
-                    gap_start = sorted_starts[i] + sorted_lengths[i]
-                    gap_end = sorted_starts[i + 1]
-                    gap = gap_end - gap_start
-                    if gap > 0:
-                        self.gap_sizes.append(gap)
+                self.gap_sizes.extend(_positive_gaps_between_intervals(ns, nl))
 
         # MSP stats
         n_msps = len(as_starts) if as_starts is not None else 0
