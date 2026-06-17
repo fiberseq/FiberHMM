@@ -201,6 +201,14 @@ def _daf_chimera_events(ct_positions, ga_positions):
                   + [(int(p), -1) for p in ga_positions])
 
 
+def _has_min_daf_chimera_strand_counts(
+    nct: int,
+    nga: int,
+    min_seg_events: int,
+) -> bool:
+    return min(nct, nga) >= min_seg_events
+
+
 def _is_pure_daf_segment(dominant_count, segment_size,
                          min_seg_events: int, purity: float) -> bool:
     return (
@@ -247,7 +255,7 @@ def is_daf_chimera(ct_positions, ga_positions,
     """
     nct = len(ct_positions)
     nga = len(ga_positions)
-    if min(nct, nga) < min_seg_events:
+    if not _has_min_daf_chimera_strand_counts(nct, nga, min_seg_events):
         return False
 
     events = _daf_chimera_events(ct_positions, ga_positions)
