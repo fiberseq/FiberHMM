@@ -5,6 +5,7 @@ Default values can be overridden per-script where needed.
 """
 
 import argparse
+import multiprocessing
 
 
 MODE_DESCRIPTIONS = {
@@ -16,6 +17,17 @@ MODE_DESCRIPTIONS = {
 
 def mode_description(mode: str) -> str:
     return MODE_DESCRIPTIONS.get(mode, mode)
+
+
+def resolve_core_count(requested_cores: int, cpu_count_func=None) -> int:
+    """Resolve CLI core count where 0 means auto-detect and the minimum is 1."""
+    requested_cores = int(requested_cores)
+    if requested_cores == 0:
+        cpu_count_func = (
+            multiprocessing.cpu_count if cpu_count_func is None else cpu_count_func
+        )
+        return int(cpu_count_func())
+    return max(1, requested_cores)
 
 
 def add_mode_args(parser: argparse.ArgumentParser,

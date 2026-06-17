@@ -46,6 +46,7 @@ from collections import deque
 import pysam
 
 from fiberhmm.cli.model_selection import resolve_model_path as _resolve_cli_model_path
+from fiberhmm.cli.common import resolve_core_count
 from fiberhmm.cli.recall_config import (
     resolve_recall_defaults as _shared_resolve_recall_defaults,
     should_write_legacy_tags,
@@ -456,7 +457,7 @@ def _print_beta_banner(downstream_compat):
 
 
 def _resolve_cores(requested_cores):
-    return mp.cpu_count() if requested_cores == 0 else max(1, requested_cores)
+    return resolve_core_count(requested_cores, mp.cpu_count)
 
 
 def _resolve_recall_defaults(args):

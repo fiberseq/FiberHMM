@@ -15,6 +15,7 @@ from fiberhmm.cli.common import (
     add_stats_args,
     add_verbose_args,
     mode_description,
+    resolve_core_count,
 )
 
 
@@ -123,6 +124,11 @@ class TestAddParallelArgs:
         add_parallel_args(parser)
         args = parser.parse_args(['-c', '8'])
         assert args.cores == 8
+
+    def test_resolve_core_count(self):
+        assert resolve_core_count(0, cpu_count_func=lambda: 12) == 12
+        assert resolve_core_count(-3, cpu_count_func=lambda: 12) == 1
+        assert resolve_core_count(4, cpu_count_func=lambda: 12) == 4
 
 
 class TestAddContextArgs:

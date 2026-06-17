@@ -18,6 +18,7 @@ from fiberhmm.cli.common import (
     add_stats_args,
     add_version_args,
     mode_description,
+    resolve_core_count,
 )
 from fiberhmm.cli.model_selection import resolve_model_path as _resolve_cli_model_path
 from fiberhmm.core.model_io import load_model_with_metadata
@@ -165,6 +166,13 @@ def _resolve_process_unmapped(args, use_streaming: bool) -> bool:
     return process_unmapped
 
 
+def _resolve_apply_cores(requested_cores: int) -> int:
+    n_cores = resolve_core_count(requested_cores)
+    if int(requested_cores) == 0:
+        print(f"Auto-detected {n_cores} CPU cores")
+    return n_cores
+
+
 def _resolve_context_size(args, model_context_size: int) -> int:
     if args.context_size is not None:
         context_size = args.context_size
@@ -238,13 +246,7 @@ def main():
     if stdout_mode:
         sys.stdout = sys.stderr
 
-    # Determine number of cores
-    if args.cores == 0:
-        import multiprocessing
-        n_cores = multiprocessing.cpu_count()
-        print(f"Auto-detected {n_cores} CPU cores")
-    else:
-        n_cores = args.cores
+    n_cores = _resolve_apply_cores(args.cores)
 
     # Create output directory (unless writing to stdout)
     if not stdout_mode:

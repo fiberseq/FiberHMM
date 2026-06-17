@@ -6,6 +6,7 @@ import pytest
 
 from fiberhmm.cli.apply import (
     _print_processing_settings,
+    _resolve_apply_cores,
     _resolve_context_size,
     _resolve_mode,
     _resolve_model_path,
@@ -53,6 +54,13 @@ def test_apply_process_unmapped_respects_explicit_true(tmp_path):
     )
 
     assert _resolve_process_unmapped(args, use_streaming=False)
+
+
+def test_apply_resolve_cores_auto_and_clamps(capsys):
+    assert _resolve_apply_cores(-3) == 1
+
+    assert _resolve_apply_cores(0) >= 1
+    assert "Auto-detected" in capsys.readouterr().out
 
 
 def test_apply_context_size_override_warns(capsys):
