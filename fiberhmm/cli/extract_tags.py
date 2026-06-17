@@ -770,6 +770,15 @@ def _deam_ref_pos_for_query(aligned_pairs, query_pos: int) -> Optional[int]:
     return ref_pos
 
 
+def _deam_base_flavor(base) -> Optional[int]:
+    base_upper = base.upper() if isinstance(base, str) else chr(base).upper()
+    if base_upper == 'C':
+        return 1
+    if base_upper == 'G':
+        return 0
+    return None
+
+
 def _deam_iupac_positions(seq: str, aligned_pairs) -> list:
     if not seq:
         return []
@@ -804,12 +813,8 @@ def _deam_mm_ml_positions(read, aligned_pairs, prob_threshold: int) -> list:
         if mod_code != 'u':
             continue
         # Flavor: C->U = 1 (Y/CT-dea), G->U = 0 (R/GA-dea).
-        b = base.upper() if isinstance(base, str) else chr(base).upper()
-        if b == 'C':
-            flavor = 1
-        elif b == 'G':
-            flavor = 0
-        else:
+        flavor = _deam_base_flavor(base)
+        if flavor is None:
             continue
         for query_pos, prob in zip(pos_arr, qual_arr):
             query_pos = int(query_pos)
