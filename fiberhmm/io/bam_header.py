@@ -13,6 +13,30 @@ def _header_to_dict(header) -> dict:
     return dict(header)
 
 
+def _next_pg_id(pgs, base: str) -> str:
+    existing_ids = {pg.get('ID') for pg in pgs}
+    pid = base
+    i = 1
+    while pid in existing_ids:
+        i += 1
+        pid = f"{base}.{i}"
+    return pid
+
+
+def _pg_fields_from_record(record: dict) -> dict:
+    return {
+        key: str(record[key])
+        for key in ('PN', 'VN', 'CL', 'DS')
+        if record.get(key)
+    }
+
+
+def _last_pg_id(pgs) -> Optional[str]:
+    if pgs and pgs[-1].get('ID'):
+        return pgs[-1]['ID']
+    return None
+
+
 def append_pg_record(header, record: dict):
     """Return a copy of ``header`` with a ``@PG`` program-group line appended.
 
@@ -22,22 +46,13 @@ def append_pg_record(header, record: dict):
     """
     d = _header_to_dict(header)
     pgs = list(d.get('PG', []))
-    existing_ids = {p.get('ID') for p in pgs}
-
     base = record.get('PN') or 'fiberhmm'
-    pid = base
-    i = 1
-    while pid in existing_ids:
-        i += 1
-        pid = f"{base}.{i}"
+    pg = {'ID': _next_pg_id(pgs, base)}
+    pg.update(_pg_fields_from_record(record))
 
-    pg = {'ID': pid}
-    for key in ('PN', 'VN', 'CL', 'DS'):
-        val = record.get(key)
-        if val:
-            pg[key] = str(val)
-    if pgs and pgs[-1].get('ID'):
-        pg['PP'] = pgs[-1]['ID']
+    previous_id = _last_pg_id(pgs)
+    if previous_id:
+        pg['PP'] = previous_id
 
     d['PG'] = pgs + [pg]
     return pysam.AlignmentHeader.from_dict(d)
