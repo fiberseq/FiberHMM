@@ -791,6 +791,20 @@ def _encoding_inputs_for_read(
     return query_sequence, m6a_positions, None
 
 
+def _processing_strand_for_read(
+    fiber_read: dict,
+    query_sequence: str,
+    m6a_positions,
+    mode: str,
+) -> str:
+    if mode == 'daf':
+        return fiber_read.get('_daf_strand') or detect_daf_strand(
+            query_sequence,
+            m6a_positions,
+        )
+    return '.'
+
+
 def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,
                           mode: str, context_size: int, msp_min_size: int,
                           with_scores: bool, return_posteriors: bool = False,
@@ -807,12 +821,9 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     m6a_positions = fiber_read['m6a_query_positions']
 
     # Detect strand
-    if mode == 'daf':
-        strand = fiber_read.get('_daf_strand') or detect_daf_strand(query_sequence, m6a_positions)
-    elif mode == 'nanopore-fiber':
-        strand = '.'  # No strand detection for nanopore
-    else:
-        strand = '.'
+    strand = _processing_strand_for_read(
+        fiber_read, query_sequence, m6a_positions, mode,
+    )
 
     # Encode — pass is_reverse so nanopore mode handles strand correctly.
     # Circular mode keeps the 3x tiling private to inference and projects the

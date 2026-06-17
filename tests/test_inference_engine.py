@@ -87,6 +87,29 @@ def test_encoding_inputs_for_read_tiles_only_circular_reads():
     assert circular_length == 4
 
 
+def test_processing_strand_for_read_prefers_daf_tag_and_defaults(monkeypatch):
+    assert engine._processing_strand_for_read(
+        {"_daf_strand": "-"},
+        "ACGT",
+        {1},
+        mode="daf",
+    ) == "-"
+
+    monkeypatch.setattr(engine, "detect_daf_strand", lambda seq, positions: "+")
+    assert engine._processing_strand_for_read(
+        {},
+        "ACGT",
+        {1},
+        mode="daf",
+    ) == "+"
+    assert engine._processing_strand_for_read(
+        {},
+        "ACGT",
+        {1},
+        mode="pacbio-fiber",
+    ) == "."
+
+
 class TestPredictFootprints:
     def test_empty_input(self, simple_model):
         starts, sizes, count, scores = predict_footprints(simple_model, np.array([]))
