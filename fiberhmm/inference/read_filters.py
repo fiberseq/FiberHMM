@@ -54,6 +54,13 @@ def _alignment_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     return None
 
 
+def _length_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
+    read_len = _filter_read_length(read)
+    if read_len is None or read_len < config.min_read_length:
+        return "too_short"
+    return None
+
+
 def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     """Return the skip reason for a streaming read, or None if processable."""
     reason = _unmapped_skip_reason(read, config)
@@ -64,9 +71,9 @@ def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     if reason is not None:
         return reason
 
-    read_len = _filter_read_length(read)
-    if read_len is None or read_len < config.min_read_length:
-        return "too_short"
+    reason = _length_skip_reason(read, config)
+    if reason is not None:
+        return reason
 
     if config.train_rids and read.query_name in config.train_rids:
         return "training_excluded"

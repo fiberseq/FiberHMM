@@ -9,6 +9,7 @@ from fiberhmm.inference.read_filters import (
     _alignment_skip_reason,
     _filter_read_length,
     _is_secondary_or_supplementary,
+    _length_skip_reason,
     _unmapped_skip_reason,
     is_primary_alignment,
     is_primary_mapped_alignment,
@@ -118,6 +119,34 @@ def test_alignment_skip_reason_checks_primary_and_mapped_mapq():
             ReadFilterConfig(process_unmapped=True, min_mapq=30),
         )
         is None
+    )
+
+
+def test_length_skip_reason_uses_filter_read_length_policy():
+    assert (
+        _length_skip_reason(_Read(query_alignment_length=99), ReadFilterConfig())
+        is None
+    )
+    assert (
+        _length_skip_reason(
+            _Read(query_alignment_length=99),
+            ReadFilterConfig(min_read_length=100),
+        )
+        == "too_short"
+    )
+    assert (
+        _length_skip_reason(
+            _Read(is_unmapped=True, query_length=99),
+            ReadFilterConfig(process_unmapped=True, min_read_length=100),
+        )
+        == "too_short"
+    )
+    assert (
+        _length_skip_reason(
+            _Read(query_alignment_length=None),
+            ReadFilterConfig(min_read_length=1),
+        )
+        == "too_short"
     )
 
 
