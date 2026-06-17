@@ -175,6 +175,19 @@ def _msp_intervals_from_nuc_boundaries(nuc_starts, nuc_ends, read_length: int,
     return starts[size_mask], sizes[size_mask]
 
 
+def _nuc_boundaries_from_footprint_runs(
+    fp_starts,
+    fp_ends,
+    nuc_min_size: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    if len(fp_starts) == 0:
+        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
+
+    fp_sizes_arr = fp_ends - fp_starts
+    nuc_mask = fp_sizes_arr >= nuc_min_size
+    return fp_starts[nuc_mask], fp_ends[nuc_mask]
+
+
 def _empty_interval_result(include_predictions: bool = False) -> dict:
     result = {
         'footprint_starts': np.array([], dtype=np.int32),
@@ -263,14 +276,11 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
     # Find MSPs (accessible regions between nucleosome-sized footprints)
     # Only footprints >= nuc_min_size act as MSP boundaries
     if len(states) > 0:
-        if len(fp_starts) > 0:
-            fp_sizes_arr = fp_ends - fp_starts
-            nuc_mask = fp_sizes_arr >= nuc_min_size
-            nuc_starts = fp_starts[nuc_mask]
-            nuc_ends = fp_ends[nuc_mask]
-        else:
-            nuc_starts = np.array([], dtype=np.int64)
-            nuc_ends = np.array([], dtype=np.int64)
+        nuc_starts, nuc_ends = _nuc_boundaries_from_footprint_runs(
+            fp_starts,
+            fp_ends,
+            nuc_min_size,
+        )
 
         msp_starts_arr, msp_sizes_arr = _msp_intervals_from_nuc_boundaries(
             nuc_starts, nuc_ends, len(states), msp_min_size,
