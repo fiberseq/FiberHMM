@@ -41,6 +41,20 @@ def test_nuc_call_quality_lists_preserve_nq_el_er_order():
     )
 
 
+def test_optional_apply_scores_respects_enabled_flag():
+    apply_result = {"ns_scores": np.asarray([0.25], dtype=np.float32)}
+
+    assert fused_stages._optional_apply_scores(
+        apply_result, "ns_scores", enabled=True,
+    ) is apply_result["ns_scores"]
+    assert fused_stages._optional_apply_scores(
+        apply_result, "ns_scores", enabled=False,
+    ) is None
+    assert fused_stages._optional_apply_scores(
+        apply_result, "as_scores", enabled=True,
+    ) is None
+
+
 def test_interval_pairs_casts_parallel_arrays_to_int_pairs():
     pairs = fused_stages._interval_pairs(
         np.asarray([1, 2], dtype=np.int32),

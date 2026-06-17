@@ -71,6 +71,10 @@ def _nuc_call_quality_lists(nuc_calls):
     )
 
 
+def _optional_apply_scores(apply_result: Mapping[str, Any], key: str, enabled: bool):
+    return apply_result.get(key) if enabled else None
+
+
 def _promote_large_tf_nucs(
     tf_calls,
     nuc_calls,
@@ -250,7 +254,7 @@ def _build_fused_recall_result_without_nucs_linear(
         nl,
         tf_calls,
         unify_threshold,
-        apply_result.get("ns_scores") if with_scores else None,
+        _optional_apply_scores(apply_result, "ns_scores", with_scores),
     )
     kept_starts, kept_lengths = split_intervals(kept_nucs)
 
@@ -259,8 +263,8 @@ def _build_fused_recall_result_without_nucs_linear(
         "nl": kept_lengths,
         "as": msps,
         "al": msp_lengths,
-        "ns_scores": apply_result.get("ns_scores") if with_scores else None,
-        "as_scores": apply_result.get("as_scores") if with_scores else None,
+        "ns_scores": _optional_apply_scores(apply_result, "ns_scores", with_scores),
+        "as_scores": _optional_apply_scores(apply_result, "as_scores", with_scores),
         "nq_for_kept_nucs": nq_for_kept,
         "tf_calls": tf_calls,
     }
@@ -297,17 +301,17 @@ def _build_fused_recall_result_without_nucs_circular(
         tf_calls,
         unify_threshold,
         read_length,
-        apply_result.get("circular_ns_scores") if with_scores else None,
+        _optional_apply_scores(apply_result, "circular_ns_scores", with_scores),
     )
     kept_starts, kept_lengths, kept_scores = split_intervals_for_legacy(
         kept_nucs,
         read_length,
-        apply_result.get("circular_ns_scores") if with_scores else None,
+        _optional_apply_scores(apply_result, "circular_ns_scores", with_scores),
     )
     msp_starts, msp_lengths_split, msp_scores = split_intervals_for_legacy(
         apply_result.get("circular_as", []),
         read_length,
-        apply_result.get("circular_as_scores") if with_scores else None,
+        _optional_apply_scores(apply_result, "circular_as_scores", with_scores),
     )
     return {
         "ns": kept_starts,
