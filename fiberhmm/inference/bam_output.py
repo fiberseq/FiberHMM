@@ -286,6 +286,23 @@ def _ensure_output_dir_writable(output_bam: str, verbose: bool = True) -> None:
         raise
 
 
+def _prepare_pysam_concat_fallback(
+    output_bam: str,
+    error: Exception,
+    verbose: bool = True,
+) -> None:
+    if verbose:
+        stderr = getattr(error, 'stderr', None)
+        if stderr:
+            print(f"  WARNING: samtools cat failed: {stderr.strip()}")
+        else:
+            print(f"  WARNING: samtools cat failed: {error}")
+        print("  Falling back to pysam (slower, reads each record)...")
+
+    _remove_partial_output_bam(output_bam, verbose=verbose)
+    _ensure_output_dir_writable(output_bam, verbose=verbose)
+
+
 def _write_empty_bam_from_input_header(input_bam: str, output_bam: str) -> None:
     """Create an empty BAM using the input BAM header."""
     with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as inbam:
@@ -369,15 +386,7 @@ def _concatenate_region_bams(
         return
 
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        if verbose:
-            if hasattr(e, 'stderr') and e.stderr:
-                print(f"  WARNING: samtools cat failed: {e.stderr.strip()}")
-            else:
-                print(f"  WARNING: samtools cat failed: {e}")
-            print("  Falling back to pysam (slower, reads each record)...")
-
-        _remove_partial_output_bam(output_bam, verbose=verbose)
-        _ensure_output_dir_writable(output_bam, verbose=verbose)
+        _prepare_pysam_concat_fallback(output_bam, e, verbose=verbose)
 
     try:
         _concatenate_bams_with_pysam(bam_files, output_bam, verbose=verbose)

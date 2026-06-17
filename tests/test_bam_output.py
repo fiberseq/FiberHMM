@@ -127,6 +127,56 @@ def test_concatenate_trivial_region_bams_handles_empty_single_and_many(monkeypat
     ]
 
 
+def test_prepare_pysam_concat_fallback_logs_stderr_and_prepares(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(
+        bam_output,
+        "_remove_partial_output_bam",
+        lambda output_bam, verbose=True: calls.append(("remove", output_bam, verbose)),
+    )
+    monkeypatch.setattr(
+        bam_output,
+        "_ensure_output_dir_writable",
+        lambda output_bam, verbose=True: calls.append(("probe", output_bam, verbose)),
+    )
+    error = subprocess.CalledProcessError(1, "samtools cat", stderr="bad sort\n")
+
+    bam_output._prepare_pysam_concat_fallback("out.bam", error, verbose=True)
+
+    captured = capsys.readouterr()
+    assert "samtools cat failed: bad sort" in captured.out
+    assert "Falling back to pysam" in captured.out
+    assert calls == [
+        ("remove", "out.bam", True),
+        ("probe", "out.bam", True),
+    ]
+
+
+def test_prepare_pysam_concat_fallback_respects_quiet_mode(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(
+        bam_output,
+        "_remove_partial_output_bam",
+        lambda output_bam, verbose=True: calls.append(("remove", output_bam, verbose)),
+    )
+    monkeypatch.setattr(
+        bam_output,
+        "_ensure_output_dir_writable",
+        lambda output_bam, verbose=True: calls.append(("probe", output_bam, verbose)),
+    )
+
+    bam_output._prepare_pysam_concat_fallback(
+        "out.bam", FileNotFoundError("samtools"), verbose=False,
+    )
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert calls == [
+        ("remove", "out.bam", False),
+        ("probe", "out.bam", False),
+    ]
+
+
 def test_convert_to_bigbed_sorts_without_shell(monkeypatch, tmp_path):
     bed = tmp_path / "calls.bed"
     chrom_sizes = tmp_path / "chrom.sizes"
