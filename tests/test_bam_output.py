@@ -198,6 +198,18 @@ def test_normalize_bed12_blocks_sorts_merges_scores_and_pads():
     assert scores == [82, 0]
 
 
+def test_bed12_components_from_ref_blocks_builds_offsets_and_scores():
+    assert bam_output._bed12_components_from_ref_blocks([], with_scores=True) is None
+    assert bam_output._bed12_components_from_ref_blocks(
+        [(120, 130, 255), (100, 105, 128)],
+        with_scores=True,
+    ) == (100, 130, [20, 0], [10, 5], [255, 128])
+    assert bam_output._bed12_components_from_ref_blocks(
+        [(120, 130, 255)],
+        with_scores=False,
+    ) == (120, 130, [0], [10], [])
+
+
 def test_footprint_bed12_line_from_read_projects_and_formats(monkeypatch):
     read = SimpleNamespace(
         reference_name="chr1",

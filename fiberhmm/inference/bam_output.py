@@ -628,23 +628,31 @@ def _normalize_bed12_blocks(block_starts, block_sizes, valid_scores, read_length
     return _pad_bed12_blocks(block_starts, block_sizes, valid_scores, read_length)
 
 
+def _bed12_components_from_ref_blocks(blocks, with_scores: bool):
+    ref_starts = [start for start, _, _ in blocks]
+    if not ref_starts:
+        return None
+
+    ref_ends = [end for _, end, _ in blocks]
+    valid_scores = [score for _, _, score in blocks] if with_scores else []
+    chrom_start = min(ref_starts)
+    chrom_end = max(ref_ends)
+    block_sizes = [end - start for start, end in zip(ref_starts, ref_ends)]
+    block_starts = [start - chrom_start for start in ref_starts]
+    return chrom_start, chrom_end, block_starts, block_sizes, valid_scores
+
+
 def _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores: bool) -> Optional[str]:
     chrom = read.reference_name
     strand = '-' if read.is_reverse else '+'
 
     query_to_ref = build_query_to_ref(read)
     blocks = scored_interval_spans(ns, nl, nq if with_scores else None, query_to_ref)
-    ref_starts = [start for start, _, _ in blocks]
-    ref_ends = [end for _, end, _ in blocks]
-    valid_scores = [score for _, _, score in blocks] if with_scores else []
-
-    if not ref_starts:
+    components = _bed12_components_from_ref_blocks(blocks, with_scores)
+    if components is None:
         return None
 
-    chrom_start = min(ref_starts)
-    chrom_end = max(ref_ends)
-    block_sizes = [ref_ends[i] - ref_starts[i] for i in range(len(ref_starts))]
-    block_starts = [ref_starts[i] - chrom_start for i in range(len(ref_starts))]
+    chrom_start, chrom_end, block_starts, block_sizes, valid_scores = components
 
     read_length = chrom_end - chrom_start
     block_starts, block_sizes, valid_scores = _normalize_bed12_blocks(
