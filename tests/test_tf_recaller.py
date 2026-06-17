@@ -23,6 +23,7 @@ from fiberhmm.io.ma_tags import (
     _format_ma_annotation_part,
     _nuc_aq_has_edge_qualities,
     _parse_ma_interval_list,
+    _parse_ma_read_length,
     ambiguity_to_edge,
     format_aq_array,
     format_ma_tag,
@@ -194,6 +195,13 @@ def test_parse_ma_interval_list_skips_empty_tokens_and_reports_bad_intervals():
 
     with pytest.raises(ValueError, match="missing dash"):
         _parse_ma_interval_list("1-10,bad")
+
+
+def test_parse_ma_read_length_reports_bad_token():
+    assert _parse_ma_read_length("4521") == 4521
+
+    with pytest.raises(ValueError, match="must start with read length"):
+        _parse_ma_read_length("not-a-length")
 
 
 def test_aq_layout():

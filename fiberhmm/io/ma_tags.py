@@ -137,6 +137,13 @@ def _parse_ma_interval_list(data: str) -> List[Tuple[int, int]]:
     return intervals
 
 
+def _parse_ma_read_length(token: str) -> int:
+    try:
+        return int(token)
+    except ValueError:
+        raise ValueError(f'MA tag must start with read length; got {token!r}')
+
+
 def flip_interval_frame(start: int, length: int, read_length: int) -> Tuple[int, int]:
     """Convert a (start, length) interval between the SEQ (forward-reference) and
     molecular (original-fiber) coordinate frames of a reverse-mapped read.
@@ -309,10 +316,7 @@ def parse_ma_tag(ma_string: str) -> dict:
     if not ma_string:
         raise ValueError('empty MA tag')
     pieces = ma_string.split(';')
-    try:
-        read_length = int(pieces[0])
-    except ValueError:
-        raise ValueError(f'MA tag must start with read length; got {pieces[0]!r}')
+    read_length = _parse_ma_read_length(pieces[0])
     out = {'read_length': read_length, 'nuc': [], 'msp': [], 'tf': [],
            'raw_types': []}
     for chunk in pieces[1:]:
