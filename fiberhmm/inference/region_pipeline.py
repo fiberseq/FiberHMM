@@ -73,6 +73,28 @@ def _base_region_worker_params(
     }
 
 
+def _print_skip_reasons_summary(
+    aggregation: RegionBamAggregation,
+    footprint_label: str = "With footprints",
+) -> None:
+    if aggregation.total_skipped <= 0:
+        return
+
+    total_encountered = aggregation.total_reads + aggregation.total_skipped
+    print(
+        f"  Processed: {aggregation.total_reads:,} | "
+        f"Skipped: {aggregation.total_skipped:,} | "
+        f"{footprint_label}: {aggregation.reads_with_footprints:,}"
+    )
+    print("  Skip reasons:")
+    for reason, count in sorted(
+        aggregation.skip_reasons.items(), key=lambda x: -x[1]
+    ):
+        if count > 0:
+            pct = 100 * count / total_encountered
+            print(f"    {reason}: {count:,} ({pct:.1f}%)")
+
+
 def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    model_path: str, train_rids: Set[str],
                                    edge_trim: int, circular: bool,
@@ -201,20 +223,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         print()  # Newline after progress
 
         # Print skip reasons summary
-        if aggregation.total_skipped > 0:
-            total_encountered = aggregation.total_reads + aggregation.total_skipped
-            print(
-                f"  Processed: {aggregation.total_reads:,} | "
-                f"Skipped: {aggregation.total_skipped:,} | "
-                f"With footprints: {aggregation.reads_with_footprints:,}"
-            )
-            print("  Skip reasons:")
-            for reason, count in sorted(
-                aggregation.skip_reasons.items(), key=lambda x: -x[1]
-            ):
-                if count > 0:
-                    pct = 100 * count / total_encountered
-                    print(f"    {reason}: {count:,} ({pct:.1f}%)")
+        _print_skip_reasons_summary(aggregation)
 
         # Sort temp BAMs by region order and filter to non-empty
         aggregation.temp_bams.sort(key=lambda x: x[0])
@@ -515,19 +524,7 @@ def _process_bam_region_parallel_fused(
                 sys.stdout.flush()
         print()
 
-        if aggregation.total_skipped > 0:
-            total_enc = aggregation.total_reads + aggregation.total_skipped
-            print(
-                f"  Processed: {aggregation.total_reads:,} | "
-                f"Skipped: {aggregation.total_skipped:,} | "
-                f"With FP: {aggregation.reads_with_footprints:,}"
-            )
-            print("  Skip reasons:")
-            for reason, count in sorted(
-                aggregation.skip_reasons.items(), key=lambda x: -x[1]
-            ):
-                if count > 0:
-                    print(f"    {reason}: {count:,} ({100*count/total_enc:.1f}%)")
+        _print_skip_reasons_summary(aggregation, footprint_label="With FP")
 
         # Concat region BAMs in region-index order - preserves coord sort.
         aggregation.temp_bams.sort(key=lambda x: x[0])

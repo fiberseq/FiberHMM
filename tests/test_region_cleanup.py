@@ -55,6 +55,30 @@ def _indexed_input_bam(tmp_path):
     return str(input_bam)
 
 
+def test_region_skip_summary_formats_counts(capsys):
+    aggregation = region_pipeline.RegionBamAggregation()
+    aggregation.add_result(
+        0,
+        region_pipeline.RegionBamResult(
+            "region.bam",
+            total_reads=10,
+            reads_with_footprints=3,
+            written=10,
+            skip_reasons={"low_mapq": 2, "empty": 0},
+        ),
+    )
+
+    region_pipeline._print_skip_reasons_summary(
+        aggregation,
+        footprint_label="With FP",
+    )
+
+    out = capsys.readouterr().out
+    assert "Processed: 10 | Skipped: 2 | With FP: 3" in out
+    assert "low_mapq: 2 (16.7%)" in out
+    assert "empty" not in out
+
+
 def test_region_parallel_bam_cleans_temp_dir_on_worker_failure(monkeypatch, tmp_path):
     temp_dirs = _install_failing_region_pool(monkeypatch, tmp_path)
     input_bam = _indexed_input_bam(tmp_path)
