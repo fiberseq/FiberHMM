@@ -5,6 +5,7 @@ import numpy as np
 from fiberhmm.inference.reference_mapping import (
     _first_ref_in_query_interval,
     _last_ref_in_query_interval,
+    _ref_positions_to_half_open_span,
     query_interval_to_ref_block,
     query_interval_to_ref_span,
     query_to_ref_lookup,
@@ -21,6 +22,11 @@ def test_query_to_ref_lookup_accepts_arrays_and_dicts():
     assert query_to_ref_lookup(q2r, 10) is None
     assert query_to_ref_lookup({0: 200, 2: 202}, 2) == 202
     assert query_to_ref_lookup({0: 200, 2: 202}, 1) is None
+
+
+def test_ref_positions_to_half_open_span_orders_positions():
+    assert _ref_positions_to_half_open_span(100, 103) == (100, 104)
+    assert _ref_positions_to_half_open_span(103, 100) == (100, 104)
 
 
 def test_exact_block_mapping_requires_aligned_endpoints():

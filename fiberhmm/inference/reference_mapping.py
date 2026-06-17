@@ -25,6 +25,11 @@ def query_to_ref_lookup(query_to_ref, qpos: int) -> Optional[int]:
     return None
 
 
+def _ref_positions_to_half_open_span(ref_start: int, ref_end: int) -> Tuple[int, int]:
+    ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
+    return ref_start, ref_end
+
+
 def query_interval_to_ref_block(qstart, length, query_to_ref) -> Optional[Tuple[int, int]]:
     """Map a query interval to a reference block using exact aligned endpoints."""
     qstart = int(qstart)
@@ -33,8 +38,7 @@ def query_interval_to_ref_block(qstart, length, query_to_ref) -> Optional[Tuple[
     ref_end = query_to_ref_lookup(query_to_ref, qend - 1)
     if ref_start is None or ref_end is None:
         return None
-    ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
-    return ref_start, ref_end
+    return _ref_positions_to_half_open_span(ref_start, ref_end)
 
 
 def _first_ref_in_query_interval(qstart, length, query_to_ref) -> Optional[int]:
@@ -67,7 +71,7 @@ def query_interval_to_ref_span(qstart, length, query_to_ref) -> Optional[Tuple[i
 
     if ref_start is None or ref_end is None:
         return None
-    ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
+    ref_start, ref_end = _ref_positions_to_half_open_span(ref_start, ref_end)
     if ref_end <= ref_start:
         return None
     return ref_start, ref_end
