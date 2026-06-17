@@ -77,6 +77,16 @@ def test_daf_mismatch_positions_from_pairs_collects_deamination_directions():
     )
 
 
+def test_needs_fasta_pair_fallback_detects_missing_ref_bases():
+    assert encoder._needs_fasta_pair_fallback(None)
+    assert encoder._needs_fasta_pair_fallback([
+        (0, 100, None),
+        (None, 101, "A"),
+        (1, None, "C"),
+    ])
+    assert not encoder._needs_fasta_pair_fallback([(0, 100, "C")])
+
+
 def test_mark_iupac_positions_replaces_selected_bases():
     assert encoder._mark_iupac_positions("ACGT", [1, 3], "Y") == "AYGY"
 

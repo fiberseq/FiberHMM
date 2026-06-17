@@ -119,6 +119,12 @@ def _daf_mismatch_positions_from_pairs(pairs, seq: str):
     return ct_positions, ga_positions
 
 
+def _needs_fasta_pair_fallback(pairs) -> bool:
+    return pairs is None or all(
+        p[2] is None for p in pairs if p[0] is not None and p[1] is not None
+    )
+
+
 # ---------------------------------------------------------------------------
 # Per-read encoding
 # ---------------------------------------------------------------------------
@@ -180,7 +186,7 @@ def get_daf_positions(read, force_strand=None, ref_fasta=None):
         return None
 
     # Fallback: build pairs from reference FASTA when MD tag is absent
-    if pairs is None or all(p[2] is None for p in pairs if p[0] is not None and p[1] is not None):
+    if _needs_fasta_pair_fallback(pairs):
         if ref_fasta is None:
             return None
         try:
