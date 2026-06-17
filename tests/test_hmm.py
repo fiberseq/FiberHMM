@@ -23,6 +23,8 @@ try:
         _hmmlearn_version_tuple,
         _logsumexp,
         _logsumexp_axis1,
+        _random_training_parameters,
+        _training_data_for_iteration,
         _try_create_hmmlearn,
     )
     from fiberhmm.core.model_io import load_model, load_model_with_metadata, save_model
@@ -34,6 +36,8 @@ except ImportError:
         _hmmlearn_version_tuple,
         _logsumexp,
         _logsumexp_axis1,
+        _random_training_parameters,
+        _training_data_for_iteration,
         _try_create_hmmlearn,
         load_model,
         load_model_with_metadata,
@@ -201,6 +205,27 @@ class TestModelTraining:
         multinomial = _try_create_hmmlearn(emission_probs)
         assert isinstance(multinomial, FakeMultinomialHMM)
         np.testing.assert_array_equal(multinomial.emissionprob_, emission_probs)
+
+    def test_random_training_parameters_are_seeded_and_normalized(self):
+        start_a, trans_a = _random_training_parameters(3)
+        start_b, trans_b = _random_training_parameters(3)
+
+        np.testing.assert_array_equal(start_a, start_b)
+        np.testing.assert_array_equal(trans_a, trans_b)
+        np.testing.assert_allclose(start_a.sum(), 1.0)
+        np.testing.assert_allclose(trans_a.sum(axis=1), [1.0, 1.0])
+
+    def test_training_data_for_iteration_cycles_dict_inputs(self):
+        arrays = {
+            0: np.array([0, 1]),
+            1: np.array([2, 3]),
+        }
+
+        np.testing.assert_array_equal(_training_data_for_iteration(arrays, 0), [0, 1])
+        np.testing.assert_array_equal(_training_data_for_iteration(arrays, 3), [2, 3])
+
+        direct = np.array([4, 5])
+        assert _training_data_for_iteration(direct, 99) is direct
 
     def test_fit_updates_parameters(self, simple_emission_probs, simple_observations):
         """Test that fit() updates start and transition probabilities."""

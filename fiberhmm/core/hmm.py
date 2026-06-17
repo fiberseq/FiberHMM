@@ -1030,6 +1030,38 @@ def _try_create_hmmlearn(emission_probs: np.ndarray):
         return None
 
 
+def _random_training_parameters(seed: int) -> Tuple[np.ndarray, np.ndarray]:
+    np.random.seed(seed)
+    return np.random.dirichlet((1, 1)), np.random.dirichlet((1, 1), 2)
+
+
+def _new_training_model(emission_probs: np.ndarray, use_legacy: bool):
+    if use_legacy:
+        model = _try_create_hmmlearn(emission_probs)
+        if model is not None:
+            return model
+    return _new_native_model(emission_probs)
+
+
+def _training_data_for_iteration(train_data, iteration: int):
+    if isinstance(train_data, dict):
+        return train_data[iteration % len(train_data)]
+    return train_data
+
+
+def _model_training_logprob(model, training: np.ndarray) -> float:
+    if hasattr(model, 'monitor_') and model.monitor_ and model.monitor_.history:
+        return model.monitor_.history[-1]
+    return model.score(training)
+
+
+def _normalize_trained_models(best_model, all_models) -> None:
+    if best_model is not None:
+        best_model.normalize_states()
+    for model in all_models:
+        model.normalize_states()
+
+
 def train_model(emission_probs: np.ndarray,
                 train_data: np.ndarray,
                 n_iterations: int = 10,
@@ -1058,37 +1090,21 @@ def train_model(emission_probs: np.ndarray,
                 disable=not HAS_TQDM)
 
     for i in pbar:
-        np.random.seed(i)
-
         # Random initialization
-        start_probs = np.random.dirichlet((1, 1))
-        transition_probs = np.random.dirichlet((1, 1), 2)
+        start_probs, transition_probs = _random_training_parameters(i)
 
         # Create model
-        if use_legacy:
-            model = _try_create_hmmlearn(emission_probs)
-            if model is None:
-                model = _new_native_model(emission_probs)
-        else:
-            model = _new_native_model(emission_probs)
-
+        model = _new_training_model(emission_probs, use_legacy)
         model.startprob_ = start_probs
         model.transmat_ = transition_probs
 
         # Train
-        if isinstance(train_data, dict):
-            data = train_data[i % len(train_data)]
-        else:
-            data = train_data
-
+        data = _training_data_for_iteration(train_data, i)
         training = data.reshape(-1, 1)
         model.fit(training, lengths=[len(data)], verbose=True, desc=f"Init {i+1} EM")
 
         # Get log probability
-        if hasattr(model, 'monitor_') and model.monitor_ and model.monitor_.history:
-            logprob = model.monitor_.history[-1]
-        else:
-            logprob = model.score(training)
+        logprob = _model_training_logprob(model, training)
 
         # Convert to native if needed
         if not isinstance(model, FiberHMM):
@@ -1106,10 +1122,7 @@ def train_model(emission_probs: np.ndarray,
 
     # Normalize states for best model and all models
     if normalize:
-        if best_model is not None:
-            best_model.normalize_states()
-        for model in all_models:
-            model.normalize_states()
+        _normalize_trained_models(best_model, all_models)
 
     return best_model, all_models
 
