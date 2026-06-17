@@ -272,6 +272,10 @@ def test_training_sample_filter_helper_applies_alignment_filters():
     assert train._passes_training_sample_filters(
         read(reference_end=13), 20, 4,
     ) is False
+    assert train._training_reference_span(read(reference_start=None)) is None
+    assert train._passes_training_sample_filters(
+        read(reference_start=None), 20, 4,
+    ) is False
     assert train._passes_training_sample_filters(
         read(is_supplementary=True), 20, 4,
     ) is False

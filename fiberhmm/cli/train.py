@@ -235,6 +235,12 @@ def _chrom_pos_from_genome_offset(chroms: list, cum_lengths: np.ndarray,
     return chrom, int(pos)
 
 
+def _training_reference_span(read):
+    if read.reference_end is None or read.reference_start is None:
+        return None
+    return read.reference_end - read.reference_start
+
+
 def _passes_training_sample_filters(read, min_mapq: int,
                                     min_read_length: int) -> bool:
     if not is_primary_mapped_alignment(read):
@@ -243,7 +249,8 @@ def _passes_training_sample_filters(read, min_mapq: int,
         return False
     if read.query_sequence is None:
         return False
-    return (read.reference_end - read.reference_start) >= min_read_length
+    reference_span = _training_reference_span(read)
+    return reference_span is not None and reference_span >= min_read_length
 
 
 def _training_mod_query_positions(read, prob_threshold: int, mode: str) -> set:
