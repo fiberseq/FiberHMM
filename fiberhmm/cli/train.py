@@ -373,6 +373,16 @@ def sample_reads(bam_files: list, read_count: int, seed: int,
     return all_reads[:read_count]
 
 
+def _shuffled_training_arrays(encoded_reads: list, n_iterations: int) -> dict:
+    train_arrays = {}
+    for i in range(n_iterations):
+        np.random.seed(i)
+        indices = np.random.permutation(len(encoded_reads))
+        shuffled = [encoded_reads[j] for j in indices]
+        train_arrays[i] = np.concatenate(shuffled).astype(int)
+    return train_arrays
+
+
 def generate_training_arrays(reads: list, edge_trim: int,
                              n_iterations: int, mode: str = 'pacbio-fiber',
                              context_size: int = 3) -> tuple:
@@ -417,12 +427,7 @@ def generate_training_arrays(reads: list, edge_trim: int,
         raise ValueError("No reads successfully encoded! Check input BAM files.")
 
     # Create shuffled training arrays
-    train_arrays = {}
-    for i in range(n_iterations):
-        np.random.seed(i)
-        indices = np.random.permutation(len(encoded_reads))
-        shuffled = [encoded_reads[j] for j in indices]
-        train_arrays[i] = np.concatenate(shuffled).astype(int)
+    train_arrays = _shuffled_training_arrays(encoded_reads, n_iterations)
 
     return train_arrays, train_rids, encoded_reads, valid_reads
 

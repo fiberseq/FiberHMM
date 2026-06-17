@@ -62,6 +62,23 @@ def test_nonzero_emissions_by_state_filters_zero_entries():
     np.testing.assert_array_equal(msp, [0.1, 0.3])
 
 
+def test_shuffled_training_arrays_are_deterministic_int_arrays():
+    encoded_reads = [
+        np.array([1, 1], dtype=np.int64),
+        np.array([2], dtype=np.int64),
+        np.array([3, 3], dtype=np.int64),
+    ]
+
+    first = train._shuffled_training_arrays(encoded_reads, n_iterations=3)
+    second = train._shuffled_training_arrays(encoded_reads, n_iterations=3)
+
+    assert list(first) == [0, 1, 2]
+    for iteration, values in first.items():
+        np.testing.assert_array_equal(values, second[iteration])
+        assert np.issubdtype(values.dtype, np.integer)
+        assert sorted(values.tolist()) == [1, 1, 2, 3, 3]
+
+
 def test_training_zoom_window_starts_are_deterministic_and_bounded():
     assert train._training_zoom_window_starts(
         seq_len=500, window_size=1000, n_windows=3, seed=0,
