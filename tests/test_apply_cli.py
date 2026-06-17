@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from fiberhmm.cli.apply import (
+    _resolve_context_size,
+    _resolve_mode,
     _resolve_model_path,
     _resolve_process_unmapped,
     _use_streaming_pipeline,
@@ -50,3 +52,28 @@ def test_apply_process_unmapped_respects_explicit_true(tmp_path):
     )
 
     assert _resolve_process_unmapped(args, use_streaming=False)
+
+
+def test_apply_context_size_override_warns(capsys):
+    args = SimpleNamespace(context_size=5)
+
+    assert _resolve_context_size(args, model_context_size=3) == 5
+    out = capsys.readouterr().out
+    assert "Overriding model context size 3 with 5" in out
+    assert "Context size: k=5" in out
+
+
+def test_apply_mode_override_warns(capsys):
+    args = SimpleNamespace(mode="daf")
+
+    assert _resolve_mode(args, model_mode="pacbio-fiber") == "daf"
+    out = capsys.readouterr().out
+    assert "overrides model mode 'pacbio-fiber'" in out
+    assert "Mode: daf" in out
+
+
+def test_apply_mode_defaults_without_model_metadata(capsys):
+    args = SimpleNamespace(mode=None)
+
+    assert _resolve_mode(args, model_mode="unknown") == "pacbio-fiber"
+    assert "defaulting to 'pacbio-fiber'" in capsys.readouterr().out

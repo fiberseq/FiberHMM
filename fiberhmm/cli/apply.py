@@ -180,6 +180,32 @@ def _resolve_process_unmapped(args, use_streaming: bool) -> bool:
     return process_unmapped
 
 
+def _resolve_context_size(args, model_context_size: int) -> int:
+    if args.context_size is not None:
+        context_size = args.context_size
+        if context_size != model_context_size:
+            print(f"  WARNING: Overriding model context size {model_context_size} with {context_size}")
+    else:
+        context_size = model_context_size
+    print(f"  Context size: k={context_size} ({2*context_size + 1}-mer)")
+    return context_size
+
+
+def _resolve_mode(args, model_mode: str) -> str:
+    if args.mode is not None:
+        mode = args.mode
+        if mode != model_mode:
+            print(f"  NOTE: Command line mode '{mode}' overrides model mode '{model_mode}'")
+    elif model_mode and model_mode != 'unknown':
+        mode = model_mode
+    else:
+        mode = 'pacbio-fiber'
+        print(f"  No mode in model metadata, defaulting to '{mode}'")
+
+    print(f"  Mode: {mode}")
+    return mode
+
+
 def main():
     args = parse_args()
 
@@ -238,27 +264,9 @@ def main():
     else:
         print("  Numba JIT: disabled (pip install numba for ~10x speedup)")
 
-    # Determine context size (command line overrides model)
-    if args.context_size is not None:
-        context_size = args.context_size
-        if context_size != model_context_size:
-            print(f"  WARNING: Overriding model context size {model_context_size} with {context_size}")
-    else:
-        context_size = model_context_size
-    print(f"  Context size: k={context_size} ({2*context_size + 1}-mer)")
-
-    # Determine mode (priority: command line > model > default)
-    if args.mode is not None:
-        mode = args.mode
-        if mode != model_mode:
-            print(f"  NOTE: Command line mode '{mode}' overrides model mode '{model_mode}'")
-    elif model_mode and model_mode != 'unknown':
-        mode = model_mode
-    else:
-        mode = 'pacbio-fiber'
-        print(f"  No mode in model metadata, defaulting to '{mode}'")
-
-    print(f"  Mode: {mode}")
+    # Determine context size and mode (command line overrides model metadata)
+    context_size = _resolve_context_size(args, model_context_size)
+    mode = _resolve_mode(args, model_mode)
     args.mode = mode
 
     # Determine MSP minimum size (default 60bp for all modes)
