@@ -703,6 +703,22 @@ def _read_with_mm_ml(seq, mm_tag, ml_bytes, ref_start=0, is_reverse=False):
     return read
 
 
+def test_deam_mm_ml_positions_maps_flavor_and_threshold():
+    seq = list("A" * 30)
+    seq[10] = "C"
+    seq[20] = "C"
+    read = _read_with_mm_ml(
+        seq="".join(seq),
+        mm_tag="C+u,0,0;",
+        ml_bytes=[100, 200],
+        ref_start=500,
+    )
+
+    assert extract_tags._deam_mm_ml_positions(
+        read, _identity_map(read), prob_threshold=125,
+    ) == [(520, 1)]
+
+
 def test_deam_priority1_mm_ml_u_code_wins_over_ry():
     """If MM/ML carries dU 'u' calls, they must win over R/Y in the
     sequence -- matches FiberBrowser's first-non-empty-source rule."""

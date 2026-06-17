@@ -722,6 +722,55 @@ def _deam_iupac_positions(seq: str, aligned_pairs) -> list:
     return positions
 
 
+def _deam_mm_ml_positions(read, aligned_pairs, prob_threshold: int) -> list:
+    # Uses our safe MM/ML parser rather than pysam's modified_bases (which
+    # can segfault on unusual MM/ML layouts). Note: parse_mm_ml_per_mod_type
+    # is single-char-code-only, so the rare ChEBI 55797 numeric encoding
+    # isn't detected here -- users with modkit-style numeric codes should
+    # run `samtools calmd` + standard encode or rely on R/Y fallback.
+    from fiberhmm.core.bam_reader import parse_mm_ml_per_mod_type
+
+    tag_errors = (KeyError, ValueError)
+    mm_tag = get_preferred_tag(read, 'MM', 'Mm', '', errors=tag_errors)
+    ml_raw = get_preferred_tag(read, 'ML', 'Ml', None, errors=tag_errors)
+    per_mod = {}
+    if mm_tag and ml_raw is not None:
+        try:
+            if len(ml_raw) > 0:
+                ml_bytes = compact_ml_value(ml_raw)
+                seq = read.query_sequence
+                if seq is not None:
+                    per_mod = parse_mm_ml_per_mod_type(
+                        mm_tag, ml_bytes, seq, read.is_reverse,
+                    )
+        except Exception:
+            per_mod = {}
+
+    n = len(aligned_pairs)
+    positions = []
+    for (base, mod_code), (pos_arr, qual_arr) in per_mod.items():
+        if mod_code != 'u':
+            continue
+        # Flavor: C->U = 1 (Y/CT-dea), G->U = 0 (R/GA-dea).
+        b = base.upper() if isinstance(base, str) else chr(base).upper()
+        if b == 'C':
+            flavor = 1
+        elif b == 'G':
+            flavor = 0
+        else:
+            continue
+        for query_pos, prob in zip(pos_arr.tolist(), qual_arr.tolist()):
+            if prob < prob_threshold:
+                continue
+            if query_pos < 0 or query_pos >= n:
+                continue
+            ref_pos = int(aligned_pairs[query_pos])
+            if ref_pos < 0:
+                continue
+            positions.append((ref_pos, flavor))
+    return positions
+
+
 def _extract_deam(read, bed_out, query_to_ref=None,
                   block_scores: bool = False,
                   prob_threshold: int = 0) -> int:
@@ -744,51 +793,13 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     MM/ML calls can be filtered up front via prob_threshold).
     """
     aligned_pairs = query_to_ref if query_to_ref is not None else _build_query_to_ref(read)
-    n = len(aligned_pairs)
 
     positions_list = []  # (ref_pos, code) where code: 0=R, 1=Y
 
     # --- Priority 1: MM/ML-native 'u' dU calls --------------------------
-    # Uses our safe MM/ML parser rather than pysam's modified_bases (which
-    # can segfault on unusual MM/ML layouts). Note: parse_mm_ml_per_mod_type
-    # is single-char-code-only, so the rare ChEBI 55797 numeric encoding
-    # isn't detected here -- users with modkit-style numeric codes should
-    # run `samtools calmd` + standard encode or rely on R/Y fallback.
-    from fiberhmm.core.bam_reader import parse_mm_ml_per_mod_type
-    tag_errors = (KeyError, ValueError)
-    mm_tag = get_preferred_tag(read, 'MM', 'Mm', '', errors=tag_errors)
-    ml_raw = get_preferred_tag(read, 'ML', 'Ml', None, errors=tag_errors)
-    per_mod = {}
-    if mm_tag and ml_raw is not None:
-        try:
-            if len(ml_raw) > 0:
-                ml_bytes = compact_ml_value(ml_raw)
-                seq = read.query_sequence
-                if seq is not None:
-                    per_mod = parse_mm_ml_per_mod_type(mm_tag, ml_bytes, seq, read.is_reverse)
-        except Exception:
-            per_mod = {}
-
-    for (base, mod_code), (pos_arr, qual_arr) in per_mod.items():
-        if mod_code != 'u':
-            continue
-        # Flavor: C->U = 1 (Y/CT-dea), G->U = 0 (R/GA-dea).
-        b = base.upper() if isinstance(base, str) else chr(base).upper()
-        if b == 'C':
-            flavor = 1
-        elif b == 'G':
-            flavor = 0
-        else:
-            continue
-        for query_pos, prob in zip(pos_arr.tolist(), qual_arr.tolist()):
-            if prob < prob_threshold:
-                continue
-            if query_pos < 0 or query_pos >= n:
-                continue
-            ref_pos = int(aligned_pairs[query_pos])
-            if ref_pos < 0:
-                continue
-            positions_list.append((ref_pos, flavor))
+    positions_list.extend(
+        _deam_mm_ml_positions(read, aligned_pairs, prob_threshold)
+    )
 
     # --- Priority 2: IUPAC R/Y in the query sequence --------------------
     if not positions_list:
