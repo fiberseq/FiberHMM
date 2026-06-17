@@ -34,6 +34,13 @@ except ImportError:
     HAS_POSTERIOR_WRITER = False
 
 
+def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, reason) -> int:
+    chunk_read_objs.append(read)
+    chunk_skip_flags.append(True)
+    skip_reasons[reason] += 1
+    return 1
+
+
 def _process_bam_streaming_pipeline_fused(
     input_bam: str, output_bam: str,
     model_path: str, recall_model_path: str,
@@ -118,23 +125,22 @@ def _process_bam_streaming_pipeline_fused(
             last_progress_reads = 0
             last_progress_time = time.time()
 
-            def _buffer_skip(rd, reason):
-                nonlocal skipped
-                chunk_read_objs.append(rd)
-                chunk_skip_flags.append(True)
-                skipped += 1
-                skip_reasons[reason] += 1
-
             try:
                 for read in inbam.fetch(until_eof=True):
                     skip_reason = streaming_skip_reason(read, filter_config)
                     if skip_reason:
-                        _buffer_skip(read, skip_reason)
+                        skipped += _buffer_skipped_read(
+                            chunk_read_objs, chunk_skip_flags, skip_reasons,
+                            read, skip_reason,
+                        )
                         continue
 
                     payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
                     if payload is None:
-                        _buffer_skip(read, 'no_modifications')
+                        skipped += _buffer_skipped_read(
+                            chunk_read_objs, chunk_skip_flags, skip_reasons,
+                            read, 'no_modifications',
+                        )
                         continue
 
                     chunk_payloads.append(payload)
@@ -340,23 +346,22 @@ def _process_bam_streaming_pipeline(
             last_progress_reads = 0
             last_progress_time = time.time()
 
-            def _buffer_skip(rd, reason):
-                nonlocal skipped
-                chunk_read_objs.append(rd)
-                chunk_skip_flags.append(True)
-                skipped += 1
-                skip_reasons[reason] += 1
-
             try:
                 for read in inbam.fetch(until_eof=True):
                     skip_reason = streaming_skip_reason(read, filter_config)
                     if skip_reason:
-                        _buffer_skip(read, skip_reason)
+                        skipped += _buffer_skipped_read(
+                            chunk_read_objs, chunk_skip_flags, skip_reasons,
+                            read, skip_reason,
+                        )
                         continue
 
                     payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
                     if payload is None:
-                        _buffer_skip(read, 'no_modifications')
+                        skipped += _buffer_skipped_read(
+                            chunk_read_objs, chunk_skip_flags, skip_reasons,
+                            read, 'no_modifications',
+                        )
                         continue
 
                     chunk_reads.append(payload)
