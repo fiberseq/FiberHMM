@@ -787,6 +787,26 @@ def _create_scores_schema(cursor) -> None:
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_reads_chrom_start ON reads(chrom, start)')
 
 
+def _write_scores_database(
+    records: List[dict],
+    db_path: str,
+    *,
+    create_schema: bool,
+) -> None:
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    try:
+        cursor = conn.cursor()
+        if create_schema:
+            _create_scores_schema(cursor)
+        _insert_score_records(cursor, records)
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def create_scores_database(records: List[dict], db_path: str):
     """
     Create SQLite database with detailed per-footprint scores.
@@ -797,29 +817,9 @@ def create_scores_database(records: List[dict], db_path: str):
 
     This allows fast lookup by read_id for downstream analysis.
     """
-    import sqlite3
-
-    conn = sqlite3.connect(db_path)
-    try:
-        cursor = conn.cursor()
-
-        _create_scores_schema(cursor)
-        _insert_score_records(cursor, records)
-
-        conn.commit()
-    finally:
-        conn.close()
+    _write_scores_database(records, db_path, create_schema=True)
 
 
 def append_to_scores_database(records: List[dict], db_path: str):
     """Append records to existing scores database."""
-    import sqlite3
-
-    conn = sqlite3.connect(db_path)
-    try:
-        cursor = conn.cursor()
-        _insert_score_records(cursor, records)
-
-        conn.commit()
-    finally:
-        conn.close()
+    _write_scores_database(records, db_path, create_schema=False)
