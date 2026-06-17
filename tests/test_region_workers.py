@@ -2,11 +2,14 @@
 
 from types import SimpleNamespace
 
+from fiberhmm.inference.engine import CHIMERA_SKIP
 from fiberhmm.inference.read_filters import ReadFilterConfig
 from fiberhmm.inference.region_workers import (
     _REGION_ROUTE_OUTSIDE,
     _REGION_ROUTE_PROCESS,
     _REGION_ROUTE_SKIP,
+    _extract_region_fiber_read,
+    _extract_region_payload_fiber_read,
     _format_region_bed12_row,
     _region_read_route,
 )
@@ -44,6 +47,84 @@ def test_region_read_route_preserves_skip_and_ownership_order():
     assert _region_read_route(
         _route_read(is_unmapped=True, reference_start=90), 100, 200, config
     ) == (_REGION_ROUTE_SKIP, "unmapped")
+
+
+def test_extract_region_fiber_read_maps_skip_reasons(monkeypatch):
+    read = _route_read()
+    fiber_read = {"query_sequence": "ACGT"}
+
+    def fake_extract(got_read, mode, prob_threshold):
+        assert got_read is read
+        assert mode == "pacbio-fiber"
+        assert prob_threshold == 128
+        return fiber_read
+
+    import fiberhmm.inference.region_workers as region_workers
+
+    monkeypatch.setattr(region_workers, "_extract_fiber_read_from_pysam", fake_extract)
+    assert _extract_region_fiber_read(read, "pacbio-fiber", 128) == (fiber_read, None)
+
+    monkeypatch.setattr(
+        region_workers, "_extract_fiber_read_from_pysam", lambda *_: CHIMERA_SKIP
+    )
+    assert _extract_region_fiber_read(read, "pacbio-fiber", 128) == (None, "chimera")
+
+    monkeypatch.setattr(
+        region_workers, "_extract_fiber_read_from_pysam", lambda *_: None
+    )
+    assert _extract_region_fiber_read(read, "pacbio-fiber", 128) == (
+        None,
+        "no_modifications",
+    )
+
+    def fail_extract(*_):
+        raise ValueError("bad read")
+
+    monkeypatch.setattr(region_workers, "_extract_fiber_read_from_pysam", fail_extract)
+    assert _extract_region_fiber_read(read, "pacbio-fiber", 128) == (
+        None,
+        "extraction_failed",
+    )
+
+
+def test_extract_region_payload_fiber_read_maps_skip_reasons(monkeypatch):
+    payload = {"query_name": "read1"}
+    fiber_read = {"query_sequence": "ACGT"}
+
+    def fake_extract(got_payload, mode, prob_threshold):
+        assert got_payload is payload
+        assert mode == "pacbio-fiber"
+        assert prob_threshold == 128
+        return fiber_read
+
+    import fiberhmm.inference.region_workers as region_workers
+
+    monkeypatch.setattr(region_workers, "extract_fiber_read_from_payload", fake_extract)
+    assert _extract_region_payload_fiber_read(payload, "pacbio-fiber", 128) == (
+        fiber_read,
+        None,
+    )
+    assert _extract_region_payload_fiber_read(None, "pacbio-fiber", 128) == (
+        None,
+        "no_modifications",
+    )
+
+    monkeypatch.setattr(
+        region_workers, "extract_fiber_read_from_payload", lambda *_: CHIMERA_SKIP
+    )
+    assert _extract_region_payload_fiber_read(payload, "pacbio-fiber", 128) == (
+        None,
+        "chimera",
+    )
+
+    def fail_extract(*_):
+        raise ValueError("bad payload")
+
+    monkeypatch.setattr(region_workers, "extract_fiber_read_from_payload", fail_extract)
+    assert _extract_region_payload_fiber_read(payload, "pacbio-fiber", 128) == (
+        None,
+        "extraction_failed",
+    )
 
 
 def test_region_bed12_row_pads_blocks_and_scores():

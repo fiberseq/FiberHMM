@@ -72,6 +72,38 @@ def _write_skipped_region_read(outbam, read, skip_reasons: dict, reason: str) ->
     return 1
 
 
+def _fiber_read_skip_reason(fiber_read) -> Optional[str]:
+    if fiber_read is CHIMERA_SKIP:
+        return CHIMERA_SKIP_REASON
+    if fiber_read is None:
+        return 'no_modifications'
+    return None
+
+
+def _extract_region_fiber_read(read, mode: str, prob_threshold: int):
+    try:
+        fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
+    except Exception:
+        return None, 'extraction_failed'
+    skip_reason = _fiber_read_skip_reason(fiber_read)
+    if skip_reason:
+        return None, skip_reason
+    return fiber_read, None
+
+
+def _extract_region_payload_fiber_read(payload, mode: str, prob_threshold: int):
+    if payload is None:
+        return None, 'no_modifications'
+    try:
+        fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
+    except Exception:
+        return None, 'extraction_failed'
+    skip_reason = _fiber_read_skip_reason(fiber_read)
+    if skip_reason:
+        return None, skip_reason
+    return fiber_read, None
+
+
 def _read_starts_in_region(read, start: int, end: int) -> bool:
     return int(start) <= int(read.reference_start) < int(end)
 
@@ -272,23 +304,12 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         if route == _REGION_ROUTE_OUTSIDE:
                             continue
 
-                        try:
-                            fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
-                            if fiber_read is CHIMERA_SKIP:
-                                written += _write_skipped_region_read(
-                                    outbam, read, skip_reasons, 'chimera'
-                                )
-                                skipped += 1
-                                continue
-                            if fiber_read is None:
-                                written += _write_skipped_region_read(
-                                    outbam, read, skip_reasons, 'no_modifications'
-                                )
-                                skipped += 1
-                                continue
-                        except Exception:
+                        fiber_read, skip_reason = _extract_region_fiber_read(
+                            read, mode, prob_threshold,
+                        )
+                        if skip_reason:
                             written += _write_skipped_region_read(
-                                outbam, read, skip_reasons, 'extraction_failed'
+                                outbam, read, skip_reasons, skip_reason
                             )
                             skipped += 1
                             continue
@@ -415,11 +436,10 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
                     if not _read_starts_in_region(read, start, end):
                         continue
 
-                    try:
-                        fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
-                        if fiber_read is None or fiber_read is CHIMERA_SKIP:
-                            continue
-                    except Exception:
+                    fiber_read, skip_reason = _extract_region_fiber_read(
+                        read, mode, prob_threshold,
+                    )
+                    if skip_reason:
                         continue
 
                     total_reads += 1
@@ -589,27 +609,16 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         continue
 
                     payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
-                    if payload is None:
+                    fiber_read, skip_reason = _extract_region_payload_fiber_read(
+                        payload, mode, prob_threshold,
+                    )
+                    if skip_reason:
                         written += _write_skipped_region_read(
-                            outbam, read, skip_reasons, 'no_modifications'
+                            outbam, read, skip_reasons, skip_reason
                         )
                         skipped += 1
                         continue
-
                     try:
-                        fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
-                        if fiber_read is CHIMERA_SKIP:
-                            written += _write_skipped_region_read(
-                                outbam, read, skip_reasons, 'chimera'
-                            )
-                            skipped += 1
-                            continue
-                        if fiber_read is None:
-                            written += _write_skipped_region_read(
-                                outbam, read, skip_reasons, 'no_modifications'
-                            )
-                            skipped += 1
-                            continue
                         apply_result = run_hmm_apply_stage(
                             fiber_read,
                             model,
