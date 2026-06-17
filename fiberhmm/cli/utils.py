@@ -328,8 +328,7 @@ def _parse_footprints_from_bam_read(read):
     return None
 
 
-def _estimate_emission_probs(target_rates, accessibility_priors, min_observations=100):
-    """Estimate P(m|acc) and P(m|inacc) using weighted linear regression."""
+def _prepare_regression_inputs(target_rates, accessibility_priors, min_observations):
     merged = target_rates.merge(accessibility_priors, on='context', how='inner')
     merged = merged[(merged['total'] >= min_observations) &
                     (merged['total_bp'] >= min_observations)]
@@ -339,6 +338,16 @@ def _estimate_emission_probs(target_rates, accessibility_priors, min_observation
         'total_target_obs': merged['total'].sum() if len(merged) > 0 else 0,
         'total_ref_obs': merged['total_bp'].sum() if len(merged) > 0 else 0,
     }
+    return merged, diagnostics
+
+
+def _estimate_emission_probs(target_rates, accessibility_priors, min_observations=100):
+    """Estimate P(m|acc) and P(m|inacc) using weighted linear regression."""
+    merged, diagnostics = _prepare_regression_inputs(
+        target_rates,
+        accessibility_priors,
+        min_observations,
+    )
 
     if len(merged) < 10:
         print(f"  Warning: Only {len(merged)} contexts with sufficient data")
