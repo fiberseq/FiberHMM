@@ -8,11 +8,13 @@ from fiberhmm.cli.generate_probs import (
     _combined_probability_frame,
     _combined_probability_table_path,
     _context_size_label,
+    _count_items_desc,
     _generate_probs_skip_reason,
     _max_reads_per_file,
     _new_filter_stats,
     _probability_counter_path,
     _probability_table_path,
+    _print_daf_diagnostics,
     _progress_postfix,
     _process_probability_read,
     _read_reference_span,
@@ -195,6 +197,27 @@ def test_progress_postfix_formats_counts_and_rate():
         "rate": "24.7%",
     }
     assert _progress_postfix(0, 0)["rate"] == "0.0%"
+
+
+def test_count_items_desc_sorts_by_count_descending():
+    assert _count_items_desc({"low": 1, "high": 3, "mid": 2}) == [
+        ("high", 3),
+        ("mid", 2),
+        ("low", 1),
+    ]
+
+
+def test_print_daf_diagnostics_formats_counts(capsys):
+    _print_daf_diagnostics(
+        {"C+m": 1000, "G-a": 2},
+        {"+:C": 3, "-:G": 4000},
+    )
+
+    out = capsys.readouterr().out
+    assert "MM tag modification types found" in out
+    assert "C+m: 1,000" in out
+    assert "Strand assignments" in out
+    assert "-:G: 4,000" in out
 
 
 def test_combined_probability_frame_outer_merges_contexts_and_fills_missing():

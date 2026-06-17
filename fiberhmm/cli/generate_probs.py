@@ -263,6 +263,19 @@ def _progress_postfix(reads_processed: int, reads_scanned: int) -> Dict[str, str
     }
 
 
+def _count_items_desc(counts):
+    return sorted(counts.items(), key=lambda x: -x[1])
+
+
+def _print_daf_diagnostics(mm_tag_types, strand_assignments) -> None:
+    print("\n    MM tag modification types found:")
+    for tag_type, count in _count_items_desc(mm_tag_types):
+        print(f"      {tag_type}: {count:,}")
+    print("\n    Strand assignments:")
+    for assignment, count in _count_items_desc(strand_assignments):
+        print(f"      {assignment}: {count:,}")
+
+
 def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 mode: str, args, max_reads: int = 0, verbose: bool = False) -> Tuple[int, dict]:
     """
@@ -329,12 +342,7 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
 
     # Print MM tag diagnostics for daf mode (to show C vs G strand detection)
     if mode == 'daf':
-        print("\n    MM tag modification types found:")
-        for tag_type, count in sorted(mm_tag_types.items(), key=lambda x: -x[1]):
-            print(f"      {tag_type}: {count:,}")
-        print("\n    Strand assignments:")
-        for assignment, count in sorted(strand_assignments.items(), key=lambda x: -x[1]):
-            print(f"      {assignment}: {count:,}")
+        _print_daf_diagnostics(mm_tag_types, strand_assignments)
 
     return reads_processed, filter_stats
 
