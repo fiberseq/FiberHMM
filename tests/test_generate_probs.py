@@ -13,6 +13,7 @@ from fiberhmm.cli.generate_probs import (
     _count_items_desc,
     _generate_probs_skip_reason,
     _max_reads_per_file,
+    _maybe_update_probability_progress,
     _new_filter_stats,
     _probability_counter_path,
     _probability_table_path,
@@ -70,6 +71,14 @@ class _Counter:
 
     def save(self, path):
         self.saved_paths.append(path)
+
+
+class _Progress:
+    def __init__(self):
+        self.postfixes = []
+
+    def set_postfix(self, value):
+        self.postfixes.append(value)
 
 
 def test_new_filter_stats_returns_zeroed_independent_stats():
@@ -288,6 +297,19 @@ def test_progress_postfix_formats_counts_and_rate():
         "rate": "24.7%",
     }
     assert _progress_postfix(0, 0)["rate"] == "0.0%"
+
+
+def test_maybe_update_probability_progress_updates_every_5000_reads():
+    pbar = _Progress()
+
+    _maybe_update_probability_progress(pbar, reads_processed=0, reads_scanned=0)
+    _maybe_update_probability_progress(pbar, reads_processed=10, reads_scanned=4999)
+    assert pbar.postfixes == []
+
+    _maybe_update_probability_progress(pbar, reads_processed=2500, reads_scanned=5000)
+    assert pbar.postfixes == [
+        {"processed": "2,500", "scanned": "5,000", "rate": "50.0%"},
+    ]
 
 
 def test_count_items_desc_sorts_by_count_descending():

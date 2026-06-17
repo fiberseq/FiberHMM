@@ -344,6 +344,15 @@ def _progress_postfix(reads_processed: int, reads_scanned: int) -> Dict[str, str
     }
 
 
+def _maybe_update_probability_progress(
+    pbar,
+    reads_processed: int,
+    reads_scanned: int,
+) -> None:
+    if reads_scanned > 0 and reads_scanned % 5000 == 0:
+        pbar.set_postfix(_progress_postfix(reads_processed, reads_scanned))
+
+
 def _count_items_desc(counts):
     return sorted(counts.items(), key=lambda x: -x[1])
 
@@ -394,8 +403,9 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
             filter_stats['scanned'] += 1
 
             # Update progress bar periodically
-            if reads_scanned % 5000 == 0:
-                pbar.set_postfix(_progress_postfix(reads_processed, reads_scanned))
+            _maybe_update_probability_progress(
+                pbar, reads_processed, reads_scanned,
+            )
 
             tags = _probability_read_tags_or_skip(
                 read, filter_stats, args.min_mapq, args.min_read_length,
