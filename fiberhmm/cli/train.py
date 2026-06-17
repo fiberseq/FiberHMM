@@ -491,6 +491,47 @@ def _expected_model_durations(transmat: np.ndarray) -> tuple:
     )
 
 
+def _viterbi_state_size_stats(model: FiberHMM, encoded_reads: list) -> tuple:
+    all_footprint_sizes = []
+    all_msp_sizes = []
+    all_states = []
+
+    for encoded in encoded_reads:
+        if len(encoded) == 0:
+            continue
+        states = model.predict(encoded)
+        all_states.append(states)
+        fp_sizes, msp_sizes = _state_run_lengths(states)
+        all_footprint_sizes.extend(fp_sizes)
+        all_msp_sizes.extend(msp_sizes)
+
+    return all_footprint_sizes, all_msp_sizes, all_states
+
+
+def _training_zoom_window_starts(seq_len: int, window_size: int,
+                                 n_windows: int, seed: int) -> list:
+    np.random.seed(seed)
+
+    if seq_len >= window_size * n_windows:
+        region_size = seq_len // n_windows
+        window_starts = []
+        for w in range(n_windows):
+            region_start = w * region_size
+            region_end = min((w + 1) * region_size, seq_len) - window_size
+            if region_end > region_start:
+                start = np.random.randint(region_start, region_end)
+            else:
+                start = region_start
+            window_starts.append(start)
+        return window_starts
+
+    window_starts = [
+        int(seq_len * i / (n_windows + 1))
+        for i in range(1, n_windows + 1)
+    ]
+    return [max(0, min(start, seq_len - window_size)) for start in window_starts]
+
+
 def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads: list,
                             emission_probs: np.ndarray, output_dir: str,
                             n_examples: int = 5, mode: str = 'pacbio-fiber'):
@@ -524,18 +565,9 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
 
     # Run Viterbi on all encoded reads to get footprint statistics
     print("  Running Viterbi on training reads...")
-    all_footprint_sizes = []
-    all_msp_sizes = []
-    all_states = []
-
-    for encoded in encoded_reads:
-        if len(encoded) == 0:
-            continue
-        states = model.predict(encoded)
-        all_states.append(states)
-        fp_sizes, msp_sizes = _state_run_lengths(states)
-        all_footprint_sizes.extend(fp_sizes)
-        all_msp_sizes.extend(msp_sizes)
+    all_footprint_sizes, all_msp_sizes, all_states = _viterbi_state_size_stats(
+        model, encoded_reads,
+    )
 
     with PdfPages(pdf_path) as pdf:
         # Page 1: Model parameters
@@ -705,27 +737,11 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
             # === ZOOM PANELS (3 random 1kb windows) ===
 
             # Select 3 random windows
-            np.random.seed(idx)  # Reproducible per read
             window_size = 1000
             n_windows = 3
-
-            # Ensure windows don't overlap and fit within read
-            if seq_len >= window_size * n_windows:
-                # Divide read into regions and pick one window from each
-                region_size = seq_len // n_windows
-                window_starts = []
-                for w in range(n_windows):
-                    region_start = w * region_size
-                    region_end = min((w + 1) * region_size, seq_len) - window_size
-                    if region_end > region_start:
-                        start = np.random.randint(region_start, region_end)
-                    else:
-                        start = region_start
-                    window_starts.append(start)
-            else:
-                # Read is short, just use evenly spaced windows
-                window_starts = [int(seq_len * i / (n_windows + 1)) for i in range(1, n_windows + 1)]
-                window_starts = [max(0, min(s, seq_len - window_size)) for s in window_starts]
+            window_starts = _training_zoom_window_starts(
+                seq_len, window_size, n_windows, seed=idx,
+            )
 
             # Plot each zoom window
             for w_idx, w_start in enumerate(window_starts):

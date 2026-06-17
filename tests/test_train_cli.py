@@ -32,6 +32,45 @@ def test_expected_model_durations_from_self_transitions():
     assert durations[1] == float('inf')
 
 
+def test_viterbi_state_size_stats_skips_empty_reads():
+    class FakeModel:
+        def predict(self, encoded):
+            return encoded
+
+    footprint_sizes, msp_sizes, states = train._viterbi_state_size_stats(
+        FakeModel(),
+        [
+            np.array([0, 0, 1, 1]),
+            np.array([], dtype=int),
+            np.array([1, 0, 0]),
+        ],
+    )
+
+    assert footprint_sizes == [2, 2]
+    assert msp_sizes == [2, 1]
+    assert len(states) == 2
+    np.testing.assert_array_equal(states[0], [0, 0, 1, 1])
+    np.testing.assert_array_equal(states[1], [1, 0, 0])
+
+
+def test_training_zoom_window_starts_are_deterministic_and_bounded():
+    assert train._training_zoom_window_starts(
+        seq_len=500, window_size=1000, n_windows=3, seed=0,
+    ) == [0, 0, 0]
+
+    starts = train._training_zoom_window_starts(
+        seq_len=6000, window_size=1000, n_windows=3, seed=7,
+    )
+    assert starts == train._training_zoom_window_starts(
+        seq_len=6000, window_size=1000, n_windows=3, seed=7,
+    )
+    assert len(starts) == 3
+    assert all(0 <= start <= 5000 for start in starts)
+    assert starts[0] < 2000
+    assert 2000 <= starts[1] < 4000
+    assert 4000 <= starts[2] <= 5000
+
+
 def test_training_config_includes_base_model_only_when_used():
     args = SimpleNamespace(
         context_size=3,
