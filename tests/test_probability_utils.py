@@ -6,6 +6,7 @@ from fiberhmm.probabilities.output_paths import (
     probability_table_path,
 )
 from fiberhmm.probabilities.utils import (
+    _daf_strand_base_from_counts,
     detect_strand_and_base,
     get_base_name,
     reverse_complement,
@@ -25,6 +26,9 @@ def test_detect_strand_and_base_for_fiber_modes():
 
 
 def test_detect_strand_and_base_for_daf_modes():
+    assert _daf_strand_base_from_counts(2, 1) == ("+", "C")
+    assert _daf_strand_base_from_counts(1, 2) == ("-", "G")
+    assert _daf_strand_base_from_counts(2, 2) == (".", "C")
     assert detect_strand_and_base("TTA", {0, 1}, "daf") == ("+", "C")
     assert detect_strand_and_base("TAA", {1, 2}, "daf") == ("-", "G")
     assert detect_strand_and_base("TAA", {0, 1}, "daf") == (".", "C")
