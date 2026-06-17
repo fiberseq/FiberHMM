@@ -5,6 +5,7 @@ import json
 
 import numpy as np
 
+from fiberhmm.posteriors import region_tsv
 from fiberhmm.posteriors.region_tsv import (
     format_region_posterior_line,
     merge_region_posteriors_tsv,
@@ -12,6 +13,14 @@ from fiberhmm.posteriors.region_tsv import (
     region_posteriors_tsv_output_path,
 )
 from fiberhmm.posteriors.tsv_backend import parse_posteriors_line
+
+
+def test_region_posterior_encoding_helpers_clip_and_join_values():
+    assert region_tsv._posterior_probabilities_b64(
+        np.array([-1.0, 0.5, 2.0], dtype=np.float32),
+    ) == "AH//"
+    assert region_tsv._comma_join_ints(np.array([2, 8], dtype=np.int32)) == "2,8"
+    assert region_tsv._comma_join_ints([]) == ""
 
 
 def test_format_region_posterior_line_matches_tsv_parser():

@@ -17,6 +17,15 @@ REGION_POSTERIORS_HEADER = (
 )
 
 
+def _posterior_probabilities_b64(posteriors: np.ndarray) -> str:
+    post_u8 = np.clip(posteriors * 255, 0, 255).astype(np.uint8)
+    return base64.b64encode(post_u8.tobytes()).decode("ascii")
+
+
+def _comma_join_ints(values: Sequence[int]) -> str:
+    return ",".join(map(str, values)) if len(values) > 0 else ""
+
+
 def format_region_posterior_line(
     read_name: str,
     chrom: str,
@@ -28,10 +37,9 @@ def format_region_posterior_line(
     footprint_sizes: Sequence[int],
 ) -> str:
     """Format one region-worker posterior record without a header."""
-    post_u8 = np.clip(posteriors * 255, 0, 255).astype(np.uint8)
-    post_b64 = base64.b64encode(post_u8.tobytes()).decode("ascii")
-    fp_starts_str = ",".join(map(str, footprint_starts)) if len(footprint_starts) > 0 else ""
-    fp_sizes_str = ",".join(map(str, footprint_sizes)) if len(footprint_sizes) > 0 else ""
+    post_b64 = _posterior_probabilities_b64(posteriors)
+    fp_starts_str = _comma_join_ints(footprint_starts)
+    fp_sizes_str = _comma_join_ints(footprint_sizes)
 
     return (
         f"{read_name}\t{chrom}\t{ref_start}\t{ref_end}\t{strand}\t"
