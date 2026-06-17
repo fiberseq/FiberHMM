@@ -34,6 +34,11 @@ def _print_bundled_model_message(
         )
 
 
+def _resolve_bundled_model_path(args, tool: str) -> str:
+    from fiberhmm.models import get_model_path
+    return get_model_path(args.enzyme, tool=tool, seq=args.seq)
+
+
 def resolve_model_path(
     args,
     *,
@@ -49,9 +54,8 @@ def resolve_model_path(
         _print_model_required_error()
         sys.exit(1)
 
-    from fiberhmm.models import get_model_path
     try:
-        model_path = get_model_path(args.enzyme, tool=tool, seq=args.seq)
+        model_path = _resolve_bundled_model_path(args, tool)
     except (KeyError, FileNotFoundError) as e:
         print(_model_resolution_error_message(e), file=sys.stderr)
         sys.exit(1)
