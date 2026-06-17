@@ -19,6 +19,7 @@ from fiberhmm.inference.tf_recaller import (
 )
 from fiberhmm.io.ma_tags import (
     EDGE_AMBIGUITY_SAT,
+    _parse_ma_interval_list,
     ambiguity_to_edge,
     format_aq_array,
     format_ma_tag,
@@ -159,6 +160,13 @@ def test_format_and_parse_ma_tag():
     assert parsed['nuc'] == nucs
     assert parsed['msp'] == msps
     assert parsed['tf'] == tfs
+
+
+def test_parse_ma_interval_list_skips_empty_tokens_and_reports_bad_intervals():
+    assert _parse_ma_interval_list("1-10,,21-5,") == [(0, 10), (20, 5)]
+
+    with pytest.raises(ValueError, match="missing dash"):
+        _parse_ma_interval_list("1-10,bad")
 
 
 def test_aq_layout():

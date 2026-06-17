@@ -110,6 +110,15 @@ def _parse_ma_interval(token: str) -> Tuple[int, int]:
     return int(start_str) - 1, int(length_str)
 
 
+def _parse_ma_interval_list(data: str) -> List[Tuple[int, int]]:
+    intervals: List[Tuple[int, int]] = []
+    for tok in data.split(','):
+        if not tok:
+            continue
+        intervals.append(_parse_ma_interval(tok))
+    return intervals
+
+
 def flip_interval_frame(start: int, length: int, read_length: int) -> Tuple[int, int]:
     """Convert a (start, length) interval between the SEQ (forward-reference) and
     molecular (original-fiber) coordinate frames of a reverse-mapped read.
@@ -299,11 +308,7 @@ def parse_ma_tag(ma_string: str) -> dict:
             raise ValueError(f'MA chunk missing colon: {chunk!r}')
         head, data = chunk.split(':', 1)
         name, strand, qual_spec = _parse_ma_head(head)
-        intervals: List[Tuple[int, int]] = []
-        for tok in data.split(','):
-            if not tok:
-                continue
-            intervals.append(_parse_ma_interval(tok))
+        intervals = _parse_ma_interval_list(data)
         out['raw_types'].append((name, strand, qual_spec, intervals))
         if name in out:
             out[name].extend(intervals)
