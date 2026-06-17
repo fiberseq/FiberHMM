@@ -87,6 +87,27 @@ def _project_unique_center_calls(calls: Sequence, read_length: int, build_call) 
     return out
 
 
+def _projected_tf_call(call, interval: Interval):
+    return type(call)(
+        start=interval[0],
+        length=interval[1],
+        llr=call.llr,
+        n_opps=call.n_opps,
+        left_ambiguity=call.left_ambiguity,
+        right_ambiguity=call.right_ambiguity,
+    )
+
+
+def _projected_nuc_call(call, interval: Interval):
+    return type(call)(
+        start=interval[0],
+        length=interval[1],
+        nq=call.nq,
+        el=call.el,
+        er=call.er,
+    )
+
+
 def project_center_runs(
     starts: Sequence[int],
     ends: Sequence[int],
@@ -127,14 +148,7 @@ def project_center_tf_calls(tf_calls: Sequence, read_length: int) -> list:
     return _project_unique_center_calls(
         tf_calls,
         read_length,
-        lambda call, interval: type(call)(
-            start=interval[0],
-            length=interval[1],
-            llr=call.llr,
-            n_opps=call.n_opps,
-            left_ambiguity=call.left_ambiguity,
-            right_ambiguity=call.right_ambiguity,
-        ),
+        _projected_tf_call,
     )
 
 
@@ -147,13 +161,7 @@ def project_center_nuc_calls(nuc_calls: Sequence, read_length: int) -> list:
     return _project_unique_center_calls(
         nuc_calls,
         read_length,
-        lambda call, interval: type(call)(
-            start=interval[0],
-            length=interval[1],
-            nq=call.nq,
-            el=call.el,
-            er=call.er,
-        ),
+        _projected_nuc_call,
     )
 
 

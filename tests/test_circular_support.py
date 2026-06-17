@@ -7,6 +7,8 @@ from fiberhmm.inference.circular import (
     _legacy_interval_pieces,
     _legacy_interval_score,
     _linear_segments_overlap,
+    _projected_nuc_call,
+    _projected_tf_call,
     _tiled_mod_positions,
     circular_intervals_overlap,
     project_center_nuc_calls,
@@ -93,6 +95,28 @@ def test_project_center_tf_calls_preserves_call_metrics():
     assert projected == [
         TFCall(start=95, length=20, llr=7.0, n_opps=6, left_ambiguity=1, right_ambiguity=2)
     ]
+
+
+def test_projected_call_helpers_preserve_metrics_and_quality():
+    tf_call = TFCall(start=195, length=20, llr=7.0, n_opps=6,
+                     left_ambiguity=1, right_ambiguity=2)
+    nuc_call = NucCall(start=195, length=20, nq=7, el=8, er=9)
+
+    assert _projected_tf_call(tf_call, (95, 20)) == TFCall(
+        start=95,
+        length=20,
+        llr=7.0,
+        n_opps=6,
+        left_ambiguity=1,
+        right_ambiguity=2,
+    )
+    assert _projected_nuc_call(nuc_call, (95, 20)) == NucCall(
+        start=95,
+        length=20,
+        nq=7,
+        el=8,
+        er=9,
+    )
 
 
 def test_project_center_nuc_calls_preserves_quality_bytes():
