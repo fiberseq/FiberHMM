@@ -310,6 +310,23 @@ def unify_nuc_calls_with_tf_calls(
     ]
 
 
+def _msp_gaps_between_nucs(
+    kept_nucs: Sequence[NucCall],
+    span_lo: int,
+    span_hi: int,
+    floor: int,
+) -> List[Interval]:
+    msps: List[Interval] = []
+    cur = int(span_lo)
+    for k in kept_nucs:
+        if k.start - cur >= floor:
+            msps.append((cur, k.start - cur))
+        cur = max(cur, k.start + k.length)
+    if int(span_hi) - cur >= floor:
+        msps.append((cur, int(span_hi) - cur))
+    return msps
+
+
 def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
                             nuc_min_size=85):
     """Produce non-overlapping nucleosomes + complementary MSPs that TILE
@@ -349,15 +366,7 @@ def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
         kept.append(NucCall(s, e - s, n.nq, el, n.er))
         last_end = e
 
-    msps = []
-    cur = span_lo
-    for k in kept:
-        if k.start - cur >= floor:
-            msps.append((cur, k.start - cur))
-        cur = max(cur, k.start + k.length)
-    if span_hi - cur >= floor:
-        msps.append((cur, span_hi - cur))
-    return kept, msps
+    return kept, _msp_gaps_between_nucs(kept, span_lo, span_hi, floor)
 
 
 def _circular_uncovered_cut(calls, read_length: int) -> int:

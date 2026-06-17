@@ -8,6 +8,7 @@ from fiberhmm.inference.nuc_recaller import (
     NucCall,
     _circular_uncovered_cut,
     _keep_nuc_against_circular_intervals,
+    _msp_gaps_between_nucs,
     _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
     assemble_circular_nuc_msp_tiling,
@@ -253,6 +254,22 @@ def test_drop_short_nuc_overlapping_promoted():
     assert drop_short_nucs_overlapping_promoted(long_nuc, promoted, 90) == long_nuc
     far = [NucCall(300, 85, 100, 255, 255)]
     assert drop_short_nucs_overlapping_promoted(far, promoted, 90) == far
+
+
+def test_msp_gaps_between_nucs_respects_floor():
+    kept = [
+        NucCall(10, 20, 200, 255, 255),
+        NucCall(50, 10, 200, 255, 255),
+    ]
+
+    assert _msp_gaps_between_nucs(kept, span_lo=0, span_hi=70, floor=5) == [
+        (0, 10),
+        (30, 20),
+        (60, 10),
+    ]
+    assert _msp_gaps_between_nucs(kept, span_lo=0, span_hi=70, floor=15) == [
+        (30, 20),
+    ]
 
 
 def test_circular_tiling_no_overlap_for_wrapped_nuc():
