@@ -18,6 +18,10 @@ def _print_model_required_error(error_file=None) -> None:
     print(_MODEL_REQUIRED_MESSAGE, file=error_file)
 
 
+def _model_resolution_error_message(error: Exception) -> str:
+    return f"error: {error}"
+
+
 def _print_bundled_model_message(
     model_path: str,
     bundled_message: str | None,
@@ -49,7 +53,7 @@ def resolve_model_path(
     try:
         model_path = get_model_path(args.enzyme, tool=tool, seq=args.seq)
     except (KeyError, FileNotFoundError) as e:
-        print(f"error: {e}", file=sys.stderr)
+        print(_model_resolution_error_message(e), file=sys.stderr)
         sys.exit(1)
 
     _print_bundled_model_message(

@@ -3,6 +3,7 @@
 import io
 
 from fiberhmm.cli.model_selection import (
+    _model_resolution_error_message,
     _print_bundled_model_message,
     _print_model_required_error,
 )
@@ -16,6 +17,12 @@ def test_print_model_required_error_describes_model_choices():
     assert "one of --model or --enzyme" in out.getvalue()
     assert "Use --enzyme hia5/dddb/ddda" in out.getvalue()
     assert "use --model /path/to/model.json" in out.getvalue()
+
+
+def test_model_resolution_error_message_prefixes_error():
+    message = _model_resolution_error_message(FileNotFoundError("missing model"))
+
+    assert message == "error: missing model"
 
 
 def test_print_bundled_model_message_formats_configured_message():
