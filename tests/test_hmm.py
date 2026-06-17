@@ -21,6 +21,7 @@ try:
         FiberHMM,
         _hmmlearn_uses_categorical,
         _hmmlearn_version_tuple,
+        _initialized_training_model,
         _logsumexp,
         _logsumexp_axis1,
         _methylated_emission_means,
@@ -28,6 +29,7 @@ try:
         _normalized_transition_counts,
         _random_training_parameters,
         _training_data_for_iteration,
+        _training_observation_matrix,
         _try_create_hmmlearn,
     )
     from fiberhmm.core.model_io import load_model, load_model_with_metadata, save_model
@@ -37,6 +39,7 @@ except ImportError:
         FiberHMM,
         _hmmlearn_uses_categorical,
         _hmmlearn_version_tuple,
+        _initialized_training_model,
         _logsumexp,
         _logsumexp_axis1,
         _methylated_emission_means,
@@ -44,6 +47,7 @@ except ImportError:
         _normalized_transition_counts,
         _random_training_parameters,
         _training_data_for_iteration,
+        _training_observation_matrix,
         _try_create_hmmlearn,
         load_model,
         load_model_with_metadata,
@@ -252,6 +256,21 @@ class TestModelTraining:
 
         direct = np.array([4, 5])
         assert _training_data_for_iteration(direct, 99) is direct
+
+    def test_training_model_initialization_and_observation_matrix(self):
+        emission_probs = np.array([[0.8, 0.2], [0.2, 0.8]])
+
+        model = _initialized_training_model(emission_probs, use_legacy=False, seed=4)
+        expected_start, expected_trans = _random_training_parameters(4)
+
+        assert isinstance(model, FiberHMM)
+        np.testing.assert_array_equal(model.emissionprob_, emission_probs)
+        np.testing.assert_allclose(model.startprob_, expected_start)
+        np.testing.assert_allclose(model.transmat_, expected_trans)
+        np.testing.assert_array_equal(
+            _training_observation_matrix(np.array([1, 2, 3])),
+            np.array([[1], [2], [3]]),
+        )
 
     def test_fit_updates_parameters(self, simple_emission_probs, simple_observations):
         """Test that fit() updates start and transition probabilities."""

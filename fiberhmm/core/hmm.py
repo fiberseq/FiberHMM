@@ -1037,10 +1037,26 @@ def _new_training_model(emission_probs: np.ndarray, use_legacy: bool):
     return _new_native_model(emission_probs)
 
 
+def _initialized_training_model(
+    emission_probs: np.ndarray,
+    use_legacy: bool,
+    seed: int,
+):
+    start_probs, transition_probs = _random_training_parameters(seed)
+    model = _new_training_model(emission_probs, use_legacy)
+    model.startprob_ = start_probs
+    model.transmat_ = transition_probs
+    return model
+
+
 def _training_data_for_iteration(train_data, iteration: int):
     if isinstance(train_data, dict):
         return train_data[iteration % len(train_data)]
     return train_data
+
+
+def _training_observation_matrix(data: np.ndarray) -> np.ndarray:
+    return data.reshape(-1, 1)
 
 
 def _model_training_logprob(model, training: np.ndarray) -> float:
@@ -1084,17 +1100,11 @@ def train_model(emission_probs: np.ndarray,
                 disable=not HAS_TQDM)
 
     for i in pbar:
-        # Random initialization
-        start_probs, transition_probs = _random_training_parameters(i)
-
-        # Create model
-        model = _new_training_model(emission_probs, use_legacy)
-        model.startprob_ = start_probs
-        model.transmat_ = transition_probs
+        model = _initialized_training_model(emission_probs, use_legacy, i)
 
         # Train
         data = _training_data_for_iteration(train_data, i)
-        training = data.reshape(-1, 1)
+        training = _training_observation_matrix(data)
         model.fit(training, lengths=[len(data)], verbose=True, desc=f"Init {i+1} EM")
 
         # Get log probability
