@@ -328,6 +328,21 @@ class _FakeRead:
             self._tags[t] = v
 
 
+def test_raw_legacy_recall_tags_handles_missing_and_present_tags():
+    read = _FakeRead()
+
+    assert tf_recaller._raw_legacy_recall_tags(read) == ((), (), (), ())
+
+    read.set_tag('ns', [10])
+    read.set_tag('nl', [20])
+    read.set_tag('as', [40])
+    read.set_tag('al', [5])
+
+    assert tf_recaller._raw_legacy_recall_tags(read) == (
+        [10], [20], [40], [5],
+    )
+
+
 def test_spec_mode_emits_ma_aq_and_clean_legacy():
     read = _FakeRead()
     nucs = [(50, 120)]

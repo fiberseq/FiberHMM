@@ -512,6 +512,20 @@ def extract_modifications(read, mode: str, context_size: int = 3
     return _extract_mm_ml_modifications(read, seq, mode, mm_tag, ml_tag)
 
 
+def _raw_legacy_recall_tags(read):
+    try:
+        ns_raw = read.get_tag('ns')
+        nl_raw = read.get_tag('nl')
+    except KeyError:
+        ns_raw, nl_raw = (), ()
+    try:
+        as_raw = read.get_tag('as')
+        al_raw = read.get_tag('al')
+    except KeyError:
+        as_raw, al_raw = (), ()
+    return ns_raw, nl_raw, as_raw, al_raw
+
+
 def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
                 mode: str, context_size: int,
                 min_llr: float, min_opps: int,
@@ -525,16 +539,7 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
                               (>= unify_threshold OR no overlapping TF call)
         - msp_intervals: v2 MSPs unchanged
     """
-    try:
-        ns_raw = read.get_tag('ns')
-        nl_raw = read.get_tag('nl')
-    except KeyError:
-        ns_raw, nl_raw = (), ()
-    try:
-        as_raw = read.get_tag('as')
-        al_raw = read.get_tag('al')
-    except KeyError:
-        as_raw, al_raw = (), ()
+    ns_raw, nl_raw, as_raw, al_raw = _raw_legacy_recall_tags(read)
 
     if len(ns_raw) == 0 and len(as_raw) == 0:
         return [], [], []
