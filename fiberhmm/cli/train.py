@@ -438,6 +438,24 @@ def _training_strand_for_read(fiber_read, mode: str) -> str:
     return '.'
 
 
+def _encode_training_read(
+    fiber_read,
+    edge_trim: int,
+    mode: str,
+    context_size: int,
+) -> np.ndarray:
+    strand = _training_strand_for_read(fiber_read, mode)
+    return encode_from_query_sequence(
+        fiber_read.query_sequence,
+        fiber_read.m6a_query_positions,
+        edge_trim,
+        mode=mode,
+        strand=strand,
+        context_size=context_size,
+        is_reverse=getattr(fiber_read, 'is_reverse', False),
+    )
+
+
 def generate_training_arrays(reads: list, edge_trim: int,
                              n_iterations: int, mode: str = 'pacbio-fiber',
                              context_size: int = 3) -> tuple:
@@ -452,17 +470,11 @@ def generate_training_arrays(reads: list, edge_trim: int,
     valid_reads = []  # Keep track of which reads were successfully encoded
 
     for fiber_read in tqdm(reads, desc="Encoding"):
-        # Detect strand based on mode
-        strand = _training_strand_for_read(fiber_read, mode)
-
-        encoded = encode_from_query_sequence(
-            fiber_read.query_sequence,
-            fiber_read.m6a_query_positions,
+        encoded = _encode_training_read(
+            fiber_read,
             edge_trim,
-            mode=mode,
-            strand=strand,
-            context_size=context_size,
-            is_reverse=getattr(fiber_read, 'is_reverse', False),
+            mode,
+            context_size,
         )
 
         if len(encoded) > 0:

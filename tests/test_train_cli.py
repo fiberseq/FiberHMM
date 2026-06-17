@@ -97,6 +97,48 @@ def test_training_strand_for_read_detects_only_daf_mode(monkeypatch):
     assert train._training_strand_for_read(read, "nanopore-fiber") == "."
 
 
+def test_encode_training_read_passes_mode_strand_context_and_reverse(monkeypatch):
+    read = SimpleNamespace(
+        query_sequence="ACGT",
+        m6a_query_positions={1},
+        is_reverse=True,
+    )
+    captured = {}
+
+    monkeypatch.setattr(train, "_training_strand_for_read", lambda fiber_read, mode: "+")
+
+    def fake_encode(sequence, mod_positions, edge_trim, **kwargs):
+        captured.update(
+            sequence=sequence,
+            mod_positions=mod_positions,
+            edge_trim=edge_trim,
+            kwargs=kwargs,
+        )
+        return np.array([1, 2, 3], dtype=np.int32)
+
+    monkeypatch.setattr(train, "encode_from_query_sequence", fake_encode)
+
+    encoded = train._encode_training_read(
+        read,
+        edge_trim=12,
+        mode="daf",
+        context_size=5,
+    )
+
+    np.testing.assert_array_equal(encoded, [1, 2, 3])
+    assert captured == {
+        "sequence": "ACGT",
+        "mod_positions": {1},
+        "edge_trim": 12,
+        "kwargs": {
+            "mode": "daf",
+            "strand": "+",
+            "context_size": 5,
+            "is_reverse": True,
+        },
+    }
+
+
 def test_training_zoom_window_starts_are_deterministic_and_bounded():
     assert train._training_zoom_window_starts(
         seq_len=500, window_size=1000, n_windows=3, seed=0,
