@@ -37,11 +37,18 @@ def _filter_read_length(read):
     return read.query_alignment_length
 
 
-def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
-    """Return the skip reason for a streaming read, or None if processable."""
+def _unmapped_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     if read.is_unmapped:
         if not config.process_unmapped or read.query_sequence is None:
             return "unmapped"
+    return None
+
+
+def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
+    """Return the skip reason for a streaming read, or None if processable."""
+    reason = _unmapped_skip_reason(read, config)
+    if reason is not None:
+        return reason
 
     if config.primary_only and _is_secondary_or_supplementary(read):
         return "secondary_supplementary"

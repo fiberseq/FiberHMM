@@ -8,6 +8,7 @@ from fiberhmm.inference.read_filters import (
     ReadFilterConfig,
     _filter_read_length,
     _is_secondary_or_supplementary,
+    _unmapped_skip_reason,
     is_primary_alignment,
     is_primary_mapped_alignment,
     streaming_skip_reason,
@@ -70,6 +71,28 @@ def test_filter_read_length_uses_query_length_for_unmapped_reads():
     assert _filter_read_length(_Read(query_alignment_length=10)) == 10
     assert _filter_read_length(_Read(is_unmapped=True, query_length=4)) == 4
     assert _filter_read_length(_Read(is_unmapped=True, query_length=None)) == 0
+
+
+def test_unmapped_skip_reason_requires_enabled_processing_and_sequence():
+    assert _unmapped_skip_reason(_Read(), ReadFilterConfig()) is None
+    assert (
+        _unmapped_skip_reason(_Read(is_unmapped=True), ReadFilterConfig())
+        == "unmapped"
+    )
+    assert (
+        _unmapped_skip_reason(
+            _Read(is_unmapped=True, query_sequence=None),
+            ReadFilterConfig(process_unmapped=True),
+        )
+        == "unmapped"
+    )
+    assert (
+        _unmapped_skip_reason(
+            _Read(is_unmapped=True),
+            ReadFilterConfig(process_unmapped=True),
+        )
+        is None
+    )
 
 
 def test_streaming_filter_skips_unmapped_without_process_unmapped():
