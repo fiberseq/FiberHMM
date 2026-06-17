@@ -81,6 +81,14 @@ def write_hdf5_file_metadata(
     h5_file.attrs['format_version'] = 2
 
 
+def _posterior_chrom_subgroups(include_ref_positions: bool = True) -> List[str]:
+    groups = ['posteriors']
+    if include_ref_positions:
+        groups.append('ref_positions')
+    groups.extend(['footprint_starts', 'footprint_sizes'])
+    return groups
+
+
 def create_posterior_chrom_group(
     h5_file,
     chrom: str,
@@ -88,11 +96,8 @@ def create_posterior_chrom_group(
     include_ref_positions: bool = True,
 ):
     grp = h5_file.create_group(chrom)
-    grp.create_group('posteriors')
-    if include_ref_positions:
-        grp.create_group('ref_positions')
-    grp.create_group('footprint_starts')
-    grp.create_group('footprint_sizes')
+    for name in _posterior_chrom_subgroups(include_ref_positions):
+        grp.create_group(name)
     return grp
 
 

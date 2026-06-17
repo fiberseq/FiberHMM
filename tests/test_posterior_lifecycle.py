@@ -92,6 +92,20 @@ def test_hdf5_chrom_metadata_helper_appends_default_strand():
     }
 
 
+def test_posterior_chrom_subgroups_respects_ref_position_toggle():
+    assert hdf5_backend._posterior_chrom_subgroups(True) == [
+        "posteriors",
+        "ref_positions",
+        "footprint_starts",
+        "footprint_sizes",
+    ]
+    assert hdf5_backend._posterior_chrom_subgroups(False) == [
+        "posteriors",
+        "footprint_starts",
+        "footprint_sizes",
+    ]
+
+
 def test_hdf5_fiber_array_dataset_helper_writes_expected_groups(tmp_path):
     with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
         grp = hdf5_backend.create_posterior_chrom_group(h5, "chr1")
