@@ -212,11 +212,17 @@ def _annotation_to_ref_block(ann, query_to_ref):
     return _query_interval_to_ref_block(ann['start'], ann['length'], query_to_ref)
 
 
+def _mean_block_score(blocks, with_scores: bool) -> int:
+    if not with_scores:
+        return 0
+    return int(sum(block[2] for block in blocks) / len(blocks))
+
+
 def _write_legacy_interval_row(read, bed_out, blocks, with_scores: bool,
                                extra_columns=()):
     chrom_start = blocks[0][0]
     chrom_end = blocks[-1][1]
-    mean_score = int(sum(sc for _, _, sc in blocks) / len(blocks)) if with_scores else 0
+    mean_score = _mean_block_score(blocks, with_scores)
     strand = '-' if read.is_reverse else '+'
     row = _bed12_row(
         read.reference_name,
@@ -316,7 +322,7 @@ def _extract_ma_interval_type(
     blocks.sort(key=lambda x: x[0])
     chrom_start = blocks[0][0]
     chrom_end = blocks[-1][1]
-    mean_score = int(sum(b[2] for b in blocks) / len(blocks)) if with_scores else 0
+    mean_score = _mean_block_score(blocks, with_scores)
     extra = []
     if block_scores:
         if target_name in ('tf', 'nuc'):
