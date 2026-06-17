@@ -928,6 +928,32 @@ def _save_training_outputs(best_model, all_models, args, train_rids) -> None:
         json.dump(_training_config(args), f, indent=2)
 
 
+def _build_model_from_base(base_model_path: str, emission_probs: np.ndarray,
+                           context_size: int):
+    print(f"\nLoading base model: {base_model_path}")
+    base_model = load_model(base_model_path, normalize=False)
+
+    # Validate emission dimensions match
+    if base_model.emissionprob_.shape[1] != emission_probs.shape[1]:
+        print("Error: Emission size mismatch!")
+        print(f"  Base model: {base_model.emissionprob_.shape[1]} observations")
+        print(f"  New emissions: {emission_probs.shape[1]} observations")
+        print(f"  Check that context_size matches (k={context_size})")
+        sys.exit(1)
+
+    # Create new model with base model's transitions and new emissions
+    best_model = FiberHMM(n_states=2)
+    best_model.startprob_ = base_model.startprob_.copy()
+    best_model.transmat_ = base_model.transmat_.copy()
+    best_model.emissionprob_ = emission_probs
+
+    print(f"  Kept startprob: {best_model.startprob_}")
+    print(f"  Kept transmat:\n{best_model.transmat_}")
+    print(f"  Replaced emissions: {emission_probs.shape}")
+
+    return best_model, [best_model]
+
+
 def main():
     args = parse_args()
 
@@ -974,29 +1000,11 @@ def main():
     train_rids = []
 
     if args.base_model:
-        # Use transitions from base model with new emissions
-        print(f"\nLoading base model: {args.base_model}")
-        base_model = load_model(args.base_model, normalize=False)
-
-        # Validate emission dimensions match
-        if base_model.emissionprob_.shape[1] != emission_probs.shape[1]:
-            print("Error: Emission size mismatch!")
-            print(f"  Base model: {base_model.emissionprob_.shape[1]} observations")
-            print(f"  New emissions: {emission_probs.shape[1]} observations")
-            print(f"  Check that context_size matches (k={args.context_size})")
-            sys.exit(1)
-
-        # Create new model with base model's transitions and new emissions
-        best_model = FiberHMM(n_states=2)
-        best_model.startprob_ = base_model.startprob_.copy()
-        best_model.transmat_ = base_model.transmat_.copy()
-        best_model.emissionprob_ = emission_probs
-
-        print(f"  Kept startprob: {best_model.startprob_}")
-        print(f"  Kept transmat:\n{best_model.transmat_}")
-        print(f"  Replaced emissions: {emission_probs.shape}")
-
-        all_models = [best_model]
+        best_model, all_models = _build_model_from_base(
+            args.base_model,
+            emission_probs,
+            args.context_size,
+        )
     else:
         # Normal training path
         # Sample reads

@@ -70,6 +70,37 @@ def test_model_json_record_uses_plain_lists():
     }
 
 
+def test_build_model_from_base_copies_transitions_and_replaces_emissions(monkeypatch):
+    base_model = SimpleNamespace(
+        startprob_=np.array([0.7, 0.3]),
+        transmat_=np.array([[0.95, 0.05], [0.1, 0.9]]),
+        emissionprob_=np.zeros((2, 4)),
+    )
+    emission_probs = np.full((2, 4), 0.25)
+
+    monkeypatch.setattr(
+        train,
+        "load_model",
+        lambda path, normalize=False: base_model,
+    )
+
+    model, all_models = train._build_model_from_base(
+        "base-model.json",
+        emission_probs,
+        context_size=3,
+    )
+
+    assert all_models == [model]
+    np.testing.assert_array_equal(model.startprob_, [0.7, 0.3])
+    np.testing.assert_array_equal(model.transmat_, [[0.95, 0.05], [0.1, 0.9]])
+    assert model.emissionprob_ is emission_probs
+
+    base_model.startprob_[0] = 0.1
+    base_model.transmat_[0, 0] = 0.1
+    assert model.startprob_[0] == 0.7
+    assert model.transmat_[0, 0] == 0.95
+
+
 def test_sample_reads_indexed_preserves_reverse_flag(monkeypatch):
     class FakeRead:
         is_unmapped = False
