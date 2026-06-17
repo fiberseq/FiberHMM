@@ -11,6 +11,10 @@ def _probability_path(directory: str, *parts, suffix: str) -> str:
     return os.path.join(directory, _probability_filename(*parts, suffix=suffix))
 
 
+def _probability_counter_suffix(temporary: bool) -> str:
+    return ".probs.pkl.tmp" if temporary else ".probs.pkl"
+
+
 def probability_counter_path(
     output_dir: str,
     base_name: str,
@@ -19,7 +23,7 @@ def probability_counter_path(
     *,
     temporary: bool = False,
 ) -> str:
-    suffix = ".probs.pkl.tmp" if temporary else ".probs.pkl"
+    suffix = _probability_counter_suffix(temporary)
     return _probability_path(output_dir, base_name, sample_name, base, suffix=suffix)
 
 

@@ -1,6 +1,7 @@
 """Tests for probability-generation utility helpers."""
 
 from fiberhmm.probabilities.output_paths import (
+    _probability_counter_suffix,
     _probability_filename,
     _probability_path,
     combined_probability_table_path,
@@ -69,6 +70,8 @@ def test_get_base_name_handles_trailing_slash_and_empty_path():
 
 
 def test_probability_output_path_helpers_are_shared():
+    assert _probability_counter_suffix(False) == ".probs.pkl"
+    assert _probability_counter_suffix(True) == ".probs.pkl.tmp"
     assert _probability_filename("run", "accessible", "A", suffix=".tsv") == (
         "run_accessible_A.tsv"
     )
