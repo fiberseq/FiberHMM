@@ -38,6 +38,15 @@ def _write_passthrough(outbam, read_obj, counters) -> None:
     _increment_counter(counters, 'written')
 
 
+def _posterior_ref_positions(read_obj):
+    if not HAS_POSTERIOR_WRITER:
+        return np.array([], dtype=np.int32)
+    try:
+        return get_ref_positions_from_read(read_obj)
+    except Exception:
+        return np.array([], dtype=np.int32)
+
+
 def _drain_oldest_chunk(
     inflight,
     outbam,
@@ -73,17 +82,11 @@ def _drain_oldest_chunk(
             if posterior_writer and result.get('posteriors') is not None:
                 chrom = read_obj.reference_name
                 if chrom:
-                    try:
-                        ref_positions = (
-                            get_ref_positions_from_read(read_obj)
-                            if HAS_POSTERIOR_WRITER
-                            else np.array([], dtype=np.int32)
-                        )
-                    except Exception:
-                        ref_positions = np.array([], dtype=np.int32)
                     posterior_writer.add_fiber(
                         chrom,
-                        posterior_fiber_data(read_obj, result, ref_positions),
+                        posterior_fiber_data(
+                            read_obj, result, _posterior_ref_positions(read_obj),
+                        ),
                     )
         else:
             _record_no_footprints(counters)

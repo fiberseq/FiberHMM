@@ -6,6 +6,7 @@ from collections import deque
 from concurrent.futures import Future
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 import fiberhmm.inference.legacy_pipeline as legacy_pipeline
@@ -630,6 +631,29 @@ def test_streaming_drain_counter_helpers_write_passthrough():
         "no_footprints": 1,
     }
     assert outbam.written == [read]
+
+
+def test_posterior_ref_positions_handles_backend_fallbacks(monkeypatch):
+    read = object()
+    monkeypatch.setattr(streaming_drain, "HAS_POSTERIOR_WRITER", False)
+    empty = streaming_drain._posterior_ref_positions(read)
+    assert empty.dtype == np.int32
+    assert empty.size == 0
+
+    positions = np.asarray([1, 2, 3], dtype=np.int32)
+    monkeypatch.setattr(streaming_drain, "HAS_POSTERIOR_WRITER", True)
+    monkeypatch.setattr(
+        streaming_drain, "get_ref_positions_from_read", lambda got_read: positions
+    )
+    assert streaming_drain._posterior_ref_positions(read) is positions
+
+    def fail_positions(_):
+        raise RuntimeError("bad read")
+
+    monkeypatch.setattr(streaming_drain, "get_ref_positions_from_read", fail_positions)
+    empty = streaming_drain._posterior_ref_positions(read)
+    assert empty.dtype == np.int32
+    assert empty.size == 0
 
 
 def test_streaming_drain_counts_worker_failures_and_passes_read_through():
