@@ -226,15 +226,50 @@ def _annotate_circular_parts(annotations, read_length: int):
     return annotations
 
 
-def _annotation_to_ref_block(ann, query_to_ref):
-    qstart = int(ann['start'])
-    qend = qstart + int(ann['length'])
+def _query_interval_to_ref_block(qstart, length, query_to_ref):
+    qstart = int(qstart)
+    qend = qstart + int(length)
     ref_start = _q2r_lookup(query_to_ref, qstart)
     ref_end = _q2r_lookup(query_to_ref, qend - 1)
     if ref_start is None or ref_end is None:
         return None
     ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
     return ref_start, ref_end
+
+
+def _annotation_to_ref_block(ann, query_to_ref):
+    return _query_interval_to_ref_block(ann['start'], ann['length'], query_to_ref)
+
+
+def _legacy_interval_blocks(starts, lengths, scores, query_to_ref):
+    blocks = []
+    for i, (qstart, length) in enumerate(zip(starts, lengths)):
+        block = _query_interval_to_ref_block(qstart, length, query_to_ref)
+        if block is None:
+            continue
+        score = int(scores[i]) if scores is not None and i < len(scores) else 0
+        blocks.append((block[0], block[1], score))
+    blocks.sort(key=lambda x: x[0])
+    return blocks
+
+
+def _write_legacy_interval_row(read, bed_out, blocks, with_scores: bool,
+                               extra_columns=()):
+    chrom_start = blocks[0][0]
+    chrom_end = blocks[-1][1]
+    mean_score = int(sum(sc for _, _, sc in blocks) / len(blocks)) if with_scores else 0
+    strand = '-' if read.is_reverse else '+'
+    row = _bed12_row(
+        read.reference_name,
+        chrom_start,
+        chrom_end,
+        read.query_name,
+        mean_score,
+        strand,
+        [(s, e) for s, e, _ in blocks],
+        extra_columns,
+    )
+    bed_out.write(row + "\n")
 
 
 def _extract_ma_interval_type(
@@ -519,52 +554,20 @@ def _extract_footprints(read, bed_out, with_scores: bool,
         except KeyError:
             pass
 
-    ref_name = read.reference_name
-    strand = '-' if read.is_reverse else '+'
-    read_id = read.query_name
-
-    blocks = []  # list of (ref_start, ref_end, score)
-    for i, (qstart, length) in enumerate(zip(ns, nl)):
-        qend = qstart + length
-
-        ref_start = _q2r_lookup(query_to_ref, qstart)
-        ref_end = _q2r_lookup(query_to_ref, qend - 1)
-
-        if ref_start is None or ref_end is None:
-            continue
-
-        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
-
-        score = 0
-        if scores is not None and i < len(scores):
-            score = int(scores[i])
-
-        blocks.append((ref_start, ref_end, score))
-
+    blocks = _legacy_interval_blocks(ns, nl, scores, query_to_ref)
     if not blocks:
         return 0
 
-    blocks.sort(key=lambda x: x[0])
-
-    chrom_start = blocks[0][0]
-    chrom_end = blocks[-1][1]
-    block_count = len(blocks)
-    block_sizes = ','.join(str(e - s) for s, e, _ in blocks)
-    block_starts = ','.join(str(s - chrom_start) for s, _, _ in blocks)
-
-    mean_score = int(sum(sc for _, _, sc in blocks) / len(blocks)) if with_scores else 0
-
-    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
-           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
+    extra = []
     if block_scores:
         # Legacy ns/nl nucs have no edge refinement -> el/er = 0 (unrefined),
         # matching the nucleosome schema's blockNq, blockEl, blockEr columns.
         block_nq = ','.join(str(sc) for _, _, sc in blocks)
         block_zero = ','.join('0' for _ in blocks)
-        row += f"\t{block_nq}\t{block_zero}\t{block_zero}"
+        extra.extend([block_nq, block_zero, block_zero])
     if circular_groups:
-        row += "\t.\t1\t1\t0\t0"
-    bed_out.write(row + "\n")
+        extra.extend(['.', 1, 1, 0, 0])
+    _write_legacy_interval_row(read, bed_out, blocks, with_scores, extra)
 
     return len(blocks)
 
@@ -634,49 +637,17 @@ def _extract_msps(read, bed_out, with_scores: bool,
         except KeyError:
             pass
 
-    ref_name = read.reference_name
-    strand = '-' if read.is_reverse else '+'
-    read_id = read.query_name
-
-    blocks = []  # list of (ref_start, ref_end, score)
-    for i, (qstart, length) in enumerate(zip(as_starts, al_lengths)):
-        qend = qstart + length
-
-        ref_start = _q2r_lookup(query_to_ref, qstart)
-        ref_end = _q2r_lookup(query_to_ref, qend - 1)
-
-        if ref_start is None or ref_end is None:
-            continue
-
-        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
-
-        score = 0
-        if scores is not None and i < len(scores):
-            score = int(scores[i])
-
-        blocks.append((ref_start, ref_end, score))
-
+    blocks = _legacy_interval_blocks(as_starts, al_lengths, scores, query_to_ref)
     if not blocks:
         return 0
 
-    blocks.sort(key=lambda x: x[0])
-
-    chrom_start = blocks[0][0]
-    chrom_end = blocks[-1][1]
-    block_count = len(blocks)
-    block_sizes = ','.join(str(e - s) for s, e, _ in blocks)
-    block_starts = ','.join(str(s - chrom_start) for s, _, _ in blocks)
-
-    mean_score = int(sum(sc for _, _, sc in blocks) / len(blocks)) if with_scores else 0
-
-    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
-           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
+    extra = []
     if block_scores:
         block_aq = ','.join(str(sc) for _, _, sc in blocks)
-        row += f"\t{block_aq}"
+        extra.append(block_aq)
     if circular_groups:
-        row += "\t.\t1\t1\t0\t0"
-    bed_out.write(row + "\n")
+        extra.extend(['.', 1, 1, 0, 0])
+    _write_legacy_interval_row(read, bed_out, blocks, with_scores, extra)
 
     return len(blocks)
 
