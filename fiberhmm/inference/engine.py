@@ -778,6 +778,19 @@ def _single_read_result_from_prediction(fp_result: dict, strand: str,
     return result
 
 
+def _encoding_inputs_for_read(
+    query_sequence: str,
+    m6a_positions,
+    circular: bool,
+):
+    if circular and len(query_sequence) > 0:
+        encode_sequence, encode_mods = tile_sequence_and_mods(
+            query_sequence, m6a_positions,
+        )
+        return encode_sequence, encode_mods, len(query_sequence)
+    return query_sequence, m6a_positions, None
+
+
 def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,
                           mode: str, context_size: int, msp_min_size: int,
                           with_scores: bool, return_posteriors: bool = False,
@@ -805,12 +818,9 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     # Circular mode keeps the 3x tiling private to inference and projects the
     # middle copy back to molecule coordinates before anything is written.
     is_reverse = fiber_read.get('is_reverse', False)
-    encode_sequence = query_sequence
-    encode_mods = m6a_positions
-    circular_read_length = None
-    if circular and len(query_sequence) > 0:
-        encode_sequence, encode_mods = tile_sequence_and_mods(query_sequence, m6a_positions)
-        circular_read_length = len(query_sequence)
+    encode_sequence, encode_mods, circular_read_length = _encoding_inputs_for_read(
+        query_sequence, m6a_positions, circular,
+    )
 
     encoded = encode_from_query_sequence(
         encode_sequence, encode_mods, edge_trim,

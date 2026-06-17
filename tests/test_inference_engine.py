@@ -67,6 +67,26 @@ def test_single_read_result_from_prediction_includes_optional_fields():
     np.testing.assert_array_equal(result["encoded"], [1, 2, 3])
 
 
+def test_encoding_inputs_for_read_tiles_only_circular_reads():
+    seq, mods, circular_length = engine._encoding_inputs_for_read(
+        "ACGT",
+        {1, 3},
+        circular=False,
+    )
+    assert seq == "ACGT"
+    assert mods == {1, 3}
+    assert circular_length is None
+
+    seq, mods, circular_length = engine._encoding_inputs_for_read(
+        "ACGT",
+        {1, 3},
+        circular=True,
+    )
+    assert seq == "ACGTACGTACGT"
+    assert mods == {1, 3, 5, 7, 9, 11}
+    assert circular_length == 4
+
+
 class TestPredictFootprints:
     def test_empty_input(self, simple_model):
         starts, sizes, count, scores = predict_footprints(simple_model, np.array([]))
