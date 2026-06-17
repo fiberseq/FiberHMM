@@ -311,6 +311,25 @@ def _is_miss_code(code: int) -> bool:
     return UNMETH_OFFSET <= code < UNMETH_OFFSET + N_CTX
 
 
+def _tf_call_from_scan_arrays(
+    starts,
+    ends,
+    llrs,
+    opps_arr,
+    l_amb,
+    r_amb,
+    index: int,
+) -> TFCall:
+    return TFCall(
+        start=int(starts[index]),
+        length=int(ends[index] - starts[index]),
+        llr=float(llrs[index]),
+        n_opps=int(opps_arr[index]),
+        left_ambiguity=int(l_amb[index]),
+        right_ambiguity=int(r_amb[index]),
+    )
+
+
 @_numba_jit(nopython=True, cache=True)
 def _call_tfs_numba(obs, lo, hi, llr_hit, llr_miss,
                     min_llr, min_opps):
@@ -451,14 +470,11 @@ def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
     )
     calls: List[TFCall] = []
     for i in range(len(starts)):
-        calls.append(TFCall(
-            start=int(starts[i]),
-            length=int(ends[i] - starts[i]),
-            llr=float(llrs[i]),
-            n_opps=int(opps_arr[i]),
-            left_ambiguity=int(l_amb[i]),
-            right_ambiguity=int(r_amb[i]),
-        ))
+        calls.append(
+            _tf_call_from_scan_arrays(
+                starts, ends, llrs, opps_arr, l_amb, r_amb, i,
+            )
+        )
     return calls
 
 

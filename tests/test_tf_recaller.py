@@ -242,6 +242,27 @@ def test_bounded_scan_interval_clips_to_read_bounds():
     assert tf_recaller._bounded_scan_interval(120, 5, 100) is None
 
 
+def test_tf_call_from_scan_arrays_converts_types_and_lengths():
+    call = tf_recaller._tf_call_from_scan_arrays(
+        np.array([10]),
+        np.array([25]),
+        np.array([5.5]),
+        np.array([3]),
+        np.array([2]),
+        np.array([4]),
+        0,
+    )
+
+    assert call == TFCall(
+        start=10,
+        length=15,
+        llr=5.5,
+        n_opps=3,
+        left_ambiguity=2,
+        right_ambiguity=4,
+    )
+
+
 def test_build_scan_intervals_includes_short_nucs():
     # MSPs at [0, 100), short nuc at [200, 240) (nl=40), big nuc at [400, 600)
     iv = build_scan_intervals(
