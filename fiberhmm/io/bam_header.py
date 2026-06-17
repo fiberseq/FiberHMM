@@ -37,6 +37,17 @@ def _last_pg_id(pgs) -> Optional[str]:
     return None
 
 
+def _new_pg_record(pgs, record: dict) -> dict:
+    base = record.get('PN') or 'fiberhmm'
+    pg = {'ID': _next_pg_id(pgs, base)}
+    pg.update(_pg_fields_from_record(record))
+
+    previous_id = _last_pg_id(pgs)
+    if previous_id:
+        pg['PP'] = previous_id
+    return pg
+
+
 def append_pg_record(header, record: dict):
     """Return a copy of ``header`` with a ``@PG`` program-group line appended.
 
@@ -46,15 +57,7 @@ def append_pg_record(header, record: dict):
     """
     d = _header_to_dict(header)
     pgs = list(d.get('PG', []))
-    base = record.get('PN') or 'fiberhmm'
-    pg = {'ID': _next_pg_id(pgs, base)}
-    pg.update(_pg_fields_from_record(record))
-
-    previous_id = _last_pg_id(pgs)
-    if previous_id:
-        pg['PP'] = previous_id
-
-    d['PG'] = pgs + [pg]
+    d['PG'] = pgs + [_new_pg_record(pgs, record)]
     return pysam.AlignmentHeader.from_dict(d)
 
 

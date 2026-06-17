@@ -4,6 +4,7 @@ import pysam
 
 from fiberhmm.io.bam_header import (
     COORD_MOLECULAR_MARKER,
+    _new_pg_record,
     append_coord_marker,
     append_pg_record,
     maybe_append_pg,
@@ -37,6 +38,20 @@ def test_append_pg_record_assigns_unique_id_and_chains_previous_pg():
     assert pgs[1]["VN"] == "1.0"
     assert pgs[1]["CL"] == "fiberhmm call"
     assert pgs[1]["DS"] == "desc"
+
+
+def test_new_pg_record_builds_unique_id_and_default_program_name():
+    record = _new_pg_record(
+        [{"ID": "fiberhmm", "PN": "fiberhmm"}],
+        {"VN": "1.0", "CL": "fiberhmm call"},
+    )
+
+    assert record == {
+        "ID": "fiberhmm.2",
+        "VN": "1.0",
+        "CL": "fiberhmm call",
+        "PP": "fiberhmm",
+    }
 
 
 def test_maybe_append_pg_returns_original_header_without_record():
