@@ -191,12 +191,16 @@ def interval_segments(interval: Interval, read_length: int) -> list[Interval]:
     return split_circular_interval(interval[0], interval[1], read_length)
 
 
+def _linear_segments_overlap(a: Interval, b: Interval) -> bool:
+    a_start, a_len = a
+    b_start, b_len = b
+    return a_start < b_start + b_len and b_start < a_start + a_len
+
+
 def circular_intervals_overlap(a: Interval, b: Interval, read_length: int) -> bool:
     """Return whether two circular intervals overlap."""
-    for a_start, a_len in interval_segments(a, read_length):
-        a_end = a_start + a_len
-        for b_start, b_len in interval_segments(b, read_length):
-            b_end = b_start + b_len
-            if a_start < b_end and b_start < a_end:
+    for a_segment in interval_segments(a, read_length):
+        for b_segment in interval_segments(b, read_length):
+            if _linear_segments_overlap(a_segment, b_segment):
                 return True
     return False

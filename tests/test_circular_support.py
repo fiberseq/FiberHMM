@@ -5,6 +5,7 @@ import numpy as np
 from fiberhmm.inference.circular import (
     _center_copy_bounds,
     _legacy_interval_score,
+    _linear_segments_overlap,
     _tiled_mod_positions,
     circular_intervals_overlap,
     project_center_nuc_calls,
@@ -126,6 +127,11 @@ def test_circular_intervals_overlap_across_origin():
     assert circular_intervals_overlap((90, 20), (5, 5), 100)
     assert circular_intervals_overlap((90, 20), (95, 2), 100)
     assert not circular_intervals_overlap((90, 5), (10, 5), 100)
+
+
+def test_linear_segments_overlap_uses_half_open_lengths():
+    assert not _linear_segments_overlap((10, 10), (20, 5))
+    assert _linear_segments_overlap((10, 11), (20, 5))
 
 
 def test_project_circular_result_track_returns_legacy_and_circular_views():
