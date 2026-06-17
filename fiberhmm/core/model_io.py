@@ -54,13 +54,7 @@ def load_model(filepath: str, normalize: bool = True) -> FiberHMM:
     Returns:
         FiberHMM model instance
     """
-    if filepath.endswith('.npz'):
-        model = _load_npz(filepath)
-    elif filepath.endswith('.json'):
-        model = _load_json(filepath)
-    else:
-        # Assume pickle (legacy)
-        model = _load_pickle(filepath)
+    model, _, _ = _load_model_and_metadata_by_extension(filepath)
 
     # Normalize states to ensure correct assignment
     if normalize:
@@ -87,6 +81,15 @@ def freeze_model_for_inference(model: FiberHMM) -> FiberHMM:
 def load_model_for_inference(filepath: str, normalize: bool = True) -> FiberHMM:
     """Load and freeze a model for read-only inference loops."""
     return freeze_model_for_inference(load_model(filepath, normalize=normalize))
+
+
+def _load_model_and_metadata_by_extension(filepath: str) -> Tuple[FiberHMM, int, str]:
+    if filepath.endswith('.npz'):
+        return _load_npz_with_metadata(filepath)
+    if filepath.endswith('.json'):
+        return _load_json_with_metadata(filepath)
+    # Assume pickle (legacy)
+    return _load_pickle_with_metadata(filepath)
 
 
 def _model_from_arrays(n_states, startprob, transmat, emissionprob) -> FiberHMM:
@@ -288,12 +291,7 @@ def load_model_with_metadata(filepath: str, normalize: bool = True) -> Tuple[Fib
     Returns:
         (model, context_size, mode)
     """
-    if filepath.endswith('.npz'):
-        model, context_size, mode = _load_npz_with_metadata(filepath)
-    elif filepath.endswith('.json'):
-        model, context_size, mode = _load_json_with_metadata(filepath)
-    else:
-        model, context_size, mode = _load_pickle_with_metadata(filepath)
+    model, context_size, mode = _load_model_and_metadata_by_extension(filepath)
 
     # Normalize states to ensure correct assignment
     if normalize:
