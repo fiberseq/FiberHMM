@@ -32,6 +32,7 @@ from tqdm import tqdm
 
 # Package imports
 from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
+from fiberhmm.core.tag_access import get_preferred_tag
 from fiberhmm.probabilities.context_counter import ContextCounter
 from fiberhmm.probabilities.stats import generate_probability_stats
 from fiberhmm.probabilities.utils import detect_strand_and_base
@@ -160,17 +161,7 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 continue
 
             # Get MM/ML tags
-            mm_tag = None
-            ml_tag = None
-
-            try:
-                if read.has_tag('MM'):
-                    mm_tag = read.get_tag('MM')
-                elif read.has_tag('Mm'):
-                    mm_tag = read.get_tag('Mm')
-            except KeyError:
-                pass
-
+            mm_tag = get_preferred_tag(read, 'MM', 'Mm')
             if mm_tag is None:
                 filter_stats['no_mm_tag'] += 1
                 continue
@@ -181,14 +172,8 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                     base_mod = mod_spec.split(',')[0] if ',' in mod_spec else mod_spec
                     mm_tag_types[base_mod] += 1
 
-            try:
-                if read.has_tag('ML'):
-                    ml_tag = list(read.get_tag('ML'))
-                elif read.has_tag('Ml'):
-                    ml_tag = list(read.get_tag('Ml'))
-            except KeyError:
-                pass
-
+            ml_raw = get_preferred_tag(read, 'ML', 'Ml')
+            ml_tag = list(ml_raw) if ml_raw is not None else None
             if ml_tag is None:
                 filter_stats['no_ml_tag'] += 1
                 continue

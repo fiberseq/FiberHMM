@@ -417,6 +417,7 @@ def _process_target_bam(bam_path, mode, max_context, args):
     import pysam
 
     from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
+    from fiberhmm.core.tag_access import get_preferred_tag
     from fiberhmm.probabilities.context_counter import ContextCounter
     from fiberhmm.probabilities.utils import detect_strand_and_base
 
@@ -445,18 +446,9 @@ def _process_target_bam(bam_path, mode, max_context, args):
             if read.reference_end - read.reference_start < args.min_read_length:
                 continue
 
-            mm_tag = ml_tag = None
-            try:
-                if read.has_tag('MM'):
-                    mm_tag = read.get_tag('MM')
-                elif read.has_tag('Mm'):
-                    mm_tag = read.get_tag('Mm')
-                if read.has_tag('ML'):
-                    ml_tag = list(read.get_tag('ML'))
-                elif read.has_tag('Ml'):
-                    ml_tag = list(read.get_tag('Ml'))
-            except KeyError:
-                continue
+            mm_tag = get_preferred_tag(read, 'MM', 'Mm')
+            ml_raw = get_preferred_tag(read, 'ML', 'Ml')
+            ml_tag = list(ml_raw) if ml_raw is not None else None
 
             if mm_tag is None:
                 continue

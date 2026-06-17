@@ -1184,8 +1184,7 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
                 if mm_present:
                     counts['has_MM'] += 1
                     try:
-                        mm_str = (read.get_tag('MM') if read.has_tag('MM')
-                                  else read.get_tag('Mm'))
+                        mm_str = get_preferred_tag(read, 'MM', 'Mm', '')
                         for m in mm_re.finditer(mm_str):
                             counts['mm_subtypes'].add(
                                 f"{m.group(1).upper()}{m.group(2)}{m.group(3)}")

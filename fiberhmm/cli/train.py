@@ -31,6 +31,7 @@ from fiberhmm.core.bam_reader import (
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.hmm import train_model as train_hmm_models
 from fiberhmm.core.model_io import load_model, save_model
+from fiberhmm.core.tag_access import get_preferred_tag
 
 pd.options.mode.chained_assignment = None
 
@@ -285,13 +286,9 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                         mod_query_pos = get_modified_positions_pysam(read, prob_threshold, mode)
 
                         if not mod_query_pos:
-                            try:
-                                mm_tag = read.get_tag('MM') if read.has_tag('MM') else (
-                                    read.get_tag('Mm') if read.has_tag('Mm') else None)
-                                ml_tag = list(read.get_tag('ML')) if read.has_tag('ML') else (
-                                    list(read.get_tag('Ml')) if read.has_tag('Ml') else None)
-                            except KeyError:
-                                mm_tag = ml_tag = None
+                            mm_tag = get_preferred_tag(read, 'MM', 'Mm')
+                            ml_raw = get_preferred_tag(read, 'ML', 'Ml')
+                            ml_tag = list(ml_raw) if ml_raw is not None else None
 
                             if mm_tag and ml_tag:
                                 mod_query_pos = parse_mm_tag_query_positions(

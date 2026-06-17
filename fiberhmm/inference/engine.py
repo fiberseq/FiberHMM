@@ -427,11 +427,7 @@ def detect_mode_from_bam(bam_path: str, n_sample: int = 100) -> str:
 
                 # Get MM tag
                 if reads_with_mm < n_sample:
-                    try:
-                        mm_tag = read.get_tag('MM') if read.has_tag('MM') else \
-                                 read.get_tag('Mm') if read.has_tag('Mm') else None
-                    except KeyError:
-                        mm_tag = None
+                    mm_tag = get_preferred_tag(read, 'MM', 'Mm')
 
                     if mm_tag:
                         reads_with_mm += 1

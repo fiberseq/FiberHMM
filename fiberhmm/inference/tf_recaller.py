@@ -61,6 +61,7 @@ from fiberhmm.core.bam_reader import (
     has_iupac_encoding,
     parse_mm_tag_query_positions,
 )
+from fiberhmm.core.tag_access import get_preferred_tag
 from fiberhmm.inference.tag_utils import clear_tags
 from fiberhmm.io.ma_tags import (
     ambiguity_to_edge,
@@ -471,14 +472,8 @@ def extract_modifications(read, mode: str, context_size: int = 3
             st_tag = None
         mod_pos, strand, seq = extract_daf_iupac_positions(seq, st_tag)
         return mod_pos, strand, seq
-    try:
-        mm_tag = read.get_tag('MM') if read.has_tag('MM') else read.get_tag('Mm')
-    except KeyError:
-        mm_tag = ''
-    try:
-        ml_tag = read.get_tag('ML') if read.has_tag('ML') else read.get_tag('Ml')
-    except KeyError:
-        ml_tag = []
+    mm_tag = get_preferred_tag(read, 'MM', 'Mm', '')
+    ml_tag = get_preferred_tag(read, 'ML', 'Ml', [])
     if not mm_tag or not ml_tag:
         if mode == 'daf':
             md_result = getattr(read, '_daf_md_result', None)
