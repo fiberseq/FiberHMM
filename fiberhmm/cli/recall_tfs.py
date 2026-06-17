@@ -67,6 +67,38 @@ _WORKER = {}
 _STATS_KEYS = ('v2', 'tf', 'demoted', 'failed')
 
 
+def _new_stats():
+    return {key: 0 for key in _STATS_KEYS}
+
+
+def _failed_stats():
+    stats = _new_stats()
+    stats['failed'] = 1
+    return stats
+
+
+def _add_stats(total, stats):
+    for key in _STATS_KEYS:
+        total[key] += stats.get(key, 0)
+
+
+def _stats_tuple(n_reads, stats):
+    return (
+        n_reads,
+        stats['v2'],
+        stats['tf'],
+        stats['demoted'],
+        stats['failed'],
+    )
+
+
+def _process_payload_safely(payload):
+    try:
+        return _process_payload_record(payload)
+    except Exception:
+        return None, _failed_stats()
+
+
 def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold):
     """Set per-process globals once per worker.
 
@@ -142,7 +174,7 @@ def _process_payload_record(payload) -> tuple:
         daf_md_result=payload.get('_daf_md_result'),
     )
     tags = payload['tags']
-    stats = {key: 0 for key in _STATS_KEYS}
+    stats = _new_stats()
     unify_threshold = _WORKER['unify_threshold']
 
     has_ns = 'ns' in tags and 'nl' in tags
@@ -190,17 +222,11 @@ def _process_payload_record(payload) -> tuple:
 def _process_payload_chunk(payloads):
     """Worker: process a list of compact payloads."""
     out = []
-    total = {key: 0 for key in _STATS_KEYS}
+    total = _new_stats()
     for payload in payloads:
-        try:
-            result, stats = _process_payload_record(payload)
-        except Exception:
-            result = None
-            stats = {key: 0 for key in _STATS_KEYS}
-            stats['failed'] = 1
+        result, stats = _process_payload_safely(payload)
         out.append(result)
-        for key in _STATS_KEYS:
-            total[key] += stats[key]
+        _add_stats(total, stats)
     return out, total
 
 
@@ -225,25 +251,18 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
                         also_write_legacy, downstream_compat, max_reads):
     """Single-threaded path.  No IPC — process reads directly."""
     _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold)
-    n_reads = n_v2 = n_tf = n_demoted = n_failed = 0
+    n_reads = 0
+    total = _new_stats()
     for read in bam_in:
         if max_reads and n_reads >= max_reads:
             break
-        try:
-            result, stats = _process_payload_record(_make_payload(read, mode))
-        except Exception:
-            result = None
-            stats = {key: 0 for key in _STATS_KEYS}
-            stats['failed'] = 1
+        result, stats = _process_payload_safely(_make_payload(read, mode))
         if result is not None:
             _apply_result(read, result, also_write_legacy, downstream_compat)
         bam_out.write(read)
         n_reads += 1
-        n_v2 += stats['v2']
-        n_tf += stats['tf']
-        n_demoted += stats['demoted']
-        n_failed += stats['failed']
-    return n_reads, n_v2, n_tf, n_demoted, n_failed
+        _add_stats(total, stats)
+    return _stats_tuple(n_reads, total)
 
 
 def _parallel_loop(bam_in, bam_out, _header_text,
@@ -265,11 +284,11 @@ def _parallel_loop(bam_in, bam_out, _header_text,
     MAX_INFLIGHT = n_cores + 2   # workers + small head-start headroom
     pending: deque = deque()     # deque of (reads_chunk, AsyncResult)
 
-    n_reads = n_v2 = n_tf = n_demoted = 0
-    n_failed = 0
+    n_reads = 0
+    total = _new_stats()
 
     def _drain_one():
-        nonlocal n_reads, n_v2, n_tf, n_demoted, n_failed
+        nonlocal n_reads
         reads_chunk, fut = pending.popleft()
         out_results, stats = fut.get()   # blocks until result is ready
         for read, result in zip(reads_chunk, out_results):
@@ -277,10 +296,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
                 _apply_result(read, result, also_write_legacy, downstream_compat)
             bam_out.write(read)
         n_reads += len(reads_chunk)
-        n_v2 += stats['v2']
-        n_tf += stats['tf']
-        n_demoted += stats['demoted']
-        n_failed += stats['failed']
+        _add_stats(total, stats)
 
     with mp.Pool(
         processes=n_cores,
@@ -316,7 +332,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         while pending:
             _drain_one()
 
-    return n_reads, n_v2, n_tf, n_demoted, n_failed
+    return _stats_tuple(n_reads, total)
 
 
 def parse_args():

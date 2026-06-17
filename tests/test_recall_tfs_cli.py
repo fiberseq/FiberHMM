@@ -79,6 +79,16 @@ def test_recall_tfs_payload_chunk_counts_per_read_failures(monkeypatch):
     assert stats == {"v2": 2, "tf": 4, "demoted": 6, "failed": 1}
 
 
+def test_recall_tfs_stats_helpers_accumulate_summary():
+    total = recall_tfs._new_stats()
+
+    recall_tfs._add_stats(total, {"v2": 1, "tf": 2, "demoted": 3, "failed": 4})
+    recall_tfs._add_stats(total, {"tf": 5})
+
+    assert total == {"v2": 1, "tf": 7, "demoted": 3, "failed": 4}
+    assert recall_tfs._stats_tuple(9, total) == (9, 1, 7, 3, 4)
+
+
 def test_recall_tfs_model_resolution_uses_custom_path():
     args = SimpleNamespace(model="/tmp/custom.json", enzyme=None, seq=None)
 
