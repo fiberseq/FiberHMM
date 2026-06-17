@@ -174,6 +174,40 @@ def _combined_probability_frame(
     return combined[['encode', 'context', 'accessible_prob', 'inaccessible_prob']]
 
 
+def _probability_counter_path(
+    output_dir: str,
+    base_name: str,
+    sample_name: str,
+    base: str,
+    *,
+    temporary: bool = False,
+) -> str:
+    suffix = ".probs.pkl.tmp" if temporary else ".probs.pkl"
+    return os.path.join(output_dir, f"{base_name}_{sample_name}_{base}{suffix}")
+
+
+def _probability_table_path(
+    tables_dir: str,
+    base_name: str,
+    sample_name: str,
+    base: str,
+    context_size: int,
+) -> str:
+    return os.path.join(
+        tables_dir,
+        f"{base_name}_{sample_name}_{base}_k{context_size}.tsv",
+    )
+
+
+def _combined_probability_table_path(
+    tables_dir: str,
+    base_name: str,
+    base: str,
+    context_size: int,
+) -> str:
+    return os.path.join(tables_dir, f"{base_name}_{base}_k{context_size}_probs.tsv")
+
+
 def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 mode: str, args, max_reads: int = 0, verbose: bool = False) -> Tuple[int, dict]:
     """
@@ -312,7 +346,15 @@ def process_sample_set(bam_files: List[str], counters: Dict[str, ContextCounter]
         # Save intermediate
         if args.save_interval > 0:
             for base, counter in counters.items():
-                counter.save(os.path.join(output_dir, f"{base_name}_{sample_name}_{base}.probs.pkl.tmp"))
+                counter.save(
+                    _probability_counter_path(
+                        output_dir,
+                        base_name,
+                        sample_name,
+                        base,
+                        temporary=True,
+                    )
+                )
 
         if args.max_reads > 0 and total_reads >= args.max_reads:
             break
@@ -421,8 +463,8 @@ def main():
         print(f"    Unique contexts: {len(inacc.counts):,}")
 
         # Save full counters (PKL files in output root)
-        acc.save(os.path.join(output_dir, f"{base_name}_accessible_{base}.probs.pkl"))
-        inacc.save(os.path.join(output_dir, f"{base_name}_inaccessible_{base}.probs.pkl"))
+        acc.save(_probability_counter_path(output_dir, base_name, "accessible", base))
+        inacc.save(_probability_counter_path(output_dir, base_name, "inaccessible", base))
 
         # Skip if no data for this base
         if acc.total_positions == 0 and inacc.total_positions == 0:
@@ -438,14 +480,26 @@ def main():
         for ctx_size in args.context_sizes:
             # Accessible probabilities
             _, acc_probs = acc.get_encoding_table(ctx_size)
-            acc_tsv = os.path.join(tables_dir, f"{base_name}_accessible_{base}_k{ctx_size}.tsv")
+            acc_tsv = _probability_table_path(
+                tables_dir,
+                base_name,
+                "accessible",
+                base,
+                ctx_size,
+            )
             acc_probs[['encode', 'context', 'hit', 'nohit', 'ratio']].to_csv(
                 acc_tsv, sep='\t', index=False
             )
 
             # Inaccessible probabilities
             _, inacc_probs = inacc.get_encoding_table(ctx_size)
-            inacc_tsv = os.path.join(tables_dir, f"{base_name}_inaccessible_{base}_k{ctx_size}.tsv")
+            inacc_tsv = _probability_table_path(
+                tables_dir,
+                base_name,
+                "inaccessible",
+                base,
+                ctx_size,
+            )
             inacc_probs[['encode', 'context', 'hit', 'nohit', 'ratio']].to_csv(
                 inacc_tsv, sep='\t', index=False
             )
@@ -474,14 +528,25 @@ def main():
 
             combined = _combined_probability_frame(acc_probs, inacc_probs)
 
-            combined_file = os.path.join(tables_dir, f"{base_name}_{base}_k{ctx_size}_probs.tsv")
+            combined_file = _combined_probability_table_path(
+                tables_dir,
+                base_name,
+                base,
+                ctx_size,
+            )
             combined.to_csv(combined_file, sep='\t', index=False)
             print(f"  {combined_file} ({len(combined)} contexts)")
 
     # Clean up temp files
     for base in target_bases:
         for sample in ['accessible', 'inaccessible']:
-            tmp_file = os.path.join(output_dir, f"{base_name}_{sample}_{base}.probs.pkl.tmp")
+            tmp_file = _probability_counter_path(
+                output_dir,
+                base_name,
+                sample,
+                base,
+                temporary=True,
+            )
             if os.path.exists(tmp_file):
                 os.remove(tmp_file)
 

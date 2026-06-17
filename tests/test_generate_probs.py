@@ -5,8 +5,11 @@ import pandas as pd
 from fiberhmm.cli.generate_probs import (
     FILTER_STAT_KEYS,
     _combined_probability_frame,
+    _combined_probability_table_path,
     _generate_probs_skip_reason,
     _new_filter_stats,
+    _probability_counter_path,
+    _probability_table_path,
     _record_mm_tag_types,
     _target_bases_for_mode,
 )
@@ -90,3 +93,22 @@ def test_combined_probability_frame_outer_merges_contexts_and_fills_missing():
         'accessible_prob': [0.8, 0.0, 0.9],
         'inaccessible_prob': [0.0, 0.1, 0.2],
     }
+
+
+def test_probability_output_path_helpers():
+    assert _probability_counter_path("out", "run", "accessible", "A") == (
+        "out/run_accessible_A.probs.pkl"
+    )
+    assert _probability_counter_path(
+        "out",
+        "run",
+        "inaccessible",
+        "C",
+        temporary=True,
+    ) == "out/run_inaccessible_C.probs.pkl.tmp"
+    assert _probability_table_path("out/tables", "run", "accessible", "A", 3) == (
+        "out/tables/run_accessible_A_k3.tsv"
+    )
+    assert _combined_probability_table_path("out/tables", "run", "C", 5) == (
+        "out/tables/run_C_k5_probs.tsv"
+    )
