@@ -665,23 +665,25 @@ def process_bam_daf_encode(
     return summary
 
 
+def _first_mapped_reads_have_md_tag(inbam, max_reads: int = 10) -> bool:
+    checked = 0
+    for read in inbam.fetch(until_eof=True):
+        if not is_primary_mapped_alignment(read):
+            continue
+        if read.has_tag("MD"):
+            return True
+        checked += 1
+        if checked >= max_reads:
+            break
+    return False
+
+
 def _check_md_tag(inbam, ref_fasta, _log):
     """Peek at the first few mapped reads to check for the MD tag.
 
     Resets the file iterator after peeking.  Prints a warning or error.
     """
-    # Save position and peek
-    checked = 0
-    has_md = False
-    for read in inbam.fetch(until_eof=True):
-        if not is_primary_mapped_alignment(read):
-            continue
-        if read.has_tag("MD"):
-            has_md = True
-            break
-        checked += 1
-        if checked >= 10:
-            break
+    has_md = _first_mapped_reads_have_md_tag(inbam)
 
     # Reset iterator
     inbam.reset()

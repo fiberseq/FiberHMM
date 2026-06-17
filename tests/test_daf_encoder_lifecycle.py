@@ -54,6 +54,34 @@ class _WritableDafRead:
         self.tags[tag] = (value, value_type)
 
 
+class _MdRead:
+    def __init__(self, has_md: bool, **overrides):
+        self._has_md = has_md
+        attrs = {
+            "is_unmapped": False,
+            "is_secondary": False,
+            "is_supplementary": False,
+        }
+        attrs.update(overrides)
+        for key, value in attrs.items():
+            setattr(self, key, value)
+
+    def has_tag(self, tag):
+        return tag == "MD" and self._has_md
+
+
+class _FakeBam:
+    def __init__(self, reads):
+        self.reads = reads
+        self.reset_count = 0
+
+    def fetch(self, until_eof=False):
+        return iter(self.reads)
+
+    def reset(self):
+        self.reset_count += 1
+
+
 def test_daf_encode_skip_reason_matches_filter_order():
     assert encoder._daf_encode_skip_reason(_daf_read(), 20, 1000) is None
     assert encoder._daf_encode_skip_reason(
@@ -102,6 +130,30 @@ def test_needs_fasta_pair_fallback_detects_missing_ref_bases():
         (1, None, "C"),
     ])
     assert not encoder._needs_fasta_pair_fallback([(0, 100, "C")])
+
+
+def test_first_mapped_reads_have_md_tag_skips_non_primary_and_honors_limit():
+    assert encoder._first_mapped_reads_have_md_tag(
+        _FakeBam([
+            _MdRead(False, is_unmapped=True),
+            _MdRead(False),
+            _MdRead(True),
+        ])
+    )
+    assert not encoder._first_mapped_reads_have_md_tag(
+        _FakeBam([_MdRead(False), _MdRead(True)]),
+        max_reads=1,
+    )
+
+
+def test_check_md_tag_resets_after_peeking_when_md_present():
+    bam = _FakeBam([_MdRead(True)])
+    log = io.StringIO()
+
+    encoder._check_md_tag(bam, None, log)
+
+    assert bam.reset_count == 1
+    assert log.getvalue() == ""
 
 
 def test_mark_iupac_positions_replaces_selected_bases():
