@@ -27,6 +27,13 @@ def test_unknown_bundled_model_message_lists_choices_and_override():
     assert "Use --model" in message
 
 
+def test_unknown_tool_message_lists_valid_tools():
+    message = models._unknown_tool_message("score")
+
+    assert "Tool 'score' not recognised" in message
+    assert "use 'apply' or 'recall'" in message
+
+
 def test_get_model_path_defaults_hia5_seq_with_warning():
     with pytest.warns(UserWarning, match="defaulting to 'pacbio'"):
         path = models.get_model_path("hia5", tool="apply")

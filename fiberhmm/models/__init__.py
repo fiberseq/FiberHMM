@@ -68,6 +68,10 @@ def _unknown_bundled_model_message(enzyme: str, seq: str | None, tool: str) -> s
     )
 
 
+def _unknown_tool_message(tool: str) -> str:
+    return f"Tool {tool!r} not recognised; use 'apply' or 'recall'."
+
+
 def _bundled_model_key(enzyme: str, seq: str | None) -> tuple[str, str | None]:
     enz = enzyme.lower()
     return enz, _seq_key_for_enzyme(enz, seq)
@@ -98,7 +102,7 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
     FileNotFoundError
         If the bundled file is missing from the installation.
     """
-    t   = tool.lower()
+    t = tool.lower()
 
     key = _bundled_model_key(enzyme, seq)
     entry = _BUNDLED.get(key)
@@ -107,9 +111,7 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
 
     fname = entry.get(t)
     if fname is None:
-        raise KeyError(
-            f"Tool {tool!r} not recognised; use 'apply' or 'recall'."
-        )
+        raise KeyError(_unknown_tool_message(tool))
 
     path = _bundled_model_path(fname)
     if not os.path.isfile(path):
