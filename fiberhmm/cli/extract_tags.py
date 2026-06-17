@@ -52,9 +52,13 @@ from typing import Dict, Optional, Set, Tuple
 import numpy as np
 import pysam
 
-from fiberhmm.core.bam_reader import cigar_to_query_ref
 from fiberhmm.core.tag_access import compact_ml_value, get_preferred_tag
 from fiberhmm.inference.parallel import _get_genome_regions
+from fiberhmm.inference.reference_mapping import (
+    build_query_to_ref as _build_query_to_ref,
+    query_interval_to_ref_block as _query_interval_to_ref_block,
+    scored_interval_blocks as _legacy_interval_blocks,
+)
 from fiberhmm.io.ma_tags import (
     flip_interval_frame,
     flip_intervals_to_seq,
@@ -93,32 +97,6 @@ def _init_extract_worker(params: dict):
     """Initialize worker with parameters."""
     global _worker_params
     _worker_params = params
-
-
-def _build_query_to_ref(read):
-    """Build query->reference position lookup from CIGAR (numpy int64 array).
-
-    Returns a numpy int64 array indexed by query position.  ``-1`` means
-    the query position has no reference mapping (insertion, soft-clip,
-    or out-of-range).  Computed once per read and shared across all
-    extraction types.
-
-    Use ``_q2r_lookup(arr, qpos)`` to do bounds-checked lookup returning
-    None for unmapped positions (drop-in for the old dict.get()).
-
-    ~10× faster than get_aligned_pairs() + dict construction on long reads:
-    avoids the 20k+ Python tuple allocations pysam emits per read.
-    """
-    return cigar_to_query_ref(read)
-
-
-def _q2r_lookup(query_to_ref, qpos):
-    """Dict.get()-compatible lookup on the numpy array returned by
-    _build_query_to_ref.  Returns None for unmapped / out-of-range."""
-    if 0 <= qpos < len(query_to_ref):
-        r = int(query_to_ref[qpos])
-        return r if r >= 0 else None
-    return None
 
 
 def _bed12_row(ref_name, chrom_start, chrom_end, read_id, score, strand,
@@ -227,31 +205,8 @@ def _annotate_circular_parts(annotations, read_length: int):
     return annotations
 
 
-def _query_interval_to_ref_block(qstart, length, query_to_ref):
-    qstart = int(qstart)
-    qend = qstart + int(length)
-    ref_start = _q2r_lookup(query_to_ref, qstart)
-    ref_end = _q2r_lookup(query_to_ref, qend - 1)
-    if ref_start is None or ref_end is None:
-        return None
-    ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
-    return ref_start, ref_end
-
-
 def _annotation_to_ref_block(ann, query_to_ref):
     return _query_interval_to_ref_block(ann['start'], ann['length'], query_to_ref)
-
-
-def _legacy_interval_blocks(starts, lengths, scores, query_to_ref):
-    blocks = []
-    for i, (qstart, length) in enumerate(zip(starts, lengths)):
-        block = _query_interval_to_ref_block(qstart, length, query_to_ref)
-        if block is None:
-            continue
-        score = int(scores[i]) if scores is not None and i < len(scores) else 0
-        blocks.append((block[0], block[1], score))
-    blocks.sort(key=lambda x: x[0])
-    return blocks
 
 
 def _write_legacy_interval_row(read, bed_out, blocks, with_scores: bool,

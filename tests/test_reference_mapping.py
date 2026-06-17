@@ -1,0 +1,47 @@
+"""Tests for shared query-to-reference interval mapping helpers."""
+
+import numpy as np
+
+from fiberhmm.inference.reference_mapping import (
+    query_interval_to_ref_block,
+    query_interval_to_ref_span,
+    query_to_ref_lookup,
+    scored_interval_blocks,
+    scored_interval_spans,
+)
+
+
+def test_query_to_ref_lookup_accepts_arrays_and_dicts():
+    q2r = np.array([100, -1, 102], dtype=np.int64)
+
+    assert query_to_ref_lookup(q2r, 0) == 100
+    assert query_to_ref_lookup(q2r, 1) is None
+    assert query_to_ref_lookup(q2r, 10) is None
+    assert query_to_ref_lookup({0: 200, 2: 202}, 2) == 202
+    assert query_to_ref_lookup({0: 200, 2: 202}, 1) is None
+
+
+def test_exact_block_mapping_requires_aligned_endpoints():
+    q2r = np.array([100, -1, 102, 103, -1, 105], dtype=np.int64)
+
+    assert query_interval_to_ref_block(0, 4, q2r) == (100, 104)
+    assert query_interval_to_ref_block(1, 3, q2r) is None
+    assert query_interval_to_ref_block(2, 3, q2r) is None
+
+
+def test_span_mapping_scans_inward_past_unaligned_edges():
+    q2r = np.array([100, -1, 102, 103, -1, 105], dtype=np.int64)
+
+    assert query_interval_to_ref_span(1, 3, q2r) == (102, 104)
+    assert query_interval_to_ref_span(2, 3, q2r) == (102, 104)
+    assert query_interval_to_ref_span(1, 1, q2r) is None
+
+
+def test_scored_interval_helpers_keep_scores_aligned_after_sorting():
+    q2r = np.array([50, 51, 52, 100, -1, 102], dtype=np.int64)
+
+    exact = scored_interval_blocks([3, 0], [2, 2], [7, 9], q2r)
+    span = scored_interval_spans([3, 0], [2, 2], [7, 9], q2r)
+
+    assert exact == [(50, 52, 9)]
+    assert span == [(50, 52, 9), (100, 101, 7)]

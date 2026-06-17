@@ -10,6 +10,10 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.bam_reader import get_bam_chrom_sizes
+from fiberhmm.inference.reference_mapping import (
+    build_query_to_ref,
+    scored_interval_spans,
+)
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 
@@ -529,46 +533,12 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
             chrom = read.reference_name
             strand = '-' if read.is_reverse else '+'
 
-            # Get aligned pairs for coordinate mapping
-            # This gives us (query_pos, ref_pos) pairs
-            aligned_pairs = read.get_aligned_pairs()
-            query_to_ref = {}
-            for qpos, rpos in aligned_pairs:
-                if qpos is not None and rpos is not None:
-                    query_to_ref[qpos] = rpos
-
             # Map footprints to reference coordinates
-            ref_starts = []
-            ref_ends = []
-            valid_scores = []
-
-            for i, (start, length) in enumerate(zip(ns, nl)):
-                end = start + length
-
-                # Find reference positions for start and end
-                # Handle cases where exact position isn't aligned (indels)
-                ref_start = None
-                ref_end = None
-
-                # Find closest aligned position for start
-                for offset in range(length):
-                    if start + offset in query_to_ref:
-                        ref_start = query_to_ref[start + offset]
-                        break
-
-                # Find closest aligned position for end (going backwards)
-                for offset in range(length):
-                    if end - 1 - offset in query_to_ref:
-                        ref_end = query_to_ref[end - 1 - offset] + 1
-                        break
-
-                if ref_start is not None and ref_end is not None and ref_end > ref_start:
-                    ref_starts.append(ref_start)
-                    ref_ends.append(ref_end)
-                    if nq is not None and i < len(nq):
-                        valid_scores.append(nq[i])
-                    elif with_scores:
-                        valid_scores.append(0)
+            query_to_ref = build_query_to_ref(read)
+            blocks = scored_interval_spans(ns, nl, nq if with_scores else None, query_to_ref)
+            ref_starts = [start for start, _, _ in blocks]
+            ref_ends = [end for _, end, _ in blocks]
+            valid_scores = [score for _, _, score in blocks] if with_scores else []
 
             if not ref_starts:
                 continue
