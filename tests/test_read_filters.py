@@ -21,6 +21,7 @@ from fiberhmm.inference.skip_reasons import (
     CHIMERA_SKIP_REASON,
     NO_FOOTPRINTS_SKIP_REASON,
     new_skip_reasons,
+    _skip_reason_keys,
 )
 
 
@@ -48,6 +49,14 @@ def test_skip_reason_factory_zeroes_base_and_extra_reasons():
 
     reasons["low_mapq"] = 3
     assert new_skip_reasons()["low_mapq"] == 0
+
+
+def test_skip_reason_keys_append_extras_after_base_reasons():
+    assert _skip_reason_keys((NO_FOOTPRINTS_SKIP_REASON, CHIMERA_SKIP_REASON)) == (
+        *BASE_SKIP_REASON_KEYS,
+        NO_FOOTPRINTS_SKIP_REASON,
+        CHIMERA_SKIP_REASON,
+    )
 
 
 def test_streaming_filter_allows_processable_mapped_read():

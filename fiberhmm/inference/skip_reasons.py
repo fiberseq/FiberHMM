@@ -16,5 +16,9 @@ NO_FOOTPRINTS_SKIP_REASON = 'no_footprints'
 CHIMERA_SKIP_REASON = 'chimera'
 
 
+def _skip_reason_keys(extra_reasons) -> tuple:
+    return (*BASE_SKIP_REASON_KEYS, *extra_reasons)
+
+
 def new_skip_reasons(*extra_reasons: str) -> dict:
-    return {reason: 0 for reason in (*BASE_SKIP_REASON_KEYS, *extra_reasons)}
+    return {reason: 0 for reason in _skip_reason_keys(extra_reasons)}
