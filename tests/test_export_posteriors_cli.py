@@ -276,6 +276,20 @@ def test_flush_h5_chrom_buffer_skips_empty_buffer(monkeypatch):
     ) == 0
 
 
+def test_new_h5_export_chrom_state_initializes_parallel_trackers():
+    counts, metadata, buffers = export_posteriors._new_h5_export_chrom_state({
+        "chr2": [(0, 10), (10, 20)],
+        "chr1": [(5, 15)],
+    })
+
+    assert counts == {"chr2": 0, "chr1": 0}
+    assert metadata == {
+        "chr2": {"ids": [], "starts": [], "ends": [], "strands": []},
+        "chr1": {"ids": [], "starts": [], "ends": [], "strands": []},
+    }
+    assert buffers == {"chr2": [], "chr1": []}
+
+
 def test_submit_next_region_records_pending_future():
     class FakeExecutor:
         def __init__(self):

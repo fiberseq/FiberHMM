@@ -416,6 +416,16 @@ def _flush_h5_chrom_buffer(h5_file, chrom: str, write_buffers: dict,
     return n_written
 
 
+def _new_h5_export_chrom_state(regions_by_chrom: dict) -> tuple[dict, dict, dict]:
+    chrom_fiber_counts = {chrom: 0 for chrom in regions_by_chrom}
+    chrom_metadata = {
+        chrom: {'ids': [], 'starts': [], 'ends': [], 'strands': []}
+        for chrom in regions_by_chrom
+    }
+    write_buffers = {chrom: [] for chrom in regions_by_chrom}
+    return chrom_fiber_counts, chrom_metadata, write_buffers
+
+
 def _process_regions(regions, input_bam, model_path, params,
                      n_cores, verbose, result_callback):
     """Process all regions and call result_callback(chrom, results) for each."""
@@ -554,12 +564,9 @@ def export_posteriors_hdf5(
     regions_by_chrom = _regions_by_chrom(regions)
 
     # Track per-chromosome data
-    chrom_fiber_counts = {chrom: 0 for chrom in regions_by_chrom}
-    chrom_metadata = {chrom: {'ids': [], 'starts': [], 'ends': [], 'strands': []}
-                      for chrom in regions_by_chrom}
-
-    # Pending writes buffer per chromosome
-    write_buffers = {chrom: [] for chrom in regions_by_chrom}
+    chrom_fiber_counts, chrom_metadata, write_buffers = _new_h5_export_chrom_state(
+        regions_by_chrom,
+    )
 
     with h5py.File(output_h5, 'w') as f:
         write_hdf5_file_metadata(
