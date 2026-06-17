@@ -15,6 +15,7 @@ from fiberhmm.core.model_io import (
     _model_file_format,
     _model_json_record,
     _normalize_model_if_requested,
+    _pickle_payload_has_metadata,
     load_model,
     load_model_for_inference,
     load_model_with_metadata,
@@ -184,6 +185,11 @@ class TestLoadSaveRoundTrip:
         np.testing.assert_allclose(loaded.startprob_, sample_model.startprob_)
         np.testing.assert_allclose(loaded.transmat_, sample_model.transmat_)
         np.testing.assert_allclose(loaded.emissionprob_, sample_model.emissionprob_)
+
+    def test_pickle_payload_has_metadata_identifies_wrapped_model_payloads(self):
+        assert _pickle_payload_has_metadata({"model": object()})
+        assert not _pickle_payload_has_metadata({"model_type": "FiberHMM_native"})
+        assert not _pickle_payload_has_metadata(object())
 
 
 class TestModeAliases:

@@ -192,10 +192,14 @@ def _load_pickle(filepath: str) -> FiberHMM:
     return model
 
 
+def _pickle_payload_has_metadata(obj) -> bool:
+    return isinstance(obj, dict) and 'model' in obj
+
+
 def _load_pickle_with_metadata(filepath: str) -> Tuple[FiberHMM, int, str]:
     """Load model and metadata from pickle format (legacy)."""
     obj = _read_pickle(filepath)
-    if isinstance(obj, dict) and 'model' in obj:
+    if _pickle_payload_has_metadata(obj):
         model = _coerce_loaded_model(obj['model'])
         context_size, mode = _metadata_from_mapping(obj)
         return model, context_size, mode
