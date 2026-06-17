@@ -158,6 +158,39 @@ def test_extract_region_worker_closes_temp_beds_when_partial_open_fails(
     assert opened[0].closed
 
 
+def test_extract_region_read_selected_applies_primary_region_and_mapq_filters():
+    def read(**overrides):
+        attrs = {
+            "is_unmapped": False,
+            "is_secondary": False,
+            "is_supplementary": False,
+            "reference_start": 100,
+            "mapping_quality": 20,
+        }
+        attrs.update(overrides)
+        return SimpleNamespace(**attrs)
+
+    assert extract_tags._extract_region_read_selected(read(), 100, 200, 20)
+    assert not extract_tags._extract_region_read_selected(
+        read(reference_start=99), 100, 200, 20,
+    )
+    assert not extract_tags._extract_region_read_selected(
+        read(reference_start=200), 100, 200, 20,
+    )
+    assert not extract_tags._extract_region_read_selected(
+        read(mapping_quality=19), 100, 200, 20,
+    )
+    assert not extract_tags._extract_region_read_selected(
+        read(is_unmapped=True), 100, 200, 20,
+    )
+    assert not extract_tags._extract_region_read_selected(
+        read(is_secondary=True), 100, 200, 20,
+    )
+    assert not extract_tags._extract_region_read_selected(
+        read(is_supplementary=True), 100, 200, 20,
+    )
+
+
 def test_extract_read_types_reuses_query_ref_map(monkeypatch):
     read = _FakeRead()
     read.set_tag('ns', array('I', [100]))

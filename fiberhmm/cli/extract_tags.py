@@ -338,6 +338,14 @@ def _ma_circular_row_name(read_id: str, target_name: str, ann) -> str:
     return f"{read_id}|{target_name}|{ann['circ_id']}|{ann['circ_part']}/{ann['circ_parts']}"
 
 
+def _extract_region_read_selected(read, start: int, end: int, min_mapq: int) -> bool:
+    return (
+        is_primary_mapped_alignment(read)
+        and start <= read.reference_start < end
+        and read.mapping_quality >= min_mapq
+    )
+
+
 def _mean_block_score(blocks, with_scores: bool) -> int:
     if not with_scores:
         return 0
@@ -478,11 +486,7 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                     return (temp_bed_paths, 0, n_features)
 
                 for read in read_iter:
-                    if not is_primary_mapped_alignment(read):
-                        continue
-                    if read.reference_start < start or read.reference_start >= end:
-                        continue
-                    if read.mapping_quality < min_mapq:
+                    if not _extract_region_read_selected(read, start, end, min_mapq):
                         continue
 
                     n_reads += 1
