@@ -157,6 +157,18 @@ def _create_h5_chrom_groups(h5_file, chrom_counts, string_dtype):
     return chrom_indices
 
 
+def _write_h5_metadata_from_tsv_metadata(h5_file, metadata: dict) -> None:
+    from fiberhmm.posteriors.hdf5_backend import write_hdf5_file_metadata
+
+    write_hdf5_file_metadata(
+        h5_file,
+        mode=metadata.get('mode', 'pacbio-fiber'),
+        context_size=metadata.get('context_size', 3),
+        edge_trim=metadata.get('edge_trim', 10),
+        source_bam=metadata.get('source_bam', ''),
+    )
+
+
 def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
     record = _posterior_record_from_fields(fields, np.float16)
     chrom = record['chrom']
@@ -298,7 +310,6 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
         Number of fibers converted
     """
     import h5py
-    from fiberhmm.posteriors.hdf5_backend import write_hdf5_file_metadata
 
     # First pass: count fibers per chromosome
     metadata, chrom_counts, n_total = _scan_tsv_for_h5(tsv_path, verbose)
@@ -308,13 +319,7 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
         print(f"  Writing {h5_path}...")
 
     with h5py.File(h5_path, 'w') as f:
-        write_hdf5_file_metadata(
-            f,
-            mode=metadata.get('mode', 'pacbio-fiber'),
-            context_size=metadata.get('context_size', 3),
-            edge_trim=metadata.get('edge_trim', 10),
-            source_bam=metadata.get('source_bam', ''),
-        )
+        _write_h5_metadata_from_tsv_metadata(f, metadata)
 
         dt = h5py.special_dtype(vlen=str)
 

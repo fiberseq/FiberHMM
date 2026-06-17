@@ -197,6 +197,19 @@ def test_posterior_tsv_metadata_uses_source_bam_basename():
     }
 
 
+def test_write_h5_metadata_from_tsv_metadata_applies_defaults(tmp_path):
+    h5_path = tmp_path / "posteriors.h5"
+
+    with h5py.File(h5_path, "w") as h5:
+        tsv_backend._write_h5_metadata_from_tsv_metadata(h5, {"mode": "daf"})
+
+    with h5py.File(h5_path, "r") as h5:
+        assert h5.attrs["mode"] == "daf"
+        assert h5.attrs["context_size"] == 3
+        assert h5.attrs["edge_trim"] == 10
+        assert h5.attrs["source_bam"] == ""
+
+
 def test_format_posterior_metadata_line_uses_metadata_prefix():
     assert format_posterior_metadata_line({"mode": "daf"}) == (
         '#metadata:{"mode": "daf"}\n'
