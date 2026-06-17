@@ -45,6 +45,12 @@ def _samtools_index_error_requires_sort(stderr: str) -> bool:
     return 'not sorted' in error_text or 'coordinate' in error_text
 
 
+def _sorted_bam_temp_path(output_bam: str) -> str:
+    if output_bam.endswith('.bam'):
+        return output_bam[:-4] + '.sorted.bam'
+    return output_bam + '.sorted.bam'
+
+
 def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4):
     """
     Index a BAM file, sorting first only if needed.
@@ -112,7 +118,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
         sys.stdout.flush()
 
     # Sort using samtools (faster than pysam for large files)
-    sorted_bam = output_bam.replace('.bam', '.sorted.bam')
+    sorted_bam = _sorted_bam_temp_path(output_bam)
     sort_start = time.time()
     try:
         _run_samtools_sort(output_bam, sorted_bam, threads)

@@ -18,6 +18,11 @@ def test_samtools_index_error_requires_sort_detection():
     assert not bam_output._samtools_index_error_requires_sort("")
 
 
+def test_sorted_bam_temp_path_preserves_bam_suffix_convention():
+    assert bam_output._sorted_bam_temp_path("out.bam") == "out.sorted.bam"
+    assert bam_output._sorted_bam_temp_path("out.cram") == "out.cram.sorted.bam"
+
+
 def test_convert_to_bigbed_sorts_without_shell(monkeypatch, tmp_path):
     bed = tmp_path / "calls.bed"
     chrom_sizes = tmp_path / "chrom.sizes"
