@@ -221,13 +221,20 @@ def _is_pure_daf_segment(dominant_count, segment_size,
     )
 
 
-def _daf_chimera_breakpoint_matches(ct_left, left_n, nct, nga,
-                                    min_seg_events: int,
-                                    purity: float) -> bool:
+def _daf_chimera_segment_counts(ct_left, left_n, nct, nga):
     right_n = nct + nga - left_n
     ga_left = left_n - ct_left
     ct_right = nct - ct_left
     ga_right = nga - ga_left
+    return right_n, ga_left, ct_right, ga_right
+
+
+def _daf_chimera_breakpoint_matches(ct_left, left_n, nct, nga,
+                                    min_seg_events: int,
+                                    purity: float) -> bool:
+    right_n, ga_left, ct_right, ga_right = _daf_chimera_segment_counts(
+        ct_left, left_n, nct, nga,
+    )
 
     ct_then_ga = (
         _is_pure_daf_segment(ct_left, left_n, min_seg_events, purity)
