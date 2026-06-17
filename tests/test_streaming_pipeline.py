@@ -9,6 +9,7 @@ from fiberhmm.inference import streaming_pipeline
 from fiberhmm.inference.streaming_pipeline import (
     _apply_worker_args,
     _fused_worker_args,
+    _streaming_completion_message,
     _streaming_filter_config,
     _streaming_log_for_output,
     _streaming_output_target,
@@ -75,6 +76,17 @@ def test_streaming_progress_message_formats_counts_and_rates():
 def test_streaming_rate_handles_zero_elapsed():
     assert _streaming_rate(120, 20.0) == 6.0
     assert _streaming_rate(120, 0.0) == 0
+
+
+def test_streaming_completion_message_formats_final_counts():
+    assert _streaming_completion_message(
+        label="Fused",
+        total_reads=1234,
+        skipped=56,
+        reads_with_footprints=78,
+        rate=9.87,
+        rate_unit="r/s",
+    ) == "\r  Fused: 1,234 | Skipped: 56 | With footprints: 78 | 9.9 r/s"
 
 
 def test_streaming_filter_config_captures_read_filter_settings():

@@ -236,6 +236,21 @@ def _streaming_rate(total_reads: int, elapsed: float) -> float:
     return total_reads / elapsed if elapsed > 0 else 0
 
 
+def _streaming_completion_message(
+    label: str,
+    total_reads: int,
+    skipped: int,
+    reads_with_footprints: int,
+    rate: float,
+    rate_unit: str,
+) -> str:
+    return (
+        f"\r  {label}: {total_reads:,} | Skipped: {skipped:,} | "
+        f"With footprints: {reads_with_footprints:,} | "
+        f"{rate:.1f} {rate_unit}"
+    )
+
+
 def _process_bam_streaming_pipeline_fused(
     input_bam: str, output_bam: str,
     model_path: str, recall_model_path: str,
@@ -411,8 +426,14 @@ def _process_bam_streaming_pipeline_fused(
     elapsed = time.time() - start_time
     rate = _streaming_rate(total_reads, elapsed)
     reads_with_fp = counters['reads_with_footprints']
-    print(f"\r  Fused: {total_reads:,} | Skipped: {skipped:,} | "
-          f"With footprints: {reads_with_fp:,} | {rate:.1f} r/s", file=_log)
+    print(_streaming_completion_message(
+        "Fused",
+        total_reads,
+        skipped,
+        reads_with_fp,
+        rate,
+        "r/s",
+    ), file=_log)
     _print_worker_failure_summary(counters, _log)
     _print_streaming_skip_summary(skip_reasons, total_reads, skipped, _log)
     if counters.get('chimera'):
@@ -616,8 +637,14 @@ def _process_bam_streaming_pipeline(
     elapsed = time.time() - start_time
     rate = _streaming_rate(total_reads, elapsed)
     reads_with_footprints = counters['reads_with_footprints']
-    print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | "
-          f"With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s", file=_log)
+    print(_streaming_completion_message(
+        "Processed",
+        total_reads,
+        skipped,
+        reads_with_footprints,
+        rate,
+        "reads/s",
+    ), file=_log)
     _print_worker_failure_summary(counters, _log)
     _print_streaming_skip_summary(skip_reasons, total_reads, skipped, _log)
 
