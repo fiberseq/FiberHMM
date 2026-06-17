@@ -33,6 +33,7 @@ from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.hmm import train_model as train_hmm_models
 from fiberhmm.core.model_io import load_model, save_model
 from fiberhmm.core.tag_access import get_preferred_tag
+from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 
 pd.options.mode.chained_assignment = None
 
@@ -263,7 +264,7 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                 try:
                     for read in bam.fetch(chrom, max(0, pos - 100), pos + 100):
                         # Apply filters
-                        if read.is_unmapped or read.is_secondary or read.is_supplementary:
+                        if not is_primary_mapped_alignment(read):
                             continue
                         if read.mapping_quality < min_mapq:
                             continue
