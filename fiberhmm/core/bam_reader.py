@@ -1255,6 +1255,22 @@ def _encode_vectorized(sequence: str, target_base: str, context_size: int,
     return me_encode
 
 
+def _read_mod_query_positions(read, prob_threshold: int, mode: str) -> Set[int]:
+    mod_query_pos = get_modified_positions_pysam(read, prob_threshold, mode)
+    if mod_query_pos:
+        return mod_query_pos
+
+    mm_tag = get_preferred_tag(read, 'MM', 'Mm')
+    ml_tag = get_preferred_tag(read, 'ML', 'Ml')
+    if mm_tag and ml_tag:
+        return parse_mm_tag_query_positions(
+            mm_tag, ml_tag, read.query_sequence,
+            read.is_reverse, prob_threshold, mode=mode,
+        )
+
+    return mod_query_pos
+
+
 def read_bam(bam_path: str,
              region: Optional[str] = None,
              min_mapq: int = 20,
@@ -1293,21 +1309,7 @@ def read_bam(bam_path: str,
             if aligned_length < min_read_length:
                 continue
 
-            # Get MM/ML tags
-            # Get modification positions using pysam's built-in API
-            mod_query_pos = get_modified_positions_pysam(read, prob_threshold, mode)
-
-            # Fall back to manual parsing if pysam API returns nothing
-            if not mod_query_pos:
-                mm_tag = get_preferred_tag(read, 'MM', 'Mm')
-                ml_tag = get_preferred_tag(read, 'ML', 'Ml')
-
-                # Parse modification positions in query coordinates
-                if mm_tag and ml_tag:
-                    mod_query_pos = parse_mm_tag_query_positions(
-                        mm_tag, ml_tag, read.query_sequence,
-                        read.is_reverse, prob_threshold, mode=mode
-                    )
+            mod_query_pos = _read_mod_query_positions(read, prob_threshold, mode)
 
             # Build query-to-reference position mapping
             query_to_ref = get_reference_positions(read)
