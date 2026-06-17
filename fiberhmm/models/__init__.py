@@ -72,6 +72,13 @@ def _unknown_tool_message(tool: str) -> str:
     return f"Tool {tool!r} not recognised; use 'apply' or 'recall'."
 
 
+def _missing_bundled_model_message(path: str) -> str:
+    return (
+        f"Bundled model file missing: {path}. "
+        f"The fiberhmm installation may be incomplete."
+    )
+
+
 def _bundled_model_key(enzyme: str, seq: str | None) -> tuple[str, str | None]:
     enz = enzyme.lower()
     return enz, _seq_key_for_enzyme(enz, seq)
@@ -115,8 +122,5 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
 
     path = _bundled_model_path(fname)
     if not os.path.isfile(path):
-        raise FileNotFoundError(
-            f"Bundled model file missing: {path}. "
-            f"The fiberhmm installation may be incomplete."
-        )
+        raise FileNotFoundError(_missing_bundled_model_message(path))
     return path

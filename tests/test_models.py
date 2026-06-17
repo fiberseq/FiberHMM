@@ -34,6 +34,13 @@ def test_unknown_tool_message_lists_valid_tools():
     assert "use 'apply' or 'recall'" in message
 
 
+def test_missing_bundled_model_message_names_path_and_installation():
+    message = models._missing_bundled_model_message("/tmp/missing.json")
+
+    assert "Bundled model file missing: /tmp/missing.json" in message
+    assert "installation may be incomplete" in message
+
+
 def test_get_model_path_defaults_hia5_seq_with_warning():
     with pytest.warns(UserWarning, match="defaulting to 'pacbio'"):
         path = models.get_model_path("hia5", tool="apply")
