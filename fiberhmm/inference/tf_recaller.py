@@ -99,6 +99,16 @@ class TFCall:
     right_ambiguity: int  # bp gap to bracketing hit on the right (>=0)
 
 
+def _clear_tags(read, tags: Sequence[str]) -> None:
+    """Remove tags when present, matching pysam's tolerated failure mode."""
+    for tag in tags:
+        if read.has_tag(tag):
+            try:
+                read.set_tag(tag, None)
+            except Exception:
+                pass
+
+
 def build_llr_tables(model) -> Tuple[np.ndarray, np.ndarray]:
     """Return (llr_hit, llr_miss) lookup arrays, length N_CTX each.
 
@@ -641,12 +651,7 @@ def write_ma_tags(read, read_length: int,
         has_any_annotation = bool(ma_nucs or ma_msps or ma_tfs)
         if not has_any_annotation:
             # Strip any stale tags, leave the read with no MA/AQ
-            for tag in ('MA', 'AQ', 'AN'):
-                if read.has_tag(tag):
-                    try:
-                        read.set_tag(tag, None)
-                    except Exception:
-                        pass
+            _clear_tags(read, ('MA', 'AQ', 'AN'))
         else:
             ma = format_ma_tag(
                 read_length=read_length,
@@ -659,11 +664,8 @@ def write_ma_tags(read, read_length: int,
             if needs_an:
                 read.set_tag('AN', format_an_tag(nuc_names + msp_names + tf_names),
                              value_type='Z')
-            elif read.has_tag('AN'):
-                try:
-                    read.set_tag('AN', None)
-                except Exception:
-                    pass
+            else:
+                _clear_tags(read, ('AN',))
             # AQ only carries values for nuc+Q and tf+QQQ. If neither is
             # present in this read, no quality type is in MA -> spec says
             # AQ must not be written.
@@ -688,20 +690,12 @@ def write_ma_tags(read, read_length: int,
                     nuc_rq_values=split_nuc_er,
                 )
                 read.set_tag('AQ', aq)
-            elif read.has_tag('AQ'):
-                try:
-                    read.set_tag('AQ', None)
-                except Exception:
-                    pass
+            else:
+                _clear_tags(read, ('AQ',))
     else:
         # Compat mode: strip any stale MA/AQ so consumers that see both
         # tags don't get out-of-sync views.
-        for tag in ('MA', 'AQ', 'AN'):
-            if read.has_tag(tag):
-                try:
-                    read.set_tag(tag, None)
-                except Exception:
-                    pass
+        _clear_tags(read, ('MA', 'AQ', 'AN'))
 
     if also_write_legacy:
         # Build the ns/nl track. In default mode it's nucleosomes only.
@@ -732,22 +726,12 @@ def write_ma_tags(read, read_length: int,
             read.set_tag('ns', pyarray.array('I', ns))
             read.set_tag('nl', pyarray.array('I', nl))
         else:
-            for tag in ('ns', 'nl', 'nq'):
-                if read.has_tag(tag):
-                    try:
-                        read.set_tag(tag, None)
-                    except Exception:
-                        pass
+            _clear_tags(read, ('ns', 'nl', 'nq'))
         if a_s:
             read.set_tag('as', pyarray.array('I', a_s))
             read.set_tag('al', pyarray.array('I', a_l))
         else:
-            for tag in ('as', 'al', 'aq'):
-                if read.has_tag(tag):
-                    try:
-                        read.set_tag(tag, None)
-                    except Exception:
-                        pass
+            _clear_tags(read, ('as', 'al', 'aq'))
         # nq must have len == len(ns) per fibertools invariant. If we wrote
         # new ns/nl without fresh scores, drop any stale nq from the input BAM
         # to avoid len(nq) != len(ns) failing ft validate (see fibertools-rs
@@ -763,15 +747,9 @@ def write_ma_tags(read, read_length: int,
                 legacy_nq = [0] * len(ns)
             read.set_tag('nq', pyarray.array('B',
                           legacy_nq))
-        elif ns and read.has_tag('nq'):
-            try:
-                read.set_tag('nq', None)
-            except Exception:
-                pass
+        elif ns:
+            _clear_tags(read, ('nq',))
         # Same for aq: stale per-msp qualities from input would mismatch
         # the refreshed as/al length.
-        if a_s and read.has_tag('aq'):
-            try:
-                read.set_tag('aq', None)
-            except Exception:
-                pass
+        if a_s:
+            _clear_tags(read, ('aq',))
