@@ -19,13 +19,17 @@ def warm_up_model_predict(model) -> None:
         _ = model.predict(dummy_obs)
 
 
+def _posterior_warmup_obs(length: int) -> np.ndarray:
+    return np.zeros(max(1, int(length)), dtype=np.int32)
+
+
 def warm_up_model_posteriors(model, length: int = 100) -> None:
     from fiberhmm.core.hmm import HAS_NUMBA
 
     if not HAS_NUMBA:
         return
 
-    dummy_obs = np.zeros(max(1, int(length)), dtype=np.int32)
+    dummy_obs = _posterior_warmup_obs(length)
     try:
         _ = model.predict(dummy_obs)
         _ = model.predict_proba(dummy_obs)

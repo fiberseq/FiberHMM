@@ -19,6 +19,14 @@ class RecordingModel:
         return np.zeros((len(obs), 2), dtype=np.float32)
 
 
+def test_posterior_warmup_obs_uses_int32_and_min_length():
+    obs = worker_warmup._posterior_warmup_obs(0)
+
+    assert obs.dtype == np.int32
+    assert obs.tolist() == [0]
+    assert worker_warmup._posterior_warmup_obs(3).tolist() == [0, 0, 0]
+
+
 def test_warm_up_model_posteriors_runs_predict_and_proba(monkeypatch):
     monkeypatch.setattr("fiberhmm.core.hmm.HAS_NUMBA", True)
 
