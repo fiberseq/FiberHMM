@@ -100,6 +100,27 @@ def test_posterior_read_strand_uses_mode_policy(monkeypatch):
     ) == "+"
 
 
+def test_posterior_result_record_preserves_metadata_and_arrays():
+    read = SimpleNamespace(query_name="read-a", reference_start=10, reference_end=30)
+    posteriors = np.array([0.1, 0.2], dtype=np.float16)
+    ref_positions = np.array([10, 11], dtype=np.int32)
+    starts = np.array([10], dtype=np.int32)
+    sizes = np.array([2], dtype=np.int32)
+
+    record = export_posteriors._posterior_result_record(
+        read, "+", posteriors, ref_positions, starts, sizes,
+    )
+
+    assert record["read_name"] == "read-a"
+    assert record["ref_start"] == 10
+    assert record["ref_end"] == 30
+    assert record["strand"] == "+"
+    assert record["posteriors"] is posteriors
+    assert record["ref_positions"] is ref_positions
+    assert record["footprint_starts"] is starts
+    assert record["footprint_sizes"] is sizes
+
+
 def test_h5_batch_metadata_helpers_append_and_concatenate():
     ids, starts, ends, strands = export_posteriors._h5_batch_metadata([
         {"read_name": "read-a", "ref_start": 10, "ref_end": 15, "strand": "+"},

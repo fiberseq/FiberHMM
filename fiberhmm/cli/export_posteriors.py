@@ -167,6 +167,26 @@ def _posterior_read_strand(mode: str, sequence: str, mod_positions: Set[int],
     return '-' if is_reverse else '+'
 
 
+def _posterior_result_record(
+    read,
+    strand: str,
+    p_footprint: np.ndarray,
+    ref_positions: np.ndarray,
+    footprint_starts: np.ndarray,
+    footprint_sizes: np.ndarray,
+) -> Dict:
+    return {
+        'read_name': read.query_name,
+        'ref_start': read.reference_start,
+        'ref_end': read.reference_end,
+        'strand': strand,
+        'posteriors': p_footprint,
+        'ref_positions': ref_positions,
+        'footprint_starts': footprint_starts,
+        'footprint_sizes': footprint_sizes,
+    }
+
+
 def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
                                   context_size: int, edge_trim: int) -> Optional[Dict]:
     """
@@ -218,16 +238,9 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
         ref_positions,
     )
 
-    return {
-        'read_name': read.query_name,
-        'ref_start': read.reference_start,
-        'ref_end': read.reference_end,
-        'strand': strand,
-        'posteriors': p_footprint,
-        'ref_positions': ref_positions,
-        'footprint_starts': fp_starts_ref,
-        'footprint_sizes': fp_sizes_ref,
-    }
+    return _posterior_result_record(
+        read, strand, p_footprint, ref_positions, fp_starts_ref, fp_sizes_ref,
+    )
 
 
 # Global worker state
