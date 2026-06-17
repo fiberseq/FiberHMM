@@ -101,6 +101,11 @@ def test_region_worker_ready_message_prints_once(monkeypatch, capsys):
     assert capsys.readouterr().out == ""
 
 
+def test_read_rate_handles_zero_elapsed():
+    assert region_pipeline._read_rate(10, 2.0) == 5.0
+    assert region_pipeline._read_rate(10, 0.0) == 0
+
+
 def test_region_progress_formats_counts_and_rate(monkeypatch, capsys):
     monkeypatch.setattr(region_pipeline.time, "time", lambda: 12.0)
     aggregation = region_pipeline.RegionBamAggregation(

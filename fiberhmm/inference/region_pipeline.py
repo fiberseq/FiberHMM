@@ -109,6 +109,10 @@ def _report_workers_ready_once(
     return first_result_time
 
 
+def _read_rate(total_reads: int, elapsed_seconds: float) -> float:
+    return total_reads / elapsed_seconds if elapsed_seconds > 0 else 0
+
+
 def _print_region_progress(
     aggregation,
     total_regions: int,
@@ -119,7 +123,7 @@ def _print_region_progress(
     rate_precision: int = 1,
 ) -> None:
     elapsed = time.time() - start_time
-    rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
+    rate = _read_rate(aggregation.total_reads, elapsed)
     rate_text = f"{rate:.{rate_precision}f}"
     print(
         f"\r  Regions: {aggregation.completed}/{total_regions} | "
@@ -329,7 +333,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                     )
 
         elapsed = time.time() - start_time
-        rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
+        rate = _read_rate(aggregation.total_reads, elapsed)
         print(
             f"Completed: {aggregation.total_reads:,} reads | "
             f"{aggregation.reads_with_footprints:,} with footprints | "
@@ -446,7 +450,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
                     shutil.copyfileobj(fin, fout)
 
         elapsed = time.time() - start_time
-        rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
+        rate = _read_rate(aggregation.total_reads, elapsed)
         print(
             f"Completed: {aggregation.total_reads:,} reads | "
             f"{aggregation.reads_with_footprints:,} with footprints | "
@@ -584,7 +588,7 @@ def _process_bam_region_parallel_fused(
             pass
 
         elapsed = time.time() - start_time
-        rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
+        rate = _read_rate(aggregation.total_reads, elapsed)
         print(
             f"  Total: {aggregation.total_reads:,} reads, "
             f"{aggregation.reads_with_footprints:,} with footprints, "
