@@ -75,6 +75,88 @@ def _parse_int_array(values: str) -> np.ndarray:
     return np.array([int(x) for x in values.split(',') if x], dtype=np.int32)
 
 
+def _scan_tsv_for_h5(tsv_path: str, verbose: bool):
+    metadata = {}
+    chrom_counts = {}
+    n_total = 0
+
+    with _open_text_file(tsv_path, 'rt') as infile:
+        for line in infile:
+            if line.startswith('#metadata:'):
+                metadata = json.loads(line.split(':', 1)[1])
+                continue
+            if line.startswith('#'):
+                continue
+
+            parts = line.strip().split('\t')
+            if len(parts) >= 2:
+                chrom = parts[1]
+                chrom_counts[chrom] = chrom_counts.get(chrom, 0) + 1
+                n_total += 1
+
+                if verbose and n_total % 500000 == 0:
+                    print(f"\r    Counted {n_total:,} fibers...", end='')
+                    sys.stdout.flush()
+
+    return metadata, chrom_counts, n_total
+
+
+def _create_h5_chrom_groups(h5_file, chrom_counts, string_dtype):
+    chrom_indices = {}
+    for chrom, count in chrom_counts.items():
+        grp = h5_file.create_group(chrom)
+        grp.create_group('posteriors')
+        grp.create_group('footprint_starts')
+        grp.create_group('footprint_sizes')
+        grp.attrs['n_fibers'] = count
+        chrom_indices[chrom] = 0
+
+        # Pre-allocate metadata arrays
+        grp.create_dataset('fiber_ids', shape=(count,), dtype=string_dtype)
+        grp.create_dataset('fiber_starts', shape=(count,), dtype=np.int32)
+        grp.create_dataset('fiber_ends', shape=(count,), dtype=np.int32)
+        grp.create_dataset('strands', shape=(count,), dtype=string_dtype)
+    return chrom_indices
+
+
+def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
+    (
+        read_id, chrom, start, end, strand, post_b64,
+        fp_starts_str, fp_sizes_str,
+    ) = fields
+    posteriors = _decode_posteriors_b64(post_b64, np.float16)
+    fp_starts = _parse_int_array(fp_starts_str)
+    fp_sizes = _parse_int_array(fp_sizes_str)
+
+    # Get index for this chromosome
+    idx = chrom_indices[chrom]
+    chrom_indices[chrom] += 1
+
+    grp = h5_file[chrom]
+
+    # Write data
+    grp['posteriors'].create_dataset(
+        str(idx),
+        data=posteriors,
+        compression='gzip', compression_opts=4
+    )
+    grp['footprint_starts'].create_dataset(
+        str(idx),
+        data=fp_starts,
+        compression='gzip'
+    )
+    grp['footprint_sizes'].create_dataset(
+        str(idx),
+        data=fp_sizes,
+        compression='gzip'
+    )
+
+    grp['fiber_ids'][idx] = read_id
+    grp['fiber_starts'][idx] = start
+    grp['fiber_ends'][idx] = end
+    grp['strands'][idx] = strand
+
+
 class PosteriorsTSVWriter:
     """
     Simple streaming writer for posteriors in TSV format.
@@ -249,74 +331,20 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
 
         dt = h5py.special_dtype(vlen=str)
 
-        # Pre-create chromosome groups
-        chrom_indices = {}  # Track current index per chromosome
-        for chrom, count in chrom_counts.items():
-            grp = f.create_group(chrom)
-            grp.create_group('posteriors')
-            grp.create_group('footprint_starts')
-            grp.create_group('footprint_sizes')
-            grp.attrs['n_fibers'] = count
-            chrom_indices[chrom] = 0
-
-            # Pre-allocate metadata arrays
-            grp.create_dataset('fiber_ids', shape=(count,), dtype=dt)
-            grp.create_dataset('fiber_starts', shape=(count,), dtype=np.int32)
-            grp.create_dataset('fiber_ends', shape=(count,), dtype=np.int32)
-            grp.create_dataset('strands', shape=(count,), dtype=dt)
+        chrom_indices = _create_h5_chrom_groups(f, chrom_counts, dt)
 
         n_written = 0
-
-        def process_line(line):
-            nonlocal n_written
-            fields = _split_posteriors_line(line)
-            if fields is None:
-                return
-
-            (
-                read_id, chrom, start, end, strand, post_b64,
-                fp_starts_str, fp_sizes_str,
-            ) = fields
-            posteriors = _decode_posteriors_b64(post_b64, np.float16)
-            fp_starts = _parse_int_array(fp_starts_str)
-            fp_sizes = _parse_int_array(fp_sizes_str)
-
-            # Get index for this chromosome
-            idx = chrom_indices[chrom]
-            chrom_indices[chrom] += 1
-
-            grp = f[chrom]
-
-            # Write data
-            grp['posteriors'].create_dataset(
-                str(idx),
-                data=posteriors,
-                compression='gzip', compression_opts=4
-            )
-            grp['footprint_starts'].create_dataset(
-                str(idx),
-                data=fp_starts,
-                compression='gzip'
-            )
-            grp['footprint_sizes'].create_dataset(
-                str(idx),
-                data=fp_sizes,
-                compression='gzip'
-            )
-
-            grp['fiber_ids'][idx] = read_id
-            grp['fiber_starts'][idx] = start
-            grp['fiber_ends'][idx] = end
-            grp['strands'][idx] = strand
-
-            n_written += 1
 
         with _open_text_file(tsv_path, 'rt') as infile:
             for line in infile:
                 if line.startswith('#'):
                     continue
 
-                process_line(line)
+                fields = _split_posteriors_line(line)
+                if fields is None:
+                    continue
+                _write_h5_posterior_record(f, chrom_indices, fields)
+                n_written += 1
 
                 if verbose and n_written % 100000 == 0:
                     print(f"\r    Written {n_written:,} / {n_total:,} fibers...", end='')

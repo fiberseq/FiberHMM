@@ -1,6 +1,7 @@
 import binascii
 import gzip
 
+import h5py
 import numpy as np
 import pytest
 
@@ -9,6 +10,12 @@ from fiberhmm.posteriors.region_tsv import (
     format_region_posterior_line,
 )
 from fiberhmm.posteriors import tsv_backend
+
+
+def _h5_text(value):
+    if isinstance(value, bytes):
+        return value.decode()
+    return value
 
 
 class _TrackingHandle:
@@ -103,6 +110,56 @@ def test_tsv_writer_reuses_region_posterior_row_format(tmp_path):
         footprint_starts=np.array([12], dtype=np.int32),
         footprint_sizes=np.array([4], dtype=np.int32),
     )
+
+
+def test_tsv_to_h5_writes_metadata_and_arrays(tmp_path):
+    tsv_path = tmp_path / "posteriors.tsv"
+    h5_path = tmp_path / "posteriors.h5"
+
+    with tsv_backend.PosteriorsTSVWriter(
+        str(tsv_path),
+        mode="daf",
+        context_size=5,
+        edge_trim=12,
+        source_bam="/path/input.bam",
+        compress=False,
+    ) as writer:
+        writer.write_fiber(
+            read_id="read1",
+            chrom="chr1",
+            start=10,
+            end=13,
+            strand="+",
+            posteriors=np.array([0.0, 0.5, 1.0], dtype=np.float32),
+            fp_starts=np.array([10], dtype=np.int32),
+            fp_sizes=np.array([3], dtype=np.int32),
+        )
+
+    assert tsv_backend.tsv_to_h5(str(tsv_path), str(h5_path), verbose=False) == 1
+
+    with h5py.File(h5_path, "r") as h5:
+        assert h5.attrs["mode"] == "daf"
+        assert h5.attrs["context_size"] == 5
+        assert h5.attrs["edge_trim"] == 12
+        assert h5.attrs["source_bam"] == "input.bam"
+        assert h5["chr1"].attrs["n_fibers"] == 1
+        assert _h5_text(h5["chr1"]["fiber_ids"][0]) == "read1"
+        assert h5["chr1"]["fiber_starts"][0] == 10
+        assert h5["chr1"]["fiber_ends"][0] == 13
+        assert _h5_text(h5["chr1"]["strands"][0]) == "+"
+        np.testing.assert_allclose(
+            h5["chr1"]["posteriors"]["0"][:],
+            np.array([0.0, 0.5, 1.0], dtype=np.float16),
+            atol=1 / 255,
+        )
+        np.testing.assert_array_equal(
+            h5["chr1"]["footprint_starts"]["0"][:],
+            np.array([10], dtype=np.int32),
+        )
+        np.testing.assert_array_equal(
+            h5["chr1"]["footprint_sizes"]["0"][:],
+            np.array([3], dtype=np.int32),
+        )
 
 
 def test_concatenate_tsvs_closes_input_and_output_when_read_fails(monkeypatch, tmp_path):
