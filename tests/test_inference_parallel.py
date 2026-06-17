@@ -37,6 +37,15 @@ def _done_future(value):
     return future
 
 
+class _Executor:
+    def __init__(self):
+        self.submitted = []
+
+    def submit(self, fn, *args):
+        self.submitted.append((fn, args))
+        return _done_future(("submitted", fn, args))
+
+
 def test_worker_chunk_result_coerces_legacy_lists():
     assert coerce_worker_chunk_result([None]) == ([None], 0)
     assert coerce_worker_chunk_result(WorkerChunkResult([None], 2)) == ([None], 2)
@@ -130,6 +139,51 @@ def test_streaming_summary_helpers_format_nonzero_counts(capsys):
     assert "Worker read failures: 3 (passed through unchanged)" in out
     assert "low_mapq: 2 (16.7%)" in out
     assert "empty" not in out
+
+
+def test_streaming_chunk_submission_uses_completed_future_for_empty_items():
+    inflight = deque()
+    executor = _Executor()
+
+    streaming_pipeline._submit_streaming_chunk(
+        inflight,
+        executor,
+        object(),
+        [],
+        ["read"],
+        [True],
+        ("arg",),
+    )
+
+    future, read_objs, chunk_items, skip_flags = inflight.pop()
+    assert executor.submitted == []
+    assert future.result() == []
+    assert read_objs == ["read"]
+    assert chunk_items == []
+    assert skip_flags == [True]
+
+
+def test_streaming_chunk_submission_submits_nonempty_items():
+    inflight = deque()
+    executor = _Executor()
+    worker_fn = object()
+
+    streaming_pipeline._submit_streaming_chunk(
+        inflight,
+        executor,
+        worker_fn,
+        ["payload"],
+        ["read"],
+        [False],
+        ("arg",),
+    )
+
+    future, read_objs, chunk_items, skip_flags = inflight.pop()
+    assert executor.submitted == [(worker_fn, (["payload"], "arg"))]
+    assert future.result() == ("submitted", worker_fn, (["payload"], "arg"))
+    assert read_objs == ["read"]
+    assert chunk_items == ["payload"]
+    assert skip_flags == [False]
 
 
 def test_streaming_dispatch_does_not_load_model_in_parent(monkeypatch):

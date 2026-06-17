@@ -41,6 +41,21 @@ def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, 
     return 1
 
 
+def _completed_empty_future() -> Future:
+    future = Future()
+    future.set_result([])
+    return future
+
+
+def _submit_streaming_chunk(inflight, executor, worker_fn, chunk_items,
+                            chunk_read_objs, chunk_skip_flags, worker_args) -> None:
+    if chunk_items:
+        future = executor.submit(worker_fn, chunk_items, *worker_args)
+    else:
+        future = _completed_empty_future()
+    inflight.append((future, chunk_read_objs, chunk_items, chunk_skip_flags))
+
+
 def _new_streaming_counters() -> dict:
     return {
         'reads_with_footprints': 0,
@@ -192,15 +207,21 @@ def _process_bam_streaming_pipeline_fused(
                                 inflight, outbam, with_scores,
                                 also_write_legacy, downstream_compat, counters,
                             )
-                        future = executor.submit(
+                        _submit_streaming_chunk(
+                            inflight,
+                            executor,
                             _process_fused_payload_chunk_worker,
-                            chunk_payloads, edge_trim, circular, mode,
-                            context_size, msp_min_size, nuc_min_size,
-                            with_scores, prob_threshold,
-                            mode, context_size,
-                            min_llr, min_opps, unify_threshold,
+                            chunk_payloads,
+                            chunk_read_objs,
+                            chunk_skip_flags,
+                            (
+                                edge_trim, circular, mode,
+                                context_size, msp_min_size, nuc_min_size,
+                                with_scores, prob_threshold,
+                                mode, context_size,
+                                min_llr, min_opps, unify_threshold,
+                            ),
                         )
-                        inflight.append((future, chunk_read_objs, chunk_payloads, chunk_skip_flags))
                         chunk_payloads = []
                         chunk_read_objs = []
                         chunk_skip_flags = []
@@ -223,19 +244,21 @@ def _process_bam_streaming_pipeline_fused(
                             inflight, outbam, with_scores,
                             also_write_legacy, downstream_compat, counters,
                         )
-                    if chunk_payloads:
-                        future = executor.submit(
-                            _process_fused_payload_chunk_worker,
-                            chunk_payloads, edge_trim, circular, mode,
+                    _submit_streaming_chunk(
+                        inflight,
+                        executor,
+                        _process_fused_payload_chunk_worker,
+                        chunk_payloads,
+                        chunk_read_objs,
+                        chunk_skip_flags,
+                        (
+                            edge_trim, circular, mode,
                             context_size, msp_min_size, nuc_min_size,
                             with_scores, prob_threshold,
                             mode, context_size,
                             min_llr, min_opps, unify_threshold,
-                        )
-                    else:
-                        future = Future()
-                        future.set_result([])
-                    inflight.append((future, chunk_read_objs, chunk_payloads, chunk_skip_flags))
+                        ),
+                    )
 
                 while inflight:
                     _drain_oldest_fused_chunk(
@@ -389,13 +412,19 @@ def _process_bam_streaming_pipeline(
                                 posterior_writer, counters
                             )
 
-                        future = executor.submit(
+                        _submit_streaming_chunk(
+                            inflight,
+                            executor,
                             _process_payload_chunk_worker,
-                            chunk_reads, edge_trim, circular, mode, context_size,
-                            msp_min_size, nuc_min_size, with_scores, return_posteriors,
-                            prob_threshold,
+                            chunk_reads,
+                            chunk_read_objs,
+                            chunk_skip_flags,
+                            (
+                                edge_trim, circular, mode, context_size,
+                                msp_min_size, nuc_min_size, with_scores, return_posteriors,
+                                prob_threshold,
+                            ),
                         )
-                        inflight.append((future, chunk_read_objs, chunk_reads, chunk_skip_flags))
                         chunk_reads = []
                         chunk_read_objs = []
                         chunk_skip_flags = []
@@ -420,17 +449,19 @@ def _process_bam_streaming_pipeline(
                             posterior_writer, counters
                         )
 
-                    if chunk_reads:
-                        future = executor.submit(
-                            _process_payload_chunk_worker,
-                            chunk_reads, edge_trim, circular, mode, context_size,
+                    _submit_streaming_chunk(
+                        inflight,
+                        executor,
+                        _process_payload_chunk_worker,
+                        chunk_reads,
+                        chunk_read_objs,
+                        chunk_skip_flags,
+                        (
+                            edge_trim, circular, mode, context_size,
                             msp_min_size, nuc_min_size, with_scores, return_posteriors,
                             prob_threshold,
-                        )
-                    else:
-                        future = Future()
-                        future.set_result([])
-                    inflight.append((future, chunk_read_objs, chunk_reads, chunk_skip_flags))
+                        ),
+                    )
 
                 while inflight:
                     _drain_oldest_chunk(
