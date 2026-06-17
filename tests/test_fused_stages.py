@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 
 from fiberhmm.inference import fused_stages
@@ -26,6 +28,17 @@ def test_apply_result_has_footprints_detects_nucs_or_msps():
     assert fused_stages.apply_result_has_footprints(empty) is False
     assert fused_stages.apply_result_has_footprints(nuc_only) is True
     assert fused_stages.apply_result_has_footprints(msp_only) is True
+
+
+def test_nuc_call_quality_lists_preserve_nq_el_er_order():
+    nucs = [
+        SimpleNamespace(nq=1, el=2, er=3),
+        SimpleNamespace(nq=4, el=5, er=6),
+    ]
+
+    assert fused_stages._nuc_call_quality_lists(nucs) == (
+        [1, 4], [2, 5], [3, 6],
+    )
 
 
 def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatch):

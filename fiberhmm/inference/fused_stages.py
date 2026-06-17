@@ -50,6 +50,14 @@ def _interval_pair_lists(intervals):
     return [s for s, _ in intervals], [length for _, length in intervals]
 
 
+def _nuc_call_quality_lists(nuc_calls):
+    return (
+        [k.nq for k in nuc_calls],
+        [k.el for k in nuc_calls],
+        [k.er for k in nuc_calls],
+    )
+
+
 def apply_result_has_footprints(apply_result: Optional[Mapping[str, Any]]) -> bool:
     """Return whether an HMM apply result has annotations worth writing."""
     if apply_result is None:
@@ -338,6 +346,7 @@ def _build_fused_recall_result_with_nucs(
         kept, span_lo, span_hi, msp_min_size, nuc_min_size)
     msp_starts, msp_len = _interval_pair_lists(new_msps)
 
+    nq_for_kept, nuc_el_for_kept, nuc_er_for_kept = _nuc_call_quality_lists(kept)
     return {
         "ns": np.asarray([k.start for k in kept], dtype=np.int32),
         "nl": np.asarray([k.length for k in kept], dtype=np.int32),
@@ -345,9 +354,9 @@ def _build_fused_recall_result_with_nucs(
         "al": np.asarray(msp_len, dtype=np.int32),
         "ns_scores": None,
         "as_scores": None,
-        "nq_for_kept_nucs": [k.nq for k in kept],
-        "nuc_el_for_kept": [k.el for k in kept],
-        "nuc_er_for_kept": [k.er for k in kept],
+        "nq_for_kept_nucs": nq_for_kept,
+        "nuc_el_for_kept": nuc_el_for_kept,
+        "nuc_er_for_kept": nuc_er_for_kept,
         "tf_calls": tf_calls,
     }
 
@@ -422,6 +431,7 @@ def _build_fused_recall_result_with_nucs_circular(
     msp_starts, msp_lengths_split, _ = split_intervals_for_legacy(
         proj_msps, read_length, None)
 
+    nq_for_kept, nuc_el_for_kept, nuc_er_for_kept = _nuc_call_quality_lists(kept)
     return {
         "ns": kept_starts,
         "nl": kept_lengths,
@@ -429,9 +439,9 @@ def _build_fused_recall_result_with_nucs_circular(
         "al": msp_lengths_split,
         "ns_scores": None,
         "as_scores": None,
-        "nq_for_kept_nucs": [k.nq for k in kept],
-        "nuc_el_for_kept": [k.el for k in kept],
-        "nuc_er_for_kept": [k.er for k in kept],
+        "nq_for_kept_nucs": nq_for_kept,
+        "nuc_el_for_kept": nuc_el_for_kept,
+        "nuc_er_for_kept": nuc_er_for_kept,
         "tf_calls": tf_calls,
         "circular": True,
         "circular_read_length": read_length,
