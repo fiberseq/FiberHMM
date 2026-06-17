@@ -76,6 +76,9 @@ def _parse_int_array(values: str) -> np.ndarray:
 
 
 def _scan_tsv_for_h5(tsv_path: str, verbose: bool):
+    if verbose:
+        print(f"  Scanning {tsv_path}...")
+
     metadata = {}
     chrom_counts = {}
     n_total = 0
@@ -97,6 +100,9 @@ def _scan_tsv_for_h5(tsv_path: str, verbose: bool):
                 if verbose and n_total % 500000 == 0:
                     print(f"\r    Counted {n_total:,} fibers...", end='')
                     sys.stdout.flush()
+
+    if verbose:
+        print(f"\r    Found {n_total:,} fibers across {len(chrom_counts)} chromosomes")
 
     return metadata, chrom_counts, n_total
 
@@ -291,33 +297,7 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
     from fiberhmm.posteriors.hdf5_backend import write_hdf5_file_metadata
 
     # First pass: count fibers per chromosome
-    if verbose:
-        print(f"  Scanning {tsv_path}...")
-
-    metadata = {}
-    chrom_counts = {}
-    n_total = 0
-
-    with _open_text_file(tsv_path, 'rt') as infile:
-        for line in infile:
-            if line.startswith('#metadata:'):
-                metadata = json.loads(line.split(':', 1)[1])
-                continue
-            if line.startswith('#'):
-                continue
-
-            parts = line.strip().split('\t')
-            if len(parts) >= 2:
-                chrom = parts[1]
-                chrom_counts[chrom] = chrom_counts.get(chrom, 0) + 1
-                n_total += 1
-
-                if verbose and n_total % 500000 == 0:
-                    print(f"\r    Counted {n_total:,} fibers...", end='')
-                    sys.stdout.flush()
-
-    if verbose:
-        print(f"\r    Found {n_total:,} fibers across {len(chrom_counts)} chromosomes")
+    metadata, chrom_counts, n_total = _scan_tsv_for_h5(tsv_path, verbose)
 
     # Create H5 file with pre-allocated structure
     if verbose:

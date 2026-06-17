@@ -112,6 +112,27 @@ def test_tsv_writer_reuses_region_posterior_row_format(tmp_path):
     )
 
 
+def test_scan_tsv_for_h5_collects_metadata_and_chrom_counts(tmp_path):
+    tsv_path = tmp_path / "posteriors.tsv"
+    tsv_path.write_text(
+        '#metadata:{"mode":"daf","context_size":5,"edge_trim":12}\n'
+        + REGION_POSTERIORS_HEADER
+        + "read1\tchr2L\t0\t3\t+\tabc\t\t\n"
+        + "read2\tchr2L\t4\t8\t-\tdef\t\t\n"
+        + "read3\tchr3R\t10\t14\t+\tghi\t\t\n",
+        encoding="utf-8",
+    )
+
+    metadata, chrom_counts, n_total = tsv_backend._scan_tsv_for_h5(
+        str(tsv_path),
+        verbose=False,
+    )
+
+    assert metadata == {"mode": "daf", "context_size": 5, "edge_trim": 12}
+    assert chrom_counts == {"chr2L": 2, "chr3R": 1}
+    assert n_total == 3
+
+
 def test_tsv_to_h5_writes_metadata_and_arrays(tmp_path):
     tsv_path = tmp_path / "posteriors.tsv"
     h5_path = tmp_path / "posteriors.h5"
