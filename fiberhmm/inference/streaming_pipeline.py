@@ -66,6 +66,26 @@ def _new_streaming_skip_reasons(*, include_no_footprints: bool = False) -> dict:
     return reasons
 
 
+def _print_worker_failure_summary(counters: dict, log) -> None:
+    if counters['worker_failures']:
+        print(
+            f"  Worker read failures: {counters['worker_failures']:,} "
+            f"(passed through unchanged)",
+            file=log,
+        )
+
+
+def _print_streaming_skip_summary(skip_reasons: dict, total_reads: int,
+                                  skipped: int, log) -> None:
+    if skipped <= 0:
+        return
+    print("  Skip reasons:", file=log)
+    for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+        if count > 0:
+            pct = 100 * count / (total_reads + skipped)
+            print(f"    {reason}: {count:,} ({pct:.1f}%)", file=log)
+
+
 def _process_bam_streaming_pipeline_fused(
     input_bam: str, output_bam: str,
     model_path: str, recall_model_path: str,
@@ -235,18 +255,8 @@ def _process_bam_streaming_pipeline_fused(
     reads_with_fp = counters['reads_with_footprints']
     print(f"\r  Fused: {total_reads:,} | Skipped: {skipped:,} | "
           f"With footprints: {reads_with_fp:,} | {rate:.1f} r/s", file=_log)
-    if counters['worker_failures']:
-        print(
-            f"  Worker read failures: {counters['worker_failures']:,} "
-            f"(passed through unchanged)",
-            file=_log,
-        )
-    if skipped > 0:
-        print("  Skip reasons:", file=_log)
-        for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
-            if count > 0:
-                pct = 100 * count / (total_reads + skipped)
-                print(f"    {reason}: {count:,} ({pct:.1f}%)", file=_log)
+    _print_worker_failure_summary(counters, _log)
+    _print_streaming_skip_summary(skip_reasons, total_reads, skipped, _log)
     if counters.get('chimera'):
         print(f"  DAF strand-swap chimeras filtered: {counters['chimera']:,}",
               file=_log)
@@ -441,19 +451,8 @@ def _process_bam_streaming_pipeline(
     reads_with_footprints = counters['reads_with_footprints']
     print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | "
           f"With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s", file=_log)
-    if counters['worker_failures']:
-        print(
-            f"  Worker read failures: {counters['worker_failures']:,} "
-            f"(passed through unchanged)",
-            file=_log,
-        )
-
-    if skipped > 0:
-        print("  Skip reasons:", file=_log)
-        for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
-            if count > 0:
-                pct = 100 * count / (total_reads + skipped)
-                print(f"    {reason}: {count:,} ({pct:.1f}%)", file=_log)
+    _print_worker_failure_summary(counters, _log)
+    _print_streaming_skip_summary(skip_reasons, total_reads, skipped, _log)
 
     if output_bam != '-' and not process_unmapped:
         _sort_and_index_bam(output_bam, threads=n_cores)

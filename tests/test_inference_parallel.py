@@ -1,6 +1,7 @@
 """
 Tests for fiberhmm.inference.parallel module — region splitting and chromosome filtering.
 """
+import sys
 from collections import deque
 from concurrent.futures import Future
 
@@ -111,6 +112,24 @@ def test_parallel_reexports_region_pipeline_entry_points():
         is region_pipeline._process_bam_region_parallel_fused
     )
     assert parallel._process_bed_region_parallel is region_pipeline._process_bed_region_parallel
+
+
+def test_streaming_summary_helpers_format_nonzero_counts(capsys):
+    streaming_pipeline._print_worker_failure_summary(
+        {"worker_failures": 3},
+        sys.stdout,
+    )
+    streaming_pipeline._print_streaming_skip_summary(
+        {"low_mapq": 2, "empty": 0},
+        total_reads=10,
+        skipped=2,
+        log=sys.stdout,
+    )
+
+    out = capsys.readouterr().out
+    assert "Worker read failures: 3 (passed through unchanged)" in out
+    assert "low_mapq: 2 (16.7%)" in out
+    assert "empty" not in out
 
 
 def test_streaming_dispatch_does_not_load_model_in_parent(monkeypatch):
