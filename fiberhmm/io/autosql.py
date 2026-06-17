@@ -114,16 +114,25 @@ def _schema_description(description: str, sample_name: Optional[str] = None) -> 
     return f'Sample: {sample_name}. {description}'
 
 
-def _make_schema(table_name: str, description: str,
-                 extract_type: Optional[str] = None,
-                 block_scores: bool = False,
-                 sample_name: Optional[str] = None,
-                 circular_groups: bool = False) -> str:
+def _schema_fields(
+    extract_type: Optional[str] = None,
+    block_scores: bool = False,
+    circular_groups: bool = False,
+) -> str:
     fields = _BED12_FIELDS
     if block_scores and extract_type in _BLOCK_SCORE_FIELDS:
         fields = fields + _BLOCK_SCORE_FIELDS[extract_type]
     if circular_groups:
         fields = fields + _CIRCULAR_FIELDS
+    return fields
+
+
+def _make_schema(table_name: str, description: str,
+                 extract_type: Optional[str] = None,
+                 block_scores: bool = False,
+                 sample_name: Optional[str] = None,
+                 circular_groups: bool = False) -> str:
+    fields = _schema_fields(extract_type, block_scores, circular_groups)
     description = _schema_description(description, sample_name)
     return (
         f'table {table_name}\n'

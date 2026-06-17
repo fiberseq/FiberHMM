@@ -30,6 +30,7 @@ from fiberhmm.io.autosql import (
     _autosql_variant_suffix,
     _canonical_autosql_type,
     _schema_description,
+    _schema_fields,
     get_schema,
     write_autosql_for,
 )
@@ -494,6 +495,20 @@ def test_schema_description_prepends_sample_marker_when_present():
     assert _schema_description("Track description", "sample-a") == (
         "Sample: sample-a. Track description"
     )
+
+
+def test_schema_fields_add_block_score_and_circular_columns():
+    default_fields = _schema_fields()
+    assert 'blockTq' not in default_fields
+    assert 'circId' not in default_fields
+
+    tf_fields = _schema_fields('tf', block_scores=True)
+    assert 'blockTq' in tf_fields
+    assert 'blockEl' in tf_fields
+
+    circular_fields = _schema_fields('msp', circular_groups=True)
+    assert 'blockAq' not in circular_fields
+    assert 'circId' in circular_fields
 
 
 # ------------------- footprint --------------------------------------
