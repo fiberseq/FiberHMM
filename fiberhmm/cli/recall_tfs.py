@@ -46,6 +46,7 @@ from collections import deque
 import pysam
 
 from fiberhmm.core.model_io import load_model_with_metadata
+from fiberhmm.core.tag_access import compact_ml_value
 from fiberhmm.io.bam_header import append_coord_marker
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
@@ -125,10 +126,7 @@ def _make_payload(read, mode=None) -> dict:
             val = read.get_tag(t)
             if t in ('ML', 'Ml'):
                 # array.array('B', ...) → bytes via buffer protocol: fast memcpy
-                try:
-                    val = bytes(val)
-                except TypeError:
-                    pass  # scalar or already bytes
+                val = compact_ml_value(val)
             tags[t] = val
 
     payload = {
