@@ -388,37 +388,35 @@ def process_bam_daf_encode(
             disable=(output_bam == "-"),
         )
 
+        def _write_skipped_read(read):
+            nonlocal skipped
+            outbam.write(read)
+            skipped += 1
+            pbar.update(1)
+
         for read in inbam.fetch(until_eof=True):
             total += 1
 
             # Filter: unmapped / secondary / supplementary pass through
             if read.is_unmapped or read.is_secondary or read.is_supplementary:
-                outbam.write(read)
-                skipped += 1
-                pbar.update(1)
+                _write_skipped_read(read)
                 continue
 
             # MAPQ filter
             if read.mapping_quality < min_mapq:
-                outbam.write(read)
-                skipped += 1
-                pbar.update(1)
+                _write_skipped_read(read)
                 continue
 
             # Length filter
             read_len = read.query_alignment_length
             if read_len is not None and read_len < min_read_length:
-                outbam.write(read)
-                skipped += 1
-                pbar.update(1)
+                _write_skipped_read(read)
                 continue
 
             # Encode
             result = encode_read_daf(read, force_strand=force_strand, ref_fasta=ref_fasta)
             if result is None:
-                outbam.write(read)
-                skipped += 1
-                pbar.update(1)
+                _write_skipped_read(read)
                 continue
 
             new_seq, st_tag, n_deam = result
