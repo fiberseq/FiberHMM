@@ -13,6 +13,7 @@ from fiberhmm.inference.tf_recaller import TFCall, write_ma_tags
 from fiberhmm.io.ma_tags import _read_length_of, flip_interval_frame
 
 Interval = Tuple[int, int]
+STALE_SPEC_TAGS = ("MA", "AN", "AQ")
 
 
 def _flip_legacy_intervals_to_molecular(
@@ -201,6 +202,10 @@ def _legacy_interval_group(
     )
 
 
+def _clear_stale_spec_tags(read) -> None:
+    clear_tags(read, STALE_SPEC_TAGS)
+
+
 def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True) -> None:
     """Write legacy apply tags (`ns/nl/as/al`, optional `nq/aq`) in place.
 
@@ -211,7 +216,7 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     # Apply recomputes the read structure, so any pre-existing MA/AN/AQ from a
     # prior fiberhmm-call/recall pass now refers to stale ns/nl coordinates.
     # Strip them so the BAM never carries an inconsistent annotation view.
-    clear_tags(read, ("MA", "AN", "AQ"))
+    _clear_stale_spec_tags(read)
 
     # FiberHMM works in SEQ (query_sequence) coordinates; ns/nl/as/al must be
     # written in molecular (original-fiber) frame for fibertools. Flip + re-sort

@@ -7,6 +7,8 @@ import array as pyarray
 import numpy as np
 
 from fiberhmm.inference.tagging import (
+    STALE_SPEC_TAGS,
+    _clear_stale_spec_tags,
     _flip_legacy_intervals_to_molecular,
     _fused_recall_tag_intervals,
     _legacy_apply_interval_groups,
@@ -121,6 +123,19 @@ def test_set_legacy_apply_tags_strips_stale_ma_an_aq_from_prior_recall():
     assert "AQ" not in read.tags
     assert read.tags["ns"].tolist() == [10]
     assert read.tags["nl"].tolist() == [30]
+
+
+def test_clear_stale_spec_tags_removes_policy_tag_set():
+    read = RecordingRead()
+    for tag in STALE_SPEC_TAGS:
+        read.tags[tag] = "stale"
+    read.tags["ns"] = [10]
+
+    _clear_stale_spec_tags(read)
+
+    for tag in STALE_SPEC_TAGS:
+        assert tag not in read.tags
+    assert read.tags["ns"] == [10]
 
 
 def test_set_legacy_apply_tags_strips_stale_ma_an_even_when_no_new_calls():
