@@ -30,6 +30,7 @@ from fiberhmm.cli.call import (
     _resolve_call_mode_context,
     _resolve_recall_nucs,
     _resolve_recall_model,
+    _should_check_daf_inputs,
     _should_warn_stale_daf_md,
     _sniff_daf_input_sources,
 )
@@ -166,6 +167,12 @@ def test_missing_daf_source_message_mentions_all_recovery_paths():
     assert "R/Y IUPAC codes" in message
     assert "MD tags" in message
     assert "--reference ref.fa" in message
+
+
+def test_should_check_daf_inputs_only_for_daf_file_input():
+    assert _should_check_daf_inputs("daf", "input.bam")
+    assert not _should_check_daf_inputs("daf", "-")
+    assert not _should_check_daf_inputs("pacbio-fiber", "input.bam")
 
 
 def test_call_model_resolution_uses_custom_paths():

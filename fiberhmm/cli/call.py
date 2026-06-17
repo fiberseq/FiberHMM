@@ -425,6 +425,10 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
     sys.exit(2)
 
 
+def _should_check_daf_inputs(mode: str, input_path: str) -> bool:
+    return mode == 'daf' and input_path != '-'
+
+
 def main():
     args = parse_args()
     stdout_mode = (args.output == '-')
@@ -447,7 +451,7 @@ def main():
     # auto estimation): the DAF path needs R/Y in the stored sequence, MD tags,
     # or --reference. If none are available every read is silently skipped, so
     # error out in under a second with an actionable message.
-    if mode == 'daf' and args.input != '-':
+    if _should_check_daf_inputs(mode, args.input):
         _check_daf_inputs(args.input, args.reference)
 
     # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
