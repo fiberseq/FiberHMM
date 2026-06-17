@@ -18,6 +18,18 @@ def _h5_text(value):
     return value
 
 
+def test_posterior_tsv_output_path_respects_compression_flag():
+    assert tsv_backend._posterior_tsv_output_path(
+        "out.tsv", compress=False,
+    ) == "out.tsv"
+    assert tsv_backend._posterior_tsv_output_path(
+        "out.tsv", compress=True,
+    ) == "out.tsv.gz"
+    assert tsv_backend._posterior_tsv_output_path(
+        "out.tsv.gz", compress=False,
+    ) == "out.tsv.gz"
+
+
 class _TrackingHandle:
     def __init__(self, inner=None, *, fail_during_iteration: bool = False):
         self._inner = inner

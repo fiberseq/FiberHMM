@@ -167,6 +167,12 @@ def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
     grp['strands'][idx] = strand
 
 
+def _posterior_tsv_output_path(output_path: str, compress: bool) -> str:
+    if compress or output_path.endswith('.gz'):
+        return output_path if output_path.endswith('.gz') else output_path + '.gz'
+    return output_path
+
+
 class PosteriorsTSVWriter:
     """
     Simple streaming writer for posteriors in TSV format.
@@ -189,13 +195,7 @@ class PosteriorsTSVWriter:
         """
         self.output_path = output_path
         self.compress = compress or output_path.endswith('.gz')
-
-        # Open file
-        if self.compress:
-            if not output_path.endswith('.gz'):
-                self.output_path = output_path + '.gz'
-        else:
-            self.output_path = output_path
+        self.output_path = _posterior_tsv_output_path(output_path, compress)
         self._file = _open_text_file(self.output_path, 'wt')
 
         # Write header with metadata
