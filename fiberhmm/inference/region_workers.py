@@ -127,8 +127,11 @@ def _region_read_route(read, start: int, end: int, filter_config: ReadFilterConf
 
 def _region_bed12_blocks(ref_start, ref_end, starts, lengths, scores=None):
     read_length = ref_end - ref_start
-    block_starts = [int(start - ref_start) for start in starts]
-    block_sizes = [int(length) for length in lengths]
+    block_starts, block_sizes = _region_bed_block_components(
+        ref_start,
+        starts,
+        lengths,
+    )
     score_list = (
         [int(score * 1000) for score in scores]
         if scores is not None else None
@@ -149,6 +152,13 @@ def _region_bed12_blocks(ref_start, ref_end, starts, lengths, scores=None):
             score_list.append(0)
 
     return block_starts, block_sizes, score_list
+
+
+def _region_bed_block_components(ref_start, starts, lengths):
+    return (
+        [int(start - ref_start) for start in starts],
+        [int(length) for length in lengths],
+    )
 
 
 def _format_region_bed12_row(ref_name, ref_start, ref_end, read_id, strand,
