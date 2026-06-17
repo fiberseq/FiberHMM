@@ -376,6 +376,12 @@ def _predict_state_outputs(model: FiberHMM, encoded_read: np.ndarray,
     return states, None, None
 
 
+def _footprint_posterior_track(posteriors_full: np.ndarray,
+                               start: int = 0,
+                               end: Optional[int] = None) -> np.ndarray:
+    return posteriors_full[start:end, 0].astype(np.float16)
+
+
 def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
                                  msp_min_size: int = 147,
                                  with_scores: bool = False,
@@ -424,7 +430,7 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
 
     if return_posteriors:
         # P(footprint) = posteriors_full[:, 0]
-        result['posteriors'] = posteriors_full[:, 0].astype(np.float16)
+        result['posteriors'] = _footprint_posterior_track(posteriors_full)
 
     if circular_read_length is not None:
         result.update(
@@ -439,7 +445,9 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
         )
         if return_posteriors and posteriors_full is not None:
             n = int(circular_read_length)
-            result['posteriors'] = posteriors_full[n:2 * n, 0].astype(np.float16)
+            result['posteriors'] = _footprint_posterior_track(
+                posteriors_full, n, 2 * n,
+            )
         return result
 
     result['states'] = states

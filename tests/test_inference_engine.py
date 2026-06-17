@@ -148,6 +148,18 @@ class TestPredictFootprintsAndMsps:
         np.testing.assert_allclose(confidence, [0.8, 0.9])
         np.testing.assert_allclose(posteriors, [[0.8, 0.2], [0.1, 0.9]])
 
+    def test_footprint_posterior_track_extracts_first_column_as_float16(self):
+        posteriors = np.array([
+            [0.1, 0.9],
+            [0.2, 0.8],
+            [0.3, 0.7],
+        ], dtype=np.float32)
+
+        track = engine._footprint_posterior_track(posteriors, 1, 3)
+
+        assert track.dtype == np.float16
+        np.testing.assert_allclose(track, [0.2, 0.3], atol=1e-3)
+
     def test_returns_dict_with_correct_keys(self, simple_model):
         obs = np.array([0, 0, 0, 3, 3, 3, 3, 3, 0, 0, 0], dtype=np.int32)
         result = predict_footprints_and_msps(simple_model, obs)
