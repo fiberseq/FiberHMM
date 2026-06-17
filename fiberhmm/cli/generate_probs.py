@@ -252,6 +252,23 @@ def _record_filter_skip(filter_stats: Dict[str, int], skip_reason) -> bool:
     return True
 
 
+def _probability_read_tags_or_skip(
+    read,
+    filter_stats: Dict[str, int],
+    min_mapq: int,
+    min_read_length: int,
+):
+    skip_reason = _generate_probs_skip_reason(read, min_mapq, min_read_length)
+    if _record_filter_skip(filter_stats, skip_reason):
+        return None
+
+    mm_tag, ml_tag, tag_skip_reason = _read_mm_ml_tags_or_skip(read)
+    if _record_filter_skip(filter_stats, tag_skip_reason):
+        return None
+
+    return mm_tag, ml_tag
+
+
 def _process_probability_read(
     read,
     counters: Dict[str, ContextCounter],
@@ -346,16 +363,13 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
             if reads_scanned % 5000 == 0:
                 pbar.set_postfix(_progress_postfix(reads_processed, reads_scanned))
 
-            skip_reason = _generate_probs_skip_reason(
-                read, args.min_mapq, args.min_read_length,
+            tags = _probability_read_tags_or_skip(
+                read, filter_stats, args.min_mapq, args.min_read_length,
             )
-            if _record_filter_skip(filter_stats, skip_reason):
+            if tags is None:
                 continue
 
-            mm_tag, ml_tag, tag_skip_reason = _read_mm_ml_tags_or_skip(read)
-            if _record_filter_skip(filter_stats, tag_skip_reason):
-                continue
-
+            mm_tag, ml_tag = tags
             _process_probability_read(
                 read, counters, mode, args.prob_threshold, args.edge_trim,
                 mm_tag, ml_tag, mm_tag_types, strand_assignments,

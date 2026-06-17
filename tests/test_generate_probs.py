@@ -16,6 +16,7 @@ from fiberhmm.cli.generate_probs import (
     _probability_counter_path,
     _probability_table_path,
     _print_daf_diagnostics,
+    _probability_read_tags_or_skip,
     _progress_postfix,
     _process_probability_read,
     _read_limit_reached,
@@ -162,6 +163,27 @@ def test_record_filter_skip_increments_when_reason_is_present():
     assert stats == {}
     assert _record_filter_skip(stats, "low_mapq")
     assert stats["low_mapq"] == 1
+
+
+def test_probability_read_tags_or_skip_returns_tags_and_records_filter_failures():
+    stats = defaultdict(int)
+    read = _Read({"MM": "A+a,0;", "ML": [200]})
+
+    assert _probability_read_tags_or_skip(read, stats, 20, 100) == (
+        "A+a,0;",
+        [200],
+    )
+    assert stats == {}
+
+    read = _Read({"MM": "A+a,0;", "ML": [200]})
+    read.mapping_quality = 10
+    assert _probability_read_tags_or_skip(read, stats, 20, 100) is None
+    assert stats["low_mapq"] == 1
+
+    assert _probability_read_tags_or_skip(
+        _Read({"MM": "A+a,0;"}), stats, 20, 100,
+    ) is None
+    assert stats["no_ml_tag"] == 1
 
 
 def test_remove_temporary_probability_counters_removes_expected_files(tmp_path):
