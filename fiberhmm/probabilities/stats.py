@@ -69,6 +69,14 @@ def _top_differentiating_contexts(merged, n: int = 15):
     return ranked.nlargest(n, 'diff')
 
 
+def _cumulative_observation_percentages(totals) -> np.ndarray:
+    sorted_totals = np.sort(np.asarray(totals))[::-1]
+    total = np.sum(sorted_totals)
+    if total <= 0:
+        return np.array([])
+    return np.cumsum(sorted_totals) / total * 100
+
+
 def _write_probability_ratio_summary(handle, label: str, ratios: np.ndarray) -> None:
     if len(ratios) == 0:
         return
@@ -280,14 +288,11 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
 
             # Cumulative coverage
             ax = axes[0, 1]
-            acc_sorted = np.sort(acc_total.values)[::-1]
-            inacc_sorted = np.sort(inacc_total.values)[::-1]
-
-            if np.sum(acc_sorted) > 0:
-                acc_cumsum = np.cumsum(acc_sorted) / np.sum(acc_sorted) * 100
+            acc_cumsum = _cumulative_observation_percentages(acc_total.values)
+            inacc_cumsum = _cumulative_observation_percentages(inacc_total.values)
+            if len(acc_cumsum) > 0:
                 ax.plot(range(len(acc_cumsum)), acc_cumsum, label='Accessible', color='forestgreen')
-            if np.sum(inacc_sorted) > 0:
-                inacc_cumsum = np.cumsum(inacc_sorted) / np.sum(inacc_sorted) * 100
+            if len(inacc_cumsum) > 0:
                 ax.plot(range(len(inacc_cumsum)), inacc_cumsum, label='Inaccessible', color='firebrick')
             ax.axhline(90, color='gray', linestyle='--', alpha=0.5)
             ax.set_xlabel('Number of contexts (ranked)')

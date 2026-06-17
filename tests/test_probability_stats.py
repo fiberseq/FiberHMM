@@ -150,3 +150,10 @@ def test_probability_plot_helpers_filter_log_odds_and_rank_contexts():
     assert top["context"].tolist() == ["AAG", "AAA"]
     assert top["diff"].round(1).tolist() == [1.0, 0.6]
     assert "diff" not in merged.columns
+
+
+def test_cumulative_observation_percentages_sorts_and_handles_empty_totals():
+    percentages = stats._cumulative_observation_percentages([1, 4, 0])
+
+    assert percentages.tolist() == [80.0, 100.0, 100.0]
+    assert stats._cumulative_observation_percentages([0, 0]).tolist() == []
