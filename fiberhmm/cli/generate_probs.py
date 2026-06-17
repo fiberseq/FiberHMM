@@ -276,6 +276,10 @@ def _print_daf_diagnostics(mm_tag_types, strand_assignments) -> None:
         print(f"      {assignment}: {count:,}")
 
 
+def _read_limit_reached(max_reads: int, reads_processed: int) -> bool:
+    return max_reads > 0 and reads_processed >= max_reads
+
+
 def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 mode: str, args, max_reads: int = 0, verbose: bool = False) -> Tuple[int, dict]:
     """
@@ -333,7 +337,7 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
             filter_stats['processed'] += 1
 
             # Check max reads (limit by PROCESSED count for consistent sample size)
-            if max_reads > 0 and reads_processed >= max_reads:
+            if _read_limit_reached(max_reads, reads_processed):
                 break
 
     # Print filter stats in verbose mode
@@ -384,7 +388,7 @@ def process_sample_set(bam_files: List[str], counters: Dict[str, ContextCounter]
                     )
                 )
 
-        if args.max_reads > 0 and total_reads >= args.max_reads:
+        if _read_limit_reached(args.max_reads, total_reads):
             break
 
     return total_reads, total_scanned, dict(combined_stats)

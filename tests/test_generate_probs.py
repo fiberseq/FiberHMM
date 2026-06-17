@@ -17,6 +17,7 @@ from fiberhmm.cli.generate_probs import (
     _print_daf_diagnostics,
     _progress_postfix,
     _process_probability_read,
+    _read_limit_reached,
     _read_reference_span,
     _read_mm_ml_tags_or_skip,
     _record_mm_tag_types,
@@ -218,6 +219,12 @@ def test_print_daf_diagnostics_formats_counts(capsys):
     assert "C+m: 1,000" in out
     assert "Strand assignments" in out
     assert "-:G: 4,000" in out
+
+
+def test_read_limit_reached_treats_zero_as_unlimited():
+    assert not _read_limit_reached(0, 10_000)
+    assert not _read_limit_reached(10, 9)
+    assert _read_limit_reached(10, 10)
 
 
 def test_combined_probability_frame_outer_merges_contexts_and_fills_missing():
