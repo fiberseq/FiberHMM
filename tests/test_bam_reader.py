@@ -23,6 +23,7 @@ try:
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
         _append_mm_mod_result,
+        _context_flanks,
         _daf_deamination_base_counts,
         _has_mm_ml_inputs,
         _iter_mm_mod_specs,
@@ -33,6 +34,7 @@ try:
         _mm_mod_spec_parts,
         _mm_positions_from_spec,
         _mm_target_base,
+        _reverse_complement_context,
         detect_daf_strand,
         encode_from_query_sequence,
         get_reference_positions_array,
@@ -47,6 +49,7 @@ except ImportError:
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
         _append_mm_mod_result,
+        _context_flanks,
         _daf_deamination_base_counts,
         _has_mm_ml_inputs,
         _iter_mm_mod_specs,
@@ -57,6 +60,7 @@ except ImportError:
         _mm_mod_spec_parts,
         _mm_positions_from_spec,
         _mm_target_base,
+        _reverse_complement_context,
         detect_daf_strand,
         encode_from_query_sequence,
         get_reference_positions_array,
@@ -68,6 +72,13 @@ def test_modified_base_quality_passes_unknown_or_threshold_values():
     assert _modified_base_quality_passes(-1, 125)
     assert _modified_base_quality_passes(125, 125)
     assert not _modified_base_quality_passes(124, 125)
+
+
+def test_context_lookup_helpers_build_flanks_and_reverse_complements():
+    assert _context_flanks(0) == [""]
+    assert _context_flanks(1) == ["A", "C", "G", "T"]
+    assert _context_flanks(2)[:5] == ["AA", "AC", "AG", "AT", "CA"]
+    assert _reverse_complement_context("ACGTNRY") == "NNNACGT"
 
 
 def test_has_mm_ml_inputs_handles_empty_and_numpy_ml_tags():

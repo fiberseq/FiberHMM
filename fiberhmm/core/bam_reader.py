@@ -28,6 +28,24 @@ except ImportError:
         return _wrap
 
 
+_CONTEXT_BASES = ('A', 'C', 'G', 'T')
+_CONTEXT_RC_BASES = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', 'N': 'N'}
+
+
+def _context_flanks(context_size: int) -> List[str]:
+    if context_size == 0:
+        return ['']
+    return [
+        flank + base
+        for flank in _context_flanks(context_size - 1)
+        for base in _CONTEXT_BASES
+    ]
+
+
+def _reverse_complement_context(seq: str) -> str:
+    return ''.join(_CONTEXT_RC_BASES.get(base, 'N') for base in reversed(seq))
+
+
 # =============================================================================
 # Context encoding with variable sizes
 # =============================================================================
@@ -64,15 +82,7 @@ class ContextEncoder:
                       include_rc: bool) -> Dict[str, int]:
         """Build a new lookup table."""
         center = center_base.upper()
-        bases = ['A', 'C', 'G', 'T']
-
-        # Generate all k-mers for flanking regions
-        def gen_kmers(k):
-            if k == 0:
-                return ['']
-            return [s + b for s in gen_kmers(k - 1) for b in bases]
-
-        flanks = gen_kmers(context_size)
+        flanks = _context_flanks(context_size)
 
         # Build all contexts
         contexts = [left + center + right for left in flanks for right in flanks]
@@ -80,13 +90,8 @@ class ContextEncoder:
 
         # Add reverse complements if requested
         if include_rc:
-            rc_map = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', 'N': 'N'}
-
-            def rc(seq):
-                return ''.join(rc_map.get(b, 'N') for b in reversed(seq))
-
             for ctx in list(lookup.keys()):
-                rc_ctx = rc(ctx)
+                rc_ctx = _reverse_complement_context(ctx)
                 if rc_ctx not in lookup:
                     lookup[rc_ctx] = lookup[ctx]
 
