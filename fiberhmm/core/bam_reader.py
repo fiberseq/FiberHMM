@@ -703,6 +703,13 @@ def _infer_daf_iupac_strand(seq_upper: str) -> str:
     return '.'
 
 
+def _daf_iupac_strand(st_tag: Optional[str], seq_upper: str) -> str:
+    strand = daf_strand_from_tag(st_tag)
+    if strand == '.' and st_tag is None:
+        return _infer_daf_iupac_strand(seq_upper)
+    return strand
+
+
 def _convert_daf_iupac_sequence(seq_upper: str) -> Tuple[Set[int], str]:
     seq_arr = np.frombuffer(seq_upper.encode('ascii'), dtype=np.uint8)
     y_mask = seq_arr == ord('Y')
@@ -739,13 +746,7 @@ def extract_daf_iupac_positions(sequence: str, st_tag: Optional[str] = None) -> 
         has all R replaced with A and all Y replaced with T (pure ACGT).
     """
     seq_upper = sequence.upper()
-    mod_positions: Set[int] = set()
-
-    # Determine strand
-    strand = daf_strand_from_tag(st_tag)
-    if strand == '.' and st_tag is None:
-        strand = _infer_daf_iupac_strand(seq_upper)
-
+    strand = _daf_iupac_strand(st_tag, seq_upper)
     mod_positions, converted = _convert_daf_iupac_sequence(seq_upper)
 
     return mod_positions, strand, converted

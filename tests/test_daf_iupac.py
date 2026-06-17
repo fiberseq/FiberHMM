@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from fiberhmm.core.bam_reader import (
+    _daf_iupac_strand,
     encode_from_query_sequence,
     extract_daf_iupac_positions,
     has_iupac_encoding,
@@ -58,6 +59,13 @@ class TestExtractDafIupacPositions:
         assert _infer_daf_iupac_strand("AYYRC") == "+"
         assert _infer_daf_iupac_strand("ARRYC") == "-"
         assert _infer_daf_iupac_strand("ARYC") == "."
+
+    def test_iupac_strand_prefers_tags_and_infers_when_absent(self):
+        assert _daf_iupac_strand("CT", "ARRR") == "+"
+        assert _daf_iupac_strand("GA", "AYYY") == "-"
+        assert _daf_iupac_strand(None, "AYYRC") == "+"
+        assert _daf_iupac_strand(None, "ARRYC") == "-"
+        assert _daf_iupac_strand("XY", "AYYRC") == "."
 
     def test_convert_daf_iupac_sequence_returns_positions_and_acgt_sequence(self):
         assert _convert_daf_iupac_sequence("ARYC") == ({1, 2}, "AATC")
