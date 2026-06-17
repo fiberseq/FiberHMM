@@ -177,6 +177,11 @@ def _submit_region_futures(executor, worker, work_items) -> dict:
     }
 
 
+def _make_output_temp_dir(output_path: str, prefix: str) -> str:
+    output_dir = os.path.dirname(os.path.abspath(output_path))
+    return tempfile.mkdtemp(prefix=prefix, dir=output_dir)
+
+
 def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    model_path: str, train_rids: Set[str],
                                    edge_trim: int, circular: bool,
@@ -225,8 +230,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
     sys.stdout.flush()
 
     # Create temp directory in output folder for easier cleanup
-    output_dir = os.path.dirname(os.path.abspath(output_bam))
-    temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_tmp_', dir=output_dir)
+    temp_dir = _make_output_temp_dir(output_bam, '.fiberhmm_tmp_')
 
     try:
         # Prepare parameters (will be passed to initializer)
@@ -391,8 +395,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
     sys.stdout.flush()
 
     # Create temp directory for BED files (small compared to BAMs)
-    output_dir = os.path.dirname(os.path.abspath(output_bed))
-    temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_bed_tmp_', dir=output_dir)
+    temp_dir = _make_output_temp_dir(output_bed, '.fiberhmm_bed_tmp_')
 
     try:
         params = _base_region_worker_params(
@@ -515,8 +518,7 @@ def _process_bam_region_parallel_fused(
     print(f"Processing {len(regions)} regions with {n_cores} cores (fused apply+recall)...")
     sys.stdout.flush()
 
-    output_dir = os.path.dirname(os.path.abspath(output_bam))
-    temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_call_tmp_', dir=output_dir)
+    temp_dir = _make_output_temp_dir(output_bam, '.fiberhmm_call_tmp_')
 
     params = _base_region_worker_params(
         edge_trim=edge_trim,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from fiberhmm.inference import parallel, region_pipeline
@@ -201,6 +203,20 @@ def test_submit_region_futures_maps_futures_to_region_indices():
         (worker, "a"),
         (worker, "b"),
     ]
+
+
+def test_make_output_temp_dir_places_directory_next_to_output(tmp_path):
+    output_path = tmp_path / "nested" / "out.bam"
+    output_path.parent.mkdir()
+
+    temp_dir = region_pipeline._make_output_temp_dir(
+        str(output_path),
+        ".fiberhmm_test_",
+    )
+
+    assert os.path.dirname(temp_dir) == str(output_path.parent)
+    assert os.path.isdir(temp_dir)
+    assert os.path.basename(temp_dir).startswith(".fiberhmm_test_")
 
 
 def test_region_parallel_bam_cleans_temp_dir_on_worker_failure(monkeypatch, tmp_path):
