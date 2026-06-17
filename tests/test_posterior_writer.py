@@ -3,6 +3,12 @@ import pytest
 from fiberhmm.posteriors import writer
 
 
+def test_is_hdf5_output_path_matches_supported_extensions():
+    assert writer._is_hdf5_output_path("posteriors.h5")
+    assert writer._is_hdf5_output_path("posteriors.hdf5")
+    assert not writer._is_hdf5_output_path("posteriors.tsv.gz")
+
+
 def test_resolve_writer_format_auto_detects_hdf5_extensions():
     assert writer._resolve_writer_format("posteriors.h5", "auto") == "hdf5"
     assert writer._resolve_writer_format("posteriors.hdf5", "auto") == "hdf5"

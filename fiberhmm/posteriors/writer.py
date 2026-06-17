@@ -15,10 +15,14 @@ Usage:
 """
 
 
+def _is_hdf5_output_path(output_path: str) -> bool:
+    return output_path.endswith('.h5') or output_path.endswith('.hdf5')
+
+
 def _resolve_writer_format(output_path: str, format: str) -> str:
     if format != 'auto':
         return format
-    if output_path.endswith('.h5') or output_path.endswith('.hdf5'):
+    if _is_hdf5_output_path(output_path):
         return 'hdf5'
     return 'tsv'
 
