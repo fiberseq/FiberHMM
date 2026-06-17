@@ -16,6 +16,7 @@ import fiberhmm.inference.region_workers as region_workers
 import fiberhmm.inference.streaming_drain as streaming_drain
 import fiberhmm.inference.streaming_pipeline as streaming_pipeline
 import fiberhmm.inference.streaming_workers as streaming_workers
+from fiberhmm.inference.engine import CHIMERA_SKIP
 from fiberhmm.inference.parallel import (
     _drain_oldest_chunk,
     _drain_oldest_fused_chunk,
@@ -415,6 +416,49 @@ def test_payload_worker_counts_per_read_failures(monkeypatch):
     assert isinstance(chunk_result, WorkerChunkResult)
     assert chunk_result.read_failures == 2
     assert chunk_result.results == [{"payload": "ok"}, None, None, None]
+
+
+def test_streaming_payload_fiber_read_result_maps_chimera(monkeypatch):
+    payload = {"read_id": "read1"}
+    fiber_read = {"query_sequence": "ACGT"}
+
+    def fake_extract(got_payload, mode, prob_threshold):
+        assert got_payload is payload
+        assert mode == "pacbio-fiber"
+        assert prob_threshold == 128
+        return fiber_read
+
+    monkeypatch.setattr(streaming_workers, "extract_fiber_read_from_payload", fake_extract)
+    assert streaming_workers._payload_fiber_read_result(
+        payload, "pacbio-fiber", 128,
+    ) == fiber_read
+
+    monkeypatch.setattr(
+        streaming_workers, "extract_fiber_read_from_payload", lambda *_: None
+    )
+    assert streaming_workers._payload_fiber_read_result(
+        payload, "pacbio-fiber", 128,
+    ) is None
+
+    monkeypatch.setattr(
+        streaming_workers, "extract_fiber_read_from_payload", lambda *_: CHIMERA_SKIP
+    )
+    assert streaming_workers._payload_fiber_read_result(
+        payload, "pacbio-fiber", 128,
+    ) is None
+    assert streaming_workers._payload_fiber_read_result(
+        payload,
+        "pacbio-fiber",
+        128,
+        chimera_result=streaming_workers.CHIMERA_RESULT,
+    ) == streaming_workers.CHIMERA_RESULT
+
+    def fail_extract(*_):
+        raise ValueError("bad payload")
+
+    monkeypatch.setattr(streaming_workers, "extract_fiber_read_from_payload", fail_extract)
+    with pytest.raises(ValueError):
+        streaming_workers._payload_fiber_read_result(payload, "pacbio-fiber", 128)
 
 
 def test_fused_payload_worker_counts_per_read_failures(monkeypatch):

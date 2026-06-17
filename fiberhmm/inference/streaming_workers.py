@@ -10,11 +10,6 @@ from fiberhmm.inference.engine import (
     extract_fiber_read_from_payload,
 )
 from fiberhmm.inference.recall_tables import load_recall_llr_tables
-
-# Picklable per-result marker for a DAF chimera-filtered read (CHIMERA_SKIP is an
-# identity sentinel that does not survive worker IPC, so the worker emits this
-# string instead and the drain tallies it).
-CHIMERA_RESULT = "__fiberhmm_chimera_skip__"
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
@@ -26,6 +21,11 @@ from fiberhmm.inference.worker_warmup import (
     warm_up_tf_recaller,
 )
 from fiberhmm.inference.worker_results import WorkerChunkResult
+
+# Picklable per-result marker for a DAF chimera-filtered read (CHIMERA_SKIP is an
+# identity sentinel that does not survive worker IPC, so the worker emits this
+# string instead and the drain tallies it).
+CHIMERA_RESULT = "__fiberhmm_chimera_skip__"
 
 _worker_model = None
 _worker_debug_timing = False
@@ -46,6 +46,15 @@ def _process_worker_items(items, process_item):
             read_failures += 1
         results.append(result)
     return WorkerChunkResult(results, read_failures)
+
+
+def _payload_fiber_read_result(
+    payload, mode: str, prob_threshold: int, *, chimera_result=None
+):
+    fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
+    if fiber_read is CHIMERA_SKIP:
+        return chimera_result
+    return fiber_read
 
 
 def _init_bam_worker(model_path, debug_timing=False):
@@ -181,8 +190,10 @@ def _process_fused_payload_chunk_worker(
     llr_miss = _worker_recall_state['llr_miss']
 
     def process_item(payload):
-        fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
-        if fiber_read is CHIMERA_SKIP:
+        fiber_read = _payload_fiber_read_result(
+            payload, mode, prob_threshold, chimera_result=CHIMERA_RESULT,
+        )
+        if fiber_read == CHIMERA_RESULT:
             # DAF strand-swap chimera filtered out -- distinct marker so the
             # drain can tally it (vs folding into "no footprints"). The
             # marker is a picklable string (CHIMERA_SKIP is an identity
@@ -253,10 +264,8 @@ def _process_payload_chunk_worker(
     global _worker_model
 
     def process_item(payload):
-        fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
-        if fiber_read is None or fiber_read is CHIMERA_SKIP:
-            # CHIMERA_SKIP: DAF strand-swap chimera filtered out (streaming
-            # passes it through unannotated; region-parallel tallies a count).
+        fiber_read = _payload_fiber_read_result(payload, mode, prob_threshold)
+        if fiber_read is None:
             return None
         return _process_single_read(
             fiber_read, _worker_model, edge_trim, circular,
