@@ -24,6 +24,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from fiberhmm.core.model_io import load_model_with_metadata, save_model
+from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 # =============================================================================
@@ -386,7 +387,7 @@ def _process_reference_bam(bam_path, max_context, args):
         pbar = tqdm(bam.fetch(), desc="Processing reference BAM")
 
         for read in pbar:
-            if read.is_unmapped or read.is_secondary or read.is_supplementary:
+            if not is_primary_mapped_alignment(read):
                 continue
             if read.mapping_quality < args.min_mapq:
                 continue
@@ -437,7 +438,7 @@ def _process_target_bam(bam_path, mode, max_context, args):
         pbar = tqdm(bam.fetch(), desc="Processing target BAM")
 
         for read in pbar:
-            if read.is_unmapped or read.is_secondary or read.is_supplementary:
+            if not is_primary_mapped_alignment(read):
                 continue
             if read.mapping_quality < args.min_mapq:
                 continue
