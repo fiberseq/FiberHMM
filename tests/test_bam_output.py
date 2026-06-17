@@ -23,6 +23,10 @@ def test_sorted_bam_temp_path_preserves_bam_suffix_convention():
     assert bam_output._sorted_bam_temp_path("out.cram") == "out.cram.sorted.bam"
 
 
+def test_sorted_bed_temp_path_appends_sorted_suffix():
+    assert bam_output._sorted_bed_temp_path("calls.bed") == "calls.bed.sorted"
+
+
 def test_convert_to_bigbed_sorts_without_shell(monkeypatch, tmp_path):
     bed = tmp_path / "calls.bed"
     chrom_sizes = tmp_path / "chrom.sizes"

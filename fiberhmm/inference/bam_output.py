@@ -378,6 +378,10 @@ def _sort_bed_for_bigbed(bed_file: str, sorted_bed: str) -> None:
     )
 
 
+def _sorted_bed_temp_path(bed_file: str) -> str:
+    return bed_file + '.sorted'
+
+
 def _bed_to_bigbed_command(
     sorted_bed: str,
     chrom_sizes: str,
@@ -419,7 +423,7 @@ def convert_to_bigbed(bed_file: str, chrom_sizes: str, output_bb: str) -> bool:
     if not _bed_to_bigbed_available():
         return False
 
-    sorted_bed = bed_file + '.sorted'
+    sorted_bed = _sorted_bed_temp_path(bed_file)
     try:
         # Sort BED file
         _sort_bed_for_bigbed(bed_file, sorted_bed)
@@ -489,7 +493,7 @@ def convert_to_bigbed_with_schema(bed_file: str, chrom_sizes: str,
     if not _bed_to_bigbed_available():
         return False
 
-    sorted_bed = bed_file + '.sorted'
+    sorted_bed = _sorted_bed_temp_path(bed_file)
     try:
         # Sort BED file
         _sort_bed_for_bigbed(bed_file, sorted_bed)
