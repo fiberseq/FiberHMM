@@ -34,6 +34,11 @@ def _position_weight(weights, position: int) -> float:
     return weights[position] if position < len(weights) else 0.0
 
 
+def _count_ratio(hit, nohit) -> float:
+    total = hit + nohit
+    return hit / total if total > 0 else 0.0
+
+
 class ContextCounter:
     """
     Counts modification hits/misses per sequence context.
@@ -255,13 +260,11 @@ class ContextCounter:
         rows = []
         for context, counts in sorted(aggregated.items()):
             hit, nohit = counts
-            total = hit + nohit
-            ratio = hit / total if total > 0 else 0.0
             rows.append({
                 'context': context,
                 'hit': int(hit),
                 'nohit': int(nohit),
-                'ratio': ratio
+                'ratio': _count_ratio(hit, nohit)
             })
 
         df = pd.DataFrame(rows)

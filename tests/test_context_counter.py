@@ -4,6 +4,7 @@ import numpy as np
 
 from fiberhmm.probabilities.context_counter import (
     ContextCounter,
+    _count_ratio,
     _position_weight,
     _reconstruct_deaminated_sequence,
 )
@@ -19,6 +20,11 @@ def test_position_weight_defaults_out_of_range_to_zero():
 
     assert _position_weight(weights, 1) == 0.75
     assert _position_weight(weights, 2) == 0.0
+
+
+def test_count_ratio_handles_zero_total():
+    assert _count_ratio(2, 6) == 0.25
+    assert _count_ratio(0, 0) == 0.0
 
 
 def test_add_position_records_valid_center_contexts():
