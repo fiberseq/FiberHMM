@@ -115,6 +115,22 @@ def _total_call_llr(calls) -> float:
     return total_llr
 
 
+def _nuc_from_protected_calls(calls, nuc_min_size: int):
+    ordered = sorted(calls, key=lambda p: p.start)
+    first, last = ordered[0], ordered[-1]
+    cstart = first.start
+    cend = last.start + last.length
+    if cend - cstart < nuc_min_size:
+        return None
+    return NucCall(
+        start=cstart,
+        length=cend - cstart,
+        nq=llr_to_tq(_total_call_llr(ordered)),
+        el=ambiguity_to_edge(first.left_ambiguity),
+        er=ambiguity_to_edge(last.right_ambiguity),
+    )
+
+
 def _refine_fragment(obs, a, b, llr_hit, llr_miss,
                      nuc_min_size, edge_min_llr, edge_min_opps):
     """Edge-refine one protected fragment into a NucCall (or demote it).
@@ -133,26 +149,17 @@ def _refine_fragment(obs, a, b, llr_hit, llr_miss,
     if not prot:
         # signal-desert fragment: keep raw extent, unknown quality/edges
         return NucCall(a, b - a, nq=0, el=0, er=0), access
-    prot = sorted(prot, key=lambda p: p.start)
-    first, last = prot[0], prot[-1]
-    cstart = first.start
-    cend = last.start + last.length
-    if cend - cstart < nuc_min_size:
+    nuc = _nuc_from_protected_calls(prot, nuc_min_size)
+    if nuc is None:
         # Edge refinement trimmed the protected core below the floor (a sparse
         # protected island) -> not a nucleosome, demote the whole fragment.
         access.append((a, b - a))
         return None, access
-    nuc = NucCall(
-        start=cstart,
-        length=cend - cstart,
-        nq=llr_to_tq(_total_call_llr(prot)),
-        el=ambiguity_to_edge(first.left_ambiguity),
-        er=ambiguity_to_edge(last.right_ambiguity),
-    )
-    if cstart > a:
-        access.append((a, cstart - a))
-    if b > cend:
-        access.append((cend, b - cend))
+    nuc_end = nuc.start + nuc.length
+    if nuc.start > a:
+        access.append((a, nuc.start - a))
+    if b > nuc_end:
+        access.append((nuc_end, b - nuc_end))
     return nuc, access
 
 

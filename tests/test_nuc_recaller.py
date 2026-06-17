@@ -10,6 +10,7 @@ from fiberhmm.inference.nuc_recaller import (
     _circular_uncovered_cut,
     _keep_nuc_against_circular_intervals,
     _msp_gaps_between_nucs,
+    _nuc_from_protected_calls,
     _ordered_positive_nuc_calls,
     _phase_cut_window,
     _promoted_nuc_from_tf_call,
@@ -100,6 +101,24 @@ def test_total_call_llr_sums_call_scores():
     ]
 
     assert _total_call_llr(calls) == 3.75
+
+
+def test_nuc_from_protected_calls_uses_outer_span_and_floor():
+    calls = [
+        TFCall(start=20, length=5, llr=2.25, n_opps=2,
+               left_ambiguity=0, right_ambiguity=3),
+        TFCall(start=10, length=5, llr=1.5, n_opps=2,
+               left_ambiguity=2, right_ambiguity=0),
+    ]
+
+    nuc = _nuc_from_protected_calls(calls, nuc_min_size=15)
+
+    assert nuc is not None
+    assert (nuc.start, nuc.length) == (10, 15)
+    assert nuc.nq > 0
+    assert nuc.el > 0
+    assert nuc.er > 0
+    assert _nuc_from_protected_calls(calls, nuc_min_size=16) is None
 
 
 def test_bounded_interval_handles_clamping_and_invalid_spans():
