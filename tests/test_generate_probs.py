@@ -13,6 +13,7 @@ from fiberhmm.cli.generate_probs import (
     _probability_counter_path,
     _probability_table_path,
     _read_reference_span,
+    _read_mm_ml_tags_or_skip,
     _record_mm_tag_types,
     _target_bases_for_mode,
 )
@@ -26,6 +27,17 @@ class _Read:
     query_sequence = "A" * 200
     reference_start = 100
     reference_end = 300
+
+    def __init__(self, tags=None):
+        self.tags = tags or {}
+
+    def has_tag(self, tag):
+        return tag in self.tags
+
+    def get_tag(self, tag):
+        if tag not in self.tags:
+            raise KeyError(tag)
+        return self.tags[tag]
 
 
 def test_new_filter_stats_returns_zeroed_independent_stats():
@@ -67,6 +79,25 @@ def test_read_reference_span_handles_missing_coordinates():
     read = _Read()
     read.reference_end = None
     assert _read_reference_span(read) is None
+
+
+def test_read_mm_ml_tags_or_skip_prefers_supported_tag_names():
+    read = _Read({"MM": "A+a,0;", "ML": [200]})
+    assert _read_mm_ml_tags_or_skip(read) == ("A+a,0;", [200], None)
+
+    read = _Read({"Mm": "C+m,0;", "Ml": (150,)})
+    assert _read_mm_ml_tags_or_skip(read) == ("C+m,0;", [150], None)
+
+    assert _read_mm_ml_tags_or_skip(_Read({"ML": [200]})) == (
+        None,
+        None,
+        "no_mm_tag",
+    )
+    assert _read_mm_ml_tags_or_skip(_Read({"MM": "A+a,0;"})) == (
+        "A+a,0;",
+        None,
+        "no_ml_tag",
+    )
 
 
 def test_target_bases_for_mode():

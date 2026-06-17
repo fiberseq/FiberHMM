@@ -161,6 +161,18 @@ def _generate_probs_skip_reason(read, min_mapq: int, min_read_length: int):
     return None
 
 
+def _read_mm_ml_tags_or_skip(read):
+    mm_tag = get_preferred_tag(read, 'MM', 'Mm')
+    if mm_tag is None:
+        return None, None, 'no_mm_tag'
+
+    ml_raw = get_preferred_tag(read, 'ML', 'Ml')
+    if ml_raw is None:
+        return mm_tag, None, 'no_ml_tag'
+
+    return mm_tag, list(ml_raw), None
+
+
 def _target_bases_for_mode(mode: str) -> List[str]:
     if mode == 'daf':
         return ['C']
@@ -242,20 +254,13 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 filter_stats[skip_reason] += 1
                 continue
 
-            # Get MM/ML tags
-            mm_tag = get_preferred_tag(read, 'MM', 'Mm')
-            if mm_tag is None:
-                filter_stats['no_mm_tag'] += 1
+            mm_tag, ml_tag, tag_skip_reason = _read_mm_ml_tags_or_skip(read)
+            if tag_skip_reason is not None:
+                filter_stats[tag_skip_reason] += 1
                 continue
 
             # Track MM tag types (for diagnostics)
             _record_mm_tag_types(mm_tag, mm_tag_types)
-
-            ml_raw = get_preferred_tag(read, 'ML', 'Ml')
-            ml_tag = list(ml_raw) if ml_raw is not None else None
-            if ml_tag is None:
-                filter_stats['no_ml_tag'] += 1
-                continue
 
             # Parse modifications
             mod_positions = parse_mm_tag_query_positions(
