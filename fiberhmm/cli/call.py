@@ -388,6 +388,20 @@ def _should_warn_stale_daf_md(sniff: dict, has_ref: bool) -> bool:
     return bool(sniff['md_bad'] and not sniff['has_ry'] and not has_ref)
 
 
+def _stale_daf_md_warning_message(sniff: dict) -> str:
+    return (
+        f"  NOTE: {sniff['md_bad']}/{sniff['md_total']} "
+        f"of the sniffed reads with MD tags\n"
+        f"  have MD/CIGAR length mismatches (typical of consensus BAMs\n"
+        f"  where MD is stale after CIGAR was recomputed). Those reads\n"
+        f"  will be skipped in DAF mode. The reads themselves are fine;\n"
+        f"  only the MD annotation is stale. To recover calls on those\n"
+        f"  reads, regenerate MD with:\n"
+        f"    samtools calmd -b aligned.bam ref.fa > fixed.bam\n"
+        f"  or pass --reference ref.fa to fiberhmm-call."
+    )
+
+
 def _missing_daf_source_message(input_bam: str, checked_reads: int) -> str:
     return (
         "error: --mode daf needs deamination calls, and none of the supported\n"
@@ -426,18 +440,7 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
         # Warn about stale MD only when we'll actually be relying on it
         # (no R/Y fast path available for these reads) AND some were bad.
         if _should_warn_stale_daf_md(sniff, has_ref):
-            print(
-                f"  NOTE: {sniff['md_bad']}/{sniff['md_total']} "
-                f"of the sniffed reads with MD tags\n"
-                f"  have MD/CIGAR length mismatches (typical of consensus BAMs\n"
-                f"  where MD is stale after CIGAR was recomputed). Those reads\n"
-                f"  will be skipped in DAF mode. The reads themselves are fine;\n"
-                f"  only the MD annotation is stale. To recover calls on those\n"
-                f"  reads, regenerate MD with:\n"
-                f"    samtools calmd -b aligned.bam ref.fa > fixed.bam\n"
-                f"  or pass --reference ref.fa to fiberhmm-call.",
-                file=sys.stderr,
-            )
+            print(_stale_daf_md_warning_message(sniff), file=sys.stderr)
         return
 
     print(

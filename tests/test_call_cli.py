@@ -38,6 +38,7 @@ from fiberhmm.cli.call import (
     _should_check_daf_inputs,
     _should_warn_stale_daf_md,
     _sniff_daf_input_sources,
+    _stale_daf_md_warning_message,
 )
 
 
@@ -171,6 +172,15 @@ def test_missing_daf_source_message_mentions_all_recovery_paths():
     assert "first 7 mapped reads of input.bam" in message
     assert "R/Y IUPAC codes" in message
     assert "MD tags" in message
+    assert "--reference ref.fa" in message
+
+
+def test_stale_daf_md_warning_message_mentions_counts_and_recovery():
+    message = _stale_daf_md_warning_message({"md_bad": 2, "md_total": 5})
+
+    assert "2/5" in message
+    assert "MD/CIGAR length mismatches" in message
+    assert "samtools calmd" in message
     assert "--reference ref.fa" in message
 
 
