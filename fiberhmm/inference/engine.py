@@ -6,6 +6,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.bam_reader import (
+    _has_mm_ml_inputs,
     _mm_mod_spec_parts,
     daf_strand_from_tag,
     detect_daf_strand,
@@ -701,15 +702,8 @@ def _extract_mm_ml_fiber_read(read, query_sequence: str, mode: str,
     mm_tag = get_preferred_tag(read, 'MM', 'Mm', '')
     ml_raw = get_preferred_tag(read, 'ML', 'Ml', None)
 
-    if not mm_tag or ml_raw is None:
+    if not _has_mm_ml_inputs(mm_tag, ml_raw):
         return None
-
-    # Empty-ML guard (also avoids the parser doing real work for nothing).
-    try:
-        if len(ml_raw) == 0:
-            return None
-    except TypeError:
-        pass
 
     # Convert ML to bytes once (fast memcpy, no PyInt allocations).
     ml_bytes = compact_ml_value(ml_raw)

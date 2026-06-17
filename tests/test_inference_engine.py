@@ -562,3 +562,25 @@ class TestFiberReadExtraction:
         assert fiber_read["query_length"] == 4
         assert fiber_read["is_reverse"] is True
         assert fiber_read["m6a_query_positions"] == {3}
+
+    def test_extract_mm_ml_fiber_read_skips_empty_numpy_ml(self, monkeypatch):
+        read = self.FakeRead(
+            "AAAA",
+            {
+                "MM": "A+a,0;",
+                "ML": np.asarray([], dtype=np.uint8),
+            },
+        )
+
+        monkeypatch.setattr(
+            engine,
+            "parse_mm_tag_query_positions",
+            lambda *args, **kwargs: pytest.fail("parser should not run"),
+        )
+
+        assert engine._extract_mm_ml_fiber_read(
+            read,
+            "AAAA",
+            mode="pacbio-fiber",
+            prob_threshold=125,
+        ) is None
