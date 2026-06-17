@@ -27,6 +27,12 @@ def is_primary_mapped_alignment(read) -> bool:
     return not read.is_unmapped and is_primary_alignment(read)
 
 
+def _filter_read_length(read):
+    if read.is_unmapped:
+        return read.query_length or 0
+    return read.query_alignment_length
+
+
 def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     """Return the skip reason for a streaming read, or None if processable."""
     if read.is_unmapped:
@@ -39,10 +45,7 @@ def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     if not read.is_unmapped and read.mapping_quality < config.min_mapq:
         return "low_mapq"
 
-    if read.is_unmapped:
-        read_len = read.query_length or 0
-    else:
-        read_len = read.query_alignment_length
+    read_len = _filter_read_length(read)
     if read_len is None or read_len < config.min_read_length:
         return "too_short"
 
