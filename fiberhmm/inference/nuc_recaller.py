@@ -168,6 +168,14 @@ def _split_on_accessible_cuts(obs, a, b, nhit, nmiss,
     return frags, access
 
 
+def _phase_cut_window(a: int, b: int, pred: int, phase_window: int):
+    lo = max(a, pred - phase_window)
+    hi = min(b, pred + phase_window)
+    if hi - lo < 2:
+        return None
+    return lo, hi
+
+
 def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
                         phase_min_llr, phase_min_opps, phase_window):
     """Evidence-gated periodicity split of a long protected fragment.
@@ -189,10 +197,10 @@ def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
     cut_pairs: List[Interval] = []
     for i in range(1, n):
         pred = a + int(round(i * spacing))
-        lo = max(a, pred - phase_window)
-        hi = min(b, pred + phase_window)
-        if hi - lo < 2:
+        window = _phase_cut_window(a, b, pred, phase_window)
+        if window is None:
             continue
+        lo, hi = window
         found = call_tfs_in_interval(obs, lo, hi, nhit, nmiss,
                                      phase_min_llr, phase_min_opps)
         if found:

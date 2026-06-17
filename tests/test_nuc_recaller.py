@@ -10,6 +10,7 @@ from fiberhmm.inference.nuc_recaller import (
     _circular_uncovered_cut,
     _keep_nuc_against_circular_intervals,
     _msp_gaps_between_nucs,
+    _phase_cut_window,
     _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
     _total_call_llr,
@@ -173,6 +174,12 @@ def test_phase_prior_never_splits_signal_desert():
         llr_hit=llr_hit, llr_miss=llr_miss,
         split_min_llr=4.0, split_min_opps=3, nuc_min_size=85, phase_nrl=185)
     assert len(nucs) == 1
+
+
+def test_phase_cut_window_clips_to_fragment_and_rejects_tiny_windows():
+    assert _phase_cut_window(10, 100, pred=50, phase_window=15) == (35, 65)
+    assert _phase_cut_window(10, 100, pred=12, phase_window=15) == (10, 27)
+    assert _phase_cut_window(10, 11, pred=10, phase_window=15) is None
 
 
 def test_rederive_msps_merges_and_filters():
