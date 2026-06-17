@@ -157,6 +157,12 @@ def project_center_nuc_calls(nuc_calls: Sequence, read_length: int) -> list:
     )
 
 
+def _legacy_interval_score(score_values, index: int):
+    if score_values is not None and index < len(score_values):
+        return score_values[index]
+    return None
+
+
 def split_intervals_for_legacy(
     intervals: Sequence[Interval],
     read_length: int,
@@ -167,7 +173,7 @@ def split_intervals_for_legacy(
     score_values = list(scores) if scores is not None else None
 
     for idx, (start, length) in enumerate(intervals):
-        score = score_values[idx] if score_values is not None and idx < len(score_values) else None
+        score = _legacy_interval_score(score_values, idx)
         for piece_start, piece_len in split_circular_interval(start, length, read_length):
             pieces.append((piece_start, piece_len, score))
 

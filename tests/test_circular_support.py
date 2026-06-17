@@ -4,6 +4,7 @@ import numpy as np
 
 from fiberhmm.inference.circular import (
     _center_copy_bounds,
+    _legacy_interval_score,
     _tiled_mod_positions,
     circular_intervals_overlap,
     project_center_nuc_calls,
@@ -98,6 +99,12 @@ def test_project_center_nuc_calls_preserves_quality_bytes():
     projected = project_center_nuc_calls(calls, 100)
 
     assert projected == [NucCall(start=95, length=20, nq=7, el=8, er=9)]
+
+
+def test_legacy_interval_score_defaults_missing_scores_to_none():
+    assert _legacy_interval_score([0.25], 0) == 0.25
+    assert _legacy_interval_score([0.25], 1) is None
+    assert _legacy_interval_score(None, 0) is None
 
 
 def test_split_intervals_for_legacy_duplicates_scores_for_wrapped_features():
