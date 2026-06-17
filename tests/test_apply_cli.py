@@ -7,9 +7,12 @@ import pytest
 from fiberhmm.cli.apply import (
     _dataset_name,
     _ddda_notice_needed,
+    _load_training_read_ids,
     _print_processing_settings,
     _print_ddda_two_pass_notice,
+    _print_region_filter_settings,
     _resolve_apply_cores,
+    _resolve_chroms_set,
     _resolve_context_size,
     _resolve_mode,
     _resolve_model_path,
@@ -155,3 +158,26 @@ def test_apply_print_processing_settings_reports_mode_specific_options(capsys):
     assert "Confidence scores: enabled" in out
     assert "Scores database: scores.db" in out
     assert "Strand detection: automatic" in out
+
+
+def test_apply_load_training_read_ids(tmp_path, capsys):
+    assert _load_training_read_ids(None) == set()
+
+    train_reads = tmp_path / "train_reads.tsv"
+    train_reads.write_text("rid\nread1\nread2\nread1\n")
+
+    assert _load_training_read_ids(str(train_reads)) == {"read1", "read2"}
+    assert "Excluding 2 training reads" in capsys.readouterr().out
+
+
+def test_apply_chrom_filter_helpers(capsys):
+    assert _resolve_chroms_set(None) is None
+    assert _resolve_chroms_set([]) is None
+    assert _resolve_chroms_set(["chr2", "chr1", "chr2"]) == {"chr1", "chr2"}
+
+    args = SimpleNamespace(skip_scaffolds=True)
+    _print_region_filter_settings(args, {"chr2", "chr1"})
+
+    out = capsys.readouterr().out
+    assert "Processing only chromosomes: chr1, chr2" in out
+    assert "Skipping scaffold/contig chromosomes" in out

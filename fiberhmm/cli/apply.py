@@ -278,6 +278,27 @@ def _print_processing_settings(
     print()
 
 
+def _load_training_read_ids(train_reads):
+    if not train_reads:
+        return set()
+
+    train_df = pd.read_csv(train_reads, sep='\t')
+    train_rids = set(train_df['rid'].tolist())
+    print(f"Excluding {len(train_rids)} training reads")
+    return train_rids
+
+
+def _resolve_chroms_set(chroms):
+    return set(chroms) if chroms else None
+
+
+def _print_region_filter_settings(args, chroms_set) -> None:
+    if chroms_set:
+        print(f"Processing only chromosomes: {', '.join(sorted(chroms_set))}")
+    if args.skip_scaffolds:
+        print("Skipping scaffold/contig chromosomes")
+
+
 def main():
     args = parse_args()
 
@@ -324,11 +345,7 @@ def main():
     msp_min_size = args.msp_min_size if args.msp_min_size is not None else 0
 
     # Load training read IDs to exclude
-    train_rids = set()
-    if args.train_reads:
-        train_df = pd.read_csv(args.train_reads, sep='\t')
-        train_rids = set(train_df['rid'].tolist())
-        print(f"Excluding {len(train_rids)} training reads")
+    train_rids = _load_training_read_ids(args.train_reads)
 
     dataset = _dataset_name(args.input)
 
@@ -342,11 +359,8 @@ def main():
     )
 
     # Parse chromosomes
-    chroms_set = set(args.chroms) if args.chroms else None
-    if chroms_set:
-        print(f"Processing only chromosomes: {', '.join(sorted(chroms_set))}")
-    if args.skip_scaffolds:
-        print("Skipping scaffold/contig chromosomes")
+    chroms_set = _resolve_chroms_set(args.chroms)
+    _print_region_filter_settings(args, chroms_set)
 
     # Mode selection:
     #   n_cores > 1 or stdin → streaming pipeline
