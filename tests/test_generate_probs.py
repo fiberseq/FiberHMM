@@ -12,6 +12,7 @@ from fiberhmm.cli.generate_probs import (
     _new_filter_stats,
     _probability_counter_path,
     _probability_table_path,
+    _process_probability_read,
     _read_reference_span,
     _read_mm_ml_tags_or_skip,
     _record_mm_tag_types,
@@ -27,6 +28,7 @@ class _Read:
     query_sequence = "A" * 200
     reference_start = 100
     reference_end = 300
+    is_reverse = False
 
     def __init__(self, tags=None):
         self.tags = tags or {}
@@ -38,6 +40,18 @@ class _Read:
         if tag not in self.tags:
             raise KeyError(tag)
         return self.tags[tag]
+
+
+class _Counter:
+    def __init__(self):
+        self.processed = []
+        self.processed_daf = []
+
+    def process_read(self, sequence, mod_positions, edge_trim):
+        self.processed.append((sequence, mod_positions, edge_trim))
+
+    def process_read_daf(self, sequence, mod_positions, strand, edge_trim):
+        self.processed_daf.append((sequence, mod_positions, strand, edge_trim))
 
 
 def test_new_filter_stats_returns_zeroed_independent_stats():
@@ -117,6 +131,52 @@ def test_record_mm_tag_types_counts_non_empty_specs():
         'G-a?': 1,
         'A+a': 1,
     }
+
+
+def test_process_probability_read_updates_target_counter(monkeypatch):
+    monkeypatch.setattr(
+        "fiberhmm.cli.generate_probs.parse_mm_tag_query_positions",
+        lambda *args, **kwargs: {2, 4},
+    )
+    monkeypatch.setattr(
+        "fiberhmm.cli.generate_probs.detect_strand_and_base",
+        lambda *args, **kwargs: ("+", "A"),
+    )
+    counter = _Counter()
+    mm_tag_types = defaultdict(int)
+    strand_assignments = defaultdict(int)
+
+    _process_probability_read(
+        _Read(), {"A": counter}, "pacbio-fiber", 125, 9,
+        "A+a,0;", [200], mm_tag_types, strand_assignments,
+    )
+
+    assert dict(mm_tag_types) == {"A+a": 1}
+    assert dict(strand_assignments) == {"+:A": 1}
+    assert counter.processed == [("A" * 200, {2, 4}, 9)]
+    assert counter.processed_daf == []
+
+
+def test_process_probability_read_routes_daf_to_c_counter(monkeypatch):
+    monkeypatch.setattr(
+        "fiberhmm.cli.generate_probs.parse_mm_tag_query_positions",
+        lambda *args, **kwargs: {5},
+    )
+    monkeypatch.setattr(
+        "fiberhmm.cli.generate_probs.detect_strand_and_base",
+        lambda *args, **kwargs: ("-", "G"),
+    )
+    counter = _Counter()
+    strand_assignments = defaultdict(int)
+
+    _process_probability_read(
+        _Read(), {"C": counter}, "daf", 125, 11,
+        "G-a,0;", [220], defaultdict(int), strand_assignments,
+    )
+
+    assert dict(strand_assignments) == {"-:G": 1}
+    assert counter.processed == []
+    assert counter.processed_daf == [("A" * 200, {5}, "-", 11)]
 
 
 def test_combined_probability_frame_outer_merges_contexts_and_fills_missing():

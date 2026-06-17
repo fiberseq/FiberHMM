@@ -207,6 +207,39 @@ def _accumulate_filter_stats(combined_stats, filter_stats: Dict[str, int]) -> No
         combined_stats[key] += value
 
 
+def _process_probability_read(
+    read,
+    counters: Dict[str, ContextCounter],
+    mode: str,
+    prob_threshold: int,
+    edge_trim: int,
+    mm_tag: str,
+    ml_tag,
+    mm_tag_types: MutableMapping[str, int],
+    strand_assignments: MutableMapping[str, int],
+) -> None:
+    _record_mm_tag_types(mm_tag, mm_tag_types)
+
+    mod_positions = parse_mm_tag_query_positions(
+        mm_tag, ml_tag, read.query_sequence,
+        read.is_reverse, prob_threshold, mode=mode,
+    )
+    strand, target_base = detect_strand_and_base(
+        read.query_sequence, mod_positions, mode,
+    )
+    strand_assignments[f"{strand}:{target_base}"] += 1
+
+    if mode == 'daf':
+        if 'C' in counters:
+            counters['C'].process_read_daf(
+                read.query_sequence, mod_positions, strand, edge_trim,
+            )
+    elif target_base in counters:
+        counters[target_base].process_read(
+            read.query_sequence, mod_positions, edge_trim,
+        )
+
+
 def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 mode: str, args, max_reads: int = 0, verbose: bool = False) -> Tuple[int, dict]:
     """
@@ -259,32 +292,10 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 filter_stats[tag_skip_reason] += 1
                 continue
 
-            # Track MM tag types (for diagnostics)
-            _record_mm_tag_types(mm_tag, mm_tag_types)
-
-            # Parse modifications
-            mod_positions = parse_mm_tag_query_positions(
-                mm_tag, ml_tag, read.query_sequence,
-                read.is_reverse, args.prob_threshold, mode=mode
+            _process_probability_read(
+                read, counters, mode, args.prob_threshold, args.edge_trim,
+                mm_tag, ml_tag, mm_tag_types, strand_assignments,
             )
-
-            # Determine strand and target base
-            strand, target_base = detect_strand_and_base(
-                read.query_sequence, mod_positions, mode
-            )
-            strand_assignments[f"{strand}:{target_base}"] += 1
-
-            # Process read with appropriate counter
-            if mode == 'daf':
-                # DAF-seq: always use C counter (G contexts are RC'd to C internally)
-                if 'C' in counters:
-                    counters['C'].process_read_daf(
-                        read.query_sequence, mod_positions, strand, args.edge_trim
-                    )
-            elif target_base in counters:
-                counters[target_base].process_read(
-                    read.query_sequence, mod_positions, args.edge_trim
-                )
 
             reads_processed += 1
             filter_stats['processed'] += 1
