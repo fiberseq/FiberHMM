@@ -4,7 +4,28 @@ Correctness tests for the streaming producer-consumer pipeline.
 
 import pysam
 
+from fiberhmm.inference.streaming_pipeline import (
+    _apply_worker_args,
+    _fused_worker_args,
+)
 from fiberhmm.inference.parallel import process_bam_for_footprints
+
+
+def test_apply_worker_args_match_payload_worker_contract():
+    assert _apply_worker_args(
+        11, True, "deam", 5, 61, 86, True, False, 127
+    ) == (
+        11, True, "deam", 5, 61, 86, True, False, 127
+    )
+
+
+def test_fused_worker_args_include_recall_contract():
+    assert _fused_worker_args(
+        12, False, "pacbio-fiber", 7, 62, 87, False, 126, 4.5, 6, 91
+    ) == (
+        12, False, "pacbio-fiber", 7, 62, 87, False, 126,
+        "pacbio-fiber", 7, 4.5, 6, 91,
+    )
 
 
 def _count_bam_reads(bam_path):

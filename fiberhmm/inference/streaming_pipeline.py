@@ -69,6 +69,60 @@ def _submit_streaming_chunk(inflight, executor, worker_fn, chunk_items,
     inflight.append((future, chunk_read_objs, chunk_items, chunk_skip_flags))
 
 
+def _apply_worker_args(
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    with_scores: bool,
+    return_posteriors: bool,
+    prob_threshold: int,
+) -> tuple:
+    return (
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        nuc_min_size,
+        with_scores,
+        return_posteriors,
+        prob_threshold,
+    )
+
+
+def _fused_worker_args(
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    with_scores: bool,
+    prob_threshold: int,
+    min_llr: float,
+    min_opps: int,
+    unify_threshold: int,
+) -> tuple:
+    return (
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        nuc_min_size,
+        with_scores,
+        prob_threshold,
+        mode,
+        context_size,
+        min_llr,
+        min_opps,
+        unify_threshold,
+    )
+
+
 def _new_streaming_counters() -> dict:
     return {
         'reads_with_footprints': 0,
@@ -221,12 +275,11 @@ def _process_bam_streaming_pipeline_fused(
                             chunk_payloads,
                             chunk_read_objs,
                             chunk_skip_flags,
-                            (
-                                edge_trim, circular, mode,
-                                context_size, msp_min_size, nuc_min_size,
-                                with_scores, prob_threshold,
-                                mode, context_size,
-                                min_llr, min_opps, unify_threshold,
+                            _fused_worker_args(
+                                edge_trim, circular, mode, context_size,
+                                msp_min_size, nuc_min_size, with_scores,
+                                prob_threshold, min_llr, min_opps,
+                                unify_threshold,
                             ),
                         )
                         chunk_payloads = []
@@ -258,12 +311,11 @@ def _process_bam_streaming_pipeline_fused(
                         chunk_payloads,
                         chunk_read_objs,
                         chunk_skip_flags,
-                        (
-                            edge_trim, circular, mode,
-                            context_size, msp_min_size, nuc_min_size,
-                            with_scores, prob_threshold,
-                            mode, context_size,
-                            min_llr, min_opps, unify_threshold,
+                        _fused_worker_args(
+                            edge_trim, circular, mode, context_size,
+                            msp_min_size, nuc_min_size, with_scores,
+                            prob_threshold, min_llr, min_opps,
+                            unify_threshold,
                         ),
                     )
 
@@ -420,10 +472,10 @@ def _process_bam_streaming_pipeline(
                             chunk_reads,
                             chunk_read_objs,
                             chunk_skip_flags,
-                            (
+                            _apply_worker_args(
                                 edge_trim, circular, mode, context_size,
-                                msp_min_size, nuc_min_size, with_scores, return_posteriors,
-                                prob_threshold,
+                                msp_min_size, nuc_min_size, with_scores,
+                                return_posteriors, prob_threshold,
                             ),
                         )
                         chunk_reads = []
@@ -457,10 +509,10 @@ def _process_bam_streaming_pipeline(
                         chunk_reads,
                         chunk_read_objs,
                         chunk_skip_flags,
-                        (
+                        _apply_worker_args(
                             edge_trim, circular, mode, context_size,
-                            msp_min_size, nuc_min_size, with_scores, return_posteriors,
-                            prob_threshold,
+                            msp_min_size, nuc_min_size, with_scores,
+                            return_posteriors, prob_threshold,
                         ),
                     )
 
