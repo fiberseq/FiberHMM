@@ -1286,7 +1286,7 @@ def _read_mod_query_positions(read, prob_threshold: int, mode: str) -> Set[int]:
 
     mm_tag = get_preferred_tag(read, 'MM', 'Mm')
     ml_tag = get_preferred_tag(read, 'ML', 'Ml')
-    if mm_tag and ml_tag:
+    if _has_mm_ml_inputs(mm_tag, ml_tag):
         return parse_mm_tag_query_positions(
             mm_tag, ml_tag, read.query_sequence,
             read.is_reverse, prob_threshold, mode=mode,

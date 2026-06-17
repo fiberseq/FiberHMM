@@ -79,6 +79,58 @@ def test_has_mm_ml_inputs_handles_empty_and_numpy_ml_tags():
     assert _has_mm_ml_inputs("A+a,0;", 128)
 
 
+def test_read_mod_query_positions_accepts_numpy_ml_tag(monkeypatch):
+    ml_tag = np.asarray([200], dtype=np.uint8)
+
+    class Read:
+        query_sequence = "AAAA"
+        is_reverse = False
+
+        def has_tag(self, tag):
+            return tag in {"MM", "ML"}
+
+        def get_tag(self, tag):
+            if tag == "MM":
+                return "A+a,0;"
+            if tag == "ML":
+                return ml_tag
+            raise KeyError(tag)
+
+    captured = {}
+
+    def fake_parse(mm_tag, got_ml_tag, sequence, is_reverse, prob_threshold, mode):
+        captured.update({
+            "mm_tag": mm_tag,
+            "ml_tag": got_ml_tag,
+            "sequence": sequence,
+            "is_reverse": is_reverse,
+            "prob_threshold": prob_threshold,
+            "mode": mode,
+        })
+        return {0}
+
+    monkeypatch.setattr(
+        bam_reader,
+        "get_modified_positions_pysam",
+        lambda *args, **kwargs: set(),
+    )
+    monkeypatch.setattr(bam_reader, "parse_mm_tag_query_positions", fake_parse)
+
+    assert bam_reader._read_mod_query_positions(
+        Read(),
+        prob_threshold=125,
+        mode="pacbio-fiber",
+    ) == {0}
+    assert captured.pop("ml_tag") is ml_tag
+    assert captured == {
+        "mm_tag": "A+a,0;",
+        "sequence": "AAAA",
+        "is_reverse": False,
+        "prob_threshold": 125,
+        "mode": "pacbio-fiber",
+    }
+
+
 def test_read_bam_keeps_raw_ml_container_for_manual_parser(monkeypatch):
     import array as pyarray
 
