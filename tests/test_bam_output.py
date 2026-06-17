@@ -66,6 +66,31 @@ def test_throughput_gbs_handles_positive_and_non_positive_elapsed():
     assert bam_output._throughput_gbs(8.0, -1.0) == 0.0
 
 
+def test_try_pysam_index_reports_success(monkeypatch, capsys):
+    indexed = []
+    monkeypatch.setattr(bam_output.pysam, "index", lambda path: indexed.append(path))
+    monkeypatch.setattr(bam_output.time, "time", lambda: 12.5)
+
+    assert bam_output._try_pysam_index("out.bam", verbose=True, idx_start=10.0)
+
+    assert indexed == ["out.bam"]
+    assert "Index created (pysam) in 2.5s" in capsys.readouterr().out
+
+
+def test_try_pysam_index_returns_false_on_samtools_error(monkeypatch, capsys):
+    class FakeSamtoolsError(Exception):
+        pass
+
+    def fail_index(path):
+        raise FakeSamtoolsError(path)
+
+    monkeypatch.setattr(bam_output.pysam.utils, "SamtoolsError", FakeSamtoolsError)
+    monkeypatch.setattr(bam_output.pysam, "index", fail_index)
+
+    assert not bam_output._try_pysam_index("out.bam", verbose=True, idx_start=10.0)
+    assert capsys.readouterr().out == ""
+
+
 def test_sorted_bed_temp_path_appends_sorted_suffix():
     assert bam_output._sorted_bed_temp_path("calls.bed") == "calls.bed.sorted"
 

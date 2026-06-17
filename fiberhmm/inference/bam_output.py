@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from typing import List, Optional, Sequence
 
 import numpy as np
@@ -101,6 +102,18 @@ def _throughput_gbs(size_gb: float, elapsed_seconds: float) -> float:
     return size_gb / elapsed_seconds
 
 
+def _try_pysam_index(output_bam: str, verbose: bool, idx_start: float) -> bool:
+    try:
+        pysam.index(output_bam)
+    except pysam.utils.SamtoolsError:
+        return False
+
+    if verbose:
+        idx_time = time.time() - idx_start
+        print(f"  ✓ Index created (pysam) in {idx_time:.1f}s")
+    return True
+
+
 def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4):
     """
     Index a BAM file, sorting first only if needed.
@@ -109,8 +122,6 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
     since regions are processed and concatenated in order. Try indexing
     first to save time; only sort if indexing fails.
     """
-    import time
-
     bam_size_gb = _file_size_gb(output_bam)
 
     # Try indexing directly first (using samtools with threads for speed)
@@ -138,25 +149,16 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
             # Some other error, try pysam
             if verbose:
                 print(f"  samtools index error: {result.stderr.strip()}, trying pysam...")
-            pysam.index(output_bam)
-            if verbose:
-                idx_time = time.time() - idx_start
-                print(f"  ✓ Index created (pysam) in {idx_time:.1f}s")
-            return
+            if _try_pysam_index(output_bam, verbose, idx_start):
+                return
 
     except FileNotFoundError:
         # samtools not found, try pysam
         if verbose:
             print("  samtools not found, using pysam...")
-        try:
-            idx_start = time.time()
-            pysam.index(output_bam)
-            if verbose:
-                idx_time = time.time() - idx_start
-                print(f"  ✓ Index created (pysam) in {idx_time:.1f}s")
+        idx_start = time.time()
+        if _try_pysam_index(output_bam, verbose, idx_start):
             return
-        except pysam.utils.SamtoolsError:
-            pass
     except pysam.utils.SamtoolsError:
         pass
 
