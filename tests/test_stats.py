@@ -112,6 +112,28 @@ def test_stats_tag_helpers_flip_intervals_and_scale_scores():
     assert stats_module._scaled_score_tag(read, "aq") is None
 
 
+def test_stats_read_signal_arrays_loads_intervals_and_optional_scores():
+    read = _FakeRead({
+        "ns": [10],
+        "nl": [5],
+        "as": [20],
+        "al": [7],
+        "nq": [255],
+        "aq": [128],
+    })
+
+    without_scores = stats_module._stats_read_signal_arrays(read, with_scores=False)
+    with_scores = stats_module._stats_read_signal_arrays(read, with_scores=True)
+
+    np.testing.assert_array_equal(without_scores[0], [10])
+    np.testing.assert_array_equal(without_scores[1], [5])
+    np.testing.assert_array_equal(without_scores[2], [20])
+    np.testing.assert_array_equal(without_scores[3], [7])
+    assert without_scores[4:] == (None, None)
+    np.testing.assert_allclose(with_scores[4], [1.0])
+    np.testing.assert_allclose(with_scores[5], [128 / 255])
+
+
 def test_footprint_size_bin_counts_use_stable_labels():
     labels, counts = stats_module._footprint_size_bin_counts(
         [0, 19, 20, 149, 500, 9999],

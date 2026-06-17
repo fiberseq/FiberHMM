@@ -99,6 +99,23 @@ def _count_primary_mapped_reads(bam_path: str) -> int:
     return total_reads
 
 
+def _stats_read_signal_arrays(read, with_scores: bool) -> tuple:
+    ns, nl = _flipped_interval_tag_arrays(
+        read, 'ns', 'nl', (np.array([]), np.array([])),
+    )
+    as_starts, al_lengths = _flipped_interval_tag_arrays(
+        read, 'as', 'al', (None, None),
+    )
+
+    ns_scores = None
+    as_scores = None
+    if with_scores:
+        ns_scores = _scaled_score_tag(read, 'nq')
+        as_scores = _scaled_score_tag(read, 'aq')
+
+    return ns, nl, as_starts, al_lengths, ns_scores, as_scores
+
+
 class FootprintStats:
     """Collects footprint statistics from sampled reads."""
 
@@ -471,20 +488,9 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
             if sampled >= n_samples:
                 break
 
-            # Get interval tags (molecular frame -> flip to SEQ/query coords)
-            ns, nl = _flipped_interval_tag_arrays(
-                read, 'ns', 'nl', (np.array([]), np.array([])),
-            )
-            as_starts, al_lengths = _flipped_interval_tag_arrays(
-                read, 'as', 'al', (None, None),
-            )
-
-            # Get scores
-            ns_scores = None
-            as_scores = None
-            if with_scores:
-                ns_scores = _scaled_score_tag(read, 'nq')
-                as_scores = _scaled_score_tag(read, 'aq')
+            (
+                ns, nl, as_starts, al_lengths, ns_scores, as_scores,
+            ) = _stats_read_signal_arrays(read, with_scores)
 
             read_length = read.query_length or 0
             stats.add_read(read_length, ns, nl, as_starts, al_lengths, ns_scores, as_scores)
