@@ -20,6 +20,7 @@ from fiberhmm.inference.circular import (
     split_intervals_for_legacy,
     tile_sequence_and_mods,
 )
+from fiberhmm.inference.payload_read import PayloadRead
 
 try:
     from numba import njit as _numba_njit
@@ -495,39 +496,6 @@ def detect_mode_from_bam(bam_path: str, n_sample: int = 100) -> str:
 # ---------------------------------------------------------------------------
 
 
-class _ApplyPayloadRead:
-    """Minimal duck-type for pysam.AlignedSegment used inside apply workers.
-
-    _extract_fiber_read_from_pysam only reads .query_name, .query_sequence,
-    .is_reverse, .has_tag(t), .get_tag(t) — the same surface this class
-    exposes — so it works unchanged on either a real pysam segment (in main)
-    or this slim payload wrapper (in worker).
-
-    For the DAF MD-fallback path (--mode daf with raw input), the producer
-    side (``make_apply_payload``) computes ``_daf_md_result`` from
-    ``read.get_aligned_pairs(with_seq=True)`` once, and stashes it on the
-    stub. The MD branch in _extract_fiber_read_from_pysam reads it back
-    from there instead of trying to call get_aligned_pairs (which the stub
-    does not implement).
-    """
-    __slots__ = ('query_name', 'query_sequence', 'is_reverse', '_tags',
-                 '_daf_md_result')
-
-    def __init__(self, query_name, query_sequence, is_reverse, tags,
-                 daf_md_result=None):
-        self.query_name = query_name
-        self.query_sequence = query_sequence
-        self.is_reverse = is_reverse
-        self._tags = tags
-        self._daf_md_result = daf_md_result
-
-    def has_tag(self, t):
-        return t in self._tags
-
-    def get_tag(self, t):
-        return self._tags[t]
-
-
 def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[dict]:
     """Extract slim payload from a pysam read for the apply slim-IPC path.
 
@@ -538,7 +506,7 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[di
     additionally pre-computes the MD-derived deamination positions so the
     worker can run the HMM directly on the raw BAM without an upstream
     ``fiberhmm-daf-encode`` pass. The MD walk has to happen here because
-    the slim ``_ApplyPayloadRead`` stub in the worker has no access to the
+    the slim ``PayloadRead`` stub in the worker has no access to the
     live pysam alignment API. Cost: ~1-3ms per read for raw DAF input;
     zero cost for pre-encoded BAMs (the IUPAC fast path triggers first).
 
@@ -586,9 +554,11 @@ def extract_fiber_read_from_payload(payload: dict, mode: str, prob_threshold: in
     extraction failure) — caller treats result=None as 'no footprints'.
     """
     return _extract_fiber_read_from_pysam(
-        _ApplyPayloadRead(
-            payload['query_name'], payload['query_sequence'],
-            payload['is_reverse'], payload['tags'],
+        PayloadRead(
+            payload['query_sequence'],
+            payload['is_reverse'],
+            payload['tags'],
+            query_name=payload['query_name'],
             daf_md_result=payload.get('_daf_md_result'),
         ),
         mode, prob_threshold,

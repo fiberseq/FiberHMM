@@ -48,6 +48,7 @@ import pysam
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.core.tag_access import compact_ml_value
 from fiberhmm.io.bam_header import append_coord_marker
+from fiberhmm.inference.payload_read import PayloadRead
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
     HAS_NUMBA,
@@ -83,28 +84,6 @@ def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold)
 # ---------------------------------------------------------------------------
 # Slim IPC: compact payload helpers (no SAM text serialization in the hot path)
 # ---------------------------------------------------------------------------
-
-class _PayloadRead:
-    """Minimal duck-type for pysam.AlignedSegment used inside worker processes.
-
-    Workers receive a compact dict extracted by _make_payload() in the main
-    process instead of a full SAM string.  This avoids four
-    to_string()/fromstring() calls per read (two in the main process, two in
-    the worker) and the associated MM/ML base64 encoding overhead.
-    """
-    __slots__ = ('query_sequence', 'is_reverse', '_tags', '_daf_md_result')
-
-    def __init__(self, seq, is_reverse, tags, daf_md_result=None):
-        self.query_sequence = seq
-        self.is_reverse = is_reverse
-        self._tags = tags
-        self._daf_md_result = daf_md_result
-
-    def has_tag(self, t):
-        return t in self._tags
-
-    def get_tag(self, t):
-        return self._tags[t]
 
 
 def _make_payload(read, mode=None) -> dict:
@@ -155,11 +134,11 @@ def _process_payload_record(payload) -> tuple:
     write_ma_tags() is intentionally left to the main process so the
     serialized return value stays small (<1 KB for typical call counts).
     """
-    read = _PayloadRead(
+    read = PayloadRead(
         payload['seq'],
         payload['is_reverse'],
         payload['tags'],
-        payload.get('_daf_md_result'),
+        daf_md_result=payload.get('_daf_md_result'),
     )
     tags = payload['tags']
     stats = {key: 0 for key in _STATS_KEYS}
