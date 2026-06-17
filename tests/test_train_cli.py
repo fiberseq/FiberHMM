@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 import numpy as np
 
@@ -28,6 +30,44 @@ def test_expected_model_durations_from_self_transitions():
 
     assert durations[0] == pytest.approx(5.0)
     assert durations[1] == float('inf')
+
+
+def test_training_config_includes_base_model_only_when_used():
+    args = SimpleNamespace(
+        context_size=3,
+        mode="daf",
+        edge_trim=10,
+        prob_adjust=1.25,
+        base_model=None,
+    )
+
+    assert train._training_config(args) == {
+        "context_size": 3,
+        "mode": "daf",
+        "edge_trim": 10,
+        "prob_adjust": 1.25,
+    }
+
+    args.base_model = "base-model.json"
+    assert train._training_config(args)["base_model"] == "base-model.json"
+
+
+def test_model_json_record_uses_plain_lists():
+    model = SimpleNamespace(
+        n_states=2,
+        startprob_=np.array([0.4, 0.6]),
+        transmat_=np.array([[0.9, 0.1], [0.2, 0.8]]),
+        emissionprob_=np.array([[0.1, 0.2], [0.8, 0.9]]),
+    )
+
+    record = train._model_json_record(model)
+
+    assert record == {
+        "n_states": 2,
+        "startprob": [0.4, 0.6],
+        "transmat": [[0.9, 0.1], [0.2, 0.8]],
+        "emissionprob": [[0.1, 0.2], [0.8, 0.9]],
+    }
 
 
 def test_sample_reads_indexed_preserves_reverse_flag(monkeypatch):

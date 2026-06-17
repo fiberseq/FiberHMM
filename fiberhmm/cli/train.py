@@ -869,6 +869,65 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
     print(f"  Saved: {summary_path}")
 
 
+def _model_json_record(model):
+    return {
+        'n_states': model.n_states,
+        'startprob': model.startprob_.tolist(),
+        'transmat': model.transmat_.tolist(),
+        'emissionprob': model.emissionprob_.tolist(),
+    }
+
+
+def _training_config(args):
+    config = {
+        'context_size': args.context_size,
+        'mode': args.mode,
+        'edge_trim': args.edge_trim,
+        'prob_adjust': args.prob_adjust,
+    }
+    if args.base_model:
+        config['base_model'] = args.base_model
+    return config
+
+
+def _save_training_outputs(best_model, all_models, args, train_rids) -> None:
+    print(f"\nSaving to {args.outdir}")
+
+    # Save best model in JSON format (recommended - portable, human-readable)
+    save_model(
+        best_model,
+        os.path.join(args.outdir, 'best-model.json'),
+        context_size=args.context_size,
+        mode=args.mode
+    )
+    print("  Saved: best-model.json (recommended)")
+
+    # Also save in NPZ for backwards compatibility
+    save_model(
+        best_model,
+        os.path.join(args.outdir, 'best-model.npz'),
+        context_size=args.context_size,
+        mode=args.mode
+    )
+    print("  Saved: best-model.npz (numpy format)")
+
+    # Save all models as JSON list
+    all_models_data = [_model_json_record(m) for m in all_models]
+    with open(os.path.join(args.outdir, 'all_models.json'), 'w') as f:
+        json.dump(all_models_data, f)
+
+    # Save training reads (only if we did training)
+    if train_rids:
+        pd.DataFrame({'rid': train_rids}).to_csv(
+            os.path.join(args.outdir, 'training-reads.tsv'),
+            sep='\t', index=False
+        )
+
+    # Save config (JSON - human readable)
+    with open(os.path.join(args.outdir, 'model_config.json'), 'w') as f:
+        json.dump(_training_config(args), f, indent=2)
+
+
 def main():
     args = parse_args()
 
@@ -960,57 +1019,7 @@ def main():
         print(f"\nTraining HMM ({args.iterations} iterations)...")
         best_model, all_models = train_hmm(emission_probs, train_arrays, args.use_hmmlearn)
 
-    # Save
-    print(f"\nSaving to {args.outdir}")
-
-    # Save best model in JSON format (recommended - portable, human-readable)
-    save_model(
-        best_model,
-        os.path.join(args.outdir, 'best-model.json'),
-        context_size=args.context_size,
-        mode=args.mode
-    )
-    print("  Saved: best-model.json (recommended)")
-
-    # Also save in NPZ for backwards compatibility
-    save_model(
-        best_model,
-        os.path.join(args.outdir, 'best-model.npz'),
-        context_size=args.context_size,
-        mode=args.mode
-    )
-    print("  Saved: best-model.npz (numpy format)")
-
-    # Save all models as JSON list
-    all_models_data = []
-    for m in all_models:
-        all_models_data.append({
-            'n_states': m.n_states,
-            'startprob': m.startprob_.tolist(),
-            'transmat': m.transmat_.tolist(),
-            'emissionprob': m.emissionprob_.tolist()
-        })
-    with open(os.path.join(args.outdir, 'all_models.json'), 'w') as f:
-        json.dump(all_models_data, f)
-
-    # Save training reads (only if we did training)
-    if train_rids:
-        pd.DataFrame({'rid': train_rids}).to_csv(
-            os.path.join(args.outdir, 'training-reads.tsv'),
-            sep='\t', index=False
-        )
-
-    # Save config (JSON - human readable)
-    config = {
-        'context_size': args.context_size,
-        'mode': args.mode,
-        'edge_trim': args.edge_trim,
-        'prob_adjust': args.prob_adjust
-    }
-    if args.base_model:
-        config['base_model'] = args.base_model
-    with open(os.path.join(args.outdir, 'model_config.json'), 'w') as f:
-        json.dump(config, f, indent=2)
+    _save_training_outputs(best_model, all_models, args, train_rids)
 
     # Generate stats if requested (only if we have training data)
     if args.stats and valid_reads and encoded_reads:
