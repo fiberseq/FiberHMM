@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pysam
 
-from fiberhmm.inference.region_planning import _get_genome_regions
+from fiberhmm.inference.region_planning import _chromosome_regions, _get_genome_regions
 
 
 def _write_empty_bam(path):
@@ -18,6 +18,14 @@ def _write_empty_bam(path):
     })
     with pysam.AlignmentFile(path, "wb", header=header):
         pass
+
+
+def test_chromosome_regions_tiles_partial_last_region():
+    assert _chromosome_regions("chr1", 250, 100) == [
+        ("chr1", 0, 100),
+        ("chr1", 100, 200),
+        ("chr1", 200, 250),
+    ]
 
 
 def test_get_genome_regions_splits_and_filters(tmp_path):

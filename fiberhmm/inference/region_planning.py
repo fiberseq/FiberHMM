@@ -8,6 +8,13 @@ from typing import Optional, Set
 import pysam
 
 
+_SKIP_CHROM_PATTERNS = (
+    '_RANDOM', '_ALT', '_FIX', '_HAP',
+    'CHRUN_', 'UN_', 'SCAFFOLD', 'CONTIG',
+    '_GL', '_KI', '_JH', '_KB',  # Common GenBank accession prefixes
+)
+
+
 def _is_main_chromosome(chrom: str) -> bool:
     """
     Check if a chromosome name is a main chromosome (not a scaffold/contig).
@@ -25,12 +32,7 @@ def _is_main_chromosome(chrom: str) -> bool:
     c = chrom.upper()
 
     # Skip obvious scaffolds/contigs
-    skip_patterns = [
-        '_RANDOM', '_ALT', '_FIX', '_HAP',
-        'CHRUN_', 'UN_', 'SCAFFOLD', 'CONTIG',
-        '_GL', '_KI', '_JH', '_KB'  # Common GenBank accession prefixes
-    ]
-    for pattern in skip_patterns:
+    for pattern in _SKIP_CHROM_PATTERNS:
         if pattern in c:
             return False
 
@@ -55,6 +57,13 @@ def _is_main_chromosome(chrom: str) -> bool:
         return True
 
     return False
+
+
+def _chromosome_regions(chrom: str, chrom_len: int, region_size: int) -> list[tuple[str, int, int]]:
+    return [
+        (chrom, int(start), int(min(start + region_size, chrom_len)))
+        for start in range(0, int(chrom_len), int(region_size))
+    ]
 
 
 def _get_genome_regions(
@@ -86,8 +95,6 @@ def _get_genome_regions(
                 continue
 
             chrom_len = int(bam.get_reference_length(chrom))
-            for start in range(0, chrom_len, region_size):
-                end = min(start + region_size, chrom_len)
-                regions.append((chrom, int(start), int(end)))
+            regions.extend(_chromosome_regions(chrom, chrom_len, region_size))
 
     return regions
