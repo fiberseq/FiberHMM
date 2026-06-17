@@ -353,6 +353,39 @@ def _daf_encode_skip_reason(read, min_mapq: int, min_read_length: int):
     return None
 
 
+def _daf_encode_summary(total: int, encoded: int, ct_count: int, ga_count: int,
+                        skipped: int, total_deam: int, total_bases: int,
+                        elapsed: float) -> dict:
+    mean_deam_rate = total_deam / total_bases if total_bases > 0 else 0.0
+    return {
+        "total": total,
+        "encoded": encoded,
+        "ct": ct_count,
+        "ga": ga_count,
+        "skipped": skipped,
+        "mean_deam_rate": mean_deam_rate,
+        "elapsed": elapsed,
+    }
+
+
+def _print_daf_encode_summary(summary: dict, log) -> None:
+    print(f"\n{'=' * 60}", file=log)
+    print("fiberhmm-daf-encode summary", file=log)
+    print(f"{'=' * 60}", file=log)
+    print(f"  Total reads:       {summary['total']:>12,}", file=log)
+    print(f"  Encoded:           {summary['encoded']:>12,}", file=log)
+    print(f"    CT (+ strand):   {summary['ct']:>12,}", file=log)
+    print(f"    GA (- strand):   {summary['ga']:>12,}", file=log)
+    print(f"  Skipped:           {summary['skipped']:>12,}", file=log)
+    print(f"  Mean deam. rate:   {summary['mean_deam_rate']:>12.4f}", file=log)
+    print(f"  Elapsed:           {summary['elapsed']:>12.1f}s", file=log)
+    if summary['elapsed'] > 0:
+        throughput = summary['total'] / summary['elapsed']
+        print(f"  Throughput:        {throughput:>12,.0f} reads/sec", file=log)
+    print(f"{'=' * 60}", file=log)
+    log.flush()
+
+
 def process_bam_daf_encode(
     input_bam,
     output_bam,
@@ -497,33 +530,13 @@ def process_bam_daf_encode(
             ref_fasta.close()
 
     elapsed = time.time() - start_time
-    mean_deam_rate = total_deam / total_bases if total_bases > 0 else 0.0
 
     # Summary
-    summary = {
-        "total": total,
-        "encoded": encoded,
-        "ct": ct_count,
-        "ga": ga_count,
-        "skipped": skipped,
-        "mean_deam_rate": mean_deam_rate,
-        "elapsed": elapsed,
-    }
-
-    print(f"\n{'=' * 60}", file=_log)
-    print("fiberhmm-daf-encode summary", file=_log)
-    print(f"{'=' * 60}", file=_log)
-    print(f"  Total reads:       {total:>12,}", file=_log)
-    print(f"  Encoded:           {encoded:>12,}", file=_log)
-    print(f"    CT (+ strand):   {ct_count:>12,}", file=_log)
-    print(f"    GA (- strand):   {ga_count:>12,}", file=_log)
-    print(f"  Skipped:           {skipped:>12,}", file=_log)
-    print(f"  Mean deam. rate:   {mean_deam_rate:>12.4f}", file=_log)
-    print(f"  Elapsed:           {elapsed:>12.1f}s", file=_log)
-    if elapsed > 0:
-        print(f"  Throughput:        {total / elapsed:>12,.0f} reads/sec", file=_log)
-    print(f"{'=' * 60}", file=_log)
-    _log.flush()
+    summary = _daf_encode_summary(
+        total, encoded, ct_count, ga_count, skipped,
+        total_deam, total_bases, elapsed,
+    )
+    _print_daf_encode_summary(summary, _log)
 
     # Sort + index if writing to a file (not stdout)
     if output_bam != "-" and os.path.isfile(output_bam):

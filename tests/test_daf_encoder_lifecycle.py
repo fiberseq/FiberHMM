@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 from types import SimpleNamespace
 
 import pytest
@@ -50,6 +51,39 @@ def test_daf_encode_skip_reason_matches_filter_order():
     assert encoder._daf_encode_skip_reason(
         _daf_read(query_alignment_length=None), 20, 1000
     ) is None
+
+
+def test_daf_encode_summary_and_report_format():
+    summary = encoder._daf_encode_summary(
+        total=100,
+        encoded=80,
+        ct_count=30,
+        ga_count=50,
+        skipped=20,
+        total_deam=25,
+        total_bases=1000,
+        elapsed=2.0,
+    )
+
+    assert summary == {
+        "total": 100,
+        "encoded": 80,
+        "ct": 30,
+        "ga": 50,
+        "skipped": 20,
+        "mean_deam_rate": 0.025,
+        "elapsed": 2.0,
+    }
+
+    log = io.StringIO()
+    encoder._print_daf_encode_summary(summary, log)
+    text = log.getvalue()
+
+    assert "fiberhmm-daf-encode summary" in text
+    assert "Total reads:" in text
+    assert "Mean deam. rate:" in text
+    assert "0.0250" in text
+    assert "50 reads/sec" in text
 
 
 def test_write_skipped_daf_read_writes_updates_and_returns_increment():
