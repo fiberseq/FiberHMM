@@ -616,6 +616,17 @@ def detect_daf_strand(sequence: str, mod_positions: Set[int]) -> str:
     if not mod_positions:
         return '.'
 
+    t_count, a_count = _daf_deamination_base_counts(sequence, mod_positions)
+
+    if t_count > a_count:
+        return '+'  # C->T deamination, + strand
+    elif a_count > t_count:
+        return '-'  # G->A deamination, - strand
+    else:
+        return '.'
+
+
+def _daf_deamination_base_counts(sequence: str, mod_positions: Set[int]) -> tuple:
     seq_upper = sequence.upper()
     t_count = 0
     a_count = 0
@@ -627,13 +638,7 @@ def detect_daf_strand(sequence: str, mod_positions: Set[int]) -> str:
                 t_count += 1
             elif base == 'A':
                 a_count += 1
-
-    if t_count > a_count:
-        return '+'  # C->T deamination, + strand
-    elif a_count > t_count:
-        return '-'  # G->A deamination, - strand
-    else:
-        return '.'
+    return t_count, a_count
 
 
 def daf_strand_from_tag(st_tag: Optional[str]) -> str:

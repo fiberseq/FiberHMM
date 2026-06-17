@@ -22,6 +22,7 @@ try:
         ContextEncoder,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
+        _daf_deamination_base_counts,
         _iter_mm_mod_specs,
         _mm_base_and_mod_code,
         _mm_mod_spec_parts,
@@ -40,6 +41,7 @@ except ImportError:
         ContextEncoder,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
+        _daf_deamination_base_counts,
         _iter_mm_mod_specs,
         _mm_base_and_mod_code,
         _mm_mod_spec_parts,
@@ -398,6 +400,9 @@ class TestDAFStrandDetection:
 
         # Should return '.' for unclear
         assert strand == '.'
+
+    def test_deamination_base_counts_ignore_out_of_range_positions(self):
+        assert _daf_deamination_base_counts("taCG", {0, 1, 2, 99}) == (1, 1)
 
 
 class TestSequenceEncoding:
