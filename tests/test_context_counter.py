@@ -12,6 +12,7 @@ from fiberhmm.probabilities.context_counter import (
     _daf_reconstruction_bases,
     _missing_probability_rows,
     _position_weight,
+    _probability_dataframe_from_counts,
     _probability_row,
     _reconstruct_deaminated_sequence,
     _trim_context,
@@ -91,6 +92,20 @@ def test_aggregate_context_counts_trims_and_merges_centered_contexts():
 
     with pytest.raises(ValueError, match="Requested context size"):
         _aggregate_context_counts({}, max_context=1, context_size=2)
+
+
+def test_probability_dataframe_from_counts_sorts_rows_and_adds_encode():
+    df = _probability_dataframe_from_counts(
+        {
+            "TAT": [2, 2],
+            "CAC": [1, 3],
+        }
+    )
+
+    assert df.to_dict("records") == [
+        {"context": "CAC", "hit": 1, "nohit": 3, "ratio": 0.25, "encode": 0},
+        {"context": "TAT", "hit": 2, "nohit": 2, "ratio": 0.5, "encode": 1},
+    ]
 
 
 def test_add_position_records_valid_center_contexts():

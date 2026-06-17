@@ -98,6 +98,18 @@ def _aggregate_context_counts(counts, max_context: int, context_size: int) -> di
     return dict(aggregated)
 
 
+def _probability_dataframe_from_counts(aggregated: dict) -> pd.DataFrame:
+    rows = [
+        _probability_row(context, counts)
+        for context, counts in sorted(aggregated.items())
+    ]
+    df = pd.DataFrame(rows)
+    if len(df) > 0:
+        df = df.sort_values('context').reset_index(drop=True)
+        df['encode'] = range(len(df))
+    return df
+
+
 class ContextCounter:
     """
     Counts modification hits/misses per sequence context.
@@ -280,18 +292,7 @@ class ContextCounter:
             self.max_context,
             context_size,
         )
-
-        # Build DataFrame
-        rows = []
-        for context, counts in sorted(aggregated.items()):
-            rows.append(_probability_row(context, counts))
-
-        df = pd.DataFrame(rows)
-        if len(df) > 0:
-            df = df.sort_values('context').reset_index(drop=True)
-            df['encode'] = range(len(df))
-
-        return df
+        return _probability_dataframe_from_counts(aggregated)
 
     def get_encoding_table(self, context_size: int = 3, fill_missing: bool = False) -> Tuple[Dict[str, int], pd.DataFrame]:
         """
