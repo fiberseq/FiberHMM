@@ -19,10 +19,18 @@ from fiberhmm.io.bed import bed12_row
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 
+def _samtools_index_cmd(output_bam: str, threads: int) -> List[str]:
+    return ['samtools', 'index', '-@', str(threads), output_bam]
+
+
+def _samtools_sort_cmd(output_bam: str, sorted_bam: str, threads: int) -> List[str]:
+    return ['samtools', 'sort', '-@', str(threads), '-o', sorted_bam, output_bam]
+
+
 def _run_samtools_index(output_bam: str, threads: int, check: bool = False) -> subprocess.CompletedProcess:
     """Run `samtools index` with the shared command shape."""
     return subprocess.run(
-        ['samtools', 'index', '-@', str(threads), output_bam],
+        _samtools_index_cmd(output_bam, threads),
         check=check, capture_output=True, text=True
     )
 
@@ -30,7 +38,7 @@ def _run_samtools_index(output_bam: str, threads: int, check: bool = False) -> s
 def _run_samtools_sort(output_bam: str, sorted_bam: str, threads: int) -> None:
     """Run `samtools sort` and raise with stderr preserved on failure."""
     result = subprocess.run(
-        ['samtools', 'sort', '-@', str(threads), '-o', sorted_bam, output_bam],
+        _samtools_sort_cmd(output_bam, sorted_bam, threads),
         capture_output=True, text=True
     )
     if result.returncode != 0:

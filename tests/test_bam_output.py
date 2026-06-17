@@ -19,6 +19,15 @@ def test_samtools_index_error_requires_sort_detection():
     assert not bam_output._samtools_index_error_requires_sort("")
 
 
+def test_samtools_command_builders_preserve_thread_args():
+    assert bam_output._samtools_index_cmd("out.bam", 8) == [
+        "samtools", "index", "-@", "8", "out.bam",
+    ]
+    assert bam_output._samtools_sort_cmd("out.bam", "out.sorted.bam", 4) == [
+        "samtools", "sort", "-@", "4", "-o", "out.sorted.bam", "out.bam",
+    ]
+
+
 def test_sorted_bam_temp_path_preserves_bam_suffix_convention():
     assert bam_output._sorted_bam_temp_path("out.bam") == "out.sorted.bam"
     assert bam_output._sorted_bam_temp_path("out.cram") == "out.cram.sorted.bam"
