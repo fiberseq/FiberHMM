@@ -40,6 +40,27 @@ def _create_gzip_dataset(
     group.create_dataset(name, data=data, **kwargs)
 
 
+def write_fiber_metadata_datasets(
+    group,
+    fiber_ids,
+    starts,
+    ends,
+    strands,
+    n_fibers: Optional[int] = None,
+) -> None:
+    n = len(fiber_ids) if n_fibers is None else int(n_fibers)
+    if n == 0:
+        group.attrs['n_fibers'] = 0
+        return
+
+    dt = h5py.special_dtype(vlen=str)
+    group.create_dataset('fiber_ids', data=fiber_ids, dtype=dt)
+    _create_gzip_dataset(group, 'fiber_starts', _int32_array(starts))
+    _create_gzip_dataset(group, 'fiber_ends', _int32_array(ends))
+    group.create_dataset('strands', data=strands, dtype=dt)
+    group.attrs['n_fibers'] = n
+
+
 class PosteriorWriter:
     """
     Streaming writer for HMM posteriors to HDF5.
@@ -189,30 +210,18 @@ class PosteriorWriter:
         """Flush all buffers and write metadata arrays."""
         self.flush()
 
-        # Write metadata arrays for each chromosome
-        dt = h5py.special_dtype(vlen=str)
-
         for chrom, grp in self._chrom_groups.items():
             meta = self._chrom_metadata[chrom]
             n_fibers = self._chrom_counts[chrom]
 
-            if n_fibers == 0:
-                grp.attrs['n_fibers'] = 0
-                continue
-
-            grp.create_dataset('fiber_ids', data=meta['ids'], dtype=dt)
-            grp.create_dataset(
-                'fiber_starts',
-                data=np.array(meta['starts'], dtype=np.int32),
-                compression='gzip'
+            write_fiber_metadata_datasets(
+                grp,
+                meta['ids'],
+                meta['starts'],
+                meta['ends'],
+                meta['strands'],
+                n_fibers=n_fibers,
             )
-            grp.create_dataset(
-                'fiber_ends',
-                data=np.array(meta['ends'], dtype=np.int32),
-                compression='gzip'
-            )
-            grp.create_dataset('strands', data=meta['strands'], dtype=dt)
-            grp.attrs['n_fibers'] = n_fibers
 
     def close(self):
         """Finalize and close the H5 file."""

@@ -398,6 +398,7 @@ def export_posteriors_hdf5(
     Memory usage stays bounded regardless of BAM size.
     """
     import h5py
+    from fiberhmm.posteriors.hdf5_backend import write_fiber_metadata_datasets
 
     mode, context_size, regions, params = _prepare_export_run(
         input_bam, model_path, chroms, region_size, mode_override,
@@ -472,26 +473,19 @@ def export_posteriors_hdf5(
         if verbose:
             print("Finalizing metadata...")
 
-        dt = h5py.special_dtype(vlen=str)
         for chrom in regions_by_chrom:
             grp = f[chrom]
             meta = chrom_metadata[chrom]
             n_fibers = chrom_fiber_counts[chrom]
 
-            if n_fibers == 0:
-                grp.attrs['n_fibers'] = 0
-                continue
-
-            # Concatenate pre-built arrays (fast)
-            grp.create_dataset('fiber_ids', data=meta['ids'], dtype=dt)
-            grp.create_dataset('fiber_starts',
-                              data=np.concatenate(meta['starts']) if meta['starts'] else np.array([], dtype=np.int32),
-                              compression='gzip')
-            grp.create_dataset('fiber_ends',
-                              data=np.concatenate(meta['ends']) if meta['ends'] else np.array([], dtype=np.int32),
-                              compression='gzip')
-            grp.create_dataset('strands', data=meta['strands'], dtype=dt)
-            grp.attrs['n_fibers'] = n_fibers
+            write_fiber_metadata_datasets(
+                grp,
+                meta['ids'],
+                np.concatenate(meta['starts']) if meta['starts'] else np.array([], dtype=np.int32),
+                np.concatenate(meta['ends']) if meta['ends'] else np.array([], dtype=np.int32),
+                meta['strands'],
+                n_fibers=n_fibers,
+            )
 
     total_fibers = sum(chrom_fiber_counts.values())
 
