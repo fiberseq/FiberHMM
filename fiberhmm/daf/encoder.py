@@ -91,6 +91,18 @@ def md_matches_cigar(read) -> bool:
     return md_len == cigar_ref_len
 
 
+def _select_daf_strand(n_ct: int, n_ga: int, force_strand=None):
+    if force_strand is not None:
+        return force_strand.upper()
+    if n_ct == 0 and n_ga == 0:
+        return None
+    if n_ct > n_ga:
+        return "CT"
+    if n_ga > n_ct:
+        return "GA"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Per-read encoding
 # ---------------------------------------------------------------------------
@@ -177,19 +189,9 @@ def get_daf_positions(read, force_strand=None, ref_fasta=None):
     n_ct = len(ct_positions)
     n_ga = len(ga_positions)
 
-    # Determine conversion strand
-    if force_strand is not None:
-        strand = force_strand.upper()
-    else:
-        if n_ct == 0 and n_ga == 0:
-            return None
-        if n_ct > n_ga:
-            strand = "CT"
-        elif n_ga > n_ct:
-            strand = "GA"
-        else:
-            # Equal and nonzero -- ambiguous, skip
-            return None
+    strand = _select_daf_strand(n_ct, n_ga, force_strand)
+    if strand is None:
+        return None
 
     return (ct_positions, ga_positions, strand)
 
