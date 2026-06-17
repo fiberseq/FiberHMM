@@ -3,6 +3,8 @@
 import numpy as np
 
 from fiberhmm.inference.reference_mapping import (
+    _first_ref_in_query_interval,
+    _last_ref_in_query_interval,
     query_interval_to_ref_block,
     query_interval_to_ref_span,
     query_to_ref_lookup,
@@ -35,6 +37,15 @@ def test_span_mapping_scans_inward_past_unaligned_edges():
     assert query_interval_to_ref_span(1, 3, q2r) == (102, 104)
     assert query_interval_to_ref_span(2, 3, q2r) == (102, 104)
     assert query_interval_to_ref_span(1, 1, q2r) is None
+
+
+def test_interval_endpoint_scanners_skip_unaligned_positions():
+    q2r = np.array([-1, 101, 102, -1, 104, -1], dtype=np.int64)
+
+    assert _first_ref_in_query_interval(0, 4, q2r) == 101
+    assert _last_ref_in_query_interval(0, 4, q2r) == 102
+    assert _first_ref_in_query_interval(3, 1, q2r) is None
+    assert _last_ref_in_query_interval(5, 1, q2r) is None
 
 
 def test_scored_interval_helpers_keep_scores_aligned_after_sorting():
