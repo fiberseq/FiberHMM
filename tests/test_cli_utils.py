@@ -155,7 +155,7 @@ def test_target_mod_positions_from_bam_read_uses_mm_ml_tags(monkeypatch):
     assert _target_mod_positions_from_bam_read(Read(), 125, "pacbio-fiber") == {2}
     assert captured == {
         "mm_tag": "A+a,0;",
-        "ml_tag": [200],
+        "ml_tag": b"\xc8",
         "sequence": "AAAA",
         "is_reverse": True,
         "prob_threshold": 125,

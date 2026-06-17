@@ -417,11 +417,11 @@ def _passes_transfer_target_filters(read, min_mapq: int,
 
 def _target_mod_positions_from_bam_read(read, prob_threshold: int, mode: str):
     from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
-    from fiberhmm.core.tag_access import get_preferred_tag
+    from fiberhmm.core.tag_access import compact_ml_value, get_preferred_tag
 
     mm_tag = get_preferred_tag(read, 'MM', 'Mm')
     ml_raw = get_preferred_tag(read, 'ML', 'Ml')
-    ml_tag = list(ml_raw) if ml_raw is not None else None
+    ml_tag = compact_ml_value(ml_raw) if ml_raw is not None else None
 
     if mm_tag is None:
         return None
