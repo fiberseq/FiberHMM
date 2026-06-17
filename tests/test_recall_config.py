@@ -2,11 +2,20 @@
 
 from types import SimpleNamespace
 
-from fiberhmm.cli.recall_config import resolve_recall_defaults, should_write_legacy_tags
+from fiberhmm.cli.recall_config import (
+    _recall_preset_for_args,
+    resolve_recall_defaults,
+    should_write_legacy_tags,
+)
 
 
 def test_recall_config_resolves_preset_defaults_and_overrides():
     presets = {"enzyme": {"min_llr": 2.5, "emission_uplift": 1.2}}
+
+    assert _recall_preset_for_args(
+        SimpleNamespace(enzyme="enzyme"), presets,
+    ) == {"min_llr": 2.5, "emission_uplift": 1.2}
+    assert _recall_preset_for_args(SimpleNamespace(enzyme=None), presets) == {}
 
     args = SimpleNamespace(enzyme="enzyme", min_llr=None, emission_uplift=None)
     assert resolve_recall_defaults(args, presets) == (2.5, 1.2)

@@ -3,10 +3,14 @@
 from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
 
 
+def _recall_preset_for_args(args, presets: dict) -> dict:
+    return presets.get(args.enzyme, {}) if args.enzyme else {}
+
+
 def resolve_recall_defaults(args, presets=None):
     """Resolve min-LLR and emission-uplift from CLI overrides or enzyme presets."""
     presets = ENZYME_PRESETS if presets is None else presets
-    preset = presets.get(args.enzyme, {}) if args.enzyme else {}
+    preset = _recall_preset_for_args(args, presets)
     min_llr = args.min_llr if args.min_llr is not None else preset.get('min_llr', 5.0)
     uplift = (
         args.emission_uplift if args.emission_uplift is not None
