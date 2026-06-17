@@ -105,6 +105,15 @@ EXTRA_FIELD_COUNTS = {t: f.count('int[blockCount]')
                      for t, f in _BLOCK_SCORE_FIELDS.items()}
 
 
+def _schema_description(description: str, sample_name: Optional[str] = None) -> str:
+    if not sample_name:
+        return description
+    # Prepend a machine-parseable "Sample: <name>." marker. The autoSQL
+    # description is a free-form string so we stay format-compatible;
+    # bigBedInfo -as surfaces this to downstream tools.
+    return f'Sample: {sample_name}. {description}'
+
+
 def _make_schema(table_name: str, description: str,
                  extract_type: Optional[str] = None,
                  block_scores: bool = False,
@@ -115,11 +124,7 @@ def _make_schema(table_name: str, description: str,
         fields = fields + _BLOCK_SCORE_FIELDS[extract_type]
     if circular_groups:
         fields = fields + _CIRCULAR_FIELDS
-    if sample_name:
-        # Prepend a machine-parseable "Sample: <name>." marker. The autoSQL
-        # description is a free-form string so we stay format-compatible;
-        # bigBedInfo -as surfaces this to downstream tools.
-        description = f'Sample: {sample_name}. {description}'
+    description = _schema_description(description, sample_name)
     return (
         f'table {table_name}\n'
         f'"{description}"\n'

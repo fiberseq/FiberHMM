@@ -29,6 +29,7 @@ from fiberhmm.io.autosql import (
     EXTRA_FIELD_COUNTS,
     _autosql_variant_suffix,
     _canonical_autosql_type,
+    _schema_description,
     get_schema,
     write_autosql_for,
 )
@@ -486,6 +487,13 @@ def test_write_autosql_for_writes_both_variants(tmp_path):
         assert 'blockEr' in content
     with open(circ) as f:
         assert 'circId' in f.read()
+
+
+def test_schema_description_prepends_sample_marker_when_present():
+    assert _schema_description("Track description") == "Track description"
+    assert _schema_description("Track description", "sample-a") == (
+        "Sample: sample-a. Track description"
+    )
 
 
 # ------------------- footprint --------------------------------------
