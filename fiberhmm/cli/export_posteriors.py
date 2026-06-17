@@ -467,6 +467,39 @@ def _new_h5_export_chrom_state(regions_by_chrom: dict) -> tuple[dict, dict, dict
     return chrom_fiber_counts, chrom_metadata, write_buffers
 
 
+def _buffer_h5_region_results(
+    chrom: str,
+    results,
+    write_buffers: dict,
+    write_batch_size: int,
+    flush_buffer,
+) -> None:
+    write_buffers[chrom].extend(results)
+    if len(write_buffers[chrom]) >= write_batch_size:
+        flush_buffer(chrom)
+
+
+def _write_h5_chrom_metadata(
+    h5_file,
+    chrom: str,
+    chrom_metadata: dict,
+    chrom_fiber_counts: dict,
+    write_fiber_metadata_datasets,
+) -> None:
+    grp = h5_file[chrom]
+    meta = chrom_metadata[chrom]
+    n_fibers = chrom_fiber_counts[chrom]
+
+    write_fiber_metadata_datasets(
+        grp,
+        meta['ids'],
+        _concat_h5_metadata_arrays(meta['starts']),
+        _concat_h5_metadata_arrays(meta['ends']),
+        meta['strands'],
+        n_fibers=n_fibers,
+    )
+
+
 def _process_regions(regions, input_bam, model_path, params,
                      n_cores, verbose, result_callback):
     """Process all regions and call result_callback(chrom, results) for each."""
@@ -626,9 +659,9 @@ def export_posteriors_hdf5(
             )
 
         def on_results(chrom, results):
-            write_buffers[chrom].extend(results)
-            if len(write_buffers[chrom]) >= write_batch_size:
-                flush_buffer(chrom)
+            _buffer_h5_region_results(
+                chrom, results, write_buffers, write_batch_size, flush_buffer,
+            )
 
         _process_regions(regions, input_bam, model_path, params, n_cores, verbose, on_results)
 
@@ -641,17 +674,12 @@ def export_posteriors_hdf5(
             print("Finalizing metadata...")
 
         for chrom in regions_by_chrom:
-            grp = f[chrom]
-            meta = chrom_metadata[chrom]
-            n_fibers = chrom_fiber_counts[chrom]
-
-            write_fiber_metadata_datasets(
-                grp,
-                meta['ids'],
-                _concat_h5_metadata_arrays(meta['starts']),
-                _concat_h5_metadata_arrays(meta['ends']),
-                meta['strands'],
-                n_fibers=n_fibers,
+            _write_h5_chrom_metadata(
+                f,
+                chrom,
+                chrom_metadata,
+                chrom_fiber_counts,
+                write_fiber_metadata_datasets,
             )
 
     total_fibers = sum(chrom_fiber_counts.values())

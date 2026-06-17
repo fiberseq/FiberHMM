@@ -304,6 +304,71 @@ def test_new_h5_export_chrom_state_initializes_parallel_trackers():
     assert buffers == {"chr2": [], "chr1": []}
 
 
+def test_h5_region_buffer_flushes_at_batch_size():
+    buffers = {"chr1": [{"read_name": "existing"}]}
+    flushed = []
+
+    export_posteriors._buffer_h5_region_results(
+        "chr1",
+        [{"read_name": "new"}],
+        buffers,
+        write_batch_size=3,
+        flush_buffer=flushed.append,
+    )
+
+    assert buffers["chr1"] == [{"read_name": "existing"}, {"read_name": "new"}]
+    assert flushed == []
+
+    export_posteriors._buffer_h5_region_results(
+        "chr1",
+        [{"read_name": "third"}],
+        buffers,
+        write_batch_size=3,
+        flush_buffer=flushed.append,
+    )
+
+    assert flushed == ["chr1"]
+
+
+def test_write_h5_chrom_metadata_concatenates_sidecars():
+    calls = []
+    h5_file = {"chr1": object()}
+    chrom_metadata = {
+        "chr1": {
+            "ids": ["read-a", "read-b"],
+            "starts": [
+                np.array([10], dtype=np.int32),
+                np.array([20], dtype=np.int32),
+            ],
+            "ends": [
+                np.array([15], dtype=np.int32),
+                np.array([25], dtype=np.int32),
+            ],
+            "strands": ["+", "-"],
+        }
+    }
+    chrom_fiber_counts = {"chr1": 2}
+
+    def fake_write_metadata(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    export_posteriors._write_h5_chrom_metadata(
+        h5_file,
+        "chr1",
+        chrom_metadata,
+        chrom_fiber_counts,
+        fake_write_metadata,
+    )
+
+    args, kwargs = calls[0]
+    assert args[0] is h5_file["chr1"]
+    assert args[1] == ["read-a", "read-b"]
+    np.testing.assert_array_equal(args[2], np.array([10, 20], dtype=np.int32))
+    np.testing.assert_array_equal(args[3], np.array([15, 25], dtype=np.int32))
+    assert args[4] == ["+", "-"]
+    assert kwargs == {"n_fibers": 2}
+
+
 def test_submit_next_region_records_pending_future():
     class FakeExecutor:
         def __init__(self):
