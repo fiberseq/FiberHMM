@@ -1,6 +1,6 @@
 """Tests for shared BED formatting helpers."""
 
-from fiberhmm.io.bed import _bed12_block_fields, bed12_row
+from fiberhmm.io.bed import _bed12_block_fields, _bed12_core_columns, bed12_row
 
 
 def test_bed12_block_fields_format_count_sizes_and_relative_starts():
@@ -9,6 +9,32 @@ def test_bed12_block_fields_format_count_sizes_and_relative_starts():
         "10,10",
         "0,40",
     )
+
+
+def test_bed12_core_columns_preserve_standard_field_order():
+    assert _bed12_core_columns(
+        ref_name="chr1",
+        chrom_start=100,
+        chrom_end=150,
+        read_id="read1",
+        score=42,
+        strand="+",
+        blocks=[(100, 110), (140, 150)],
+        item_rgb="0,0,0",
+    ) == [
+        "chr1",
+        100,
+        150,
+        "read1",
+        42,
+        "+",
+        100,
+        150,
+        "0,0,0",
+        2,
+        "10,10",
+        "0,40",
+    ]
 
 
 def test_bed12_row_formats_standard_and_extra_columns():
