@@ -115,6 +115,20 @@ def _record_mm_mode_specs(counts: dict, mm_tag: str) -> None:
         counts[key] += 1
 
 
+def _record_iupac_mode_indicators(counts: dict, read) -> None:
+    if has_iupac_encoding(read.query_sequence):
+        counts['iupac'] += 1
+    if read.has_tag('st'):
+        counts['st'] += 1
+
+
+def _record_mm_mode_indicators(counts: dict, read) -> None:
+    mm_tag = get_preferred_tag(read, 'MM', 'Mm')
+    if mm_tag:
+        counts['reads_with_mm'] += 1
+        _record_mm_mode_specs(counts, mm_tag)
+
+
 def _mode_from_detection_counts(counts: dict) -> str:
     if counts['reads_with_mm'] == 0:
         # No MM tags found -- check for IUPAC R/Y encoding.
@@ -510,18 +524,11 @@ def detect_mode_from_bam(bam_path: str, n_sample: int = 100) -> str:
                 # Track IUPAC indicators (always, up to n_sample)
                 if n_scanned < n_sample:
                     n_scanned += 1
-                    if has_iupac_encoding(read.query_sequence):
-                        counts['iupac'] += 1
-                    if read.has_tag('st'):
-                        counts['st'] += 1
+                    _record_iupac_mode_indicators(counts, read)
 
                 # Get MM tag
                 if counts['reads_with_mm'] < n_sample:
-                    mm_tag = get_preferred_tag(read, 'MM', 'Mm')
-
-                    if mm_tag:
-                        counts['reads_with_mm'] += 1
-                        _record_mm_mode_specs(counts, mm_tag)
+                    _record_mm_mode_indicators(counts, read)
 
             return _mode_from_detection_counts(counts)
 

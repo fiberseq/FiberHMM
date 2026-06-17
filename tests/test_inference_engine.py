@@ -408,6 +408,32 @@ class TestModeDetection:
         assert counts["c_plus_m"] == 1
         assert counts["other"] == 1
 
+    def test_mode_detection_read_indicator_helpers_update_counts(self):
+        class FakeRead:
+            query_sequence = "ACYR"
+
+            def __init__(self, tags):
+                self.tags = tags
+
+            def has_tag(self, tag):
+                return tag in self.tags
+
+            def get_tag(self, tag):
+                if tag not in self.tags:
+                    raise KeyError(tag)
+                return self.tags[tag]
+
+        counts = engine._new_mode_detection_counts()
+        read = FakeRead({"st": "CT", "MM": "T-a,0;"})
+
+        engine._record_iupac_mode_indicators(counts, read)
+        engine._record_mm_mode_indicators(counts, read)
+
+        assert counts["iupac"] == 1
+        assert counts["st"] == 1
+        assert counts["reads_with_mm"] == 1
+        assert counts["t_minus_a"] == 1
+
     def test_mode_detection_helper_uses_iupac_when_no_mm_tags(self):
         counts = engine._new_mode_detection_counts()
         counts["iupac"] = 1
