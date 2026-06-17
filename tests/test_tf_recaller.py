@@ -393,6 +393,37 @@ def test_spec_mode_splits_wrapped_annotations_and_writes_an():
     assert list(read.get_tag('nq')) == [201, 201]
 
 
+def test_write_ma_tags_reverse_read_flips_intervals_and_edges():
+    read = _FakeRead()
+    read.is_reverse = True
+    tfs = [TFCall(start=60, length=10, llr=5.0, n_opps=5,
+                  left_ambiguity=3, right_ambiguity=6)]
+
+    write_ma_tags(
+        read,
+        100,
+        tf_calls=tfs,
+        kept_nucs=[(10, 20)],
+        msps=[(35, 15)],
+        nq_for_kept_nucs=[200],
+        nuc_el_for_kept=[240],
+        nuc_er_for_kept=[120],
+        also_write_legacy=True,
+        downstream_compat=False,
+    )
+
+    assert read.get_tag('MA') == '100;nuc.QQQ:71-20;msp.:51-15;tf.QQQ:31-10'
+    assert list(read.get_tag('AQ')) == [
+        200, 120, 240,
+        50, ambiguity_to_edge(6), ambiguity_to_edge(3),
+    ]
+    assert list(read.get_tag('ns')) == [70]
+    assert list(read.get_tag('nl')) == [20]
+    assert list(read.get_tag('nq')) == [200]
+    assert list(read.get_tag('as')) == [50]
+    assert list(read.get_tag('al')) == [15]
+
+
 def test_spec_mode_strips_stale_an_when_next_read_is_linear():
     read = _FakeRead()
     read.set_tag('AN', 'stale', value_type='Z')

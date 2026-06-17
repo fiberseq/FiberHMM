@@ -99,6 +99,19 @@ class TFCall:
     right_ambiguity: int  # bp gap to bracketing hit on the right (>=0)
 
 
+@dataclass
+class _TagOutputFrame:
+    nuc_intervals: List[Tuple[int, int]]
+    msp_intervals: List[Tuple[int, int]]
+    tf_intervals: List[Tuple[int, int]]
+    nq_values: List[int]
+    tq_values: List[int]
+    tf_el_values: List[int]
+    tf_er_values: List[int]
+    nuc_el_values: Optional[List[int]]
+    nuc_er_values: Optional[List[int]]
+
+
 def _clear_tags(read, tags: Sequence[str]) -> None:
     """Remove tags when present, matching pysam's tolerated failure mode."""
     for tag in tags:
@@ -130,6 +143,66 @@ def _split_named_intervals(
             if split_quals is not None:
                 split_quals.append(qual_rows[idx])
     return split_intervals, split_names, split_quals, any_split
+
+
+def _prepare_tag_output_frame(
+    read,
+    read_length: int,
+    kept_nucs: Sequence[Tuple[int, int]],
+    msps: Sequence[Tuple[int, int]],
+    tf_intervals: Sequence[Tuple[int, int]],
+    nq_values: Sequence[int],
+    tq_values: Sequence[int],
+    tf_el_values: Sequence[int],
+    tf_er_values: Sequence[int],
+    nuc_el_values: Optional[Sequence[int]] = None,
+    nuc_er_values: Optional[Sequence[int]] = None,
+) -> _TagOutputFrame:
+    """Convert internal SEQ-frame calls to sorted molecular-frame tag rows."""
+    nuc_qqq = nuc_el_values is not None and nuc_er_values is not None
+    if not read_length:
+        return _TagOutputFrame(
+            nuc_intervals=list(kept_nucs),
+            msp_intervals=list(msps),
+            tf_intervals=list(tf_intervals),
+            nq_values=list(nq_values),
+            tq_values=list(tq_values),
+            tf_el_values=list(tf_el_values),
+            tf_er_values=list(tf_er_values),
+            nuc_el_values=list(nuc_el_values) if nuc_el_values is not None else None,
+            nuc_er_values=list(nuc_er_values) if nuc_er_values is not None else None,
+        )
+
+    rev = bool(getattr(read, 'is_reverse', False))
+
+    def _mol(start, length):
+        if rev:
+            return flip_interval_frame(start, length, read_length)
+        return int(start), int(length)
+
+    nuc_recs = sorted(
+        (_mol(start, length), nq_values[i],
+         (nuc_er_values[i] if rev else nuc_el_values[i]) if nuc_qqq else None,
+         (nuc_el_values[i] if rev else nuc_er_values[i]) if nuc_qqq else None)
+        for i, (start, length) in enumerate(kept_nucs)
+    )
+    tf_recs = sorted(
+        (_mol(start, length), tq_values[i],
+         tf_er_values[i] if rev else tf_el_values[i],
+         tf_el_values[i] if rev else tf_er_values[i])
+        for i, (start, length) in enumerate(tf_intervals)
+    )
+    return _TagOutputFrame(
+        nuc_intervals=[r[0] for r in nuc_recs],
+        msp_intervals=sorted(_mol(start, length) for start, length in msps),
+        tf_intervals=[r[0] for r in tf_recs],
+        nq_values=[r[1] for r in nuc_recs],
+        tq_values=[r[1] for r in tf_recs],
+        tf_el_values=[r[2] for r in tf_recs],
+        tf_er_values=[r[3] for r in tf_recs],
+        nuc_el_values=[r[2] for r in nuc_recs] if nuc_qqq else None,
+        nuc_er_values=[r[3] for r in nuc_recs] if nuc_qqq else None,
+    )
 
 
 def build_llr_tables(model) -> Tuple[np.ndarray, np.ndarray]:
@@ -591,42 +664,31 @@ def write_ma_tags(read, read_length: int,
     el_vals = [ambiguity_to_edge(c.left_ambiguity) for c in tf_calls]
     er_vals = [ambiguity_to_edge(c.right_ambiguity) for c in tf_calls]
 
-    # Coordinate frame + ordering for fibertools / Molecular-annotation spec:
-    #  - FiberHMM works in SEQ (query_sequence, forward-reference) coords, but
-    #    ns/nl/as/al and MA must be MOLECULAR (original-fiber) frame. For a
-    #    reverse-mapped read the frames are reverse complements, so flip each
-    #    interval [s,s+l) -> [L-(s+l), L-s) and swap its left/right edge bytes.
-    #  - fibertools requires per-feature positions sorted ascending, so ALWAYS
-    #    re-sort by (molecular) start -- the recaller can append promoted nucs
-    #    out of order even on forward reads.
-    if read_length:
-        rev = bool(getattr(read, 'is_reverse', False))
-
-        def _mol(s, length):
-            return flip_interval_frame(s, length, read_length) if rev else (int(s), int(length))
-
-        nuc_recs = sorted(
-            (_mol(s, length), nq_values[i],
-             (nuc_er_values[i] if rev else nuc_el_values[i]) if nuc_qqq else None,
-             (nuc_el_values[i] if rev else nuc_er_values[i]) if nuc_qqq else None)
-            for i, (s, length) in enumerate(kept_nucs)
-        )
-        kept_nucs = [r[0] for r in nuc_recs]
-        nq_values = [r[1] for r in nuc_recs]
-        if nuc_qqq:
-            nuc_el_values = [r[2] for r in nuc_recs]
-            nuc_er_values = [r[3] for r in nuc_recs]
-        msps = sorted(_mol(s, length) for s, length in msps)
-        tf_recs = sorted(
-            (_mol(s, length), tq_vals[i],
-             er_vals[i] if rev else el_vals[i],
-             el_vals[i] if rev else er_vals[i])
-            for i, (s, length) in enumerate(tf_intervals)
-        )
-        tf_intervals = [r[0] for r in tf_recs]
-        tq_vals = [r[1] for r in tf_recs]
-        el_vals = [r[2] for r in tf_recs]
-        er_vals = [r[3] for r in tf_recs]
+    # FiberHMM works in SEQ coords internally. Tags are written in molecular
+    # frame and sorted within each annotation type for fibertools/spec readers.
+    output_frame = _prepare_tag_output_frame(
+        read,
+        read_length,
+        kept_nucs,
+        msps,
+        tf_intervals,
+        nq_values,
+        tq_vals,
+        el_vals,
+        er_vals,
+        nuc_el_values if nuc_qqq else None,
+        nuc_er_values if nuc_qqq else None,
+    )
+    kept_nucs = output_frame.nuc_intervals
+    msps = output_frame.msp_intervals
+    tf_intervals = output_frame.tf_intervals
+    nq_values = output_frame.nq_values
+    tq_vals = output_frame.tq_values
+    el_vals = output_frame.tf_el_values
+    er_vals = output_frame.tf_er_values
+    if nuc_qqq:
+        nuc_el_values = output_frame.nuc_el_values or []
+        nuc_er_values = output_frame.nuc_er_values or []
 
     if nuc_qqq:
         nuc_q_rows = [[q, el, er]
