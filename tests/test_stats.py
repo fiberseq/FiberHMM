@@ -108,6 +108,10 @@ def test_footprint_size_bin_counts_use_stable_labels():
     assert counts.tolist() == [2, 1, 0, 0, 0, 1, 0, 0, 0, 2]
 
 
+def test_positive_counts_filters_zero_counts_without_reordering():
+    assert stats_module._positive_counts([0, 3, 1, 0, 2]) == [3, 1, 2]
+
+
 def test_add_numeric_summary_writes_requested_keys_and_skips_empty_values():
     summary = {}
 

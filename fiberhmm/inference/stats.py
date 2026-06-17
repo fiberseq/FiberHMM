@@ -54,6 +54,10 @@ def _footprint_size_bin_counts(sizes) -> tuple:
     return _FOOTPRINT_SIZE_BIN_LABELS, counts
 
 
+def _positive_counts(values) -> list:
+    return [x for x in values if x > 0]
+
+
 def _add_numeric_summary(
     summary: dict,
     prefix: str,
@@ -162,7 +166,7 @@ class FootprintStats:
         )
 
         if self.footprints_per_read:
-            fp_per_read = [x for x in self.footprints_per_read if x > 0]
+            fp_per_read = _positive_counts(self.footprints_per_read)
             if fp_per_read:
                 summary['footprints_per_read_median'] = np.median(fp_per_read)
                 summary['footprints_per_read_mean'] = np.mean(fp_per_read)
@@ -302,7 +306,7 @@ class FootprintStats:
 
                 # Footprints per read
                 ax = axes[1, 0]
-                fp_per_read = [x for x in self.footprints_per_read if x > 0]
+                fp_per_read = _positive_counts(self.footprints_per_read)
                 if fp_per_read:
                     ax.hist(fp_per_read, bins=range(0, min(50, max(fp_per_read)+2)),
                            color='forestgreen', edgecolor='white', alpha=0.8)
