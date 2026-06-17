@@ -772,18 +772,7 @@ def _single_read_result_from_prediction(fp_result: dict, strand: str,
         'as_scores': fp_result.get('msp_scores')
     }
     if fp_result.get('circular'):
-        result.update({
-            'circular': True,
-            'circular_read_length': fp_result['circular_read_length'],
-            'circular_ns': fp_result['circular_ns'],
-            'circular_as': fp_result['circular_as'],
-            'circular_ns_scores': fp_result.get('circular_ns_scores'),
-            'circular_as_scores': fp_result.get('circular_as_scores'),
-            'tiled_ns': fp_result['tiled_ns'],
-            'tiled_nl': fp_result['tiled_nl'],
-            'tiled_as': fp_result['tiled_as'],
-            'tiled_al': fp_result['tiled_al'],
-        })
+        result.update(_circular_single_read_fields(fp_result))
 
     if return_posteriors and fp_result.get('posteriors') is not None:
         result['posteriors'] = fp_result['posteriors']
@@ -794,6 +783,21 @@ def _single_read_result_from_prediction(fp_result: dict, strand: str,
         result['strand'] = strand
 
     return result
+
+
+def _circular_single_read_fields(fp_result: dict) -> dict:
+    return {
+        'circular': True,
+        'circular_read_length': fp_result['circular_read_length'],
+        'circular_ns': fp_result['circular_ns'],
+        'circular_as': fp_result['circular_as'],
+        'circular_ns_scores': fp_result.get('circular_ns_scores'),
+        'circular_as_scores': fp_result.get('circular_as_scores'),
+        'tiled_ns': fp_result['tiled_ns'],
+        'tiled_nl': fp_result['tiled_nl'],
+        'tiled_as': fp_result['tiled_as'],
+        'tiled_al': fp_result['tiled_al'],
+    }
 
 
 def _encoding_inputs_for_read(

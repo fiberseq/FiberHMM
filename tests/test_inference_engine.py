@@ -67,6 +67,33 @@ def test_single_read_result_from_prediction_includes_optional_fields():
     np.testing.assert_array_equal(result["encoded"], [1, 2, 3])
 
 
+def test_circular_single_read_fields_maps_circular_prediction_fields():
+    fields = engine._circular_single_read_fields({
+        "circular_read_length": 100,
+        "circular_ns": [(1, 10)],
+        "circular_as": [(20, 5)],
+        "circular_ns_scores": [0.8],
+        "circular_as_scores": [0.6],
+        "tiled_ns": [101],
+        "tiled_nl": [10],
+        "tiled_as": [120],
+        "tiled_al": [5],
+    })
+
+    assert fields == {
+        "circular": True,
+        "circular_read_length": 100,
+        "circular_ns": [(1, 10)],
+        "circular_as": [(20, 5)],
+        "circular_ns_scores": [0.8],
+        "circular_as_scores": [0.6],
+        "tiled_ns": [101],
+        "tiled_nl": [10],
+        "tiled_as": [120],
+        "tiled_al": [5],
+    }
+
+
 def test_encoding_inputs_for_read_tiles_only_circular_reads():
     seq, mods, circular_length = engine._encoding_inputs_for_read(
         "ACGT",
