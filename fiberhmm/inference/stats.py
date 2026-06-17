@@ -7,6 +7,12 @@ import pysam
 from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
+_FOOTPRINT_SIZE_BINS = [0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 10000]
+_FOOTPRINT_SIZE_BIN_LABELS = [
+    '0-20', '20-40', '40-60', '60-80', '80-100',
+    '100-150', '150-200', '200-300', '300-500', '500+',
+]
+
 
 def _positive_gaps_between_intervals(starts: np.ndarray, lengths: np.ndarray) -> list:
     if len(starts) <= 1:
@@ -41,6 +47,11 @@ def _scaled_score_tag(read, tag: str):
         return np.array(read.get_tag(tag)) / 255.0
     except KeyError:
         return None
+
+
+def _footprint_size_bin_counts(sizes) -> tuple:
+    counts, _ = np.histogram(np.array(sizes), bins=_FOOTPRINT_SIZE_BINS)
+    return _FOOTPRINT_SIZE_BIN_LABELS, counts
 
 
 class FootprintStats:
@@ -336,13 +347,7 @@ class FootprintStats:
             # Footprint size vs count (2D histogram)
             ax = axes[1, 1]
             if len(self.footprint_sizes) > 100:
-                # Create size bins
-                sizes = np.array(self.footprint_sizes)
-                bins = [0, 20, 40, 60, 80, 100, 150, 200, 300, 500, 10000]
-                labels = ['0-20', '20-40', '40-60', '60-80', '80-100',
-                         '100-150', '150-200', '200-300', '300-500', '500+']
-                counts, _ = np.histogram(sizes, bins=bins)
-
+                labels, counts = _footprint_size_bin_counts(self.footprint_sizes)
                 ax.barh(range(len(labels)), counts, color='steelblue', alpha=0.8)
                 ax.set_yticks(range(len(labels)))
                 ax.set_yticklabels(labels)

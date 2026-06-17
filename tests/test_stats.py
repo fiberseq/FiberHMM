@@ -86,3 +86,23 @@ def test_stats_tag_helpers_flip_intervals_and_scale_scores():
     assert missing == ("missing", "missing")
     np.testing.assert_allclose(scores, [1.0, 0.0])
     assert stats_module._scaled_score_tag(read, "aq") is None
+
+
+def test_footprint_size_bin_counts_use_stable_labels():
+    labels, counts = stats_module._footprint_size_bin_counts(
+        [0, 19, 20, 149, 500, 9999],
+    )
+
+    assert labels == [
+        "0-20",
+        "20-40",
+        "40-60",
+        "60-80",
+        "80-100",
+        "100-150",
+        "150-200",
+        "200-300",
+        "300-500",
+        "500+",
+    ]
+    assert counts.tolist() == [2, 1, 0, 0, 0, 1, 0, 0, 0, 2]
