@@ -1084,6 +1084,13 @@ def _extract_region_temp_beds(temp_dir: str, region_index: int, extract_types) -
     }
 
 
+def _extract_region_work_items(regions, input_bam: str, temp_dir: str, extract_types):
+    return [
+        (region, input_bam, _extract_region_temp_beds(temp_dir, i, extract_types))
+        for i, region in enumerate(regions)
+    ]
+
+
 def _canonical_extract_type(extract_type: str) -> str:
     return 'nucleosome' if extract_type == 'footprint' else extract_type
 
@@ -1157,10 +1164,12 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
         }
 
         # Work items: per region, a dict of {type: temp_bed_path}
-        work_items = []
-        for i, region in enumerate(regions):
-            per_type_beds = _extract_region_temp_beds(temp_dir, i, extract_types)
-            work_items.append((region, input_bam, per_type_beds))
+        work_items = _extract_region_work_items(
+            regions,
+            input_bam,
+            temp_dir,
+            extract_types,
+        )
 
         total_reads = 0
         total_features = {t: 0 for t in extract_types}

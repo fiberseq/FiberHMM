@@ -424,6 +424,28 @@ def test_extract_region_temp_beds_uses_stable_region_and_type_names(tmp_path):
     }
 
 
+def test_extract_region_work_items_preserve_region_order_and_temp_paths(tmp_path):
+    regions = [("chr1", 0, 100), ("chr2", 50, 75)]
+
+    work_items = extract_tags._extract_region_work_items(
+        regions,
+        "input.bam",
+        str(tmp_path),
+        ["msp", "deam"],
+    )
+
+    assert [item[0] for item in work_items] == regions
+    assert [item[1] for item in work_items] == ["input.bam", "input.bam"]
+    assert work_items[0][2] == {
+        "msp": str(tmp_path / "region_000000_msp.bed"),
+        "deam": str(tmp_path / "region_000000_deam.bed"),
+    }
+    assert work_items[1][2] == {
+        "msp": str(tmp_path / "region_000001_msp.bed"),
+        "deam": str(tmp_path / "region_000001_deam.bed"),
+    }
+
+
 def test_normalize_parallel_extract_args_handles_aliases_and_backcompat_paths():
     output_beds, extract_types = extract_tags._normalize_parallel_extract_args(
         "footprints.bed",
