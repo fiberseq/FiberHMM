@@ -37,6 +37,23 @@ def _daf_read(**overrides):
     return SimpleNamespace(**attrs)
 
 
+class _WritableDafRead:
+    is_unmapped = False
+    is_secondary = False
+    is_supplementary = False
+    mapping_quality = 60
+    query_alignment_length = 1500
+    query_length = 4
+
+    def __init__(self):
+        self.query_sequence = "ACGT"
+        self.query_qualities = [30, 31, 32, 33]
+        self.tags = {}
+
+    def set_tag(self, tag, value, value_type=None):
+        self.tags[tag] = (value, value_type)
+
+
 def test_daf_encode_skip_reason_matches_filter_order():
     assert encoder._daf_encode_skip_reason(_daf_read(), 20, 1000) is None
     assert encoder._daf_encode_skip_reason(
@@ -157,6 +174,76 @@ def test_apply_daf_encoding_to_read_preserves_qualities_and_sets_st_tag():
     assert read.query_sequence == "AYT"
     assert read.query_qualities is qualities
     assert read.tags["st"] == ("CT", "Z")
+
+
+def test_daf_encoded_read_stats_counts_selected_strand_and_bases():
+    assert encoder._daf_encoded_read_stats(_daf_read(query_length=4), "CT", 2) == {
+        "encoded": 1,
+        "skipped": 0,
+        "ct": 1,
+        "ga": 0,
+        "total_deam": 2,
+        "total_bases": 4,
+    }
+    assert encoder._daf_encoded_read_stats(_daf_read(query_length=None), "GA", 3) == {
+        "encoded": 1,
+        "skipped": 0,
+        "ct": 0,
+        "ga": 1,
+        "total_deam": 3,
+        "total_bases": 0,
+    }
+
+
+def test_process_daf_encode_read_writes_encoded_read_and_returns_stats(monkeypatch):
+    read = _WritableDafRead()
+    qualities = read.query_qualities
+    handle = _FakeHandle()
+    handle.written = []
+    handle.write = handle.written.append
+    progress = _FakeProgress()
+
+    monkeypatch.setattr(
+        encoder,
+        "encode_read_daf",
+        lambda *args, **kwargs: ("AYGT", "CT", 1),
+    )
+
+    assert encoder._process_daf_encode_read(
+        handle, progress, read, 20, 1000,
+    ) == {
+        "encoded": 1,
+        "skipped": 0,
+        "ct": 1,
+        "ga": 0,
+        "total_deam": 1,
+        "total_bases": 4,
+    }
+    assert handle.written == [read]
+    assert progress.n == 1
+    assert read.query_sequence == "AYGT"
+    assert read.query_qualities is qualities
+    assert read.tags["st"] == ("CT", "Z")
+
+
+def test_process_daf_encode_read_writes_skipped_read(monkeypatch):
+    read = _WritableDafRead()
+    read.mapping_quality = 10
+    handle = _FakeHandle()
+    handle.written = []
+    handle.write = handle.written.append
+    progress = _FakeProgress()
+
+    def fail_encode(*args, **kwargs):
+        raise AssertionError("filtered reads should not be encoded")
+
+    monkeypatch.setattr(encoder, "encode_read_daf", fail_encode)
+
+    assert encoder._process_daf_encode_read(
+        handle, progress, read, 20, 1000,
+    ) == encoder._daf_skipped_read_stats()
+    assert handle.written == [read]
+    assert progress.n == 1
 
 
 def test_write_skipped_daf_read_writes_updates_and_returns_increment():

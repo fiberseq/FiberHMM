@@ -442,6 +442,55 @@ def _apply_daf_encoding_to_read(read, new_seq: str, st_tag: str) -> None:
     read.set_tag("st", st_tag, value_type="Z")
 
 
+def _daf_encoded_read_stats(read, st_tag: str, n_deam: int) -> dict:
+    return {
+        "encoded": 1,
+        "skipped": 0,
+        "ct": 1 if st_tag == "CT" else 0,
+        "ga": 0 if st_tag == "CT" else 1,
+        "total_deam": n_deam,
+        "total_bases": read.query_length or 0,
+    }
+
+
+def _daf_skipped_read_stats() -> dict:
+    return {
+        "encoded": 0,
+        "skipped": 1,
+        "ct": 0,
+        "ga": 0,
+        "total_deam": 0,
+        "total_bases": 0,
+    }
+
+
+def _process_daf_encode_read(
+    outbam,
+    pbar,
+    read,
+    min_mapq: int,
+    min_read_length: int,
+    force_strand=None,
+    ref_fasta=None,
+) -> dict:
+    skip_reason = _daf_encode_skip_reason(read, min_mapq, min_read_length)
+    if skip_reason:
+        _write_skipped_daf_read(outbam, pbar, read)
+        return _daf_skipped_read_stats()
+
+    result = encode_read_daf(read, force_strand=force_strand, ref_fasta=ref_fasta)
+    if result is None:
+        _write_skipped_daf_read(outbam, pbar, read)
+        return _daf_skipped_read_stats()
+
+    new_seq, st_tag, n_deam = result
+    _apply_daf_encoding_to_read(read, new_seq, st_tag)
+
+    outbam.write(read)
+    pbar.update(1)
+    return _daf_encoded_read_stats(read, st_tag, n_deam)
+
+
 def process_bam_daf_encode(
     input_bam,
     output_bam,
@@ -527,34 +576,21 @@ def process_bam_daf_encode(
         for read in inbam.fetch(until_eof=True):
             total += 1
 
-            skip_reason = _daf_encode_skip_reason(read, min_mapq, min_read_length)
-            if skip_reason:
-                skipped += _write_skipped_daf_read(outbam, pbar, read)
-                continue
-
-            # Encode
-            result = encode_read_daf(read, force_strand=force_strand, ref_fasta=ref_fasta)
-            if result is None:
-                skipped += _write_skipped_daf_read(outbam, pbar, read)
-                continue
-
-            new_seq, st_tag, n_deam = result
-
-            # Update the read: replace sequence (preserving qualities)
-            _apply_daf_encoding_to_read(read, new_seq, st_tag)
-
-            outbam.write(read)
-            encoded += 1
-            total_deam += n_deam
-            if read.query_length:
-                total_bases += read.query_length
-
-            if st_tag == "CT":
-                ct_count += 1
-            else:
-                ga_count += 1
-
-            pbar.update(1)
+            read_stats = _process_daf_encode_read(
+                outbam,
+                pbar,
+                read,
+                min_mapq,
+                min_read_length,
+                force_strand=force_strand,
+                ref_fasta=ref_fasta,
+            )
+            encoded += read_stats["encoded"]
+            skipped += read_stats["skipped"]
+            ct_count += read_stats["ct"]
+            ga_count += read_stats["ga"]
+            total_deam += read_stats["total_deam"]
+            total_bases += read_stats["total_bases"]
 
             # Progress to stderr every 10k reads
             if total % 10000 == 0:
