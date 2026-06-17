@@ -24,6 +24,7 @@ from typing import Iterable, List, Sequence, Tuple
 
 import numpy as np
 
+from fiberhmm.inference.circular import circular_intervals_overlap
 from fiberhmm.inference.tf_recaller import call_tfs_in_interval, merge_intervals
 from fiberhmm.io.ma_tags import ambiguity_to_edge, llr_to_tq
 
@@ -75,6 +76,23 @@ def _keep_nuc_against_linear_intervals(
     return not any(
         _linear_intervals_overlap(nuc_start, nuc_end, other_start, other_end)
         for other_start, other_end in intervals
+    )
+
+
+def _keep_nuc_against_circular_intervals(
+    nuc: NucCall,
+    intervals: Sequence[Tuple[int, int]],
+    unify_threshold: int,
+    read_length: int,
+) -> bool:
+    if nuc.length <= 0:
+        return False
+    if nuc.length >= unify_threshold:
+        return True
+    iv = (nuc.start, nuc.length)
+    return not any(
+        circular_intervals_overlap(iv, other, read_length)
+        for other in intervals
     )
 
 
@@ -474,20 +492,10 @@ def unify_circular_nuc_calls_with_tf_calls(
     Nuc calls and TF calls are in molecular (circular) coordinates; overlap is
     tested with circular-aware segment overlap.
     """
-    from fiberhmm.inference.circular import circular_intervals_overlap
-
     tf_intervals = [(c.start, c.length) for c in tf_calls]
-    kept: List[NucCall] = []
-    for nc in nuc_calls:
-        if nc.length <= 0:
-            continue
-        keep = nc.length >= unify_threshold
-        if not keep:
-            iv = (nc.start, nc.length)
-            keep = not any(
-                circular_intervals_overlap(iv, tfi, read_length)
-                for tfi in tf_intervals
-            )
-        if keep:
-            kept.append(nc)
-    return kept
+    return [
+        nc for nc in nuc_calls
+        if _keep_nuc_against_circular_intervals(
+            nc, tf_intervals, unify_threshold, read_length
+        )
+    ]

@@ -7,6 +7,7 @@ from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
     _circular_uncovered_cut,
+    _keep_nuc_against_circular_intervals,
     _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
     assemble_circular_nuc_msp_tiling,
@@ -199,6 +200,23 @@ def test_unify_circular_drops_short_nuc_overlapping_wrapped_tf():
     kept = unify_circular_nuc_calls_with_tf_calls(nucs, tf, unify_threshold=85,
                                                   read_length=n)
     assert [(k.start, k.length) for k in kept] == [(40, 30)]
+
+
+def test_keep_nuc_against_circular_intervals_keeps_large_nucs():
+    wrapped_tf = [(95, 10)]
+
+    assert not _keep_nuc_against_circular_intervals(
+        NucCall(start=2, length=20, nq=100, el=0, er=0),
+        wrapped_tf,
+        unify_threshold=85,
+        read_length=100,
+    )
+    assert _keep_nuc_against_circular_intervals(
+        NucCall(start=2, length=85, nq=100, el=0, er=0),
+        wrapped_tf,
+        unify_threshold=85,
+        read_length=100,
+    )
 
 
 def test_promote_large_tf_to_nuc():
