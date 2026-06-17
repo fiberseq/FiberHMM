@@ -64,6 +64,10 @@ def _write_skipped_region_read(outbam, read, skip_reasons: dict, reason: str) ->
     return 1
 
 
+def _read_starts_in_region(read, start: int, end: int) -> bool:
+    return int(start) <= int(read.reference_start) < int(end)
+
+
 def _init_region_worker(model_path: str, params: dict):
     """Initialize worker for region-parallel processing."""
     global _worker_model, _worker_region_params
@@ -200,7 +204,7 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
 
                         # Only process reads that START in this region to avoid duplicates.
                         # fetch returns reads that overlap the region.
-                        if read.reference_start < start or read.reference_start >= end:
+                        if not _read_starts_in_region(read, start, end):
                             continue
 
                         if skip_reason:
@@ -346,7 +350,7 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
                     if read.is_unmapped or read.is_secondary or read.is_supplementary:
                         continue
 
-                    if read.reference_start < start or read.reference_start >= end:
+                    if not _read_starts_in_region(read, start, end):
                         continue
 
                     if read.mapping_quality < min_mapq:
@@ -571,7 +575,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         )
                         skipped += 1
                         continue
-                    if read.reference_start < start or read.reference_start >= end:
+                    if not _read_starts_in_region(read, start, end):
                         continue
                     if skip_reason:
                         written += _write_skipped_region_read(
