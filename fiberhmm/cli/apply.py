@@ -241,6 +241,14 @@ def _resolve_mode(args, model_mode: str) -> str:
     return mode
 
 
+def _strand_detection_message(mode: str):
+    if mode == 'daf':
+        return "Strand detection: automatic (C=+, G=-)"
+    if mode == 'nanopore-fiber':
+        return "Strand detection: none (A-centered only)"
+    return None
+
+
 def _print_processing_settings(
     args,
     mode: str,
@@ -266,10 +274,9 @@ def _print_processing_settings(
         print("  Confidence scores: enabled")
     if args.scores_db:
         print(f"  Scores database: {db_path}")
-    if mode == 'daf':
-        print("  Strand detection: automatic (C=+, G=-)")
-    elif mode == 'nanopore-fiber':
-        print("  Strand detection: none (A-centered only)")
+    strand_message = _strand_detection_message(mode)
+    if strand_message:
+        print(f"  {strand_message}")
     if args.no_msps:
         print("  MSP output: disabled (--no-msps)")
     else:

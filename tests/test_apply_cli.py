@@ -22,6 +22,7 @@ from fiberhmm.cli.apply import (
     _resolve_scores_db_path,
     _print_scores_db_summary,
     _processing_status_message,
+    _strand_detection_message,
     _use_streaming_pipeline,
     _stats_output_prefix,
     _scores_db_counts,
@@ -133,6 +134,16 @@ def test_apply_mode_defaults_without_model_metadata(capsys):
 
     assert _resolve_mode(args, model_mode="unknown") == "pacbio-fiber"
     assert "defaulting to 'pacbio-fiber'" in capsys.readouterr().out
+
+
+def test_apply_strand_detection_message_by_mode():
+    assert _strand_detection_message("daf") == (
+        "Strand detection: automatic (C=+, G=-)"
+    )
+    assert _strand_detection_message("nanopore-fiber") == (
+        "Strand detection: none (A-centered only)"
+    )
+    assert _strand_detection_message("pacbio-fiber") is None
 
 
 def test_apply_print_processing_settings_reports_mode_specific_options(capsys):
