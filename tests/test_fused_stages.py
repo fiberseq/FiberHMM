@@ -41,6 +41,16 @@ def test_nuc_call_quality_lists_preserve_nq_el_er_order():
     )
 
 
+def test_interval_pairs_casts_parallel_arrays_to_int_pairs():
+    pairs = fused_stages._interval_pairs(
+        np.asarray([1, 2], dtype=np.int32),
+        np.asarray([10, 20], dtype=np.int64),
+    )
+
+    assert pairs == [(1, 10), (2, 20)]
+    assert all(type(value) is int for pair in pairs for value in pair)
+
+
 def test_circular_read_length_prefers_apply_metadata():
     fiber_read = {"query_sequence": "A" * 100}
 

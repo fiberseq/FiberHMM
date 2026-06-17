@@ -50,6 +50,10 @@ def _interval_pair_lists(intervals):
     return [s for s, _ in intervals], [length for _, length in intervals]
 
 
+def _interval_pairs(starts, lengths):
+    return [(int(start), int(length)) for start, length in zip(starts, lengths)]
+
+
 def _nuc_call_quality_lists(nuc_calls):
     return (
         [k.nq for k in nuc_calls],
@@ -390,10 +394,10 @@ def _build_fused_recall_result_with_nucs_circular(
     read_length = _circular_read_length(fiber_read, apply_result)
     tiled_ns = apply_result.get("tiled_ns", apply_result["ns"])
     tiled_nl = apply_result.get("tiled_nl", apply_result["nl"])
-    tiled_msps = list(zip(
-        (int(s) for s in apply_result.get("tiled_as", apply_result["as"])),
-        (int(x) for x in apply_result.get("tiled_al", apply_result["al"])),
-    ))
+    tiled_msps = _interval_pairs(
+        apply_result.get("tiled_as", apply_result["as"]),
+        apply_result.get("tiled_al", apply_result["al"]),
+    )
 
     # 1) split + edge-refine in tiled coordinates (+ optional Pass-2 phase prior)
     tiled_nucs, tiled_access = recall_nucs_in_read(
