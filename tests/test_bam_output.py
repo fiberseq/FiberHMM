@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -191,6 +192,59 @@ def test_normalize_bed12_blocks_sorts_merges_scores_and_pads():
     assert starts == [0, 29]
     assert sizes == [25, 1]
     assert scores == [82, 0]
+
+
+def test_footprint_bed12_line_from_read_projects_and_formats(monkeypatch):
+    read = SimpleNamespace(
+        reference_name="chr1",
+        is_reverse=True,
+        query_name="read1",
+    )
+    ns = [10, 40]
+    nl = [5, 10]
+    nq = [255, 128]
+
+    monkeypatch.setattr(bam_output, "build_query_to_ref", lambda got_read: {
+        "read": got_read,
+    })
+
+    def fake_scored_interval_spans(got_ns, got_nl, got_scores, query_to_ref):
+        assert got_ns is ns
+        assert got_nl is nl
+        assert got_scores is nq
+        assert query_to_ref == {"read": read}
+        return [(120, 130, 255), (100, 105, 128)]
+
+    monkeypatch.setattr(bam_output, "scored_interval_spans", fake_scored_interval_spans)
+
+    row = bam_output._footprint_bed12_line_from_read(read, ns, nl, nq, with_scores=True)
+
+    assert row.split("\t") == [
+        "chr1",
+        "100",
+        "130",
+        "read1",
+        "2",
+        "-",
+        "100",
+        "130",
+        "0,0,0",
+        "2",
+        "5,10",
+        "0,20",
+        "501,1000",
+    ]
+
+
+def test_footprint_bed12_line_from_read_returns_none_without_ref_blocks(monkeypatch):
+    read = SimpleNamespace(reference_name="chr1", is_reverse=False, query_name="read1")
+
+    monkeypatch.setattr(bam_output, "build_query_to_ref", lambda got_read: {})
+    monkeypatch.setattr(bam_output, "scored_interval_spans", lambda *_: [])
+
+    assert bam_output._footprint_bed12_line_from_read(
+        read, [10], [5], [255], with_scores=True,
+    ) is None
 
 
 @pytest.mark.parametrize(

@@ -624,6 +624,45 @@ def _normalize_bed12_blocks(block_starts, block_sizes, valid_scores, read_length
     return _pad_bed12_blocks(block_starts, block_sizes, valid_scores, read_length)
 
 
+def _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores: bool) -> Optional[str]:
+    chrom = read.reference_name
+    strand = '-' if read.is_reverse else '+'
+
+    query_to_ref = build_query_to_ref(read)
+    blocks = scored_interval_spans(ns, nl, nq if with_scores else None, query_to_ref)
+    ref_starts = [start for start, _, _ in blocks]
+    ref_ends = [end for _, end, _ in blocks]
+    valid_scores = [score for _, _, score in blocks] if with_scores else []
+
+    if not ref_starts:
+        return None
+
+    chrom_start = min(ref_starts)
+    chrom_end = max(ref_ends)
+    block_sizes = [ref_ends[i] - ref_starts[i] for i in range(len(ref_starts))]
+    block_starts = [ref_starts[i] - chrom_start for i in range(len(ref_starts))]
+
+    read_length = chrom_end - chrom_start
+    block_starts, block_sizes, valid_scores = _normalize_bed12_blocks(
+        block_starts,
+        block_sizes,
+        valid_scores,
+        read_length,
+    )
+
+    return _format_footprint_bed12_row(
+        chrom,
+        chrom_start,
+        chrom_end,
+        read.query_name,
+        strand,
+        block_starts,
+        block_sizes,
+        valid_scores,
+        with_scores,
+    )
+
+
 def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
                                   with_scores: bool = False,
                                   n_cores: int = 1) -> int:
@@ -670,48 +709,9 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
                 except KeyError:
                     pass
 
-            # Convert query coords to reference coords
-            chrom = read.reference_name
-            strand = '-' if read.is_reverse else '+'
-
-            # Map footprints to reference coordinates
-            query_to_ref = build_query_to_ref(read)
-            blocks = scored_interval_spans(ns, nl, nq if with_scores else None, query_to_ref)
-            ref_starts = [start for start, _, _ in blocks]
-            ref_ends = [end for _, end, _ in blocks]
-            valid_scores = [score for _, _, score in blocks] if with_scores else []
-
-            if not ref_starts:
+            line = _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores)
+            if line is None:
                 continue
-
-            # Build BED12 record
-            chrom_start = min(ref_starts)
-            chrom_end = max(ref_ends)
-            name = read.query_name
-
-            # Block coordinates (relative to chromStart)
-            block_sizes = [ref_ends[i] - ref_starts[i] for i in range(len(ref_starts))]
-            block_starts = [ref_starts[i] - chrom_start for i in range(len(ref_starts))]
-
-            read_length = chrom_end - chrom_start
-            block_starts, block_sizes, valid_scores = _normalize_bed12_blocks(
-                block_starts,
-                block_sizes,
-                valid_scores,
-                read_length,
-            )
-
-            line = _format_footprint_bed12_row(
-                chrom,
-                chrom_start,
-                chrom_end,
-                name,
-                strand,
-                block_starts,
-                block_sizes,
-                valid_scores,
-                with_scores,
-            )
 
             out.write(line + '\n')
             count += 1
