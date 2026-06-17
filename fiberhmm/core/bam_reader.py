@@ -414,6 +414,30 @@ def _append_mm_mod_result(result: dict, key, positions: np.ndarray,
         result[key] = (positions, qualities)
 
 
+def _print_mm_parse_debug(
+    sequence: str,
+    seq_upper: str,
+    mm_tag: str,
+    ml_arr_all: np.ndarray,
+    is_reverse: bool,
+) -> None:
+    base_counts = {base: seq_upper.count(base) for base in 'ACGT'}
+    print(
+        f"  [DAF DEBUG] Seq len={len(sequence)}, "
+        f"bases: A={base_counts['A']} C={base_counts['C']} "
+        f"G={base_counts['G']} T={base_counts['T']}"
+    )
+    print(f"  [DAF DEBUG] MM tag: {mm_tag[:200]}...")
+    print(
+        f"  [DAF DEBUG] ML tag len: {len(ml_arr_all)}, "
+        f"first 10 values: {ml_arr_all[:10].tolist()}"
+    )
+    print(
+        "  [DAF DEBUG] is_reverse: "
+        f"{is_reverse}, walking on {'RC(SEQ)' if is_reverse else 'SEQ'}"
+    )
+
+
 def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
                                sequence: str, is_reverse: bool) -> Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]]:
     """Parse MM/ML into per-mod-type position + quality arrays (SEQ frame).
@@ -583,15 +607,9 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
     # IPC format), array.array (what pysam returns), or Python list (legacy
     # callers).  All downstream slicing becomes O(1) numpy views.
     ml_arr_all = _ml_tag_to_uint8_array(ml_tag)
-    ml_len_total = len(ml_arr_all)
 
     if debug and mode == 'daf':
-        # Count bases in sequence
-        base_counts = {b: seq_upper.count(b) for b in 'ACGT'}
-        print(f"  [DAF DEBUG] Seq len={len(sequence)}, bases: A={base_counts['A']} C={base_counts['C']} G={base_counts['G']} T={base_counts['T']}")
-        print(f"  [DAF DEBUG] MM tag: {mm_tag[:200]}...")
-        print(f"  [DAF DEBUG] ML tag len: {ml_len_total}, first 10 values: {ml_arr_all[:10].tolist()}")
-        print(f"  [DAF DEBUG] is_reverse: {is_reverse}, walking on {'RC(SEQ)' if is_reverse else 'SEQ'}")
+        _print_mm_parse_debug(sequence, seq_upper, mm_tag, ml_arr_all, is_reverse)
 
     ml_idx = 0
     # Pre-compute base position arrays per target base (cached within one call)

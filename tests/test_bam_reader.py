@@ -35,6 +35,7 @@ try:
         _mm_positions_from_spec,
         _mm_target_base,
         _mm_walk_context,
+        _print_mm_parse_debug,
         _reverse_complement_context,
         detect_daf_strand,
         encode_from_query_sequence,
@@ -62,6 +63,7 @@ except ImportError:
         _mm_positions_from_spec,
         _mm_target_base,
         _mm_walk_context,
+        _print_mm_parse_debug,
         _reverse_complement_context,
         detect_daf_strand,
         encode_from_query_sequence,
@@ -116,6 +118,22 @@ def test_mm_walk_context_builds_forward_and_reverse_search_sequences():
         search_bytes,
         np.frombuffer(b"GCTT", dtype=np.uint8),
     )
+
+
+def test_print_mm_parse_debug_reports_sequence_and_ml_context(capsys):
+    _print_mm_parse_debug(
+        "AACGT",
+        "AACGT",
+        "A+a,0,1;",
+        np.asarray([200, 150], dtype=np.uint8),
+        is_reverse=True,
+    )
+
+    out = capsys.readouterr().out
+    assert "Seq len=5, bases: A=2 C=1 G=1 T=1" in out
+    assert "MM tag: A+a,0,1;..." in out
+    assert "ML tag len: 2, first 10 values: [200, 150]" in out
+    assert "is_reverse: True, walking on RC(SEQ)" in out
 
 
 def test_read_mod_query_positions_accepts_numpy_ml_tag(monkeypatch):
