@@ -8,6 +8,7 @@ import numpy as np
 from fiberhmm.posteriors.region_tsv import (
     format_region_posterior_line,
     merge_region_posteriors_tsv,
+    region_posteriors_needs_h5_conversion,
     region_posteriors_tsv_output_path,
 )
 from fiberhmm.posteriors.tsv_backend import parse_posteriors_line
@@ -39,9 +40,13 @@ def test_format_region_posterior_line_matches_tsv_parser():
 
 def test_region_posteriors_tsv_output_path():
     assert region_posteriors_tsv_output_path("out.h5") == "out.tsv.gz"
+    assert region_posteriors_tsv_output_path("out.hdf5") == "out.tsv.gz"
     assert region_posteriors_tsv_output_path("out.tsv") == "out.tsv.gz"
     assert region_posteriors_tsv_output_path("out.tsv.gz") == "out.tsv.gz"
     assert region_posteriors_tsv_output_path("out") == "out.tsv.gz"
+    assert region_posteriors_needs_h5_conversion("out.h5")
+    assert region_posteriors_needs_h5_conversion("out.hdf5")
+    assert not region_posteriors_needs_h5_conversion("out.tsv.gz")
 
 
 def test_merge_region_posteriors_tsv_orders_regions_and_preserves_input_list(tmp_path):

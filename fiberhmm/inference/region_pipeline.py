@@ -36,8 +36,7 @@ from fiberhmm.inference.region_workers import (
 )
 from fiberhmm.posteriors.region_tsv import (
     merge_region_posteriors_tsv as _merge_region_posteriors_tsv,
-)
-from fiberhmm.posteriors.region_tsv import (
+    region_posteriors_needs_h5_conversion,
     region_posteriors_tsv_output_path,
 )
 
@@ -319,8 +318,11 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                     f"Posteriors: {n_fibers:,} fibers -> {tsv_path} "
                     f"({file_size:.1f} MB, {merge_time:.1f}s)"
                 )
-                if output_posteriors.endswith('.h5'):
-                    print(f"  To convert to H5: python posteriors_io.py tsv2h5 {tsv_path} {output_posteriors}")
+                if region_posteriors_needs_h5_conversion(output_posteriors):
+                    print(
+                        "  To convert to H5: python posteriors_io.py "
+                        f"tsv2h5 {tsv_path} {output_posteriors}"
+                    )
 
         elapsed = time.time() - start_time
         rate = aggregation.total_reads / elapsed if elapsed > 0 else 0

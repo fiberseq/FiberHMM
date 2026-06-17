@@ -10,6 +10,8 @@ from typing import Iterable, Sequence
 
 import numpy as np
 
+from fiberhmm.posteriors.writer import _resolve_writer_format
+
 REGION_POSTERIORS_HEADER = (
     "#read_id\tchrom\tstart\tend\tstrand\tposteriors_b64\tfp_starts\tfp_sizes\n"
 )
@@ -57,13 +59,18 @@ def write_region_posteriors_tsv(tsv_path: str, posteriors_data: Iterable[dict]) 
 
 def region_posteriors_tsv_output_path(output_path: str) -> str:
     """Return the gzipped TSV path produced for a requested posterior path."""
-    if output_path.endswith(".h5"):
-        return output_path.replace(".h5", ".tsv.gz")
+    if _resolve_writer_format(output_path, "auto") == "hdf5":
+        root, _ext = os.path.splitext(output_path)
+        return root + ".tsv.gz"
     if output_path.endswith(".tsv"):
         return output_path + ".gz"
     if output_path.endswith(".tsv.gz"):
         return output_path
     return output_path + ".tsv.gz"
+
+
+def region_posteriors_needs_h5_conversion(output_path: str) -> bool:
+    return _resolve_writer_format(output_path, "auto") == "hdf5"
 
 
 def _region_posteriors_metadata(
