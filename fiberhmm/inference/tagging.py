@@ -135,6 +135,16 @@ def _filter_nucs_with_tf_overlap(
     return kept, kept_scores
 
 
+def _tf_linear_intervals(tf_calls: Sequence[TFCall]) -> list[Interval]:
+    return [(c.start, c.start + c.length) for c in tf_calls]
+
+
+def _linear_intervals_overlap(left: Interval, right: Interval) -> bool:
+    left_start, left_end = left
+    right_start, right_end = right
+    return left_start < right_end and right_start < left_end
+
+
 def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True) -> None:
     """Write legacy apply tags (`ns/nl/as/al`, optional `nq/aq`) in place.
 
@@ -176,12 +186,14 @@ def unify_nucs_with_tf_calls(
     re-derived from a later tag state, which keeps fused call output consistent
     with the HMM scoring pass.
     """
-    tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
+    tf_intervals = _tf_linear_intervals(tf_calls)
 
     def overlaps_tf(interval: Interval) -> bool:
         s, length = interval
-        nuc_end = s + length
-        return any(ts < nuc_end and te > s for ts, te in tf_intervals)
+        return any(
+            _linear_intervals_overlap((s, s + length), tf_interval)
+            for tf_interval in tf_intervals
+        )
 
     return _filter_nucs_with_tf_overlap(
         zip(ns, nl),

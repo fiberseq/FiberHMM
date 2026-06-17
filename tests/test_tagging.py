@@ -8,6 +8,8 @@ import numpy as np
 
 from fiberhmm.inference.tagging import (
     _fused_recall_tag_intervals,
+    _linear_intervals_overlap,
+    _tf_linear_intervals,
     scores_to_u8,
     set_legacy_apply_tags,
     unify_circular_nucs_with_tf_calls,
@@ -136,6 +138,18 @@ def test_fused_recall_tag_intervals_prefer_circular_intervals_when_present():
     result["circular_as"] = [(80, 10)]
 
     assert _fused_recall_tag_intervals(result) == ([(90, 20)], [(80, 10)])
+
+
+def test_linear_tf_interval_helpers_use_half_open_overlap():
+    calls = [
+        TFCall(start=20, length=10, llr=5.0, n_opps=3,
+               left_ambiguity=0, right_ambiguity=0)
+    ]
+
+    assert _tf_linear_intervals(calls) == [(20, 30)]
+    assert _linear_intervals_overlap((10, 20), (20, 30)) is False
+    assert _linear_intervals_overlap((19, 20), (20, 30)) is False
+    assert _linear_intervals_overlap((19, 21), (20, 30)) is True
 
 
 def test_unify_nucs_with_tf_calls_drops_short_overlaps_and_carries_scores():
