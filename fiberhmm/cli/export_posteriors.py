@@ -61,6 +61,41 @@ def _detect_format(output_path: str, format_arg: str) -> str:
     return 'tsv'
 
 
+def _prepare_export_run(
+    input_bam: str,
+    model_path: str,
+    chroms: Optional[Set[str]],
+    region_size: int,
+    mode_override: str,
+    context_size_override: int,
+    edge_trim: int,
+    n_cores: int,
+    output_format: str,
+    verbose: bool,
+    core_note: str = "",
+) -> Tuple[str, int, List[Tuple[str, int, int]], dict]:
+    _, model_context_size, model_mode = load_model_with_metadata(model_path, normalize=True)
+    mode = mode_override if mode_override else model_mode
+    context_size = context_size_override if context_size_override else model_context_size
+
+    if verbose:
+        print(f"Loaded model: mode={model_mode}, context_size={model_context_size}")
+        if mode_override:
+            print(f"  Mode override: {mode}")
+
+    regions = _get_genome_regions(input_bam, region_size, chroms=chroms)
+    if verbose:
+        print(f"Processing {len(regions)} regions from {input_bam}")
+        print(f"Using {n_cores} cores{core_note}, output format: {output_format}")
+
+    params = {
+        'mode': mode,
+        'context_size': context_size,
+        'edge_trim': edge_trim,
+    }
+    return mode, context_size, regions, params
+
+
 def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
                                   context_size: int, edge_trim: int) -> Optional[Dict]:
     """
@@ -308,25 +343,10 @@ def export_posteriors_tsv(
     """Export posterior probabilities to gzipped TSV."""
     from fiberhmm.posteriors.tsv_backend import PosteriorsTSVWriter
 
-    model, model_context_size, model_mode = load_model_with_metadata(model_path, normalize=True)
-    mode = mode_override if mode_override else model_mode
-    context_size = context_size_override if context_size_override else model_context_size
-
-    if verbose:
-        print(f"Loaded model: mode={model_mode}, context_size={model_context_size}")
-        if mode_override:
-            print(f"  Mode override: {mode}")
-
-    regions = _get_genome_regions(input_bam, region_size, chroms=chroms)
-    if verbose:
-        print(f"Processing {len(regions)} regions from {input_bam}")
-        print(f"Using {n_cores} cores, output format: TSV")
-
-    params = {
-        'mode': mode,
-        'context_size': context_size,
-        'edge_trim': edge_trim
-    }
+    mode, context_size, regions, params = _prepare_export_run(
+        input_bam, model_path, chroms, region_size, mode_override,
+        context_size_override, edge_trim, n_cores, "TSV", verbose,
+    )
 
     compress = output_path.endswith('.gz')
     writer = PosteriorsTSVWriter(
@@ -381,25 +401,11 @@ def export_posteriors_hdf5(
     """
     import h5py
 
-    model, model_context_size, model_mode = load_model_with_metadata(model_path, normalize=True)
-    mode = mode_override if mode_override else model_mode
-    context_size = context_size_override if context_size_override else model_context_size
-
-    if verbose:
-        print(f"Loaded model: mode={model_mode}, context_size={model_context_size}")
-        if mode_override:
-            print(f"  Mode override: {mode}")
-
-    regions = _get_genome_regions(input_bam, region_size, chroms=chroms)
-    if verbose:
-        print(f"Processing {len(regions)} regions from {input_bam}")
-        print(f"Using {n_cores} cores with streaming/batched writes, output format: HDF5")
-
-    params = {
-        'mode': mode,
-        'context_size': context_size,
-        'edge_trim': edge_trim
-    }
+    mode, context_size, regions, params = _prepare_export_run(
+        input_bam, model_path, chroms, region_size, mode_override,
+        context_size_override, edge_trim, n_cores, "HDF5", verbose,
+        core_note=" with streaming/batched writes",
+    )
 
     # Group regions by chromosome
     regions_by_chrom = {}
