@@ -489,6 +489,20 @@ def test_streaming_payload_fiber_read_result_maps_chimera(monkeypatch):
         streaming_workers._payload_fiber_read_result(payload, "pacbio-fiber", 128)
 
 
+def test_fused_payload_fiber_read_result_preserves_picklable_chimera(monkeypatch):
+    monkeypatch.setattr(
+        streaming_workers,
+        "extract_fiber_read_from_payload",
+        lambda *_: CHIMERA_SKIP,
+    )
+
+    assert streaming_workers._fused_payload_fiber_read_result(
+        {"read_id": "read1"},
+        "pacbio-fiber",
+        128,
+    ) == streaming_workers.CHIMERA_RESULT
+
+
 def test_run_worker_single_read_forwards_apply_arguments(monkeypatch):
     model = object()
     fiber_read = {"query_sequence": "ACGT"}

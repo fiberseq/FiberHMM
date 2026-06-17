@@ -57,6 +57,15 @@ def _payload_fiber_read_result(
     return fiber_read
 
 
+def _fused_payload_fiber_read_result(payload, mode: str, prob_threshold: int):
+    return _payload_fiber_read_result(
+        payload,
+        mode,
+        prob_threshold,
+        chimera_result=CHIMERA_RESULT,
+    )
+
+
 def _run_worker_single_read(
     fiber_read,
     edge_trim: int,
@@ -292,9 +301,7 @@ def _process_fused_payload_chunk_worker(
     llr_hit, llr_miss = _worker_recall_tables()
 
     def process_item(payload):
-        fiber_read = _payload_fiber_read_result(
-            payload, mode, prob_threshold, chimera_result=CHIMERA_RESULT,
-        )
+        fiber_read = _fused_payload_fiber_read_result(payload, mode, prob_threshold)
         if fiber_read == CHIMERA_RESULT:
             # DAF strand-swap chimera filtered out -- distinct marker so the
             # drain can tally it (vs folding into "no footprints"). The
