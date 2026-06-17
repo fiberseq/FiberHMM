@@ -133,6 +133,32 @@ def _valid_region_tsv_files(temp_tsv_files: Iterable[tuple[int, str]]) -> list[t
     ]
 
 
+def _write_region_tsv_header(
+    outfile,
+    mode: str,
+    context_size: int,
+    edge_trim: int,
+    source_bam: str,
+) -> None:
+    metadata = _posterior_tsv_metadata(
+        mode,
+        context_size,
+        edge_trim,
+        source_bam,
+    )
+    outfile.write(format_posterior_metadata_line(metadata))
+    outfile.write(REGION_POSTERIORS_HEADER)
+
+
+def _copy_region_tsv_records(outfile, tsv_path: str) -> int:
+    n_fibers = 0
+    with open(tsv_path, "r") as infile:
+        for line in infile:
+            outfile.write(line)
+            n_fibers += 1
+    return n_fibers
+
+
 def merge_region_posteriors_tsv(
     temp_tsv_files: Iterable[tuple[int, str]],
     output_path: str,
@@ -152,20 +178,12 @@ def merge_region_posteriors_tsv(
 
     tsv_output = region_posteriors_tsv_output_path(output_path)
     with gzip.open(tsv_output, "wt", compresslevel=4) as outfile:
-        metadata = _posterior_tsv_metadata(
-            mode,
-            context_size,
-            edge_trim,
-            source_bam,
+        _write_region_tsv_header(
+            outfile, mode, context_size, edge_trim, source_bam,
         )
-        outfile.write(format_posterior_metadata_line(metadata))
-        outfile.write(REGION_POSTERIORS_HEADER)
 
         n_fibers = 0
         for _region_idx, tsv_path in valid_files:
-            with open(tsv_path, "r") as infile:
-                for line in infile:
-                    outfile.write(line)
-                    n_fibers += 1
+            n_fibers += _copy_region_tsv_records(outfile, tsv_path)
 
     return n_fibers

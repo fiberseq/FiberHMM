@@ -1,6 +1,7 @@
 """Tests for region-parallel posterior TSV helpers."""
 
 import gzip
+import io
 import json
 
 import numpy as np
@@ -69,6 +70,35 @@ def test_region_posteriors_tsv_output_path():
     assert region_posteriors_needs_h5_conversion("out.h5")
     assert region_posteriors_needs_h5_conversion("out.hdf5")
     assert not region_posteriors_needs_h5_conversion("out.tsv.gz")
+
+
+def test_region_tsv_header_and_record_copy_helpers(tmp_path):
+    output = io.StringIO()
+
+    region_tsv._write_region_tsv_header(
+        output,
+        mode="daf",
+        context_size=5,
+        edge_trim=12,
+        source_bam="/data/input.bam",
+    )
+
+    header_lines = output.getvalue().splitlines()
+    metadata = json.loads(header_lines[0].removeprefix("#metadata:"))
+    assert metadata == {
+        "mode": "daf",
+        "context_size": 5,
+        "edge_trim": 12,
+        "source_bam": "input.bam",
+        "format_version": 1,
+    }
+    assert header_lines[1].startswith("#read_id\tchrom")
+
+    records = tmp_path / "records.tsv"
+    records.write_text("read1\tchr1\t1\t2\t+\tAA==\t\t\n", encoding="utf-8")
+
+    assert region_tsv._copy_region_tsv_records(output, str(records)) == 1
+    assert output.getvalue().endswith("read1\tchr1\t1\t2\t+\tAA==\t\t\n")
 
 
 def test_merge_region_posteriors_tsv_orders_regions_and_preserves_input_list(tmp_path):
