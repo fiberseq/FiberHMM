@@ -10,6 +10,7 @@ from fiberhmm.cli.apply import (
     _context_size_message,
     _dataset_name,
     _ddda_notice_needed,
+    _load_apply_model_with_summary,
     _load_training_read_ids,
     _print_apply_done,
     _print_numba_status,
@@ -51,6 +52,25 @@ def test_apply_model_resolution_requires_model_or_enzyme(capsys):
 
     assert exc.value.code == 1
     assert "one of --model or --enzyme must be provided" in capsys.readouterr().err
+
+
+def test_apply_load_model_with_summary_reports_parameters(monkeypatch, capsys):
+    model = SimpleNamespace(startprob_=[0.4, 0.6], transmat_=[[0.9, 0.1]])
+
+    monkeypatch.setattr(
+        "fiberhmm.cli.apply.load_model_with_metadata",
+        lambda path: (model, 3, "pacbio-fiber"),
+    )
+
+    assert _load_apply_model_with_summary("model.json") == (
+        model, 3, "pacbio-fiber",
+    )
+
+    out = capsys.readouterr().out
+    assert "Loading model from model.json" in out
+    assert "Model loaded successfully" in out
+    assert "Start probs: [0.4, 0.6]" in out
+    assert "Transition matrix:" in out
 
 
 def test_apply_streaming_pipeline_selection():

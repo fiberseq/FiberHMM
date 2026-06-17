@@ -219,6 +219,15 @@ def _print_ddda_two_pass_notice(model_path: str, enzyme: str = None) -> None:
     )
 
 
+def _load_apply_model_with_summary(model_path: str):
+    print(f"Loading model from {model_path}")
+    model, model_context_size, model_mode = load_model_with_metadata(model_path)
+    print("Model loaded successfully")
+    print(f"  Start probs: {model.startprob_}")
+    print(f"  Transition matrix:\n{model.transmat_}")
+    return model, model_context_size, model_mode
+
+
 def _context_size_message(context_size: int) -> str:
     return f"k={context_size} ({2*context_size + 1}-mer)"
 
@@ -463,11 +472,7 @@ def main():
     model_path = _resolve_model_path(args)
 
     # Load model with metadata
-    print(f"Loading model from {model_path}")
-    model, model_context_size, model_mode = load_model_with_metadata(model_path)
-    print("Model loaded successfully")
-    print(f"  Start probs: {model.startprob_}")
-    print(f"  Transition matrix:\n{model.transmat_}")
+    model, model_context_size, model_mode = _load_apply_model_with_summary(model_path)
 
     # Surface the DddA two-pass workflow whenever a DddA model is detected.
     # ddda_nuc.json deliberately does NOT emit sub-nucleosomal TF calls;
