@@ -21,6 +21,7 @@ from fiberhmm.inference.region_workers import (
     _region_read_route,
     _region_result_ns_scores,
     _record_skipped_region_read,
+    _write_unfootprinted_region_read,
     _write_region_posterior_record,
 )
 
@@ -72,6 +73,17 @@ def test_record_skipped_region_read_writes_and_updates_counters():
     assert outbam.written == [read]
     assert skip_reasons["low_mapq"] == 1
     assert (written, skipped) == (4, 3)
+
+
+def test_write_unfootprinted_region_read_counts_no_footprints():
+    read = _route_read()
+    outbam = SimpleNamespace(written=[])
+    outbam.write = outbam.written.append
+    skip_reasons = {"no_footprints": 4}
+
+    assert _write_unfootprinted_region_read(outbam, read, skip_reasons) == 1
+    assert outbam.written == [read]
+    assert skip_reasons["no_footprints"] == 5
 
 
 def test_extract_region_fiber_read_maps_skip_reasons(monkeypatch):

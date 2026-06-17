@@ -86,6 +86,12 @@ def _record_skipped_region_read(
     )
 
 
+def _write_unfootprinted_region_read(outbam, read, skip_reasons: dict) -> int:
+    outbam.write(read)
+    skip_reasons[NO_FOOTPRINTS_SKIP_REASON] += 1
+    return 1
+
+
 def _fiber_read_skip_reason(fiber_read) -> Optional[str]:
     if fiber_read is CHIMERA_SKIP:
         return CHIMERA_SKIP_REASON
@@ -451,7 +457,10 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                                 ):
                                     posteriors_written += 1
                         else:
-                            skip_reasons['no_footprints'] += 1
+                            written += _write_unfootprinted_region_read(
+                                outbam, read, skip_reasons,
+                            )
+                            continue
 
                         outbam.write(read)
                         written += 1
@@ -719,9 +728,9 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                     total_reads += 1
 
                     if not apply_result_has_footprints(apply_result):
-                        outbam.write(read)
-                        written += 1
-                        skip_reasons['no_footprints'] += 1
+                        written += _write_unfootprinted_region_read(
+                            outbam, read, skip_reasons,
+                        )
                         continue
 
                     fused_result = build_fused_recall_result(
