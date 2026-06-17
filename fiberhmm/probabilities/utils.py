@@ -59,6 +59,11 @@ def detect_strand_and_base(sequence: str, mod_positions: Set[int], mode: str) ->
     return '.', 'A'
 
 
+def _standard_output_dirs(output_path: str) -> Tuple[Path, Path, Path]:
+    output_dir = Path(output_path)
+    return output_dir, output_dir / "tables", output_dir / "plots"
+
+
 def setup_output_dirs(output_path: str) -> Tuple[Path, Path, Path]:
     """
     Create standard output directory structure (tables/, plots/).
@@ -69,9 +74,7 @@ def setup_output_dirs(output_path: str) -> Tuple[Path, Path, Path]:
     Returns:
         (output_dir, tables_dir, plots_dir) as Path objects
     """
-    output_dir = Path(output_path)
-    tables_dir = output_dir / "tables"
-    plots_dir = output_dir / "plots"
+    output_dir, tables_dir, plots_dir = _standard_output_dirs(output_path)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     tables_dir.mkdir(exist_ok=True)

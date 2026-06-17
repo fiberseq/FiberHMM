@@ -8,6 +8,7 @@ from fiberhmm.probabilities.output_paths import (
 )
 from fiberhmm.probabilities.utils import (
     _daf_strand_base_from_counts,
+    _standard_output_dirs,
     detect_strand_and_base,
     get_base_name,
     reverse_complement,
@@ -44,6 +45,15 @@ def test_output_directory_helpers(tmp_path):
     assert output_dir.is_dir()
     assert tables_dir.is_dir()
     assert plots_dir.is_dir()
+
+
+def test_standard_output_dirs_returns_layout_without_creating(tmp_path):
+    output_dir, tables_dir, plots_dir = _standard_output_dirs(str(tmp_path / "run"))
+
+    assert output_dir == tmp_path / "run"
+    assert tables_dir == output_dir / "tables"
+    assert plots_dir == output_dir / "plots"
+    assert not output_dir.exists()
 
 
 def test_get_base_name_handles_trailing_slash_and_empty_path():
