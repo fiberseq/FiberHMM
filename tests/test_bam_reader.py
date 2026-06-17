@@ -25,6 +25,7 @@ try:
         _daf_deamination_base_counts,
         _iter_mm_mod_specs,
         _mm_base_indices,
+        _mm_qualities_for_valid_positions,
         _modified_base_quality_passes,
         _mm_base_and_mod_code,
         _mm_mod_spec_parts,
@@ -46,6 +47,7 @@ except ImportError:
         _daf_deamination_base_counts,
         _iter_mm_mod_specs,
         _mm_base_indices,
+        _mm_qualities_for_valid_positions,
         _modified_base_quality_passes,
         _mm_base_and_mod_code,
         _mm_mod_spec_parts,
@@ -316,6 +318,26 @@ class TestMMTagParsing:
         np.testing.assert_array_equal(
             _mm_base_indices(np.array([], dtype=np.int64)),
             [],
+        )
+
+    def test_mm_qualities_for_valid_positions_handles_truncated_ml(self):
+        valid = np.array([True, False, True], dtype=bool)
+
+        np.testing.assert_array_equal(
+            _mm_qualities_for_valid_positions(
+                np.array([200, 100, 180], dtype=np.uint8),
+                valid,
+                n_mods=3,
+            ),
+            [200, 180],
+        )
+        np.testing.assert_array_equal(
+            _mm_qualities_for_valid_positions(
+                np.array([200, 100], dtype=np.uint8),
+                valid,
+                n_mods=3,
+            ),
+            [200],
         )
 
     def test_mm_positions_from_spec_filters_quality_bounds_and_reverse(self):

@@ -330,6 +330,16 @@ def _mm_base_indices(skip_arr: np.ndarray) -> np.ndarray:
     return np.cumsum(skip_arr) + np.arange(len(skip_arr))
 
 
+def _mm_qualities_for_valid_positions(
+    ml_slice: np.ndarray,
+    valid: np.ndarray,
+    n_mods: int,
+) -> np.ndarray:
+    if len(ml_slice) >= n_mods:
+        return ml_slice[valid]
+    return ml_slice[valid[:len(ml_slice)]]
+
+
 def _mm_valid_positions_and_qualities(skip_arr: np.ndarray,
                                       base_positions: np.ndarray,
                                       ml_slice: np.ndarray,
@@ -348,11 +358,7 @@ def _mm_valid_positions_and_qualities(skip_arr: np.ndarray,
         return np.array([], dtype=np.int64), np.array([], dtype=np.uint8)
 
     positions = base_positions[base_indices[valid]]
-    qualities = (
-        ml_slice[valid]
-        if len(ml_slice) >= n_mods
-        else ml_slice[valid[:len(ml_slice)]]
-    )
+    qualities = _mm_qualities_for_valid_positions(ml_slice, valid, n_mods)
 
     if is_reverse:
         positions = q_len - 1 - positions
