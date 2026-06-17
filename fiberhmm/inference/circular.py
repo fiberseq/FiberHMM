@@ -24,6 +24,28 @@ def tile_sequence_and_mods(sequence: str, mod_positions: Iterable[int]) -> tuple
     return sequence * 3, tiled_mods
 
 
+def _project_center_interval(s_raw, e_raw, read_length: int) -> Optional[Interval]:
+    n = int(read_length)
+    s = int(s_raw)
+    e = int(e_raw)
+    if n <= 0 or e <= s:
+        return None
+
+    center_start = n
+    center_end = 2 * n
+    if center_start <= s < center_end:
+        qstart = s - center_start
+        length = min(e - s, n)
+    elif s < center_start and e > center_end:
+        qstart = 0
+        length = n
+    else:
+        return None
+
+    interval = (qstart % n, max(0, min(int(length), n)))
+    return interval if interval[1] > 0 else None
+
+
 def project_center_runs(
     starts: Sequence[int],
     ends: Sequence[int],
@@ -40,28 +62,15 @@ def project_center_runs(
     if n <= 0:
         return []
 
-    center_start = n
-    center_end = 2 * n
     out: list[Interval] = []
     seen: set[Interval] = set()
 
     for s_raw, e_raw in zip(starts, ends):
-        s = int(s_raw)
-        e = int(e_raw)
-        if e <= s:
+        interval = _project_center_interval(s_raw, e_raw, n)
+        if interval is None:
             continue
 
-        if center_start <= s < center_end:
-            qstart = s - center_start
-            length = min(e - s, n)
-        elif s < center_start and e > center_end:
-            qstart = 0
-            length = n
-        else:
-            continue
-
-        interval = (qstart % n, max(0, min(int(length), n)))
-        if interval[1] > 0 and interval not in seen:
+        if interval not in seen:
             out.append(interval)
             seen.add(interval)
 
@@ -81,22 +90,13 @@ def project_center_scores(
     if n <= 0:
         return np.asarray([], dtype=np.float32)
 
-    center_start = n
-    center_end = 2 * n
     out: list[float] = []
     seen: set[Interval] = set()
     for s_raw, e_raw, score in zip(starts, ends, scores):
-        s = int(s_raw)
-        e = int(e_raw)
-        if e <= s:
+        interval = _project_center_interval(s_raw, e_raw, n)
+        if interval is None:
             continue
-        if center_start <= s < center_end:
-            interval = ((s - center_start) % n, max(0, min(e - s, n)))
-        elif s < center_start and e > center_end:
-            interval = (0, n)
-        else:
-            continue
-        if interval[1] > 0 and interval not in seen:
+        if interval not in seen:
             out.append(float(score))
             seen.add(interval)
     return np.asarray(out, dtype=np.float32)
@@ -108,22 +108,15 @@ def project_center_tf_calls(tf_calls: Sequence, read_length: int) -> list:
     if n <= 0:
         return []
 
-    center_start = n
-    center_end = 2 * n
     out = []
     seen: set[Interval] = set()
     for call in tf_calls:
         s = int(call.start)
         e = s + int(call.length)
-        if e <= s:
+        interval = _project_center_interval(s, e, n)
+        if interval is None:
             continue
-        if center_start <= s < center_end:
-            interval = ((s - center_start) % n, max(0, min(e - s, n)))
-        elif s < center_start and e > center_end:
-            interval = (0, n)
-        else:
-            continue
-        if interval[1] <= 0 or interval in seen:
+        if interval in seen:
             continue
         seen.add(interval)
         out.append(type(call)(
@@ -147,22 +140,15 @@ def project_center_nuc_calls(nuc_calls: Sequence, read_length: int) -> list:
     if n <= 0:
         return []
 
-    center_start = n
-    center_end = 2 * n
     out = []
     seen: set[Interval] = set()
     for call in nuc_calls:
         s = int(call.start)
         e = s + int(call.length)
-        if e <= s:
+        interval = _project_center_interval(s, e, n)
+        if interval is None:
             continue
-        if center_start <= s < center_end:
-            interval = ((s - center_start) % n, max(0, min(e - s, n)))
-        elif s < center_start and e > center_end:
-            interval = (0, n)
-        else:
-            continue
-        if interval[1] <= 0 or interval in seen:
+        if interval in seen:
             continue
         seen.add(interval)
         out.append(type(call)(
