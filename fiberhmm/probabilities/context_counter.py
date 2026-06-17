@@ -30,6 +30,10 @@ def _reconstruct_deaminated_sequence(
     return ''.join(seq_list)
 
 
+def _position_weight(weights, position: int) -> float:
+    return weights[position] if position < len(weights) else 0.0
+
+
 class ContextCounter:
     """
     Counts modification hits/misses per sequence context.
@@ -422,7 +426,7 @@ class ContextCounter:
             edge_trim,
         ):
             # Get weight for this position
-            weight = weights[i] if i < len(weights) else 0.0
+            weight = _position_weight(weights, i)
             self._record_context(context, i in mod_positions, weight)
 
     def reset(self):

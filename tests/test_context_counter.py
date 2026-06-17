@@ -4,6 +4,7 @@ import numpy as np
 
 from fiberhmm.probabilities.context_counter import (
     ContextCounter,
+    _position_weight,
     _reconstruct_deaminated_sequence,
 )
 
@@ -11,6 +12,13 @@ from fiberhmm.probabilities.context_counter import (
 def test_reconstruct_deaminated_sequence_only_reverts_matching_bases():
     assert _reconstruct_deaminated_sequence("ATTA", {1, 2, 20}, "T", "C") == "ACCA"
     assert _reconstruct_deaminated_sequence("ATTA", {0, 3}, "T", "C") == "ATTA"
+
+
+def test_position_weight_defaults_out_of_range_to_zero():
+    weights = np.array([0.25, 0.75])
+
+    assert _position_weight(weights, 1) == 0.75
+    assert _position_weight(weights, 2) == 0.0
 
 
 def test_add_position_records_valid_center_contexts():
