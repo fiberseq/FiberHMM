@@ -22,6 +22,11 @@ def _normalized_chromosome_name(chrom: str) -> str:
     return chrom
 
 
+def _has_skip_chromosome_pattern(chrom: str) -> bool:
+    c = chrom.upper()
+    return any(pattern in c for pattern in _SKIP_CHROM_PATTERNS)
+
+
 def _is_main_chromosome(chrom: str) -> bool:
     """
     Check if a chromosome name is a main chromosome (not a scaffold/contig).
@@ -38,9 +43,8 @@ def _is_main_chromosome(chrom: str) -> bool:
     c = chrom.upper()
 
     # Skip obvious scaffolds/contigs
-    for pattern in _SKIP_CHROM_PATTERNS:
-        if pattern in c:
-            return False
+    if _has_skip_chromosome_pattern(c):
+        return False
 
     c = _normalized_chromosome_name(c)
 

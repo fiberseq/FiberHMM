@@ -7,6 +7,7 @@ import pysam
 from fiberhmm.inference.region_planning import (
     _chromosome_regions,
     _get_genome_regions,
+    _has_skip_chromosome_pattern,
     _include_chromosome,
     _normalized_chromosome_name,
 )
@@ -36,6 +37,12 @@ def test_chromosome_regions_tiles_partial_last_region():
 def test_normalized_chromosome_name_strips_chr_prefix_and_uppercases():
     assert _normalized_chromosome_name("chrM") == "M"
     assert _normalized_chromosome_name("2l") == "2L"
+
+
+def test_has_skip_chromosome_pattern_detects_scaffold_markers():
+    assert _has_skip_chromosome_pattern("chrUn_random")
+    assert _has_skip_chromosome_pattern("chr1_KI270706v1_random")
+    assert not _has_skip_chromosome_pattern("chr2L")
 
 
 def test_include_chromosome_applies_allowlist_and_scaffold_filter():
