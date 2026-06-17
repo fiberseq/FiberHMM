@@ -979,39 +979,46 @@ def create_hmmlearn_model(emission_probs: np.ndarray,
     return model
 
 
+def _hmmlearn_version_tuple(version: str) -> Tuple[int, int]:
+    parts = version.split('.') if version else []
+    major_version = int(parts[0]) if parts else 0
+    minor_version = int(parts[1]) if len(parts) > 1 else 0
+    return major_version, minor_version
+
+
+def _hmmlearn_uses_categorical(version: Tuple[int, int]) -> bool:
+    major_version, minor_version = version
+    return major_version > 0 or (major_version == 0 and minor_version >= 3)
+
+
+def _new_hmmlearn_model(model_class, emission_probs: np.ndarray):
+    model = model_class(
+        n_components=2,
+        init_params='',  # Don't auto-initialize
+        params='st',     # Train start and transition probs only
+        n_iter=1000
+    )
+    model.emissionprob_ = emission_probs
+    return model
+
+
 def _try_create_hmmlearn(emission_probs: np.ndarray):
     """Try to create an hmmlearn model, handling version differences."""
     try:
         import hmmlearn
         version = getattr(hmmlearn, '__version__', '0.0.0')
-        major_version = int(version.split('.')[0]) if version else 0
-        minor_version = int(version.split('.')[1]) if len(version.split('.')) > 1 else 0
 
         # hmmlearn >= 0.3 uses CategoricalHMM
-        if major_version > 0 or (major_version == 0 and minor_version >= 3):
+        if _hmmlearn_uses_categorical(_hmmlearn_version_tuple(version)):
             from hmmlearn.hmm import CategoricalHMM
 
-            model = CategoricalHMM(
-                n_components=2,
-                init_params='',  # Don't auto-initialize
-                params='st',     # Train start and transition probs only
-                n_iter=1000
-            )
-            model.emissionprob_ = emission_probs
-            return model
+            return _new_hmmlearn_model(CategoricalHMM, emission_probs)
 
         else:
             # Old hmmlearn with MultinomialHMM
             from hmmlearn.hmm import MultinomialHMM
 
-            model = MultinomialHMM(
-                n_components=2,
-                init_params='',
-                params='st',
-                n_iter=1000
-            )
-            model.emissionprob_ = emission_probs
-            return model
+            return _new_hmmlearn_model(MultinomialHMM, emission_probs)
 
     except ImportError:
         return None

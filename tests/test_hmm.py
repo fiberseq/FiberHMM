@@ -10,20 +10,31 @@ Tests cover:
 """
 import os
 import sys
+import types
 
 import numpy as np
 import pytest
 
 # Try package imports first, fall back to flat imports
 try:
-    from fiberhmm.core.hmm import FiberHMM, _logsumexp, _logsumexp_axis1
+    from fiberhmm.core.hmm import (
+        FiberHMM,
+        _hmmlearn_uses_categorical,
+        _hmmlearn_version_tuple,
+        _logsumexp,
+        _logsumexp_axis1,
+        _try_create_hmmlearn,
+    )
     from fiberhmm.core.model_io import load_model, load_model_with_metadata, save_model
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
     from hmm import (
         FiberHMM,
+        _hmmlearn_uses_categorical,
+        _hmmlearn_version_tuple,
         _logsumexp,
         _logsumexp_axis1,
+        _try_create_hmmlearn,
         load_model,
         load_model_with_metadata,
         save_model,
@@ -146,6 +157,50 @@ class TestForwardBackward:
 
 class TestModelTraining:
     """Test Baum-Welch training."""
+
+    def test_hmmlearn_version_selection(self):
+        assert _hmmlearn_version_tuple("0.2.8") == (0, 2)
+        assert _hmmlearn_version_tuple("0.3.0") == (0, 3)
+        assert _hmmlearn_version_tuple("1.0.0") == (1, 0)
+        assert not _hmmlearn_uses_categorical((0, 2))
+        assert _hmmlearn_uses_categorical((0, 3))
+        assert _hmmlearn_uses_categorical((1, 0))
+
+    def test_try_create_hmmlearn_selects_model_for_version(self, monkeypatch):
+        class FakeCategoricalHMM:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        class FakeMultinomialHMM:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        def install_fake_hmmlearn(version):
+            hmmlearn_module = types.ModuleType("hmmlearn")
+            hmmlearn_module.__version__ = version
+            hmm_module = types.ModuleType("hmmlearn.hmm")
+            hmm_module.CategoricalHMM = FakeCategoricalHMM
+            hmm_module.MultinomialHMM = FakeMultinomialHMM
+            monkeypatch.setitem(sys.modules, "hmmlearn", hmmlearn_module)
+            monkeypatch.setitem(sys.modules, "hmmlearn.hmm", hmm_module)
+
+        emission_probs = np.array([[0.8, 0.2], [0.2, 0.8]])
+
+        install_fake_hmmlearn("0.3.0")
+        categorical = _try_create_hmmlearn(emission_probs)
+        assert isinstance(categorical, FakeCategoricalHMM)
+        assert categorical.kwargs == {
+            "n_components": 2,
+            "init_params": "",
+            "params": "st",
+            "n_iter": 1000,
+        }
+        np.testing.assert_array_equal(categorical.emissionprob_, emission_probs)
+
+        install_fake_hmmlearn("0.2.8")
+        multinomial = _try_create_hmmlearn(emission_probs)
+        assert isinstance(multinomial, FakeMultinomialHMM)
+        np.testing.assert_array_equal(multinomial.emissionprob_, emission_probs)
 
     def test_fit_updates_parameters(self, simple_emission_probs, simple_observations):
         """Test that fit() updates start and transition probabilities."""
