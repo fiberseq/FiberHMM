@@ -12,6 +12,7 @@ import pytest
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.model_io import (
     _json_save_path,
+    _normalize_model_if_requested,
     load_model,
     load_model_for_inference,
     load_model_with_metadata,
@@ -33,6 +34,21 @@ def sample_model():
 
 
 class TestLoadSaveRoundTrip:
+    def test_normalize_model_if_requested_calls_normalize_conditionally(self):
+        class Model:
+            def __init__(self):
+                self.calls = 0
+
+            def normalize_states(self):
+                self.calls += 1
+
+        model = Model()
+
+        assert _normalize_model_if_requested(model, False) is model
+        assert model.calls == 0
+        assert _normalize_model_if_requested(model, True) is model
+        assert model.calls == 1
+
     def test_json_round_trip(self, sample_model, tmp_path):
         filepath = str(tmp_path / "model.json")
         save_model(sample_model, filepath, context_size=3, mode='pacbio-fiber')

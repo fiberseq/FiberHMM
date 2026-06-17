@@ -56,11 +56,15 @@ def load_model(filepath: str, normalize: bool = True) -> FiberHMM:
     """
     model, _, _ = _load_model_and_metadata_by_extension(filepath)
 
-    # Normalize states to ensure correct assignment
-    if normalize:
-        model.normalize_states()
+    _normalize_model_if_requested(model, normalize)
 
     return _unfreeze_model_logs(model)
+
+
+def _normalize_model_if_requested(model: FiberHMM, normalize: bool) -> FiberHMM:
+    if normalize:
+        model.normalize_states()
+    return model
 
 
 def _unfreeze_model_logs(model: FiberHMM) -> FiberHMM:
@@ -293,9 +297,7 @@ def load_model_with_metadata(filepath: str, normalize: bool = True) -> Tuple[Fib
     """
     model, context_size, mode = _load_model_and_metadata_by_extension(filepath)
 
-    # Normalize states to ensure correct assignment
-    if normalize:
-        model.normalize_states()
+    _normalize_model_if_requested(model, normalize)
 
     # Normalize old mode names to new names
     mode = _normalize_mode(mode)
