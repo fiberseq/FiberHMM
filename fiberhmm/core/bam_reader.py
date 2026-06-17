@@ -312,6 +312,50 @@ def _target_base_allowed_for_mode(target_base: str, mode: str) -> bool:
     return True
 
 
+def _mm_valid_positions_and_qualities(skip_arr: np.ndarray,
+                                      base_positions: np.ndarray,
+                                      ml_slice: np.ndarray,
+                                      q_len: int,
+                                      is_reverse: bool) -> Tuple[np.ndarray, np.ndarray]:
+    n_mods = len(skip_arr)
+    if n_mods == 0 or len(base_positions) == 0:
+        return np.array([], dtype=np.int64), np.array([], dtype=np.uint8)
+
+    base_indices = np.cumsum(skip_arr) + np.arange(n_mods)
+    valid = base_indices < len(base_positions)
+    if len(ml_slice) < n_mods:
+        valid[len(ml_slice):] = False
+
+    if not np.any(valid):
+        return np.array([], dtype=np.int64), np.array([], dtype=np.uint8)
+
+    positions = base_positions[base_indices[valid]]
+    qualities = (
+        ml_slice[valid]
+        if len(ml_slice) >= n_mods
+        else ml_slice[valid[:len(ml_slice)]]
+    )
+
+    if is_reverse:
+        positions = q_len - 1 - positions
+
+    return positions, qualities
+
+
+def _mm_positions_from_spec(skip_arr: np.ndarray,
+                            base_positions: np.ndarray,
+                            ml_slice: np.ndarray,
+                            q_len: int,
+                            is_reverse: bool,
+                            prob_threshold: int) -> np.ndarray:
+    positions, qualities = _mm_valid_positions_and_qualities(
+        skip_arr, base_positions, ml_slice, q_len, is_reverse,
+    )
+    if len(qualities) == 0:
+        return positions
+    return positions[qualities >= prob_threshold]
+
+
 def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
                                sequence: str, is_reverse: bool) -> Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]]:
     """Parse MM/ML into per-mod-type position + quality arrays (SEQ frame).
@@ -364,37 +408,20 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
             continue
         target_base, mod_code = base_and_mod
 
-        if n_mods == 0:
-            continue
         # Target positions in the sequence (cached per base)
         base_positions = _cached_base_positions(
             base_positions_cache, target_base, seq_bytes,
         )
 
-        if len(base_positions) == 0:
-            ml_idx += n_mods
-            continue
-
-        # Vectorized skip-count walk
-        base_indices = np.cumsum(skip_arr) + np.arange(n_mods)
-        valid = base_indices < len(base_positions)
-
         ml_end = ml_idx + n_mods
         ml_slice = ml_arr_all[ml_idx:ml_end]
         ml_idx = ml_end
-        if len(ml_slice) < n_mods:
-            valid[len(ml_slice):] = False
 
-        if not np.any(valid):
+        positions, qualities = _mm_valid_positions_and_qualities(
+            skip_arr, base_positions, ml_slice, q_len, is_reverse,
+        )
+        if len(positions) == 0:
             continue
-
-        positions = base_positions[base_indices[valid]]
-        qualities = ml_slice[valid] if len(ml_slice) >= n_mods \
-            else ml_slice[valid[:len(ml_slice)]]
-
-        # Flip from ORIGINAL frame back to SEQ frame for reverse reads.
-        if is_reverse:
-            positions = q_len - 1 - positions
 
         key = (target_base, mod_code)
         if key in result:
@@ -563,29 +590,19 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
             base_pos_cache, target_base, search_bytes,
         )
 
-        if n_mods == 0 or len(base_positions) == 0:
-            ml_idx += n_mods
-            continue
-
-        base_indices = np.cumsum(skip_arr) + np.arange(n_mods)
-
         ml_end = ml_idx + n_mods
         ml_slice_arr = ml_arr_all[ml_idx:ml_end]
         ml_idx = ml_end
 
-        valid = base_indices < len(base_positions)
-        if len(ml_slice_arr) < n_mods:
-            valid[len(ml_slice_arr):] = False
-
-        above_thresh = np.zeros(n_mods, dtype=bool)
-        above_thresh[:len(ml_slice_arr)] = ml_slice_arr >= prob_threshold
-
-        keep = valid & above_thresh
-        if np.any(keep):
-            hit_positions = base_positions[base_indices[keep]]
-            # Flip from ORIGINAL frame back to SEQ frame for reverse reads.
-            if is_reverse:
-                hit_positions = q_len - 1 - hit_positions
+        hit_positions = _mm_positions_from_spec(
+            skip_arr,
+            base_positions,
+            ml_slice_arr,
+            q_len,
+            is_reverse,
+            prob_threshold,
+        )
+        if len(hit_positions) > 0:
             mod_positions.update(hit_positions.tolist())
 
     return mod_positions

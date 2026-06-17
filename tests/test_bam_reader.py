@@ -23,6 +23,7 @@ try:
         _build_hexamer_lookup_with_rc,
         _mm_base_and_mod_code,
         _mm_mod_spec_parts,
+        _mm_positions_from_spec,
         _mm_target_base,
         detect_daf_strand,
         encode_from_query_sequence,
@@ -39,6 +40,7 @@ except ImportError:
         _build_hexamer_lookup_with_rc,
         _mm_base_and_mod_code,
         _mm_mod_spec_parts,
+        _mm_positions_from_spec,
         _mm_target_base,
         detect_daf_strand,
         encode_from_query_sequence,
@@ -219,6 +221,23 @@ class TestMMTagParsing:
         assert _mm_base_and_mod_code(base_mod) == ("A", "a")
         assert _mm_base_and_mod_code("A") is None
         assert _mm_mod_spec_parts("A+a.") is None
+
+    def test_mm_positions_from_spec_filters_quality_bounds_and_reverse(self):
+        skip_arr = np.array([0, 1, 1], dtype=np.int64)
+        base_positions = np.array([1, 4, 8], dtype=np.int64)
+        ml_slice = np.array([200, 100], dtype=np.uint8)
+
+        forward = _mm_positions_from_spec(
+            skip_arr, base_positions, ml_slice,
+            q_len=10, is_reverse=False, prob_threshold=125,
+        )
+        reverse = _mm_positions_from_spec(
+            skip_arr, base_positions, ml_slice,
+            q_len=10, is_reverse=True, prob_threshold=125,
+        )
+
+        np.testing.assert_array_equal(forward, [1])
+        np.testing.assert_array_equal(reverse, [8])
 
     def test_parse_mm_tag_basic(self):
         """Test basic MM tag parsing."""
