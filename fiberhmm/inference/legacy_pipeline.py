@@ -101,6 +101,12 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
     return reads_with_footprints, no_footprints, worker_failures, None
 
 
+def _legacy_posterior_ref_positions(read_obj):
+    if HAS_POSTERIOR_WRITER:
+        return get_ref_positions_from_read(read_obj)
+    return np.array([], dtype=np.int32)
+
+
 def _write_chunk_posteriors(posterior_writer, chunk_results):
     if not posterior_writer or not chunk_results:
         return
@@ -109,14 +115,13 @@ def _write_chunk_posteriors(posterior_writer, chunk_results):
         if result and result.get('posteriors') is not None:
             chrom = read_obj.reference_name
             if chrom:
-                ref_positions = (
-                    get_ref_positions_from_read(read_obj)
-                    if HAS_POSTERIOR_WRITER
-                    else np.array([], dtype=np.int32)
-                )
                 posterior_writer.add_fiber(
                     chrom,
-                    posterior_fiber_data(read_obj, result, ref_positions),
+                    posterior_fiber_data(
+                        read_obj,
+                        result,
+                        _legacy_posterior_ref_positions(read_obj),
+                    ),
                 )
 
 

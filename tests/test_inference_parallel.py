@@ -90,6 +90,25 @@ def test_legacy_skip_helpers_write_and_count_reason():
     assert skip_reasons["low_mapq"] == 0
 
 
+def test_legacy_posterior_ref_positions_uses_backend_when_available(monkeypatch):
+    read = object()
+    monkeypatch.setattr(legacy_pipeline, "HAS_POSTERIOR_WRITER", False)
+    empty = legacy_pipeline._legacy_posterior_ref_positions(read)
+
+    assert empty.dtype == np.int32
+    assert empty.size == 0
+
+    positions = np.asarray([10, 20], dtype=np.int32)
+    monkeypatch.setattr(legacy_pipeline, "HAS_POSTERIOR_WRITER", True)
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "get_ref_positions_from_read",
+        lambda got_read: positions,
+    )
+
+    assert legacy_pipeline._legacy_posterior_ref_positions(read) is positions
+
+
 def test_parallel_reexports_streaming_worker_entry_points():
     assert parallel._init_bam_worker is streaming_workers._init_bam_worker
     assert parallel._init_fused_worker is streaming_workers._init_fused_worker
