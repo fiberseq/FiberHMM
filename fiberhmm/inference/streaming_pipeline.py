@@ -16,6 +16,10 @@ from fiberhmm.inference.engine import make_apply_payload
 from fiberhmm.io.bam_header import append_coord_marker, maybe_append_pg
 from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
+from fiberhmm.inference.skip_reasons import (
+    NO_FOOTPRINTS_SKIP_REASON,
+    new_skip_reasons,
+)
 from fiberhmm.inference.streaming_drain import (
     _drain_oldest_chunk,
     _drain_oldest_fused_chunk,
@@ -134,18 +138,8 @@ def _new_streaming_counters() -> dict:
 
 
 def _new_streaming_skip_reasons(*, include_no_footprints: bool = False) -> dict:
-    reasons = {
-        'unmapped': 0,
-        'secondary_supplementary': 0,
-        'low_mapq': 0,
-        'too_short': 0,
-        'training_excluded': 0,
-        'no_modifications': 0,
-        'extraction_failed': 0,
-    }
-    if include_no_footprints:
-        reasons['no_footprints'] = 0
-    return reasons
+    extras = (NO_FOOTPRINTS_SKIP_REASON,) if include_no_footprints else ()
+    return new_skip_reasons(*extras)
 
 
 def _print_worker_failure_summary(counters: dict, log) -> None:

@@ -10,6 +10,12 @@ from fiberhmm.inference.read_filters import (
     is_primary_mapped_alignment,
     streaming_skip_reason,
 )
+from fiberhmm.inference.skip_reasons import (
+    BASE_SKIP_REASON_KEYS,
+    CHIMERA_SKIP_REASON,
+    NO_FOOTPRINTS_SKIP_REASON,
+    new_skip_reasons,
+)
 
 
 @dataclass
@@ -22,6 +28,20 @@ class _Read:
     mapping_quality: int = 60
     query_length: int | None = 4
     query_alignment_length: int | None = 4
+
+
+def test_skip_reason_factory_zeroes_base_and_extra_reasons():
+    reasons = new_skip_reasons(NO_FOOTPRINTS_SKIP_REASON, CHIMERA_SKIP_REASON)
+
+    assert tuple(reasons) == (
+        *BASE_SKIP_REASON_KEYS,
+        NO_FOOTPRINTS_SKIP_REASON,
+        CHIMERA_SKIP_REASON,
+    )
+    assert set(reasons.values()) == {0}
+
+    reasons["low_mapq"] = 3
+    assert new_skip_reasons()["low_mapq"] == 0
 
 
 def test_streaming_filter_allows_processable_mapped_read():

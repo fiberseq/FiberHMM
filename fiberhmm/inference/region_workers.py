@@ -30,6 +30,12 @@ from fiberhmm.inference.region_types import (
     RegionBedResult,
     RegionBedWorkItem,
 )
+from fiberhmm.inference.skip_reasons import (
+    BASE_SKIP_REASON_KEYS,
+    CHIMERA_SKIP_REASON,
+    NO_FOOTPRINTS_SKIP_REASON,
+    new_skip_reasons,
+)
 from fiberhmm.inference.tagging import (
     set_legacy_apply_tags,
     write_fused_recall_tags,
@@ -49,21 +55,14 @@ _PRE_OWNERSHIP_SKIP_REASONS = {"unmapped", "secondary_supplementary"}
 _REGION_ROUTE_PROCESS = "process"
 _REGION_ROUTE_SKIP = "skip"
 _REGION_ROUTE_OUTSIDE = "outside_region"
-_REGION_SKIP_REASON_KEYS = (
-    'unmapped',
-    'secondary_supplementary',
-    'low_mapq',
-    'too_short',
-    'training_excluded',
-    'no_modifications',
-    'extraction_failed',
-    'no_footprints',
-    'chimera',
+_REGION_SKIP_REASON_KEYS = BASE_SKIP_REASON_KEYS + (
+    NO_FOOTPRINTS_SKIP_REASON,
+    CHIMERA_SKIP_REASON,
 )
 
 
 def _new_region_skip_reasons() -> dict:
-    return {reason: 0 for reason in _REGION_SKIP_REASON_KEYS}
+    return new_skip_reasons(NO_FOOTPRINTS_SKIP_REASON, CHIMERA_SKIP_REASON)
 
 
 def _write_skipped_region_read(outbam, read, skip_reasons: dict, reason: str) -> int:
