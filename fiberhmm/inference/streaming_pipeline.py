@@ -210,6 +210,10 @@ def _streaming_progress_rates(
     return inst_rate, avg_rate
 
 
+def _streaming_rate(total_reads: int, elapsed: float) -> float:
+    return total_reads / elapsed if elapsed > 0 else 0
+
+
 def _process_bam_streaming_pipeline_fused(
     input_bam: str, output_bam: str,
     model_path: str, recall_model_path: str,
@@ -375,7 +379,7 @@ def _process_bam_streaming_pipeline_fused(
                         ref_fasta = None
 
     elapsed = time.time() - start_time
-    rate = total_reads / elapsed if elapsed > 0 else 0
+    rate = _streaming_rate(total_reads, elapsed)
     reads_with_fp = counters['reads_with_footprints']
     print(f"\r  Fused: {total_reads:,} | Skipped: {skipped:,} | "
           f"With footprints: {reads_with_fp:,} | {rate:.1f} r/s", file=_log)
@@ -573,7 +577,7 @@ def _process_bam_streaming_pipeline(
                         posterior_writer = None
 
     elapsed = time.time() - start_time
-    rate = total_reads / elapsed if elapsed > 0 else 0
+    rate = _streaming_rate(total_reads, elapsed)
     reads_with_footprints = counters['reads_with_footprints']
     print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | "
           f"With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s", file=_log)

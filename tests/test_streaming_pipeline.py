@@ -11,6 +11,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _streaming_filter_config,
     _streaming_log_for_output,
     _streaming_progress_rates,
+    _streaming_rate,
     _worker_common_args,
 )
 from fiberhmm.inference.parallel import process_bam_for_footprints
@@ -54,6 +55,11 @@ def test_streaming_progress_rates_handle_elapsed_and_zero_dt():
         last_progress_time=30.0,
         now=30.0,
     ) == (0, 0)
+
+
+def test_streaming_rate_handles_zero_elapsed():
+    assert _streaming_rate(120, 20.0) == 6.0
+    assert _streaming_rate(120, 0.0) == 0
 
 
 def test_streaming_filter_config_captures_read_filter_settings():
