@@ -161,6 +161,11 @@ def _write_bam_list_file(bam_files: List[str], list_file: str) -> None:
             f.write(bam_path + '\n')
 
 
+def _remove_file_if_exists(path: str) -> None:
+    if os.path.exists(path):
+        os.remove(path)
+
+
 def _run_samtools_list_command(
     bam_files: List[str],
     list_file: str,
@@ -176,8 +181,7 @@ def _run_samtools_list_command(
                 output=result.stdout, stderr=result.stderr,
             )
     finally:
-        if os.path.exists(list_file):
-            os.remove(list_file)
+        _remove_file_if_exists(list_file)
 
 
 def _samtools_cat_bams(bam_files: List[str], output_bam: str, list_file: str) -> None:
@@ -441,8 +445,7 @@ def convert_to_bigbed(bed_file: str, chrom_sizes: str, output_bb: str) -> bool:
         print(f"Error during bigBed conversion: {e}")
         return False
     finally:
-        if os.path.exists(sorted_bed):
-            os.remove(sorted_bed)
+        _remove_file_if_exists(sorted_bed)
 
 
 def write_chrom_sizes(bam_path: str, output_path: str) -> str:
@@ -521,8 +524,7 @@ def convert_to_bigbed_with_schema(bed_file: str, chrom_sizes: str,
         print(f"Error during bigBed conversion: {e}")
         return False
     finally:
-        if os.path.exists(sorted_bed):
-            os.remove(sorted_bed)
+        _remove_file_if_exists(sorted_bed)
 
 
 def _format_footprint_bed12_row(

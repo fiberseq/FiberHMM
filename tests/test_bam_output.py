@@ -28,6 +28,17 @@ def test_sorted_bed_temp_path_appends_sorted_suffix():
     assert bam_output._sorted_bed_temp_path("calls.bed") == "calls.bed.sorted"
 
 
+def test_remove_file_if_exists_handles_missing_and_present_files(tmp_path):
+    missing = tmp_path / "missing.tmp"
+    bam_output._remove_file_if_exists(str(missing))
+
+    present = tmp_path / "present.tmp"
+    present.write_text("temporary")
+    bam_output._remove_file_if_exists(str(present))
+
+    assert not present.exists()
+
+
 def test_convert_to_bigbed_sorts_without_shell(monkeypatch, tmp_path):
     bed = tmp_path / "calls.bed"
     chrom_sizes = tmp_path / "chrom.sizes"
