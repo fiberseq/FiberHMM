@@ -253,6 +253,7 @@ def test_ma_annotation_record_normalizes_reverse_read_annotation():
 
 
 def test_ma_annotation_quality_values_pad_triplets_and_ignore_msp_quals():
+    assert extract_tags._quality_triplet([10, 20]) == (10, 20, 0)
     assert extract_tags._ma_annotation_quality_values('tf', [10, 20]) == (
         10, (10, 20, 0),
     )

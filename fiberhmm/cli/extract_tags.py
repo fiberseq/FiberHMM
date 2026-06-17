@@ -265,13 +265,17 @@ def _annotation_to_ref_block(ann, query_to_ref):
     return _query_interval_to_ref_block(ann['start'], ann['length'], query_to_ref)
 
 
+def _quality_triplet(quals) -> Tuple[int, int, int]:
+    return (
+        int(quals[0]) if len(quals) >= 1 else 0,
+        int(quals[1]) if len(quals) >= 2 else 0,
+        int(quals[2]) if len(quals) >= 3 else 0,
+    )
+
+
 def _ma_annotation_quality_values(target_name: str, quals):
     if target_name in ('tf', 'nuc'):
-        qvals = (
-            int(quals[0]) if len(quals) >= 1 else 0,
-            int(quals[1]) if len(quals) >= 2 else 0,
-            int(quals[2]) if len(quals) >= 3 else 0,
-        )
+        qvals = _quality_triplet(quals)
         return qvals[0], qvals
     return 0, (0,)
 
