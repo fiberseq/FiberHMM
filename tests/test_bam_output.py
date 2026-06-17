@@ -164,6 +164,19 @@ def test_format_footprint_bed12_row_omits_scores_when_disabled():
     assert row.split("\t")[4] == "1"
 
 
+def test_normalize_bed12_blocks_sorts_merges_scores_and_pads():
+    starts, sizes, scores = bam_output._normalize_bed12_blocks(
+        block_starts=[20, 0, 5],
+        block_sizes=[5, 10, 20],
+        valid_scores=[100, 50, 80],
+        read_length=30,
+    )
+
+    assert starts == [0, 29]
+    assert sizes == [25, 1]
+    assert scores == [82, 0]
+
+
 @pytest.mark.parametrize(
     "write_scores",
     [bam_output.create_scores_database, bam_output.append_to_scores_database],

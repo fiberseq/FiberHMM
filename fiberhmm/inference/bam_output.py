@@ -543,6 +543,72 @@ def _format_footprint_bed12_row(
     )
 
 
+def _sort_bed12_blocks(block_starts, block_sizes, valid_scores):
+    if valid_scores:
+        sorted_indices = sorted(range(len(block_starts)), key=lambda i: block_starts[i])
+        return (
+            [block_starts[i] for i in sorted_indices],
+            [block_sizes[i] for i in sorted_indices],
+            [valid_scores[i] for i in sorted_indices],
+        )
+
+    sorted_pairs = sorted(zip(block_starts, block_sizes))
+    return [p[0] for p in sorted_pairs], [p[1] for p in sorted_pairs], []
+
+
+def _merge_bed12_blocks(block_starts, block_sizes, valid_scores):
+    merged_starts = [block_starts[0]]
+    merged_sizes = [block_sizes[0]]
+    merged_scores = [valid_scores[0]] if valid_scores else []
+
+    for i in range(1, len(block_starts)):
+        prev_end = merged_starts[-1] + merged_sizes[-1]
+        curr_start = block_starts[i]
+        curr_size = block_sizes[i]
+
+        if curr_start <= prev_end:  # Adjacent or overlapping
+            new_end = max(prev_end, curr_start + curr_size)
+            merged_sizes[-1] = new_end - merged_starts[-1]
+            if merged_scores:
+                merged_scores[-1] = (merged_scores[-1] + valid_scores[i]) // 2
+        else:
+            merged_starts.append(curr_start)
+            merged_sizes.append(curr_size)
+            if valid_scores:
+                merged_scores.append(valid_scores[i])
+
+    return merged_starts, merged_sizes, merged_scores
+
+
+def _pad_bed12_blocks(block_starts, block_sizes, valid_scores, read_length: int):
+    # BED12 requires blocks to span chromStart to chromEnd. Add 1bp padding
+    # blocks at start/end if needed.
+    if block_starts[0] != 0:
+        block_starts.insert(0, 0)
+        block_sizes.insert(0, 1)
+        if valid_scores:
+            valid_scores.insert(0, 0)
+
+    last_end = block_starts[-1] + block_sizes[-1]
+    if last_end < read_length:
+        block_starts.append(read_length - 1)
+        block_sizes.append(1)
+        if valid_scores:
+            valid_scores.append(0)
+
+    return block_starts, block_sizes, valid_scores
+
+
+def _normalize_bed12_blocks(block_starts, block_sizes, valid_scores, read_length: int):
+    block_starts, block_sizes, valid_scores = _sort_bed12_blocks(
+        block_starts, block_sizes, valid_scores,
+    )
+    block_starts, block_sizes, valid_scores = _merge_bed12_blocks(
+        block_starts, block_sizes, valid_scores,
+    )
+    return _pad_bed12_blocks(block_starts, block_sizes, valid_scores, read_length)
+
+
 def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
                                   with_scores: bool = False,
                                   n_cores: int = 1) -> int:
@@ -612,63 +678,13 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
             block_sizes = [ref_ends[i] - ref_starts[i] for i in range(len(ref_starts))]
             block_starts = [ref_starts[i] - chrom_start for i in range(len(ref_starts))]
 
-            # Sort blocks by start position (required for BED12)
-            if valid_scores:
-                sorted_indices = sorted(range(len(block_starts)), key=lambda i: block_starts[i])
-                block_starts = [block_starts[i] for i in sorted_indices]
-                block_sizes = [block_sizes[i] for i in sorted_indices]
-                valid_scores = [valid_scores[i] for i in sorted_indices]
-            else:
-                sorted_pairs = sorted(zip(block_starts, block_sizes))
-                block_starts = [p[0] for p in sorted_pairs]
-                block_sizes = [p[1] for p in sorted_pairs]
-
-            # Merge adjacent/overlapping blocks (can happen due to indels in alignment)
-            merged_starts = [block_starts[0]]
-            merged_sizes = [block_sizes[0]]
-            merged_scores = [valid_scores[0]] if valid_scores else []
-
-            for i in range(1, len(block_starts)):
-                prev_end = merged_starts[-1] + merged_sizes[-1]
-                curr_start = block_starts[i]
-                curr_size = block_sizes[i]
-
-                if curr_start <= prev_end:  # Adjacent or overlapping
-                    # Extend previous block
-                    new_end = max(prev_end, curr_start + curr_size)
-                    merged_sizes[-1] = new_end - merged_starts[-1]
-                    # Average scores if merging
-                    if merged_scores:
-                        merged_scores[-1] = (merged_scores[-1] + valid_scores[i]) // 2
-                else:
-                    # New separate block
-                    merged_starts.append(curr_start)
-                    merged_sizes.append(curr_size)
-                    if valid_scores:
-                        merged_scores.append(valid_scores[i])
-
-            block_starts = merged_starts
-            block_sizes = merged_sizes
-            valid_scores = merged_scores
-
-            # BED12 requires blocks to span chromStart to chromEnd
-            # Add 1bp padding blocks at start/end if needed
             read_length = chrom_end - chrom_start
-
-            # Check if first block starts at 0
-            if block_starts[0] != 0:
-                block_starts.insert(0, 0)
-                block_sizes.insert(0, 1)
-                if valid_scores:
-                    valid_scores.insert(0, 0)
-
-            # Check if last block ends at read_length
-            last_end = block_starts[-1] + block_sizes[-1]
-            if last_end < read_length:
-                block_starts.append(read_length - 1)
-                block_sizes.append(1)
-                if valid_scores:
-                    valid_scores.append(0)
+            block_starts, block_sizes, valid_scores = _normalize_bed12_blocks(
+                block_starts,
+                block_sizes,
+                valid_scores,
+                read_length,
+            )
 
             line = _format_footprint_bed12_row(
                 chrom,
