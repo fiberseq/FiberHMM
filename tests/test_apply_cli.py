@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from fiberhmm.cli.apply import (
+    _print_processing_settings,
     _resolve_context_size,
     _resolve_mode,
     _resolve_model_path,
@@ -77,3 +78,34 @@ def test_apply_mode_defaults_without_model_metadata(capsys):
 
     assert _resolve_mode(args, model_mode="unknown") == "pacbio-fiber"
     assert "defaulting to 'pacbio-fiber'" in capsys.readouterr().out
+
+
+def test_apply_print_processing_settings_reports_mode_specific_options(capsys):
+    args = SimpleNamespace(
+        input="input.bam",
+        outdir="out",
+        edge_trim=10,
+        min_mapq=0,
+        prob_threshold=128,
+        circular=True,
+        scores_db=True,
+        no_msps=False,
+        stats=True,
+    )
+
+    _print_processing_settings(
+        args,
+        mode="daf",
+        context_size=3,
+        n_cores=4,
+        msp_min_size=0,
+        with_scores=True,
+        db_path="scores.db",
+    )
+
+    out = capsys.readouterr().out
+    assert "Mode: daf (DAF-seq deamination" in out
+    assert "Circular mode: enabled" in out
+    assert "Confidence scores: enabled" in out
+    assert "Scores database: scores.db" in out
+    assert "Strand detection: automatic" in out

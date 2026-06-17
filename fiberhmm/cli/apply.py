@@ -23,6 +23,13 @@ from fiberhmm.inference.parallel import process_bam_for_footprints
 from fiberhmm.inference.stats import collect_stats_from_bam
 
 
+_MODE_DESCRIPTIONS = {
+    'pacbio-fiber': 'PacBio fiber-seq (A-centered)',
+    'nanopore-fiber': 'Nanopore fiber-seq (A-centered)',
+    'daf': 'DAF-seq deamination (C/G-centered)',
+}
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Apply FiberHMM model to call chromatin footprints from fiber-seq BAM',
@@ -206,6 +213,44 @@ def _resolve_mode(args, model_mode: str) -> str:
     return mode
 
 
+def _print_processing_settings(
+    args,
+    mode: str,
+    context_size: int,
+    n_cores: int,
+    msp_min_size: int,
+    with_scores: bool,
+    db_path: str = None,
+) -> None:
+    mode_desc = _MODE_DESCRIPTIONS.get(mode, mode)
+
+    print(f"\nProcessing: {args.input}")
+    print(f"  Mode: {mode} ({mode_desc})")
+    print(f"  Context: k={context_size} ({2*context_size + 1}-mer)")
+    print(f"  Output: {args.outdir}")
+    print(f"  Cores: {n_cores}")
+    print(f"  Edge trim: {args.edge_trim} bp")
+    print(f"  Min MAPQ: {args.min_mapq}")
+    print(f"  Mod prob threshold: {args.prob_threshold}/255")
+    if args.circular:
+        print("  Circular mode: enabled")
+    if with_scores:
+        print("  Confidence scores: enabled")
+    if args.scores_db:
+        print(f"  Scores database: {db_path}")
+    if mode == 'daf':
+        print("  Strand detection: automatic (C=+, G=-)")
+    elif mode == 'nanopore-fiber':
+        print("  Strand detection: none (A-centered only)")
+    if args.no_msps:
+        print("  MSP output: disabled (--no-msps)")
+    else:
+        print(f"  MSP min size: {msp_min_size} bp")
+    if args.stats:
+        print("  Stats: enabled")
+    print()
+
+
 def main():
     args = parse_args()
 
@@ -293,39 +338,9 @@ def main():
     if args.scores_db:
         db_path = os.path.join(args.outdir, f"{dataset}_scores.db")
 
-    # Print settings
-    mode_descs = {
-        'pacbio-fiber': 'PacBio fiber-seq (A-centered)',
-        'nanopore-fiber': 'Nanopore fiber-seq (A-centered)',
-        'daf': 'DAF-seq deamination (C/G-centered)'
-    }
-    mode_desc = mode_descs.get(mode, mode)
-
-    print(f"\nProcessing: {args.input}")
-    print(f"  Mode: {mode} ({mode_desc})")
-    print(f"  Context: k={context_size} ({2*context_size + 1}-mer)")
-    print(f"  Output: {args.outdir}")
-    print(f"  Cores: {n_cores}")
-    print(f"  Edge trim: {args.edge_trim} bp")
-    print(f"  Min MAPQ: {args.min_mapq}")
-    print(f"  Mod prob threshold: {args.prob_threshold}/255")
-    if args.circular:
-        print("  Circular mode: enabled")
-    if with_scores:
-        print("  Confidence scores: enabled")
-    if args.scores_db:
-        print(f"  Scores database: {db_path}")
-    if mode == 'daf':
-        print("  Strand detection: automatic (C=+, G=-)")
-    elif mode == 'nanopore-fiber':
-        print("  Strand detection: none (A-centered only)")
-    if args.no_msps:
-        print("  MSP output: disabled (--no-msps)")
-    else:
-        print(f"  MSP min size: {msp_min_size} bp")
-    if args.stats:
-        print("  Stats: enabled")
-    print()
+    _print_processing_settings(
+        args, mode, context_size, n_cores, msp_min_size, with_scores, db_path,
+    )
 
     # Parse chromosomes
     chroms_set = set(args.chroms) if args.chroms else None
