@@ -135,6 +135,22 @@ def _region_bed12_blocks(ref_start, ref_end, starts, lengths, scores=None):
     score_list = _region_bed_score_list(scores)
 
     # BED12 requires blocks to span chromStart to chromEnd.
+    _pad_region_bed12_to_read_span(
+        block_starts,
+        block_sizes,
+        score_list,
+        read_length,
+    )
+
+    return block_starts, block_sizes, score_list
+
+
+def _pad_region_bed12_to_read_span(
+    block_starts: list,
+    block_sizes: list,
+    score_list,
+    read_length: int,
+) -> None:
     if block_starts[0] != 0:
         block_starts.insert(0, 0)
         block_sizes.insert(0, 1)
@@ -147,8 +163,6 @@ def _region_bed12_blocks(ref_start, ref_end, starts, lengths, scores=None):
         block_sizes.append(1)
         if score_list is not None:
             score_list.append(0)
-
-    return block_starts, block_sizes, score_list
 
 
 def _region_bed_block_components(ref_start, starts, lengths):
