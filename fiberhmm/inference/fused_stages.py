@@ -34,16 +34,21 @@ from fiberhmm.inference.tf_recaller import build_scan_intervals, call_tfs_in_int
 def _analyzed_span(apply_result, read_length, kept):
     """Extent (lo, hi) the read was annotated over -- the union of the original
     HMM footprints/MSPs and the final nucleosomes -- used to tile MSPs."""
-    starts, ends = [], []
-    for ks, kl in (("ns", "nl"), ("as", "al")):
-        for s, length in zip(apply_result.get(ks, ()), apply_result.get(kl, ())):
-            starts.append(int(s))
-            ends.append(int(s) + int(length))
+    starts, ends = _apply_result_interval_bounds(apply_result)
     for k in kept:
         starts.append(int(k.start))
         ends.append(int(k.start) + int(k.length))
     return (min(starts) if starts else 0,
             max(ends) if ends else int(read_length))
+
+
+def _apply_result_interval_bounds(apply_result):
+    starts, ends = [], []
+    for ks, kl in (("ns", "nl"), ("as", "al")):
+        for s, length in zip(apply_result.get(ks, ()), apply_result.get(kl, ())):
+            starts.append(int(s))
+            ends.append(int(s) + int(length))
+    return starts, ends
 
 
 def _interval_pair_lists(intervals):

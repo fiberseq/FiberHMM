@@ -30,6 +30,19 @@ def test_apply_result_has_footprints_detects_nucs_or_msps():
     assert fused_stages.apply_result_has_footprints(msp_only) is True
 
 
+def test_apply_result_interval_bounds_collects_nucs_and_msps():
+    starts, ends = fused_stages._apply_result_interval_bounds({
+        "ns": np.asarray([10], dtype=np.int32),
+        "nl": np.asarray([20], dtype=np.int64),
+        "as": np.asarray([40], dtype=np.int32),
+        "al": np.asarray([5], dtype=np.int64),
+    })
+
+    assert starts == [10, 40]
+    assert ends == [30, 45]
+    assert all(type(value) is int for value in starts + ends)
+
+
 def test_nuc_call_quality_lists_preserve_nq_el_er_order():
     nucs = [
         SimpleNamespace(nq=1, el=2, er=3),
