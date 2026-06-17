@@ -275,6 +275,11 @@ def _bounded_scan_interval(start, length, read_len: int) -> Optional[Tuple[int, 
     return bounded if bounded[1] > bounded[0] else None
 
 
+def _is_short_nuc_length(length, unify_threshold: int) -> bool:
+    length = int(length)
+    return 0 < length < int(unify_threshold)
+
+
 def build_scan_intervals(ns: Sequence[int], nl: Sequence[int],
                          as_: Sequence[int], al: Sequence[int],
                          read_len: int, unify_threshold: int = 90
@@ -291,8 +296,7 @@ def build_scan_intervals(ns: Sequence[int], nl: Sequence[int],
         if interval is not None:
             iv.append(interval)
     for s, length in zip(ns, nl):
-        length = int(length)
-        if 0 < length < unify_threshold:
+        if _is_short_nuc_length(length, unify_threshold):
             interval = _bounded_scan_interval(s, length, read_len)
             if interval is not None:
                 iv.append(interval)

@@ -263,6 +263,12 @@ def test_tf_call_from_scan_arrays_converts_types_and_lengths():
     )
 
 
+def test_is_short_nuc_length_requires_positive_below_threshold():
+    assert not tf_recaller._is_short_nuc_length(0, 90)
+    assert tf_recaller._is_short_nuc_length(89, 90)
+    assert not tf_recaller._is_short_nuc_length(90, 90)
+
+
 def test_build_scan_intervals_includes_short_nucs():
     # MSPs at [0, 100), short nuc at [200, 240) (nl=40), big nuc at [400, 600)
     iv = build_scan_intervals(
