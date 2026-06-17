@@ -628,6 +628,47 @@ def _legacy_starts_lengths(rows):
     return [int(s) for s, _, _ in rows], [int(length) for _, length, _ in rows]
 
 
+def _nuc_quality_rows(nq_values: Sequence[int], nuc_qqq: bool,
+                      nuc_el_values: Optional[Sequence[int]] = None,
+                      nuc_er_values: Optional[Sequence[int]] = None):
+    if nuc_qqq:
+        return [
+            [q, el, er]
+            for q, el, er in zip(
+                nq_values,
+                nuc_el_values or [],
+                nuc_er_values or [],
+            )
+        ]
+    return [[q] for q in nq_values]
+
+
+def _tf_quality_rows(tq_vals: Sequence[int], el_vals: Sequence[int],
+                     er_vals: Sequence[int]):
+    return [[tq, el, er] for tq, el, er in zip(tq_vals, el_vals, er_vals)]
+
+
+def _format_split_aq(nuc_q_split, tf_q_split, nuc_qqq: bool):
+    split_nq_values = [row[0] for row in (nuc_q_split or [])]
+    split_tq_vals = [row[0] for row in (tf_q_split or [])]
+    split_el_vals = [row[1] for row in (tf_q_split or [])]
+    split_er_vals = [row[2] for row in (tf_q_split or [])]
+    if nuc_qqq:
+        split_nuc_el = [row[1] for row in (nuc_q_split or [])]
+        split_nuc_er = [row[2] for row in (nuc_q_split or [])]
+    else:
+        split_nuc_el = ()
+        split_nuc_er = ()
+    return format_aq_array(
+        nq_values=split_nq_values,
+        tf_q_values=split_tq_vals,
+        tf_lq_values=split_el_vals,
+        tf_rq_values=split_er_vals,
+        nuc_lq_values=split_nuc_el,
+        nuc_rq_values=split_nuc_er,
+    )
+
+
 def _write_legacy_recall_tags(read, read_length: int,
                               kept_nucs: Sequence[Tuple[int, int]],
                               msps: Sequence[Tuple[int, int]],
@@ -765,12 +806,13 @@ def write_ma_tags(read, read_length: int,
         nuc_el_values = output_frame.nuc_el_values or []
         nuc_er_values = output_frame.nuc_er_values or []
 
-    if nuc_qqq:
-        nuc_q_rows = [[q, el, er]
-                      for q, el, er in zip(nq_values, nuc_el_values, nuc_er_values)]
-    else:
-        nuc_q_rows = [[q] for q in nq_values]
-    tf_q_rows = [[tq, el, er] for tq, el, er in zip(tq_vals, el_vals, er_vals)]
+    nuc_q_rows = _nuc_quality_rows(
+        nq_values,
+        nuc_qqq,
+        nuc_el_values if nuc_qqq else None,
+        nuc_er_values if nuc_qqq else None,
+    )
+    tf_q_rows = _tf_quality_rows(tq_vals, el_vals, er_vals)
     ma_nucs, nuc_names, nuc_q_split, nuc_split = _split_named_intervals(
         kept_nucs, "nuc", read_length, nuc_q_rows,
     )
@@ -814,25 +856,10 @@ def write_ma_tags(read, read_length: int,
             # AQ must not be written.
             has_quality = bool(ma_nucs or ma_tfs)
             if has_quality:
-                split_nq_values = [row[0] for row in (nuc_q_split or [])]
-                split_tq_vals = [row[0] for row in (tf_q_split or [])]
-                split_el_vals = [row[1] for row in (tf_q_split or [])]
-                split_er_vals = [row[2] for row in (tf_q_split or [])]
-                if nuc_qqq:
-                    split_nuc_el = [row[1] for row in (nuc_q_split or [])]
-                    split_nuc_er = [row[2] for row in (nuc_q_split or [])]
-                else:
-                    split_nuc_el = ()
-                    split_nuc_er = ()
-                aq = format_aq_array(
-                    nq_values=split_nq_values,
-                    tf_q_values=split_tq_vals,
-                    tf_lq_values=split_el_vals,
-                    tf_rq_values=split_er_vals,
-                    nuc_lq_values=split_nuc_el,
-                    nuc_rq_values=split_nuc_er,
+                read.set_tag(
+                    'AQ',
+                    _format_split_aq(nuc_q_split, tf_q_split, nuc_qqq),
                 )
-                read.set_tag('AQ', aq)
             else:
                 clear_tags(read, ('AQ',))
     else:

@@ -58,6 +58,28 @@ def test_split_legacy_interval_rows_splits_sorts_and_clamps_scores():
     assert tf_recaller._legacy_starts_lengths(rows) == ([0, 10, 90], [10, 5, 10])
 
 
+def test_quality_row_helpers_preserve_aq_layout():
+    assert tf_recaller._nuc_quality_rows([7, 8], nuc_qqq=False) == [[7], [8]]
+    assert tf_recaller._nuc_quality_rows(
+        [7], nuc_qqq=True, nuc_el_values=[8], nuc_er_values=[9],
+    ) == [[7, 8, 9]]
+    assert tf_recaller._tf_quality_rows([10], [11], [12]) == [[10, 11, 12]]
+
+    default_aq = tf_recaller._format_split_aq(
+        [[7]],
+        [[10, 11, 12]],
+        nuc_qqq=False,
+    )
+    nuc_qqq_aq = tf_recaller._format_split_aq(
+        [[7, 8, 9]],
+        [[10, 11, 12]],
+        nuc_qqq=True,
+    )
+
+    assert list(default_aq) == [7, 10, 11, 12]
+    assert list(nuc_qqq_aq) == [7, 8, 9, 10, 11, 12]
+
+
 def test_ma_tag_matches_spec_regex():
     """Every MA string we emit must match the official spec regex
     (https://github.com/fiberseq/Molecular-annotation-spec)."""
