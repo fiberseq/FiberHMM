@@ -704,6 +704,58 @@ def _parse_mod_positions_safe(read, target_mod_codes):
     return out
 
 
+def _mod_positions_to_ref_values(positions, aligned_pairs, prob_threshold: int):
+    n = len(aligned_pairs)
+    out = []
+    for query_pos, value in positions:
+        if value < prob_threshold:
+            continue
+        if query_pos < 0 or query_pos >= n:
+            continue
+        ref_pos = int(aligned_pairs[query_pos])
+        if ref_pos < 0:
+            continue
+        out.append((ref_pos, int(value)))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def _write_position_blocks_row(read, bed_out, positions_list, score: int,
+                               extra_columns=()):
+    chrom_start = positions_list[0][0]
+    chrom_end = positions_list[-1][0] + 1
+    blocks = [(pos, pos + 1) for pos, _ in positions_list]
+    strand = '-' if read.is_reverse else '+'
+    row = _bed12_row(
+        read.reference_name,
+        chrom_start,
+        chrom_end,
+        read.query_name,
+        int(score),
+        strand,
+        blocks,
+        extra_columns,
+    )
+    bed_out.write(row + "\n")
+
+
+def _extract_mm_mod(read, bed_out, target_mod_codes, prob_threshold: int,
+                    query_to_ref=None, block_scores: bool = False) -> int:
+    positions = _parse_mod_positions_safe(read, target_mod_codes)
+    if not positions:
+        return 0
+
+    aligned_pairs = query_to_ref if query_to_ref is not None else _build_query_to_ref(read)
+    positions_list = _mod_positions_to_ref_values(positions, aligned_pairs, prob_threshold)
+    if not positions_list:
+        return 0
+
+    mean_score = int(sum(sc for _, sc in positions_list) / len(positions_list))
+    extra = [','.join(str(sc) for _, sc in positions_list)] if block_scores else ()
+    _write_position_blocks_row(read, bed_out, positions_list, mean_score, extra)
+    return len(positions_list)
+
+
 def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None,
                  block_scores: bool = False) -> int:
     """Extract m6A positions from MM/ML tags as BED12 (one line per read).
@@ -711,49 +763,8 @@ def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None,
     When ``block_scores=True``, appends a 13th column of comma-separated
     per-position ML values (int[blockCount] blockMl).
     """
-    positions = _parse_mod_positions_safe(read, {'a'})
-    if not positions:
-        return 0
-
-    ref_name = read.reference_name
-    strand = '-' if read.is_reverse else '+'
-    read_id = read.query_name
-
-    aligned_pairs = query_to_ref if query_to_ref is not None else _build_query_to_ref(read)
-    n = len(aligned_pairs)
-
-    positions_list = []  # list of (ref_pos, score)
-    for query_pos, prob in positions:
-        if prob < prob_threshold:
-            continue
-        if query_pos < 0 or query_pos >= n:
-            continue
-        ref_pos = int(aligned_pairs[query_pos])
-        if ref_pos < 0:
-            continue
-        positions_list.append((ref_pos, int(prob)))
-
-    if not positions_list:
-        return 0
-
-    positions_list.sort(key=lambda x: x[0])
-
-    chrom_start = positions_list[0][0]
-    chrom_end = positions_list[-1][0] + 1
-    block_count = len(positions_list)
-    block_sizes = ','.join('1' for _ in positions_list)
-    block_starts = ','.join(str(pos - chrom_start) for pos, _ in positions_list)
-
-    mean_score = int(sum(sc for _, sc in positions_list) / len(positions_list))
-
-    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
-           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
-    if block_scores:
-        block_ml = ','.join(str(sc) for _, sc in positions_list)
-        row += f"\t{block_ml}"
-    bed_out.write(row + "\n")
-
-    return len(positions_list)
+    return _extract_mm_mod(read, bed_out, {'a'}, prob_threshold,
+                           query_to_ref, block_scores)
 
 
 def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
@@ -763,49 +774,8 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
     When ``block_scores=True``, appends a 13th column of comma-separated
     per-position ML values (int[blockCount] blockMl).
     """
-    positions = _parse_mod_positions_safe(read, {'m'})
-    if not positions:
-        return 0
-
-    ref_name = read.reference_name
-    strand = '-' if read.is_reverse else '+'
-    read_id = read.query_name
-
-    aligned_pairs = query_to_ref if query_to_ref is not None else _build_query_to_ref(read)
-    n = len(aligned_pairs)
-
-    positions_list = []
-    for query_pos, prob in positions:
-        if prob < prob_threshold:
-            continue
-        if query_pos < 0 or query_pos >= n:
-            continue
-        ref_pos = int(aligned_pairs[query_pos])
-        if ref_pos < 0:
-            continue
-        positions_list.append((ref_pos, int(prob)))
-
-    if not positions_list:
-        return 0
-
-    positions_list.sort(key=lambda x: x[0])
-
-    chrom_start = positions_list[0][0]
-    chrom_end = positions_list[-1][0] + 1
-    block_count = len(positions_list)
-    block_sizes = ','.join('1' for _ in positions_list)
-    block_starts = ','.join(str(pos - chrom_start) for pos, _ in positions_list)
-
-    mean_score = int(sum(sc for _, sc in positions_list) / len(positions_list))
-
-    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
-           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
-    if block_scores:
-        block_ml = ','.join(str(sc) for _, sc in positions_list)
-        row += f"\t{block_ml}"
-    bed_out.write(row + "\n")
-
-    return len(positions_list)
+    return _extract_mm_mod(read, bed_out, {'m'}, prob_threshold,
+                           query_to_ref, block_scores)
 
 
 def _extract_deam(read, bed_out, query_to_ref=None,
@@ -829,10 +799,6 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     BED score column 5 is constant ``255`` (IUPAC calls are deterministic;
     MM/ML calls can be filtered up front via prob_threshold).
     """
-    ref_name = read.reference_name
-    strand = '-' if read.is_reverse else '+'
-    read_id = read.query_name
-
     aligned_pairs = query_to_ref if query_to_ref is not None else _build_query_to_ref(read)
     n = len(aligned_pairs)
 
@@ -945,19 +911,8 @@ def _extract_deam(read, bed_out, query_to_ref=None,
         return 0
 
     positions_list.sort(key=lambda x: x[0])
-
-    chrom_start = positions_list[0][0]
-    chrom_end = positions_list[-1][0] + 1
-    block_count = len(positions_list)
-    block_sizes = ','.join('1' for _ in positions_list)
-    block_starts = ','.join(str(pos - chrom_start) for pos, _ in positions_list)
-
-    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t255\t{strand}\t"
-           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
-    if block_scores:
-        block_mod = ','.join(str(code) for _, code in positions_list)
-        row += f"\t{block_mod}"
-    bed_out.write(row + "\n")
+    extra = [','.join(str(code) for _, code in positions_list)] if block_scores else ()
+    _write_position_blocks_row(read, bed_out, positions_list, 255, extra)
 
     return len(positions_list)
 
