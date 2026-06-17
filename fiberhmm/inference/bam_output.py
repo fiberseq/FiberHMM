@@ -747,6 +747,35 @@ def _insert_score_records(cursor, records: List[dict]) -> None:
         _insert_score_record(cursor, record)
 
 
+def _create_scores_schema(cursor) -> None:
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS reads (
+            read_id TEXT PRIMARY KEY,
+            chrom TEXT,
+            start INTEGER,
+            end INTEGER,
+            strand TEXT,
+            n_footprints INTEGER,
+            mean_score REAL
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS footprints (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            read_id TEXT,
+            footprint_idx INTEGER,
+            rel_start INTEGER,
+            size INTEGER,
+            score INTEGER,
+            FOREIGN KEY (read_id) REFERENCES reads(read_id)
+        )
+    ''')
+
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_footprints_read_id ON footprints(read_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_reads_chrom_start ON reads(chrom, start)')
+
+
 def create_scores_database(records: List[dict], db_path: str):
     """
     Create SQLite database with detailed per-footprint scores.
@@ -763,36 +792,7 @@ def create_scores_database(records: List[dict], db_path: str):
     try:
         cursor = conn.cursor()
 
-        # Create tables
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS reads (
-                read_id TEXT PRIMARY KEY,
-                chrom TEXT,
-                start INTEGER,
-                end INTEGER,
-                strand TEXT,
-                n_footprints INTEGER,
-                mean_score REAL
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS footprints (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                read_id TEXT,
-                footprint_idx INTEGER,
-                rel_start INTEGER,
-                size INTEGER,
-                score INTEGER,
-                FOREIGN KEY (read_id) REFERENCES reads(read_id)
-            )
-        ''')
-
-        # Create indices for fast lookup
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_footprints_read_id ON footprints(read_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_reads_chrom_start ON reads(chrom, start)')
-
-        # Insert data
+        _create_scores_schema(cursor)
         _insert_score_records(cursor, records)
 
         conn.commit()
