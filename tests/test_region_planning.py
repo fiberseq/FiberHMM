@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pysam
 
-from fiberhmm.inference.region_planning import _chromosome_regions, _get_genome_regions
+from fiberhmm.inference.region_planning import (
+    _chromosome_regions,
+    _get_genome_regions,
+    _include_chromosome,
+)
 
 
 def _write_empty_bam(path):
@@ -26,6 +30,13 @@ def test_chromosome_regions_tiles_partial_last_region():
         ("chr1", 100, 200),
         ("chr1", 200, 250),
     ]
+
+
+def test_include_chromosome_applies_allowlist_and_scaffold_filter():
+    assert _include_chromosome("chr1", chroms=None, skip_scaffolds=False)
+    assert _include_chromosome("chr1", chroms={"chr1"}, skip_scaffolds=True)
+    assert not _include_chromosome("chr2", chroms={"chr1"}, skip_scaffolds=False)
+    assert not _include_chromosome("chrUn_random", chroms=None, skip_scaffolds=True)
 
 
 def test_get_genome_regions_splits_and_filters(tmp_path):

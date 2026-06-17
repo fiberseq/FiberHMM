@@ -66,6 +66,18 @@ def _chromosome_regions(chrom: str, chrom_len: int, region_size: int) -> list[tu
     ]
 
 
+def _include_chromosome(
+    chrom: str,
+    chroms: Optional[Set[str]],
+    skip_scaffolds: bool,
+) -> bool:
+    if chroms is not None and chrom not in chroms:
+        return False
+    if skip_scaffolds and not _is_main_chromosome(chrom):
+        return False
+    return True
+
+
 def _get_genome_regions(
     bam_path: str,
     region_size: int = 10_000_000,
@@ -89,9 +101,7 @@ def _get_genome_regions(
 
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         for chrom in bam.references:
-            if chroms is not None and chrom not in chroms:
-                continue
-            if skip_scaffolds and not _is_main_chromosome(chrom):
+            if not _include_chromosome(chrom, chroms, skip_scaffolds):
                 continue
 
             chrom_len = int(bam.get_reference_length(chrom))
