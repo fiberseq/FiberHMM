@@ -78,6 +78,13 @@ def _chroms_set(chroms) -> Optional[Set[str]]:
     return set(chroms) if chroms else None
 
 
+def _regions_by_chrom(regions: List[Tuple[str, int, int]]) -> Dict[str, List[Tuple[int, int]]]:
+    grouped = {}
+    for chrom, start, end in regions:
+        grouped.setdefault(chrom, []).append((start, end))
+    return grouped
+
+
 def _prepare_export_run(
     input_bam: str,
     model_path: str,
@@ -414,6 +421,7 @@ def export_posteriors_hdf5(
     """
     import h5py
     from fiberhmm.posteriors.hdf5_backend import (
+        create_posterior_chrom_group,
         write_fiber_metadata_datasets,
         write_hdf5_file_metadata,
     )
@@ -425,11 +433,7 @@ def export_posteriors_hdf5(
     )
 
     # Group regions by chromosome
-    regions_by_chrom = {}
-    for chrom, start, end in regions:
-        if chrom not in regions_by_chrom:
-            regions_by_chrom[chrom] = []
-        regions_by_chrom[chrom].append((start, end))
+    regions_by_chrom = _regions_by_chrom(regions)
 
     # Track per-chromosome data
     chrom_fiber_counts = {chrom: 0 for chrom in regions_by_chrom}
@@ -451,11 +455,7 @@ def export_posteriors_hdf5(
 
         # Pre-create chromosome groups
         for chrom in regions_by_chrom:
-            grp = f.create_group(chrom)
-            grp.create_group('posteriors')
-            grp.create_group('ref_positions')
-            grp.create_group('footprint_starts')
-            grp.create_group('footprint_sizes')
+            create_posterior_chrom_group(f, chrom)
 
         def flush_buffer(chrom):
             """Write buffered fibers to HDF5."""

@@ -37,6 +37,19 @@ def test_export_posteriors_chroms_set():
     assert export_posteriors._chroms_set(["chr2", "chr1", "chr2"]) == {"chr1", "chr2"}
 
 
+def test_export_posteriors_regions_by_chrom_preserves_order():
+    regions = [
+        ("chr2", 0, 10),
+        ("chr1", 5, 15),
+        ("chr2", 10, 20),
+    ]
+
+    assert export_posteriors._regions_by_chrom(regions) == {
+        "chr2": [(0, 10), (10, 20)],
+        "chr1": [(5, 15)],
+    }
+
+
 def test_export_posteriors_tsv_closes_writer_when_region_processing_fails(
     monkeypatch, tmp_path
 ):
