@@ -136,6 +136,50 @@ Examples:
     return parser.parse_args()
 
 
+def _resolve_model_path(args):
+    """Resolve the apply model path from --model or bundled --enzyme/--seq."""
+    if args.model is not None:
+        return args.model
+
+    if args.enzyme is None:
+        print(
+            "error: one of --model or --enzyme must be provided.\n"
+            "  Use --enzyme hia5/dddb/ddda to pick a bundled model, or\n"
+            "  use --model /path/to/model.json for a custom model.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from fiberhmm.models import get_model_path as _get_bundled
+    try:
+        model_path = _get_bundled(args.enzyme, tool='apply', seq=args.seq)
+    except (KeyError, FileNotFoundError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Using bundled model: {model_path}")
+    return model_path
+
+
+def _use_streaming_pipeline(input_bam: str, n_cores: int) -> bool:
+    return input_bam == '-' or n_cores > 1
+
+
+def _has_bam_index(input_bam: str) -> bool:
+    return (
+        os.path.exists(input_bam + '.bai') or
+        os.path.exists(input_bam.replace('.bam', '.bai'))
+    )
+
+
+def _resolve_process_unmapped(args, use_streaming: bool) -> bool:
+    process_unmapped = args.process_unmapped
+    if use_streaming and not process_unmapped and args.input != '-':
+        if not _has_bam_index(args.input):
+            process_unmapped = True
+            print("Enabling unmapped read processing (no BAM index)")
+    return process_unmapped
+
+
 def main():
     args = parse_args()
 
@@ -157,24 +201,7 @@ def main():
     if not stdout_mode:
         os.makedirs(args.outdir, exist_ok=True)
 
-    # Resolve model path: explicit -m wins; else use bundled model for --enzyme
-    model_path = args.model
-    if model_path is None:
-        if args.enzyme is None:
-            print(
-                "error: one of --model or --enzyme must be provided.\n"
-                "  Use --enzyme hia5/dddb/ddda to pick a bundled model, or\n"
-                "  use --model /path/to/model.json for a custom model.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        from fiberhmm.models import get_model_path as _get_bundled
-        try:
-            model_path = _get_bundled(args.enzyme, tool='apply', seq=args.seq)
-        except (KeyError, FileNotFoundError) as e:
-            print(f"error: {e}", file=sys.stderr)
-            sys.exit(1)
-        print(f"Using bundled model: {model_path}")
+    model_path = _resolve_model_path(args)
 
     # Load model with metadata
     print(f"Loading model from {model_path}")
@@ -302,23 +329,12 @@ def main():
     # Mode selection:
     #   n_cores > 1 or stdin → streaming pipeline
     #   n_cores == 1 → single-threaded chunk mode
-    use_streaming = False
-
+    use_streaming = _use_streaming_pipeline(args.input, n_cores)
     if args.input == '-':
-        use_streaming = True
         print("Reading from stdin, using streaming pipeline mode")
-    elif n_cores > 1:
-        use_streaming = True
-    # else: n_cores == 1, use legacy single-threaded chunk mode
 
     # Auto-detect process_unmapped: enable when streaming without an index
-    process_unmapped = args.process_unmapped
-    if use_streaming and not process_unmapped and args.input != '-':
-        has_index = (os.path.exists(args.input + '.bai') or
-                     os.path.exists(args.input.replace('.bam', '.bai')))
-        if not has_index:
-            process_unmapped = True
-            print("Enabling unmapped read processing (no BAM index)")
+    process_unmapped = _resolve_process_unmapped(args, use_streaming)
 
     # === MAIN PROCESSING ===
     if stdout_mode:
