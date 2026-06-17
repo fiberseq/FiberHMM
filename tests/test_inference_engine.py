@@ -1,6 +1,8 @@
 """
 Tests for fiberhmm.inference.engine module.
 """
+import array
+
 import numpy as np
 import pytest
 
@@ -309,6 +311,25 @@ class TestFiberReadExtraction:
             "query_length": 4,
             "_daf_strand": "+",
         }
+
+    def test_make_apply_payload_compacts_ml_tag(self):
+        read = self.FakeRead(
+            "AAAA",
+            {
+                "MM": "A+a,0;",
+                "ML": array.array("B", [200]),
+                "st": "CT",
+            },
+        )
+
+        payload = engine.make_apply_payload(read)
+
+        assert payload["query_name"] == "read1"
+        assert payload["query_sequence"] == "AAAA"
+        assert payload["is_reverse"] is False
+        assert payload["tags"]["MM"] == "A+a,0;"
+        assert payload["tags"]["ML"] == bytes([200])
+        assert payload["tags"]["st"] == "CT"
 
     def test_extract_fiber_read_mm_ml_branch_preserves_reverse_flag(self):
         read = self.FakeRead(

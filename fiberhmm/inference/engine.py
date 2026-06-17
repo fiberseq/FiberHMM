@@ -508,6 +508,19 @@ def detect_mode_from_bam(bam_path: str, n_sample: int = 100) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _apply_payload_tags(read) -> dict:
+    tags = {}
+    for tag in ('MM', 'Mm', 'ML', 'Ml', 'st'):
+        if read.has_tag(tag):
+            val = read.get_tag(tag)
+            if tag in ('ML', 'Ml'):
+                # array.array('B', ...) → bytes via buffer protocol: fast memcpy,
+                # avoids ~5000 PyInt allocations per Hia5 PacBio read.
+                val = compact_ml_value(val)
+            tags[tag] = val
+    return tags
+
+
 def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[dict]:
     """Extract slim payload from a pysam read for the apply slim-IPC path.
 
@@ -528,15 +541,7 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[di
     if not seq:
         return None
 
-    tags = {}
-    for t in ('MM', 'Mm', 'ML', 'Ml', 'st'):
-        if read.has_tag(t):
-            val = read.get_tag(t)
-            if t in ('ML', 'Ml'):
-                # array.array('B', ...) → bytes via buffer protocol: fast memcpy,
-                # avoids ~5000 PyInt allocations per Hia5 PacBio read.
-                val = compact_ml_value(val)
-            tags[t] = val
+    tags = _apply_payload_tags(read)
 
     payload = {
         'query_name': read.query_name,
