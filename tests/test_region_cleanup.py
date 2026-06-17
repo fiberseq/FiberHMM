@@ -149,6 +149,23 @@ def test_region_work_item_builders_use_stable_temp_names(tmp_path):
     ]
 
 
+def test_ordered_existing_temp_paths_sorts_and_filters_empty(tmp_path):
+    nonempty_late = tmp_path / "region_2.bam"
+    nonempty_early = tmp_path / "region_0.bam"
+    empty = tmp_path / "region_1.bam"
+    missing = tmp_path / "missing.bam"
+    nonempty_late.write_bytes(b"late")
+    nonempty_early.write_bytes(b"early")
+    empty.write_bytes(b"")
+
+    assert region_pipeline._ordered_existing_temp_paths([
+        (2, str(nonempty_late)),
+        (1, str(empty)),
+        (3, str(missing)),
+        (0, str(nonempty_early)),
+    ]) == [str(nonempty_early), str(nonempty_late)]
+
+
 def test_region_parallel_bam_cleans_temp_dir_on_worker_failure(monkeypatch, tmp_path):
     temp_dirs = _install_failing_region_pool(monkeypatch, tmp_path)
     input_bam = _indexed_input_bam(tmp_path)

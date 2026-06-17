@@ -155,6 +155,14 @@ def _region_bed_work_items(regions, input_bam: str, temp_dir: str) -> list[Regio
     ]
 
 
+def _ordered_existing_temp_paths(indexed_paths) -> list:
+    return [
+        path
+        for _, path in sorted(indexed_paths, key=lambda x: x[0])
+        if os.path.exists(path) and os.path.getsize(path) > 0
+    ]
+
+
 def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    model_path: str, train_rids: Set[str],
                                    edge_trim: int, circular: bool,
@@ -277,9 +285,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         _print_skip_reasons_summary(aggregation)
 
         # Sort temp BAMs by region order and filter to non-empty
-        aggregation.temp_bams.sort(key=lambda x: x[0])
-        non_empty_bams = [bam for _, bam in aggregation.temp_bams
-                         if os.path.exists(bam) and os.path.getsize(bam) > 0]
+        non_empty_bams = _ordered_existing_temp_paths(aggregation.temp_bams)
 
         _concatenate_region_bams(input_bam, output_bam, non_empty_bams, temp_dir)
 
@@ -423,9 +429,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
         print()  # Newline after progress
 
         # Sort temp BEDs by region order and concatenate
-        aggregation.temp_beds.sort(key=lambda x: x[0])
-        non_empty_beds = [bed for _, bed in aggregation.temp_beds
-                         if os.path.exists(bed) and os.path.getsize(bed) > 0]
+        non_empty_beds = _ordered_existing_temp_paths(aggregation.temp_beds)
 
         print(f"Concatenating {len(non_empty_beds)} region BED files...")
         sys.stdout.flush()
@@ -564,9 +568,7 @@ def _process_bam_region_parallel_fused(
         _print_skip_reasons_summary(aggregation, footprint_label="With FP")
 
         # Concat region BAMs in region-index order - preserves coord sort.
-        aggregation.temp_bams.sort(key=lambda x: x[0])
-        non_empty = [bam for _, bam in aggregation.temp_bams
-                     if os.path.exists(bam) and os.path.getsize(bam) > 0]
+        non_empty = _ordered_existing_temp_paths(aggregation.temp_bams)
         _concatenate_region_bams(input_bam, output_bam, non_empty, temp_dir)
 
         # Index directly (input sorted -> each region sorted -> concat sorted).
