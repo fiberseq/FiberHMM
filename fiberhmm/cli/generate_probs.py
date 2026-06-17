@@ -23,7 +23,7 @@ Features:
 import argparse
 import os
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, List, MutableMapping, Tuple
 
 import numpy as np
 import pandas as pd
@@ -36,6 +36,20 @@ from fiberhmm.core.tag_access import get_preferred_tag
 from fiberhmm.probabilities.context_counter import ContextCounter
 from fiberhmm.probabilities.stats import generate_probability_stats
 from fiberhmm.probabilities.utils import detect_strand_and_base
+
+
+FILTER_STAT_KEYS = (
+    'scanned',
+    'unmapped',
+    'secondary',
+    'supplementary',
+    'low_mapq',
+    'no_sequence',
+    'short_read',
+    'no_mm_tag',
+    'no_ml_tag',
+    'processed',
+)
 
 
 def parse_args():
@@ -86,6 +100,39 @@ def parse_args():
     return parser.parse_args()
 
 
+def _new_filter_stats() -> Dict[str, int]:
+    return dict.fromkeys(FILTER_STAT_KEYS, 0)
+
+
+def _record_mm_tag_types(mm_tag: str, mm_tag_types: MutableMapping[str, int]) -> None:
+    for mod_spec in mm_tag.split(';'):
+        if not mod_spec:
+            continue
+        base_mod = mod_spec.split(',')[0] if ',' in mod_spec else mod_spec
+        mm_tag_types[base_mod] += 1
+
+
+def _print_filter_stats(filter_stats: Dict[str, int], min_mapq: int, min_read_length: int) -> None:
+    print("\n    Filter Statistics:")
+    print(f"      Total scanned:      {filter_stats['scanned']:>10,}")
+    print(f"      Passed all filters: {filter_stats['processed']:>10,} ({100*filter_stats['processed']/max(1,filter_stats['scanned']):.1f}%)")
+    print("      ─────────────────────────────────")
+    print(f"      Unmapped:           {filter_stats['unmapped']:>10,}")
+    print(f"      Secondary:          {filter_stats['secondary']:>10,}")
+    print(f"      Supplementary:      {filter_stats['supplementary']:>10,}")
+    print(f"      Low MAPQ (<{min_mapq}):    {filter_stats['low_mapq']:>10,}")
+    print(f"      No sequence:        {filter_stats['no_sequence']:>10,}")
+    print(f"      Short (<{min_read_length}bp):      {filter_stats['short_read']:>10,}")
+    print(f"      No MM tag:          {filter_stats['no_mm_tag']:>10,}")
+    print(f"      No ML tag:          {filter_stats['no_ml_tag']:>10,}")
+
+
+def _target_bases_for_mode(mode: str) -> List[str]:
+    if mode == 'daf':
+        return ['C']
+    return ['A']
+
+
 def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 mode: str, args, max_reads: int = 0, verbose: bool = False) -> Tuple[int, dict]:
     """
@@ -106,18 +153,7 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
     reads_scanned = 0
 
     # Track filter failures
-    filter_stats = {
-        'scanned': 0,
-        'unmapped': 0,
-        'secondary': 0,
-        'supplementary': 0,
-        'low_mapq': 0,
-        'no_sequence': 0,
-        'short_read': 0,
-        'no_mm_tag': 0,
-        'no_ml_tag': 0,
-        'processed': 0,
-    }
+    filter_stats = _new_filter_stats()
 
     # Track MM tag types seen (for diagnostics)
     mm_tag_types = defaultdict(int)
@@ -167,10 +203,7 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 continue
 
             # Track MM tag types (for diagnostics)
-            for mod_spec in mm_tag.split(';'):
-                if mod_spec:
-                    base_mod = mod_spec.split(',')[0] if ',' in mod_spec else mod_spec
-                    mm_tag_types[base_mod] += 1
+            _record_mm_tag_types(mm_tag, mm_tag_types)
 
             ml_raw = get_preferred_tag(read, 'ML', 'Ml')
             ml_tag = list(ml_raw) if ml_raw is not None else None
@@ -211,18 +244,7 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
 
     # Print filter stats in verbose mode
     if verbose:
-        print("\n    Filter Statistics:")
-        print(f"      Total scanned:      {filter_stats['scanned']:>10,}")
-        print(f"      Passed all filters: {filter_stats['processed']:>10,} ({100*filter_stats['processed']/max(1,filter_stats['scanned']):.1f}%)")
-        print("      ─────────────────────────────────")
-        print(f"      Unmapped:           {filter_stats['unmapped']:>10,}")
-        print(f"      Secondary:          {filter_stats['secondary']:>10,}")
-        print(f"      Supplementary:      {filter_stats['supplementary']:>10,}")
-        print(f"      Low MAPQ (<{args.min_mapq}):    {filter_stats['low_mapq']:>10,}")
-        print(f"      No sequence:        {filter_stats['no_sequence']:>10,}")
-        print(f"      Short (<{args.min_read_length}bp):      {filter_stats['short_read']:>10,}")
-        print(f"      No MM tag:          {filter_stats['no_mm_tag']:>10,}")
-        print(f"      No ML tag:          {filter_stats['no_ml_tag']:>10,}")
+        _print_filter_stats(filter_stats, args.min_mapq, args.min_read_length)
 
     # Print MM tag diagnostics for daf mode (to show C vs G strand detection)
     if mode == 'daf':
@@ -325,13 +347,7 @@ def main():
         print(f"  - {f}")
 
     # Determine which bases to track based on mode
-    if args.mode in ('pacbio-fiber', 'nanopore-fiber'):
-        target_bases = ['A']
-    elif args.mode == 'daf':
-        # DAF mode uses only C-centered contexts; G contexts are reverse complemented to C
-        target_bases = ['C']
-    else:
-        target_bases = ['A']
+    target_bases = _target_bases_for_mode(args.mode)
 
     print(f"\nTarget bases: {', '.join(target_bases)}")
     if args.mode == 'daf':
