@@ -579,6 +579,14 @@ def _training_size_summary(total_label: str, size_label: str, sizes: list) -> st
     )
 
 
+def _training_example_plot_data(model, read, encoded):
+    seq_len = len(read.query_sequence)
+    m6a_positions = sorted(read.m6a_query_positions)
+    posteriors = model.predict_proba(encoded)
+    footprint_prob = posteriors[:, 0]
+    return seq_len, m6a_positions, footprint_prob
+
+
 def _write_training_stats_summary(summary_path: str, model: FiberHMM,
                                   emission_probs: np.ndarray,
                                   sampled_reads: list,
@@ -743,12 +751,9 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
             states = all_states[idx]
             encoded = encoded_reads[idx]
 
-            seq_len = len(read.query_sequence)
-            m6a_positions = sorted(read.m6a_query_positions)
-
-            # Get posterior probabilities
-            posteriors = model.predict_proba(encoded)  # Shape: (T, 2)
-            footprint_prob = posteriors[:, 0]  # P(footprint)
+            seq_len, m6a_positions, footprint_prob = _training_example_plot_data(
+                model, read, encoded,
+            )
 
             # Helper function to draw state blocks
             def draw_state_blocks(ax, region_states, region_len):
@@ -888,10 +893,9 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         states = all_states[0]
         encoded = encoded_reads[0]
 
-        seq_len = len(read.query_sequence)
-        m6a_positions = sorted(read.m6a_query_positions)
-        posteriors = model.predict_proba(encoded)
-        footprint_prob = posteriors[:, 0]
+        seq_len, m6a_positions, footprint_prob = _training_example_plot_data(
+            model, read, encoded,
+        )
 
         fig, axes = plt.subplots(3, 1, figsize=(14, 6),
                                 gridspec_kw={'height_ratios': [1, 1.5, 1]})

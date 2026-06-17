@@ -116,6 +116,23 @@ def test_training_size_summary_formats_nonempty_and_empty_sizes():
     assert train._training_size_summary("MSPs", "MSP sizes", []) == ""
 
 
+def test_training_example_plot_data_sorts_positions_and_uses_footprint_probs():
+    class FakeModel:
+        def predict_proba(self, encoded):
+            np.testing.assert_array_equal(encoded, [3, 4])
+            return np.array([[0.2, 0.8], [0.7, 0.3]])
+
+    read = SimpleNamespace(query_sequence="AC", m6a_query_positions={1, 0})
+
+    seq_len, m6a_positions, footprint_prob = train._training_example_plot_data(
+        FakeModel(), read, np.array([3, 4]),
+    )
+
+    assert seq_len == 2
+    assert m6a_positions == [0, 1]
+    np.testing.assert_array_equal(footprint_prob, [0.2, 0.7])
+
+
 def test_write_training_stats_summary(tmp_path):
     model = SimpleNamespace(
         transmat_=np.array([[0.8, 0.2], [0.25, 0.75]]),
