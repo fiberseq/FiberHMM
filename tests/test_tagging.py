@@ -11,6 +11,7 @@ from fiberhmm.inference.tagging import (
     _fused_recall_tag_intervals,
     _legacy_apply_interval_groups,
     _linear_intervals_overlap,
+    _nuc_overlaps_any_linear_interval,
     _should_keep_nuc_interval,
     _tf_linear_intervals,
     scores_to_u8,
@@ -190,6 +191,13 @@ def test_linear_tf_interval_helpers_use_half_open_overlap():
     assert _linear_intervals_overlap((10, 20), (20, 30)) is False
     assert _linear_intervals_overlap((19, 20), (20, 30)) is False
     assert _linear_intervals_overlap((19, 21), (20, 30)) is True
+
+
+def test_nuc_overlaps_any_linear_interval_uses_start_length_interval():
+    tf_intervals = [(20, 30), (50, 60)]
+
+    assert not _nuc_overlaps_any_linear_interval((10, 10), tf_intervals)
+    assert _nuc_overlaps_any_linear_interval((19, 2), tf_intervals)
 
 
 def test_should_keep_nuc_interval_applies_length_and_overlap_policy():

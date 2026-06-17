@@ -162,6 +162,18 @@ def _linear_intervals_overlap(left: Interval, right: Interval) -> bool:
     return left_start < right_end and right_start < left_end
 
 
+def _nuc_overlaps_any_linear_interval(
+    interval: Interval,
+    linear_intervals: Sequence[Interval],
+) -> bool:
+    s, length = interval
+    linear_interval = (s, s + length)
+    return any(
+        _linear_intervals_overlap(linear_interval, other)
+        for other in linear_intervals
+    )
+
+
 def _legacy_apply_interval_groups(result: dict, read, with_scores: bool):
     nucs = _to_molecular_legacy(
         result["ns"], result["nl"], result.get("ns_scores"),
@@ -217,11 +229,7 @@ def unify_nucs_with_tf_calls(
     tf_intervals = _tf_linear_intervals(tf_calls)
 
     def overlaps_tf(interval: Interval) -> bool:
-        s, length = interval
-        return any(
-            _linear_intervals_overlap((s, s + length), tf_interval)
-            for tf_interval in tf_intervals
-        )
+        return _nuc_overlaps_any_linear_interval(interval, tf_intervals)
 
     return _filter_nucs_with_tf_overlap(
         zip(ns, nl),
