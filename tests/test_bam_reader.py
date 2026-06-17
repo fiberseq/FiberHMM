@@ -24,6 +24,7 @@ try:
         _build_hexamer_lookup_with_rc,
         _daf_deamination_base_counts,
         _iter_mm_mod_specs,
+        _mm_base_indices,
         _modified_base_quality_passes,
         _mm_base_and_mod_code,
         _mm_mod_spec_parts,
@@ -44,6 +45,7 @@ except ImportError:
         _build_hexamer_lookup_with_rc,
         _daf_deamination_base_counts,
         _iter_mm_mod_specs,
+        _mm_base_indices,
         _modified_base_quality_passes,
         _mm_base_and_mod_code,
         _mm_mod_spec_parts,
@@ -305,6 +307,16 @@ class TestMMTagParsing:
         assert [n_mods for _, _, n_mods in specs] == [2, 1]
         np.testing.assert_array_equal(specs[0][1], [0, 5])
         np.testing.assert_array_equal(specs[1][1], [2])
+
+    def test_mm_base_indices_convert_skip_counts_to_base_offsets(self):
+        np.testing.assert_array_equal(
+            _mm_base_indices(np.array([0, 0, 2], dtype=np.int64)),
+            [0, 1, 4],
+        )
+        np.testing.assert_array_equal(
+            _mm_base_indices(np.array([], dtype=np.int64)),
+            [],
+        )
 
     def test_mm_positions_from_spec_filters_quality_bounds_and_reverse(self):
         skip_arr = np.array([0, 1, 1], dtype=np.int64)

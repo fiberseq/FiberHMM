@@ -326,6 +326,10 @@ def _target_base_allowed_for_mode(target_base: str, mode: str) -> bool:
     return True
 
 
+def _mm_base_indices(skip_arr: np.ndarray) -> np.ndarray:
+    return np.cumsum(skip_arr) + np.arange(len(skip_arr))
+
+
 def _mm_valid_positions_and_qualities(skip_arr: np.ndarray,
                                       base_positions: np.ndarray,
                                       ml_slice: np.ndarray,
@@ -335,7 +339,7 @@ def _mm_valid_positions_and_qualities(skip_arr: np.ndarray,
     if n_mods == 0 or len(base_positions) == 0:
         return np.array([], dtype=np.int64), np.array([], dtype=np.uint8)
 
-    base_indices = np.cumsum(skip_arr) + np.arange(n_mods)
+    base_indices = _mm_base_indices(skip_arr)
     valid = base_indices < len(base_positions)
     if len(ml_slice) < n_mods:
         valid[len(ml_slice):] = False
