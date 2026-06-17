@@ -208,6 +208,15 @@ def _combined_probability_table_path(
     return os.path.join(tables_dir, f"{base_name}_{base}_k{context_size}_probs.tsv")
 
 
+def _max_reads_per_file(max_reads: int, n_files: int) -> int:
+    return max_reads // n_files if max_reads > 0 else 0
+
+
+def _accumulate_filter_stats(combined_stats, filter_stats: Dict[str, int]) -> None:
+    for key, value in filter_stats.items():
+        combined_stats[key] += value
+
+
 def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 mode: str, args, max_reads: int = 0, verbose: bool = False) -> Tuple[int, dict]:
     """
@@ -328,7 +337,7 @@ def process_sample_set(bam_files: List[str], counters: Dict[str, ContextCounter]
     total_scanned = 0
     combined_stats = defaultdict(int)
 
-    max_per_file = args.max_reads // len(bam_files) if args.max_reads > 0 else 0
+    max_per_file = _max_reads_per_file(args.max_reads, len(bam_files))
 
     for bam_file in bam_files:
         print(f"\n  Processing: {bam_file}")
@@ -337,9 +346,7 @@ def process_sample_set(bam_files: List[str], counters: Dict[str, ContextCounter]
         total_reads += reads
         total_scanned += filter_stats['scanned']
 
-        # Accumulate filter stats
-        for k, v in filter_stats.items():
-            combined_stats[k] += v
+        _accumulate_filter_stats(combined_stats, filter_stats)
 
         print(f"    Processed {reads:,} reads (scanned {filter_stats['scanned']:,})")
 

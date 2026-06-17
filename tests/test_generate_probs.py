@@ -4,9 +4,11 @@ import pandas as pd
 
 from fiberhmm.cli.generate_probs import (
     FILTER_STAT_KEYS,
+    _accumulate_filter_stats,
     _combined_probability_frame,
     _combined_probability_table_path,
     _generate_probs_skip_reason,
+    _max_reads_per_file,
     _new_filter_stats,
     _probability_counter_path,
     _probability_table_path,
@@ -112,3 +114,17 @@ def test_probability_output_path_helpers():
     assert _combined_probability_table_path("out/tables", "run", "C", 5) == (
         "out/tables/run_C_k5_probs.tsv"
     )
+
+
+def test_sample_set_bookkeeping_helpers():
+    assert _max_reads_per_file(0, 3) == 0
+    assert _max_reads_per_file(10, 3) == 3
+
+    combined = defaultdict(int, {"scanned": 5, "processed": 2})
+    _accumulate_filter_stats(combined, {"scanned": 4, "low_mapq": 1})
+
+    assert dict(combined) == {
+        "scanned": 9,
+        "processed": 2,
+        "low_mapq": 1,
+    }
