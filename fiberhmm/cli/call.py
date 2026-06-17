@@ -181,10 +181,19 @@ def _resolve_recall_model(args):
     return None  # reuse apply model
 
 
+def _call_mode_or_default(args_mode, model_mode) -> str:
+    return args_mode or model_mode or 'pacbio-fiber'
+
+
+def _call_context_size_or_default(args_context_size, model_k) -> int:
+    return args_context_size or int(model_k or 3)
+
+
 def _resolve_call_mode_context(args, model_k, model_mode):
-    mode = args.mode or model_mode or 'pacbio-fiber'
-    k = args.context_size or int(model_k or 3)
-    return mode, k
+    return (
+        _call_mode_or_default(args.mode, model_mode),
+        _call_context_size_or_default(args.context_size, model_k),
+    )
 
 
 _resolve_call_chroms = resolve_chroms_set

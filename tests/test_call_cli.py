@@ -14,8 +14,10 @@ from conftest import make_synthetic_bam, make_synthetic_iupac_bam
 from fiberhmm.cli.call import (
     _build_pg_record,
     _call_banner_text,
+    _call_context_size_or_default,
     _call_circular_label,
     _call_enzyme_label,
+    _call_mode_or_default,
     _call_mode_label,
     _call_pg_description,
     _call_recall_model_label,
@@ -224,6 +226,13 @@ def test_call_model_resolution_requires_model_or_enzyme(capsys):
 
 
 def test_call_mode_context_resolution_uses_overrides_metadata_and_defaults():
+    assert _call_mode_or_default("daf", "pacbio-fiber") == "daf"
+    assert _call_mode_or_default(None, "nanopore-fiber") == "nanopore-fiber"
+    assert _call_mode_or_default(None, None) == "pacbio-fiber"
+    assert _call_context_size_or_default(5, 3) == 5
+    assert _call_context_size_or_default(None, 4) == 4
+    assert _call_context_size_or_default(None, None) == 3
+
     args = SimpleNamespace(mode="daf", context_size=5)
     assert _resolve_call_mode_context(args, model_k=3, model_mode="pacbio-fiber") == (
         "daf",
