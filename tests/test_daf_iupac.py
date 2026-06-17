@@ -13,6 +13,7 @@ from fiberhmm.core.bam_reader import (
     encode_from_query_sequence,
     extract_daf_iupac_positions,
     has_iupac_encoding,
+    _convert_daf_iupac_sequence,
     _infer_daf_iupac_strand,
 )
 
@@ -57,6 +58,10 @@ class TestExtractDafIupacPositions:
         assert _infer_daf_iupac_strand("AYYRC") == "+"
         assert _infer_daf_iupac_strand("ARRYC") == "-"
         assert _infer_daf_iupac_strand("ARYC") == "."
+
+    def test_convert_daf_iupac_sequence_returns_positions_and_acgt_sequence(self):
+        assert _convert_daf_iupac_sequence("ARYC") == ({1, 2}, "AATC")
+        assert _convert_daf_iupac_sequence("ACGT") == (set(), "ACGT")
 
     def test_ct_strand_y_positions(self):
         """+ strand (CT): Y marks deaminated C → converted to T."""

@@ -681,6 +681,22 @@ def _infer_daf_iupac_strand(seq_upper: str) -> str:
     return '.'
 
 
+def _convert_daf_iupac_sequence(seq_upper: str) -> Tuple[Set[int], str]:
+    seq_arr = np.frombuffer(seq_upper.encode('ascii'), dtype=np.uint8)
+    y_mask = seq_arr == ord('Y')
+    r_mask = seq_arr == ord('R')
+    mod_mask = y_mask | r_mask
+
+    if not np.any(mod_mask):
+        return set(), seq_upper
+
+    mod_positions = set(np.where(mod_mask)[0].tolist())
+    out_arr = seq_arr.copy()
+    out_arr[y_mask] = ord('T')
+    out_arr[r_mask] = ord('A')
+    return mod_positions, out_arr.tobytes().decode('ascii')
+
+
 def extract_daf_iupac_positions(sequence: str, st_tag: Optional[str] = None) -> Tuple[Set[int], str, str]:
     """
     Extract deamination positions from IUPAC R/Y encoded DAF-seq sequence.
@@ -708,21 +724,7 @@ def extract_daf_iupac_positions(sequence: str, st_tag: Optional[str] = None) -> 
     if strand == '.' and st_tag is None:
         strand = _infer_daf_iupac_strand(seq_upper)
 
-    # Vectorized IUPAC conversion: Y (→T) + R (→A) + collect mod positions.
-    # 10-30× faster than the per-base Python loop for long reads.
-    seq_arr = np.frombuffer(seq_upper.encode('ascii'), dtype=np.uint8)
-    y_mask = seq_arr == ord('Y')
-    r_mask = seq_arr == ord('R')
-    mod_mask = y_mask | r_mask
-
-    if np.any(mod_mask):
-        mod_positions = set(np.where(mod_mask)[0].tolist())
-        out_arr = seq_arr.copy()
-        out_arr[y_mask] = ord('T')
-        out_arr[r_mask] = ord('A')
-        converted = out_arr.tobytes().decode('ascii')
-    else:
-        converted = seq_upper
+    mod_positions, converted = _convert_daf_iupac_sequence(seq_upper)
 
     return mod_positions, strand, converted
 
