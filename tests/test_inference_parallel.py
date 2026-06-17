@@ -943,6 +943,50 @@ def test_record_apply_result_tags_posteriors_or_counts_no_footprints(monkeypatch
     assert counters == {"reads_with_footprints": 1, "no_footprints": 1}
 
 
+def test_record_fused_result_tags_chimeras_or_counts_no_footprints(monkeypatch):
+    read = SimpleNamespace(query_sequence="ACGT")
+    result = {"tf_calls": []}
+    counters = {}
+    tagged = []
+
+    def fake_write_tags(
+        got_read,
+        read_length,
+        result,
+        also_write_legacy,
+        downstream_compat,
+    ):
+        tagged.append((
+            got_read,
+            read_length,
+            result,
+            also_write_legacy,
+            downstream_compat,
+        ))
+
+    monkeypatch.setattr(streaming_drain, "write_fused_recall_tags", fake_write_tags)
+
+    streaming_drain._record_fused_result(
+        read, result, also_write_legacy=True, downstream_compat=False,
+        counters=counters,
+    )
+    streaming_drain._record_fused_result(
+        read, streaming_workers.CHIMERA_RESULT,
+        also_write_legacy=True, downstream_compat=False, counters=counters,
+    )
+    streaming_drain._record_fused_result(
+        read, None, also_write_legacy=True, downstream_compat=False,
+        counters=counters,
+    )
+
+    assert tagged == [(read, 4, result, True, False)]
+    assert counters == {
+        "reads_with_footprints": 1,
+        "chimera": 1,
+        "no_footprints": 1,
+    }
+
+
 def test_streaming_drain_counts_worker_failures_and_passes_read_through():
     read = object()
     outbam = _OutBam()

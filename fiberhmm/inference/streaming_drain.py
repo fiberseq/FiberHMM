@@ -108,6 +108,28 @@ def _record_apply_result(
         _record_no_footprints(counters)
 
 
+def _record_fused_result(
+    read_obj,
+    result,
+    also_write_legacy,
+    downstream_compat,
+    counters,
+) -> None:
+    if result == CHIMERA_RESULT:
+        _record_chimera(counters)
+    elif result is not None:
+        write_fused_recall_tags(
+            read_obj,
+            read_length=_fused_read_length(read_obj),
+            result=result,
+            also_write_legacy=also_write_legacy,
+            downstream_compat=downstream_compat,
+        )
+        _record_reads_with_footprints(counters)
+    else:
+        _record_no_footprints(counters)
+
+
 def _drain_oldest_chunk(
     inflight,
     outbam,
@@ -176,18 +198,8 @@ def _drain_oldest_fused_chunk(
 
         next(payload_iter)
         result = next(result_iter)
-        if result == CHIMERA_RESULT:
-            _record_chimera(counters)
-        elif result is not None:
-            write_fused_recall_tags(
-                read_obj,
-                read_length=_fused_read_length(read_obj),
-                result=result,
-                also_write_legacy=also_write_legacy,
-                downstream_compat=downstream_compat,
-            )
-            _record_reads_with_footprints(counters)
-        else:
-            _record_no_footprints(counters)
+        _record_fused_result(
+            read_obj, result, also_write_legacy, downstream_compat, counters,
+        )
 
         _write_passthrough(outbam, read_obj, counters)
