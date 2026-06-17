@@ -115,6 +115,11 @@ def test_h5_batch_metadata_helpers_append_and_concatenate():
     )
 
 
+def test_decode_h5_text_accepts_bytes_and_strings():
+    assert export_posteriors._decode_h5_text(b"read-a") == "read-a"
+    assert export_posteriors._decode_h5_text("read-b") == "read-b"
+
+
 def test_write_h5_fiber_arrays_uses_backend_dataset_specs(tmp_path):
     with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
         grp = hdf5_backend.create_posterior_chrom_group(h5, "chr1")

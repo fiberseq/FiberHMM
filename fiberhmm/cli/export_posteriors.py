@@ -339,6 +339,12 @@ def _concat_h5_metadata_arrays(arrays) -> np.ndarray:
     return np.concatenate(arrays) if arrays else np.array([], dtype=np.int32)
 
 
+def _decode_h5_text(value):
+    if isinstance(value, bytes):
+        return value.decode()
+    return value
+
+
 def _flush_h5_chrom_buffer(h5_file, chrom: str, write_buffers: dict,
                            chrom_fiber_counts: dict, chrom_metadata: dict) -> int:
     """Write one chromosome buffer to HDF5 and update metadata sidecars."""
@@ -695,14 +701,12 @@ class PosteriorReader:
             fp_sizes = fp_sizes_grp[str(idx)][:] if fp_sizes_grp else np.array([], dtype=np.int32)
 
             strand = strands[idx] if strands is not None else '.'
-            if isinstance(strand, bytes):
-                strand = strand.decode()
 
             fibers.append(FiberPosterior(
-                fiber_id=ids[idx] if isinstance(ids[idx], str) else ids[idx].decode(),
+                fiber_id=_decode_h5_text(ids[idx]),
                 start=int(starts[idx]),
                 end=int(ends[idx]),
-                strand=strand,
+                strand=_decode_h5_text(strand),
                 posteriors=posteriors.astype(np.float32),
                 ref_positions=ref_positions,
                 footprint_starts=fp_starts,
