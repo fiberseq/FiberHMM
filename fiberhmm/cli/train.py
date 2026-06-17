@@ -256,12 +256,17 @@ def _passes_training_sample_filters(read, min_mapq: int,
 def _training_mod_query_positions(read, prob_threshold: int, mode: str) -> set:
     from fiberhmm.core.bam_reader import (
         get_modified_positions_pysam,
-        parse_mm_tag_query_positions,
     )
 
     mod_query_pos = get_modified_positions_pysam(read, prob_threshold, mode)
     if mod_query_pos:
         return set(mod_query_pos)
+
+    return _training_mm_ml_query_positions(read, prob_threshold, mode)
+
+
+def _training_mm_ml_query_positions(read, prob_threshold: int, mode: str) -> set:
+    from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
 
     mm_tag = get_preferred_tag(read, 'MM', 'Mm')
     ml_tag = get_preferred_tag(read, 'ML', 'Ml')

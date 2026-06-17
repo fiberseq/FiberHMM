@@ -315,6 +315,7 @@ def test_training_mod_query_positions_prefers_pysam_then_mm_fallback(monkeypatch
     monkeypatch.setattr(bam_reader, "parse_mm_tag_query_positions", fake_parse)
 
     assert train._training_mod_query_positions(read, 125, "pacbio-fiber") == {1}
+    assert train._training_mm_ml_query_positions(read, 125, "pacbio-fiber") == {1}
     assert captured["ml_tag"] == b"\xc8"
 
 
