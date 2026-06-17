@@ -217,6 +217,41 @@ def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
     return int(res['nrl'])
 
 
+def _resolve_recall_nucs(args) -> bool:
+    """Resolve the nucleosome recaller default and DddA-specific warnings."""
+    if args.recall_nucs is None:
+        recall_nucs = (args.enzyme != 'ddda')
+        if args.enzyme == 'ddda':
+            print("  NOTE: nucleosome recaller is OFF by default for DddA "
+                  "(use --recall-nucs to force it on).", file=sys.stderr)
+    else:
+        recall_nucs = bool(args.recall_nucs)
+        if recall_nucs and args.enzyme == 'ddda':
+            print("  WARNING: --recall-nucs on DddA uses the uplifted TF model for "
+                  "splitting (aggressive) — verify results.", file=sys.stderr)
+    return recall_nucs
+
+
+def _build_pg_record(mode, recall_nucs, phase_nrl, keep_chimeras, argv=None):
+    """Build the @PG provenance record for fused call output BAMs."""
+    import fiberhmm as _fh
+
+    argv = sys.argv if argv is None else argv
+    chimera_state = 'n/a' if mode != 'daf' else ('off' if keep_chimeras else 'on')
+    return {
+        'PN': 'fiberhmm-call',
+        'VN': getattr(_fh, '__version__', 'unknown'),
+        'CL': ' '.join(argv),
+        # The `coord=molecular` token is a stable, version-independent contract
+        # for downstream consumers (e.g. FiberBrowser) to detect that ns/nl/as/al
+        # and MA are in molecular (original-fiber) frame -- keep the exact token.
+        'DS': (f"FiberHMM fused apply+recall; coord=molecular "
+               f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
+               f"mode={mode} recall_nucs={recall_nucs} phase_nrl={phase_nrl} "
+               f"chimera_filter={chimera_state}"),
+    }
+
+
 def _check_daf_inputs(input_bam: str, reference: str = None,
                        n_sniff: int = 10) -> None:
     """Sniff the first ~N mapped reads of a DAF-mode input BAM and confirm
@@ -310,19 +345,7 @@ def main():
 
     min_llr, uplift = resolve_recall_defaults(args)
 
-    # Nucleosome recaller: ON by default, except DddA (the bundled DddA recall
-    # model is the uplifted TF model, too aggressive for nuc splitting). Explicit
-    # --recall-nucs / --no-recall-nucs always wins.
-    if args.recall_nucs is None:
-        recall_nucs = (args.enzyme != 'ddda')
-        if args.enzyme == 'ddda':
-            print("  NOTE: nucleosome recaller is OFF by default for DddA "
-                  "(use --recall-nucs to force it on).", file=sys.stderr)
-    else:
-        recall_nucs = bool(args.recall_nucs)
-        if recall_nucs and args.enzyme == 'ddda':
-            print("  WARNING: --recall-nucs on DddA uses the uplifted TF model for "
-                  "splitting (aggressive) — verify results.", file=sys.stderr)
+    recall_nucs = _resolve_recall_nucs(args)
 
     # Fast-fail sniff for --mode daf BEFORE any BAM scanning (e.g. --phase-nrl
     # auto estimation): the DAF path needs R/Y in the stored sequence, MD tags,
@@ -335,23 +358,9 @@ def main():
     phase_nrl = _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
                                    recall_nucs)
 
-    # @PG provenance for the output BAM header. The molecular-frame note is the
-    # important bit: it tells downstream tools how to read ns/nl/as/al/MA.
-    import fiberhmm as _fh
-    chimera_state = ('n/a' if mode != 'daf'
-                     else ('off' if args.keep_chimeras else 'on'))
-    pg_record = {
-        'PN': 'fiberhmm-call',
-        'VN': getattr(_fh, '__version__', 'unknown'),
-        'CL': ' '.join(sys.argv),
-        # The `coord=molecular` token is a stable, version-independent contract
-        # for downstream consumers (e.g. FiberBrowser) to detect that ns/nl/as/al
-        # and MA are in molecular (original-fiber) frame -- keep the exact token.
-        'DS': (f"FiberHMM fused apply+recall; coord=molecular "
-               f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
-               f"mode={mode} recall_nucs={recall_nucs} phase_nrl={phase_nrl} "
-               f"chimera_filter={chimera_state}"),
-    }
+    pg_record = _build_pg_record(
+        mode, recall_nucs, phase_nrl, args.keep_chimeras, sys.argv,
+    )
 
     mode_label = 'region-parallel' if args.region_parallel else 'streaming'
     print(

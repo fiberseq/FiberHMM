@@ -12,8 +12,10 @@ import pytest
 from conftest import make_synthetic_bam, make_synthetic_iupac_bam
 
 from fiberhmm.cli.call import (
+    _build_pg_record,
     _check_daf_inputs,
     _resolve_apply_model,
+    _resolve_recall_nucs,
     _resolve_recall_model,
 )
 
@@ -143,3 +145,35 @@ def test_call_model_resolution_requires_model_or_enzyme(capsys):
 
     assert exc.value.code == 1
     assert "one of --model or --enzyme required" in capsys.readouterr().err
+
+
+def test_call_recall_nucs_defaults_and_ddda_warnings(capsys):
+    args = SimpleNamespace(enzyme="hia5", recall_nucs=None)
+    assert _resolve_recall_nucs(args) is True
+    assert capsys.readouterr().err == ""
+
+    args = SimpleNamespace(enzyme="ddda", recall_nucs=None)
+    assert _resolve_recall_nucs(args) is False
+    assert "OFF by default for DddA" in capsys.readouterr().err
+
+    args = SimpleNamespace(enzyme="ddda", recall_nucs=True)
+    assert _resolve_recall_nucs(args) is True
+    assert "--recall-nucs on DddA" in capsys.readouterr().err
+
+
+def test_call_pg_record_documents_molecular_coordinates():
+    record = _build_pg_record(
+        mode="daf",
+        recall_nucs=True,
+        phase_nrl=185,
+        keep_chimeras=False,
+        argv=["fiberhmm-call", "-i", "in.bam"],
+    )
+
+    assert record["PN"] == "fiberhmm-call"
+    assert record["CL"] == "fiberhmm-call -i in.bam"
+    assert "coord=molecular" in record["DS"]
+    assert "mode=daf" in record["DS"]
+    assert "recall_nucs=True" in record["DS"]
+    assert "phase_nrl=185" in record["DS"]
+    assert "chimera_filter=on" in record["DS"]
