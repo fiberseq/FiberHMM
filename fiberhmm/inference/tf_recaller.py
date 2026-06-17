@@ -695,6 +695,15 @@ def _recall_nuc_quality_inputs(kept_nucs: Sequence[Tuple[int, int]],
     return nq_values, nuc_qqq, nuc_el_values, nuc_er_values
 
 
+def _recall_tf_quality_inputs(tf_calls: Sequence[TFCall]):
+    return (
+        [(c.start, c.length) for c in tf_calls],
+        [llr_to_tq(c.llr) for c in tf_calls],
+        [ambiguity_to_edge(c.left_ambiguity) for c in tf_calls],
+        [ambiguity_to_edge(c.right_ambiguity) for c in tf_calls],
+    )
+
+
 def _write_legacy_recall_tags(read, read_length: int,
                               kept_nucs: Sequence[Tuple[int, int]],
                               msps: Sequence[Tuple[int, int]],
@@ -789,10 +798,7 @@ def write_ma_tags(read, read_length: int,
         kept_nucs, nq_for_kept_nucs, nuc_el_for_kept, nuc_er_for_kept,
     )
 
-    tf_intervals = [(c.start, c.length) for c in tf_calls]
-    tq_vals = [llr_to_tq(c.llr) for c in tf_calls]
-    el_vals = [ambiguity_to_edge(c.left_ambiguity) for c in tf_calls]
-    er_vals = [ambiguity_to_edge(c.right_ambiguity) for c in tf_calls]
+    tf_intervals, tq_vals, el_vals, er_vals = _recall_tf_quality_inputs(tf_calls)
 
     # FiberHMM works in SEQ coords internally. Tags are written in molecular
     # frame and sorted within each annotation type for fibertools/spec readers.

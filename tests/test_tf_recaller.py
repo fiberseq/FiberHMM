@@ -79,6 +79,16 @@ def test_quality_row_helpers_preserve_aq_layout():
         [7], nuc_qqq=True, nuc_el_values=[8], nuc_er_values=[9],
     ) == [[7, 8, 9]]
     assert tf_recaller._tf_quality_rows([10], [11], [12]) == [[10, 11, 12]]
+    assert tf_recaller._recall_tf_quality_inputs([
+        TFCall(
+            start=5,
+            length=10,
+            llr=5.0,
+            n_opps=3,
+            left_ambiguity=0,
+            right_ambiguity=EDGE_AMBIGUITY_SAT + 5,
+        )
+    ]) == ([(5, 10)], [50], [255], [0])
 
     default_aq = tf_recaller._format_split_aq(
         [[7]],
