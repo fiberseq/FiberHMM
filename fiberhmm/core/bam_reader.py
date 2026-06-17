@@ -1060,24 +1060,17 @@ def _encode_daf_vectorized_observations(seq_int: np.ndarray, mod_mask: np.ndarra
     left_offsets = np.arange(-k, 0)
     right_offsets = np.arange(1, k + 1)
 
-    left_indices = target_positions[:, np.newaxis] + left_offsets
-    right_indices = target_positions[:, np.newaxis] + right_offsets
-
-    left_contexts = recon_int[left_indices]
-    right_contexts = recon_int[right_indices]
-
-    # Check for invalid bases (N, etc.)
-    valid_context = ~(np.any(left_contexts > 3, axis=1) |
-                      np.any(right_contexts > 3, axis=1))
-
-    if not np.any(valid_context):
+    valid_positions, codes = _context_codes_for_target_positions(
+        target_positions,
+        recon_int,
+        left_offsets,
+        right_offsets,
+        powers,
+        k,
+        use_rc,
+    )
+    if len(valid_positions) == 0:
         return result
-
-    valid_positions = target_positions[valid_context]
-    valid_left = left_contexts[valid_context].astype(np.int64)
-    valid_right = right_contexts[valid_context].astype(np.int64)
-
-    codes = _context_codes_from_flanks(valid_left, valid_right, powers, k, use_rc)
 
     # Apply methylated codes to deaminated positions.
     deam_at_valid = is_deaminated[valid_positions]
