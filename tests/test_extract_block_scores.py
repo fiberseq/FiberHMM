@@ -9,6 +9,7 @@ Covers:
 from __future__ import annotations
 
 import io
+import os
 from array import array
 from types import SimpleNamespace
 
@@ -31,6 +32,7 @@ from fiberhmm.io.autosql import (
     _autosql_file_suffix,
     _autosql_variant_suffix,
     _canonical_autosql_type,
+    _create_autosql_output_path,
     _schema_description,
     _schema_fields,
     get_schema,
@@ -599,6 +601,24 @@ def test_autosql_file_name_and_suffix_helpers():
     assert _autosql_file_suffix('.bs') == '.bs.as'
     assert _autosql_file_name('tf', '') == 'fiberhmm_tf.as'
     assert _autosql_file_name('tf', '.bs.circ') == 'fiberhmm_tf.bs.circ.as'
+
+
+def test_create_autosql_output_path_handles_tempfile_and_output_dir(tmp_path):
+    out_dir = tmp_path / 'schemas'
+    fixed_path = _create_autosql_output_path(
+        'tf', '.bs', '.bs.as', str(out_dir),
+    )
+
+    assert fixed_path == str(out_dir / 'fiberhmm_tf.bs.as')
+    assert out_dir.is_dir()
+
+    temp_path = _create_autosql_output_path('tf', '.bs', '.bs.as', None)
+    try:
+        assert os.path.exists(temp_path)
+        assert os.path.basename(temp_path).startswith('fiberhmm_tf_')
+        assert temp_path.endswith('.bs.as')
+    finally:
+        os.unlink(temp_path)
 
 
 def test_schema_description_prepends_sample_marker_when_present():

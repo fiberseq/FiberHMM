@@ -233,6 +233,18 @@ def _autosql_file_name(extract_type: str, variant: str) -> str:
     return f'fiberhmm_{extract_type}{variant}.as'
 
 
+def _create_autosql_output_path(extract_type: str, variant: str, suffix: str,
+                                out_dir: Optional[str]) -> str:
+    if out_dir is None:
+        fd, path = tempfile.mkstemp(prefix=f'fiberhmm_{extract_type}_',
+                                    suffix=suffix)
+        os.close(fd)
+        return path
+
+    os.makedirs(out_dir, exist_ok=True)
+    return os.path.join(out_dir, _autosql_file_name(extract_type, variant))
+
+
 def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
                       block_scores: bool = False,
                       sample_name: Optional[str] = None,
@@ -253,13 +265,7 @@ def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
         return None
     variant = _autosql_variant_suffix(block_scores, circular_groups)
     suffix = _autosql_file_suffix(variant)
-    if out_dir is None:
-        fd, path = tempfile.mkstemp(prefix=f'fiberhmm_{extract_type}_',
-                                     suffix=suffix)
-        os.close(fd)
-    else:
-        os.makedirs(out_dir, exist_ok=True)
-        path = os.path.join(out_dir, _autosql_file_name(extract_type, variant))
+    path = _create_autosql_output_path(extract_type, variant, suffix, out_dir)
     with open(path, 'w') as f:
         f.write(schema)
     return path
