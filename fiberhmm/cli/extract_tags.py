@@ -1098,6 +1098,45 @@ def _submit_extract_region_futures(executor, work_items) -> dict:
     }
 
 
+def _new_extract_feature_counts(extract_types) -> dict:
+    return {t: 0 for t in extract_types}
+
+
+def _new_extract_temp_beds_by_type(extract_types) -> dict:
+    return {t: [] for t in extract_types}
+
+
+def _record_extract_region_result(
+    extract_types,
+    region_index: int,
+    temp_bed_paths: dict,
+    n_feats: dict,
+    total_features: dict,
+    temp_beds_by_type: dict,
+) -> None:
+    for t in extract_types:
+        total_features[t] += n_feats.get(t, 0)
+        tb = temp_bed_paths.get(t)
+        if tb and os.path.exists(tb) and os.path.getsize(tb) > 0:
+            temp_beds_by_type[t].append((region_index, tb))
+
+
+def _extract_progress_message(
+    completed: int,
+    total_regions: int,
+    total_reads: int,
+    total_features: dict,
+    extract_types,
+    elapsed: float,
+) -> str:
+    rate = total_reads / elapsed if elapsed > 0 else 0
+    feat_str = ' '.join(f"{t}={total_features[t]:,}" for t in extract_types)
+    return (
+        f"\r  Regions: {completed}/{total_regions} | "
+        f"Reads: {total_reads:,} | {feat_str} | {rate:.0f} reads/s"
+    )
+
+
 def _canonical_extract_type(extract_type: str) -> str:
     return 'nucleosome' if extract_type == 'footprint' else extract_type
 
@@ -1255,9 +1294,9 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
         )
 
         total_reads = 0
-        total_features = {t: 0 for t in extract_types}
+        total_features = _new_extract_feature_counts(extract_types)
         # {extract_type: [(region_idx, temp_bed_path)]}
-        temp_beds_by_type = {t: [] for t in extract_types}
+        temp_beds_by_type = _new_extract_temp_beds_by_type(extract_types)
         completed = 0
 
         with ProcessPoolExecutor(
@@ -1272,18 +1311,29 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                 try:
                     temp_bed_paths, n_reads, n_feats = future.result()
                     total_reads += n_reads
-                    for t in extract_types:
-                        total_features[t] += n_feats.get(t, 0)
-                        tb = temp_bed_paths.get(t)
-                        if tb and os.path.exists(tb) and os.path.getsize(tb) > 0:
-                            temp_beds_by_type[t].append((futures[future], tb))
+                    _record_extract_region_result(
+                        extract_types,
+                        futures[future],
+                        temp_bed_paths,
+                        n_feats,
+                        total_features,
+                        temp_beds_by_type,
+                    )
                 except Exception as e:
                     print(f"Worker error: {e}")
 
                 elapsed = time.time() - start_time
-                rate = total_reads / elapsed if elapsed > 0 else 0
-                feat_str = ' '.join(f"{t}={total_features[t]:,}" for t in extract_types)
-                print(f"\r  Regions: {completed}/{len(regions)} | Reads: {total_reads:,} | {feat_str} | {rate:.0f} reads/s", end='')
+                print(
+                    _extract_progress_message(
+                        completed,
+                        len(regions),
+                        total_reads,
+                        total_features,
+                        extract_types,
+                        elapsed,
+                    ),
+                    end='',
+                )
         print()
 
         # Concatenate + sort per type

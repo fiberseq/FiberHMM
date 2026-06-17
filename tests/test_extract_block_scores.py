@@ -473,6 +473,43 @@ def test_submit_extract_region_futures_maps_region_indices():
     ]
 
 
+def test_extract_parallel_result_helpers_track_features_and_nonempty_beds(tmp_path):
+    nonempty = tmp_path / "region_0_tf.bed"
+    empty = tmp_path / "region_0_msp.bed"
+    nonempty.write_text("chr1\t0\t10\n")
+    empty.write_text("")
+    extract_types = ["tf", "msp"]
+    total_features = extract_tags._new_extract_feature_counts(extract_types)
+    temp_beds_by_type = extract_tags._new_extract_temp_beds_by_type(extract_types)
+
+    extract_tags._record_extract_region_result(
+        extract_types,
+        region_index=7,
+        temp_bed_paths={"tf": str(nonempty), "msp": str(empty)},
+        n_feats={"tf": 3},
+        total_features=total_features,
+        temp_beds_by_type=temp_beds_by_type,
+    )
+
+    assert total_features == {"tf": 3, "msp": 0}
+    assert temp_beds_by_type == {"tf": [(7, str(nonempty))], "msp": []}
+
+
+def test_extract_progress_message_formats_counts_and_zero_elapsed():
+    message = extract_tags._extract_progress_message(
+        completed=2,
+        total_regions=5,
+        total_reads=1234,
+        total_features={"tf": 10, "msp": 3},
+        extract_types=["tf", "msp"],
+        elapsed=0,
+    )
+
+    assert message == (
+        "\r  Regions: 2/5 | Reads: 1,234 | tf=10 msp=3 | 0 reads/s"
+    )
+
+
 def test_normalize_parallel_extract_args_handles_aliases_and_backcompat_paths():
     output_beds, extract_types = extract_tags._normalize_parallel_extract_args(
         "footprints.bed",
