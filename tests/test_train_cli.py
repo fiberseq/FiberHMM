@@ -319,6 +319,46 @@ def test_training_mod_query_positions_prefers_pysam_then_mm_fallback(monkeypatch
     assert captured["ml_tag"] == b"\xc8"
 
 
+def test_training_sample_candidate_filters_duplicates_and_requires_mods(monkeypatch):
+    read = SimpleNamespace(query_name="read1")
+    fiber = object()
+
+    monkeypatch.setattr(
+        train,
+        "_passes_training_sample_filters",
+        lambda got_read, min_mapq, min_read_length: got_read is read,
+    )
+    monkeypatch.setattr(
+        train,
+        "_training_mod_query_positions",
+        lambda got_read, prob_threshold, mode: {2},
+    )
+    monkeypatch.setattr(
+        train,
+        "_training_fiber_read_from_segment",
+        lambda got_read, mods: fiber,
+    )
+
+    assert train._training_sample_candidate(
+        read, set(), 20, 1000, 125, "pacbio-fiber",
+    ) is fiber
+    assert train._training_sample_candidate(
+        read, {"read1"}, 20, 1000, 125, "pacbio-fiber",
+    ) is None
+    assert train._training_sample_candidate(
+        SimpleNamespace(query_name="read2"), set(), 20, 1000, 125, "pacbio-fiber",
+    ) is None
+
+    monkeypatch.setattr(
+        train,
+        "_training_mod_query_positions",
+        lambda got_read, prob_threshold, mode: set(),
+    )
+    assert train._training_sample_candidate(
+        read, set(), 20, 1000, 125, "pacbio-fiber",
+    ) is None
+
+
 def test_reads_per_training_file_has_one_read_minimum():
     assert train._reads_per_training_file(100, 4) == 25
     assert train._reads_per_training_file(2, 5) == 1

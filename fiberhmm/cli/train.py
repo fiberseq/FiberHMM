@@ -294,6 +294,26 @@ def _training_fiber_read_from_segment(read, mod_query_pos: set):
     )
 
 
+def _training_sample_candidate(
+    read,
+    seen_read_ids: set,
+    min_mapq: int,
+    min_read_length: int,
+    prob_threshold: int,
+    mode: str,
+):
+    if not _passes_training_sample_filters(read, min_mapq, min_read_length):
+        return None
+    if read.query_name in seen_read_ids:
+        return None
+
+    mod_query_pos = _training_mod_query_positions(read, prob_threshold, mode)
+    if not mod_query_pos:
+        return None
+
+    return _training_fiber_read_from_segment(read, mod_query_pos)
+
+
 def _reads_per_training_file(read_count: int, n_files: int) -> int:
     return max(1, read_count // n_files)
 
@@ -347,25 +367,16 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                 # Fetch reads overlapping this position
                 try:
                     for read in bam.fetch(chrom, max(0, pos - 100), pos + 100):
-                        if not _passes_training_sample_filters(
-                            read, min_mapq, min_read_length,
-                        ):
-                            continue
-
-                        # Skip if we've already sampled this read
-                        if read.query_name in seen_read_ids:
-                            continue
-
-                        # Get modifications
-                        mod_query_pos = _training_mod_query_positions(
-                            read, prob_threshold, mode,
+                        fiber_read = _training_sample_candidate(
+                            read,
+                            seen_read_ids,
+                            min_mapq,
+                            min_read_length,
+                            prob_threshold,
+                            mode,
                         )
-                        if not mod_query_pos:
+                        if fiber_read is None:
                             continue
-
-                        fiber_read = _training_fiber_read_from_segment(
-                            read, mod_query_pos,
-                        )
 
                         sampled.append(fiber_read)
                         seen_read_ids.add(read.query_name)
