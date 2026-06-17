@@ -61,6 +61,12 @@ def _length_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     return None
 
 
+def _training_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
+    if config.train_rids and read.query_name in config.train_rids:
+        return "training_excluded"
+    return None
+
+
 def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     """Return the skip reason for a streaming read, or None if processable."""
     reason = _unmapped_skip_reason(read, config)
@@ -75,7 +81,4 @@ def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     if reason is not None:
         return reason
 
-    if config.train_rids and read.query_name in config.train_rids:
-        return "training_excluded"
-
-    return None
+    return _training_skip_reason(read, config)

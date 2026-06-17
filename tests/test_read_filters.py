@@ -10,6 +10,7 @@ from fiberhmm.inference.read_filters import (
     _filter_read_length,
     _is_secondary_or_supplementary,
     _length_skip_reason,
+    _training_skip_reason,
     _unmapped_skip_reason,
     is_primary_alignment,
     is_primary_mapped_alignment,
@@ -148,6 +149,16 @@ def test_length_skip_reason_uses_filter_read_length_policy():
         )
         == "too_short"
     )
+
+
+def test_training_skip_reason_matches_configured_read_ids():
+    config = ReadFilterConfig(train_rids={"holdout"})
+
+    assert _training_skip_reason(_Read(query_name="holdout"), config) == (
+        "training_excluded"
+    )
+    assert _training_skip_reason(_Read(query_name="other"), config) is None
+    assert _training_skip_reason(_Read(query_name="holdout"), ReadFilterConfig()) is None
 
 
 def test_streaming_filter_skips_unmapped_without_process_unmapped():
