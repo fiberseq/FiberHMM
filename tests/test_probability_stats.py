@@ -112,6 +112,40 @@ def test_write_probability_ratio_summary_formats_nonempty_ratios_only():
     assert "Empty contexts" not in text
 
 
+def test_write_base_probability_summary_formats_rates_and_context_stats():
+    acc_table = pd.DataFrame({
+        "context": ["AAA", "AAC"],
+        "ratio": [0.2, 0.8],
+        "hit": [1, 4],
+        "nohit": [4, 1],
+    })
+    inacc_table = pd.DataFrame({
+        "context": ["AAA", "AAC"],
+        "ratio": [0.1, 0.0],
+        "hit": [1, 0],
+        "nohit": [9, 0],
+    })
+    handle = io.StringIO()
+
+    stats._write_base_probability_summary(
+        handle,
+        "A",
+        _FakeCounter(100, 25, {"AAA": 5}, acc_table),
+        _FakeCounter(200, 20, {"AAA": 10, "AAC": 2}, inacc_table),
+        acc_table,
+        inacc_table,
+        context_size=2,
+    )
+
+    text = handle.getvalue()
+    assert "A-centered Contexts" in text
+    assert "Rate difference:     0.1500" in text
+    assert "Fold enrichment:     2.50x" in text
+    assert "Per-context statistics (k=2, 5-mer):" in text
+    assert "Accessible contexts with data: 2" in text
+    assert "Inaccessible contexts with data: 1" in text
+
+
 def test_write_probability_stats_summary(tmp_path):
     acc_table = pd.DataFrame({
         "context": ["AAA", "AAC", "AAG"],

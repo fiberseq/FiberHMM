@@ -125,6 +125,42 @@ def _write_probability_ratio_summary(handle, label: str, ratios: np.ndarray) -> 
     handle.write(f"    Prob std:    {np.std(ratios):.4f}\n")
 
 
+def _write_base_probability_summary(
+    handle,
+    base: str,
+    acc: 'ContextCounter',
+    inacc: 'ContextCounter',
+    acc_probs,
+    inacc_probs,
+    context_size: int,
+) -> None:
+    acc_summary = _counter_rate_summary(acc)
+    inacc_summary = _counter_rate_summary(inacc)
+    acc_rate = acc_summary['rate']
+    inacc_rate = inacc_summary['rate']
+
+    handle.write(f"{base}-centered Contexts\n")
+    handle.write("-" * 40 + "\n")
+    _write_counter_rate_summary(handle, "Accessible", acc_summary)
+    _write_counter_rate_summary(handle, "Inaccessible", inacc_summary)
+
+    handle.write("\nSeparation:\n")
+    handle.write(f"  Rate difference:     {acc_rate - inacc_rate:.4f}\n")
+    handle.write(f"  Fold enrichment:     {_fold_enrichment(acc_rate, inacc_rate):.2f}x\n")
+
+    acc_with_data = _probability_ratios_with_data(acc_probs)
+    inacc_with_data = _probability_ratios_with_data(inacc_probs)
+
+    handle.write(
+        f"\nPer-context statistics "
+        f"({_probability_context_label(context_size)}):\n"
+    )
+    _write_probability_ratio_summary(handle, "Accessible", acc_with_data)
+    _write_probability_ratio_summary(handle, "Inaccessible", inacc_with_data)
+
+    handle.write("\n")
+
+
 def _write_probability_stats_summary(summary_file: str,
                                      accessible_counters: Dict[str, 'ContextCounter'],
                                      inaccessible_counters: Dict[str, 'ContextCounter'],
@@ -141,34 +177,12 @@ def _write_probability_stats_summary(summary_file: str,
             acc = accessible_counters[base]
             inacc = inaccessible_counters[base]
 
-            acc_summary = _counter_rate_summary(acc)
-            inacc_summary = _counter_rate_summary(inacc)
-            acc_rate = acc_summary['rate']
-            inacc_rate = inacc_summary['rate']
-
-            f.write(f"{base}-centered Contexts\n")
-            f.write("-" * 40 + "\n")
-            _write_counter_rate_summary(f, "Accessible", acc_summary)
-            _write_counter_rate_summary(f, "Inaccessible", inacc_summary)
-
-            f.write("\nSeparation:\n")
-            f.write(f"  Rate difference:     {acc_rate - inacc_rate:.4f}\n")
-            f.write(f"  Fold enrichment:     {_fold_enrichment(acc_rate, inacc_rate):.2f}x\n")
-
             acc_probs, inacc_probs = _probability_tables_for_base(
                 accessible_counters, inaccessible_counters, base, context_size,
             )
-            acc_with_data = _probability_ratios_with_data(acc_probs)
-            inacc_with_data = _probability_ratios_with_data(inacc_probs)
-
-            f.write(
-                f"\nPer-context statistics "
-                f"({_probability_context_label(context_size)}):\n"
+            _write_base_probability_summary(
+                f, base, acc, inacc, acc_probs, inacc_probs, context_size,
             )
-            _write_probability_ratio_summary(f, "Accessible", acc_with_data)
-            _write_probability_ratio_summary(f, "Inaccessible", inacc_with_data)
-
-            f.write("\n")
 
 
 def _probability_stats_output_path(
