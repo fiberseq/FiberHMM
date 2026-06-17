@@ -131,6 +131,10 @@ def _print_region_progress(
     sys.stdout.flush()
 
 
+def _region_temp_path(temp_dir: str, index: int, suffix: str) -> str:
+    return os.path.join(temp_dir, f'region_{index:06d}.{suffix}')
+
+
 def _region_bam_work_items(
     regions,
     input_bam: str,
@@ -139,8 +143,8 @@ def _region_bam_work_items(
 ) -> list[RegionBamWorkItem]:
     work_items = []
     for i, region in enumerate(regions):
-        temp_bam = os.path.join(temp_dir, f'region_{i:06d}.bam')
-        temp_tsv = os.path.join(temp_dir, f'region_{i:06d}.tsv') if include_tsv else None
+        temp_bam = _region_temp_path(temp_dir, i, 'bam')
+        temp_tsv = _region_temp_path(temp_dir, i, 'tsv') if include_tsv else None
         work_items.append(
             RegionBamWorkItem((region[0], region[1], region[2]), input_bam, temp_bam, temp_tsv)
         )
@@ -149,7 +153,7 @@ def _region_bam_work_items(
 
 def _region_bed_work_items(regions, input_bam: str, temp_dir: str) -> list[RegionBedWorkItem]:
     return [
-        RegionBedWorkItem(region, input_bam, os.path.join(temp_dir, f'region_{i:06d}.bed'))
+        RegionBedWorkItem(region, input_bam, _region_temp_path(temp_dir, i, 'bed'))
         for i, region in enumerate(regions)
     ]
 

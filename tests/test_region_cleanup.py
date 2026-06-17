@@ -126,6 +126,10 @@ def test_region_work_item_builders_use_stable_temp_names(tmp_path):
     regions = [("chr1", 0, 100), ("chr2", 5, 25)]
     temp_dir = str(tmp_path)
 
+    assert region_pipeline._region_temp_path(temp_dir, 12, "bam") == (
+        str(tmp_path / "region_000012.bam")
+    )
+
     bam_items = region_pipeline._region_bam_work_items(
         regions,
         "input.bam",
