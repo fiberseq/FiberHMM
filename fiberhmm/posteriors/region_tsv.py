@@ -67,7 +67,7 @@ def write_region_posteriors_tsv(tsv_path: str, posteriors_data: Iterable[dict]) 
 
 def region_posteriors_tsv_output_path(output_path: str) -> str:
     """Return the gzipped TSV path produced for a requested posterior path."""
-    if _resolve_writer_format(output_path, "auto") == "hdf5":
+    if region_posteriors_needs_h5_conversion(output_path):
         root, _ext = os.path.splitext(output_path)
         return root + ".tsv.gz"
     if output_path.endswith(".tsv"):
