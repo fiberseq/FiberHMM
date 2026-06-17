@@ -1080,6 +1080,60 @@ def _circular_groups_for_bigbed(circular_groups: bool, extract_type: str) -> boo
     return circular_groups and extract_type in ('nucleosome', 'msp', 'tf')
 
 
+def _remove_empty_bed_if_present(bed_path: str) -> None:
+    if os.path.exists(bed_path):
+        try:
+            os.remove(bed_path)
+        except (PermissionError, OSError):
+            pass
+
+
+def _remove_bed_after_bigbed(bed_path: str) -> None:
+    try:
+        os.remove(bed_path)
+    except (PermissionError, OSError) as e:
+        print(f"  Warning: Could not remove BED file: {e}")
+
+
+def _skip_empty_extract_output(extract_type: str, bed_path: str) -> None:
+    print(f"  [{extract_type}] no features, skipping")
+    _remove_empty_bed_if_present(bed_path)
+
+
+def _convert_extract_output_to_bigbed(
+    extract_type: str,
+    bed_path: str,
+    bb_path: str,
+    chrom_sizes: Dict[str, int],
+    *,
+    block_scores: bool,
+    sample_name: str,
+    circular_groups: bool,
+    keep_bed: bool,
+) -> bool:
+    print(f"  [{extract_type}] converting to bigBed...")
+    circular_groups_for_type = _circular_groups_for_bigbed(
+        circular_groups, extract_type,
+    )
+    converted = bed_to_bigbed(
+        bed_path,
+        bb_path,
+        chrom_sizes,
+        'bed12',
+        extract_type=extract_type,
+        block_scores=block_scores,
+        sample_name=sample_name,
+        circular_groups=circular_groups_for_type,
+    )
+    if not converted:
+        return False
+
+    print(f"  [{extract_type}] bigBed: {bb_path}")
+    if not keep_bed:
+        _remove_bed_after_bigbed(bed_path)
+    return True
+
+
 def _extract_read_types(read, extract_types, bed_outs, *, with_scores: bool,
                         block_scores: bool, circular_groups: bool,
                         min_tq: int, prob_threshold: int) -> dict:
@@ -1867,32 +1921,22 @@ Examples:
         bb_path = bb_paths[extract_type]
 
         if feats == 0:
-            print(f"  [{extract_type}] no features, skipping")
-            if os.path.exists(bed_path):
-                try:
-                    os.remove(bed_path)
-                except (PermissionError, OSError):
-                    pass
+            _skip_empty_extract_output(extract_type, bed_path)
             continue
 
         print(f"  [{extract_type}] BED: {bed_path}")
 
         if make_bigbed:
-            print(f"  [{extract_type}] converting to bigBed...")
-            circular_groups_for_type = _circular_groups_for_bigbed(
-                args.circular_groups, extract_type,
+            _convert_extract_output_to_bigbed(
+                extract_type,
+                bed_path,
+                bb_path,
+                chrom_sizes,
+                block_scores=args.block_scores,
+                sample_name=sample_name,
+                circular_groups=args.circular_groups,
+                keep_bed=args.keep_bed,
             )
-            if bed_to_bigbed(bed_path, bb_path, chrom_sizes, 'bed12',
-                              extract_type=extract_type,
-                              block_scores=args.block_scores,
-                              sample_name=sample_name,
-                              circular_groups=circular_groups_for_type):
-                print(f"  [{extract_type}] bigBed: {bb_path}")
-                if not args.keep_bed:
-                    try:
-                        os.remove(bed_path)
-                    except (PermissionError, OSError) as e:
-                        print(f"  Warning: Could not remove BED file: {e}")
 
     print("\nDone!")
 

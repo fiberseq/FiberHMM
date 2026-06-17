@@ -437,6 +437,54 @@ def test_extract_cli_setup_helpers_build_paths_and_filters(tmp_path):
     assert not extract_tags._circular_groups_for_bigbed(False, "tf")
 
 
+def test_extract_output_finalization_helpers_cleanup_and_convert(
+    monkeypatch, tmp_path, capsys,
+):
+    empty_bed = tmp_path / "empty_tf.bed"
+    empty_bed.write_text("")
+
+    extract_tags._skip_empty_extract_output("tf", str(empty_bed))
+
+    assert not empty_bed.exists()
+    assert "[tf] no features, skipping" in capsys.readouterr().out
+
+    bed_path = tmp_path / "sample_tf.bed"
+    bb_path = tmp_path / "sample_tf.bb"
+    bed_path.write_text("chr1\t0\t10\n")
+    calls = []
+
+    def fake_bed_to_bigbed(*args, **kwargs):
+        calls.append((args, kwargs))
+        return True
+
+    monkeypatch.setattr(extract_tags, "bed_to_bigbed", fake_bed_to_bigbed)
+
+    assert extract_tags._convert_extract_output_to_bigbed(
+        "tf",
+        str(bed_path),
+        str(bb_path),
+        {"chr1": 100},
+        block_scores=True,
+        sample_name="sample-a",
+        circular_groups=True,
+        keep_bed=False,
+    )
+
+    assert calls == [(
+        (str(bed_path), str(bb_path), {"chr1": 100}, "bed12"),
+        {
+            "extract_type": "tf",
+            "block_scores": True,
+            "sample_name": "sample-a",
+            "circular_groups": True,
+        },
+    )]
+    assert not bed_path.exists()
+    out = capsys.readouterr().out
+    assert "[tf] converting to bigBed" in out
+    assert f"[tf] bigBed: {bb_path}" in out
+
+
 def test_extract_region_temp_beds_uses_stable_region_and_type_names(tmp_path):
     assert extract_tags._extract_region_temp_beds(
         str(tmp_path),
