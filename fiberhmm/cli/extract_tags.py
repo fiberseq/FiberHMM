@@ -398,12 +398,6 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                 except ValueError:
                     return (temp_bed_paths, 0, n_features)
 
-                # Which extract types need aligned_pairs?  All of them except
-                # pure tag-presence checks — nucleosome, msp, tf, m6a, m5c, deam
-                # all need query->ref mapping.
-                need_mapping = any(t in extract_types for t in
-                                   ('nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam'))
-
                 for read in read_iter:
                     if not is_primary_mapped_alignment(read):
                         continue
@@ -414,52 +408,18 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
 
                     n_reads += 1
 
-                    # Build query->ref mapping once, pass to all extractors.
-                    # Lazy: only build if at least one selected type needs it
-                    # AND the read has any relevant tags (skip for reads with
-                    # no annotations at all).
-                    query_to_ref = None
-
-                    if 'nucleosome' in extract_types:
-                        if query_to_ref is None:
-                            query_to_ref = _build_query_to_ref(read)
-                        n_features['nucleosome'] += _extract_footprints(
-                            read, bed_outs['nucleosome'], with_scores, query_to_ref,
-                            block_scores=block_scores,
-                            circular_groups=circular_groups)
-                    if 'msp' in extract_types:
-                        if query_to_ref is None:
-                            query_to_ref = _build_query_to_ref(read)
-                        n_features['msp'] += _extract_msps(
-                            read, bed_outs['msp'], with_scores, query_to_ref,
-                            block_scores=block_scores,
-                            circular_groups=circular_groups)
-                    if 'tf' in extract_types:
-                        if query_to_ref is None:
-                            query_to_ref = _build_query_to_ref(read)
-                        n_features['tf'] += _extract_tfs(
-                            read, bed_outs['tf'], with_scores, min_tq, query_to_ref,
-                            block_scores=block_scores,
-                            circular_groups=circular_groups)
-                    if 'm6a' in extract_types:
-                        if query_to_ref is None:
-                            query_to_ref = _build_query_to_ref(read)
-                        n_features['m6a'] += _extract_m6a(
-                            read, bed_outs['m6a'], prob_threshold, query_to_ref,
-                            block_scores=block_scores)
-                    if 'm5c' in extract_types:
-                        if query_to_ref is None:
-                            query_to_ref = _build_query_to_ref(read)
-                        n_features['m5c'] += _extract_m5c(
-                            read, bed_outs['m5c'], prob_threshold, query_to_ref,
-                            block_scores=block_scores)
-                    if 'deam' in extract_types:
-                        if query_to_ref is None:
-                            query_to_ref = _build_query_to_ref(read)
-                        n_features['deam'] += _extract_deam(
-                            read, bed_outs['deam'], query_to_ref,
-                            block_scores=block_scores,
-                            prob_threshold=prob_threshold)
+                    read_features = _extract_read_types(
+                        read,
+                        extract_types,
+                        bed_outs,
+                        with_scores=with_scores,
+                        block_scores=block_scores,
+                        circular_groups=circular_groups,
+                        min_tq=min_tq,
+                        prob_threshold=prob_threshold,
+                    )
+                    for extract_type, count in read_features.items():
+                        n_features[extract_type] += count
 
         return (temp_bed_paths, n_reads, n_features)
 
@@ -869,6 +829,100 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     _write_position_blocks_row(read, bed_out, positions_list, 255, extra)
 
     return len(positions_list)
+
+
+def _extract_nucleosome_for_worker(read, bed_out, query_to_ref, *, with_scores,
+                                   block_scores, circular_groups, min_tq,
+                                   prob_threshold) -> int:
+    return _extract_footprints(
+        read, bed_out, with_scores, query_to_ref,
+        block_scores=block_scores,
+        circular_groups=circular_groups,
+    )
+
+
+def _extract_msp_for_worker(read, bed_out, query_to_ref, *, with_scores,
+                            block_scores, circular_groups, min_tq,
+                            prob_threshold) -> int:
+    return _extract_msps(
+        read, bed_out, with_scores, query_to_ref,
+        block_scores=block_scores,
+        circular_groups=circular_groups,
+    )
+
+
+def _extract_tf_for_worker(read, bed_out, query_to_ref, *, with_scores,
+                           block_scores, circular_groups, min_tq,
+                           prob_threshold) -> int:
+    return _extract_tfs(
+        read, bed_out, with_scores, min_tq, query_to_ref,
+        block_scores=block_scores,
+        circular_groups=circular_groups,
+    )
+
+
+def _extract_m6a_for_worker(read, bed_out, query_to_ref, *, with_scores,
+                            block_scores, circular_groups, min_tq,
+                            prob_threshold) -> int:
+    return _extract_m6a(
+        read, bed_out, prob_threshold, query_to_ref,
+        block_scores=block_scores,
+    )
+
+
+def _extract_m5c_for_worker(read, bed_out, query_to_ref, *, with_scores,
+                            block_scores, circular_groups, min_tq,
+                            prob_threshold) -> int:
+    return _extract_m5c(
+        read, bed_out, prob_threshold, query_to_ref,
+        block_scores=block_scores,
+    )
+
+
+def _extract_deam_for_worker(read, bed_out, query_to_ref, *, with_scores,
+                             block_scores, circular_groups, min_tq,
+                             prob_threshold) -> int:
+    return _extract_deam(
+        read, bed_out, query_to_ref,
+        block_scores=block_scores,
+        prob_threshold=prob_threshold,
+    )
+
+
+_READ_TYPE_EXTRACTORS = {
+    'nucleosome': _extract_nucleosome_for_worker,
+    'msp': _extract_msp_for_worker,
+    'tf': _extract_tf_for_worker,
+    'm6a': _extract_m6a_for_worker,
+    'm5c': _extract_m5c_for_worker,
+    'deam': _extract_deam_for_worker,
+}
+
+
+def _extract_read_types(read, extract_types, bed_outs, *, with_scores: bool,
+                        block_scores: bool, circular_groups: bool,
+                        min_tq: int, prob_threshold: int) -> dict:
+    """Extract every requested type from one read using one ref map."""
+    query_to_ref = None
+    n_features = {}
+    for extract_type in extract_types:
+        extractor = _READ_TYPE_EXTRACTORS.get(extract_type)
+        if extractor is None:
+            n_features[extract_type] = 0
+            continue
+        if query_to_ref is None:
+            query_to_ref = _build_query_to_ref(read)
+        n_features[extract_type] = extractor(
+            read,
+            bed_outs[extract_type],
+            query_to_ref,
+            with_scores=with_scores,
+            block_scores=block_scores,
+            circular_groups=circular_groups,
+            min_tq=min_tq,
+            prob_threshold=prob_threshold,
+        )
+    return n_features
 
 
 def extract_tags_parallel(input_bam: str, output_beds, extract_types,

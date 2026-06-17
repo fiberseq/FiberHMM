@@ -150,6 +150,41 @@ def test_extract_region_worker_closes_temp_beds_when_partial_open_fails(
     assert opened[0].closed
 
 
+def test_extract_read_types_reuses_query_ref_map(monkeypatch):
+    read = _FakeRead()
+    read.set_tag('ns', array('I', [100]))
+    read.set_tag('nl', array('I', [20]))
+    read.set_tag('as', array('I', [200]))
+    read.set_tag('al', array('I', [30]))
+
+    built_for = []
+
+    def fake_build_query_to_ref(read_arg):
+        built_for.append(read_arg)
+        return _identity_map(read_arg)
+
+    monkeypatch.setattr(extract_tags, "_build_query_to_ref", fake_build_query_to_ref)
+
+    bed_outs = {
+        'nucleosome': io.StringIO(),
+        'msp': io.StringIO(),
+    }
+
+    counts = extract_tags._extract_read_types(
+        read,
+        ['nucleosome', 'msp'],
+        bed_outs,
+        with_scores=False,
+        block_scores=False,
+        circular_groups=False,
+        min_tq=50,
+        prob_threshold=0,
+    )
+
+    assert counts == {'nucleosome': 1, 'msp': 1}
+    assert built_for == [read]
+
+
 # ------------------- autoSQL schemas --------------------------------
 
 def test_autosql_default_is_bed12_only():
