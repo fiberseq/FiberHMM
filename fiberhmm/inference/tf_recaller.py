@@ -109,6 +109,29 @@ def _clear_tags(read, tags: Sequence[str]) -> None:
                 pass
 
 
+def _split_named_intervals(
+    intervals: Sequence[Tuple[int, int]],
+    prefix: str,
+    read_length: int,
+    qual_rows: Optional[Sequence[Sequence[int]]] = None,
+) -> Tuple[List[Tuple[int, int]], List[str], Optional[List[Sequence[int]]], bool]:
+    split_intervals: List[Tuple[int, int]] = []
+    split_names: List[str] = []
+    split_quals: Optional[List[Sequence[int]]] = [] if qual_rows is not None else None
+    any_split = False
+    for idx, (start, length) in enumerate(intervals):
+        pieces = split_circular_interval(start, length, read_length)
+        if len(pieces) > 1:
+            any_split = True
+        name = f"fhw_{prefix}_{idx}" if len(pieces) > 1 else f"fh_{prefix}_{idx}"
+        for piece in pieces:
+            split_intervals.append(piece)
+            split_names.append(name)
+            if split_quals is not None:
+                split_quals.append(qual_rows[idx])
+    return split_intervals, split_names, split_quals, any_split
+
+
 def build_llr_tables(model) -> Tuple[np.ndarray, np.ndarray]:
     """Return (llr_hit, llr_miss) lookup arrays, length N_CTX each.
 
@@ -605,37 +628,20 @@ def write_ma_tags(read, read_length: int,
         el_vals = [r[2] for r in tf_recs]
         er_vals = [r[3] for r in tf_recs]
 
-    def split_named_intervals(intervals, prefix, qual_rows=None):
-        split_intervals = []
-        split_names = []
-        split_quals = [] if qual_rows is not None else None
-        any_split = False
-        for idx, (start, length) in enumerate(intervals):
-            pieces = split_circular_interval(start, length, read_length)
-            if len(pieces) > 1:
-                any_split = True
-            name = f"fhw_{prefix}_{idx}" if len(pieces) > 1 else f"fh_{prefix}_{idx}"
-            for piece in pieces:
-                split_intervals.append(piece)
-                split_names.append(name)
-                if split_quals is not None:
-                    split_quals.append(qual_rows[idx])
-        return split_intervals, split_names, split_quals, any_split
-
     if nuc_qqq:
         nuc_q_rows = [[q, el, er]
                       for q, el, er in zip(nq_values, nuc_el_values, nuc_er_values)]
     else:
         nuc_q_rows = [[q] for q in nq_values]
     tf_q_rows = [[tq, el, er] for tq, el, er in zip(tq_vals, el_vals, er_vals)]
-    ma_nucs, nuc_names, nuc_q_split, nuc_split = split_named_intervals(
-        kept_nucs, "nuc", nuc_q_rows,
+    ma_nucs, nuc_names, nuc_q_split, nuc_split = _split_named_intervals(
+        kept_nucs, "nuc", read_length, nuc_q_rows,
     )
-    ma_msps, msp_names, _msp_q_split, msp_split = split_named_intervals(
-        msps, "msp", None,
+    ma_msps, msp_names, _msp_q_split, msp_split = _split_named_intervals(
+        msps, "msp", read_length, None,
     )
-    ma_tfs, tf_names, tf_q_split, tf_split = split_named_intervals(
-        tf_intervals, "tf", tf_q_rows,
+    ma_tfs, tf_names, tf_q_split, tf_split = _split_named_intervals(
+        tf_intervals, "tf", read_length, tf_q_rows,
     )
     needs_an = nuc_split or msp_split or tf_split
 
