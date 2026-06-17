@@ -669,6 +669,27 @@ def _format_split_aq(nuc_q_split, tf_q_split, nuc_qqq: bool):
     )
 
 
+def _recall_nuc_quality_inputs(kept_nucs: Sequence[Tuple[int, int]],
+                               nq_for_kept_nucs: Optional[Sequence[int]],
+                               nuc_el_for_kept: Optional[Sequence[int]],
+                               nuc_er_for_kept: Optional[Sequence[int]]):
+    nq_values = list(nq_for_kept_nucs) if nq_for_kept_nucs is not None \
+        else [0] * len(kept_nucs)
+    if len(nq_values) != len(kept_nucs):
+        raise ValueError("nq_values length must match kept_nucs length")
+
+    nuc_qqq = nuc_el_for_kept is not None and nuc_er_for_kept is not None
+    nuc_el_values = []
+    nuc_er_values = []
+    if nuc_qqq:
+        nuc_el_values = list(nuc_el_for_kept)
+        nuc_er_values = list(nuc_er_for_kept)
+        if not (len(nuc_el_values) == len(nuc_er_values) == len(kept_nucs)):
+            raise ValueError("nuc edge arrays must match kept_nucs length")
+
+    return nq_values, nuc_qqq, nuc_el_values, nuc_er_values
+
+
 def _write_legacy_recall_tags(read, read_length: int,
                               kept_nucs: Sequence[Tuple[int, int]],
                               msps: Sequence[Tuple[int, int]],
@@ -759,21 +780,9 @@ def write_ma_tags(read, read_length: int,
             "(compat mode writes TF calls into the legacy ns/nl track)."
         )
 
-    # Default nq for kept nucs to 0 (sentinel for "unverified") if not provided.
-    nq_values = list(nq_for_kept_nucs) if nq_for_kept_nucs is not None \
-        else [0] * len(kept_nucs)
-    if len(nq_values) != len(kept_nucs):
-        raise ValueError("nq_values length must match kept_nucs length")
-
-    # nuc+QQQ mode: the nuc recaller supplies per-nuc edge-sharpness bytes.
-    # When present, nucleosomes carry (nq, el, er) like tf+QQQ; otherwise the
-    # legacy nuc+Q (single nq byte) layout is used.
-    nuc_qqq = nuc_el_for_kept is not None and nuc_er_for_kept is not None
-    if nuc_qqq:
-        nuc_el_values = list(nuc_el_for_kept)
-        nuc_er_values = list(nuc_er_for_kept)
-        if not (len(nuc_el_values) == len(nuc_er_values) == len(kept_nucs)):
-            raise ValueError("nuc edge arrays must match kept_nucs length")
+    nq_values, nuc_qqq, nuc_el_values, nuc_er_values = _recall_nuc_quality_inputs(
+        kept_nucs, nq_for_kept_nucs, nuc_el_for_kept, nuc_er_for_kept,
+    )
 
     tf_intervals = [(c.start, c.length) for c in tf_calls]
     tq_vals = [llr_to_tq(c.llr) for c in tf_calls]

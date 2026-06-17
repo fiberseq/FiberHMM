@@ -59,6 +59,19 @@ def test_split_legacy_interval_rows_splits_sorts_and_clamps_scores():
 
 
 def test_quality_row_helpers_preserve_aq_layout():
+    assert tf_recaller._recall_nuc_quality_inputs(
+        [(0, 100), (200, 50)], None, None, None,
+    ) == ([0, 0], False, [], [])
+    assert tf_recaller._recall_nuc_quality_inputs(
+        [(0, 100)], [7], [8], [9],
+    ) == ([7], True, [8], [9])
+
+    with pytest.raises(ValueError, match="nq_values"):
+        tf_recaller._recall_nuc_quality_inputs([(0, 100)], [1, 2], None, None)
+
+    with pytest.raises(ValueError, match="nuc edge arrays"):
+        tf_recaller._recall_nuc_quality_inputs([(0, 100)], [1], [2, 3], [4])
+
     assert tf_recaller._nuc_quality_rows([7, 8], nuc_qqq=False) == [[7], [8]]
     assert tf_recaller._nuc_quality_rows(
         [7], nuc_qqq=True, nuc_el_values=[8], nuc_er_values=[9],
