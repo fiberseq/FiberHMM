@@ -142,6 +142,14 @@ def test_training_example_plot_data_sorts_positions_and_uses_footprint_probs():
     np.testing.assert_array_equal(footprint_prob, [0.2, 0.7])
 
 
+def test_training_stats_paths_are_under_plots_dir():
+    assert train._training_stats_paths("/tmp/out") == {
+        "plots_dir": "/tmp/out/plots",
+        "pdf": "/tmp/out/plots/training_stats.pdf",
+        "summary": "/tmp/out/plots/training_stats.txt",
+    }
+
+
 def test_write_training_stats_summary(tmp_path):
     model = SimpleNamespace(
         transmat_=np.array([[0.8, 0.2], [0.25, 0.75]]),

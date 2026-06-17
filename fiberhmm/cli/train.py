@@ -594,6 +594,15 @@ def _training_example_plot_data(model, read, encoded):
     return seq_len, m6a_positions, footprint_prob
 
 
+def _training_stats_paths(output_dir: str) -> dict:
+    plots_dir = os.path.join(output_dir, 'plots')
+    return {
+        'plots_dir': plots_dir,
+        'pdf': os.path.join(plots_dir, 'training_stats.pdf'),
+        'summary': os.path.join(plots_dir, 'training_stats.txt'),
+    }
+
+
 def _write_training_stats_summary(summary_path: str, model: FiberHMM,
                                   emission_probs: np.ndarray,
                                   sampled_reads: list,
@@ -665,10 +674,11 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         print("  Warning: matplotlib not installed. Skipping stats plots.")
         return
 
-    plots_dir = os.path.join(output_dir, 'plots')
+    paths = _training_stats_paths(output_dir)
+    plots_dir = paths['plots_dir']
     os.makedirs(plots_dir, exist_ok=True)
 
-    pdf_path = os.path.join(plots_dir, 'training_stats.pdf')
+    pdf_path = paths['pdf']
 
     # Run Viterbi on all encoded reads to get footprint statistics
     print("  Running Viterbi on training reads...")
@@ -952,12 +962,11 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         print(f"  Saved: {png_path}")
 
     # Write text summary
-    summary_path = os.path.join(plots_dir, 'training_stats.txt')
     _write_training_stats_summary(
-        summary_path, model, emission_probs, sampled_reads,
+        paths['summary'], model, emission_probs, sampled_reads,
         all_footprint_sizes, all_msp_sizes,
     )
-    print(f"  Saved: {summary_path}")
+    print(f"  Saved: {paths['summary']}")
 
 
 def _model_json_record(model):
