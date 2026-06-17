@@ -198,6 +198,15 @@ def get_schema(extract_type: str, block_scores: bool = False,
                         circular_groups=circular_groups)
 
 
+def _autosql_variant_suffix(block_scores: bool, circular_groups: bool) -> str:
+    variant = ''
+    if block_scores:
+        variant += '.bs'
+    if circular_groups:
+        variant += '.circ'
+    return variant
+
+
 def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
                       block_scores: bool = False,
                       sample_name: Optional[str] = None,
@@ -216,11 +225,7 @@ def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
                         circular_groups=circular_groups)
     if schema is None:
         return None
-    variant = ''
-    if block_scores:
-        variant += '.bs'
-    if circular_groups:
-        variant += '.circ'
+    variant = _autosql_variant_suffix(block_scores, circular_groups)
     suffix = f'{variant}.as' if variant else '.as'
     if out_dir is None:
         fd, path = tempfile.mkstemp(prefix=f'fiberhmm_{extract_type}_',

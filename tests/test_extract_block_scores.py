@@ -26,6 +26,7 @@ from fiberhmm.io.autosql import (
     AUTOSQL_SCHEMAS,
     CIRCULAR_FIELD_COUNT,
     EXTRA_FIELD_COUNTS,
+    _autosql_variant_suffix,
     get_schema,
     write_autosql_for,
 )
@@ -312,6 +313,11 @@ def test_footprint_is_deprecated_alias_for_nucleosome():
 
 
 def test_write_autosql_for_writes_both_variants(tmp_path):
+    assert _autosql_variant_suffix(False, False) == ''
+    assert _autosql_variant_suffix(True, False) == '.bs'
+    assert _autosql_variant_suffix(False, True) == '.circ'
+    assert _autosql_variant_suffix(True, True) == '.bs.circ'
+
     classic = write_autosql_for('tf', out_dir=str(tmp_path), block_scores=False)
     bs = write_autosql_for('tf', out_dir=str(tmp_path), block_scores=True)
     circ = write_autosql_for(
