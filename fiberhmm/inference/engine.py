@@ -763,14 +763,7 @@ def _single_read_result_from_prediction(fp_result: dict, strand: str,
                                         encoded: np.ndarray,
                                         return_posteriors: bool,
                                         include_encoded: bool) -> dict:
-    result = {
-        'ns': fp_result['footprint_starts'],
-        'nl': fp_result['footprint_sizes'],
-        'ns_scores': fp_result.get('footprint_scores'),
-        'as': fp_result['msp_starts'],
-        'al': fp_result['msp_sizes'],
-        'as_scores': fp_result.get('msp_scores')
-    }
+    result = _base_single_read_fields(fp_result)
     if fp_result.get('circular'):
         result.update(_circular_single_read_fields(fp_result))
 
@@ -783,6 +776,17 @@ def _single_read_result_from_prediction(fp_result: dict, strand: str,
         result['strand'] = strand
 
     return result
+
+
+def _base_single_read_fields(fp_result: dict) -> dict:
+    return {
+        'ns': fp_result['footprint_starts'],
+        'nl': fp_result['footprint_sizes'],
+        'ns_scores': fp_result.get('footprint_scores'),
+        'as': fp_result['msp_starts'],
+        'al': fp_result['msp_sizes'],
+        'as_scores': fp_result.get('msp_scores')
+    }
 
 
 def _circular_single_read_fields(fp_result: dict) -> dict:

@@ -67,6 +67,23 @@ def test_single_read_result_from_prediction_includes_optional_fields():
     np.testing.assert_array_equal(result["encoded"], [1, 2, 3])
 
 
+def test_base_single_read_fields_maps_linear_prediction_fields():
+    fields = engine._base_single_read_fields({
+        "footprint_starts": np.array([1]),
+        "footprint_sizes": np.array([10]),
+        "footprint_scores": np.array([0.8]),
+        "msp_starts": np.array([20]),
+        "msp_sizes": np.array([5]),
+    })
+
+    np.testing.assert_array_equal(fields["ns"], [1])
+    np.testing.assert_array_equal(fields["nl"], [10])
+    np.testing.assert_array_equal(fields["ns_scores"], [0.8])
+    np.testing.assert_array_equal(fields["as"], [20])
+    np.testing.assert_array_equal(fields["al"], [5])
+    assert fields["as_scores"] is None
+
+
 def test_circular_single_read_fields_maps_circular_prediction_fields():
     fields = engine._circular_single_read_fields({
         "circular_read_length": 100,
