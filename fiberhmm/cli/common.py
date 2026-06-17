@@ -7,6 +7,17 @@ Default values can be overridden per-script where needed.
 import argparse
 
 
+MODE_DESCRIPTIONS = {
+    'pacbio-fiber': 'PacBio fiber-seq (A-centered)',
+    'nanopore-fiber': 'Nanopore fiber-seq (A-centered)',
+    'daf': 'DAF-seq deamination (C/G-centered)',
+}
+
+
+def mode_description(mode: str) -> str:
+    return MODE_DESCRIPTIONS.get(mode, mode)
+
+
 def add_mode_args(parser: argparse.ArgumentParser,
                   default: str = 'pacbio-fiber',
                   required: bool = False) -> None:

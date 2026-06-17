@@ -17,19 +17,13 @@ from fiberhmm.cli.common import (
     add_parallel_args,
     add_stats_args,
     add_version_args,
+    mode_description,
 )
 from fiberhmm.cli.model_selection import resolve_model_path as _resolve_cli_model_path
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.inference.parallel import process_bam_for_footprints
 from fiberhmm.inference.stats import collect_stats_from_bam
 from fiberhmm.io.bam_index import bam_index_exists
-
-
-_MODE_DESCRIPTIONS = {
-    'pacbio-fiber': 'PacBio fiber-seq (A-centered)',
-    'nanopore-fiber': 'Nanopore fiber-seq (A-centered)',
-    'daf': 'DAF-seq deamination (C/G-centered)',
-}
 
 
 def parse_args():
@@ -206,7 +200,7 @@ def _print_processing_settings(
     with_scores: bool,
     db_path: str = None,
 ) -> None:
-    mode_desc = _MODE_DESCRIPTIONS.get(mode, mode)
+    mode_desc = mode_description(mode)
 
     print(f"\nProcessing: {args.input}")
     print(f"  Mode: {mode} ({mode_desc})")

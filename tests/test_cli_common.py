@@ -14,6 +14,7 @@ from fiberhmm.cli.common import (
     add_parallel_args,
     add_stats_args,
     add_verbose_args,
+    mode_description,
 )
 
 
@@ -48,6 +49,10 @@ class TestAddModeArgs:
         add_mode_args(parser, required=True)
         with pytest.raises(SystemExit):
             parser.parse_args([])
+
+    def test_mode_description(self):
+        assert mode_description('daf') == 'DAF-seq deamination (C/G-centered)'
+        assert mode_description('custom') == 'custom'
 
 
 class TestAddFilterArgs:

@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+from fiberhmm.cli.common import mode_description
 from fiberhmm.core.bam_reader import (
     ContextEncoder,
     detect_daf_strand,
@@ -873,12 +874,7 @@ def main():
         print("Error: --input is required unless using --base-model")
         sys.exit(1)
 
-    mode_descs = {
-        'pacbio-fiber': 'PacBio fiber-seq (A-centered)',
-        'nanopore-fiber': 'Nanopore fiber-seq (A-centered)',
-        'daf': 'DAF-seq deamination (C/G-centered)'
-    }
-    mode_desc = mode_descs.get(args.mode, args.mode)
+    mode_desc = mode_description(args.mode)
 
     context_mer = 2 * args.context_size + 1
     n_codes = ContextEncoder.get_n_codes(args.context_size)
