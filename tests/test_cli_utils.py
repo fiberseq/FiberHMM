@@ -12,6 +12,7 @@ from fiberhmm.cli.utils import (
     _scale_emission_probabilities,
     _target_bases_for_transfer_mode,
     _target_mod_positions_from_bam_read,
+    _transfer_context_index,
     _write_transfer_probability_tables,
 )
 
@@ -220,6 +221,20 @@ def test_accessibility_priors_for_base_filters_tsv_and_counter():
     }
 
     assert _accessibility_priors_for_base("G", 3, None, {"A": FakeCounter()}) is None
+
+
+def test_transfer_context_index_sorts_contexts_and_assigns_encodes():
+    target_rates = pd.DataFrame({
+        "context": ["CCC", "AAA", "CAC"],
+        "ratio": [0.2, 0.3, 0.4],
+    })
+
+    context_index = _transfer_context_index(target_rates)
+
+    assert context_index.to_dict("list") == {
+        "encode": [0, 1, 2],
+        "context": ["AAA", "CAC", "CCC"],
+    }
 
 
 def test_write_transfer_probability_tables_uses_shared_layout(tmp_path):

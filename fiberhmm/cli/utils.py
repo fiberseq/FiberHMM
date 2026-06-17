@@ -634,6 +634,13 @@ def _accessibility_priors_for_base(base: str, context_size: int,
     return None
 
 
+def _transfer_context_index(target_rates: pd.DataFrame) -> pd.DataFrame:
+    output_df = target_rates[['context']].copy()
+    output_df = output_df.sort_values('context').reset_index(drop=True)
+    output_df['encode'] = range(len(output_df))
+    return output_df[['encode', 'context']]
+
+
 def _write_transfer_probability_tables(
     tables_dir: str,
     base_name: str,
@@ -643,9 +650,7 @@ def _write_transfer_probability_tables(
     p_acc: float,
     p_inacc: float,
 ) -> str:
-    output_df = target_rates[['context']].copy()
-    output_df = output_df.sort_values('context').reset_index(drop=True)
-    output_df['encode'] = range(len(output_df))
+    output_df = _transfer_context_index(target_rates)
 
     acc_df = output_df.copy()
     acc_df['ratio'] = p_acc
