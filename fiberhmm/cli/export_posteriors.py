@@ -35,7 +35,9 @@ from fiberhmm.cli.common import (
     add_parallel_args,
     add_verbose_args,
     add_version_args,
+    resolve_core_count,
 )
+from fiberhmm.cli.model_selection import resolve_model_path as _resolve_cli_model_path
 
 # Package imports
 from fiberhmm.core.bam_reader import (
@@ -61,6 +63,19 @@ def _detect_format(output_path: str, format_arg: str) -> str:
     if output_path.endswith('.h5') or output_path.endswith('.hdf5'):
         return 'hdf5'
     return 'tsv'
+
+
+def _resolve_model_path(args) -> str:
+    """Resolve the export model path from --model or bundled --enzyme/--seq."""
+    return _resolve_cli_model_path(
+        args,
+        tool='apply',
+        bundled_message="Using bundled model: {model_path}",
+    )
+
+
+def _chroms_set(chroms) -> Optional[Set[str]]:
+    return set(chroms) if chroms else None
 
 
 def _prepare_export_run(
@@ -754,18 +769,9 @@ def main():
 
     args = parser.parse_args()
 
-    model_path = args.model
-    if model_path is None:
-        if args.enzyme is None:
-            parser.error("one of --model or --enzyme must be provided.")
-        from fiberhmm.models import get_model_path as _get_bundled
-        try:
-            model_path = _get_bundled(args.enzyme, tool='apply', seq=args.seq)
-        except (KeyError, FileNotFoundError) as e:
-            parser.error(str(e))
-        print(f"Using bundled model: {model_path}")
-
-    chroms = set(args.chroms) if args.chroms else None
+    model_path = _resolve_model_path(args)
+    chroms = _chroms_set(args.chroms)
+    n_cores = resolve_core_count(args.cores)
 
     export_posteriors(
         input_bam=args.input,
@@ -774,7 +780,7 @@ def main():
         format=args.format,
         chroms=chroms,
         edge_trim=args.edge_trim,
-        n_cores=args.cores,
+        n_cores=n_cores,
         region_size=args.region_size,
         write_batch_size=args.batch_size,
         verbose=args.verbose or True,
