@@ -212,15 +212,20 @@ _TRAINING_SKIP_CHROM_PATTERNS = (
 )
 
 
+def _training_chrom_is_sampleable(ref: str, length: int) -> bool:
+    if length < 100000:
+        return False
+    ref_lower = ref.lower()
+    return not any(
+        pattern in ref_lower for pattern in _TRAINING_SKIP_CHROM_PATTERNS
+    )
+
+
 def _training_sampling_chrom_lengths(ref_lengths: dict) -> dict:
     main_chroms = {}
     for ref, length in ref_lengths.items():
-        # Skip very short references and obvious scaffolds.
-        if length < 100000:
-            continue
-        if any(pattern in ref.lower() for pattern in _TRAINING_SKIP_CHROM_PATTERNS):
-            continue
-        main_chroms[ref] = length
+        if _training_chrom_is_sampleable(ref, length):
+            main_chroms[ref] = length
     return main_chroms or ref_lengths
 
 

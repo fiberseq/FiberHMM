@@ -265,6 +265,13 @@ def test_model_json_record_uses_plain_lists():
     }
 
 
+def test_training_chrom_is_sampleable_filters_short_and_scaffold_names():
+    assert train._training_chrom_is_sampleable("chr2L", 1_000_000)
+    assert not train._training_chrom_is_sampleable("tiny", 99_999)
+    assert not train._training_chrom_is_sampleable("chrUn_random", 1_000_000)
+    assert not train._training_chrom_is_sampleable("CHR_ALT_1", 1_000_000)
+
+
 def test_training_sampling_chrom_lengths_filters_scaffolds_and_falls_back():
     ref_lengths = {
         "chr1": 1_000_000,
