@@ -97,6 +97,16 @@ def test_training_zoom_window_starts_are_deterministic_and_bounded():
     assert 4000 <= starts[2] <= 5000
 
 
+def test_training_size_summary_formats_nonempty_and_empty_sizes():
+    assert train._training_size_summary(
+        "footprints", "Footprint sizes", [10, 30],
+    ) == (
+        "  Total footprints: 2\n"
+        "  Footprint sizes: mean=20.0, median=20.0, range=10-30\n"
+    )
+    assert train._training_size_summary("MSPs", "MSP sizes", []) == ""
+
+
 def test_write_training_stats_summary(tmp_path):
     model = SimpleNamespace(
         transmat_=np.array([[0.8, 0.2], [0.25, 0.75]]),

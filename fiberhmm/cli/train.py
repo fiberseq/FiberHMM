@@ -561,6 +561,17 @@ def _training_zoom_window_starts(seq_len: int, window_size: int,
     return [max(0, min(start, seq_len - window_size)) for start in window_starts]
 
 
+def _training_size_summary(total_label: str, size_label: str, sizes: list) -> str:
+    if len(sizes) == 0:
+        return ''
+    return (
+        f"  Total {total_label}: {len(sizes):,}\n"
+        f"  {size_label}: mean={np.mean(sizes):.1f}, "
+        f"median={np.median(sizes):.1f}, "
+        f"range={min(sizes)}-{max(sizes)}\n"
+    )
+
+
 def _write_training_stats_summary(summary_path: str, model: FiberHMM,
                                   emission_probs: np.ndarray,
                                   sampled_reads: list,
@@ -598,20 +609,12 @@ def _write_training_stats_summary(summary_path: str, model: FiberHMM,
         f.write("\nTraining Data Statistics:\n")
         f.write("-" * 40 + "\n")
         f.write(f"  Reads used: {len(sampled_reads)}\n")
-        if len(all_footprint_sizes) > 0:
-            f.write(f"  Total footprints: {len(all_footprint_sizes):,}\n")
-            f.write(
-                f"  Footprint sizes: mean={np.mean(all_footprint_sizes):.1f}, "
-                f"median={np.median(all_footprint_sizes):.1f}, "
-                f"range={min(all_footprint_sizes)}-{max(all_footprint_sizes)}\n"
+        f.write(
+            _training_size_summary(
+                'footprints', 'Footprint sizes', all_footprint_sizes,
             )
-        if len(all_msp_sizes) > 0:
-            f.write(f"  Total MSPs: {len(all_msp_sizes):,}\n")
-            f.write(
-                f"  MSP sizes: mean={np.mean(all_msp_sizes):.1f}, "
-                f"median={np.median(all_msp_sizes):.1f}, "
-                f"range={min(all_msp_sizes)}-{max(all_msp_sizes)}\n"
-            )
+        )
+        f.write(_training_size_summary('MSPs', 'MSP sizes', all_msp_sizes))
 
 
 def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads: list,
