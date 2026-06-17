@@ -105,6 +105,84 @@ def test_recall_tfs_model_resolution_requires_model_or_enzyme(capsys):
     assert "one of --model or --enzyme must be provided" in capsys.readouterr().err
 
 
+def test_recall_tfs_setup_helpers_resolve_cores_defaults_and_legacy(monkeypatch):
+    monkeypatch.setattr(recall_tfs.mp, "cpu_count", lambda: 12)
+    monkeypatch.setattr(
+        recall_tfs,
+        "ENZYME_PRESETS",
+        {"test-enzyme": {"min_llr": 2.5, "emission_uplift": 1.2}},
+    )
+
+    assert recall_tfs._resolve_cores(0) == 12
+    assert recall_tfs._resolve_cores(-3) == 1
+    assert recall_tfs._resolve_cores(4) == 4
+
+    preset_args = SimpleNamespace(
+        enzyme="test-enzyme",
+        min_llr=None,
+        emission_uplift=None,
+        downstream_compat=False,
+        no_legacy_tags=True,
+    )
+    assert recall_tfs._resolve_recall_defaults(preset_args) == (2.5, 1.2)
+    assert recall_tfs._also_write_legacy(preset_args) is False
+
+    override_args = SimpleNamespace(
+        enzyme="test-enzyme",
+        min_llr=8.0,
+        emission_uplift=1.5,
+        downstream_compat=True,
+        no_legacy_tags=True,
+    )
+    assert recall_tfs._resolve_recall_defaults(override_args) == (8.0, 1.5)
+    assert recall_tfs._also_write_legacy(override_args) is True
+
+
+def test_recall_tfs_load_model_config_uses_metadata_and_overrides(monkeypatch):
+    monkeypatch.setattr(
+        recall_tfs,
+        "load_model_with_metadata",
+        lambda path: ("model", 5, "model-mode"),
+    )
+
+    args = SimpleNamespace(mode=None, context_size=None)
+
+    assert recall_tfs._load_recall_model_config("/tmp/model.json", args) == (
+        "model",
+        "model-mode",
+        5,
+    )
+
+    args = SimpleNamespace(mode="arg-mode", context_size=7)
+
+    assert recall_tfs._load_recall_model_config("/tmp/model.json", args) == (
+        "model",
+        "arg-mode",
+        7,
+    )
+
+
+def test_recall_tfs_load_model_config_falls_back_to_json_metadata(monkeypatch):
+    monkeypatch.setattr(
+        recall_tfs,
+        "load_model_with_metadata",
+        lambda path: ("model", None, None),
+    )
+    monkeypatch.setattr(
+        recall_tfs,
+        "_resolve_model_metadata",
+        lambda path: ("fallback-mode", 3),
+    )
+
+    args = SimpleNamespace(mode=None, context_size=None)
+
+    assert recall_tfs._load_recall_model_config("/tmp/model.json", args) == (
+        "model",
+        "fallback-mode",
+        3,
+    )
+
+
 def test_recall_tfs_single_thread_passes_failed_reads_through(monkeypatch):
     reads = [
         SimpleNamespace(query_name="ok", query_sequence="AAAA"),

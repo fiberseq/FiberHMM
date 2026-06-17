@@ -418,19 +418,9 @@ def _resolve_model_path(args):
     )
 
 
-def main():
-    args = parse_args()
-
-    stdout_mode = (args.out_bam == '-')
-    if stdout_mode:
-        # Redirect informational prints to stderr so BAM stream on stdout stays clean
-        sys.stdout = sys.stderr
-
-    model_path = _resolve_model_path(args)
-
+def _print_beta_banner(downstream_compat):
     # Prominent beta banner: this feature is new, expect rough edges.
-    # Mode line varies based on --downstream-compat.
-    if args.downstream_compat:
+    if downstream_compat:
         mode_banner = (
             "  MODE: DOWNSTREAM-COMPAT -- TF calls written into legacy ns/nl.\n"
             "  MA/AQ spec tags are NOT emitted. Per-TF quality scoring is lost.\n"
@@ -459,18 +449,22 @@ def main():
         file=sys.stderr,
     )
 
-    # Resolve cores
-    if args.cores == 0:
-        n_cores = mp.cpu_count()
-    else:
-        n_cores = max(1, args.cores)
 
-    # Presets + overrides
+def _resolve_cores(requested_cores):
+    return mp.cpu_count() if requested_cores == 0 else max(1, requested_cores)
+
+
+def _resolve_recall_defaults(args):
     preset = ENZYME_PRESETS.get(args.enzyme, {}) if args.enzyme else {}
     min_llr = args.min_llr if args.min_llr is not None else preset.get('min_llr', 5.0)
-    uplift = args.emission_uplift if args.emission_uplift is not None \
+    uplift = (
+        args.emission_uplift if args.emission_uplift is not None
         else preset.get('emission_uplift', 1.0)
+    )
+    return min_llr, uplift
 
+
+def _load_recall_model_config(model_path, args):
     model, model_k, model_mode = load_model_with_metadata(model_path)
     if not model_mode or not model_k:
         fb_mode, fb_k = _resolve_model_metadata(model_path)
@@ -478,10 +472,37 @@ def main():
         model_k = model_k or fb_k
     mode = args.mode or model_mode
     k = args.context_size or int(model_k)
+    return model, mode, k
 
+
+def _build_recall_llr_tables(model, uplift):
     llr_hit, llr_miss = build_llr_tables(model)
     if abs(uplift - 1.0) > 1e-9:
         llr_hit, llr_miss = apply_emission_uplift(llr_hit, llr_miss, model, uplift)
+    return llr_hit, llr_miss
+
+
+def _also_write_legacy(args):
+    # Compat mode always writes legacy tags because TFs live in ns/nl there.
+    return True if args.downstream_compat else (not args.no_legacy_tags)
+
+
+def main():
+    args = parse_args()
+
+    stdout_mode = (args.out_bam == '-')
+    if stdout_mode:
+        # Redirect informational prints to stderr so BAM stream on stdout stays clean
+        sys.stdout = sys.stderr
+
+    model_path = _resolve_model_path(args)
+
+    _print_beta_banner(args.downstream_compat)
+
+    n_cores = _resolve_cores(args.cores)
+    min_llr, uplift = _resolve_recall_defaults(args)
+    model, mode, k = _load_recall_model_config(model_path, args)
+    llr_hit, llr_miss = _build_recall_llr_tables(model, uplift)
 
     print(
         f"[recall_tfs] enzyme={args.enzyme or 'custom'} mode={mode} k={k} "
@@ -501,9 +522,7 @@ def main():
                                        header=append_coord_marker(bam_in.header),
                                        threads=args.io_threads)
         header_text = str(bam_in.header)
-
-        # Compat mode always writes legacy tags (TFs live in ns/nl there).
-        also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
+        also_write_legacy = _also_write_legacy(args)
 
         if n_cores == 1:
             n_reads, n_v2, n_tf, n_demoted, n_failed = _single_thread_loop(
