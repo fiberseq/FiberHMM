@@ -76,6 +76,29 @@ def ambiguity_to_edge(ambiguity_bp: int) -> int:
     return int(round(255 * (1 - ambiguity_bp / EDGE_AMBIGUITY_SAT)))
 
 
+def _clamp_byte(value: int) -> int:
+    return max(0, min(255, int(value)))
+
+
+def _format_interval_list(intervals: Sequence[Tuple[int, int]]) -> str:
+    return ','.join(f'{int(start) + 1}-{int(length)}'
+                    for start, length in intervals)
+
+
+def _parse_ma_head(head: str) -> Tuple[str, str, str]:
+    for i, c in enumerate(head):
+        if c in '+-.':
+            return head[:i], c, head[i + 1:]
+    raise ValueError(f'MA head missing strand: {head!r}')
+
+
+def _parse_ma_interval(token: str) -> Tuple[int, int]:
+    if '-' not in token:
+        raise ValueError(f'MA interval missing dash: {token!r}')
+    start_str, length_str = token.split('-', 1)
+    return int(start_str) - 1, int(length_str)
+
+
 def flip_interval_frame(start: int, length: int, read_length: int) -> Tuple[int, int]:
     """Convert a (start, length) interval between the SEQ (forward-reference) and
     molecular (original-fiber) coordinate frames of a reverse-mapped read.
@@ -178,14 +201,14 @@ def format_ma_tag(read_length: int,
     # still accepts it.)
     parts = [str(int(read_length))]
     if nuc_intervals:
-        nucs = ','.join(f'{int(s) + 1}-{int(end)}' for s, end in nuc_intervals)
+        nucs = _format_interval_list(nuc_intervals)
         parts.append(f'nuc.{nuc_qual_spec}:{nucs}' if nuc_qual_spec
                      else f'nuc.:{nucs}')
     if msp_intervals:
-        msps = ','.join(f'{int(s) + 1}-{int(end)}' for s, end in msp_intervals)
+        msps = _format_interval_list(msp_intervals)
         parts.append(f'msp.:{msps}')
     if tf_intervals:
-        tfs = ','.join(f'{int(s) + 1}-{int(end)}' for s, end in tf_intervals)
+        tfs = _format_interval_list(tf_intervals)
         parts.append(f'tf.{tf_qual_spec}:{tfs}' if tf_qual_spec
                      else f'tf.:{tfs}')
     return ';'.join(parts)
@@ -225,27 +248,24 @@ def format_aq_array(nq_values: Sequence[int],
     nuc+QQQ schema), each nucleosome instead emits three bytes (nq, el, er),
     mirroring the TF layout. The three nuc arrays must then be equal length.
     """
-    def clamp(v):
-        return max(0, min(255, int(v)))
-
     out = array.array('B')
     if nuc_lq_values or nuc_rq_values:
         if not (len(nq_values) == len(nuc_lq_values) == len(nuc_rq_values)):
             raise ValueError("nuc quality arrays must have equal length")
         for nq, el, er in zip(nq_values, nuc_lq_values, nuc_rq_values):
-            out.append(clamp(nq))
-            out.append(clamp(el))
-            out.append(clamp(er))
+            out.append(_clamp_byte(nq))
+            out.append(_clamp_byte(el))
+            out.append(_clamp_byte(er))
     else:
         for nq in nq_values:
-            out.append(clamp(nq))
+            out.append(_clamp_byte(nq))
     if tf_q_values:
         if not (len(tf_q_values) == len(tf_lq_values) == len(tf_rq_values)):
             raise ValueError("TF quality arrays must have equal length")
         for tq, el, er in zip(tf_q_values, tf_lq_values, tf_rq_values):
-            out.append(clamp(tq))
-            out.append(clamp(el))
-            out.append(clamp(er))
+            out.append(_clamp_byte(tq))
+            out.append(_clamp_byte(el))
+            out.append(_clamp_byte(er))
     return out
 
 
@@ -278,22 +298,12 @@ def parse_ma_tag(ma_string: str) -> dict:
         if ':' not in chunk:
             raise ValueError(f'MA chunk missing colon: {chunk!r}')
         head, data = chunk.split(':', 1)
-        for i, c in enumerate(head):
-            if c in '+-.':
-                name = head[:i]
-                strand = head[i]
-                qual_spec = head[i + 1:]
-                break
-        else:
-            raise ValueError(f'MA head missing strand: {head!r}')
+        name, strand, qual_spec = _parse_ma_head(head)
         intervals: List[Tuple[int, int]] = []
         for tok in data.split(','):
             if not tok:
                 continue
-            if '-' not in tok:
-                raise ValueError(f'MA interval missing dash: {tok!r}')
-            s_str, l_str = tok.split('-', 1)
-            intervals.append((int(s_str) - 1, int(l_str)))
+            intervals.append(_parse_ma_interval(tok))
         out['raw_types'].append((name, strand, qual_spec, intervals))
         if name in out:
             out[name].extend(intervals)
