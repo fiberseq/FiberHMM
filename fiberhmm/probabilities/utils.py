@@ -17,6 +17,10 @@ def reverse_complement(seq: str) -> str:
     return seq.translate(_RC_TABLE)[::-1]
 
 
+def _count_mod_positions_at_base(seq_upper: str, mod_positions: Set[int], base: str) -> int:
+    return sum(1 for p in mod_positions if p < len(seq_upper) and seq_upper[p] == base)
+
+
 def detect_strand_and_base(sequence: str, mod_positions: Set[int], mode: str) -> Tuple[str, str]:
     """
     Detect strand and target base based on mode.
@@ -40,8 +44,8 @@ def detect_strand_and_base(sequence: str, mod_positions: Set[int], mode: str) ->
     seq_upper = sequence.upper()
 
     if mode == 'daf':
-        t_count = sum(1 for p in mod_positions if p < len(seq_upper) and seq_upper[p] == 'T')
-        a_count = sum(1 for p in mod_positions if p < len(seq_upper) and seq_upper[p] == 'A')
+        t_count = _count_mod_positions_at_base(seq_upper, mod_positions, 'T')
+        a_count = _count_mod_positions_at_base(seq_upper, mod_positions, 'A')
 
         if t_count > a_count:
             return '+', 'C'
