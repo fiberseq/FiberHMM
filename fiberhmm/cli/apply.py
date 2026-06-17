@@ -18,6 +18,7 @@ from fiberhmm.cli.common import (
     add_stats_args,
     add_version_args,
     mode_description,
+    resolve_chroms_set,
     resolve_core_count,
 )
 from fiberhmm.cli.model_selection import resolve_model_path as _resolve_cli_model_path
@@ -288,8 +289,7 @@ def _load_training_read_ids(train_reads):
     return train_rids
 
 
-def _resolve_chroms_set(chroms):
-    return set(chroms) if chroms else None
+_resolve_chroms_set = resolve_chroms_set
 
 
 def _print_region_filter_settings(args, chroms_set) -> None:

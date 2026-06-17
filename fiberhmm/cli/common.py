@@ -30,6 +30,11 @@ def resolve_core_count(requested_cores: int, cpu_count_func=None) -> int:
     return max(1, requested_cores)
 
 
+def resolve_chroms_set(chroms):
+    """Normalize an optional CLI chromosome list into a de-duplicated set."""
+    return set(chroms) if chroms else None
+
+
 def add_mode_args(parser: argparse.ArgumentParser,
                   default: str = 'pacbio-fiber',
                   required: bool = False) -> None:

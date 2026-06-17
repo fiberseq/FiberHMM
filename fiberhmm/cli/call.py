@@ -24,6 +24,7 @@ Examples:
 import argparse
 import sys
 
+from fiberhmm.cli.common import resolve_chroms_set
 from fiberhmm.cli.recall_config import resolve_recall_defaults, should_write_legacy_tags
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.inference.parallel import (
@@ -186,8 +187,7 @@ def _resolve_call_mode_context(args, model_k, model_mode):
     return mode, k
 
 
-def _resolve_call_chroms(chroms):
-    return set(chroms) if chroms else None
+_resolve_call_chroms = resolve_chroms_set
 
 
 def _check_region_parallel_file_io(args) -> None:

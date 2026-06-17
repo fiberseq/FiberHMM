@@ -35,6 +35,7 @@ from fiberhmm.cli.common import (
     add_parallel_args,
     add_verbose_args,
     add_version_args,
+    resolve_chroms_set,
     resolve_core_count,
 )
 from fiberhmm.cli.model_selection import resolve_model_path as _resolve_cli_model_path
@@ -74,8 +75,7 @@ def _resolve_model_path(args) -> str:
     )
 
 
-def _chroms_set(chroms) -> Optional[Set[str]]:
-    return set(chroms) if chroms else None
+_chroms_set = resolve_chroms_set
 
 
 def _regions_by_chrom(regions: List[Tuple[str, int, int]]) -> Dict[str, List[Tuple[int, int]]]:

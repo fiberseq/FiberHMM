@@ -15,6 +15,7 @@ from fiberhmm.cli.common import (
     add_stats_args,
     add_verbose_args,
     mode_description,
+    resolve_chroms_set,
     resolve_core_count,
 )
 
@@ -129,6 +130,11 @@ class TestAddParallelArgs:
         assert resolve_core_count(0, cpu_count_func=lambda: 12) == 12
         assert resolve_core_count(-3, cpu_count_func=lambda: 12) == 1
         assert resolve_core_count(4, cpu_count_func=lambda: 12) == 4
+
+    def test_resolve_chroms_set(self):
+        assert resolve_chroms_set(None) is None
+        assert resolve_chroms_set([]) is None
+        assert resolve_chroms_set(["chr2", "chr1", "chr2"]) == {"chr1", "chr2"}
 
 
 class TestAddContextArgs:
