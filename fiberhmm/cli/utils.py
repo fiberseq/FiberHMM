@@ -23,6 +23,10 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+from fiberhmm.cli.generate_probs import (
+    _combined_probability_table_path,
+    _probability_table_path,
+)
 from fiberhmm.core.model_io import load_model_with_metadata, save_model
 from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
@@ -614,6 +618,57 @@ def _accessibility_priors_for_base(base: str, context_size: int,
     return None
 
 
+def _write_transfer_probability_tables(
+    tables_dir: str,
+    base_name: str,
+    base: str,
+    context_size: int,
+    target_rates: pd.DataFrame,
+    p_acc: float,
+    p_inacc: float,
+) -> str:
+    output_df = target_rates[['context']].copy()
+    output_df = output_df.sort_values('context').reset_index(drop=True)
+    output_df['encode'] = range(len(output_df))
+
+    acc_df = output_df.copy()
+    acc_df['ratio'] = p_acc
+    acc_file = _probability_table_path(
+        tables_dir,
+        base_name,
+        "accessible",
+        base,
+        context_size,
+    )
+    acc_df[['encode', 'context', 'ratio']].to_csv(acc_file, sep='\t', index=False)
+
+    inacc_df = output_df.copy()
+    inacc_df['ratio'] = p_inacc
+    inacc_file = _probability_table_path(
+        tables_dir,
+        base_name,
+        "inaccessible",
+        base,
+        context_size,
+    )
+    inacc_df[['encode', 'context', 'ratio']].to_csv(inacc_file, sep='\t', index=False)
+
+    combined = pd.DataFrame({
+        'encode': range(len(output_df)),
+        'context': output_df['context'].values,
+        'accessible_prob': p_acc,
+        'inaccessible_prob': p_inacc
+    })
+    combined_file = _combined_probability_table_path(
+        tables_dir,
+        base_name,
+        base,
+        context_size,
+    )
+    combined.to_csv(combined_file, sep='\t', index=False)
+    return combined_file
+
+
 def cmd_transfer(args):
     """Transfer emission probs between modalities."""
     max_context = max(args.context_sizes)
@@ -704,30 +759,15 @@ def cmd_transfer(args):
             print(f"    Estimated P(m|inaccessible): {p_inacc:.4f}")
             print(f"    Enrichment ratio: {p_acc/max(0.001, p_inacc):.1f}x")
 
-            # Create output files
-            output_df = target_rates[['context']].copy()
-            output_df = output_df.sort_values('context').reset_index(drop=True)
-            output_df['encode'] = range(len(output_df))
-
-            acc_df = output_df.copy()
-            acc_df['ratio'] = p_acc
-            acc_file = os.path.join(tables_dir, f"{base_name}_accessible_{base}_k{k}.tsv")
-            acc_df[['encode', 'context', 'ratio']].to_csv(acc_file, sep='\t', index=False)
-
-            inacc_df = output_df.copy()
-            inacc_df['ratio'] = p_inacc
-            inacc_file = os.path.join(tables_dir,
-                                      f"{base_name}_inaccessible_{base}_k{k}.tsv")
-            inacc_df[['encode', 'context', 'ratio']].to_csv(inacc_file, sep='\t', index=False)
-
-            combined = pd.DataFrame({
-                'encode': range(len(output_df)),
-                'context': output_df['context'].values,
-                'accessible_prob': p_acc,
-                'inaccessible_prob': p_inacc
-            })
-            combined_file = os.path.join(tables_dir, f"{base_name}_{base}_k{k}_probs.tsv")
-            combined.to_csv(combined_file, sep='\t', index=False)
+            combined_file = _write_transfer_probability_tables(
+                tables_dir,
+                base_name,
+                base,
+                k,
+                target_rates,
+                p_acc,
+                p_inacc,
+            )
             print(f"    Output: {combined_file}")
 
         all_regression_data[k] = regression_data_k

@@ -8,6 +8,7 @@ from fiberhmm.cli.utils import (
     _estimate_emission_probs,
     _scale_emission_probabilities,
     _target_bases_for_transfer_mode,
+    _write_transfer_probability_tables,
 )
 
 
@@ -129,3 +130,37 @@ def test_accessibility_priors_for_base_filters_tsv_and_counter():
     }
 
     assert _accessibility_priors_for_base("G", 3, None, {"A": FakeCounter()}) is None
+
+
+def test_write_transfer_probability_tables_uses_shared_layout(tmp_path):
+    target_rates = pd.DataFrame({
+        "context": ["CCC", "AAA"],
+        "ratio": [0.2, 0.3],
+    })
+
+    combined_file = _write_transfer_probability_tables(
+        str(tmp_path),
+        "run",
+        "C",
+        3,
+        target_rates,
+        p_acc=0.8,
+        p_inacc=0.1,
+    )
+
+    acc = pd.read_csv(tmp_path / "run_accessible_C_k3.tsv", sep="\t")
+    inacc = pd.read_csv(tmp_path / "run_inaccessible_C_k3.tsv", sep="\t")
+    combined = pd.read_csv(combined_file, sep="\t")
+
+    assert acc.to_dict("list") == {
+        "encode": [0, 1],
+        "context": ["AAA", "CCC"],
+        "ratio": [0.8, 0.8],
+    }
+    assert inacc["ratio"].tolist() == [0.1, 0.1]
+    assert combined.to_dict("list") == {
+        "encode": [0, 1],
+        "context": ["AAA", "CCC"],
+        "accessible_prob": [0.8, 0.8],
+        "inaccessible_prob": [0.1, 0.1],
+    }
