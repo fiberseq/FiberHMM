@@ -799,6 +799,15 @@ def test_result_has_posteriors_requires_non_none_posteriors():
     assert not streaming_drain._result_has_posteriors({})
 
 
+def test_posterior_chrom_reads_reference_name():
+    assert streaming_drain._posterior_chrom(
+        SimpleNamespace(reference_name="chr1"),
+    ) == "chr1"
+    assert streaming_drain._posterior_chrom(
+        SimpleNamespace(reference_name=None),
+    ) is None
+
+
 def test_streaming_drain_counts_worker_failures_and_passes_read_through():
     read = object()
     outbam = _OutBam()

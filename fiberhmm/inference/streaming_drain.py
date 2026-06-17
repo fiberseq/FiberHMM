@@ -63,6 +63,10 @@ def _result_has_posteriors(result: dict) -> bool:
     return result.get('posteriors') is not None
 
 
+def _posterior_chrom(read_obj):
+    return read_obj.reference_name
+
+
 def _drain_oldest_chunk(
     inflight,
     outbam,
@@ -96,7 +100,7 @@ def _drain_oldest_chunk(
             _record_reads_with_footprints(counters)
 
             if posterior_writer and _result_has_posteriors(result):
-                chrom = read_obj.reference_name
+                chrom = _posterior_chrom(read_obj)
                 if chrom:
                     posterior_writer.add_fiber(
                         chrom,
