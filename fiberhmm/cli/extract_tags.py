@@ -974,6 +974,10 @@ def _extract_region_temp_beds(temp_dir: str, region_index: int, extract_types) -
     }
 
 
+def _bed12_type_flag(n_extra: int) -> str:
+    return f'-type=bed12+{int(n_extra)}' if int(n_extra) > 0 else '-type=bed12'
+
+
 def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           n_cores: int = 1, region_size: int = 10_000_000,
                           min_mapq: int = 0, prob_threshold: int = 125,
@@ -1150,8 +1154,7 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
         if as_file:
             cmd.append(f'-as={as_file}')
         if bed_type == 'bed12':
-            type_flag = f'-type=bed12+{n_extra}' if n_extra > 0 else '-type=bed12'
-            cmd.append(type_flag)
+            cmd.append(_bed12_type_flag(n_extra))
         cmd.extend([bed_path, sizes_file, bigbed_path])
 
         result = subprocess.run(cmd, capture_output=True, text=True)

@@ -255,6 +255,11 @@ def test_extract_region_temp_beds_uses_stable_region_and_type_names(tmp_path):
     }
 
 
+def test_bed12_type_flag_formats_extra_column_count():
+    assert extract_tags._bed12_type_flag(0) == "-type=bed12"
+    assert extract_tags._bed12_type_flag(4) == "-type=bed12+4"
+
+
 # ------------------- autoSQL schemas --------------------------------
 
 def test_autosql_default_is_bed12_only():
