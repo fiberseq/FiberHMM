@@ -106,6 +106,13 @@ def test_posterior_chrom_subgroups_respects_ref_position_toggle():
     ]
 
 
+def test_file_size_mb_reports_megabytes(tmp_path):
+    path = tmp_path / "payload.bin"
+    path.write_bytes(b"0" * (1024 * 1024))
+
+    assert hdf5_backend._file_size_mb(str(path)) == 1.0
+
+
 def test_hdf5_fiber_array_dataset_helper_writes_expected_groups(tmp_path):
     with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
         grp = hdf5_backend.create_posterior_chrom_group(h5, "chr1")

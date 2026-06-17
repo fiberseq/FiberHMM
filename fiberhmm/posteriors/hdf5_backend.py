@@ -112,6 +112,10 @@ def _append_fiber_metadata(meta: Dict[str, List], fiber: Dict) -> None:
     meta['strands'].append(fiber.get('strand', '.'))
 
 
+def _file_size_mb(path: str) -> float:
+    return os.path.getsize(path) / (1024 * 1024)
+
+
 def _write_fiber_array_datasets(group, index: int, fiber: Dict) -> None:
     idx = str(index)
     _create_gzip_dataset(
@@ -284,7 +288,7 @@ class PosteriorWriter:
                 self._closed = True
 
         # Return stats
-        file_size = os.path.getsize(self.output_path) / (1024 * 1024)
+        file_size = _file_size_mb(self.output_path)
         return self.total_written, file_size
 
     def __enter__(self):
