@@ -16,6 +16,84 @@ if TYPE_CHECKING:
     from fiberhmm.probabilities.context_counter import ContextCounter
 
 
+def _modification_rate(counter: 'ContextCounter') -> float:
+    return counter.total_modified / max(1, counter.total_positions)
+
+
+def _probability_ratios_with_data(prob_table) -> np.ndarray:
+    ratios = prob_table['ratio'].values
+    return ratios[prob_table['hit'] + prob_table['nohit'] > 0]
+
+
+def _write_probability_stats_summary(summary_file: str,
+                                     accessible_counters: Dict[str, 'ContextCounter'],
+                                     inaccessible_counters: Dict[str, 'ContextCounter'],
+                                     context_size: int,
+                                     title_prefix: str) -> None:
+    with open(summary_file, 'w') as f:
+        f.write(
+            f"{title_prefix} Emission Probability Statistics "
+            f"(k={context_size}, {2*context_size+1}-mer)\n"
+        )
+        f.write("=" * 60 + "\n\n")
+
+        for base in accessible_counters.keys():
+            acc = accessible_counters[base]
+            inacc = inaccessible_counters[base]
+
+            acc_rate = _modification_rate(acc)
+            inacc_rate = _modification_rate(inacc)
+
+            f.write(f"{base}-centered Contexts\n")
+            f.write("-" * 40 + "\n")
+            f.write("\nAccessible:\n")
+            f.write(f"  Total positions:     {acc.total_positions:,}\n")
+            f.write(f"  Modified positions:  {acc.total_modified:,}\n")
+            f.write(f"  Modification rate:   {acc_rate:.4f} ({acc_rate*100:.2f}%)\n")
+            f.write(f"  Unique contexts:     {len(acc.counts):,}\n")
+
+            f.write("\nInaccessible:\n")
+            f.write(f"  Total positions:     {inacc.total_positions:,}\n")
+            f.write(f"  Modified positions:  {inacc.total_modified:,}\n")
+            f.write(f"  Modification rate:   {inacc_rate:.4f} ({inacc_rate*100:.2f}%)\n")
+            f.write(f"  Unique contexts:     {len(inacc.counts):,}\n")
+
+            f.write("\nSeparation:\n")
+            f.write(f"  Rate difference:     {acc_rate - inacc_rate:.4f}\n")
+            f.write(f"  Fold enrichment:     {acc_rate / max(0.001, inacc_rate):.2f}x\n")
+
+            _, acc_probs = acc.get_encoding_table(context_size)
+            _, inacc_probs = inacc.get_encoding_table(context_size)
+            acc_with_data = _probability_ratios_with_data(acc_probs)
+            inacc_with_data = _probability_ratios_with_data(inacc_probs)
+
+            f.write(
+                f"\nPer-context statistics "
+                f"(k={context_size}, {2*context_size+1}-mer):\n"
+            )
+            if len(acc_with_data) > 0:
+                f.write(f"  Accessible contexts with data: {len(acc_with_data)}\n")
+                f.write(
+                    f"    Prob range:  {np.min(acc_with_data):.4f} - "
+                    f"{np.max(acc_with_data):.4f}\n"
+                )
+                f.write(f"    Prob median: {np.median(acc_with_data):.4f}\n")
+                f.write(f"    Prob mean:   {np.mean(acc_with_data):.4f}\n")
+                f.write(f"    Prob std:    {np.std(acc_with_data):.4f}\n")
+
+            if len(inacc_with_data) > 0:
+                f.write(f"  Inaccessible contexts with data: {len(inacc_with_data)}\n")
+                f.write(
+                    f"    Prob range:  {np.min(inacc_with_data):.4f} - "
+                    f"{np.max(inacc_with_data):.4f}\n"
+                )
+                f.write(f"    Prob median: {np.median(inacc_with_data):.4f}\n")
+                f.write(f"    Prob mean:   {np.mean(inacc_with_data):.4f}\n")
+                f.write(f"    Prob std:    {np.std(inacc_with_data):.4f}\n")
+
+            f.write("\n")
+
+
 def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
                                 inaccessible_counters: Dict[str, 'ContextCounter'],
                                 plots_dir: str, base_name: str, context_size: int = 3,
@@ -36,62 +114,10 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
 
     # Write text summary (includes k in filename)
     summary_file = os.path.join(plots_dir, f"{base_name}_k{context_size}_stats.txt")
-    with open(summary_file, 'w') as f:
-        f.write(f"{title_prefix} Emission Probability Statistics (k={context_size}, {2*context_size+1}-mer)\n")
-        f.write("=" * 60 + "\n\n")
-
-        for base in accessible_counters.keys():
-            acc = accessible_counters[base]
-            inacc = inaccessible_counters[base]
-
-            acc_rate = acc.total_modified / max(1, acc.total_positions)
-            inacc_rate = inacc.total_modified / max(1, inacc.total_positions)
-
-            f.write(f"{base}-centered Contexts\n")
-            f.write("-" * 40 + "\n")
-            f.write("\nAccessible:\n")
-            f.write(f"  Total positions:     {acc.total_positions:,}\n")
-            f.write(f"  Modified positions:  {acc.total_modified:,}\n")
-            f.write(f"  Modification rate:   {acc_rate:.4f} ({acc_rate*100:.2f}%)\n")
-            f.write(f"  Unique contexts:     {len(acc.counts):,}\n")
-
-            f.write("\nInaccessible:\n")
-            f.write(f"  Total positions:     {inacc.total_positions:,}\n")
-            f.write(f"  Modified positions:  {inacc.total_modified:,}\n")
-            f.write(f"  Modification rate:   {inacc_rate:.4f} ({inacc_rate*100:.2f}%)\n")
-            f.write(f"  Unique contexts:     {len(inacc.counts):,}\n")
-
-            f.write("\nSeparation:\n")
-            f.write(f"  Rate difference:     {acc_rate - inacc_rate:.4f}\n")
-            f.write(f"  Fold enrichment:     {acc_rate / max(0.001, inacc_rate):.2f}x\n")
-
-            # Per-context stats
-            _, acc_probs = acc.get_encoding_table(context_size)
-            _, inacc_probs = inacc.get_encoding_table(context_size)
-
-            acc_ratios = acc_probs['ratio'].values
-            inacc_ratios = inacc_probs['ratio'].values
-
-            # Filter to contexts with data
-            acc_with_data = acc_ratios[acc_probs['hit'] + acc_probs['nohit'] > 0]
-            inacc_with_data = inacc_ratios[inacc_probs['hit'] + inacc_probs['nohit'] > 0]
-
-            f.write(f"\nPer-context statistics (k={context_size}, {2*context_size+1}-mer):\n")
-            if len(acc_with_data) > 0:
-                f.write(f"  Accessible contexts with data: {len(acc_with_data)}\n")
-                f.write(f"    Prob range:  {np.min(acc_with_data):.4f} - {np.max(acc_with_data):.4f}\n")
-                f.write(f"    Prob median: {np.median(acc_with_data):.4f}\n")
-                f.write(f"    Prob mean:   {np.mean(acc_with_data):.4f}\n")
-                f.write(f"    Prob std:    {np.std(acc_with_data):.4f}\n")
-
-            if len(inacc_with_data) > 0:
-                f.write(f"  Inaccessible contexts with data: {len(inacc_with_data)}\n")
-                f.write(f"    Prob range:  {np.min(inacc_with_data):.4f} - {np.max(inacc_with_data):.4f}\n")
-                f.write(f"    Prob median: {np.median(inacc_with_data):.4f}\n")
-                f.write(f"    Prob mean:   {np.mean(inacc_with_data):.4f}\n")
-                f.write(f"    Prob std:    {np.std(inacc_with_data):.4f}\n")
-
-            f.write("\n")
+    _write_probability_stats_summary(
+        summary_file, accessible_counters, inaccessible_counters,
+        context_size, title_prefix,
+    )
 
     print(f"  Summary: {summary_file}")
 
