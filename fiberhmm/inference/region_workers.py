@@ -46,6 +46,9 @@ _worker_region_params = None
 _worker_recall_state = {}
 
 _PRE_OWNERSHIP_SKIP_REASONS = {"unmapped", "secondary_supplementary"}
+_REGION_ROUTE_PROCESS = "process"
+_REGION_ROUTE_SKIP = "skip"
+_REGION_ROUTE_OUTSIDE = "outside_region"
 _REGION_SKIP_REASON_KEYS = (
     'unmapped',
     'secondary_supplementary',
@@ -72,6 +75,23 @@ def _write_skipped_region_read(outbam, read, skip_reasons: dict, reason: str) ->
 
 def _read_starts_in_region(read, start: int, end: int) -> bool:
     return int(start) <= int(read.reference_start) < int(end)
+
+
+def _region_read_route(read, start: int, end: int, filter_config: ReadFilterConfig):
+    """Classify a fetched read before region-worker processing.
+
+    Pre-ownership skip reasons are passed through before checking
+    reference_start. Other reads are processed only by the region containing
+    their start to avoid duplicate output from overlapping fetches.
+    """
+    skip_reason = streaming_skip_reason(read, filter_config)
+    if skip_reason in _PRE_OWNERSHIP_SKIP_REASONS:
+        return _REGION_ROUTE_SKIP, skip_reason
+    if not _read_starts_in_region(read, start, end):
+        return _REGION_ROUTE_OUTSIDE, None
+    if skip_reason:
+        return _REGION_ROUTE_SKIP, skip_reason
+    return _REGION_ROUTE_PROCESS, None
 
 
 def _format_region_bed12_row(ref_name, ref_start, ref_end, read_id, strand,
@@ -241,24 +261,16 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         return RegionBamResult(temp_bam_path, 0, 0, 0)
 
                     for read in read_iter:
-                        skip_reason = streaming_skip_reason(read, filter_config)
-                        if skip_reason in _PRE_OWNERSHIP_SKIP_REASONS:
+                        route, skip_reason = _region_read_route(
+                            read, start, end, filter_config,
+                        )
+                        if route == _REGION_ROUTE_SKIP:
                             written += _write_skipped_region_read(
                                 outbam, read, skip_reasons, skip_reason
                             )
                             skipped += 1
                             continue
-
-                        # Only process reads that START in this region to avoid duplicates.
-                        # fetch returns reads that overlap the region.
-                        if not _read_starts_in_region(read, start, end):
-                            continue
-
-                        if skip_reason:
-                            written += _write_skipped_region_read(
-                                outbam, read, skip_reasons, skip_reason
-                            )
-                            skipped += 1
+                        if route == _REGION_ROUTE_OUTSIDE:
                             continue
 
                         try:
@@ -565,20 +577,16 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                     return RegionBamResult(temp_bam_path, 0, 0, 0)
 
                 for read in read_iter:
-                    skip_reason = streaming_skip_reason(read, filter_config)
-                    if skip_reason in _PRE_OWNERSHIP_SKIP_REASONS:
+                    route, skip_reason = _region_read_route(
+                        read, start, end, filter_config,
+                    )
+                    if route == _REGION_ROUTE_SKIP:
                         written += _write_skipped_region_read(
                             outbam, read, skip_reasons, skip_reason
                         )
                         skipped += 1
                         continue
-                    if not _read_starts_in_region(read, start, end):
-                        continue
-                    if skip_reason:
-                        written += _write_skipped_region_read(
-                            outbam, read, skip_reasons, skip_reason
-                        )
-                        skipped += 1
+                    if route == _REGION_ROUTE_OUTSIDE:
                         continue
 
                     payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
