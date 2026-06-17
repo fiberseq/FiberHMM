@@ -303,6 +303,14 @@ def _prepare_pysam_concat_fallback(
     _ensure_output_dir_writable(output_bam, verbose=verbose)
 
 
+def _log_pysam_concat_failure(output_bam: str, error: Exception) -> None:
+    output_dir_path = os.path.dirname(output_bam)
+    print(f"  ERROR: pysam fallback also failed: {error}")
+    print(f"    Output path: {output_bam}")
+    print(f"    Output dir exists: {os.path.exists(output_dir_path)}")
+    print("  Attempting manual BAM concatenation via samtools merge...")
+
+
 def _write_empty_bam_from_input_header(input_bam: str, output_bam: str) -> None:
     """Create an empty BAM using the input BAM header."""
     with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as inbam:
@@ -396,11 +404,7 @@ def _concatenate_region_bams(
 
     except Exception as pysam_err:
         if verbose:
-            output_dir_path = os.path.dirname(output_bam)
-            print(f"  ERROR: pysam fallback also failed: {pysam_err}")
-            print(f"    Output path: {output_bam}")
-            print(f"    Output dir exists: {os.path.exists(output_dir_path)}")
-            print("  Attempting manual BAM concatenation via samtools merge...")
+            _log_pysam_concat_failure(output_bam, pysam_err)
 
         try:
             _samtools_merge_bams(bam_files, output_bam, bam_list_file)

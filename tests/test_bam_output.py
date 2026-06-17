@@ -177,6 +177,18 @@ def test_prepare_pysam_concat_fallback_respects_quiet_mode(monkeypatch, capsys):
     ]
 
 
+def test_log_pysam_concat_failure_reports_output_context(tmp_path, capsys):
+    output_bam = tmp_path / "out.bam"
+
+    bam_output._log_pysam_concat_failure(str(output_bam), RuntimeError("read failed"))
+
+    captured = capsys.readouterr()
+    assert "pysam fallback also failed: read failed" in captured.out
+    assert f"Output path: {output_bam}" in captured.out
+    assert "Output dir exists: True" in captured.out
+    assert "samtools merge" in captured.out
+
+
 def test_convert_to_bigbed_sorts_without_shell(monkeypatch, tmp_path):
     bed = tmp_path / "calls.bed"
     chrom_sizes = tmp_path / "chrom.sizes"
