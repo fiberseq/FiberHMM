@@ -415,6 +415,28 @@ def test_selected_extract_types_defaults_and_preserves_cli_order():
     )
 
 
+def test_extract_cli_setup_helpers_build_paths_and_filters(tmp_path):
+    input_bam = tmp_path / "sample_footprints.bam"
+    input_bam.write_text("")
+
+    assert extract_tags._default_extract_outdir(str(input_bam)) == str(tmp_path)
+    assert extract_tags._extract_dataset_name(str(input_bam)) == "sample"
+    assert extract_tags._parse_chroms_filter(None) is None
+    assert extract_tags._parse_chroms_filter("chr2L,chr3R") == {"chr2L", "chr3R"}
+    assert extract_tags._extract_output_paths(
+        str(tmp_path),
+        "sample",
+        ["nucleosome", "tf"],
+        "bed",
+    ) == {
+        "nucleosome": str(tmp_path / "sample_nucleosome.bed"),
+        "tf": str(tmp_path / "sample_tf.bed"),
+    }
+    assert extract_tags._circular_groups_for_bigbed(True, "tf")
+    assert not extract_tags._circular_groups_for_bigbed(True, "deam")
+    assert not extract_tags._circular_groups_for_bigbed(False, "tf")
+
+
 def test_extract_region_temp_beds_uses_stable_region_and_type_names(tmp_path):
     assert extract_tags._extract_region_temp_beds(
         str(tmp_path),

@@ -1055,6 +1055,31 @@ def _selected_extract_types(args) -> list:
     ]
 
 
+def _default_extract_outdir(input_path: str) -> str:
+    outdir = os.path.dirname(os.path.abspath(input_path))
+    return outdir or '.'
+
+
+def _extract_dataset_name(input_path: str) -> str:
+    return os.path.basename(input_path).replace('.bam', '').replace('_footprints', '')
+
+
+def _parse_chroms_filter(chroms_arg: Optional[str]) -> Optional[Set[str]]:
+    if not chroms_arg:
+        return None
+    return set(chroms_arg.split(','))
+
+
+def _extract_output_paths(outdir: str, dataset: str, extract_types, suffix: str) -> dict:
+    return {
+        t: os.path.join(outdir, f"{dataset}_{t}.{suffix}") for t in extract_types
+    }
+
+
+def _circular_groups_for_bigbed(circular_groups: bool, extract_type: str) -> bool:
+    return circular_groups and extract_type in ('nucleosome', 'msp', 'tf')
+
+
 def _extract_read_types(read, extract_types, bed_outs, *, with_scores: bool,
                         block_scores: bool, circular_groups: bool,
                         min_tq: int, prob_threshold: int) -> dict:
@@ -1764,9 +1789,7 @@ Examples:
 
     # Default output directory to input file's directory
     if args.outdir is None:
-        args.outdir = os.path.dirname(os.path.abspath(args.input))
-        if not args.outdir:
-            args.outdir = '.'
+        args.outdir = _default_extract_outdir(args.input)
 
     # Determine what to extract (default: all)
     extract_types = _selected_extract_types(args)
@@ -1778,12 +1801,10 @@ Examples:
     os.makedirs(args.outdir, exist_ok=True)
 
     # Parse chromosome filter
-    chroms = None
-    if args.chroms:
-        chroms = set(args.chroms.split(','))
+    chroms = _parse_chroms_filter(args.chroms)
 
     # Get dataset name (file prefix + default sample_name).
-    dataset = os.path.basename(args.input).replace('.bam', '').replace('_footprints', '')
+    dataset = _extract_dataset_name(args.input)
     sample_name = args.sample_name or dataset
 
     # Get chrom sizes — only required for bigBed conversion
@@ -1820,12 +1841,8 @@ Examples:
     # opens the BAM once, iterates once, builds the query->ref mapping
     # once per read, and writes to N per-type output BEDs.  N× faster
     # than running the old one-type-at-a-time loop.
-    output_beds = {
-        t: os.path.join(args.outdir, f"{dataset}_{t}.bed") for t in extract_types
-    }
-    bb_paths = {
-        t: os.path.join(args.outdir, f"{dataset}_{t}.bb") for t in extract_types
-    }
+    output_beds = _extract_output_paths(args.outdir, dataset, extract_types, 'bed')
+    bb_paths = _extract_output_paths(args.outdir, dataset, extract_types, 'bb')
     print(f"=== Extracting {', '.join(extract_types)} (single pass) ===")
     n_reads, n_features = extract_tags_parallel(
         input_bam=args.input,
@@ -1862,8 +1879,8 @@ Examples:
 
         if make_bigbed:
             print(f"  [{extract_type}] converting to bigBed...")
-            circular_groups_for_type = (
-                args.circular_groups and extract_type in ('nucleosome', 'msp', 'tf')
+            circular_groups_for_type = _circular_groups_for_bigbed(
+                args.circular_groups, extract_type,
             )
             if bed_to_bigbed(bed_path, bb_path, chrom_sizes, 'bed12',
                               extract_type=extract_type,
