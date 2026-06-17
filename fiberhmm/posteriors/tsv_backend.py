@@ -184,6 +184,23 @@ def _write_h5_metadata_from_tsv_metadata(h5_file, metadata: dict) -> None:
     )
 
 
+def _h5_posterior_record_dataset_specs(record: dict) -> list[tuple]:
+    return [
+        ('posteriors', record['posteriors'], 4),
+        ('footprint_starts', record['fp_starts'], None),
+        ('footprint_sizes', record['fp_sizes'], None),
+    ]
+
+
+def _write_h5_record_array_datasets(group, index: int, record: dict) -> None:
+    idx = str(index)
+    for group_name, data, compression_opts in _h5_posterior_record_dataset_specs(record):
+        kwargs = {'compression': 'gzip'}
+        if compression_opts is not None:
+            kwargs['compression_opts'] = compression_opts
+        group[group_name].create_dataset(idx, data=data, **kwargs)
+
+
 def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
     record = _posterior_record_from_fields(fields, np.float16)
     chrom = record['chrom']
@@ -194,22 +211,7 @@ def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
 
     grp = h5_file[chrom]
 
-    # Write data
-    grp['posteriors'].create_dataset(
-        str(idx),
-        data=record['posteriors'],
-        compression='gzip', compression_opts=4
-    )
-    grp['footprint_starts'].create_dataset(
-        str(idx),
-        data=record['fp_starts'],
-        compression='gzip'
-    )
-    grp['footprint_sizes'].create_dataset(
-        str(idx),
-        data=record['fp_sizes'],
-        compression='gzip'
-    )
+    _write_h5_record_array_datasets(grp, idx, record)
 
     grp['fiber_ids'][idx] = record['read_id']
     grp['fiber_starts'][idx] = record['start']

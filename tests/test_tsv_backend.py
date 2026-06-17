@@ -177,6 +177,28 @@ def test_posterior_record_from_fields_decodes_with_requested_dtype():
     np.testing.assert_array_equal(record["fp_sizes"], [1, 2])
 
 
+def test_h5_posterior_record_dataset_specs_define_compressed_arrays():
+    record = {
+        "posteriors": np.array([0.1, 0.2], dtype=np.float16),
+        "fp_starts": np.array([4], dtype=np.int32),
+        "fp_sizes": np.array([5], dtype=np.int32),
+    }
+
+    specs = tsv_backend._h5_posterior_record_dataset_specs(record)
+
+    assert [name for name, _, _ in specs] == [
+        "posteriors",
+        "footprint_starts",
+        "footprint_sizes",
+    ]
+    assert specs[0][1] is record["posteriors"]
+    assert specs[0][2] == 4
+    assert specs[1][1] is record["fp_starts"]
+    assert specs[1][2] is None
+    assert specs[2][1] is record["fp_sizes"]
+    assert specs[2][2] is None
+
+
 def test_chrom_from_countable_tsv_line_filters_non_data_rows():
     assert tsv_backend._chrom_from_countable_tsv_line("#metadata:{}\n") is None
     assert tsv_backend._chrom_from_countable_tsv_line("read_without_chrom\n") is None
