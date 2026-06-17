@@ -218,6 +218,16 @@ def _region_read_filter_config(params: dict, *, require_train_rids: bool) -> Rea
     )
 
 
+def _region_bed_read_filter_config(params: dict) -> ReadFilterConfig:
+    return ReadFilterConfig(
+        min_mapq=int(params['min_mapq']),
+        min_read_length=int(params['min_read_length']),
+        primary_only=True,
+        process_unmapped=False,
+        train_rids=params['train_rids'],
+    )
+
+
 def _region_fused_recall_options(
     params: dict,
     nuc_min_size: int,
@@ -257,6 +267,20 @@ def _region_result_ns_scores(result: dict, with_scores: bool):
         return None
     scores = result['ns_scores']
     return scores if scores is not None else None
+
+
+def _region_bed12_row_from_read_result(read, result: dict, with_scores: bool) -> str:
+    strand = '-' if read.is_reverse else '+'
+    return _format_region_bed12_row(
+        read.reference_name,
+        read.reference_start,
+        read.reference_end,
+        read.query_name,
+        strand,
+        result['ns'],
+        result['nl'],
+        _region_result_ns_scores(result, with_scores),
+    )
 
 
 def _init_region_worker(model_path: str, params: dict):
@@ -475,13 +499,7 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
         prob_threshold = int(params['prob_threshold'])
         with_scores = params['with_scores']
         io_threads = int(params.get('io_threads', 4))
-        filter_config = ReadFilterConfig(
-            min_mapq=int(params['min_mapq']),
-            min_read_length=int(params['min_read_length']),
-            primary_only=True,
-            process_unmapped=False,
-            train_rids=params['train_rids'],
-        )
+        filter_config = _region_bed_read_filter_config(params)
 
         total_reads = 0
         reads_with_footprints = 0
@@ -518,20 +536,9 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
 
                     if result is not None and len(result['ns']) > 0:
                         reads_with_footprints += 1
-
-                        ref_name = read.reference_name
-                        ref_start = read.reference_start
-                        ref_end = read.reference_end
-                        strand = '-' if read.is_reverse else '+'
-                        read_id = read.query_name
-
-                        ns = result['ns']
-                        nl = result['nl']
-                        ns_scores = _region_result_ns_scores(result, with_scores)
                         bed_out.write(
-                            _format_region_bed12_row(
-                                ref_name, ref_start, ref_end, read_id, strand,
-                                ns, nl, ns_scores,
+                            _region_bed12_row_from_read_result(
+                                read, result, with_scores,
                             ) + "\n"
                         )
 

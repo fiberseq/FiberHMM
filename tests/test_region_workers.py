@@ -10,9 +10,11 @@ from fiberhmm.inference.region_workers import (
     _REGION_ROUTE_SKIP,
     _extract_region_fiber_read,
     _extract_region_payload_fiber_read,
+    _region_bed12_row_from_read_result,
     _format_region_bed12_row,
     _pad_region_bed12_to_read_span,
     _region_bed_block_components,
+    _region_bed_read_filter_config,
     _region_bed_score_list,
     _region_bed12_blocks,
     _region_fused_recall_options,
@@ -242,6 +244,56 @@ def test_region_bed12_row_omits_scores_when_absent():
         "30",
         "0",
     ]
+
+
+def test_region_bed12_row_from_read_result_uses_read_fields_and_scores():
+    read = SimpleNamespace(
+        reference_name="chr2",
+        reference_start=50,
+        reference_end=80,
+        query_name="read2",
+        is_reverse=True,
+    )
+    result = {
+        "ns": [55],
+        "nl": [10],
+        "ns_scores": [0.25],
+    }
+
+    row = _region_bed12_row_from_read_result(read, result, with_scores=True)
+
+    assert row.split("\t") == [
+        "chr2",
+        "50",
+        "80",
+        "read2",
+        "0",
+        "-",
+        "50",
+        "80",
+        "0,0,0",
+        "3",
+        "1,10,1",
+        "0,5,29",
+        "0,250,0",
+    ]
+
+
+def test_region_bed_read_filter_config_preserves_bed_policy():
+    train_rids = {"training-read"}
+
+    config = _region_bed_read_filter_config({
+        "min_mapq": "7",
+        "min_read_length": "101",
+        "primary_only": False,
+        "train_rids": train_rids,
+    })
+
+    assert config.min_mapq == 7
+    assert config.min_read_length == 101
+    assert config.primary_only is True
+    assert config.process_unmapped is False
+    assert config.train_rids is train_rids
 
 
 def test_region_fused_recall_options_uses_defaults_and_casts_values():
