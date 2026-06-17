@@ -559,6 +559,25 @@ def _generate_regression_stats(regression_data, plots_dir, base_name, context_si
         print(f"    Plot: {png_path}")
 
 
+def _emission_stats(values):
+    return values.min(), values.max(), values.mean()
+
+
+def _scale_emission_probabilities(emissionprob, target_state, scale):
+    adjusted = emissionprob.copy()
+    if target_state is not None:
+        before_stats = _emission_stats(adjusted[target_state])
+        adjusted[target_state] *= scale
+        adjusted[target_state] = np.clip(adjusted[target_state], 0, 1)
+        after_stats = _emission_stats(adjusted[target_state])
+    else:
+        before_stats = _emission_stats(adjusted)
+        adjusted *= scale
+        adjusted = np.clip(adjusted, 0, 1)
+        after_stats = _emission_stats(adjusted)
+    return adjusted, before_stats, after_stats
+
+
 def cmd_transfer(args):
     """Transfer emission probs between modalities."""
     max_context = max(args.context_sizes)
@@ -737,24 +756,11 @@ def cmd_adjust(args):
     print(f"  Target: {args.state} (state {'all' if target_state is None else target_state})")
     print(f"  Scale factor: {scale}")
 
-    emissionprob = model.emissionprob_.copy()
-
-    if target_state is not None:
-        before_stats = (emissionprob[target_state].min(),
-                       emissionprob[target_state].max(),
-                       emissionprob[target_state].mean())
-        emissionprob[target_state] *= scale
-        emissionprob[target_state] = np.clip(emissionprob[target_state], 0, 1)
-        after_stats = (emissionprob[target_state].min(),
-                      emissionprob[target_state].max(),
-                      emissionprob[target_state].mean())
-    else:
-        before_stats = (emissionprob.min(), emissionprob.max(), emissionprob.mean())
-        emissionprob *= scale
-        emissionprob = np.clip(emissionprob, 0, 1)
-        after_stats = (emissionprob.min(), emissionprob.max(), emissionprob.mean())
-
-    model.emissionprob_ = emissionprob
+    model.emissionprob_, before_stats, after_stats = _scale_emission_probabilities(
+        model.emissionprob_,
+        target_state,
+        scale,
+    )
 
     print(f"  Before: min={before_stats[0]:.6f}, max={before_stats[1]:.6f}, "
           f"mean={before_stats[2]:.6f}")
