@@ -17,6 +17,7 @@ from fiberhmm.cli.call import (
     _call_circular_label,
     _call_enzyme_label,
     _call_mode_label,
+    _call_pg_description,
     _call_recall_model_label,
     _check_daf_inputs,
     _check_region_parallel_file_io,
@@ -320,6 +321,21 @@ def test_call_pg_record_documents_molecular_coordinates():
     assert "recall_nucs=True" in record["DS"]
     assert "phase_nrl=185" in record["DS"]
     assert "chimera_filter=on" in record["DS"]
+
+
+def test_call_pg_description_documents_settings():
+    description = _call_pg_description(
+        mode="daf",
+        recall_nucs=False,
+        phase_nrl=0,
+        keep_chimeras=True,
+    )
+
+    assert "coord=molecular" in description
+    assert "mode=daf" in description
+    assert "recall_nucs=False" in description
+    assert "phase_nrl=0" in description
+    assert "chimera_filter=off" in description
 
 
 def test_call_banner_label_helpers():

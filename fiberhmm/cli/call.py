@@ -280,12 +280,21 @@ def _chimera_filter_state(mode: str, keep_chimeras: bool) -> str:
     return 'off' if keep_chimeras else 'on'
 
 
+def _call_pg_description(mode, recall_nucs, phase_nrl, keep_chimeras) -> str:
+    chimera_state = _chimera_filter_state(mode, keep_chimeras)
+    return (
+        f"FiberHMM fused apply+recall; coord=molecular "
+        f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
+        f"mode={mode} recall_nucs={recall_nucs} phase_nrl={phase_nrl} "
+        f"chimera_filter={chimera_state}"
+    )
+
+
 def _build_pg_record(mode, recall_nucs, phase_nrl, keep_chimeras, argv=None):
     """Build the @PG provenance record for fused call output BAMs."""
     import fiberhmm as _fh
 
     argv = sys.argv if argv is None else argv
-    chimera_state = _chimera_filter_state(mode, keep_chimeras)
     return {
         'PN': 'fiberhmm-call',
         'VN': getattr(_fh, '__version__', 'unknown'),
@@ -293,10 +302,7 @@ def _build_pg_record(mode, recall_nucs, phase_nrl, keep_chimeras, argv=None):
         # The `coord=molecular` token is a stable, version-independent contract
         # for downstream consumers (e.g. FiberBrowser) to detect that ns/nl/as/al
         # and MA are in molecular (original-fiber) frame -- keep the exact token.
-        'DS': (f"FiberHMM fused apply+recall; coord=molecular "
-               f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
-               f"mode={mode} recall_nucs={recall_nucs} phase_nrl={phase_nrl} "
-               f"chimera_filter={chimera_state}"),
+        'DS': _call_pg_description(mode, recall_nucs, phase_nrl, keep_chimeras),
     }
 
 
