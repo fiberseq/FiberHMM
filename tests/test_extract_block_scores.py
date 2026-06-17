@@ -272,6 +272,17 @@ def test_ma_block_score_columns_match_annotation_shape():
     assert extract_tags._ma_block_score_columns('msp', scalar_blocks) == ['0,0']
 
 
+def test_ma_annotation_block_builds_ref_block_or_returns_none():
+    ann = {'start': 10, 'length': 5, 'quals': [60, 7, 8]}
+    block = extract_tags._ma_annotation_block('tf', ann, _identity_map(_FakeRead()), 50)
+
+    assert block == (1_000_010, 1_000_015, 60, (60, 7, 8), ann)
+    assert extract_tags._ma_annotation_block(
+        'tf', ann, _identity_map(_FakeRead()), 61,
+    ) is None
+    assert extract_tags._ma_annotation_block('nuc', ann, {}, 255) is None
+
+
 def test_circular_annotation_group_helpers_detect_wrapped_named_pieces():
     left = {'name': 'call-a', 'start': 0, 'length': 15}
     right = {'name': 'call-a', 'start': 85, 'length': 15}

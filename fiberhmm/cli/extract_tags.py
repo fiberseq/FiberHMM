@@ -284,6 +284,20 @@ def _ma_block_score_columns(target_name: str, blocks) -> list:
     return [','.join(str(b[3][0]) for b in blocks)]
 
 
+def _ma_annotation_block(target_name: str, ann, query_to_ref, min_tq: int):
+    quals = ann['quals']
+    if not _ma_annotation_passes_min_tq(target_name, quals, min_tq):
+        return None
+
+    block = _annotation_to_ref_block(ann, query_to_ref)
+    if block is None:
+        return None
+
+    ref_start, ref_end = block
+    score, qvals = _ma_annotation_quality_values(target_name, quals)
+    return ref_start, ref_end, score, qvals, ann
+
+
 def _mean_block_score(blocks, with_scores: bool) -> int:
     if not with_scores:
         return 0
@@ -334,16 +348,9 @@ def _extract_ma_interval_type(
 
     blocks = []
     for ann in annotations:
-        quals = ann['quals']
-        if not _ma_annotation_passes_min_tq(target_name, quals, min_tq):
-            continue
-        block = _annotation_to_ref_block(ann, query_to_ref)
-        if block is None:
-            continue
-        ref_start, ref_end = block
-        # nuc.Q (legacy) -> (nq, 0, 0); nuc.QQQ/tf.QQQ keep the full triplet.
-        score, qvals = _ma_annotation_quality_values(target_name, quals)
-        blocks.append((ref_start, ref_end, score, qvals, ann))
+        block = _ma_annotation_block(target_name, ann, query_to_ref, min_tq)
+        if block is not None:
+            blocks.append(block)
 
     if not blocks:
         return 0
