@@ -62,6 +62,29 @@ def test_footprint_reference_intervals_clamps_and_skips_invalid_positions():
     np.testing.assert_array_equal(sizes, np.array([1, 1], dtype=np.int32))
 
 
+def test_h5_batch_metadata_helpers_append_and_concatenate():
+    meta = {"ids": [], "starts": [], "ends": [], "strands": []}
+
+    export_posteriors._append_h5_batch_metadata(
+        meta,
+        ids=["read-a", "read-b"],
+        starts=np.array([10, 20], dtype=np.int32),
+        ends=np.array([15, 25], dtype=np.int32),
+        strands=["+", "-"],
+    )
+
+    assert meta["ids"] == ["read-a", "read-b"]
+    assert meta["strands"] == ["+", "-"]
+    np.testing.assert_array_equal(
+        export_posteriors._concat_h5_metadata_arrays(meta["starts"]),
+        np.array([10, 20], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        export_posteriors._concat_h5_metadata_arrays([]),
+        np.array([], dtype=np.int32),
+    )
+
+
 def test_submit_next_region_records_pending_future():
     class FakeExecutor:
         def __init__(self):

@@ -315,6 +315,17 @@ def _write_batch_to_h5(grp, fibers: List[Dict], start_idx: int):
     return fiber_ids, starts, ends, strands
 
 
+def _append_h5_batch_metadata(meta: dict, ids, starts, ends, strands) -> None:
+    meta['ids'].extend(ids)
+    meta['starts'].append(starts)
+    meta['ends'].append(ends)
+    meta['strands'].extend(strands)
+
+
+def _concat_h5_metadata_arrays(arrays) -> np.ndarray:
+    return np.concatenate(arrays) if arrays else np.array([], dtype=np.int32)
+
+
 def _process_regions(regions, input_bam, model_path, params,
                      n_cores, verbose, result_callback):
     """Process all regions and call result_callback(chrom, results) for each."""
@@ -486,10 +497,13 @@ def export_posteriors_hdf5(
             ids, starts, ends, strands = _write_batch_to_h5(grp, buffer, start_idx)
 
             # Accumulate metadata
-            chrom_metadata[chrom]['ids'].extend(ids)
-            chrom_metadata[chrom]['starts'].append(starts)
-            chrom_metadata[chrom]['ends'].append(ends)
-            chrom_metadata[chrom]['strands'].extend(strands)
+            _append_h5_batch_metadata(
+                chrom_metadata[chrom],
+                ids,
+                starts,
+                ends,
+                strands,
+            )
 
             chrom_fiber_counts[chrom] += len(buffer)
             write_buffers[chrom] = []
@@ -517,8 +531,8 @@ def export_posteriors_hdf5(
             write_fiber_metadata_datasets(
                 grp,
                 meta['ids'],
-                np.concatenate(meta['starts']) if meta['starts'] else np.array([], dtype=np.int32),
-                np.concatenate(meta['ends']) if meta['ends'] else np.array([], dtype=np.int32),
+                _concat_h5_metadata_arrays(meta['starts']),
+                _concat_h5_metadata_arrays(meta['ends']),
                 meta['strands'],
                 n_fibers=n_fibers,
             )
