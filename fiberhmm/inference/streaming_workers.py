@@ -35,6 +35,19 @@ _worker_debug_timing = False
 _worker_recall_state = {}
 
 
+def _process_worker_items(items, process_item):
+    results = []
+    read_failures = 0
+    for item in items:
+        try:
+            result = process_item(item)
+        except Exception:
+            result = None
+            read_failures += 1
+        results.append(result)
+    return WorkerChunkResult(results, read_failures)
+
+
 def _init_bam_worker(model_path, debug_timing=False):
     """Initialize worker process with model."""
     global _worker_model, _worker_debug_timing
@@ -120,23 +133,15 @@ def _process_chunk_worker(
     """
     global _worker_model
 
-    results = []
-    read_failures = 0
-    for fiber_read in chunk_reads:
-        try:
-            result = _process_single_read(
-                fiber_read, _worker_model, edge_trim, circular,
-                mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
-                with_scores=with_scores,
-                return_posteriors=return_posteriors,
-            )
-        except Exception:
-            # Per-read failure: skip this read but keep the worker alive.
-            result = None
-            read_failures += 1
-        results.append(result)
+    def process_item(fiber_read):
+        return _process_single_read(
+            fiber_read, _worker_model, edge_trim, circular,
+            mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+            return_posteriors=return_posteriors,
+        )
 
-    return WorkerChunkResult(results, read_failures)
+    return _process_worker_items(chunk_reads, process_item)
 
 
 def _process_fused_payload_chunk_worker(
@@ -175,63 +180,53 @@ def _process_fused_payload_chunk_worker(
     llr_hit = _worker_recall_state['llr_hit']
     llr_miss = _worker_recall_state['llr_miss']
 
-    results = []
-    read_failures = 0
-    for payload in chunk_payloads:
-        try:
-            fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
-            if fiber_read is CHIMERA_SKIP:
-                # DAF strand-swap chimera filtered out -- distinct marker so the
-                # drain can tally it (vs folding into "no footprints"). The
-                # marker is a picklable string (CHIMERA_SKIP is an identity
-                # sentinel that does not survive the worker IPC boundary).
-                results.append(CHIMERA_RESULT)
-                continue
-            if fiber_read is None:
-                results.append(None)
-                continue
+    def process_item(payload):
+        fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
+        if fiber_read is CHIMERA_SKIP:
+            # DAF strand-swap chimera filtered out -- distinct marker so the
+            # drain can tally it (vs folding into "no footprints"). The
+            # marker is a picklable string (CHIMERA_SKIP is an identity
+            # sentinel that does not survive the worker IPC boundary).
+            return CHIMERA_RESULT
+        if fiber_read is None:
+            return None
 
-            apply_result = run_hmm_apply_stage(
-                fiber_read,
-                _worker_model,
-                edge_trim,
-                circular,
-                mode,
-                context_size,
-                msp_min_size,
-                nuc_min_size,
-                with_scores,
-            )
+        apply_result = run_hmm_apply_stage(
+            fiber_read,
+            _worker_model,
+            edge_trim,
+            circular,
+            mode,
+            context_size,
+            msp_min_size,
+            nuc_min_size,
+            with_scores,
+        )
 
-            # Match streaming semantics: if apply produced no footprints and
-            # no MSPs, treat as "nothing to annotate" so the drain pass-throughs
-            # the read unchanged (preserving any pre-existing tags on input).
-            if not apply_result_has_footprints(apply_result):
-                results.append(None)
-                continue
+        # Match streaming semantics: if apply produced no footprints and
+        # no MSPs, treat as "nothing to annotate" so the drain pass-throughs
+        # the read unchanged (preserving any pre-existing tags on input).
+        if not apply_result_has_footprints(apply_result):
+            return None
 
-            results.append(build_fused_recall_result(
-                fiber_read,
-                apply_result,
-                llr_hit,
-                llr_miss,
-                min_llr,
-                min_opps,
-                unify_threshold,
-                with_scores,
-                recall_nucs=_worker_recall_state.get('recall_nucs', False),
-                split_min_llr=_worker_recall_state.get('split_min_llr', 4.0),
-                split_min_opps=_worker_recall_state.get('split_min_opps', 3),
-                nuc_min_size=nuc_min_size,
-                msp_min_size=msp_min_size,
-                phase_nrl=_worker_recall_state.get('phase_nrl', 0),
-            ))
-        except Exception:
-            # Per-read failure must not kill the worker or the whole chunk.
-            read_failures += 1
-            results.append(None)
+        return build_fused_recall_result(
+            fiber_read,
+            apply_result,
+            llr_hit,
+            llr_miss,
+            min_llr,
+            min_opps,
+            unify_threshold,
+            with_scores,
+            recall_nucs=_worker_recall_state.get('recall_nucs', False),
+            split_min_llr=_worker_recall_state.get('split_min_llr', 4.0),
+            split_min_opps=_worker_recall_state.get('split_min_opps', 3),
+            nuc_min_size=nuc_min_size,
+            msp_min_size=msp_min_size,
+            phase_nrl=_worker_recall_state.get('phase_nrl', 0),
+        )
 
-    return WorkerChunkResult(results, read_failures)
+    return _process_worker_items(chunk_payloads, process_item)
 
 
 def _process_payload_chunk_worker(
@@ -257,25 +252,17 @@ def _process_payload_chunk_worker(
     """
     global _worker_model
 
-    results = []
-    read_failures = 0
-    for payload in chunk_payloads:
-        try:
-            fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
-            if fiber_read is None or fiber_read is CHIMERA_SKIP:
-                # CHIMERA_SKIP: DAF strand-swap chimera filtered out (streaming
-                # passes it through unannotated; region-parallel tallies a count).
-                results.append(None)
-                continue
-            result = _process_single_read(
-                fiber_read, _worker_model, edge_trim, circular,
-                mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
-                with_scores=with_scores,
-                return_posteriors=return_posteriors,
-            )
-        except Exception:
-            result = None
-            read_failures += 1
-        results.append(result)
+    def process_item(payload):
+        fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
+        if fiber_read is None or fiber_read is CHIMERA_SKIP:
+            # CHIMERA_SKIP: DAF strand-swap chimera filtered out (streaming
+            # passes it through unannotated; region-parallel tallies a count).
+            return None
+        return _process_single_read(
+            fiber_read, _worker_model, edge_trim, circular,
+            mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+            return_posteriors=return_posteriors,
+        )
 
-    return WorkerChunkResult(results, read_failures)
+    return _process_worker_items(chunk_payloads, process_item)
