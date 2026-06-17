@@ -92,6 +92,16 @@ def test_interval_pairs_casts_parallel_arrays_to_int_pairs():
     assert all(type(value) is int for pair in pairs for value in pair)
 
 
+def test_interval_ends_casts_and_adds_starts_lengths():
+    ends = fused_stages._interval_ends([
+        (np.int32(1), np.int64(10)),
+        (2, 20),
+    ])
+
+    assert ends == [11, 22]
+    assert all(type(value) is int for value in ends)
+
+
 def test_tiled_interval_arrays_prefers_tiled_values():
     base = {
         "ns": np.asarray([1], dtype=np.int32),

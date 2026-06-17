@@ -59,6 +59,10 @@ def _interval_pairs(starts, lengths):
     return [(int(start), int(length)) for start, length in zip(starts, lengths)]
 
 
+def _interval_ends(intervals):
+    return [int(start) + int(length) for start, length in intervals]
+
+
 def _tiled_interval_arrays(apply_result: Mapping[str, Any]):
     return (
         apply_result.get("tiled_ns", apply_result["ns"]),
@@ -463,7 +467,7 @@ def _build_fused_recall_result_with_nucs_circular(
     proj_nucs = project_center_nuc_calls(tiled_nucs, read_length)
     proj_msps = project_center_runs(
         tiled_msp_starts,
-        [s + length for s, length in tiled_new_msps],
+        _interval_ends(tiled_new_msps),
         read_length,
     )
 
