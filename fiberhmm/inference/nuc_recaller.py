@@ -227,6 +227,25 @@ def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
     return subs, cut_intervals
 
 
+def _phase_or_unsplit_subfragments(
+    obs,
+    a: int,
+    b: int,
+    nhit,
+    nmiss,
+    phase_nrl: int,
+    phase_min_llr: float,
+    phase_min_opps: int,
+    phase_window: int,
+):
+    if phase_nrl > 0:
+        return _phase_subfragments(
+            obs, a, b, nhit, nmiss, phase_nrl,
+            phase_min_llr, phase_min_opps, phase_window,
+        )
+    return [(a, b)], []
+
+
 def recall_nucs_in_read(
     obs: np.ndarray,
     ns: Sequence[int],
@@ -283,13 +302,10 @@ def recall_nucs_in_read(
 
         # --- Pass 2 (optional): phase-prior split of long fragments ---
         for a, b in frags:
-            if phase_nrl > 0:
-                subs, phase_cuts = _phase_subfragments(
-                    obs, a, b, nhit, nmiss, phase_nrl,
-                    phase_min_llr, phase_min_opps, phase_window)
-                access.extend(phase_cuts)
-            else:
-                subs = [(a, b)]
+            subs, phase_cuts = _phase_or_unsplit_subfragments(
+                obs, a, b, nhit, nmiss, phase_nrl,
+                phase_min_llr, phase_min_opps, phase_window)
+            access.extend(phase_cuts)
             # --- EDGES + quality per (sub)fragment (protected Kadane, +llr) ---
             for sa, sb in subs:
                 nuc, acc = _refine_fragment(

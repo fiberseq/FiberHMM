@@ -12,6 +12,7 @@ from fiberhmm.inference.nuc_recaller import (
     _msp_gaps_between_nucs,
     _nuc_from_protected_calls,
     _ordered_positive_nuc_calls,
+    _phase_or_unsplit_subfragments,
     _phase_cut_window,
     _promoted_nuc_from_tf_call,
     _residue_intervals_around_nuc,
@@ -210,6 +211,23 @@ def test_phase_cut_window_clips_to_fragment_and_rejects_tiny_windows():
     assert _phase_cut_window(10, 100, pred=50, phase_window=15) == (35, 65)
     assert _phase_cut_window(10, 100, pred=12, phase_window=15) == (10, 27)
     assert _phase_cut_window(10, 11, pred=10, phase_window=15) is None
+
+
+def test_phase_or_unsplit_subfragments_returns_original_when_disabled():
+    subs, cuts = _phase_or_unsplit_subfragments(
+        np.array([], dtype=np.int32),
+        10,
+        90,
+        np.array([], dtype=np.float64),
+        np.array([], dtype=np.float64),
+        phase_nrl=0,
+        phase_min_llr=1.0,
+        phase_min_opps=1,
+        phase_window=35,
+    )
+
+    assert subs == [(10, 90)]
+    assert cuts == []
 
 
 def test_rederive_msps_merges_and_filters():
