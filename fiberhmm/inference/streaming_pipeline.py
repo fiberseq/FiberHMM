@@ -216,6 +216,22 @@ def _streaming_progress_rates(
     return inst_rate, avg_rate
 
 
+def _streaming_progress_message(
+    label: str,
+    total_reads: int,
+    skipped: int,
+    inflight_count: int,
+    inst_rate: float,
+    avg_rate: float,
+    rate_unit: str,
+) -> str:
+    return (
+        f"\r  {label}: {total_reads:,} | Skipped: {skipped:,} | "
+        f"Inflight: {inflight_count} | "
+        f"{inst_rate:.0f} {rate_unit} (avg {avg_rate:.0f})"
+    )
+
+
 def _streaming_rate(total_reads: int, elapsed: float) -> float:
     return total_reads / elapsed if elapsed > 0 else 0
 
@@ -343,9 +359,19 @@ def _process_bam_streaming_pipeline_fused(
                         )
                         last_progress_reads = total_reads
                         last_progress_time = now
-                        print(f"\r  Fused: {total_reads:,} | Skipped: {skipped:,} | "
-                              f"Inflight: {len(inflight)} | {inst:.0f} r/s (avg {avg:.0f})",
-                              end='', file=_log)
+                        print(
+                            _streaming_progress_message(
+                                "Fused",
+                                total_reads,
+                                skipped,
+                                len(inflight),
+                                inst,
+                                avg,
+                                "r/s",
+                            ),
+                            end='',
+                            file=_log,
+                        )
                         _log.flush()
 
                 if chunk_read_objs:
@@ -537,10 +563,19 @@ def _process_bam_streaming_pipeline(
                         )
                         last_progress_reads = total_reads
                         last_progress_time = now
-                        print(f"\r  Processed: {total_reads:,} | "
-                              f"Skipped: {skipped:,} | "
-                              f"Inflight: {len(inflight)} | "
-                              f"{inst_rate:.0f} reads/s (avg {avg_rate:.0f})", end='', file=_log)
+                        print(
+                            _streaming_progress_message(
+                                "Processed",
+                                total_reads,
+                                skipped,
+                                len(inflight),
+                                inst_rate,
+                                avg_rate,
+                                "reads/s",
+                            ),
+                            end='',
+                            file=_log,
+                        )
                         _log.flush()
 
                 if chunk_read_objs:

@@ -12,6 +12,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _streaming_filter_config,
     _streaming_log_for_output,
     _streaming_output_target,
+    _streaming_progress_message,
     _streaming_progress_rates,
     _streaming_rate,
     _worker_common_args,
@@ -57,6 +58,18 @@ def test_streaming_progress_rates_handle_elapsed_and_zero_dt():
         last_progress_time=30.0,
         now=30.0,
     ) == (0, 0)
+
+
+def test_streaming_progress_message_formats_counts_and_rates():
+    assert _streaming_progress_message(
+        label="Processed",
+        total_reads=1234,
+        skipped=56,
+        inflight_count=3,
+        inst_rate=78.9,
+        avg_rate=12.3,
+        rate_unit="reads/s",
+    ) == "\r  Processed: 1,234 | Skipped: 56 | Inflight: 3 | 79 reads/s (avg 12)"
 
 
 def test_streaming_rate_handles_zero_elapsed():
