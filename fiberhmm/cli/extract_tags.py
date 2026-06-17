@@ -436,6 +436,34 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
         return (temp_bed_paths, 0, {t: 0 for t in (params or {}).get('extract_types', [])})
 
 
+def _legacy_interval_blocks_from_tags(
+    read,
+    start_tag: str,
+    length_tag: str,
+    score_tag: str,
+    query_to_ref,
+    include_scores: bool,
+):
+    try:
+        starts_raw = read.get_tag(start_tag)
+        lengths_raw = read.get_tag(length_tag)
+    except KeyError:
+        return []
+
+    starts, lengths = flip_intervals_to_seq(starts_raw, lengths_raw, read)
+    if len(starts) == 0:
+        return []
+
+    scores = None
+    if include_scores:
+        try:
+            scores = read.get_tag(score_tag)
+        except KeyError:
+            pass
+
+    return _legacy_interval_blocks(starts, lengths, scores, query_to_ref)
+
+
 def _extract_footprints(read, bed_out, with_scores: bool,
                         query_to_ref: Optional[dict] = None,
                         block_scores: bool = False,
@@ -460,27 +488,11 @@ def _extract_footprints(read, bed_out, with_scores: bool,
     if ma_count is not None:
         return ma_count
 
-    try:
-        ns_raw = read.get_tag('ns')  # molecular-frame starts
-        nl_raw = read.get_tag('nl')
-    except KeyError:
-        return 0
-    # Tags are molecular frame; flip back to SEQ (query) coords for ref mapping.
-    ns, nl = flip_intervals_to_seq(ns_raw, nl_raw, read)
-
-    if len(ns) == 0:
-        return 0
-
     # Need per-block nq if we're emitting the blockNq column even when
     # with_scores is False (the mean-score column 5 still uses 0).
-    scores = None
-    if with_scores or block_scores:
-        try:
-            scores = read.get_tag('nq')
-        except KeyError:
-            pass
-
-    blocks = _legacy_interval_blocks(ns, nl, scores, query_to_ref)
+    blocks = _legacy_interval_blocks_from_tags(
+        read, 'ns', 'nl', 'nq', query_to_ref, with_scores or block_scores,
+    )
     if not blocks:
         return 0
 
@@ -546,24 +558,9 @@ def _extract_msps(read, bed_out, with_scores: bool,
     if ma_count is not None:
         return ma_count
 
-    try:
-        as_raw = read.get_tag('as')  # molecular-frame MSP starts
-        al_raw = read.get_tag('al')
-    except KeyError:
-        return 0
-    as_starts, al_lengths = flip_intervals_to_seq(as_raw, al_raw, read)
-
-    if len(as_starts) == 0:
-        return 0
-
-    scores = None
-    if with_scores or block_scores:
-        try:
-            scores = read.get_tag('aq')
-        except KeyError:
-            pass
-
-    blocks = _legacy_interval_blocks(as_starts, al_lengths, scores, query_to_ref)
+    blocks = _legacy_interval_blocks_from_tags(
+        read, 'as', 'al', 'aq', query_to_ref, with_scores or block_scores,
+    )
     if not blocks:
         return 0
 

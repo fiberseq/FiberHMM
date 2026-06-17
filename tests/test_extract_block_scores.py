@@ -187,6 +187,22 @@ def test_extract_read_types_reuses_query_ref_map(monkeypatch):
     assert built_for == [read]
 
 
+def test_legacy_interval_blocks_from_tags_flips_and_scores_reverse_reads():
+    assert extract_tags._legacy_interval_blocks_from_tags(
+        _FakeRead(), 'ns', 'nl', 'nq', np.array([], dtype=np.int64), True,
+    ) == []
+
+    read = _FakeRead(is_reverse=True, query_len=200, ref_start=1_000)
+    read.query_sequence = "A" * 200
+    read.set_tag('ns', array('I', [10]))
+    read.set_tag('nl', array('I', [5]))
+    read.set_tag('nq', array('B', [180]))
+
+    assert extract_tags._legacy_interval_blocks_from_tags(
+        read, 'ns', 'nl', 'nq', _identity_map(read), True,
+    ) == [(1185, 1190, 180)]
+
+
 def test_ma_annotation_quality_values_pad_triplets_and_ignore_msp_quals():
     assert extract_tags._ma_annotation_quality_values('tf', [10, 20]) == (
         10, (10, 20, 0),
