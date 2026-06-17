@@ -235,6 +235,23 @@ def test_ma_interval_and_quals_helpers_preserve_genomic_order():
     assert extract_tags._ma_quals_in_genomic_order([1, 2], True) == [1, 2]
 
 
+def test_ma_annotation_record_normalizes_reverse_read_annotation():
+    assert extract_tags._ma_annotation_record(
+        10,
+        5,
+        [1, 2, 3],
+        "call-a",
+        read_length=100,
+        is_reverse=True,
+    ) == {
+        "start": 85,
+        "length": 5,
+        "quals": [1, 3, 2],
+        "name": "call-a",
+        "read_length": 100,
+    }
+
+
 def test_ma_annotation_quality_values_pad_triplets_and_ignore_msp_quals():
     assert extract_tags._ma_annotation_quality_values('tf', [10, 20]) == (
         10, (10, 20, 0),

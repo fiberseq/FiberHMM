@@ -146,6 +146,29 @@ def _ma_quals_in_genomic_order(quals, is_reverse: bool) -> list:
     return q_out
 
 
+def _ma_annotation_record(
+    start: int,
+    length: int,
+    quals,
+    name: str,
+    read_length: int,
+    is_reverse: bool,
+) -> dict:
+    # MA is molecular frame; flip to SEQ (query) for ref mapping.
+    a_start, a_len = _ma_interval_to_seq(
+        int(start), int(length), read_length, is_reverse,
+    )
+    # The BED is genomic, so emit QQQ edge bytes in GENOMIC left/right order:
+    # on a reverse read the molecular 5' edge is the genomic-right edge.
+    return {
+        'start': a_start,
+        'length': a_len,
+        'quals': _ma_quals_in_genomic_order(quals, is_reverse),
+        'name': name,
+        'read_length': read_length,
+    }
+
+
 def _parse_ma_annotations(read, target_name: str):
     """Return target annotations from MA/AQ/AN in positional annotation order."""
     tag_inputs = _ma_annotation_tag_inputs(read)
@@ -171,21 +194,11 @@ def _parse_ma_annotations(read, target_name: str):
             quals = per_annotation[ann_idx] if ann_idx < len(per_annotation) else []
             ann_name = an_names[ann_idx] if ann_idx < len(an_names) else ''
             if name == target_name:
-                # MA is molecular frame; flip to SEQ (query) for ref mapping.
-                a_start, a_len = _ma_interval_to_seq(
-                    int(s), int(length), read_length, is_reverse,
+                annotations.append(
+                    _ma_annotation_record(
+                        s, length, quals, ann_name, read_length, is_reverse,
+                    )
                 )
-                # The BED is genomic, so emit QQQ edge bytes in GENOMIC left/right
-                # order: on a reverse read the molecular 5' edge (el) is the
-                # genomic-right edge. q[0] = nq/tq is unchanged.
-                q_out = _ma_quals_in_genomic_order(quals, is_reverse)
-                annotations.append({
-                    'start': a_start,
-                    'length': a_len,
-                    'quals': q_out,
-                    'name': ann_name,
-                    'read_length': read_length,
-                })
             ann_idx += 1
     return annotations
 
