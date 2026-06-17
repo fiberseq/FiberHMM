@@ -45,3 +45,16 @@ def test_scored_interval_helpers_keep_scores_aligned_after_sorting():
 
     assert exact == [(50, 52, 9)]
     assert span == [(50, 52, 9), (100, 101, 7)]
+
+
+def test_scored_interval_helpers_default_missing_scores_to_zero():
+    q2r = np.array([10, 11, 12, 13], dtype=np.int64)
+
+    assert scored_interval_blocks([0, 2], [1, 1], None, q2r) == [
+        (10, 11, 0),
+        (12, 13, 0),
+    ]
+    assert scored_interval_spans([0, 2], [1, 1], [5], q2r) == [
+        (10, 11, 5),
+        (12, 13, 0),
+    ]
