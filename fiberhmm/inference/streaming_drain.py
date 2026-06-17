@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from fiberhmm.inference.posterior_records import posterior_fiber_data
 from fiberhmm.inference.streaming_workers import CHIMERA_RESULT
 from fiberhmm.inference.tagging import set_legacy_apply_tags, write_fused_recall_tags
 from fiberhmm.inference.worker_results import coerce_worker_chunk_result
@@ -72,16 +73,10 @@ def _drain_oldest_chunk(
                         )
                     except Exception:
                         ref_positions = np.array([], dtype=np.int32)
-                    posterior_writer.add_fiber(chrom, {
-                        'read_name': read_obj.query_name,
-                        'ref_start': read_obj.reference_start,
-                        'ref_end': read_obj.reference_end,
-                        'strand': result.get('strand', '.'),
-                        'posteriors': result['posteriors'],
-                        'ref_positions': ref_positions,
-                        'footprint_starts': result['ns'],
-                        'footprint_sizes': result['nl'],
-                    })
+                    posterior_writer.add_fiber(
+                        chrom,
+                        posterior_fiber_data(read_obj, result, ref_positions),
+                    )
         else:
             _increment_counter(counters, 'no_footprints')
 

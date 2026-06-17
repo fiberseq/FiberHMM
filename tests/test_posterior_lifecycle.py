@@ -5,7 +5,40 @@ import numpy as np
 import pytest
 
 from fiberhmm.inference import legacy_pipeline, parallel, streaming_pipeline
+from fiberhmm.inference.posterior_records import posterior_fiber_data
 from fiberhmm.posteriors import hdf5_backend
+
+
+def test_posterior_fiber_data_uses_writer_contract_fields():
+    class Read:
+        query_name = "read-1"
+        reference_start = 100
+        reference_end = 150
+
+    posteriors = np.array([0.1, 0.9], dtype=np.float16)
+    ref_positions = np.array([100, 101], dtype=np.int32)
+    starts = np.array([3], dtype=np.int32)
+    lengths = np.array([20], dtype=np.int32)
+
+    record = posterior_fiber_data(
+        Read(),
+        {
+            "strand": "+",
+            "posteriors": posteriors,
+            "ns": starts,
+            "nl": lengths,
+        },
+        ref_positions,
+    )
+
+    assert record["read_name"] == "read-1"
+    assert record["ref_start"] == 100
+    assert record["ref_end"] == 150
+    assert record["strand"] == "+"
+    assert record["posteriors"] is posteriors
+    assert record["ref_positions"] is ref_positions
+    assert record["footprint_starts"] is starts
+    assert record["footprint_sizes"] is lengths
 
 
 def test_posterior_chrom_group_helper_controls_ref_positions(tmp_path):

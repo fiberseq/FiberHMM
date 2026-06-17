@@ -17,6 +17,7 @@ from fiberhmm.inference.engine import (
     _process_single_read,
 )
 from fiberhmm.inference.mp_context import _MP_CONTEXT
+from fiberhmm.inference.posterior_records import posterior_fiber_data
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.skip_reasons import (
     BASE_SKIP_REASON_KEYS,
@@ -113,16 +114,10 @@ def _write_chunk_posteriors(posterior_writer, chunk_results):
                     if HAS_POSTERIOR_WRITER
                     else np.array([], dtype=np.int32)
                 )
-                posterior_writer.add_fiber(chrom, {
-                    'read_name': read_obj.query_name,
-                    'ref_start': read_obj.reference_start,
-                    'ref_end': read_obj.reference_end,
-                    'strand': result.get('strand', '.'),
-                    'posteriors': result['posteriors'],
-                    'ref_positions': ref_positions,
-                    'footprint_starts': result['ns'],
-                    'footprint_sizes': result['nl'],
-                })
+                posterior_writer.add_fiber(
+                    chrom,
+                    posterior_fiber_data(read_obj, result, ref_positions),
+                )
 
 
 _LEGACY_SKIP_REASON_KEYS = BASE_SKIP_REASON_KEYS + (NO_FOOTPRINTS_SKIP_REASON,)
