@@ -9,6 +9,12 @@ from fiberhmm.inference.posterior_records import posterior_fiber_data
 from fiberhmm.posteriors import hdf5_backend
 
 
+def _h5_text(value):
+    if isinstance(value, bytes):
+        return value.decode()
+    return value
+
+
 def test_posterior_fiber_data_uses_writer_contract_fields():
     class Read:
         query_name = "read-1"
@@ -172,6 +178,28 @@ def test_hdf5_fiber_array_dataset_helper_writes_expected_groups(tmp_path):
         np.testing.assert_array_equal(grp["ref_positions"]["2"][:], [10, -1])
         np.testing.assert_array_equal(grp["footprint_starts"]["2"][:], [3])
         np.testing.assert_array_equal(grp["footprint_sizes"]["2"][:], [20])
+
+
+def test_hdf5_chrom_fiber_metadata_helper_writes_final_arrays(tmp_path):
+    meta = {
+        "ids": ["read1", "read2"],
+        "starts": [10, 20],
+        "ends": [15, 25],
+        "strands": ["+", "-"],
+    }
+
+    with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
+        grp = hdf5_backend.create_posterior_chrom_group(h5, "chr1")
+        hdf5_backend._write_chrom_fiber_metadata(grp, meta, n_fibers=2)
+
+        assert grp.attrs["n_fibers"] == 2
+        assert [_h5_text(value) for value in grp["fiber_ids"][:]] == [
+            "read1",
+            "read2",
+        ]
+        np.testing.assert_array_equal(grp["fiber_starts"][:], [10, 20])
+        np.testing.assert_array_equal(grp["fiber_ends"][:], [15, 25])
+        assert [_h5_text(value) for value in grp["strands"][:]] == ["+", "-"]
 
 
 def test_hdf5_ref_positions_use_core_mapping_with_insertions():

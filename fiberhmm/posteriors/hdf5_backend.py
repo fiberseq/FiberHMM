@@ -173,6 +173,17 @@ def _write_fiber_array_datasets(group, index: int, fiber: Dict) -> None:
         )
 
 
+def _write_chrom_fiber_metadata(group, meta: Dict[str, List], n_fibers: int) -> None:
+    write_fiber_metadata_datasets(
+        group,
+        meta['ids'],
+        meta['starts'],
+        meta['ends'],
+        meta['strands'],
+        n_fibers=n_fibers,
+    )
+
+
 class PosteriorWriter:
     """
     Streaming writer for HMM posteriors to HDF5.
@@ -298,15 +309,7 @@ class PosteriorWriter:
         for chrom, grp in self._chrom_groups.items():
             meta = self._chrom_metadata[chrom]
             n_fibers = self._chrom_counts[chrom]
-
-            write_fiber_metadata_datasets(
-                grp,
-                meta['ids'],
-                meta['starts'],
-                meta['ends'],
-                meta['strands'],
-                n_fibers=n_fibers,
-            )
+            _write_chrom_fiber_metadata(grp, meta, n_fibers)
 
     def close(self):
         """Finalize and close the H5 file."""
