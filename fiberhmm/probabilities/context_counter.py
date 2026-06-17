@@ -8,7 +8,12 @@ from typing import Dict, Iterator, List, Optional, Set, Tuple
 import numpy as np
 import pandas as pd
 
-from fiberhmm.probabilities.utils import reverse_complement
+from fiberhmm.probabilities.utils import (
+    detect_strand_and_base,
+    get_base_name,
+    reverse_complement,
+    setup_output_dirs,
+)
 
 
 class ContextCounter:
