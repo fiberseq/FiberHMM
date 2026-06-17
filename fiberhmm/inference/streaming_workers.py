@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fiberhmm.core.model_io import freeze_model_for_inference, load_model
+from fiberhmm.core.model_io import load_model_for_inference
 from fiberhmm.inference.engine import (
     CHIMERA_SKIP,
     _process_single_read,
@@ -41,7 +41,7 @@ def _init_bam_worker(model_path, debug_timing=False):
         # Disable numba caching to avoid file lock contention between workers.
         disable_numba_cache_locking()
 
-        _worker_model = freeze_model_for_inference(load_model(model_path))
+        _worker_model = load_model_for_inference(model_path)
         _worker_debug_timing = debug_timing
 
         # Warm up numba JIT compilation in this worker.
@@ -77,7 +77,7 @@ def _init_fused_worker(
 
     disable_numba_cache_locking()
 
-    _worker_model = freeze_model_for_inference(load_model(apply_model_path))
+    _worker_model = load_model_for_inference(apply_model_path)
     _worker_debug_timing = debug_timing
 
     # Build TF-recall LLR tables from the recall model (or reuse apply model).

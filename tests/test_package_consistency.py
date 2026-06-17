@@ -37,8 +37,9 @@ class TestPackageImports:
         assert callable(parse_mm_tag_query_positions)
 
     def test_core_model_io_imports(self):
-        from fiberhmm.core.model_io import load_model, save_model
+        from fiberhmm.core.model_io import load_model, load_model_for_inference, save_model
         assert callable(load_model)
+        assert callable(load_model_for_inference)
         assert callable(save_model)
         assert callable(load_model_with_metadata)
 

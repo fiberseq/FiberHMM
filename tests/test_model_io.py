@@ -10,7 +10,12 @@ import numpy as np
 import pytest
 
 from fiberhmm.core.hmm import FiberHMM
-from fiberhmm.core.model_io import load_model, load_model_with_metadata, save_model
+from fiberhmm.core.model_io import (
+    load_model,
+    load_model_for_inference,
+    load_model_with_metadata,
+    save_model,
+)
 
 
 @pytest.fixture
@@ -43,6 +48,14 @@ class TestLoadSaveRoundTrip:
         model, ctx, mode = load_model_with_metadata(filepath, normalize=False)
         assert ctx == 5
         assert mode == 'daf'
+
+    def test_load_model_for_inference_freezes_log_cache(self, sample_model, tmp_path):
+        filepath = str(tmp_path / "model.json")
+        save_model(sample_model, filepath, context_size=3, mode='pacbio-fiber')
+
+        loaded = load_model_for_inference(filepath, normalize=False)
+
+        assert loaded._log_probs_frozen
 
     def test_json_contains_expected_keys(self, sample_model, tmp_path):
         filepath = str(tmp_path / "model.json")

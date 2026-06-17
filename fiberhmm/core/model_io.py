@@ -84,6 +84,11 @@ def freeze_model_for_inference(model: FiberHMM) -> FiberHMM:
     return model
 
 
+def load_model_for_inference(filepath: str, normalize: bool = True) -> FiberHMM:
+    """Load and freeze a model for read-only inference loops."""
+    return freeze_model_for_inference(load_model(filepath, normalize=normalize))
+
+
 def _model_from_arrays(n_states, startprob, transmat, emissionprob) -> FiberHMM:
     model = FiberHMM(n_states=int(n_states))
     model.startprob_ = np.array(startprob)

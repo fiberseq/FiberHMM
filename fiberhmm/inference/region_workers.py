@@ -6,7 +6,7 @@ from typing import Optional
 
 import pysam
 
-from fiberhmm.core.model_io import freeze_model_for_inference, load_model
+from fiberhmm.core.model_io import load_model_for_inference
 from fiberhmm.io.bam_header import append_coord_marker, maybe_append_pg
 from fiberhmm.inference.engine import (
     CHIMERA_SKIP,
@@ -95,7 +95,7 @@ def _init_region_worker(model_path: str, params: dict):
         disable_numba_cache_locking()
 
         # Load model once per worker.
-        _worker_model = freeze_model_for_inference(load_model(model_path))
+        _worker_model = load_model_for_inference(model_path)
         _worker_region_params = params
 
         configure_daf_chimera_filter(
@@ -446,7 +446,7 @@ def _init_fused_region_worker(
 
     disable_numba_cache_locking()
 
-    _worker_model = freeze_model_for_inference(load_model(apply_model_path))
+    _worker_model = load_model_for_inference(apply_model_path)
     # Open the reference FASTA after fork: pysam.FastaFile is not fork-safe.
     ref_path = params.get('ref_fasta_path')
     if ref_path:

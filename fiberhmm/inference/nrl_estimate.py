@@ -14,7 +14,7 @@ from typing import Optional
 import numpy as np
 import pysam
 
-from fiberhmm.core.model_io import freeze_model_for_inference, load_model, load_model_with_metadata
+from fiberhmm.core.model_io import load_model_for_inference, load_model_with_metadata
 from fiberhmm.inference.engine import CHIMERA_SKIP, _extract_fiber_read_from_pysam
 from fiberhmm.inference.fused_stages import run_hmm_apply_stage
 from fiberhmm.inference.nuc_recaller import recall_nucs_in_read
@@ -51,7 +51,7 @@ def estimate_phase_nrl(
     ``[clamp_lo, clamp_hi]``). ``source`` is ``'estimated'`` or ``'anchor'``
     (insufficient data).
     """
-    model = freeze_model_for_inference(load_model(apply_model_path))
+    model = load_model_for_inference(apply_model_path)
     r_model, _, _ = load_model_with_metadata(recall_model_path or apply_model_path)
     llr_hit, llr_miss = build_llr_tables(r_model)
 
