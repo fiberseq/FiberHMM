@@ -261,6 +261,53 @@ def test_log_pysam_concat_failure_reports_output_context(tmp_path, capsys):
     assert "samtools merge" in captured.out
 
 
+def test_bigbed_conversion_helpers_report_errors_and_score_types(monkeypatch, capsys):
+    calls = []
+
+    def fake_run(sorted_bed, chrom_sizes, output_bb, bed_type="bed12", autosql=None):
+        calls.append((sorted_bed, chrom_sizes, output_bb, bed_type, autosql))
+        return subprocess.CompletedProcess(
+            ["bedToBigBed"], 1, stdout="", stderr="schema failed"
+        )
+
+    monkeypatch.setattr(bam_output, "_run_bed_to_bigbed", fake_run)
+
+    assert bam_output._bed_type_for_scores(with_scores=False) == "bed12"
+    assert bam_output._bed_type_for_scores(with_scores=True) == "bed12+1"
+    assert not bam_output._convert_sorted_bed_to_bigbed(
+        "calls.sorted",
+        "chrom.sizes",
+        "calls.bb",
+        bed_type="bed12+1",
+        autosql="schema.as",
+    )
+
+    assert calls == [
+        ("calls.sorted", "chrom.sizes", "calls.bb", "bed12+1", "schema.as")
+    ]
+    assert "bedToBigBed error: schema failed" in capsys.readouterr().out
+
+
+def test_convert_bigbed_score_fallback_reports_success(monkeypatch, capsys):
+    calls = []
+
+    def fake_run(sorted_bed, chrom_sizes, output_bb, bed_type="bed12", autosql=None):
+        calls.append((sorted_bed, chrom_sizes, output_bb, bed_type, autosql))
+        return subprocess.CompletedProcess(["bedToBigBed"], 0, stdout="", stderr="")
+
+    monkeypatch.setattr(bam_output, "_run_bed_to_bigbed", fake_run)
+
+    assert bam_output._convert_bigbed_score_fallback(
+        "calls.sorted", "chrom.sizes", "calls.bb"
+    )
+    assert calls == [
+        ("calls.sorted", "chrom.sizes", "calls.bb", "bed12", None)
+    ]
+    out = capsys.readouterr().out
+    assert "Trying fallback to standard BED12" in out
+    assert "Fallback succeeded" in out
+
+
 def test_convert_to_bigbed_sorts_without_shell(monkeypatch, tmp_path):
     bed = tmp_path / "calls.bed"
     chrom_sizes = tmp_path / "chrom.sizes"

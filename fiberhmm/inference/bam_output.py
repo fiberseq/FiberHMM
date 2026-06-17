@@ -514,6 +514,41 @@ def _bed_to_bigbed_available() -> bool:
     return True
 
 
+def _convert_sorted_bed_to_bigbed(
+    sorted_bed: str,
+    chrom_sizes: str,
+    output_bb: str,
+    bed_type: str = 'bed12',
+    autosql: Optional[str] = None,
+) -> bool:
+    result = _run_bed_to_bigbed(
+        sorted_bed, chrom_sizes, output_bb, bed_type, autosql
+    )
+    if result.returncode == 0:
+        return True
+
+    print(f"bedToBigBed error: {result.stderr}")
+    return False
+
+
+def _bed_type_for_scores(with_scores: bool) -> str:
+    return 'bed12+1' if with_scores else 'bed12'
+
+
+def _convert_bigbed_score_fallback(
+    sorted_bed: str,
+    chrom_sizes: str,
+    output_bb: str,
+) -> bool:
+    print("Trying fallback to standard BED12...")
+    result = _run_bed_to_bigbed(sorted_bed, chrom_sizes, output_bb)
+    if result.returncode != 0:
+        return False
+
+    print("Fallback succeeded (scores in BED only, not bigBed)")
+    return True
+
+
 def convert_to_bigbed(bed_file: str, chrom_sizes: str, output_bb: str) -> bool:
     """Convert BED12 to bigBed format."""
     if not _bed_to_bigbed_available():
@@ -525,13 +560,7 @@ def convert_to_bigbed(bed_file: str, chrom_sizes: str, output_bb: str) -> bool:
         _sort_bed_for_bigbed(bed_file, sorted_bed)
 
         # Convert
-        result = _run_bed_to_bigbed(sorted_bed, chrom_sizes, output_bb)
-
-        if result.returncode != 0:
-            print(f"bedToBigBed error: {result.stderr}")
-            return False
-
-        return True
+        return _convert_sorted_bed_to_bigbed(sorted_bed, chrom_sizes, output_bb)
 
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"Error during bigBed conversion: {e}")
@@ -604,23 +633,17 @@ def convert_to_bigbed_with_schema(bed_file: str, chrom_sizes: str,
         _sort_bed_for_bigbed(bed_file, sorted_bed)
 
         # Use BED12+ type if we have scores
-        bed_type = 'bed12+1' if with_scores else 'bed12'
-        result = _run_bed_to_bigbed(
+        bed_type = _bed_type_for_scores(with_scores)
+        converted = _convert_sorted_bed_to_bigbed(
             sorted_bed, chrom_sizes, output_bb, bed_type, autosql
         )
 
-        if result.returncode != 0:
-            print(f"bedToBigBed error: {result.stderr}")
-            # Fall back to standard BED12 if extended format fails
-            if with_scores:
-                print("Trying fallback to standard BED12...")
-                result = _run_bed_to_bigbed(sorted_bed, chrom_sizes, output_bb)
-                if result.returncode == 0:
-                    print("Fallback succeeded (scores in BED only, not bigBed)")
-                    return True
-            return False
+        if converted:
+            return True
 
-        return True
+        if with_scores:
+            return _convert_bigbed_score_fallback(sorted_bed, chrom_sizes, output_bb)
+        return False
 
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"Error during bigBed conversion: {e}")
