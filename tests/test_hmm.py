@@ -19,6 +19,7 @@ import pytest
 try:
     from fiberhmm.core.hmm import (
         FiberHMM,
+        _fit_training_iteration,
         _hmmlearn_uses_categorical,
         _hmmlearn_version_tuple,
         _initialized_training_model,
@@ -38,6 +39,7 @@ except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
     from hmm import (
         FiberHMM,
+        _fit_training_iteration,
         _hmmlearn_uses_categorical,
         _hmmlearn_version_tuple,
         _initialized_training_model,
@@ -284,6 +286,27 @@ class TestModelTraining:
         assert _updated_best_training_model(
             old_model, -10.0, new_model, -11.0,
         ) == (old_model, -10.0)
+
+    def test_fit_training_iteration_shapes_data_and_labels_fit(self):
+        class FakeModel:
+            def __init__(self):
+                self.calls = []
+
+            def fit(self, training, **kwargs):
+                self.calls.append((training, kwargs))
+
+        model = FakeModel()
+        training = _fit_training_iteration(model, np.array([1, 2, 3]), 4)
+
+        np.testing.assert_array_equal(training, np.array([[1], [2], [3]]))
+        assert len(model.calls) == 1
+        call_training, kwargs = model.calls[0]
+        np.testing.assert_array_equal(call_training, training)
+        assert kwargs == {
+            "lengths": [3],
+            "verbose": True,
+            "desc": "Init 5 EM",
+        }
 
     def test_fit_updates_parameters(self, simple_emission_probs, simple_observations):
         """Test that fit() updates start and transition probabilities."""

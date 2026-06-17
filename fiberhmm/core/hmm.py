@@ -1059,6 +1059,17 @@ def _training_observation_matrix(data: np.ndarray) -> np.ndarray:
     return data.reshape(-1, 1)
 
 
+def _fit_training_iteration(model, data: np.ndarray, iteration: int) -> np.ndarray:
+    training = _training_observation_matrix(data)
+    model.fit(
+        training,
+        lengths=[len(data)],
+        verbose=True,
+        desc=f"Init {iteration+1} EM",
+    )
+    return training
+
+
 def _model_training_logprob(model, training: np.ndarray) -> float:
     if hasattr(model, 'monitor_') and model.monitor_ and model.monitor_.history:
         return model.monitor_.history[-1]
@@ -1115,8 +1126,7 @@ def train_model(emission_probs: np.ndarray,
 
         # Train
         data = _training_data_for_iteration(train_data, i)
-        training = _training_observation_matrix(data)
-        model.fit(training, lengths=[len(data)], verbose=True, desc=f"Init {i+1} EM")
+        training = _fit_training_iteration(model, data, i)
 
         # Get log probability
         logprob = _model_training_logprob(model, training)
