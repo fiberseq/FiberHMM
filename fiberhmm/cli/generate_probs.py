@@ -136,6 +136,12 @@ def _print_filter_stats(filter_stats: Dict[str, int], min_mapq: int, min_read_le
     print(f"      No ML tag:          {filter_stats['no_ml_tag']:>10,}")
 
 
+def _read_reference_span(read):
+    if read.reference_end is None or read.reference_start is None:
+        return None
+    return read.reference_end - read.reference_start
+
+
 def _generate_probs_skip_reason(read, min_mapq: int, min_read_length: int):
     if read.is_unmapped:
         return 'unmapped'
@@ -147,9 +153,10 @@ def _generate_probs_skip_reason(read, min_mapq: int, min_read_length: int):
         return 'low_mapq'
     if read.query_sequence is None:
         return 'no_sequence'
-    if read.reference_end is None or read.reference_start is None:
+    reference_span = _read_reference_span(read)
+    if reference_span is None:
         return 'no_sequence'
-    if read.reference_end - read.reference_start < min_read_length:
+    if reference_span < min_read_length:
         return 'short_read'
     return None
 

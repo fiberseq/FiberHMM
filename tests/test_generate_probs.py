@@ -12,6 +12,7 @@ from fiberhmm.cli.generate_probs import (
     _new_filter_stats,
     _probability_counter_path,
     _probability_table_path,
+    _read_reference_span,
     _record_mm_tag_types,
     _target_bases_for_mode,
 )
@@ -53,7 +54,19 @@ def test_generate_probs_skip_reason_filters_in_expected_order():
     assert _generate_probs_skip_reason(read, 20, 100) == 'short_read'
 
     read = _Read()
+    read.reference_start = None
+    assert _generate_probs_skip_reason(read, 20, 100) == 'no_sequence'
+
+    read = _Read()
     assert _generate_probs_skip_reason(read, 20, 100) is None
+
+
+def test_read_reference_span_handles_missing_coordinates():
+    assert _read_reference_span(_Read()) == 200
+
+    read = _Read()
+    read.reference_end = None
+    assert _read_reference_span(read) is None
 
 
 def test_target_bases_for_mode():
