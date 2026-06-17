@@ -393,11 +393,17 @@ def _run_bed_to_bigbed(
     )
 
 
-def convert_to_bigbed(bed_file: str, chrom_sizes: str, output_bb: str) -> bool:
-    """Convert BED12 to bigBed format."""
+def _bed_to_bigbed_available() -> bool:
     if not shutil.which('bedToBigBed'):
         print("Warning: bedToBigBed not found in PATH. Skipping bigBed conversion.")
         print("Download from: https://hgdownload.soe.ucsc.edu/admin/exe/")
+        return False
+    return True
+
+
+def convert_to_bigbed(bed_file: str, chrom_sizes: str, output_bb: str) -> bool:
+    """Convert BED12 to bigBed format."""
+    if not _bed_to_bigbed_available():
         return False
 
     sorted_bed = bed_file + '.sorted'
@@ -467,9 +473,7 @@ def convert_to_bigbed_with_schema(bed_file: str, chrom_sizes: str,
                                    autosql: str, output_bb: str,
                                    with_scores: bool = False) -> bool:
     """Convert BED12+ to bigBed format using custom autoSql schema."""
-    if not shutil.which('bedToBigBed'):
-        print("Warning: bedToBigBed not found in PATH. Skipping bigBed conversion.")
-        print("Download from: https://hgdownload.soe.ucsc.edu/admin/exe/")
+    if not _bed_to_bigbed_available():
         return False
 
     sorted_bed = bed_file + '.sorted'
