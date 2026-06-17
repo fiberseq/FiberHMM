@@ -379,6 +379,12 @@ def _daf_encode_throughput(summary: dict):
     return summary['total'] / elapsed
 
 
+def _daf_progress_rate(reads_processed: int, elapsed: float):
+    if elapsed <= 0:
+        return None
+    return reads_processed / elapsed
+
+
 def _print_daf_encode_summary(summary: dict, log) -> None:
     print(f"\n{'=' * 60}", file=log)
     print("fiberhmm-daf-encode summary", file=log)
@@ -522,8 +528,8 @@ def process_bam_daf_encode(
             if total % 10000 == 0:
                 now = time.time()
                 elapsed = now - last_progress
-                if elapsed > 0:
-                    rate = 10000 / elapsed
+                rate = _daf_progress_rate(10000, elapsed)
+                if rate is not None:
                     print(
                         f"  [{total:,} reads] {rate:,.0f} reads/sec "
                         f"(CT={ct_count:,} GA={ga_count:,} skip={skipped:,})",

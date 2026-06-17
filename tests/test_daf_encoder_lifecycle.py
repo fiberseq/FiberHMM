@@ -70,6 +70,11 @@ def test_daf_encode_throughput_handles_zero_elapsed():
     assert encoder._daf_encode_throughput({"total": 100, "elapsed": 0.0}) is None
 
 
+def test_daf_progress_rate_handles_zero_elapsed():
+    assert encoder._daf_progress_rate(10_000, 2.0) == 5000.0
+    assert encoder._daf_progress_rate(10_000, 0.0) is None
+
+
 def test_daf_encode_summary_and_report_format():
     summary = encoder._daf_encode_summary(
         total=100,
