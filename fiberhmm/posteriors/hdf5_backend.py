@@ -81,6 +81,21 @@ def write_hdf5_file_metadata(
     h5_file.attrs['format_version'] = 2
 
 
+def create_posterior_chrom_group(
+    h5_file,
+    chrom: str,
+    *,
+    include_ref_positions: bool = True,
+):
+    grp = h5_file.create_group(chrom)
+    grp.create_group('posteriors')
+    if include_ref_positions:
+        grp.create_group('ref_positions')
+    grp.create_group('footprint_starts')
+    grp.create_group('footprint_sizes')
+    return grp
+
+
 class PosteriorWriter:
     """
     Streaming writer for HMM posteriors to HDF5.
@@ -138,11 +153,7 @@ class PosteriorWriter:
     def _ensure_chrom(self, chrom: str):
         """Create chromosome group if it doesn't exist."""
         if chrom not in self._chrom_groups:
-            grp = self.h5.create_group(chrom)
-            grp.create_group('posteriors')
-            grp.create_group('ref_positions')
-            grp.create_group('footprint_starts')
-            grp.create_group('footprint_sizes')
+            grp = create_posterior_chrom_group(self.h5, chrom)
 
             self._chrom_groups[chrom] = grp
             self._chrom_counts[chrom] = 0

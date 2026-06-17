@@ -1,10 +1,33 @@
 """Failure-path coverage for apply-pipeline resource lifetimes."""
 
+import h5py
 import numpy as np
 import pytest
 
 from fiberhmm.inference import legacy_pipeline, parallel, streaming_pipeline
 from fiberhmm.posteriors import hdf5_backend
+
+
+def test_posterior_chrom_group_helper_controls_ref_positions(tmp_path):
+    with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
+        with_ref = hdf5_backend.create_posterior_chrom_group(h5, "chr1")
+        without_ref = hdf5_backend.create_posterior_chrom_group(
+            h5,
+            "chr2",
+            include_ref_positions=False,
+        )
+
+        assert set(with_ref.keys()) == {
+            "posteriors",
+            "ref_positions",
+            "footprint_starts",
+            "footprint_sizes",
+        }
+        assert set(without_ref.keys()) == {
+            "posteriors",
+            "footprint_starts",
+            "footprint_sizes",
+        }
 
 
 def test_hdf5_ref_positions_use_core_mapping_with_insertions():

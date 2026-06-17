@@ -102,12 +102,15 @@ def _scan_tsv_for_h5(tsv_path: str, verbose: bool):
 
 
 def _create_h5_chrom_groups(h5_file, chrom_counts, string_dtype):
+    from fiberhmm.posteriors.hdf5_backend import create_posterior_chrom_group
+
     chrom_indices = {}
     for chrom, count in chrom_counts.items():
-        grp = h5_file.create_group(chrom)
-        grp.create_group('posteriors')
-        grp.create_group('footprint_starts')
-        grp.create_group('footprint_sizes')
+        grp = create_posterior_chrom_group(
+            h5_file,
+            chrom,
+            include_ref_positions=False,
+        )
         grp.attrs['n_fibers'] = count
         chrom_indices[chrom] = 0
 
