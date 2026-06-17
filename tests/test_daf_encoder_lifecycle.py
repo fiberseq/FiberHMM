@@ -91,6 +91,11 @@ def test_mark_iupac_positions_replaces_selected_bases():
     assert encoder._mark_iupac_positions("ACGT", [1, 3], "Y") == "AYGY"
 
 
+def test_encoded_daf_sequence_marks_selected_strand_and_counts_events():
+    assert encoder._encoded_daf_sequence("ACGT", [1], [2], "CT") == ("AYGT", 1)
+    assert encoder._encoded_daf_sequence("ACGT", [1], [2], "GA") == ("ACRT", 1)
+
+
 def test_daf_encode_throughput_handles_zero_elapsed():
     assert encoder._daf_encode_throughput({"total": 100, "elapsed": 2.0}) == 50.0
     assert encoder._daf_encode_throughput({"total": 100, "elapsed": 0.0}) is None

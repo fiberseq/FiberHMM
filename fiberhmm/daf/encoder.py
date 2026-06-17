@@ -311,6 +311,12 @@ def _mark_iupac_positions(sequence: str, positions, code: str) -> str:
     return "".join(seq_list)
 
 
+def _encoded_daf_sequence(seq: str, ct_positions, ga_positions, strand: str):
+    if strand == "CT":
+        return _mark_iupac_positions(seq, ct_positions, "Y"), len(ct_positions)
+    return _mark_iupac_positions(seq, ga_positions, "R"), len(ga_positions)
+
+
 def encode_read_daf(read, force_strand=None, ref_fasta=None):
     """Identify deamination mismatches and encode as IUPAC R/Y.
 
@@ -331,12 +337,9 @@ def encode_read_daf(read, force_strand=None, ref_fasta=None):
     ct_positions, ga_positions, strand = res
 
     seq = read.query_sequence
-    if strand == "CT":
-        new_seq = _mark_iupac_positions(seq, ct_positions, "Y")  # Y = C or T
-        n_deam = len(ct_positions)
-    else:  # GA
-        new_seq = _mark_iupac_positions(seq, ga_positions, "R")  # R = A or G
-        n_deam = len(ga_positions)
+    new_seq, n_deam = _encoded_daf_sequence(
+        seq, ct_positions, ga_positions, strand,
+    )
 
     st_tag = strand  # "CT" or "GA"
     return (new_seq, st_tag, n_deam)
