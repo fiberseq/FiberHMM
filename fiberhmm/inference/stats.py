@@ -84,6 +84,12 @@ def _add_numeric_summary(
         summary[f'{prefix}_q75'] = np.percentile(values, 75)
 
 
+def _stats_sampling_probability(total_reads: int, n_samples: int) -> float:
+    if total_reads <= n_samples:
+        return 1.0
+    return n_samples / total_reads
+
+
 class FootprintStats:
     """Collects footprint statistics from sampled reads."""
 
@@ -441,11 +447,7 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
             if is_primary_mapped_alignment(read):
                 total_reads += 1
 
-    # Calculate sampling probability
-    if total_reads <= n_samples:
-        sample_prob = 1.0
-    else:
-        sample_prob = n_samples / total_reads
+    sample_prob = _stats_sampling_probability(total_reads, n_samples)
 
     print(f"  Sampling ~{min(n_samples, total_reads):,} reads from {total_reads:,} total ({sample_prob*100:.1f}%)")
 

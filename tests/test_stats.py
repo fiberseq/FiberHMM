@@ -135,3 +135,9 @@ def test_add_numeric_summary_writes_requested_keys_and_skips_empty_values():
     assert summary["example_q25"] == np.percentile([1, 2, 5], 25)
     assert summary["example_q75"] == np.percentile([1, 2, 5], 75)
     assert "empty_median" not in summary
+
+
+def test_stats_sampling_probability_handles_full_and_partial_samples():
+    assert stats_module._stats_sampling_probability(10, 100) == 1.0
+    assert stats_module._stats_sampling_probability(100, 10) == 0.1
+    assert stats_module._stats_sampling_probability(100, 0) == 0.0
