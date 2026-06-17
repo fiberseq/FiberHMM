@@ -25,6 +25,16 @@ def _probability_ratios_with_data(prob_table) -> np.ndarray:
     return ratios[prob_table['hit'] + prob_table['nohit'] > 0]
 
 
+def _merged_probability_table(acc_probs, inacc_probs):
+    merged = acc_probs[['context', 'ratio', 'hit', 'nohit']].merge(
+        inacc_probs[['context', 'ratio', 'hit', 'nohit']],
+        on='context', suffixes=('_acc', '_inacc')
+    )
+    merged['total_acc'] = merged['hit_acc'] + merged['nohit_acc']
+    merged['total_inacc'] = merged['hit_inacc'] + merged['nohit_inacc']
+    return merged
+
+
 def _write_probability_stats_summary(summary_file: str,
                                      accessible_counters: Dict[str, 'ContextCounter'],
                                      inaccessible_counters: Dict[str, 'ContextCounter'],
@@ -166,13 +176,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
 
             # 2. Scatter plot: accessible vs inaccessible
             ax = axes[0, 1]
-            # Merge by context to ensure alignment
-            merged = acc_probs[['context', 'ratio', 'hit', 'nohit']].merge(
-                inacc_probs[['context', 'ratio', 'hit', 'nohit']],
-                on='context', suffixes=('_acc', '_inacc')
-            )
-            merged['total_acc'] = merged['hit_acc'] + merged['nohit_acc']
-            merged['total_inacc'] = merged['hit_inacc'] + merged['nohit_inacc']
+            merged = _merged_probability_table(acc_probs, inacc_probs)
             # Filter to contexts with data in both
             mask = (merged['total_acc'] > 10) & (merged['total_inacc'] > 10)
             if mask.sum() > 0:
