@@ -88,6 +88,14 @@ def _add_numeric_summary(
         summary[f'{prefix}_q75'] = np.percentile(values, 75)
 
 
+def _add_positive_count_summary(summary: dict, prefix: str, values) -> None:
+    positive_values = _positive_counts(values)
+    if not positive_values:
+        return
+    summary[f'{prefix}_median'] = np.median(positive_values)
+    summary[f'{prefix}_mean'] = np.mean(positive_values)
+
+
 def _stats_sampling_probability(total_reads: int, n_samples: int) -> float:
     if total_reads <= n_samples:
         return 1.0
@@ -225,10 +233,9 @@ class FootprintStats:
         )
 
         if self.footprints_per_read:
-            fp_per_read = _positive_counts(self.footprints_per_read)
-            if fp_per_read:
-                summary['footprints_per_read_median'] = np.median(fp_per_read)
-                summary['footprints_per_read_mean'] = np.mean(fp_per_read)
+            _add_positive_count_summary(
+                summary, 'footprints_per_read', self.footprints_per_read,
+            )
 
         _add_numeric_summary(
             summary,

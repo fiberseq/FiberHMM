@@ -209,6 +209,19 @@ def test_add_numeric_summary_writes_requested_keys_and_skips_empty_values():
     assert "empty_median" not in summary
 
 
+def test_add_positive_count_summary_ignores_zero_values():
+    summary = {}
+
+    stats_module._add_positive_count_summary(
+        summary, "footprints_per_read", [0, 3, 1, 0],
+    )
+    stats_module._add_positive_count_summary(summary, "empty", [0, 0])
+
+    assert summary["footprints_per_read_median"] == 2
+    assert summary["footprints_per_read_mean"] == 2
+    assert "empty_median" not in summary
+
+
 def test_stats_sampling_probability_handles_full_and_partial_samples():
     assert stats_module._stats_sampling_probability(10, 100) == 1.0
     assert stats_module._stats_sampling_probability(100, 10) == 0.1
