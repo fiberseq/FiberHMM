@@ -111,6 +111,13 @@ def test_quality_row_helpers_preserve_aq_layout():
     assert list(nuc_qqq_aq) == [7, 8, 9, 10, 11, 12]
 
 
+def test_positive_length_intervals_filters_and_normalizes():
+    assert tf_recaller._positive_length_intervals(
+        np.array([5, 10, 15]),
+        np.array([0, -3, 7]),
+    ) == [(15, 7)]
+
+
 def test_nuc_aq_has_edge_qualities_detects_schema_mode():
     assert not _nuc_aq_has_edge_qualities([], [])
     assert _nuc_aq_has_edge_qualities([1], [])

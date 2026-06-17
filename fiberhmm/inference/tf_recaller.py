@@ -553,6 +553,14 @@ def _raw_legacy_recall_tags(read):
     return ns_raw, nl_raw, as_raw, al_raw
 
 
+def _positive_length_intervals(starts, lengths) -> List[Tuple[int, int]]:
+    return [
+        (int(start), int(length))
+        for start, length in zip(starts, lengths)
+        if int(length) > 0
+    ]
+
+
 def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
                 mode: str, context_size: int,
                 min_llr: float, min_opps: int,
@@ -579,16 +587,8 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
     extracted = extract_modifications(read, mode, context_size)
     if extracted is None:
         # Pass through v2 calls unchanged
-        nucs = [
-            (int(s), int(length))
-            for s, length in zip(ns_raw, nl_raw)
-            if int(length) > 0
-        ]
-        msps = [
-            (int(s), int(length))
-            for s, length in zip(as_raw, al_raw)
-            if int(length) > 0
-        ]
+        nucs = _positive_length_intervals(ns_raw, nl_raw)
+        msps = _positive_length_intervals(as_raw, al_raw)
         return [], nucs, msps
 
     mod_pos, strand, seq = extracted
@@ -609,11 +609,7 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
         ))
 
     # Unify: drop v2 short-nucs (nl < threshold) that overlap any TF call.
-    msps = [
-        (int(s), int(length))
-        for s, length in zip(as_raw, al_raw)
-        if int(length) > 0
-    ]
+    msps = _positive_length_intervals(as_raw, al_raw)
     kept_nucs: List[Tuple[int, int]] = []
     tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
     for s, length in zip(ns_raw, nl_raw):
