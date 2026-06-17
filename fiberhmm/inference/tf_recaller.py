@@ -642,20 +642,30 @@ def _clamp_u8(value) -> int:
     return max(0, min(255, int(value)))
 
 
+def _split_legacy_interval_row(interval: Tuple[int, int],
+                               read_length: int,
+                               score=None):
+    encoded_score = None if score is None else _clamp_u8(score)
+    return [
+        (piece[0], piece[1], encoded_score)
+        for piece in split_circular_interval(interval[0], interval[1], read_length)
+    ]
+
+
 def _split_legacy_interval_rows(intervals: Sequence[Tuple[int, int]],
                                 read_length: int,
                                 scores: Optional[Sequence[int]] = None):
     if scores is None:
         rows = [
-            (piece[0], piece[1], None)
+            row
             for interval in intervals
-            for piece in split_circular_interval(interval[0], interval[1], read_length)
+            for row in _split_legacy_interval_row(interval, read_length)
         ]
     else:
         rows = [
-            (piece[0], piece[1], _clamp_u8(score))
+            row
             for interval, score in zip(intervals, scores)
-            for piece in split_circular_interval(interval[0], interval[1], read_length)
+            for row in _split_legacy_interval_row(interval, read_length, score)
         ]
     rows.sort(key=lambda t: (int(t[0]), int(t[1])))
     return rows
