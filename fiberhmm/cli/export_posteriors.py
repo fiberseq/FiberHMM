@@ -383,6 +383,12 @@ def _decode_h5_text(value):
     return value
 
 
+def _h5_indexed_array(group, index: int, default):
+    if group is None:
+        return default
+    return group[str(index)][:]
+
+
 def _fiber_overlap_indices(
     starts: np.ndarray,
     ends: np.ndarray,
@@ -771,9 +777,13 @@ class PosteriorReader:
             idx = int(idx)
             posteriors = post_grp[str(idx)][:]
 
-            ref_positions = ref_pos_grp[str(idx)][:] if ref_pos_grp else None
-            fp_starts = fp_starts_grp[str(idx)][:] if fp_starts_grp else np.array([], dtype=np.int32)
-            fp_sizes = fp_sizes_grp[str(idx)][:] if fp_sizes_grp else np.array([], dtype=np.int32)
+            ref_positions = _h5_indexed_array(ref_pos_grp, idx, None)
+            fp_starts = _h5_indexed_array(
+                fp_starts_grp, idx, np.array([], dtype=np.int32),
+            )
+            fp_sizes = _h5_indexed_array(
+                fp_sizes_grp, idx, np.array([], dtype=np.int32),
+            )
 
             strand = strands[idx] if strands is not None else '.'
 

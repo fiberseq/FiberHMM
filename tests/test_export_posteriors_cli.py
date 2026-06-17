@@ -171,6 +171,20 @@ def test_decode_h5_text_accepts_bytes_and_strings():
     assert export_posteriors._decode_h5_text("read-b") == "read-b"
 
 
+def test_h5_indexed_array_reads_present_group_or_returns_default(tmp_path):
+    default = object()
+
+    with h5py.File(tmp_path / "arrays.h5", "w") as h5:
+        group = h5.create_group("values")
+        group.create_dataset("2", data=np.array([1, 2], dtype=np.int32))
+
+        np.testing.assert_array_equal(
+            export_posteriors._h5_indexed_array(group, 2, default),
+            np.array([1, 2], dtype=np.int32),
+        )
+        assert export_posteriors._h5_indexed_array(None, 2, default) is default
+
+
 def test_fiber_region_index_helpers_select_expected_records():
     starts = np.array([0, 10, 20, 30], dtype=np.int32)
     ends = np.array([9, 25, 40, 50], dtype=np.int32)
