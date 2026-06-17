@@ -275,6 +275,13 @@ def is_daf_chimera(ct_positions, ga_positions,
     return False
 
 
+def _mark_iupac_positions(sequence: str, positions, code: str) -> str:
+    seq_list = list(sequence)
+    for pos in positions:
+        seq_list[int(pos)] = code
+    return "".join(seq_list)
+
+
 def encode_read_daf(read, force_strand=None, ref_fasta=None):
     """Identify deamination mismatches and encode as IUPAC R/Y.
 
@@ -295,18 +302,13 @@ def encode_read_daf(read, force_strand=None, ref_fasta=None):
     ct_positions, ga_positions, strand = res
 
     seq = read.query_sequence
-    # Build new sequence with IUPAC encoding
-    seq_list = list(seq)
     if strand == "CT":
-        for pos in ct_positions:
-            seq_list[pos] = "Y"  # Y = C or T
+        new_seq = _mark_iupac_positions(seq, ct_positions, "Y")  # Y = C or T
         n_deam = len(ct_positions)
     else:  # GA
-        for pos in ga_positions:
-            seq_list[pos] = "R"  # R = A or G
+        new_seq = _mark_iupac_positions(seq, ga_positions, "R")  # R = A or G
         n_deam = len(ga_positions)
 
-    new_seq = "".join(seq_list)
     st_tag = strand  # "CT" or "GA"
     return (new_seq, st_tag, n_deam)
 

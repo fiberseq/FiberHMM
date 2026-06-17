@@ -61,6 +61,10 @@ def test_select_daf_strand_handles_forced_dominant_and_ambiguous_cases():
     assert encoder._select_daf_strand(0, 0, force_strand="ga") == "GA"
 
 
+def test_mark_iupac_positions_replaces_selected_bases():
+    assert encoder._mark_iupac_positions("ACGT", [1, 3], "Y") == "AYGY"
+
+
 def test_daf_encode_summary_and_report_format():
     summary = encoder._daf_encode_summary(
         total=100,
