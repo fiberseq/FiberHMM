@@ -402,6 +402,15 @@ def _mm_positions_from_spec(skip_arr: np.ndarray,
     return positions[qualities >= prob_threshold]
 
 
+def _mm_ml_slice_for_spec(
+    ml_arr_all: np.ndarray,
+    ml_idx: int,
+    n_mods: int,
+) -> Tuple[np.ndarray, int]:
+    ml_end = ml_idx + n_mods
+    return ml_arr_all[ml_idx:ml_end], ml_end
+
+
 def _append_mm_mod_result(result: dict, key, positions: np.ndarray,
                           qualities: np.ndarray) -> None:
     if key in result:
@@ -477,9 +486,7 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
             base_positions_cache, target_base, seq_bytes,
         )
 
-        ml_end = ml_idx + n_mods
-        ml_slice = ml_arr_all[ml_idx:ml_end]
-        ml_idx = ml_end
+        ml_slice, ml_idx = _mm_ml_slice_for_spec(ml_arr_all, ml_idx, n_mods)
 
         positions, qualities = _mm_valid_positions_and_qualities(
             skip_arr, base_positions, ml_slice, q_len, is_reverse,
@@ -629,9 +636,9 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
             base_pos_cache, target_base, search_bytes,
         )
 
-        ml_end = ml_idx + n_mods
-        ml_slice_arr = ml_arr_all[ml_idx:ml_end]
-        ml_idx = ml_end
+        ml_slice_arr, ml_idx = _mm_ml_slice_for_spec(
+            ml_arr_all, ml_idx, n_mods,
+        )
 
         hit_positions = _mm_positions_from_spec(
             skip_arr,

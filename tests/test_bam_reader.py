@@ -28,6 +28,7 @@ try:
         _has_mm_ml_inputs,
         _iter_mm_mod_specs,
         _mm_base_indices,
+        _mm_ml_slice_for_spec,
         _mm_qualities_for_valid_positions,
         _modified_base_quality_passes,
         _mm_base_and_mod_code,
@@ -56,6 +57,7 @@ except ImportError:
         _has_mm_ml_inputs,
         _iter_mm_mod_specs,
         _mm_base_indices,
+        _mm_ml_slice_for_spec,
         _mm_qualities_for_valid_positions,
         _modified_base_quality_passes,
         _mm_base_and_mod_code,
@@ -134,6 +136,16 @@ def test_print_mm_parse_debug_reports_sequence_and_ml_context(capsys):
     assert "MM tag: A+a,0,1;..." in out
     assert "ML tag len: 2, first 10 values: [200, 150]" in out
     assert "is_reverse: True, walking on RC(SEQ)" in out
+
+
+def test_mm_ml_slice_for_spec_returns_view_and_next_index():
+    ml = np.asarray([10, 20, 30, 40], dtype=np.uint8)
+
+    ml_slice, next_idx = _mm_ml_slice_for_spec(ml, 1, 2)
+
+    np.testing.assert_array_equal(ml_slice, np.asarray([20, 30], dtype=np.uint8))
+    assert np.shares_memory(ml_slice, ml)
+    assert next_idx == 3
 
 
 def test_read_mod_query_positions_accepts_numpy_ml_tag(monkeypatch):
