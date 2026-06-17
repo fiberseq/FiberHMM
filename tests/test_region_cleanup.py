@@ -175,6 +175,34 @@ def test_ordered_existing_temp_paths_sorts_and_filters_empty(tmp_path):
     ]) == [str(nonempty_early), str(nonempty_late)]
 
 
+def test_submit_region_futures_maps_futures_to_region_indices():
+    class Executor:
+        def __init__(self):
+            self.submitted = []
+
+        def submit(self, worker, item):
+            future = object()
+            self.submitted.append((future, worker, item))
+            return future
+
+    def worker(item):
+        return item
+
+    executor = Executor()
+    work_items = ["a", "b"]
+
+    futures = region_pipeline._submit_region_futures(executor, worker, work_items)
+
+    assert futures == {
+        executor.submitted[0][0]: 0,
+        executor.submitted[1][0]: 1,
+    }
+    assert [(worker_fn, item) for _, worker_fn, item in executor.submitted] == [
+        (worker, "a"),
+        (worker, "b"),
+    ]
+
+
 def test_region_parallel_bam_cleans_temp_dir_on_worker_failure(monkeypatch, tmp_path):
     temp_dirs = _install_failing_region_pool(monkeypatch, tmp_path)
     input_bam = _indexed_input_bam(tmp_path)

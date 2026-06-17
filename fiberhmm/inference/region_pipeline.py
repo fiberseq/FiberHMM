@@ -170,6 +170,13 @@ def _ordered_existing_temp_paths(indexed_paths) -> list:
     ]
 
 
+def _submit_region_futures(executor, worker, work_items) -> dict:
+    return {
+        executor.submit(worker, item): i
+        for i, item in enumerate(work_items)
+    }
+
+
 def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    model_path: str, train_rids: Set[str],
                                    edge_trim: int, circular: bool,
@@ -263,8 +270,11 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             initializer=_init_region_worker,
             initargs=(model_path, params)
         ) as executor:
-            futures = {executor.submit(_process_region_to_bam, item): i
-                      for i, item in enumerate(work_items)}
+            futures = _submit_region_futures(
+                executor,
+                _process_region_to_bam,
+                work_items,
+            )
 
             for future in as_completed(futures):
                 try:
@@ -416,8 +426,11 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
             initializer=_init_region_worker,
             initargs=(model_path, params)
         ) as executor:
-            futures = {executor.submit(_process_region_to_bed, item): i
-                      for i, item in enumerate(work_items)}
+            futures = _submit_region_futures(
+                executor,
+                _process_region_to_bed,
+                work_items,
+            )
 
             for future in as_completed(futures):
                 try:
@@ -554,8 +567,11 @@ def _process_bam_region_parallel_fused(
             initializer=_init_fused_region_worker,
             initargs=(apply_model_path, recall_model_path, emission_uplift, params),
         ) as executor:
-            futures = {executor.submit(_process_region_to_bam_fused, item): i
-                       for i, item in enumerate(work_items)}
+            futures = _submit_region_futures(
+                executor,
+                _process_region_to_bam_fused,
+                work_items,
+            )
 
             for future in as_completed(futures):
                 result = RegionBamResult.from_value(future.result())
