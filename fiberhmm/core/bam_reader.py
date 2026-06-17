@@ -671,6 +671,16 @@ def has_iupac_encoding(sequence: str) -> bool:
     return 'R' in seq or 'Y' in seq
 
 
+def _infer_daf_iupac_strand(seq_upper: str) -> str:
+    y_count = seq_upper.count('Y')
+    r_count = seq_upper.count('R')
+    if y_count > r_count:
+        return '+'
+    if r_count > y_count:
+        return '-'
+    return '.'
+
+
 def extract_daf_iupac_positions(sequence: str, st_tag: Optional[str] = None) -> Tuple[Set[int], str, str]:
     """
     Extract deamination positions from IUPAC R/Y encoded DAF-seq sequence.
@@ -696,15 +706,7 @@ def extract_daf_iupac_positions(sequence: str, st_tag: Optional[str] = None) -> 
     # Determine strand
     strand = daf_strand_from_tag(st_tag)
     if strand == '.' and st_tag is None:
-        # Infer from R vs Y counts
-        y_count = seq_upper.count('Y')
-        r_count = seq_upper.count('R')
-        if y_count > r_count:
-            strand = '+'
-        elif r_count > y_count:
-            strand = '-'
-        else:
-            strand = '.'
+        strand = _infer_daf_iupac_strand(seq_upper)
 
     # Vectorized IUPAC conversion: Y (→T) + R (→A) + collect mod positions.
     # 10-30× faster than the per-base Python loop for long reads.
