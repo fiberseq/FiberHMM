@@ -52,6 +52,19 @@ def _top_differentiating_contexts(merged, n: int = 15):
     return ranked.nlargest(n, 'diff')
 
 
+def _write_probability_ratio_summary(handle, label: str, ratios: np.ndarray) -> None:
+    if len(ratios) == 0:
+        return
+    handle.write(f"  {label} contexts with data: {len(ratios)}\n")
+    handle.write(
+        f"    Prob range:  {np.min(ratios):.4f} - "
+        f"{np.max(ratios):.4f}\n"
+    )
+    handle.write(f"    Prob median: {np.median(ratios):.4f}\n")
+    handle.write(f"    Prob mean:   {np.mean(ratios):.4f}\n")
+    handle.write(f"    Prob std:    {np.std(ratios):.4f}\n")
+
+
 def _write_probability_stats_summary(summary_file: str,
                                      accessible_counters: Dict[str, 'ContextCounter'],
                                      inaccessible_counters: Dict[str, 'ContextCounter'],
@@ -98,25 +111,8 @@ def _write_probability_stats_summary(summary_file: str,
                 f"\nPer-context statistics "
                 f"(k={context_size}, {2*context_size+1}-mer):\n"
             )
-            if len(acc_with_data) > 0:
-                f.write(f"  Accessible contexts with data: {len(acc_with_data)}\n")
-                f.write(
-                    f"    Prob range:  {np.min(acc_with_data):.4f} - "
-                    f"{np.max(acc_with_data):.4f}\n"
-                )
-                f.write(f"    Prob median: {np.median(acc_with_data):.4f}\n")
-                f.write(f"    Prob mean:   {np.mean(acc_with_data):.4f}\n")
-                f.write(f"    Prob std:    {np.std(acc_with_data):.4f}\n")
-
-            if len(inacc_with_data) > 0:
-                f.write(f"  Inaccessible contexts with data: {len(inacc_with_data)}\n")
-                f.write(
-                    f"    Prob range:  {np.min(inacc_with_data):.4f} - "
-                    f"{np.max(inacc_with_data):.4f}\n"
-                )
-                f.write(f"    Prob median: {np.median(inacc_with_data):.4f}\n")
-                f.write(f"    Prob mean:   {np.mean(inacc_with_data):.4f}\n")
-                f.write(f"    Prob std:    {np.std(inacc_with_data):.4f}\n")
+            _write_probability_ratio_summary(f, "Accessible", acc_with_data)
+            _write_probability_ratio_summary(f, "Inaccessible", inacc_with_data)
 
             f.write("\n")
 

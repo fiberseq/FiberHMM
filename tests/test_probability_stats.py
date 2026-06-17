@@ -1,5 +1,8 @@
 """Tests for probability statistics report helpers."""
 
+import io
+
+import numpy as np
 import pandas as pd
 
 from fiberhmm.probabilities import stats
@@ -26,6 +29,23 @@ def test_probability_stats_summary_helpers_filter_contexts_with_data(tmp_path):
 
     assert stats._modification_rate(_FakeCounter(0, 5, {}, table)) == 5.0
     assert stats._probability_ratios_with_data(table).tolist() == [0.2, 0.9]
+
+
+def test_write_probability_ratio_summary_formats_nonempty_ratios_only():
+    handle = io.StringIO()
+
+    stats._write_probability_ratio_summary(
+        handle,
+        "Accessible",
+        np.array([0.2, 0.8]),
+    )
+    stats._write_probability_ratio_summary(handle, "Empty", np.array([]))
+
+    text = handle.getvalue()
+    assert "Accessible contexts with data: 2" in text
+    assert "Prob range:  0.2000 - 0.8000" in text
+    assert "Prob median: 0.5000" in text
+    assert "Empty contexts" not in text
 
 
 def test_write_probability_stats_summary(tmp_path):
