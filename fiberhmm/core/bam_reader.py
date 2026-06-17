@@ -259,6 +259,15 @@ def _ml_tag_to_uint8_array(ml_tag) -> np.ndarray:
     return np.asarray(ml_tag, dtype=np.uint8)
 
 
+def _has_mm_ml_inputs(mm_tag: str, ml_tag) -> bool:
+    if not mm_tag or ml_tag is None:
+        return False
+    try:
+        return len(ml_tag) > 0
+    except TypeError:
+        return True
+
+
 def _mm_search_sequence(seq_upper: str, is_reverse: bool) -> str:
     if is_reverse:
         return seq_upper.translate(_COMPLEMENT_TABLE)[::-1]
@@ -407,13 +416,8 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
     """
     result: Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]] = {}
 
-    if not mm_tag or not ml_tag:
+    if not _has_mm_ml_inputs(mm_tag, ml_tag):
         return result
-    try:
-        if len(ml_tag) == 0:
-            return result
-    except TypeError:
-        pass
 
     ml_arr_all = _ml_tag_to_uint8_array(ml_tag)
 
@@ -554,7 +558,7 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
     """
     mod_positions: Set[int] = set()
 
-    if not mm_tag or not ml_tag:
+    if not _has_mm_ml_inputs(mm_tag, ml_tag):
         return mod_positions
 
     seq_upper = sequence.upper()

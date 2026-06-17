@@ -24,6 +24,7 @@ try:
         _build_hexamer_lookup_with_rc,
         _append_mm_mod_result,
         _daf_deamination_base_counts,
+        _has_mm_ml_inputs,
         _iter_mm_mod_specs,
         _mm_base_indices,
         _mm_qualities_for_valid_positions,
@@ -47,6 +48,7 @@ except ImportError:
         _build_hexamer_lookup_with_rc,
         _append_mm_mod_result,
         _daf_deamination_base_counts,
+        _has_mm_ml_inputs,
         _iter_mm_mod_specs,
         _mm_base_indices,
         _mm_qualities_for_valid_positions,
@@ -66,6 +68,15 @@ def test_modified_base_quality_passes_unknown_or_threshold_values():
     assert _modified_base_quality_passes(-1, 125)
     assert _modified_base_quality_passes(125, 125)
     assert not _modified_base_quality_passes(124, 125)
+
+
+def test_has_mm_ml_inputs_handles_empty_and_numpy_ml_tags():
+    assert not _has_mm_ml_inputs("", [128])
+    assert not _has_mm_ml_inputs("A+a,0;", None)
+    assert not _has_mm_ml_inputs("A+a,0;", [])
+    assert not _has_mm_ml_inputs("A+a,0;", np.asarray([], dtype=np.uint8))
+    assert _has_mm_ml_inputs("A+a,0;", np.asarray([128, 255], dtype=np.uint8))
+    assert _has_mm_ml_inputs("A+a,0;", 128)
 
 
 def test_read_bam_keeps_raw_ml_container_for_manual_parser(monkeypatch):
