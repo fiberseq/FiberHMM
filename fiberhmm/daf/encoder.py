@@ -14,6 +14,7 @@ import pysam
 from tqdm import tqdm
 
 from fiberhmm.inference.bam_output import _sort_and_index_bam
+from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 
 # CIGAR op codes (from the BAM spec) that consume reference:
 #   M=0, D=2, N=3, =7, X=8. Of these, MD describes M/=/X/D only
@@ -125,7 +126,7 @@ def get_daf_positions(read, force_strand=None, ref_fasta=None):
         no ``force_strand``).
     """
     # Skip unmapped / secondary / supplementary
-    if read.is_unmapped or read.is_secondary or read.is_supplementary:
+    if not is_primary_mapped_alignment(read):
         return None
 
     seq = read.query_sequence
@@ -398,7 +399,7 @@ def process_bam_daf_encode(
             total += 1
 
             # Filter: unmapped / secondary / supplementary pass through
-            if read.is_unmapped or read.is_secondary or read.is_supplementary:
+            if not is_primary_mapped_alignment(read):
                 _write_skipped_read(read)
                 continue
 
@@ -512,7 +513,7 @@ def _check_md_tag(inbam, ref_fasta, _log):
     checked = 0
     has_md = False
     for read in inbam.fetch(until_eof=True):
-        if read.is_unmapped or read.is_secondary or read.is_supplementary:
+        if not is_primary_mapped_alignment(read):
             continue
         if read.has_tag("MD"):
             has_md = True
