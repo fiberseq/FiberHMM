@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from fiberhmm.daf import encoder
@@ -20,6 +22,34 @@ class _FakeProgress:
 
     def update(self, amount):
         self.n += amount
+
+
+def _daf_read(**overrides):
+    attrs = {
+        "is_unmapped": False,
+        "is_secondary": False,
+        "is_supplementary": False,
+        "mapping_quality": 60,
+        "query_alignment_length": 1500,
+    }
+    attrs.update(overrides)
+    return SimpleNamespace(**attrs)
+
+
+def test_daf_encode_skip_reason_matches_filter_order():
+    assert encoder._daf_encode_skip_reason(_daf_read(), 20, 1000) is None
+    assert encoder._daf_encode_skip_reason(
+        _daf_read(is_unmapped=True), 20, 1000
+    ) == "not_primary_mapped"
+    assert encoder._daf_encode_skip_reason(
+        _daf_read(mapping_quality=10), 20, 1000
+    ) == "low_mapq"
+    assert encoder._daf_encode_skip_reason(
+        _daf_read(query_alignment_length=999), 20, 1000
+    ) == "too_short"
+    assert encoder._daf_encode_skip_reason(
+        _daf_read(query_alignment_length=None), 20, 1000
+    ) is None
 
 
 def test_write_skipped_daf_read_writes_updates_and_returns_increment():

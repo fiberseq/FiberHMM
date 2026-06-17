@@ -342,6 +342,17 @@ def _write_skipped_daf_read(outbam, pbar, read) -> int:
     return 1
 
 
+def _daf_encode_skip_reason(read, min_mapq: int, min_read_length: int):
+    if not is_primary_mapped_alignment(read):
+        return "not_primary_mapped"
+    if read.mapping_quality < min_mapq:
+        return "low_mapq"
+    read_len = read.query_alignment_length
+    if read_len is not None and read_len < min_read_length:
+        return "too_short"
+    return None
+
+
 def process_bam_daf_encode(
     input_bam,
     output_bam,
@@ -427,19 +438,8 @@ def process_bam_daf_encode(
         for read in inbam.fetch(until_eof=True):
             total += 1
 
-            # Filter: unmapped / secondary / supplementary pass through
-            if not is_primary_mapped_alignment(read):
-                skipped += _write_skipped_daf_read(outbam, pbar, read)
-                continue
-
-            # MAPQ filter
-            if read.mapping_quality < min_mapq:
-                skipped += _write_skipped_daf_read(outbam, pbar, read)
-                continue
-
-            # Length filter
-            read_len = read.query_alignment_length
-            if read_len is not None and read_len < min_read_length:
+            skip_reason = _daf_encode_skip_reason(read, min_mapq, min_read_length)
+            if skip_reason:
                 skipped += _write_skipped_daf_read(outbam, pbar, read)
                 continue
 
