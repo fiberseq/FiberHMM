@@ -15,6 +15,20 @@ except ImportError:
     HAS_POSTERIOR_WRITER = False
 
 
+def _increment_counter(counters, key: str, amount: int = 1) -> None:
+    counters[key] = counters.get(key, 0) + amount
+
+
+def _record_worker_failures(counters, worker_failures: int) -> None:
+    if worker_failures:
+        _increment_counter(counters, 'worker_failures', worker_failures)
+
+
+def _write_passthrough(outbam, read_obj, counters) -> None:
+    outbam.write(read_obj)
+    _increment_counter(counters, 'written')
+
+
 def _drain_oldest_chunk(
     inflight,
     outbam,
@@ -32,22 +46,20 @@ def _drain_oldest_chunk(
     """
     future, chunk_read_objs, chunk_reads, chunk_skip_flags = inflight.popleft()
     results, worker_failures = coerce_worker_chunk_result(future.result())
-    if worker_failures:
-        counters['worker_failures'] = counters.get('worker_failures', 0) + worker_failures
+    _record_worker_failures(counters, worker_failures)
     result_iter = iter(results)
     fiber_iter = iter(chunk_reads)
 
     for read_obj, is_skipped in zip(chunk_read_objs, chunk_skip_flags):
         if is_skipped:
-            outbam.write(read_obj)
-            counters['written'] += 1
+            _write_passthrough(outbam, read_obj, counters)
             continue
 
         next(fiber_iter)
         result = next(result_iter)
         if result is not None:
             set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
-            counters['reads_with_footprints'] += 1
+            _increment_counter(counters, 'reads_with_footprints')
 
             if posterior_writer and result.get('posteriors') is not None:
                 chrom = read_obj.reference_name
@@ -71,10 +83,9 @@ def _drain_oldest_chunk(
                         'footprint_sizes': result['nl'],
                     })
         else:
-            counters['no_footprints'] += 1
+            _increment_counter(counters, 'no_footprints')
 
-        outbam.write(read_obj)
-        counters['written'] += 1
+        _write_passthrough(outbam, read_obj, counters)
 
 
 def _drain_oldest_fused_chunk(
@@ -88,21 +99,19 @@ def _drain_oldest_fused_chunk(
     """Drain one fused apply+recall chunk and write reads in input order."""
     future, chunk_read_objs, chunk_payloads, chunk_skip_flags = inflight.popleft()
     results, worker_failures = coerce_worker_chunk_result(future.result())
-    if worker_failures:
-        counters['worker_failures'] = counters.get('worker_failures', 0) + worker_failures
+    _record_worker_failures(counters, worker_failures)
     result_iter = iter(results)
     payload_iter = iter(chunk_payloads)
 
     for read_obj, is_skipped in zip(chunk_read_objs, chunk_skip_flags):
         if is_skipped:
-            outbam.write(read_obj)
-            counters['written'] += 1
+            _write_passthrough(outbam, read_obj, counters)
             continue
 
         next(payload_iter)
         result = next(result_iter)
         if result == CHIMERA_RESULT:
-            counters['chimera'] = counters.get('chimera', 0) + 1
+            _increment_counter(counters, 'chimera')
         elif result is not None:
             write_fused_recall_tags(
                 read_obj,
@@ -111,9 +120,8 @@ def _drain_oldest_fused_chunk(
                 also_write_legacy=also_write_legacy,
                 downstream_compat=downstream_compat,
             )
-            counters['reads_with_footprints'] += 1
+            _increment_counter(counters, 'reads_with_footprints')
         else:
-            counters['no_footprints'] += 1
+            _increment_counter(counters, 'no_footprints')
 
-        outbam.write(read_obj)
-        counters['written'] += 1
+        _write_passthrough(outbam, read_obj, counters)

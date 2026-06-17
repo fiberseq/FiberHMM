@@ -11,6 +11,7 @@ import fiberhmm.inference.mp_context as mp_context
 import fiberhmm.inference.parallel as parallel
 import fiberhmm.inference.region_pipeline as region_pipeline
 import fiberhmm.inference.region_workers as region_workers
+import fiberhmm.inference.streaming_drain as streaming_drain
 import fiberhmm.inference.streaming_pipeline as streaming_pipeline
 import fiberhmm.inference.streaming_workers as streaming_workers
 from fiberhmm.inference.parallel import (
@@ -275,6 +276,19 @@ def test_fused_payload_worker_counts_per_read_failures(monkeypatch):
         None,
         None,
     ]
+
+
+def test_streaming_drain_counter_helpers_write_passthrough():
+    read = object()
+    outbam = _OutBam()
+    counters = {}
+
+    streaming_drain._increment_counter(counters, "written", 2)
+    streaming_drain._record_worker_failures(counters, 3)
+    streaming_drain._write_passthrough(outbam, read, counters)
+
+    assert counters == {"written": 3, "worker_failures": 3}
+    assert outbam.written == [read]
 
 
 def test_streaming_drain_counts_worker_failures_and_passes_read_through():
