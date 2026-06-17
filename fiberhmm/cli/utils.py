@@ -26,6 +26,7 @@ from tqdm import tqdm
 from fiberhmm.core.model_io import load_model_with_metadata, save_model
 from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
+from fiberhmm.probabilities.utils import get_base_name, setup_output_dirs
 
 # =============================================================================
 # convert subcommand
@@ -563,16 +564,10 @@ def cmd_transfer(args):
     max_context = max(args.context_sizes)
 
     output_dir = args.output
-    tables_dir = os.path.join(output_dir, "tables")
-    plots_dir = os.path.join(output_dir, "plots")
-
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(tables_dir, exist_ok=True)
-    os.makedirs(plots_dir, exist_ok=True)
-
-    base_name = os.path.basename(output_dir.rstrip('/'))
-    if not base_name:
-        base_name = "transfer"
+    _, tables_dir_path, plots_dir_path = setup_output_dirs(output_dir)
+    tables_dir = str(tables_dir_path)
+    plots_dir = str(plots_dir_path)
+    base_name = get_base_name(output_dir, default="transfer")
 
     print("=" * 60)
     print("FiberHMM Transfer Learning - Emission Probability Estimator")

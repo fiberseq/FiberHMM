@@ -35,7 +35,11 @@ from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
 from fiberhmm.core.tag_access import get_preferred_tag
 from fiberhmm.probabilities.context_counter import ContextCounter
 from fiberhmm.probabilities.stats import generate_probability_stats
-from fiberhmm.probabilities.utils import detect_strand_and_base
+from fiberhmm.probabilities.utils import (
+    detect_strand_and_base,
+    get_base_name,
+    setup_output_dirs,
+)
 
 
 FILTER_STAT_KEYS = (
@@ -305,17 +309,10 @@ def main():
 
     # Set up output directories
     output_dir = args.output
-    tables_dir = os.path.join(output_dir, "tables")
-    plots_dir = os.path.join(output_dir, "plots")
-
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(tables_dir, exist_ok=True)
-    os.makedirs(plots_dir, exist_ok=True)
-
-    # Base name for files (last component of output path)
-    base_name = os.path.basename(output_dir.rstrip('/'))
-    if not base_name:
-        base_name = "probs"
+    _, tables_dir_path, plots_dir_path = setup_output_dirs(output_dir)
+    tables_dir = str(tables_dir_path)
+    plots_dir = str(plots_dir_path)
+    base_name = get_base_name(output_dir)
 
     print("=" * 60)
     print("FiberHMM Emission Probability Generator")
