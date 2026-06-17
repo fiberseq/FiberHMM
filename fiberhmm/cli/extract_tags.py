@@ -133,6 +133,19 @@ def _ma_annotation_tag_inputs(read):
     return ma_str, aq, an_names
 
 
+def _ma_interval_to_seq(start: int, length: int, read_length: int, is_reverse: bool):
+    if is_reverse:
+        return flip_interval_frame(start, length, read_length)
+    return start, length
+
+
+def _ma_quals_in_genomic_order(quals, is_reverse: bool) -> list:
+    q_out = [int(q) for q in quals]
+    if is_reverse and len(q_out) >= 3:
+        q_out[1], q_out[2] = q_out[2], q_out[1]
+    return q_out
+
+
 def _parse_ma_annotations(read, target_name: str):
     """Return target annotations from MA/AQ/AN in positional annotation order."""
     tag_inputs = _ma_annotation_tag_inputs(read)
@@ -159,14 +172,13 @@ def _parse_ma_annotations(read, target_name: str):
             ann_name = an_names[ann_idx] if ann_idx < len(an_names) else ''
             if name == target_name:
                 # MA is molecular frame; flip to SEQ (query) for ref mapping.
-                a_start, a_len = (flip_interval_frame(int(s), int(length), read_length)
-                                  if is_reverse else (int(s), int(length)))
-                q_out = [int(q) for q in quals]
+                a_start, a_len = _ma_interval_to_seq(
+                    int(s), int(length), read_length, is_reverse,
+                )
                 # The BED is genomic, so emit QQQ edge bytes in GENOMIC left/right
                 # order: on a reverse read the molecular 5' edge (el) is the
-                # genomic-right edge, so swap el<->er. (q[0] = nq/tq is unchanged.)
-                if is_reverse and len(q_out) >= 3:
-                    q_out[1], q_out[2] = q_out[2], q_out[1]
+                # genomic-right edge. q[0] = nq/tq is unchanged.
+                q_out = _ma_quals_in_genomic_order(quals, is_reverse)
                 annotations.append({
                     'start': a_start,
                     'length': a_len,

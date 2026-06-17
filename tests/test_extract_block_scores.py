@@ -222,6 +222,15 @@ def test_ma_annotation_tag_inputs_handles_required_and_optional_tags():
     )
 
 
+def test_ma_interval_and_quals_helpers_preserve_genomic_order():
+    assert extract_tags._ma_interval_to_seq(10, 5, 100, False) == (10, 5)
+    assert extract_tags._ma_interval_to_seq(10, 5, 100, True) == (85, 5)
+
+    assert extract_tags._ma_quals_in_genomic_order([1, 2, 3], False) == [1, 2, 3]
+    assert extract_tags._ma_quals_in_genomic_order([1, 2, 3], True) == [1, 3, 2]
+    assert extract_tags._ma_quals_in_genomic_order([1, 2], True) == [1, 2]
+
+
 def test_ma_annotation_quality_values_pad_triplets_and_ignore_msp_quals():
     assert extract_tags._ma_annotation_quality_values('tf', [10, 20]) == (
         10, (10, 20, 0),
