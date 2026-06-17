@@ -34,6 +34,7 @@ try:
         _mm_mod_spec_parts,
         _mm_positions_from_spec,
         _mm_target_base,
+        _mm_walk_context,
         _reverse_complement_context,
         detect_daf_strand,
         encode_from_query_sequence,
@@ -60,6 +61,7 @@ except ImportError:
         _mm_mod_spec_parts,
         _mm_positions_from_spec,
         _mm_target_base,
+        _mm_walk_context,
         _reverse_complement_context,
         detect_daf_strand,
         encode_from_query_sequence,
@@ -88,6 +90,32 @@ def test_has_mm_ml_inputs_handles_empty_and_numpy_ml_tags():
     assert not _has_mm_ml_inputs("A+a,0;", np.asarray([], dtype=np.uint8))
     assert _has_mm_ml_inputs("A+a,0;", np.asarray([128, 255], dtype=np.uint8))
     assert _has_mm_ml_inputs("A+a,0;", 128)
+
+
+def test_mm_walk_context_builds_forward_and_reverse_search_sequences():
+    seq_upper, q_len, search_seq, search_bytes = _mm_walk_context(
+        "AaGC", is_reverse=False,
+    )
+
+    assert seq_upper == "AAGC"
+    assert q_len == 4
+    assert search_seq == "AAGC"
+    np.testing.assert_array_equal(
+        search_bytes,
+        np.frombuffer(b"AAGC", dtype=np.uint8),
+    )
+
+    seq_upper, q_len, search_seq, search_bytes = _mm_walk_context(
+        "AAGC", is_reverse=True,
+    )
+
+    assert seq_upper == "AAGC"
+    assert q_len == 4
+    assert search_seq == "GCTT"
+    np.testing.assert_array_equal(
+        search_bytes,
+        np.frombuffer(b"GCTT", dtype=np.uint8),
+    )
 
 
 def test_read_mod_query_positions_accepts_numpy_ml_tag(monkeypatch):

@@ -279,6 +279,14 @@ def _mm_search_sequence(seq_upper: str, is_reverse: bool) -> str:
     return seq_upper
 
 
+def _mm_walk_context(sequence: str, is_reverse: bool) -> Tuple[str, int, str, np.ndarray]:
+    seq_upper = sequence.upper()
+    q_len = len(seq_upper)
+    search_seq = _mm_search_sequence(seq_upper, is_reverse)
+    search_bytes = np.frombuffer(search_seq.encode('ascii'), dtype=np.uint8)
+    return seq_upper, q_len, search_seq, search_bytes
+
+
 def _mm_skip_counts(raw_counts) -> np.ndarray:
     try:
         return np.asarray(raw_counts, dtype=np.int64)
@@ -426,13 +434,9 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
 
     ml_arr_all = _ml_tag_to_uint8_array(ml_tag)
 
-    seq_upper = sequence.upper()
-    q_len = len(seq_upper)
-
     # For reverse-aligned reads, MM walks in the RC of SEQ (original
     # sequencing direction).  See SAM specs on MM/ML orientation.
-    search_seq = _mm_search_sequence(seq_upper, is_reverse)
-    seq_bytes = np.frombuffer(search_seq.encode('ascii'), dtype=np.uint8)
+    _, q_len, _, seq_bytes = _mm_walk_context(sequence, is_reverse)
     base_positions_cache: Dict[str, np.ndarray] = {}
 
     ml_idx = 0
@@ -566,15 +570,14 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
     if not _has_mm_ml_inputs(mm_tag, ml_tag):
         return mod_positions
 
-    seq_upper = sequence.upper()
-    q_len = len(seq_upper)
-
     # CORRECTNESS: MM walks positions in the ORIGINAL sequencing direction,
     # which equals SEQ for forward-aligned reads and equals the reverse
     # complement of SEQ for reverse-aligned reads.  We do the walk on
     # ``search_seq`` (== ORIGINAL) and flip positions back to SEQ frame at
     # the end via ``q_len - 1 - pos``.
-    search_seq = _mm_search_sequence(seq_upper, is_reverse)
+    seq_upper, q_len, search_seq, search_bytes = _mm_walk_context(
+        sequence, is_reverse,
+    )
 
     # Convert ml_tag to a numpy uint8 array once.  Accepts raw bytes (fastest
     # IPC format), array.array (what pysam returns), or Python list (legacy
@@ -593,7 +596,6 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
     ml_idx = 0
     # Pre-compute base position arrays per target base (cached within one call)
     base_pos_cache: Dict[str, np.ndarray] = {}
-    search_bytes = np.frombuffer(search_seq.encode('ascii'), dtype=np.uint8)
 
     for base_mod, skip_arr, n_mods in _iter_mm_mod_specs(mm_tag):
         target_base = _mm_target_base(base_mod)
