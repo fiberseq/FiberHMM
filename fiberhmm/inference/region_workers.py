@@ -225,6 +225,13 @@ def _write_region_posterior_record(tsv_file, read, result: dict) -> bool:
         return False
 
 
+def _region_result_ns_scores(result: dict, with_scores: bool):
+    if not with_scores:
+        return None
+    scores = result['ns_scores']
+    return scores if scores is not None else None
+
+
 def _init_region_worker(model_path: str, params: dict):
     """Initialize worker for region-parallel processing."""
     global _worker_model, _worker_region_params
@@ -493,11 +500,7 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
 
                         ns = result['ns']
                         nl = result['nl']
-                        ns_scores = (
-                            result['ns_scores']
-                            if with_scores and result['ns_scores'] is not None
-                            else None
-                        )
+                        ns_scores = _region_result_ns_scores(result, with_scores)
                         bed_out.write(
                             _format_region_bed12_row(
                                 ref_name, ref_start, ref_end, read_id, strand,

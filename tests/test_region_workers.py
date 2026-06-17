@@ -14,6 +14,7 @@ from fiberhmm.inference.region_workers import (
     _region_bed12_blocks,
     _region_fused_recall_options,
     _region_read_route,
+    _region_result_ns_scores,
     _write_region_posterior_record,
 )
 
@@ -290,3 +291,11 @@ def test_write_region_posterior_record_returns_success_status(monkeypatch):
         "footprint_sizes": [2],
     }
     assert not _write_region_posterior_record(Tsv(fail=True), read, result)
+
+
+def test_region_result_ns_scores_respects_with_scores_flag():
+    scores = [0.25, 0.75]
+
+    assert _region_result_ns_scores({"ns_scores": scores}, with_scores=False) is None
+    assert _region_result_ns_scores({"ns_scores": None}, with_scores=True) is None
+    assert _region_result_ns_scores({"ns_scores": scores}, with_scores=True) is scores
