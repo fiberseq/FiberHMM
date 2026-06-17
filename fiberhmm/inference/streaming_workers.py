@@ -57,6 +57,19 @@ def _payload_fiber_read_result(
     return fiber_read
 
 
+def _fused_recall_state(llr_hit, llr_miss, recall_nucs: bool,
+                        split_min_llr: float, split_min_opps: int,
+                        phase_nrl: int) -> dict:
+    return {
+        'llr_hit': llr_hit,
+        'llr_miss': llr_miss,
+        'recall_nucs': recall_nucs,
+        'split_min_llr': split_min_llr,
+        'split_min_opps': split_min_opps,
+        'phase_nrl': phase_nrl,
+    }
+
+
 def _init_bam_worker(model_path, debug_timing=False):
     """Initialize worker process with model."""
     global _worker_model, _worker_debug_timing
@@ -108,12 +121,9 @@ def _init_fused_worker(
         apply_model_path,
         emission_uplift,
     )
-    _worker_recall_state['llr_hit'] = llr_hit
-    _worker_recall_state['llr_miss'] = llr_miss
-    _worker_recall_state['recall_nucs'] = recall_nucs
-    _worker_recall_state['split_min_llr'] = split_min_llr
-    _worker_recall_state['split_min_opps'] = split_min_opps
-    _worker_recall_state['phase_nrl'] = phase_nrl
+    _worker_recall_state = _fused_recall_state(
+        llr_hit, llr_miss, recall_nucs, split_min_llr, split_min_opps, phase_nrl,
+    )
     configure_daf_chimera_filter(filter_chimeras, chimera_min_seg, chimera_purity)
 
     # Warmup: apply Viterbi + TF Kadane scan.

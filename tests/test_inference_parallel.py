@@ -469,6 +469,27 @@ def test_streaming_payload_fiber_read_result_maps_chimera(monkeypatch):
         streaming_workers._payload_fiber_read_result(payload, "pacbio-fiber", 128)
 
 
+def test_fused_recall_state_preserves_tables_and_thresholds():
+    hit = object()
+    miss = object()
+
+    assert streaming_workers._fused_recall_state(
+        hit,
+        miss,
+        recall_nucs=True,
+        split_min_llr=4.5,
+        split_min_opps=5,
+        phase_nrl=185,
+    ) == {
+        "llr_hit": hit,
+        "llr_miss": miss,
+        "recall_nucs": True,
+        "split_min_llr": 4.5,
+        "split_min_opps": 5,
+        "phase_nrl": 185,
+    }
+
+
 def test_fused_payload_worker_counts_per_read_failures(monkeypatch):
     def fake_extract(payload, mode, prob_threshold):
         if payload == "extract-bad":
