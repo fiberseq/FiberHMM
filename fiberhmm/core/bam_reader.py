@@ -245,6 +245,37 @@ def get_modified_positions_pysam(read, prob_threshold: int = 125, mode: str = 'p
     return mod_positions
 
 
+_COMPLEMENT_TABLE = str.maketrans('ACGTacgtNn', 'TGCAtgcaNn')
+
+
+def _ml_tag_to_uint8_array(ml_tag) -> np.ndarray:
+    if isinstance(ml_tag, (bytes, bytearray, memoryview)):
+        return np.frombuffer(ml_tag, dtype=np.uint8)
+    if isinstance(ml_tag, np.ndarray):
+        return ml_tag
+    return np.asarray(ml_tag, dtype=np.uint8)
+
+
+def _mm_search_sequence(seq_upper: str, is_reverse: bool) -> str:
+    if is_reverse:
+        return seq_upper.translate(_COMPLEMENT_TABLE)[::-1]
+    return seq_upper
+
+
+def _mm_skip_counts(raw_counts) -> np.ndarray:
+    try:
+        return np.asarray(raw_counts, dtype=np.int64)
+    except (ValueError, TypeError):
+        skip_counts = []
+        for value in raw_counts:
+            if value.strip():
+                try:
+                    skip_counts.append(int(value))
+                except ValueError:
+                    continue
+        return np.asarray(skip_counts, dtype=np.int64)
+
+
 def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
                                sequence: str, is_reverse: bool) -> Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]]:
     """Parse MM/ML into per-mod-type position + quality arrays (SEQ frame).
@@ -268,22 +299,14 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
     except TypeError:
         pass
 
-    if isinstance(ml_tag, (bytes, bytearray, memoryview)):
-        ml_arr_all = np.frombuffer(ml_tag, dtype=np.uint8)
-    elif isinstance(ml_tag, np.ndarray):
-        ml_arr_all = ml_tag
-    else:
-        ml_arr_all = np.asarray(ml_tag, dtype=np.uint8)
+    ml_arr_all = _ml_tag_to_uint8_array(ml_tag)
 
     seq_upper = sequence.upper()
     q_len = len(seq_upper)
 
     # For reverse-aligned reads, MM walks in the RC of SEQ (original
     # sequencing direction).  See SAM specs on MM/ML orientation.
-    if is_reverse:
-        search_seq = seq_upper.translate(_COMPLEMENT_TABLE)[::-1]
-    else:
-        search_seq = seq_upper
+    search_seq = _mm_search_sequence(seq_upper, is_reverse)
     seq_bytes = np.frombuffer(search_seq.encode('ascii'), dtype=np.uint8)
     base_positions_cache: Dict[str, np.ndarray] = {}
 
@@ -296,17 +319,7 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
             continue
 
         base_mod = parts[0]  # e.g. "A+a" or "A+a." or "C+m?"
-        try:
-            skip_arr = np.asarray(parts[1:], dtype=np.int64)
-        except (ValueError, TypeError):
-            skip_counts = []
-            for x in parts[1:]:
-                if x.strip():
-                    try:
-                        skip_counts.append(int(x))
-                    except ValueError:
-                        continue
-            skip_arr = np.asarray(skip_counts, dtype=np.int64)
+        skip_arr = _mm_skip_counts(parts[1:])
         n_mods = len(skip_arr)
 
         # Parse "X+y" or "X+y." or "X-y?" into (target_base, mod_code)
@@ -427,9 +440,6 @@ def cigar_to_query_ref(read) -> np.ndarray:
     return _cigar_walk_numba(cigar_ops, cigar_lens, int(ref_start), int(q_len))
 
 
-_COMPLEMENT_TABLE = str.maketrans('ACGTacgtNn', 'TGCAtgcaNn')
-
-
 def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
                                   sequence: str, is_reverse: bool,
                                   prob_threshold: int = 125,
@@ -475,20 +485,12 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
     # complement of SEQ for reverse-aligned reads.  We do the walk on
     # ``search_seq`` (== ORIGINAL) and flip positions back to SEQ frame at
     # the end via ``q_len - 1 - pos``.
-    if is_reverse:
-        search_seq = seq_upper.translate(_COMPLEMENT_TABLE)[::-1]
-    else:
-        search_seq = seq_upper
+    search_seq = _mm_search_sequence(seq_upper, is_reverse)
 
     # Convert ml_tag to a numpy uint8 array once.  Accepts raw bytes (fastest
     # IPC format), array.array (what pysam returns), or Python list (legacy
     # callers).  All downstream slicing becomes O(1) numpy views.
-    if isinstance(ml_tag, (bytes, bytearray, memoryview)):
-        ml_arr_all = np.frombuffer(ml_tag, dtype=np.uint8)
-    elif isinstance(ml_tag, np.ndarray):
-        ml_arr_all = ml_tag
-    else:
-        ml_arr_all = np.asarray(ml_tag, dtype=np.uint8)
+    ml_arr_all = _ml_tag_to_uint8_array(ml_tag)
     ml_len_total = len(ml_arr_all)
 
     if debug and mode == 'daf':
@@ -513,17 +515,7 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
             continue
 
         base_mod = parts[0]
-        try:
-            skip_arr = np.asarray(parts[1:], dtype=np.int64)
-        except (ValueError, TypeError):
-            skip_counts = []
-            for x in parts[1:]:
-                if x.strip():
-                    try:
-                        skip_counts.append(int(x))
-                    except ValueError:
-                        continue
-            skip_arr = np.asarray(skip_counts, dtype=np.int64)
+        skip_arr = _mm_skip_counts(parts[1:])
 
         n_mods = len(skip_arr)
 
