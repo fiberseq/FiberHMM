@@ -188,6 +188,23 @@ class TestExtractFootprintsFromStates:
 
 
 class TestModeDetection:
+    def test_mode_detection_helpers_count_mm_specs(self):
+        counts = engine._new_mode_detection_counts()
+
+        engine._record_mm_mode_specs(counts, "T-a,0;A+a,0;C+m,0;Z+z,0;malformed;")
+
+        assert counts["t_minus_a"] == 1
+        assert counts["a_plus_a"] == 1
+        assert counts["c_plus_m"] == 1
+        assert counts["other"] == 1
+
+    def test_mode_detection_helper_uses_iupac_when_no_mm_tags(self):
+        counts = engine._new_mode_detection_counts()
+        counts["iupac"] = 1
+        counts["st"] = 1
+
+        assert engine._mode_from_detection_counts(counts) == "daf"
+
     def test_detect_mode_uses_valid_mm_specs_and_ignores_malformed(self, monkeypatch):
         class FakeRead:
             is_unmapped = False

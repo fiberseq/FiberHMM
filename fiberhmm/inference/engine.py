@@ -82,6 +82,58 @@ def footprint_runs(states: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 _footprint_runs = footprint_runs
 
 
+def _new_mode_detection_counts() -> dict:
+    return {
+        't_minus_a': 0,
+        'a_plus_a': 0,
+        'c_plus_m': 0,
+        'other': 0,
+        'reads_with_mm': 0,
+        'iupac': 0,
+        'st': 0,
+    }
+
+
+def _mode_detection_key_for_mm_base(base_mod: str) -> str:
+    if base_mod.startswith('T-a') or base_mod.startswith('T+a'):
+        return 't_minus_a'
+    if base_mod.startswith('A+a') or base_mod.startswith('A-a'):
+        return 'a_plus_a'
+    if base_mod.startswith('C+m') or base_mod.startswith('C-m'):
+        return 'c_plus_m'
+    return 'other'
+
+
+def _record_mm_mode_specs(counts: dict, mm_tag: str) -> None:
+    for mod_spec in mm_tag.split(';'):
+        if not mod_spec:
+            continue
+        parts = _mm_mod_spec_parts(mod_spec)
+        if parts is None:
+            continue
+        key = _mode_detection_key_for_mm_base(parts[0].strip())
+        counts[key] += 1
+
+
+def _mode_from_detection_counts(counts: dict) -> str:
+    if counts['reads_with_mm'] == 0:
+        # No MM tags found -- check for IUPAC R/Y encoding.
+        if counts['iupac'] > 0 and counts['st'] > 0:
+            return 'daf'
+        return 'unknown'
+
+    # DAF-seq uses T-a for + strand deamination (C->T)
+    # and A+a for - strand deamination (G->A).
+    if counts['t_minus_a'] > 0:
+        # T-a tags are DAF-specific (deaminated C shows as T).
+        return 'daf'
+    if counts['a_plus_a'] > 0 and counts['c_plus_m'] == 0:
+        # Only A+a without 5mC: could be m6A fiber-seq or DAF - strand only.
+        # For now, assume pacbio-fiber unless we see T-a.
+        return 'pacbio-fiber'
+    return 'unknown'
+
+
 def _mean_interval_scores(confidence: np.ndarray, starts, ends,
                           invert: bool = False) -> np.ndarray:
     scores = np.zeros(len(starts), dtype=np.float32)
@@ -407,18 +459,11 @@ def detect_mode_from_bam(bam_path: str, n_sample: int = 100) -> str:
     """
     try:
         with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
-            t_minus_a_count = 0  # T-a tags (DAF + strand)
-            a_plus_a_count = 0   # A+a tags (DAF - strand or m6A)
-            c_plus_m_count = 0   # C+m tags (5mC methylation)
-            other_count = 0
-            reads_with_mm = 0
-            # Also track IUPAC indicators in the same pass
-            iupac_count = 0
-            st_count = 0
+            counts = _new_mode_detection_counts()
             n_scanned = 0
 
             for read in bam.fetch(until_eof=True):
-                if reads_with_mm >= n_sample and n_scanned >= n_sample:
+                if counts['reads_with_mm'] >= n_sample and n_scanned >= n_sample:
                     break
 
                 if read.is_unmapped or read.query_sequence is None:
@@ -428,54 +473,19 @@ def detect_mode_from_bam(bam_path: str, n_sample: int = 100) -> str:
                 if n_scanned < n_sample:
                     n_scanned += 1
                     if has_iupac_encoding(read.query_sequence):
-                        iupac_count += 1
+                        counts['iupac'] += 1
                     if read.has_tag('st'):
-                        st_count += 1
+                        counts['st'] += 1
 
                 # Get MM tag
-                if reads_with_mm < n_sample:
+                if counts['reads_with_mm'] < n_sample:
                     mm_tag = get_preferred_tag(read, 'MM', 'Mm')
 
                     if mm_tag:
-                        reads_with_mm += 1
+                        counts['reads_with_mm'] += 1
+                        _record_mm_mode_specs(counts, mm_tag)
 
-                        # Parse MM tag to identify modification types
-                        for mod_spec in mm_tag.split(';'):
-                            if not mod_spec:
-                                continue
-                            parts = _mm_mod_spec_parts(mod_spec)
-                            if parts is None:
-                                continue
-                            base_mod = parts[0].strip()
-
-                            if base_mod.startswith('T-a') or base_mod.startswith('T+a'):
-                                t_minus_a_count += 1
-                            elif base_mod.startswith('A+a') or base_mod.startswith('A-a'):
-                                a_plus_a_count += 1
-                            elif base_mod.startswith('C+m') or base_mod.startswith('C-m'):
-                                c_plus_m_count += 1
-                            else:
-                                other_count += 1
-
-            # Determine mode based on tag patterns
-            if reads_with_mm == 0:
-                # No MM tags found — check for IUPAC R/Y encoding
-                if iupac_count > 0 and st_count > 0:
-                    return 'daf'
-                return 'unknown'
-
-            # DAF-seq uses T-a for + strand deamination (C→T)
-            # and A+a for - strand deamination (G→A)
-            if t_minus_a_count > 0:
-                # T-a tags are DAF-specific (deaminated C shows as T)
-                return 'daf'
-            elif a_plus_a_count > 0 and c_plus_m_count == 0:
-                # Only A+a without 5mC - could be m6A fiber-seq or DAF - strand only
-                # Check if we also see patterns suggesting DAF
-                # For now, assume pacbio-fiber unless we see T-a
-                return 'pacbio-fiber'
-            else:
-                return 'unknown'
+            return _mode_from_detection_counts(counts)
 
     except Exception as e:
         print(f"  Warning: Could not auto-detect mode from BAM: {e}")
