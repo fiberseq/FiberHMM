@@ -1137,6 +1137,40 @@ def _extract_progress_message(
     )
 
 
+def _sorted_extract_region_beds(region_beds):
+    return sorted(region_beds, key=lambda x: x[0])
+
+
+def _write_concatenated_region_beds(out_path: str, region_beds) -> None:
+    with open(out_path, 'w') as outf:
+        for _, tb in region_beds:
+            with open(tb, 'r') as inf:
+                shutil.copyfileobj(inf, outf)
+
+
+def _sort_bed_in_place(out_path: str) -> None:
+    sorted_bed = out_path + '.sorted'
+    subprocess.run(
+        ['sort', '-k1,1', '-k2,2n', out_path, '-o', sorted_bed],
+        check=True,
+    )
+    os.replace(sorted_bed, out_path)
+
+
+def _bed_file_has_content(out_path: str) -> bool:
+    return os.path.getsize(out_path) > 0
+
+
+def _finalize_extract_type_bed(extract_type: str, region_beds, out_path: str) -> None:
+    beds = _sorted_extract_region_beds(region_beds)
+    print(f"  [{extract_type}] concatenating {len(beds)} region BEDs...")
+    _write_concatenated_region_beds(out_path, beds)
+
+    if _bed_file_has_content(out_path):
+        print(f"  [{extract_type}] sorting BED...")
+        _sort_bed_in_place(out_path)
+
+
 def _canonical_extract_type(extract_type: str) -> str:
     return 'nucleosome' if extract_type == 'footprint' else extract_type
 
@@ -1338,19 +1372,11 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
 
         # Concatenate + sort per type
         for t in extract_types:
-            beds = sorted(temp_beds_by_type[t], key=lambda x: x[0])
-            out_path = output_beds[t]
-            print(f"  [{t}] concatenating {len(beds)} region BEDs...")
-            with open(out_path, 'w') as outf:
-                for _, tb in beds:
-                    with open(tb, 'r') as inf:
-                        shutil.copyfileobj(inf, outf)
-            if os.path.getsize(out_path) > 0:
-                print(f"  [{t}] sorting BED...")
-                sorted_bed = out_path + '.sorted'
-                subprocess.run(['sort', '-k1,1', '-k2,2n', out_path, '-o', sorted_bed],
-                               check=True)
-                os.replace(sorted_bed, out_path)
+            _finalize_extract_type_bed(
+                t,
+                temp_beds_by_type[t],
+                output_beds[t],
+            )
 
         elapsed = time.time() - start_time
         feat_summary = ', '.join(f"{t}: {total_features[t]:,}" for t in extract_types)

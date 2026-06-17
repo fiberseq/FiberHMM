@@ -510,6 +510,49 @@ def test_extract_progress_message_formats_counts_and_zero_elapsed():
     )
 
 
+def test_finalize_extract_type_bed_concatenates_regions_in_order(
+    monkeypatch, tmp_path, capsys,
+):
+    late = tmp_path / "region_2_tf.bed"
+    early = tmp_path / "region_1_tf.bed"
+    out_path = tmp_path / "tf.bed"
+    late.write_text("chr2\t20\t30\n")
+    early.write_text("chr1\t10\t20\n")
+    sort_calls = []
+
+    monkeypatch.setattr(
+        extract_tags,
+        "_sort_bed_in_place",
+        lambda path: sort_calls.append(path),
+    )
+
+    extract_tags._finalize_extract_type_bed(
+        "tf",
+        [(2, str(late)), (1, str(early))],
+        str(out_path),
+    )
+
+    assert out_path.read_text() == "chr1\t10\t20\nchr2\t20\t30\n"
+    assert sort_calls == [str(out_path)]
+    out = capsys.readouterr().out
+    assert "[tf] concatenating 2 region BEDs" in out
+    assert "[tf] sorting BED" in out
+
+
+def test_finalize_extract_type_bed_skips_sort_for_empty_output(monkeypatch, tmp_path):
+    out_path = tmp_path / "tf.bed"
+
+    monkeypatch.setattr(
+        extract_tags,
+        "_sort_bed_in_place",
+        lambda path: pytest.fail("unexpected sort"),
+    )
+
+    extract_tags._finalize_extract_type_bed("tf", [], str(out_path))
+
+    assert out_path.read_text() == ""
+
+
 def test_normalize_parallel_extract_args_handles_aliases_and_backcompat_paths():
     output_beds, extract_types = extract_tags._normalize_parallel_extract_args(
         "footprints.bed",
