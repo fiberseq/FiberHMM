@@ -60,6 +60,7 @@ from fiberhmm.inference.reference_mapping import (
     query_to_ref_lookup as _query_to_ref_lookup,
     scored_interval_blocks as _legacy_interval_blocks,
 )
+from fiberhmm.io.bam_index import ensure_bam_index
 from fiberhmm.io.ma_tags import (
     flip_interval_frame,
     flip_intervals_to_seq,
@@ -892,10 +893,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
     output_beds = {('nucleosome' if k == 'footprint' else k): v
                    for k, v in output_beds.items()}
 
-    # Check BAM index
-    if not os.path.exists(input_bam + '.bai') and not os.path.exists(input_bam.replace('.bam', '.bai')):
-        print("Indexing input BAM...")
-        pysam.index(input_bam)
+    ensure_bam_index(input_bam, "Indexing input BAM...")
 
     # Get regions
     regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)

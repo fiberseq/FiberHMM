@@ -12,6 +12,7 @@ from typing import Optional, Set, Tuple
 
 import pysam
 
+from fiberhmm.io.bam_index import ensure_bam_index
 from fiberhmm.inference.bam_output import (
     _concatenate_region_bams,
     _sort_and_index_bam,
@@ -110,10 +111,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
     start_time = time.time()
     return_posteriors = output_posteriors is not None
 
-    # Check that BAM is indexed
-    if not os.path.exists(input_bam + '.bai') and not os.path.exists(input_bam.replace('.bam', '.bai')):
-        print("Indexing input BAM for region-parallel processing...")
-        pysam.index(input_bam)
+    ensure_bam_index(input_bam, "Indexing input BAM for region-parallel processing...")
 
     # Get regions
     regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
@@ -299,10 +297,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
     """
     start_time = time.time()
 
-    # Check that BAM is indexed
-    if not os.path.exists(input_bam + '.bai') and not os.path.exists(input_bam.replace('.bam', '.bai')):
-        print("Indexing input BAM for region-parallel processing...")
-        pysam.index(input_bam)
+    ensure_bam_index(input_bam, "Indexing input BAM for region-parallel processing...")
 
     # Get regions
     regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)

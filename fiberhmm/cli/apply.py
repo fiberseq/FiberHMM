@@ -22,6 +22,7 @@ from fiberhmm.cli.model_selection import resolve_model_path as _resolve_cli_mode
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.inference.parallel import process_bam_for_footprints
 from fiberhmm.inference.stats import collect_stats_from_bam
+from fiberhmm.io.bam_index import bam_index_exists
 
 
 _MODE_DESCRIPTIONS = {
@@ -158,10 +159,7 @@ def _use_streaming_pipeline(input_bam: str, n_cores: int) -> bool:
 
 
 def _has_bam_index(input_bam: str) -> bool:
-    return (
-        os.path.exists(input_bam + '.bai') or
-        os.path.exists(input_bam.replace('.bam', '.bai'))
-    )
+    return bam_index_exists(input_bam)
 
 
 def _resolve_process_unmapped(args, use_streaming: bool) -> bool:
