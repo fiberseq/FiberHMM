@@ -532,6 +532,60 @@ def _training_zoom_window_starts(seq_len: int, window_size: int,
     return [max(0, min(start, seq_len - window_size)) for start in window_starts]
 
 
+def _write_training_stats_summary(summary_path: str, model: FiberHMM,
+                                  emission_probs: np.ndarray,
+                                  sampled_reads: list,
+                                  all_footprint_sizes: list,
+                                  all_msp_sizes: list) -> None:
+    with open(summary_path, 'w') as f:
+        f.write("FiberHMM Training Statistics\n")
+        f.write("=" * 60 + "\n\n")
+
+        f.write("Transition Matrix:\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"  Footprint \u2192 Footprint: {model.transmat_[0, 0]:.6f}\n")
+        f.write(f"  Footprint \u2192 Accessible: {model.transmat_[0, 1]:.6f}\n")
+        f.write(f"  Accessible \u2192 Footprint: {model.transmat_[1, 0]:.6f}\n")
+        f.write(f"  Accessible \u2192 Accessible: {model.transmat_[1, 1]:.6f}\n")
+
+        expected_fp, expected_msp = _expected_model_durations(model.transmat_)
+        f.write(f"\n  Expected footprint duration: {expected_fp:.1f} bp\n")
+        f.write(f"  Expected MSP duration: {expected_msp:.1f} bp\n")
+
+        f.write("\nEmission Probabilities:\n")
+        f.write("-" * 40 + "\n")
+        fp_nonzero = emission_probs[0, :][emission_probs[0, :] > 0]
+        msp_nonzero = emission_probs[1, :][emission_probs[1, :] > 0]
+        f.write(
+            f"  Footprint contexts: {len(fp_nonzero):,} "
+            f"(mean={np.mean(fp_nonzero):.4f}, "
+            f"median={np.median(fp_nonzero):.4f})\n"
+        )
+        f.write(
+            f"  Accessible contexts: {len(msp_nonzero):,} "
+            f"(mean={np.mean(msp_nonzero):.4f}, "
+            f"median={np.median(msp_nonzero):.4f})\n"
+        )
+
+        f.write("\nTraining Data Statistics:\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"  Reads used: {len(sampled_reads)}\n")
+        if len(all_footprint_sizes) > 0:
+            f.write(f"  Total footprints: {len(all_footprint_sizes):,}\n")
+            f.write(
+                f"  Footprint sizes: mean={np.mean(all_footprint_sizes):.1f}, "
+                f"median={np.median(all_footprint_sizes):.1f}, "
+                f"range={min(all_footprint_sizes)}-{max(all_footprint_sizes)}\n"
+            )
+        if len(all_msp_sizes) > 0:
+            f.write(f"  Total MSPs: {len(all_msp_sizes):,}\n")
+            f.write(
+                f"  MSP sizes: mean={np.mean(all_msp_sizes):.1f}, "
+                f"median={np.median(all_msp_sizes):.1f}, "
+                f"range={min(all_msp_sizes)}-{max(all_msp_sizes)}\n"
+            )
+
+
 def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads: list,
                             emission_probs: np.ndarray, output_dir: str,
                             n_examples: int = 5, mode: str = 'pacbio-fiber'):
@@ -855,42 +909,10 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
 
     # Write text summary
     summary_path = os.path.join(plots_dir, 'training_stats.txt')
-    with open(summary_path, 'w') as f:
-        f.write("FiberHMM Training Statistics\n")
-        f.write("=" * 60 + "\n\n")
-
-        f.write("Transition Matrix:\n")
-        f.write("-" * 40 + "\n")
-        f.write(f"  Footprint → Footprint: {model.transmat_[0, 0]:.6f}\n")
-        f.write(f"  Footprint → Accessible: {model.transmat_[0, 1]:.6f}\n")
-        f.write(f"  Accessible → Footprint: {model.transmat_[1, 0]:.6f}\n")
-        f.write(f"  Accessible → Accessible: {model.transmat_[1, 1]:.6f}\n")
-
-        expected_fp, expected_msp = _expected_model_durations(model.transmat_)
-        f.write(f"\n  Expected footprint duration: {expected_fp:.1f} bp\n")
-        f.write(f"  Expected MSP duration: {expected_msp:.1f} bp\n")
-
-        f.write("\nEmission Probabilities:\n")
-        f.write("-" * 40 + "\n")
-        fp_nonzero = emission_probs[0, :][emission_probs[0, :] > 0]
-        msp_nonzero = emission_probs[1, :][emission_probs[1, :] > 0]
-        f.write(f"  Footprint contexts: {len(fp_nonzero):,} (mean={np.mean(fp_nonzero):.4f}, median={np.median(fp_nonzero):.4f})\n")
-        f.write(f"  Accessible contexts: {len(msp_nonzero):,} (mean={np.mean(msp_nonzero):.4f}, median={np.median(msp_nonzero):.4f})\n")
-
-        f.write("\nTraining Data Statistics:\n")
-        f.write("-" * 40 + "\n")
-        f.write(f"  Reads used: {len(sampled_reads)}\n")
-        if len(all_footprint_sizes) > 0:
-            f.write(f"  Total footprints: {len(all_footprint_sizes):,}\n")
-            f.write(f"  Footprint sizes: mean={np.mean(all_footprint_sizes):.1f}, "
-                   f"median={np.median(all_footprint_sizes):.1f}, "
-                   f"range={min(all_footprint_sizes)}-{max(all_footprint_sizes)}\n")
-        if len(all_msp_sizes) > 0:
-            f.write(f"  Total MSPs: {len(all_msp_sizes):,}\n")
-            f.write(f"  MSP sizes: mean={np.mean(all_msp_sizes):.1f}, "
-                   f"median={np.median(all_msp_sizes):.1f}, "
-                   f"range={min(all_msp_sizes)}-{max(all_msp_sizes)}\n")
-
+    _write_training_stats_summary(
+        summary_path, model, emission_probs, sampled_reads,
+        all_footprint_sizes, all_msp_sizes,
+    )
     print(f"  Saved: {summary_path}")
 
 

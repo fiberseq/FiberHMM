@@ -71,6 +71,31 @@ def test_training_zoom_window_starts_are_deterministic_and_bounded():
     assert 4000 <= starts[2] <= 5000
 
 
+def test_write_training_stats_summary(tmp_path):
+    model = SimpleNamespace(
+        transmat_=np.array([[0.8, 0.2], [0.25, 0.75]]),
+    )
+    summary_path = tmp_path / "training_stats.txt"
+
+    train._write_training_stats_summary(
+        str(summary_path),
+        model,
+        emission_probs=np.array([[0.0, 0.2, 0.4], [0.1, 0.0, 0.9]]),
+        sampled_reads=[object(), object()],
+        all_footprint_sizes=[10, 30],
+        all_msp_sizes=[20],
+    )
+
+    text = summary_path.read_text()
+    assert "FiberHMM Training Statistics" in text
+    assert "Footprint → Footprint: 0.800000" in text
+    assert "Expected footprint duration: 5.0 bp" in text
+    assert "Footprint contexts: 2 (mean=0.3000, median=0.3000)" in text
+    assert "Reads used: 2" in text
+    assert "Footprint sizes: mean=20.0, median=20.0, range=10-30" in text
+    assert "MSP sizes: mean=20.0, median=20.0, range=20-20" in text
+
+
 def test_training_config_includes_base_model_only_when_used():
     args = SimpleNamespace(
         context_size=3,
