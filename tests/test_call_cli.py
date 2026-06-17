@@ -14,6 +14,10 @@ from conftest import make_synthetic_bam, make_synthetic_iupac_bam
 from fiberhmm.cli.call import (
     _build_pg_record,
     _call_banner_text,
+    _call_circular_label,
+    _call_enzyme_label,
+    _call_mode_label,
+    _call_recall_model_label,
     _check_daf_inputs,
     _check_region_parallel_file_io,
     _chimera_filter_state,
@@ -316,6 +320,17 @@ def test_call_pg_record_documents_molecular_coordinates():
     assert "recall_nucs=True" in record["DS"]
     assert "phase_nrl=185" in record["DS"]
     assert "chimera_filter=on" in record["DS"]
+
+
+def test_call_banner_label_helpers():
+    assert _call_mode_label(False) == "streaming"
+    assert _call_mode_label(True) == "region-parallel"
+    assert _call_recall_model_label(None) == "(reuse apply model)"
+    assert _call_recall_model_label("recall.json") == "recall.json"
+    assert _call_enzyme_label(None) == "custom"
+    assert _call_enzyme_label("dddb") == "dddb"
+    assert _call_circular_label(False) == ""
+    assert _call_circular_label(True) == " circular=on"
 
 
 def test_call_banner_text_formats_resolved_settings():

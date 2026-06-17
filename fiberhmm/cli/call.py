@@ -300,13 +300,29 @@ def _build_pg_record(mode, recall_nucs, phase_nrl, keep_chimeras, argv=None):
     }
 
 
+def _call_mode_label(region_parallel: bool) -> str:
+    return 'region-parallel' if region_parallel else 'streaming'
+
+
+def _call_recall_model_label(recall_model_path) -> str:
+    return recall_model_path or '(reuse apply model)'
+
+
+def _call_enzyme_label(enzyme) -> str:
+    return enzyme or 'custom'
+
+
+def _call_circular_label(circular: bool) -> str:
+    return ' circular=on' if circular else ''
+
+
 def _call_banner_text(apply_model_path, recall_model_path, mode, k, enzyme,
                       min_llr, min_opps, unify_threshold, uplift,
                       cores, io_threads, circular, region_parallel):
-    mode_label = 'region-parallel' if region_parallel else 'streaming'
-    recall_model_label = recall_model_path or '(reuse apply model)'
-    enzyme_label = enzyme or 'custom'
-    circular_label = ' circular=on' if circular else ''
+    mode_label = _call_mode_label(region_parallel)
+    recall_model_label = _call_recall_model_label(recall_model_path)
+    enzyme_label = _call_enzyme_label(enzyme)
+    circular_label = _call_circular_label(circular)
     return (
         "\n=========================================================================\n"
         f"  fiberhmm-call [BETA] — fused apply + recall-tfs ({mode_label})\n"
