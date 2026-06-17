@@ -44,17 +44,25 @@ def _unmapped_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     return None
 
 
+def _alignment_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
+    if config.primary_only and _is_secondary_or_supplementary(read):
+        return "secondary_supplementary"
+
+    if not read.is_unmapped and read.mapping_quality < config.min_mapq:
+        return "low_mapq"
+
+    return None
+
+
 def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     """Return the skip reason for a streaming read, or None if processable."""
     reason = _unmapped_skip_reason(read, config)
     if reason is not None:
         return reason
 
-    if config.primary_only and _is_secondary_or_supplementary(read):
-        return "secondary_supplementary"
-
-    if not read.is_unmapped and read.mapping_quality < config.min_mapq:
-        return "low_mapq"
+    reason = _alignment_skip_reason(read, config)
+    if reason is not None:
+        return reason
 
     read_len = _filter_read_length(read)
     if read_len is None or read_len < config.min_read_length:

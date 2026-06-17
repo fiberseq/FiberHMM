@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from fiberhmm.inference.read_filters import (
     ReadFilterConfig,
+    _alignment_skip_reason,
     _filter_read_length,
     _is_secondary_or_supplementary,
     _unmapped_skip_reason,
@@ -90,6 +91,31 @@ def test_unmapped_skip_reason_requires_enabled_processing_and_sequence():
         _unmapped_skip_reason(
             _Read(is_unmapped=True),
             ReadFilterConfig(process_unmapped=True),
+        )
+        is None
+    )
+
+
+def test_alignment_skip_reason_checks_primary_and_mapped_mapq():
+    assert _alignment_skip_reason(_Read(), ReadFilterConfig(primary_only=True)) is None
+    assert (
+        _alignment_skip_reason(
+            _Read(is_secondary=True),
+            ReadFilterConfig(primary_only=True),
+        )
+        == "secondary_supplementary"
+    )
+    assert (
+        _alignment_skip_reason(
+            _Read(mapping_quality=10),
+            ReadFilterConfig(min_mapq=30),
+        )
+        == "low_mapq"
+    )
+    assert (
+        _alignment_skip_reason(
+            _Read(is_unmapped=True, mapping_quality=0),
+            ReadFilterConfig(process_unmapped=True, min_mapq=30),
         )
         is None
     )
