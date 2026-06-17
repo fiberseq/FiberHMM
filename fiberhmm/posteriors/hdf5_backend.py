@@ -16,10 +16,28 @@ Usage:
 """
 
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import h5py
 import numpy as np
+
+
+def _int32_array(values) -> np.ndarray:
+    if values is None or len(values) == 0:
+        return np.array([], dtype=np.int32)
+    return np.asarray(values, dtype=np.int32)
+
+
+def _create_gzip_dataset(
+    group,
+    name: str,
+    data,
+    compression_opts: Optional[int] = None,
+) -> None:
+    kwargs = {'compression': 'gzip'}
+    if compression_opts is not None:
+        kwargs['compression_opts'] = compression_opts
+    group.create_dataset(name, data=data, **kwargs)
 
 
 class PosteriorWriter:
@@ -131,36 +149,26 @@ class PosteriorWriter:
             idx = start_idx + i
 
             # Write variable-length arrays with compression
-            grp['posteriors'].create_dataset(
+            _create_gzip_dataset(
+                grp['posteriors'],
                 str(idx),
-                data=fiber['posteriors'].astype(np.float16),
-                compression='gzip',
-                compression_opts=4
+                fiber['posteriors'].astype(np.float16),
+                compression_opts=4,
             )
 
-            ref_pos = fiber.get('ref_positions')
-            if ref_pos is None or len(ref_pos) == 0:
-                ref_pos = np.array([], dtype=np.int32)
-            grp['ref_positions'].create_dataset(
+            ref_pos = _int32_array(fiber.get('ref_positions'))
+            _create_gzip_dataset(
+                grp['ref_positions'],
                 str(idx),
-                data=ref_pos.astype(np.int32),
-                compression='gzip',
-                compression_opts=4
+                ref_pos,
+                compression_opts=4,
             )
 
-            fp_starts = fiber.get('footprint_starts', np.array([], dtype=np.int32))
-            fp_sizes = fiber.get('footprint_sizes', np.array([], dtype=np.int32))
+            fp_starts = _int32_array(fiber.get('footprint_starts'))
+            fp_sizes = _int32_array(fiber.get('footprint_sizes'))
 
-            grp['footprint_starts'].create_dataset(
-                str(idx),
-                data=fp_starts.astype(np.int32),
-                compression='gzip'
-            )
-            grp['footprint_sizes'].create_dataset(
-                str(idx),
-                data=fp_sizes.astype(np.int32),
-                compression='gzip'
-            )
+            _create_gzip_dataset(grp['footprint_starts'], str(idx), fp_starts)
+            _create_gzip_dataset(grp['footprint_sizes'], str(idx), fp_sizes)
 
             # Accumulate metadata for final arrays
             meta['ids'].append(fiber['read_name'])
