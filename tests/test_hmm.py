@@ -29,6 +29,7 @@ try:
         _normalized_start_counts,
         _normalized_transition_counts,
         _random_training_parameters,
+        _swap_hmm_state_order,
         _training_data_for_iteration,
         _training_has_converged,
         _training_observation_matrix,
@@ -51,6 +52,7 @@ except ImportError:
         _normalized_start_counts,
         _normalized_transition_counts,
         _random_training_parameters,
+        _swap_hmm_state_order,
         _training_data_for_iteration,
         _training_has_converged,
         _training_observation_matrix,
@@ -374,6 +376,26 @@ class TestModelTraining:
 
 class TestStateNormalization:
     """Test state normalization functionality."""
+
+    def test_swap_hmm_state_order_updates_probabilities_and_clears_logs(self):
+        model = FiberHMM()
+        model.emissionprob_ = np.array([[0.1, 0.2], [0.8, 0.9]])
+        model.startprob_ = np.array([0.3, 0.7])
+        model.transmat_ = np.array([[0.8, 0.2], [0.1, 0.9]])
+        model._log_startprob = np.array([1.0])
+        model._log_transmat = np.array([2.0])
+        model._log_emissionprob = np.array([3.0])
+        model._log_probs_frozen = True
+
+        _swap_hmm_state_order(model)
+
+        np.testing.assert_array_equal(model.emissionprob_, [[0.8, 0.9], [0.1, 0.2]])
+        np.testing.assert_array_equal(model.startprob_, [0.7, 0.3])
+        np.testing.assert_array_equal(model.transmat_, [[0.9, 0.1], [0.2, 0.8]])
+        assert model._log_startprob is None
+        assert model._log_transmat is None
+        assert model._log_emissionprob is None
+        assert model._log_probs_frozen is False
 
     def test_normalize_states_correct_order(self, hexamer_emission_probs):
         """Test that normalize_states() puts states in correct order."""

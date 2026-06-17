@@ -811,23 +811,7 @@ class FiberHMM:
         if verbose:
             print("States are REVERSED - swapping (State 0 had higher mean, should be footprint)")
 
-        # Swap emission probabilities
-        self.emissionprob_ = self.emissionprob_[[1, 0], :]
-
-        # Swap start probabilities
-        if self.startprob_ is not None:
-            self.startprob_ = self.startprob_[[1, 0]]
-
-        # Swap transition matrix rows and columns
-        if self.transmat_ is not None:
-            # Swap rows, then swap columns
-            self.transmat_ = self.transmat_[[1, 0], :][:, [1, 0]]
-
-        # Clear cached log probabilities (they need to be recomputed)
-        self._log_startprob = None
-        self._log_transmat = None
-        self._log_emissionprob = None
-        self._log_probs_frozen = False
+        _swap_hmm_state_order(self)
 
         if verbose:
             new_mean_0, new_mean_1 = _methylated_emission_means(self.emissionprob_)
@@ -942,6 +926,22 @@ def _methylated_emission_means(emissionprob: np.ndarray) -> Tuple[float, float]:
         float(np.mean(emissionprob[0, :n_methylated])),
         float(np.mean(emissionprob[1, :n_methylated])),
     )
+
+
+def _clear_hmm_log_cache(model) -> None:
+    model._log_startprob = None
+    model._log_transmat = None
+    model._log_emissionprob = None
+    model._log_probs_frozen = False
+
+
+def _swap_hmm_state_order(model) -> None:
+    model.emissionprob_ = model.emissionprob_[[1, 0], :]
+    if model.startprob_ is not None:
+        model.startprob_ = model.startprob_[[1, 0]]
+    if model.transmat_ is not None:
+        model.transmat_ = model.transmat_[[1, 0], :][:, [1, 0]]
+    _clear_hmm_log_cache(model)
 
 
 # =============================================================================
