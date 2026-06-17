@@ -90,45 +90,34 @@ def _load_npz_model_raw(filepath):
     }
 
 
-def cmd_convert(args):
-    """Convert pickle/NPZ model to JSON."""
-    input_path = Path(args.input)
-    output_path = Path(args.output)
-
-    if not input_path.exists():
-        print(f"Error: Input file not found: {input_path}", file=sys.stderr)
-        sys.exit(1)
-
+def _load_raw_model_by_suffix(input_path: Path):
     suffix = input_path.suffix.lower()
-    print(f"Loading model from {input_path}...")
+    if suffix == '.npz':
+        return _load_npz_model_raw(input_path)
+    if suffix in ['.pickle', '.pkl']:
+        return _load_pickle_model_raw(input_path)
 
     try:
-        if suffix == '.npz':
-            data = _load_npz_model_raw(input_path)
-        elif suffix in ['.pickle', '.pkl']:
-            data = _load_pickle_model_raw(input_path)
-        else:
-            try:
-                data = _load_pickle_model_raw(input_path)
-            except Exception:
-                data = _load_npz_model_raw(input_path)
-    except Exception as e:
-        print(f"Error loading model: {e}", file=sys.stderr)
-        sys.exit(1)
+        return _load_pickle_model_raw(input_path)
+    except Exception:
+        return _load_npz_model_raw(input_path)
 
-    startprob = np.array(data['startprob'])
-    transmat = np.array(data['transmat'])
-    emissionprob = np.array(data['emissionprob'])
 
-    print(f"  States: {data['n_states']}")
-    print(f"  Context size: k={data['context_size']} ({2*data['context_size']+1}-mer)")
-    print(f"  Mode: {data['mode']}")
-    print(f"  Start probs: {startprob}")
-    print(f"  Transition matrix shape: {transmat.shape}")
-    print(f"  Emission prob shape: {emissionprob.shape}")
+def _raw_model_parameter_arrays(data: dict):
+    return (
+        np.array(data['startprob']),
+        np.array(data['transmat']),
+        np.array(data['emissionprob']),
+    )
 
-    # Save as JSON
-    json_data = {
+
+def _converted_model_json_payload(
+    data: dict,
+    startprob: np.ndarray,
+    transmat: np.ndarray,
+    emissionprob: np.ndarray,
+) -> dict:
+    return {
         'model_type': 'FiberHMM',
         'version': '2.0',
         'n_states': int(data['n_states']),
@@ -138,6 +127,37 @@ def cmd_convert(args):
         'context_size': int(data['context_size']),
         'mode': str(data['mode']),
     }
+
+
+def cmd_convert(args):
+    """Convert pickle/NPZ model to JSON."""
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+
+    if not input_path.exists():
+        print(f"Error: Input file not found: {input_path}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Loading model from {input_path}...")
+
+    try:
+        data = _load_raw_model_by_suffix(input_path)
+    except Exception as e:
+        print(f"Error loading model: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    startprob, transmat, emissionprob = _raw_model_parameter_arrays(data)
+
+    print(f"  States: {data['n_states']}")
+    print(f"  Context size: k={data['context_size']} ({2*data['context_size']+1}-mer)")
+    print(f"  Mode: {data['mode']}")
+    print(f"  Start probs: {startprob}")
+    print(f"  Transition matrix shape: {transmat.shape}")
+    print(f"  Emission prob shape: {emissionprob.shape}")
+
+    json_data = _converted_model_json_payload(
+        data, startprob, transmat, emissionprob,
+    )
 
     print(f"Saving to {output_path}...")
     with open(output_path, 'w') as f:

@@ -9,9 +9,12 @@ from fiberhmm.cli.utils import (
     _accessibility_priors_for_base,
     _accessibility_priors_dataframe,
     _aggregate_accessibility_counts,
+    _converted_model_json_payload,
     _estimate_emission_probs,
+    _load_raw_model_by_suffix,
     _passes_transfer_base_filters,
     _passes_transfer_target_filters,
+    _raw_model_parameter_arrays,
     _scale_emission_probabilities,
     _target_bases_for_transfer_mode,
     _target_mod_positions_from_bam_read,
@@ -26,6 +29,76 @@ def test_target_bases_for_transfer_mode():
     assert _target_bases_for_transfer_mode('pacbio-fiber') == ['A']
     assert _target_bases_for_transfer_mode('nanopore-fiber') == ['A']
     assert _target_bases_for_transfer_mode('daf') == ['C', 'G']
+
+
+def test_load_raw_model_by_suffix_uses_expected_loader(monkeypatch, tmp_path):
+    import fiberhmm.cli.utils as cli_utils
+
+    calls = []
+
+    def fake_pickle(path):
+        calls.append(("pickle", path.name))
+        return {"loader": "pickle"}
+
+    def fake_npz(path):
+        calls.append(("npz", path.name))
+        return {"loader": "npz"}
+
+    monkeypatch.setattr(cli_utils, "_load_pickle_model_raw", fake_pickle)
+    monkeypatch.setattr(cli_utils, "_load_npz_model_raw", fake_npz)
+
+    assert _load_raw_model_by_suffix(tmp_path / "model.pkl") == {
+        "loader": "pickle",
+    }
+    assert _load_raw_model_by_suffix(tmp_path / "model.npz") == {"loader": "npz"}
+    assert calls == [("pickle", "model.pkl"), ("npz", "model.npz")]
+
+
+def test_load_raw_model_by_suffix_falls_back_to_npz(monkeypatch, tmp_path):
+    import fiberhmm.cli.utils as cli_utils
+
+    calls = []
+
+    def fail_pickle(path):
+        calls.append(("pickle", path.name))
+        raise ValueError("not pickle")
+
+    def fake_npz(path):
+        calls.append(("npz", path.name))
+        return {"loader": "npz"}
+
+    monkeypatch.setattr(cli_utils, "_load_pickle_model_raw", fail_pickle)
+    monkeypatch.setattr(cli_utils, "_load_npz_model_raw", fake_npz)
+
+    assert _load_raw_model_by_suffix(tmp_path / "model.legacy") == {
+        "loader": "npz",
+    }
+    assert calls == [("pickle", "model.legacy"), ("npz", "model.legacy")]
+
+
+def test_converted_model_json_payload_coerces_arrays_and_metadata():
+    data = {
+        "startprob": [0.25, 0.75],
+        "transmat": [[0.9, 0.1], [0.2, 0.8]],
+        "emissionprob": [[0.4, 0.6], [0.7, 0.3]],
+        "n_states": "2",
+        "context_size": "3",
+        "mode": "daf",
+    }
+    startprob, transmat, emissionprob = _raw_model_parameter_arrays(data)
+
+    assert _converted_model_json_payload(
+        data, startprob, transmat, emissionprob,
+    ) == {
+        "model_type": "FiberHMM",
+        "version": "2.0",
+        "n_states": 2,
+        "startprob": [0.25, 0.75],
+        "transmat": [[0.9, 0.1], [0.2, 0.8]],
+        "emissionprob": [[0.4, 0.6], [0.7, 0.3]],
+        "context_size": 3,
+        "mode": "daf",
+    }
 
 
 def test_accessibility_counter_records_accessible_and_protected_contexts():
