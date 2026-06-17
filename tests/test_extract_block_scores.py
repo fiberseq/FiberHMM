@@ -1426,6 +1426,46 @@ def test_deam_positions_by_priority_stops_at_first_nonempty_source(monkeypatch):
     assert calls == ["mm", "iupac", "md"]
 
 
+def test_tag_diagnostic_helpers_parse_summary_and_predictions():
+    counts = extract_tags._new_tag_diagnostic_counts()
+    assert extract_tags._tag_diagnostic_summary(counts) == (
+        "no mapped reads in first sniff — extract will be empty"
+    )
+
+    counts.update({
+        "reads_scanned": 4,
+        "has_ns_nl": 2,
+        "has_as_al": 1,
+        "has_MA_AQ": 1,
+        "has_MM": 3,
+        "has_ry_in_seq": 1,
+        "has_md_only": 1,
+        "mm_subtypes": {"C+m", "A+a", "C+u"},
+    })
+
+    assert extract_tags._mm_subtypes_from_tag(
+        "A+a,0;C+55797,0;T-a?,0;"
+    ) == {"A+a", "C+55797", "T-a"}
+    assert extract_tags._tag_diagnostic_summary(counts) == (
+        "ns/nl=2/4, as/al=1/4, MA/AQ=1/4, "
+        "MM/ML=3/4 [A+a,C+m,C+u], R/Y-in-seq=1/4, MD-only=1/4"
+    )
+    assert extract_tags._predicted_extract_sources(counts) == {
+        "nucleosome": "ns/nl",
+        "msp": "as/al",
+        "tf": "MA/AQ tf. annotations",
+        "m6a": "MM/ML (A+a)",
+        "m5c": "MM/ML (C+m)",
+        "deam": "MM/ML (u / 55797)",
+    }
+    assert extract_tags._deam_prediction_uses_direct_source(
+        "MM/ML (u / 55797)"
+    )
+    assert not extract_tags._deam_prediction_uses_direct_source(
+        "MD-only (path-3 fallback)"
+    )
+
+
 def test_looks_like_fiber_seq_detects_hia5_bams():
     """Regression for Christy LaFlamme's crash on surjected fiber-seq
     CRAMs: --deam should auto-skip on fiber-seq BAMs in --all mode to

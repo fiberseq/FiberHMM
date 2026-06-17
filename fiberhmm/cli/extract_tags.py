@@ -40,6 +40,7 @@ Usage:
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -70,6 +71,9 @@ from fiberhmm.io.ma_tags import (
     parse_aq_array,
     parse_ma_tag,
 )
+
+
+_MM_SUBTYPE_RE = re.compile(r'([ACGTUN])([+-])([a-z0-9]+|\d+)', re.IGNORECASE)
 
 
 def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
@@ -1469,19 +1473,8 @@ def _looks_like_fiber_seq(diag: Dict[str, object]) -> bool:
     return (has_m6a or has_m5c) and not has_u_code and not has_ry
 
 
-def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
-    """Sniff the first N mapped reads and report which sources each
-    extract type can work from. Reports per-source presence counts
-    plus a ``summary`` string for immediate user feedback.
-
-    Matches FiberBrowser's diagnose_bam_tags detection priority so
-    the user can predict which tracks will populate before the heavy
-    pass runs.
-    """
-    import re
-
-    from fiberhmm.daf.encoder import md_matches_cigar
-    counts = {
+def _new_tag_diagnostic_counts() -> Dict[str, object]:
+    return {
         'reads_scanned': 0,
         # Footprint / MSP / TF tags
         'has_ns_nl': 0, 'has_as_al': 0, 'has_MA_AQ': 0,
@@ -1496,7 +1489,93 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
         # --deam path-3 extraction.
         'md_bad_cigar': 0,
     }
-    mm_re = re.compile(r'([ACGTUN])([+-])([a-z0-9]+|\d+)', re.IGNORECASE)
+
+
+def _mm_subtypes_from_tag(mm_tag: str) -> Set[str]:
+    return {
+        f"{m.group(1).upper()}{m.group(2)}{m.group(3)}"
+        for m in _MM_SUBTYPE_RE.finditer(mm_tag)
+    }
+
+
+def _tag_diagnostic_fraction(count: int, total: int) -> str:
+    return f"{count}/{total}"
+
+
+def _tag_diagnostic_summary_parts(counts: Dict[str, object], total: int) -> list:
+    parts = []
+    if counts['has_ns_nl']:
+        parts.append(f"ns/nl={_tag_diagnostic_fraction(counts['has_ns_nl'], total)}")
+    if counts['has_as_al']:
+        parts.append(f"as/al={_tag_diagnostic_fraction(counts['has_as_al'], total)}")
+    if counts['has_MA_AQ']:
+        parts.append(f"MA/AQ={_tag_diagnostic_fraction(counts['has_MA_AQ'], total)}")
+    if counts['has_MM']:
+        mm_subtypes = sorted(counts['mm_subtypes'])
+        sub = (' [' + ','.join(mm_subtypes) + ']' if mm_subtypes else '')
+        parts.append(f"MM/ML={_tag_diagnostic_fraction(counts['has_MM'], total)}{sub}")
+    if counts['has_ry_in_seq']:
+        parts.append(
+            f"R/Y-in-seq={_tag_diagnostic_fraction(counts['has_ry_in_seq'], total)}"
+        )
+    if counts['has_md_only']:
+        parts.append(f"MD-only={_tag_diagnostic_fraction(counts['has_md_only'], total)}")
+    return parts
+
+
+def _tag_diagnostic_summary(counts: Dict[str, object]) -> str:
+    total = counts['reads_scanned']
+    if total == 0:
+        return "no mapped reads in first sniff — extract will be empty"
+
+    parts = _tag_diagnostic_summary_parts(counts, total)
+    if parts:
+        return ', '.join(parts)
+    return f'no FiberHMM / modification tags detected in first {total} mapped reads'
+
+
+def _predicted_extract_sources(diag: Dict[str, object]) -> dict:
+    predicted = {}
+    if diag['has_ns_nl']:
+        predicted['nucleosome'] = 'ns/nl'
+    if diag['has_as_al']:
+        predicted['msp'] = 'as/al'
+    if diag['has_MA_AQ']:
+        predicted['tf'] = 'MA/AQ tf. annotations'
+    if diag['has_MM'] and any('a' in s.lower() for s in diag['mm_subtypes']):
+        predicted['m6a'] = 'MM/ML (A+a)'
+    if diag['has_MM'] and any('+m' in s.lower() or '-m' in s.lower()
+                               for s in diag['mm_subtypes']):
+        predicted['m5c'] = 'MM/ML (C+m)'
+
+    mm_has_u = any(('+u' in s.lower() or '+55797' in s)
+                   for s in diag['mm_subtypes'])
+    if mm_has_u:
+        predicted['deam'] = 'MM/ML (u / 55797)'
+    elif diag['has_ry_in_seq']:
+        predicted['deam'] = 'R/Y in sequence'
+    elif diag['has_md_only']:
+        predicted['deam'] = 'MD-only (path-3 fallback)'
+    return predicted
+
+
+def _deam_prediction_uses_direct_source(predicted_deam: Optional[str]) -> bool:
+    return bool(
+        predicted_deam and ('MM/ML' in predicted_deam or 'R/Y' in predicted_deam)
+    )
+
+
+def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
+    """Sniff the first N mapped reads and report which sources each
+    extract type can work from. Reports per-source presence counts
+    plus a ``summary`` string for immediate user feedback.
+
+    Matches FiberBrowser's diagnose_bam_tags detection priority so
+    the user can predict which tracks will populate before the heavy
+    pass runs.
+    """
+    from fiberhmm.daf.encoder import md_matches_cigar
+    counts = _new_tag_diagnostic_counts()
 
     try:
         with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
@@ -1518,9 +1597,7 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
                     counts['has_MM'] += 1
                     try:
                         mm_str = get_preferred_tag(read, 'MM', 'Mm', '')
-                        for m in mm_re.finditer(mm_str):
-                            counts['mm_subtypes'].add(
-                                f"{m.group(1).upper()}{m.group(2)}{m.group(3)}")
+                        counts['mm_subtypes'].update(_mm_subtypes_from_tag(mm_str))
                     except Exception:
                         pass
                 if ml_present:
@@ -1543,35 +1620,8 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
     except (ValueError, OSError):
         pass
 
-    n = counts['reads_scanned']
     counts['mm_subtypes'] = sorted(counts['mm_subtypes'])
-
-    if n == 0:
-        counts['summary'] = "no mapped reads in first sniff — extract will be empty"
-        return counts
-
-    def frac(k):
-        return f"{k}/{n}"
-
-    parts = []
-    if counts['has_ns_nl']:
-        parts.append(f"ns/nl={frac(counts['has_ns_nl'])}")
-    if counts['has_as_al']:
-        parts.append(f"as/al={frac(counts['has_as_al'])}")
-    if counts['has_MA_AQ']:
-        parts.append(f"MA/AQ={frac(counts['has_MA_AQ'])}")
-    if counts['has_MM']:
-        sub = (' [' + ','.join(counts['mm_subtypes']) + ']'
-               if counts['mm_subtypes'] else '')
-        parts.append(f"MM/ML={frac(counts['has_MM'])}{sub}")
-    if counts['has_ry_in_seq']:
-        parts.append(f"R/Y-in-seq={frac(counts['has_ry_in_seq'])}")
-    if counts['has_md_only']:
-        parts.append(f"MD-only={frac(counts['has_md_only'])}")
-
-    counts['summary'] = (', '.join(parts) if parts
-                         else 'no FiberHMM / modification tags detected '
-                              f'in first {n} mapped reads')
+    counts['summary'] = _tag_diagnostic_summary(counts)
     return counts
 
 
@@ -1580,27 +1630,7 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
     print(f"Tag scan (first {diag['reads_scanned']} mapped reads): {diag['summary']}")
 
     # Predict which tracks will have content.
-    predicted = {}
-    if diag['has_ns_nl']:
-        predicted['nucleosome'] = 'ns/nl'
-    if diag['has_as_al']:
-        predicted['msp'] = 'as/al'
-    if diag['has_MA_AQ']:
-        predicted['tf'] = 'MA/AQ tf. annotations'
-    if diag['has_MM'] and any('a' in s.lower() for s in diag['mm_subtypes']):
-        predicted['m6a'] = 'MM/ML (A+a)'
-    if diag['has_MM'] and any('+m' in s.lower() or '-m' in s.lower()
-                               for s in diag['mm_subtypes']):
-        predicted['m5c'] = 'MM/ML (C+m)'
-    # deam: any of MM/ML u, R/Y in seq, or MD-only
-    mm_has_u = any(('+u' in s.lower() or '+55797' in s)
-                   for s in diag['mm_subtypes'])
-    if mm_has_u:
-        predicted['deam'] = 'MM/ML (u / 55797)'
-    elif diag['has_ry_in_seq']:
-        predicted['deam'] = 'R/Y in sequence'
-    elif diag['has_md_only']:
-        predicted['deam'] = 'MD-only (path-3 fallback)'
+    predicted = _predicted_extract_sources(diag)
 
     expected = []
     empty = []
@@ -1620,9 +1650,9 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
     # fine; this is just a stale annotation that silently drops --deam
     # extraction on affected reads.
     md_bad = diag.get('md_bad_cigar', 0)
-    if md_bad and 'deam' in extract_types and not any(
-        p for p in (predicted.get('deam'), )
-        if p and ('MM/ML' in p or 'R/Y' in p)
+    if (
+        md_bad and 'deam' in extract_types
+        and not _deam_prediction_uses_direct_source(predicted.get('deam'))
     ):
         n = diag.get('reads_scanned', 0)
         print(
