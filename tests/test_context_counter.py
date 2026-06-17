@@ -1,9 +1,11 @@
 """Tests for probability context counting primitives."""
 
 import numpy as np
+import pytest
 
 from fiberhmm.probabilities.context_counter import (
     ContextCounter,
+    _aggregate_context_counts,
     _context_to_code,
     _count_ratio,
     _daf_c_context_from_strand_context,
@@ -71,6 +73,24 @@ def test_context_encoding_helpers_sort_codes_and_create_missing_rows():
         {"context": "CCC", "hit": 0, "nohit": 0, "ratio": 0.0, "encode": 2},
         {"context": "AAC", "hit": 0, "nohit": 0, "ratio": 0.0, "encode": 1},
     ]
+
+
+def test_aggregate_context_counts_trims_and_merges_centered_contexts():
+    assert _aggregate_context_counts(
+        {
+            "AACAA": [2, 3],
+            "TACAT": [5, 7],
+            "GAGAG": [11, 13],
+        },
+        max_context=2,
+        context_size=1,
+    ) == {
+        "ACA": [7, 10],
+        "AGA": [11, 13],
+    }
+
+    with pytest.raises(ValueError, match="Requested context size"):
+        _aggregate_context_counts({}, max_context=1, context_size=2)
 
 
 def test_add_position_records_valid_center_contexts():

@@ -85,6 +85,19 @@ def _missing_probability_rows(all_contexts, existing, context_to_code: dict) -> 
     ]
 
 
+def _aggregate_context_counts(counts, max_context: int, context_size: int) -> dict:
+    if context_size > max_context:
+        raise ValueError(f"Requested context size {context_size} > max {max_context}")
+
+    aggregated = defaultdict(lambda: [0, 0])
+    trim = max_context - context_size
+    for full_context, context_counts in counts.items():
+        small_context = _trim_context(full_context, trim)
+        aggregated[small_context][0] += context_counts[0]
+        aggregated[small_context][1] += context_counts[1]
+    return dict(aggregated)
+
+
 class ContextCounter:
     """
     Counts modification hits/misses per sequence context.
@@ -262,19 +275,11 @@ class ContextCounter:
         Returns:
             DataFrame with columns: context, hit, nohit, ratio
         """
-        if context_size > self.max_context:
-            raise ValueError(f"Requested context size {context_size} > max {self.max_context}")
-
-        # Aggregate counts for smaller context
-        aggregated = defaultdict(lambda: [0, 0])
-
-        trim = self.max_context - context_size
-
-        for full_context, counts in self.counts.items():
-            # Extract the smaller context from center
-            small_context = _trim_context(full_context, trim)
-            aggregated[small_context][0] += counts[0]
-            aggregated[small_context][1] += counts[1]
+        aggregated = _aggregate_context_counts(
+            self.counts,
+            self.max_context,
+            context_size,
+        )
 
         # Build DataFrame
         rows = []
