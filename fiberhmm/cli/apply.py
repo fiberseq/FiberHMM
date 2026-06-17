@@ -18,6 +18,7 @@ from fiberhmm.cli.common import (
     add_stats_args,
     add_version_args,
 )
+from fiberhmm.cli.model_selection import resolve_model_path as _resolve_cli_model_path
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.inference.parallel import process_bam_for_footprints
 from fiberhmm.inference.stats import collect_stats_from_bam
@@ -145,26 +146,11 @@ Examples:
 
 def _resolve_model_path(args):
     """Resolve the apply model path from --model or bundled --enzyme/--seq."""
-    if args.model is not None:
-        return args.model
-
-    if args.enzyme is None:
-        print(
-            "error: one of --model or --enzyme must be provided.\n"
-            "  Use --enzyme hia5/dddb/ddda to pick a bundled model, or\n"
-            "  use --model /path/to/model.json for a custom model.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    from fiberhmm.models import get_model_path as _get_bundled
-    try:
-        model_path = _get_bundled(args.enzyme, tool='apply', seq=args.seq)
-    except (KeyError, FileNotFoundError) as e:
-        print(f"error: {e}", file=sys.stderr)
-        sys.exit(1)
-    print(f"Using bundled model: {model_path}")
-    return model_path
+    return _resolve_cli_model_path(
+        args,
+        tool='apply',
+        bundled_message="Using bundled model: {model_path}",
+    )
 
 
 def _use_streaming_pipeline(input_bam: str, n_cores: int) -> bool:

@@ -45,6 +45,7 @@ from collections import deque
 
 import pysam
 
+from fiberhmm.cli.model_selection import resolve_model_path as _resolve_cli_model_path
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.core.tag_access import compact_ml_value
 from fiberhmm.io.bam_header import append_coord_marker
@@ -393,26 +394,12 @@ def _resolve_model_metadata(model_path):
 
 def _resolve_model_path(args):
     """Resolve the recall model path from --model or bundled --enzyme/--seq."""
-    if args.model is not None:
-        return args.model
-
-    if args.enzyme is None:
-        print(
-            "error: one of --model or --enzyme must be provided.\n"
-            "  Use --enzyme hia5/dddb/ddda to pick a bundled model, or\n"
-            "  use --model /path/to/model.json for a custom model.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    from fiberhmm.models import get_model_path as _get_bundled
-    try:
-        model_path = _get_bundled(args.enzyme, tool='recall', seq=args.seq)
-    except (KeyError, FileNotFoundError) as e:
-        print(f"error: {e}", file=sys.stderr)
-        sys.exit(1)
-    print(f"[recall_tfs] using bundled model: {model_path}", file=sys.stderr)
-    return model_path
+    return _resolve_cli_model_path(
+        args,
+        tool='recall',
+        bundled_message="[recall_tfs] using bundled model: {model_path}",
+        bundled_message_file=sys.stderr,
+    )
 
 
 def main():
