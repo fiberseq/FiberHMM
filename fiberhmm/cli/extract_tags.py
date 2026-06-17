@@ -60,6 +60,7 @@ from fiberhmm.inference.reference_mapping import (
     query_to_ref_lookup as _query_to_ref_lookup,
     scored_interval_blocks as _legacy_interval_blocks,
 )
+from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.bam_index import ensure_bam_index
 from fiberhmm.io.ma_tags import (
     flip_interval_frame,
@@ -395,7 +396,7 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                                    ('nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam'))
 
                 for read in read_iter:
-                    if read.is_unmapped or read.is_secondary or read.is_supplementary:
+                    if not is_primary_mapped_alignment(read):
                         continue
                     if read.reference_start < start or read.reference_start >= end:
                         continue
@@ -1119,7 +1120,7 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
     try:
         with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
             for read in bam:
-                if read.is_unmapped or read.is_secondary or read.is_supplementary:
+                if not is_primary_mapped_alignment(read):
                     continue
                 counts['reads_scanned'] += 1
 
