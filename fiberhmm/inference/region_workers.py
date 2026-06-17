@@ -191,6 +191,21 @@ def _region_read_filter_config(params: dict, *, require_train_rids: bool) -> Rea
     )
 
 
+def _region_fused_recall_options(
+    params: dict,
+    nuc_min_size: int,
+    msp_min_size: int,
+) -> dict:
+    return {
+        'recall_nucs': bool(params.get('recall_nucs', False)),
+        'split_min_llr': float(params.get('split_min_llr', 4.0)),
+        'split_min_opps': int(params.get('split_min_opps', 3)),
+        'nuc_min_size': nuc_min_size,
+        'msp_min_size': msp_min_size,
+        'phase_nrl': int(params.get('phase_nrl', 0)),
+    }
+
+
 def _init_region_worker(model_path: str, params: dict):
     """Initialize worker for region-parallel processing."""
     global _worker_model, _worker_region_params
@@ -581,10 +596,6 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         unify_threshold = int(params['unify_threshold'])
         also_write_legacy = params['also_write_legacy']
         downstream_compat = params['downstream_compat']
-        recall_nucs = bool(params.get('recall_nucs', False))
-        split_min_llr = float(params.get('split_min_llr', 4.0))
-        split_min_opps = int(params.get('split_min_opps', 3))
-        phase_nrl = int(params.get('phase_nrl', 0))
 
         pysam.set_verbosity(0)
 
@@ -664,12 +675,9 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         min_opps,
                         unify_threshold,
                         with_scores,
-                        recall_nucs=recall_nucs,
-                        split_min_llr=split_min_llr,
-                        split_min_opps=split_min_opps,
-                        nuc_min_size=nuc_min_size,
-                        msp_min_size=msp_min_size,
-                        phase_nrl=phase_nrl,
+                        **_region_fused_recall_options(
+                            params, nuc_min_size, msp_min_size,
+                        ),
                     )
                     write_fused_recall_tags(
                         read,

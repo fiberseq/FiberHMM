@@ -12,6 +12,7 @@ from fiberhmm.inference.region_workers import (
     _extract_region_payload_fiber_read,
     _format_region_bed12_row,
     _region_bed12_blocks,
+    _region_fused_recall_options,
     _region_read_route,
 )
 
@@ -207,3 +208,35 @@ def test_region_bed12_row_omits_scores_when_absent():
         "30",
         "0",
     ]
+
+
+def test_region_fused_recall_options_uses_defaults_and_casts_values():
+    assert _region_fused_recall_options(
+        {},
+        nuc_min_size=85,
+        msp_min_size=20,
+    ) == {
+        "recall_nucs": False,
+        "split_min_llr": 4.0,
+        "split_min_opps": 3,
+        "nuc_min_size": 85,
+        "msp_min_size": 20,
+        "phase_nrl": 0,
+    }
+    assert _region_fused_recall_options(
+        {
+            "recall_nucs": 1,
+            "split_min_llr": "5.5",
+            "split_min_opps": "7",
+            "phase_nrl": "185",
+        },
+        nuc_min_size=90,
+        msp_min_size=25,
+    ) == {
+        "recall_nucs": True,
+        "split_min_llr": 5.5,
+        "split_min_opps": 7,
+        "nuc_min_size": 90,
+        "msp_min_size": 25,
+        "phase_nrl": 185,
+    }
