@@ -132,10 +132,7 @@ def _region_bed12_blocks(ref_start, ref_end, starts, lengths, scores=None):
         starts,
         lengths,
     )
-    score_list = (
-        [int(score * 1000) for score in scores]
-        if scores is not None else None
-    )
+    score_list = _region_bed_score_list(scores)
 
     # BED12 requires blocks to span chromStart to chromEnd.
     if block_starts[0] != 0:
@@ -159,6 +156,12 @@ def _region_bed_block_components(ref_start, starts, lengths):
         [int(start - ref_start) for start in starts],
         [int(length) for length in lengths],
     )
+
+
+def _region_bed_score_list(scores):
+    if scores is None:
+        return None
+    return [int(score * 1000) for score in scores]
 
 
 def _format_region_bed12_row(ref_name, ref_start, ref_end, read_id, strand,

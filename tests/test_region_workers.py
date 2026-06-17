@@ -12,6 +12,7 @@ from fiberhmm.inference.region_workers import (
     _extract_region_payload_fiber_read,
     _format_region_bed12_row,
     _region_bed_block_components,
+    _region_bed_score_list,
     _region_bed12_blocks,
     _region_fused_recall_options,
     _region_read_route,
@@ -196,6 +197,11 @@ def test_region_bed_block_components_project_reference_offsets():
     assert block_starts == [20, 80]
     assert block_sizes == [10, 5]
     assert all(type(value) is int for value in block_starts + block_sizes)
+
+
+def test_region_bed_score_list_scales_optional_scores():
+    assert _region_bed_score_list(None) is None
+    assert _region_bed_score_list([0.5, 0.75]) == [500, 750]
 
 
 def test_region_bed12_row_omits_scores_when_absent():
