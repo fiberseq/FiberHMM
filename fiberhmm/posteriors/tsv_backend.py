@@ -196,6 +196,7 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
         Number of fibers converted
     """
     import h5py
+    from fiberhmm.posteriors.hdf5_backend import write_hdf5_file_metadata
 
     # First pass: count fibers per chromosome
     if verbose:
@@ -231,12 +232,13 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
         print(f"  Writing {h5_path}...")
 
     with h5py.File(h5_path, 'w') as f:
-        # Metadata
-        f.attrs['mode'] = metadata.get('mode', 'pacbio-fiber')
-        f.attrs['context_size'] = metadata.get('context_size', 3)
-        f.attrs['edge_trim'] = metadata.get('edge_trim', 10)
-        f.attrs['source_bam'] = metadata.get('source_bam', '')
-        f.attrs['format_version'] = 2
+        write_hdf5_file_metadata(
+            f,
+            mode=metadata.get('mode', 'pacbio-fiber'),
+            context_size=metadata.get('context_size', 3),
+            edge_trim=metadata.get('edge_trim', 10),
+            source_bam=metadata.get('source_bam', ''),
+        )
 
         dt = h5py.special_dtype(vlen=str)
 

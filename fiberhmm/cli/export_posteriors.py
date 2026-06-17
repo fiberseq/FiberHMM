@@ -398,7 +398,10 @@ def export_posteriors_hdf5(
     Memory usage stays bounded regardless of BAM size.
     """
     import h5py
-    from fiberhmm.posteriors.hdf5_backend import write_fiber_metadata_datasets
+    from fiberhmm.posteriors.hdf5_backend import (
+        write_fiber_metadata_datasets,
+        write_hdf5_file_metadata,
+    )
 
     mode, context_size, regions, params = _prepare_export_run(
         input_bam, model_path, chroms, region_size, mode_override,
@@ -422,13 +425,14 @@ def export_posteriors_hdf5(
     write_buffers = {chrom: [] for chrom in regions_by_chrom}
 
     with h5py.File(output_h5, 'w') as f:
-        # Store file metadata
-        f.attrs['mode'] = mode
-        f.attrs['context_size'] = context_size
-        f.attrs['model_path'] = os.path.basename(model_path)
-        f.attrs['edge_trim'] = edge_trim
-        f.attrs['source_bam'] = os.path.basename(input_bam)
-        f.attrs['format_version'] = 2
+        write_hdf5_file_metadata(
+            f,
+            mode=mode,
+            context_size=context_size,
+            edge_trim=edge_trim,
+            source_bam=input_bam,
+            model_path=model_path,
+        )
 
         # Pre-create chromosome groups
         for chrom in regions_by_chrom:

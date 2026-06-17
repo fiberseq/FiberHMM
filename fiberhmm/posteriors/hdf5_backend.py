@@ -61,6 +61,24 @@ def write_fiber_metadata_datasets(
     group.attrs['n_fibers'] = n
 
 
+def write_hdf5_file_metadata(
+    h5_file,
+    *,
+    mode: str,
+    context_size: int,
+    edge_trim: int,
+    source_bam: str,
+    model_path: str = None,
+) -> None:
+    h5_file.attrs['mode'] = mode
+    h5_file.attrs['context_size'] = context_size
+    if model_path is not None:
+        h5_file.attrs['model_path'] = os.path.basename(model_path)
+    h5_file.attrs['edge_trim'] = edge_trim
+    h5_file.attrs['source_bam'] = os.path.basename(source_bam)
+    h5_file.attrs['format_version'] = 2
+
+
 class PosteriorWriter:
     """
     Streaming writer for HMM posteriors to HDF5.
@@ -98,12 +116,13 @@ class PosteriorWriter:
         # Open H5 file
         self.h5 = h5py.File(output_path, 'w')
 
-        # Write file-level metadata
-        self.h5.attrs['mode'] = mode
-        self.h5.attrs['context_size'] = context_size
-        self.h5.attrs['edge_trim'] = edge_trim
-        self.h5.attrs['source_bam'] = os.path.basename(source_bam)
-        self.h5.attrs['format_version'] = 2
+        write_hdf5_file_metadata(
+            self.h5,
+            mode=mode,
+            context_size=context_size,
+            edge_trim=edge_trim,
+            source_bam=source_bam,
+        )
 
         # Per-chromosome state
         self._chrom_groups: Dict[str, h5py.Group] = {}
