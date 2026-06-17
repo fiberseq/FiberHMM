@@ -399,6 +399,52 @@ def _print_apply_done(stdout_mode: bool, output_bam: str) -> None:
     print(f"  fiberhmm-extract-tags -i {output_bam}")
 
 
+def _apply_processing_kwargs(
+    args,
+    output_bam: str,
+    model_path: str,
+    train_rids,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    with_scores: bool,
+    n_cores: int,
+    chroms_set,
+    use_streaming: bool,
+    process_unmapped: bool,
+) -> dict:
+    return {
+        'input_bam': args.input,
+        'output_bam': output_bam,
+        'model_or_path': model_path,
+        'train_rids': train_rids,
+        'edge_trim': args.edge_trim,
+        'circular': args.circular,
+        'mode': mode,
+        'context_size': context_size,
+        'msp_min_size': msp_min_size,
+        'nuc_min_size': args.nuc_min_size,
+        'min_mapq': args.min_mapq,
+        'prob_threshold': args.prob_threshold,
+        'min_read_length': args.min_read_length,
+        'with_scores': with_scores,
+        'n_cores': n_cores,
+        'max_reads': args.max_reads,
+        'debug_timing': args.debug_timing,
+        'region_parallel': False,
+        'region_size': args.region_size,
+        'skip_scaffolds': args.skip_scaffolds,
+        'chroms': chroms_set,
+        'primary_only': args.primary,
+        'output_posteriors': args.output_posteriors,
+        'write_msps': not args.no_msps,
+        'io_threads': args.io_threads,
+        'streaming_pipeline': use_streaming,
+        'chunk_size': args.chunk_size,
+        'process_unmapped': process_unmapped,
+    }
+
+
 def main():
     args = parse_args()
 
@@ -474,34 +520,20 @@ def main():
     print(_processing_status_message(args.max_reads))
 
     total_reads, reads_with_footprints = process_bam_for_footprints(
-        input_bam=args.input,
-        output_bam=output_bam,
-        model_or_path=model_path,
-        train_rids=train_rids,
-        edge_trim=args.edge_trim,
-        circular=args.circular,
-        mode=mode,
-        context_size=context_size,
-        msp_min_size=msp_min_size,
-        nuc_min_size=args.nuc_min_size,
-        min_mapq=args.min_mapq,
-        prob_threshold=args.prob_threshold,
-        min_read_length=args.min_read_length,
-        with_scores=with_scores,
-        n_cores=n_cores,
-        max_reads=args.max_reads,
-        debug_timing=args.debug_timing,
-        region_parallel=False,
-        region_size=args.region_size,
-        skip_scaffolds=args.skip_scaffolds,
-        chroms=chroms_set,
-        primary_only=args.primary,
-        output_posteriors=args.output_posteriors,
-        write_msps=not args.no_msps,
-        io_threads=args.io_threads,
-        streaming_pipeline=use_streaming,
-        chunk_size=args.chunk_size,
-        process_unmapped=process_unmapped,
+        **_apply_processing_kwargs(
+            args,
+            output_bam,
+            model_path,
+            train_rids,
+            mode,
+            context_size,
+            msp_min_size,
+            with_scores,
+            n_cores,
+            chroms_set,
+            use_streaming,
+            process_unmapped,
+        )
     )
     _print_processing_result(
         total_reads, reads_with_footprints, output_bam, stdout_mode,

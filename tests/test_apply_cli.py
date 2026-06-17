@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from fiberhmm.cli.apply import (
+    _apply_processing_kwargs,
     _context_size_message,
     _dataset_name,
     _ddda_notice_needed,
@@ -318,3 +319,68 @@ def test_apply_stats_writer_uses_expected_prefix(monkeypatch, capsys):
         ("plot", "/tmp/out/sample_footprints"),
     ]
     assert "Stats: /tmp/out/sample_footprints_stats.txt" in capsys.readouterr().out
+
+
+def test_apply_processing_kwargs_preserve_pipeline_arguments():
+    args = SimpleNamespace(
+        input="input.bam",
+        edge_trim=10,
+        circular=True,
+        nuc_min_size=85,
+        min_mapq=20,
+        prob_threshold=128,
+        min_read_length=1000,
+        max_reads=500,
+        debug_timing=True,
+        region_size=1_000_000,
+        skip_scaffolds=True,
+        primary=True,
+        output_posteriors="post.h5",
+        no_msps=False,
+        io_threads=3,
+        chunk_size=2000,
+    )
+
+    assert _apply_processing_kwargs(
+        args,
+        output_bam="out.bam",
+        model_path="model.json",
+        train_rids={"read-a"},
+        mode="daf",
+        context_size=3,
+        msp_min_size=0,
+        with_scores=True,
+        n_cores=4,
+        chroms_set={"chr1"},
+        use_streaming=True,
+        process_unmapped=True,
+    ) == {
+        "input_bam": "input.bam",
+        "output_bam": "out.bam",
+        "model_or_path": "model.json",
+        "train_rids": {"read-a"},
+        "edge_trim": 10,
+        "circular": True,
+        "mode": "daf",
+        "context_size": 3,
+        "msp_min_size": 0,
+        "nuc_min_size": 85,
+        "min_mapq": 20,
+        "prob_threshold": 128,
+        "min_read_length": 1000,
+        "with_scores": True,
+        "n_cores": 4,
+        "max_reads": 500,
+        "debug_timing": True,
+        "region_parallel": False,
+        "region_size": 1_000_000,
+        "skip_scaffolds": True,
+        "chroms": {"chr1"},
+        "primary_only": True,
+        "output_posteriors": "post.h5",
+        "write_msps": True,
+        "io_threads": 3,
+        "streaming_pipeline": True,
+        "chunk_size": 2000,
+        "process_unmapped": True,
+    }
