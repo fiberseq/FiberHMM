@@ -13,6 +13,7 @@ from fiberhmm.core.bam_reader import (
     parse_mm_tag_query_positions,
 )
 from fiberhmm.core.hmm import FiberHMM
+from fiberhmm.core.tag_access import compact_ml_value, get_preferred_tag
 from fiberhmm.inference.circular import (
     project_center_runs,
     project_center_scores,
@@ -527,23 +528,6 @@ class _ApplyPayloadRead:
         return self._tags[t]
 
 
-def _get_first_present_tag(read, tags, default=None):
-    try:
-        for tag in tags:
-            if read.has_tag(tag):
-                return read.get_tag(tag)
-    except KeyError:
-        return default
-    return default
-
-
-def _compact_ml_value(value):
-    try:
-        return bytes(value)
-    except TypeError:
-        return value
-
-
 def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[dict]:
     """Extract slim payload from a pysam read for the apply slim-IPC path.
 
@@ -571,7 +555,7 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[di
             if t in ('ML', 'Ml'):
                 # array.array('B', ...) → bytes via buffer protocol: fast memcpy,
                 # avoids ~5000 PyInt allocations per Hia5 PacBio read.
-                val = _compact_ml_value(val)
+                val = compact_ml_value(val)
             tags[t] = val
 
     payload = {
@@ -693,8 +677,8 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
     # iteration over every modification (~5000 per Hia5 PacBio read =
     # ~5-10 ms/read).  parse_mm_tag_query_positions does the same parse in
     # vectorized numpy and accepts ML as bytes (no PyInt materialization).
-    mm_tag = _get_first_present_tag(read, ('MM', 'Mm'), '')
-    ml_raw = _get_first_present_tag(read, ('ML', 'Ml'), None)
+    mm_tag = get_preferred_tag(read, 'MM', 'Mm', '')
+    ml_raw = get_preferred_tag(read, 'ML', 'Ml', None)
 
     if not mm_tag or ml_raw is None:
         return None
@@ -707,7 +691,7 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         pass
 
     # Convert ML to bytes once (fast memcpy, no PyInt allocations).
-    ml_bytes = _compact_ml_value(ml_raw)
+    ml_bytes = compact_ml_value(ml_raw)
 
     try:
         mod_pos_set = parse_mm_tag_query_positions(

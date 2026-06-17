@@ -16,6 +16,8 @@ from typing import Dict, Iterator, List, Optional, Set, Tuple
 import numpy as np
 import pysam
 
+from fiberhmm.core.tag_access import get_preferred_tag
+
 try:
     from numba import njit as _numba_njit
     _HAS_NUMBA = True
@@ -1257,23 +1259,8 @@ def read_bam(bam_path: str,
 
             # Fall back to manual parsing if pysam API returns nothing
             if not mod_query_pos:
-                try:
-                    mm_tag = None
-                    ml_tag = None
-
-                    if read.has_tag('MM'):
-                        mm_tag = read.get_tag('MM')
-                    elif read.has_tag('Mm'):
-                        mm_tag = read.get_tag('Mm')
-
-                    if read.has_tag('ML'):
-                        ml_tag = read.get_tag('ML')
-                    elif read.has_tag('Ml'):
-                        ml_tag = read.get_tag('Ml')
-
-                except KeyError:
-                    mm_tag = None
-                    ml_tag = None
+                mm_tag = get_preferred_tag(read, 'MM', 'Mm')
+                ml_tag = get_preferred_tag(read, 'ML', 'Ml')
 
                 # Parse modification positions in query coordinates
                 if mm_tag and ml_tag:

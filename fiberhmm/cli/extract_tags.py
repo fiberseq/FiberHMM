@@ -53,6 +53,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.bam_reader import cigar_to_query_ref
+from fiberhmm.core.tag_access import compact_ml_value, get_preferred_tag
 from fiberhmm.inference.parallel import _get_genome_regions
 from fiberhmm.io.ma_tags import (
     flip_interval_frame,
@@ -666,16 +667,9 @@ def _parse_mod_positions_safe(read, target_mod_codes):
     Empty list on any failure (missing tags, parse error, etc.).
     """
     from fiberhmm.core.bam_reader import parse_mm_ml_per_mod_type
-    try:
-        mm_tag = read.get_tag('MM') if read.has_tag('MM') else (
-            read.get_tag('Mm') if read.has_tag('Mm') else '')
-    except (KeyError, ValueError):
-        mm_tag = ''
-    try:
-        ml_raw = read.get_tag('ML') if read.has_tag('ML') else (
-            read.get_tag('Ml') if read.has_tag('Ml') else None)
-    except (KeyError, ValueError):
-        ml_raw = None
+    tag_errors = (KeyError, ValueError)
+    mm_tag = get_preferred_tag(read, 'MM', 'Mm', '', errors=tag_errors)
+    ml_raw = get_preferred_tag(read, 'ML', 'Ml', None, errors=tag_errors)
     if not mm_tag or ml_raw is None:
         return []
     try:
@@ -683,10 +677,7 @@ def _parse_mod_positions_safe(read, target_mod_codes):
             return []
     except TypeError:
         pass
-    try:
-        ml_bytes = bytes(ml_raw)
-    except TypeError:
-        ml_bytes = ml_raw
+    ml_bytes = compact_ml_value(ml_raw)
     seq = read.query_sequence
     if seq is None:
         return []
@@ -811,21 +802,14 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     # isn't detected here -- users with modkit-style numeric codes should
     # run `samtools calmd` + standard encode or rely on R/Y fallback.
     from fiberhmm.core.bam_reader import parse_mm_ml_per_mod_type
-    try:
-        mm_tag = read.get_tag('MM') if read.has_tag('MM') else (
-            read.get_tag('Mm') if read.has_tag('Mm') else '')
-    except (KeyError, ValueError):
-        mm_tag = ''
-    try:
-        ml_raw = read.get_tag('ML') if read.has_tag('ML') else (
-            read.get_tag('Ml') if read.has_tag('Ml') else None)
-    except (KeyError, ValueError):
-        ml_raw = None
+    tag_errors = (KeyError, ValueError)
+    mm_tag = get_preferred_tag(read, 'MM', 'Mm', '', errors=tag_errors)
+    ml_raw = get_preferred_tag(read, 'ML', 'Ml', None, errors=tag_errors)
     per_mod = {}
     if mm_tag and ml_raw is not None:
         try:
             if len(ml_raw) > 0:
-                ml_bytes = bytes(ml_raw) if not isinstance(ml_raw, (bytes, bytearray, memoryview)) else ml_raw
+                ml_bytes = compact_ml_value(ml_raw)
                 seq = read.query_sequence
                 if seq is not None:
                     per_mod = parse_mm_ml_per_mod_type(mm_tag, ml_bytes, seq, read.is_reverse)
