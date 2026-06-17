@@ -561,6 +561,24 @@ def _positive_length_intervals(starts, lengths) -> List[Tuple[int, int]]:
     ]
 
 
+def _kept_legacy_nuc_interval(
+    start,
+    length,
+    tf_intervals: Sequence[Tuple[int, int]],
+    unify_threshold: int,
+) -> Optional[Tuple[int, int]]:
+    start = int(start)
+    length = int(length)
+    if length <= 0:
+        return None
+    if length >= unify_threshold:
+        return start, length
+    nuc_end = start + length
+    if any(ts < nuc_end and te > start for ts, te in tf_intervals):
+        return None
+    return start, length
+
+
 def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
                 mode: str, context_size: int,
                 min_llr: float, min_opps: int,
@@ -613,18 +631,9 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
     kept_nucs: List[Tuple[int, int]] = []
     tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
     for s, length in zip(ns_raw, nl_raw):
-        s = int(s)
-        length = int(length)
-        if length <= 0:
-            continue
-        if length >= unify_threshold:
-            kept_nucs.append((s, length))
-            continue
-        # Short v2 nuc -- drop if overlapped by any TF call
-        nuc_end = s + length
-        if any(ts < nuc_end and te > s for ts, te in tf_intervals):
-            continue
-        kept_nucs.append((s, length))
+        kept = _kept_legacy_nuc_interval(s, length, tf_intervals, unify_threshold)
+        if kept is not None:
+            kept_nucs.append(kept)
 
     return tf_calls, kept_nucs, msps
 

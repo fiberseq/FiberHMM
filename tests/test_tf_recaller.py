@@ -118,6 +118,21 @@ def test_positive_length_intervals_filters_and_normalizes():
     ) == [(15, 7)]
 
 
+def test_kept_legacy_nuc_interval_applies_tf_overlap_policy():
+    tf_intervals = [(20, 30)]
+
+    assert tf_recaller._kept_legacy_nuc_interval(10, 0, tf_intervals, 90) is None
+    assert tf_recaller._kept_legacy_nuc_interval(10, 90, tf_intervals, 90) == (
+        10,
+        90,
+    )
+    assert tf_recaller._kept_legacy_nuc_interval(10, 15, tf_intervals, 90) is None
+    assert tf_recaller._kept_legacy_nuc_interval(30, 15, tf_intervals, 90) == (
+        30,
+        15,
+    )
+
+
 def test_nuc_aq_has_edge_qualities_detects_schema_mode():
     assert not _nuc_aq_has_edge_qualities([], [])
     assert _nuc_aq_has_edge_qualities([1], [])
