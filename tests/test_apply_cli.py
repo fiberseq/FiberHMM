@@ -5,7 +5,10 @@ from types import SimpleNamespace
 import pytest
 
 from fiberhmm.cli.apply import (
+    _dataset_name,
+    _ddda_notice_needed,
     _print_processing_settings,
+    _print_ddda_two_pass_notice,
     _resolve_apply_cores,
     _resolve_context_size,
     _resolve_mode,
@@ -61,6 +64,26 @@ def test_apply_resolve_cores_auto_and_clamps(capsys):
 
     assert _resolve_apply_cores(0) >= 1
     assert "Auto-detected" in capsys.readouterr().out
+
+
+def test_apply_dataset_name():
+    assert _dataset_name("-") == "stdin"
+    assert _dataset_name("/tmp/sample.bam") == "sample"
+    assert _dataset_name("/tmp/sample.cram") == "sample.cram"
+
+
+def test_apply_ddda_notice_detection_and_output(capsys):
+    assert _ddda_notice_needed("/models/ddda_nuc.json", None)
+    assert _ddda_notice_needed("/models/custom.json", "ddda")
+    assert not _ddda_notice_needed("/models/custom.json", "hia5")
+
+    _print_ddda_two_pass_notice("/models/custom.json", "hia5")
+    assert capsys.readouterr().err == ""
+
+    _print_ddda_two_pass_notice("/models/ddda_nuc.json")
+    err = capsys.readouterr().err
+    assert "DddA model detected" in err
+    assert "fiberhmm-recall-tfs" in err
 
 
 def test_apply_context_size_override_warns(capsys):

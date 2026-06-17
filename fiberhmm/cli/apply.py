@@ -173,6 +173,35 @@ def _resolve_apply_cores(requested_cores: int) -> int:
     return n_cores
 
 
+def _dataset_name(input_bam: str) -> str:
+    if input_bam == '-':
+        return 'stdin'
+    return os.path.basename(input_bam).replace('.bam', '')
+
+
+def _ddda_notice_needed(model_path: str, enzyme: str = None) -> bool:
+    model_basename = os.path.basename(model_path).lower()
+    return 'ddda' in model_basename or enzyme == 'ddda'
+
+
+def _print_ddda_two_pass_notice(model_path: str, enzyme: str = None) -> None:
+    if not _ddda_notice_needed(model_path, enzyme):
+        return
+    print(
+        "\n"
+        "------------------------------------------------------------------------\n"
+        "  NOTE: DddA model detected.\n"
+        "  This model calls NUCLEOSOMES only. To recover TF / Pol II\n"
+        "  footprints, run the beta 2nd-pass recaller after this step:\n"
+        "\n"
+        "    fiberhmm-recall-tfs -i <output.bam> -o <recalled.bam> --enzyme ddda\n"
+        "\n"
+        "  fiberhmm-recall-tfs is a beta feature, first in fiberhmm 2.6.0.\n"
+        "------------------------------------------------------------------------\n",
+        file=sys.stderr,
+    )
+
+
 def _resolve_context_size(args, model_context_size: int) -> int:
     if args.context_size is not None:
         context_size = args.context_size
@@ -265,22 +294,7 @@ def main():
     # ddda_nuc.json deliberately does NOT emit sub-nucleosomal TF calls;
     # users unaware of fiberhmm-recall-tfs will think their data just has
     # no TFs. Print a prominent notice (stderr so BAM streams stay clean).
-    _model_basename = os.path.basename(model_path).lower()
-    if 'ddda' in _model_basename or getattr(args, 'enzyme', None) == 'ddda':
-        import sys as _sys
-        print(
-            "\n"
-            "------------------------------------------------------------------------\n"
-            "  NOTE: DddA model detected.\n"
-            "  This model calls NUCLEOSOMES only. To recover TF / Pol II\n"
-            "  footprints, run the beta 2nd-pass recaller after this step:\n"
-            "\n"
-            "    fiberhmm-recall-tfs -i <output.bam> -o <recalled.bam> --enzyme ddda\n"
-            "\n"
-            "  fiberhmm-recall-tfs is a beta feature, first in fiberhmm 2.6.0.\n"
-            "------------------------------------------------------------------------\n",
-            file=_sys.stderr,
-        )
+    _print_ddda_two_pass_notice(model_path, getattr(args, 'enzyme', None))
 
     # Show optimization status
     from fiberhmm.core.hmm import HAS_NUMBA
@@ -304,11 +318,7 @@ def main():
         train_rids = set(train_df['rid'].tolist())
         print(f"Excluding {len(train_rids)} training reads")
 
-    # Get dataset name
-    if args.input == '-':
-        dataset = 'stdin'
-    else:
-        dataset = os.path.basename(args.input).replace('.bam', '')
+    dataset = _dataset_name(args.input)
 
     # Determine if we need scores
     with_scores = args.scores or args.scores_db
