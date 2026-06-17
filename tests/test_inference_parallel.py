@@ -583,6 +583,17 @@ def test_worker_recall_options_uses_state_with_defaults(monkeypatch):
     }
 
 
+def test_worker_recall_tables_reads_current_state(monkeypatch):
+    hit = object()
+    miss = object()
+    monkeypatch.setattr(streaming_workers, "_worker_recall_state", {
+        "llr_hit": hit,
+        "llr_miss": miss,
+    })
+
+    assert streaming_workers._worker_recall_tables() == (hit, miss)
+
+
 def test_fused_payload_worker_counts_per_read_failures(monkeypatch):
     def fake_extract(payload, mode, prob_threshold):
         if payload == "extract-bad":

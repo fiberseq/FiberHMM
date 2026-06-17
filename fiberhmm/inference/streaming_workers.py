@@ -106,6 +106,10 @@ def _worker_recall_options(nuc_min_size: int, msp_min_size: int) -> dict:
     }
 
 
+def _worker_recall_tables():
+    return _worker_recall_state['llr_hit'], _worker_recall_state['llr_miss']
+
+
 def _init_bam_worker(model_path, debug_timing=False):
     """Initialize worker process with model."""
     global _worker_model, _worker_debug_timing
@@ -237,8 +241,7 @@ def _process_fused_payload_chunk_worker(
 
     # Model/params set once per worker; TF LLR tables attached to the
     # worker globals via _init_fused_worker.
-    llr_hit = _worker_recall_state['llr_hit']
-    llr_miss = _worker_recall_state['llr_miss']
+    llr_hit, llr_miss = _worker_recall_tables()
 
     def process_item(payload):
         fiber_read = _payload_fiber_read_result(
