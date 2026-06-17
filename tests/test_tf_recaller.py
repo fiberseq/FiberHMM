@@ -19,6 +19,7 @@ from fiberhmm.inference.tf_recaller import (
 )
 from fiberhmm.io.ma_tags import (
     EDGE_AMBIGUITY_SAT,
+    _format_ma_annotation_part,
     _parse_ma_interval_list,
     ambiguity_to_edge,
     format_aq_array,
@@ -160,6 +161,14 @@ def test_format_and_parse_ma_tag():
     assert parsed['nuc'] == nucs
     assert parsed['msp'] == msps
     assert parsed['tf'] == tfs
+
+
+def test_format_ma_annotation_part_handles_empty_and_quality_specs():
+    assert _format_ma_annotation_part('nuc', [], 'Q') is None
+    assert _format_ma_annotation_part('nuc', [(0, 10), (20, 5)], 'QQQ') == (
+        'nuc.QQQ:1-10,21-5'
+    )
+    assert _format_ma_annotation_part('msp', [(5, 12)], '') == 'msp.:6-12'
 
 
 def test_parse_ma_interval_list_skips_empty_tokens_and_reports_bad_intervals():
