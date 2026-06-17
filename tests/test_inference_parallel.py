@@ -51,6 +51,23 @@ def test_parallel_reexports_legacy_pipeline_entry_points():
     assert parallel._process_bam_legacy_pipeline is legacy_pipeline._process_bam_legacy_pipeline
 
 
+def test_legacy_skip_helpers_write_and_count_reason():
+    read = object()
+    outbam = _OutBam()
+    skip_reasons = legacy_pipeline._new_legacy_skip_reasons()
+
+    assert legacy_pipeline._write_skipped_legacy_read(
+        outbam,
+        read,
+        skip_reasons,
+        "no_modifications",
+    ) == 1
+
+    assert outbam.written == [read]
+    assert skip_reasons["no_modifications"] == 1
+    assert skip_reasons["low_mapq"] == 0
+
+
 def test_parallel_reexports_streaming_worker_entry_points():
     assert parallel._init_bam_worker is streaming_workers._init_bam_worker
     assert parallel._init_fused_worker is streaming_workers._init_fused_worker

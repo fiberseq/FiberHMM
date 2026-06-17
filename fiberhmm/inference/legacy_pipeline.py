@@ -120,6 +120,28 @@ def _write_chunk_posteriors(posterior_writer, chunk_results):
                 })
 
 
+_LEGACY_SKIP_REASON_KEYS = (
+    'unmapped',
+    'secondary_supplementary',
+    'low_mapq',
+    'too_short',
+    'training_excluded',
+    'no_modifications',
+    'extraction_failed',
+    'no_footprints',
+)
+
+
+def _new_legacy_skip_reasons() -> dict:
+    return {reason: 0 for reason in _LEGACY_SKIP_REASON_KEYS}
+
+
+def _write_skipped_legacy_read(outbam, read, skip_reasons: dict, reason: str) -> int:
+    outbam.write(read)
+    skip_reasons[reason] += 1
+    return 1
+
+
 def _process_bam_legacy_pipeline(
     input_bam: str,
     output_bam: str,
@@ -151,16 +173,7 @@ def _process_bam_legacy_pipeline(
     worker_failures = 0
 
     # Track skip reasons
-    skip_reasons = {
-        'unmapped': 0,
-        'secondary_supplementary': 0,
-        'low_mapq': 0,
-        'too_short': 0,
-        'training_excluded': 0,
-        'no_modifications': 0,
-        'extraction_failed': 0,
-        'no_footprints': 0,
-    }
+    skip_reasons = _new_legacy_skip_reasons()
     filter_config = ReadFilterConfig(
         min_mapq=min_mapq,
         min_read_length=min_read_length,
@@ -216,23 +229,23 @@ def _process_bam_legacy_pipeline(
                 for read in inbam:
                     skip_reason = streaming_skip_reason(read, filter_config)
                     if skip_reason:
-                        outbam.write(read)
-                        skipped += 1
-                        skip_reasons[skip_reason] += 1
+                        skipped += _write_skipped_legacy_read(
+                            outbam, read, skip_reasons, skip_reason
+                        )
                         continue
 
                     # Extract data needed for processing
                     try:
                         fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
                         if fiber_read is None:
-                            outbam.write(read)
-                            skipped += 1
-                            skip_reasons['no_modifications'] += 1
+                            skipped += _write_skipped_legacy_read(
+                                outbam, read, skip_reasons, 'no_modifications'
+                            )
                             continue
                     except Exception:
-                        outbam.write(read)
-                        skipped += 1
-                        skip_reasons['extraction_failed'] += 1
+                        skipped += _write_skipped_legacy_read(
+                            outbam, read, skip_reasons, 'extraction_failed'
+                        )
                         continue
 
                     chunk_reads.append(fiber_read)
