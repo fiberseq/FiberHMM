@@ -181,13 +181,17 @@ AUTOSQL_SCHEMAS = {
 _TYPE_ALIASES = {'footprint': 'nucleosome'}
 
 
+def _canonical_autosql_type(extract_type: str) -> str:
+    return _TYPE_ALIASES.get(extract_type, extract_type)
+
+
 def get_schema(extract_type: str, block_scores: bool = False,
                sample_name: Optional[str] = None,
                circular_groups: bool = False) -> Optional[str]:
     """Return the autoSQL schema string for ``extract_type``, optionally
     with the per-block score columns appended and/or a ``Sample: <name>.``
     marker prepended to the description."""
-    extract_type = _TYPE_ALIASES.get(extract_type, extract_type)
+    extract_type = _canonical_autosql_type(extract_type)
     desc = _DESCRIPTIONS.get(extract_type)
     if desc is None:
         return None
@@ -219,7 +223,7 @@ def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
     Pass ``sample_name`` to embed a machine-parseable ``Sample: <name>.``
     prefix in the autoSQL description (visible via ``bigBedInfo -as``).
     """
-    extract_type = _TYPE_ALIASES.get(extract_type, extract_type)
+    extract_type = _canonical_autosql_type(extract_type)
     schema = get_schema(extract_type, block_scores=block_scores,
                         sample_name=sample_name,
                         circular_groups=circular_groups)

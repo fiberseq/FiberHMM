@@ -28,6 +28,7 @@ from fiberhmm.io.autosql import (
     CIRCULAR_FIELD_COUNT,
     EXTRA_FIELD_COUNTS,
     _autosql_variant_suffix,
+    _canonical_autosql_type,
     get_schema,
     write_autosql_for,
 )
@@ -358,6 +359,8 @@ def test_footprint_is_deprecated_alias_for_nucleosome():
     # 'footprint' was the type name through 2.13.x; it must still resolve to the
     # nucleosome schema (table fiberhmm_nucleosome), now that the canonical name
     # is 'nucleosome'.
+    assert _canonical_autosql_type('footprint') == 'nucleosome'
+    assert _canonical_autosql_type('tf') == 'tf'
     assert get_schema('footprint', block_scores=True) == \
            get_schema('nucleosome', block_scores=True)
     assert 'fiberhmm_nucleosome' in get_schema('footprint')
