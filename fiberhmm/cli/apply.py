@@ -327,6 +327,12 @@ def _print_scores_db_summary(db_path: str) -> None:
     print(f"  {n_reads:,} reads, {n_footprints:,} footprints")
 
 
+def _processing_status_message(max_reads) -> str:
+    if max_reads:
+        return f"Processing BAM (limited to {max_reads:,} reads)..."
+    return "Processing BAM..."
+
+
 def main():
     args = parse_args()
 
@@ -402,10 +408,7 @@ def main():
 
     # === MAIN PROCESSING ===
     output_bam = _resolve_output_bam(args, dataset, stdout_mode)
-    if args.max_reads:
-        print(f"Processing BAM (limited to {args.max_reads:,} reads)...")
-    else:
-        print("Processing BAM...")
+    print(_processing_status_message(args.max_reads))
 
     total_reads, reads_with_footprints = process_bam_for_footprints(
         input_bam=args.input,

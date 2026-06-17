@@ -21,6 +21,7 @@ from fiberhmm.cli.apply import (
     _resolve_process_unmapped,
     _resolve_scores_db_path,
     _print_scores_db_summary,
+    _processing_status_message,
     _use_streaming_pipeline,
     _stats_output_prefix,
     _scores_db_counts,
@@ -209,3 +210,11 @@ def test_apply_scores_db_summary_helpers(tmp_path, capsys):
 
     _print_scores_db_summary(str(tmp_path / "missing.db"))
     assert capsys.readouterr().out == ""
+
+
+def test_processing_status_message_formats_read_limit():
+    assert _processing_status_message(None) == "Processing BAM..."
+    assert _processing_status_message(0) == "Processing BAM..."
+    assert _processing_status_message(12500) == (
+        "Processing BAM (limited to 12,500 reads)..."
+    )
