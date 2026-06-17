@@ -41,6 +41,31 @@ def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, 
     return 1
 
 
+def _new_streaming_counters() -> dict:
+    return {
+        'reads_with_footprints': 0,
+        'no_footprints': 0,
+        'worker_failures': 0,
+        'written': 0,
+        'chimera': 0,
+    }
+
+
+def _new_streaming_skip_reasons(*, include_no_footprints: bool = False) -> dict:
+    reasons = {
+        'unmapped': 0,
+        'secondary_supplementary': 0,
+        'low_mapq': 0,
+        'too_short': 0,
+        'training_excluded': 0,
+        'no_modifications': 0,
+        'extraction_failed': 0,
+    }
+    if include_no_footprints:
+        reasons['no_footprints'] = 0
+    return reasons
+
+
 def _process_bam_streaming_pipeline_fused(
     input_bam: str, output_bam: str,
     model_path: str, recall_model_path: str,
@@ -72,21 +97,11 @@ def _process_bam_streaming_pipeline_fused(
     pysam.set_verbosity(0)
     max_inflight = n_cores + 2
     start_time = time.time()
-    counters = {
-        'reads_with_footprints': 0,
-        'no_footprints': 0,
-        'worker_failures': 0,
-        'written': 0,
-        'chimera': 0,
-    }
+    counters = _new_streaming_counters()
 
     total_reads = 0
     skipped = 0
-    skip_reasons = {
-        'unmapped': 0, 'secondary_supplementary': 0, 'low_mapq': 0,
-        'too_short': 0, 'training_excluded': 0, 'no_modifications': 0,
-        'extraction_failed': 0,
-    }
+    skip_reasons = _new_streaming_skip_reasons()
     filter_config = ReadFilterConfig(
         min_mapq=min_mapq,
         min_read_length=min_read_length,
@@ -270,16 +285,7 @@ def _process_bam_streaming_pipeline(
     ref_fasta = None
 
     total_reads = 0
-    skip_reasons = {
-        'unmapped': 0,
-        'secondary_supplementary': 0,
-        'low_mapq': 0,
-        'too_short': 0,
-        'training_excluded': 0,
-        'no_modifications': 0,
-        'extraction_failed': 0,
-        'no_footprints': 0,
-    }
+    skip_reasons = _new_streaming_skip_reasons(include_no_footprints=True)
     filter_config = ReadFilterConfig(
         min_mapq=min_mapq,
         min_read_length=min_read_length,
@@ -288,13 +294,7 @@ def _process_bam_streaming_pipeline(
         train_rids=train_rids,
     )
 
-    counters = {
-        'reads_with_footprints': 0,
-        'no_footprints': 0,
-        'worker_failures': 0,
-        'written': 0,
-        'chimera': 0,
-    }
+    counters = _new_streaming_counters()
 
     posterior_writer = None
     posterior_stats = None
