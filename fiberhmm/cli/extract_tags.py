@@ -697,6 +697,31 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
                            query_to_ref, block_scores)
 
 
+def _deam_iupac_positions(seq: str, aligned_pairs) -> list:
+    if not seq:
+        return []
+
+    n = len(aligned_pairs)
+    arr = np.frombuffer(seq.encode('ascii'), dtype=np.uint8)
+    r_mask = (arr == ord('R'))
+    y_mask = (arr == ord('Y'))
+    mod_mask = r_mask | y_mask
+    if not mod_mask.any():
+        return []
+
+    positions = []
+    for q_pos in np.where(mod_mask)[0]:
+        qi = int(q_pos)
+        if qi >= n:
+            continue
+        ref_pos = int(aligned_pairs[qi])
+        if ref_pos < 0:
+            continue
+        flavor = 1 if y_mask[qi] else 0
+        positions.append((ref_pos, flavor))
+    return positions
+
+
 def _extract_deam(read, bed_out, query_to_ref=None,
                   block_scores: bool = False,
                   prob_threshold: int = 0) -> int:
@@ -768,21 +793,7 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     # --- Priority 2: IUPAC R/Y in the query sequence --------------------
     if not positions_list:
         seq = read.query_sequence
-        if seq:
-            arr = np.frombuffer(seq.encode('ascii'), dtype=np.uint8)
-            r_mask = (arr == ord('R'))
-            y_mask = (arr == ord('Y'))
-            mod_mask = r_mask | y_mask
-            if mod_mask.any():
-                for q_pos in np.where(mod_mask)[0]:
-                    qi = int(q_pos)
-                    if qi >= n:
-                        continue
-                    ref_pos = int(aligned_pairs[qi])
-                    if ref_pos < 0:
-                        continue
-                    flavor = 1 if y_mask[qi] else 0
-                    positions_list.append((ref_pos, flavor))
+        positions_list.extend(_deam_iupac_positions(seq, aligned_pairs))
 
     # --- Priority 3: ref mismatch via MD tag ----------------------------
     # Fallback for raw DAF BAMs that were neither MM/ML-tagged nor IUPAC-
