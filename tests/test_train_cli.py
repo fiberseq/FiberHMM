@@ -88,6 +88,15 @@ def test_shuffled_training_arrays_are_deterministic_int_arrays():
         assert sorted(values.tolist()) == [1, 1, 2, 3, 3]
 
 
+def test_training_strand_for_read_detects_only_daf_mode(monkeypatch):
+    read = SimpleNamespace(query_sequence="ACGT", m6a_query_positions={1})
+
+    monkeypatch.setattr(train, "detect_daf_strand", lambda seq, positions: "-")
+    assert train._training_strand_for_read(read, "daf") == "-"
+    assert train._training_strand_for_read(read, "pacbio-fiber") == "."
+    assert train._training_strand_for_read(read, "nanopore-fiber") == "."
+
+
 def test_training_zoom_window_starts_are_deterministic_and_bounded():
     assert train._training_zoom_window_starts(
         seq_len=500, window_size=1000, n_windows=3, seed=0,

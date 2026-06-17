@@ -400,6 +400,15 @@ def _shuffled_training_arrays(encoded_reads: list, n_iterations: int) -> dict:
     return train_arrays
 
 
+def _training_strand_for_read(fiber_read, mode: str) -> str:
+    if mode == 'daf':
+        return detect_daf_strand(
+            fiber_read.query_sequence,
+            fiber_read.m6a_query_positions,
+        )
+    return '.'
+
+
 def generate_training_arrays(reads: list, edge_trim: int,
                              n_iterations: int, mode: str = 'pacbio-fiber',
                              context_size: int = 3) -> tuple:
@@ -415,13 +424,7 @@ def generate_training_arrays(reads: list, edge_trim: int,
 
     for fiber_read in tqdm(reads, desc="Encoding"):
         # Detect strand based on mode
-        if mode == 'daf':
-            strand = detect_daf_strand(fiber_read.query_sequence,
-                                       fiber_read.m6a_query_positions)
-        elif mode == 'nanopore-fiber':
-            strand = '.'  # No strand detection for nanopore
-        else:  # m6a mode
-            strand = '.'
+        strand = _training_strand_for_read(fiber_read, mode)
 
         encoded = encode_from_query_sequence(
             fiber_read.query_sequence,
