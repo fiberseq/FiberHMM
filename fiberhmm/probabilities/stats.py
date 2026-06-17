@@ -203,6 +203,18 @@ def _probability_stats_output_path(
     )
 
 
+def _probability_distribution_plot_path(
+    plots_dir: str,
+    base_name: str,
+    base: str,
+    context_size: int,
+) -> str:
+    return os.path.join(
+        plots_dir,
+        f"{base_name}_{base}_k{context_size}_distribution.png",
+    )
+
+
 def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
                                 inaccessible_counters: Dict[str, 'ContextCounter'],
                                 plots_dir: str, base_name: str, context_size: int = 3,
@@ -425,7 +437,9 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
         ax.legend(fontsize=11)
 
         plt.tight_layout()
-        png_path = os.path.join(plots_dir, f"{base_name}_{base}_k{context_size}_distribution.png")
+        png_path = _probability_distribution_plot_path(
+            plots_dir, base_name, base, context_size,
+        )
         plt.savefig(png_path, dpi=150)
         plt.close(fig)
         print(f"  Plot: {png_path}")

@@ -183,6 +183,9 @@ def test_probability_stats_output_path_uses_context_stem():
     assert stats._probability_stats_output_path("plots", "run", 4, "pdf") == (
         "plots/run_k4_stats.pdf"
     )
+    assert stats._probability_distribution_plot_path("plots", "run", "A", 4) == (
+        "plots/run_A_k4_distribution.png"
+    )
 
 
 def test_merged_probability_table_aligns_contexts_and_totals():
