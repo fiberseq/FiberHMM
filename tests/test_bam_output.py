@@ -164,6 +164,10 @@ def test_format_footprint_bed12_row_preserves_scores_and_item_rgb():
     ]
 
 
+def test_format_bed_score_column_scales_quality_bytes_to_bed_range():
+    assert bam_output._format_bed_score_column([0, 128, 255]) == "0,501,1000"
+
+
 def test_format_footprint_bed12_row_omits_scores_when_disabled():
     row = bam_output._format_footprint_bed12_row(
         chrom="chr1",

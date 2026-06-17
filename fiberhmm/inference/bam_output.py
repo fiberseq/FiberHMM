@@ -4,7 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 import numpy as np
 import pysam
@@ -543,8 +543,7 @@ def _format_footprint_bed12_row(
     ]
     extra = ()
     if with_scores and valid_scores:
-        scaled_scores = [int(score * 1000 / 255) for score in valid_scores]
-        extra = (','.join(str(score) for score in scaled_scores),)
+        extra = (_format_bed_score_column(valid_scores),)
     return bed12_row(
         chrom,
         chrom_start,
@@ -556,6 +555,11 @@ def _format_footprint_bed12_row(
         extra,
         item_rgb="0,0,0",
     )
+
+
+def _format_bed_score_column(scores: Sequence[int]) -> str:
+    scaled_scores = [int(score * 1000 / 255) for score in scores]
+    return ','.join(str(score) for score in scaled_scores)
 
 
 def _sort_bed12_blocks(block_starts, block_sizes, valid_scores):
