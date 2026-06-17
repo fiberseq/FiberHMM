@@ -752,6 +752,27 @@ def _write_transfer_probability_tables(
     return combined_file
 
 
+def _save_accessibility_priors(
+    tables_dir: str,
+    base_name: str,
+    max_context: int,
+    accessibility_counters,
+) -> list[str]:
+    written = []
+    for base in ['A', 'C', 'G', 'T']:
+        if base not in accessibility_counters:
+            continue
+        priors = accessibility_counters[base].get_accessibility_priors(max_context)
+        priors_file = os.path.join(
+            tables_dir,
+            f"{base_name}_accessibility_priors_{base}_k{max_context}.tsv",
+        )
+        priors.to_csv(priors_file, sep='\t', index=False)
+        print(f"  {priors_file}")
+        written.append(priors_file)
+    return written
+
+
 def cmd_transfer(args):
     """Transfer emission probs between modalities."""
     max_context = max(args.context_sizes)
@@ -858,15 +879,9 @@ def cmd_transfer(args):
     # Save accessibility priors if computed
     if accessibility_counters is not None:
         print("\nSaving accessibility priors for reuse:")
-        for base in ['A', 'C', 'G', 'T']:
-            if base in accessibility_counters:
-                priors = accessibility_counters[base].get_accessibility_priors(max_context)
-                priors_file = os.path.join(
-                    tables_dir,
-                    f"{base_name}_accessibility_priors_{base}_k{max_context}.tsv"
-                )
-                priors.to_csv(priors_file, sep='\t', index=False)
-                print(f"  {priors_file}")
+        _save_accessibility_priors(
+            tables_dir, base_name, max_context, accessibility_counters,
+        )
 
     # Generate stats if requested
     if args.stats:

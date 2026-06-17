@@ -15,6 +15,7 @@ from fiberhmm.cli.utils import (
     _passes_transfer_base_filters,
     _passes_transfer_target_filters,
     _raw_model_parameter_arrays,
+    _save_accessibility_priors,
     _scale_emission_probabilities,
     _target_bases_for_transfer_mode,
     _target_mod_positions_from_bam_read,
@@ -427,3 +428,31 @@ def test_write_transfer_probability_tables_uses_shared_layout(tmp_path):
         "accessible_prob": [0.8, 0.8],
         "inaccessible_prob": [0.1, 0.1],
     }
+
+
+def test_save_accessibility_priors_writes_known_bases(tmp_path, capsys):
+    class FakeCounter:
+        def __init__(self, base):
+            self.base = base
+
+        def get_accessibility_priors(self, context_size):
+            return pd.DataFrame({
+                "context": [f"{self.base}{context_size}"],
+                "p_accessible": [0.5],
+            })
+
+    written = _save_accessibility_priors(
+        str(tmp_path),
+        "run",
+        3,
+        {"C": FakeCounter("C"), "N": FakeCounter("N")},
+    )
+
+    expected = str(tmp_path / "run_accessibility_priors_C_k3.tsv")
+    assert written == [expected]
+    saved = pd.read_csv(expected, sep="\t")
+    assert saved.to_dict("list") == {
+        "context": ["C3"],
+        "p_accessible": [0.5],
+    }
+    assert expected in capsys.readouterr().out
