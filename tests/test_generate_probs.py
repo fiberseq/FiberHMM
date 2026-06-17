@@ -5,6 +5,7 @@ import pandas as pd
 
 from fiberhmm.cli.generate_probs import (
     FILTER_STAT_KEYS,
+    PROBABILITY_TSV_COLUMNS,
     _accumulate_filter_stats,
     _combined_probability_frame,
     _combined_probability_table_path,
@@ -28,6 +29,7 @@ from fiberhmm.cli.generate_probs import (
     _safe_percent,
     _save_temporary_probability_counters,
     _target_bases_for_mode,
+    _write_probability_table,
 )
 
 
@@ -334,6 +336,28 @@ def test_combined_probability_frame_outer_merges_contexts_and_fills_missing():
         'accessible_prob': [0.8, 0.0, 0.9],
         'inaccessible_prob': [0.0, 0.1, 0.2],
     }
+
+
+def test_write_probability_table_uses_stable_probability_columns(tmp_path):
+    probs = pd.DataFrame({
+        'context': ['AAA'],
+        'ratio': [0.25],
+        'encode': [7],
+        'hit': [1],
+        'nohit': [3],
+        'ignored': ['x'],
+    })
+    output = tmp_path / 'probs.tsv'
+
+    _write_probability_table(probs, str(output))
+
+    assert PROBABILITY_TSV_COLUMNS == (
+        'encode', 'context', 'hit', 'nohit', 'ratio',
+    )
+    assert output.read_text() == (
+        "encode\tcontext\thit\tnohit\tratio\n"
+        "7\tAAA\t1\t3\t0.25\n"
+    )
 
 
 def test_probability_output_path_helpers():

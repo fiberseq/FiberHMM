@@ -60,6 +60,7 @@ FILTER_STAT_KEYS = (
     'processed',
 )
 SAMPLE_TYPES = ('accessible', 'inaccessible')
+PROBABILITY_TSV_COLUMNS = ('encode', 'context', 'hit', 'nohit', 'ratio')
 
 
 def parse_args():
@@ -216,6 +217,12 @@ def _combined_probability_frame(
     combined = combined.sort_values('context').reset_index(drop=True)
     combined['encode'] = range(len(combined))
     return combined[['encode', 'context', 'accessible_prob', 'inaccessible_prob']]
+
+
+def _write_probability_table(probs: pd.DataFrame, output_path: str) -> None:
+    probs[list(PROBABILITY_TSV_COLUMNS)].to_csv(
+        output_path, sep='\t', index=False,
+    )
 
 
 def _max_reads_per_file(max_reads: int, n_files: int) -> int:
@@ -571,9 +578,7 @@ def main():
                 base,
                 ctx_size,
             )
-            acc_probs[['encode', 'context', 'hit', 'nohit', 'ratio']].to_csv(
-                acc_tsv, sep='\t', index=False
-            )
+            _write_probability_table(acc_probs, acc_tsv)
 
             # Inaccessible probabilities
             _, inacc_probs = inacc.get_encoding_table(ctx_size)
@@ -584,9 +589,7 @@ def main():
                 base,
                 ctx_size,
             )
-            inacc_probs[['encode', 'context', 'hit', 'nohit', 'ratio']].to_csv(
-                inacc_tsv, sep='\t', index=False
-            )
+            _write_probability_table(inacc_probs, inacc_tsv)
 
             n_acc = len(acc_probs)
             n_inacc = len(inacc_probs)
