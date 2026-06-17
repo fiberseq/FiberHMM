@@ -121,6 +121,47 @@ def _write_read_stats_section(handle, summary: dict) -> None:
     handle.write("\n")
 
 
+def _write_footprint_stats_section(handle, summary: dict) -> None:
+    handle.write("Footprint Statistics\n")
+    handle.write("-" * 30 + "\n")
+    if 'total_footprints' in summary:
+        handle.write(f"Total footprints:           {summary['total_footprints']:,}\n")
+        handle.write(
+            f"Size (median):              "
+            f"{summary['footprint_size_median']:.0f} bp\n"
+        )
+        handle.write(
+            f"Size (mean ± std):          "
+            f"{summary['footprint_size_mean']:.1f} ± "
+            f"{summary['footprint_size_std']:.1f} bp\n"
+        )
+        handle.write(
+            f"Size (range):               "
+            f"{summary['footprint_size_min']:.0f} - "
+            f"{summary['footprint_size_max']:.0f} bp\n"
+        )
+        handle.write(
+            f"Size (IQR):                 "
+            f"{summary['footprint_size_q25']:.0f} - "
+            f"{summary['footprint_size_q75']:.0f} bp\n"
+        )
+    if 'footprints_per_read_median' in summary:
+        handle.write(
+            f"Per read (median):          "
+            f"{summary['footprints_per_read_median']:.1f}\n"
+        )
+        handle.write(
+            f"Per read (mean):            "
+            f"{summary['footprints_per_read_mean']:.1f}\n"
+        )
+    if 'footprint_coverage_median' in summary:
+        handle.write(
+            f"Read coverage (median):     "
+            f"{summary['footprint_coverage_median']*100:.1f}%\n"
+        )
+    handle.write("\n")
+
+
 def _stats_sampling_probability(total_reads: int, n_samples: int) -> float:
     if total_reads <= n_samples:
         return 1.0
@@ -301,21 +342,7 @@ class FootprintStats:
             f.write("=" * 50 + "\n\n")
 
             _write_read_stats_section(f, summary)
-
-            f.write("Footprint Statistics\n")
-            f.write("-" * 30 + "\n")
-            if 'total_footprints' in summary:
-                f.write(f"Total footprints:           {summary['total_footprints']:,}\n")
-                f.write(f"Size (median):              {summary['footprint_size_median']:.0f} bp\n")
-                f.write(f"Size (mean ± std):          {summary['footprint_size_mean']:.1f} ± {summary['footprint_size_std']:.1f} bp\n")
-                f.write(f"Size (range):               {summary['footprint_size_min']:.0f} - {summary['footprint_size_max']:.0f} bp\n")
-                f.write(f"Size (IQR):                 {summary['footprint_size_q25']:.0f} - {summary['footprint_size_q75']:.0f} bp\n")
-            if 'footprints_per_read_median' in summary:
-                f.write(f"Per read (median):          {summary['footprints_per_read_median']:.1f}\n")
-                f.write(f"Per read (mean):            {summary['footprints_per_read_mean']:.1f}\n")
-            if 'footprint_coverage_median' in summary:
-                f.write(f"Read coverage (median):     {summary['footprint_coverage_median']*100:.1f}%\n")
-            f.write("\n")
+            _write_footprint_stats_section(f, summary)
 
             if 'total_gaps' in summary:
                 f.write("Gap (Accessible Region) Statistics\n")

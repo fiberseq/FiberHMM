@@ -250,6 +250,41 @@ def test_write_read_stats_section_formats_counts_and_lengths():
     )
 
 
+def test_write_footprint_stats_section_formats_size_and_coverage():
+    handle = io.StringIO()
+
+    stats_module._write_footprint_stats_section(
+        handle,
+        {
+            "total_footprints": 1234,
+            "footprint_size_median": 147,
+            "footprint_size_mean": 151.25,
+            "footprint_size_std": 12.5,
+            "footprint_size_min": 80,
+            "footprint_size_max": 220,
+            "footprint_size_q25": 130,
+            "footprint_size_q75": 170,
+            "footprints_per_read_median": 3,
+            "footprints_per_read_mean": 3.5,
+            "footprint_coverage_median": 0.42,
+        },
+    )
+
+    assert handle.getvalue() == (
+        "Footprint Statistics\n"
+        "------------------------------\n"
+        "Total footprints:           1,234\n"
+        "Size (median):              147 bp\n"
+        "Size (mean ± std):          151.2 ± 12.5 bp\n"
+        "Size (range):               80 - 220 bp\n"
+        "Size (IQR):                 130 - 170 bp\n"
+        "Per read (median):          3.0\n"
+        "Per read (mean):            3.5\n"
+        "Read coverage (median):     42.0%\n"
+        "\n"
+    )
+
+
 def test_stats_sampling_probability_handles_full_and_partial_samples():
     assert stats_module._stats_sampling_probability(10, 100) == 1.0
     assert stats_module._stats_sampling_probability(100, 10) == 0.1
