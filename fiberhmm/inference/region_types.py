@@ -100,9 +100,10 @@ class RegionBamAggregation:
         self.reads_with_footprints += result.reads_with_footprints
         self.temp_bams.append((region_index, result.temp_bam_path))
 
-        for reason, count in result.skip_reasons.items():
-            self.skip_reasons[reason] = self.skip_reasons.get(reason, 0) + count
-            self.total_skipped += count
+        self.total_skipped += _accumulate_skip_reasons(
+            self.skip_reasons,
+            result.skip_reasons,
+        )
 
         if include_tsv and result.temp_tsv_path:
             self.temp_tsvs.append((region_index, result.temp_tsv_path))
@@ -171,3 +172,14 @@ class RegionBedAggregation:
 def _coerce_region(region: tuple) -> GenomicRegion:
     chrom, start, end = region
     return chrom, int(start), int(end)
+
+
+def _accumulate_skip_reasons(
+    target: SkipReasons,
+    source: SkipReasons,
+) -> int:
+    total = 0
+    for reason, count in source.items():
+        target[reason] = target.get(reason, 0) + count
+        total += count
+    return total

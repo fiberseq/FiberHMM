@@ -9,6 +9,7 @@ from fiberhmm.inference.region_types import (
     RegionBedAggregation,
     RegionBedResult,
     RegionBedWorkItem,
+    _accumulate_skip_reasons,
 )
 
 
@@ -73,6 +74,15 @@ def test_region_bam_aggregation_accumulates_counts_paths_and_skips():
     assert aggregation.temp_bams == [(2, "region_2.bam"), (0, "region_0.bam")]
     assert aggregation.temp_tsvs == [(2, "region_2.tsv")]
     assert aggregation.completed == 2
+
+
+def test_accumulate_skip_reasons_updates_target_and_returns_added_total():
+    target = {"low_mapq": 2}
+
+    added = _accumulate_skip_reasons(target, {"low_mapq": 1, "too_short": 4})
+
+    assert added == 5
+    assert target == {"low_mapq": 3, "too_short": 4}
 
 
 def test_region_bed_aggregation_accumulates_counts_and_paths():
