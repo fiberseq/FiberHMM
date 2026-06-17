@@ -537,6 +537,13 @@ def _cigar_walk_numba(cigar_ops, cigar_lens, ref_start, q_len):
     return result
 
 
+def _cigar_op_len_arrays(cigar) -> Tuple[np.ndarray, np.ndarray]:
+    return (
+        np.asarray([op for op, _ in cigar], dtype=np.int64),
+        np.asarray([length for _, length in cigar], dtype=np.int64),
+    )
+
+
 def cigar_to_query_ref(read) -> np.ndarray:
     """Build query_pos -> ref_pos numpy array for a pysam read.
 
@@ -559,8 +566,7 @@ def cigar_to_query_ref(read) -> np.ndarray:
     q_len = read.query_length or 0
     if q_len == 0:
         return np.array([], dtype=np.int64)
-    cigar_ops = np.asarray([c[0] for c in cigar], dtype=np.int64)
-    cigar_lens = np.asarray([c[1] for c in cigar], dtype=np.int64)
+    cigar_ops, cigar_lens = _cigar_op_len_arrays(cigar)
     return _cigar_walk_numba(cigar_ops, cigar_lens, int(ref_start), int(q_len))
 
 

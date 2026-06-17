@@ -23,6 +23,7 @@ try:
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
         _append_mm_mod_result,
+        _cigar_op_len_arrays,
         _context_flanks,
         _context_codes_for_target_positions,
         _daf_deamination_base_counts,
@@ -53,6 +54,7 @@ except ImportError:
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
         _append_mm_mod_result,
+        _cigar_op_len_arrays,
         _context_flanks,
         _context_codes_for_target_positions,
         _daf_deamination_base_counts,
@@ -309,6 +311,15 @@ def test_get_reference_positions_array_uses_minus_one_for_insertions():
         get_reference_positions_array(FakeRead()),
         np.array([10, 11, -1, 12], dtype=np.int32),
     )
+
+
+def test_cigar_op_len_arrays_split_ops_and_lengths():
+    cigar_ops, cigar_lens = _cigar_op_len_arrays([(0, 10), (1, 2), (4, 3)])
+
+    assert cigar_ops.dtype == np.int64
+    assert cigar_lens.dtype == np.int64
+    np.testing.assert_array_equal(cigar_ops, [0, 1, 4])
+    np.testing.assert_array_equal(cigar_lens, [10, 2, 3])
 
 
 def test_read_bam_filter_helper_applies_basic_read_filters():
