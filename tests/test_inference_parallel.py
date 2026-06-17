@@ -622,6 +622,7 @@ def test_streaming_drain_counter_helpers_write_passthrough():
     streaming_drain._record_worker_failures(counters, 3)
     streaming_drain._record_reads_with_footprints(counters)
     streaming_drain._record_no_footprints(counters)
+    streaming_drain._record_chimera(counters)
     streaming_drain._write_passthrough(outbam, read, counters)
 
     assert counters == {
@@ -629,6 +630,7 @@ def test_streaming_drain_counter_helpers_write_passthrough():
         "worker_failures": 3,
         "reads_with_footprints": 1,
         "no_footprints": 1,
+        "chimera": 1,
     }
     assert outbam.written == [read]
 

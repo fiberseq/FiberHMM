@@ -33,6 +33,10 @@ def _record_no_footprints(counters) -> None:
     _increment_counter(counters, 'no_footprints')
 
 
+def _record_chimera(counters) -> None:
+    _increment_counter(counters, 'chimera')
+
+
 def _write_passthrough(outbam, read_obj, counters) -> None:
     outbam.write(read_obj)
     _increment_counter(counters, 'written')
@@ -125,7 +129,7 @@ def _drain_oldest_fused_chunk(
         next(payload_iter)
         result = next(result_iter)
         if result == CHIMERA_RESULT:
-            _increment_counter(counters, 'chimera')
+            _record_chimera(counters)
         elif result is not None:
             write_fused_recall_tags(
                 read_obj,
