@@ -21,6 +21,7 @@ from fiberhmm.inference.parallel import (
     _drain_oldest_chunk,
     _drain_oldest_fused_chunk,
     _is_main_chromosome,
+    _model_and_path_for_processing,
 )
 from fiberhmm.inference.read_filters import ReadFilterConfig
 from fiberhmm.inference.worker_results import WorkerChunkResult, coerce_worker_chunk_result
@@ -57,6 +58,13 @@ def test_worker_chunk_result_coerces_legacy_lists():
 def test_parallel_reexports_multiprocessing_context():
     assert parallel._select_mp_context is mp_context._select_mp_context
     assert parallel._MP_CONTEXT is mp_context._MP_CONTEXT
+
+
+def test_model_and_path_for_processing_splits_path_and_loaded_model():
+    assert _model_and_path_for_processing("model.json") == (None, "model.json")
+
+    model = object()
+    assert _model_and_path_for_processing(model) == (model, None)
 
 
 def test_parallel_reexports_legacy_pipeline_entry_points():

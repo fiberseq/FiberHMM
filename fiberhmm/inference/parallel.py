@@ -51,6 +51,12 @@ from fiberhmm.inference.streaming_workers import (
 _is_main_chromosome = _region_is_main_chromosome
 
 
+def _model_and_path_for_processing(model_or_path):
+    if isinstance(model_or_path, str):
+        return None, model_or_path
+    return model_or_path, None
+
+
 def process_bam_for_footprints(input_bam: str, output_bam: str,
                                 model_or_path, train_rids: Set[str],
                                 edge_trim: int, circular: bool,
@@ -95,12 +101,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
     pysam.set_verbosity(0)
 
     # Get model path for workers
-    if isinstance(model_or_path, str):
-        model_path = model_or_path
-        model = None
-    else:
-        model = model_or_path
-        model_path = None
+    model, model_path = _model_and_path_for_processing(model_or_path)
 
     # Dispatch to region-parallel if requested (requires model_path for workers)
     if region_parallel:
