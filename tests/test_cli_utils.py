@@ -6,6 +6,7 @@ from fiberhmm.cli.utils import (
     AccessibilityCounter,
     _accessibility_priors_for_base,
     _estimate_emission_probs,
+    _passes_transfer_base_filters,
     _scale_emission_probabilities,
     _target_bases_for_transfer_mode,
     _write_transfer_probability_tables,
@@ -74,6 +75,29 @@ def test_estimate_emission_probs_fits_linear_accessibility_model():
     assert p_inacc == pytest.approx(0.1)
     assert diagnostics["n_contexts"] == 12
     assert diagnostics["r_squared"] == pytest.approx(1.0)
+
+
+def test_passes_transfer_base_filters_checks_primary_mapq_and_sequence():
+    class Read:
+        is_unmapped = False
+        is_secondary = False
+        is_supplementary = False
+        mapping_quality = 20
+        query_sequence = "ACGT"
+
+    assert _passes_transfer_base_filters(Read(), min_mapq=20)
+
+    read = Read()
+    read.mapping_quality = 19
+    assert not _passes_transfer_base_filters(read, min_mapq=20)
+
+    read = Read()
+    read.query_sequence = None
+    assert not _passes_transfer_base_filters(read, min_mapq=20)
+
+    read = Read()
+    read.is_secondary = True
+    assert not _passes_transfer_base_filters(read, min_mapq=20)
 
 
 def test_scale_emission_probabilities_scales_one_state_and_clips():

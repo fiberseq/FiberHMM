@@ -398,6 +398,14 @@ def _estimate_emission_probs(target_rates, accessibility_priors, min_observation
         return 0.5, 0.1, diagnostics
 
 
+def _passes_transfer_base_filters(read, min_mapq: int) -> bool:
+    if not is_primary_mapped_alignment(read):
+        return False
+    if read.mapping_quality < min_mapq:
+        return False
+    return read.query_sequence is not None
+
+
 def _process_reference_bam(bam_path, max_context, args):
     """Process reference BAM with footprint tags to get accessibility priors."""
     import pysam
@@ -411,11 +419,7 @@ def _process_reference_bam(bam_path, max_context, args):
         pbar = tqdm(bam.fetch(), desc="Processing reference BAM")
 
         for read in pbar:
-            if not is_primary_mapped_alignment(read):
-                continue
-            if read.mapping_quality < args.min_mapq:
-                continue
-            if read.query_sequence is None:
+            if not _passes_transfer_base_filters(read, args.min_mapq):
                 continue
 
             total_reads += 1
@@ -462,11 +466,7 @@ def _process_target_bam(bam_path, mode, max_context, args):
         pbar = tqdm(bam.fetch(), desc="Processing target BAM")
 
         for read in pbar:
-            if not is_primary_mapped_alignment(read):
-                continue
-            if read.mapping_quality < args.min_mapq:
-                continue
-            if read.query_sequence is None:
+            if not _passes_transfer_base_filters(read, args.min_mapq):
                 continue
             if read.reference_end is None or read.reference_start is None:
                 continue
