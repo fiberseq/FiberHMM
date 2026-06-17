@@ -15,6 +15,23 @@ from fiberhmm.io.ma_tags import _read_length_of, flip_interval_frame
 Interval = Tuple[int, int]
 
 
+def _flip_legacy_intervals_to_molecular(
+    starts: Sequence[int],
+    lengths: Sequence[int],
+    scores: Optional[Sequence[float]],
+    read_length: int,
+):
+    recs = sorted(
+        (flip_interval_frame(s, length, read_length),
+         (scores[i] if scores is not None else None))
+        for i, (s, length) in enumerate(zip(starts, lengths))
+    )
+    new_s = [r[0][0] for r in recs]
+    new_l = [r[0][1] for r in recs]
+    new_sc = [r[1] for r in recs] if scores is not None else None
+    return new_s, new_l, new_sc
+
+
 def _to_molecular_legacy(starts, lengths, scores, read, with_scores):
     """Convert parallel (start, length[, score]) legacy arrays to molecular
     frame for a reverse-mapped read (no-op for forward reads). Returns lists;
@@ -27,15 +44,7 @@ def _to_molecular_legacy(starts, lengths, scores, read, with_scores):
     read_length = _read_length_of(read)
     if not read_length:
         return s_list, l_list, sc
-    recs = sorted(
-        (flip_interval_frame(s, length, read_length),
-         (sc[i] if sc is not None else None))
-        for i, (s, length) in enumerate(zip(s_list, l_list))
-    )
-    new_s = [r[0][0] for r in recs]
-    new_l = [r[0][1] for r in recs]
-    new_sc = [r[1] for r in recs] if sc is not None else None
-    return new_s, new_l, new_sc
+    return _flip_legacy_intervals_to_molecular(s_list, l_list, sc, read_length)
 
 
 def _array_to_ints(values) -> list[int]:

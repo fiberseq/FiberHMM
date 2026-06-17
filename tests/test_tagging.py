@@ -7,6 +7,7 @@ import array as pyarray
 import numpy as np
 
 from fiberhmm.inference.tagging import (
+    _flip_legacy_intervals_to_molecular,
     _fused_recall_tag_intervals,
     _linear_intervals_overlap,
     _tf_linear_intervals,
@@ -37,6 +38,19 @@ def test_scores_to_u8_clips_and_returns_python_ints():
 
     assert values == [0, 0, 127, 255, 255]
     assert all(type(value) is int for value in values)
+
+
+def test_flip_legacy_intervals_to_molecular_sorts_and_reorders_scores():
+    starts, lengths, scores = _flip_legacy_intervals_to_molecular(
+        [10, 80],
+        [5, 10],
+        [0.25, 0.75],
+        read_length=100,
+    )
+
+    assert starts == [10, 85]
+    assert lengths == [10, 5]
+    assert scores == [0.75, 0.25]
 
 
 def test_set_legacy_apply_tags_writes_unsigned_bam_arrays():
