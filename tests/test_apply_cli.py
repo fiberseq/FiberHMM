@@ -10,7 +10,10 @@ from fiberhmm.cli.apply import (
     _dataset_name,
     _ddda_notice_needed,
     _load_training_read_ids,
+    _print_apply_done,
+    _print_numba_status,
     _print_processing_settings,
+    _print_processing_result,
     _print_ddda_two_pass_notice,
     _print_region_filter_settings,
     _msp_output_message,
@@ -29,6 +32,7 @@ from fiberhmm.cli.apply import (
     _use_streaming_pipeline,
     _stats_output_prefix,
     _scores_db_counts,
+    _write_apply_stats,
 )
 
 
@@ -254,3 +258,63 @@ def test_processing_status_message_formats_read_limit():
     assert _processing_status_message(12500) == (
         "Processing BAM (limited to 12,500 reads)..."
     )
+
+
+def test_apply_reporting_helpers_route_messages(capsys):
+    _print_numba_status(True)
+    assert "Numba JIT: enabled" in capsys.readouterr().out
+
+    _print_numba_status(False)
+    assert "Numba JIT: disabled" in capsys.readouterr().out
+
+    _print_processing_result(1200, 34, "out.bam", stdout_mode=False)
+    out = capsys.readouterr().out
+    assert "Processed 1,200 reads -> 34 with footprints" in out
+    assert "BAM: out.bam" in out
+    assert "BAM index: out.bam.bai" in out
+
+    _print_processing_result(5, 2, "-", stdout_mode=True)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Processed 5 reads -> 2 with footprints" in captured.err
+
+    _print_apply_done(False, "out.bam")
+    out = capsys.readouterr().out
+    assert "Done!" in out
+    assert "fiberhmm-extract-tags -i out.bam" in out
+
+    _print_apply_done(True, "-")
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Done!" in captured.err
+
+
+def test_apply_stats_writer_uses_expected_prefix(monkeypatch, capsys):
+    calls = []
+
+    class Stats:
+        def write_summary(self, path):
+            calls.append(("summary", path))
+
+        def plot_distributions(self, prefix):
+            calls.append(("plot", prefix))
+
+    def fake_collect(output_bam, **kwargs):
+        calls.append(("collect", output_bam, kwargs))
+        return Stats()
+
+    monkeypatch.setattr("fiberhmm.cli.apply.collect_stats_from_bam", fake_collect)
+    args = SimpleNamespace(outdir="/tmp/out", stats_sample=100, stats_seed=7)
+
+    _write_apply_stats("out.bam", args, "sample", with_scores=True)
+
+    assert calls == [
+        ("collect", "out.bam", {
+            "n_samples": 100,
+            "seed": 7,
+            "with_scores": True,
+        }),
+        ("summary", "/tmp/out/sample_footprints_stats.txt"),
+        ("plot", "/tmp/out/sample_footprints"),
+    ]
+    assert "Stats: /tmp/out/sample_footprints_stats.txt" in capsys.readouterr().out

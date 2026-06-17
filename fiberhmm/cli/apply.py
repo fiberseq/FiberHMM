@@ -351,6 +351,54 @@ def _processing_status_message(max_reads) -> str:
     return "Processing BAM..."
 
 
+def _print_numba_status(has_numba: bool) -> None:
+    if has_numba:
+        print("  Numba JIT: enabled (fast)")
+    else:
+        print("  Numba JIT: disabled (pip install numba for ~10x speedup)")
+
+
+def _print_processing_result(
+    total_reads: int,
+    reads_with_footprints: int,
+    output_bam: str,
+    stdout_mode: bool,
+) -> None:
+    stream = sys.stderr if stdout_mode else sys.stdout
+    print(
+        f"\nProcessed {total_reads:,} reads -> "
+        f"{reads_with_footprints:,} with footprints",
+        file=stream,
+    )
+    if not stdout_mode:
+        print(f"BAM: {output_bam}")
+        print(f"BAM index: {output_bam}.bai")
+
+
+def _write_apply_stats(output_bam: str, args, dataset: str, with_scores: bool) -> None:
+    print("\nGenerating statistics...")
+    stats_prefix = _stats_output_prefix(args.outdir, dataset)
+    stats = collect_stats_from_bam(
+        output_bam,
+        n_samples=args.stats_sample,
+        seed=args.stats_seed,
+        with_scores=with_scores,
+    )
+    stats.write_summary(f"{stats_prefix}_stats.txt")
+    stats.plot_distributions(stats_prefix)
+    print(f"Stats: {stats_prefix}_stats.txt, {stats_prefix}_stats.pdf")
+
+
+def _print_apply_done(stdout_mode: bool, output_bam: str) -> None:
+    if stdout_mode:
+        print("\nDone!", file=sys.stderr)
+        return
+
+    print("\nDone!")
+    print("\nTo extract BED12/bigBed for browser visualization:")
+    print(f"  fiberhmm-extract-tags -i {output_bam}")
+
+
 def main():
     args = parse_args()
 
@@ -383,10 +431,7 @@ def main():
 
     # Show optimization status
     from fiberhmm.core.hmm import HAS_NUMBA
-    if HAS_NUMBA:
-        print("  Numba JIT: enabled (fast)")
-    else:
-        print("  Numba JIT: disabled (pip install numba for ~10x speedup)")
+    _print_numba_status(HAS_NUMBA)
 
     # Determine context size and mode (command line overrides model metadata)
     context_size = _resolve_context_size(args, model_context_size)
@@ -458,33 +503,18 @@ def main():
         chunk_size=args.chunk_size,
         process_unmapped=process_unmapped,
     )
-    print(f"\nProcessed {total_reads:,} reads -> {reads_with_footprints:,} with footprints",
-          file=sys.stderr if stdout_mode else sys.stdout)
-    if not stdout_mode:
-        print(f"BAM: {output_bam}")
-        print(f"BAM index: {output_bam}.bai")
+    _print_processing_result(
+        total_reads, reads_with_footprints, output_bam, stdout_mode,
+    )
 
     # Generate stats if requested (not available for stdout mode)
     if args.stats and not stdout_mode:
-        print("\nGenerating statistics...")
-        stats_prefix = _stats_output_prefix(args.outdir, dataset)
-        stats = collect_stats_from_bam(output_bam,
-                                       n_samples=args.stats_sample,
-                                       seed=args.stats_seed,
-                                       with_scores=with_scores)
-        stats.write_summary(f"{stats_prefix}_stats.txt")
-        stats.plot_distributions(stats_prefix)
-        print(f"Stats: {stats_prefix}_stats.txt, {stats_prefix}_stats.pdf")
+        _write_apply_stats(output_bam, args, dataset, with_scores)
 
     # Print scores database info
     _print_scores_db_summary(db_path)
 
-    if stdout_mode:
-        print("\nDone!", file=sys.stderr)
-    else:
-        print("\nDone!")
-        print("\nTo extract BED12/bigBed for browser visualization:")
-        print(f"  fiberhmm-extract-tags -i {output_bam}")
+    _print_apply_done(stdout_mode, output_bam)
 
 
 if __name__ == '__main__':
