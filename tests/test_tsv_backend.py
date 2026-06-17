@@ -183,6 +183,14 @@ def test_chrom_from_countable_tsv_line_filters_non_data_rows():
     assert tsv_backend._chrom_from_countable_tsv_line("read1\tchr2L\t0\t3\n") == "chr2L"
 
 
+def test_metadata_from_tsv_line_parses_only_metadata_rows():
+    assert tsv_backend._metadata_from_tsv_line("read1\tchr1\t0\t3\n") is None
+    assert tsv_backend._metadata_from_tsv_line("#comment\n") is None
+    assert tsv_backend._metadata_from_tsv_line(
+        '#metadata:{"mode":"daf","context_size":5}\n'
+    ) == {"mode": "daf", "context_size": 5}
+
+
 def test_iter_tsv_posterior_fields_skips_non_records(tmp_path):
     tsv_path = tmp_path / "posteriors.tsv"
     tsv_path.write_text(

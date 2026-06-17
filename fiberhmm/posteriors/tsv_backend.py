@@ -87,6 +87,12 @@ def _chrom_from_countable_tsv_line(line: str) -> Optional[str]:
     return parts[1]
 
 
+def _metadata_from_tsv_line(line: str) -> Optional[dict]:
+    if not line.startswith('#metadata:'):
+        return None
+    return json.loads(line.split(':', 1)[1])
+
+
 def _posterior_record_from_fields(fields, dtype) -> dict:
     (
         read_id, chrom, start, end, strand, post_b64,
@@ -123,8 +129,9 @@ def _scan_tsv_for_h5(tsv_path: str, verbose: bool):
 
     with _open_text_file(tsv_path, 'rt') as infile:
         for line in infile:
-            if line.startswith('#metadata:'):
-                metadata = json.loads(line.split(':', 1)[1])
+            line_metadata = _metadata_from_tsv_line(line)
+            if line_metadata is not None:
+                metadata = line_metadata
                 continue
 
             chrom = _chrom_from_countable_tsv_line(line)
