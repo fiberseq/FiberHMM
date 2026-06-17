@@ -121,10 +121,14 @@ def _record_mm_tag_types(mm_tag: str, mm_tag_types: MutableMapping[str, int]) ->
         mm_tag_types[base_mod] += 1
 
 
+def _safe_percent(numerator: int, denominator: int) -> float:
+    return 100 * numerator / max(1, denominator)
+
+
 def _print_filter_stats(filter_stats: Dict[str, int], min_mapq: int, min_read_length: int) -> None:
     print("\n    Filter Statistics:")
     print(f"      Total scanned:      {filter_stats['scanned']:>10,}")
-    print(f"      Passed all filters: {filter_stats['processed']:>10,} ({100*filter_stats['processed']/max(1,filter_stats['scanned']):.1f}%)")
+    print(f"      Passed all filters: {filter_stats['processed']:>10,} ({_safe_percent(filter_stats['processed'], filter_stats['scanned']):.1f}%)")
     print("      ─────────────────────────────────")
     print(f"      Unmapped:           {filter_stats['unmapped']:>10,}")
     print(f"      Secondary:          {filter_stats['secondary']:>10,}")
@@ -259,7 +263,7 @@ def _progress_postfix(reads_processed: int, reads_scanned: int) -> Dict[str, str
     return {
         'processed': f'{reads_processed:,}',
         'scanned': f'{reads_scanned:,}',
-        'rate': f'{100*reads_processed/max(1, reads_scanned):.1f}%'
+        'rate': f'{_safe_percent(reads_processed, reads_scanned):.1f}%'
     }
 
 
