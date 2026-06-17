@@ -271,12 +271,18 @@ def _resolve_recall_nucs(args) -> bool:
     return recall_nucs
 
 
+def _chimera_filter_state(mode: str, keep_chimeras: bool) -> str:
+    if mode != 'daf':
+        return 'n/a'
+    return 'off' if keep_chimeras else 'on'
+
+
 def _build_pg_record(mode, recall_nucs, phase_nrl, keep_chimeras, argv=None):
     """Build the @PG provenance record for fused call output BAMs."""
     import fiberhmm as _fh
 
     argv = sys.argv if argv is None else argv
-    chimera_state = 'n/a' if mode != 'daf' else ('off' if keep_chimeras else 'on')
+    chimera_state = _chimera_filter_state(mode, keep_chimeras)
     return {
         'PN': 'fiberhmm-call',
         'VN': getattr(_fh, '__version__', 'unknown'),

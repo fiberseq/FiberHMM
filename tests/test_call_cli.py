@@ -16,6 +16,7 @@ from fiberhmm.cli.call import (
     _call_banner_text,
     _check_daf_inputs,
     _check_region_parallel_file_io,
+    _chimera_filter_state,
     _daf_sources_available,
     _is_phase_nrl_off,
     _normalize_phase_nrl_option,
@@ -258,6 +259,12 @@ def test_call_recall_nucs_defaults_and_ddda_warnings(capsys):
     args = SimpleNamespace(enzyme="ddda", recall_nucs=True)
     assert _resolve_recall_nucs(args) is True
     assert "--recall-nucs on DddA" in capsys.readouterr().err
+
+
+def test_chimera_filter_state_is_daf_specific():
+    assert _chimera_filter_state("daf", keep_chimeras=False) == "on"
+    assert _chimera_filter_state("daf", keep_chimeras=True) == "off"
+    assert _chimera_filter_state("pacbio-fiber", keep_chimeras=False) == "n/a"
 
 
 def test_call_pg_record_documents_molecular_coordinates():
