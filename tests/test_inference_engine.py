@@ -5,9 +5,11 @@ import numpy as np
 import pytest
 
 from fiberhmm.core.hmm import FiberHMM
+import fiberhmm.inference.engine as engine
 from fiberhmm.inference.engine import (
     _extract_footprints_from_states,
     _footprint_runs,
+    detect_mode_from_bam,
     predict_footprints,
     predict_footprints_and_msps,
 )
@@ -182,3 +184,39 @@ class TestExtractFootprintsFromStates:
         result = _extract_footprints_from_states(states, confidence, 1, with_scores=True)
         if len(result['footprint_starts']) > 0:
             assert result['footprint_scores'] is not None
+
+
+class TestModeDetection:
+    def test_detect_mode_uses_valid_mm_specs_and_ignores_malformed(self, monkeypatch):
+        class FakeRead:
+            is_unmapped = False
+            query_sequence = "A" * 20
+
+            def __init__(self, mm_tag):
+                self._mm_tag = mm_tag
+
+            def has_tag(self, tag):
+                return tag in {"MM", "Mm"}
+
+            def get_tag(self, tag):
+                if tag in {"MM", "Mm"}:
+                    return self._mm_tag
+                raise KeyError(tag)
+
+        class FakeBam:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def fetch(self, until_eof=False):
+                return iter([FakeRead("malformed;T-a,0;")])
+
+        monkeypatch.setattr(
+            engine.pysam,
+            "AlignmentFile",
+            lambda *args, **kwargs: FakeBam(),
+        )
+
+        assert detect_mode_from_bam("fake.bam", n_sample=1) == "daf"

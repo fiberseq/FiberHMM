@@ -6,6 +6,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.bam_reader import (
+    _mm_mod_spec_parts,
     daf_strand_from_tag,
     detect_daf_strand,
     encode_from_query_sequence,
@@ -442,8 +443,8 @@ def detect_mode_from_bam(bam_path: str, n_sample: int = 100) -> str:
                         for mod_spec in mm_tag.split(';'):
                             if not mod_spec:
                                 continue
-                            parts = mod_spec.split(',')
-                            if len(parts) < 2:
+                            parts = _mm_mod_spec_parts(mod_spec)
+                            if parts is None:
                                 continue
                             base_mod = parts[0].strip()
 
