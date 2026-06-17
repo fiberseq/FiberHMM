@@ -12,6 +12,7 @@ import pytest
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.model_io import (
     _json_save_path,
+    _json_save_redirect_warning,
     _model_file_format,
     _model_json_record,
     _normalize_model_if_requested,
@@ -277,6 +278,13 @@ class TestSaveRedirect:
             "/tmp/model.json",
             "/tmp/model.npz",
         )
+
+    def test_json_save_redirect_warning_names_both_paths(self):
+        message = _json_save_redirect_warning("/tmp/model.json", "/tmp/model.npz")
+
+        assert "Only JSON format is supported for saving" in message
+        assert "/tmp/model.json" in message
+        assert "/tmp/model.npz" in message
 
     def test_npz_redirects_to_json(self, sample_model, tmp_path):
         npz_path = str(tmp_path / "model.npz")

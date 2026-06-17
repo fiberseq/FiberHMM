@@ -250,6 +250,13 @@ def _json_save_path(filepath: str) -> Tuple[str, str]:
     return base + '.json', filepath
 
 
+def _json_save_redirect_warning(filepath: str, old_path: str) -> str:
+    return (
+        "Only JSON format is supported for saving. "
+        f"Saving to '{filepath}' instead of '{old_path}'."
+    )
+
+
 def save_model(model: FiberHMM, filepath: str,
                context_size: int = 3, mode: str = 'pacbio-fiber'):
     """
@@ -269,10 +276,7 @@ def save_model(model: FiberHMM, filepath: str,
     """
     filepath, old_path = _json_save_path(filepath)
     if old_path != filepath:
-        warnings.warn(
-            f"Only JSON format is supported for saving. "
-            f"Saving to '{filepath}' instead of '{old_path}'."
-        )
+        warnings.warn(_json_save_redirect_warning(filepath, old_path))
 
     _save_json(model, filepath, context_size, mode)
 
