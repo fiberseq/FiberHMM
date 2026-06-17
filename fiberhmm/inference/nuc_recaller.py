@@ -20,7 +20,7 @@ signal per read.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from typing import Iterable, List, Sequence, Tuple
 
 import numpy as np
 
@@ -38,6 +38,19 @@ class NucCall:
     nq: int          # quality byte from cumulative protected LLR (0-255)
     el: int          # left-edge sharpness byte (0-255; 255 = sharp)
     er: int          # right-edge sharpness byte
+
+
+def _fragments_after_cuts(a: int, b: int,
+                          cut_spans: Iterable[Tuple[int, int]]) -> List[Interval]:
+    frags: List[Interval] = []
+    cur = int(a)
+    for cs, ce in sorted((int(cs), int(ce)) for cs, ce in cut_spans):
+        if cs > cur:
+            frags.append((cur, cs))
+        cur = max(cur, ce)
+    if cur < b:
+        frags.append((cur, int(b)))
+    return frags
 
 
 def _refine_fragment(obs, a, b, llr_hit, llr_miss,
@@ -117,14 +130,7 @@ def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
     if not cut_pairs:
         return [(a, b)], []
     cut_pairs.sort()
-    subs: List[Interval] = []
-    cur = a
-    for cs, ce in cut_pairs:
-        if cs > cur:
-            subs.append((cur, cs))
-        cur = max(cur, ce)
-    if cur < b:
-        subs.append((cur, b))
+    subs = _fragments_after_cuts(a, b, cut_pairs)
     cut_intervals = [(cs, ce - cs) for cs, ce in cut_pairs]
     return subs, cut_intervals
 
@@ -186,16 +192,9 @@ def recall_nucs_in_read(
             access.append((c.start, c.length))
 
         # --- fragments = footprint minus the cut spans ---
-        frags: List[Interval] = []
-        cur = s
-        for c in cuts:
-            cs = c.start
-            ce = c.start + c.length
-            if cs > cur:
-                frags.append((cur, cs))
-            cur = max(cur, ce)
-        if cur < e:
-            frags.append((cur, e))
+        frags = _fragments_after_cuts(
+            s, e, ((c.start, c.start + c.length) for c in cuts)
+        )
 
         # --- Pass 2 (optional): phase-prior split of long fragments ---
         for a, b in frags:
