@@ -175,15 +175,30 @@ def _nuc_overlaps_any_linear_interval(
 
 
 def _legacy_apply_interval_groups(result: dict, read, with_scores: bool):
-    nucs = _to_molecular_legacy(
-        result["ns"], result["nl"], result.get("ns_scores"),
-        read, with_scores,
+    nucs = _legacy_interval_group(
+        result, "ns", "nl", "ns_scores", read, with_scores,
     )
-    msps = _to_molecular_legacy(
-        result["as"], result["al"], result.get("as_scores"),
-        read, with_scores,
+    msps = _legacy_interval_group(
+        result, "as", "al", "as_scores", read, with_scores,
     )
     return nucs, msps
+
+
+def _legacy_interval_group(
+    result: dict,
+    start_key: str,
+    length_key: str,
+    score_key: str,
+    read,
+    with_scores: bool,
+):
+    return _to_molecular_legacy(
+        result[start_key],
+        result[length_key],
+        result.get(score_key),
+        read,
+        with_scores,
+    )
 
 
 def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True) -> None:

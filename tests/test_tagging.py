@@ -10,6 +10,7 @@ from fiberhmm.inference.tagging import (
     _flip_legacy_intervals_to_molecular,
     _fused_recall_tag_intervals,
     _legacy_apply_interval_groups,
+    _legacy_interval_group,
     _linear_intervals_overlap,
     _nuc_overlaps_any_linear_interval,
     _should_keep_nuc_interval,
@@ -163,6 +164,32 @@ def test_legacy_apply_interval_groups_prepares_nucs_msps_and_scores():
     assert msps == ([100], [200], [0.5])
     assert nucs_without_scores == ([10], [30], None)
     assert msps_without_scores == ([100], [200], None)
+
+
+def test_legacy_interval_group_resolves_keyed_arrays_and_scores():
+    read = RecordingRead()
+    result = {
+        "starts": np.asarray([10], dtype=np.int32),
+        "lengths": np.asarray([30], dtype=np.int32),
+        "scores": np.asarray([0.25]),
+    }
+
+    assert _legacy_interval_group(
+        result,
+        "starts",
+        "lengths",
+        "scores",
+        read,
+        with_scores=True,
+    ) == ([10], [30], [0.25])
+    assert _legacy_interval_group(
+        result,
+        "starts",
+        "lengths",
+        "scores",
+        read,
+        with_scores=False,
+    ) == ([10], [30], None)
 
 
 def test_fused_recall_tag_intervals_prefer_circular_intervals_when_present():
