@@ -120,6 +120,32 @@ def _prepare_export_run(
     return mode, context_size, regions, params
 
 
+def _footprint_reference_intervals(
+    fp_start_idx,
+    fp_end_idx,
+    ref_positions: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    fp_starts_ref = []
+    fp_sizes_ref = []
+
+    if len(fp_start_idx) > 0 and len(ref_positions) > 0:
+        for s, e in zip(fp_start_idx, fp_end_idx):
+            s_clamped = min(s, len(ref_positions) - 1)
+            e_clamped = min(e, len(ref_positions)) - 1
+
+            ref_s = ref_positions[s_clamped]
+            ref_e = ref_positions[e_clamped] if e_clamped >= 0 else ref_s
+
+            if ref_s >= 0 and ref_e >= 0:
+                fp_starts_ref.append(ref_s)
+                fp_sizes_ref.append(max(1, ref_e - ref_s))
+
+    return (
+        np.array(fp_starts_ref, dtype=np.int32),
+        np.array(fp_sizes_ref, dtype=np.int32),
+    )
+
+
 def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
                                   context_size: int, edge_trim: int) -> Optional[Dict]:
     """
@@ -176,21 +202,11 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
 
     # Extract footprint intervals
     fp_start_idx, fp_end_idx = footprint_runs(states)
-
-    fp_starts_ref = []
-    fp_sizes_ref = []
-
-    if len(fp_start_idx) > 0 and len(ref_positions) > 0:
-        for s, e in zip(fp_start_idx, fp_end_idx):
-            s_clamped = min(s, len(ref_positions) - 1)
-            e_clamped = min(e, len(ref_positions)) - 1
-
-            ref_s = ref_positions[s_clamped]
-            ref_e = ref_positions[e_clamped] if e_clamped >= 0 else ref_s
-
-            if ref_s >= 0 and ref_e >= 0:
-                fp_starts_ref.append(ref_s)
-                fp_sizes_ref.append(max(1, ref_e - ref_s))
+    fp_starts_ref, fp_sizes_ref = _footprint_reference_intervals(
+        fp_start_idx,
+        fp_end_idx,
+        ref_positions,
+    )
 
     return {
         'read_name': read.query_name,
@@ -199,8 +215,8 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
         'strand': strand,
         'posteriors': p_footprint,
         'ref_positions': ref_positions,
-        'footprint_starts': np.array(fp_starts_ref, dtype=np.int32),
-        'footprint_sizes': np.array(fp_sizes_ref, dtype=np.int32),
+        'footprint_starts': fp_starts_ref,
+        'footprint_sizes': fp_sizes_ref,
     }
 
 

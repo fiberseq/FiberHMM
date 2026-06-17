@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from fiberhmm.cli import export_posteriors
@@ -48,6 +49,17 @@ def test_export_posteriors_regions_by_chrom_preserves_order():
         "chr2": [(0, 10), (10, 20)],
         "chr1": [(5, 15)],
     }
+
+
+def test_footprint_reference_intervals_clamps_and_skips_invalid_positions():
+    starts, sizes = export_posteriors._footprint_reference_intervals(
+        fp_start_idx=np.array([0, 2, 3]),
+        fp_end_idx=np.array([2, 4, 10]),
+        ref_positions=np.array([100, 101, -1, 103, 104], dtype=np.int32),
+    )
+
+    np.testing.assert_array_equal(starts, np.array([100, 103], dtype=np.int32))
+    np.testing.assert_array_equal(sizes, np.array([1, 1], dtype=np.int32))
 
 
 def test_submit_next_region_records_pending_future():
