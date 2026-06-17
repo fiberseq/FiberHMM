@@ -7,6 +7,7 @@ import array as pyarray
 import numpy as np
 
 from fiberhmm.inference.tagging import (
+    _fused_recall_tag_intervals,
     scores_to_u8,
     set_legacy_apply_tags,
     unify_circular_nucs_with_tf_calls,
@@ -119,6 +120,22 @@ def test_set_legacy_apply_tags_strips_stale_ma_an_even_when_no_new_calls():
 
     assert "MA" not in read.tags
     assert "AN" not in read.tags
+
+
+def test_fused_recall_tag_intervals_prefer_circular_intervals_when_present():
+    result = {
+        "ns": np.asarray([10], dtype=np.int32),
+        "nl": np.asarray([5], dtype=np.int32),
+        "as": np.asarray([20], dtype=np.int32),
+        "al": np.asarray([6], dtype=np.int32),
+    }
+
+    assert _fused_recall_tag_intervals(result) == ([(10, 5)], [(20, 6)])
+
+    result["circular_ns"] = [(90, 20)]
+    result["circular_as"] = [(80, 10)]
+
+    assert _fused_recall_tag_intervals(result) == ([(90, 20)], [(80, 10)])
 
 
 def test_unify_nucs_with_tf_calls_drops_short_overlaps_and_carries_scores():

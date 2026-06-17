@@ -224,6 +224,16 @@ def split_intervals(intervals: Sequence[Interval]) -> tuple[np.ndarray, np.ndarr
     return starts, lengths
 
 
+def _fused_recall_tag_intervals(result: dict) -> tuple[list[Interval], list[Interval]]:
+    kept_nucs = result.get("circular_ns") or intervals_from_arrays(
+        result["ns"], result["nl"],
+    )
+    msps = result.get("circular_as") or intervals_from_arrays(
+        result["as"], result["al"],
+    )
+    return kept_nucs, msps
+
+
 def write_fused_recall_tags(
     read,
     read_length: int,
@@ -232,8 +242,7 @@ def write_fused_recall_tags(
     downstream_compat: bool,
 ) -> None:
     """Apply a fused apply+TF-recall result to a pysam read."""
-    kept_nucs = result.get("circular_ns") or intervals_from_arrays(result["ns"], result["nl"])
-    msps = result.get("circular_as") or intervals_from_arrays(result["as"], result["al"])
+    kept_nucs, msps = _fused_recall_tag_intervals(result)
     write_ma_tags(
         read,
         read_length=read_length,
