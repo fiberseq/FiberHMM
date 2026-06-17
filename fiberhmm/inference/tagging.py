@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import array as pyarray
-from typing import Optional, Sequence, Tuple
+from typing import Callable, Iterable, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -115,6 +115,26 @@ def _append_kept_interval(
         )
 
 
+def _filter_nucs_with_tf_overlap(
+    nucs: Iterable[Interval],
+    unify_threshold: int,
+    ns_scores: Optional[Sequence[float]],
+    overlaps_tf: Callable[[Interval], bool],
+) -> tuple[list[Interval], Optional[list[int]]]:
+    score_values = scores_to_u8(ns_scores)
+    kept: list[Interval] = []
+    kept_scores: Optional[list[int]] = [] if score_values is not None else None
+
+    for idx, (s_raw, length_raw) in enumerate(nucs):
+        interval = (int(s_raw), int(length_raw))
+        if interval[1] <= 0:
+            continue
+        if interval[1] >= unify_threshold or not overlaps_tf(interval):
+            _append_kept_interval(kept, kept_scores, interval, score_values, idx)
+
+    return kept, kept_scores
+
+
 def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True) -> None:
     """Write legacy apply tags (`ns/nl/as/al`, optional `nq/aq`) in place.
 
@@ -157,23 +177,18 @@ def unify_nucs_with_tf_calls(
     with the HMM scoring pass.
     """
     tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
-    score_values = scores_to_u8(ns_scores)
-    kept: list[Interval] = []
-    kept_scores: Optional[list[int]] = [] if score_values is not None else None
 
-    for idx, (s_raw, length_raw) in enumerate(zip(ns, nl)):
-        s = int(s_raw)
-        length = int(length_raw)
-        if length <= 0:
-            continue
-        keep = length >= unify_threshold
-        if not keep:
-            nuc_end = s + length
-            keep = not any(ts < nuc_end and te > s for ts, te in tf_intervals)
-        if keep:
-            _append_kept_interval(kept, kept_scores, (s, length), score_values, idx)
+    def overlaps_tf(interval: Interval) -> bool:
+        s, length = interval
+        nuc_end = s + length
+        return any(ts < nuc_end and te > s for ts, te in tf_intervals)
 
-    return kept, kept_scores
+    return _filter_nucs_with_tf_overlap(
+        zip(ns, nl),
+        unify_threshold,
+        ns_scores,
+        overlaps_tf,
+    )
 
 
 def unify_circular_nucs_with_tf_calls(
@@ -185,23 +200,19 @@ def unify_circular_nucs_with_tf_calls(
 ) -> tuple[list[Interval], Optional[list[int]]]:
     """Drop short circular nucleosome calls that overlap circular TF calls."""
     tf_intervals = [(c.start, c.length) for c in tf_calls]
-    score_values = scores_to_u8(ns_scores)
-    kept: list[Interval] = []
-    kept_scores: Optional[list[int]] = [] if score_values is not None else None
 
-    for idx, (s_raw, length_raw) in enumerate(nucs):
-        interval = (int(s_raw), int(length_raw))
-        if interval[1] <= 0:
-            continue
-        keep = interval[1] >= unify_threshold
-        if not keep:
-            keep = not any(
-                circular_intervals_overlap(interval, tf_interval, read_length)
-                for tf_interval in tf_intervals
-            )
-        if keep:
-            _append_kept_interval(kept, kept_scores, interval, score_values, idx)
-    return kept, kept_scores
+    def overlaps_tf(interval: Interval) -> bool:
+        return any(
+            circular_intervals_overlap(interval, tf_interval, read_length)
+            for tf_interval in tf_intervals
+        )
+
+    return _filter_nucs_with_tf_overlap(
+        nucs,
+        unify_threshold,
+        ns_scores,
+        overlaps_tf,
+    )
 
 
 def split_intervals(intervals: Sequence[Interval]) -> tuple[np.ndarray, np.ndarray]:
