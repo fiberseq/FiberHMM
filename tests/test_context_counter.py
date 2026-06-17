@@ -2,7 +2,15 @@
 
 import numpy as np
 
-from fiberhmm.probabilities.context_counter import ContextCounter
+from fiberhmm.probabilities.context_counter import (
+    ContextCounter,
+    _reconstruct_deaminated_sequence,
+)
+
+
+def test_reconstruct_deaminated_sequence_only_reverts_matching_bases():
+    assert _reconstruct_deaminated_sequence("ATTA", {1, 2, 20}, "T", "C") == "ACCA"
+    assert _reconstruct_deaminated_sequence("ATTA", {0, 3}, "T", "C") == "ATTA"
 
 
 def test_add_position_records_valid_center_contexts():

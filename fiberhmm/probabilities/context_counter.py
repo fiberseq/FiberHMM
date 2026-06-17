@@ -16,6 +16,20 @@ from fiberhmm.probabilities.utils import (
 )
 
 
+def _reconstruct_deaminated_sequence(
+    seq_upper: str,
+    mod_positions: Set[int],
+    deam_base: str,
+    orig_base: str,
+) -> str:
+    seq_list = list(seq_upper)
+    seq_len = len(seq_upper)
+    for pos in mod_positions:
+        if 0 <= pos < seq_len and seq_list[pos] == deam_base:
+            seq_list[pos] = orig_base
+    return ''.join(seq_list)
+
+
 class ContextCounter:
     """
     Counts modification hits/misses per sequence context.
@@ -151,11 +165,9 @@ class ContextCounter:
             orig_base = 'G'
 
             # Reconstruct original sequence (replace A back to G at deaminated positions)
-            seq_list = list(seq_upper)
-            for pos in mod_positions:
-                if 0 <= pos < seq_len and seq_list[pos] == deam_base:
-                    seq_list[pos] = orig_base
-            reconstructed = ''.join(seq_list)
+            reconstructed = _reconstruct_deaminated_sequence(
+                seq_upper, mod_positions, deam_base, orig_base,
+            )
 
             # Process G positions and convert contexts to C-centered via RC
             for i, g_context in self._iter_contexts(
@@ -173,11 +185,9 @@ class ContextCounter:
             orig_base = 'C'
 
             # Reconstruct original sequence (replace T back to C at deaminated positions)
-            seq_list = list(seq_upper)
-            for pos in mod_positions:
-                if 0 <= pos < seq_len and seq_list[pos] == deam_base:
-                    seq_list[pos] = orig_base
-            reconstructed = ''.join(seq_list)
+            reconstructed = _reconstruct_deaminated_sequence(
+                seq_upper, mod_positions, deam_base, orig_base,
+            )
 
             # Process C positions directly
             for i, context in self._iter_contexts(
