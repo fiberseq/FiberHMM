@@ -793,6 +793,12 @@ def test_posterior_ref_positions_handles_backend_fallbacks(monkeypatch):
     assert empty.size == 0
 
 
+def test_result_has_posteriors_requires_non_none_posteriors():
+    assert streaming_drain._result_has_posteriors({"posteriors": [0.1]})
+    assert not streaming_drain._result_has_posteriors({"posteriors": None})
+    assert not streaming_drain._result_has_posteriors({})
+
+
 def test_streaming_drain_counts_worker_failures_and_passes_read_through():
     read = object()
     outbam = _OutBam()

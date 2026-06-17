@@ -59,6 +59,10 @@ def _fused_read_length(read_obj) -> int:
     return len(read_obj.query_sequence) if read_obj.query_sequence else 0
 
 
+def _result_has_posteriors(result: dict) -> bool:
+    return result.get('posteriors') is not None
+
+
 def _drain_oldest_chunk(
     inflight,
     outbam,
@@ -91,7 +95,7 @@ def _drain_oldest_chunk(
             set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
             _record_reads_with_footprints(counters)
 
-            if posterior_writer and result.get('posteriors') is not None:
+            if posterior_writer and _result_has_posteriors(result):
                 chrom = read_obj.reference_name
                 if chrom:
                     posterior_writer.add_fiber(
