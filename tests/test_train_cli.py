@@ -6,6 +6,22 @@ from fiberhmm.core import bam_reader
 pysam = pytest.importorskip("pysam")
 
 
+def test_state_runs_groups_contiguous_states():
+    assert train._state_runs([0, 0, 1, 1, 1, 0]) == [
+        (0, 2, 0),
+        (2, 5, 1),
+        (5, 6, 0),
+    ]
+    assert train._state_runs([]) == []
+
+
+def test_state_run_lengths_splits_footprint_and_msp_lengths():
+    footprint_sizes, msp_sizes = train._state_run_lengths([0, 0, 1, 1, 1, 0])
+
+    assert footprint_sizes == [2, 1]
+    assert msp_sizes == [3]
+
+
 def test_sample_reads_indexed_preserves_reverse_flag(monkeypatch):
     class FakeRead:
         is_unmapped = False

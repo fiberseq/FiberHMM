@@ -440,6 +440,35 @@ def train_hmm(emission_probs: np.ndarray, train_arrays: dict,
     return best_model, models
 
 
+def _state_runs(states):
+    """Yield ``(start, end, state)`` runs from a Viterbi state sequence."""
+    if len(states) == 0:
+        return []
+
+    runs = []
+    current_state = states[0]
+    start = 0
+    for i in range(1, len(states)):
+        if states[i] != current_state:
+            runs.append((start, i, current_state))
+            current_state = states[i]
+            start = i
+    runs.append((start, len(states), current_state))
+    return runs
+
+
+def _state_run_lengths(states):
+    footprint_sizes = []
+    msp_sizes = []
+    for start, end, state in _state_runs(states):
+        length = end - start
+        if state == 0:
+            footprint_sizes.append(length)
+        else:
+            msp_sizes.append(length)
+    return footprint_sizes, msp_sizes
+
+
 def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads: list,
                             emission_probs: np.ndarray, output_dir: str,
                             n_examples: int = 5, mode: str = 'pacbio-fiber'):
@@ -482,27 +511,9 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
             continue
         states = model.predict(encoded)
         all_states.append(states)
-
-        # Extract footprint and MSP sizes
-        current_state = states[0]
-        current_length = 1
-
-        for i in range(1, len(states)):
-            if states[i] == current_state:
-                current_length += 1
-            else:
-                if current_state == 0:  # Footprint
-                    all_footprint_sizes.append(current_length)
-                else:  # MSP
-                    all_msp_sizes.append(current_length)
-                current_state = states[i]
-                current_length = 1
-
-        # Don't forget the last segment
-        if current_state == 0:
-            all_footprint_sizes.append(current_length)
-        else:
-            all_msp_sizes.append(current_length)
+        fp_sizes, msp_sizes = _state_run_lengths(states)
+        all_footprint_sizes.extend(fp_sizes)
+        all_msp_sizes.extend(msp_sizes)
 
     with PdfPages(pdf_path) as pdf:
         # Page 1: Model parameters
@@ -606,28 +617,14 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
                 """Draw footprint (green) and accessible (white) blocks."""
                 patches = []
                 colors_list = []
-                current_state = region_states[0]
-                block_start = 0
+                for start, end, state in _state_runs(region_states):
+                    patches.append(Rectangle((start, 0), end - start, 1))
+                    colors_list.append('forestgreen' if state == 0 else 'white')
 
-                for i in range(1, len(region_states)):
-                    if region_states[i] != current_state:
-                        width = i - block_start
-                        rect = Rectangle((block_start, 0), width, 1)
-                        patches.append(rect)
-                        # Green for footprint (state 0), white for accessible (state 1)
-                        colors_list.append('forestgreen' if current_state == 0 else 'white')
-                        current_state = region_states[i]
-                        block_start = i
-
-                # Last block
-                width = len(region_states) - block_start
-                rect = Rectangle((block_start, 0), width, 1)
-                patches.append(rect)
-                colors_list.append('forestgreen' if current_state == 0 else 'white')
-
-                collection = PatchCollection(patches, facecolors=colors_list,
-                                            edgecolors='lightgray', linewidths=0.3)
-                ax.add_collection(collection)
+                if patches:
+                    collection = PatchCollection(patches, facecolors=colors_list,
+                                                edgecolors='lightgray', linewidths=0.3)
+                    ax.add_collection(collection)
                 ax.set_xlim(0, region_len)
                 ax.set_ylim(0, 1)
 
@@ -793,22 +790,12 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         ax = axes[1]
         patches = []
         colors = []
-        current_state = states[0]
-        start_pos = 0
-        for i in range(1, len(states)):
-            if states[i] != current_state:
-                width = i - start_pos
-                rect = Rectangle((start_pos, 0), width, 1)
-                patches.append(rect)
-                colors.append('forestgreen' if current_state == 0 else 'white')
-                current_state = states[i]
-                start_pos = i
-        width = len(states) - start_pos
-        rect = Rectangle((start_pos, 0), width, 1)
-        patches.append(rect)
-        colors.append('forestgreen' if current_state == 0 else 'white')
-        collection = PatchCollection(patches, facecolors=colors, edgecolors='lightgray', linewidths=0.3)
-        ax.add_collection(collection)
+        for start, end, state in _state_runs(states):
+            patches.append(Rectangle((start, 0), end - start, 1))
+            colors.append('forestgreen' if state == 0 else 'white')
+        if patches:
+            collection = PatchCollection(patches, facecolors=colors, edgecolors='lightgray', linewidths=0.3)
+            ax.add_collection(collection)
         ax.set_xlim(0, seq_len)
         ax.set_ylim(0, 1)
         ax.set_ylabel('State')
