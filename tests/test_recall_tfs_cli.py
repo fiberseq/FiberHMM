@@ -32,11 +32,44 @@ def test_recall_tfs_make_payload_keeps_legacy_tag_arrays_compact():
         def get_tag(self, tag):
             return tags[tag]
 
-    payload = recall_tfs._make_payload(FakeRead())
+    extracted_tags = recall_tfs._payload_tags(FakeRead())
 
+    assert extracted_tags["ML"] == bytes(tags["ML"])
+    for tag in ("ns", "nl", "as", "al", "nq"):
+        assert extracted_tags[tag] is tags[tag]
+
+    payload = recall_tfs._make_payload(FakeRead())
     assert payload["tags"]["ML"] == bytes(tags["ML"])
     for tag in ("ns", "nl", "as", "al", "nq"):
         assert payload["tags"][tag] is tags[tag]
+
+
+def test_recall_tfs_daf_md_fallback_predicate():
+    assert recall_tfs._needs_daf_md_result(
+        "ACGT",
+        {},
+        "daf",
+    ) is True
+    assert recall_tfs._needs_daf_md_result(
+        "ARYT",
+        {},
+        "daf",
+    ) is False
+    assert recall_tfs._needs_daf_md_result(
+        "ACGT",
+        {"MM": "C+m,0;", "ML": b"\xff"},
+        "daf",
+    ) is False
+    assert recall_tfs._needs_daf_md_result(
+        "ACGT",
+        {},
+        "pacbio-fiber",
+    ) is False
+    assert recall_tfs._needs_daf_md_result(
+        "",
+        {},
+        "daf",
+    ) is False
 
 
 def test_recall_tfs_reverse_read_preserves_nq(monkeypatch):

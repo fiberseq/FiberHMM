@@ -72,6 +72,7 @@ from fiberhmm.inference.tf_recaller import (
 
 _WORKER = {}
 _STATS_KEYS = ('v2', 'tf', 'demoted', 'failed')
+_PAYLOAD_TAG_NAMES = ('MM', 'Mm', 'ML', 'Ml', 'ns', 'nl', 'as', 'al', 'nq', 'st')
 
 
 def _new_stats():
@@ -145,6 +146,32 @@ def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold)
 # ---------------------------------------------------------------------------
 
 
+def _payload_tag_value(tag, value):
+    if tag in ('ML', 'Ml'):
+        # array.array('B', ...) -> bytes via buffer protocol: fast memcpy
+        return compact_ml_value(value)
+    return value
+
+
+def _payload_tags(read) -> dict:
+    return {
+        tag: _payload_tag_value(tag, read.get_tag(tag))
+        for tag in _PAYLOAD_TAG_NAMES
+        if read.has_tag(tag)
+    }
+
+
+def _has_mm_ml_tags(tags: dict) -> bool:
+    return ('MM' in tags or 'Mm' in tags) and ('ML' in tags or 'Ml' in tags)
+
+
+def _needs_daf_md_result(seq, tags: dict, mode) -> bool:
+    if mode != 'daf' or not seq:
+        return False
+    from fiberhmm.core.bam_reader import has_iupac_encoding
+    return not has_iupac_encoding(seq) and not _has_mm_ml_tags(tags)
+
+
 def _make_payload(read, mode=None) -> dict:
     """Extract only the tag data workers need from a pysam read.
 
@@ -158,30 +185,17 @@ def _make_payload(read, mode=None) -> dict:
     bytes is a straight memcpy vs. pickling a Python list.
     parse_mm_tag_query_positions accepts bytes directly via np.frombuffer.
     """
-    tags = {}
-    for t in ('MM', 'Mm', 'ML', 'Ml', 'ns', 'nl', 'as', 'al', 'nq', 'st'):
-        if read.has_tag(t):
-            val = read.get_tag(t)
-            if t in ('ML', 'Ml'):
-                # array.array('B', ...) → bytes via buffer protocol: fast memcpy
-                val = compact_ml_value(val)
-            tags[t] = val
-
+    tags = _payload_tags(read)
     payload = {
         'seq': read.query_sequence,
         'is_reverse': read.is_reverse,
         'tags': tags,
     }
-    if mode == 'daf' and read.query_sequence:
-        from fiberhmm.core.bam_reader import has_iupac_encoding
-        if (
-            not has_iupac_encoding(read.query_sequence)
-            and not (('MM' in tags or 'Mm' in tags) and ('ML' in tags or 'Ml' in tags))
-        ):
-            from fiberhmm.daf.encoder import get_daf_positions
-            md_result = get_daf_positions(read)
-            if md_result is not None:
-                payload['_daf_md_result'] = md_result
+    if _needs_daf_md_result(read.query_sequence, tags, mode):
+        from fiberhmm.daf.encoder import get_daf_positions
+        md_result = get_daf_positions(read)
+        if md_result is not None:
+            payload['_daf_md_result'] = md_result
     return payload
 
 
