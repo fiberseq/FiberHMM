@@ -908,6 +908,29 @@ def test_pop_inflight_chunk_coerces_worker_result_and_removes_entry():
     assert not inflight
 
 
+def test_drain_chunk_in_order_interleaves_skips_and_results():
+    skipped_read = object()
+    processed_read = object()
+    result = {"ns": [1]}
+    outbam = _OutBam()
+    counters = {}
+    recorded = []
+
+    streaming_drain._drain_chunk_in_order(
+        [skipped_read, processed_read],
+        [{"payload": "processed"}],
+        [True, False],
+        [result],
+        outbam,
+        counters,
+        lambda read, got_result: recorded.append((read, got_result)),
+    )
+
+    assert outbam.written == [skipped_read, processed_read]
+    assert counters == {"written": 2}
+    assert recorded == [(processed_read, result)]
+
+
 def test_record_apply_result_tags_posteriors_or_counts_no_footprints(monkeypatch):
     read = object()
     result = {"ns": [1]}

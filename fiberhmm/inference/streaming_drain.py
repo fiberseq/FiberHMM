@@ -88,6 +88,28 @@ def _pop_inflight_chunk(inflight):
     return results, worker_failures, chunk_read_objs, chunk_items, chunk_skip_flags
 
 
+def _drain_chunk_in_order(
+    chunk_read_objs,
+    chunk_items,
+    chunk_skip_flags,
+    results,
+    outbam,
+    counters,
+    record_result,
+) -> None:
+    result_iter = iter(results)
+    item_iter = iter(chunk_items)
+
+    for read_obj, is_skipped in zip(chunk_read_objs, chunk_skip_flags):
+        if is_skipped:
+            _write_passthrough(outbam, read_obj, counters)
+            continue
+
+        next(item_iter)
+        record_result(read_obj, next(result_iter))
+        _write_passthrough(outbam, read_obj, counters)
+
+
 def _record_apply_result(
     read_obj,
     result,
@@ -153,22 +175,22 @@ def _drain_oldest_chunk(
         chunk_skip_flags,
     ) = _pop_inflight_chunk(inflight)
     _record_worker_failures(counters, worker_failures)
-    result_iter = iter(results)
-    fiber_iter = iter(chunk_reads)
 
-    for read_obj, is_skipped in zip(chunk_read_objs, chunk_skip_flags):
-        if is_skipped:
-            _write_passthrough(outbam, read_obj, counters)
-            continue
-
-        next(fiber_iter)
-        result = next(result_iter)
+    def record_result(read_obj, result):
         _record_apply_result(
             read_obj, result, with_scores, write_msps, posterior_writer,
             counters,
         )
 
-        _write_passthrough(outbam, read_obj, counters)
+    _drain_chunk_in_order(
+        chunk_read_objs,
+        chunk_reads,
+        chunk_skip_flags,
+        results,
+        outbam,
+        counters,
+        record_result,
+    )
 
 
 def _drain_oldest_fused_chunk(
@@ -188,18 +210,18 @@ def _drain_oldest_fused_chunk(
         chunk_skip_flags,
     ) = _pop_inflight_chunk(inflight)
     _record_worker_failures(counters, worker_failures)
-    result_iter = iter(results)
-    payload_iter = iter(chunk_payloads)
 
-    for read_obj, is_skipped in zip(chunk_read_objs, chunk_skip_flags):
-        if is_skipped:
-            _write_passthrough(outbam, read_obj, counters)
-            continue
-
-        next(payload_iter)
-        result = next(result_iter)
+    def record_result(read_obj, result):
         _record_fused_result(
             read_obj, result, also_write_legacy, downstream_compat, counters,
         )
 
-        _write_passthrough(outbam, read_obj, counters)
+    _drain_chunk_in_order(
+        chunk_read_objs,
+        chunk_payloads,
+        chunk_skip_flags,
+        results,
+        outbam,
+        counters,
+        record_result,
+    )
