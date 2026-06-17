@@ -245,6 +245,24 @@ def _remove_temporary_probability_counters(
                 os.remove(tmp_file)
 
 
+def _save_temporary_probability_counters(
+    counters: Dict[str, ContextCounter],
+    output_dir: str,
+    base_name: str,
+    sample_name: str,
+) -> None:
+    for base, counter in counters.items():
+        counter.save(
+            _probability_counter_path(
+                output_dir,
+                base_name,
+                sample_name,
+                base,
+                temporary=True,
+            )
+        )
+
+
 def _record_filter_skip(filter_stats: Dict[str, int], skip_reason) -> bool:
     if skip_reason is None:
         return False
@@ -419,16 +437,9 @@ def process_sample_set(bam_files: List[str], counters: Dict[str, ContextCounter]
 
         # Save intermediate
         if args.save_interval > 0:
-            for base, counter in counters.items():
-                counter.save(
-                    _probability_counter_path(
-                        output_dir,
-                        base_name,
-                        sample_name,
-                        base,
-                        temporary=True,
-                    )
-                )
+            _save_temporary_probability_counters(
+                counters, output_dir, base_name, sample_name,
+            )
 
         if _read_limit_reached(args.max_reads, total_reads):
             break

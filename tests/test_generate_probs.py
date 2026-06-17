@@ -26,6 +26,7 @@ from fiberhmm.cli.generate_probs import (
     _record_mm_tag_types,
     _remove_temporary_probability_counters,
     _safe_percent,
+    _save_temporary_probability_counters,
     _target_bases_for_mode,
 )
 
@@ -56,12 +57,16 @@ class _Counter:
     def __init__(self):
         self.processed = []
         self.processed_daf = []
+        self.saved_paths = []
 
     def process_read(self, sequence, mod_positions, edge_trim):
         self.processed.append((sequence, mod_positions, edge_trim))
 
     def process_read_daf(self, sequence, mod_positions, strand, edge_trim):
         self.processed_daf.append((sequence, mod_positions, strand, edge_trim))
+
+    def save(self, path):
+        self.saved_paths.append(path)
 
 
 def test_new_filter_stats_returns_zeroed_independent_stats():
@@ -210,6 +215,21 @@ def test_remove_temporary_probability_counters_removes_expected_files(tmp_path):
 
     assert all(not path.exists() for path in paths)
     assert keep.exists()
+
+
+def test_save_temporary_probability_counters_uses_probability_paths():
+    counter_a = _Counter()
+    counter_c = _Counter()
+
+    _save_temporary_probability_counters(
+        {"A": counter_a, "C": counter_c},
+        "out",
+        "sample",
+        "accessible",
+    )
+
+    assert counter_a.saved_paths == ["out/sample_accessible_A.probs.pkl.tmp"]
+    assert counter_c.saved_paths == ["out/sample_accessible_C.probs.pkl.tmp"]
 
 
 def test_process_probability_read_updates_target_counter(monkeypatch):
