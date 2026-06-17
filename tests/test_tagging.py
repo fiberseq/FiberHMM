@@ -10,6 +10,7 @@ from fiberhmm.inference.tagging import (
     _flip_legacy_intervals_to_molecular,
     _fused_recall_tag_intervals,
     _linear_intervals_overlap,
+    _should_keep_nuc_interval,
     _tf_linear_intervals,
     scores_to_u8,
     set_legacy_apply_tags,
@@ -164,6 +165,16 @@ def test_linear_tf_interval_helpers_use_half_open_overlap():
     assert _linear_intervals_overlap((10, 20), (20, 30)) is False
     assert _linear_intervals_overlap((19, 20), (20, 30)) is False
     assert _linear_intervals_overlap((19, 21), (20, 30)) is True
+
+
+def test_should_keep_nuc_interval_applies_length_and_overlap_policy():
+    def overlaps_tf(interval):
+        return interval == (20, 10)
+
+    assert not _should_keep_nuc_interval((0, 0), 90, overlaps_tf)
+    assert not _should_keep_nuc_interval((20, 10), 90, overlaps_tf)
+    assert _should_keep_nuc_interval((20, 100), 90, overlaps_tf)
+    assert _should_keep_nuc_interval((40, 10), 90, overlaps_tf)
 
 
 def test_unify_nucs_with_tf_calls_drops_short_overlaps_and_carries_scores():

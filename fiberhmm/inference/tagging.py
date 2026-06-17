@@ -124,6 +124,16 @@ def _append_kept_interval(
         )
 
 
+def _should_keep_nuc_interval(
+    interval: Interval,
+    unify_threshold: int,
+    overlaps_tf: Callable[[Interval], bool],
+) -> bool:
+    if interval[1] <= 0:
+        return False
+    return interval[1] >= unify_threshold or not overlaps_tf(interval)
+
+
 def _filter_nucs_with_tf_overlap(
     nucs: Iterable[Interval],
     unify_threshold: int,
@@ -136,9 +146,7 @@ def _filter_nucs_with_tf_overlap(
 
     for idx, (s_raw, length_raw) in enumerate(nucs):
         interval = (int(s_raw), int(length_raw))
-        if interval[1] <= 0:
-            continue
-        if interval[1] >= unify_threshold or not overlaps_tf(interval):
+        if _should_keep_nuc_interval(interval, unify_threshold, overlaps_tf):
             _append_kept_interval(kept, kept_scores, interval, score_values, idx)
 
     return kept, kept_scores
