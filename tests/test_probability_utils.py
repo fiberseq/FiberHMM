@@ -2,6 +2,7 @@
 
 from fiberhmm.probabilities.output_paths import (
     _probability_filename,
+    _probability_path,
     combined_probability_table_path,
     probability_counter_path,
     probability_table_path,
@@ -64,6 +65,9 @@ def test_get_base_name_handles_trailing_slash_and_empty_path():
 def test_probability_output_path_helpers_are_shared():
     assert _probability_filename("run", "accessible", "A", suffix=".tsv") == (
         "run_accessible_A.tsv"
+    )
+    assert _probability_path("out", "run", "accessible", "A", suffix=".tsv") == (
+        "out/run_accessible_A.tsv"
     )
     assert probability_counter_path("out", "run", "accessible", "A") == (
         "out/run_accessible_A.probs.pkl"
