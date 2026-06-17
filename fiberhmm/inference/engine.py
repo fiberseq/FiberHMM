@@ -117,6 +117,23 @@ def _msp_intervals_from_nuc_boundaries(nuc_starts, nuc_ends, read_length: int,
     return starts[size_mask], sizes[size_mask]
 
 
+def _empty_interval_result(include_predictions: bool = False) -> dict:
+    result = {
+        'footprint_starts': np.array([], dtype=np.int32),
+        'footprint_sizes': np.array([], dtype=np.int32),
+        'footprint_scores': None,
+        'msp_starts': np.array([], dtype=np.int32),
+        'msp_sizes': np.array([], dtype=np.int32),
+        'msp_scores': None,
+    }
+    if include_predictions:
+        result.update({
+            'states': np.array([], dtype=np.int8),
+            'posteriors': None,
+        })
+    return result
+
+
 def predict_footprints(model: FiberHMM, encoded_read: np.ndarray,
                        with_scores: bool = False) -> Tuple[np.ndarray, np.ndarray, int, Optional[np.ndarray]]:
     """
@@ -169,14 +186,7 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
 
     Used for timing breakdown to separate HMM time from post-processing.
     """
-    result = {
-        'footprint_starts': np.array([], dtype=np.int32),
-        'footprint_sizes': np.array([], dtype=np.int32),
-        'footprint_scores': None,
-        'msp_starts': np.array([], dtype=np.int32),
-        'msp_sizes': np.array([], dtype=np.int32),
-        'msp_scores': None,
-    }
+    result = _empty_interval_result()
 
     if len(states) == 0:
         return result
@@ -332,16 +342,7 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
             'states': raw HMM state array
             'posteriors': P(footprint) per position (if return_posteriors)
     """
-    result = {
-        'footprint_starts': np.array([], dtype=np.int32),
-        'footprint_sizes': np.array([], dtype=np.int32),
-        'footprint_scores': None,
-        'msp_starts': np.array([], dtype=np.int32),
-        'msp_sizes': np.array([], dtype=np.int32),
-        'msp_scores': None,
-        'states': np.array([], dtype=np.int8),
-        'posteriors': None,
-    }
+    result = _empty_interval_result(include_predictions=True)
 
     if len(encoded_read) == 0:
         return result
