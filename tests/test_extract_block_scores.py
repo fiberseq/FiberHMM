@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 from array import array
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -214,6 +215,32 @@ def test_ma_block_score_columns_match_annotation_shape():
         '5,8', '6,9', '7,10',
     ]
     assert extract_tags._ma_block_score_columns('msp', scalar_blocks) == ['0,0']
+
+
+def test_selected_extract_types_defaults_and_preserves_cli_order():
+    def args(**overrides):
+        values = {
+            'all': False,
+            'nucleosome': False,
+            'msp': False,
+            'tf': False,
+            'm6a': False,
+            'm5c': False,
+            'deam': False,
+        }
+        values.update(overrides)
+        return SimpleNamespace(**values)
+
+    assert extract_tags._selected_extract_types(args()) == list(
+        extract_tags.ALL_EXTRACT_TYPES
+    )
+    assert extract_tags._selected_extract_types(args(m5c=True, msp=True)) == [
+        'msp',
+        'm5c',
+    ]
+    assert extract_tags._selected_extract_types(args(all=True, tf=True)) == list(
+        extract_tags.ALL_EXTRACT_TYPES
+    )
 
 
 # ------------------- autoSQL schemas --------------------------------

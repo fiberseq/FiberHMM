@@ -928,6 +928,28 @@ _READ_TYPE_EXTRACTORS = {
 }
 
 
+ALL_EXTRACT_TYPES = ('nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam')
+EXPLICIT_EXTRACT_FLAGS = (
+    ('nucleosome', 'nucleosome'),
+    ('msp', 'msp'),
+    ('tf', 'tf'),
+    ('m6a', 'm6a'),
+    ('m5c', 'm5c'),
+    ('deam', 'deam'),
+)
+
+
+def _selected_extract_types(args) -> list:
+    any_selected = any(getattr(args, attr) for attr, _ in EXPLICIT_EXTRACT_FLAGS)
+    if args.all or not any_selected:
+        return list(ALL_EXTRACT_TYPES)
+    return [
+        extract_type
+        for attr, extract_type in EXPLICIT_EXTRACT_FLAGS
+        if getattr(args, attr)
+    ]
+
+
 def _extract_read_types(read, extract_types, bed_outs, *, with_scores: bool,
                         block_scores: bool, circular_groups: bool,
                         min_tq: int, prob_threshold: int) -> dict:
@@ -1453,24 +1475,7 @@ Examples:
             args.outdir = '.'
 
     # Determine what to extract (default: all)
-    extract_types = []
-    any_selected = (args.nucleosome or args.msp or args.tf or
-                    args.m6a or args.m5c or args.deam)
-    if args.all or not any_selected:
-        extract_types = ['nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam']
-    else:
-        if args.nucleosome:
-            extract_types.append('nucleosome')
-        if args.msp:
-            extract_types.append('msp')
-        if args.tf:
-            extract_types.append('tf')
-        if args.m6a:
-            extract_types.append('m6a')
-        if args.m5c:
-            extract_types.append('m5c')
-        if args.deam:
-            extract_types.append('deam')
+    extract_types = _selected_extract_types(args)
 
     # Default to bigbed unless --bed-only specified
     make_bigbed = not args.bed_only
