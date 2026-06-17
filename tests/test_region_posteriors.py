@@ -23,6 +23,19 @@ def test_region_posterior_encoding_helpers_clip_and_join_values():
     assert region_tsv._comma_join_ints([]) == ""
 
 
+def test_region_posterior_fields_preserve_tsv_column_order():
+    assert region_tsv._region_posterior_fields(
+        read_name="read1",
+        chrom="chr2",
+        ref_start=10,
+        ref_end=20,
+        strand="+",
+        posteriors=np.array([0.0, 1.0], dtype=np.float32),
+        footprint_starts=np.array([2], dtype=np.int32),
+        footprint_sizes=np.array([3], dtype=np.int32),
+    ) == ["read1", "chr2", "10", "20", "+", "AP8=", "2", "3"]
+
+
 def test_format_region_posterior_line_matches_tsv_parser():
     line = format_region_posterior_line(
         read_name="read1",

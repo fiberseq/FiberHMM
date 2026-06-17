@@ -26,6 +26,28 @@ def _comma_join_ints(values: Sequence[int]) -> str:
     return ",".join(map(str, values)) if len(values) > 0 else ""
 
 
+def _region_posterior_fields(
+    read_name: str,
+    chrom: str,
+    ref_start: int,
+    ref_end: int,
+    strand: str,
+    posteriors: np.ndarray,
+    footprint_starts: Sequence[int],
+    footprint_sizes: Sequence[int],
+) -> list[str]:
+    return [
+        read_name,
+        chrom,
+        str(ref_start),
+        str(ref_end),
+        strand,
+        _posterior_probabilities_b64(posteriors),
+        _comma_join_ints(footprint_starts),
+        _comma_join_ints(footprint_sizes),
+    ]
+
+
 def format_region_posterior_line(
     read_name: str,
     chrom: str,
@@ -37,14 +59,17 @@ def format_region_posterior_line(
     footprint_sizes: Sequence[int],
 ) -> str:
     """Format one region-worker posterior record without a header."""
-    post_b64 = _posterior_probabilities_b64(posteriors)
-    fp_starts_str = _comma_join_ints(footprint_starts)
-    fp_sizes_str = _comma_join_ints(footprint_sizes)
-
-    return (
-        f"{read_name}\t{chrom}\t{ref_start}\t{ref_end}\t{strand}\t"
-        f"{post_b64}\t{fp_starts_str}\t{fp_sizes_str}\n"
+    fields = _region_posterior_fields(
+        read_name,
+        chrom,
+        ref_start,
+        ref_end,
+        strand,
+        posteriors,
+        footprint_starts,
+        footprint_sizes,
     )
+    return "\t".join(fields) + "\n"
 
 
 def write_region_posteriors_tsv(tsv_path: str, posteriors_data: Iterable[dict]) -> None:
