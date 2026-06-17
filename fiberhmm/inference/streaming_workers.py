@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
-
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model
 from fiberhmm.inference.engine import (
     CHIMERA_SKIP,
@@ -21,6 +19,11 @@ from fiberhmm.inference.fused_stages import (
     build_fused_recall_result,
     run_hmm_apply_stage,
 )
+from fiberhmm.inference.worker_warmup import (
+    disable_numba_cache_locking,
+    warm_up_model_predict,
+    warm_up_tf_recaller,
+)
 from fiberhmm.inference.worker_results import WorkerChunkResult
 
 _worker_model = None
@@ -31,44 +34,18 @@ _worker_debug_timing = False
 _worker_recall_state = {}
 
 
-def _disable_numba_cache_locking() -> None:
-    import os
-
-    os.environ['NUMBA_CACHE_DIR'] = ''
-
-
-def _warm_up_model_predict(model) -> None:
-    from fiberhmm.core.hmm import HAS_NUMBA
-
-    if HAS_NUMBA:
-        dummy_obs = np.array([0, 1, 2, 3], dtype=np.int32)
-        _ = model.predict(dummy_obs)
-
-
-def _warm_up_tf_recaller(llr_hit, llr_miss) -> None:
-    from fiberhmm.core.hmm import HAS_NUMBA
-
-    if HAS_NUMBA:
-        from fiberhmm.inference.tf_recaller import call_tfs_in_interval
-
-        _ = call_tfs_in_interval(
-            np.zeros(16, dtype=np.int32), 0, 16,
-            llr_hit, llr_miss, min_llr=4.0, min_opps=3,
-        )
-
-
 def _init_bam_worker(model_path, debug_timing=False):
     """Initialize worker process with model."""
     global _worker_model, _worker_debug_timing
     try:
         # Disable numba caching to avoid file lock contention between workers.
-        _disable_numba_cache_locking()
+        disable_numba_cache_locking()
 
         _worker_model = freeze_model_for_inference(load_model(model_path))
         _worker_debug_timing = debug_timing
 
         # Warm up numba JIT compilation in this worker.
-        _warm_up_model_predict(_worker_model)
+        warm_up_model_predict(_worker_model)
     except Exception as e:
         import traceback
 
@@ -98,7 +75,7 @@ def _init_fused_worker(
     """
     global _worker_model, _worker_debug_timing, _worker_recall_state
 
-    _disable_numba_cache_locking()
+    disable_numba_cache_locking()
 
     _worker_model = freeze_model_for_inference(load_model(apply_model_path))
     _worker_debug_timing = debug_timing
@@ -129,8 +106,8 @@ def _init_fused_worker(
     configure_daf_chimera_filter(filter_chimeras, chimera_min_seg, chimera_purity)
 
     # Warmup: apply Viterbi + TF Kadane scan.
-    _warm_up_model_predict(_worker_model)
-    _warm_up_tf_recaller(llr_hit, llr_miss)
+    warm_up_model_predict(_worker_model)
+    warm_up_tf_recaller(llr_hit, llr_miss)
 
 
 def _process_chunk_worker(

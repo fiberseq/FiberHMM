@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-import numpy as np
 import pysam
 
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model
@@ -32,6 +31,11 @@ from fiberhmm.inference.region_types import (
 from fiberhmm.inference.tagging import (
     set_legacy_apply_tags,
     write_fused_recall_tags,
+)
+from fiberhmm.inference.worker_warmup import (
+    disable_numba_cache_locking,
+    warm_up_model_predict,
+    warm_up_tf_recaller,
 )
 from fiberhmm.posteriors.region_tsv import format_region_posterior_line
 
@@ -85,11 +89,10 @@ def _region_read_filter_config(params: dict, *, require_train_rids: bool) -> Rea
 def _init_region_worker(model_path: str, params: dict):
     """Initialize worker for region-parallel processing."""
     global _worker_model, _worker_region_params
-    import os
 
     try:
         # Disable numba caching to avoid file lock contention.
-        os.environ['NUMBA_CACHE_DIR'] = ''
+        disable_numba_cache_locking()
 
         # Load model once per worker.
         _worker_model = freeze_model_for_inference(load_model(model_path))
@@ -102,11 +105,7 @@ def _init_region_worker(model_path: str, params: dict):
         )
 
         # Warm up numba JIT.
-        from fiberhmm.core.hmm import HAS_NUMBA
-
-        if HAS_NUMBA:
-            dummy_obs = np.array([0, 1, 2, 3], dtype=np.int32)
-            _ = _worker_model.predict(dummy_obs)
+        warm_up_model_predict(_worker_model)
 
     except Exception as e:
         import traceback
@@ -449,9 +448,8 @@ def _init_fused_region_worker(
     params for the region worker to pick up.
     """
     global _worker_model, _worker_region_params, _worker_recall_state
-    import os
 
-    os.environ['NUMBA_CACHE_DIR'] = ''
+    disable_numba_cache_locking()
 
     _worker_model = freeze_model_for_inference(load_model(apply_model_path))
     # Open the reference FASTA after fork: pysam.FastaFile is not fork-safe.
@@ -480,17 +478,8 @@ def _init_fused_region_worker(
         params.get('chimera_purity', 0.8),
     )
 
-    from fiberhmm.core.hmm import HAS_NUMBA
-
-    if HAS_NUMBA:
-        dummy_obs = np.array([0, 1, 2, 3], dtype=np.int32)
-        _ = _worker_model.predict(dummy_obs)
-        from fiberhmm.inference.tf_recaller import call_tfs_in_interval
-
-        _ = call_tfs_in_interval(
-            np.zeros(16, dtype=np.int32), 0, 16,
-            llr_hit, llr_miss, min_llr=4.0, min_opps=3,
-        )
+    warm_up_model_predict(_worker_model)
+    warm_up_tf_recaller(llr_hit, llr_miss)
 
 
 def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
