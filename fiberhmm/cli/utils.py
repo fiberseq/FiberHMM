@@ -597,6 +597,23 @@ def _scale_emission_probabilities(emissionprob, target_state, scale):
     return adjusted, before_stats, after_stats
 
 
+def _accessibility_priors_for_base(base: str, context_size: int,
+                                   accessibility_priors_df,
+                                   accessibility_counters):
+    if accessibility_priors_df is not None:
+        center_idx = context_size
+        return accessibility_priors_df[
+            accessibility_priors_df['context'].apply(
+                lambda c: len(c) > center_idx and c[center_idx] == base
+            )
+        ].copy()
+
+    if accessibility_counters is not None and base in accessibility_counters:
+        return accessibility_counters[base].get_accessibility_priors(context_size)
+
+    return None
+
+
 def cmd_transfer(args):
     """Transfer emission probs between modalities."""
     max_context = max(args.context_sizes)
@@ -659,17 +676,10 @@ def cmd_transfer(args):
 
         for base in target_bases:
             target_rates = target_counters[base].get_probabilities(k)
-
-            if accessibility_priors_df is not None:
-                center_idx = k
-                priors = accessibility_priors_df[
-                    accessibility_priors_df['context'].apply(
-                        lambda c: len(c) > center_idx and c[center_idx] == base
-                    )
-                ].copy()
-            elif accessibility_counters is not None and base in accessibility_counters:
-                priors = accessibility_counters[base].get_accessibility_priors(k)
-            else:
+            priors = _accessibility_priors_for_base(
+                base, k, accessibility_priors_df, accessibility_counters,
+            )
+            if priors is None:
                 print(f"  Warning: No accessibility priors for {base}")
                 continue
 

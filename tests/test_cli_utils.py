@@ -4,6 +4,7 @@ import pytest
 
 from fiberhmm.cli.utils import (
     AccessibilityCounter,
+    _accessibility_priors_for_base,
     _estimate_emission_probs,
     _scale_emission_probabilities,
     _target_bases_for_transfer_mode,
@@ -99,3 +100,32 @@ def test_scale_emission_probabilities_scales_all_states():
     np.testing.assert_allclose(adjusted, [[0.1, 0.2], [0.3, 0.4]])
     np.testing.assert_allclose(before, (0.2, 0.8, 0.5))
     np.testing.assert_allclose(after, (0.1, 0.4, 0.25))
+
+
+def test_accessibility_priors_for_base_filters_tsv_and_counter():
+    priors = pd.DataFrame({
+        "context": ["AAA", "ACA", "CG"],
+        "p_accessible": [0.1, 0.2, 0.3],
+    })
+
+    selected = _accessibility_priors_for_base(
+        "C", 1, priors, accessibility_counters=None,
+    )
+    assert selected["context"].tolist() == ["ACA"]
+
+    class FakeCounter:
+        def get_accessibility_priors(self, context_size):
+            return pd.DataFrame({
+                "context": [f"k{context_size}"],
+                "p_accessible": [0.5],
+            })
+
+    counter_selected = _accessibility_priors_for_base(
+        "A", 3, None, {"A": FakeCounter()},
+    )
+    assert counter_selected.to_dict("list") == {
+        "context": ["k3"],
+        "p_accessible": [0.5],
+    }
+
+    assert _accessibility_priors_for_base("G", 3, None, {"A": FakeCounter()}) is None
