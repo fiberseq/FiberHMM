@@ -15,6 +15,12 @@ Usage:
 """
 
 
+def _resolve_writer_format(output_path: str, format: str) -> str:
+    if format != 'auto':
+        return format
+    if output_path.endswith('.h5') or output_path.endswith('.hdf5'):
+        return 'hdf5'
+    return 'tsv'
 
 
 def create_writer(output_path: str, format: str = 'auto',
@@ -37,11 +43,7 @@ def create_writer(output_path: str, format: str = 'auto',
     Returns:
         Writer object (PosteriorWriter or PosteriorsTSVWriter)
     """
-    if format == 'auto':
-        if output_path.endswith('.h5') or output_path.endswith('.hdf5'):
-            format = 'hdf5'
-        else:
-            format = 'tsv'
+    format = _resolve_writer_format(output_path, format)
 
     if format == 'hdf5':
         from fiberhmm.posteriors.hdf5_backend import PosteriorWriter
