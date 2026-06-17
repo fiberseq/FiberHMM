@@ -11,6 +11,7 @@ import pytest
 
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.model_io import (
+    _json_save_path,
     load_model,
     load_model_for_inference,
     load_model_with_metadata,
@@ -225,6 +226,16 @@ class TestModeAliases:
 
 
 class TestSaveRedirect:
+    def test_json_save_path_helper_redirects_legacy_extensions(self):
+        assert _json_save_path("/tmp/model.json") == (
+            "/tmp/model.json",
+            "/tmp/model.json",
+        )
+        assert _json_save_path("/tmp/model.npz") == (
+            "/tmp/model.json",
+            "/tmp/model.npz",
+        )
+
     def test_npz_redirects_to_json(self, sample_model, tmp_path):
         npz_path = str(tmp_path / "model.npz")
         json_path = str(tmp_path / "model.json")

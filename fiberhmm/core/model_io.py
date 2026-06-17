@@ -223,6 +223,13 @@ def _convert_hmmlearn_model(hmmlearn_model) -> FiberHMM:
 # Saving functions (JSON only; legacy formats removed)
 # =============================================================================
 
+def _json_save_path(filepath: str) -> Tuple[str, str]:
+    if filepath.endswith('.json'):
+        return filepath, filepath
+    base, _ = os.path.splitext(filepath)
+    return base + '.json', filepath
+
+
 def save_model(model: FiberHMM, filepath: str,
                context_size: int = 3, mode: str = 'pacbio-fiber'):
     """
@@ -240,10 +247,8 @@ def save_model(model: FiberHMM, filepath: str,
         context_size: Context size used for training (saved as metadata)
         mode: Analysis mode used for training (saved as metadata)
     """
-    if not filepath.endswith('.json'):
-        old_path = filepath
-        base, _ = os.path.splitext(filepath)
-        filepath = base + '.json'
+    filepath, old_path = _json_save_path(filepath)
+    if old_path != filepath:
         warnings.warn(
             f"Only JSON format is supported for saving. "
             f"Saving to '{filepath}' instead of '{old_path}'."
