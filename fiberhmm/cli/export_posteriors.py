@@ -244,6 +244,18 @@ def _process_region_worker(args) -> Tuple[str, int, int, List[Dict]]:
     return (chrom, start, end, results)
 
 
+def _submit_next_region(executor, region_iter, input_bam: str, pending: dict) -> bool:
+    try:
+        chrom, start, end = next(region_iter)
+    except StopIteration:
+        return False
+
+    args = (chrom, start, end, input_bam)
+    future = executor.submit(_process_region_worker, args)
+    pending[future] = (chrom, start, end)
+    return True
+
+
 def _write_batch_to_h5(grp, fibers: List[Dict], start_idx: int):
     """
     Write a batch of fibers to HDF5 efficiently.
@@ -301,12 +313,7 @@ def _process_regions(regions, input_bam, model_path, params,
             max_pending = n_cores * 2
 
             for _ in range(min(max_pending, len(regions))):
-                try:
-                    chrom, start, end = next(region_iter)
-                    args = (chrom, start, end, input_bam)
-                    future = executor.submit(_process_region_worker, args)
-                    pending[future] = (chrom, start, end)
-                except StopIteration:
+                if not _submit_next_region(executor, region_iter, input_bam, pending):
                     break
 
             pbar = tqdm(total=len(regions), desc="Processing regions", disable=not verbose)
@@ -330,13 +337,7 @@ def _process_regions(regions, input_bam, model_path, params,
 
                     pbar.update(1)
 
-                    try:
-                        chrom, start, end = next(region_iter)
-                        args = (chrom, start, end, input_bam)
-                        future = executor.submit(_process_region_worker, args)
-                        pending[future] = (chrom, start, end)
-                    except StopIteration:
-                        pass
+                    _submit_next_region(executor, region_iter, input_bam, pending)
 
             pbar.close()
     else:

@@ -50,6 +50,39 @@ def test_export_posteriors_regions_by_chrom_preserves_order():
     }
 
 
+def test_submit_next_region_records_pending_future():
+    class FakeExecutor:
+        def __init__(self):
+            self.submitted = []
+
+        def submit(self, fn, args):
+            future = object()
+            self.submitted.append((future, fn, args))
+            return future
+
+    executor = FakeExecutor()
+    region_iter = iter([("chr1", 10, 20)])
+    pending = {}
+
+    assert export_posteriors._submit_next_region(
+        executor,
+        region_iter,
+        "input.bam",
+        pending,
+    )
+    future, fn, args = executor.submitted[0]
+    assert fn is export_posteriors._process_region_worker
+    assert args == ("chr1", 10, 20, "input.bam")
+    assert pending == {future: ("chr1", 10, 20)}
+
+    assert not export_posteriors._submit_next_region(
+        executor,
+        region_iter,
+        "input.bam",
+        pending,
+    )
+
+
 def test_export_posteriors_tsv_closes_writer_when_region_processing_fails(
     monkeypatch, tmp_path
 ):
