@@ -26,6 +26,23 @@ def _positive_gaps_between_intervals(starts: np.ndarray, lengths: np.ndarray) ->
     return gaps
 
 
+def _flipped_interval_tag_arrays(read, start_tag: str, length_tag: str, default):
+    try:
+        starts, lengths = flip_intervals_to_seq(
+            read.get_tag(start_tag), read.get_tag(length_tag), read,
+        )
+        return np.array(starts), np.array(lengths)
+    except KeyError:
+        return default
+
+
+def _scaled_score_tag(read, tag: str):
+    try:
+        return np.array(read.get_tag(tag)) / 255.0
+    except KeyError:
+        return None
+
+
 class FootprintStats:
     """Collects footprint statistics from sampled reads."""
 
@@ -402,40 +419,20 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
             if sampled >= n_samples:
                 break
 
-            # Get footprint tags (molecular frame -> flip to SEQ/query coords)
-            try:
-                _ns, _nl = flip_intervals_to_seq(
-                    read.get_tag('ns'), read.get_tag('nl'), read)
-                ns = np.array(_ns)
-                nl = np.array(_nl)
-            except KeyError:
-                ns = np.array([])
-                nl = np.array([])
-
-            # Get MSP tags
-            try:
-                _as, _al = flip_intervals_to_seq(
-                    read.get_tag('as'), read.get_tag('al'), read)
-                as_starts = np.array(_as)
-                al_lengths = np.array(_al)
-            except KeyError:
-                as_starts = None
-                al_lengths = None
+            # Get interval tags (molecular frame -> flip to SEQ/query coords)
+            ns, nl = _flipped_interval_tag_arrays(
+                read, 'ns', 'nl', (np.array([]), np.array([])),
+            )
+            as_starts, al_lengths = _flipped_interval_tag_arrays(
+                read, 'as', 'al', (None, None),
+            )
 
             # Get scores
             ns_scores = None
             as_scores = None
             if with_scores:
-                try:
-                    nq = np.array(read.get_tag('nq'))
-                    ns_scores = nq / 255.0  # Scale back to 0-1
-                except KeyError:
-                    pass
-                try:
-                    aq = np.array(read.get_tag('aq'))
-                    as_scores = aq / 255.0
-                except KeyError:
-                    pass
+                ns_scores = _scaled_score_tag(read, 'nq')
+                as_scores = _scaled_score_tag(read, 'aq')
 
             read_length = read.query_length or 0
             stats.add_read(read_length, ns, nl, as_starts, al_lengths, ns_scores, as_scores)

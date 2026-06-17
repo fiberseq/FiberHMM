@@ -11,6 +11,15 @@ class _FakeRead:
     is_secondary = False
     is_supplementary = False
     query_length = 100
+    is_reverse = False
+
+    def __init__(self, tags=None):
+        self._tags = tags or {}
+
+    def get_tag(self, tag):
+        if tag not in self._tags:
+            raise KeyError(tag)
+        return self._tags[tag]
 
 
 class _FakeBam:
@@ -59,3 +68,21 @@ def test_positive_gaps_between_intervals_sorts_and_skips_overlaps():
     )
 
     assert gaps == [5]
+
+
+def test_stats_tag_helpers_flip_intervals_and_scale_scores():
+    read = _FakeRead({"ns": [10], "nl": [5], "nq": [255, 0]})
+
+    starts, lengths = stats_module._flipped_interval_tag_arrays(
+        read, "ns", "nl", (None, None),
+    )
+    missing = stats_module._flipped_interval_tag_arrays(
+        read, "as", "al", ("missing", "missing"),
+    )
+    scores = stats_module._scaled_score_tag(read, "nq")
+
+    np.testing.assert_array_equal(starts, [10])
+    np.testing.assert_array_equal(lengths, [5])
+    assert missing == ("missing", "missing")
+    np.testing.assert_allclose(scores, [1.0, 0.0])
+    assert stats_module._scaled_score_tag(read, "aq") is None
