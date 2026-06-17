@@ -123,6 +123,19 @@ def test_daf_progress_rate_handles_zero_elapsed():
     assert encoder._daf_progress_rate(10_000, 0.0) is None
 
 
+def test_print_daf_progress_formats_rate_counts_and_skips_zero_elapsed():
+    log = io.StringIO()
+
+    encoder._print_daf_progress(10_000, 10_000, 2.0, 12, 34, 56, log)
+    assert log.getvalue() == (
+        "  [10,000 reads] 5,000 reads/sec (CT=12 GA=34 skip=56)\n"
+    )
+
+    log = io.StringIO()
+    encoder._print_daf_progress(10_000, 10_000, 0.0, 12, 34, 56, log)
+    assert log.getvalue() == ""
+
+
 def test_daf_encode_summary_and_report_format():
     summary = encoder._daf_encode_summary(
         total=100,
