@@ -158,6 +158,52 @@ def _streaming_read(**overrides):
     return SimpleNamespace(**attrs)
 
 
+def test_legacy_fiber_read_or_skip_filters_and_extracts(monkeypatch):
+    config = ReadFilterConfig(min_mapq=20, min_read_length=50)
+    extracted = []
+
+    def fake_extract(read, mode, prob_threshold):
+        extracted.append((read.query_name, mode, prob_threshold))
+        return {"read_id": read.query_name}
+
+    monkeypatch.setattr(legacy_pipeline, "_extract_fiber_read_from_pysam", fake_extract)
+
+    fiber_read, reason = legacy_pipeline._legacy_fiber_read_or_skip(
+        _streaming_read(), config, "daf", 128,
+    )
+    assert fiber_read == {"read_id": "read1"}
+    assert reason is None
+    assert extracted == [("read1", "daf", 128)]
+
+    fiber_read, reason = legacy_pipeline._legacy_fiber_read_or_skip(
+        _streaming_read(mapping_quality=0), config, "daf", 128,
+    )
+    assert fiber_read is None
+    assert reason == "low_mapq"
+    assert extracted == [("read1", "daf", 128)]
+
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_extract_fiber_read_from_pysam",
+        lambda read, mode, prob_threshold: None,
+    )
+    fiber_read, reason = legacy_pipeline._legacy_fiber_read_or_skip(
+        _streaming_read(), config, "daf", 128,
+    )
+    assert fiber_read is None
+    assert reason == "no_modifications"
+
+    def fail_extract(read, mode, prob_threshold):
+        raise ValueError("bad read")
+
+    monkeypatch.setattr(legacy_pipeline, "_extract_fiber_read_from_pysam", fail_extract)
+    fiber_read, reason = legacy_pipeline._legacy_fiber_read_or_skip(
+        _streaming_read(), config, "daf", 128,
+    )
+    assert fiber_read is None
+    assert reason == "extraction_failed"
+
+
 def test_streaming_payload_or_skip_filters_and_builds_payload(monkeypatch):
     config = ReadFilterConfig(min_mapq=20, min_read_length=50)
     built = []

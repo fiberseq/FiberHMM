@@ -142,6 +142,22 @@ def _write_skipped_legacy_read(outbam, read, skip_reasons: dict, reason: str) ->
     return 1
 
 
+def _legacy_fiber_read_or_skip(read, filter_config: ReadFilterConfig,
+                               mode: str, prob_threshold: int):
+    skip_reason = streaming_skip_reason(read, filter_config)
+    if skip_reason:
+        return None, skip_reason
+
+    try:
+        fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
+    except Exception:
+        return None, 'extraction_failed'
+
+    if fiber_read is None:
+        return None, 'no_modifications'
+    return fiber_read, None
+
+
 def _process_bam_legacy_pipeline(
     input_bam: str,
     output_bam: str,
@@ -227,24 +243,12 @@ def _process_bam_legacy_pipeline(
 
             try:
                 for read in inbam:
-                    skip_reason = streaming_skip_reason(read, filter_config)
+                    fiber_read, skip_reason = _legacy_fiber_read_or_skip(
+                        read, filter_config, mode, prob_threshold,
+                    )
                     if skip_reason:
                         skipped += _write_skipped_legacy_read(
                             outbam, read, skip_reasons, skip_reason
-                        )
-                        continue
-
-                    # Extract data needed for processing
-                    try:
-                        fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
-                        if fiber_read is None:
-                            skipped += _write_skipped_legacy_read(
-                                outbam, read, skip_reasons, 'no_modifications'
-                            )
-                            continue
-                    except Exception:
-                        skipped += _write_skipped_legacy_read(
-                            outbam, read, skip_reasons, 'extraction_failed'
                         )
                         continue
 
