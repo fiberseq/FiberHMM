@@ -8,6 +8,7 @@ from fiberhmm.probabilities.output_paths import (
     probability_table_path,
 )
 from fiberhmm.probabilities.utils import (
+    _daf_position_counts,
     _daf_strand_base_from_counts,
     _is_fiber_probability_mode,
     _standard_output_dirs,
@@ -33,6 +34,7 @@ def test_detect_strand_and_base_for_fiber_modes():
 
 
 def test_detect_strand_and_base_for_daf_modes():
+    assert _daf_position_counts("TAA", {0, 1, 99}) == (1, 1)
     assert _daf_strand_base_from_counts(2, 1) == ("+", "C")
     assert _daf_strand_base_from_counts(1, 2) == ("-", "G")
     assert _daf_strand_base_from_counts(2, 2) == (".", "C")

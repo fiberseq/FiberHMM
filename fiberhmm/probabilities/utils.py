@@ -30,6 +30,12 @@ def _daf_strand_base_from_counts(t_count: int, a_count: int) -> Tuple[str, str]:
     return '.', 'C'
 
 
+def _daf_position_counts(seq_upper: str, mod_positions: Set[int]) -> Tuple[int, int]:
+    t_count = _count_mod_positions_at_base(seq_upper, mod_positions, 'T')
+    a_count = _count_mod_positions_at_base(seq_upper, mod_positions, 'A')
+    return t_count, a_count
+
+
 def _is_fiber_probability_mode(mode: str) -> bool:
     return mode in _FIBER_PROBABILITY_MODES
 
@@ -57,8 +63,7 @@ def detect_strand_and_base(sequence: str, mod_positions: Set[int], mode: str) ->
     seq_upper = sequence.upper()
 
     if mode == 'daf':
-        t_count = _count_mod_positions_at_base(seq_upper, mod_positions, 'T')
-        a_count = _count_mod_positions_at_base(seq_upper, mod_positions, 'A')
+        t_count, a_count = _daf_position_counts(seq_upper, mod_positions)
         return _daf_strand_base_from_counts(t_count, a_count)
 
     return '.', 'A'
