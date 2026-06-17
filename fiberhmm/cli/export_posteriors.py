@@ -46,6 +46,7 @@ from fiberhmm.core.bam_reader import (
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model_with_metadata
 from fiberhmm.inference.engine import footprint_runs
+from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.inference.worker_warmup import (
     disable_numba_cache_locking,
     warm_up_model_posteriors,
@@ -103,7 +104,7 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
     Extract posterior probabilities from a single read.
     Returns dict with fiber data or None if filtered.
     """
-    if read.is_unmapped or read.is_secondary or read.is_supplementary:
+    if not is_primary_mapped_alignment(read):
         return None
 
     sequence = read.query_sequence

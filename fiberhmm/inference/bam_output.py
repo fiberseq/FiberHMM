@@ -14,6 +14,7 @@ from fiberhmm.inference.reference_mapping import (
     build_query_to_ref,
     scored_interval_spans,
 )
+from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 
@@ -533,7 +534,7 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
     with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as bam, open(output_bed, 'w') as out:
         for read in bam:
             # Skip unmapped and secondary/supplementary (BED should have one row per molecule)
-            if read.is_unmapped or read.is_secondary or read.is_supplementary:
+            if not is_primary_mapped_alignment(read):
                 continue
 
             # Get footprint tags (molecular frame -> flip to SEQ/query coords)

@@ -18,6 +18,7 @@ from fiberhmm.core.model_io import freeze_model_for_inference, load_model, load_
 from fiberhmm.inference.engine import CHIMERA_SKIP, _extract_fiber_read_from_pysam
 from fiberhmm.inference.fused_stages import run_hmm_apply_stage
 from fiberhmm.inference.nuc_recaller import recall_nucs_in_read
+from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.inference.tf_recaller import build_llr_tables
 
 # Window (bp) for the primary nucleosome-repeat peak: excludes sub-nucleosomal
@@ -59,7 +60,7 @@ def estimate_phase_nrl(
     bam = pysam.AlignmentFile(input_bam, 'rb', check_sq=False)
     try:
         for read in bam.fetch(until_eof=True):
-            if read.is_unmapped or read.is_secondary or read.is_supplementary:
+            if not is_primary_mapped_alignment(read):
                 continue
             fr = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
             if fr is None or fr is CHIMERA_SKIP:

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
+from fiberhmm.inference.read_filters import (
+    ReadFilterConfig,
+    is_primary_alignment,
+    is_primary_mapped_alignment,
+    streaming_skip_reason,
+)
 
 
 @dataclass
@@ -21,6 +26,18 @@ class _Read:
 
 def test_streaming_filter_allows_processable_mapped_read():
     assert streaming_skip_reason(_Read(), ReadFilterConfig()) is None
+
+
+def test_primary_alignment_predicates():
+    assert is_primary_alignment(_Read())
+    assert is_primary_alignment(_Read(is_unmapped=True))
+    assert not is_primary_alignment(_Read(is_secondary=True))
+    assert not is_primary_alignment(_Read(is_supplementary=True))
+
+    assert is_primary_mapped_alignment(_Read())
+    assert not is_primary_mapped_alignment(_Read(is_unmapped=True))
+    assert not is_primary_mapped_alignment(_Read(is_secondary=True))
+    assert not is_primary_mapped_alignment(_Read(is_supplementary=True))
 
 
 def test_streaming_filter_skips_unmapped_without_process_unmapped():

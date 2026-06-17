@@ -17,6 +17,16 @@ class ReadFilterConfig:
     train_rids: AbstractSet[str] = field(default_factory=frozenset)
 
 
+def is_primary_alignment(read) -> bool:
+    """Return True for primary alignments, including unmapped primary reads."""
+    return not (read.is_secondary or read.is_supplementary)
+
+
+def is_primary_mapped_alignment(read) -> bool:
+    """Return True for mapped primary alignments."""
+    return not read.is_unmapped and is_primary_alignment(read)
+
+
 def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     """Return the skip reason for a streaming read, or None if processable."""
     if read.is_unmapped:

@@ -4,6 +4,7 @@
 import numpy as np
 import pysam
 
+from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 
@@ -367,7 +368,7 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
     total_reads = 0
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         for read in bam:
-            if not read.is_unmapped and not read.is_secondary and not read.is_supplementary:
+            if is_primary_mapped_alignment(read):
                 total_reads += 1
 
     # Calculate sampling probability
@@ -383,7 +384,7 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
 
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         for read in bam:
-            if read.is_unmapped or read.is_secondary or read.is_supplementary:
+            if not is_primary_mapped_alignment(read):
                 continue
 
             # Reservoir sampling
