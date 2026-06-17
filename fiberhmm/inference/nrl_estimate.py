@@ -26,6 +26,41 @@ from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 _PEAK_LO, _PEAK_HI = 120, 260
 
 
+def _phase_nrl_peak_spacings(spacings) -> np.ndarray:
+    sp = np.asarray(spacings, dtype=np.float64)
+    return sp[(sp >= _PEAK_LO) & (sp <= _PEAK_HI)]
+
+
+def _phase_nrl_estimate_from_peak(peak: np.ndarray, clamp_lo: int, clamp_hi: int):
+    bins = np.arange(_PEAK_LO, _PEAK_HI + 10, 10)
+    hist, edges = np.histogram(peak, bins=bins)
+    mode = float(edges[int(np.argmax(hist))] + 5)
+    median = float(np.median(peak))
+    est = 0.5 * (mode + median)
+    nrl = int(round(np.clip(est, clamp_lo, clamp_hi)))
+    ci = (float(np.percentile(peak, 25)), float(np.percentile(peak, 75)))
+    return nrl, ci
+
+
+def _phase_nrl_result(
+    spacings,
+    n_reads: int,
+    *,
+    anchor: int,
+    clamp_lo: int,
+    clamp_hi: int,
+    min_pairs: int,
+) -> dict:
+    peak = _phase_nrl_peak_spacings(spacings)
+    if peak.size < min_pairs:
+        return {'nrl': int(anchor), 'ci': None, 'n_pairs': int(peak.size),
+                'n_reads': n_reads, 'source': 'anchor'}
+
+    nrl, ci = _phase_nrl_estimate_from_peak(peak, clamp_lo, clamp_hi)
+    return {'nrl': nrl, 'ci': ci, 'n_pairs': int(peak.size),
+            'n_reads': n_reads, 'source': 'estimated'}
+
+
 def estimate_phase_nrl(
     input_bam: str,
     apply_model_path: str,
@@ -88,20 +123,13 @@ def estimate_phase_nrl(
     finally:
         bam.close()
 
-    sp = np.asarray(spacings, dtype=np.float64)
-    peak = sp[(sp >= _PEAK_LO) & (sp <= _PEAK_HI)]
-    if peak.size < min_pairs:
-        return {'nrl': int(anchor), 'ci': None, 'n_pairs': int(peak.size),
-                'n_reads': n_reads, 'source': 'anchor'}
-
     # Robust central estimate: histogram mode (10bp bins) cross-checked against
     # the in-peak median, then clamped to the anchored band.
-    bins = np.arange(_PEAK_LO, _PEAK_HI + 10, 10)
-    hist, edges = np.histogram(peak, bins=bins)
-    mode = float(edges[int(np.argmax(hist))] + 5)
-    median = float(np.median(peak))
-    est = 0.5 * (mode + median)
-    nrl = int(round(np.clip(est, clamp_lo, clamp_hi)))
-    ci = (float(np.percentile(peak, 25)), float(np.percentile(peak, 75)))
-    return {'nrl': nrl, 'ci': ci, 'n_pairs': int(peak.size),
-            'n_reads': n_reads, 'source': 'estimated'}
+    return _phase_nrl_result(
+        spacings,
+        n_reads,
+        anchor=anchor,
+        clamp_lo=clamp_lo,
+        clamp_hi=clamp_hi,
+        min_pairs=min_pairs,
+    )
