@@ -633,6 +633,13 @@ def test_streaming_drain_counter_helpers_write_passthrough():
     assert outbam.written == [read]
 
 
+def test_empty_ref_positions_returns_int32_empty_array():
+    empty = streaming_drain._empty_ref_positions()
+
+    assert empty.dtype == np.int32
+    assert empty.size == 0
+
+
 def test_posterior_ref_positions_handles_backend_fallbacks(monkeypatch):
     read = object()
     monkeypatch.setattr(streaming_drain, "HAS_POSTERIOR_WRITER", False)

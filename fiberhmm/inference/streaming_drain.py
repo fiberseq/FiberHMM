@@ -38,13 +38,17 @@ def _write_passthrough(outbam, read_obj, counters) -> None:
     _increment_counter(counters, 'written')
 
 
+def _empty_ref_positions():
+    return np.array([], dtype=np.int32)
+
+
 def _posterior_ref_positions(read_obj):
     if not HAS_POSTERIOR_WRITER:
-        return np.array([], dtype=np.int32)
+        return _empty_ref_positions()
     try:
         return get_ref_positions_from_read(read_obj)
     except Exception:
-        return np.array([], dtype=np.int32)
+        return _empty_ref_positions()
 
 
 def _drain_oldest_chunk(
