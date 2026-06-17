@@ -1,5 +1,10 @@
 """Tests for probability-generation utility helpers."""
 
+from fiberhmm.probabilities.output_paths import (
+    combined_probability_table_path,
+    probability_counter_path,
+    probability_table_path,
+)
 from fiberhmm.probabilities.utils import (
     detect_strand_and_base,
     get_base_name,
@@ -39,3 +44,22 @@ def test_output_directory_helpers(tmp_path):
 def test_get_base_name_handles_trailing_slash_and_empty_path():
     assert get_base_name("/tmp/example/") == "example"
     assert get_base_name("", default="fallback") == "fallback"
+
+
+def test_probability_output_path_helpers_are_shared():
+    assert probability_counter_path("out", "run", "accessible", "A") == (
+        "out/run_accessible_A.probs.pkl"
+    )
+    assert probability_counter_path(
+        "out",
+        "run",
+        "inaccessible",
+        "C",
+        temporary=True,
+    ) == "out/run_inaccessible_C.probs.pkl.tmp"
+    assert probability_table_path("out/tables", "run", "accessible", "A", 3) == (
+        "out/tables/run_accessible_A_k3.tsv"
+    )
+    assert combined_probability_table_path("out/tables", "run", "C", 5) == (
+        "out/tables/run_C_k5_probs.tsv"
+    )

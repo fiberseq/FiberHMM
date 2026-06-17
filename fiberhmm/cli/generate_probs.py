@@ -34,6 +34,11 @@ from tqdm import tqdm
 from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
 from fiberhmm.core.tag_access import get_preferred_tag
 from fiberhmm.probabilities.context_counter import ContextCounter
+from fiberhmm.probabilities.output_paths import (
+    combined_probability_table_path as _combined_probability_table_path,
+    probability_counter_path as _probability_counter_path,
+    probability_table_path as _probability_table_path,
+)
 from fiberhmm.probabilities.stats import generate_probability_stats
 from fiberhmm.probabilities.utils import (
     detect_strand_and_base,
@@ -172,40 +177,6 @@ def _combined_probability_frame(
     combined = combined.sort_values('context').reset_index(drop=True)
     combined['encode'] = range(len(combined))
     return combined[['encode', 'context', 'accessible_prob', 'inaccessible_prob']]
-
-
-def _probability_counter_path(
-    output_dir: str,
-    base_name: str,
-    sample_name: str,
-    base: str,
-    *,
-    temporary: bool = False,
-) -> str:
-    suffix = ".probs.pkl.tmp" if temporary else ".probs.pkl"
-    return os.path.join(output_dir, f"{base_name}_{sample_name}_{base}{suffix}")
-
-
-def _probability_table_path(
-    tables_dir: str,
-    base_name: str,
-    sample_name: str,
-    base: str,
-    context_size: int,
-) -> str:
-    return os.path.join(
-        tables_dir,
-        f"{base_name}_{sample_name}_{base}_k{context_size}.tsv",
-    )
-
-
-def _combined_probability_table_path(
-    tables_dir: str,
-    base_name: str,
-    base: str,
-    context_size: int,
-) -> str:
-    return os.path.join(tables_dir, f"{base_name}_{base}_k{context_size}_probs.tsv")
 
 
 def _max_reads_per_file(max_reads: int, n_files: int) -> int:

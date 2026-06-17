@@ -23,13 +23,13 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from fiberhmm.cli.generate_probs import (
-    _combined_probability_table_path,
-    _probability_table_path,
-)
 from fiberhmm.core.model_io import load_model_with_metadata, save_model
 from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
+from fiberhmm.probabilities.output_paths import (
+    combined_probability_table_path as _combined_probability_table_path,
+    probability_table_path as _probability_table_path,
+)
 from fiberhmm.probabilities.utils import get_base_name, setup_output_dirs
 
 # =============================================================================
