@@ -26,6 +26,11 @@ from typing import Optional, TextIO
 
 import numpy as np
 
+from fiberhmm.posteriors.region_tsv import (
+    REGION_POSTERIORS_HEADER,
+    format_region_posterior_line,
+)
+
 
 def _open_text_file(path: str, mode: str) -> TextIO:
     """Open plain or gzip-compressed text files with consistent settings."""
@@ -110,7 +115,7 @@ class PosteriorsTSVWriter:
             'format_version': 1,
         }
         self._file.write(f"#metadata:{json.dumps(metadata)}\n")
-        self._file.write("#read_id\tchrom\tstart\tend\tstrand\tposteriors_b64\tfp_starts\tfp_sizes\n")
+        self._file.write(REGION_POSTERIORS_HEADER)
 
         self.n_written = 0
 
@@ -130,16 +135,18 @@ class PosteriorsTSVWriter:
             fp_starts: Footprint start positions (query coords)
             fp_sizes: Footprint sizes
         """
-        # Quantize posteriors to uint8
-        post_u8 = np.clip(posteriors * 255, 0, 255).astype(np.uint8)
-        post_b64 = base64.b64encode(post_u8.tobytes()).decode('ascii')
-
-        # Encode footprint arrays as comma-separated
-        fp_starts_str = ','.join(map(str, fp_starts)) if len(fp_starts) > 0 else ''
-        fp_sizes_str = ','.join(map(str, fp_sizes)) if len(fp_sizes) > 0 else ''
-
-        line = f"{read_id}\t{chrom}\t{start}\t{end}\t{strand}\t{post_b64}\t{fp_starts_str}\t{fp_sizes_str}\n"
-        self._file.write(line)
+        self._file.write(
+            format_region_posterior_line(
+                read_name=read_id,
+                chrom=chrom,
+                ref_start=start,
+                ref_end=end,
+                strand=strand,
+                posteriors=posteriors,
+                footprint_starts=fp_starts,
+                footprint_sizes=fp_sizes,
+            )
+        )
         self.n_written += 1
 
     def flush(self):

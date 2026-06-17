@@ -1,8 +1,13 @@
 import binascii
 import gzip
 
+import numpy as np
 import pytest
 
+from fiberhmm.posteriors.region_tsv import (
+    REGION_POSTERIORS_HEADER,
+    format_region_posterior_line,
+)
 from fiberhmm.posteriors import tsv_backend
 
 
@@ -62,6 +67,42 @@ def test_tsv_to_h5_closes_gzip_inputs_when_conversion_fails(monkeypatch, tmp_pat
 
     assert len(handles) == 2
     assert all(handle.closed for handle in handles)
+
+
+def test_tsv_writer_reuses_region_posterior_row_format(tmp_path):
+    output_path = tmp_path / "posteriors.tsv"
+    writer = tsv_backend.PosteriorsTSVWriter(
+        str(output_path),
+        mode="pacbio-fiber",
+        context_size=3,
+        edge_trim=10,
+        source_bam="input.bam",
+        compress=False,
+    )
+    writer.write_fiber(
+        read_id="read1",
+        chrom="chr1",
+        start=10,
+        end=20,
+        strand="+",
+        posteriors=np.array([0.0, 0.5, 1.0], dtype=np.float32),
+        fp_starts=np.array([12], dtype=np.int32),
+        fp_sizes=np.array([4], dtype=np.int32),
+    )
+    assert writer.close() == 1
+
+    lines = output_path.read_text().splitlines(keepends=True)
+    assert lines[1] == REGION_POSTERIORS_HEADER
+    assert lines[2] == format_region_posterior_line(
+        read_name="read1",
+        chrom="chr1",
+        ref_start=10,
+        ref_end=20,
+        strand="+",
+        posteriors=np.array([0.0, 0.5, 1.0], dtype=np.float32),
+        footprint_starts=np.array([12], dtype=np.int32),
+        footprint_sizes=np.array([4], dtype=np.int32),
+    )
 
 
 def test_concatenate_tsvs_closes_input_and_output_when_read_fails(monkeypatch, tmp_path):
