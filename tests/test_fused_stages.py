@@ -41,6 +41,15 @@ def test_nuc_call_quality_lists_preserve_nq_el_er_order():
     )
 
 
+def test_circular_read_length_prefers_apply_metadata():
+    fiber_read = {"query_sequence": "A" * 100}
+
+    assert fused_stages._circular_read_length(
+        fiber_read, {"circular_read_length": 75},
+    ) == 75
+    assert fused_stages._circular_read_length(fiber_read, {}) == 100
+
+
 def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatch):
     seen = {"interval_args": None, "scan_args": []}
 

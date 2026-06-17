@@ -58,6 +58,14 @@ def _nuc_call_quality_lists(nuc_calls):
     )
 
 
+def _circular_read_length(fiber_read: Mapping[str, Any],
+                          apply_result: Mapping[str, Any]) -> int:
+    return int(
+        apply_result.get("circular_read_length")
+        or len(fiber_read["query_sequence"])
+    )
+
+
 def apply_result_has_footprints(apply_result: Optional[Mapping[str, Any]]) -> bool:
     """Return whether an HMM apply result has annotations worth writing."""
     if apply_result is None:
@@ -239,7 +247,7 @@ def _build_fused_recall_result_without_nucs_circular(
     unify_threshold: int,
     with_scores: bool,
 ) -> dict:
-    read_length = int(apply_result.get("circular_read_length") or len(fiber_read["query_sequence"]))
+    read_length = _circular_read_length(fiber_read, apply_result)
     tf_calls = run_tf_recall_stage(
         apply_result["encoded"],
         apply_result.get("tiled_ns", apply_result["ns"]),
@@ -379,8 +387,7 @@ def _build_fused_recall_result_with_nucs_circular(
     the refined nucs, MSPs and TF calls back to molecule coordinates."""
     obs = apply_result["encoded"]                     # 3x tiled observations
     tiled_len = len(obs)
-    read_length = int(apply_result.get("circular_read_length")
-                      or len(fiber_read["query_sequence"]))
+    read_length = _circular_read_length(fiber_read, apply_result)
     tiled_ns = apply_result.get("tiled_ns", apply_result["ns"])
     tiled_nl = apply_result.get("tiled_nl", apply_result["nl"])
     tiled_msps = list(zip(
