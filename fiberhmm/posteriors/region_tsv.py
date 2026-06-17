@@ -66,6 +66,29 @@ def region_posteriors_tsv_output_path(output_path: str) -> str:
     return output_path + ".tsv.gz"
 
 
+def _region_posteriors_metadata(
+    mode: str,
+    context_size: int,
+    edge_trim: int,
+    source_bam: str,
+) -> dict:
+    return {
+        "mode": mode,
+        "context_size": context_size,
+        "edge_trim": edge_trim,
+        "source_bam": os.path.basename(source_bam),
+        "format_version": 1,
+    }
+
+
+def _valid_region_tsv_files(temp_tsv_files: Iterable[tuple[int, str]]) -> list[tuple[int, str]]:
+    return [
+        (idx, path)
+        for idx, path in sorted(temp_tsv_files, key=lambda item: item[0])
+        if os.path.exists(path) and os.path.getsize(path) > 0
+    ]
+
+
 def merge_region_posteriors_tsv(
     temp_tsv_files: Iterable[tuple[int, str]],
     output_path: str,
@@ -79,24 +102,18 @@ def merge_region_posteriors_tsv(
 
     H5 conversion is left as a separate step to avoid memory/parallel issues.
     """
-    ordered_files = sorted(temp_tsv_files, key=lambda item: item[0])
-    valid_files = [
-        (idx, path)
-        for idx, path in ordered_files
-        if os.path.exists(path) and os.path.getsize(path) > 0
-    ]
+    valid_files = _valid_region_tsv_files(temp_tsv_files)
     if not valid_files:
         return 0
 
     tsv_output = region_posteriors_tsv_output_path(output_path)
     with gzip.open(tsv_output, "wt", compresslevel=4) as outfile:
-        metadata = {
-            "mode": mode,
-            "context_size": context_size,
-            "edge_trim": edge_trim,
-            "source_bam": os.path.basename(source_bam),
-            "format_version": 1,
-        }
+        metadata = _region_posteriors_metadata(
+            mode,
+            context_size,
+            edge_trim,
+            source_bam,
+        )
         outfile.write(f"#metadata:{json.dumps(metadata)}\n")
         outfile.write(REGION_POSTERIORS_HEADER)
 
