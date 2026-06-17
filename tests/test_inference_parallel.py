@@ -908,6 +908,41 @@ def test_pop_inflight_chunk_coerces_worker_result_and_removes_entry():
     assert not inflight
 
 
+def test_record_apply_result_tags_posteriors_or_counts_no_footprints(monkeypatch):
+    read = object()
+    result = {"ns": [1]}
+    counters = {}
+    tagged = []
+    posteriors = []
+
+    def fake_set_tags(got_read, got_result, with_scores, write_msps):
+        tagged.append((got_read, got_result, with_scores, write_msps))
+
+    def fake_add_posterior(writer, got_read, got_result):
+        posteriors.append((writer, got_read, got_result))
+        return True
+
+    monkeypatch.setattr(streaming_drain, "set_legacy_apply_tags", fake_set_tags)
+    monkeypatch.setattr(
+        streaming_drain,
+        "_add_posterior_fiber_if_available",
+        fake_add_posterior,
+    )
+
+    streaming_drain._record_apply_result(
+        read, result, with_scores=True, write_msps=False,
+        posterior_writer="writer", counters=counters,
+    )
+    streaming_drain._record_apply_result(
+        read, None, with_scores=True, write_msps=False,
+        posterior_writer="writer", counters=counters,
+    )
+
+    assert tagged == [(read, result, True, False)]
+    assert posteriors == [("writer", read, result)]
+    assert counters == {"reads_with_footprints": 1, "no_footprints": 1}
+
+
 def test_streaming_drain_counts_worker_failures_and_passes_read_through():
     read = object()
     outbam = _OutBam()

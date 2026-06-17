@@ -88,6 +88,26 @@ def _pop_inflight_chunk(inflight):
     return results, worker_failures, chunk_read_objs, chunk_items, chunk_skip_flags
 
 
+def _record_apply_result(
+    read_obj,
+    result,
+    with_scores,
+    write_msps,
+    posterior_writer,
+    counters,
+) -> None:
+    if result is not None:
+        set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
+        _record_reads_with_footprints(counters)
+        _add_posterior_fiber_if_available(
+            posterior_writer,
+            read_obj,
+            result,
+        )
+    else:
+        _record_no_footprints(counters)
+
+
 def _drain_oldest_chunk(
     inflight,
     outbam,
@@ -121,16 +141,10 @@ def _drain_oldest_chunk(
 
         next(fiber_iter)
         result = next(result_iter)
-        if result is not None:
-            set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
-            _record_reads_with_footprints(counters)
-            _add_posterior_fiber_if_available(
-                posterior_writer,
-                read_obj,
-                result,
-            )
-        else:
-            _record_no_footprints(counters)
+        _record_apply_result(
+            read_obj, result, with_scores, write_msps, posterior_writer,
+            counters,
+        )
 
         _write_passthrough(outbam, read_obj, counters)
 
