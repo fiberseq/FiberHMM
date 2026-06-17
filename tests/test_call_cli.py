@@ -20,6 +20,7 @@ from fiberhmm.cli.call import (
     _is_phase_nrl_off,
     _normalize_phase_nrl_option,
     _parse_fixed_phase_nrl,
+    _phase_nrl_estimate_message,
     _resolve_apply_model,
     _resolve_call_chroms,
     _resolve_call_mode_context,
@@ -217,6 +218,32 @@ def test_call_phase_nrl_literal_helpers():
     assert _parse_fixed_phase_nrl("185") == 185
     assert _parse_fixed_phase_nrl("-10") == 0
     assert _parse_fixed_phase_nrl("auto") is None
+
+
+def test_phase_nrl_estimate_message_formats_ci_and_counts():
+    message = _phase_nrl_estimate_message({
+        "nrl": 185,
+        "source": "estimated",
+        "n_pairs": 1234,
+        "n_reads": 56,
+        "ci": (170.2, 199.8),
+    })
+
+    assert message == (
+        "  phase NRL: 185 bp (estimated, 1,234 pairs from 56 reads CI[170-200])"
+    )
+
+
+def test_phase_nrl_estimate_message_omits_missing_ci():
+    message = _phase_nrl_estimate_message({
+        "nrl": 185,
+        "source": "fallback",
+        "n_pairs": 0,
+        "n_reads": 0,
+        "ci": None,
+    })
+
+    assert message == "  phase NRL: 185 bp (fallback, 0 pairs from 0 reads)"
 
 
 def test_call_recall_nucs_defaults_and_ddda_warnings(capsys):

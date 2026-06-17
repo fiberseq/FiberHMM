@@ -214,6 +214,15 @@ def _parse_fixed_phase_nrl(raw: str):
         return None
 
 
+def _phase_nrl_estimate_message(result: dict) -> str:
+    ci = result['ci']
+    ci_str = f" CI[{ci[0]:.0f}-{ci[1]:.0f}]" if ci else ""
+    return (
+        f"  phase NRL: {result['nrl']} bp ({result['source']}, "
+        f"{result['n_pairs']:,} pairs from {result['n_reads']:,} reads{ci_str})"
+    )
+
+
 def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
                        recall_nucs) -> int:
     """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off)."""
@@ -243,11 +252,7 @@ def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
         nuc_min_size=args.nuc_min_size, msp_min_size=args.msp_min_size,
         prob_threshold=args.prob_threshold, edge_trim=args.edge_trim,
     )
-    ci = res['ci']
-    ci_str = f" CI[{ci[0]:.0f}-{ci[1]:.0f}]" if ci else ""
-    print(f"  phase NRL: {res['nrl']} bp ({res['source']}, "
-          f"{res['n_pairs']:,} pairs from {res['n_reads']:,} reads{ci_str})",
-          file=sys.stderr)
+    print(_phase_nrl_estimate_message(res), file=sys.stderr)
     return int(res['nrl'])
 
 
