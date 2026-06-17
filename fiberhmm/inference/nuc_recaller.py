@@ -429,6 +429,10 @@ def _whole_molecule_nuc_call(call: NucCall, read_length: int) -> NucCall:
     return NucCall(0, read_length, call.nq, call.el, call.er)
 
 
+def _whole_molecule_nuc_candidate(calls, read_length: int):
+    return next((n for n in calls if int(n.length) >= int(read_length)), None)
+
+
 def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
                                      nuc_min_size=85):
     """Circular-aware ``assemble_nuc_msp_tiling``.
@@ -458,7 +462,7 @@ def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
     if not calls:
         # no nucleosomes -> the entire molecule tiles as one accessible MSP
         return [], _whole_molecule_msp(rl, floor)
-    whole = next((n for n in calls if int(n.length) >= rl), None)
+    whole = _whole_molecule_nuc_candidate(calls, rl)
     if whole is not None:
         if rl >= nfloor:
             return [_whole_molecule_nuc_call(whole, rl)], []

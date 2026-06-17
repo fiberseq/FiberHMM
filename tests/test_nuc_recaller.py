@@ -16,6 +16,7 @@ from fiberhmm.inference.nuc_recaller import (
     _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
     _total_call_llr,
+    _whole_molecule_nuc_candidate,
     assemble_circular_nuc_msp_tiling,
     assemble_nuc_msp_tiling,
     drop_short_nucs_overlapping_promoted,
@@ -403,6 +404,15 @@ def test_circular_tiling_whole_molecule_nuc_normalizes_start():
         (0, 200, 201, 123, 45)
     ]
     assert msps == []
+
+
+def test_whole_molecule_nuc_candidate_returns_first_covering_call():
+    short = NucCall(10, 199, 1, 2, 3)
+    whole = NucCall(50, 200, 4, 5, 6)
+    later = NucCall(0, 220, 7, 8, 9)
+
+    assert _whole_molecule_nuc_candidate([short, whole, later], 200) is whole
+    assert _whole_molecule_nuc_candidate([short], 200) is None
 
 
 def test_nuc_qqq_aq_roundtrip():
