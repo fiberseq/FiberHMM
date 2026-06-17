@@ -11,6 +11,7 @@ from fiberhmm.inference.region_workers import (
     _extract_region_fiber_read,
     _extract_region_payload_fiber_read,
     _format_region_bed12_row,
+    _region_bed12_blocks,
     _region_read_route,
 )
 
@@ -154,6 +155,31 @@ def test_region_bed12_row_pads_blocks_and_scores():
         "0,20,80,99",
         "0,500,750,0",
     ]
+
+
+def test_region_bed12_blocks_project_pad_and_scale_scores():
+    block_starts, block_sizes, score_list = _region_bed12_blocks(
+        ref_start=100,
+        ref_end=200,
+        starts=[120, 180],
+        lengths=[10, 5],
+        scores=[0.5, 0.75],
+    )
+
+    assert block_starts == [0, 20, 80, 99]
+    assert block_sizes == [1, 10, 5, 1]
+    assert score_list == [0, 500, 750, 0]
+
+    block_starts, block_sizes, score_list = _region_bed12_blocks(
+        ref_start=100,
+        ref_end=130,
+        starts=[100],
+        lengths=[30],
+    )
+
+    assert block_starts == [0]
+    assert block_sizes == [30]
+    assert score_list is None
 
 
 def test_region_bed12_row_omits_scores_when_absent():

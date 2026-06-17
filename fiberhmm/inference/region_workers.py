@@ -125,13 +125,14 @@ def _region_read_route(read, start: int, end: int, filter_config: ReadFilterConf
     return _REGION_ROUTE_PROCESS, None
 
 
-def _format_region_bed12_row(ref_name, ref_start, ref_end, read_id, strand,
-                             starts, lengths, scores=None):
-    """Format one region-worker BED12 row from reference-frame intervals."""
+def _region_bed12_blocks(ref_start, ref_end, starts, lengths, scores=None):
     read_length = ref_end - ref_start
     block_starts = [int(start - ref_start) for start in starts]
     block_sizes = [int(length) for length in lengths]
-    score_list = [int(score * 1000) for score in scores] if scores is not None else None
+    score_list = (
+        [int(score * 1000) for score in scores]
+        if scores is not None else None
+    )
 
     # BED12 requires blocks to span chromStart to chromEnd.
     if block_starts[0] != 0:
@@ -147,6 +148,15 @@ def _format_region_bed12_row(ref_name, ref_start, ref_end, read_id, strand,
         if score_list is not None:
             score_list.append(0)
 
+    return block_starts, block_sizes, score_list
+
+
+def _format_region_bed12_row(ref_name, ref_start, ref_end, read_id, strand,
+                             starts, lengths, scores=None):
+    """Format one region-worker BED12 row from reference-frame intervals."""
+    block_starts, block_sizes, score_list = _region_bed12_blocks(
+        ref_start, ref_end, starts, lengths, scores,
+    )
     blocks = [
         (ref_start + start, ref_start + start + size)
         for start, size in zip(block_starts, block_sizes)
