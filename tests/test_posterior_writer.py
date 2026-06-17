@@ -16,6 +16,13 @@ def test_resolve_writer_format_auto_detects_hdf5_extensions():
     assert writer._resolve_writer_format("posteriors.any", "tsv") == "tsv"
 
 
+def test_unknown_writer_format_message_names_valid_formats():
+    message = writer._unknown_writer_format_message("json")
+
+    assert "Unknown posteriors format: 'json'" in message
+    assert "Use 'hdf5' or 'tsv'" in message
+
+
 def test_create_writer_rejects_unknown_format():
     with pytest.raises(ValueError, match="Unknown posteriors format"):
         writer.create_writer("posteriors.out", format="unknown")

@@ -27,6 +27,10 @@ def _resolve_writer_format(output_path: str, format: str) -> str:
     return 'tsv'
 
 
+def _unknown_writer_format_message(format: str) -> str:
+    return f"Unknown posteriors format: {format!r}. Use 'hdf5' or 'tsv'."
+
+
 def create_writer(output_path: str, format: str = 'auto',
                   mode: str = 'pacbio-fiber', context_size: int = 3,
                   edge_trim: int = 10, source_bam: str = '',
@@ -62,4 +66,4 @@ def create_writer(output_path: str, format: str = 'auto',
             source_bam, compress
         )
     else:
-        raise ValueError(f"Unknown posteriors format: {format!r}. Use 'hdf5' or 'tsv'.")
+        raise ValueError(_unknown_writer_format_message(format))
