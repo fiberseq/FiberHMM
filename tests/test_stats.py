@@ -179,6 +179,11 @@ def test_positive_counts_filters_zero_counts_without_reordering():
     assert stats_module._positive_counts([0, 3, 1, 0, 2]) == [3, 1, 2]
 
 
+def test_footprint_coverage_fraction_handles_zero_read_length():
+    assert stats_module._footprint_coverage_fraction(25, 100) == 0.25
+    assert stats_module._footprint_coverage_fraction(25, 0) == 0
+
+
 def test_add_numeric_summary_writes_requested_keys_and_skips_empty_values():
     summary = {}
 

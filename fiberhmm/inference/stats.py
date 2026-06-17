@@ -58,6 +58,10 @@ def _positive_counts(values) -> list:
     return [x for x in values if x > 0]
 
 
+def _footprint_coverage_fraction(total_fp_bases, read_length: int) -> float:
+    return total_fp_bases / read_length if read_length > 0 else 0
+
+
 def _add_numeric_summary(
     summary: dict,
     prefix: str,
@@ -178,7 +182,9 @@ class FootprintStats:
 
             # Footprint coverage
             total_fp_bases = np.sum(nl)
-            self.footprint_coverage.append(total_fp_bases / read_length if read_length > 0 else 0)
+            self.footprint_coverage.append(
+                _footprint_coverage_fraction(total_fp_bases, read_length)
+            )
 
             # Gap sizes (accessible regions between footprints)
             if n_footprints > 1:
