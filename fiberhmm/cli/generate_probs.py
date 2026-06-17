@@ -59,6 +59,7 @@ FILTER_STAT_KEYS = (
     'no_ml_tag',
     'processed',
 )
+SAMPLE_TYPES = ('accessible', 'inaccessible')
 
 
 def parse_args():
@@ -224,6 +225,24 @@ def _max_reads_per_file(max_reads: int, n_files: int) -> int:
 def _accumulate_filter_stats(combined_stats, filter_stats: Dict[str, int]) -> None:
     for key, value in filter_stats.items():
         combined_stats[key] += value
+
+
+def _remove_temporary_probability_counters(
+    output_dir: str,
+    base_name: str,
+    target_bases: List[str],
+) -> None:
+    for base in target_bases:
+        for sample in SAMPLE_TYPES:
+            tmp_file = _probability_counter_path(
+                output_dir,
+                base_name,
+                sample,
+                base,
+                temporary=True,
+            )
+            if os.path.exists(tmp_file):
+                os.remove(tmp_file)
 
 
 def _record_filter_skip(filter_stats: Dict[str, int], skip_reason) -> bool:
@@ -578,17 +597,7 @@ def main():
             print(f"  {combined_file} ({len(combined)} contexts)")
 
     # Clean up temp files
-    for base in target_bases:
-        for sample in ['accessible', 'inaccessible']:
-            tmp_file = _probability_counter_path(
-                output_dir,
-                base_name,
-                sample,
-                base,
-                temporary=True,
-            )
-            if os.path.exists(tmp_file):
-                os.remove(tmp_file)
+    _remove_temporary_probability_counters(output_dir, base_name, target_bases)
 
     # Generate stats if requested (for each context size)
     if args.stats:

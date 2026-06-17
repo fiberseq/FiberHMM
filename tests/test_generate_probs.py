@@ -1,4 +1,5 @@
 from collections import defaultdict
+from pathlib import Path
 
 import pandas as pd
 
@@ -22,6 +23,7 @@ from fiberhmm.cli.generate_probs import (
     _read_mm_ml_tags_or_skip,
     _record_filter_skip,
     _record_mm_tag_types,
+    _remove_temporary_probability_counters,
     _safe_percent,
     _target_bases_for_mode,
 )
@@ -160,6 +162,32 @@ def test_record_filter_skip_increments_when_reason_is_present():
     assert stats == {}
     assert _record_filter_skip(stats, "low_mapq")
     assert stats["low_mapq"] == 1
+
+
+def test_remove_temporary_probability_counters_removes_expected_files(tmp_path):
+    output_dir = str(tmp_path)
+    base_name = "sample"
+    paths = [
+        Path(
+            _probability_counter_path(
+                output_dir,
+                base_name,
+                sample,
+                "A",
+                temporary=True,
+            )
+        )
+        for sample in ("accessible", "inaccessible")
+    ]
+    for path in paths:
+        path.write_text("counter")
+    keep = tmp_path / "sample_accessible_A_counts.pkl"
+    keep.write_text("counter")
+
+    _remove_temporary_probability_counters(output_dir, base_name, ["A"])
+
+    assert all(not path.exists() for path in paths)
+    assert keep.exists()
 
 
 def test_process_probability_read_updates_target_counter(monkeypatch):
