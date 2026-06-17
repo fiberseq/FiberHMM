@@ -28,6 +28,7 @@ from fiberhmm.core.bam_reader import (
     ContextEncoder,
     detect_daf_strand,
     encode_from_query_sequence,
+    get_reference_positions,
 )
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.hmm import train_model as train_hmm_models
@@ -195,6 +196,17 @@ def make_emission_probs(acc_file: str, inacc_file: str,
     return emission_probs
 
 
+def _query_to_ref_positions(read) -> list:
+    try:
+        return get_reference_positions(read)
+    except AttributeError:
+        query_to_ref = [None] * len(read.query_sequence)
+        for query_pos, ref_pos in read.get_aligned_pairs():
+            if query_pos is not None and ref_pos is not None:
+                query_to_ref[query_pos] = ref_pos
+        return query_to_ref
+
+
 def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                          mode: str = 'pacbio-fiber', min_mapq: int = 20,
                          prob_threshold: int = 125, min_read_length: int = 1000) -> list:
@@ -301,12 +313,6 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                         if not mod_query_pos:
                             continue
 
-                        # Build query-to-ref map as list
-                        query_to_ref = [None] * len(read.query_sequence)
-                        for query_pos, ref_pos in read.get_aligned_pairs():
-                            if query_pos is not None and ref_pos is not None:
-                                query_to_ref[query_pos] = ref_pos
-
                         fiber_read = FiberRead(
                             read_id=read.query_name,
                             chrom=read.reference_name,
@@ -315,7 +321,7 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                             strand='-' if read.is_reverse else '+',
                             query_sequence=read.query_sequence,
                             m6a_query_positions=set(mod_query_pos),
-                            query_to_ref=query_to_ref,
+                            query_to_ref=_query_to_ref_positions(read),
                             is_reverse=read.is_reverse,
                         )
 
