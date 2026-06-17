@@ -129,6 +129,16 @@ def test_tiled_interval_arrays_prefers_tiled_values():
     assert result[3] is tiled["tiled_al"]
 
 
+def test_apply_result_msp_pairs_reads_apply_msp_arrays():
+    pairs = fused_stages._apply_result_msp_pairs({
+        "as": np.asarray([3, 7], dtype=np.int32),
+        "al": np.asarray([4, 8], dtype=np.int64),
+    })
+
+    assert pairs == [(3, 4), (7, 8)]
+    assert all(type(value) is int for pair in pairs for value in pair)
+
+
 def test_circular_read_length_prefers_apply_metadata():
     fiber_read = {"query_sequence": "A" * 100}
 

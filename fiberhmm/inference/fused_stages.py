@@ -72,6 +72,10 @@ def _tiled_interval_arrays(apply_result: Mapping[str, Any]):
     )
 
 
+def _apply_result_msp_pairs(apply_result: Mapping[str, Any]):
+    return _interval_pairs(apply_result["as"], apply_result["al"])
+
+
 def _nuc_call_quality_lists(nuc_calls):
     return (
         [k.nq for k in nuc_calls],
@@ -364,9 +368,7 @@ def _build_fused_recall_result_with_nucs(
     read_length = len(fiber_read["query_sequence"])
     ns = apply_result["ns"]
     nl = apply_result["nl"]
-    orig_msps = list(
-        zip((int(s) for s in apply_result["as"]), (int(x) for x in apply_result["al"]))
-    )
+    orig_msps = _apply_result_msp_pairs(apply_result)
 
     # 1) split + edge-refine footprints (+ optional Pass-2 phase prior)
     nuc_calls, access = recall_nucs_in_read(
