@@ -824,6 +824,10 @@ class _FakeReadWithSeq(_FakeRead):
 def test_deam_iupac_positions_maps_flavors_and_skips_unmapped():
     q2r = np.array([100, -1, 102, 103, 104])
 
+    assert extract_tags._sort_position_values_by_ref([(104, 0), (100, 1)]) == [
+        (100, 1),
+        (104, 0),
+    ]
     assert extract_tags._deam_ref_pos_for_query(q2r, 0) == 100
     assert extract_tags._deam_ref_pos_for_query(q2r, 1) is None
     assert extract_tags._deam_ref_pos_for_query(q2r, -1) is None

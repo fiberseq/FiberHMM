@@ -704,6 +704,10 @@ def _parse_mod_positions_safe(read, target_mod_codes):
     return out
 
 
+def _sort_position_values_by_ref(positions_list):
+    return sorted(positions_list, key=lambda x: x[0])
+
+
 def _mod_positions_to_ref_values(positions, aligned_pairs, prob_threshold: int):
     out = []
     for query_pos, value in positions:
@@ -713,8 +717,7 @@ def _mod_positions_to_ref_values(positions, aligned_pairs, prob_threshold: int):
         if ref_pos is None:
             continue
         out.append((ref_pos, int(value)))
-    out.sort(key=lambda x: x[0])
-    return out
+    return _sort_position_values_by_ref(out)
 
 
 def _write_position_blocks_row(read, bed_out, positions_list, score: int,
@@ -947,7 +950,7 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     if not positions_list:
         return 0
 
-    positions_list.sort(key=lambda x: x[0])
+    positions_list = _sort_position_values_by_ref(positions_list)
     extra = _position_block_extra_column(positions_list, block_scores)
     _write_position_blocks_row(read, bed_out, positions_list, 255, extra)
 
