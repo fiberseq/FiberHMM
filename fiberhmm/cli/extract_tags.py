@@ -1444,13 +1444,16 @@ Examples:
     parser.add_argument('-p', '--prob-threshold', type=int, default=125,
                         help='Min probability for m6a/m5c (0-255)')
     parser.add_argument('--no-scores', action='store_true', help='Omit scores from output')
-    parser.add_argument('--block-scores', action='store_true',
+    parser.add_argument('--block-scores', action=argparse.BooleanOptionalAction,
+                        default=True,
                         help='Append per-block quality as extra BED column(s) (BED12+N). '
                              'nucleosome -> blockNq/blockEl/blockEr, msp -> blockAq, '
                              'm6a/m5c -> blockMl, '
                              'tf -> blockTq/blockEl/blockEr. bigBed uses -type=bed12+N and '
                              'the matching autoSQL schema so FiberBrowser/UCSC can surface '
-                             'per-feature quality without a sidecar database.')
+                             'per-feature quality (incl. recaller edge bytes) without a '
+                             'sidecar database. ON by default; use --no-block-scores for '
+                             'plain BED12.')
     parser.add_argument('--circular-groups', action='store_true',
                         help='Append circId/circPart/circParts/molStart/molLength columns '
                              'and preserve MA/AN groups for circular wrapped features.')
