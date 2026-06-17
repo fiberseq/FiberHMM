@@ -205,6 +205,23 @@ def test_legacy_interval_blocks_from_tags_flips_and_scores_reverse_reads():
     ) == [(1185, 1190, 180)]
 
 
+def test_ma_annotation_tag_inputs_handles_required_and_optional_tags():
+    read = _FakeRead()
+    assert extract_tags._ma_annotation_tag_inputs(read) is None
+
+    read.set_tag('MA', '100;tf+Q:1-5')
+    assert extract_tags._ma_annotation_tag_inputs(read) == (
+        '100;tf+Q:1-5', [], [],
+    )
+
+    aq = array('B', [200])
+    read.set_tag('AQ', aq)
+    read.set_tag('AN', 'tf_a')
+    assert extract_tags._ma_annotation_tag_inputs(read) == (
+        '100;tf+Q:1-5', aq, ['tf_a'],
+    )
+
+
 def test_ma_annotation_quality_values_pad_triplets_and_ignore_msp_quals():
     assert extract_tags._ma_annotation_quality_values('tf', [10, 20]) == (
         10, (10, 20, 0),

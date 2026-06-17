@@ -117,8 +117,7 @@ def _bed12_row(ref_name, chrom_start, chrom_end, read_id, score, strand,
     )
 
 
-def _parse_ma_annotations(read, target_name: str):
-    """Return target annotations from MA/AQ/AN in positional annotation order."""
+def _ma_annotation_tag_inputs(read):
     try:
         ma_str = read.get_tag('MA')
     except KeyError:
@@ -131,6 +130,16 @@ def _parse_ma_annotations(read, target_name: str):
         an_names = parse_an_tag(read.get_tag('AN')) if read.has_tag('AN') else []
     except KeyError:
         an_names = []
+    return ma_str, aq, an_names
+
+
+def _parse_ma_annotations(read, target_name: str):
+    """Return target annotations from MA/AQ/AN in positional annotation order."""
+    tag_inputs = _ma_annotation_tag_inputs(read)
+    if tag_inputs is None:
+        return None
+    ma_str, aq, an_names = tag_inputs
+
     try:
         parsed = parse_ma_tag(ma_str)
     except ValueError:
