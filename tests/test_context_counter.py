@@ -10,9 +10,12 @@ from fiberhmm.probabilities.context_counter import (
     _count_ratio,
     _daf_c_context_from_strand_context,
     _daf_reconstruction_bases,
+    _empty_probability_table,
+    _encode_probability_table,
     _missing_probability_rows,
     _position_weight,
     _probability_dataframe_from_counts,
+    _probability_table_with_missing_contexts,
     _probability_row,
     _reconstruct_deaminated_sequence,
     _trim_context,
@@ -105,6 +108,45 @@ def test_probability_dataframe_from_counts_sorts_rows_and_adds_encode():
     assert df.to_dict("records") == [
         {"context": "CAC", "hit": 1, "nohit": 3, "ratio": 0.25, "encode": 0},
         {"context": "TAT", "hit": 2, "nohit": 2, "ratio": 0.5, "encode": 1},
+    ]
+
+
+def test_probability_encoding_helpers_handle_empty_observed_and_missing_rows():
+    assert list(_empty_probability_table().columns) == [
+        "context",
+        "hit",
+        "nohit",
+        "ratio",
+        "encode",
+    ]
+
+    probs = _probability_dataframe_from_counts(
+        {
+            "TAT": [2, 2],
+            "CAC": [1, 3],
+        }
+    )
+    context_to_code, encoded = _encode_probability_table(
+        probs,
+        ["AAA", "CAC", "TAT"],
+    )
+
+    assert context_to_code == {"AAA": 0, "CAC": 1, "TAT": 2}
+    assert encoded[["context", "encode"]].to_dict("records") == [
+        {"context": "CAC", "encode": 1},
+        {"context": "TAT", "encode": 2},
+    ]
+
+    filled = _probability_table_with_missing_contexts(
+        encoded,
+        ["AAA", "CAC", "TAT"],
+        context_to_code,
+    )
+
+    assert filled.to_dict("records") == [
+        {"context": "AAA", "hit": 0, "nohit": 0, "ratio": 0.0, "encode": 0},
+        {"context": "CAC", "hit": 1, "nohit": 3, "ratio": 0.25, "encode": 1},
+        {"context": "TAT", "hit": 2, "nohit": 2, "ratio": 0.5, "encode": 2},
     ]
 
 

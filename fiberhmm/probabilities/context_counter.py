@@ -15,6 +15,8 @@ from fiberhmm.probabilities.utils import (
     setup_output_dirs,
 )
 
+_PROBABILITY_TABLE_COLUMNS = ['context', 'hit', 'nohit', 'ratio', 'encode']
+
 
 def _reconstruct_deaminated_sequence(
     seq_upper: str,
@@ -108,6 +110,35 @@ def _probability_dataframe_from_counts(aggregated: dict) -> pd.DataFrame:
         df = df.sort_values('context').reset_index(drop=True)
         df['encode'] = range(len(df))
     return df
+
+
+def _empty_probability_table() -> pd.DataFrame:
+    return pd.DataFrame(columns=_PROBABILITY_TABLE_COLUMNS)
+
+
+def _encode_probability_table(
+    probs: pd.DataFrame,
+    contexts,
+) -> Tuple[Dict[str, int], pd.DataFrame]:
+    context_to_code = _context_to_code(contexts)
+    probs = probs.copy()
+    probs['encode'] = probs['context'].map(context_to_code)
+    probs = probs.sort_values('encode').reset_index(drop=True)
+    return context_to_code, probs
+
+
+def _probability_table_with_missing_contexts(
+    probs: pd.DataFrame,
+    all_contexts,
+    context_to_code: dict,
+) -> pd.DataFrame:
+    existing = set(probs['context'])
+    missing = _missing_probability_rows(
+        all_contexts, existing, context_to_code,
+    )
+    if missing:
+        probs = pd.concat([probs, pd.DataFrame(missing)], ignore_index=True)
+    return probs.sort_values('encode').reset_index(drop=True)
 
 
 class ContextCounter:
@@ -310,31 +341,22 @@ class ContextCounter:
 
         # Handle empty DataFrame
         if len(probs) == 0:
-            return {}, pd.DataFrame(columns=['context', 'hit', 'nohit', 'ratio', 'encode'])
+            return {}, _empty_probability_table()
 
         if fill_missing and context_size <= 5:  # Only allow fill_missing for small k
             # Build deterministic encoding (alphabetical order of ALL possible)
             all_contexts = self._generate_all_contexts(context_size)
-            context_to_code = _context_to_code(all_contexts)
-
-            # Add encoding to probability table
-            probs['encode'] = probs['context'].map(context_to_code)
-
-            # Fill missing contexts with zeros
-            existing = set(probs['context'])
-            missing = _missing_probability_rows(
-                all_contexts, existing, context_to_code,
+            context_to_code, probs = _encode_probability_table(
+                probs, all_contexts,
             )
-
-            if missing:
-                probs = pd.concat([probs, pd.DataFrame(missing)], ignore_index=True)
-
-            probs = probs.sort_values('encode').reset_index(drop=True)
+            probs = _probability_table_with_missing_contexts(
+                probs, all_contexts, context_to_code,
+            )
         else:
             # Fast path: only observed contexts, encode alphabetically
-            context_to_code = _context_to_code(probs['context'].unique())
-            probs['encode'] = probs['context'].map(context_to_code)
-            probs = probs.sort_values('encode').reset_index(drop=True)
+            context_to_code, probs = _encode_probability_table(
+                probs, probs['context'].unique(),
+            )
 
         return context_to_code, probs
 
