@@ -76,6 +76,13 @@ def _nuc_call_quality_lists(nuc_calls):
     )
 
 
+def _nuc_call_arrays(nuc_calls):
+    return (
+        np.asarray([k.start for k in nuc_calls], dtype=np.int32),
+        np.asarray([k.length for k in nuc_calls], dtype=np.int32),
+    )
+
+
 def _optional_apply_scores(apply_result: Mapping[str, Any], key: str, enabled: bool):
     return apply_result.get(key) if enabled else None
 
@@ -393,9 +400,10 @@ def _build_fused_recall_result_with_nucs(
     msp_starts, msp_len = _interval_pair_lists(new_msps)
 
     nq_for_kept, nuc_el_for_kept, nuc_er_for_kept = _nuc_call_quality_lists(kept)
+    nuc_starts, nuc_lengths = _nuc_call_arrays(kept)
     return {
-        "ns": np.asarray([k.start for k in kept], dtype=np.int32),
-        "nl": np.asarray([k.length for k in kept], dtype=np.int32),
+        "ns": nuc_starts,
+        "nl": nuc_lengths,
         "as": np.asarray(msp_starts, dtype=np.int32),
         "al": np.asarray(msp_len, dtype=np.int32),
         "ns_scores": None,

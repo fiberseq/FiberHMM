@@ -54,6 +54,20 @@ def test_nuc_call_quality_lists_preserve_nq_el_er_order():
     )
 
 
+def test_nuc_call_arrays_preserve_start_length_order_and_dtype():
+    nucs = [
+        SimpleNamespace(start=10, length=20),
+        SimpleNamespace(start=40, length=5),
+    ]
+
+    starts, lengths = fused_stages._nuc_call_arrays(nucs)
+
+    assert starts.dtype == np.int32
+    assert lengths.dtype == np.int32
+    np.testing.assert_array_equal(starts, [10, 40])
+    np.testing.assert_array_equal(lengths, [20, 5])
+
+
 def test_optional_apply_scores_respects_enabled_flag():
     apply_result = {"ns_scores": np.asarray([0.25], dtype=np.float32)}
 
