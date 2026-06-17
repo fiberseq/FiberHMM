@@ -23,6 +23,7 @@ try:
         _hmmlearn_version_tuple,
         _logsumexp,
         _logsumexp_axis1,
+        _methylated_emission_means,
         _normalized_start_counts,
         _normalized_transition_counts,
         _random_training_parameters,
@@ -38,6 +39,7 @@ except ImportError:
         _hmmlearn_version_tuple,
         _logsumexp,
         _logsumexp_axis1,
+        _methylated_emission_means,
         _normalized_start_counts,
         _normalized_transition_counts,
         _random_training_parameters,
@@ -177,6 +179,14 @@ class TestModelTraining:
         np.testing.assert_allclose(startprob.sum(), 1.0)
         np.testing.assert_allclose(transmat.sum(axis=1), [1.0, 1.0])
         assert np.all(transmat > 0)
+
+    def test_methylated_emission_means_use_first_half_only(self):
+        means = _methylated_emission_means(np.array([
+            [0.1, 0.3, 0.9, 0.9],
+            [0.6, 0.8, 0.0, 0.0],
+        ]))
+
+        assert means == pytest.approx((0.2, 0.7))
 
     def test_hmmlearn_version_selection(self):
         assert _hmmlearn_version_tuple("0.2.8") == (0, 2)

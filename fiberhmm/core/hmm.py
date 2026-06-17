@@ -795,17 +795,7 @@ class FiberHMM:
         if self.emissionprob_ is None:
             return False
 
-        # Only look at the first half (methylated positions)
-        # The emission matrix has format: [methylated, unmethylated] where unmeth = 1 - meth
-        # Looking at the full matrix gives ~0.5 for both states, which is useless
-        n_obs = self.emissionprob_.shape[1]
-        n_methylated = n_obs // 2  # First half is methylated
-
-        # Compute mean emission probability for each state (methylated positions only)
-        # Lower mean = lower methylation probability = footprint state (State 0)
-        # Higher mean = higher methylation probability = accessible state (State 1)
-        mean_0 = np.mean(self.emissionprob_[0, :n_methylated])
-        mean_1 = np.mean(self.emissionprob_[1, :n_methylated])
+        mean_0, mean_1 = _methylated_emission_means(self.emissionprob_)
 
         if verbose:
             print(f"Methylated emission means: State 0 = {mean_0:.4f}, State 1 = {mean_1:.4f}")
@@ -839,8 +829,7 @@ class FiberHMM:
         self._log_probs_frozen = False
 
         if verbose:
-            new_mean_0 = np.mean(self.emissionprob_[0, :n_methylated])
-            new_mean_1 = np.mean(self.emissionprob_[1, :n_methylated])
+            new_mean_0, new_mean_1 = _methylated_emission_means(self.emissionprob_)
             print(f"After swap: State 0 = {new_mean_0:.4f}, State 1 = {new_mean_1:.4f}")
 
         return True
@@ -942,6 +931,16 @@ def _normalized_transition_counts(trans_counts: np.ndarray) -> np.ndarray:
     transmat = trans_counts / trans_sums
     transmat = np.clip(transmat, 1e-10, 1.0)
     return transmat / transmat.sum(axis=1, keepdims=True)
+
+
+def _methylated_emission_means(emissionprob: np.ndarray) -> Tuple[float, float]:
+    # Only the first half represents methylated observations. The second half
+    # contains unmethylated complements, making full-row means uninformative.
+    n_methylated = emissionprob.shape[1] // 2
+    return (
+        float(np.mean(emissionprob[0, :n_methylated])),
+        float(np.mean(emissionprob[1, :n_methylated])),
+    )
 
 
 # =============================================================================
