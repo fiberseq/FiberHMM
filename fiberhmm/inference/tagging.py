@@ -79,6 +79,26 @@ def _u32_bam_array(values) -> pyarray.array:
     return arr
 
 
+def _write_legacy_interval_tags(
+    read,
+    start_tag: str,
+    length_tag: str,
+    score_tag: str,
+    starts: Sequence[int],
+    lengths: Sequence[int],
+    scores: Optional[Sequence[float]],
+    with_scores: bool,
+) -> None:
+    if len(starts) == 0:
+        return
+    read.set_tag(start_tag, _u32_bam_array(starts))
+    read.set_tag(length_tag, _u32_bam_array(lengths))
+    if with_scores and scores is not None:
+        read.set_tag(score_tag, scores_to_u8(scores))
+    else:
+        clear_tags(read, (score_tag,))
+
+
 def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True) -> None:
     """Write legacy apply tags (`ns/nl/as/al`, optional `nq/aq`) in place.
 
@@ -101,21 +121,9 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
         result["as"], result["al"], result.get("as_scores"),
         read, with_scores)
 
-    if len(ns_s) > 0:
-        read.set_tag("ns", _u32_bam_array(ns_s))
-        read.set_tag("nl", _u32_bam_array(ns_l))
-        if with_scores and ns_sc is not None:
-            read.set_tag("nq", scores_to_u8(ns_sc))
-        else:
-            clear_tags(read, ("nq",))
-
-    if write_msps and len(as_s) > 0:
-        read.set_tag("as", _u32_bam_array(as_s))
-        read.set_tag("al", _u32_bam_array(as_l))
-        if with_scores and as_sc is not None:
-            read.set_tag("aq", scores_to_u8(as_sc))
-        else:
-            clear_tags(read, ("aq",))
+    _write_legacy_interval_tags(read, "ns", "nl", "nq", ns_s, ns_l, ns_sc, with_scores)
+    if write_msps:
+        _write_legacy_interval_tags(read, "as", "al", "aq", as_s, as_l, as_sc, with_scores)
 
 
 def unify_nucs_with_tf_calls(
