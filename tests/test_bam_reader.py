@@ -22,6 +22,7 @@ try:
         ContextEncoder,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
+        _append_mm_mod_result,
         _daf_deamination_base_counts,
         _iter_mm_mod_specs,
         _mm_base_indices,
@@ -44,6 +45,7 @@ except ImportError:
         ContextEncoder,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
+        _append_mm_mod_result,
         _daf_deamination_base_counts,
         _iter_mm_mod_specs,
         _mm_base_indices,
@@ -339,6 +341,26 @@ class TestMMTagParsing:
             ),
             [200],
         )
+
+    def test_append_mm_mod_result_concatenates_duplicate_keys(self):
+        result = {}
+
+        _append_mm_mod_result(
+            result,
+            ("A", "a"),
+            np.array([1], dtype=np.int64),
+            np.array([200], dtype=np.uint8),
+        )
+        _append_mm_mod_result(
+            result,
+            ("A", "a"),
+            np.array([4], dtype=np.int64),
+            np.array([180], dtype=np.uint8),
+        )
+
+        positions, qualities = result[("A", "a")]
+        np.testing.assert_array_equal(positions, [1, 4])
+        np.testing.assert_array_equal(qualities, [200, 180])
 
     def test_mm_positions_from_spec_filters_quality_bounds_and_reverse(self):
         skip_arr = np.array([0, 1, 1], dtype=np.int64)

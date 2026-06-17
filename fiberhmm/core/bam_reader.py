@@ -380,6 +380,18 @@ def _mm_positions_from_spec(skip_arr: np.ndarray,
     return positions[qualities >= prob_threshold]
 
 
+def _append_mm_mod_result(result: dict, key, positions: np.ndarray,
+                          qualities: np.ndarray) -> None:
+    if key in result:
+        prev_pos, prev_qual = result[key]
+        result[key] = (
+            np.concatenate([prev_pos, positions]),
+            np.concatenate([prev_qual, qualities]),
+        )
+    else:
+        result[key] = (positions, qualities)
+
+
 def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
                                sequence: str, is_reverse: bool) -> Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]]:
     """Parse MM/ML into per-mod-type position + quality arrays (SEQ frame).
@@ -439,15 +451,8 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
             continue
 
         key = (target_base, mod_code)
-        if key in result:
-            # Multiple mod specs for same (base, mod_code) — concatenate
-            prev_pos, prev_qual = result[key]
-            result[key] = (
-                np.concatenate([prev_pos, positions]),
-                np.concatenate([prev_qual, qualities]),
-            )
-        else:
-            result[key] = (positions, qualities)
+        # Multiple mod specs for the same (base, mod_code) are concatenated.
+        _append_mm_mod_result(result, key, positions, qualities)
 
     return result
 
