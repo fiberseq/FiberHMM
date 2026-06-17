@@ -31,24 +31,44 @@ _worker_debug_timing = False
 _worker_recall_state = {}
 
 
+def _disable_numba_cache_locking() -> None:
+    import os
+
+    os.environ['NUMBA_CACHE_DIR'] = ''
+
+
+def _warm_up_model_predict(model) -> None:
+    from fiberhmm.core.hmm import HAS_NUMBA
+
+    if HAS_NUMBA:
+        dummy_obs = np.array([0, 1, 2, 3], dtype=np.int32)
+        _ = model.predict(dummy_obs)
+
+
+def _warm_up_tf_recaller(llr_hit, llr_miss) -> None:
+    from fiberhmm.core.hmm import HAS_NUMBA
+
+    if HAS_NUMBA:
+        from fiberhmm.inference.tf_recaller import call_tfs_in_interval
+
+        _ = call_tfs_in_interval(
+            np.zeros(16, dtype=np.int32), 0, 16,
+            llr_hit, llr_miss, min_llr=4.0, min_opps=3,
+        )
+
+
 def _init_bam_worker(model_path, debug_timing=False):
     """Initialize worker process with model."""
     global _worker_model, _worker_debug_timing
     try:
         # Disable numba caching to avoid file lock contention between workers.
-        import os
-
-        os.environ['NUMBA_CACHE_DIR'] = ''
+        _disable_numba_cache_locking()
 
         _worker_model = freeze_model_for_inference(load_model(model_path))
         _worker_debug_timing = debug_timing
 
         # Warm up numba JIT compilation in this worker.
-        from fiberhmm.core.hmm import HAS_NUMBA
-
-        if HAS_NUMBA:
-            dummy_obs = np.array([0, 1, 2, 3], dtype=np.int32)
-            _ = _worker_model.predict(dummy_obs)
+        _warm_up_model_predict(_worker_model)
     except Exception as e:
         import traceback
 
@@ -77,9 +97,8 @@ def _init_fused_worker(
     (the common case -- same model file drives both passes).
     """
     global _worker_model, _worker_debug_timing, _worker_recall_state
-    import os
 
-    os.environ['NUMBA_CACHE_DIR'] = ''
+    _disable_numba_cache_locking()
 
     _worker_model = freeze_model_for_inference(load_model(apply_model_path))
     _worker_debug_timing = debug_timing
@@ -110,17 +129,8 @@ def _init_fused_worker(
     configure_daf_chimera_filter(filter_chimeras, chimera_min_seg, chimera_purity)
 
     # Warmup: apply Viterbi + TF Kadane scan.
-    from fiberhmm.core.hmm import HAS_NUMBA
-
-    if HAS_NUMBA:
-        dummy_obs = np.array([0, 1, 2, 3], dtype=np.int32)
-        _ = _worker_model.predict(dummy_obs)
-        from fiberhmm.inference.tf_recaller import call_tfs_in_interval
-
-        _ = call_tfs_in_interval(
-            np.zeros(16, dtype=np.int32), 0, 16,
-            llr_hit, llr_miss, min_llr=4.0, min_opps=3,
-        )
+    _warm_up_model_predict(_worker_model)
+    _warm_up_tf_recaller(llr_hit, llr_miss)
 
 
 def _process_chunk_worker(
