@@ -1091,6 +1091,13 @@ def _extract_region_work_items(regions, input_bam: str, temp_dir: str, extract_t
     ]
 
 
+def _submit_extract_region_futures(executor, work_items) -> dict:
+    return {
+        executor.submit(_extract_region_worker, item): i
+        for i, item in enumerate(work_items)
+    }
+
+
 def _canonical_extract_type(extract_type: str) -> str:
     return 'nucleosome' if extract_type == 'footprint' else extract_type
 
@@ -1182,8 +1189,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
             initializer=_init_extract_worker,
             initargs=(params,)
         ) as executor:
-            futures = {executor.submit(_extract_region_worker, item): i
-                      for i, item in enumerate(work_items)}
+            futures = _submit_extract_region_futures(executor, work_items)
 
             for future in as_completed(futures):
                 completed += 1

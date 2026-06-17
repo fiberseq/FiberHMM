@@ -446,6 +446,31 @@ def test_extract_region_work_items_preserve_region_order_and_temp_paths(tmp_path
     }
 
 
+def test_submit_extract_region_futures_maps_region_indices():
+    class Executor:
+        def __init__(self):
+            self.submitted = []
+
+        def submit(self, worker, item):
+            future = object()
+            self.submitted.append((future, worker, item))
+            return future
+
+    executor = Executor()
+    work_items = ["region-a", "region-b"]
+
+    futures = extract_tags._submit_extract_region_futures(executor, work_items)
+
+    assert futures == {
+        executor.submitted[0][0]: 0,
+        executor.submitted[1][0]: 1,
+    }
+    assert [(worker, item) for _, worker, item in executor.submitted] == [
+        (extract_tags._extract_region_worker, "region-a"),
+        (extract_tags._extract_region_worker, "region-b"),
+    ]
+
+
 def test_normalize_parallel_extract_args_handles_aliases_and_backcompat_paths():
     output_beds, extract_types = extract_tags._normalize_parallel_extract_args(
         "footprints.bed",
