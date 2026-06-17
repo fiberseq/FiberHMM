@@ -685,6 +685,12 @@ def _write_position_blocks_row(read, bed_out, positions_list, score: int,
     bed_out.write(row + "\n")
 
 
+def _position_block_extra_column(positions_list, enabled: bool):
+    if not enabled:
+        return ()
+    return [','.join(str(value) for _, value in positions_list)]
+
+
 def _extract_mm_mod(read, bed_out, target_mod_codes, prob_threshold: int,
                     query_to_ref=None, block_scores: bool = False) -> int:
     positions = _parse_mod_positions_safe(read, target_mod_codes)
@@ -697,7 +703,7 @@ def _extract_mm_mod(read, bed_out, target_mod_codes, prob_threshold: int,
         return 0
 
     mean_score = int(sum(sc for _, sc in positions_list) / len(positions_list))
-    extra = [','.join(str(sc) for _, sc in positions_list)] if block_scores else ()
+    extra = _position_block_extra_column(positions_list, block_scores)
     _write_position_blocks_row(read, bed_out, positions_list, mean_score, extra)
     return len(positions_list)
 
@@ -850,7 +856,7 @@ def _extract_deam(read, bed_out, query_to_ref=None,
         return 0
 
     positions_list.sort(key=lambda x: x[0])
-    extra = [','.join(str(code) for _, code in positions_list)] if block_scores else ()
+    extra = _position_block_extra_column(positions_list, block_scores)
     _write_position_blocks_row(read, bed_out, positions_list, 255, extra)
 
     return len(positions_list)
