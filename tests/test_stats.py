@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+
 import numpy as np
 import pytest
 
@@ -220,6 +222,32 @@ def test_add_positive_count_summary_ignores_zero_values():
     assert summary["footprints_per_read_median"] == 2
     assert summary["footprints_per_read_mean"] == 2
     assert "empty_median" not in summary
+
+
+def test_write_read_stats_section_formats_counts_and_lengths():
+    handle = io.StringIO()
+
+    stats_module._write_read_stats_section(
+        handle,
+        {
+            "total_reads_sampled": 1000,
+            "reads_with_footprints": 250,
+            "pct_reads_with_footprints": 25.0,
+            "read_length_median": 1200,
+            "read_length_mean": 1500,
+            "read_length_std": 250,
+        },
+    )
+
+    assert handle.getvalue() == (
+        "Read Statistics\n"
+        "------------------------------\n"
+        "Total reads sampled:        1,000\n"
+        "Reads with footprints:      250 (25.0%)\n"
+        "Read length (median):       1200 bp\n"
+        "Read length (mean ± std):   1500 ± 250 bp\n"
+        "\n"
+    )
 
 
 def test_stats_sampling_probability_handles_full_and_partial_samples():

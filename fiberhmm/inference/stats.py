@@ -96,6 +96,31 @@ def _add_positive_count_summary(summary: dict, prefix: str, values) -> None:
     summary[f'{prefix}_mean'] = np.mean(positive_values)
 
 
+def _write_read_stats_section(handle, summary: dict) -> None:
+    handle.write("Read Statistics\n")
+    handle.write("-" * 30 + "\n")
+    handle.write(
+        f"Total reads sampled:        "
+        f"{summary.get('total_reads_sampled', 0):,}\n"
+    )
+    handle.write(
+        f"Reads with footprints:      "
+        f"{summary.get('reads_with_footprints', 0):,} "
+        f"({summary.get('pct_reads_with_footprints', 0):.1f}%)\n"
+    )
+    if 'read_length_median' in summary:
+        handle.write(
+            f"Read length (median):       "
+            f"{summary['read_length_median']:.0f} bp\n"
+        )
+        handle.write(
+            f"Read length (mean ± std):   "
+            f"{summary['read_length_mean']:.0f} ± "
+            f"{summary['read_length_std']:.0f} bp\n"
+        )
+    handle.write("\n")
+
+
 def _stats_sampling_probability(total_reads: int, n_samples: int) -> float:
     if total_reads <= n_samples:
         return 1.0
@@ -275,14 +300,7 @@ class FootprintStats:
             f.write("FiberHMM Footprint Statistics\n")
             f.write("=" * 50 + "\n\n")
 
-            f.write("Read Statistics\n")
-            f.write("-" * 30 + "\n")
-            f.write(f"Total reads sampled:        {summary.get('total_reads_sampled', 0):,}\n")
-            f.write(f"Reads with footprints:      {summary.get('reads_with_footprints', 0):,} ({summary.get('pct_reads_with_footprints', 0):.1f}%)\n")
-            if 'read_length_median' in summary:
-                f.write(f"Read length (median):       {summary['read_length_median']:.0f} bp\n")
-                f.write(f"Read length (mean ± std):   {summary['read_length_mean']:.0f} ± {summary['read_length_std']:.0f} bp\n")
-            f.write("\n")
+            _write_read_stats_section(f, summary)
 
             f.write("Footprint Statistics\n")
             f.write("-" * 30 + "\n")
