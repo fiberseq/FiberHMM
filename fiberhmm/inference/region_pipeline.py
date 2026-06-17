@@ -135,6 +135,15 @@ def _print_region_progress(
     sys.stdout.flush()
 
 
+def _region_completion_summary(total_reads: int, reads_with_footprints: int, elapsed: float) -> str:
+    rate = _read_rate(total_reads, elapsed)
+    return (
+        f"Completed: {total_reads:,} reads | "
+        f"{reads_with_footprints:,} with footprints | "
+        f"{rate:.1f} reads/s | {elapsed:.1f}s"
+    )
+
+
 def _region_temp_path(temp_dir: str, index: int, suffix: str) -> str:
     return os.path.join(temp_dir, f'region_{index:06d}.{suffix}')
 
@@ -347,12 +356,11 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                     )
 
         elapsed = time.time() - start_time
-        rate = _read_rate(aggregation.total_reads, elapsed)
-        print(
-            f"Completed: {aggregation.total_reads:,} reads | "
-            f"{aggregation.reads_with_footprints:,} with footprints | "
-            f"{rate:.1f} reads/s | {elapsed:.1f}s"
-        )
+        print(_region_completion_summary(
+            aggregation.total_reads,
+            aggregation.reads_with_footprints,
+            elapsed,
+        ))
 
         return aggregation.total_reads, aggregation.reads_with_footprints
 
@@ -466,12 +474,11 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
                     shutil.copyfileobj(fin, fout)
 
         elapsed = time.time() - start_time
-        rate = _read_rate(aggregation.total_reads, elapsed)
-        print(
-            f"Completed: {aggregation.total_reads:,} reads | "
-            f"{aggregation.reads_with_footprints:,} with footprints | "
-            f"{rate:.1f} reads/s | {elapsed:.1f}s"
-        )
+        print(_region_completion_summary(
+            aggregation.total_reads,
+            aggregation.reads_with_footprints,
+            elapsed,
+        ))
 
         return aggregation.total_reads, aggregation.reads_with_footprints
 

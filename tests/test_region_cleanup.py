@@ -129,6 +129,14 @@ def test_region_progress_formats_counts_and_rate(monkeypatch, capsys):
     assert "Regions: 2/3 | Reads: 10 | With FP: 4 | 5 r/s" in out
 
 
+def test_region_completion_summary_formats_counts_and_rate():
+    assert region_pipeline._region_completion_summary(
+        total_reads=1234,
+        reads_with_footprints=56,
+        elapsed=2.0,
+    ) == "Completed: 1,234 reads | 56 with footprints | 617.0 reads/s | 2.0s"
+
+
 def test_region_work_item_builders_use_stable_temp_names(tmp_path):
     regions = [("chr1", 0, 100), ("chr2", 5, 25)]
     temp_dir = str(tmp_path)
