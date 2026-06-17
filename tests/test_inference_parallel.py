@@ -4,6 +4,7 @@ Tests for fiberhmm.inference.parallel module — region splitting and chromosome
 import sys
 from collections import deque
 from concurrent.futures import Future
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,6 +21,7 @@ from fiberhmm.inference.parallel import (
     _drain_oldest_fused_chunk,
     _is_main_chromosome,
 )
+from fiberhmm.inference.read_filters import ReadFilterConfig
 from fiberhmm.inference.worker_results import WorkerChunkResult, coerce_worker_chunk_result
 
 
@@ -139,6 +141,56 @@ def test_streaming_summary_helpers_format_nonzero_counts(capsys):
     assert "Worker read failures: 3 (passed through unchanged)" in out
     assert "low_mapq: 2 (16.7%)" in out
     assert "empty" not in out
+
+
+def _streaming_read(**overrides):
+    attrs = {
+        "is_unmapped": False,
+        "is_secondary": False,
+        "is_supplementary": False,
+        "mapping_quality": 60,
+        "query_alignment_length": 100,
+        "query_length": 100,
+        "query_name": "read1",
+        "query_sequence": "A" * 100,
+    }
+    attrs.update(overrides)
+    return SimpleNamespace(**attrs)
+
+
+def test_streaming_payload_or_skip_filters_and_builds_payload(monkeypatch):
+    config = ReadFilterConfig(min_mapq=20, min_read_length=50)
+    built = []
+
+    def fake_make_payload(read, mode, ref_fasta):
+        built.append((read.query_name, mode, ref_fasta))
+        return {"read_id": read.query_name}
+
+    monkeypatch.setattr(streaming_pipeline, "make_apply_payload", fake_make_payload)
+
+    payload, reason = streaming_pipeline._streaming_payload_or_skip(
+        _streaming_read(), config, "daf", ref_fasta="ref.fa",
+    )
+    assert payload == {"read_id": "read1"}
+    assert reason is None
+    assert built == [("read1", "daf", "ref.fa")]
+
+    payload, reason = streaming_pipeline._streaming_payload_or_skip(
+        _streaming_read(mapping_quality=0), config, "daf",
+    )
+    assert payload is None
+    assert reason == "low_mapq"
+    assert built == [("read1", "daf", "ref.fa")]
+
+    monkeypatch.setattr(
+        streaming_pipeline, "make_apply_payload",
+        lambda read, mode, ref_fasta: None,
+    )
+    payload, reason = streaming_pipeline._streaming_payload_or_skip(
+        _streaming_read(), config, "daf",
+    )
+    assert payload is None
+    assert reason == "no_modifications"
 
 
 def test_streaming_chunk_submission_uses_completed_future_for_empty_items():

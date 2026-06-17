@@ -41,6 +41,19 @@ def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, 
     return 1
 
 
+def _streaming_payload_or_skip(read, filter_config: ReadFilterConfig,
+                               mode: str, ref_fasta=None):
+    skip_reason = streaming_skip_reason(read, filter_config)
+    if skip_reason:
+        return None, skip_reason
+
+    payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
+    if payload is None:
+        return None, 'no_modifications'
+
+    return payload, None
+
+
 def _completed_empty_future() -> Future:
     future = Future()
     future.set_result([])
@@ -177,19 +190,13 @@ def _process_bam_streaming_pipeline_fused(
 
             try:
                 for read in inbam.fetch(until_eof=True):
-                    skip_reason = streaming_skip_reason(read, filter_config)
+                    payload, skip_reason = _streaming_payload_or_skip(
+                        read, filter_config, mode, ref_fasta,
+                    )
                     if skip_reason:
                         skipped += _buffer_skipped_read(
                             chunk_read_objs, chunk_skip_flags, skip_reasons,
                             read, skip_reason,
-                        )
-                        continue
-
-                    payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
-                    if payload is None:
-                        skipped += _buffer_skipped_read(
-                            chunk_read_objs, chunk_skip_flags, skip_reasons,
-                            read, 'no_modifications',
                         )
                         continue
 
@@ -381,19 +388,13 @@ def _process_bam_streaming_pipeline(
 
             try:
                 for read in inbam.fetch(until_eof=True):
-                    skip_reason = streaming_skip_reason(read, filter_config)
+                    payload, skip_reason = _streaming_payload_or_skip(
+                        read, filter_config, mode, ref_fasta,
+                    )
                     if skip_reason:
                         skipped += _buffer_skipped_read(
                             chunk_read_objs, chunk_skip_flags, skip_reasons,
                             read, skip_reason,
-                        )
-                        continue
-
-                    payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
-                    if payload is None:
-                        skipped += _buffer_skipped_read(
-                            chunk_read_objs, chunk_skip_flags, skip_reasons,
-                            read, 'no_modifications',
                         )
                         continue
 
