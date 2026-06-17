@@ -79,6 +79,33 @@ def test_region_skip_summary_formats_counts(capsys):
     assert "empty" not in out
 
 
+def test_region_work_item_builders_use_stable_temp_names(tmp_path):
+    regions = [("chr1", 0, 100), ("chr2", 5, 25)]
+    temp_dir = str(tmp_path)
+
+    bam_items = region_pipeline._region_bam_work_items(
+        regions,
+        "input.bam",
+        temp_dir,
+        include_tsv=True,
+    )
+    bed_items = region_pipeline._region_bed_work_items(regions, "input.bam", temp_dir)
+
+    assert [item.region for item in bam_items] == regions
+    assert [item.temp_bam_path for item in bam_items] == [
+        str(tmp_path / "region_000000.bam"),
+        str(tmp_path / "region_000001.bam"),
+    ]
+    assert [item.temp_tsv_path for item in bam_items] == [
+        str(tmp_path / "region_000000.tsv"),
+        str(tmp_path / "region_000001.tsv"),
+    ]
+    assert [item.temp_bed_path for item in bed_items] == [
+        str(tmp_path / "region_000000.bed"),
+        str(tmp_path / "region_000001.bed"),
+    ]
+
+
 def test_region_parallel_bam_cleans_temp_dir_on_worker_failure(monkeypatch, tmp_path):
     temp_dirs = _install_failing_region_pool(monkeypatch, tmp_path)
     input_bam = _indexed_input_bam(tmp_path)

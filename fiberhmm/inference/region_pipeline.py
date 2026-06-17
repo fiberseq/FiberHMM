@@ -95,6 +95,29 @@ def _print_skip_reasons_summary(
             print(f"    {reason}: {count:,} ({pct:.1f}%)")
 
 
+def _region_bam_work_items(
+    regions,
+    input_bam: str,
+    temp_dir: str,
+    include_tsv: bool = False,
+) -> list[RegionBamWorkItem]:
+    work_items = []
+    for i, region in enumerate(regions):
+        temp_bam = os.path.join(temp_dir, f'region_{i:06d}.bam')
+        temp_tsv = os.path.join(temp_dir, f'region_{i:06d}.tsv') if include_tsv else None
+        work_items.append(
+            RegionBamWorkItem((region[0], region[1], region[2]), input_bam, temp_bam, temp_tsv)
+        )
+    return work_items
+
+
+def _region_bed_work_items(regions, input_bam: str, temp_dir: str) -> list[RegionBedWorkItem]:
+    return [
+        RegionBedWorkItem(region, input_bam, os.path.join(temp_dir, f'region_{i:06d}.bed'))
+        for i, region in enumerate(regions)
+    ]
+
+
 def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    model_path: str, train_rids: Set[str],
                                    edge_trim: int, circular: bool,
@@ -168,12 +191,10 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             'io_threads': io_threads,
         })
 
-        # Work items - include temp H5 path if posteriors requested
-        work_items = []
-        for i, region in enumerate(regions):
-            temp_bam = os.path.join(temp_dir, f'region_{i:06d}.bam')
-            temp_h5 = os.path.join(temp_dir, f'region_{i:06d}.tsv') if return_posteriors else None
-            work_items.append(RegionBamWorkItem(region, input_bam, temp_bam, temp_h5))
+        # Work items - include temp TSV path if posteriors requested
+        work_items = _region_bam_work_items(
+            regions, input_bam, temp_dir, include_tsv=return_posteriors,
+        )
 
         # Process regions in parallel
         aggregation = RegionBamAggregation()
@@ -334,10 +355,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
         )
 
         # Work items - write temp BED files
-        work_items = []
-        for i, region in enumerate(regions):
-            temp_bed = os.path.join(temp_dir, f'region_{i:06d}.bed')
-            work_items.append(RegionBedWorkItem(region, input_bam, temp_bed))
+        work_items = _region_bed_work_items(regions, input_bam, temp_dir)
 
         aggregation = RegionBedAggregation()
         first_result_time = None
@@ -483,13 +501,7 @@ def _process_bam_region_parallel_fused(
         'ref_fasta_path': ref_fasta_path,
     })
 
-    work_items = [
-        RegionBamWorkItem(
-            (r[0], r[1], r[2]), input_bam,
-            os.path.join(temp_dir, f'region_{i:06d}.bam'),
-        )
-        for i, r in enumerate(regions)
-    ]
+    work_items = _region_bam_work_items(regions, input_bam, temp_dir)
 
     try:
         aggregation = RegionBamAggregation()
