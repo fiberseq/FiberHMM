@@ -1,5 +1,6 @@
 """CLI characterization tests for `fiberhmm-apply` helpers."""
 
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -19,7 +20,10 @@ from fiberhmm.cli.apply import (
     _resolve_output_bam,
     _resolve_process_unmapped,
     _resolve_scores_db_path,
+    _print_scores_db_summary,
     _use_streaming_pipeline,
+    _stats_output_prefix,
+    _scores_db_counts,
 )
 
 
@@ -88,6 +92,7 @@ def test_apply_output_and_scores_paths():
 
     args.scores_db = False
     assert _resolve_scores_db_path(args, "sample") is None
+    assert _stats_output_prefix("/tmp/out", "sample") == "/tmp/out/sample_footprints"
 
 
 def test_apply_ddda_notice_detection_and_output(capsys):
@@ -181,3 +186,26 @@ def test_apply_chrom_filter_helpers(capsys):
     out = capsys.readouterr().out
     assert "Processing only chromosomes: chr1, chr2" in out
     assert "Skipping scaffold/contig chromosomes" in out
+
+
+def test_apply_scores_db_summary_helpers(tmp_path, capsys):
+    db_path = tmp_path / "scores.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("CREATE TABLE reads (id INTEGER)")
+        conn.execute("CREATE TABLE footprints (id INTEGER)")
+        conn.executemany("INSERT INTO reads VALUES (?)", [(1,), (2,)])
+        conn.executemany("INSERT INTO footprints VALUES (?)", [(1,), (2,), (3,)])
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert _scores_db_counts(str(db_path)) == (2, 3)
+
+    _print_scores_db_summary(str(db_path))
+    out = capsys.readouterr().out
+    assert f"Scores DB: {db_path}" in out
+    assert "2 reads, 3 footprints" in out
+
+    _print_scores_db_summary(str(tmp_path / "missing.db"))
+    assert capsys.readouterr().out == ""

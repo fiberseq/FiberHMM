@@ -299,6 +299,34 @@ def _print_region_filter_settings(args, chroms_set) -> None:
         print("Skipping scaffold/contig chromosomes")
 
 
+def _stats_output_prefix(outdir: str, dataset: str) -> str:
+    return os.path.join(outdir, f"{dataset}_footprints")
+
+
+def _scores_db_counts(db_path: str):
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM reads")
+        n_reads = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM footprints")
+        n_footprints = cursor.fetchone()[0]
+    finally:
+        conn.close()
+    return n_reads, n_footprints
+
+
+def _print_scores_db_summary(db_path: str) -> None:
+    if not db_path or not os.path.exists(db_path):
+        return
+
+    n_reads, n_footprints = _scores_db_counts(db_path)
+    print(f"Scores DB: {db_path}")
+    print(f"  {n_reads:,} reads, {n_footprints:,} footprints")
+
+
 def main():
     args = parse_args()
 
@@ -418,7 +446,7 @@ def main():
     # Generate stats if requested (not available for stdout mode)
     if args.stats and not stdout_mode:
         print("\nGenerating statistics...")
-        stats_prefix = os.path.join(args.outdir, f"{dataset}_footprints")
+        stats_prefix = _stats_output_prefix(args.outdir, dataset)
         stats = collect_stats_from_bam(output_bam,
                                        n_samples=args.stats_sample,
                                        seed=args.stats_seed,
@@ -428,17 +456,7 @@ def main():
         print(f"Stats: {stats_prefix}_stats.txt, {stats_prefix}_stats.pdf")
 
     # Print scores database info
-    if db_path and os.path.exists(db_path):
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM reads")
-        n_reads = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM footprints")
-        n_footprints = cursor.fetchone()[0]
-        conn.close()
-        print(f"Scores DB: {db_path}")
-        print(f"  {n_reads:,} reads, {n_footprints:,} footprints")
+    _print_scores_db_summary(db_path)
 
     if stdout_mode:
         print("\nDone!", file=sys.stderr)
