@@ -286,6 +286,11 @@ def test_scores_database_closes_connection_when_record_parsing_fails(
     assert not connection.committed
 
 
+def test_parse_int_csv_skips_empty_fields():
+    assert bam_output._parse_int_csv("10,20,") == [10, 20]
+    assert bam_output._parse_int_csv("") == []
+
+
 def test_scores_database_create_and_append_write_expected_rows(tmp_path):
     db_path = str(tmp_path / "scores.db")
     first = {

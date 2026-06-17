@@ -723,12 +723,16 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
     return count
 
 
+def _parse_int_csv(value: str) -> List[int]:
+    return [int(x) for x in value.split(',') if x]
+
+
 def _parse_score_block_values(record: dict):
-    block_sizes = [int(x) for x in record['blockSizes'].split(',') if x]
-    block_starts = [int(x) for x in record['blockStarts'].split(',') if x]
+    block_sizes = _parse_int_csv(record['blockSizes'])
+    block_starts = _parse_int_csv(record['blockStarts'])
 
     if 'blockScores' in record:
-        block_scores = [int(x) for x in record['blockScores'].split(',') if x]
+        block_scores = _parse_int_csv(record['blockScores'])
     else:
         block_scores = [0] * len(block_sizes)
 
