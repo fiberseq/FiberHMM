@@ -386,6 +386,13 @@ def _print_daf_encode_summary(summary: dict, log) -> None:
     log.flush()
 
 
+def _apply_daf_encoding_to_read(read, new_seq: str, st_tag: str) -> None:
+    quals = read.query_qualities
+    read.query_sequence = new_seq
+    read.query_qualities = quals
+    read.set_tag("st", st_tag, value_type="Z")
+
+
 def process_bam_daf_encode(
     input_bam,
     output_bam,
@@ -485,12 +492,7 @@ def process_bam_daf_encode(
             new_seq, st_tag, n_deam = result
 
             # Update the read: replace sequence (preserving qualities)
-            quals = read.query_qualities
-            read.query_sequence = new_seq
-            read.query_qualities = quals
-
-            # Set st:Z tag
-            read.set_tag("st", st_tag, value_type="Z")
+            _apply_daf_encoding_to_read(read, new_seq, st_tag)
 
             outbam.write(read)
             encoded += 1

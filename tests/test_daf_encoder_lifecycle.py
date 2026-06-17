@@ -86,6 +86,26 @@ def test_daf_encode_summary_and_report_format():
     assert "50 reads/sec" in text
 
 
+def test_apply_daf_encoding_to_read_preserves_qualities_and_sets_st_tag():
+    class FakeRead:
+        def __init__(self):
+            self.query_sequence = "ACT"
+            self.query_qualities = [30, 31, 32]
+            self.tags = {}
+
+        def set_tag(self, tag, value, value_type=None):
+            self.tags[tag] = (value, value_type)
+
+    read = FakeRead()
+    qualities = read.query_qualities
+
+    encoder._apply_daf_encoding_to_read(read, "AYT", "CT")
+
+    assert read.query_sequence == "AYT"
+    assert read.query_qualities is qualities
+    assert read.tags["st"] == ("CT", "Z")
+
+
 def test_write_skipped_daf_read_writes_updates_and_returns_increment():
     handle = _FakeHandle()
     handle.written = []
