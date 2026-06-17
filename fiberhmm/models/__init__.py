@@ -64,6 +64,10 @@ def _bundled_model_key(enzyme: str, seq: str | None) -> tuple[str, str | None]:
     return enz, _seq_key_for_enzyme(enz, seq)
 
 
+def _bundled_model_path(filename: str) -> str:
+    return os.path.join(_MODELS_DIR, filename)
+
+
 def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) -> str:
     """Return the absolute path to a bundled model.
 
@@ -103,7 +107,7 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
             f"Tool {tool!r} not recognised; use 'apply' or 'recall'."
         )
 
-    path = os.path.join(_MODELS_DIR, fname)
+    path = _bundled_model_path(fname)
     if not os.path.isfile(path):
         raise FileNotFoundError(
             f"Bundled model file missing: {path}. "

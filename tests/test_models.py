@@ -12,6 +12,12 @@ def test_bundled_model_key_normalizes_enzyme_and_seq():
     assert models._bundled_model_key("DddB", "nanopore") == ("dddb", None)
 
 
+def test_bundled_model_path_uses_models_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr(models, "_MODELS_DIR", str(tmp_path))
+
+    assert models._bundled_model_path("model.json") == str(tmp_path / "model.json")
+
+
 def test_get_model_path_defaults_hia5_seq_with_warning():
     with pytest.warns(UserWarning, match="defaulting to 'pacbio'"):
         path = models.get_model_path("hia5", tool="apply")
