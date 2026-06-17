@@ -51,6 +51,33 @@ def test_interval_pairs_casts_parallel_arrays_to_int_pairs():
     assert all(type(value) is int for pair in pairs for value in pair)
 
 
+def test_tiled_interval_arrays_prefers_tiled_values():
+    base = {
+        "ns": np.asarray([1], dtype=np.int32),
+        "nl": np.asarray([10], dtype=np.int32),
+        "as": np.asarray([20], dtype=np.int32),
+        "al": np.asarray([30], dtype=np.int32),
+    }
+    result = fused_stages._tiled_interval_arrays(base)
+    assert result[0] is base["ns"]
+    assert result[1] is base["nl"]
+    assert result[2] is base["as"]
+    assert result[3] is base["al"]
+
+    tiled = {
+        **base,
+        "tiled_ns": np.asarray([101], dtype=np.int32),
+        "tiled_nl": np.asarray([110], dtype=np.int32),
+        "tiled_as": np.asarray([120], dtype=np.int32),
+        "tiled_al": np.asarray([130], dtype=np.int32),
+    }
+    result = fused_stages._tiled_interval_arrays(tiled)
+    assert result[0] is tiled["tiled_ns"]
+    assert result[1] is tiled["tiled_nl"]
+    assert result[2] is tiled["tiled_as"]
+    assert result[3] is tiled["tiled_al"]
+
+
 def test_circular_read_length_prefers_apply_metadata():
     fiber_read = {"query_sequence": "A" * 100}
 
