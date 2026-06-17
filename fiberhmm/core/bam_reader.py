@@ -189,6 +189,19 @@ def get_reference_positions(read: pysam.AlignedSegment) -> List[Optional[int]]:
     return ref_positions
 
 
+def _pysam_modified_base_allowed(base, mod_code, mode: str) -> bool:
+    if mode == 'pacbio-fiber':
+        # 21839 is the ChEBI code for m6A.
+        return base in ('A', 'T') and mod_code in ('a', 21839)
+    if mode == 'nanopore-fiber':
+        return base == 'A' and mod_code in ('a', 21839)
+    if mode == 'daf':
+        # DAF-seq deamination can be represented against converted or
+        # original bases depending on the caller.
+        return base in ('T', 'A', 'C', 'G')
+    return True
+
+
 def get_modified_positions_pysam(read, prob_threshold: int = 125, mode: str = 'pacbio-fiber') -> Set[int]:
     """
     Get modification positions using pysam's built-in modified_bases property.
@@ -215,22 +228,8 @@ def get_modified_positions_pysam(read, prob_threshold: int = 125, mode: str = 'p
             return mod_positions
 
         for (base, strand, mod_code), positions in mod_bases.items():
-            # For m6A mode, look at BOTH A and T positions with m6A
-            # A positions = m6A on sequenced strand
-            # T positions = m6A on opposite strand (T in read is A on template)
-            if mode == 'pacbio-fiber':
-                if base not in ('A', 'T') or mod_code not in ('a', 21839):  # 21839 is ChEBI code for m6A
-                    continue
-            elif mode == 'daf':
-                # DAF-seq: deamination converts C->T (+ strand) or G->A (- strand)
-                # The BAM sequence has converted bases, but MM tag may use original bases
-                # Accept T, A, C, or G with any modification code
-                if base not in ('T', 'A', 'C', 'G'):
-                    continue
-            # For nanopore mode, accept only A with m6A (same as m6a mode)
-            elif mode == 'nanopore-fiber':
-                if base != 'A' or mod_code not in ('a', 21839):
-                    continue
+            if not _pysam_modified_base_allowed(base, mod_code, mode):
+                continue
 
             for pos, qual in positions:
                 # qual is 256*prob, threshold is on 0-255 scale
