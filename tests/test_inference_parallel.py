@@ -469,6 +469,46 @@ def test_streaming_payload_fiber_read_result_maps_chimera(monkeypatch):
         streaming_workers._payload_fiber_read_result(payload, "pacbio-fiber", 128)
 
 
+def test_run_worker_single_read_forwards_apply_arguments(monkeypatch):
+    model = object()
+    fiber_read = {"query_sequence": "ACGT"}
+    seen = {}
+
+    def fake_process(*args, **kwargs):
+        seen["args"] = args
+        seen["kwargs"] = kwargs
+        return {"ok": True}
+
+    monkeypatch.setattr(streaming_workers, "_worker_model", model)
+    monkeypatch.setattr(streaming_workers, "_process_single_read", fake_process)
+
+    assert streaming_workers._run_worker_single_read(
+        fiber_read,
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
+        return_posteriors=True,
+    ) == {"ok": True}
+    assert seen["args"] == (
+        fiber_read,
+        model,
+        1,
+        True,
+        "pacbio-fiber",
+        7,
+        60,
+    )
+    assert seen["kwargs"] == {
+        "nuc_min_size": 85,
+        "with_scores": True,
+        "return_posteriors": True,
+    }
+
+
 def test_fused_recall_state_preserves_tables_and_thresholds():
     hit = object()
     miss = object()

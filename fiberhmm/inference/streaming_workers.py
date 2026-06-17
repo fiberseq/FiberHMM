@@ -57,6 +57,31 @@ def _payload_fiber_read_result(
     return fiber_read
 
 
+def _run_worker_single_read(
+    fiber_read,
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    with_scores: bool,
+    return_posteriors: bool,
+):
+    return _process_single_read(
+        fiber_read,
+        _worker_model,
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        nuc_min_size=nuc_min_size,
+        with_scores=with_scores,
+        return_posteriors=return_posteriors,
+    )
+
+
 def _fused_recall_state(llr_hit, llr_miss, recall_nucs: bool,
                         split_min_llr: float, split_min_opps: int,
                         phase_nrl: int) -> dict:
@@ -153,11 +178,16 @@ def _process_chunk_worker(
     global _worker_model
 
     def process_item(fiber_read):
-        return _process_single_read(
-            fiber_read, _worker_model, edge_trim, circular,
-            mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
-            with_scores=with_scores,
-            return_posteriors=return_posteriors,
+        return _run_worker_single_read(
+            fiber_read,
+            edge_trim,
+            circular,
+            mode,
+            context_size,
+            msp_min_size,
+            nuc_min_size,
+            with_scores,
+            return_posteriors,
         )
 
     return _process_worker_items(chunk_reads, process_item)
@@ -277,11 +307,16 @@ def _process_payload_chunk_worker(
         fiber_read = _payload_fiber_read_result(payload, mode, prob_threshold)
         if fiber_read is None:
             return None
-        return _process_single_read(
-            fiber_read, _worker_model, edge_trim, circular,
-            mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
-            with_scores=with_scores,
-            return_posteriors=return_posteriors,
+        return _run_worker_single_read(
+            fiber_read,
+            edge_trim,
+            circular,
+            mode,
+            context_size,
+            msp_min_size,
+            nuc_min_size,
+            with_scores,
+            return_posteriors,
         )
 
     return _process_worker_items(chunk_payloads, process_item)
