@@ -244,6 +244,17 @@ def test_selected_extract_types_defaults_and_preserves_cli_order():
     )
 
 
+def test_extract_region_temp_beds_uses_stable_region_and_type_names(tmp_path):
+    assert extract_tags._extract_region_temp_beds(
+        str(tmp_path),
+        7,
+        ["nucleosome", "tf"],
+    ) == {
+        "nucleosome": str(tmp_path / "region_000007_nucleosome.bed"),
+        "tf": str(tmp_path / "region_000007_tf.bed"),
+    }
+
+
 # ------------------- autoSQL schemas --------------------------------
 
 def test_autosql_default_is_bed12_only():

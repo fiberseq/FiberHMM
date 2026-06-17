@@ -967,6 +967,13 @@ def _extract_read_types(read, extract_types, bed_outs, *, with_scores: bool,
     return n_features
 
 
+def _extract_region_temp_beds(temp_dir: str, region_index: int, extract_types) -> dict:
+    return {
+        t: os.path.join(temp_dir, f'region_{region_index:06d}_{t}.bed')
+        for t in extract_types
+    }
+
+
 def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           n_cores: int = 1, region_size: int = 10_000_000,
                           min_mapq: int = 0, prob_threshold: int = 125,
@@ -1029,10 +1036,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
         # Work items: per region, a dict of {type: temp_bed_path}
         work_items = []
         for i, region in enumerate(regions):
-            per_type_beds = {
-                t: os.path.join(temp_dir, f'region_{i:06d}_{t}.bed')
-                for t in extract_types
-            }
+            per_type_beds = _extract_region_temp_beds(temp_dir, i, extract_types)
             work_items.append((region, input_bam, per_type_beds))
 
         total_reads = 0
