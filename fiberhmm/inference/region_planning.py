@@ -15,6 +15,13 @@ _SKIP_CHROM_PATTERNS = (
 )
 
 
+def _normalized_chromosome_name(chrom: str) -> str:
+    chrom = chrom.upper()
+    if chrom.startswith('CHR'):
+        return chrom[3:]
+    return chrom
+
+
 def _is_main_chromosome(chrom: str) -> bool:
     """
     Check if a chromosome name is a main chromosome (not a scaffold/contig).
@@ -28,7 +35,6 @@ def _is_main_chromosome(chrom: str) -> bool:
     - *_random, chrUn_*, scaffolds, contigs, etc.
     """
 
-    # Normalize to uppercase for comparison
     c = chrom.upper()
 
     # Skip obvious scaffolds/contigs
@@ -36,9 +42,7 @@ def _is_main_chromosome(chrom: str) -> bool:
         if pattern in c:
             return False
 
-    # Strip chr prefix if present
-    if c.startswith('CHR'):
-        c = c[3:]
+    c = _normalized_chromosome_name(c)
 
     # Accept numbered chromosomes 1-22 (or more for other organisms)
     if c.isdigit():

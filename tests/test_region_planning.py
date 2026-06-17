@@ -8,6 +8,7 @@ from fiberhmm.inference.region_planning import (
     _chromosome_regions,
     _get_genome_regions,
     _include_chromosome,
+    _normalized_chromosome_name,
 )
 
 
@@ -30,6 +31,11 @@ def test_chromosome_regions_tiles_partial_last_region():
         ("chr1", 100, 200),
         ("chr1", 200, 250),
     ]
+
+
+def test_normalized_chromosome_name_strips_chr_prefix_and_uppercases():
+    assert _normalized_chromosome_name("chrM") == "M"
+    assert _normalized_chromosome_name("2l") == "2L"
 
 
 def test_include_chromosome_applies_allowlist_and_scaffold_filter():
