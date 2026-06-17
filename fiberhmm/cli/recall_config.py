@@ -22,6 +22,10 @@ def resolve_recall_defaults(args, presets=None):
     return min_llr, uplift
 
 
+def _legacy_tags_enabled(downstream_compat: bool, no_legacy_tags: bool) -> bool:
+    return True if downstream_compat else (not no_legacy_tags)
+
+
 def should_write_legacy_tags(args):
     """Return whether legacy ns/nl/as/al tags should be emitted."""
-    return True if args.downstream_compat else (not args.no_legacy_tags)
+    return _legacy_tags_enabled(args.downstream_compat, args.no_legacy_tags)

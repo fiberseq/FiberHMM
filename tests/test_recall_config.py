@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from fiberhmm.cli.recall_config import (
     _arg_or_preset_value,
+    _legacy_tags_enabled,
     _recall_preset_for_args,
     resolve_recall_defaults,
     should_write_legacy_tags,
@@ -37,6 +38,10 @@ def test_recall_config_resolves_preset_defaults_and_overrides():
 
 
 def test_recall_config_resolves_legacy_tag_output():
+    assert _legacy_tags_enabled(False, False) is True
+    assert _legacy_tags_enabled(False, True) is False
+    assert _legacy_tags_enabled(True, True) is True
+
     args = SimpleNamespace(downstream_compat=False, no_legacy_tags=False)
     assert should_write_legacy_tags(args) is True
 
