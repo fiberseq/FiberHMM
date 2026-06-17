@@ -594,6 +594,41 @@ def test_worker_recall_tables_reads_current_state(monkeypatch):
     assert streaming_workers._worker_recall_tables() == (hit, miss)
 
 
+def test_run_worker_fused_apply_stage_forwards_arguments(monkeypatch):
+    model = object()
+    fiber_read = {"query_sequence": "ACGT"}
+    seen = {}
+
+    def fake_apply(*args):
+        seen["args"] = args
+        return {"apply": True}
+
+    monkeypatch.setattr(streaming_workers, "_worker_model", model)
+    monkeypatch.setattr(streaming_workers, "run_hmm_apply_stage", fake_apply)
+
+    assert streaming_workers._run_worker_fused_apply_stage(
+        fiber_read,
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
+    ) == {"apply": True}
+    assert seen["args"] == (
+        fiber_read,
+        model,
+        1,
+        True,
+        "pacbio-fiber",
+        7,
+        60,
+        85,
+        True,
+    )
+
+
 def test_fused_payload_worker_counts_per_read_failures(monkeypatch):
     def fake_extract(payload, mode, prob_threshold):
         if payload == "extract-bad":

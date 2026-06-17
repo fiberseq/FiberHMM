@@ -110,6 +110,29 @@ def _worker_recall_tables():
     return _worker_recall_state['llr_hit'], _worker_recall_state['llr_miss']
 
 
+def _run_worker_fused_apply_stage(
+    fiber_read,
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    with_scores: bool,
+):
+    return run_hmm_apply_stage(
+        fiber_read,
+        _worker_model,
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        nuc_min_size,
+        with_scores,
+    )
+
+
 def _init_bam_worker(model_path, debug_timing=False):
     """Initialize worker process with model."""
     global _worker_model, _worker_debug_timing
@@ -256,9 +279,8 @@ def _process_fused_payload_chunk_worker(
         if fiber_read is None:
             return None
 
-        apply_result = run_hmm_apply_stage(
+        apply_result = _run_worker_fused_apply_stage(
             fiber_read,
-            _worker_model,
             edge_trim,
             circular,
             mode,
