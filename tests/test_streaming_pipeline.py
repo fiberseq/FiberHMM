@@ -7,6 +7,7 @@ import pysam
 from fiberhmm.inference.streaming_pipeline import (
     _apply_worker_args,
     _fused_worker_args,
+    _streaming_progress_rates,
 )
 from fiberhmm.inference.parallel import process_bam_for_footprints
 
@@ -26,6 +27,24 @@ def test_fused_worker_args_include_recall_contract():
         12, False, "pacbio-fiber", 7, 62, 87, False, 126,
         "pacbio-fiber", 7, 4.5, 6, 91,
     )
+
+
+def test_streaming_progress_rates_handle_elapsed_and_zero_dt():
+    assert _streaming_progress_rates(
+        total_reads=120,
+        last_progress_reads=20,
+        start_time=10.0,
+        last_progress_time=20.0,
+        now=30.0,
+    ) == (10.0, 6.0)
+
+    assert _streaming_progress_rates(
+        total_reads=120,
+        last_progress_reads=20,
+        start_time=30.0,
+        last_progress_time=30.0,
+        now=30.0,
+    ) == (0, 0)
 
 
 def _count_bam_reads(bam_path):

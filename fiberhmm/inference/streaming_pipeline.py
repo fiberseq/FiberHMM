@@ -162,6 +162,20 @@ def _print_streaming_skip_summary(skip_reasons: dict, total_reads: int,
             print(f"    {reason}: {count:,} ({pct:.1f}%)", file=log)
 
 
+def _streaming_progress_rates(
+    total_reads: int,
+    last_progress_reads: int,
+    start_time: float,
+    last_progress_time: float,
+    now: float,
+) -> tuple[float, float]:
+    elapsed = now - start_time
+    avg_rate = total_reads / elapsed if elapsed > 0 else 0
+    dt = now - last_progress_time
+    inst_rate = (total_reads - last_progress_reads) / dt if dt > 0 else 0
+    return inst_rate, avg_rate
+
+
 def _process_bam_streaming_pipeline_fused(
     input_bam: str, output_bam: str,
     model_path: str, recall_model_path: str,
@@ -281,10 +295,10 @@ def _process_bam_streaming_pipeline_fused(
                         chunk_skip_flags = []
 
                         now = time.time()
-                        elapsed = now - start_time
-                        avg = total_reads / elapsed if elapsed > 0 else 0
-                        dt = now - last_progress_time
-                        inst = (total_reads - last_progress_reads) / dt if dt > 0 else 0
+                        inst, avg = _streaming_progress_rates(
+                            total_reads, last_progress_reads,
+                            start_time, last_progress_time, now,
+                        )
                         last_progress_reads = total_reads
                         last_progress_time = now
                         print(f"\r  Fused: {total_reads:,} | Skipped: {skipped:,} | "
@@ -477,10 +491,10 @@ def _process_bam_streaming_pipeline(
                         chunk_skip_flags = []
 
                         now = time.time()
-                        elapsed = now - start_time
-                        avg_rate = total_reads / elapsed if elapsed > 0 else 0
-                        dt = now - last_progress_time
-                        inst_rate = (total_reads - last_progress_reads) / dt if dt > 0 else 0
+                        inst_rate, avg_rate = _streaming_progress_rates(
+                            total_reads, last_progress_reads,
+                            start_time, last_progress_time, now,
+                        )
                         last_progress_reads = total_reads
                         last_progress_time = now
                         print(f"\r  Processed: {total_reads:,} | "
