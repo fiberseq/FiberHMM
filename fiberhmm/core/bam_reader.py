@@ -873,6 +873,18 @@ def _encode_daf_observations(sequence: str, mod_positions: Set[int],
     )
 
 
+def _context_codes_from_flanks(left_contexts: np.ndarray, right_contexts: np.ndarray,
+                               powers: np.ndarray, k: int, use_rc: bool) -> np.ndarray:
+    if use_rc:
+        # For RC target contexts L[X]R, use RC(R)[target]RC(L).
+        left = right_contexts[:, ::-1] ^ 2
+        right = left_contexts[:, ::-1] ^ 2
+    else:
+        left = left_contexts
+        right = right_contexts
+    return np.sum(left * powers, axis=1) * (4 ** k) + np.sum(right * powers, axis=1)
+
+
 def _encode_daf_vectorized_observations(seq_int: np.ndarray, mod_mask: np.ndarray,
                                         context_size: int, edge_trim: int,
                                         non_target_code: int,
@@ -936,13 +948,7 @@ def _encode_daf_vectorized_observations(seq_int: np.ndarray, mod_mask: np.ndarra
     valid_left = left_contexts[valid_context].astype(np.int64)
     valid_right = right_contexts[valid_context].astype(np.int64)
 
-    if use_rc:
-        # For G-centered context L[G]R, RC gives RC(R)[C]RC(L).
-        rc_left = valid_right[:, ::-1] ^ 2
-        rc_right = valid_left[:, ::-1] ^ 2
-        codes = np.sum(rc_left * powers, axis=1) * (4 ** k) + np.sum(rc_right * powers, axis=1)
-    else:
-        codes = np.sum(valid_left * powers, axis=1) * (4 ** k) + np.sum(valid_right * powers, axis=1)
+    codes = _context_codes_from_flanks(valid_left, valid_right, powers, k, use_rc)
 
     # Apply methylated codes to deaminated positions.
     deam_at_valid = is_deaminated[valid_positions]
@@ -1174,16 +1180,7 @@ def _encode_vectorized(sequence: str, target_base: str, context_size: int,
         valid_left = left_contexts[valid_mask].astype(np.int64)
         valid_right = right_contexts[valid_mask].astype(np.int64)
 
-        if use_rc:
-            # For T positions: compute RC to map to A-centered codes
-            # RC mapping for A=0, C=1, T=2, G=3: use XOR with 2
-            # This gives: A(0)<->T(2), C(1)<->G(3)
-            rc_left = valid_right[:, ::-1] ^ 2
-            rc_right = valid_left[:, ::-1] ^ 2
-            codes = np.sum(rc_left * powers, axis=1) * (4 ** k) + np.sum(rc_right * powers, axis=1)
-        else:
-            # Forward codes
-            codes = np.sum(valid_left * powers, axis=1) * (4 ** k) + np.sum(valid_right * powers, axis=1)
+        codes = _context_codes_from_flanks(valid_left, valid_right, powers, k, use_rc)
 
         return target_pos[valid_mask], codes
 
