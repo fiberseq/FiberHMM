@@ -114,6 +114,51 @@ def _try_pysam_index(output_bam: str, verbose: bool, idx_start: float) -> bool:
     return True
 
 
+def _sort_bam_with_fallback(
+    output_bam: str,
+    sorted_bam: str,
+    threads: int,
+    verbose: bool,
+    bam_size_gb: float,
+) -> None:
+    sort_start = time.time()
+    try:
+        _run_samtools_sort(output_bam, sorted_bam, threads)
+        if verbose:
+            sort_time = time.time() - sort_start
+            speed = _throughput_gbs(bam_size_gb, sort_time)
+            print(f"  Sorted in {sort_time:.1f}s ({speed:.2f} GB/s)")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        if verbose:
+            print("  Using pysam sort (slower)...")
+        pysam.sort("-o", sorted_bam, output_bam)
+        if verbose:
+            sort_time = time.time() - sort_start
+            print(f"  Sorted (pysam) in {sort_time:.1f}s")
+
+
+def _index_sorted_bam(
+    output_bam: str,
+    threads: int,
+    verbose: bool,
+    bam_size_gb: float,
+) -> None:
+    if verbose:
+        print("  Indexing sorted BAM...")
+        sys.stdout.flush()
+
+    idx_start = time.time()
+    try:
+        _run_samtools_index(output_bam, threads, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pysam.index(output_bam)
+
+    if verbose:
+        idx_time = time.time() - idx_start
+        speed = _throughput_gbs(bam_size_gb, idx_time)
+        print(f"  ✓ Index created in {idx_time:.1f}s ({speed:.2f} GB/s)")
+
+
 def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4):
     """
     Index a BAM file, sorting first only if needed.
@@ -170,39 +215,9 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
 
     # Sort using samtools (faster than pysam for large files)
     sorted_bam = _sorted_bam_temp_path(output_bam)
-    sort_start = time.time()
-    try:
-        _run_samtools_sort(output_bam, sorted_bam, threads)
-        if verbose:
-            sort_time = time.time() - sort_start
-            speed = _throughput_gbs(bam_size_gb, sort_time)
-            print(f"  Sorted in {sort_time:.1f}s ({speed:.2f} GB/s)")
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        # Fallback to pysam
-        if verbose:
-            print("  Using pysam sort (slower)...")
-        pysam.sort("-o", sorted_bam, output_bam)
-        if verbose:
-            sort_time = time.time() - sort_start
-            print(f"  Sorted (pysam) in {sort_time:.1f}s")
-
+    _sort_bam_with_fallback(output_bam, sorted_bam, threads, verbose, bam_size_gb)
     os.replace(sorted_bam, output_bam)
-
-    if verbose:
-        print("  Indexing sorted BAM...")
-        sys.stdout.flush()
-
-    # Index the sorted BAM
-    idx_start = time.time()
-    try:
-        _run_samtools_index(output_bam, threads, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pysam.index(output_bam)
-
-    if verbose:
-        idx_time = time.time() - idx_start
-        speed = _throughput_gbs(bam_size_gb, idx_time)
-        print(f"  ✓ Index created in {idx_time:.1f}s ({speed:.2f} GB/s)")
+    _index_sorted_bam(output_bam, threads, verbose, bam_size_gb)
 
 
 def _write_bam_list_file(bam_files: List[str], list_file: str) -> None:

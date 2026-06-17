@@ -91,6 +91,53 @@ def test_try_pysam_index_returns_false_on_samtools_error(monkeypatch, capsys):
     assert capsys.readouterr().out == ""
 
 
+def test_sort_bam_with_fallback_uses_pysam_after_samtools_failure(monkeypatch, capsys):
+    pysam_sorts = []
+
+    def fail_samtools_sort(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, "samtools sort")
+
+    monkeypatch.setattr(bam_output, "_run_samtools_sort", fail_samtools_sort)
+    monkeypatch.setattr(bam_output.pysam, "sort", lambda *args: pysam_sorts.append(args))
+    monkeypatch.setattr(bam_output.time, "time", lambda: 12.0)
+
+    bam_output._sort_bam_with_fallback(
+        "out.bam",
+        "out.sorted.bam",
+        threads=4,
+        verbose=True,
+        bam_size_gb=2.0,
+    )
+
+    assert pysam_sorts == [("-o", "out.sorted.bam", "out.bam")]
+    out = capsys.readouterr().out
+    assert "Using pysam sort" in out
+    assert "Sorted (pysam) in 0.0s" in out
+
+
+def test_index_sorted_bam_falls_back_to_pysam_when_samtools_missing(monkeypatch, capsys):
+    indexed = []
+
+    def fail_samtools_index(*args, **kwargs):
+        raise FileNotFoundError("samtools")
+
+    monkeypatch.setattr(bam_output, "_run_samtools_index", fail_samtools_index)
+    monkeypatch.setattr(bam_output.pysam, "index", lambda path: indexed.append(path))
+    monkeypatch.setattr(bam_output.time, "time", lambda: 22.0)
+
+    bam_output._index_sorted_bam(
+        "out.bam",
+        threads=2,
+        verbose=True,
+        bam_size_gb=4.0,
+    )
+
+    assert indexed == ["out.bam"]
+    out = capsys.readouterr().out
+    assert "Indexing sorted BAM" in out
+    assert "Index created in 0.0s" in out
+
+
 def test_sorted_bed_temp_path_appends_sorted_suffix():
     assert bam_output._sorted_bed_temp_path("calls.bed") == "calls.bed.sorted"
 
