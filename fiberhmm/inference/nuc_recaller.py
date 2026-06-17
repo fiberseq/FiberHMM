@@ -53,6 +53,31 @@ def _fragments_after_cuts(a: int, b: int,
     return frags
 
 
+def _call_interval(call) -> Tuple[int, int]:
+    return int(call.start), int(call.start + call.length)
+
+
+def _linear_intervals_overlap(a_start: int, a_end: int,
+                              b_start: int, b_end: int) -> bool:
+    return int(a_start) < int(b_end) and int(b_start) < int(a_end)
+
+
+def _keep_nuc_against_linear_intervals(
+    nuc: NucCall,
+    intervals: Sequence[Tuple[int, int]],
+    unify_threshold: int,
+) -> bool:
+    if nuc.length <= 0:
+        return False
+    if nuc.length >= unify_threshold:
+        return True
+    nuc_start, nuc_end = _call_interval(nuc)
+    return not any(
+        _linear_intervals_overlap(nuc_start, nuc_end, other_start, other_end)
+        for other_start, other_end in intervals
+    )
+
+
 def _refine_fragment(obs, a, b, llr_hit, llr_miss,
                      nuc_min_size, edge_min_llr, edge_min_opps):
     """Edge-refine one protected fragment into a NucCall (or demote it).
@@ -254,19 +279,11 @@ def unify_nuc_calls_with_tf_calls(
     Mirrors ``tagging.unify_nucs_with_tf_calls`` but operates on NucCall objects
     so the per-nuc quality bytes survive unification.
     """
-    tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
-    kept: List[NucCall] = []
-    for nc in nuc_calls:
-        if nc.length <= 0:
-            continue
-        keep = nc.length >= unify_threshold
-        if not keep:
-            nuc_end = nc.start + nc.length
-            keep = not any(ts < nuc_end and te > nc.start
-                           for ts, te in tf_intervals)
-        if keep:
-            kept.append(nc)
-    return kept
+    tf_intervals = [_call_interval(c) for c in tf_calls]
+    return [
+        nc for nc in nuc_calls
+        if _keep_nuc_against_linear_intervals(nc, tf_intervals, unify_threshold)
+    ]
 
 
 def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
@@ -401,17 +418,11 @@ def drop_short_nucs_overlapping_promoted(nuc_calls, promoted, unify_threshold):
     """
     if not promoted:
         return list(nuc_calls)
-    pints = [(p.start, p.start + p.length) for p in promoted]
-    out = []
-    for n in nuc_calls:
-        if n.length >= unify_threshold:
-            out.append(n)
-            continue
-        n_end = n.start + n.length
-        if any(ps < n_end and n.start < pe for ps, pe in pints):
-            continue  # short nuc overlapping a promoted nucleosome -> drop
-        out.append(n)
-    return out
+    promoted_intervals = [_call_interval(p) for p in promoted]
+    return [
+        n for n in nuc_calls
+        if _keep_nuc_against_linear_intervals(n, promoted_intervals, unify_threshold)
+    ]
 
 
 def promote_large_tf_calls(tf_calls, obs, llr_hit, llr_miss, threshold,
