@@ -455,6 +455,41 @@ def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
     return calls
 
 
+def _extract_daf_iupac_modifications(read, seq: str):
+    try:
+        st_tag = read.get_tag('st')
+    except KeyError:
+        st_tag = None
+    mod_pos, strand, seq = extract_daf_iupac_positions(seq, st_tag)
+    return mod_pos, strand, seq
+
+
+def _extract_daf_md_modifications(read, seq: str):
+    md_result = getattr(read, '_daf_md_result', None)
+    if md_result is None and hasattr(read, 'get_aligned_pairs'):
+        from fiberhmm.daf.encoder import get_daf_positions
+        md_result = get_daf_positions(read)
+    if md_result is None:
+        return None
+    ct_pos, ga_pos, strand_tag = md_result
+    strand = daf_strand_from_tag(strand_tag)
+    if strand == '+':
+        return set(ct_pos), strand, seq.upper()
+    return set(ga_pos), strand if strand != '.' else '-', seq.upper()
+
+
+def _extract_mm_ml_modifications(read, seq: str, mode: str, mm_tag, ml_tag):
+    mod_pos = parse_mm_tag_query_positions(
+        mm_tag, ml_tag, seq, read.is_reverse,
+        prob_threshold=125, mode=mode,
+    )
+    if mode == 'daf':
+        strand = detect_daf_strand(seq, mod_pos)
+    else:
+        strand = '.'
+    return mod_pos, strand, seq
+
+
 def extract_modifications(read, mode: str, context_size: int = 3
                           ) -> Optional[Tuple[set, str, str]]:
     """Pull (mod_positions, strand, sequence) for a read.
@@ -467,36 +502,14 @@ def extract_modifications(read, mode: str, context_size: int = 3
     if seq is None or len(seq) < 2 * context_size + 1:
         return None
     if mode == 'daf' and has_iupac_encoding(seq):
-        try:
-            st_tag = read.get_tag('st')
-        except KeyError:
-            st_tag = None
-        mod_pos, strand, seq = extract_daf_iupac_positions(seq, st_tag)
-        return mod_pos, strand, seq
+        return _extract_daf_iupac_modifications(read, seq)
     mm_tag = get_preferred_tag(read, 'MM', 'Mm', '')
     ml_tag = get_preferred_tag(read, 'ML', 'Ml', [])
     if not mm_tag or not ml_tag:
         if mode == 'daf':
-            md_result = getattr(read, '_daf_md_result', None)
-            if md_result is None and hasattr(read, 'get_aligned_pairs'):
-                from fiberhmm.daf.encoder import get_daf_positions
-                md_result = get_daf_positions(read)
-            if md_result is not None:
-                ct_pos, ga_pos, strand_tag = md_result
-                strand = daf_strand_from_tag(strand_tag)
-                if strand == '+':
-                    return set(ct_pos), strand, seq.upper()
-                return set(ga_pos), strand if strand != '.' else '-', seq.upper()
+            return _extract_daf_md_modifications(read, seq)
         return None
-    mod_pos = parse_mm_tag_query_positions(
-        mm_tag, ml_tag, seq, read.is_reverse,
-        prob_threshold=125, mode=mode,
-    )
-    if mode == 'daf':
-        strand = detect_daf_strand(seq, mod_pos)
-    else:
-        strand = '.'
-    return mod_pos, strand, seq
+    return _extract_mm_ml_modifications(read, seq, mode, mm_tag, ml_tag)
 
 
 def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,

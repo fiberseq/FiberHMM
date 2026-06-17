@@ -473,6 +473,16 @@ def test_extract_modifications_keeps_raw_ml_container(monkeypatch):
     assert captured['ml_tag'] is raw_ml
 
 
+def test_extract_modifications_handles_daf_iupac_branch():
+    read = _FakeRead()
+    read.query_sequence = 'ACYR'
+    read.set_tag('st', 'CT')
+
+    assert tf_recaller.extract_modifications(read, 'daf', context_size=1) == (
+        {2, 3}, '+', 'ACTA',
+    )
+
+
 def test_stale_nq_aq_cleared_when_refreshing_legacy_tags():
     """Regression for ft-validate panic reported by Shane Neph:
     input BAM pre-tagged by ft/modkit with ns+nl+nq (and as+al+aq) at
