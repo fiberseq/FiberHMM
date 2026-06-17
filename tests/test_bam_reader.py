@@ -24,6 +24,7 @@ try:
         _build_hexamer_lookup_with_rc,
         _append_mm_mod_result,
         _context_flanks,
+        _context_codes_for_target_positions,
         _daf_deamination_base_counts,
         _has_mm_ml_inputs,
         _iter_mm_mod_specs,
@@ -53,6 +54,7 @@ except ImportError:
         _build_hexamer_lookup_with_rc,
         _append_mm_mod_result,
         _context_flanks,
+        _context_codes_for_target_positions,
         _daf_deamination_base_counts,
         _has_mm_ml_inputs,
         _iter_mm_mod_specs,
@@ -85,6 +87,49 @@ def test_context_lookup_helpers_build_flanks_and_reverse_complements():
     assert _context_flanks(1) == ["A", "C", "G", "T"]
     assert _context_flanks(2)[:5] == ["AA", "AC", "AG", "AT", "CA"]
     assert _reverse_complement_context("ACGTNRY") == "NNNACGT"
+
+
+def test_context_codes_for_target_positions_filters_and_reverse_complements():
+    seq_int = bam_reader._sequence_base_int_array("AACGT")
+    positions = np.asarray([1, 2], dtype=np.int64)
+    left_offsets = np.asarray([-1], dtype=np.int64)
+    right_offsets = np.asarray([1], dtype=np.int64)
+    powers = np.asarray([1], dtype=np.int64)
+
+    valid_positions, codes = _context_codes_for_target_positions(
+        positions, seq_int, left_offsets, right_offsets, powers, k=1,
+        use_rc=False,
+    )
+
+    np.testing.assert_array_equal(valid_positions, [1, 2])
+    np.testing.assert_array_equal(codes, [1, 3])
+
+    valid_positions, codes = _context_codes_for_target_positions(
+        np.asarray([1], dtype=np.int64),
+        seq_int,
+        left_offsets,
+        right_offsets,
+        powers,
+        k=1,
+        use_rc=True,
+    )
+
+    np.testing.assert_array_equal(valid_positions, [1])
+    np.testing.assert_array_equal(codes, [14])
+
+    invalid_seq = bam_reader._sequence_base_int_array("AANGT")
+    valid_positions, codes = _context_codes_for_target_positions(
+        np.asarray([1, 3], dtype=np.int64),
+        invalid_seq,
+        left_offsets,
+        right_offsets,
+        powers,
+        k=1,
+        use_rc=False,
+    )
+
+    np.testing.assert_array_equal(valid_positions, [])
+    np.testing.assert_array_equal(codes, [])
 
 
 def test_has_mm_ml_inputs_handles_empty_and_numpy_ml_tags():
