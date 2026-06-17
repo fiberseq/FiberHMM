@@ -255,6 +255,14 @@ def _process_probability_read(
         )
 
 
+def _progress_postfix(reads_processed: int, reads_scanned: int) -> Dict[str, str]:
+    return {
+        'processed': f'{reads_processed:,}',
+        'scanned': f'{reads_scanned:,}',
+        'rate': f'{100*reads_processed/max(1, reads_scanned):.1f}%'
+    }
+
+
 def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 mode: str, args, max_reads: int = 0, verbose: bool = False) -> Tuple[int, dict]:
     """
@@ -289,11 +297,7 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
 
             # Update progress bar periodically
             if reads_scanned % 5000 == 0:
-                pbar.set_postfix({
-                    'processed': f'{reads_processed:,}',
-                    'scanned': f'{reads_scanned:,}',
-                    'rate': f'{100*reads_processed/max(1,reads_scanned):.1f}%'
-                })
+                pbar.set_postfix(_progress_postfix(reads_processed, reads_scanned))
 
             skip_reason = _generate_probs_skip_reason(
                 read, args.min_mapq, args.min_read_length,

@@ -13,6 +13,7 @@ from fiberhmm.cli.generate_probs import (
     _new_filter_stats,
     _probability_counter_path,
     _probability_table_path,
+    _progress_postfix,
     _process_probability_read,
     _read_reference_span,
     _read_mm_ml_tags_or_skip,
@@ -185,6 +186,15 @@ def test_process_probability_read_routes_daf_to_c_counter(monkeypatch):
     assert dict(strand_assignments) == {"-:G": 1}
     assert counter.processed == []
     assert counter.processed_daf == [("A" * 200, {5}, "-", 11)]
+
+
+def test_progress_postfix_formats_counts_and_rate():
+    assert _progress_postfix(1234, 5000) == {
+        "processed": "1,234",
+        "scanned": "5,000",
+        "rate": "24.7%",
+    }
+    assert _progress_postfix(0, 0)["rate"] == "0.0%"
 
 
 def test_combined_probability_frame_outer_merges_contexts_and_fills_missing():
