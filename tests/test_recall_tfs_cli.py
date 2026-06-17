@@ -199,6 +199,11 @@ def test_recall_tfs_write_recall_result_passes_through_null_result(monkeypatch):
     assert applied == [("annotated", "result", True, False)]
 
 
+def test_recall_tfs_read_sequence_length_handles_missing_sequence():
+    assert recall_tfs._read_sequence_length(SimpleNamespace(query_sequence="ACGT")) == 4
+    assert recall_tfs._read_sequence_length(SimpleNamespace(query_sequence=None)) == 0
+
+
 def test_recall_tfs_model_resolution_uses_custom_path():
     args = SimpleNamespace(model="/tmp/custom.json", enzyme=None, seq=None)
 

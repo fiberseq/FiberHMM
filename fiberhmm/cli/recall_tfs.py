@@ -270,12 +270,16 @@ def _process_payload_chunk(payloads):
     return out, total
 
 
+def _read_sequence_length(read) -> int:
+    return len(read.query_sequence) if read.query_sequence else 0
+
+
 def _apply_result(read, result, also_write_legacy, downstream_compat):
     """Apply compact worker result to a pysam read in place (main process)."""
     tf_calls, kept_nucs, msps, nq_for_kept = result
     write_ma_tags(
         read,
-        read_length=len(read.query_sequence) if read.query_sequence else 0,
+        read_length=_read_sequence_length(read),
         tf_calls=tf_calls,
         kept_nucs=kept_nucs,
         msps=msps,
