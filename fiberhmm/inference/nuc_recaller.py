@@ -108,6 +108,13 @@ def _keep_nuc_against_circular_intervals(
     )
 
 
+def _total_call_llr(calls) -> float:
+    total_llr = 0.0
+    for call in calls:
+        total_llr += call.llr
+    return total_llr
+
+
 def _refine_fragment(obs, a, b, llr_hit, llr_miss,
                      nuc_min_size, edge_min_llr, edge_min_opps):
     """Edge-refine one protected fragment into a NucCall (or demote it).
@@ -135,13 +142,10 @@ def _refine_fragment(obs, a, b, llr_hit, llr_miss,
         # protected island) -> not a nucleosome, demote the whole fragment.
         access.append((a, b - a))
         return None, access
-    total_llr = 0.0
-    for p in prot:
-        total_llr += p.llr
     nuc = NucCall(
         start=cstart,
         length=cend - cstart,
-        nq=llr_to_tq(total_llr),
+        nq=llr_to_tq(_total_call_llr(prot)),
         el=ambiguity_to_edge(first.left_ambiguity),
         er=ambiguity_to_edge(last.right_ambiguity),
     )

@@ -12,6 +12,7 @@ from fiberhmm.inference.nuc_recaller import (
     _msp_gaps_between_nucs,
     _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
+    _total_call_llr,
     assemble_circular_nuc_msp_tiling,
     assemble_nuc_msp_tiling,
     drop_short_nucs_overlapping_promoted,
@@ -84,6 +85,17 @@ def test_split_on_accessible_cuts_returns_fragments_and_cut_access():
     assert len(frags) == 2
     assert access
     assert any(60 <= s <= 66 for s, _ in access)
+
+
+def test_total_call_llr_sums_call_scores():
+    calls = [
+        TFCall(start=0, length=5, llr=1.5, n_opps=2,
+               left_ambiguity=0, right_ambiguity=0),
+        TFCall(start=10, length=5, llr=2.25, n_opps=2,
+               left_ambiguity=0, right_ambiguity=0),
+    ]
+
+    assert _total_call_llr(calls) == 3.75
 
 
 def test_bounded_interval_handles_clamping_and_invalid_spans():
