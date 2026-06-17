@@ -92,6 +92,24 @@ def _write_unfootprinted_region_read(outbam, read, skip_reasons: dict) -> int:
     return 1
 
 
+def _write_footprinted_region_read(
+    outbam,
+    read,
+    result: dict,
+    with_scores: bool,
+    write_msps: bool,
+    tsv_file,
+) -> tuple[int, bool]:
+    set_legacy_apply_tags(read, result, with_scores, write_msps)
+    posterior_written = (
+        tsv_file is not None
+        and result.get('posteriors') is not None
+        and _write_region_posterior_record(tsv_file, read, result)
+    )
+    outbam.write(read)
+    return 1, bool(posterior_written)
+
+
 def _fiber_read_skip_reason(fiber_read) -> Optional[str]:
     if fiber_read is CHIMERA_SKIP:
         return CHIMERA_SKIP_REASON
@@ -447,23 +465,20 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
 
                         if result is not None:
                             reads_with_footprints += 1
-
-                            set_legacy_apply_tags(read, result, with_scores, write_msps)
-
-                            # Stream posteriors to TSV immediately (no memory accumulation).
-                            if tsv_file and result.get('posteriors') is not None:
-                                if _write_region_posterior_record(
-                                    tsv_file, read, result,
-                                ):
-                                    posteriors_written += 1
+                            written_delta, posterior_written = (
+                                _write_footprinted_region_read(
+                                    outbam, read, result, with_scores, write_msps,
+                                    tsv_file,
+                                )
+                            )
+                            written += written_delta
+                            if posterior_written:
+                                posteriors_written += 1
                         else:
                             written += _write_unfootprinted_region_read(
                                 outbam, read, skip_reasons,
                             )
                             continue
-
-                        outbam.write(read)
-                        written += 1
 
         finally:
             if tsv_file:

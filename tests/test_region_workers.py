@@ -21,6 +21,7 @@ from fiberhmm.inference.region_workers import (
     _region_read_route,
     _region_result_ns_scores,
     _record_skipped_region_read,
+    _write_footprinted_region_read,
     _write_unfootprinted_region_read,
     _write_region_posterior_record,
 )
@@ -84,6 +85,61 @@ def test_write_unfootprinted_region_read_counts_no_footprints():
     assert _write_unfootprinted_region_read(outbam, read, skip_reasons) == 1
     assert outbam.written == [read]
     assert skip_reasons["no_footprints"] == 5
+
+
+def test_write_footprinted_region_read_tags_writes_and_streams_posterior(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    read = _route_read()
+    result = {"posteriors": [0.1], "ns": [10], "nl": [5]}
+    outbam = SimpleNamespace(written=[])
+    outbam.write = outbam.written.append
+    tsv_file = SimpleNamespace()
+    calls = {}
+
+    def fake_set_tags(got_read, got_result, with_scores, write_msps):
+        calls["set_tags"] = (got_read, got_result, with_scores, write_msps)
+
+    def fake_write_posterior(got_tsv, got_read, got_result):
+        calls["posterior"] = (got_tsv, got_read, got_result)
+        return True
+
+    monkeypatch.setattr(region_workers, "set_legacy_apply_tags", fake_set_tags)
+    monkeypatch.setattr(
+        region_workers, "_write_region_posterior_record", fake_write_posterior
+    )
+
+    written, posterior_written = _write_footprinted_region_read(
+        outbam, read, result, with_scores=True, write_msps=False, tsv_file=tsv_file
+    )
+
+    assert (written, posterior_written) == (1, True)
+    assert calls["set_tags"] == (read, result, True, False)
+    assert calls["posterior"] == (tsv_file, read, result)
+    assert outbam.written == [read]
+
+
+def test_write_footprinted_region_read_skips_absent_posteriors(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    read = _route_read()
+    outbam = SimpleNamespace(written=[])
+    outbam.write = outbam.written.append
+    result = {"posteriors": None}
+    posterior_calls = []
+
+    monkeypatch.setattr(region_workers, "set_legacy_apply_tags", lambda *_: None)
+    monkeypatch.setattr(
+        region_workers,
+        "_write_region_posterior_record",
+        lambda *args: posterior_calls.append(args),
+    )
+
+    assert _write_footprinted_region_read(
+        outbam, read, result, with_scores=False, write_msps=True, tsv_file=object()
+    ) == (1, False)
+    assert posterior_calls == []
+    assert outbam.written == [read]
 
 
 def test_extract_region_fiber_read_maps_skip_reasons(monkeypatch):
