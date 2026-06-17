@@ -17,6 +17,7 @@ from fiberhmm.cli.utils import (
     _target_mod_positions_from_bam_read,
     _trim_accessibility_context,
     _transfer_context_index,
+    _transfer_probability_frame,
     _write_transfer_probability_tables,
 )
 
@@ -286,6 +287,22 @@ def test_transfer_context_index_sorts_contexts_and_assigns_encodes():
         "encode": [0, 1, 2],
         "context": ["AAA", "CAC", "CCC"],
     }
+
+
+def test_transfer_probability_frame_adds_constant_ratio_column():
+    context_index = pd.DataFrame({
+        "encode": [0, 1],
+        "context": ["AAA", "CCC"],
+    })
+
+    frame = _transfer_probability_frame(context_index, ratio=0.8)
+
+    assert frame.to_dict("list") == {
+        "encode": [0, 1],
+        "context": ["AAA", "CCC"],
+        "ratio": [0.8, 0.8],
+    }
+    assert "ratio" not in context_index.columns
 
 
 def test_write_transfer_probability_tables_uses_shared_layout(tmp_path):

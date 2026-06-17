@@ -666,6 +666,15 @@ def _transfer_context_index(target_rates: pd.DataFrame) -> pd.DataFrame:
     return output_df[['encode', 'context']]
 
 
+def _transfer_probability_frame(
+    context_index: pd.DataFrame,
+    ratio: float,
+) -> pd.DataFrame:
+    output_df = context_index.copy()
+    output_df['ratio'] = ratio
+    return output_df[['encode', 'context', 'ratio']]
+
+
 def _write_transfer_probability_tables(
     tables_dir: str,
     base_name: str,
@@ -677,8 +686,7 @@ def _write_transfer_probability_tables(
 ) -> str:
     output_df = _transfer_context_index(target_rates)
 
-    acc_df = output_df.copy()
-    acc_df['ratio'] = p_acc
+    acc_df = _transfer_probability_frame(output_df, p_acc)
     acc_file = _probability_table_path(
         tables_dir,
         base_name,
@@ -686,10 +694,9 @@ def _write_transfer_probability_tables(
         base,
         context_size,
     )
-    acc_df[['encode', 'context', 'ratio']].to_csv(acc_file, sep='\t', index=False)
+    acc_df.to_csv(acc_file, sep='\t', index=False)
 
-    inacc_df = output_df.copy()
-    inacc_df['ratio'] = p_inacc
+    inacc_df = _transfer_probability_frame(output_df, p_inacc)
     inacc_file = _probability_table_path(
         tables_dir,
         base_name,
@@ -697,7 +704,7 @@ def _write_transfer_probability_tables(
         base,
         context_size,
     )
-    inacc_df[['encode', 'context', 'ratio']].to_csv(inacc_file, sep='\t', index=False)
+    inacc_df.to_csv(inacc_file, sep='\t', index=False)
 
     combined = pd.DataFrame({
         'encode': range(len(output_df)),
