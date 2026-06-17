@@ -65,6 +65,11 @@ def test_mark_iupac_positions_replaces_selected_bases():
     assert encoder._mark_iupac_positions("ACGT", [1, 3], "Y") == "AYGY"
 
 
+def test_daf_encode_throughput_handles_zero_elapsed():
+    assert encoder._daf_encode_throughput({"total": 100, "elapsed": 2.0}) == 50.0
+    assert encoder._daf_encode_throughput({"total": 100, "elapsed": 0.0}) is None
+
+
 def test_daf_encode_summary_and_report_format():
     summary = encoder._daf_encode_summary(
         total=100,

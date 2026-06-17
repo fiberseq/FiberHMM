@@ -372,6 +372,13 @@ def _daf_encode_summary(total: int, encoded: int, ct_count: int, ga_count: int,
     }
 
 
+def _daf_encode_throughput(summary: dict):
+    elapsed = summary['elapsed']
+    if elapsed <= 0:
+        return None
+    return summary['total'] / elapsed
+
+
 def _print_daf_encode_summary(summary: dict, log) -> None:
     print(f"\n{'=' * 60}", file=log)
     print("fiberhmm-daf-encode summary", file=log)
@@ -383,8 +390,8 @@ def _print_daf_encode_summary(summary: dict, log) -> None:
     print(f"  Skipped:           {summary['skipped']:>12,}", file=log)
     print(f"  Mean deam. rate:   {summary['mean_deam_rate']:>12.4f}", file=log)
     print(f"  Elapsed:           {summary['elapsed']:>12.1f}s", file=log)
-    if summary['elapsed'] > 0:
-        throughput = summary['total'] / summary['elapsed']
+    throughput = _daf_encode_throughput(summary)
+    if throughput is not None:
         print(f"  Throughput:        {throughput:>12,.0f} reads/sec", file=log)
     print(f"{'=' * 60}", file=log)
     log.flush()
