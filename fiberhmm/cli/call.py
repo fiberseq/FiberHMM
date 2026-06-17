@@ -305,6 +305,14 @@ def _sniff_daf_input_sources(input_bam: str, n_sniff: int = 10):
     return result
 
 
+def _daf_sources_available(sniff: dict, has_ref: bool) -> bool:
+    return bool(sniff['has_ry'] or sniff['has_md'] or has_ref)
+
+
+def _should_warn_stale_daf_md(sniff: dict, has_ref: bool) -> bool:
+    return bool(sniff['md_bad'] and not sniff['has_ry'] and not has_ref)
+
+
 def _check_daf_inputs(input_bam: str, reference: str = None,
                        n_sniff: int = 10) -> None:
     """Sniff the first ~N mapped reads of a DAF-mode input BAM and confirm
@@ -323,10 +331,10 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
     if sniff is None:
         return
 
-    if sniff['has_ry'] or sniff['has_md'] or has_ref:
+    if _daf_sources_available(sniff, has_ref):
         # Warn about stale MD only when we'll actually be relying on it
         # (no R/Y fast path available for these reads) AND some were bad.
-        if sniff['md_bad'] and not sniff['has_ry'] and not has_ref:
+        if _should_warn_stale_daf_md(sniff, has_ref):
             print(
                 f"  NOTE: {sniff['md_bad']}/{sniff['md_total']} "
                 f"of the sniffed reads with MD tags\n"

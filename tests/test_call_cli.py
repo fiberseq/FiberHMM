@@ -15,11 +15,13 @@ from fiberhmm.cli.call import (
     _build_pg_record,
     _check_daf_inputs,
     _check_region_parallel_file_io,
+    _daf_sources_available,
     _resolve_apply_model,
     _resolve_call_chroms,
     _resolve_call_mode_context,
     _resolve_recall_nucs,
     _resolve_recall_model,
+    _should_warn_stale_daf_md,
     _sniff_daf_input_sources,
 )
 
@@ -120,6 +122,21 @@ def test_daf_input_sniff_rejects_missing_deamination_source(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "--mode daf needs deamination calls" in err
     assert "--reference ref.fa" in err
+
+
+def test_daf_input_predicates_cover_sources_and_md_warning():
+    sniff = {"has_ry": False, "has_md": False, "md_bad": 0}
+    assert not _daf_sources_available(sniff, has_ref=False)
+    assert _daf_sources_available(sniff, has_ref=True)
+
+    sniff = {"has_ry": True, "has_md": False, "md_bad": 2}
+    assert _daf_sources_available(sniff, has_ref=False)
+    assert not _should_warn_stale_daf_md(sniff, has_ref=False)
+
+    sniff = {"has_ry": False, "has_md": True, "md_bad": 2}
+    assert _daf_sources_available(sniff, has_ref=False)
+    assert _should_warn_stale_daf_md(sniff, has_ref=False)
+    assert not _should_warn_stale_daf_md(sniff, has_ref=True)
 
 
 def test_call_model_resolution_uses_custom_paths():
