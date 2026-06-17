@@ -99,6 +99,22 @@ class TestLoadSaveRoundTrip:
         assert mode == "nanopore-fiber"
         assert not loaded._log_probs_frozen
 
+    def test_metadata_pickle_accepts_native_dict_model(self, sample_model, tmp_path):
+        filepath = str(tmp_path / "native_dict_with_metadata.pkl")
+        with open(filepath, "wb") as f:
+            pickle.dump(
+                {"model": sample_model.to_dict(), "context_size": 5, "mode": "m6a"},
+                f,
+            )
+
+        loaded, context_size, mode = load_model_with_metadata(filepath, normalize=False)
+
+        assert context_size == 5
+        assert mode == "pacbio-fiber"
+        np.testing.assert_allclose(loaded.startprob_, sample_model.startprob_)
+        np.testing.assert_allclose(loaded.transmat_, sample_model.transmat_)
+        np.testing.assert_allclose(loaded.emissionprob_, sample_model.emissionprob_)
+
 
 class TestModeAliases:
     def test_nanopore_alias(self, sample_model, tmp_path):

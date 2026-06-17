@@ -21,6 +21,15 @@ import numpy as np
 
 from fiberhmm.core.hmm import FiberHMM
 
+DEFAULT_CONTEXT_SIZE = 3
+DEFAULT_MODE = 'pacbio-fiber'
+MODE_ALIASES = {
+    'nanopore': 'nanopore-fiber',
+    'stranded': 'nanopore-fiber',
+    'pacbio': 'pacbio-fiber',
+    'm6a': 'pacbio-fiber',
+}
+
 # =============================================================================
 # Loading functions (all formats supported for backward compatibility)
 # =============================================================================
@@ -75,54 +84,64 @@ def freeze_model_for_inference(model: FiberHMM) -> FiberHMM:
     return model
 
 
+def _model_from_arrays(n_states, startprob, transmat, emissionprob) -> FiberHMM:
+    model = FiberHMM(n_states=int(n_states))
+    model.startprob_ = np.array(startprob)
+    model.transmat_ = np.array(transmat)
+    model.emissionprob_ = np.array(emissionprob)
+    return model
+
+
+def _read_json(filepath: str) -> dict:
+    with open(filepath, 'r') as f:
+        return json.load(f)
+
+
+def _read_pickle(filepath: str):
+    with open(filepath, 'rb') as f:
+        return pickle.load(f)
+
+
+def _coerce_loaded_model(obj) -> FiberHMM:
+    if isinstance(obj, FiberHMM):
+        return obj
+    if isinstance(obj, dict) and obj.get('model_type') == 'FiberHMM_native':
+        return FiberHMM.from_dict(obj)
+    return _convert_hmmlearn_model(obj)
+
+
+def _normalize_mode(mode: str) -> str:
+    return MODE_ALIASES.get(mode, mode)
+
+
 def _load_npz(filepath: str) -> FiberHMM:
     """Load model from NPZ format."""
-    data = np.load(filepath, allow_pickle=False)
-
-    model = FiberHMM(n_states=int(data['n_states']))
-    model.startprob_ = data['startprob']
-    model.transmat_ = data['transmat']
-    model.emissionprob_ = data['emissionprob']
-
-    return model
+    with np.load(filepath, allow_pickle=False) as data:
+        return _model_from_arrays(
+            data['n_states'],
+            data['startprob'],
+            data['transmat'],
+            data['emissionprob'],
+        )
 
 
 def _load_json(filepath: str) -> FiberHMM:
     """Load model from JSON format."""
-    with open(filepath, 'r') as f:
-        data = json.load(f)
-
-    model = FiberHMM(n_states=data['n_states'])
-    model.startprob_ = np.array(data['startprob'])
-    model.transmat_ = np.array(data['transmat'])
-    model.emissionprob_ = np.array(data['emissionprob'])
-
-    return model
+    data = _read_json(filepath)
+    return _model_from_arrays(
+        data['n_states'],
+        data['startprob'],
+        data['transmat'],
+        data['emissionprob'],
+    )
 
 
 def _load_pickle(filepath: str) -> FiberHMM:
     """Load model from pickle format (legacy)."""
-    with open(filepath, 'rb') as f:
-        obj = pickle.load(f)
-
-    # Check if it's already a native FiberHMM
-    if isinstance(obj, FiberHMM):
-        return obj
-
-    # Check if it's a dict serialization
-    if isinstance(obj, dict):
-        if obj.get('model_type') == 'FiberHMM_native':
-            return FiberHMM.from_dict(obj)
-        # Also handle the new metadata format from train_model.py
-        if 'model' in obj:
-            inner = obj['model']
-            if isinstance(inner, FiberHMM):
-                return inner
-            if isinstance(inner, dict) and inner.get('model_type') == 'FiberHMM_native':
-                return FiberHMM.from_dict(inner)
-
-    # Try to convert from hmmlearn model
-    return _convert_hmmlearn_model(obj)
+    obj = _read_pickle(filepath)
+    if isinstance(obj, dict) and 'model' in obj:
+        return _coerce_loaded_model(obj['model'])
+    return _coerce_loaded_model(obj)
 
 
 def _convert_hmmlearn_model(hmmlearn_model) -> FiberHMM:
@@ -223,59 +242,44 @@ def load_model_with_metadata(filepath: str, normalize: bool = True) -> Tuple[Fib
         (model, context_size, mode)
     """
     if filepath.endswith('.npz'):
-        data = np.load(filepath, allow_pickle=False)
-        model = FiberHMM(n_states=int(data['n_states']))
-        model.startprob_ = data['startprob']
-        model.transmat_ = data['transmat']
-        model.emissionprob_ = data['emissionprob']
-
-        context_size = int(data.get('context_size', 3))
-        mode = str(data.get('mode', 'pacbio-fiber'))
+        with np.load(filepath, allow_pickle=False) as data:
+            model = _model_from_arrays(
+                data['n_states'],
+                data['startprob'],
+                data['transmat'],
+                data['emissionprob'],
+            )
+            context_size = int(data.get('context_size', DEFAULT_CONTEXT_SIZE))
+            mode = str(data.get('mode', DEFAULT_MODE))
 
     elif filepath.endswith('.json'):
-        with open(filepath, 'r') as f:
-            data = json.load(f)
-
-        model = FiberHMM(n_states=data['n_states'])
-        model.startprob_ = np.array(data['startprob'])
-        model.transmat_ = np.array(data['transmat'])
-        model.emissionprob_ = np.array(data['emissionprob'])
-
-        context_size = data.get('context_size', 3)
-        mode = data.get('mode', 'pacbio-fiber')
+        data = _read_json(filepath)
+        model = _model_from_arrays(
+            data['n_states'],
+            data['startprob'],
+            data['transmat'],
+            data['emissionprob'],
+        )
+        context_size = data.get('context_size', DEFAULT_CONTEXT_SIZE)
+        mode = data.get('mode', DEFAULT_MODE)
 
     else:
         # Pickle format
-        with open(filepath, 'rb') as f:
-            obj = pickle.load(f)
-
+        obj = _read_pickle(filepath)
         if isinstance(obj, dict) and 'model' in obj:
-            model = obj['model']
-            if not isinstance(model, FiberHMM):
-                model = _convert_hmmlearn_model(model)
-            context_size = obj.get('context_size', 3)
-            mode = obj.get('mode', 'pacbio-fiber')
-        elif isinstance(obj, FiberHMM):
-            model = obj
-            context_size = 3
-            mode = 'pacbio-fiber'
+            model = _coerce_loaded_model(obj['model'])
+            context_size = obj.get('context_size', DEFAULT_CONTEXT_SIZE)
+            mode = obj.get('mode', DEFAULT_MODE)
         else:
-            model = _convert_hmmlearn_model(obj)
-            context_size = 3
-            mode = 'pacbio-fiber'
+            model = _coerce_loaded_model(obj)
+            context_size = DEFAULT_CONTEXT_SIZE
+            mode = DEFAULT_MODE
 
     # Normalize states to ensure correct assignment
     if normalize:
         model.normalize_states()
 
     # Normalize old mode names to new names
-    mode_aliases = {
-        'nanopore': 'nanopore-fiber',
-        'stranded': 'nanopore-fiber',
-        'pacbio': 'pacbio-fiber',
-        'm6a': 'pacbio-fiber',
-    }
-    if mode in mode_aliases:
-        mode = mode_aliases[mode]
+    mode = _normalize_mode(mode)
 
     return _unfreeze_model_logs(model), context_size, mode
