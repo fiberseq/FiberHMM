@@ -51,6 +51,10 @@ def _posterior_ref_positions(read_obj):
         return _empty_ref_positions()
 
 
+def _fused_read_length(read_obj) -> int:
+    return len(read_obj.query_sequence) if read_obj.query_sequence else 0
+
+
 def _drain_oldest_chunk(
     inflight,
     outbam,
@@ -125,7 +129,7 @@ def _drain_oldest_fused_chunk(
         elif result is not None:
             write_fused_recall_tags(
                 read_obj,
-                read_length=len(read_obj.query_sequence) if read_obj.query_sequence else 0,
+                read_length=_fused_read_length(read_obj),
                 result=result,
                 also_write_legacy=also_write_legacy,
                 downstream_compat=downstream_compat,

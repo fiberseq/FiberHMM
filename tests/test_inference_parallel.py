@@ -640,6 +640,17 @@ def test_empty_ref_positions_returns_int32_empty_array():
     assert empty.size == 0
 
 
+def test_fused_read_length_uses_query_sequence_when_present():
+    assert (
+        streaming_drain._fused_read_length(SimpleNamespace(query_sequence="ACGT"))
+        == 4
+    )
+    assert (
+        streaming_drain._fused_read_length(SimpleNamespace(query_sequence=None))
+        == 0
+    )
+
+
 def test_posterior_ref_positions_handles_backend_fallbacks(monkeypatch):
     read = object()
     monkeypatch.setattr(streaming_drain, "HAS_POSTERIOR_WRITER", False)
