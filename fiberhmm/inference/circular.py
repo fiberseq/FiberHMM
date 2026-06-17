@@ -46,6 +46,40 @@ def _project_center_interval(s_raw, e_raw, read_length: int) -> Optional[Interva
     return interval if interval[1] > 0 else None
 
 
+def _project_unique_center_intervals(starts, ends, read_length: int) -> list[tuple[int, Interval]]:
+    n = int(read_length)
+    if n <= 0:
+        return []
+
+    out: list[tuple[int, Interval]] = []
+    seen: set[Interval] = set()
+    for idx, (s_raw, e_raw) in enumerate(zip(starts, ends)):
+        interval = _project_center_interval(s_raw, e_raw, n)
+        if interval is None or interval in seen:
+            continue
+        out.append((idx, interval))
+        seen.add(interval)
+    return out
+
+
+def _project_unique_center_calls(calls: Sequence, read_length: int, build_call) -> list:
+    n = int(read_length)
+    if n <= 0:
+        return []
+
+    out = []
+    seen: set[Interval] = set()
+    for call in calls:
+        s = int(call.start)
+        e = s + int(call.length)
+        interval = _project_center_interval(s, e, n)
+        if interval is None or interval in seen:
+            continue
+        seen.add(interval)
+        out.append(build_call(call, interval))
+    return out
+
+
 def project_center_runs(
     starts: Sequence[int],
     ends: Sequence[int],
@@ -58,23 +92,10 @@ def project_center_runs(
     features. A run that fully covers the middle copy is projected as one
     whole-molecule interval.
     """
-    n = int(read_length)
-    if n <= 0:
-        return []
-
-    out: list[Interval] = []
-    seen: set[Interval] = set()
-
-    for s_raw, e_raw in zip(starts, ends):
-        interval = _project_center_interval(s_raw, e_raw, n)
-        if interval is None:
-            continue
-
-        if interval not in seen:
-            out.append(interval)
-            seen.add(interval)
-
-    return out
+    return [
+        interval
+        for _, interval in _project_unique_center_intervals(starts, ends, read_length)
+    ]
 
 
 def project_center_scores(
@@ -86,48 +107,28 @@ def project_center_scores(
     """Project per-run scores with the same selection as project_center_runs."""
     if scores is None:
         return None
-    n = int(read_length)
-    if n <= 0:
-        return np.asarray([], dtype=np.float32)
-
-    out: list[float] = []
-    seen: set[Interval] = set()
-    for s_raw, e_raw, score in zip(starts, ends, scores):
-        interval = _project_center_interval(s_raw, e_raw, n)
-        if interval is None:
-            continue
-        if interval not in seen:
-            out.append(float(score))
-            seen.add(interval)
+    out = [
+        float(scores[idx])
+        for idx, _ in _project_unique_center_intervals(starts, ends, read_length)
+        if idx < len(scores)
+    ]
     return np.asarray(out, dtype=np.float32)
 
 
 def project_center_tf_calls(tf_calls: Sequence, read_length: int) -> list:
     """Project tiled TFCall objects back to circular molecule coordinates."""
-    n = int(read_length)
-    if n <= 0:
-        return []
-
-    out = []
-    seen: set[Interval] = set()
-    for call in tf_calls:
-        s = int(call.start)
-        e = s + int(call.length)
-        interval = _project_center_interval(s, e, n)
-        if interval is None:
-            continue
-        if interval in seen:
-            continue
-        seen.add(interval)
-        out.append(type(call)(
+    return _project_unique_center_calls(
+        tf_calls,
+        read_length,
+        lambda call, interval: type(call)(
             start=interval[0],
             length=interval[1],
             llr=call.llr,
             n_opps=call.n_opps,
             left_ambiguity=call.left_ambiguity,
             right_ambiguity=call.right_ambiguity,
-        ))
-    return out
+        ),
+    )
 
 
 def project_center_nuc_calls(nuc_calls: Sequence, read_length: int) -> list:
@@ -136,29 +137,17 @@ def project_center_nuc_calls(nuc_calls: Sequence, read_length: int) -> list:
     Mirrors ``project_center_tf_calls`` but preserves the nuc+QQQ quality bytes
     (nq/el/er). Uses ``type(call)(...)`` so this module needn't import NucCall.
     """
-    n = int(read_length)
-    if n <= 0:
-        return []
-
-    out = []
-    seen: set[Interval] = set()
-    for call in nuc_calls:
-        s = int(call.start)
-        e = s + int(call.length)
-        interval = _project_center_interval(s, e, n)
-        if interval is None:
-            continue
-        if interval in seen:
-            continue
-        seen.add(interval)
-        out.append(type(call)(
+    return _project_unique_center_calls(
+        nuc_calls,
+        read_length,
+        lambda call, interval: type(call)(
             start=interval[0],
             length=interval[1],
             nq=call.nq,
             el=call.el,
             er=call.er,
-        ))
-    return out
+        ),
+    )
 
 
 def split_intervals_for_legacy(

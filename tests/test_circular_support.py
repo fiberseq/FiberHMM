@@ -4,6 +4,7 @@ import numpy as np
 
 from fiberhmm.inference.circular import (
     circular_intervals_overlap,
+    project_center_nuc_calls,
     project_center_runs,
     project_center_scores,
     project_center_tf_calls,
@@ -11,6 +12,7 @@ from fiberhmm.inference.circular import (
     tile_sequence_and_mods,
 )
 from fiberhmm.inference.engine import _extract_footprints_from_states_circular
+from fiberhmm.inference.nuc_recaller import NucCall
 from fiberhmm.inference.tf_recaller import TFCall
 from fiberhmm.io.ma_tags import (
     format_an_tag,
@@ -73,6 +75,17 @@ def test_project_center_tf_calls_preserves_call_metrics():
     assert projected == [
         TFCall(start=95, length=20, llr=7.0, n_opps=6, left_ambiguity=1, right_ambiguity=2)
     ]
+
+
+def test_project_center_nuc_calls_preserves_quality_bytes():
+    calls = [
+        NucCall(start=95, length=20, nq=1, el=2, er=3),
+        NucCall(start=195, length=20, nq=7, el=8, er=9),
+    ]
+
+    projected = project_center_nuc_calls(calls, 100)
+
+    assert projected == [NucCall(start=95, length=20, nq=7, el=8, er=9)]
 
 
 def test_split_intervals_for_legacy_duplicates_scores_for_wrapped_features():
