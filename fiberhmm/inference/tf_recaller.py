@@ -601,6 +601,33 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
     return tf_calls, kept_nucs, msps
 
 
+def _clamp_u8(value) -> int:
+    return max(0, min(255, int(value)))
+
+
+def _split_legacy_interval_rows(intervals: Sequence[Tuple[int, int]],
+                                read_length: int,
+                                scores: Optional[Sequence[int]] = None):
+    if scores is None:
+        rows = [
+            (piece[0], piece[1], None)
+            for interval in intervals
+            for piece in split_circular_interval(interval[0], interval[1], read_length)
+        ]
+    else:
+        rows = [
+            (piece[0], piece[1], _clamp_u8(score))
+            for interval, score in zip(intervals, scores)
+            for piece in split_circular_interval(interval[0], interval[1], read_length)
+        ]
+    rows.sort(key=lambda t: (int(t[0]), int(t[1])))
+    return rows
+
+
+def _legacy_starts_lengths(rows):
+    return [int(s) for s, _, _ in rows], [int(length) for _, length, _ in rows]
+
+
 def _write_legacy_recall_tags(read, read_length: int,
                               kept_nucs: Sequence[Tuple[int, int]],
                               msps: Sequence[Tuple[int, int]],
@@ -616,23 +643,11 @@ def _write_legacy_recall_tags(read, read_length: int,
         combined = list(kept_nucs) + list(tf_intervals)
     else:
         combined = list(kept_nucs)
-    legacy_nuc_rows = [
-        (piece[0], piece[1], None)
-        for interval in combined
-        for piece in split_circular_interval(interval[0], interval[1], read_length)
-    ]
-    legacy_nuc_rows.sort(key=lambda t: (int(t[0]), int(t[1])))
-    ns = [int(s) for s, _, _ in legacy_nuc_rows]
-    nl = [int(length) for _, length, _ in legacy_nuc_rows]
+    legacy_nuc_rows = _split_legacy_interval_rows(combined, read_length)
+    ns, nl = _legacy_starts_lengths(legacy_nuc_rows)
 
-    legacy_msps = [
-        piece
-        for interval in msps
-        for piece in split_circular_interval(interval[0], interval[1], read_length)
-    ]
-    legacy_msps.sort(key=lambda t: (int(t[0]), int(t[1])))
-    a_s = [int(s) for s, _ in legacy_msps]
-    a_l = [int(length) for _, length in legacy_msps]
+    legacy_msp_rows = _split_legacy_interval_rows(msps, read_length)
+    a_s, a_l = _legacy_starts_lengths(legacy_msp_rows)
 
     if ns:
         read.set_tag('ns', pyarray.array('I', ns))
@@ -649,11 +664,7 @@ def _write_legacy_recall_tags(read, read_length: int,
     # to avoid len(nq) != len(ns) failing ft validate (see fibertools-rs
     # bamannotations.rs set_qual assert).
     if ns and nq_for_kept_nucs is not None:
-        legacy_nq_rows = []
-        for interval, q in zip(kept_nucs, nq_values):
-            for piece in split_circular_interval(interval[0], interval[1], read_length):
-                legacy_nq_rows.append((piece[0], piece[1], max(0, min(255, int(q)))))
-        legacy_nq_rows.sort(key=lambda t: (int(t[0]), int(t[1])))
+        legacy_nq_rows = _split_legacy_interval_rows(kept_nucs, read_length, nq_values)
         legacy_nq = [q for _, _, q in legacy_nq_rows]
         if len(legacy_nq) != len(ns):
             legacy_nq = [0] * len(ns)

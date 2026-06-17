@@ -47,6 +47,17 @@ def test_ambiguity_to_edge():
     assert 0 < ambiguity_to_edge(15) < 255
 
 
+def test_split_legacy_interval_rows_splits_sorts_and_clamps_scores():
+    rows = tf_recaller._split_legacy_interval_rows(
+        [(90, 20), (10, 5)],
+        read_length=100,
+        scores=[300, -5],
+    )
+
+    assert rows == [(0, 10, 255), (10, 5, 0), (90, 10, 255)]
+    assert tf_recaller._legacy_starts_lengths(rows) == ([0, 10, 90], [10, 5, 10])
+
+
 def test_ma_tag_matches_spec_regex():
     """Every MA string we emit must match the official spec regex
     (https://github.com/fiberseq/Molecular-annotation-spec)."""
