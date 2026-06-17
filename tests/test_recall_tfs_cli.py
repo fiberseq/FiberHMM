@@ -65,6 +65,21 @@ def test_recall_tfs_reverse_read_preserves_nq(monkeypatch):
     assert nq_for_kept == [77]
 
 
+def test_recall_tfs_kept_nuc_nq_from_legacy_defaults_missing_matches():
+    read = SimpleNamespace(is_reverse=False, query_sequence="A" * 200)
+
+    assert recall_tfs._kept_nuc_nq_from_legacy(
+        {"ns": [10], "nl": [20], "nq": [55]},
+        read,
+        [(10, 20), (100, 5)],
+    ) == [55, 0]
+    assert recall_tfs._kept_nuc_nq_from_legacy(
+        {"ns": [10], "nl": [20]},
+        read,
+        [(10, 20)],
+    ) is None
+
+
 def test_recall_tfs_payload_chunk_counts_per_read_failures(monkeypatch):
     def fake_process(payload):
         if payload == "bad":

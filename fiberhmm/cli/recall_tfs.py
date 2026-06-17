@@ -54,6 +54,7 @@ from fiberhmm.cli.recall_config import (
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.core.tag_access import compact_ml_value
 from fiberhmm.io.bam_header import append_coord_marker
+from fiberhmm.io.ma_tags import flip_intervals_to_seq
 from fiberhmm.inference.payload_read import PayloadRead
 from fiberhmm.inference.recall_tables import (
     build_recall_llr_tables as _shared_build_recall_llr_tables,
@@ -103,6 +104,25 @@ def _process_payload_safely(payload):
         return _process_payload_record(payload)
     except Exception:
         return None, _failed_stats()
+
+
+def _kept_nuc_nq_from_legacy(tags: dict, read, kept_nucs):
+    v2_nq = tags.get('nq', None)
+    if v2_nq is None or 'ns' not in tags or 'nl' not in tags:
+        return None
+    try:
+        # kept_nucs come back from recall_read() in SEQ (query) frame, so the
+        # nq lookup must key on SEQ-frame intervals too. The stored ns/nl are
+        # molecular; flip them before building the lookup.
+        ns_seq, nl_seq = flip_intervals_to_seq(tags['ns'], tags['nl'], read)
+        old_to_nq = {
+            (int(s), int(length)): int(v2_nq[i])
+            for i, (s, length) in enumerate(zip(ns_seq, nl_seq))
+            if i < len(v2_nq)
+        }
+        return [old_to_nq.get((s, length), 0) for s, length in kept_nucs]
+    except Exception:
+        return None
 
 
 def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold):
@@ -188,10 +208,8 @@ def _process_payload_record(payload) -> tuple:
         stats['v2'] = 1
         nl_list = tags['nl']
         v2_short_count = sum(1 for length in nl_list if 0 < int(length) < unify_threshold)
-        v2_nq = tags.get('nq', None)
     else:
         v2_short_count = 0
-        v2_nq = None
 
     tf_calls, kept_nucs, msps = recall_read(
         read,
@@ -205,22 +223,7 @@ def _process_payload_record(payload) -> tuple:
     survived_short = sum(1 for _, length in kept_nucs if length < unify_threshold)
     stats['demoted'] = max(0, v2_short_count - survived_short)
 
-    nq_for_kept = None
-    if v2_nq is not None and has_ns:
-        try:
-            # kept_nucs come back from recall_read() in SEQ (query) frame, so the
-            # nq lookup must key on SEQ-frame intervals too. The stored ns/nl are
-            # molecular; flip them (order-preserving, so v2_nq[i] stays aligned)
-            # before building the lookup -- otherwise reverse-read nucs miss their
-            # original score and get 0.
-            from fiberhmm.io.ma_tags import flip_intervals_to_seq
-            ns_seq, nl_seq = flip_intervals_to_seq(tags['ns'], tags['nl'], read)
-            old_to_nq = {(int(s), int(length)): int(v2_nq[i])
-                         for i, (s, length) in enumerate(zip(ns_seq, nl_seq))
-                         if i < len(v2_nq)}
-            nq_for_kept = [old_to_nq.get((s, length), 0) for s, length in kept_nucs]
-        except Exception:
-            nq_for_kept = None
+    nq_for_kept = _kept_nuc_nq_from_legacy(tags, read, kept_nucs)
 
     return (tf_calls, kept_nucs, msps, nq_for_kept), stats
 
