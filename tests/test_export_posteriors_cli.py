@@ -2,11 +2,12 @@
 
 from types import SimpleNamespace
 
+import h5py
 import numpy as np
 import pytest
 
 from fiberhmm.cli import export_posteriors
-from fiberhmm.posteriors import tsv_backend
+from fiberhmm.posteriors import hdf5_backend, tsv_backend
 
 
 def test_export_posteriors_detects_output_format():
@@ -112,6 +113,28 @@ def test_h5_batch_metadata_helpers_append_and_concatenate():
         export_posteriors._concat_h5_metadata_arrays([]),
         np.array([], dtype=np.int32),
     )
+
+
+def test_write_h5_fiber_arrays_uses_backend_dataset_specs(tmp_path):
+    with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
+        grp = hdf5_backend.create_posterior_chrom_group(h5, "chr1")
+
+        export_posteriors._write_h5_fiber_arrays(
+            grp,
+            4,
+            {
+                "posteriors": np.array([0.1, 0.9], dtype=np.float32),
+                "ref_positions": [10, -1],
+                "footprint_starts": [3],
+                "footprint_sizes": [20],
+            },
+        )
+
+        assert grp["posteriors"]["4"].dtype == np.float16
+        np.testing.assert_allclose(grp["posteriors"]["4"][:], [0.1, 0.9], atol=1e-3)
+        np.testing.assert_array_equal(grp["ref_positions"]["4"][:], [10, -1])
+        np.testing.assert_array_equal(grp["footprint_starts"]["4"][:], [3])
+        np.testing.assert_array_equal(grp["footprint_sizes"]["4"][:], [20])
 
 
 def test_flush_h5_chrom_buffer_writes_and_clears(monkeypatch):

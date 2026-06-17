@@ -293,6 +293,22 @@ def _h5_batch_metadata(fibers: List[Dict]):
     return fiber_ids, starts, ends, strands
 
 
+def _write_h5_fiber_arrays(grp, index: int, fiber: Dict) -> None:
+    from fiberhmm.posteriors.hdf5_backend import (
+        _create_gzip_dataset,
+        _fiber_array_dataset_specs,
+    )
+
+    idx = str(index)
+    for group_name, data, compression_opts in _fiber_array_dataset_specs(fiber):
+        _create_gzip_dataset(
+            grp[group_name],
+            idx,
+            data,
+            compression_opts=compression_opts,
+        )
+
+
 def _write_batch_to_h5(grp, fibers: List[Dict], start_idx: int):
     """
     Write a batch of fibers to HDF5 efficiently.
@@ -307,22 +323,7 @@ def _write_batch_to_h5(grp, fibers: List[Dict], start_idx: int):
 
     for i, fiber in enumerate(fibers):
         idx = start_idx + i
-
-        # Write variable-length arrays
-        grp['posteriors'].create_dataset(
-            str(idx), data=fiber['posteriors'],
-            compression='gzip', compression_opts=4
-        )
-        grp['ref_positions'].create_dataset(
-            str(idx), data=fiber['ref_positions'],
-            compression='gzip', compression_opts=4
-        )
-        grp['footprint_starts'].create_dataset(
-            str(idx), data=fiber['footprint_starts'], compression='gzip'
-        )
-        grp['footprint_sizes'].create_dataset(
-            str(idx), data=fiber['footprint_sizes'], compression='gzip'
-        )
+        _write_h5_fiber_arrays(grp, idx, fiber)
 
     return fiber_ids, starts, ends, strands
 
