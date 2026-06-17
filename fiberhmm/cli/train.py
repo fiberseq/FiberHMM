@@ -282,6 +282,10 @@ def _training_fiber_read_from_segment(read, mod_query_pos: set):
     )
 
 
+def _reads_per_training_file(read_count: int, n_files: int) -> int:
+    return max(1, read_count // n_files)
+
+
 def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                          mode: str = 'pacbio-fiber', min_mapq: int = 20,
                          prob_threshold: int = 125, min_read_length: int = 1000) -> list:
@@ -368,7 +372,7 @@ def sample_reads(bam_files: list, read_count: int, seed: int,
     np.random.seed(seed)
 
     all_reads = []
-    reads_per_file = max(1, read_count // len(bam_files))
+    reads_per_file = _reads_per_training_file(read_count, len(bam_files))
 
     for bam_file in tqdm(bam_files, desc="Sampling reads"):
         file_reads = sample_reads_indexed(

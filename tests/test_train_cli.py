@@ -306,6 +306,11 @@ def test_training_mod_query_positions_prefers_pysam_then_mm_fallback(monkeypatch
     assert captured["ml_tag"] == b"\xc8"
 
 
+def test_reads_per_training_file_has_one_read_minimum():
+    assert train._reads_per_training_file(100, 4) == 25
+    assert train._reads_per_training_file(2, 5) == 1
+
+
 def test_build_model_from_base_copies_transitions_and_replaces_emissions(monkeypatch):
     base_model = SimpleNamespace(
         startprob_=np.array([0.7, 0.3]),
