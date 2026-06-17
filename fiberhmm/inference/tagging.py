@@ -99,6 +99,22 @@ def _write_legacy_interval_tags(
         clear_tags(read, (score_tag,))
 
 
+def _append_kept_interval(
+    kept: list[Interval],
+    kept_scores: Optional[list[int]],
+    interval: Interval,
+    score_values: Optional[list[int]],
+    index: int,
+) -> None:
+    kept.append(interval)
+    if kept_scores is not None:
+        kept_scores.append(
+            score_values[index]
+            if score_values is not None and index < len(score_values)
+            else 0
+        )
+
+
 def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True) -> None:
     """Write legacy apply tags (`ns/nl/as/al`, optional `nq/aq`) in place.
 
@@ -155,9 +171,7 @@ def unify_nucs_with_tf_calls(
             nuc_end = s + length
             keep = not any(ts < nuc_end and te > s for ts, te in tf_intervals)
         if keep:
-            kept.append((s, length))
-            if kept_scores is not None:
-                kept_scores.append(score_values[idx] if idx < len(score_values) else 0)
+            _append_kept_interval(kept, kept_scores, (s, length), score_values, idx)
 
     return kept, kept_scores
 
@@ -186,9 +200,7 @@ def unify_circular_nucs_with_tf_calls(
                 for tf_interval in tf_intervals
             )
         if keep:
-            kept.append(interval)
-            if kept_scores is not None:
-                kept_scores.append(score_values[idx] if idx < len(score_values) else 0)
+            _append_kept_interval(kept, kept_scores, interval, score_values, idx)
     return kept, kept_scores
 
 

@@ -10,6 +10,7 @@ from fiberhmm.inference.tagging import (
     scores_to_u8,
     set_legacy_apply_tags,
     unify_circular_nucs_with_tf_calls,
+    unify_nucs_with_tf_calls,
 )
 from fiberhmm.inference.tf_recaller import TFCall
 
@@ -118,6 +119,24 @@ def test_set_legacy_apply_tags_strips_stale_ma_an_even_when_no_new_calls():
 
     assert "MA" not in read.tags
     assert "AN" not in read.tags
+
+
+def test_unify_nucs_with_tf_calls_drops_short_overlaps_and_carries_scores():
+    tf_calls = [
+        TFCall(start=20, length=10, llr=5.0, n_opps=3,
+               left_ambiguity=0, right_ambiguity=0)
+    ]
+
+    kept, scores = unify_nucs_with_tf_calls(
+        ns=[0, 15, 100],
+        nl=[10, 20, 120],
+        tf_calls=tf_calls,
+        unify_threshold=90,
+        ns_scores=np.asarray([0.25, 0.5]),
+    )
+
+    assert kept == [(0, 10), (100, 120)]
+    assert scores == [63, 0]
 
 
 def test_unify_circular_nucs_with_tf_calls_handles_origin_overlap():
