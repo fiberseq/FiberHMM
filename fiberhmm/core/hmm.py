@@ -973,7 +973,10 @@ def create_hmmlearn_model(emission_probs: np.ndarray,
             "hmmlearn not available or incompatible. Using native FiberHMM implementation."
         )
 
-    # Use native implementation
+    return _new_native_model(emission_probs)
+
+
+def _new_native_model(emission_probs: np.ndarray) -> FiberHMM:
     model = FiberHMM(n_states=2)
     model.emissionprob_ = emission_probs
     return model
@@ -1065,11 +1068,9 @@ def train_model(emission_probs: np.ndarray,
         if use_legacy:
             model = _try_create_hmmlearn(emission_probs)
             if model is None:
-                model = FiberHMM(n_states=2)
-                model.emissionprob_ = emission_probs
+                model = _new_native_model(emission_probs)
         else:
-            model = FiberHMM(n_states=2)
-            model.emissionprob_ = emission_probs
+            model = _new_native_model(emission_probs)
 
         model.startprob_ = start_probs
         model.transmat_ = transition_probs
