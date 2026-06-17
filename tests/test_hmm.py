@@ -23,6 +23,8 @@ try:
         _hmmlearn_version_tuple,
         _logsumexp,
         _logsumexp_axis1,
+        _normalized_start_counts,
+        _normalized_transition_counts,
         _random_training_parameters,
         _training_data_for_iteration,
         _try_create_hmmlearn,
@@ -36,6 +38,8 @@ except ImportError:
         _hmmlearn_version_tuple,
         _logsumexp,
         _logsumexp_axis1,
+        _normalized_start_counts,
+        _normalized_transition_counts,
         _random_training_parameters,
         _training_data_for_iteration,
         _try_create_hmmlearn,
@@ -161,6 +165,18 @@ class TestForwardBackward:
 
 class TestModelTraining:
     """Test Baum-Welch training."""
+
+    def test_training_count_normalization_helpers(self):
+        startprob = _normalized_start_counts(np.array([0.0, 2.0]))
+        transmat = _normalized_transition_counts(np.array([
+            [0.0, 0.0],
+            [1.0, 3.0],
+        ]))
+
+        assert startprob[0] > 0
+        np.testing.assert_allclose(startprob.sum(), 1.0)
+        np.testing.assert_allclose(transmat.sum(axis=1), [1.0, 1.0])
+        assert np.all(transmat > 0)
 
     def test_hmmlearn_version_selection(self):
         assert _hmmlearn_version_tuple("0.2.8") == (0, 2)

@@ -762,15 +762,8 @@ class FiberHMM:
                             trans_counts += np.exp(log_xi)
 
             # M-step: update parameters
-            self.startprob_ = start_counts / start_counts.sum()
-            self.startprob_ = np.clip(self.startprob_, 1e-10, 1.0)
-            self.startprob_ /= self.startprob_.sum()
-
-            trans_sums = trans_counts.sum(axis=1, keepdims=True)
-            trans_sums = np.where(trans_sums == 0, 1, trans_sums)
-            self.transmat_ = trans_counts / trans_sums
-            self.transmat_ = np.clip(self.transmat_, 1e-10, 1.0)
-            self.transmat_ /= self.transmat_.sum(axis=1, keepdims=True)
+            self.startprob_ = _normalized_start_counts(start_counts)
+            self.transmat_ = _normalized_transition_counts(trans_counts)
 
             self._compute_log_probs()
 
@@ -947,6 +940,20 @@ def _as_observation_array(X: np.ndarray) -> np.ndarray:
     if np.issubdtype(obs.dtype, np.integer):
         return obs
     return obs.astype(np.int64)
+
+
+def _normalized_start_counts(start_counts: np.ndarray) -> np.ndarray:
+    startprob = start_counts / start_counts.sum()
+    startprob = np.clip(startprob, 1e-10, 1.0)
+    return startprob / startprob.sum()
+
+
+def _normalized_transition_counts(trans_counts: np.ndarray) -> np.ndarray:
+    trans_sums = trans_counts.sum(axis=1, keepdims=True)
+    trans_sums = np.where(trans_sums == 0, 1, trans_sums)
+    transmat = trans_counts / trans_sums
+    transmat = np.clip(transmat, 1e-10, 1.0)
+    return transmat / transmat.sum(axis=1, keepdims=True)
 
 
 # =============================================================================
