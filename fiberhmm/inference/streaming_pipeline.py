@@ -156,6 +156,22 @@ def _new_streaming_skip_reasons(*, include_no_footprints: bool = False) -> dict:
     return new_skip_reasons(*extras)
 
 
+def _streaming_filter_config(
+    min_mapq: int,
+    min_read_length: int,
+    primary_only: bool,
+    process_unmapped: bool,
+    train_rids,
+) -> ReadFilterConfig:
+    return ReadFilterConfig(
+        min_mapq=min_mapq,
+        min_read_length=min_read_length,
+        primary_only=primary_only,
+        process_unmapped=process_unmapped,
+        train_rids=train_rids,
+    )
+
+
 def _print_worker_failure_summary(counters: dict, log) -> None:
     if counters['worker_failures']:
         print(
@@ -226,7 +242,7 @@ def _process_bam_streaming_pipeline_fused(
     total_reads = 0
     skipped = 0
     skip_reasons = _new_streaming_skip_reasons()
-    filter_config = ReadFilterConfig(
+    filter_config = _streaming_filter_config(
         min_mapq=min_mapq,
         min_read_length=min_read_length,
         primary_only=primary_only,
@@ -400,7 +416,7 @@ def _process_bam_streaming_pipeline(
 
     total_reads = 0
     skip_reasons = _new_streaming_skip_reasons(include_no_footprints=True)
-    filter_config = ReadFilterConfig(
+    filter_config = _streaming_filter_config(
         min_mapq=min_mapq,
         min_read_length=min_read_length,
         primary_only=primary_only,

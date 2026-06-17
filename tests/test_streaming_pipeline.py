@@ -7,6 +7,7 @@ import pysam
 from fiberhmm.inference.streaming_pipeline import (
     _apply_worker_args,
     _fused_worker_args,
+    _streaming_filter_config,
     _streaming_progress_rates,
     _worker_common_args,
 )
@@ -51,6 +52,22 @@ def test_streaming_progress_rates_handle_elapsed_and_zero_dt():
         last_progress_time=30.0,
         now=30.0,
     ) == (0, 0)
+
+
+def test_streaming_filter_config_captures_read_filter_settings():
+    config = _streaming_filter_config(
+        min_mapq=20,
+        min_read_length=50,
+        primary_only=True,
+        process_unmapped=False,
+        train_rids={"read1"},
+    )
+
+    assert config.min_mapq == 20
+    assert config.min_read_length == 50
+    assert config.primary_only is True
+    assert config.process_unmapped is False
+    assert config.train_rids == {"read1"}
 
 
 def _count_bam_reads(bam_path):
