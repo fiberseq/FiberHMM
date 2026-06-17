@@ -4,7 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import pysam
@@ -365,6 +365,34 @@ def _sort_bed_for_bigbed(bed_file: str, sorted_bed: str) -> None:
     )
 
 
+def _bed_to_bigbed_command(
+    sorted_bed: str,
+    chrom_sizes: str,
+    output_bb: str,
+    bed_type: str = 'bed12',
+    autosql: Optional[str] = None,
+) -> List[str]:
+    cmd = ['bedToBigBed', f'-type={bed_type}']
+    if autosql is not None:
+        cmd.append('-as=' + autosql)
+    cmd.extend([sorted_bed, chrom_sizes, output_bb])
+    return cmd
+
+
+def _run_bed_to_bigbed(
+    sorted_bed: str,
+    chrom_sizes: str,
+    output_bb: str,
+    bed_type: str = 'bed12',
+    autosql: Optional[str] = None,
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        _bed_to_bigbed_command(sorted_bed, chrom_sizes, output_bb, bed_type, autosql),
+        capture_output=True,
+        text=True,
+    )
+
+
 def convert_to_bigbed(bed_file: str, chrom_sizes: str, output_bb: str) -> bool:
     """Convert BED12 to bigBed format."""
     if not shutil.which('bedToBigBed'):
@@ -378,10 +406,7 @@ def convert_to_bigbed(bed_file: str, chrom_sizes: str, output_bb: str) -> bool:
         _sort_bed_for_bigbed(bed_file, sorted_bed)
 
         # Convert
-        result = subprocess.run(
-            ['bedToBigBed', '-type=bed12', sorted_bed, chrom_sizes, output_bb],
-            capture_output=True, text=True
-        )
+        result = _run_bed_to_bigbed(sorted_bed, chrom_sizes, output_bb)
 
         if result.returncode != 0:
             print(f"bedToBigBed error: {result.stderr}")
@@ -452,22 +477,18 @@ def convert_to_bigbed_with_schema(bed_file: str, chrom_sizes: str,
         # Sort BED file
         _sort_bed_for_bigbed(bed_file, sorted_bed)
 
-        # Build command - use BED12+ type if we have scores
+        # Use BED12+ type if we have scores
         bed_type = 'bed12+1' if with_scores else 'bed12'
-        cmd = ['bedToBigBed', f'-type={bed_type}', '-as=' + autosql,
-               sorted_bed, chrom_sizes, output_bb]
-
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = _run_bed_to_bigbed(
+            sorted_bed, chrom_sizes, output_bb, bed_type, autosql
+        )
 
         if result.returncode != 0:
             print(f"bedToBigBed error: {result.stderr}")
             # Fall back to standard BED12 if extended format fails
             if with_scores:
                 print("Trying fallback to standard BED12...")
-                result = subprocess.run(
-                    ['bedToBigBed', '-type=bed12', sorted_bed, chrom_sizes, output_bb],
-                    capture_output=True, text=True
-                )
+                result = _run_bed_to_bigbed(sorted_bed, chrom_sizes, output_bb)
                 if result.returncode == 0:
                     print("Fallback succeeded (scores in BED only, not bigBed)")
                     return True
