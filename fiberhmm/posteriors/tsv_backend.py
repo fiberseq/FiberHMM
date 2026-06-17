@@ -201,6 +201,13 @@ def _write_h5_record_array_datasets(group, index: int, record: dict) -> None:
         group[group_name].create_dataset(idx, data=data, **kwargs)
 
 
+def _write_h5_record_metadata(group, index: int, record: dict) -> None:
+    group['fiber_ids'][index] = record['read_id']
+    group['fiber_starts'][index] = record['start']
+    group['fiber_ends'][index] = record['end']
+    group['strands'][index] = record['strand']
+
+
 def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
     record = _posterior_record_from_fields(fields, np.float16)
     chrom = record['chrom']
@@ -212,11 +219,7 @@ def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
     grp = h5_file[chrom]
 
     _write_h5_record_array_datasets(grp, idx, record)
-
-    grp['fiber_ids'][idx] = record['read_id']
-    grp['fiber_starts'][idx] = record['start']
-    grp['fiber_ends'][idx] = record['end']
-    grp['strands'][idx] = record['strand']
+    _write_h5_record_metadata(grp, idx, record)
 
 
 def _posterior_tsv_output_path(output_path: str, compress: bool) -> str:

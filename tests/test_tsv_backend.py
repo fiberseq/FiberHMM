@@ -199,6 +199,32 @@ def test_h5_posterior_record_dataset_specs_define_compressed_arrays():
     assert specs[2][2] is None
 
 
+def test_write_h5_record_metadata_fills_preallocated_arrays(tmp_path):
+    with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
+        dt = h5py.special_dtype(vlen=str)
+        grp = h5.create_group("chr1")
+        grp.create_dataset("fiber_ids", shape=(1,), dtype=dt)
+        grp.create_dataset("fiber_starts", shape=(1,), dtype=np.int32)
+        grp.create_dataset("fiber_ends", shape=(1,), dtype=np.int32)
+        grp.create_dataset("strands", shape=(1,), dtype=dt)
+
+        tsv_backend._write_h5_record_metadata(
+            grp,
+            0,
+            {
+                "read_id": "read1",
+                "start": 10,
+                "end": 20,
+                "strand": "-",
+            },
+        )
+
+        assert _h5_text(grp["fiber_ids"][0]) == "read1"
+        assert grp["fiber_starts"][0] == 10
+        assert grp["fiber_ends"][0] == 20
+        assert _h5_text(grp["strands"][0]) == "-"
+
+
 def test_chrom_from_countable_tsv_line_filters_non_data_rows():
     assert tsv_backend._chrom_from_countable_tsv_line("#metadata:{}\n") is None
     assert tsv_backend._chrom_from_countable_tsv_line("read_without_chrom\n") is None
