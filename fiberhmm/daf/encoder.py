@@ -194,6 +194,38 @@ def get_daf_positions(read, force_strand=None, ref_fasta=None):
     return (ct_positions, ga_positions, strand)
 
 
+def _daf_chimera_events(ct_positions, ga_positions):
+    return sorted([(int(p), 1) for p in ct_positions]
+                  + [(int(p), -1) for p in ga_positions])
+
+
+def _is_pure_daf_segment(dominant_count, segment_size,
+                         min_seg_events: int, purity: float) -> bool:
+    return (
+        dominant_count >= min_seg_events
+        and dominant_count >= purity * segment_size
+    )
+
+
+def _daf_chimera_breakpoint_matches(ct_left, left_n, nct, nga,
+                                    min_seg_events: int,
+                                    purity: float) -> bool:
+    right_n = nct + nga - left_n
+    ga_left = left_n - ct_left
+    ct_right = nct - ct_left
+    ga_right = nga - ga_left
+
+    ct_then_ga = (
+        _is_pure_daf_segment(ct_left, left_n, min_seg_events, purity)
+        and _is_pure_daf_segment(ga_right, right_n, min_seg_events, purity)
+    )
+    ga_then_ct = (
+        _is_pure_daf_segment(ga_left, left_n, min_seg_events, purity)
+        and _is_pure_daf_segment(ct_right, right_n, min_seg_events, purity)
+    )
+    return ct_then_ga or ga_then_ct
+
+
 def is_daf_chimera(ct_positions, ga_positions,
                    min_seg_events: int = 5, purity: float = 0.8) -> bool:
     """Detect a DAF-seq strand-swap chimera.
@@ -216,8 +248,7 @@ def is_daf_chimera(ct_positions, ga_positions,
     if min(nct, nga) < min_seg_events:
         return False
 
-    events = sorted([(int(p), 1) for p in ct_positions]
-                    + [(int(p), -1) for p in ga_positions])
+    events = _daf_chimera_events(ct_positions, ga_positions)
     n = len(events)
     if n < 2 * min_seg_events:
         return False
@@ -230,16 +261,14 @@ def is_daf_chimera(ct_positions, ga_positions,
         right_n = n - k
         if left_n < min_seg_events or right_n < min_seg_events:
             continue
-        ga_left = left_n - ct_left
-        ct_right = nct - ct_left
-        ga_right = nga - ga_left
-        # orientation A: CT segment then GA segment
-        if (ct_left >= min_seg_events and ga_right >= min_seg_events
-                and ct_left >= purity * left_n and ga_right >= purity * right_n):
-            return True
-        # orientation B: GA segment then CT segment
-        if (ga_left >= min_seg_events and ct_right >= min_seg_events
-                and ga_left >= purity * left_n and ct_right >= purity * right_n):
+        if _daf_chimera_breakpoint_matches(
+            ct_left,
+            left_n,
+            nct,
+            nga,
+            min_seg_events,
+            purity,
+        ):
             return True
     return False
 
