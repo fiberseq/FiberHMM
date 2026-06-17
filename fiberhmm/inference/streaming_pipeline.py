@@ -73,6 +73,26 @@ def _submit_streaming_chunk(inflight, executor, worker_fn, chunk_items,
     inflight.append((future, chunk_read_objs, chunk_items, chunk_skip_flags))
 
 
+def _worker_common_args(
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    with_scores: bool,
+) -> tuple:
+    return (
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        nuc_min_size,
+        with_scores,
+    )
+
+
 def _apply_worker_args(
     edge_trim: int,
     circular: bool,
@@ -85,13 +105,10 @@ def _apply_worker_args(
     prob_threshold: int,
 ) -> tuple:
     return (
-        edge_trim,
-        circular,
-        mode,
-        context_size,
-        msp_min_size,
-        nuc_min_size,
-        with_scores,
+        *_worker_common_args(
+            edge_trim, circular, mode, context_size,
+            msp_min_size, nuc_min_size, with_scores,
+        ),
         return_posteriors,
         prob_threshold,
     )
@@ -111,13 +128,10 @@ def _fused_worker_args(
     unify_threshold: int,
 ) -> tuple:
     return (
-        edge_trim,
-        circular,
-        mode,
-        context_size,
-        msp_min_size,
-        nuc_min_size,
-        with_scores,
+        *_worker_common_args(
+            edge_trim, circular, mode, context_size,
+            msp_min_size, nuc_min_size, with_scores,
+        ),
         prob_threshold,
         mode,
         context_size,

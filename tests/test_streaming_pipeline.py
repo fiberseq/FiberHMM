@@ -8,11 +8,17 @@ from fiberhmm.inference.streaming_pipeline import (
     _apply_worker_args,
     _fused_worker_args,
     _streaming_progress_rates,
+    _worker_common_args,
 )
 from fiberhmm.inference.parallel import process_bam_for_footprints
 
 
 def test_apply_worker_args_match_payload_worker_contract():
+    assert _worker_common_args(
+        11, True, "deam", 5, 61, 86, True,
+    ) == (
+        11, True, "deam", 5, 61, 86, True,
+    )
     assert _apply_worker_args(
         11, True, "deam", 5, 61, 86, True, False, 127
     ) == (
