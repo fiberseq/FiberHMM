@@ -9,6 +9,7 @@ Tests cover:
 """
 import os
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -113,6 +114,69 @@ def test_get_reference_positions_array_uses_minus_one_for_insertions():
         get_reference_positions_array(FakeRead()),
         np.array([10, 11, -1, 12], dtype=np.int32),
     )
+
+
+def test_read_bam_filter_helper_applies_basic_read_filters():
+    def read(**overrides):
+        attrs = {
+            "is_unmapped": False,
+            "is_secondary": False,
+            "is_supplementary": False,
+            "mapping_quality": 20,
+            "query_sequence": "ACGT",
+            "reference_start": 10,
+            "reference_end": 14,
+        }
+        attrs.update(overrides)
+        return SimpleNamespace(**attrs)
+
+    assert bam_reader._passes_read_bam_filters(read(), 20, 4) is True
+    assert bam_reader._passes_read_bam_filters(
+        read(mapping_quality=19), 20, 4,
+    ) is False
+    assert bam_reader._passes_read_bam_filters(
+        read(query_sequence=None), 20, 4,
+    ) is False
+    assert bam_reader._passes_read_bam_filters(
+        read(reference_end=13), 20, 4,
+    ) is False
+    assert bam_reader._passes_read_bam_filters(
+        read(is_secondary=True), 20, 4,
+    ) is False
+    assert bam_reader._passes_read_bam_filters(
+        read(is_supplementary=True), 20, 4,
+    ) is False
+    assert bam_reader._passes_read_bam_filters(
+        read(is_unmapped=True), 20, 4,
+    ) is False
+
+
+def test_fiber_read_from_segment_preserves_read_metadata(monkeypatch):
+    read = SimpleNamespace(
+        query_name="read1",
+        reference_name="chr1",
+        reference_start=10,
+        reference_end=14,
+        is_reverse=True,
+        query_sequence="ACGT",
+    )
+    monkeypatch.setattr(
+        bam_reader,
+        "get_reference_positions",
+        lambda segment: [10, 11, 12, 13],
+    )
+
+    fiber = bam_reader._fiber_read_from_segment(read, {1, 3})
+
+    assert fiber.read_id == "read1"
+    assert fiber.chrom == "chr1"
+    assert fiber.ref_start == 10
+    assert fiber.ref_end == 14
+    assert fiber.strand == "-"
+    assert fiber.query_sequence == "ACGT"
+    assert fiber.m6a_query_positions == {1, 3}
+    assert fiber.query_to_ref == [10, 11, 12, 13]
+    assert fiber.is_reverse is True
 
 
 class TestContextEncoder:

@@ -1271,6 +1271,34 @@ def _read_mod_query_positions(read, prob_threshold: int, mode: str) -> Set[int]:
     return mod_query_pos
 
 
+def _read_aligned_length(read) -> int:
+    return read.reference_end - read.reference_start
+
+
+def _passes_read_bam_filters(read, min_mapq: int, min_read_length: int) -> bool:
+    if read.is_unmapped or read.is_secondary or read.is_supplementary:
+        return False
+    if read.mapping_quality < min_mapq:
+        return False
+    if read.query_sequence is None:
+        return False
+    return _read_aligned_length(read) >= min_read_length
+
+
+def _fiber_read_from_segment(read, mod_query_pos: Set[int]) -> FiberRead:
+    return FiberRead(
+        read_id=read.query_name,
+        chrom=read.reference_name,
+        ref_start=read.reference_start,
+        ref_end=read.reference_end,
+        strand='-' if read.is_reverse else '+',
+        query_sequence=read.query_sequence,
+        m6a_query_positions=mod_query_pos,
+        query_to_ref=get_reference_positions(read),
+        is_reverse=read.is_reverse,
+    )
+
+
 def read_bam(bam_path: str,
              region: Optional[str] = None,
              min_mapq: int = 20,
@@ -1295,36 +1323,11 @@ def read_bam(bam_path: str,
         iterator = bam.fetch(region=region) if region else bam.fetch()
 
         for read in iterator:
-            # Skip unmapped, secondary, supplementary
-            if read.is_unmapped or read.is_secondary or read.is_supplementary:
-                continue
-
-            if read.mapping_quality < min_mapq:
-                continue
-
-            if read.query_sequence is None:
-                continue
-
-            aligned_length = read.reference_end - read.reference_start
-            if aligned_length < min_read_length:
+            if not _passes_read_bam_filters(read, min_mapq, min_read_length):
                 continue
 
             mod_query_pos = _read_mod_query_positions(read, prob_threshold, mode)
-
-            # Build query-to-reference position mapping
-            query_to_ref = get_reference_positions(read)
-
-            yield FiberRead(
-                read_id=read.query_name,
-                chrom=read.reference_name,
-                ref_start=read.reference_start,
-                ref_end=read.reference_end,
-                strand='-' if read.is_reverse else '+',
-                query_sequence=read.query_sequence,
-                m6a_query_positions=mod_query_pos,
-                query_to_ref=query_to_ref,
-                is_reverse=read.is_reverse,
-            )
+            yield _fiber_read_from_segment(read, mod_query_pos)
 
 
 def bam_to_chunks(bam_path: str, chunk_size: int = 50000,
