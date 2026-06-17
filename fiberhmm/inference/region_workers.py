@@ -72,6 +72,42 @@ def _read_starts_in_region(read, start: int, end: int) -> bool:
     return int(start) <= int(read.reference_start) < int(end)
 
 
+def _format_region_bed12_row(ref_name, ref_start, ref_end, read_id, strand,
+                             starts, lengths, scores=None):
+    """Format one region-worker BED12 row from reference-frame intervals."""
+    read_length = ref_end - ref_start
+    block_starts = [int(start - ref_start) for start in starts]
+    block_sizes = [int(length) for length in lengths]
+    score_list = [int(score * 1000) for score in scores] if scores is not None else None
+
+    # BED12 requires blocks to span chromStart to chromEnd.
+    if block_starts[0] != 0:
+        block_starts.insert(0, 0)
+        block_sizes.insert(0, 1)
+        if score_list is not None:
+            score_list.insert(0, 0)
+
+    last_end = block_starts[-1] + block_sizes[-1]
+    if last_end < read_length:
+        block_starts.append(read_length - 1)
+        block_sizes.append(1)
+        if score_list is not None:
+            score_list.append(0)
+
+    block_count = len(block_starts)
+    block_sizes_str = ','.join(str(size) for size in block_sizes)
+    block_starts_str = ','.join(str(start) for start in block_starts)
+
+    row = (
+        f"{ref_name}\t{ref_start}\t{ref_end}\t{read_id}\t0\t{strand}\t"
+        f"{ref_start}\t{ref_end}\t0,0,0\t{block_count}\t"
+        f"{block_sizes_str}\t{block_starts_str}"
+    )
+    if score_list is not None:
+        row += "\t" + ','.join(str(score) for score in score_list)
+    return row
+
+
 def _region_read_filter_config(params: dict, *, require_train_rids: bool) -> ReadFilterConfig:
     train_rids = (
         params['train_rids'] if require_train_rids
@@ -383,42 +419,20 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
                         ref_end = read.reference_end
                         strand = '-' if read.is_reverse else '+'
                         read_id = read.query_name
-                        read_length = ref_end - ref_start
 
                         ns = result['ns']
                         nl = result['nl']
-                        block_starts_list = [int(s - ref_start) for s in ns]
-                        block_sizes_list = [int(length) for length in nl]
-
-                        score_list = None
-                        if with_scores and result['ns_scores'] is not None:
-                            score_list = [int(s * 1000) for s in result['ns_scores']]
-
-                        # BED12 requires blocks to span chromStart to chromEnd.
-                        if block_starts_list[0] != 0:
-                            block_starts_list.insert(0, 0)
-                            block_sizes_list.insert(0, 1)
-                            if score_list is not None:
-                                score_list.insert(0, 0)
-
-                        last_end = block_starts_list[-1] + block_sizes_list[-1]
-                        if last_end < read_length:
-                            block_starts_list.append(read_length - 1)
-                            block_sizes_list.append(1)
-                            if score_list is not None:
-                                score_list.append(0)
-
-                        block_count = len(block_starts_list)
-                        block_sizes = ','.join(str(s) for s in block_sizes_list)
-                        block_starts = ','.join(str(s) for s in block_starts_list)
-
-                        if score_list is not None:
-                            scores = ','.join(str(s) for s in score_list)
-                            bed_out.write(f"{ref_name}\t{ref_start}\t{ref_end}\t{read_id}\t0\t{strand}\t"
-                                        f"{ref_start}\t{ref_end}\t0,0,0\t{block_count}\t{block_sizes}\t{block_starts}\t{scores}\n")
-                        else:
-                            bed_out.write(f"{ref_name}\t{ref_start}\t{ref_end}\t{read_id}\t0\t{strand}\t"
-                                        f"{ref_start}\t{ref_end}\t0,0,0\t{block_count}\t{block_sizes}\t{block_starts}\n")
+                        ns_scores = (
+                            result['ns_scores']
+                            if with_scores and result['ns_scores'] is not None
+                            else None
+                        )
+                        bed_out.write(
+                            _format_region_bed12_row(
+                                ref_name, ref_start, ref_end, read_id, strand,
+                                ns, nl, ns_scores,
+                            ) + "\n"
+                        )
 
         return RegionBedResult(temp_bed_path, total_reads, reads_with_footprints)
 
