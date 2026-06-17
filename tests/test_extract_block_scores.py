@@ -502,6 +502,71 @@ def test_bed12_type_flag_formats_extra_column_count():
     assert extract_tags._bed12_type_flag(4) == "-type=bed12+4"
 
 
+def test_bigbed_chrom_sizes_file_writes_sorted_sizes(tmp_path):
+    sizes_file = tmp_path / "input.bed.sizes"
+
+    extract_tags._write_bigbed_chrom_sizes_file(
+        {"chr2": 200, "chr1": 100},
+        str(sizes_file),
+    )
+
+    assert sizes_file.read_text() == "chr1\t100\nchr2\t200\n"
+
+
+def test_bigbed_command_helpers_count_extra_fields_and_schema_files():
+    assert extract_tags._bigbed_extra_field_count(
+        "tf", block_scores=True, circular_groups=True,
+    ) == EXTRA_FIELD_COUNTS["tf"] + CIRCULAR_FIELD_COUNT
+    assert extract_tags._bigbed_extra_field_count(
+        "tf", block_scores=False, circular_groups=False,
+    ) == 0
+
+    assert extract_tags._bigbed_autosql_file(
+        None,
+        block_scores=True,
+        sample_name=None,
+        circular_groups=True,
+    ) is None
+
+    as_file = extract_tags._bigbed_autosql_file(
+        "tf",
+        block_scores=True,
+        sample_name="sample-a",
+        circular_groups=False,
+    )
+    assert as_file is not None
+    assert os.path.exists(as_file)
+
+    try:
+        assert extract_tags._bed_to_bigbed_cmd(
+            "calls.bed",
+            "calls.bed.sizes",
+            "calls.bb",
+            "bed12",
+            as_file,
+            n_extra=EXTRA_FIELD_COUNTS["tf"],
+        ) == [
+            "bedToBigBed",
+            f"-as={as_file}",
+            "-type=bed12+3",
+            "calls.bed",
+            "calls.bed.sizes",
+            "calls.bb",
+        ]
+        assert extract_tags._bed_to_bigbed_cmd(
+            "calls.bed",
+            "calls.bed.sizes",
+            "calls.bb",
+            "bed6",
+            None,
+            n_extra=0,
+        ) == ["bedToBigBed", "calls.bed", "calls.bed.sizes", "calls.bb"]
+    finally:
+        extract_tags._remove_bigbed_autosql_file(as_file)
+
+    assert not os.path.exists(as_file)
+
+
 # ------------------- autoSQL schemas --------------------------------
 
 def test_autosql_default_is_bed12_only():

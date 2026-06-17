@@ -1120,6 +1120,82 @@ def _bed12_type_flag(n_extra: int) -> str:
     return f'-type=bed12+{int(n_extra)}' if int(n_extra) > 0 else '-type=bed12'
 
 
+def _write_bigbed_chrom_sizes_file(
+    chrom_sizes: Dict[str, int],
+    sizes_file: str,
+) -> None:
+    with open(sizes_file, 'w') as f:
+        for chrom, size in sorted(chrom_sizes.items()):
+            f.write(f"{chrom}\t{size}\n")
+
+
+def _bigbed_autosql_file(
+    extract_type: Optional[str],
+    block_scores: bool,
+    sample_name: Optional[str],
+    circular_groups: bool,
+) -> Optional[str]:
+    if not extract_type:
+        return None
+
+    from fiberhmm.io.autosql import write_autosql_for
+
+    return write_autosql_for(
+        extract_type,
+        block_scores=block_scores,
+        sample_name=sample_name,
+        circular_groups=circular_groups,
+    )
+
+
+def _bigbed_extra_field_count(
+    extract_type: Optional[str],
+    block_scores: bool,
+    circular_groups: bool,
+) -> int:
+    from fiberhmm.io.autosql import CIRCULAR_FIELD_COUNT, EXTRA_FIELD_COUNTS
+
+    n_extra = EXTRA_FIELD_COUNTS.get(extract_type, 0) if block_scores else 0
+    if circular_groups:
+        n_extra += CIRCULAR_FIELD_COUNT
+    return n_extra
+
+
+def _bed_to_bigbed_cmd(
+    bed_path: str,
+    sizes_file: str,
+    bigbed_path: str,
+    bed_type: str,
+    as_file: Optional[str],
+    n_extra: int,
+) -> list:
+    cmd = ['bedToBigBed']
+    if as_file:
+        cmd.append(f'-as={as_file}')
+    if bed_type == 'bed12':
+        cmd.append(_bed12_type_flag(n_extra))
+    cmd.extend([bed_path, sizes_file, bigbed_path])
+    return cmd
+
+
+def _remove_bigbed_autosql_file(as_file: Optional[str]) -> None:
+    if not as_file or not os.path.exists(as_file):
+        return
+    try:
+        os.remove(as_file)
+    except Exception:
+        pass
+
+
+def _remove_bigbed_sizes_file(sizes_file: str) -> None:
+    if not os.path.exists(sizes_file):
+        return
+    try:
+        os.remove(sizes_file)
+    except (PermissionError, OSError) as e:
+        print(f"  Warning: Could not remove temp file {sizes_file}: {e}")
+
+
 def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           n_cores: int = 1, region_size: int = 10_000_000,
                           min_mapq: int = 0, prob_threshold: int = 125,
@@ -1263,34 +1339,19 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
         block_scores: If True, expect BED12+N input (per-block quality
             columns appended) and use the matching autoSQL variant.
     """
-    from fiberhmm.io.autosql import (
-        CIRCULAR_FIELD_COUNT,
-        EXTRA_FIELD_COUNTS,
-        write_autosql_for,
+    sizes_file = bed_path + '.sizes'
+    _write_bigbed_chrom_sizes_file(chrom_sizes, sizes_file)
+    as_file = _bigbed_autosql_file(
+        extract_type, block_scores, sample_name, circular_groups,
+    )
+    n_extra = _bigbed_extra_field_count(
+        extract_type, block_scores, circular_groups,
     )
 
-    sizes_file = bed_path + '.sizes'
-    with open(sizes_file, 'w') as f:
-        for chrom, size in sorted(chrom_sizes.items()):
-            f.write(f"{chrom}\t{size}\n")
-
-    as_file = (write_autosql_for(extract_type, block_scores=block_scores,
-                                  sample_name=sample_name,
-                                  circular_groups=circular_groups)
-               if extract_type else None)
-
-    n_extra = EXTRA_FIELD_COUNTS.get(extract_type, 0) if block_scores else 0
-    if circular_groups:
-        n_extra += CIRCULAR_FIELD_COUNT
-
     try:
-        cmd = ['bedToBigBed']
-        if as_file:
-            cmd.append(f'-as={as_file}')
-        if bed_type == 'bed12':
-            cmd.append(_bed12_type_flag(n_extra))
-        cmd.extend([bed_path, sizes_file, bigbed_path])
-
+        cmd = _bed_to_bigbed_cmd(
+            bed_path, sizes_file, bigbed_path, bed_type, as_file, n_extra,
+        )
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
@@ -1305,16 +1366,8 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
         return False
 
     finally:
-        if as_file and os.path.exists(as_file):
-            try:
-                os.remove(as_file)
-            except Exception:
-                pass
-        if os.path.exists(sizes_file):
-            try:
-                os.remove(sizes_file)
-            except (PermissionError, OSError) as e:
-                print(f"  Warning: Could not remove temp file {sizes_file}: {e}")
+        _remove_bigbed_autosql_file(as_file)
+        _remove_bigbed_sizes_file(sizes_file)
 
 
 def _looks_like_fiber_seq(diag: Dict[str, object]) -> bool:
