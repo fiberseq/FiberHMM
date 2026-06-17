@@ -327,6 +327,10 @@ def _project_circular_result_track(starts, sizes, scores, read_length: int) -> d
     }
 
 
+def _center_copy_states(states: np.ndarray, read_length: int) -> np.ndarray:
+    return states[read_length:2 * read_length].astype(np.int8, copy=False)
+
+
 def _extract_footprints_from_states_circular(
     states: np.ndarray,
     confidence: Optional[np.ndarray],
@@ -368,7 +372,7 @@ def _extract_footprints_from_states_circular(
         'msp_starts': msp_track['legacy_starts'],
         'msp_sizes': msp_track['legacy_sizes'],
         'msp_scores': msp_track['legacy_scores'],
-        'states': states[read_length:2 * read_length].astype(np.int8, copy=False),
+        'states': _center_copy_states(states, read_length),
         'posteriors': None,
         'circular': True,
         'circular_read_length': read_length,

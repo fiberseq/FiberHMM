@@ -203,6 +203,13 @@ class TestPredictFootprintsAndMsps:
         assert track.dtype == np.float16
         np.testing.assert_allclose(track, [0.2, 0.3], atol=1e-3)
 
+    def test_center_copy_states_returns_middle_tile_as_int8(self):
+        states = np.arange(12, dtype=np.int64)
+        center = engine._center_copy_states(states, read_length=4)
+
+        assert center.dtype == np.int8
+        np.testing.assert_array_equal(center, [4, 5, 6, 7])
+
     def test_nuc_boundaries_from_footprint_runs_filters_small_runs(self):
         starts, ends = engine._nuc_boundaries_from_footprint_runs(
             np.array([0, 20, 100], dtype=np.int64),
