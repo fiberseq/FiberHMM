@@ -39,6 +39,11 @@ def test_fold_enrichment_uses_floor_for_small_inaccessible_rate():
     assert stats._fold_enrichment(0.25, 0.0) == 250.0
 
 
+def test_probability_context_label_formats_kmer_width():
+    assert stats._probability_context_label(2) == "k=2, 5-mer"
+    assert stats._probability_context_label(4) == "k=4, 9-mer"
+
+
 def test_context_observation_totals_accepts_merged_column_names():
     table = pd.DataFrame({
         "hit_acc": [1, 2],

@@ -25,6 +25,10 @@ def _fold_enrichment(accessible_rate: float, inaccessible_rate: float,
     return accessible_rate / max(floor, inaccessible_rate)
 
 
+def _probability_context_label(context_size: int) -> str:
+    return f"k={context_size}, {2*context_size+1}-mer"
+
+
 def _context_observation_totals(
     prob_table, hit_col: str = 'hit', nohit_col: str = 'nohit',
 ):
@@ -103,7 +107,7 @@ def _write_probability_stats_summary(summary_file: str,
     with open(summary_file, 'w') as f:
         f.write(
             f"{title_prefix} Emission Probability Statistics "
-            f"(k={context_size}, {2*context_size+1}-mer)\n"
+            f"({_probability_context_label(context_size)})\n"
         )
         f.write("=" * 60 + "\n\n")
 
@@ -140,7 +144,7 @@ def _write_probability_stats_summary(summary_file: str,
 
             f.write(
                 f"\nPer-context statistics "
-                f"(k={context_size}, {2*context_size+1}-mer):\n"
+                f"({_probability_context_label(context_size)}):\n"
             )
             _write_probability_ratio_summary(f, "Accessible", acc_with_data)
             _write_probability_ratio_summary(f, "Inaccessible", inacc_with_data)
