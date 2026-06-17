@@ -838,20 +838,13 @@ class FiberHMM:
         - transmat: [[f64; 2]; 2]
         - emissionprob: Vec<[f64; 2]> - list of [accessible_prob, footprint_prob] per symbol
         """
-        # Transpose emission probs: Python is (n_states, n_symbols), Rust wants (n_symbols, n_states)
-        emit_transposed = self.emissionprob_.T.tolist()  # Now (n_symbols, 2)
-
-        data = {
-            'startprob': self.startprob_.tolist(),
-            'transmat': self.transmat_.tolist(),
-            'emissionprob': emit_transposed,
-        }
+        data = _rust_model_payload(self)
 
         with open(filepath, 'w') as f:
             json.dump(data, f, indent=2)
 
         print(f"Exported Rust-compatible model to {filepath}")
-        print(f"  Symbols: {len(emit_transposed)}")
+        print(f"  Symbols: {len(data['emissionprob'])}")
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> 'FiberHMM':
@@ -942,6 +935,14 @@ def _swap_hmm_state_order(model) -> None:
     if model.transmat_ is not None:
         model.transmat_ = model.transmat_[[1, 0], :][:, [1, 0]]
     _clear_hmm_log_cache(model)
+
+
+def _rust_model_payload(model) -> dict:
+    return {
+        'startprob': model.startprob_.tolist(),
+        'transmat': model.transmat_.tolist(),
+        'emissionprob': model.emissionprob_.T.tolist(),
+    }
 
 
 # =============================================================================

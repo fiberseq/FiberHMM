@@ -29,6 +29,7 @@ try:
         _normalized_start_counts,
         _normalized_transition_counts,
         _random_training_parameters,
+        _rust_model_payload,
         _swap_hmm_state_order,
         _training_data_for_iteration,
         _training_has_converged,
@@ -52,6 +53,7 @@ except ImportError:
         _normalized_start_counts,
         _normalized_transition_counts,
         _random_training_parameters,
+        _rust_model_payload,
         _swap_hmm_state_order,
         _training_data_for_iteration,
         _training_has_converged,
@@ -506,6 +508,21 @@ class TestModelSerialization:
         np.testing.assert_allclose(restored.startprob_, trained_model.startprob_)
         np.testing.assert_allclose(restored.transmat_, trained_model.transmat_)
         np.testing.assert_allclose(restored.emissionprob_, trained_model.emissionprob_)
+
+    def test_rust_model_payload_transposes_emissions(self):
+        model = FiberHMM()
+        model.startprob_ = np.array([0.25, 0.75])
+        model.transmat_ = np.array([[0.8, 0.2], [0.1, 0.9]])
+        model.emissionprob_ = np.array([
+            [0.1, 0.2, 0.3],
+            [0.9, 0.8, 0.7],
+        ])
+
+        assert _rust_model_payload(model) == {
+            "startprob": [0.25, 0.75],
+            "transmat": [[0.8, 0.2], [0.1, 0.9]],
+            "emissionprob": [[0.1, 0.9], [0.2, 0.8], [0.3, 0.7]],
+        }
 
 
 class TestPredictionMethods:
