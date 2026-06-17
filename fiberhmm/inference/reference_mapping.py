@@ -85,13 +85,21 @@ def _interval_score(scores, index: int) -> int:
     return int(scores[index]) if scores is not None and index < len(scores) else 0
 
 
+def _scored_interval_record(
+    block: Tuple[int, int],
+    scores,
+    index: int,
+) -> Tuple[int, int, int]:
+    return block[0], block[1], _interval_score(scores, index)
+
+
 def _scored_intervals(starts, lengths, scores, query_to_ref, mapper) -> List[Tuple[int, int, int]]:
     blocks = []
     for i, (qstart, length) in enumerate(zip(starts, lengths)):
         block = mapper(qstart, length, query_to_ref)
         if block is None:
             continue
-        blocks.append((block[0], block[1], _interval_score(scores, i)))
+        blocks.append(_scored_interval_record(block, scores, i))
     blocks.sort(key=lambda x: x[0])
     return blocks
 
