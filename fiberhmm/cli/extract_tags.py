@@ -62,6 +62,7 @@ from fiberhmm.inference.reference_mapping import (
 )
 from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.bam_index import ensure_bam_index
+from fiberhmm.io.bed import bed12_row
 from fiberhmm.io.ma_tags import (
     flip_interval_frame,
     flip_intervals_to_seq,
@@ -104,14 +105,16 @@ def _init_extract_worker(params: dict):
 
 def _bed12_row(ref_name, chrom_start, chrom_end, read_id, score, strand,
                blocks, extra_columns=()):
-    block_count = len(blocks)
-    block_sizes = ','.join(str(e - s) for s, e, *_ in blocks)
-    block_starts = ','.join(str(s - chrom_start) for s, *_ in blocks)
-    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{score}\t{strand}\t"
-           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
-    if extra_columns:
-        row += "\t" + "\t".join(str(c) for c in extra_columns)
-    return row
+    return bed12_row(
+        ref_name,
+        chrom_start,
+        chrom_end,
+        read_id,
+        score,
+        strand,
+        blocks,
+        extra_columns,
+    )
 
 
 def _parse_ma_annotations(read, target_name: str):

@@ -8,6 +8,7 @@ import pysam
 
 from fiberhmm.core.model_io import load_model_for_inference
 from fiberhmm.io.bam_header import append_coord_marker, maybe_append_pg
+from fiberhmm.io.bed import bed12_row
 from fiberhmm.inference.engine import (
     CHIMERA_SKIP,
     _extract_fiber_read_from_pysam,
@@ -95,18 +96,24 @@ def _format_region_bed12_row(ref_name, ref_start, ref_end, read_id, strand,
         if score_list is not None:
             score_list.append(0)
 
-    block_count = len(block_starts)
-    block_sizes_str = ','.join(str(size) for size in block_sizes)
-    block_starts_str = ','.join(str(start) for start in block_starts)
-
-    row = (
-        f"{ref_name}\t{ref_start}\t{ref_end}\t{read_id}\t0\t{strand}\t"
-        f"{ref_start}\t{ref_end}\t0,0,0\t{block_count}\t"
-        f"{block_sizes_str}\t{block_starts_str}"
-    )
+    blocks = [
+        (ref_start + start, ref_start + start + size)
+        for start, size in zip(block_starts, block_sizes)
+    ]
+    extra = ()
     if score_list is not None:
-        row += "\t" + ','.join(str(score) for score in score_list)
-    return row
+        extra = (','.join(str(score) for score in score_list),)
+    return bed12_row(
+        ref_name,
+        ref_start,
+        ref_end,
+        read_id,
+        0,
+        strand,
+        blocks,
+        extra,
+        item_rgb='0,0,0',
+    )
 
 
 def _region_read_filter_config(params: dict, *, require_train_rids: bool) -> ReadFilterConfig:
