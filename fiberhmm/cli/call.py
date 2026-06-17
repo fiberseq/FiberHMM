@@ -180,6 +180,12 @@ def _resolve_recall_model(args):
     return None  # reuse apply model
 
 
+def _resolve_call_mode_context(args, model_k, model_mode):
+    mode = args.mode or model_mode or 'pacbio-fiber'
+    k = args.context_size or int(model_k or 3)
+    return mode, k
+
+
 def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
                        recall_nucs) -> int:
     """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off)."""
@@ -351,8 +357,7 @@ def main():
 
     # Resolve mode/k from model metadata
     _, model_k, model_mode = load_model_with_metadata(apply_model_path)
-    mode = args.mode or model_mode or 'pacbio-fiber'
-    k = args.context_size or int(model_k or 3)
+    mode, k = _resolve_call_mode_context(args, model_k, model_mode)
 
     min_llr, uplift = resolve_recall_defaults(args)
 

@@ -15,6 +15,7 @@ from fiberhmm.cli.call import (
     _build_pg_record,
     _check_daf_inputs,
     _resolve_apply_model,
+    _resolve_call_mode_context,
     _resolve_recall_nucs,
     _resolve_recall_model,
     _sniff_daf_input_sources,
@@ -150,6 +151,24 @@ def test_call_model_resolution_requires_model_or_enzyme(capsys):
 
     assert exc.value.code == 1
     assert "one of --model or --enzyme required" in capsys.readouterr().err
+
+
+def test_call_mode_context_resolution_uses_overrides_metadata_and_defaults():
+    args = SimpleNamespace(mode="daf", context_size=5)
+    assert _resolve_call_mode_context(args, model_k=3, model_mode="pacbio-fiber") == (
+        "daf",
+        5,
+    )
+
+    args = SimpleNamespace(mode=None, context_size=None)
+    assert _resolve_call_mode_context(args, model_k=4, model_mode="nanopore-fiber") == (
+        "nanopore-fiber",
+        4,
+    )
+    assert _resolve_call_mode_context(args, model_k=None, model_mode=None) == (
+        "pacbio-fiber",
+        3,
+    )
 
 
 def test_call_recall_nucs_defaults_and_ddda_warnings(capsys):
