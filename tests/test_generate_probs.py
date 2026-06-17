@@ -7,6 +7,7 @@ from fiberhmm.cli.generate_probs import (
     _accumulate_filter_stats,
     _combined_probability_frame,
     _combined_probability_table_path,
+    _context_size_label,
     _generate_probs_skip_reason,
     _max_reads_per_file,
     _new_filter_stats,
@@ -118,6 +119,13 @@ def test_target_bases_for_mode():
     assert _target_bases_for_mode('pacbio-fiber') == ['A']
     assert _target_bases_for_mode('nanopore-fiber') == ['A']
     assert _target_bases_for_mode('daf') == ['C']
+
+
+def test_context_size_label_formats_single_and_range_variants():
+    assert _context_size_label([3]) == "k=3 (7-mer)"
+    assert _context_size_label([3], include_mer_span=False) == "k=3"
+    assert _context_size_label([6, 3, 4]) == "k=3 to k=6 (7-mer to 13-mer)"
+    assert _context_size_label([6, 3, 4], include_mer_span=False) == "k=3 to k=6"
 
 
 def test_record_mm_tag_types_counts_non_empty_specs():

@@ -179,6 +179,21 @@ def _target_bases_for_mode(mode: str) -> List[str]:
     return ['A']
 
 
+def _context_size_label(context_sizes: List[int], include_mer_span: bool = True) -> str:
+    if len(context_sizes) == 1:
+        k = context_sizes[0]
+        label = f"k={k}"
+        if include_mer_span:
+            label += f" ({2*k + 1}-mer)"
+        return label
+    min_k = min(context_sizes)
+    max_k = max(context_sizes)
+    label = f"k={min_k} to k={max_k}"
+    if include_mer_span:
+        label += f" ({2*min_k + 1}-mer to {2*max_k + 1}-mer)"
+    return label
+
+
 def _context_probability_frame(probs: pd.DataFrame, column_name: str) -> pd.DataFrame:
     if len(probs) == 0:
         return pd.DataFrame(columns=['context', column_name])
@@ -385,12 +400,11 @@ def main():
     print(f"  Tables: {tables_dir}/")
     print(f"  Plots:  {plots_dir}/")
     print(f"\nMode: {args.mode}")
+    context_label = _context_size_label(args.context_sizes)
     if len(args.context_sizes) == 1:
-        k = args.context_sizes[0]
-        print(f"Context size: k={k} ({2*k + 1}-mer)")
+        print(f"Context size: {context_label}")
     else:
-        print(f"Context sizes: k={min(args.context_sizes)} to k={max(args.context_sizes)} "
-              f"({2*min(args.context_sizes) + 1}-mer to {2*max(args.context_sizes) + 1}-mer)")
+        print(f"Context sizes: {context_label}")
     print(f"Max reads per sample: {args.max_reads if args.max_reads > 0 else 'all'}")
 
     print("\nFilter thresholds:")
@@ -474,10 +488,10 @@ def main():
             continue
 
         # Save TSV files for requested context sizes
-        if len(args.context_sizes) == 1:
-            print(f"\n  Generating TSV files for k={args.context_sizes[0]}...")
-        else:
-            print(f"\n  Generating TSV files for k={min(args.context_sizes)} to k={max(args.context_sizes)}...")
+        tsv_context_label = _context_size_label(
+            args.context_sizes, include_mer_span=False,
+        )
+        print(f"\n  Generating TSV files for {tsv_context_label}...")
         for ctx_size in args.context_sizes:
             # Accessible probabilities
             _, acc_probs = acc.get_encoding_table(ctx_size)
