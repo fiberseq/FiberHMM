@@ -30,10 +30,15 @@ def _ref_positions_to_half_open_span(ref_start: int, ref_end: int) -> Tuple[int,
     return ref_start, ref_end
 
 
-def query_interval_to_ref_block(qstart, length, query_to_ref) -> Optional[Tuple[int, int]]:
-    """Map a query interval to a reference block using exact aligned endpoints."""
+def _query_interval_bounds(qstart, length) -> Tuple[int, int]:
     qstart = int(qstart)
     qend = qstart + int(length)
+    return qstart, qend
+
+
+def query_interval_to_ref_block(qstart, length, query_to_ref) -> Optional[Tuple[int, int]]:
+    """Map a query interval to a reference block using exact aligned endpoints."""
+    qstart, qend = _query_interval_bounds(qstart, length)
     ref_start = query_to_ref_lookup(query_to_ref, qstart)
     ref_end = query_to_ref_lookup(query_to_ref, qend - 1)
     if ref_start is None or ref_end is None:
@@ -42,8 +47,8 @@ def query_interval_to_ref_block(qstart, length, query_to_ref) -> Optional[Tuple[
 
 
 def _first_ref_in_query_interval(qstart, length, query_to_ref) -> Optional[int]:
-    qstart = int(qstart)
-    length = int(length)
+    qstart, qend = _query_interval_bounds(qstart, length)
+    length = qend - qstart
     for offset in range(length):
         ref_pos = query_to_ref_lookup(query_to_ref, qstart + offset)
         if ref_pos is not None:
@@ -52,9 +57,8 @@ def _first_ref_in_query_interval(qstart, length, query_to_ref) -> Optional[int]:
 
 
 def _last_ref_in_query_interval(qstart, length, query_to_ref) -> Optional[int]:
-    qstart = int(qstart)
-    length = int(length)
-    qend = qstart + length
+    qstart, qend = _query_interval_bounds(qstart, length)
+    length = qend - qstart
     for offset in range(length):
         ref_pos = query_to_ref_lookup(query_to_ref, qend - 1 - offset)
         if ref_pos is not None:
@@ -64,8 +68,8 @@ def _last_ref_in_query_interval(qstart, length, query_to_ref) -> Optional[int]:
 
 def query_interval_to_ref_span(qstart, length, query_to_ref) -> Optional[Tuple[int, int]]:
     """Map a query interval to its reference span, scanning past unaligned ends."""
-    qstart = int(qstart)
-    length = int(length)
+    qstart, qend = _query_interval_bounds(qstart, length)
+    length = qend - qstart
     ref_start = _first_ref_in_query_interval(qstart, length, query_to_ref)
     ref_end = _last_ref_in_query_interval(qstart, length, query_to_ref)
 
