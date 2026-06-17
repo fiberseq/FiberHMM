@@ -675,6 +675,25 @@ def _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores: bool) -> Opti
     )
 
 
+def _read_footprint_tags_for_bed(read, with_scores: bool):
+    try:
+        ns, nl = flip_intervals_to_seq(
+            read.get_tag('ns'), read.get_tag('nl'), read)
+    except KeyError:
+        return None
+
+    if len(ns) == 0:
+        return None
+
+    nq = None
+    if with_scores:
+        try:
+            nq = read.get_tag('nq')
+        except KeyError:
+            pass
+    return ns, nl, nq
+
+
 def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
                                   with_scores: bool = False,
                                   n_cores: int = 1) -> int:
@@ -704,22 +723,10 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
                 continue
 
             # Get footprint tags (molecular frame -> flip to SEQ/query coords)
-            try:
-                ns, nl = flip_intervals_to_seq(
-                    read.get_tag('ns'), read.get_tag('nl'), read)
-            except KeyError:
-                continue  # No footprint tags
-
-            if len(ns) == 0:
+            tags = _read_footprint_tags_for_bed(read, with_scores)
+            if tags is None:
                 continue
-
-            # Get scores if requested
-            nq = None
-            if with_scores:
-                try:
-                    nq = read.get_tag('nq')
-                except KeyError:
-                    pass
+            ns, nl, nq = tags
 
             line = _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores)
             if line is None:

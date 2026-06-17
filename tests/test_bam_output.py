@@ -263,6 +263,35 @@ def test_footprint_bed12_line_from_read_returns_none_without_ref_blocks(monkeypa
     ) is None
 
 
+def test_read_footprint_tags_for_bed_handles_missing_empty_and_scores(monkeypatch):
+    class Read:
+        def __init__(self, tags):
+            self.tags = tags
+
+        def get_tag(self, key):
+            if key not in self.tags:
+                raise KeyError(key)
+            return self.tags[key]
+
+    assert bam_output._read_footprint_tags_for_bed(Read({}), with_scores=True) is None
+
+    monkeypatch.setattr(bam_output, "flip_intervals_to_seq", lambda *_: ([], []))
+    assert bam_output._read_footprint_tags_for_bed(
+        Read({"ns": [1], "nl": [2]}),
+        with_scores=True,
+    ) is None
+
+    monkeypatch.setattr(bam_output, "flip_intervals_to_seq", lambda *_: ([10], [5]))
+    assert bam_output._read_footprint_tags_for_bed(
+        Read({"ns": [1], "nl": [2]}),
+        with_scores=True,
+    ) == ([10], [5], None)
+    assert bam_output._read_footprint_tags_for_bed(
+        Read({"ns": [1], "nl": [2], "nq": [255]}),
+        with_scores=True,
+    ) == ([10], [5], [255])
+
+
 @pytest.mark.parametrize(
     "write_scores",
     [bam_output.create_scores_database, bam_output.append_to_scores_database],
