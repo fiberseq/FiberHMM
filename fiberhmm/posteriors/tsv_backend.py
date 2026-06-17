@@ -76,6 +76,24 @@ def _parse_int_array(values: str) -> np.ndarray:
     return np.array([int(x) for x in values.split(',') if x], dtype=np.int32)
 
 
+def _posterior_record_from_fields(fields, dtype) -> dict:
+    (
+        read_id, chrom, start, end, strand, post_b64,
+        fp_starts_str, fp_sizes_str,
+    ) = fields
+
+    return {
+        'read_id': read_id,
+        'chrom': chrom,
+        'start': start,
+        'end': end,
+        'strand': strand,
+        'posteriors': _decode_posteriors_b64(post_b64, dtype),
+        'fp_starts': _parse_int_array(fp_starts_str),
+        'fp_sizes': _parse_int_array(fp_sizes_str),
+    }
+
+
 def _scan_tsv_for_h5(tsv_path: str, verbose: bool):
     if verbose:
         print(f"  Scanning {tsv_path}...")
@@ -130,13 +148,8 @@ def _create_h5_chrom_groups(h5_file, chrom_counts, string_dtype):
 
 
 def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
-    (
-        read_id, chrom, start, end, strand, post_b64,
-        fp_starts_str, fp_sizes_str,
-    ) = fields
-    posteriors = _decode_posteriors_b64(post_b64, np.float16)
-    fp_starts = _parse_int_array(fp_starts_str)
-    fp_sizes = _parse_int_array(fp_sizes_str)
+    record = _posterior_record_from_fields(fields, np.float16)
+    chrom = record['chrom']
 
     # Get index for this chromosome
     idx = chrom_indices[chrom]
@@ -147,24 +160,24 @@ def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
     # Write data
     grp['posteriors'].create_dataset(
         str(idx),
-        data=posteriors,
+        data=record['posteriors'],
         compression='gzip', compression_opts=4
     )
     grp['footprint_starts'].create_dataset(
         str(idx),
-        data=fp_starts,
+        data=record['fp_starts'],
         compression='gzip'
     )
     grp['footprint_sizes'].create_dataset(
         str(idx),
-        data=fp_sizes,
+        data=record['fp_sizes'],
         compression='gzip'
     )
 
-    grp['fiber_ids'][idx] = read_id
-    grp['fiber_starts'][idx] = start
-    grp['fiber_ends'][idx] = end
-    grp['strands'][idx] = strand
+    grp['fiber_ids'][idx] = record['read_id']
+    grp['fiber_starts'][idx] = record['start']
+    grp['fiber_ends'][idx] = record['end']
+    grp['strands'][idx] = record['strand']
 
 
 def _posterior_tsv_output_path(output_path: str, compress: bool) -> str:
@@ -257,21 +270,7 @@ def parse_posteriors_line(line: str) -> Optional[dict]:
     if fields is None:
         return None
 
-    (
-        read_id, chrom, start, end, strand, post_b64,
-        fp_starts_str, fp_sizes_str,
-    ) = fields
-
-    return {
-        'read_id': read_id,
-        'chrom': chrom,
-        'start': start,
-        'end': end,
-        'strand': strand,
-        'posteriors': _decode_posteriors_b64(post_b64, np.float32),
-        'fp_starts': _parse_int_array(fp_starts_str),
-        'fp_sizes': _parse_int_array(fp_sizes_str),
-    }
+    return _posterior_record_from_fields(fields, np.float32)
 
 
 def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:

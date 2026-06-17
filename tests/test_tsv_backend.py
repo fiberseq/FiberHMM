@@ -145,6 +145,36 @@ def test_scan_tsv_for_h5_collects_metadata_and_chrom_counts(tmp_path):
     assert n_total == 3
 
 
+def test_posterior_record_from_fields_decodes_with_requested_dtype():
+    line = format_region_posterior_line(
+        read_name="read1",
+        chrom="chr1",
+        ref_start=10,
+        ref_end=13,
+        strand="-",
+        posteriors=np.array([0.0, 0.5, 1.0], dtype=np.float32),
+        footprint_starts=np.array([10, 12], dtype=np.int32),
+        footprint_sizes=np.array([1, 2], dtype=np.int32),
+    )
+
+    fields = tsv_backend._split_posteriors_line(line)
+    record = tsv_backend._posterior_record_from_fields(fields, np.float16)
+
+    assert record["read_id"] == "read1"
+    assert record["chrom"] == "chr1"
+    assert record["start"] == 10
+    assert record["end"] == 13
+    assert record["strand"] == "-"
+    assert record["posteriors"].dtype == np.float16
+    np.testing.assert_allclose(
+        record["posteriors"],
+        [0.0, 127 / 255, 1.0],
+        atol=1e-3,
+    )
+    np.testing.assert_array_equal(record["fp_starts"], [10, 12])
+    np.testing.assert_array_equal(record["fp_sizes"], [1, 2])
+
+
 def test_posterior_tsv_metadata_uses_source_bam_basename():
     assert tsv_backend._posterior_tsv_metadata(
         mode="daf",
