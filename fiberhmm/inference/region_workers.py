@@ -40,6 +40,21 @@ _worker_region_params = None
 _worker_recall_state = {}
 
 _PRE_OWNERSHIP_SKIP_REASONS = {"unmapped", "secondary_supplementary"}
+_REGION_SKIP_REASON_KEYS = (
+    'unmapped',
+    'secondary_supplementary',
+    'low_mapq',
+    'too_short',
+    'training_excluded',
+    'no_modifications',
+    'extraction_failed',
+    'no_footprints',
+    'chimera',
+)
+
+
+def _new_region_skip_reasons() -> dict:
+    return {reason: 0 for reason in _REGION_SKIP_REASON_KEYS}
 
 
 def _write_skipped_region_read(outbam, read, skip_reasons: dict, reason: str) -> int:
@@ -140,17 +155,7 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         skipped = 0
         posteriors_written = 0
 
-        skip_reasons = {
-            'unmapped': 0,
-            'secondary_supplementary': 0,
-            'low_mapq': 0,
-            'too_short': 0,
-            'training_excluded': 0,
-            'no_modifications': 0,
-            'extraction_failed': 0,
-            'no_footprints': 0,
-            'chimera': 0,
-        }
+        skip_reasons = _new_region_skip_reasons()
         filter_config = ReadFilterConfig(
             min_mapq=min_mapq,
             min_read_length=min_read_length,
@@ -539,11 +544,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         reads_with_fp = 0
         written = 0
         skipped = 0
-        skip_reasons = {
-            'unmapped': 0, 'secondary_supplementary': 0, 'low_mapq': 0,
-            'too_short': 0, 'training_excluded': 0, 'no_modifications': 0,
-            'extraction_failed': 0, 'no_footprints': 0, 'chimera': 0,
-        }
+        skip_reasons = _new_region_skip_reasons()
         filter_config = ReadFilterConfig(
             min_mapq=min_mapq,
             min_read_length=min_read_length,
