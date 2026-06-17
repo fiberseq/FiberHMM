@@ -21,6 +21,7 @@ from fiberhmm.cli.apply import (
     _resolve_output_bam,
     _resolve_process_unmapped,
     _resolve_scores_db_path,
+    _scores_enabled,
     _print_scores_db_summary,
     _processing_status_message,
     _strand_detection_message,
@@ -96,6 +97,21 @@ def test_apply_output_and_scores_paths():
     args.scores_db = False
     assert _resolve_scores_db_path(args, "sample") is None
     assert _stats_output_prefix("/tmp/out", "sample") == "/tmp/out/sample_footprints"
+
+
+@pytest.mark.parametrize(
+    ("scores", "scores_db", "expected"),
+    [
+        (False, False, False),
+        (True, False, True),
+        (False, True, True),
+        (True, True, True),
+    ],
+)
+def test_apply_scores_enabled(scores, scores_db, expected):
+    assert _scores_enabled(
+        SimpleNamespace(scores=scores, scores_db=scores_db)
+    ) is expected
 
 
 def test_apply_ddda_notice_detection_and_output(capsys):

@@ -192,6 +192,10 @@ def _resolve_scores_db_path(args, dataset: str):
     return os.path.join(args.outdir, f"{dataset}_scores.db")
 
 
+def _scores_enabled(args) -> bool:
+    return bool(args.scores or args.scores_db)
+
+
 def _ddda_notice_needed(model_path: str, enzyme: str = None) -> bool:
     model_basename = os.path.basename(model_path).lower()
     return 'ddda' in model_basename or enzyme == 'ddda'
@@ -394,7 +398,7 @@ def main():
     dataset = _dataset_name(args.input)
 
     # Determine if we need scores
-    with_scores = args.scores or args.scores_db
+    with_scores = _scores_enabled(args)
 
     db_path = _resolve_scores_db_path(args, dataset)
 
