@@ -178,6 +178,16 @@ def test_training_config_includes_base_model_only_when_used():
     assert train._training_config(args)["base_model"] == "base-model.json"
 
 
+def test_training_output_paths_use_canonical_filenames():
+    assert train._training_output_paths("/tmp/out") == {
+        "best_json": "/tmp/out/best-model.json",
+        "best_npz": "/tmp/out/best-model.npz",
+        "all_models": "/tmp/out/all_models.json",
+        "train_reads": "/tmp/out/training-reads.tsv",
+        "config": "/tmp/out/model_config.json",
+    }
+
+
 def test_model_json_record_uses_plain_lists():
     model = SimpleNamespace(
         n_states=2,

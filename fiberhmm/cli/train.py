@@ -974,13 +974,24 @@ def _training_config(args):
     return config
 
 
+def _training_output_paths(outdir: str) -> dict:
+    return {
+        'best_json': os.path.join(outdir, 'best-model.json'),
+        'best_npz': os.path.join(outdir, 'best-model.npz'),
+        'all_models': os.path.join(outdir, 'all_models.json'),
+        'train_reads': os.path.join(outdir, 'training-reads.tsv'),
+        'config': os.path.join(outdir, 'model_config.json'),
+    }
+
+
 def _save_training_outputs(best_model, all_models, args, train_rids) -> None:
     print(f"\nSaving to {args.outdir}")
+    paths = _training_output_paths(args.outdir)
 
     # Save best model in JSON format (recommended - portable, human-readable)
     save_model(
         best_model,
-        os.path.join(args.outdir, 'best-model.json'),
+        paths['best_json'],
         context_size=args.context_size,
         mode=args.mode
     )
@@ -989,7 +1000,7 @@ def _save_training_outputs(best_model, all_models, args, train_rids) -> None:
     # Also save in NPZ for backwards compatibility
     save_model(
         best_model,
-        os.path.join(args.outdir, 'best-model.npz'),
+        paths['best_npz'],
         context_size=args.context_size,
         mode=args.mode
     )
@@ -997,18 +1008,18 @@ def _save_training_outputs(best_model, all_models, args, train_rids) -> None:
 
     # Save all models as JSON list
     all_models_data = [_model_json_record(m) for m in all_models]
-    with open(os.path.join(args.outdir, 'all_models.json'), 'w') as f:
+    with open(paths['all_models'], 'w') as f:
         json.dump(all_models_data, f)
 
     # Save training reads (only if we did training)
     if train_rids:
         pd.DataFrame({'rid': train_rids}).to_csv(
-            os.path.join(args.outdir, 'training-reads.tsv'),
+            paths['train_reads'],
             sep='\t', index=False
         )
 
     # Save config (JSON - human readable)
-    with open(os.path.join(args.outdir, 'model_config.json'), 'w') as f:
+    with open(paths['config'], 'w') as f:
         json.dump(_training_config(args), f, indent=2)
 
 
