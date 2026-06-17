@@ -206,6 +206,25 @@ def _region_fused_recall_options(
     }
 
 
+def _write_region_posterior_record(tsv_file, read, result: dict) -> bool:
+    try:
+        tsv_file.write(
+            format_region_posterior_line(
+                read_name=read.query_name,
+                chrom=read.reference_name,
+                ref_start=read.reference_start,
+                ref_end=read.reference_end,
+                strand=result.get('strand', '.'),
+                posteriors=result['posteriors'],
+                footprint_starts=result['ns'],
+                footprint_sizes=result['nl'],
+            )
+        )
+        return True
+    except Exception:
+        return False
+
+
 def _init_region_worker(model_path: str, params: dict):
     """Initialize worker for region-parallel processing."""
     global _worker_model, _worker_region_params
@@ -355,22 +374,10 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
 
                             # Stream posteriors to TSV immediately (no memory accumulation).
                             if tsv_file and result.get('posteriors') is not None:
-                                try:
-                                    tsv_file.write(
-                                        format_region_posterior_line(
-                                            read_name=read.query_name,
-                                            chrom=read.reference_name,
-                                            ref_start=read.reference_start,
-                                            ref_end=read.reference_end,
-                                            strand=result.get('strand', '.'),
-                                            posteriors=result['posteriors'],
-                                            footprint_starts=result['ns'],
-                                            footprint_sizes=result['nl'],
-                                        )
-                                    )
+                                if _write_region_posterior_record(
+                                    tsv_file, read, result,
+                                ):
                                     posteriors_written += 1
-                                except Exception:
-                                    pass  # Don't crash on posteriors write failure.
                         else:
                             skip_reasons['no_footprints'] += 1
 

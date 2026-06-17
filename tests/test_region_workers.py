@@ -14,6 +14,7 @@ from fiberhmm.inference.region_workers import (
     _region_bed12_blocks,
     _region_fused_recall_options,
     _region_read_route,
+    _write_region_posterior_record,
 )
 
 
@@ -240,3 +241,52 @@ def test_region_fused_recall_options_uses_defaults_and_casts_values():
         "msp_min_size": 25,
         "phase_nrl": 185,
     }
+
+
+def test_write_region_posterior_record_returns_success_status(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    read = SimpleNamespace(
+        query_name="read1",
+        reference_name="chr1",
+        reference_start=10,
+        reference_end=20,
+    )
+    result = {
+        "strand": "+",
+        "posteriors": [0.1, 0.9],
+        "ns": [1],
+        "nl": [2],
+    }
+    seen = {}
+
+    def fake_format(**kwargs):
+        seen.update(kwargs)
+        return "posterior-line\n"
+
+    class Tsv:
+        def __init__(self, fail=False):
+            self.fail = fail
+            self.lines = []
+
+        def write(self, line):
+            if self.fail:
+                raise OSError("write failed")
+            self.lines.append(line)
+
+    monkeypatch.setattr(region_workers, "format_region_posterior_line", fake_format)
+    tsv = Tsv()
+
+    assert _write_region_posterior_record(tsv, read, result)
+    assert tsv.lines == ["posterior-line\n"]
+    assert seen == {
+        "read_name": "read1",
+        "chrom": "chr1",
+        "ref_start": 10,
+        "ref_end": 20,
+        "strand": "+",
+        "posteriors": [0.1, 0.9],
+        "footprint_starts": [1],
+        "footprint_sizes": [2],
+    }
+    assert not _write_region_posterior_record(Tsv(fail=True), read, result)
