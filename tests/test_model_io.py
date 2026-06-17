@@ -12,6 +12,7 @@ import pytest
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.model_io import (
     _json_save_path,
+    _model_file_format,
     _model_json_record,
     _normalize_model_if_requested,
     load_model,
@@ -35,6 +36,12 @@ def sample_model():
 
 
 class TestLoadSaveRoundTrip:
+    def test_model_file_format_classifies_supported_suffixes(self):
+        assert _model_file_format("model.npz") == "npz"
+        assert _model_file_format("model.json") == "json"
+        assert _model_file_format("model.pkl") == "pickle"
+        assert _model_file_format("model.legacy") == "pickle"
+
     def test_normalize_model_if_requested_calls_normalize_conditionally(self):
         class Model:
             def __init__(self):

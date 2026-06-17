@@ -87,10 +87,19 @@ def load_model_for_inference(filepath: str, normalize: bool = True) -> FiberHMM:
     return freeze_model_for_inference(load_model(filepath, normalize=normalize))
 
 
-def _load_model_and_metadata_by_extension(filepath: str) -> Tuple[FiberHMM, int, str]:
+def _model_file_format(filepath: str) -> str:
     if filepath.endswith('.npz'):
-        return _load_npz_with_metadata(filepath)
+        return 'npz'
     if filepath.endswith('.json'):
+        return 'json'
+    return 'pickle'
+
+
+def _load_model_and_metadata_by_extension(filepath: str) -> Tuple[FiberHMM, int, str]:
+    file_format = _model_file_format(filepath)
+    if file_format == 'npz':
+        return _load_npz_with_metadata(filepath)
+    if file_format == 'json':
         return _load_json_with_metadata(filepath)
     # Assume pickle (legacy)
     return _load_pickle_with_metadata(filepath)
