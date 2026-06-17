@@ -176,6 +176,12 @@ def test_posterior_record_from_fields_decodes_with_requested_dtype():
     np.testing.assert_array_equal(record["fp_sizes"], [1, 2])
 
 
+def test_chrom_from_countable_tsv_line_filters_non_data_rows():
+    assert tsv_backend._chrom_from_countable_tsv_line("#metadata:{}\n") is None
+    assert tsv_backend._chrom_from_countable_tsv_line("read_without_chrom\n") is None
+    assert tsv_backend._chrom_from_countable_tsv_line("read1\tchr2L\t0\t3\n") == "chr2L"
+
+
 def test_posterior_tsv_metadata_uses_source_bam_basename():
     assert tsv_backend._posterior_tsv_metadata(
         mode="daf",

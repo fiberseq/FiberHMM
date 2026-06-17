@@ -77,6 +77,16 @@ def _parse_int_array(values: str) -> np.ndarray:
     return np.array([int(x) for x in values.split(',') if x], dtype=np.int32)
 
 
+def _chrom_from_countable_tsv_line(line: str) -> Optional[str]:
+    if line.startswith('#'):
+        return None
+
+    parts = line.strip().split('\t')
+    if len(parts) < 2:
+        return None
+    return parts[1]
+
+
 def _posterior_record_from_fields(fields, dtype) -> dict:
     (
         read_id, chrom, start, end, strand, post_b64,
@@ -108,18 +118,17 @@ def _scan_tsv_for_h5(tsv_path: str, verbose: bool):
             if line.startswith('#metadata:'):
                 metadata = json.loads(line.split(':', 1)[1])
                 continue
-            if line.startswith('#'):
+
+            chrom = _chrom_from_countable_tsv_line(line)
+            if chrom is None:
                 continue
 
-            parts = line.strip().split('\t')
-            if len(parts) >= 2:
-                chrom = parts[1]
-                chrom_counts[chrom] = chrom_counts.get(chrom, 0) + 1
-                n_total += 1
+            chrom_counts[chrom] = chrom_counts.get(chrom, 0) + 1
+            n_total += 1
 
-                if verbose and n_total % 500000 == 0:
-                    print(f"\r    Counted {n_total:,} fibers...", end='')
-                    sys.stdout.flush()
+            if verbose and n_total % 500000 == 0:
+                print(f"\r    Counted {n_total:,} fibers...", end='')
+                sys.stdout.flush()
 
     if verbose:
         print(f"\r    Found {n_total:,} fibers across {len(chrom_counts)} chromosomes")
