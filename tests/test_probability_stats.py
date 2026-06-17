@@ -34,6 +34,11 @@ def test_probability_stats_summary_helpers_filter_contexts_with_data(tmp_path):
     assert stats._probability_ratios_with_data(table).tolist() == [0.2, 0.9]
 
 
+def test_fold_enrichment_uses_floor_for_small_inaccessible_rate():
+    assert stats._fold_enrichment(0.25, 0.1) == 2.5
+    assert stats._fold_enrichment(0.25, 0.0) == 250.0
+
+
 def test_context_observation_totals_accepts_merged_column_names():
     table = pd.DataFrame({
         "hit_acc": [1, 2],

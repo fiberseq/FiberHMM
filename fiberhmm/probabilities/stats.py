@@ -20,6 +20,11 @@ def _modification_rate(counter: 'ContextCounter') -> float:
     return counter.total_modified / max(1, counter.total_positions)
 
 
+def _fold_enrichment(accessible_rate: float, inaccessible_rate: float,
+                     floor: float = 0.001) -> float:
+    return accessible_rate / max(floor, inaccessible_rate)
+
+
 def _context_observation_totals(
     prob_table, hit_col: str = 'hit', nohit_col: str = 'nohit',
 ):
@@ -125,7 +130,7 @@ def _write_probability_stats_summary(summary_file: str,
 
             f.write("\nSeparation:\n")
             f.write(f"  Rate difference:     {acc_rate - inacc_rate:.4f}\n")
-            f.write(f"  Fold enrichment:     {acc_rate / max(0.001, inacc_rate):.2f}x\n")
+            f.write(f"  Fold enrichment:     {_fold_enrichment(acc_rate, inacc_rate):.2f}x\n")
 
             acc_probs, inacc_probs = _probability_tables_for_base(
                 accessible_counters, inaccessible_counters, base, context_size,
