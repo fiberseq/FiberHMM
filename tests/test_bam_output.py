@@ -259,6 +259,20 @@ def test_convert_to_bigbed_with_schema_falls_back_without_shell(monkeypatch, tmp
     assert not sorted_bed.exists()
 
 
+def test_bed12_columns_and_autosql_schema_include_scores_only_when_requested(tmp_path):
+    assert bam_output._bed12_record_columns(with_scores=False)[-1] == "blockStarts"
+    assert bam_output._bed12_record_columns(with_scores=True)[-1] == "blockScores"
+
+    plain_schema = bam_output._autosql_schema(with_scores=False)
+    scored_schema = bam_output._autosql_schema(with_scores=True)
+    assert "blockScores" not in plain_schema
+    assert "blockScores" in scored_schema
+
+    schema_path = tmp_path / "schema.as"
+    bam_output.write_autosql_schema(str(schema_path), with_scores=True)
+    assert schema_path.read_text() == scored_schema
+
+
 def test_extract_bed_from_tagged_bam_closes_bam_when_output_open_fails(
     monkeypatch, tmp_path
 ):

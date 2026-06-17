@@ -19,6 +19,22 @@ from fiberhmm.io.bed import bed12_row
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 
+_BED12_RECORD_COLUMNS = (
+    'chrom',
+    'chromStart',
+    'chromEnd',
+    'name',
+    'score',
+    'strand',
+    'thickStart',
+    'thickEnd',
+    'itemRgb',
+    'blockCount',
+    'blockSizes',
+    'blockStarts',
+)
+
+
 def _samtools_index_cmd(output_bam: str, threads: int) -> List[str]:
     return ['samtools', 'index', '-@', str(threads), output_bam]
 
@@ -425,10 +441,7 @@ def write_bed12_records_direct(records: List[dict], filepath: str, with_scores: 
     if not records:
         return
 
-    cols = ['chrom', 'chromStart', 'chromEnd', 'name', 'score', 'strand',
-            'thickStart', 'thickEnd', 'itemRgb', 'blockCount', 'blockSizes', 'blockStarts']
-    if with_scores:
-        cols.append('blockScores')
+    cols = _bed12_record_columns(with_scores)
 
     with open(filepath, 'w') as f:
         for rec in records:
@@ -519,12 +532,14 @@ def write_chrom_sizes(bam_path: str, output_path: str) -> str:
     return output_path
 
 
-def write_autosql_schema(filepath: str, with_scores: bool = False):
-    """
-    Write autoSql schema file for bigBed conversion.
+def _bed12_record_columns(with_scores: bool = False) -> List[str]:
+    cols = list(_BED12_RECORD_COLUMNS)
+    if with_scores:
+        cols.append('blockScores')
+    return cols
 
-    This defines the extended BED12+ format with blockScores.
-    """
+
+def _autosql_schema(with_scores: bool = False) -> str:
     schema = '''table fiberFootprints
 "FiberHMM footprint calls with per-footprint confidence scores"
     (
@@ -546,9 +561,17 @@ def write_autosql_schema(filepath: str, with_scores: bool = False):
 '''
     schema += '''    )
 '''
+    return schema
 
+
+def write_autosql_schema(filepath: str, with_scores: bool = False):
+    """
+    Write autoSql schema file for bigBed conversion.
+
+    This defines the extended BED12+ format with blockScores.
+    """
     with open(filepath, 'w') as f:
-        f.write(schema)
+        f.write(_autosql_schema(with_scores))
 
 
 def convert_to_bigbed_with_schema(bed_file: str, chrom_sizes: str,
