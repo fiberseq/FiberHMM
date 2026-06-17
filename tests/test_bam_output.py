@@ -152,6 +152,54 @@ def test_scores_database_closes_connection_when_record_parsing_fails(
     assert not connection.committed
 
 
+def test_scores_database_create_and_append_write_expected_rows(tmp_path):
+    db_path = str(tmp_path / "scores.db")
+    first = {
+        "name": "read-a",
+        "chrom": "chr1",
+        "chromStart": 100,
+        "chromEnd": 150,
+        "strand": "+",
+        "blockCount": 2,
+        "blockSizes": "10,20",
+        "blockStarts": "0,30",
+        "blockScores": "100,200",
+    }
+    second = {
+        "name": "read-b",
+        "chrom": "chr2",
+        "chromStart": 20,
+        "chromEnd": 30,
+        "strand": "-",
+        "blockCount": 1,
+        "blockSizes": "5",
+        "blockStarts": "2",
+    }
+
+    bam_output.create_scores_database([first], db_path)
+    bam_output.append_to_scores_database([second], db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        reads = conn.execute(
+            "SELECT read_id, chrom, start, end, strand, n_footprints, mean_score "
+            "FROM reads ORDER BY read_id"
+        ).fetchall()
+        footprints = conn.execute(
+            "SELECT read_id, footprint_idx, rel_start, size, score "
+            "FROM footprints ORDER BY read_id, footprint_idx"
+        ).fetchall()
+
+    assert reads == [
+        ("read-a", "chr1", 100, 150, "+", 2, 150.0),
+        ("read-b", "chr2", 20, 30, "-", 1, 0.0),
+    ]
+    assert footprints == [
+        ("read-a", 0, 0, 10, 100),
+        ("read-a", 1, 30, 20, 200),
+        ("read-b", 0, 2, 5, 0),
+    ]
+
+
 def test_samtools_cat_bams_writes_list_and_cleans_on_success(monkeypatch, tmp_path):
     inputs = [str(tmp_path / f"region_{i}.bam") for i in range(3)]
     output_bam = str(tmp_path / "out.bam")
