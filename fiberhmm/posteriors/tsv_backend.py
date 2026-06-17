@@ -38,6 +38,38 @@ def _open_text_file(path: str, mode: str) -> TextIO:
     return open(path, mode)
 
 
+def _split_posteriors_line(line: str):
+    if line.startswith('#'):
+        return None
+
+    parts = line.strip().split('\t')
+    if len(parts) < 6:
+        return None
+
+    read_id, chrom, start, end, strand, post_b64 = parts[:6]
+    fp_starts_str = parts[6] if len(parts) > 6 else ''
+    fp_sizes_str = parts[7] if len(parts) > 7 else ''
+    return (
+        read_id,
+        chrom,
+        int(start),
+        int(end),
+        strand,
+        post_b64,
+        fp_starts_str,
+        fp_sizes_str,
+    )
+
+
+def _decode_posteriors_b64(post_b64: str, dtype) -> np.ndarray:
+    post_bytes = base64.b64decode(post_b64)
+    return np.frombuffer(post_bytes, dtype=np.uint8).astype(dtype) / 255.0
+
+
+def _parse_int_array(values: str) -> np.ndarray:
+    return np.array([int(x) for x in values.split(',') if x], dtype=np.int32)
+
+
 class PosteriorsTSVWriter:
     """
     Simple streaming writer for posteriors in TSV format.
@@ -128,34 +160,24 @@ class PosteriorsTSVWriter:
 
 def parse_posteriors_line(line: str) -> Optional[dict]:
     """Parse a single line from posteriors TSV."""
-    if line.startswith('#'):
+    fields = _split_posteriors_line(line)
+    if fields is None:
         return None
 
-    parts = line.strip().split('\t')
-    if len(parts) < 6:
-        return None
-
-    read_id, chrom, start, end, strand, post_b64 = parts[:6]
-    fp_starts_str = parts[6] if len(parts) > 6 else ''
-    fp_sizes_str = parts[7] if len(parts) > 7 else ''
-
-    # Decode posteriors
-    post_bytes = base64.b64decode(post_b64)
-    posteriors = np.frombuffer(post_bytes, dtype=np.uint8).astype(np.float32) / 255.0
-
-    # Parse footprint arrays
-    fp_starts = np.array([int(x) for x in fp_starts_str.split(',') if x], dtype=np.int32)
-    fp_sizes = np.array([int(x) for x in fp_sizes_str.split(',') if x], dtype=np.int32)
+    (
+        read_id, chrom, start, end, strand, post_b64,
+        fp_starts_str, fp_sizes_str,
+    ) = fields
 
     return {
         'read_id': read_id,
         'chrom': chrom,
-        'start': int(start),
-        'end': int(end),
+        'start': start,
+        'end': end,
         'strand': strand,
-        'posteriors': posteriors,
-        'fp_starts': fp_starts,
-        'fp_sizes': fp_sizes,
+        'posteriors': _decode_posteriors_b64(post_b64, np.float32),
+        'fp_starts': _parse_int_array(fp_starts_str),
+        'fp_sizes': _parse_int_array(fp_sizes_str),
     }
 
 
@@ -238,21 +260,17 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
 
         def process_line(line):
             nonlocal n_written
-            parts = line.strip().split('\t')
-            if len(parts) < 6:
+            fields = _split_posteriors_line(line)
+            if fields is None:
                 return
 
-            read_id, chrom, start, end, strand, post_b64 = parts[:6]
-            fp_starts_str = parts[6] if len(parts) > 6 else ''
-            fp_sizes_str = parts[7] if len(parts) > 7 else ''
-
-            # Decode posteriors
-            post_bytes = base64.b64decode(post_b64)
-            posteriors = np.frombuffer(post_bytes, dtype=np.uint8).astype(np.float16) / 255.0
-
-            # Parse footprint arrays
-            fp_starts = np.array([int(x) for x in fp_starts_str.split(',') if x], dtype=np.int32)
-            fp_sizes = np.array([int(x) for x in fp_sizes_str.split(',') if x], dtype=np.int32)
+            (
+                read_id, chrom, start, end, strand, post_b64,
+                fp_starts_str, fp_sizes_str,
+            ) = fields
+            posteriors = _decode_posteriors_b64(post_b64, np.float16)
+            fp_starts = _parse_int_array(fp_starts_str)
+            fp_sizes = _parse_int_array(fp_sizes_str)
 
             # Get index for this chromosome
             idx = chrom_indices[chrom]
@@ -278,8 +296,8 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
             )
 
             grp['fiber_ids'][idx] = read_id
-            grp['fiber_starts'][idx] = int(start)
-            grp['fiber_ends'][idx] = int(end)
+            grp['fiber_starts'][idx] = start
+            grp['fiber_ends'][idx] = end
             grp['strands'][idx] = strand
 
             n_written += 1
