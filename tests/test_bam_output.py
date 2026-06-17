@@ -56,6 +56,25 @@ def test_remove_file_if_exists_handles_missing_and_present_files(tmp_path):
     assert not present.exists()
 
 
+def test_raise_if_command_failed_preserves_process_output():
+    ok = subprocess.CompletedProcess(["samtools"], 0, stdout="ok", stderr="")
+    bam_output._raise_if_command_failed(ok, "samtools ok")
+
+    failed = subprocess.CompletedProcess(
+        ["samtools"],
+        2,
+        stdout="partial",
+        stderr="failed",
+    )
+    with pytest.raises(subprocess.CalledProcessError) as exc:
+        bam_output._raise_if_command_failed(failed, "samtools cat")
+
+    assert exc.value.returncode == 2
+    assert exc.value.cmd == "samtools cat"
+    assert exc.value.output == "partial"
+    assert exc.value.stderr == "failed"
+
+
 def test_convert_to_bigbed_sorts_without_shell(monkeypatch, tmp_path):
     bed = tmp_path / "calls.bed"
     chrom_sizes = tmp_path / "chrom.sizes"

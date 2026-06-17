@@ -186,6 +186,17 @@ def _remove_file_if_exists(path: str) -> None:
         os.remove(path)
 
 
+def _raise_if_command_failed(result: subprocess.CompletedProcess, label: str) -> None:
+    if result.returncode == 0:
+        return
+    raise subprocess.CalledProcessError(
+        result.returncode,
+        label,
+        output=result.stdout,
+        stderr=result.stderr,
+    )
+
+
 def _run_samtools_list_command(
     bam_files: List[str],
     list_file: str,
@@ -195,11 +206,7 @@ def _run_samtools_list_command(
     _write_bam_list_file(bam_files, list_file)
     try:
         result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise subprocess.CalledProcessError(
-                result.returncode, label,
-                output=result.stdout, stderr=result.stderr,
-            )
+        _raise_if_command_failed(result, label)
     finally:
         _remove_file_if_exists(list_file)
 
