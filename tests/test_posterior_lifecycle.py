@@ -92,6 +92,27 @@ def test_hdf5_chrom_metadata_helper_appends_default_strand():
     }
 
 
+def test_hdf5_fiber_array_dataset_helper_writes_expected_groups(tmp_path):
+    with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
+        grp = hdf5_backend.create_posterior_chrom_group(h5, "chr1")
+
+        hdf5_backend._write_fiber_array_datasets(
+            grp,
+            2,
+            {
+                "posteriors": np.array([0.1, 0.9], dtype=np.float32),
+                "ref_positions": np.array([10, -1], dtype=np.int64),
+                "footprint_starts": [3],
+                "footprint_sizes": [20],
+            },
+        )
+
+        np.testing.assert_allclose(grp["posteriors"]["2"][:], [0.1, 0.9], atol=1e-3)
+        np.testing.assert_array_equal(grp["ref_positions"]["2"][:], [10, -1])
+        np.testing.assert_array_equal(grp["footprint_starts"]["2"][:], [3])
+        np.testing.assert_array_equal(grp["footprint_sizes"]["2"][:], [20])
+
+
 def test_hdf5_ref_positions_use_core_mapping_with_insertions():
     class Read:
         is_unmapped = False

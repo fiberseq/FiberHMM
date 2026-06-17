@@ -107,6 +107,29 @@ def _append_fiber_metadata(meta: Dict[str, List], fiber: Dict) -> None:
     meta['strands'].append(fiber.get('strand', '.'))
 
 
+def _write_fiber_array_datasets(group, index: int, fiber: Dict) -> None:
+    idx = str(index)
+    _create_gzip_dataset(
+        group['posteriors'],
+        idx,
+        fiber['posteriors'].astype(np.float16),
+        compression_opts=4,
+    )
+
+    ref_pos = _int32_array(fiber.get('ref_positions'))
+    _create_gzip_dataset(
+        group['ref_positions'],
+        idx,
+        ref_pos,
+        compression_opts=4,
+    )
+
+    fp_starts = _int32_array(fiber.get('footprint_starts'))
+    fp_sizes = _int32_array(fiber.get('footprint_sizes'))
+    _create_gzip_dataset(group['footprint_starts'], idx, fp_starts)
+    _create_gzip_dataset(group['footprint_sizes'], idx, fp_sizes)
+
+
 class PosteriorWriter:
     """
     Streaming writer for HMM posteriors to HDF5.
@@ -211,26 +234,7 @@ class PosteriorWriter:
             idx = start_idx + i
 
             # Write variable-length arrays with compression
-            _create_gzip_dataset(
-                grp['posteriors'],
-                str(idx),
-                fiber['posteriors'].astype(np.float16),
-                compression_opts=4,
-            )
-
-            ref_pos = _int32_array(fiber.get('ref_positions'))
-            _create_gzip_dataset(
-                grp['ref_positions'],
-                str(idx),
-                ref_pos,
-                compression_opts=4,
-            )
-
-            fp_starts = _int32_array(fiber.get('footprint_starts'))
-            fp_sizes = _int32_array(fiber.get('footprint_sizes'))
-
-            _create_gzip_dataset(grp['footprint_starts'], str(idx), fp_starts)
-            _create_gzip_dataset(grp['footprint_sizes'], str(idx), fp_sizes)
+            _write_fiber_array_datasets(grp, idx, fiber)
 
             # Accumulate metadata for final arrays
             _append_fiber_metadata(meta, fiber)
