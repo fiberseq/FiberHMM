@@ -578,6 +578,30 @@ def _extract_msps(read, bed_out, with_scores: bool,
     return len(blocks)
 
 
+def _safe_mm_ml_per_mod(read) -> dict:
+    """Parse MM/ML tags with FiberHMM's safe parser, returning per-mod arrays."""
+    from fiberhmm.core.bam_reader import parse_mm_ml_per_mod_type
+
+    tag_errors = (KeyError, ValueError)
+    mm_tag = get_preferred_tag(read, 'MM', 'Mm', '', errors=tag_errors)
+    ml_raw = get_preferred_tag(read, 'ML', 'Ml', None, errors=tag_errors)
+    if not mm_tag or ml_raw is None:
+        return {}
+    try:
+        if len(ml_raw) == 0:
+            return {}
+    except TypeError:
+        pass
+    seq = read.query_sequence
+    if seq is None:
+        return {}
+    try:
+        ml_bytes = compact_ml_value(ml_raw)
+        return parse_mm_ml_per_mod_type(mm_tag, ml_bytes, seq, read.is_reverse)
+    except Exception:
+        return {}
+
+
 def _parse_mod_positions_safe(read, target_mod_codes):
     """Safe replacement for pysam's ``read.modified_bases``.
 
@@ -591,25 +615,7 @@ def _parse_mod_positions_safe(read, target_mod_codes):
     (e.g. ``{'a'}`` for m6A, ``{'m'}`` for 5mC, ``{'u'}`` for dU).
     Empty list on any failure (missing tags, parse error, etc.).
     """
-    from fiberhmm.core.bam_reader import parse_mm_ml_per_mod_type
-    tag_errors = (KeyError, ValueError)
-    mm_tag = get_preferred_tag(read, 'MM', 'Mm', '', errors=tag_errors)
-    ml_raw = get_preferred_tag(read, 'ML', 'Ml', None, errors=tag_errors)
-    if not mm_tag or ml_raw is None:
-        return []
-    try:
-        if len(ml_raw) == 0:
-            return []
-    except TypeError:
-        pass
-    ml_bytes = compact_ml_value(ml_raw)
-    seq = read.query_sequence
-    if seq is None:
-        return []
-    try:
-        per_mod = parse_mm_ml_per_mod_type(mm_tag, ml_bytes, seq, read.is_reverse)
-    except Exception:
-        return []
+    per_mod = _safe_mm_ml_per_mod(read)
     out = []
     for (base, mod_code), (pos_arr, qual_arr) in per_mod.items():
         if mod_code not in target_mod_codes:
@@ -728,24 +734,7 @@ def _deam_mm_ml_positions(read, aligned_pairs, prob_threshold: int) -> list:
     # is single-char-code-only, so the rare ChEBI 55797 numeric encoding
     # isn't detected here -- users with modkit-style numeric codes should
     # run `samtools calmd` + standard encode or rely on R/Y fallback.
-    from fiberhmm.core.bam_reader import parse_mm_ml_per_mod_type
-
-    tag_errors = (KeyError, ValueError)
-    mm_tag = get_preferred_tag(read, 'MM', 'Mm', '', errors=tag_errors)
-    ml_raw = get_preferred_tag(read, 'ML', 'Ml', None, errors=tag_errors)
-    per_mod = {}
-    if mm_tag and ml_raw is not None:
-        try:
-            if len(ml_raw) > 0:
-                ml_bytes = compact_ml_value(ml_raw)
-                seq = read.query_sequence
-                if seq is not None:
-                    per_mod = parse_mm_ml_per_mod_type(
-                        mm_tag, ml_bytes, seq, read.is_reverse,
-                    )
-        except Exception:
-            per_mod = {}
-
+    per_mod = _safe_mm_ml_per_mod(read)
     n = len(aligned_pairs)
     positions = []
     for (base, mod_code), (pos_arr, qual_arr) in per_mod.items():
@@ -759,7 +748,9 @@ def _deam_mm_ml_positions(read, aligned_pairs, prob_threshold: int) -> list:
             flavor = 0
         else:
             continue
-        for query_pos, prob in zip(pos_arr.tolist(), qual_arr.tolist()):
+        for query_pos, prob in zip(pos_arr, qual_arr):
+            query_pos = int(query_pos)
+            prob = int(prob)
             if prob < prob_threshold:
                 continue
             if query_pos < 0 or query_pos >= n:

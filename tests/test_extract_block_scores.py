@@ -794,6 +794,10 @@ def test_parse_mod_positions_safe_avoids_numpy_tolist(monkeypatch):
         ml_bytes=[200, 180],
     )
 
+    per_mod = extract_tags._safe_mm_ml_per_mod(read)
+    pos_arr, qual_arr = per_mod[("A", "a")]
+    assert list(pos_arr) == [2, 5]
+    assert list(qual_arr) == [200, 180]
     assert _parse_mod_positions_safe(read, {"a"}) == [(2, 200), (5, 180)]
 
 
