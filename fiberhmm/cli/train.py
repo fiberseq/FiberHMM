@@ -396,14 +396,16 @@ def sample_reads(bam_files: list, read_count: int, seed: int,
 
     # Shuffle and truncate
     np.random.shuffle(all_reads)
+    return _top_up_training_reads(all_reads, read_count)
 
-    # If we need more reads and have some, sample with replacement
-    if len(all_reads) < read_count and len(all_reads) > 0:
-        extra_needed = read_count - len(all_reads)
-        extra_indices = np.random.choice(len(all_reads), extra_needed, replace=True)
-        all_reads.extend([all_reads[i] for i in extra_indices])
 
-    return all_reads[:read_count]
+def _top_up_training_reads(reads: list, read_count: int) -> list:
+    # If we need more reads and have some, sample with replacement.
+    if len(reads) < read_count and len(reads) > 0:
+        extra_needed = read_count - len(reads)
+        extra_indices = np.random.choice(len(reads), extra_needed, replace=True)
+        reads.extend([reads[i] for i in extra_indices])
+    return reads[:read_count]
 
 
 def _shuffled_training_arrays(encoded_reads: list, n_iterations: int) -> dict:

@@ -324,6 +324,18 @@ def test_reads_per_training_file_has_one_read_minimum():
     assert train._reads_per_training_file(2, 5) == 1
 
 
+def test_top_up_training_reads_truncates_or_samples_with_replacement():
+    assert train._top_up_training_reads([], 3) == []
+    assert train._top_up_training_reads(["a", "b", "c"], 2) == ["a", "b"]
+
+    np.random.seed(0)
+    topped = train._top_up_training_reads(["a", "b"], 5)
+
+    assert len(topped) == 5
+    assert topped[:2] == ["a", "b"]
+    assert set(topped) <= {"a", "b"}
+
+
 def test_build_model_from_base_copies_transitions_and_replaces_emissions(monkeypatch):
     base_model = SimpleNamespace(
         startprob_=np.array([0.7, 0.3]),
