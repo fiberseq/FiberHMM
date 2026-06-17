@@ -264,9 +264,8 @@ def save_model(model: FiberHMM, filepath: str,
     _save_json(model, filepath, context_size, mode)
 
 
-def _save_json(model: FiberHMM, filepath: str, context_size: int, mode: str):
-    """Save model in JSON format (human-readable, portable)."""
-    data = {
+def _model_json_record(model: FiberHMM, context_size: int, mode: str) -> dict:
+    return {
         'model_type': 'FiberHMM',
         'version': '2.0',
         'n_states': model.n_states,
@@ -276,6 +275,11 @@ def _save_json(model: FiberHMM, filepath: str, context_size: int, mode: str):
         'context_size': context_size,
         'mode': mode
     }
+
+
+def _save_json(model: FiberHMM, filepath: str, context_size: int, mode: str):
+    """Save model in JSON format (human-readable, portable)."""
+    data = _model_json_record(model, context_size, mode)
     with open(filepath, 'w') as f:
         json.dump(data, f, indent=2)
 

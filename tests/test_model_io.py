@@ -12,6 +12,7 @@ import pytest
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.model_io import (
     _json_save_path,
+    _model_json_record,
     _normalize_model_if_requested,
     load_model,
     load_model_for_inference,
@@ -109,6 +110,18 @@ class TestLoadSaveRoundTrip:
         assert 'emissionprob' in data
         assert data['context_size'] == 3
         assert data['mode'] == 'pacbio-fiber'
+
+    def test_model_json_record_uses_plain_serializable_values(self, sample_model):
+        record = _model_json_record(sample_model, context_size=5, mode="daf")
+
+        assert record["model_type"] == "FiberHMM"
+        assert record["version"] == "2.0"
+        assert record["n_states"] == 2
+        assert record["context_size"] == 5
+        assert record["mode"] == "daf"
+        assert record["startprob"] == sample_model.startprob_.tolist()
+        assert record["transmat"] == sample_model.transmat_.tolist()
+        assert record["emissionprob"] == sample_model.emissionprob_.tolist()
 
     def test_legacy_pickle_load_unfreezes_log_cache(self, tmp_path):
         """Loaded public models should recompute logs unless workers re-freeze them."""
