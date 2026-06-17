@@ -427,6 +427,17 @@ class TestPredictionMethods:
         assert posteriors.shape == (len(simple_observations), 2)
         np.testing.assert_allclose(posteriors.sum(axis=1), np.ones(len(simple_observations)), rtol=1e-5)
 
+    def test_posterior_matrix_matches_predict_proba(self, trained_model, simple_observations):
+        """Private posterior helper stays aligned with public predict_proba."""
+        obs = simple_observations.ravel()
+
+        trained_model._compute_log_probs()
+
+        np.testing.assert_allclose(
+            trained_model._posterior_matrix(obs),
+            trained_model.predict_proba(obs),
+        )
+
     def test_score_returns_finite(self, trained_model, simple_observations):
         """Test that score() returns a finite value."""
         X = simple_observations.reshape(-1, 1)

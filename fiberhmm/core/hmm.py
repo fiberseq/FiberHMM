@@ -561,6 +561,15 @@ class FiberHMM:
         path, _ = self._viterbi(obs)
         return path
 
+    def _posterior_matrix(self, obs: np.ndarray) -> np.ndarray:
+        """Compute normalized posterior probabilities for flat observations."""
+        alpha, _ = self._forward(obs)
+        beta = self._backward(obs)
+
+        log_gamma = alpha + beta
+        log_gamma -= _logsumexp_axis1(log_gamma)[:, np.newaxis]
+        return np.exp(log_gamma)
+
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         """
         Compute posterior probabilities P(state | observations) at each position.
@@ -577,21 +586,7 @@ class FiberHMM:
         self._compute_log_probs()
 
         obs = _as_observation_array(X)
-
-        # Forward-backward
-        alpha, log_prob = self._forward(obs)
-        beta = self._backward(obs)
-
-        # Compute gamma (posteriors) in log space
-        log_gamma = alpha + beta
-
-        # Normalize each row (subtract logsumexp to get proper probabilities)
-        log_gamma -= _logsumexp_axis1(log_gamma)[:, np.newaxis]
-
-        # Convert from log space
-        gamma = np.exp(log_gamma)
-
-        return gamma
+        return self._posterior_matrix(obs)
 
     def predict_with_confidence(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -615,12 +610,7 @@ class FiberHMM:
         path, _ = self._viterbi(obs)
 
         # Get posteriors
-        alpha, log_prob = self._forward(obs)
-        beta = self._backward(obs)
-
-        log_gamma = alpha + beta
-        log_gamma -= _logsumexp_axis1(log_gamma)[:, np.newaxis]
-        gamma = np.exp(log_gamma)
+        gamma = self._posterior_matrix(obs)
 
         # Confidence is the posterior probability of the predicted state
         T = len(path)
@@ -650,12 +640,7 @@ class FiberHMM:
         path, _ = self._viterbi(obs)
 
         # Get posteriors via forward-backward
-        alpha, log_prob = self._forward(obs)
-        beta = self._backward(obs)
-
-        log_gamma = alpha + beta
-        log_gamma -= _logsumexp_axis1(log_gamma)[:, np.newaxis]
-        posteriors = np.exp(log_gamma)
+        posteriors = self._posterior_matrix(obs)
 
         return path, posteriors
 
