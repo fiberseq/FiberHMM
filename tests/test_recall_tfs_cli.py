@@ -72,6 +72,11 @@ def test_recall_tfs_daf_md_fallback_predicate():
     ) is False
 
 
+def test_recall_tfs_short_v2_nuc_count_uses_open_threshold():
+    assert recall_tfs._short_v2_nuc_count({}, 90) == 0
+    assert recall_tfs._short_v2_nuc_count({"ns": [1], "nl": [0, 1, 89, 90]}, 90) == 2
+
+
 def test_recall_tfs_reverse_read_preserves_nq(monkeypatch):
     # A reverse read: stored ns/nl/nq are molecular, but recall_read returns kept
     # nucs in SEQ frame. The nq lookup must be built in SEQ frame too, else the

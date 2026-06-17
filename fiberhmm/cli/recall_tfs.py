@@ -172,6 +172,12 @@ def _needs_daf_md_result(seq, tags: dict, mode) -> bool:
     return not has_iupac_encoding(seq) and not _has_mm_ml_tags(tags)
 
 
+def _short_v2_nuc_count(tags: dict, unify_threshold: int) -> int:
+    if 'ns' not in tags or 'nl' not in tags:
+        return 0
+    return sum(1 for length in tags['nl'] if 0 < int(length) < unify_threshold)
+
+
 def _make_payload(read, mode=None) -> dict:
     """Extract only the tag data workers need from a pysam read.
 
@@ -220,8 +226,7 @@ def _process_payload_record(payload) -> tuple:
     has_ns = 'ns' in tags and 'nl' in tags
     if has_ns:
         stats['v2'] = 1
-        nl_list = tags['nl']
-        v2_short_count = sum(1 for length in nl_list if 0 < int(length) < unify_threshold)
+        v2_short_count = _short_v2_nuc_count(tags, unify_threshold)
     else:
         v2_short_count = 0
 
