@@ -14,6 +14,7 @@ from fiberhmm.inference.nuc_recaller import (
     _ordered_positive_nuc_calls,
     _phase_cut_window,
     _promoted_nuc_from_tf_call,
+    _residue_intervals_around_nuc,
     _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
     _total_call_llr,
@@ -119,6 +120,13 @@ def test_nuc_from_protected_calls_uses_outer_span_and_floor():
     assert nuc.el > 0
     assert nuc.er > 0
     assert _nuc_from_protected_calls(calls, nuc_min_size=16) is None
+
+
+def test_residue_intervals_around_nuc_reports_flanks_only():
+    nuc = NucCall(10, 20, 200, 255, 255)
+
+    assert _residue_intervals_around_nuc(0, 40, nuc) == [(0, 10), (30, 10)]
+    assert _residue_intervals_around_nuc(10, 30, nuc) == []
 
 
 def test_bounded_interval_handles_clamping_and_invalid_spans():

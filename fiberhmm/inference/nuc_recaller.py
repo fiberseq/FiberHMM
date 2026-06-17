@@ -131,6 +131,16 @@ def _nuc_from_protected_calls(calls, nuc_min_size: int):
     )
 
 
+def _residue_intervals_around_nuc(a: int, b: int, nuc: NucCall) -> List[Interval]:
+    residues: List[Interval] = []
+    nuc_end = nuc.start + nuc.length
+    if nuc.start > a:
+        residues.append((a, nuc.start - a))
+    if b > nuc_end:
+        residues.append((nuc_end, b - nuc_end))
+    return residues
+
+
 def _refine_fragment(obs, a, b, llr_hit, llr_miss,
                      nuc_min_size, edge_min_llr, edge_min_opps):
     """Edge-refine one protected fragment into a NucCall (or demote it).
@@ -155,11 +165,7 @@ def _refine_fragment(obs, a, b, llr_hit, llr_miss,
         # protected island) -> not a nucleosome, demote the whole fragment.
         access.append((a, b - a))
         return None, access
-    nuc_end = nuc.start + nuc.length
-    if nuc.start > a:
-        access.append((a, nuc.start - a))
-    if b > nuc_end:
-        access.append((nuc_end, b - nuc_end))
+    access.extend(_residue_intervals_around_nuc(a, b, nuc))
     return nuc, access
 
 
