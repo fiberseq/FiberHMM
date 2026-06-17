@@ -124,6 +124,10 @@ NON_TARGET_CODE = 4096
 UNMETHYLATED_OFFSET = 4097
 NON_A_CODE = NON_TARGET_CODE  # Backwards compatibility
 
+_CIGAR_QUERY_REF_OPS = {0, 7, 8}  # M, =, X
+_CIGAR_QUERY_ONLY_OPS = {1, 4}    # I, S
+_CIGAR_REF_ONLY_OPS = {2, 3}      # D, N
+
 
 @dataclass
 class FiberRead:
@@ -161,30 +165,17 @@ def get_reference_positions(read: pysam.AlignedSegment) -> List[Optional[int]]:
     ref_pos = read.reference_start
 
     for op, length in read.cigartuples:
-        if op == 0:  # M - match/mismatch
+        if op in _CIGAR_QUERY_REF_OPS:
             for _ in range(length):
                 ref_positions.append(ref_pos)
                 ref_pos += 1
-        elif op == 1:  # I - insertion to reference
+        elif op in _CIGAR_QUERY_ONLY_OPS:
             for _ in range(length):
                 ref_positions.append(None)
-        elif op == 2:  # D - deletion from reference
+        elif op in _CIGAR_REF_ONLY_OPS:
             ref_pos += length
-        elif op == 3:  # N - skip (intron)
-            ref_pos += length
-        elif op == 4:  # S - soft clip
-            for _ in range(length):
-                ref_positions.append(None)
-        elif op == 5:  # H - hard clip
-            pass  # Not in query sequence
-        elif op == 7:  # = - sequence match
-            for _ in range(length):
-                ref_positions.append(ref_pos)
-                ref_pos += 1
-        elif op == 8:  # X - sequence mismatch
-            for _ in range(length):
-                ref_positions.append(ref_pos)
-                ref_pos += 1
+        elif op == 5:  # H - hard clip, not in query sequence.
+            pass
 
     return ref_positions
 
