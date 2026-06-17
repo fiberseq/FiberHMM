@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from fiberhmm.inference.circular import (
+    _center_copy_bounds,
     circular_intervals_overlap,
     project_center_nuc_calls,
     project_center_runs,
@@ -45,6 +46,10 @@ def test_tile_sequence_and_mods_replicates_positions_across_three_copies():
     seq, mods = tile_sequence_and_mods("ACGT", {1, 3, 99})
     assert seq == "ACGTACGTACGT"
     assert mods == {1, 3, 5, 7, 9, 11}
+
+
+def test_center_copy_bounds_selects_middle_tile():
+    assert _center_copy_bounds(100) == (100, 200)
 
 
 def test_project_center_runs_projects_wrapped_middle_copy():

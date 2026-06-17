@@ -24,6 +24,11 @@ def tile_sequence_and_mods(sequence: str, mod_positions: Iterable[int]) -> tuple
     return sequence * 3, tiled_mods
 
 
+def _center_copy_bounds(read_length: int) -> tuple[int, int]:
+    n = int(read_length)
+    return n, 2 * n
+
+
 def _project_center_interval(s_raw, e_raw, read_length: int) -> Optional[Interval]:
     n = int(read_length)
     s = int(s_raw)
@@ -31,8 +36,7 @@ def _project_center_interval(s_raw, e_raw, read_length: int) -> Optional[Interva
     if n <= 0 or e <= s:
         return None
 
-    center_start = n
-    center_end = 2 * n
+    center_start, center_end = _center_copy_bounds(n)
     if center_start <= s < center_end:
         qstart = s - center_start
         length = min(e - s, n)
