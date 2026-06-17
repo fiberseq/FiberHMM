@@ -137,6 +137,25 @@ def _target_bases_for_mode(mode: str) -> List[str]:
     return ['A']
 
 
+def _context_probability_frame(probs: pd.DataFrame, column_name: str) -> pd.DataFrame:
+    if len(probs) == 0:
+        return pd.DataFrame(columns=['context', column_name])
+    return probs[['context', 'ratio']].rename(columns={'ratio': column_name})
+
+
+def _combined_probability_frame(
+    accessible_probs: pd.DataFrame,
+    inaccessible_probs: pd.DataFrame,
+) -> pd.DataFrame:
+    accessible = _context_probability_frame(accessible_probs, 'accessible_prob')
+    inaccessible = _context_probability_frame(inaccessible_probs, 'inaccessible_prob')
+    combined = accessible.merge(inaccessible, on='context', how='outer')
+    combined = combined.fillna(0.0)
+    combined = combined.sort_values('context').reset_index(drop=True)
+    combined['encode'] = range(len(combined))
+    return combined[['encode', 'context', 'accessible_prob', 'inaccessible_prob']]
+
+
 def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 mode: str, args, max_reads: int = 0, verbose: bool = False) -> Tuple[int, dict]:
     """
@@ -451,18 +470,7 @@ def main():
             if len(acc_probs) == 0 and len(inacc_probs) == 0:
                 continue
 
-            # Use context as key (more robust than encode which may differ)
-            acc_df = acc_probs[['context', 'ratio']].rename(columns={'ratio': 'accessible_prob'}) if len(acc_probs) > 0 else pd.DataFrame(columns=['context', 'accessible_prob'])
-            inacc_df = inacc_probs[['context', 'ratio']].rename(columns={'ratio': 'inaccessible_prob'}) if len(inacc_probs) > 0 else pd.DataFrame(columns=['context', 'inaccessible_prob'])
-
-            # Outer merge to include all observed contexts from both samples
-            combined = acc_df.merge(inacc_df, on='context', how='outer')
-            combined = combined.fillna(0.0)  # Missing contexts get 0 probability
-            combined = combined.sort_values('context').reset_index(drop=True)
-            combined['encode'] = range(len(combined))
-
-            # Reorder columns
-            combined = combined[['encode', 'context', 'accessible_prob', 'inaccessible_prob']]
+            combined = _combined_probability_frame(acc_probs, inacc_probs)
 
             combined_file = os.path.join(tables_dir, f"{base_name}_{base}_k{ctx_size}_probs.tsv")
             combined.to_csv(combined_file, sep='\t', index=False)
