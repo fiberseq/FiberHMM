@@ -35,6 +35,23 @@ def _merged_probability_table(acc_probs, inacc_probs):
     return merged
 
 
+def _filtered_log_odds(merged, eps: float = 0.001) -> np.ndarray:
+    if len(merged) == 0:
+        return np.array([])
+    acc_clipped = np.clip(merged['ratio_acc'].values, eps, 1 - eps)
+    inacc_clipped = np.clip(merged['ratio_inacc'].values, eps, 1 - eps)
+    log_odds = np.log2(acc_clipped / inacc_clipped)
+    return log_odds[np.isfinite(log_odds)]
+
+
+def _top_differentiating_contexts(merged, n: int = 15):
+    if len(merged) == 0:
+        return merged.copy()
+    ranked = merged.copy()
+    ranked['diff'] = ranked['ratio_acc'] - ranked['ratio_inacc']
+    return ranked.nlargest(n, 'diff')
+
+
 def _write_probability_stats_summary(summary_file: str,
                                      accessible_counters: Dict[str, 'ContextCounter'],
                                      inaccessible_counters: Dict[str, 'ContextCounter'],
@@ -193,31 +210,23 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
             # 3. Log-odds (separation score) - use merged data
             ax = axes[1, 0]
             # Calculate log-odds for each context (use merged for alignment)
-            eps = 0.001
-            if len(merged) > 0:
-                acc_clipped = np.clip(merged['ratio_acc'].values, eps, 1 - eps)
-                inacc_clipped = np.clip(merged['ratio_inacc'].values, eps, 1 - eps)
-                log_odds = np.log2(acc_clipped / inacc_clipped)
-
-                # Filter extreme values
-                log_odds_filtered = log_odds[np.isfinite(log_odds)]
-                if len(log_odds_filtered) > 0:
-                    bins = np.linspace(-5, 10, 51)
-                    ax.hist(log_odds_filtered, bins=bins, color='purple', alpha=0.7, edgecolor='white')
-                    ax.axvline(0, color='black', linestyle='-', linewidth=1)
-                    ax.axvline(np.median(log_odds_filtered), color='red', linestyle='--',
-                              label=f'Median: {np.median(log_odds_filtered):.2f}')
-                    ax.set_xlabel('Log2(P_accessible / P_inaccessible)')
-                    ax.set_ylabel('Number of contexts')
-                    ax.set_title('Separation Score (Log-Odds)')
-                    ax.legend()
+            log_odds_filtered = _filtered_log_odds(merged)
+            if len(log_odds_filtered) > 0:
+                bins = np.linspace(-5, 10, 51)
+                ax.hist(log_odds_filtered, bins=bins, color='purple', alpha=0.7, edgecolor='white')
+                ax.axvline(0, color='black', linestyle='-', linewidth=1)
+                ax.axvline(np.median(log_odds_filtered), color='red', linestyle='--',
+                          label=f'Median: {np.median(log_odds_filtered):.2f}')
+                ax.set_xlabel('Log2(P_accessible / P_inaccessible)')
+                ax.set_ylabel('Number of contexts')
+                ax.set_title('Separation Score (Log-Odds)')
+                ax.legend()
 
             # 4. Top differentiating contexts (use merged)
             ax = axes[1, 1]
             if len(merged) > 0:
                 # Find contexts with best separation
-                merged['diff'] = merged['ratio_acc'] - merged['ratio_inacc']
-                top_contexts = merged.nlargest(15, 'diff')
+                top_contexts = _top_differentiating_contexts(merged)
 
                 contexts = top_contexts['context'].values
                 acc_vals = top_contexts['ratio_acc'].values

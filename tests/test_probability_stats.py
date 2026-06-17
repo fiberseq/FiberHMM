@@ -82,3 +82,21 @@ def test_merged_probability_table_aligns_contexts_and_totals():
     assert merged["ratio_inacc"].tolist() == [0.1]
     assert merged["total_acc"].tolist() == [10]
     assert merged["total_inacc"].tolist() == [10]
+
+
+def test_probability_plot_helpers_filter_log_odds_and_rank_contexts():
+    merged = pd.DataFrame({
+        "context": ["AAA", "AAC", "AAG"],
+        "ratio_acc": [0.8, 0.01, 1.0],
+        "ratio_inacc": [0.2, 0.5, 0.0],
+    })
+
+    log_odds = stats._filtered_log_odds(merged, eps=0.01)
+
+    assert log_odds.round(3).tolist() == [2.0, -5.644, 6.629]
+
+    top = stats._top_differentiating_contexts(merged, n=2)
+
+    assert top["context"].tolist() == ["AAG", "AAA"]
+    assert top["diff"].round(1).tolist() == [1.0, 0.6]
+    assert "diff" not in merged.columns
