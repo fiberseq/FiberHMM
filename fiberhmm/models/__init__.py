@@ -42,6 +42,23 @@ _SEQ_REQUIRED = {'hia5'}
 _SEQ_DEFAULT  = 'pacbio'   # default when --seq omitted for hia5
 
 
+def _seq_key_for_enzyme(enz: str, seq: str | None) -> str | None:
+    if enz in _SEQ_REQUIRED:
+        if seq is None:
+            warnings.warn(
+                f"--seq not specified for {enz}; defaulting to '{_SEQ_DEFAULT}'. "
+                f"Use --seq nanopore if your data is Nanopore.",
+                stacklevel=3,
+            )
+            return _SEQ_DEFAULT
+        return seq.lower()
+    return None
+
+
+def _valid_enzyme_seq_choices() -> list[str]:
+    return [f"{e}/{s or 'any'}" for e, s in sorted(_BUNDLED)]
+
+
 def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) -> str:
     """Return the absolute path to a bundled model.
 
@@ -65,28 +82,12 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
     """
     enz = enzyme.lower()
     t   = tool.lower()
-
-    # Normalise seq: only matters for enzymes in _SEQ_REQUIRED
-    if enz in _SEQ_REQUIRED:
-        if seq is None:
-            warnings.warn(
-                f"--seq not specified for {enz}; defaulting to '{_SEQ_DEFAULT}'. "
-                f"Use --seq nanopore if your data is Nanopore.",
-                stacklevel=2,
-            )
-            seq_key: str | None = _SEQ_DEFAULT
-        else:
-            seq_key = seq.lower()
-    else:
-        if seq is not None:
-            # accepted but ignored — no platform distinction for this enzyme
-            pass
-        seq_key = None
+    seq_key = _seq_key_for_enzyme(enz, seq)
 
     key = (enz, seq_key)
     entry = _BUNDLED.get(key)
     if entry is None:
-        choices = [f"{e}/{s or 'any'}" for e, s in sorted(_BUNDLED)]
+        choices = _valid_enzyme_seq_choices()
         raise KeyError(
             f"No bundled model for enzyme={enzyme!r} seq={seq!r} tool={tool!r}. "
             f"Valid enzyme/seq combos: {choices}. "
