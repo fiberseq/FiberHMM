@@ -7,6 +7,7 @@ import pytest
 
 from fiberhmm.posteriors.region_tsv import (
     REGION_POSTERIORS_HEADER,
+    format_posterior_metadata_line,
     format_region_posterior_line,
 )
 from fiberhmm.posteriors import tsv_backend
@@ -188,6 +189,12 @@ def test_posterior_tsv_metadata_uses_source_bam_basename():
         "source_bam": "input.bam",
         "format_version": 1,
     }
+
+
+def test_format_posterior_metadata_line_uses_metadata_prefix():
+    assert format_posterior_metadata_line({"mode": "daf"}) == (
+        '#metadata:{"mode": "daf"}\n'
+    )
 
 
 def test_tsv_to_h5_writes_metadata_and_arrays(tmp_path):

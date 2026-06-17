@@ -28,6 +28,7 @@ import numpy as np
 
 from fiberhmm.posteriors.region_tsv import (
     REGION_POSTERIORS_HEADER,
+    format_posterior_metadata_line,
     format_region_posterior_line,
     _posterior_tsv_metadata,
 )
@@ -213,7 +214,7 @@ class PosteriorsTSVWriter:
 
         # Write header with metadata
         metadata = _posterior_tsv_metadata(mode, context_size, edge_trim, source_bam)
-        self._file.write(f"#metadata:{json.dumps(metadata)}\n")
+        self._file.write(format_posterior_metadata_line(metadata))
         self._file.write(REGION_POSTERIORS_HEADER)
 
         self.n_written = 0

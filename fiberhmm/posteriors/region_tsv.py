@@ -96,6 +96,10 @@ def _posterior_tsv_metadata(
     }
 
 
+def format_posterior_metadata_line(metadata: dict) -> str:
+    return f"#metadata:{json.dumps(metadata)}\n"
+
+
 def _valid_region_tsv_files(temp_tsv_files: Iterable[tuple[int, str]]) -> list[tuple[int, str]]:
     return [
         (idx, path)
@@ -129,7 +133,7 @@ def merge_region_posteriors_tsv(
             edge_trim,
             source_bam,
         )
-        outfile.write(f"#metadata:{json.dumps(metadata)}\n")
+        outfile.write(format_posterior_metadata_line(metadata))
         outfile.write(REGION_POSTERIORS_HEADER)
 
         n_fibers = 0
