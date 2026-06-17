@@ -411,6 +411,59 @@ def _h5_indexed_array(group, index: int, default):
     return group[str(index)][:]
 
 
+def _project_posterior_to_reference(
+    posteriors: np.ndarray,
+    ref_positions: np.ndarray,
+    region_start: int,
+    region_end: int,
+    method: str = 'max',
+) -> np.ndarray:
+    region_len = region_end - region_start
+    result = np.zeros(region_len, dtype=np.float32)
+    counts = np.zeros(region_len, dtype=np.int32)
+
+    for q_idx, ref_pos in enumerate(ref_positions):
+        if ref_pos < 0 or ref_pos < region_start or ref_pos >= region_end:
+            continue
+
+        rel_pos = ref_pos - region_start
+        post_val = posteriors[q_idx]
+
+        if method == 'max':
+            result[rel_pos] = max(result[rel_pos], post_val)
+        elif method == 'mean':
+            result[rel_pos] += post_val
+            counts[rel_pos] += 1
+        else:
+            if counts[rel_pos] == 0:
+                result[rel_pos] = post_val
+                counts[rel_pos] = 1
+
+    if method == 'mean':
+        valid = counts > 0
+        result[valid] /= counts[valid]
+
+    return result
+
+
+def _footprint_coverage_array(
+    footprint_starts: np.ndarray,
+    footprint_sizes: np.ndarray,
+    region_start: int,
+    region_end: int,
+) -> np.ndarray:
+    region_len = region_end - region_start
+    coverage = np.zeros(region_len, dtype=np.float32)
+
+    for fp_start, fp_size in zip(footprint_starts, footprint_sizes):
+        s = max(0, fp_start - region_start)
+        e = min(region_len, fp_start + fp_size - region_start)
+        if s < e:
+            coverage[s:e] = 1.0
+
+    return coverage
+
+
 def _fiber_overlap_indices(
     starts: np.ndarray,
     ends: np.ndarray,
@@ -875,44 +928,21 @@ class FiberPosterior:
         if self.ref_positions is None:
             raise ValueError("No reference position mapping")
 
-        region_len = region_end - region_start
-        result = np.zeros(region_len, dtype=np.float32)
-        counts = np.zeros(region_len, dtype=np.int32)
-
-        for q_idx, ref_pos in enumerate(self.ref_positions):
-            if ref_pos < 0 or ref_pos < region_start or ref_pos >= region_end:
-                continue
-
-            rel_pos = ref_pos - region_start
-            post_val = self.posteriors[q_idx]
-
-            if method == 'max':
-                result[rel_pos] = max(result[rel_pos], post_val)
-            elif method == 'mean':
-                result[rel_pos] += post_val
-                counts[rel_pos] += 1
-            else:
-                if counts[rel_pos] == 0:
-                    result[rel_pos] = post_val
-                    counts[rel_pos] = 1
-
-        if method == 'mean':
-            valid = counts > 0
-            result[valid] /= counts[valid]
-
-        return result
+        return _project_posterior_to_reference(
+            self.posteriors,
+            self.ref_positions,
+            region_start,
+            region_end,
+            method,
+        )
 
     def get_footprint_coverage(self, region_start: int, region_end: int) -> np.ndarray:
-        region_len = region_end - region_start
-        coverage = np.zeros(region_len, dtype=np.float32)
-
-        for fp_start, fp_size in zip(self.footprint_starts, self.footprint_sizes):
-            s = max(0, fp_start - region_start)
-            e = min(region_len, fp_start + fp_size - region_start)
-            if s < e:
-                coverage[s:e] = 1.0
-
-        return coverage
+        return _footprint_coverage_array(
+            self.footprint_starts,
+            self.footprint_sizes,
+            region_start,
+            region_end,
+        )
 
     def spans_region(self, start: int, end: int) -> bool:
         return self.start <= start and self.end >= end

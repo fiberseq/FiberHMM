@@ -185,6 +185,67 @@ def test_h5_indexed_array_reads_present_group_or_returns_default(tmp_path):
         assert export_posteriors._h5_indexed_array(None, 2, default) is default
 
 
+def test_posterior_projection_and_coverage_helpers():
+    posteriors = np.array([0.2, 0.6, 0.4, 0.8], dtype=np.float32)
+    ref_positions = np.array([10, 11, 11, -1], dtype=np.int32)
+
+    np.testing.assert_allclose(
+        export_posteriors._project_posterior_to_reference(
+            posteriors, ref_positions, 10, 13, method="max",
+        ),
+        np.array([0.2, 0.6, 0.0], dtype=np.float32),
+    )
+    np.testing.assert_allclose(
+        export_posteriors._project_posterior_to_reference(
+            posteriors, ref_positions, 10, 13, method="mean",
+        ),
+        np.array([0.2, 0.5, 0.0], dtype=np.float32),
+    )
+    np.testing.assert_allclose(
+        export_posteriors._project_posterior_to_reference(
+            posteriors, ref_positions, 10, 13, method="first",
+        ),
+        np.array([0.2, 0.6, 0.0], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        export_posteriors._footprint_coverage_array(
+            np.array([9, 12], dtype=np.int32),
+            np.array([3, 5], dtype=np.int32),
+            10,
+            15,
+        ),
+        np.ones(5, dtype=np.float32),
+    )
+
+
+def test_fiber_posterior_methods_delegate_projection_and_coverage():
+    fiber = export_posteriors.FiberPosterior(
+        fiber_id="read-a",
+        start=10,
+        end=30,
+        strand="+",
+        posteriors=np.array([0.2, 0.6], dtype=np.float32),
+        ref_positions=np.array([10, 11], dtype=np.int32),
+        footprint_starts=np.array([10], dtype=np.int32),
+        footprint_sizes=np.array([2], dtype=np.int32),
+    )
+
+    np.testing.assert_allclose(
+        fiber.project_to_reference(10, 13),
+        np.array([0.2, 0.6, 0.0], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        fiber.get_footprint_coverage(10, 13),
+        np.array([1.0, 1.0, 0.0], dtype=np.float32),
+    )
+    assert fiber.spans_region(12, 20)
+    assert not fiber.spans_region(5, 20)
+
+    fiber.ref_positions = None
+    with pytest.raises(ValueError, match="No reference position mapping"):
+        fiber.project_to_reference(10, 13)
+
+
 def test_fiber_region_index_helpers_select_expected_records():
     starts = np.array([0, 10, 20, 30], dtype=np.int32)
     ends = np.array([9, 25, 40, 50], dtype=np.int32)
