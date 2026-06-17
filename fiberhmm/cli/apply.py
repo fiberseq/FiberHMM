@@ -179,6 +179,18 @@ def _dataset_name(input_bam: str) -> str:
     return os.path.basename(input_bam).replace('.bam', '')
 
 
+def _resolve_output_bam(args, dataset: str, stdout_mode: bool) -> str:
+    if stdout_mode:
+        return '-'
+    return os.path.join(args.outdir, f"{dataset}_footprints.bam")
+
+
+def _resolve_scores_db_path(args, dataset: str):
+    if not args.scores_db:
+        return None
+    return os.path.join(args.outdir, f"{dataset}_scores.db")
+
+
 def _ddda_notice_needed(model_path: str, enzyme: str = None) -> bool:
     model_basename = os.path.basename(model_path).lower()
     return 'ddda' in model_basename or enzyme == 'ddda'
@@ -323,10 +335,7 @@ def main():
     # Determine if we need scores
     with_scores = args.scores or args.scores_db
 
-    # Setup scores database path if needed
-    db_path = None
-    if args.scores_db:
-        db_path = os.path.join(args.outdir, f"{dataset}_scores.db")
+    db_path = _resolve_scores_db_path(args, dataset)
 
     _print_processing_settings(
         args, mode, context_size, n_cores, msp_min_size, with_scores, db_path,
@@ -350,10 +359,7 @@ def main():
     process_unmapped = _resolve_process_unmapped(args, use_streaming)
 
     # === MAIN PROCESSING ===
-    if stdout_mode:
-        output_bam = '-'
-    else:
-        output_bam = os.path.join(args.outdir, f"{dataset}_footprints.bam")
+    output_bam = _resolve_output_bam(args, dataset, stdout_mode)
     if args.max_reads:
         print(f"Processing BAM (limited to {args.max_reads:,} reads)...")
     else:

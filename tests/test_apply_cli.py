@@ -13,7 +13,9 @@ from fiberhmm.cli.apply import (
     _resolve_context_size,
     _resolve_mode,
     _resolve_model_path,
+    _resolve_output_bam,
     _resolve_process_unmapped,
+    _resolve_scores_db_path,
     _use_streaming_pipeline,
 )
 
@@ -70,6 +72,19 @@ def test_apply_dataset_name():
     assert _dataset_name("-") == "stdin"
     assert _dataset_name("/tmp/sample.bam") == "sample"
     assert _dataset_name("/tmp/sample.cram") == "sample.cram"
+
+
+def test_apply_output_and_scores_paths():
+    args = SimpleNamespace(outdir="/tmp/out", scores_db=True)
+
+    assert _resolve_output_bam(args, "sample", stdout_mode=False) == (
+        "/tmp/out/sample_footprints.bam"
+    )
+    assert _resolve_output_bam(args, "sample", stdout_mode=True) == "-"
+    assert _resolve_scores_db_path(args, "sample") == "/tmp/out/sample_scores.db"
+
+    args.scores_db = False
+    assert _resolve_scores_db_path(args, "sample") is None
 
 
 def test_apply_ddda_notice_detection_and_output(capsys):
