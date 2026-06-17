@@ -601,6 +601,71 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
     return tf_calls, kept_nucs, msps
 
 
+def _write_legacy_recall_tags(read, read_length: int,
+                              kept_nucs: Sequence[Tuple[int, int]],
+                              msps: Sequence[Tuple[int, int]],
+                              tf_intervals: Sequence[Tuple[int, int]],
+                              nq_for_kept_nucs: Optional[Sequence[int]],
+                              nq_values: Sequence[int],
+                              downstream_compat: bool) -> None:
+    import array as pyarray
+
+    # Build the ns/nl track. In default mode it's nucleosomes only.
+    # In downstream_compat mode, TF calls are merged in, sorted by start.
+    if downstream_compat and tf_intervals:
+        combined = list(kept_nucs) + list(tf_intervals)
+    else:
+        combined = list(kept_nucs)
+    legacy_nuc_rows = [
+        (piece[0], piece[1], None)
+        for interval in combined
+        for piece in split_circular_interval(interval[0], interval[1], read_length)
+    ]
+    legacy_nuc_rows.sort(key=lambda t: (int(t[0]), int(t[1])))
+    ns = [int(s) for s, _, _ in legacy_nuc_rows]
+    nl = [int(length) for _, length, _ in legacy_nuc_rows]
+
+    legacy_msps = [
+        piece
+        for interval in msps
+        for piece in split_circular_interval(interval[0], interval[1], read_length)
+    ]
+    legacy_msps.sort(key=lambda t: (int(t[0]), int(t[1])))
+    a_s = [int(s) for s, _ in legacy_msps]
+    a_l = [int(length) for _, length in legacy_msps]
+
+    if ns:
+        read.set_tag('ns', pyarray.array('I', ns))
+        read.set_tag('nl', pyarray.array('I', nl))
+    else:
+        clear_tags(read, ('ns', 'nl', 'nq'))
+    if a_s:
+        read.set_tag('as', pyarray.array('I', a_s))
+        read.set_tag('al', pyarray.array('I', a_l))
+    else:
+        clear_tags(read, ('as', 'al', 'aq'))
+    # nq must have len == len(ns) per fibertools invariant. If we wrote
+    # new ns/nl without fresh scores, drop any stale nq from the input BAM
+    # to avoid len(nq) != len(ns) failing ft validate (see fibertools-rs
+    # bamannotations.rs set_qual assert).
+    if ns and nq_for_kept_nucs is not None:
+        legacy_nq_rows = []
+        for interval, q in zip(kept_nucs, nq_values):
+            for piece in split_circular_interval(interval[0], interval[1], read_length):
+                legacy_nq_rows.append((piece[0], piece[1], max(0, min(255, int(q)))))
+        legacy_nq_rows.sort(key=lambda t: (int(t[0]), int(t[1])))
+        legacy_nq = [q for _, _, q in legacy_nq_rows]
+        if len(legacy_nq) != len(ns):
+            legacy_nq = [0] * len(ns)
+        read.set_tag('nq', pyarray.array('B', legacy_nq))
+    elif ns:
+        clear_tags(read, ('nq',))
+    # Same for aq: stale per-msp qualities from input would mismatch
+    # the refreshed as/al length.
+    if a_s:
+        clear_tags(read, ('aq',))
+
+
 def write_ma_tags(read, read_length: int,
                   tf_calls: Sequence[TFCall],
                   kept_nucs: Sequence[Tuple[int, int]],
@@ -636,8 +701,6 @@ def write_ma_tags(read, read_length: int,
     ``downstream_compat=True`` and ``also_write_legacy=False`` are mutually
     exclusive; compat mode always writes the legacy track.
     """
-    import array as pyarray
-
     if downstream_compat and not also_write_legacy:
         raise ValueError(
             "downstream_compat=True requires also_write_legacy=True "
@@ -767,58 +830,13 @@ def write_ma_tags(read, read_length: int,
         clear_tags(read, ('MA', 'AQ', 'AN'))
 
     if also_write_legacy:
-        # Build the ns/nl track. In default mode it's nucleosomes only.
-        # In downstream_compat mode, TF calls are merged in, sorted by start.
-        if downstream_compat and tf_intervals:
-            combined = list(kept_nucs) + list(tf_intervals)
-        else:
-            combined = list(kept_nucs)
-        legacy_nuc_rows = [
-            (piece[0], piece[1], None)
-            for interval in combined
-            for piece in split_circular_interval(interval[0], interval[1], read_length)
-        ]
-        legacy_nuc_rows.sort(key=lambda t: (int(t[0]), int(t[1])))
-        ns = [int(s) for s, _, _ in legacy_nuc_rows]
-        nl = [int(length) for _, length, _ in legacy_nuc_rows]
-
-        legacy_msps = [
-            piece
-            for interval in msps
-            for piece in split_circular_interval(interval[0], interval[1], read_length)
-        ]
-        legacy_msps.sort(key=lambda t: (int(t[0]), int(t[1])))
-        a_s = [int(s) for s, _ in legacy_msps]
-        a_l = [int(length) for _, length in legacy_msps]
-
-        if ns:
-            read.set_tag('ns', pyarray.array('I', ns))
-            read.set_tag('nl', pyarray.array('I', nl))
-        else:
-            clear_tags(read, ('ns', 'nl', 'nq'))
-        if a_s:
-            read.set_tag('as', pyarray.array('I', a_s))
-            read.set_tag('al', pyarray.array('I', a_l))
-        else:
-            clear_tags(read, ('as', 'al', 'aq'))
-        # nq must have len == len(ns) per fibertools invariant. If we wrote
-        # new ns/nl without fresh scores, drop any stale nq from the input BAM
-        # to avoid len(nq) != len(ns) failing ft validate (see fibertools-rs
-        # bamannotations.rs set_qual assert).
-        if ns and nq_for_kept_nucs is not None:
-            legacy_nq_rows = []
-            for interval, q in zip(kept_nucs, nq_values):
-                for piece in split_circular_interval(interval[0], interval[1], read_length):
-                    legacy_nq_rows.append((piece[0], piece[1], max(0, min(255, int(q)))))
-            legacy_nq_rows.sort(key=lambda t: (int(t[0]), int(t[1])))
-            legacy_nq = [q for _, _, q in legacy_nq_rows]
-            if len(legacy_nq) != len(ns):
-                legacy_nq = [0] * len(ns)
-            read.set_tag('nq', pyarray.array('B',
-                          legacy_nq))
-        elif ns:
-            clear_tags(read, ('nq',))
-        # Same for aq: stale per-msp qualities from input would mismatch
-        # the refreshed as/al length.
-        if a_s:
-            clear_tags(read, ('aq',))
+        _write_legacy_recall_tags(
+            read,
+            read_length,
+            kept_nucs,
+            msps,
+            tf_intervals,
+            nq_for_kept_nucs,
+            nq_values,
+            downstream_compat,
+        )
