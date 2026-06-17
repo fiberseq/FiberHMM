@@ -330,12 +330,16 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
         context_size = int(params['context_size'])
         msp_min_size = int(params['msp_min_size'])
         nuc_min_size = int(params.get('nuc_min_size', 85))
-        min_mapq = int(params['min_mapq'])
         prob_threshold = int(params['prob_threshold'])
-        min_read_length = int(params['min_read_length'])
         with_scores = params['with_scores']
-        train_rids = params['train_rids']
         io_threads = int(params.get('io_threads', 4))
+        filter_config = ReadFilterConfig(
+            min_mapq=int(params['min_mapq']),
+            min_read_length=int(params['min_read_length']),
+            primary_only=True,
+            process_unmapped=False,
+            train_rids=params['train_rids'],
+        )
 
         total_reads = 0
         reads_with_footprints = 0
@@ -350,20 +354,10 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
                     return RegionBedResult(temp_bed_path, 0, 0)
 
                 for read in read_iter:
-                    if read.is_unmapped or read.is_secondary or read.is_supplementary:
+                    if streaming_skip_reason(read, filter_config):
                         continue
 
                     if not _read_starts_in_region(read, start, end):
-                        continue
-
-                    if read.mapping_quality < min_mapq:
-                        continue
-
-                    if read.query_alignment_length is None or read.query_alignment_length < min_read_length:
-                        continue
-
-                    read_id = read.query_name
-                    if train_rids and read_id in train_rids:
                         continue
 
                     try:
@@ -388,6 +382,7 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
                         ref_start = read.reference_start
                         ref_end = read.reference_end
                         strand = '-' if read.is_reverse else '+'
+                        read_id = read.query_name
                         read_length = ref_end - ref_start
 
                         ns = result['ns']
