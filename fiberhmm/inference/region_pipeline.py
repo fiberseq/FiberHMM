@@ -41,6 +41,37 @@ from fiberhmm.posteriors.region_tsv import (
 )
 
 
+def _base_region_worker_params(
+    *,
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    min_mapq: int,
+    prob_threshold: int,
+    min_read_length: int,
+    with_scores: bool,
+    train_rids,
+    primary_only: bool,
+) -> dict:
+    return {
+        'edge_trim': edge_trim,
+        'circular': circular,
+        'mode': mode,
+        'context_size': context_size,
+        'msp_min_size': msp_min_size,
+        'nuc_min_size': nuc_min_size,
+        'min_mapq': min_mapq,
+        'prob_threshold': prob_threshold,
+        'min_read_length': min_read_length,
+        'with_scores': with_scores,
+        'train_rids': train_rids,
+        'primary_only': primary_only,
+    }
+
+
 def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    model_path: str, train_rids: Set[str],
                                    edge_trim: int, circular: bool,
@@ -97,23 +128,25 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
     try:
         # Prepare parameters (will be passed to initializer)
-        params = {
-            'edge_trim': edge_trim,
-            'circular': circular,
-            'mode': mode,
-            'context_size': context_size,
-            'msp_min_size': msp_min_size,
-            'nuc_min_size': nuc_min_size,
-            'min_mapq': min_mapq,
-            'prob_threshold': prob_threshold,
-            'min_read_length': min_read_length,
-            'with_scores': with_scores,
-            'train_rids': train_rids,
-            'primary_only': primary_only,
+        params = _base_region_worker_params(
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            min_mapq=min_mapq,
+            prob_threshold=prob_threshold,
+            min_read_length=min_read_length,
+            with_scores=with_scores,
+            train_rids=train_rids,
+            primary_only=primary_only,
+        )
+        params.update({
             'return_posteriors': return_posteriors,
             'write_msps': write_msps,
             'io_threads': io_threads,
-        }
+        })
 
         # Work items - include temp H5 path if posteriors requested
         work_items = []
@@ -281,20 +314,20 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
     temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_bed_tmp_', dir=output_dir)
 
     try:
-        params = {
-            'edge_trim': edge_trim,
-            'circular': circular,
-            'mode': mode,
-            'context_size': context_size,
-            'msp_min_size': msp_min_size,
-            'nuc_min_size': nuc_min_size,
-            'min_mapq': min_mapq,
-            'prob_threshold': prob_threshold,
-            'min_read_length': min_read_length,
-            'with_scores': with_scores,
-            'train_rids': train_rids,
-            'primary_only': primary_only
-        }
+        params = _base_region_worker_params(
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            min_mapq=min_mapq,
+            prob_threshold=prob_threshold,
+            min_read_length=min_read_length,
+            with_scores=with_scores,
+            train_rids=train_rids,
+            primary_only=primary_only,
+        )
 
         # Work items - write temp BED files
         work_items = []
@@ -413,13 +446,21 @@ def _process_bam_region_parallel_fused(
     output_dir = os.path.dirname(os.path.abspath(output_bam))
     temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_call_tmp_', dir=output_dir)
 
-    params = {
-        'edge_trim': edge_trim, 'circular': circular,
-        'mode': mode, 'context_size': context_size,
-        'msp_min_size': msp_min_size, 'nuc_min_size': nuc_min_size,
-        'min_mapq': min_mapq, 'prob_threshold': prob_threshold,
-        'min_read_length': min_read_length, 'with_scores': with_scores,
-        'train_rids': train_rids, 'primary_only': primary_only,
+    params = _base_region_worker_params(
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        min_mapq=min_mapq,
+        prob_threshold=prob_threshold,
+        min_read_length=min_read_length,
+        with_scores=with_scores,
+        train_rids=train_rids,
+        primary_only=primary_only,
+    )
+    params.update({
         'io_threads': io_threads,
         'min_llr': min_llr, 'min_opps': min_opps,
         'unify_threshold': unify_threshold,
@@ -436,7 +477,7 @@ def _process_bam_region_parallel_fused(
         # Path string, NOT an open handle: pysam.FastaFile is not fork-safe,
         # so each worker opens it lazily in _init_fused_region_worker.
         'ref_fasta_path': ref_fasta_path,
-    }
+    })
 
     work_items = [
         RegionBamWorkItem(
