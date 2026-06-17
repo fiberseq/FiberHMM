@@ -11,6 +11,7 @@ from fiberhmm.inference.nuc_recaller import (
     _keep_nuc_against_circular_intervals,
     _msp_gaps_between_nucs,
     _phase_cut_window,
+    _promoted_nuc_from_tf_call,
     _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
     _total_call_llr,
@@ -263,6 +264,26 @@ def test_promote_large_tf_to_nuc():
         tf, obs, llr_hit, llr_miss, threshold=90, nuc_min_size=85)
     assert len(promoted) == 1 and promoted[0].length >= 85
     assert [c.start for c in remaining] == [200]
+
+
+def test_promoted_nuc_from_tf_call_refines_large_tf_span():
+    obs = _obs((MISS, 150))
+    llr_hit, llr_miss = _llr_tables()
+    tf_call = TFCall(start=0, length=120, llr=10.0, n_opps=20,
+                     left_ambiguity=1, right_ambiguity=1)
+
+    nuc = _promoted_nuc_from_tf_call(
+        tf_call,
+        obs,
+        llr_hit,
+        llr_miss,
+        nuc_min_size=85,
+        edge_min_llr=2.0,
+        edge_min_opps=2,
+    )
+
+    assert isinstance(nuc, NucCall)
+    assert nuc.length >= 85
 
 
 def test_drop_short_nuc_overlapping_promoted():

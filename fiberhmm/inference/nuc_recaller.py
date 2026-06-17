@@ -494,6 +494,28 @@ def drop_short_nucs_overlapping_promoted(nuc_calls, promoted, unify_threshold):
     ]
 
 
+def _promoted_nuc_from_tf_call(
+    call,
+    obs,
+    llr_hit,
+    llr_miss,
+    nuc_min_size,
+    edge_min_llr,
+    edge_min_opps,
+):
+    nuc, _ = _refine_fragment(
+        obs,
+        call.start,
+        call.start + call.length,
+        llr_hit,
+        llr_miss,
+        nuc_min_size,
+        edge_min_llr,
+        edge_min_opps,
+    )
+    return nuc
+
+
 def promote_large_tf_calls(tf_calls, obs, llr_hit, llr_miss, threshold,
                            nuc_min_size, edge_min_llr=2.0, edge_min_opps=2):
     """Promote nucleosome-sized TF calls (length >= ``threshold``) to NucCalls.
@@ -508,9 +530,15 @@ def promote_large_tf_calls(tf_calls, obs, llr_hit, llr_miss, threshold,
     promoted: List[NucCall] = []
     for c in tf_calls:
         if c.length >= threshold:
-            nuc, _ = _refine_fragment(obs, c.start, c.start + c.length,
-                                      llr_hit, llr_miss, nuc_min_size,
-                                      edge_min_llr, edge_min_opps)
+            nuc = _promoted_nuc_from_tf_call(
+                c,
+                obs,
+                llr_hit,
+                llr_miss,
+                nuc_min_size,
+                edge_min_llr,
+                edge_min_opps,
+            )
             if nuc is not None:
                 promoted.append(nuc)
                 continue
