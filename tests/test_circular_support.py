@@ -4,6 +4,7 @@ import numpy as np
 
 from fiberhmm.inference.circular import (
     _center_copy_bounds,
+    _legacy_interval_pieces,
     _legacy_interval_score,
     _linear_segments_overlap,
     _tiled_mod_positions,
@@ -109,6 +110,18 @@ def test_legacy_interval_score_defaults_missing_scores_to_none():
     assert _legacy_interval_score([0.25], 0) == 0.25
     assert _legacy_interval_score([0.25], 1) is None
     assert _legacy_interval_score(None, 0) is None
+
+
+def test_legacy_interval_pieces_split_wraps_and_sort_by_start():
+    assert _legacy_interval_pieces(
+        [(90, 20), (30, 5)],
+        100,
+        [0.8, 0.2],
+    ) == [
+        (0, 10, 0.8),
+        (30, 5, 0.2),
+        (90, 10, 0.8),
+    ]
 
 
 def test_split_intervals_for_legacy_duplicates_scores_for_wrapped_features():

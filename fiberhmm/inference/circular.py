@@ -163,21 +163,28 @@ def _legacy_interval_score(score_values, index: int):
     return None
 
 
+def _legacy_interval_pieces(
+    intervals: Sequence[Interval],
+    read_length: int,
+    score_values: Optional[Sequence[float]],
+) -> list[tuple[int, int, Optional[float]]]:
+    pieces: list[tuple[int, int, Optional[float]]] = []
+    for idx, (start, length) in enumerate(intervals):
+        score = _legacy_interval_score(score_values, idx)
+        for piece_start, piece_len in split_circular_interval(start, length, read_length):
+            pieces.append((piece_start, piece_len, score))
+    pieces.sort(key=lambda item: item[0])
+    return pieces
+
+
 def split_intervals_for_legacy(
     intervals: Sequence[Interval],
     read_length: int,
     scores: Optional[Sequence[float]] = None,
 ) -> tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
     """Split circular intervals into legacy-compatible linear start/length arrays."""
-    pieces: list[tuple[int, int, Optional[float]]] = []
     score_values = list(scores) if scores is not None else None
-
-    for idx, (start, length) in enumerate(intervals):
-        score = _legacy_interval_score(score_values, idx)
-        for piece_start, piece_len in split_circular_interval(start, length, read_length):
-            pieces.append((piece_start, piece_len, score))
-
-    pieces.sort(key=lambda item: item[0])
+    pieces = _legacy_interval_pieces(intervals, read_length, score_values)
     starts = np.asarray([p[0] for p in pieces], dtype=np.int32)
     lengths = np.asarray([p[1] for p in pieces], dtype=np.int32)
     if score_values is None:
