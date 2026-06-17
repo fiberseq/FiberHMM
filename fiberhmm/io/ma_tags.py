@@ -114,6 +114,23 @@ def _format_ma_annotation_part(
     return f'{name}.{qual_spec}:{formatted}' if qual_spec else f'{name}.:{formatted}'
 
 
+def _ma_annotation_parts(
+    nuc_intervals: Sequence[Tuple[int, int]],
+    msp_intervals: Sequence[Tuple[int, int]],
+    tf_intervals: Sequence[Tuple[int, int]],
+    nuc_qual_spec: str,
+    tf_qual_spec: str,
+) -> List[str]:
+    return [
+        part for part in (
+            _format_ma_annotation_part('nuc', nuc_intervals, nuc_qual_spec),
+            _format_ma_annotation_part('msp', msp_intervals, ''),
+            _format_ma_annotation_part('tf', tf_intervals, tf_qual_spec),
+        )
+        if part is not None
+    ]
+
+
 def _parse_ma_head(head: str) -> Tuple[str, str, str]:
     for i, c in enumerate(head):
         if c in '+-.':
@@ -254,13 +271,12 @@ def format_ma_tag(read_length: int,
     # features, matching fibertools. (Versions <= 2.13.1 wrote '+'; the parser
     # still accepts it.)
     parts = [str(int(read_length))]
-    for part in (
-        _format_ma_annotation_part('nuc', nuc_intervals, nuc_qual_spec),
-        _format_ma_annotation_part('msp', msp_intervals, ''),
-        _format_ma_annotation_part('tf', tf_intervals, tf_qual_spec),
-    ):
-        if part is not None:
-            parts.append(part)
+    parts.extend(
+        _ma_annotation_parts(
+            nuc_intervals, msp_intervals, tf_intervals,
+            nuc_qual_spec, tf_qual_spec,
+        )
+    )
     return ';'.join(parts)
 
 

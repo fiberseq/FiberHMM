@@ -22,6 +22,7 @@ from fiberhmm.io.ma_tags import (
     EDGE_AMBIGUITY_SAT,
     _aq_values_sequence,
     _format_ma_annotation_part,
+    _ma_annotation_parts,
     _nuc_aq_has_edge_qualities,
     _parse_ma_chunk,
     _parse_ma_interval_list,
@@ -190,6 +191,16 @@ def test_format_ma_annotation_part_handles_empty_and_quality_specs():
         'nuc.QQQ:1-10,21-5'
     )
     assert _format_ma_annotation_part('msp', [(5, 12)], '') == 'msp.:6-12'
+
+
+def test_ma_annotation_parts_omits_empty_types_and_preserves_order():
+    assert _ma_annotation_parts(
+        nuc_intervals=[],
+        msp_intervals=[(5, 12)],
+        tf_intervals=[(20, 5)],
+        nuc_qual_spec='Q',
+        tf_qual_spec='QQQ',
+    ) == ['msp.:6-12', 'tf.QQQ:21-5']
 
 
 def test_parse_ma_interval_list_skips_empty_tokens_and_reports_bad_intervals():
