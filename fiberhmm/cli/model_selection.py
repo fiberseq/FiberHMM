@@ -12,6 +12,18 @@ _MODEL_REQUIRED_MESSAGE = (
 )
 
 
+def _print_bundled_model_message(
+    model_path: str,
+    bundled_message: str | None,
+    bundled_message_file=None,
+) -> None:
+    if bundled_message is not None:
+        print(
+            bundled_message.format(model_path=model_path),
+            file=bundled_message_file,
+        )
+
+
 def resolve_model_path(
     args,
     *,
@@ -34,9 +46,9 @@ def resolve_model_path(
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if bundled_message is not None:
-        print(
-            bundled_message.format(model_path=model_path),
-            file=bundled_message_file,
-        )
+    _print_bundled_model_message(
+        model_path,
+        bundled_message,
+        bundled_message_file,
+    )
     return model_path
