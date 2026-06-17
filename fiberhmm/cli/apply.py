@@ -249,6 +249,12 @@ def _strand_detection_message(mode: str):
     return None
 
 
+def _msp_output_message(no_msps: bool, msp_min_size: int) -> str:
+    if no_msps:
+        return "MSP output: disabled (--no-msps)"
+    return f"MSP min size: {msp_min_size} bp"
+
+
 def _print_processing_settings(
     args,
     mode: str,
@@ -277,10 +283,7 @@ def _print_processing_settings(
     strand_message = _strand_detection_message(mode)
     if strand_message:
         print(f"  {strand_message}")
-    if args.no_msps:
-        print("  MSP output: disabled (--no-msps)")
-    else:
-        print(f"  MSP min size: {msp_min_size} bp")
+    print(f"  {_msp_output_message(args.no_msps, msp_min_size)}")
     if args.stats:
         print("  Stats: enabled")
     print()

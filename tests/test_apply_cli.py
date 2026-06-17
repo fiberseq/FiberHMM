@@ -12,6 +12,7 @@ from fiberhmm.cli.apply import (
     _print_processing_settings,
     _print_ddda_two_pass_notice,
     _print_region_filter_settings,
+    _msp_output_message,
     _resolve_apply_cores,
     _resolve_chroms_set,
     _resolve_context_size,
@@ -144,6 +145,12 @@ def test_apply_strand_detection_message_by_mode():
         "Strand detection: none (A-centered only)"
     )
     assert _strand_detection_message("pacbio-fiber") is None
+
+
+def test_apply_msp_output_message():
+    assert _msp_output_message(False, 0) == "MSP min size: 0 bp"
+    assert _msp_output_message(False, 75) == "MSP min size: 75 bp"
+    assert _msp_output_message(True, 75) == "MSP output: disabled (--no-msps)"
 
 
 def test_apply_print_processing_settings_reports_mode_specific_options(capsys):
