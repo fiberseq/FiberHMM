@@ -6,6 +6,8 @@ import numpy as np
 from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
+    _circular_uncovered_cut,
+    _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
     assemble_circular_nuc_msp_tiling,
     assemble_nuc_msp_tiling,
@@ -251,6 +253,20 @@ def test_circular_tiling_no_overlap_for_wrapped_nuc():
         for off in range(length):
             cov[(s + off) % rl] += 1
     assert all(c == 1 for c in cov)   # exact circular tiling: no overlap, no gap
+
+
+def test_circular_rotation_helpers_choose_cut_and_split_straddlers():
+    rl = 200
+    wrapped = [NucCall(180, 100, 200, 255, 128)]
+
+    assert _circular_uncovered_cut(wrapped, rl) == 80
+    assert [
+        (n.start, n.length, n.nq, n.el, n.er)
+        for n in _rotate_circular_nuc_calls(wrapped, cut=190, read_length=rl)
+    ] == [
+        (190, 10, 200, 255, 0),
+        (0, 90, 200, 0, 128),
+    ]
 
 
 def test_circular_tiling_empty_nucs_gives_whole_molecule_msp():
