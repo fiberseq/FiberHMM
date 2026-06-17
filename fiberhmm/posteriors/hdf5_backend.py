@@ -137,27 +137,40 @@ def _file_size_mb(path: str) -> float:
     return os.path.getsize(path) / (1024 * 1024)
 
 
+def _fiber_array_dataset_specs(fiber: Dict) -> List[tuple]:
+    return [
+        (
+            'posteriors',
+            fiber['posteriors'].astype(np.float16),
+            4,
+        ),
+        (
+            'ref_positions',
+            _int32_array(fiber.get('ref_positions')),
+            4,
+        ),
+        (
+            'footprint_starts',
+            _int32_array(fiber.get('footprint_starts')),
+            None,
+        ),
+        (
+            'footprint_sizes',
+            _int32_array(fiber.get('footprint_sizes')),
+            None,
+        ),
+    ]
+
+
 def _write_fiber_array_datasets(group, index: int, fiber: Dict) -> None:
     idx = str(index)
-    _create_gzip_dataset(
-        group['posteriors'],
-        idx,
-        fiber['posteriors'].astype(np.float16),
-        compression_opts=4,
-    )
-
-    ref_pos = _int32_array(fiber.get('ref_positions'))
-    _create_gzip_dataset(
-        group['ref_positions'],
-        idx,
-        ref_pos,
-        compression_opts=4,
-    )
-
-    fp_starts = _int32_array(fiber.get('footprint_starts'))
-    fp_sizes = _int32_array(fiber.get('footprint_sizes'))
-    _create_gzip_dataset(group['footprint_starts'], idx, fp_starts)
-    _create_gzip_dataset(group['footprint_sizes'], idx, fp_sizes)
+    for group_name, data, compression_opts in _fiber_array_dataset_specs(fiber):
+        _create_gzip_dataset(
+            group[group_name],
+            idx,
+            data,
+            compression_opts=compression_opts,
+        )
 
 
 class PosteriorWriter:

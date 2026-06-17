@@ -130,6 +130,29 @@ def test_file_size_mb_reports_megabytes(tmp_path):
     assert hdf5_backend._file_size_mb(str(path)) == 1.0
 
 
+def test_fiber_array_dataset_specs_normalize_payload_arrays():
+    specs = hdf5_backend._fiber_array_dataset_specs(
+        {
+            "posteriors": np.array([0.1, 0.9], dtype=np.float32),
+            "ref_positions": [10, -1],
+            "footprint_starts": None,
+            "footprint_sizes": [20],
+        }
+    )
+
+    assert [name for name, data, opts in specs] == [
+        "posteriors",
+        "ref_positions",
+        "footprint_starts",
+        "footprint_sizes",
+    ]
+    assert [opts for name, data, opts in specs] == [4, 4, None, None]
+    assert specs[0][1].dtype == np.float16
+    np.testing.assert_array_equal(specs[1][1], np.array([10, -1], dtype=np.int32))
+    np.testing.assert_array_equal(specs[2][1], np.array([], dtype=np.int32))
+    np.testing.assert_array_equal(specs[3][1], np.array([20], dtype=np.int32))
+
+
 def test_hdf5_fiber_array_dataset_helper_writes_expected_groups(tmp_path):
     with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
         grp = hdf5_backend.create_posterior_chrom_group(h5, "chr1")
