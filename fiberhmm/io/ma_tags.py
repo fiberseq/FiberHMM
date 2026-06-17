@@ -80,6 +80,17 @@ def _clamp_byte(value: int) -> int:
     return max(0, min(255, int(value)))
 
 
+def _append_quality_rows(out: array.array, label: str, *columns: Sequence[int]) -> None:
+    if not columns:
+        return
+    n_rows = len(columns[0])
+    if any(len(column) != n_rows for column in columns[1:]):
+        raise ValueError(f"{label} quality arrays must have equal length")
+    for row in zip(*columns):
+        for value in row:
+            out.append(_clamp_byte(value))
+
+
 def _format_interval_list(intervals: Sequence[Tuple[int, int]]) -> str:
     return ','.join(f'{int(start) + 1}-{int(length)}'
                     for start, length in intervals)
@@ -250,22 +261,11 @@ def format_aq_array(nq_values: Sequence[int],
     """
     out = array.array('B')
     if nuc_lq_values or nuc_rq_values:
-        if not (len(nq_values) == len(nuc_lq_values) == len(nuc_rq_values)):
-            raise ValueError("nuc quality arrays must have equal length")
-        for nq, el, er in zip(nq_values, nuc_lq_values, nuc_rq_values):
-            out.append(_clamp_byte(nq))
-            out.append(_clamp_byte(el))
-            out.append(_clamp_byte(er))
+        _append_quality_rows(out, "nuc", nq_values, nuc_lq_values, nuc_rq_values)
     else:
-        for nq in nq_values:
-            out.append(_clamp_byte(nq))
+        _append_quality_rows(out, "nuc", nq_values)
     if tf_q_values:
-        if not (len(tf_q_values) == len(tf_lq_values) == len(tf_rq_values)):
-            raise ValueError("TF quality arrays must have equal length")
-        for tq, el, er in zip(tf_q_values, tf_lq_values, tf_rq_values):
-            out.append(_clamp_byte(tq))
-            out.append(_clamp_byte(el))
-            out.append(_clamp_byte(er))
+        _append_quality_rows(out, "TF", tf_q_values, tf_lq_values, tf_rq_values)
     return out
 
 
