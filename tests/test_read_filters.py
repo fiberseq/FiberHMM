@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from fiberhmm.inference.read_filters import (
     ReadFilterConfig,
     _filter_read_length,
+    _is_secondary_or_supplementary,
     is_primary_alignment,
     is_primary_mapped_alignment,
     streaming_skip_reason,
@@ -50,6 +51,10 @@ def test_streaming_filter_allows_processable_mapped_read():
 
 
 def test_primary_alignment_predicates():
+    assert not _is_secondary_or_supplementary(_Read())
+    assert _is_secondary_or_supplementary(_Read(is_secondary=True))
+    assert _is_secondary_or_supplementary(_Read(is_supplementary=True))
+
     assert is_primary_alignment(_Read())
     assert is_primary_alignment(_Read(is_unmapped=True))
     assert not is_primary_alignment(_Read(is_secondary=True))
