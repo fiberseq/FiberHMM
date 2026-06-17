@@ -75,6 +75,47 @@ def _footprint_runs(states: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     return np.where(diff == -1)[0], np.where(diff == 1)[0]
 
 
+def _mean_interval_scores(confidence: np.ndarray, starts, ends,
+                          invert: bool = False) -> np.ndarray:
+    scores = np.zeros(len(starts), dtype=np.float32)
+    for i, (s, e) in enumerate(zip(starts, ends)):
+        segment = confidence[int(s):int(e)]
+        scores[i] = np.mean(1.0 - segment) if invert else np.mean(segment)
+    return scores
+
+
+def _msp_intervals_from_nuc_boundaries(nuc_starts, nuc_ends, read_length: int,
+                                       msp_min_size: int) -> Tuple[np.ndarray, np.ndarray]:
+    msp_start_list = []
+    msp_size_list = []
+
+    if len(nuc_starts) > 0:
+        if nuc_starts[0] > 0:
+            msp_start_list.append(0)
+            msp_size_list.append(int(nuc_starts[0]))
+        for i in range(len(nuc_starts) - 1):
+            gap_start = int(nuc_ends[i])
+            gap_size = int(nuc_starts[i + 1]) - gap_start
+            if gap_size > 0:
+                msp_start_list.append(gap_start)
+                msp_size_list.append(gap_size)
+        if nuc_ends[-1] < read_length:
+            msp_start_list.append(int(nuc_ends[-1]))
+            msp_size_list.append(read_length - int(nuc_ends[-1]))
+    else:
+        # No nucleosome-sized footprints: entire read is one MSP.
+        msp_start_list.append(0)
+        msp_size_list.append(read_length)
+
+    if not msp_start_list:
+        return np.array([], dtype=np.int32), np.array([], dtype=np.int32)
+
+    starts = np.array(msp_start_list, dtype=np.int32)
+    sizes = np.array(msp_size_list, dtype=np.int32)
+    size_mask = sizes >= msp_min_size
+    return starts[size_mask], sizes[size_mask]
+
+
 def predict_footprints(model: FiberHMM, encoded_read: np.ndarray,
                        with_scores: bool = False) -> Tuple[np.ndarray, np.ndarray, int, Optional[np.ndarray]]:
     """
@@ -109,10 +150,7 @@ def predict_footprints(model: FiberHMM, encoded_read: np.ndarray,
     # Compute per-footprint scores
     scores = None
     if with_scores and confidence is not None:
-        scores = np.zeros(len(starts), dtype=np.float32)
-        for i, (s, e) in enumerate(zip(starts, ends)):
-            # Mean posterior probability for footprint state within this footprint
-            scores[i] = np.mean(confidence[s:e])
+        scores = _mean_interval_scores(confidence, starts, ends)
 
     return starts, sizes, len(starts), scores
 
@@ -149,10 +187,9 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
         result['footprint_sizes'] = (fp_ends - fp_starts).astype(np.int32)
 
         if with_scores and confidence is not None:
-            fp_scores = np.zeros(len(fp_starts), dtype=np.float32)
-            for i, (s, e) in enumerate(zip(fp_starts, fp_ends)):
-                fp_scores[i] = np.mean(confidence[s:e])
-            result['footprint_scores'] = fp_scores
+            result['footprint_scores'] = _mean_interval_scores(
+                confidence, fp_starts, fp_ends,
+            )
 
     # Find MSPs (accessible regions between nucleosome-sized footprints)
     # Only footprints >= nuc_min_size act as MSP boundaries
@@ -166,44 +203,21 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
             nuc_starts = np.array([], dtype=np.int64)
             nuc_ends = np.array([], dtype=np.int64)
 
-        msp_start_list = []
-        msp_size_list = []
+        msp_starts_arr, msp_sizes_arr = _msp_intervals_from_nuc_boundaries(
+            nuc_starts, nuc_ends, len(states), msp_min_size,
+        )
 
-        if len(nuc_starts) > 0:
-            if nuc_starts[0] > 0:
-                msp_start_list.append(0)
-                msp_size_list.append(int(nuc_starts[0]))
-            for i in range(len(nuc_starts) - 1):
-                gap_start = int(nuc_ends[i])
-                gap_size = int(nuc_starts[i + 1]) - gap_start
-                if gap_size > 0:
-                    msp_start_list.append(gap_start)
-                    msp_size_list.append(gap_size)
-            if nuc_ends[-1] < len(states):
-                msp_start_list.append(int(nuc_ends[-1]))
-                msp_size_list.append(len(states) - int(nuc_ends[-1]))
-        else:
-            # No nucleosome-sized footprints: entire read is one MSP
-            msp_start_list.append(0)
-            msp_size_list.append(len(states))
+        if len(msp_starts_arr) > 0:
+            result['msp_starts'] = msp_starts_arr
+            result['msp_sizes'] = msp_sizes_arr
 
-        if msp_start_list:
-            msp_starts_arr = np.array(msp_start_list, dtype=np.int32)
-            msp_sizes_arr = np.array(msp_size_list, dtype=np.int32)
-
-            size_mask = msp_sizes_arr >= msp_min_size
-            msp_starts_arr = msp_starts_arr[size_mask]
-            msp_sizes_arr = msp_sizes_arr[size_mask]
-
-            if len(msp_starts_arr) > 0:
-                result['msp_starts'] = msp_starts_arr
-                result['msp_sizes'] = msp_sizes_arr
-
-                if with_scores and confidence is not None:
-                    msp_scores = np.zeros(len(msp_starts_arr), dtype=np.float32)
-                    for i, (s, sz) in enumerate(zip(msp_starts_arr, msp_sizes_arr)):
-                        msp_scores[i] = np.mean(1.0 - confidence[s:s+sz])
-                    result['msp_scores'] = msp_scores
+            if with_scores and confidence is not None:
+                result['msp_scores'] = _mean_interval_scores(
+                    confidence,
+                    msp_starts_arr,
+                    msp_starts_arr + msp_sizes_arr,
+                    invert=True,
+                )
 
     return result
 
