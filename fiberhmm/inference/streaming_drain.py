@@ -67,6 +67,21 @@ def _posterior_chrom(read_obj):
     return read_obj.reference_name
 
 
+def _add_posterior_fiber_if_available(posterior_writer, read_obj, result: dict) -> bool:
+    if not posterior_writer or not _result_has_posteriors(result):
+        return False
+    chrom = _posterior_chrom(read_obj)
+    if not chrom:
+        return False
+    posterior_writer.add_fiber(
+        chrom,
+        posterior_fiber_data(
+            read_obj, result, _posterior_ref_positions(read_obj),
+        ),
+    )
+    return True
+
+
 def _drain_oldest_chunk(
     inflight,
     outbam,
@@ -98,16 +113,11 @@ def _drain_oldest_chunk(
         if result is not None:
             set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
             _record_reads_with_footprints(counters)
-
-            if posterior_writer and _result_has_posteriors(result):
-                chrom = _posterior_chrom(read_obj)
-                if chrom:
-                    posterior_writer.add_fiber(
-                        chrom,
-                        posterior_fiber_data(
-                            read_obj, result, _posterior_ref_positions(read_obj),
-                        ),
-                    )
+            _add_posterior_fiber_if_available(
+                posterior_writer,
+                read_obj,
+                result,
+            )
         else:
             _record_no_footprints(counters)
 

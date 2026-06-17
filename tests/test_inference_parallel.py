@@ -808,6 +808,50 @@ def test_posterior_chrom_reads_reference_name():
     ) is None
 
 
+def test_add_posterior_fiber_if_available_guards_and_writes(monkeypatch):
+    read = SimpleNamespace(reference_name="chr1")
+    result = {"posteriors": [0.1]}
+    seen = []
+
+    class Writer:
+        def add_fiber(self, chrom, data):
+            seen.append((chrom, data))
+
+    monkeypatch.setattr(
+        streaming_drain,
+        "_posterior_ref_positions",
+        lambda got_read: ["ref-pos"],
+    )
+    monkeypatch.setattr(
+        streaming_drain,
+        "posterior_fiber_data",
+        lambda got_read, got_result, ref_positions: {
+            "read": got_read,
+            "result": got_result,
+            "ref_positions": ref_positions,
+        },
+    )
+
+    assert streaming_drain._add_posterior_fiber_if_available(
+        Writer(), read, result,
+    )
+    assert seen == [(
+        "chr1",
+        {
+            "read": read,
+            "result": result,
+            "ref_positions": ["ref-pos"],
+        },
+    )]
+    assert not streaming_drain._add_posterior_fiber_if_available(None, read, result)
+    assert not streaming_drain._add_posterior_fiber_if_available(
+        Writer(), read, {"posteriors": None},
+    )
+    assert not streaming_drain._add_posterior_fiber_if_available(
+        Writer(), SimpleNamespace(reference_name=None), result,
+    )
+
+
 def test_streaming_drain_counts_worker_failures_and_passes_read_through():
     read = object()
     outbam = _OutBam()
