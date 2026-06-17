@@ -134,6 +134,27 @@ def test_stats_read_signal_arrays_loads_intervals_and_optional_scores():
     np.testing.assert_allclose(with_scores[5], [128 / 255])
 
 
+def test_add_read_to_footprint_stats_updates_accumulator():
+    stats = stats_module.FootprintStats()
+    read = _FakeRead({
+        "ns": [10],
+        "nl": [5],
+        "as": [20],
+        "al": [7],
+        "nq": [255],
+        "aq": [128],
+    })
+
+    stats_module._add_read_to_footprint_stats(stats, read, with_scores=True)
+
+    assert stats.total_reads_sampled == 1
+    assert stats.read_lengths == [100]
+    assert stats.footprint_sizes == [5]
+    assert stats.msp_sizes == [7]
+    np.testing.assert_allclose(stats.footprint_scores, [1.0])
+    np.testing.assert_allclose(stats.msp_scores, [128 / 255])
+
+
 def test_footprint_size_bin_counts_use_stable_labels():
     labels, counts = stats_module._footprint_size_bin_counts(
         [0, 19, 20, 149, 500, 9999],

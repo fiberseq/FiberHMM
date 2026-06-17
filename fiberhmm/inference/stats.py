@@ -116,6 +116,27 @@ def _stats_read_signal_arrays(read, with_scores: bool) -> tuple:
     return ns, nl, as_starts, al_lengths, ns_scores, as_scores
 
 
+def _add_read_to_footprint_stats(
+    stats: "FootprintStats",
+    read,
+    with_scores: bool,
+) -> None:
+    (
+        ns, nl, as_starts, al_lengths, ns_scores, as_scores,
+    ) = _stats_read_signal_arrays(read, with_scores)
+
+    read_length = read.query_length or 0
+    stats.add_read(
+        read_length,
+        ns,
+        nl,
+        as_starts,
+        al_lengths,
+        ns_scores,
+        as_scores,
+    )
+
+
 class FootprintStats:
     """Collects footprint statistics from sampled reads."""
 
@@ -488,12 +509,7 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
             if sampled >= n_samples:
                 break
 
-            (
-                ns, nl, as_starts, al_lengths, ns_scores, as_scores,
-            ) = _stats_read_signal_arrays(read, with_scores)
-
-            read_length = read.query_length or 0
-            stats.add_read(read_length, ns, nl, as_starts, al_lengths, ns_scores, as_scores)
+            _add_read_to_footprint_stats(stats, read, with_scores)
             sampled += 1
 
     return stats
