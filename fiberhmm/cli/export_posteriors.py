@@ -160,6 +160,13 @@ def _modified_base_positions_forward(read, min_qual: int = 128) -> Set[int]:
     return mod_positions
 
 
+def _posterior_read_strand(mode: str, sequence: str, mod_positions: Set[int],
+                           is_reverse: bool) -> str:
+    if mode == 'daf':
+        return detect_daf_strand(sequence, mod_positions)
+    return '-' if is_reverse else '+'
+
+
 def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
                                   context_size: int, edge_trim: int) -> Optional[Dict]:
     """
@@ -179,11 +186,9 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
     if len(mod_positions) < 10:
         return None
 
-    # Determine strand
-    if mode == 'daf':
-        strand = detect_daf_strand(sequence, mod_positions)
-    else:
-        strand = '-' if read.is_reverse else '+'
+    strand = _posterior_read_strand(
+        mode, sequence, mod_positions, bool(read.is_reverse),
+    )
 
     # Encode read
     encoded = encode_from_query_sequence(

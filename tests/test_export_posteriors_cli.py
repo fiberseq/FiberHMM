@@ -82,6 +82,24 @@ def test_modified_base_positions_forward_filters_quality_and_parser_errors():
     assert export_posteriors._modified_base_positions_forward(BadRead()) == set()
 
 
+def test_posterior_read_strand_uses_mode_policy(monkeypatch):
+    monkeypatch.setattr(
+        export_posteriors,
+        "detect_daf_strand",
+        lambda sequence, mod_positions: "ct",
+    )
+
+    assert export_posteriors._posterior_read_strand(
+        "daf", "ACGT", {1}, is_reverse=False,
+    ) == "ct"
+    assert export_posteriors._posterior_read_strand(
+        "pacbio-fiber", "ACGT", {1}, is_reverse=True,
+    ) == "-"
+    assert export_posteriors._posterior_read_strand(
+        "pacbio-fiber", "ACGT", {1}, is_reverse=False,
+    ) == "+"
+
+
 def test_h5_batch_metadata_helpers_append_and_concatenate():
     ids, starts, ends, strands = export_posteriors._h5_batch_metadata([
         {"read_name": "read-a", "ref_start": 10, "ref_end": 15, "strand": "+"},
