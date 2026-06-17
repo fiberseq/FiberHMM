@@ -594,79 +594,9 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
     )
     if ma_count is not None:
         return ma_count
-
-    try:
-        ma_str = read.get_tag('MA')
-    except KeyError:
-        return 0
-    try:
-        aq = read.get_tag('AQ')
-    except KeyError:
-        aq = []
-
-    try:
-        parsed = parse_ma_tag(ma_str)
-    except ValueError:
-        return 0
-
-    qual_specs = [rt[2] for rt in parsed['raw_types']]
-    n_per_type = [len(rt[3]) for rt in parsed['raw_types']]
-    per_annotation = parse_aq_array(aq, qual_specs, n_per_type)
-
-    # Grab full tf.QQQ triplet (tq, el, er) per call.
-    tfs_with_quality = []  # (start_0based, length, tq, el, er)
-    idx = 0
-    for name, _strand, qspec, intervals in parsed['raw_types']:
-        for i, (s, length) in enumerate(intervals):
-            quals = per_annotation[idx]
-            idx += 1
-            if name != 'tf':
-                continue
-            tq = int(quals[0]) if len(quals) >= 1 else 0
-            el = int(quals[1]) if len(quals) >= 2 else 0
-            er = int(quals[2]) if len(quals) >= 3 else 0
-            if tq < min_tq:
-                continue
-            tfs_with_quality.append((s, length, tq, el, er))
-
-    if not tfs_with_quality:
-        return 0
-
-    ref_name = read.reference_name
-    strand = '-' if read.is_reverse else '+'
-    read_id = read.query_name
-
-    blocks = []  # (ref_start, ref_end, tq, el, er)
-    for qstart, length, tq, el, er in tfs_with_quality:
-        qend = qstart + length
-        ref_start = _q2r_lookup(query_to_ref, qstart)
-        ref_end = _q2r_lookup(query_to_ref, qend - 1)
-        if ref_start is None or ref_end is None:
-            continue
-        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
-        blocks.append((ref_start, ref_end, tq, el, er))
-
-    if not blocks:
-        return 0
-
-    blocks.sort(key=lambda x: x[0])
-
-    chrom_start = blocks[0][0]
-    chrom_end = blocks[-1][1]
-    block_count = len(blocks)
-    block_sizes = ','.join(str(e - s) for s, e, _, _, _ in blocks)
-    block_starts = ','.join(str(s - chrom_start) for s, _, _, _, _ in blocks)
-    mean_score = int(sum(tq for _, _, tq, _, _ in blocks) / len(blocks)) if with_scores else 0
-
-    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t{mean_score}\t{strand}\t"
-           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
-    if block_scores:
-        block_tq = ','.join(str(b[2]) for b in blocks)
-        block_el = ','.join(str(b[3]) for b in blocks)
-        block_er = ','.join(str(b[4]) for b in blocks)
-        row += f"\t{block_tq}\t{block_el}\t{block_er}"
-    bed_out.write(row + "\n")
-    return len(blocks)
+    # TF annotations have no legacy ns/nl-style fallback. If MA is absent or
+    # unparsable, there are no TF intervals to extract.
+    return 0
 
 
 def _extract_msps(read, bed_out, with_scores: bool,
