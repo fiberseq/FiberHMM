@@ -323,6 +323,35 @@ def test_submit_next_region_records_pending_future():
     )
 
 
+def test_submit_initial_regions_respects_pending_cap():
+    class FakeExecutor:
+        def __init__(self):
+            self.submitted = []
+
+        def submit(self, fn, args):
+            future = object()
+            self.submitted.append((future, fn, args))
+            return future
+
+    executor = FakeExecutor()
+    pending = {}
+
+    export_posteriors._submit_initial_regions(
+        executor,
+        iter([("chr1", 0, 10), ("chr1", 10, 20), ("chr2", 0, 10)]),
+        "input.bam",
+        pending,
+        max_pending=2,
+        total_regions=3,
+    )
+
+    assert [submitted[2] for submitted in executor.submitted] == [
+        ("chr1", 0, 10, "input.bam"),
+        ("chr1", 10, 20, "input.bam"),
+    ]
+    assert list(pending.values()) == [("chr1", 0, 10), ("chr1", 10, 20)]
+
+
 def test_export_posteriors_tsv_closes_writer_when_region_processing_fails(
     monkeypatch, tmp_path
 ):

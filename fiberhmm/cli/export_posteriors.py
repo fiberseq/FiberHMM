@@ -302,6 +302,19 @@ def _submit_next_region(executor, region_iter, input_bam: str, pending: dict) ->
     return True
 
 
+def _submit_initial_regions(
+    executor,
+    region_iter,
+    input_bam: str,
+    pending: dict,
+    max_pending: int,
+    total_regions: int,
+) -> None:
+    for _ in range(min(max_pending, total_regions)):
+        if not _submit_next_region(executor, region_iter, input_bam, pending):
+            break
+
+
 def _h5_batch_metadata(fibers: List[Dict]):
     n = len(fibers)
     fiber_ids = []
@@ -439,9 +452,14 @@ def _process_regions(regions, input_bam, model_path, params,
             region_iter = iter(regions)
             max_pending = n_cores * 2
 
-            for _ in range(min(max_pending, len(regions))):
-                if not _submit_next_region(executor, region_iter, input_bam, pending):
-                    break
+            _submit_initial_regions(
+                executor,
+                region_iter,
+                input_bam,
+                pending,
+                max_pending,
+                len(regions),
+            )
 
             pbar = tqdm(total=len(regions), desc="Processing regions", disable=not verbose)
 
