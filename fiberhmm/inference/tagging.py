@@ -162,6 +162,18 @@ def _linear_intervals_overlap(left: Interval, right: Interval) -> bool:
     return left_start < right_end and right_start < left_end
 
 
+def _legacy_apply_interval_groups(result: dict, read, with_scores: bool):
+    nucs = _to_molecular_legacy(
+        result["ns"], result["nl"], result.get("ns_scores"),
+        read, with_scores,
+    )
+    msps = _to_molecular_legacy(
+        result["as"], result["al"], result.get("as_scores"),
+        read, with_scores,
+    )
+    return nucs, msps
+
+
 def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True) -> None:
     """Write legacy apply tags (`ns/nl/as/al`, optional `nq/aq`) in place.
 
@@ -177,12 +189,11 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     # FiberHMM works in SEQ (query_sequence) coordinates; ns/nl/as/al must be
     # written in molecular (original-fiber) frame for fibertools. Flip + re-sort
     # for reverse-mapped reads (forward reads are unchanged).
-    ns_s, ns_l, ns_sc = _to_molecular_legacy(
-        result["ns"], result["nl"], result.get("ns_scores"),
-        read, with_scores)
-    as_s, as_l, as_sc = _to_molecular_legacy(
-        result["as"], result["al"], result.get("as_scores"),
-        read, with_scores)
+    (ns_s, ns_l, ns_sc), (as_s, as_l, as_sc) = _legacy_apply_interval_groups(
+        result,
+        read,
+        with_scores,
+    )
 
     _write_legacy_interval_tags(read, "ns", "nl", "nq", ns_s, ns_l, ns_sc, with_scores)
     if write_msps:

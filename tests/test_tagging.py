@@ -9,6 +9,7 @@ import numpy as np
 from fiberhmm.inference.tagging import (
     _flip_legacy_intervals_to_molecular,
     _fused_recall_tag_intervals,
+    _legacy_apply_interval_groups,
     _linear_intervals_overlap,
     _should_keep_nuc_interval,
     _tf_linear_intervals,
@@ -137,6 +138,30 @@ def test_set_legacy_apply_tags_strips_stale_ma_an_even_when_no_new_calls():
 
     assert "MA" not in read.tags
     assert "AN" not in read.tags
+
+
+def test_legacy_apply_interval_groups_prepares_nucs_msps_and_scores():
+    read = RecordingRead()
+    result = {
+        "ns": np.asarray([10], dtype=np.int32),
+        "nl": np.asarray([30], dtype=np.int32),
+        "ns_scores": np.asarray([0.25]),
+        "as": np.asarray([100], dtype=np.int32),
+        "al": np.asarray([200], dtype=np.int32),
+        "as_scores": np.asarray([0.5]),
+    }
+
+    nucs, msps = _legacy_apply_interval_groups(result, read, with_scores=True)
+    nucs_without_scores, msps_without_scores = _legacy_apply_interval_groups(
+        result,
+        read,
+        with_scores=False,
+    )
+
+    assert nucs == ([10], [30], [0.25])
+    assert msps == ([100], [200], [0.5])
+    assert nucs_without_scores == ([10], [30], None)
+    assert msps_without_scores == ([100], [200], None)
 
 
 def test_fused_recall_tag_intervals_prefer_circular_intervals_when_present():
