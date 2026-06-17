@@ -243,6 +243,16 @@ def test_ma_annotation_quality_values_pad_triplets_and_ignore_msp_quals():
     )
 
 
+def test_ma_annotation_min_tq_filter_only_applies_to_tf():
+    assert extract_tags._ma_annotation_tq([]) == 0
+    assert extract_tags._ma_annotation_tq([51, 1, 2]) == 51
+    assert extract_tags._ma_annotation_passes_min_tq('tf', [50], 50)
+    assert not extract_tags._ma_annotation_passes_min_tq('tf', [49], 50)
+    assert not extract_tags._ma_annotation_passes_min_tq('tf', [], 1)
+    assert extract_tags._ma_annotation_passes_min_tq('nuc', [], 255)
+    assert extract_tags._ma_annotation_passes_min_tq('msp', [], 255)
+
+
 def test_ma_block_score_columns_match_annotation_shape():
     triplet_blocks = [
         (100, 110, 5, (5, 6, 7), {}),

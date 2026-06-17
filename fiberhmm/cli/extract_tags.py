@@ -263,6 +263,16 @@ def _ma_annotation_quality_values(target_name: str, quals):
     return 0, (0,)
 
 
+def _ma_annotation_tq(quals) -> int:
+    return int(quals[0]) if len(quals) >= 1 else 0
+
+
+def _ma_annotation_passes_min_tq(target_name: str, quals, min_tq: int) -> bool:
+    if target_name != 'tf':
+        return True
+    return _ma_annotation_tq(quals) >= min_tq
+
+
 def _ma_block_score_columns(target_name: str, blocks) -> list:
     if target_name in ('tf', 'nuc'):
         # tf.QQQ / nuc.QQQ: three per-block quality columns.
@@ -325,10 +335,8 @@ def _extract_ma_interval_type(
     blocks = []
     for ann in annotations:
         quals = ann['quals']
-        if target_name == 'tf':
-            tq = int(quals[0]) if len(quals) >= 1 else 0
-            if tq < min_tq:
-                continue
+        if not _ma_annotation_passes_min_tq(target_name, quals, min_tq):
+            continue
         block = _annotation_to_ref_block(ann, query_to_ref)
         if block is None:
             continue
