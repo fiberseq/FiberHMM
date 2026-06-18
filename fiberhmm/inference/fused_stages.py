@@ -84,6 +84,15 @@ def _nuc_call_quality_lists(nuc_calls):
     )
 
 
+def _nuc_call_quality_fields(nuc_calls):
+    nq_for_kept, nuc_el_for_kept, nuc_er_for_kept = _nuc_call_quality_lists(nuc_calls)
+    return {
+        "nq_for_kept_nucs": nq_for_kept,
+        "nuc_el_for_kept": nuc_el_for_kept,
+        "nuc_er_for_kept": nuc_er_for_kept,
+    }
+
+
 def _nuc_call_arrays(nuc_calls):
     return (
         np.asarray([k.start for k in nuc_calls], dtype=np.int32),
@@ -405,7 +414,6 @@ def _build_fused_recall_result_with_nucs(
         kept, span_lo, span_hi, msp_min_size, nuc_min_size)
     msp_starts, msp_len = _interval_pair_lists(new_msps)
 
-    nq_for_kept, nuc_el_for_kept, nuc_er_for_kept = _nuc_call_quality_lists(kept)
     nuc_starts, nuc_lengths = _nuc_call_arrays(kept)
     return {
         "ns": nuc_starts,
@@ -414,9 +422,7 @@ def _build_fused_recall_result_with_nucs(
         "al": np.asarray(msp_len, dtype=np.int32),
         "ns_scores": None,
         "as_scores": None,
-        "nq_for_kept_nucs": nq_for_kept,
-        "nuc_el_for_kept": nuc_el_for_kept,
-        "nuc_er_for_kept": nuc_er_for_kept,
+        **_nuc_call_quality_fields(kept),
         "tf_calls": tf_calls,
     }
 
@@ -485,7 +491,6 @@ def _build_fused_recall_result_with_nucs_circular(
     msp_starts, msp_lengths_split, _ = split_intervals_for_legacy(
         proj_msps, read_length, None)
 
-    nq_for_kept, nuc_el_for_kept, nuc_er_for_kept = _nuc_call_quality_lists(kept)
     return {
         "ns": kept_starts,
         "nl": kept_lengths,
@@ -493,9 +498,7 @@ def _build_fused_recall_result_with_nucs_circular(
         "al": msp_lengths_split,
         "ns_scores": None,
         "as_scores": None,
-        "nq_for_kept_nucs": nq_for_kept,
-        "nuc_el_for_kept": nuc_el_for_kept,
-        "nuc_er_for_kept": nuc_er_for_kept,
+        **_nuc_call_quality_fields(kept),
         "tf_calls": tf_calls,
         "circular": True,
         "circular_read_length": read_length,

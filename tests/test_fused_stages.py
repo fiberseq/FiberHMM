@@ -54,6 +54,19 @@ def test_nuc_call_quality_lists_preserve_nq_el_er_order():
     )
 
 
+def test_nuc_call_quality_fields_names_quality_lists():
+    nucs = [
+        SimpleNamespace(nq=1, el=2, er=3),
+        SimpleNamespace(nq=4, el=5, er=6),
+    ]
+
+    assert fused_stages._nuc_call_quality_fields(nucs) == {
+        "nq_for_kept_nucs": [1, 4],
+        "nuc_el_for_kept": [2, 5],
+        "nuc_er_for_kept": [3, 6],
+    }
+
+
 def test_nuc_call_arrays_preserve_start_length_order_and_dtype():
     nucs = [
         SimpleNamespace(start=10, length=20),
