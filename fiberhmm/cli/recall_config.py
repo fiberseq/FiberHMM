@@ -1,6 +1,17 @@
 """Shared CLI decisions for TF/nucleosome recall commands."""
 
+from dataclasses import dataclass
+
 from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
+
+
+@dataclass(frozen=True)
+class _RecallDefaults:
+    min_llr: float
+    emission_uplift: float
+
+    def as_tuple(self) -> tuple[float, float]:
+        return self.min_llr, self.emission_uplift
 
 
 def _recall_preset_for_args(args, presets: dict) -> dict:
@@ -15,7 +26,7 @@ def _recall_presets_or_default(presets):
     return ENZYME_PRESETS if presets is None else presets
 
 
-def resolve_recall_defaults(args, presets=None):
+def _resolve_recall_default_values(args, presets=None) -> _RecallDefaults:
     """Resolve min-LLR and emission-uplift from CLI overrides or enzyme presets."""
     presets = _recall_presets_or_default(presets)
     preset = _recall_preset_for_args(args, presets)
@@ -23,7 +34,12 @@ def resolve_recall_defaults(args, presets=None):
     uplift = _arg_or_preset_value(
         args.emission_uplift, preset, 'emission_uplift', 1.0,
     )
-    return min_llr, uplift
+    return _RecallDefaults(min_llr=min_llr, emission_uplift=uplift)
+
+
+def resolve_recall_defaults(args, presets=None):
+    """Resolve min-LLR and emission-uplift from CLI overrides or enzyme presets."""
+    return _resolve_recall_default_values(args, presets).as_tuple()
 
 
 def _legacy_tags_enabled(downstream_compat: bool, no_legacy_tags: bool) -> bool:

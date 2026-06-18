@@ -8,6 +8,8 @@ from fiberhmm.cli.recall_config import (
     _legacy_tags_enabled,
     _recall_preset_for_args,
     _recall_presets_or_default,
+    _RecallDefaults,
+    _resolve_recall_default_values,
     resolve_recall_defaults,
     should_write_legacy_tags,
 )
@@ -37,6 +39,10 @@ def test_recall_config_resolves_preset_defaults_and_overrides():
     assert _recall_preset_for_args(SimpleNamespace(enzyme=None), presets) == {}
 
     args = SimpleNamespace(enzyme="enzyme", min_llr=None, emission_uplift=None)
+    assert _resolve_recall_default_values(args, presets) == _RecallDefaults(
+        min_llr=2.5,
+        emission_uplift=1.2,
+    )
     assert resolve_recall_defaults(args, presets) == (2.5, 1.2)
 
     args = SimpleNamespace(enzyme="enzyme", min_llr=8.0, emission_uplift=1.5)
