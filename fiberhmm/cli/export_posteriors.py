@@ -1121,20 +1121,18 @@ class PosteriorReader:
         return False
 
 
+@dataclass
 class FiberPosterior:
     """Represents a single fiber with HMM posterior probabilities."""
 
-    def __init__(self, fiber_id: str, start: int, end: int, strand: str,
-                 posteriors: np.ndarray, ref_positions: Optional[np.ndarray],
-                 footprint_starts: np.ndarray, footprint_sizes: np.ndarray):
-        self.fiber_id = fiber_id
-        self.start = start
-        self.end = end
-        self.strand = strand
-        self.posteriors = posteriors
-        self.ref_positions = ref_positions
-        self.footprint_starts = footprint_starts
-        self.footprint_sizes = footprint_sizes
+    fiber_id: str
+    start: int
+    end: int
+    strand: str
+    posteriors: np.ndarray
+    ref_positions: Optional[np.ndarray]
+    footprint_starts: np.ndarray
+    footprint_sizes: np.ndarray
 
     def __repr__(self):
         return (
