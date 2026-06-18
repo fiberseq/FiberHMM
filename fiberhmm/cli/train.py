@@ -60,6 +60,13 @@ class _TrainingRunResult:
     encoded_reads: list
 
 
+@dataclass(frozen=True)
+class _TrainingSamplingIndex:
+    chroms: list
+    cum_lengths: np.ndarray
+    total_length: int
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Train FiberHMM model from PacBio BAM files',
@@ -291,13 +298,16 @@ def _chrom_pos_from_genome_offset(chroms: list, cum_lengths: np.ndarray,
     return chrom, int(pos)
 
 
-def _training_sampling_index(ref_lengths: dict) -> tuple:
+def _training_sampling_index(ref_lengths: dict) -> _TrainingSamplingIndex:
     main_chroms = _training_sampling_chrom_lengths(ref_lengths)
     chroms = list(main_chroms.keys())
     lengths = np.array([main_chroms[c] for c in chroms])
     cum_lengths = np.cumsum(lengths)
-    total_length = cum_lengths[-1]
-    return chroms, cum_lengths, total_length
+    return _TrainingSamplingIndex(
+        chroms=chroms,
+        cum_lengths=cum_lengths,
+        total_length=int(cum_lengths[-1]),
+    )
 
 
 def _training_reference_span(read):
@@ -474,7 +484,7 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         # Get reference lengths from header
         ref_lengths = dict(zip(bam.references, bam.lengths))
-        chroms, cum_lengths, total_length = _training_sampling_index(ref_lengths)
+        sampling_index = _training_sampling_index(ref_lengths)
 
         # Over-sample positions since not all will yield valid reads
         n_attempts = n_samples * 20
@@ -484,15 +494,17 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
         while len(sampled) < n_samples and attempts < max_attempts:
             # Generate batch of random positions
             batch_size = min(n_attempts, n_samples * 5)
-            random_positions = np.random.randint(0, total_length, size=batch_size)
+            random_positions = np.random.randint(
+                0, sampling_index.total_length, size=batch_size,
+            )
 
             attempts += _sample_training_reads_for_positions(
                 bam,
                 random_positions,
                 sampled,
                 n_samples,
-                chroms,
-                cum_lengths,
+                sampling_index.chroms,
+                sampling_index.cum_lengths,
                 seen_read_ids,
                 min_mapq,
                 min_read_length,
