@@ -533,6 +533,49 @@ def _also_write_legacy(args):
     return should_write_legacy_tags(args)
 
 
+def _run_recall_processing(
+    args,
+    n_cores: int,
+    bam_in,
+    bam_out,
+    header_text: str,
+    llr_hit,
+    llr_miss,
+    mode: str,
+    k: int,
+    min_llr: float,
+    also_write_legacy: bool,
+):
+    if n_cores == 1:
+        return _single_thread_loop(
+            bam_in, bam_out, header_text,
+            llr_hit, llr_miss, mode, k,
+            min_llr, args.min_opps, args.unify_threshold,
+            also_write_legacy, args.downstream_compat, args.max_reads,
+        )
+    return _parallel_loop(
+        bam_in, bam_out, header_text,
+        llr_hit, llr_miss, mode, k,
+        min_llr, args.min_opps, args.unify_threshold,
+        also_write_legacy, args.downstream_compat, args.max_reads,
+        n_cores, args.chunk_size,
+    )
+
+
+def _print_recall_summary(n_reads, n_v2, n_tf, n_demoted, n_failed) -> None:
+    print(
+        f"[recall_tfs] processed {n_reads} reads; {n_v2} carried v2 tags; "
+        f"{n_tf} TF calls emitted; {n_demoted} v2 short nucs demoted to tf+",
+        file=sys.stderr,
+    )
+    if n_failed:
+        print(
+            f"[recall_tfs] warning: {n_failed} reads passed through unchanged "
+            "after recall errors",
+            file=sys.stderr,
+        )
+
+
 def main():
     args = parse_args()
 
@@ -570,37 +613,25 @@ def main():
         header_text = str(bam_in.header)
         also_write_legacy = _also_write_legacy(args)
 
-        if n_cores == 1:
-            n_reads, n_v2, n_tf, n_demoted, n_failed = _single_thread_loop(
-                bam_in, bam_out, header_text,
-                llr_hit, llr_miss, mode, k,
-                min_llr, args.min_opps, args.unify_threshold,
-                also_write_legacy, args.downstream_compat, args.max_reads,
-            )
-        else:
-            n_reads, n_v2, n_tf, n_demoted, n_failed = _parallel_loop(
-                bam_in, bam_out, header_text,
-                llr_hit, llr_miss, mode, k,
-                min_llr, args.min_opps, args.unify_threshold,
-                also_write_legacy, args.downstream_compat, args.max_reads,
-                n_cores, args.chunk_size,
-            )
+        n_reads, n_v2, n_tf, n_demoted, n_failed = _run_recall_processing(
+            args,
+            n_cores,
+            bam_in,
+            bam_out,
+            header_text,
+            llr_hit,
+            llr_miss,
+            mode,
+            k,
+            min_llr,
+            also_write_legacy,
+        )
     finally:
         bam_in.close()
         if bam_out is not None:
             bam_out.close()
 
-    print(
-        f"[recall_tfs] processed {n_reads} reads; {n_v2} carried v2 tags; "
-        f"{n_tf} TF calls emitted; {n_demoted} v2 short nucs demoted to tf+",
-        file=sys.stderr,
-    )
-    if n_failed:
-        print(
-            f"[recall_tfs] warning: {n_failed} reads passed through unchanged "
-            "after recall errors",
-            file=sys.stderr,
-        )
+    _print_recall_summary(n_reads, n_v2, n_tf, n_demoted, n_failed)
 
 
 if __name__ == '__main__':

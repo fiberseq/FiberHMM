@@ -298,6 +298,71 @@ def test_recall_tfs_load_model_config_falls_back_to_json_metadata(monkeypatch):
     )
 
 
+def test_recall_tfs_run_processing_dispatches_single_and_parallel(monkeypatch):
+    args = SimpleNamespace(
+        min_opps=3,
+        unify_threshold=90,
+        downstream_compat=False,
+        max_reads=10,
+        chunk_size=256,
+    )
+    calls = []
+
+    def fake_single(*call_args):
+        calls.append(("single", call_args))
+        return (1, 2, 3, 4, 5)
+
+    def fake_parallel(*call_args):
+        calls.append(("parallel", call_args))
+        return (6, 7, 8, 9, 10)
+
+    monkeypatch.setattr(recall_tfs, "_single_thread_loop", fake_single)
+    monkeypatch.setattr(recall_tfs, "_parallel_loop", fake_parallel)
+
+    common_args = (
+        "bam-in",
+        "bam-out",
+        "header",
+        "hit",
+        "miss",
+        "daf",
+        3,
+        4.5,
+        True,
+    )
+    assert recall_tfs._run_recall_processing(args, 1, *common_args) == (
+        1, 2, 3, 4, 5,
+    )
+    assert recall_tfs._run_recall_processing(args, 4, *common_args) == (
+        6, 7, 8, 9, 10,
+    )
+    assert calls[0] == (
+        "single",
+        (
+            "bam-in", "bam-out", "header", "hit", "miss", "daf", 3,
+            4.5, 3, 90, True, False, 10,
+        ),
+    )
+    assert calls[1] == (
+        "parallel",
+        (
+            "bam-in", "bam-out", "header", "hit", "miss", "daf", 3,
+            4.5, 3, 90, True, False, 10, 4, 256,
+        ),
+    )
+
+
+def test_recall_tfs_print_summary_reports_failures(capsys):
+    recall_tfs._print_recall_summary(10, 4, 3, 2, 1)
+
+    err = capsys.readouterr().err
+    assert "processed 10 reads" in err
+    assert "4 carried v2 tags" in err
+    assert "3 TF calls emitted" in err
+    assert "2 v2 short nucs demoted" in err
+    assert "warning: 1 reads passed through unchanged" in err
+
+
 def test_recall_tfs_single_thread_passes_failed_reads_through(monkeypatch):
     reads = [
         SimpleNamespace(query_name="ok", query_sequence="AAAA"),
