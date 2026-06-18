@@ -33,6 +33,7 @@ from fiberhmm.inference.region_workers import (
     _region_read_route,
     _region_result_ns_scores,
     _record_skipped_region_read,
+    _run_fused_region_apply_read,
     _run_region_apply_read,
     _write_footprinted_region_read,
     _write_unfootprinted_region_read,
@@ -687,6 +688,68 @@ def test_run_region_apply_read_uses_apply_config(monkeypatch):
         91,
         False,
         True,
+    )
+
+
+def test_run_fused_region_apply_read_uses_apply_config(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    calls = {}
+
+    def fake_run_hmm_apply_stage(
+        fiber_read,
+        model,
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        nuc_min_size,
+        with_scores,
+    ):
+        calls["args"] = (
+            fiber_read,
+            model,
+            edge_trim,
+            circular,
+            mode,
+            context_size,
+            msp_min_size,
+            nuc_min_size,
+            with_scores,
+        )
+        return {"ns": [1]}
+
+    monkeypatch.setattr(
+        region_workers,
+        "run_hmm_apply_stage",
+        fake_run_hmm_apply_stage,
+    )
+
+    fiber_read = {"query_sequence": "ACGT"}
+    model = object()
+    config = _apply_config(
+        edge_trim=3,
+        circular=True,
+        context_size=7,
+        msp_min_size=22,
+        nuc_min_size=91,
+        with_scores=False,
+    )
+
+    result = _run_fused_region_apply_read(fiber_read, model, config)
+
+    assert result == {"ns": [1]}
+    assert calls["args"] == (
+        fiber_read,
+        model,
+        3,
+        True,
+        "pacbio-fiber",
+        7,
+        22,
+        91,
+        False,
     )
 
 

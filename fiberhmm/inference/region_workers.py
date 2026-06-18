@@ -325,6 +325,24 @@ def _run_region_apply_read(
     )
 
 
+def _run_fused_region_apply_read(
+    fiber_read,
+    model,
+    apply_config: _RegionApplyConfig,
+):
+    return run_hmm_apply_stage(
+        fiber_read,
+        model,
+        apply_config.edge_trim,
+        apply_config.circular,
+        apply_config.mode,
+        apply_config.context_size,
+        apply_config.msp_min_size,
+        apply_config.nuc_min_size,
+        apply_config.with_scores,
+    )
+
+
 def _read_starts_in_region(read, start: int, end: int) -> bool:
     return int(start) <= int(read.reference_start) < int(end)
 
@@ -651,17 +669,7 @@ def _process_fused_region_bam_read(
         return _skipped_region_bam_delta(outbam, read, skip_reasons, skip_reason)
 
     try:
-        apply_result = run_hmm_apply_stage(
-            fiber_read,
-            model,
-            apply_config.edge_trim,
-            apply_config.circular,
-            apply_config.mode,
-            apply_config.context_size,
-            apply_config.msp_min_size,
-            apply_config.nuc_min_size,
-            apply_config.with_scores,
-        )
+        apply_result = _run_fused_region_apply_read(fiber_read, model, apply_config)
     except Exception:
         return _skipped_region_bam_delta(
             outbam, read, skip_reasons, 'extraction_failed',
