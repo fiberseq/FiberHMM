@@ -19,7 +19,11 @@ def reverse_complement(seq: str) -> str:
 
 
 def _count_mod_positions_at_base(seq_upper: str, mod_positions: Set[int], base: str) -> int:
-    return sum(1 for p in mod_positions if p < len(seq_upper) and seq_upper[p] == base)
+    return sum(
+        1
+        for p in mod_positions
+        if 0 <= p < len(seq_upper) and seq_upper[p] == base
+    )
 
 
 def _daf_strand_base_from_counts(t_count: int, a_count: int) -> Tuple[str, str]:
