@@ -39,6 +39,7 @@ from fiberhmm.inference.region_workers import (
     _region_result_ns_scores,
     _RegionBamWorkerCounts,
     _RegionPosteriorTsv,
+    _RegionReadRoute,
     _run_fused_region_apply_read,
     _run_region_apply_read,
     _write_footprinted_region_read,
@@ -556,19 +557,19 @@ def test_process_fused_region_bam_read_writes_recalled_tags(monkeypatch):
 def test_region_read_route_preserves_skip_and_ownership_order():
     config = ReadFilterConfig(min_mapq=10, min_read_length=50)
 
-    assert _region_read_route(_route_read(), 100, 200, config) == (
-        _REGION_ROUTE_PROCESS,
-        None,
+    assert _region_read_route(_route_read(), 100, 200, config) == _RegionReadRoute(
+        route=_REGION_ROUTE_PROCESS,
+        skip_reason=None,
     )
     assert _region_read_route(
         _route_read(reference_start=90), 100, 200, config
-    ) == (_REGION_ROUTE_OUTSIDE, None)
+    ) == _RegionReadRoute(route=_REGION_ROUTE_OUTSIDE, skip_reason=None)
     assert _region_read_route(
         _route_read(mapping_quality=0), 100, 200, config
-    ) == (_REGION_ROUTE_SKIP, "low_mapq")
+    ) == _RegionReadRoute(route=_REGION_ROUTE_SKIP, skip_reason="low_mapq")
     assert _region_read_route(
         _route_read(is_unmapped=True, reference_start=90), 100, 200, config
-    ) == (_REGION_ROUTE_SKIP, "unmapped")
+    ) == _RegionReadRoute(route=_REGION_ROUTE_SKIP, skip_reason="unmapped")
 
 
 def test_record_skipped_region_read_writes_and_updates_counters():

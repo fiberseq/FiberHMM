@@ -84,6 +84,12 @@ class _RegionPosteriorTsv:
 
 
 @dataclass(frozen=True)
+class _RegionReadRoute:
+    route: str
+    skip_reason: Optional[str]
+
+
+@dataclass(frozen=True)
 class _RegionBamWorkerRuntime:
     apply_config: _RegionApplyConfig
     output_config: _RegionBamOutputConfig
@@ -395,12 +401,12 @@ def _region_read_route(read, start: int, end: int, filter_config: ReadFilterConf
     """
     skip_reason = streaming_skip_reason(read, filter_config)
     if skip_reason in _PRE_OWNERSHIP_SKIP_REASONS:
-        return _REGION_ROUTE_SKIP, skip_reason
+        return _RegionReadRoute(route=_REGION_ROUTE_SKIP, skip_reason=skip_reason)
     if not _read_starts_in_region(read, start, end):
-        return _REGION_ROUTE_OUTSIDE, None
+        return _RegionReadRoute(route=_REGION_ROUTE_OUTSIDE, skip_reason=None)
     if skip_reason:
-        return _REGION_ROUTE_SKIP, skip_reason
-    return _REGION_ROUTE_PROCESS, None
+        return _RegionReadRoute(route=_REGION_ROUTE_SKIP, skip_reason=skip_reason)
+    return _RegionReadRoute(route=_REGION_ROUTE_PROCESS, skip_reason=None)
 
 
 def _region_bed12_blocks(ref_start, ref_end, starts, lengths, scores=None):
@@ -608,10 +614,12 @@ def _process_region_bam_read(
     return_posteriors: bool,
     tsv_file,
 ) -> _RegionBamReadDelta:
-    route, skip_reason = _region_read_route(read, start, end, filter_config)
-    if route == _REGION_ROUTE_SKIP:
-        return _skipped_region_bam_delta(outbam, read, skip_reasons, skip_reason)
-    if route == _REGION_ROUTE_OUTSIDE:
+    read_route = _region_read_route(read, start, end, filter_config)
+    if read_route.route == _REGION_ROUTE_SKIP:
+        return _skipped_region_bam_delta(
+            outbam, read, skip_reasons, read_route.skip_reason,
+        )
+    if read_route.route == _REGION_ROUTE_OUTSIDE:
         return _RegionBamReadDelta()
 
     fiber_read, skip_reason = _extract_region_fiber_read(
@@ -692,10 +700,12 @@ def _process_fused_region_bam_read(
     end: int,
     skip_reasons: dict,
 ) -> _RegionBamReadDelta:
-    route, skip_reason = _region_read_route(read, start, end, filter_config)
-    if route == _REGION_ROUTE_SKIP:
-        return _skipped_region_bam_delta(outbam, read, skip_reasons, skip_reason)
-    if route == _REGION_ROUTE_OUTSIDE:
+    read_route = _region_read_route(read, start, end, filter_config)
+    if read_route.route == _REGION_ROUTE_SKIP:
+        return _skipped_region_bam_delta(
+            outbam, read, skip_reasons, read_route.skip_reason,
+        )
+    if read_route.route == _REGION_ROUTE_OUTSIDE:
         return _RegionBamReadDelta()
 
     payload = make_apply_payload(
