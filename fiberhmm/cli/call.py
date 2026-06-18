@@ -557,13 +557,7 @@ def _index_streaming_call_output(args, stdout_mode: bool) -> None:
         pass
 
 
-def main():
-    args = parse_args()
-    stdout_mode = (args.output == '-')
-
-    if stdout_mode:
-        sys.stdout = sys.stderr  # informational prints → stderr, BAM → real stdout
-
+def _resolve_call_runtime(args, argv) -> dict:
     apply_model_path = _resolve_apply_model(args)
     recall_model_path = _resolve_recall_model(args)
 
@@ -572,7 +566,6 @@ def main():
     mode, k = _resolve_call_mode_context(args, model_k, model_mode)
 
     min_llr, uplift = resolve_recall_defaults(args)
-
     recall_nucs = _resolve_recall_nucs(args)
 
     # Fast-fail sniff for --mode daf BEFORE any BAM scanning (e.g. --phase-nrl
@@ -583,32 +576,12 @@ def main():
         _check_daf_inputs(args.input, args.reference)
 
     # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
-    phase_nrl = _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
-                                   recall_nucs)
-
+    phase_nrl = _resolve_phase_nrl(
+        args, apply_model_path, recall_model_path, mode, k, recall_nucs,
+    )
     pg_record = _build_pg_record(
-        mode, recall_nucs, phase_nrl, args.keep_chimeras, sys.argv,
+        mode, recall_nucs, phase_nrl, args.keep_chimeras, argv,
     )
-
-    print(
-        _call_banner_text(
-            apply_model_path=apply_model_path,
-            recall_model_path=recall_model_path,
-            mode=mode,
-            k=k,
-            enzyme=args.enzyme,
-            min_llr=min_llr,
-            min_opps=args.min_opps,
-            unify_threshold=args.unify_threshold,
-            uplift=uplift,
-            cores=args.cores,
-            io_threads=args.io_threads,
-            circular=args.circular,
-            region_parallel=args.region_parallel,
-        ),
-        file=sys.stderr,
-    )
-
     also_write_legacy = should_write_legacy_tags(args)
     common_kwargs = _call_fused_common_kwargs(
         args,
@@ -623,7 +596,52 @@ def main():
         pg_record,
     )
 
-    n_reads, n_fp = _run_call_pipeline(args, apply_model_path, common_kwargs)
+    return {
+        'apply_model_path': apply_model_path,
+        'recall_model_path': recall_model_path,
+        'mode': mode,
+        'k': k,
+        'min_llr': min_llr,
+        'uplift': uplift,
+        'recall_nucs': recall_nucs,
+        'phase_nrl': phase_nrl,
+        'pg_record': pg_record,
+        'also_write_legacy': also_write_legacy,
+        'common_kwargs': common_kwargs,
+    }
+
+
+def main():
+    args = parse_args()
+    stdout_mode = (args.output == '-')
+
+    if stdout_mode:
+        sys.stdout = sys.stderr  # informational prints → stderr, BAM → real stdout
+
+    runtime = _resolve_call_runtime(args, sys.argv)
+
+    print(
+        _call_banner_text(
+            apply_model_path=runtime['apply_model_path'],
+            recall_model_path=runtime['recall_model_path'],
+            mode=runtime['mode'],
+            k=runtime['k'],
+            enzyme=args.enzyme,
+            min_llr=runtime['min_llr'],
+            min_opps=args.min_opps,
+            unify_threshold=args.unify_threshold,
+            uplift=runtime['uplift'],
+            cores=args.cores,
+            io_threads=args.io_threads,
+            circular=args.circular,
+            region_parallel=args.region_parallel,
+        ),
+        file=sys.stderr,
+    )
+
+    n_reads, n_fp = _run_call_pipeline(
+        args, runtime['apply_model_path'], runtime['common_kwargs'],
+    )
     _index_streaming_call_output(args, stdout_mode)
 
 

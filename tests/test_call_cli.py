@@ -37,6 +37,7 @@ from fiberhmm.cli.call import (
     _resolve_apply_model,
     _resolve_call_chroms,
     _resolve_call_mode_context,
+    _resolve_call_runtime,
     _resolve_recall_nucs,
     _resolve_recall_model,
     _run_call_pipeline,
@@ -447,6 +448,84 @@ def test_call_fused_common_kwargs_preserve_shared_pipeline_arguments():
     assert kwargs["filter_chimeras"] is True
     assert kwargs["phase_nrl"] == 185
     assert kwargs["pg_record"] is pg_record
+
+
+def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
+    from fiberhmm.cli import call
+
+    args = SimpleNamespace(
+        input="in.bam",
+        reference="ref.fa",
+        keep_chimeras=False,
+    )
+    pg_record = {"ID": "fiberhmm-call"}
+    calls = []
+
+    monkeypatch.setattr(call, "_resolve_apply_model", lambda got_args: "apply.json")
+    monkeypatch.setattr(call, "_resolve_recall_model", lambda got_args: "recall.json")
+    monkeypatch.setattr(
+        call,
+        "load_model_with_metadata",
+        lambda path: ("model", 4, "model-mode"),
+    )
+    monkeypatch.setattr(
+        call,
+        "_resolve_call_mode_context",
+        lambda got_args, model_k, model_mode: ("daf", 5),
+    )
+    monkeypatch.setattr(call, "resolve_recall_defaults", lambda got_args: (6.0, 1.2))
+    monkeypatch.setattr(call, "_resolve_recall_nucs", lambda got_args: True)
+    monkeypatch.setattr(call, "_should_check_daf_inputs", lambda mode, path: True)
+    monkeypatch.setattr(
+        call,
+        "_check_daf_inputs",
+        lambda path, reference: calls.append(("check", path, reference)),
+    )
+    monkeypatch.setattr(
+        call,
+        "_resolve_phase_nrl",
+        lambda got_args, apply, recall, mode, k, recall_nucs: calls.append(
+            ("phase", apply, recall, mode, k, recall_nucs)
+        ) or 185,
+    )
+    monkeypatch.setattr(
+        call,
+        "_build_pg_record",
+        lambda mode, recall_nucs, phase_nrl, keep_chimeras, argv: calls.append(
+            ("pg", mode, recall_nucs, phase_nrl, keep_chimeras, argv)
+        ) or pg_record,
+    )
+    monkeypatch.setattr(call, "should_write_legacy_tags", lambda got_args: False)
+    monkeypatch.setattr(
+        call,
+        "_call_fused_common_kwargs",
+        lambda *call_args: calls.append(("common", call_args)) or {"shared": True},
+    )
+
+    runtime = _resolve_call_runtime(args, ["fiberhmm-call", "-i", "in.bam"])
+
+    assert runtime == {
+        "apply_model_path": "apply.json",
+        "recall_model_path": "recall.json",
+        "mode": "daf",
+        "k": 5,
+        "min_llr": 6.0,
+        "uplift": 1.2,
+        "recall_nucs": True,
+        "phase_nrl": 185,
+        "pg_record": pg_record,
+        "also_write_legacy": False,
+        "common_kwargs": {"shared": True},
+    }
+    assert calls[:3] == [
+        ("check", "in.bam", "ref.fa"),
+        ("phase", "apply.json", "recall.json", "daf", 5, True),
+        ("pg", "daf", True, 185, False, ["fiberhmm-call", "-i", "in.bam"]),
+    ]
+    assert calls[3] == (
+        "common",
+        (args, "recall.json", "daf", 5, 6.0, 1.2, False, True, 185, pg_record),
+    )
 
 
 def test_run_call_pipeline_dispatches_streaming(monkeypatch):
