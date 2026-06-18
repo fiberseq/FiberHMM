@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from fiberhmm.inference.engine import CHIMERA_SKIP
 from fiberhmm.inference.read_filters import ReadFilterConfig
+from fiberhmm.inference.region_types import RegionBamResult
 from fiberhmm.inference.region_workers import (
     _REGION_ROUTE_OUTSIDE,
     _REGION_ROUTE_PROCESS,
@@ -11,11 +12,14 @@ from fiberhmm.inference.region_workers import (
     _extract_region_fiber_read,
     _extract_region_payload_fiber_read,
     _fused_region_recall_config,
+    _open_region_posterior_tsv,
     _process_fused_region_bam_read,
     _process_region_bam_read,
     _process_region_bed_read,
+    _region_bam_result_from_counts,
     _region_bed12_row_from_read_result,
     _format_region_bed12_row,
+    _RegionBamWorkerCounts,
     _pad_region_bed12_to_read_span,
     _region_apply_config,
     _region_bam_output_config,
@@ -108,6 +112,71 @@ def test_region_bam_output_config_gates_posteriors_on_temp_path():
         None,
     ).return_posteriors is False
     assert _region_bam_output_config({}, "region.tsv").write_msps is True
+
+
+def test_open_region_posterior_tsv_opens_only_when_enabled(tmp_path):
+    disabled_config = _region_bam_output_config({"return_posteriors": False}, None)
+    assert _open_region_posterior_tsv(disabled_config, None) == (None, False)
+
+    tsv_path = tmp_path / "region.tsv"
+    enabled_config = _region_bam_output_config(
+        {"return_posteriors": True},
+        str(tsv_path),
+    )
+    tsv_file, return_posteriors = _open_region_posterior_tsv(
+        enabled_config,
+        str(tsv_path),
+    )
+
+    try:
+        assert return_posteriors is True
+        assert tsv_file is not None
+        tsv_file.write("ok\n")
+    finally:
+        tsv_file.close()
+
+    assert tsv_path.read_text() == "ok\n"
+
+    bad_file, bad_enabled = _open_region_posterior_tsv(
+        enabled_config,
+        str(tmp_path / "missing" / "region.tsv"),
+    )
+    assert bad_file is None
+    assert bad_enabled is False
+
+
+def test_region_bam_result_from_counts_includes_tsv_only_when_written():
+    counts = _RegionBamWorkerCounts(
+        total_reads=10,
+        reads_with_footprints=4,
+        written=9,
+        posteriors_written=2,
+    )
+    result = _region_bam_result_from_counts(
+        "region.bam",
+        counts,
+        {"low_mapq": 1},
+        "region.tsv",
+        return_posteriors=True,
+    )
+
+    assert result == RegionBamResult(
+        "region.bam",
+        10,
+        4,
+        9,
+        "region.tsv",
+        {"low_mapq": 1},
+    )
+
+    no_tsv = _region_bam_result_from_counts(
+        "region.bam",
+        counts,
+        {},
+        "region.tsv",
+        return_posteriors=False,
+    )
+    assert no_tsv.temp_tsv_path is None
 
 
 def test_fused_region_recall_config_casts_worker_params():

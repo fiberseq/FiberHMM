@@ -165,6 +165,38 @@ def _region_bam_output_config(
     )
 
 
+def _open_region_posterior_tsv(
+    output_config: _RegionBamOutputConfig,
+    temp_tsv_path: Optional[str],
+):
+    if not output_config.return_posteriors or not temp_tsv_path:
+        return None, False
+    try:
+        return open(temp_tsv_path, 'w'), True
+    except Exception:
+        return None, False
+
+
+def _region_bam_result_from_counts(
+    temp_bam_path: str,
+    counts: _RegionBamWorkerCounts,
+    skip_reasons: dict,
+    temp_tsv_path: Optional[str],
+    return_posteriors: bool,
+) -> RegionBamResult:
+    tsv_path = None
+    if return_posteriors and counts.posteriors_written > 0 and temp_tsv_path:
+        tsv_path = temp_tsv_path
+    return RegionBamResult(
+        temp_bam_path,
+        counts.total_reads,
+        counts.reads_with_footprints,
+        counts.written,
+        tsv_path,
+        skip_reasons,
+    )
+
+
 def _fused_region_recall_config(params: dict) -> _FusedRegionRecallConfig:
     return _FusedRegionRecallConfig(
         min_llr=float(params['min_llr']),
@@ -684,12 +716,10 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         pysam.set_verbosity(0)
 
         # Open posteriors TSV file for streaming writes (if requested).
-        tsv_file = None
-        if output_config.return_posteriors and temp_tsv_path:
-            try:
-                tsv_file = open(temp_tsv_path, 'w')
-            except Exception:
-                return_posteriors = False  # Can't write, disable.
+        tsv_file, return_posteriors = _open_region_posterior_tsv(
+            output_config,
+            temp_tsv_path,
+        )
 
         try:
             with pysam.AlignmentFile(
@@ -727,16 +757,12 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
             if tsv_file:
                 tsv_file.close()
 
-        # Return TSV path if we wrote any posteriors.
-        if return_posteriors and counts.posteriors_written > 0 and temp_tsv_path:
-            return RegionBamResult(
-                temp_bam_path, counts.total_reads, counts.reads_with_footprints,
-                counts.written, temp_tsv_path, skip_reasons,
-            )
-
-        return RegionBamResult(
-            temp_bam_path, counts.total_reads, counts.reads_with_footprints,
-            counts.written, None, skip_reasons,
+        return _region_bam_result_from_counts(
+            temp_bam_path,
+            counts,
+            skip_reasons,
+            temp_tsv_path,
+            return_posteriors,
         )
 
     except Exception as e:
