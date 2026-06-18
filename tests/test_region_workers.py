@@ -2,8 +2,9 @@
 
 from types import SimpleNamespace
 
-import fiberhmm.inference.region_workers as region_workers
 import pytest
+
+import fiberhmm.inference.region_workers as region_workers
 from fiberhmm.inference.engine import CHIMERA_SKIP
 from fiberhmm.inference.read_filters import ReadFilterConfig
 from fiberhmm.inference.region_types import RegionBamResult, RegionBamWorkItem
@@ -14,34 +15,34 @@ from fiberhmm.inference.region_workers import (
     _build_fused_region_recall_result,
     _extract_region_fiber_read,
     _extract_region_payload_fiber_read,
+    _format_region_bed12_row,
     _fused_region_recall_config,
     _fused_region_worker_runtime,
+    _new_region_skip_reasons,
     _open_region_posterior_tsv,
+    _pad_region_bed12_to_read_span,
     _process_fused_region_bam_read,
     _process_region_bam_read,
     _process_region_bed_read,
-    _format_region_bed12_row,
-    _RegionBamWorkerCounts,
-    _new_region_skip_reasons,
-    _pad_region_bed12_to_read_span,
+    _record_skipped_region_read,
     _region_apply_config,
     _region_bam_output_config,
     _region_bam_result_from_counts,
     _region_bam_worker_runtime,
+    _region_bed12_blocks,
     _region_bed12_row_from_read_result,
     _region_bed_block_components,
     _region_bed_read_filter_config,
     _region_bed_score_list,
-    _region_bed12_blocks,
     _region_fused_recall_options,
     _region_read_route,
     _region_result_ns_scores,
-    _record_skipped_region_read,
+    _RegionBamWorkerCounts,
     _run_fused_region_apply_read,
     _run_region_apply_read,
     _write_footprinted_region_read,
-    _write_unfootprinted_region_read,
     _write_region_posterior_record,
+    _write_unfootprinted_region_read,
 )
 
 

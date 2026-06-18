@@ -12,7 +12,6 @@ from typing import Optional, Set, Tuple
 
 import pysam
 
-from fiberhmm.io.bam_index import ensure_bam_index
 from fiberhmm.inference.bam_output import (
     _concatenate_region_bams,
     _sort_and_index_bam,
@@ -34,8 +33,11 @@ from fiberhmm.inference.region_workers import (
     _process_region_to_bam_fused,
     _process_region_to_bed,
 )
+from fiberhmm.io.bam_index import ensure_bam_index
 from fiberhmm.posteriors.region_tsv import (
     merge_region_posteriors_tsv as _merge_region_posteriors_tsv,
+)
+from fiberhmm.posteriors.region_tsv import (
     region_posteriors_needs_h5_conversion,
     region_posteriors_tsv_output_path,
 )

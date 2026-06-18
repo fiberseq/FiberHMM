@@ -2,13 +2,15 @@
 Correctness tests for the streaming producer-consumer pipeline.
 """
 
-from collections import deque
 import io
+import sys
+from collections import deque
+
 import pysam
 import pytest
-import sys
 
 from fiberhmm.inference import streaming_pipeline
+from fiberhmm.inference.parallel import process_bam_for_footprints
 from fiberhmm.inference.streaming_pipeline import (
     _apply_drain_chunk_factory,
     _apply_worker_args,
@@ -32,6 +34,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _print_streaming_progress,
     _run_streaming_worker_loop,
     _should_sort_streaming_output,
+    _stream_reads_to_workers,
     _streaming_completion_message,
     _streaming_filter_config,
     _streaming_log_for_output,
@@ -39,10 +42,8 @@ from fiberhmm.inference.streaming_pipeline import (
     _streaming_progress_message,
     _streaming_progress_rates,
     _streaming_rate,
-    _stream_reads_to_workers,
     _worker_common_args,
 )
-from fiberhmm.inference.parallel import process_bam_for_footprints
 
 
 class _FakeAlignmentFile:
@@ -1257,7 +1258,9 @@ class TestStreamingOrderAndDeterminism:
         tags2 = _read_tags_by_name(out2)
         assert tags1 == tags2
 
-    def test_single_core_matches_multi_core(self, synthetic_bam_small, benchmark_model_path, tmp_path):
+    def test_single_core_matches_multi_core(
+        self, synthetic_bam_small, benchmark_model_path, tmp_path,
+    ):
         """n_cores=1 and n_cores=2 produce same tags."""
         out1 = str(tmp_path / "out_1core.bam")
         out2 = str(tmp_path / "out_2core.bam")

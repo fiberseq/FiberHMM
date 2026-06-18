@@ -14,7 +14,6 @@ import pysam
 
 from fiberhmm.inference.bam_output import _sort_and_index_bam
 from fiberhmm.inference.engine import make_apply_payload
-from fiberhmm.io.bam_header import append_coord_marker, maybe_append_pg
 from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.skip_reasons import (
@@ -31,6 +30,7 @@ from fiberhmm.inference.streaming_workers import (
     _process_fused_payload_chunk_worker,
     _process_payload_chunk_worker,
 )
+from fiberhmm.io.bam_header import append_coord_marker, maybe_append_pg
 
 try:
     from fiberhmm.posteriors.hdf5_backend import PosteriorWriter
