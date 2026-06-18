@@ -628,10 +628,12 @@ def detect_mode_from_bam(bam_path: str, n_sample: int = 100) -> str:
 # shifts ~1-3 ms/read off the main-process critical path.
 # ---------------------------------------------------------------------------
 
+_APPLY_PAYLOAD_TAGS = ('MM', 'Mm', 'ML', 'Ml', 'st')
+
 
 def _apply_payload_tags(read) -> dict:
     tags = {}
-    for tag in ('MM', 'Mm', 'ML', 'Ml', 'st'):
+    for tag in _APPLY_PAYLOAD_TAGS:
         if read.has_tag(tag):
             tags[tag] = _apply_payload_tag_value(read, tag)
     return tags

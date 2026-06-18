@@ -555,6 +555,24 @@ class TestFiberReadExtraction:
         assert payload["tags"]["ML"] == bytes([200])
         assert payload["tags"]["st"] == "CT"
 
+    def test_apply_payload_tags_uses_named_tag_set(self):
+        read = self.FakeRead(
+            "AAAA",
+            {
+                "MM": "A+a,0;",
+                "Ml": array.array("B", [201]),
+                "st": "CT",
+                "RG": "ignored",
+            },
+        )
+
+        assert engine._apply_payload_tags(read) == {
+            "MM": "A+a,0;",
+            "Ml": bytes([201]),
+            "st": "CT",
+        }
+        assert set(engine._APPLY_PAYLOAD_TAGS) == {"MM", "Mm", "ML", "Ml", "st"}
+
     def test_apply_payload_tag_value_compacts_ml_only(self):
         read = self.FakeRead(
             "AAAA",
