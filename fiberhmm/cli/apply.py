@@ -28,11 +28,8 @@ from fiberhmm.inference.stats import collect_stats_from_bam
 from fiberhmm.io.bam_index import bam_index_exists
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description='Apply FiberHMM model to call chromatin footprints from fiber-seq BAM',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
+def _apply_parser_epilog() -> str:
+    return '''
 Output:
   Tagged BAM file with footprint annotations (ns/nl and as/al tags).
   Use extract_tags.py to convert to BED12/bigBed for visualization.
@@ -54,11 +51,9 @@ Examples:
   # Extract to bigBed for browser visualization
   fiberhmm-extract-tags -i output/data_footprints.bam --footprint --bigbed
 '''
-    )
 
-    add_version_args(parser)
 
-    # Required
+def _add_apply_required_args(parser) -> None:
     parser.add_argument('-i', '--input', required=True,
                         help='Input BAM file with modification calls (must be indexed)')
     parser.add_argument('-m', '--model', default=None,
@@ -67,7 +62,8 @@ Examples:
     parser.add_argument('-o', '--outdir', required=True,
                         help='Output directory, or "-" to write BAM to stdout (for piping)')
 
-    # Enzyme / platform (bundled model selection)
+
+def _add_apply_model_selection_args(parser) -> None:
     from fiberhmm.models import SUPPORTED_ENZYMES as _ENZYMES
     parser.add_argument('--enzyme', choices=_ENZYMES, default=None,
                         help='Auto-select bundled model: hia5, dddb, or ddda. '
@@ -76,17 +72,14 @@ Examples:
                         help='Sequencing platform. Required for hia5 '
                              '(pacbio or nanopore); ignored for dddb/ddda.')
 
-    # Mode
-    add_mode_args(parser, default=None)
 
-    # Context size (auto-detected from model by default)
+def _add_apply_mode_context_args(parser) -> None:
+    add_mode_args(parser, default=None)
     parser.add_argument('-k', '--context-size', type=int, default=None,
                         help='Context size (auto-detected from model if not specified)')
 
-    # Parallelization
-    add_parallel_args(parser, default_cores=1, default_region_size=10_000_000)
 
-    # Filtering
+def _add_apply_filtering_args(parser) -> None:
     add_filter_args(parser, min_mapq=0, prob_threshold=128, min_read_length=1000)
     parser.add_argument('-t', '--train-reads', default=None,
                         help='TSV file of read IDs used in training (to exclude)')
@@ -98,12 +91,14 @@ Examples:
                         help='Process unmapped reads that have sequences and modification tags. '
                              'Enabled automatically in streaming mode when no BAM index exists.')
 
-    # Processing
+
+def _add_apply_processing_args(parser) -> None:
     add_edge_trim_args(parser, default=10)
     parser.add_argument('-r', '--circular', action='store_true',
                         help='Enable circular mode (tiles reads 3x)')
 
-    # Output format flags
+
+def _add_apply_output_args(parser) -> None:
     parser.add_argument('--scores', action='store_true',
                         help='Compute per-footprint confidence scores (slower but more informative)')
     parser.add_argument('--scores-db', action='store_true',
@@ -121,23 +116,40 @@ Examples:
                         help='Do not write MSP tags (as/al/aq) to output BAM. '
                              'Useful for Fiber-seq where MSPs are computed differently by fibertools')
 
-    # QC and statistics
+
+def _add_apply_stats_args(parser) -> None:
     add_stats_args(parser)
     parser.add_argument('--stats-sample', type=int, default=10000,
                         help='Number of reads to sample for statistics (default: 10000)')
     parser.add_argument('--stats-seed', type=int, default=42,
                         help='Random seed for sampling (default: 42)')
 
-    # Posteriors and debug
+
+def _add_apply_debug_args(parser) -> None:
     parser.add_argument('--output-posteriors', type=str, default=None,
                         help='Export HMM posteriors to file (H5 or TSV)')
     parser.add_argument('--debug-timing', action='store_true',
                         help='Show per-read timing breakdown')
-
-    # Testing
     parser.add_argument('--max-reads', type=int, default=None,
                         help=argparse.SUPPRESS)
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description='Apply FiberHMM model to call chromatin footprints from fiber-seq BAM',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_apply_parser_epilog(),
+    )
+    add_version_args(parser)
+    _add_apply_required_args(parser)
+    _add_apply_model_selection_args(parser)
+    _add_apply_mode_context_args(parser)
+    add_parallel_args(parser, default_cores=1, default_region_size=10_000_000)
+    _add_apply_filtering_args(parser)
+    _add_apply_processing_args(parser)
+    _add_apply_output_args(parser)
+    _add_apply_stats_args(parser)
+    _add_apply_debug_args(parser)
     return parser.parse_args()
 
 
