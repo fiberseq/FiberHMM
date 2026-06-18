@@ -5,7 +5,6 @@ import os
 import sys
 from typing import Optional
 
-
 _VALID_MP_CONTEXTS = ('spawn', 'fork', 'forkserver')
 
 

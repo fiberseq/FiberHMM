@@ -11,18 +11,18 @@ from fiberhmm.inference.engine import (
     configure_daf_chimera_filter,
     extract_fiber_read_from_payload,
 )
-from fiberhmm.inference.recall_tables import load_recall_llr_tables
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
     run_hmm_apply_stage,
 )
+from fiberhmm.inference.recall_tables import load_recall_llr_tables
+from fiberhmm.inference.worker_results import WorkerChunkResult
 from fiberhmm.inference.worker_warmup import (
     disable_numba_cache_locking,
     warm_up_model_predict,
     warm_up_tf_recaller,
 )
-from fiberhmm.inference.worker_results import WorkerChunkResult
 
 # Picklable per-result marker for a DAF chimera-filtered read (CHIMERA_SKIP is an
 # identity sentinel that does not survive worker IPC, so the worker emits this

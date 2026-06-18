@@ -12,7 +12,6 @@ import numpy as np
 import pysam
 
 from fiberhmm.inference.bam_output import _sort_and_index_bam
-from fiberhmm.io.bam_header import append_coord_marker
 from fiberhmm.inference.engine import (
     _extract_fiber_read_from_pysam,
     _process_single_read,
@@ -30,6 +29,7 @@ from fiberhmm.inference.streaming_workers import (
 )
 from fiberhmm.inference.tagging import set_legacy_apply_tags
 from fiberhmm.inference.worker_results import coerce_worker_chunk_result
+from fiberhmm.io.bam_header import append_coord_marker
 
 # Optional: inline posteriors export
 try:
