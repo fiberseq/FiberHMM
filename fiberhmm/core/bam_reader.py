@@ -260,6 +260,14 @@ def get_modified_positions_pysam(
 _COMPLEMENT_TABLE = str.maketrans('ACGTacgtNn', 'TGCAtgcaNn')
 
 
+@dataclass(frozen=True)
+class _MmWalkContext:
+    seq_upper: str
+    q_len: int
+    search_seq: str
+    search_bytes: np.ndarray
+
+
 def _ml_tag_to_uint8_array(ml_tag) -> np.ndarray:
     if isinstance(ml_tag, (bytes, bytearray, memoryview)):
         return np.frombuffer(ml_tag, dtype=np.uint8)
@@ -281,12 +289,12 @@ def _mm_search_sequence(seq_upper: str, is_reverse: bool) -> str:
     return seq_upper
 
 
-def _mm_walk_context(sequence: str, is_reverse: bool) -> Tuple[str, int, str, np.ndarray]:
+def _mm_walk_context(sequence: str, is_reverse: bool) -> _MmWalkContext:
     seq_upper = sequence.upper()
     q_len = len(seq_upper)
     search_seq = _mm_search_sequence(seq_upper, is_reverse)
     search_bytes = np.frombuffer(search_seq.encode('ascii'), dtype=np.uint8)
-    return seq_upper, q_len, search_seq, search_bytes
+    return _MmWalkContext(seq_upper, q_len, search_seq, search_bytes)
 
 
 def _mm_skip_counts(raw_counts) -> np.ndarray:
@@ -541,7 +549,7 @@ def parse_mm_ml_per_mod_type(
 
     # For reverse-aligned reads, MM walks in the RC of SEQ (original
     # sequencing direction).  See SAM specs on MM/ML orientation.
-    _, q_len, _, seq_bytes = _mm_walk_context(sequence, is_reverse)
+    walk_context = _mm_walk_context(sequence, is_reverse)
     base_positions_cache: Dict[str, np.ndarray] = {}
 
     ml_idx = 0
@@ -551,10 +559,10 @@ def parse_mm_ml_per_mod_type(
             skip_arr,
             n_mods,
             base_positions_cache,
-            seq_bytes,
+            walk_context.search_bytes,
             ml_arr_all,
             ml_idx,
-            q_len,
+            walk_context.q_len,
             is_reverse,
         )
         if base_and_mod is None or len(positions) == 0:
@@ -677,7 +685,7 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
     # complement of SEQ for reverse-aligned reads.  We do the walk on
     # ``search_seq`` (== ORIGINAL) and flip positions back to SEQ frame at
     # the end via ``q_len - 1 - pos``.
-    seq_upper, q_len, search_seq, search_bytes = _mm_walk_context(
+    walk_context = _mm_walk_context(
         sequence, is_reverse,
     )
 
@@ -687,7 +695,13 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
     ml_arr_all = _ml_tag_to_uint8_array(ml_tag)
 
     if debug and mode == 'daf':
-        _print_mm_parse_debug(sequence, seq_upper, mm_tag, ml_arr_all, is_reverse)
+        _print_mm_parse_debug(
+            sequence,
+            walk_context.seq_upper,
+            mm_tag,
+            ml_arr_all,
+            is_reverse,
+        )
 
     ml_idx = 0
     # Pre-compute base position arrays per target base (cached within one call)
@@ -699,10 +713,10 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
             skip_arr,
             n_mods,
             base_pos_cache,
-            search_bytes,
+            walk_context.search_bytes,
             ml_arr_all,
             ml_idx,
-            q_len,
+            walk_context.q_len,
             is_reverse,
             prob_threshold,
             mode,

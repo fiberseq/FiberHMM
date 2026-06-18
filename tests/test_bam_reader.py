@@ -208,27 +208,27 @@ def test_ml_tag_to_uint8_array_promotes_scalar_values():
 
 
 def test_mm_walk_context_builds_forward_and_reverse_search_sequences():
-    seq_upper, q_len, search_seq, search_bytes = _mm_walk_context(
+    context = _mm_walk_context(
         "AaGC", is_reverse=False,
     )
 
-    assert seq_upper == "AAGC"
-    assert q_len == 4
-    assert search_seq == "AAGC"
+    assert context.seq_upper == "AAGC"
+    assert context.q_len == 4
+    assert context.search_seq == "AAGC"
     np.testing.assert_array_equal(
-        search_bytes,
+        context.search_bytes,
         np.frombuffer(b"AAGC", dtype=np.uint8),
     )
 
-    seq_upper, q_len, search_seq, search_bytes = _mm_walk_context(
+    context = _mm_walk_context(
         "AAGC", is_reverse=True,
     )
 
-    assert seq_upper == "AAGC"
-    assert q_len == 4
-    assert search_seq == "GCTT"
+    assert context.seq_upper == "AAGC"
+    assert context.q_len == 4
+    assert context.search_seq == "GCTT"
     np.testing.assert_array_equal(
-        search_bytes,
+        context.search_bytes,
         np.frombuffer(b"GCTT", dtype=np.uint8),
     )
 
