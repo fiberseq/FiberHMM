@@ -363,8 +363,15 @@ def test_probability_pdf_page_helpers_orchestrate_plot_sections(monkeypatch):
     plt = _FakeProbabilityPlt()
     pdf = _FakeProbabilityPdf()
 
-    stats._write_probability_distribution_pdf_page(
-        plt, pdf, "A", 3, acc, inacc,
+    stats._write_probability_distribution_pdf_page_from_request(
+        stats._ProbabilityDistributionPdfPageRequest(
+            plt=plt,
+            pdf=pdf,
+            base="A",
+            context_size=3,
+            accessible_probs=acc,
+            inaccessible_probs=inacc,
+        )
     )
     stats._write_probability_counts_pdf_page(plt, pdf, "A", acc, inacc)
 

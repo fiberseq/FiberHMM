@@ -133,6 +133,16 @@ class _ProbabilityDistributionPngRequest:
     inaccessible_probs: 'pd.DataFrame'
 
 
+@dataclass(frozen=True)
+class _ProbabilityDistributionPdfPageRequest:
+    plt: object
+    pdf: object
+    base: str
+    context_size: int
+    accessible_probs: 'pd.DataFrame'
+    inaccessible_probs: 'pd.DataFrame'
+
+
 def _probability_tables_for_base(
     accessible_counters,
     inaccessible_counters,
@@ -564,32 +574,50 @@ def _write_probability_distribution_pdf_page(
     acc_probs,
     inacc_probs,
 ):
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+    return _write_probability_distribution_pdf_page_from_request(
+        _ProbabilityDistributionPdfPageRequest(
+            plt=plt,
+            pdf=pdf,
+            base=base,
+            context_size=context_size,
+            accessible_probs=acc_probs,
+            inaccessible_probs=inacc_probs,
+        ),
+    )
+
+
+def _write_probability_distribution_pdf_page_from_request(
+    request: _ProbabilityDistributionPdfPageRequest,
+):
+    fig, axes = request.plt.subplots(2, 2, figsize=(11, 8.5))
     try:
         fig.suptitle(
-            f'{base}-centered Context Statistics (k={context_size})',
+            f'{request.base}-centered Context Statistics (k={request.context_size})',
             fontsize=14,
             fontweight='bold',
         )
 
         ax = axes[0, 0]
-        acc_ratios = acc_probs['ratio'].values
-        inacc_ratios = inacc_probs['ratio'].values
+        acc_ratios = request.accessible_probs['ratio'].values
+        inacc_ratios = request.inaccessible_probs['ratio'].values
         _plot_probability_ratio_histograms(ax, acc_ratios, inacc_ratios)
         ax.set_xlabel('P(methylation | context)')
         ax.set_ylabel('Number of contexts')
         ax.set_title('Emission Probability Distributions')
         ax.legend()
 
-        merged = _merged_probability_table(acc_probs, inacc_probs)
+        merged = _merged_probability_table(
+            request.accessible_probs,
+            request.inaccessible_probs,
+        )
         _plot_accessible_inaccessible_probability_scatter(axes[0, 1], merged)
         _plot_log_odds_distribution(axes[1, 0], merged)
         _plot_top_differentiating_contexts(axes[1, 1], merged)
 
-        plt.tight_layout()
-        pdf.savefig(fig)
+        request.plt.tight_layout()
+        request.pdf.savefig(fig)
     finally:
-        plt.close(fig)
+        request.plt.close(fig)
 
 
 def _write_probability_counts_pdf_page(
