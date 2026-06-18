@@ -268,6 +268,12 @@ class _MmWalkContext:
     search_bytes: np.ndarray
 
 
+@dataclass(frozen=True)
+class _MmPositionQualities:
+    positions: np.ndarray
+    qualities: np.ndarray
+
+
 def _ml_tag_to_uint8_array(ml_tag) -> np.ndarray:
     if isinstance(ml_tag, (bytes, bytearray, memoryview)):
         return np.frombuffer(ml_tag, dtype=np.uint8)
@@ -377,10 +383,13 @@ def _mm_valid_positions_and_qualities(skip_arr: np.ndarray,
                                       base_positions: np.ndarray,
                                       ml_slice: np.ndarray,
                                       q_len: int,
-                                      is_reverse: bool) -> Tuple[np.ndarray, np.ndarray]:
+                                      is_reverse: bool) -> _MmPositionQualities:
     n_mods = len(skip_arr)
     if n_mods == 0 or len(base_positions) == 0:
-        return np.array([], dtype=np.int64), np.array([], dtype=np.uint8)
+        return _MmPositionQualities(
+            np.array([], dtype=np.int64),
+            np.array([], dtype=np.uint8),
+        )
 
     base_indices = _mm_base_indices(skip_arr)
     valid = base_indices < len(base_positions)
@@ -388,7 +397,10 @@ def _mm_valid_positions_and_qualities(skip_arr: np.ndarray,
         valid[len(ml_slice):] = False
 
     if not np.any(valid):
-        return np.array([], dtype=np.int64), np.array([], dtype=np.uint8)
+        return _MmPositionQualities(
+            np.array([], dtype=np.int64),
+            np.array([], dtype=np.uint8),
+        )
 
     positions = base_positions[base_indices[valid]]
     qualities = _mm_qualities_for_valid_positions(ml_slice, valid, n_mods)
@@ -396,7 +408,7 @@ def _mm_valid_positions_and_qualities(skip_arr: np.ndarray,
     if is_reverse:
         positions = q_len - 1 - positions
 
-    return positions, qualities
+    return _MmPositionQualities(positions, qualities)
 
 
 def _mm_positions_from_spec(skip_arr: np.ndarray,
@@ -405,12 +417,12 @@ def _mm_positions_from_spec(skip_arr: np.ndarray,
                             q_len: int,
                             is_reverse: bool,
                             prob_threshold: int) -> np.ndarray:
-    positions, qualities = _mm_valid_positions_and_qualities(
+    valid_positions = _mm_valid_positions_and_qualities(
         skip_arr, base_positions, ml_slice, q_len, is_reverse,
     )
-    if len(qualities) == 0:
-        return positions
-    return positions[qualities >= prob_threshold]
+    if len(valid_positions.qualities) == 0:
+        return valid_positions.positions
+    return valid_positions.positions[valid_positions.qualities >= prob_threshold]
 
 
 def _mm_hit_positions_for_spec(
@@ -493,10 +505,15 @@ def _mm_mod_type_positions_for_spec(
         base_positions_cache, target_base, seq_bytes,
     )
     ml_slice, next_ml_idx = _mm_ml_slice_for_spec(ml_arr_all, ml_idx, n_mods)
-    positions, qualities = _mm_valid_positions_and_qualities(
+    valid_positions = _mm_valid_positions_and_qualities(
         skip_arr, base_positions, ml_slice, q_len, is_reverse,
     )
-    return base_and_mod, positions, qualities, next_ml_idx
+    return (
+        base_and_mod,
+        valid_positions.positions,
+        valid_positions.qualities,
+        next_ml_idx,
+    )
 
 
 def _print_mm_parse_debug(
