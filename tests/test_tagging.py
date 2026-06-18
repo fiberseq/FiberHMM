@@ -75,16 +75,16 @@ def test_clear_tags_tolerates_set_tag_failures():
 
 
 def test_flip_legacy_intervals_to_molecular_sorts_and_reorders_scores():
-    starts, lengths, scores = _flip_legacy_intervals_to_molecular(
+    group = _flip_legacy_intervals_to_molecular(
         [10, 80],
         [5, 10],
         [0.25, 0.75],
         read_length=100,
     )
 
-    assert starts == [10, 85]
-    assert lengths == [10, 5]
-    assert scores == [0.75, 0.25]
+    assert group.starts == [10, 85]
+    assert group.lengths == [10, 5]
+    assert group.scores == [0.75, 0.25]
 
 
 def test_set_legacy_apply_tags_writes_unsigned_bam_arrays():
@@ -203,10 +203,18 @@ def test_legacy_apply_interval_groups_prepares_nucs_msps_and_scores():
         with_scores=False,
     )
 
-    assert nucs == ([10], [30], [0.25])
-    assert msps == ([100], [200], [0.5])
-    assert nucs_without_scores == ([10], [30], None)
-    assert msps_without_scores == ([100], [200], None)
+    assert nucs.starts == [10]
+    assert nucs.lengths == [30]
+    assert nucs.scores == [0.25]
+    assert msps.starts == [100]
+    assert msps.lengths == [200]
+    assert msps.scores == [0.5]
+    assert nucs_without_scores.starts == [10]
+    assert nucs_without_scores.lengths == [30]
+    assert nucs_without_scores.scores is None
+    assert msps_without_scores.starts == [100]
+    assert msps_without_scores.lengths == [200]
+    assert msps_without_scores.scores is None
 
 
 def test_legacy_interval_group_resolves_keyed_arrays_and_scores():
@@ -217,22 +225,29 @@ def test_legacy_interval_group_resolves_keyed_arrays_and_scores():
         "scores": np.asarray([0.25]),
     }
 
-    assert _legacy_interval_group(
+    group = _legacy_interval_group(
         result,
         "starts",
         "lengths",
         "scores",
         read,
         with_scores=True,
-    ) == ([10], [30], [0.25])
-    assert _legacy_interval_group(
+    )
+    group_without_scores = _legacy_interval_group(
         result,
         "starts",
         "lengths",
         "scores",
         read,
         with_scores=False,
-    ) == ([10], [30], None)
+    )
+
+    assert group.starts == [10]
+    assert group.lengths == [30]
+    assert group.scores == [0.25]
+    assert group_without_scores.starts == [10]
+    assert group_without_scores.lengths == [30]
+    assert group_without_scores.scores is None
 
 
 def test_fused_recall_tag_intervals_prefer_circular_intervals_when_present():

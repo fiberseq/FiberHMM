@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import array as pyarray
+from dataclasses import dataclass
 from typing import Callable, Iterable, Optional, Sequence, Tuple
 
 import numpy as np
@@ -16,12 +17,19 @@ Interval = Tuple[int, int]
 STALE_SPEC_TAGS = ("MA", "AN", "AQ")
 
 
+@dataclass(frozen=True)
+class _LegacyIntervalGroup:
+    starts: list[int]
+    lengths: list[int]
+    scores: Optional[list[float]]
+
+
 def _flip_legacy_intervals_to_molecular(
     starts: Sequence[int],
     lengths: Sequence[int],
     scores: Optional[Sequence[float]],
     read_length: int,
-):
+) -> _LegacyIntervalGroup:
     recs = sorted(
         (flip_interval_frame(s, length, read_length),
          (scores[i] if scores is not None else None))
@@ -30,10 +38,10 @@ def _flip_legacy_intervals_to_molecular(
     new_s = [r[0][0] for r in recs]
     new_l = [r[0][1] for r in recs]
     new_sc = [r[1] for r in recs] if scores is not None else None
-    return new_s, new_l, new_sc
+    return _LegacyIntervalGroup(new_s, new_l, new_sc)
 
 
-def _to_molecular_legacy(starts, lengths, scores, read, with_scores):
+def _to_molecular_legacy(starts, lengths, scores, read, with_scores) -> _LegacyIntervalGroup:
     """Convert parallel (start, length[, score]) legacy arrays to molecular
     frame for a reverse-mapped read (no-op for forward reads). Returns lists;
     scores are reordered to stay aligned with the re-sorted intervals."""
@@ -41,10 +49,10 @@ def _to_molecular_legacy(starts, lengths, scores, read, with_scores):
     l_list = _array_to_ints(lengths)
     sc = list(scores) if (with_scores and scores is not None) else None
     if not s_list or not getattr(read, 'is_reverse', False):
-        return s_list, l_list, sc
+        return _LegacyIntervalGroup(s_list, l_list, sc)
     read_length = _read_length_of(read)
     if not read_length:
-        return s_list, l_list, sc
+        return _LegacyIntervalGroup(s_list, l_list, sc)
     return _flip_legacy_intervals_to_molecular(s_list, l_list, sc, read_length)
 
 
@@ -190,7 +198,11 @@ def _nuc_overlaps_any_circular_interval(
     )
 
 
-def _legacy_apply_interval_groups(result: dict, read, with_scores: bool):
+def _legacy_apply_interval_groups(
+    result: dict,
+    read,
+    with_scores: bool,
+) -> tuple[_LegacyIntervalGroup, _LegacyIntervalGroup]:
     nucs = _legacy_interval_group(
         result, "ns", "nl", "ns_scores", read, with_scores,
     )
@@ -207,7 +219,7 @@ def _legacy_interval_group(
     score_key: str,
     read,
     with_scores: bool,
-):
+) -> _LegacyIntervalGroup:
     return _to_molecular_legacy(
         result[start_key],
         result[length_key],
@@ -236,15 +248,26 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     # FiberHMM works in SEQ (query_sequence) coordinates; ns/nl/as/al must be
     # written in molecular (original-fiber) frame for fibertools. Flip + re-sort
     # for reverse-mapped reads (forward reads are unchanged).
-    (ns_s, ns_l, ns_sc), (as_s, as_l, as_sc) = _legacy_apply_interval_groups(
+    nucs, msps = _legacy_apply_interval_groups(
         result,
         read,
         with_scores,
     )
 
-    _write_legacy_interval_tags(read, "ns", "nl", "nq", ns_s, ns_l, ns_sc, with_scores)
+    _write_legacy_interval_tags(
+        read, "ns", "nl", "nq", nucs.starts, nucs.lengths, nucs.scores, with_scores,
+    )
     if write_msps:
-        _write_legacy_interval_tags(read, "as", "al", "aq", as_s, as_l, as_sc, with_scores)
+        _write_legacy_interval_tags(
+            read,
+            "as",
+            "al",
+            "aq",
+            msps.starts,
+            msps.lengths,
+            msps.scores,
+            with_scores,
+        )
 
 
 def unify_nucs_with_tf_calls(
