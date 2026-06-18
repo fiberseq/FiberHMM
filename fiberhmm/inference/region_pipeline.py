@@ -648,6 +648,36 @@ def _run_region_bam_worker_pool(
     return aggregation
 
 
+def _run_region_bed_worker_pool(
+    *,
+    n_cores: int,
+    model_path: str,
+    params: dict,
+    work_items,
+    total_regions: int,
+    start_time: float,
+) -> RegionBedAggregation:
+    aggregation = RegionBedAggregation()
+    _run_region_worker_pool(
+        n_cores=n_cores,
+        initializer=_init_region_worker,
+        initargs=(model_path, params),
+        worker=_process_region_to_bed,
+        work_items=work_items,
+        aggregation=aggregation,
+        result_type=RegionBedResult,
+        total_regions=total_regions,
+        start_time=start_time,
+        init_message=(
+            f"  Initializing {n_cores} worker processes "
+            "(loading HMM model in each)..."
+        ),
+        ready_message="Processing regions...",
+        error_prefix="Error processing region",
+    )
+    return aggregation
+
+
 def _run_fused_region_bam_worker_pool(
     *,
     n_cores: int,
@@ -842,24 +872,13 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
         # Work items - write temp BED files
         work_items = _region_bed_work_items(regions, input_bam, temp_dir)
 
-        aggregation = RegionBedAggregation()
-
-        _run_region_worker_pool(
+        aggregation = _run_region_bed_worker_pool(
             n_cores=n_cores,
-            initializer=_init_region_worker,
-            initargs=(model_path, params),
-            worker=_process_region_to_bed,
+            model_path=model_path,
+            params=params,
             work_items=work_items,
-            aggregation=aggregation,
-            result_type=RegionBedResult,
             total_regions=len(regions),
             start_time=start_time,
-            init_message=(
-                f"  Initializing {n_cores} worker processes "
-                "(loading HMM model in each)..."
-            ),
-            ready_message="Processing regions...",
-            error_prefix="Error processing region",
         )
 
         return _finalize_region_bed_parallel_run(

@@ -875,6 +875,44 @@ def test_run_region_bam_worker_pool_wires_legacy_contract(monkeypatch):
     assert kwargs["error_prefix"] == "Error processing region"
 
 
+def test_run_region_bed_worker_pool_wires_bed_contract(monkeypatch):
+    calls = []
+
+    def fake_run_region_worker_pool(**kwargs):
+        calls.append(kwargs)
+        kwargs["aggregation"].total_reads = 8
+        kwargs["aggregation"].reads_with_footprints = 3
+
+    monkeypatch.setattr(
+        region_pipeline,
+        "_run_region_worker_pool",
+        fake_run_region_worker_pool,
+    )
+
+    aggregation = region_pipeline._run_region_bed_worker_pool(
+        n_cores=2,
+        model_path="model.json",
+        params={"mode": "m6a"},
+        work_items=["region"],
+        total_regions=1,
+        start_time=10.0,
+    )
+
+    assert aggregation.total_reads == 8
+    assert aggregation.reads_with_footprints == 3
+    kwargs = calls[0]
+    assert kwargs["n_cores"] == 2
+    assert kwargs["initializer"] is region_pipeline._init_region_worker
+    assert kwargs["initargs"] == ("model.json", {"mode": "m6a"})
+    assert kwargs["worker"] is region_pipeline._process_region_to_bed
+    assert kwargs["work_items"] == ["region"]
+    assert kwargs["result_type"] is region_pipeline.RegionBedResult
+    assert kwargs["total_regions"] == 1
+    assert kwargs["start_time"] == 10.0
+    assert kwargs["ready_message"] == "Processing regions..."
+    assert kwargs["error_prefix"] == "Error processing region"
+
+
 def test_run_fused_region_bam_worker_pool_wires_fused_contract(monkeypatch):
     calls = []
 
