@@ -362,7 +362,7 @@ def _dispatch_requested_parallel_pipeline(
     max_reads: Optional[int],
     debug_timing: bool,
     process_unmapped: bool,
-    pipeline_kwargs: dict,
+    pipeline_options: _FootprintPipelineOptions,
 ) -> Optional[Tuple[int, int]]:
     result = _dispatch_region_parallel_if_requested(
         region_parallel=region_parallel,
@@ -370,7 +370,24 @@ def _dispatch_requested_parallel_pipeline(
         region_size=region_size,
         skip_scaffolds=skip_scaffolds,
         chroms=chroms,
-        **pipeline_kwargs,
+        input_bam=pipeline_options.input_bam,
+        output_bam=pipeline_options.output_bam,
+        train_rids=pipeline_options.train_rids,
+        edge_trim=pipeline_options.edge_trim,
+        circular=pipeline_options.circular,
+        mode=pipeline_options.mode,
+        context_size=pipeline_options.context_size,
+        msp_min_size=pipeline_options.msp_min_size,
+        nuc_min_size=pipeline_options.nuc_min_size,
+        min_mapq=pipeline_options.min_mapq,
+        prob_threshold=pipeline_options.prob_threshold,
+        min_read_length=pipeline_options.min_read_length,
+        with_scores=pipeline_options.with_scores,
+        n_cores=pipeline_options.n_cores,
+        primary_only=pipeline_options.primary_only,
+        output_posteriors=pipeline_options.output_posteriors,
+        write_msps=pipeline_options.write_msps,
+        io_threads=pipeline_options.io_threads,
     )
     if result is not None:
         return result
@@ -382,7 +399,24 @@ def _dispatch_requested_parallel_pipeline(
         max_reads=max_reads,
         debug_timing=debug_timing,
         process_unmapped=process_unmapped,
-        **pipeline_kwargs,
+        input_bam=pipeline_options.input_bam,
+        output_bam=pipeline_options.output_bam,
+        train_rids=pipeline_options.train_rids,
+        edge_trim=pipeline_options.edge_trim,
+        circular=pipeline_options.circular,
+        mode=pipeline_options.mode,
+        context_size=pipeline_options.context_size,
+        msp_min_size=pipeline_options.msp_min_size,
+        nuc_min_size=pipeline_options.nuc_min_size,
+        min_mapq=pipeline_options.min_mapq,
+        prob_threshold=pipeline_options.prob_threshold,
+        min_read_length=pipeline_options.min_read_length,
+        with_scores=pipeline_options.with_scores,
+        n_cores=pipeline_options.n_cores,
+        io_threads=pipeline_options.io_threads,
+        primary_only=pipeline_options.primary_only,
+        output_posteriors=pipeline_options.output_posteriors,
+        write_msps=pipeline_options.write_msps,
     )
 
 
@@ -452,7 +486,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
     model_source = _model_and_path_for_processing(model_or_path)
     model = model_source.model
     model_path = model_source.path
-    pipeline_kwargs = _footprint_pipeline_kwargs(
+    pipeline_options = _footprint_pipeline_options(
         input_bam=input_bam,
         output_bam=output_bam,
         train_rids=train_rids,
@@ -484,7 +518,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
         max_reads=max_reads,
         debug_timing=debug_timing,
         process_unmapped=process_unmapped,
-        pipeline_kwargs=pipeline_kwargs,
+        pipeline_options=pipeline_options,
     )
     if result is not None:
         return result
@@ -495,5 +529,5 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
         n_cores=n_cores,
         max_reads=max_reads,
         debug_timing=debug_timing,
-        pipeline_kwargs=pipeline_kwargs,
+        pipeline_kwargs=pipeline_options.as_kwargs(),
     )

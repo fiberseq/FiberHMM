@@ -49,6 +49,31 @@ class _Executor:
         return _done_future(("submitted", fn, args))
 
 
+def _pipeline_options(**overrides):
+    attrs = {
+        "input_bam": "in.bam",
+        "output_bam": "out.bam",
+        "train_rids": set(),
+        "edge_trim": 0,
+        "circular": False,
+        "mode": "daf",
+        "context_size": 5,
+        "msp_min_size": 60,
+        "nuc_min_size": 85,
+        "min_mapq": 0,
+        "prob_threshold": 0,
+        "min_read_length": 0,
+        "with_scores": False,
+        "n_cores": 1,
+        "primary_only": False,
+        "output_posteriors": None,
+        "write_msps": True,
+        "io_threads": 1,
+    }
+    attrs.update(overrides)
+    return parallel._FootprintPipelineOptions(**attrs)
+
+
 def test_worker_chunk_result_coerces_legacy_lists():
     assert coerce_worker_chunk_result([None]) == WorkerChunkResult([None], 0)
     assert coerce_worker_chunk_result(
@@ -1733,7 +1758,7 @@ def test_requested_parallel_pipeline_prefers_region_dispatch(monkeypatch):
         max_reads=25,
         debug_timing=True,
         process_unmapped=True,
-        pipeline_kwargs={"input_bam": "in.bam"},
+        pipeline_options=_pipeline_options(input_bam="in.bam"),
     ) == ("region", 1)
 
     assert calls[0][0] == "region"
@@ -1766,7 +1791,7 @@ def test_requested_parallel_pipeline_falls_through_to_streaming(monkeypatch):
         max_reads=25,
         debug_timing=True,
         process_unmapped=True,
-        pipeline_kwargs={"input_bam": "in.bam"},
+        pipeline_options=_pipeline_options(input_bam="in.bam"),
     ) == ("streaming", 2)
 
     assert [call[0] for call in calls] == ["region", "streaming"]
