@@ -45,6 +45,12 @@ class _EmissionEstimate:
     diagnostics: dict
 
 
+@dataclass(frozen=True)
+class _RegressionInputs:
+    merged: pd.DataFrame
+    diagnostics: dict
+
+
 # =============================================================================
 # convert subcommand
 # =============================================================================
@@ -426,16 +432,18 @@ def _prepare_regression_inputs(target_rates, accessibility_priors, min_observati
         'total_target_obs': merged['total'].sum() if len(merged) > 0 else 0,
         'total_ref_obs': merged['total_bp'].sum() if len(merged) > 0 else 0,
     }
-    return merged, diagnostics
+    return _RegressionInputs(merged=merged, diagnostics=diagnostics)
 
 
 def _estimate_emission_probs(target_rates, accessibility_priors, min_observations=100):
     """Estimate P(m|acc) and P(m|inacc) using weighted linear regression."""
-    merged, diagnostics = _prepare_regression_inputs(
+    inputs = _prepare_regression_inputs(
         target_rates,
         accessibility_priors,
         min_observations,
     )
+    merged = inputs.merged
+    diagnostics = inputs.diagnostics
 
     if len(merged) < 10:
         print(f"  Warning: Only {len(merged)} contexts with sufficient data")
