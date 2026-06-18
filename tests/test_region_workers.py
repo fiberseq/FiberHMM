@@ -17,13 +17,14 @@ from fiberhmm.inference.region_workers import (
     _process_fused_region_bam_read,
     _process_region_bam_read,
     _process_region_bed_read,
-    _region_bam_result_from_counts,
-    _region_bed12_row_from_read_result,
     _format_region_bed12_row,
     _RegionBamWorkerCounts,
     _pad_region_bed12_to_read_span,
     _region_apply_config,
     _region_bam_output_config,
+    _region_bam_result_from_counts,
+    _region_bam_worker_runtime,
+    _region_bed12_row_from_read_result,
     _region_bed_block_components,
     _region_bed_read_filter_config,
     _region_bed_score_list,
@@ -113,6 +114,40 @@ def test_region_bam_output_config_gates_posteriors_on_temp_path():
         None,
     ).return_posteriors is False
     assert _region_bam_output_config({}, "region.tsv").write_msps is True
+
+
+def test_region_bam_worker_runtime_builds_apply_output_and_filter_configs():
+    train_rids = {"read1"}
+
+    runtime = _region_bam_worker_runtime({
+        "edge_trim": "2",
+        "circular": False,
+        "mode": "pacbio-fiber",
+        "context_size": "6",
+        "msp_min_size": "21",
+        "nuc_min_size": "90",
+        "prob_threshold": "128",
+        "with_scores": True,
+        "io_threads": "3",
+        "return_posteriors": True,
+        "write_msps": False,
+        "min_mapq": "11",
+        "min_read_length": "101",
+        "primary_only": True,
+        "train_rids": train_rids,
+    }, "region.tsv")
+
+    assert runtime.apply_config.with_scores is True
+    assert runtime.apply_config.io_threads == 3
+    assert runtime.output_config.return_posteriors is True
+    assert runtime.output_config.write_msps is False
+    assert runtime.filter_config == ReadFilterConfig(
+        min_mapq=11,
+        min_read_length=101,
+        primary_only=True,
+        process_unmapped=False,
+        train_rids=train_rids,
+    )
 
 
 def test_open_region_posterior_tsv_opens_only_when_enabled(tmp_path):

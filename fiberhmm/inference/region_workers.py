@@ -82,6 +82,13 @@ class _RegionBamOutputConfig:
 
 
 @dataclass(frozen=True)
+class _RegionBamWorkerRuntime:
+    apply_config: _RegionApplyConfig
+    output_config: _RegionBamOutputConfig
+    filter_config: ReadFilterConfig
+
+
+@dataclass(frozen=True)
 class _FusedRegionRecallConfig:
     min_llr: float
     min_opps: int
@@ -421,6 +428,17 @@ def _region_bed_read_filter_config(params: dict) -> ReadFilterConfig:
     )
 
 
+def _region_bam_worker_runtime(
+    params: dict,
+    temp_tsv_path: Optional[str],
+) -> _RegionBamWorkerRuntime:
+    return _RegionBamWorkerRuntime(
+        apply_config=_region_apply_config(params),
+        output_config=_region_bam_output_config(params, temp_tsv_path),
+        filter_config=_region_read_filter_config(params, require_train_rids=True),
+    )
+
+
 def _region_fused_recall_options(
     params: dict,
     nuc_min_size: int,
@@ -729,29 +747,29 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         model = _worker_model
         params = _worker_region_params
 
-        apply_config = _region_apply_config(params)
-        output_config = _region_bam_output_config(params, temp_tsv_path)
-        return_posteriors = output_config.return_posteriors
+        runtime = _region_bam_worker_runtime(params, temp_tsv_path)
+        return_posteriors = runtime.output_config.return_posteriors
 
         counts = _RegionBamWorkerCounts()
         skip_reasons = _new_region_skip_reasons()
-        filter_config = _region_read_filter_config(params, require_train_rids=True)
 
         pysam.set_verbosity(0)
 
         # Open posteriors TSV file for streaming writes (if requested).
         tsv_file, return_posteriors = _open_region_posterior_tsv(
-            output_config,
+            runtime.output_config,
             temp_tsv_path,
         )
 
         try:
             with pysam.AlignmentFile(
-                input_bam, "rb", threads=apply_config.io_threads, check_sq=False
+                input_bam, "rb",
+                threads=runtime.apply_config.io_threads,
+                check_sq=False,
             ) as inbam:
                 with pysam.AlignmentFile(temp_bam_path, "wb",
                                          header=append_coord_marker(inbam.header),
-                                         threads=apply_config.io_threads) as outbam:
+                                         threads=runtime.apply_config.io_threads) as outbam:
 
                     # Fetch reads from this region using the index.
                     try:
@@ -767,9 +785,9 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                             read,
                             outbam,
                             model,
-                            apply_config,
-                            output_config,
-                            filter_config,
+                            runtime.apply_config,
+                            runtime.output_config,
+                            runtime.filter_config,
                             start,
                             end,
                             skip_reasons,
