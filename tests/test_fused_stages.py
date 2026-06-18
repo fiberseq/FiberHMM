@@ -96,10 +96,12 @@ def test_apply_result_interval_bounds_collects_nucs_and_msps():
 
 
 def test_analyzed_span_covers_apply_intervals_kept_nucs_and_read_fallback():
-    empty_span = fused_stages._analyzed_span(
-        {"ns": [], "nl": [], "as": [], "al": []},
-        read_length=200,
-        kept=[],
+    empty_span = fused_stages._analyzed_span_from_request(
+        fused_stages._AnalyzedSpanRequest(
+            apply_result={"ns": [], "nl": [], "as": [], "al": []},
+            read_length=200,
+            kept=[],
+        )
     )
     span = fused_stages._analyzed_span(
         {

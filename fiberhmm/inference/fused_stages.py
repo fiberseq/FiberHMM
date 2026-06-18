@@ -45,6 +45,13 @@ class _AnalyzedSpan:
 
 
 @dataclass(frozen=True)
+class _AnalyzedSpanRequest:
+    apply_result: Mapping[str, Any]
+    read_length: int
+    kept: Sequence[Any]
+
+
+@dataclass(frozen=True)
 class _IntervalPairLists:
     starts: list
     lengths: list
@@ -117,18 +124,30 @@ class _FusedRecallResultRequest:
     phase_nrl: int = 0
 
 
-def _analyzed_span(apply_result, read_length, kept):
+def _analyzed_span_from_request(
+    request: _AnalyzedSpanRequest,
+) -> _AnalyzedSpan:
     """Extent (lo, hi) the read was annotated over -- the union of the original
     HMM footprints/MSPs and the final nucleosomes -- used to tile MSPs."""
-    bounds = _apply_result_interval_bounds(apply_result)
+    bounds = _apply_result_interval_bounds(request.apply_result)
     starts = list(bounds.starts)
     ends = list(bounds.ends)
-    for k in kept:
+    for k in request.kept:
         starts.append(int(k.start))
         ends.append(int(k.start) + int(k.length))
     return _AnalyzedSpan(
         start=min(starts) if starts else 0,
-        end=max(ends) if ends else int(read_length),
+        end=max(ends) if ends else int(request.read_length),
+    )
+
+
+def _analyzed_span(apply_result, read_length, kept):
+    return _analyzed_span_from_request(
+        _AnalyzedSpanRequest(
+            apply_result=apply_result,
+            read_length=read_length,
+            kept=kept,
+        )
     )
 
 
@@ -593,7 +612,13 @@ def _build_fused_recall_result_with_nucs(
     # 5) re-tile: split/phase/promotion can leave overlapping nucs + stale MSPs.
     # Clip to non-overlapping nucleosomes and derive complementary MSPs so
     # ns/nl + as/al tile cleanly (required by fibertools / FIRE).
-    analyzed_span = _analyzed_span(apply_result, read_length, kept)
+    analyzed_span = _analyzed_span_from_request(
+        _AnalyzedSpanRequest(
+            apply_result=apply_result,
+            read_length=read_length,
+            kept=kept,
+        )
+    )
     kept, new_msps = assemble_nuc_msp_tiling(
         kept,
         analyzed_span.start,
