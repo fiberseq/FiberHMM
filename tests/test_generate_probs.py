@@ -32,6 +32,7 @@ from fiberhmm.cli.generate_probs import (
     _print_probability_results_summary,
     _progress_postfix,
     _process_probability_control_groups,
+    _process_probability_sample_file,
     _process_probability_read_or_skip,
     _process_probability_sample_group,
     _process_probability_read,
@@ -819,6 +820,52 @@ def test_finalize_probability_bam_run_routes_reports(capsys):
     assert "Passed all filters:" in out
     assert "MM tag modification types found" in out
     assert "C+m: 2" in out
+
+
+def test_process_probability_sample_file_delegates_reports_and_saves(
+    monkeypatch,
+    capsys,
+):
+    import fiberhmm.cli.generate_probs as generate_probs
+
+    process_calls = []
+    save_calls = []
+    counters = {"A": object()}
+    args = SimpleNamespace(save_interval=5, verbose=True)
+
+    def fake_process_bam(bam_file, got_counters, mode, got_args, max_reads, verbose):
+        process_calls.append(
+            (bam_file, got_counters, mode, got_args, max_reads, verbose)
+        )
+        return 7, {"scanned": 11, "processed": 7}
+
+    monkeypatch.setattr(generate_probs, "process_bam", fake_process_bam)
+    monkeypatch.setattr(
+        generate_probs,
+        "_save_temporary_probability_counters",
+        lambda *args: save_calls.append(args),
+    )
+
+    reads, stats = _process_probability_sample_file(
+        "sample.bam",
+        counters,
+        "daf",
+        args,
+        100,
+        "accessible",
+        "out",
+        "run",
+    )
+
+    assert reads == 7
+    assert stats == {"scanned": 11, "processed": 7}
+    assert process_calls == [
+        ("sample.bam", counters, "daf", args, 100, True),
+    ]
+    assert save_calls == [(counters, "out", "run", "accessible")]
+    out = capsys.readouterr().out
+    assert "Processing: sample.bam" in out
+    assert "Processed 7 reads (scanned 11)" in out
 
 
 def test_read_limit_reached_treats_zero_as_unlimited():

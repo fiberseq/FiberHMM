@@ -410,6 +410,35 @@ def _finalize_probability_bam_run(
         _print_daf_diagnostics(mm_tag_types, strand_assignments)
 
 
+def _process_probability_sample_file(
+    bam_file: str,
+    counters: Dict[str, ContextCounter],
+    mode: str,
+    args,
+    max_per_file: int,
+    sample_name: str,
+    output_dir: str,
+    base_name: str,
+) -> Tuple[int, dict]:
+    print(f"\n  Processing: {bam_file}")
+    reads, filter_stats = process_bam(
+        bam_file,
+        counters,
+        mode,
+        args,
+        max_per_file,
+        verbose=getattr(args, 'verbose', False),
+    )
+    print(f"    Processed {reads:,} reads (scanned {filter_stats['scanned']:,})")
+
+    if args.save_interval > 0:
+        _save_temporary_probability_counters(
+            counters, output_dir, base_name, sample_name,
+        )
+
+    return reads, filter_stats
+
+
 def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 mode: str, args, max_reads: int = 0, verbose: bool = False) -> Tuple[int, dict]:
     """
@@ -487,21 +516,20 @@ def process_sample_set(bam_files: List[str], counters: Dict[str, ContextCounter]
     max_per_file = _max_reads_per_file(args.max_reads, len(bam_files))
 
     for bam_file in bam_files:
-        print(f"\n  Processing: {bam_file}")
-        reads, filter_stats = process_bam(bam_file, counters, mode, args, max_per_file,
-                                          verbose=getattr(args, 'verbose', False))
+        reads, filter_stats = _process_probability_sample_file(
+            bam_file,
+            counters,
+            mode,
+            args,
+            max_per_file,
+            sample_name,
+            output_dir,
+            base_name,
+        )
         total_reads += reads
         total_scanned += filter_stats['scanned']
 
         _accumulate_filter_stats(combined_stats, filter_stats)
-
-        print(f"    Processed {reads:,} reads (scanned {filter_stats['scanned']:,})")
-
-        # Save intermediate
-        if args.save_interval > 0:
-            _save_temporary_probability_counters(
-                counters, output_dir, base_name, sample_name,
-            )
 
         if _read_limit_reached(args.max_reads, total_reads):
             break
