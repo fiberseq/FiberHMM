@@ -1375,6 +1375,17 @@ def _extract_parallel_feature_summary(extract_types, total_features: dict) -> st
     return ', '.join(f"{t}: {total_features[t]:,}" for t in extract_types)
 
 
+def _print_extract_parallel_completion(
+    extract_types,
+    total_features: dict,
+    total_reads: int,
+    start_time: float,
+) -> None:
+    elapsed = time.time() - start_time
+    feat_summary = _extract_parallel_feature_summary(extract_types, total_features)
+    print(f"Completed in {elapsed:.1f}s: {total_reads:,} reads -> {feat_summary}")
+
+
 def _sorted_extract_region_beds(region_beds):
     return sorted(region_beds, key=lambda x: x[0])
 
@@ -1603,14 +1614,11 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
             result.temp_beds_by_type,
             output_beds,
         )
-
-        elapsed = time.time() - start_time
-        feat_summary = _extract_parallel_feature_summary(
-            extract_types, result.total_features,
-        )
-        print(
-            f"Completed in {elapsed:.1f}s: "
-            f"{result.total_reads:,} reads -> {feat_summary}"
+        _print_extract_parallel_completion(
+            extract_types,
+            result.total_features,
+            result.total_reads,
+            start_time,
         )
 
         return result.total_reads, result.total_features

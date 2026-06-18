@@ -1016,6 +1016,22 @@ def test_extract_parallel_feature_summary_formats_requested_types():
     ) == "tf: 1,200, msp: 3"
 
 
+def test_print_extract_parallel_completion_formats_summary(monkeypatch, capsys):
+    monkeypatch.setattr(extract_tags.time, "time", lambda: 15.5)
+
+    extract_tags._print_extract_parallel_completion(
+        ["tf", "msp"],
+        {"tf": 1200, "msp": 3},
+        total_reads=2400,
+        start_time=10.0,
+    )
+
+    assert (
+        "Completed in 5.5s: 2,400 reads -> tf: 1,200, msp: 3"
+        in capsys.readouterr().out
+    )
+
+
 def test_finalize_extract_type_bed_concatenates_regions_in_order(
     monkeypatch, tmp_path, capsys,
 ):
