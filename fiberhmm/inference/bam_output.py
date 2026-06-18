@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence
 
 import numpy as np
 import pysam
@@ -552,6 +552,22 @@ def _convert_sorted_bed_to_bigbed(
     return False
 
 
+def _convert_bed_with_sorted_temp(
+    bed_file: str,
+    convert_sorted_bed: Callable[[str], bool],
+) -> bool:
+    sorted_bed = _sorted_bed_temp_path(bed_file)
+    try:
+        _sort_bed_for_bigbed(bed_file, sorted_bed)
+        return convert_sorted_bed(sorted_bed)
+
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"Error during bigBed conversion: {e}")
+        return False
+    finally:
+        _remove_file_if_exists(sorted_bed)
+
+
 def _bed_type_for_scores(with_scores: bool) -> str:
     return 'bed12+1' if with_scores else 'bed12'
 
@@ -594,19 +610,12 @@ def convert_to_bigbed(bed_file: str, chrom_sizes: str, output_bb: str) -> bool:
     if not _bed_to_bigbed_available():
         return False
 
-    sorted_bed = _sorted_bed_temp_path(bed_file)
-    try:
-        # Sort BED file
-        _sort_bed_for_bigbed(bed_file, sorted_bed)
-
-        # Convert
-        return _convert_sorted_bed_to_bigbed(sorted_bed, chrom_sizes, output_bb)
-
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"Error during bigBed conversion: {e}")
-        return False
-    finally:
-        _remove_file_if_exists(sorted_bed)
+    return _convert_bed_with_sorted_temp(
+        bed_file,
+        lambda sorted_bed: _convert_sorted_bed_to_bigbed(
+            sorted_bed, chrom_sizes, output_bb,
+        ),
+    )
 
 
 def write_chrom_sizes(bam_path: str, output_path: str) -> str:
@@ -667,20 +676,12 @@ def convert_to_bigbed_with_schema(bed_file: str, chrom_sizes: str,
     if not _bed_to_bigbed_available():
         return False
 
-    sorted_bed = _sorted_bed_temp_path(bed_file)
-    try:
-        # Sort BED file
-        _sort_bed_for_bigbed(bed_file, sorted_bed)
-
-        return _convert_sorted_bed_to_bigbed_with_optional_fallback(
+    return _convert_bed_with_sorted_temp(
+        bed_file,
+        lambda sorted_bed: _convert_sorted_bed_to_bigbed_with_optional_fallback(
             sorted_bed, chrom_sizes, autosql, output_bb, with_scores,
-        )
-
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"Error during bigBed conversion: {e}")
-        return False
-    finally:
-        _remove_file_if_exists(sorted_bed)
+        ),
+    )
 
 
 def _format_footprint_bed12_row(

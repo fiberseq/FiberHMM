@@ -414,6 +414,28 @@ def test_convert_to_bigbed_with_schema_falls_back_without_shell(monkeypatch, tmp
     assert not sorted_bed.exists()
 
 
+def test_convert_bed_with_sorted_temp_cleans_after_converter_error(monkeypatch, tmp_path):
+    bed = tmp_path / "calls.bed"
+    sorted_bed = Path(str(bed) + ".sorted")
+    bed.write_text("chr1\t10\t20\n")
+
+    def fake_sort(source, destination):
+        assert source == str(bed)
+        assert destination == str(sorted_bed)
+        sorted_bed.write_text("sorted")
+
+    def fail_convert(got_sorted_bed):
+        assert got_sorted_bed == str(sorted_bed)
+        raise RuntimeError("converter failed")
+
+    monkeypatch.setattr(bam_output, "_sort_bed_for_bigbed", fake_sort)
+
+    with pytest.raises(RuntimeError, match="converter failed"):
+        bam_output._convert_bed_with_sorted_temp(str(bed), fail_convert)
+
+    assert not sorted_bed.exists()
+
+
 def test_bed12_columns_and_autosql_schema_include_scores_only_when_requested(tmp_path):
     assert bam_output._bed12_record_columns(with_scores=False)[-1] == "blockStarts"
     assert bam_output._bed12_record_columns(with_scores=True)[-1] == "blockScores"
