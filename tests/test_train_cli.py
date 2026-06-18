@@ -941,6 +941,159 @@ def test_model_json_record_uses_plain_lists():
     }
 
 
+def test_load_training_emission_probs_delegates_and_reports_shape(monkeypatch, capsys):
+    calls = []
+    emission_probs = np.ones((2, 4))
+    monkeypatch.setattr(
+        train,
+        "make_emission_probs",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or emission_probs,
+    )
+    args = SimpleNamespace(
+        probs=["accessible.tsv", "inaccessible.tsv"],
+        context_size=3,
+        prob_adjust=1.25,
+    )
+
+    assert train._load_training_emission_probs(args) is emission_probs
+    assert calls == [(
+        ("accessible.tsv", "inaccessible.tsv"),
+        {"context_size": 3, "prob_adjust": 1.25},
+    )]
+    assert "Emission matrix: (2, 4)" in capsys.readouterr().out
+
+
+def test_run_training_or_base_model_uses_base_model_path(monkeypatch):
+    best_model = object()
+    monkeypatch.setattr(
+        train,
+        "_build_model_from_base",
+        lambda path, emissions, context_size: (best_model, [best_model]),
+    )
+    args = SimpleNamespace(base_model="base.json", context_size=3)
+    emission_probs = np.ones((2, 4))
+
+    assert train._run_training_or_base_model(args, emission_probs) == (
+        best_model,
+        [best_model],
+        [],
+        [],
+        [],
+    )
+
+
+def test_run_training_or_base_model_samples_encodes_and_trains(monkeypatch, capsys):
+    sampled = ["read-a", "read-b"]
+    train_arrays = [np.array([1, 2])]
+    train_rids = ["read-a"]
+    encoded_reads = ["encoded-a"]
+    valid_reads = ["read-a"]
+    best_model = object()
+    calls = []
+    monkeypatch.setattr(
+        train,
+        "sample_reads",
+        lambda *args, **kwargs: calls.append(("sample", args, kwargs)) or sampled,
+    )
+    monkeypatch.setattr(
+        train,
+        "generate_training_arrays",
+        lambda *args: calls.append(("arrays", args)) or (
+            train_arrays,
+            train_rids,
+            encoded_reads,
+            valid_reads,
+        ),
+    )
+    monkeypatch.setattr(
+        train,
+        "train_hmm",
+        lambda *args: calls.append(("train", args)) or (best_model, [best_model]),
+    )
+    args = SimpleNamespace(
+        base_model=None,
+        input=["a.bam", "b.bam"],
+        read_count=100,
+        seed=7,
+        mode="daf",
+        min_mapq=20,
+        prob_threshold=128,
+        min_read_length=1000,
+        edge_trim=10,
+        iterations=5,
+        context_size=3,
+        use_hmmlearn=False,
+    )
+    emission_probs = np.ones((2, 4))
+
+    assert train._run_training_or_base_model(args, emission_probs) == (
+        best_model,
+        [best_model],
+        train_rids,
+        valid_reads,
+        encoded_reads,
+    )
+    assert calls[0] == (
+        "sample",
+        (["a.bam", "b.bam"], 100, 7),
+        {
+            "mode": "daf",
+            "min_mapq": 20,
+            "prob_threshold": 128,
+            "min_read_length": 1000,
+        },
+    )
+    assert calls[1] == (
+        "arrays",
+        (sampled, 10, 5, "daf", 3),
+    )
+    assert calls[2] == ("train", (emission_probs, train_arrays, False))
+    out = capsys.readouterr().out
+    assert "Sampling reads from 2 BAM file(s)" in out
+    assert "Training HMM (5 iterations)" in out
+
+
+def test_maybe_generate_training_stats_handles_data_and_base_skip(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(
+        train,
+        "generate_training_stats",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    model = object()
+    emission_probs = np.ones((2, 4))
+    args = SimpleNamespace(
+        stats=True,
+        base_model=None,
+        outdir="out",
+        n_examples=3,
+        mode="daf",
+    )
+
+    train._maybe_generate_training_stats(
+        args,
+        model,
+        valid_reads=["read-a"],
+        encoded_reads=["encoded-a"],
+        emission_probs=emission_probs,
+    )
+    assert calls == [(
+        (model, ["read-a"], ["encoded-a"], emission_probs, "out"),
+        {"n_examples": 3, "mode": "daf"},
+    )]
+    assert "Generating training statistics" in capsys.readouterr().out
+
+    args.base_model = "base.json"
+    train._maybe_generate_training_stats(
+        args,
+        model,
+        valid_reads=[],
+        encoded_reads=[],
+        emission_probs=emission_probs,
+    )
+    assert "stats skipped" in capsys.readouterr().out
+
+
 def test_training_chrom_is_sampleable_filters_short_and_scaffold_names():
     assert train._training_chrom_is_sampleable("chr2L", 1_000_000)
     assert not train._training_chrom_is_sampleable("tiny", 99_999)

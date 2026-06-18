@@ -1358,16 +1358,8 @@ def _build_model_from_base(base_model_path: str, emission_probs: np.ndarray,
     return best_model, [best_model]
 
 
-def main():
-    args = parse_args()
-
-    # Validate arguments
-    if not args.base_model and not args.input:
-        print("Error: --input is required unless using --base-model")
-        sys.exit(1)
-
+def _print_training_header(args) -> None:
     mode_desc = mode_description(args.mode)
-
     context_mer = 2 * args.context_size + 1
     n_codes = ContextEncoder.get_n_codes(args.context_size)
 
@@ -1377,71 +1369,108 @@ def main():
         print(f"  Context: k={args.context_size} ({context_mer}-mer, {n_codes:,} codes)")
         print(f"  Base model: {args.base_model}")
         print("  (Transitions from base model, new emissions from prob files)")
-    else:
-        print("FiberHMM Model Training v2")
-        print(f"  Mode: {args.mode} ({mode_desc})")
-        print(f"  Context: k={args.context_size} ({context_mer}-mer, {n_codes:,} codes)")
-        print(f"  Input: {args.input}")
-        print(f"  Iterations: {args.iterations}")
-        print(f"  Reads: {args.read_count}")
-        print(f"  Seed: {args.seed}")
-        print("  (No genome context file needed)")
+        return
 
-    os.makedirs(args.outdir, exist_ok=True)
+    print("FiberHMM Model Training v2")
+    print(f"  Mode: {args.mode} ({mode_desc})")
+    print(f"  Context: k={args.context_size} ({context_mer}-mer, {n_codes:,} codes)")
+    print(f"  Input: {args.input}")
+    print(f"  Iterations: {args.iterations}")
+    print(f"  Reads: {args.read_count}")
+    print(f"  Seed: {args.seed}")
+    print("  (No genome context file needed)")
 
-    # Generate emission probabilities
+
+def _load_training_emission_probs(args) -> np.ndarray:
     print("\nLoading emission probabilities...")
     emission_probs = make_emission_probs(
-        args.probs[0], args.probs[1],
+        args.probs[0],
+        args.probs[1],
         context_size=args.context_size,
-        prob_adjust=args.prob_adjust
+        prob_adjust=args.prob_adjust,
     )
     print(f"Emission matrix: {emission_probs.shape}")
+    return emission_probs
 
-    # Initialize variables for stats generation
-    valid_reads = []
-    encoded_reads = []
-    train_rids = []
 
+def _run_training_or_base_model(args, emission_probs: np.ndarray):
     if args.base_model:
         best_model, all_models = _build_model_from_base(
             args.base_model,
             emission_probs,
             args.context_size,
         )
-    else:
-        # Normal training path
-        # Sample reads
-        print(f"\nSampling reads from {len(args.input)} BAM file(s)...")
-        sampled = sample_reads(
-            args.input, args.read_count, args.seed,
+        return best_model, all_models, [], [], []
+
+    print(f"\nSampling reads from {len(args.input)} BAM file(s)...")
+    sampled = sample_reads(
+        args.input,
+        args.read_count,
+        args.seed,
+        mode=args.mode,
+        min_mapq=args.min_mapq,
+        prob_threshold=args.prob_threshold,
+        min_read_length=args.min_read_length,
+    )
+    print(f"Total sampled: {len(sampled)} reads")
+
+    train_arrays, train_rids, encoded_reads, valid_reads = generate_training_arrays(
+        sampled, args.edge_trim, args.iterations, args.mode, args.context_size
+    )
+
+    print(f"\nTraining HMM ({args.iterations} iterations)...")
+    best_model, all_models = train_hmm(
+        emission_probs,
+        train_arrays,
+        args.use_hmmlearn,
+    )
+    return best_model, all_models, train_rids, valid_reads, encoded_reads
+
+
+def _maybe_generate_training_stats(args, best_model, valid_reads, encoded_reads,
+                                   emission_probs: np.ndarray) -> None:
+    if args.stats and valid_reads and encoded_reads:
+        print("\nGenerating training statistics...")
+        generate_training_stats(
+            best_model,
+            valid_reads,
+            encoded_reads,
+            emission_probs,
+            args.outdir,
+            n_examples=args.n_examples,
             mode=args.mode,
-            min_mapq=args.min_mapq,
-            prob_threshold=args.prob_threshold,
-            min_read_length=args.min_read_length
         )
-        print(f"Total sampled: {len(sampled)} reads")
+    elif args.stats and args.base_model:
+        print("\nNote: --stats skipped (no training data with --base-model)")
 
-        # Generate training arrays
-        train_arrays, train_rids, encoded_reads, valid_reads = generate_training_arrays(
-            sampled, args.edge_trim, args.iterations, args.mode, args.context_size
-        )
 
-        # Train
-        print(f"\nTraining HMM ({args.iterations} iterations)...")
-        best_model, all_models = train_hmm(emission_probs, train_arrays, args.use_hmmlearn)
+def main():
+    args = parse_args()
+
+    # Validate arguments
+    if not args.base_model and not args.input:
+        print("Error: --input is required unless using --base-model")
+        sys.exit(1)
+
+    _print_training_header(args)
+    os.makedirs(args.outdir, exist_ok=True)
+
+    # Generate emission probabilities
+    emission_probs = _load_training_emission_probs(args)
+    best_model, all_models, train_rids, valid_reads, encoded_reads = (
+        _run_training_or_base_model(args, emission_probs)
+    )
 
     _save_training_outputs(best_model, all_models, args, train_rids)
 
     # Generate stats if requested (only if we have training data)
-    if args.stats and valid_reads and encoded_reads:
-        print("\nGenerating training statistics...")
-        generate_training_stats(
-            best_model, valid_reads, encoded_reads, emission_probs,
-            args.outdir, n_examples=args.n_examples, mode=args.mode
-        )
-    elif args.stats and args.base_model:
-        print("\nNote: --stats skipped (no training data with --base-model)")
+    _maybe_generate_training_stats(
+        args,
+        best_model,
+        valid_reads,
+        encoded_reads,
+        emission_probs,
+    )
 
     print("Done!")
 
