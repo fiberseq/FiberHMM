@@ -35,7 +35,12 @@ from fiberhmm.inference.region_workers import (
 )
 from fiberhmm.inference.skip_reasons import iter_nonzero_skip_reasons
 from fiberhmm.io.bam_index import ensure_bam_index
-from fiberhmm.io.path_status import path_is_nonempty_file, path_is_regular_file
+from fiberhmm.io.path_status import (
+    path_is_nonempty_file,
+    path_is_regular_file,
+    path_size_gb,
+    path_size_mb,
+)
 from fiberhmm.posteriors.region_tsv import (
     merge_region_posteriors_tsv as _merge_region_posteriors_tsv,
 )
@@ -497,7 +502,7 @@ def _merge_region_posterior_outputs(
     if not path_is_regular_file(tsv_path):
         return
 
-    file_size = os.path.getsize(tsv_path) / (1024 * 1024)
+    file_size = path_size_mb(tsv_path)
     print(
         f"Posteriors: {n_fibers:,} fibers -> {tsv_path} "
         f"({file_size:.1f} MB, {merge_time:.1f}s)"
@@ -520,7 +525,7 @@ def _finalize_region_bam_output(
     sys.stdout.flush()
 
     if path_is_regular_file(output_bam):
-        output_size_gb = os.path.getsize(output_bam) / (1024**3)
+        output_size_gb = path_size_gb(output_bam)
         print(f"Output BAM: {output_size_gb:.2f}GB")
 
     print("Step: Index/Sort...")

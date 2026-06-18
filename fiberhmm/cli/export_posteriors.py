@@ -55,6 +55,7 @@ from fiberhmm.inference.worker_warmup import (
     disable_numba_cache_locking,
     warm_up_model_posteriors,
 )
+from fiberhmm.io.path_status import path_size_mb
 
 
 def _detect_format(output_path: str, format_arg: str) -> str:
@@ -712,7 +713,7 @@ def export_posteriors_tsv(
 
     if verbose:
         out_file = writer.output_path
-        file_size = os.path.getsize(out_file) / (1024 * 1024)
+        file_size = path_size_mb(out_file)
         print(f"Wrote {out_file} ({file_size:.1f} MB, {total:,} fibers)")
 
     return total
@@ -806,7 +807,7 @@ def _print_h5_export_summary(output_h5: str, total_fibers: int,
     if not verbose:
         return
 
-    file_size = os.path.getsize(output_h5) / (1024 * 1024)
+    file_size = path_size_mb(output_h5)
     print(f"Wrote {output_h5} ({file_size:.1f} MB, {total_fibers:,} fibers)")
 
 

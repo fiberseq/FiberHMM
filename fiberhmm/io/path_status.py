@@ -22,3 +22,13 @@ def path_is_nonempty_file(path: PathInput) -> bool:
         return path_is_regular_file(path) and os.path.getsize(path) > 0
     except OSError:
         return False
+
+
+def path_size_mb(path: PathInput) -> float:
+    """Return binary megabytes for a filesystem path."""
+    return os.path.getsize(path) / (1024 * 1024)
+
+
+def path_size_gb(path: PathInput) -> float:
+    """Return binary gigabytes for a filesystem path."""
+    return os.path.getsize(path) / (1024**3)

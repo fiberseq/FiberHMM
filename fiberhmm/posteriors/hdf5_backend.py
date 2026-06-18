@@ -22,6 +22,7 @@ import h5py
 import numpy as np
 
 from fiberhmm.core.bam_reader import get_reference_positions_array
+from fiberhmm.io.path_status import path_size_mb
 
 
 def _int32_array(values) -> np.ndarray:
@@ -134,7 +135,7 @@ def _append_fiber_metadata(meta: Dict[str, List], fiber: Dict) -> None:
 
 
 def _file_size_mb(path: str) -> float:
-    return os.path.getsize(path) / (1024 * 1024)
+    return path_size_mb(path)
 
 
 def _fiber_array_dataset_specs(fiber: Dict) -> List[tuple]:

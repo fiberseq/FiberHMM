@@ -18,6 +18,7 @@ from fiberhmm.inference.reference_mapping import (
 )
 from fiberhmm.io.bed import bed12_row
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
+from fiberhmm.io.path_status import path_size_gb
 
 _BED12_RECORD_COLUMNS = (
     'chrom',
@@ -93,11 +94,11 @@ def _sorted_bam_temp_path(output_bam: str) -> str:
 
 
 def _file_size_gb(path: str) -> float:
-    return os.path.getsize(path) / (1024 ** 3)
+    return path_size_gb(path)
 
 
 def _total_file_size_gb(paths: Sequence[str]) -> float:
-    return sum(os.path.getsize(path) for path in paths) / (1024 ** 3)
+    return sum(path_size_gb(path) for path in paths)
 
 
 def _throughput_gbs(size_gb: float, elapsed_seconds: float) -> float:

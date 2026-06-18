@@ -26,7 +26,7 @@ from typing import Optional, TextIO
 
 import numpy as np
 
-from fiberhmm.io.path_status import path_is_regular_file
+from fiberhmm.io.path_status import path_is_regular_file, path_size_mb
 from fiberhmm.posteriors.region_tsv import (
     REGION_POSTERIORS_HEADER,
     _posterior_tsv_metadata,
@@ -371,7 +371,7 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
                 print(f"\r    Written {n_written:,} / {n_total:,} fibers...", end='')
                 sys.stdout.flush()
 
-    file_size = os.path.getsize(h5_path) / (1024 * 1024)
+    file_size = path_size_mb(h5_path)
     if verbose:
         print(f"\r    Done: {n_written:,} fibers -> {h5_path} ({file_size:.1f} MB)")
 
