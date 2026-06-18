@@ -63,16 +63,20 @@ def test_split_legacy_interval_rows_splits_sorts_and_clamps_scores():
         scores=[300, -5],
     )
 
-    assert rows == [(0, 10, 255), (10, 5, 0), (90, 10, 255)]
+    assert rows == [
+        tf_recaller._LegacyIntervalRow(0, 10, 255),
+        tf_recaller._LegacyIntervalRow(10, 5, 0),
+        tf_recaller._LegacyIntervalRow(90, 10, 255),
+    ]
     assert tf_recaller._legacy_starts_lengths(rows) == ([0, 10, 90], [10, 5, 10])
 
 
 def test_split_legacy_interval_row_handles_optional_score():
     assert tf_recaller._split_legacy_interval_row((10, 5), 100) == [
-        (10, 5, None),
+        tf_recaller._LegacyIntervalRow(10, 5, None),
     ]
     assert tf_recaller._split_legacy_interval_row((10, 5), 100, score=-5) == [
-        (10, 5, 0),
+        tf_recaller._LegacyIntervalRow(10, 5, 0),
     ]
 
 

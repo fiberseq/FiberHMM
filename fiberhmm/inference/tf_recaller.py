@@ -172,6 +172,13 @@ class _PreferredMmMlTags:
     ml_tag: object
 
 
+@dataclass
+class _LegacyIntervalRow:
+    start: int
+    length: int
+    score: Optional[int]
+
+
 def _split_named_intervals(
     intervals: Sequence[Tuple[int, int]],
     prefix: str,
@@ -729,7 +736,7 @@ def _split_legacy_interval_row(interval: Tuple[int, int],
                                score=None):
     encoded_score = None if score is None else _clamp_u8(score)
     return [
-        (piece[0], piece[1], encoded_score)
+        _LegacyIntervalRow(piece[0], piece[1], encoded_score)
         for piece in split_circular_interval(interval[0], interval[1], read_length)
     ]
 
@@ -749,12 +756,15 @@ def _split_legacy_interval_rows(intervals: Sequence[Tuple[int, int]],
             for interval, score in zip(intervals, scores)
             for row in _split_legacy_interval_row(interval, read_length, score)
         ]
-    rows.sort(key=lambda t: (int(t[0]), int(t[1])))
+    rows.sort(key=lambda row: (int(row.start), int(row.length)))
     return rows
 
 
 def _legacy_starts_lengths(rows):
-    return [int(s) for s, _, _ in rows], [int(length) for _, length, _ in rows]
+    return (
+        [int(row.start) for row in rows],
+        [int(row.length) for row in rows],
+    )
 
 
 def _nuc_quality_rows(nq_values: Sequence[int], nuc_qqq: bool,
@@ -994,7 +1004,7 @@ def _write_legacy_recall_tags(read, read_length: int,
     # bamannotations.rs set_qual assert).
     if ns and nq_for_kept_nucs is not None:
         legacy_nq_rows = _split_legacy_interval_rows(kept_nucs, read_length, nq_values)
-        legacy_nq = [q for _, _, q in legacy_nq_rows]
+        legacy_nq = [row.score for row in legacy_nq_rows]
         if len(legacy_nq) != len(ns):
             legacy_nq = [0] * len(ns)
         read.set_tag('nq', pyarray.array('B', legacy_nq))
