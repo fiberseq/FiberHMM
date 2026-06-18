@@ -615,7 +615,7 @@ def test_prepare_region_parallel_run_indexes_reports_and_makes_temp(
         lambda *args: calls.append(("temp", args)) or str(tmp_path / "tmp"),
     )
 
-    got_regions, temp_dir = region_pipeline._prepare_region_parallel_run(
+    run = region_pipeline._prepare_region_parallel_run(
         "input.bam",
         "out.bam",
         region_size=1000,
@@ -626,8 +626,8 @@ def test_prepare_region_parallel_run_indexes_reports_and_makes_temp(
         output_posteriors="post.h5",
     )
 
-    assert got_regions is regions
-    assert temp_dir == str(tmp_path / "tmp")
+    assert run.regions is regions
+    assert run.temp_dir == str(tmp_path / "tmp")
     assert calls == [
         (
             "index",
@@ -654,7 +654,7 @@ def test_prepare_region_parallel_run_can_skip_index(monkeypatch):
     )
     monkeypatch.setattr(region_pipeline, "_make_output_temp_dir", lambda *args: "tmp")
 
-    regions, temp_dir = region_pipeline._prepare_region_parallel_run(
+    run = region_pipeline._prepare_region_parallel_run(
         "input.bam",
         "out.bam",
         region_size=1000,
@@ -666,8 +666,8 @@ def test_prepare_region_parallel_run_can_skip_index(monkeypatch):
         ensure_index=False,
     )
 
-    assert regions == [("chr1", 0, 100)]
-    assert temp_dir == "tmp"
+    assert run.regions == [("chr1", 0, 100)]
+    assert run.temp_dir == "tmp"
 
 
 def test_region_completion_result_prints_summary(monkeypatch, capsys):

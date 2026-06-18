@@ -8,6 +8,7 @@ import sys
 import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass
 from typing import Optional, Set, Tuple
 
 import pysam
@@ -48,6 +49,12 @@ from fiberhmm.posteriors.region_tsv import (
     region_posteriors_needs_h5_conversion,
     region_posteriors_tsv_output_path,
 )
+
+
+@dataclass(frozen=True)
+class _RegionParallelRun:
+    regions: list
+    temp_dir: str
 
 
 def _base_region_worker_params(
@@ -465,7 +472,10 @@ def _prepare_region_parallel_run(
         print(f"Posteriors will be written to: {output_posteriors}")
     sys.stdout.flush()
 
-    return regions, _make_output_temp_dir(output_path, temp_prefix)
+    return _RegionParallelRun(
+        regions=regions,
+        temp_dir=_make_output_temp_dir(output_path, temp_prefix),
+    )
 
 
 def _region_completion_result(aggregation, start_time: float) -> Tuple[int, int]:
@@ -768,7 +778,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
     start_time = time.time()
     return_posteriors = output_posteriors is not None
 
-    regions, temp_dir = _prepare_region_parallel_run(
+    run = _prepare_region_parallel_run(
         input_bam,
         output_bam,
         region_size,
@@ -800,7 +810,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
         # Work items - include temp TSV path if posteriors requested
         work_items = _region_bam_work_items(
-            regions, input_bam, temp_dir, include_tsv=return_posteriors,
+            run.regions, input_bam, run.temp_dir, include_tsv=return_posteriors,
         )
 
         aggregation = _run_region_bam_worker_pool(
@@ -808,7 +818,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             model_path=model_path,
             params=params,
             work_items=work_items,
-            total_regions=len(regions),
+            total_regions=len(run.regions),
             start_time=start_time,
             include_tsv=True,
         )
@@ -816,7 +826,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         return _finalize_region_bam_parallel_run(
             input_bam,
             output_bam,
-            temp_dir,
+            run.temp_dir,
             aggregation,
             start_time,
             n_cores,
@@ -829,7 +839,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
     finally:
         # Clean up temp directory
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(run.temp_dir, ignore_errors=True)
 
 
 def _process_bed_region_parallel(input_bam: str, output_bed: str,
@@ -858,7 +868,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
     """
     start_time = time.time()
 
-    regions, temp_dir = _prepare_region_parallel_run(
+    run = _prepare_region_parallel_run(
         input_bam,
         output_bed,
         region_size,
@@ -886,14 +896,14 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
         )
 
         # Work items - write temp BED files
-        work_items = _region_bed_work_items(regions, input_bam, temp_dir)
+        work_items = _region_bed_work_items(run.regions, input_bam, run.temp_dir)
 
         aggregation = _run_region_bed_worker_pool(
             n_cores=n_cores,
             model_path=model_path,
             params=params,
             work_items=work_items,
-            total_regions=len(regions),
+            total_regions=len(run.regions),
             start_time=start_time,
         )
 
@@ -902,7 +912,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
         )
 
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(run.temp_dir, ignore_errors=True)
 
 
 def _process_bam_region_parallel_fused(
@@ -940,7 +950,7 @@ def _process_bam_region_parallel_fused(
     """
     start_time = time.time()
 
-    regions, temp_dir = _prepare_region_parallel_run(
+    run = _prepare_region_parallel_run(
         input_bam,
         output_bam,
         region_size,
@@ -983,7 +993,7 @@ def _process_bam_region_parallel_fused(
             ref_fasta_path=ref_fasta_path,
         )
 
-        work_items = _region_bam_work_items(regions, input_bam, temp_dir)
+        work_items = _region_bam_work_items(run.regions, input_bam, run.temp_dir)
 
         aggregation = _run_fused_region_bam_worker_pool(
             n_cores=n_cores,
@@ -992,7 +1002,7 @@ def _process_bam_region_parallel_fused(
             emission_uplift=emission_uplift,
             params=params,
             work_items=work_items,
-            total_regions=len(regions),
+            total_regions=len(run.regions),
             start_time=start_time,
         )
         print()
@@ -1000,12 +1010,12 @@ def _process_bam_region_parallel_fused(
         _finalize_fused_region_bam_output(
             input_bam,
             output_bam,
-            temp_dir,
+            run.temp_dir,
             aggregation,
             start_time,
         )
 
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(run.temp_dir, ignore_errors=True)
 
     return aggregation.total_reads, aggregation.reads_with_footprints
