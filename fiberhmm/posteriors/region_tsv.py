@@ -65,6 +65,11 @@ class _RegionTsvMergeRequest:
 
 
 @dataclass(frozen=True)
+class _ValidRegionTsvFilesRequest:
+    temp_tsv_files: Iterable[tuple[int, str]]
+
+
+@dataclass(frozen=True)
 class _RegionTsvCopyRequest:
     outfile: object
     tsv_path: str
@@ -243,14 +248,22 @@ def format_posterior_metadata_line(metadata: dict) -> str:
     return f"#metadata:{json.dumps(metadata)}\n"
 
 
-def _valid_region_tsv_files(
-    temp_tsv_files: Iterable[tuple[int, str]],
+def _valid_region_tsv_files_from_request(
+    request: _ValidRegionTsvFilesRequest,
 ) -> list[_IndexedRegionTsvFile]:
     return [
         _IndexedRegionTsvFile(region_index=idx, path=path)
-        for idx, path in sorted(temp_tsv_files, key=lambda item: item[0])
+        for idx, path in sorted(request.temp_tsv_files, key=lambda item: item[0])
         if path_is_nonempty_file(path)
     ]
+
+
+def _valid_region_tsv_files(
+    temp_tsv_files: Iterable[tuple[int, str]],
+) -> list[_IndexedRegionTsvFile]:
+    return _valid_region_tsv_files_from_request(
+        _ValidRegionTsvFilesRequest(temp_tsv_files=temp_tsv_files)
+    )
 
 
 def _write_region_tsv_header_from_request(
@@ -317,7 +330,9 @@ def merge_region_posteriors_tsv_from_request(
 
     H5 conversion is left as a separate step to avoid memory/parallel issues.
     """
-    valid_files = _valid_region_tsv_files(request.temp_tsv_files)
+    valid_files = _valid_region_tsv_files_from_request(
+        _ValidRegionTsvFilesRequest(temp_tsv_files=request.temp_tsv_files)
+    )
     if not valid_files:
         return 0
 

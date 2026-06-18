@@ -265,7 +265,9 @@ def test_merge_region_posteriors_tsv_orders_regions_and_preserves_input_list(tmp
     ]
     original_order = list(temp_files)
 
-    assert region_tsv._valid_region_tsv_files(temp_files) == [
+    assert region_tsv._valid_region_tsv_files_from_request(
+        region_tsv._ValidRegionTsvFilesRequest(temp_tsv_files=temp_files)
+    ) == [
         region_tsv._IndexedRegionTsvFile(0, str(first)),
         region_tsv._IndexedRegionTsvFile(1, str(second)),
     ]
@@ -307,3 +309,20 @@ def test_merge_region_posteriors_tsv_orders_regions_and_preserves_input_list(tmp
     assert lines[1].startswith("#read_id\tchrom")
     assert lines[2].startswith("read_a\t")
     assert lines[3].startswith("read_b\t")
+
+
+def test_valid_region_tsv_files_adapter_builds_request(monkeypatch):
+    temp_files = [(0, "region.tsv")]
+    sentinel = [region_tsv._IndexedRegionTsvFile(0, "region.tsv")]
+    calls = []
+
+    monkeypatch.setattr(
+        region_tsv,
+        "_valid_region_tsv_files_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert region_tsv._valid_region_tsv_files(temp_files) == sentinel
+    assert calls == [
+        region_tsv._ValidRegionTsvFilesRequest(temp_tsv_files=temp_files)
+    ]
