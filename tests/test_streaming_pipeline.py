@@ -89,6 +89,80 @@ class _FakeAlignmentFile:
         return []
 
 
+def _apply_streaming_pipeline_request(**overrides):
+    values = {
+        "input_bam": "in.bam",
+        "output_bam": "out.bam",
+        "model_path": "model.json",
+        "train_rids": {"read1"},
+        "edge_trim": 0,
+        "circular": False,
+        "mode": "daf",
+        "context_size": 5,
+        "msp_min_size": 10,
+        "nuc_min_size": 20,
+        "min_mapq": 30,
+        "prob_threshold": 40,
+        "min_read_length": 50,
+        "with_scores": True,
+        "n_cores": 3,
+        "chunk_size": 100,
+        "max_inflight": None,
+        "io_threads": 2,
+        "primary_only": True,
+        "output_posteriors": None,
+        "write_msps": False,
+        "max_reads": 99,
+        "debug_timing": True,
+        "process_unmapped": False,
+    }
+    values.update(overrides)
+    return streaming_pipeline._ApplyStreamingPipelineRequest(**values)
+
+
+def _fused_streaming_pipeline_request(**overrides):
+    values = {
+        "input_bam": "in.bam",
+        "output_bam": "out.bam",
+        "model_path": "model.json",
+        "recall_model_path": None,
+        "train_rids": {"read2"},
+        "edge_trim": 0,
+        "circular": False,
+        "mode": "pacbio-fiber",
+        "context_size": 5,
+        "msp_min_size": 10,
+        "nuc_min_size": 20,
+        "min_mapq": 31,
+        "prob_threshold": 40,
+        "min_read_length": 51,
+        "with_scores": True,
+        "min_llr": 1.5,
+        "min_opps": 2,
+        "unify_threshold": 3,
+        "emission_uplift": 1.0,
+        "also_write_legacy": True,
+        "downstream_compat": False,
+        "max_reads": 99,
+        "n_cores": 4,
+        "chunk_size": 100,
+        "io_threads": 2,
+        "process_unmapped": True,
+        "primary_only": False,
+        "ref_fasta_path": "ref.fa",
+        "recall_nucs": True,
+        "split_min_llr": 4.0,
+        "split_min_opps": 3,
+        "filter_chimeras": True,
+        "chimera_min_seg": 5,
+        "chimera_purity": 0.8,
+        "phase_nrl": 147,
+        "pg_record": {"ID": "fiberhmm"},
+    }
+    values.update(overrides)
+    return streaming_pipeline._FusedStreamingPipelineRequest(**values)
+
+
 def test_apply_worker_args_match_payload_worker_contract():
     common_args = _StreamingWorkerCommonArgs(
         edge_trim=11,
@@ -147,6 +221,45 @@ def test_fused_worker_args_include_recall_contract():
     )
     assert _fused_worker_args(
         12, False, "pacbio-fiber", 7, 62, 87, False, 126, 4.5, 6, 91
+    ) == (
+        12, False, "pacbio-fiber", 7, 62, 87, False, 126,
+        "pacbio-fiber", 7, 4.5, 6, 91,
+    )
+
+
+def test_pipeline_request_worker_arg_helpers_match_worker_contract():
+    apply_request = _apply_streaming_pipeline_request(
+        edge_trim=11,
+        circular=True,
+        mode="deam",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=86,
+        with_scores=True,
+        prob_threshold=127,
+    )
+    fused_request = _fused_streaming_pipeline_request(
+        edge_trim=12,
+        circular=False,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=62,
+        nuc_min_size=87,
+        with_scores=False,
+        prob_threshold=126,
+        min_llr=4.5,
+        min_opps=6,
+        unify_threshold=91,
+    )
+
+    assert streaming_pipeline._apply_worker_args_from_pipeline_request(
+        apply_request,
+        return_posteriors=False,
+    ) == (
+        11, True, "deam", 5, 61, 86, True, False, 127,
+    )
+    assert streaming_pipeline._fused_worker_args_from_pipeline_request(
+        fused_request,
     ) == (
         12, False, "pacbio-fiber", 7, 62, 87, False, 126,
         "pacbio-fiber", 7, 4.5, 6, 91,
@@ -449,32 +562,7 @@ def test_streaming_filter_config_captures_read_filter_settings():
 
 
 def test_apply_streaming_request_config_helpers_use_request_values():
-    request = streaming_pipeline._ApplyStreamingPipelineRequest(
-        input_bam="in.bam",
-        output_bam="out.bam",
-        model_path="model.json",
-        train_rids={"read1"},
-        edge_trim=0,
-        circular=False,
-        mode="daf",
-        context_size=5,
-        msp_min_size=10,
-        nuc_min_size=20,
-        min_mapq=30,
-        prob_threshold=40,
-        min_read_length=50,
-        with_scores=True,
-        n_cores=3,
-        chunk_size=100,
-        max_inflight=None,
-        io_threads=2,
-        primary_only=True,
-        output_posteriors=None,
-        write_msps=False,
-        max_reads=99,
-        debug_timing=True,
-        process_unmapped=False,
-    )
+    request = _apply_streaming_pipeline_request()
 
     assert streaming_pipeline._apply_streaming_max_inflight(request) == 6
 
@@ -490,44 +578,7 @@ def test_apply_streaming_request_config_helpers_use_request_values():
 
 
 def test_fused_streaming_request_config_helpers_use_request_values():
-    request = streaming_pipeline._FusedStreamingPipelineRequest(
-        input_bam="in.bam",
-        output_bam="out.bam",
-        model_path="model.json",
-        recall_model_path=None,
-        train_rids={"read2"},
-        edge_trim=0,
-        circular=False,
-        mode="pacbio-fiber",
-        context_size=5,
-        msp_min_size=10,
-        nuc_min_size=20,
-        min_mapq=31,
-        prob_threshold=40,
-        min_read_length=51,
-        with_scores=True,
-        min_llr=1.5,
-        min_opps=2,
-        unify_threshold=3,
-        emission_uplift=1.0,
-        also_write_legacy=True,
-        downstream_compat=False,
-        max_reads=99,
-        n_cores=4,
-        chunk_size=100,
-        io_threads=2,
-        process_unmapped=True,
-        primary_only=False,
-        ref_fasta_path="ref.fa",
-        recall_nucs=True,
-        split_min_llr=4.0,
-        split_min_opps=3,
-        filter_chimeras=True,
-        chimera_min_seg=5,
-        chimera_purity=0.8,
-        phase_nrl=147,
-        pg_record={"ID": "fiberhmm"},
-    )
+    request = _fused_streaming_pipeline_request()
 
     assert streaming_pipeline._fused_streaming_max_inflight(request) == 6
 

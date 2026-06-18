@@ -933,6 +933,41 @@ def _fused_worker_args(
     )
 
 
+def _apply_worker_args_from_pipeline_request(
+    request: _ApplyStreamingPipelineRequest,
+    return_posteriors: bool,
+) -> tuple:
+    return _apply_worker_args(
+        request.edge_trim,
+        request.circular,
+        request.mode,
+        request.context_size,
+        request.msp_min_size,
+        request.nuc_min_size,
+        request.with_scores,
+        return_posteriors,
+        request.prob_threshold,
+    )
+
+
+def _fused_worker_args_from_pipeline_request(
+    request: _FusedStreamingPipelineRequest,
+) -> tuple:
+    return _fused_worker_args(
+        request.edge_trim,
+        request.circular,
+        request.mode,
+        request.context_size,
+        request.msp_min_size,
+        request.nuc_min_size,
+        request.with_scores,
+        request.prob_threshold,
+        request.min_llr,
+        request.min_opps,
+        request.unify_threshold,
+    )
+
+
 def _new_streaming_counters() -> dict:
     return {
         'reads_with_footprints': 0,
@@ -1517,13 +1552,7 @@ def _process_bam_streaming_pipeline_fused_from_request(
                     request.n_cores,
                 )
 
-                worker_args = _fused_worker_args(
-                    request.edge_trim, request.circular, request.mode,
-                    request.context_size, request.msp_min_size,
-                    request.nuc_min_size, request.with_scores,
-                    request.prob_threshold, request.min_llr,
-                    request.min_opps, request.unify_threshold,
-                )
+                worker_args = _fused_worker_args_from_pipeline_request(request)
 
                 read_counts = _run_streaming_worker_loop(
                     inbam.fetch(until_eof=True),
@@ -1674,11 +1703,9 @@ def _process_bam_streaming_pipeline_from_request(
                     request.model_path, request.n_cores, request.debug_timing,
                 )
 
-                worker_args = _apply_worker_args(
-                    request.edge_trim, request.circular, request.mode,
-                    request.context_size, request.msp_min_size,
-                    request.nuc_min_size, request.with_scores,
-                    return_posteriors, request.prob_threshold,
+                worker_args = _apply_worker_args_from_pipeline_request(
+                    request,
+                    return_posteriors,
                 )
 
                 read_counts = _run_streaming_worker_loop(
