@@ -111,6 +111,12 @@ class _RegionBamReadDelta:
     posteriors_written: int = 0
 
 
+@dataclass(frozen=True)
+class _SkippedRegionReadCounts:
+    written: int
+    skipped: int
+
+
 @dataclass
 class _RegionBamWorkerCounts:
     total_reads: int = 0
@@ -237,10 +243,12 @@ def _record_skipped_region_read(
     reason: str,
     written: int,
     skipped: int,
-) -> tuple[int, int]:
-    return (
-        written + _write_skipped_region_read(outbam, read, skip_reasons, reason),
-        skipped + 1,
+) -> _SkippedRegionReadCounts:
+    return _SkippedRegionReadCounts(
+        written=written + _write_skipped_region_read(
+            outbam, read, skip_reasons, reason,
+        ),
+        skipped=skipped + 1,
     )
 
 
@@ -568,10 +576,10 @@ def _region_bed12_row_from_read_result(read, result: dict, with_scores: bool) ->
 
 
 def _skipped_region_bam_delta(outbam, read, skip_reasons: dict, reason: str):
-    written, skipped = _record_skipped_region_read(
+    counts = _record_skipped_region_read(
         outbam, read, skip_reasons, reason, written=0, skipped=0,
     )
-    return _RegionBamReadDelta(written=written, skipped=skipped)
+    return _RegionBamReadDelta(written=counts.written, skipped=counts.skipped)
 
 
 def _process_region_bam_read(

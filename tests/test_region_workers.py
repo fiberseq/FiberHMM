@@ -571,13 +571,14 @@ def test_record_skipped_region_read_writes_and_updates_counters():
     outbam.write = outbam.written.append
     skip_reasons = {"low_mapq": 0}
 
-    written, skipped = _record_skipped_region_read(
+    counts = _record_skipped_region_read(
         outbam, read, skip_reasons, "low_mapq", written=3, skipped=2
     )
 
     assert outbam.written == [read]
     assert skip_reasons["low_mapq"] == 1
-    assert (written, skipped) == (4, 3)
+    assert counts.written == 4
+    assert counts.skipped == 3
 
 
 def test_write_unfootprinted_region_read_counts_no_footprints():
