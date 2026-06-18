@@ -413,12 +413,12 @@ def test_get_reference_positions_array_uses_minus_one_for_insertions():
 
 
 def test_cigar_op_len_arrays_split_ops_and_lengths():
-    cigar_ops, cigar_lens = _cigar_op_len_arrays([(0, 10), (1, 2), (4, 3)])
+    cigar_arrays = _cigar_op_len_arrays([(0, 10), (1, 2), (4, 3)])
 
-    assert cigar_ops.dtype == np.int64
-    assert cigar_lens.dtype == np.int64
-    np.testing.assert_array_equal(cigar_ops, [0, 1, 4])
-    np.testing.assert_array_equal(cigar_lens, [10, 2, 3])
+    assert cigar_arrays.ops.dtype == np.int64
+    assert cigar_arrays.lengths.dtype == np.int64
+    np.testing.assert_array_equal(cigar_arrays.ops, [0, 1, 4])
+    np.testing.assert_array_equal(cigar_arrays.lengths, [10, 2, 3])
 
 
 def test_read_bam_filter_helper_applies_basic_read_filters():
