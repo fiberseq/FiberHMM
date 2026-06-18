@@ -2127,6 +2127,45 @@ def test_tag_diagnostic_helpers_parse_summary_and_predictions():
     )
 
 
+def test_record_tag_diagnostic_read_updates_per_read_sources():
+    counts = extract_tags._new_tag_diagnostic_counts()
+    checked_reads = []
+
+    tagged = _FakeRead()
+    tagged.query_sequence = "ACRY"
+    for tag in ("ns", "nl", "as", "al", "MA", "AQ", "ML", "MD"):
+        tagged.set_tag(tag, "present")
+    tagged.set_tag("MM", "A+a,0;C+u,1;")
+
+    extract_tags._record_tag_diagnostic_read(
+        counts,
+        tagged,
+        lambda read: checked_reads.append(read) or False,
+    )
+
+    md_only = _FakeRead()
+    md_only.query_sequence = "ACGT"
+    md_only.set_tag("MD", "4")
+
+    extract_tags._record_tag_diagnostic_read(
+        counts,
+        md_only,
+        lambda read: checked_reads.append(read) or True,
+    )
+
+    assert counts["reads_scanned"] == 2
+    assert counts["has_ns_nl"] == 1
+    assert counts["has_as_al"] == 1
+    assert counts["has_MA_AQ"] == 1
+    assert counts["has_MM"] == 1
+    assert counts["has_ML"] == 1
+    assert counts["has_ry_in_seq"] == 1
+    assert counts["md_bad_cigar"] == 1
+    assert counts["has_md_only"] == 1
+    assert counts["mm_subtypes"] == {"A+a", "C+u"}
+    assert checked_reads == [tagged, md_only]
+
+
 def test_looks_like_fiber_seq_detects_hia5_bams():
     """Regression for Christy LaFlamme's crash on surjected fiber-seq
     CRAMs: --deam should auto-skip on fiber-seq BAMs in --all mode to

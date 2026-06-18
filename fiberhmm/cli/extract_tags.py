@@ -1904,6 +1904,53 @@ def _deam_prediction_uses_direct_source(predicted_deam: Optional[str]) -> bool:
     )
 
 
+def _record_interval_tag_diagnostics(counts: Dict[str, object], read) -> None:
+    if read.has_tag('ns') and read.has_tag('nl'):
+        counts['has_ns_nl'] += 1
+    if read.has_tag('as') and read.has_tag('al'):
+        counts['has_as_al'] += 1
+    if read.has_tag('MA') and read.has_tag('AQ'):
+        counts['has_MA_AQ'] += 1
+
+
+def _record_mm_ml_diagnostics(counts: Dict[str, object], read) -> bool:
+    mm_present = read.has_tag('MM') or read.has_tag('Mm')
+    ml_present = read.has_tag('ML') or read.has_tag('Ml')
+    if mm_present:
+        counts['has_MM'] += 1
+        try:
+            mm_str = get_preferred_tag(read, 'MM', 'Mm', '')
+            counts['mm_subtypes'].update(_mm_subtypes_from_tag(mm_str))
+        except Exception:
+            pass
+    if ml_present:
+        counts['has_ML'] += 1
+    return mm_present
+
+
+def _read_has_ry_sequence(read) -> bool:
+    seq = getattr(read, 'query_sequence', None)
+    return bool(seq and ('R' in seq or 'Y' in seq))
+
+
+def _record_tag_diagnostic_read(counts: Dict[str, object], read, md_matches_cigar) -> None:
+    counts['reads_scanned'] += 1
+
+    _record_interval_tag_diagnostics(counts, read)
+    mm_present = _record_mm_ml_diagnostics(counts, read)
+
+    has_ry = _read_has_ry_sequence(read)
+    if has_ry:
+        counts['has_ry_in_seq'] += 1
+
+    has_md = read.has_tag('MD')
+    if has_md and not md_matches_cigar(read):
+        counts['md_bad_cigar'] += 1
+
+    if has_md and not (mm_present or has_ry):
+        counts['has_md_only'] += 1
+
+
 def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
     """Sniff the first N mapped reads and report which sources each
     extract type can work from. Reports per-source presence counts
@@ -1921,38 +1968,7 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
             for read in bam:
                 if not is_primary_mapped_alignment(read):
                     continue
-                counts['reads_scanned'] += 1
-
-                if read.has_tag('ns') and read.has_tag('nl'):
-                    counts['has_ns_nl'] += 1
-                if read.has_tag('as') and read.has_tag('al'):
-                    counts['has_as_al'] += 1
-                if read.has_tag('MA') and read.has_tag('AQ'):
-                    counts['has_MA_AQ'] += 1
-
-                mm_present = read.has_tag('MM') or read.has_tag('Mm')
-                ml_present = read.has_tag('ML') or read.has_tag('Ml')
-                if mm_present:
-                    counts['has_MM'] += 1
-                    try:
-                        mm_str = get_preferred_tag(read, 'MM', 'Mm', '')
-                        counts['mm_subtypes'].update(_mm_subtypes_from_tag(mm_str))
-                    except Exception:
-                        pass
-                if ml_present:
-                    counts['has_ML'] += 1
-
-                seq = read.query_sequence
-                if seq and ('R' in seq or 'Y' in seq):
-                    counts['has_ry_in_seq'] += 1
-
-                if read.has_tag('MD') and not md_matches_cigar(read):
-                    counts['md_bad_cigar'] += 1
-
-                has_md = read.has_tag('MD')
-                has_mod_source = mm_present or (seq and ('R' in seq or 'Y' in seq))
-                if has_md and not has_mod_source:
-                    counts['has_md_only'] += 1
+                _record_tag_diagnostic_read(counts, read, md_matches_cigar)
 
                 if counts['reads_scanned'] >= n_reads:
                     break
