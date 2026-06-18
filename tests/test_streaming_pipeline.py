@@ -266,6 +266,117 @@ def test_pipeline_request_worker_arg_helpers_match_worker_contract():
     )
 
 
+def test_run_apply_streaming_reads_opens_runs_and_closes_posteriors(monkeypatch):
+    class InputBam:
+        def fetch(self, **kwargs):
+            assert kwargs == {"until_eof": True}
+            return ["read"]
+
+    writer = object()
+    posterior_stats = _StreamingPosteriorStats(n_fibers=2, file_size_mb=0.5)
+    filter_config = object()
+    counters = {"written": 0}
+    skip_reasons = {"low_mapq": 0}
+    log = io.StringIO()
+    pipeline_request = _apply_streaming_pipeline_request(
+        mode="deam",
+        output_posteriors="post.h5",
+        max_reads=11,
+        chunk_size=12,
+        with_scores=True,
+        write_msps=False,
+    )
+    calls = []
+
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_open_streaming_posterior_writer",
+        lambda *args: calls.append(("open", args))
+        or _StreamingPosteriorWriter(writer=writer, enabled=True),
+    )
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_new_apply_streaming_executor",
+        lambda *args: calls.append(("executor", args)) or "executor",
+    )
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_apply_worker_args_from_pipeline_request",
+        lambda *args: calls.append(("worker_args", args)) or ("worker-args",),
+    )
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_apply_drain_chunk_factory",
+        lambda *args: calls.append(("drain_factory", args)) or "drain",
+    )
+
+    def fake_run_streaming_worker_loop(*args):
+        calls.append(("loop", args))
+        return _StreamingReadCounts(processed=3, skipped=1)
+
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_run_streaming_worker_loop",
+        fake_run_streaming_worker_loop,
+    )
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_close_streaming_posterior_writer",
+        lambda got_writer: calls.append(("close", got_writer)) or posterior_stats,
+    )
+
+    result = streaming_pipeline._run_apply_streaming_reads_from_request(
+        streaming_pipeline._ApplyStreamingReadLoopRequest(
+            pipeline_request=pipeline_request,
+            inbam=InputBam(),
+            outbam="outbam",
+            filter_config=filter_config,
+            max_inflight=9,
+            counters=counters,
+            skip_reasons=skip_reasons,
+            log=log,
+            ref_fasta=None,
+            start_time=5.0,
+        )
+    )
+
+    assert result == streaming_pipeline._ApplyStreamingReadLoopResult(
+        read_counts=_StreamingReadCounts(processed=3, skipped=1),
+        posterior_stats=posterior_stats,
+    )
+    assert calls == [
+        (
+            "open",
+            ("post.h5", "deam", 5, 0, "in.bam", log),
+        ),
+        ("executor", ("model.json", 3, True)),
+        ("worker_args", (pipeline_request, True)),
+        ("drain_factory", ("outbam", True, False, writer, counters)),
+        (
+            "loop",
+            (
+                ["read"],
+                filter_config,
+                "deam",
+                None,
+                "executor",
+                streaming_pipeline._process_payload_chunk_worker,
+                ("worker-args",),
+                11,
+                12,
+                9,
+                "drain",
+                skip_reasons,
+                log,
+                "Processed",
+                "reads/s",
+                5.0,
+            ),
+        ),
+        ("close", writer),
+    ]
+
+
 def test_streaming_progress_rates_handle_elapsed_and_zero_dt():
     assert _streaming_progress_rates(
         total_reads=120,

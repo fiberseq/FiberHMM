@@ -568,6 +568,26 @@ class _ApplyStreamingPipelineRequest:
     process_unmapped: bool
 
 
+@dataclass(frozen=True)
+class _ApplyStreamingReadLoopRequest:
+    pipeline_request: _ApplyStreamingPipelineRequest
+    inbam: object
+    outbam: object
+    filter_config: ReadFilterConfig
+    max_inflight: int
+    counters: dict
+    skip_reasons: dict
+    log: object
+    ref_fasta: object
+    start_time: float
+
+
+@dataclass(frozen=True)
+class _ApplyStreamingReadLoopResult:
+    read_counts: _StreamingReadCounts
+    posterior_stats: object
+
+
 def _flush_streaming_chunk_and_report_progress(
     context: _StreamingFlushContext,
     chunk_items,
@@ -1021,6 +1041,67 @@ def _fused_streaming_max_inflight(
     request: _FusedStreamingPipelineRequest,
 ) -> int:
     return request.n_cores + 2
+
+
+def _run_apply_streaming_reads_from_request(
+    request: _ApplyStreamingReadLoopRequest,
+) -> _ApplyStreamingReadLoopResult:
+    pipeline_request = request.pipeline_request
+    posterior_writer = None
+    posterior_stats = None
+    try:
+        posterior_output = _open_streaming_posterior_writer(
+            pipeline_request.output_posteriors,
+            pipeline_request.mode,
+            pipeline_request.context_size,
+            pipeline_request.edge_trim,
+            pipeline_request.input_bam,
+            request.log,
+        )
+        posterior_writer = posterior_output.writer
+
+        executor = _new_apply_streaming_executor(
+            pipeline_request.model_path,
+            pipeline_request.n_cores,
+            pipeline_request.debug_timing,
+        )
+
+        worker_args = _apply_worker_args_from_pipeline_request(
+            pipeline_request,
+            posterior_output.enabled,
+        )
+
+        read_counts = _run_streaming_worker_loop(
+            request.inbam.fetch(until_eof=True),
+            request.filter_config,
+            pipeline_request.mode,
+            request.ref_fasta,
+            executor,
+            _process_payload_chunk_worker,
+            worker_args,
+            pipeline_request.max_reads,
+            pipeline_request.chunk_size,
+            request.max_inflight,
+            _apply_drain_chunk_factory(
+                request.outbam,
+                pipeline_request.with_scores,
+                pipeline_request.write_msps,
+                posterior_writer,
+                request.counters,
+            ),
+            request.skip_reasons,
+            request.log,
+            "Processed",
+            "reads/s",
+            request.start_time,
+        )
+    finally:
+        posterior_stats = _close_streaming_posterior_writer(posterior_writer)
+
+    return _ApplyStreamingReadLoopResult(
+        read_counts=read_counts,
+        posterior_stats=posterior_stats,
+    )
 
 
 def _print_worker_failure_summary(counters: dict, log) -> None:
@@ -1664,9 +1745,7 @@ def _process_bam_streaming_pipeline_from_request(
 
     counters = _new_streaming_counters()
 
-    posterior_writer = None
     posterior_stats = None
-    return_posteriors = False
 
     _log = _streaming_log_for_output(request.output_bam)
 
@@ -1690,56 +1769,23 @@ def _process_bam_streaming_pipeline_from_request(
                                  threads=request.io_threads) as outbam:
             skipped = 0
 
-            try:
-                posterior_output = _open_streaming_posterior_writer(
-                    request.output_posteriors, request.mode,
-                    request.context_size, request.edge_trim,
-                    request.input_bam, _log,
+            read_loop_result = _run_apply_streaming_reads_from_request(
+                _ApplyStreamingReadLoopRequest(
+                    pipeline_request=request,
+                    inbam=inbam,
+                    outbam=outbam,
+                    filter_config=filter_config,
+                    max_inflight=max_inflight,
+                    counters=counters,
+                    skip_reasons=skip_reasons,
+                    log=_log,
+                    ref_fasta=ref_fasta,
+                    start_time=start_time,
                 )
-                posterior_writer = posterior_output.writer
-                return_posteriors = posterior_output.enabled
-
-                executor = _new_apply_streaming_executor(
-                    request.model_path, request.n_cores, request.debug_timing,
-                )
-
-                worker_args = _apply_worker_args_from_pipeline_request(
-                    request,
-                    return_posteriors,
-                )
-
-                read_counts = _run_streaming_worker_loop(
-                    inbam.fetch(until_eof=True),
-                    filter_config,
-                    request.mode,
-                    ref_fasta,
-                    executor,
-                    _process_payload_chunk_worker,
-                    worker_args,
-                    request.max_reads,
-                    request.chunk_size,
-                    max_inflight,
-                    _apply_drain_chunk_factory(
-                        outbam,
-                        request.with_scores,
-                        request.write_msps,
-                        posterior_writer,
-                        counters,
-                    ),
-                    skip_reasons,
-                    _log,
-                    "Processed",
-                    "reads/s",
-                    start_time,
-                )
-                total_reads = read_counts.processed
-                skipped = read_counts.skipped
-
-            finally:
-                posterior_stats = _close_streaming_posterior_writer(
-                    posterior_writer,
-                )
-                posterior_writer = None
+            )
+            total_reads = read_loop_result.read_counts.processed
+            skipped = read_loop_result.read_counts.skipped
+            posterior_stats = read_loop_result.posterior_stats
 
     reads_with_footprints = _finalize_apply_streaming_pipeline(
         total_reads=total_reads,
