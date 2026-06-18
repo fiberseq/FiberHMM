@@ -126,6 +126,28 @@ def test_tsv_writer_reuses_region_posterior_row_format(tmp_path):
     )
 
 
+def test_tsv_writer_close_is_idempotent_and_blocks_late_writes(tmp_path):
+    writer = tsv_backend.PosteriorsTSVWriter(
+        str(tmp_path / "posteriors.tsv"),
+        compress=False,
+    )
+
+    assert writer.close() == 0
+    assert writer.close() == 0
+
+    with pytest.raises(RuntimeError, match="closed"):
+        writer.write_fiber(
+            read_id="read1",
+            chrom="chr1",
+            start=10,
+            end=20,
+            strand="+",
+            posteriors=np.array([0.0], dtype=np.float32),
+            fp_starts=np.array([], dtype=np.int32),
+            fp_sizes=np.array([], dtype=np.int32),
+        )
+
+
 def test_scan_tsv_for_h5_collects_metadata_and_chrom_counts(tmp_path):
     tsv_path = tmp_path / "posteriors.tsv"
     tsv_path.write_text(

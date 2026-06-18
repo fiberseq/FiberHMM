@@ -252,6 +252,7 @@ class PosteriorsTSVWriter:
         self.compress = compress or output_path.endswith('.gz')
         self.output_path = _posterior_tsv_output_path(output_path, compress)
         self._file = _open_text_file(self.output_path, 'wt')
+        self._closed = False
 
         # Write header with metadata
         metadata = _posterior_tsv_metadata(mode, context_size, edge_trim, source_bam)
@@ -276,6 +277,9 @@ class PosteriorsTSVWriter:
             fp_starts: Footprint start positions (query coords)
             fp_sizes: Footprint sizes
         """
+        if self._closed:
+            raise RuntimeError("PosteriorsTSVWriter is closed")
+
         self._file.write(
             format_region_posterior_line(
                 read_name=read_id,
@@ -296,7 +300,12 @@ class PosteriorsTSVWriter:
 
     def close(self):
         """Close the file."""
-        self._file.close()
+        if self._closed:
+            return self.n_written
+        try:
+            self._file.close()
+        finally:
+            self._closed = True
         return self.n_written
 
     def __enter__(self):
