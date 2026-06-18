@@ -265,6 +265,34 @@ def test_raise_if_command_failed_preserves_process_output():
     assert exc.value.stderr == "failed"
 
 
+def test_run_samtools_list_command_cleans_list_when_write_fails(monkeypatch, tmp_path):
+    list_file = tmp_path / "inputs.txt"
+    run_calls = []
+
+    def fail_write(bam_files, got_list_file):
+        assert got_list_file == str(list_file)
+        list_file.write_text("partial\n")
+        raise RuntimeError("list write failed")
+
+    monkeypatch.setattr(bam_output, "_write_bam_list_file", fail_write)
+    monkeypatch.setattr(
+        bam_output.subprocess,
+        "run",
+        lambda *args, **kwargs: run_calls.append((args, kwargs)),
+    )
+
+    with pytest.raises(RuntimeError, match="list write failed"):
+        bam_output._run_samtools_list_command(
+            ["a.bam"],
+            str(list_file),
+            ["samtools", "cat"],
+            "samtools cat",
+        )
+
+    assert run_calls == []
+    assert not list_file.exists()
+
+
 def test_concatenate_trivial_region_bams_handles_empty_single_and_many(monkeypatch):
     calls = []
 

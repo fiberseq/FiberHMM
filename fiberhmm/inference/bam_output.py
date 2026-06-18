@@ -271,8 +271,8 @@ def _run_samtools_list_command(
     cmd: List[str],
     label: str,
 ) -> None:
-    _write_bam_list_file(bam_files, list_file)
     try:
+        _write_bam_list_file(bam_files, list_file)
         result = subprocess.run(cmd, capture_output=True, text=True)
         _raise_if_command_failed(result, label)
     finally:
