@@ -337,6 +337,29 @@ def _process_probability_read(
         )
 
 
+def _process_probability_read_or_skip(
+    read,
+    counters: Dict[str, ContextCounter],
+    mode: str,
+    args,
+    filter_stats: Dict[str, int],
+    mm_tag_types: MutableMapping[str, int],
+    strand_assignments: MutableMapping[str, int],
+) -> bool:
+    tags = _probability_read_tags_or_skip(
+        read, filter_stats, args.min_mapq, args.min_read_length,
+    )
+    if tags is None:
+        return False
+
+    mm_tag, ml_tag = tags
+    _process_probability_read(
+        read, counters, mode, args.prob_threshold, args.edge_trim,
+        mm_tag, ml_tag, mm_tag_types, strand_assignments,
+    )
+    return True
+
+
 def _progress_postfix(reads_processed: int, reads_scanned: int) -> Dict[str, str]:
     return {
         'processed': f'{reads_processed:,}',
@@ -408,17 +431,12 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 pbar, reads_processed, reads_scanned,
             )
 
-            tags = _probability_read_tags_or_skip(
-                read, filter_stats, args.min_mapq, args.min_read_length,
+            processed = _process_probability_read_or_skip(
+                read, counters, mode, args, filter_stats,
+                mm_tag_types, strand_assignments,
             )
-            if tags is None:
+            if not processed:
                 continue
-
-            mm_tag, ml_tag = tags
-            _process_probability_read(
-                read, counters, mode, args.prob_threshold, args.edge_trim,
-                mm_tag, ml_tag, mm_tag_types, strand_assignments,
-            )
 
             reads_processed += 1
             filter_stats['processed'] += 1

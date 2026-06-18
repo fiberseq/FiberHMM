@@ -31,6 +31,7 @@ from fiberhmm.cli.generate_probs import (
     _print_probability_results_summary,
     _progress_postfix,
     _process_probability_control_groups,
+    _process_probability_read_or_skip,
     _process_probability_sample_group,
     _process_probability_read,
     _read_limit_reached,
@@ -695,6 +696,63 @@ def test_process_probability_read_routes_daf_to_c_counter(monkeypatch):
     assert dict(strand_assignments) == {"-:G": 1}
     assert counter.processed == []
     assert counter.processed_daf == [("A" * 200, {5}, "-", 11)]
+
+
+def test_process_probability_read_or_skip_routes_processed_reads(monkeypatch):
+    import fiberhmm.cli.generate_probs as generate_probs
+
+    args = SimpleNamespace(
+        min_mapq=20,
+        min_read_length=100,
+        prob_threshold=125,
+        edge_trim=9,
+    )
+    filter_stats = defaultdict(int)
+    mm_tag_types = defaultdict(int)
+    strand_assignments = defaultdict(int)
+    counters = {"A": _Counter()}
+    calls = []
+
+    monkeypatch.setattr(
+        generate_probs,
+        "_probability_read_tags_or_skip",
+        lambda read, stats, min_mapq, min_read_length: ("A+a,0;", [200]),
+    )
+    monkeypatch.setattr(
+        generate_probs,
+        "_process_probability_read",
+        lambda *call_args: calls.append(call_args),
+    )
+
+    read = _Read()
+    assert _process_probability_read_or_skip(
+        read, counters, "pacbio-fiber", args, filter_stats,
+        mm_tag_types, strand_assignments,
+    ) is True
+    assert calls == [(
+        read,
+        counters,
+        "pacbio-fiber",
+        125,
+        9,
+        "A+a,0;",
+        [200],
+        mm_tag_types,
+        strand_assignments,
+    )]
+
+    calls.clear()
+    monkeypatch.setattr(
+        generate_probs,
+        "_probability_read_tags_or_skip",
+        lambda read, stats, min_mapq, min_read_length: None,
+    )
+
+    assert _process_probability_read_or_skip(
+        _Read(), counters, "pacbio-fiber", args, filter_stats,
+        mm_tag_types, strand_assignments,
+    ) is False
+    assert calls == []
 
 
 def test_progress_postfix_formats_counts_and_rate():
