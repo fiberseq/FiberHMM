@@ -292,6 +292,15 @@ class _ApplyProcessingPlan:
 
 
 @dataclass(frozen=True)
+class _ApplyFinalizationPlan:
+    output_bam: str
+    dataset: str
+    with_scores: bool
+    db_path: str | None
+    stdout_mode: bool
+
+
+@dataclass(frozen=True)
 class _ScoresDbCounts:
     reads: int
     footprints: int
@@ -647,6 +656,35 @@ def _run_apply_processing(
     return _run_apply_processing_plan(args, plan, stdout_mode)
 
 
+def _apply_finalization_plan_from_runtime(
+    runtime: _ApplyRuntime,
+    stdout_mode: bool,
+) -> _ApplyFinalizationPlan:
+    return _ApplyFinalizationPlan(
+        output_bam=runtime.output_bam,
+        dataset=runtime.dataset,
+        with_scores=runtime.with_scores,
+        db_path=runtime.db_path,
+        stdout_mode=stdout_mode,
+    )
+
+
+def _finalize_apply_outputs_plan(
+    args,
+    plan: _ApplyFinalizationPlan,
+) -> None:
+    if args.stats and not plan.stdout_mode:
+        _write_apply_stats(
+            plan.output_bam,
+            args,
+            plan.dataset,
+            plan.with_scores,
+        )
+
+    _print_scores_db_summary(plan.db_path)
+    _print_apply_done(plan.stdout_mode, plan.output_bam)
+
+
 def _finalize_apply_outputs(
     args,
     output_bam: str,
@@ -655,11 +693,14 @@ def _finalize_apply_outputs(
     db_path,
     stdout_mode: bool,
 ) -> None:
-    if args.stats and not stdout_mode:
-        _write_apply_stats(output_bam, args, dataset, with_scores)
-
-    _print_scores_db_summary(db_path)
-    _print_apply_done(stdout_mode, output_bam)
+    plan = _ApplyFinalizationPlan(
+        output_bam=output_bam,
+        dataset=dataset,
+        with_scores=with_scores,
+        db_path=db_path,
+        stdout_mode=stdout_mode,
+    )
+    _finalize_apply_outputs_plan(args, plan)
 
 
 def _prepare_apply_io(args):
@@ -764,14 +805,11 @@ def main():
     runtime = _resolve_apply_runtime(args, io.n_cores, io.stdout_mode)
     processing_plan = _apply_processing_plan_from_runtime(runtime, io.n_cores)
     _run_apply_processing_plan(args, processing_plan, io.stdout_mode)
-    _finalize_apply_outputs(
-        args,
-        runtime.output_bam,
-        runtime.dataset,
-        runtime.with_scores,
-        runtime.db_path,
+    finalization_plan = _apply_finalization_plan_from_runtime(
+        runtime,
         io.stdout_mode,
     )
+    _finalize_apply_outputs_plan(args, finalization_plan)
 
 
 if __name__ == '__main__':

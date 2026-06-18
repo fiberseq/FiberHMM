@@ -6,9 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from fiberhmm.cli.apply import (
+    _apply_finalization_plan_from_runtime,
     _apply_processing_kwargs,
     _apply_processing_kwargs_for_plan,
     _apply_processing_plan_from_runtime,
+    _ApplyFinalizationPlan,
     _ApplyIO,
     _ApplyProcessingPlan,
     _ApplyProcessingResult,
@@ -18,6 +20,7 @@ from fiberhmm.cli.apply import (
     _dataset_name,
     _ddda_notice_needed,
     _finalize_apply_outputs,
+    _finalize_apply_outputs_plan,
     _load_apply_model_with_summary,
     _load_training_read_ids,
     _LoadedApplyModel,
@@ -664,7 +667,30 @@ def test_finalize_apply_outputs_writes_stats_only_for_file_outputs(monkeypatch):
     )
     args = SimpleNamespace(stats=True)
 
-    _finalize_apply_outputs(args, "out.bam", "sample", True, "scores.db", False)
+    runtime = _ApplyRuntime(
+        model_path="model.json",
+        train_rids={"read-a"},
+        mode="daf",
+        context_size=3,
+        msp_min_size=0,
+        with_scores=True,
+        dataset="sample",
+        db_path="scores.db",
+        chroms_set={"chr1"},
+        use_streaming=True,
+        process_unmapped=False,
+        output_bam="out.bam",
+    )
+    plan = _ApplyFinalizationPlan(
+        output_bam="out.bam",
+        dataset="sample",
+        with_scores=True,
+        db_path="scores.db",
+        stdout_mode=False,
+    )
+
+    assert _apply_finalization_plan_from_runtime(runtime, False) == plan
+    _finalize_apply_outputs_plan(args, plan)
     _finalize_apply_outputs(args, "-", "sample", True, "scores.db", True)
 
     assert calls == [
