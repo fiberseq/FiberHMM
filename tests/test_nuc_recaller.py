@@ -18,6 +18,7 @@ from fiberhmm.inference.nuc_recaller import (
     _nuc_from_protected_calls,
     _NucRecallParams,
     _NucRecallResult,
+    _NucsInReadRecallRequest,
     _NucSpanRecallRequest,
     _ordered_positive_nuc_calls,
     _phase_cut_window,
@@ -48,6 +49,7 @@ from fiberhmm.inference.nuc_recaller import (
     drop_short_nucs_overlapping_promoted,
     promote_large_tf_calls,
     recall_nucs_in_read,
+    recall_nucs_in_read_from_request,
     rederive_msps,
     unify_circular_nuc_calls_with_tf_calls,
     unify_nuc_calls_with_tf_calls,
@@ -77,10 +79,18 @@ def test_split_separates_two_nucs_at_a_hit_cluster():
     # 60 misses | 6 hits | 60 misses -> the hit cluster is a cut between 2 nucs
     obs = _obs((MISS, 60), (HIT, 6), (MISS, 60))
     llr_hit, llr_miss = _llr_tables()
-    nucs, access = recall_nucs_in_read(
-        obs, ns=[0], nl=[len(obs)], read_length=len(obs),
-        llr_hit=llr_hit, llr_miss=llr_miss,
-        split_min_llr=4.0, split_min_opps=3, nuc_min_size=40,
+    nucs, access = recall_nucs_in_read_from_request(
+        _NucsInReadRecallRequest(
+            obs=obs,
+            ns=[0],
+            nl=[len(obs)],
+            read_length=len(obs),
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            split_min_llr=4.0,
+            split_min_opps=3,
+            nuc_min_size=40,
+        )
     )
     assert len(nucs) == 2, [(n.start, n.length) for n in nucs]
     # a cut (accessible run) was recorded over the hit cluster

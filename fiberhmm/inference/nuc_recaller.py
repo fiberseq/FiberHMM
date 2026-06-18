@@ -94,6 +94,25 @@ class _BoundedNucSpansRecallRequest:
 
 
 @dataclass(frozen=True)
+class _NucsInReadRecallRequest:
+    obs: np.ndarray
+    ns: Sequence[int]
+    nl: Sequence[int]
+    read_length: int
+    llr_hit: np.ndarray
+    llr_miss: np.ndarray
+    split_min_llr: float
+    split_min_opps: int
+    nuc_min_size: int
+    edge_min_llr: float = 2.0
+    edge_min_opps: int = 2
+    phase_nrl: int = 0
+    phase_min_llr: float = 1.0
+    phase_min_opps: int = 1
+    phase_window: int = 35
+
+
+@dataclass(frozen=True)
 class _RefinedFragment:
     nuc: NucCall | None
     access: List[Interval]
@@ -634,23 +653,8 @@ def _recall_bounded_nuc_spans(
     )
 
 
-def recall_nucs_in_read(
-    obs: np.ndarray,
-    ns: Sequence[int],
-    nl: Sequence[int],
-    read_length: int,
-    llr_hit: np.ndarray,
-    llr_miss: np.ndarray,
-    *,
-    split_min_llr: float,
-    split_min_opps: int,
-    nuc_min_size: int,
-    edge_min_llr: float = 2.0,
-    edge_min_opps: int = 2,
-    phase_nrl: int = 0,
-    phase_min_llr: float = 1.0,
-    phase_min_opps: int = 1,
-    phase_window: int = 35,
+def recall_nucs_in_read_from_request(
+    request: _NucsInReadRecallRequest,
 ) -> Tuple[List[NucCall], List[Interval]]:
     """Split + edge-refine the footprints (``ns``/``nl``) of one read.
 
@@ -669,29 +673,68 @@ def recall_nucs_in_read(
     a predicted linker -- a cut still requires real local evidence there, so a
     signal-desert is never split.
     """
-    tables = _recall_nuc_tables(llr_hit, llr_miss)
+    tables = _recall_nuc_tables(request.llr_hit, request.llr_miss)
     params = _recall_nuc_params(
-        split_min_llr=split_min_llr,
-        split_min_opps=split_min_opps,
-        nuc_min_size=nuc_min_size,
-        edge_min_llr=edge_min_llr,
-        edge_min_opps=edge_min_opps,
-        phase_nrl=phase_nrl,
-        phase_min_llr=phase_min_llr,
-        phase_min_opps=phase_min_opps,
-        phase_window=phase_window,
+        split_min_llr=request.split_min_llr,
+        split_min_opps=request.split_min_opps,
+        nuc_min_size=request.nuc_min_size,
+        edge_min_llr=request.edge_min_llr,
+        edge_min_opps=request.edge_min_opps,
+        phase_nrl=request.phase_nrl,
+        phase_min_llr=request.phase_min_llr,
+        phase_min_opps=request.phase_min_opps,
+        phase_window=request.phase_window,
     )
     result = _recall_bounded_nuc_spans_from_request(
         _BoundedNucSpansRecallRequest(
-            obs=obs,
-            ns=ns,
-            nl=nl,
-            read_length=read_length,
+            obs=request.obs,
+            ns=request.ns,
+            nl=request.nl,
+            read_length=request.read_length,
             tables=tables,
             params=params,
         )
     )
     return result.nucs, result.access
+
+
+def recall_nucs_in_read(
+    obs: np.ndarray,
+    ns: Sequence[int],
+    nl: Sequence[int],
+    read_length: int,
+    llr_hit: np.ndarray,
+    llr_miss: np.ndarray,
+    *,
+    split_min_llr: float,
+    split_min_opps: int,
+    nuc_min_size: int,
+    edge_min_llr: float = 2.0,
+    edge_min_opps: int = 2,
+    phase_nrl: int = 0,
+    phase_min_llr: float = 1.0,
+    phase_min_opps: int = 1,
+    phase_window: int = 35,
+) -> Tuple[List[NucCall], List[Interval]]:
+    return recall_nucs_in_read_from_request(
+        _NucsInReadRecallRequest(
+            obs=obs,
+            ns=ns,
+            nl=nl,
+            read_length=read_length,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            split_min_llr=split_min_llr,
+            split_min_opps=split_min_opps,
+            nuc_min_size=nuc_min_size,
+            edge_min_llr=edge_min_llr,
+            edge_min_opps=edge_min_opps,
+            phase_nrl=phase_nrl,
+            phase_min_llr=phase_min_llr,
+            phase_min_opps=phase_min_opps,
+            phase_window=phase_window,
+        )
+    )
 
 
 def rederive_msps(
