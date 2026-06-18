@@ -184,6 +184,39 @@ def test_training_example_plot_data_sorts_positions_and_uses_footprint_probs():
     np.testing.assert_array_equal(footprint_prob, [0.2, 0.7])
 
 
+def test_training_example_title_formats_read_context():
+    read = SimpleNamespace(
+        read_id="read-abcdefghijklmnopqrstuvwxyz0123456789",
+        chrom="chr2L",
+        ref_start=1234,
+        ref_end=5678,
+    )
+
+    assert train._training_example_title(2, read, 12345, [1, 2, 3]) == (
+        "Example Read 3: read-abcdefghijklmnopqrstuvwxyz0123456789...\n"
+        "Length: 12,345bp | Chromosome: chr2L:1,234-5,678 | m6A calls: 3"
+    )
+
+
+def test_add_training_zoom_highlight_marks_all_overview_axes():
+    class FakeAxis:
+        def __init__(self):
+            self.spans = []
+
+        def axvspan(self, *args, **kwargs):
+            self.spans.append((args, kwargs))
+
+    axes = (FakeAxis(), FakeAxis(), FakeAxis())
+
+    train._add_training_zoom_highlight(axes, 10, 20, "red")
+
+    assert [axis.spans for axis in axes] == [
+        [((10, 20), {"alpha": 0.15, "color": "red"})],
+        [((10, 20), {"alpha": 0.15, "color": "red"})],
+        [((10, 20), {"alpha": 0.15, "color": "red"})],
+    ]
+
+
 def test_add_training_state_blocks_uses_state_specs_and_sets_limits():
     rectangles = []
     collections = []

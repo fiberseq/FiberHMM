@@ -38,6 +38,8 @@ from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 
 pd.options.mode.chained_assignment = None
 
+_TRAINING_ZOOM_COLORS = ('red', 'blue', 'orange')
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -636,6 +638,22 @@ def _training_example_plot_data(model, read, encoded):
     return seq_len, m6a_positions, footprint_prob
 
 
+def _training_example_title(idx: int, read, seq_len: int,
+                            m6a_positions: list) -> str:
+    return (
+        f'Example Read {idx + 1}: {read.read_id[:50]}...\n'
+        f'Length: {seq_len:,}bp | '
+        f'Chromosome: {read.chrom}:{read.ref_start:,}-{read.ref_end:,} | '
+        f'm6A calls: {len(m6a_positions):,}'
+    )
+
+
+def _add_training_zoom_highlight(overview_axes: tuple, start: int, end: int,
+                                 color: str) -> None:
+    for ax in overview_axes:
+        ax.axvspan(start, end, alpha=0.15, color=color)
+
+
 def _add_training_state_blocks(
     ax,
     region_states,
@@ -915,10 +933,11 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
                                  left=0.06, right=0.98, top=0.93, bottom=0.04)
 
             # Title
-            fig.suptitle(f'Example Read {idx+1}: {read.read_id[:50]}...\n'
-                        f'Length: {seq_len:,}bp | Chromosome: {read.chrom}:{read.ref_start:,}-{read.ref_end:,} | '
-                        f'm6A calls: {len(m6a_positions):,}',
-                        fontsize=11, y=0.98)
+            fig.suptitle(
+                _training_example_title(idx, read, seq_len, m6a_positions),
+                fontsize=11,
+                y=0.98,
+            )
 
             # === OVERVIEW PANELS (top row, span all 3 columns) ===
 
@@ -991,9 +1010,12 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
                 ax_zoom_m6a.set_title(f'Zoom {w_idx+1}: {w_start:,}-{w_end:,}bp', fontsize=9)
 
                 # Mark this window on overview
-                ax_overview_m6a.axvspan(w_start, w_end, alpha=0.15, color=['red', 'blue', 'orange'][w_idx])
-                ax_overview_fp.axvspan(w_start, w_end, alpha=0.15, color=['red', 'blue', 'orange'][w_idx])
-                ax_overview_prob.axvspan(w_start, w_end, alpha=0.15, color=['red', 'blue', 'orange'][w_idx])
+                _add_training_zoom_highlight(
+                    (ax_overview_m6a, ax_overview_fp, ax_overview_prob),
+                    w_start,
+                    w_end,
+                    _TRAINING_ZOOM_COLORS[w_idx],
+                )
 
                 # Footprints
                 ax_zoom_fp = fig.add_subplot(gs[4, w_idx])
