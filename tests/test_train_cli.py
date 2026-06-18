@@ -83,8 +83,8 @@ def test_state_block_specs_include_plot_widths_and_colors():
 def test_expected_model_durations_from_self_transitions():
     durations = train._expected_model_durations(np.array([[0.8, 0.2], [0.1, 1.0]]))
 
-    assert durations[0] == pytest.approx(5.0)
-    assert durations[1] == float('inf')
+    assert durations.footprint == pytest.approx(5.0)
+    assert durations.msp == float('inf')
 
 
 def test_viterbi_state_size_stats_skips_empty_reads():

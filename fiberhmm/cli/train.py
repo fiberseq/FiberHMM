@@ -74,6 +74,12 @@ class _ViterbiStateSizeStats:
     states: list
 
 
+@dataclass(frozen=True)
+class _ExpectedModelDurations:
+    footprint: float
+    msp: float
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Train FiberHMM model from PacBio BAM files',
@@ -708,10 +714,10 @@ def _expected_state_duration(stay_prob: float) -> float:
     return 1 / (1 - stay_prob)
 
 
-def _expected_model_durations(transmat: np.ndarray) -> tuple:
-    return (
-        _expected_state_duration(float(transmat[0, 0])),
-        _expected_state_duration(float(transmat[1, 1])),
+def _expected_model_durations(transmat: np.ndarray) -> _ExpectedModelDurations:
+    return _ExpectedModelDurations(
+        footprint=_expected_state_duration(float(transmat[0, 0])),
+        msp=_expected_state_duration(float(transmat[1, 1])),
     )
 
 
@@ -962,13 +968,13 @@ def _plot_training_transition_matrix(ax, trans: np.ndarray) -> None:
                 fontsize=12,
             )
 
-    expected_fp, expected_msp = _expected_model_durations(trans)
+    expected_durations = _expected_model_durations(trans)
     ax.text(
         0.5,
         -0.3,
         (
-            f'Expected durations: Footprint={expected_fp:.0f}bp, '
-            f'MSP={expected_msp:.0f}bp'
+            f'Expected durations: Footprint={expected_durations.footprint:.0f}bp, '
+            f'MSP={expected_durations.msp:.0f}bp'
         ),
         transform=ax.transAxes,
         ha='center',
@@ -1001,9 +1007,12 @@ def _write_training_stats_summary(summary_path: str, model: FiberHMM,
         f.write(f"  Accessible \u2192 Footprint: {model.transmat_[1, 0]:.6f}\n")
         f.write(f"  Accessible \u2192 Accessible: {model.transmat_[1, 1]:.6f}\n")
 
-        expected_fp, expected_msp = _expected_model_durations(model.transmat_)
-        f.write(f"\n  Expected footprint duration: {expected_fp:.1f} bp\n")
-        f.write(f"  Expected MSP duration: {expected_msp:.1f} bp\n")
+        expected_durations = _expected_model_durations(model.transmat_)
+        f.write(
+            f"\n  Expected footprint duration: "
+            f"{expected_durations.footprint:.1f} bp\n"
+        )
+        f.write(f"  Expected MSP duration: {expected_durations.msp:.1f} bp\n")
 
         f.write("\nEmission Probabilities:\n")
         f.write("-" * 40 + "\n")
