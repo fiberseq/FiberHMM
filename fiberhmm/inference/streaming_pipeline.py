@@ -122,6 +122,26 @@ class _StreamingApplyWorkerArgs:
         )
 
 
+@dataclass(frozen=True)
+class _StreamingFusedWorkerArgs:
+    common: _StreamingWorkerCommonArgs
+    prob_threshold: int
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+
+    def as_tuple(self) -> tuple:
+        return (
+            *self.common.as_tuple(),
+            self.prob_threshold,
+            self.common.mode,
+            self.common.context_size,
+            self.min_llr,
+            self.min_opps,
+            self.unify_threshold,
+        )
+
+
 def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, reason) -> int:
     chunk_read_objs.append(read)
     chunk_skip_flags.append(True)
@@ -510,6 +530,12 @@ def _apply_worker_args_from_request(
     return request.as_tuple()
 
 
+def _fused_worker_args_from_request(
+    request: _StreamingFusedWorkerArgs,
+) -> tuple:
+    return request.as_tuple()
+
+
 def _apply_worker_args(
     edge_trim: int,
     circular: bool,
@@ -551,17 +577,22 @@ def _fused_worker_args(
     min_opps: int,
     unify_threshold: int,
 ) -> tuple:
-    return (
-        *_worker_common_args(
-            edge_trim, circular, mode, context_size,
-            msp_min_size, nuc_min_size, with_scores,
+    return _fused_worker_args_from_request(
+        _StreamingFusedWorkerArgs(
+            common=_new_streaming_worker_common_args(
+                edge_trim,
+                circular,
+                mode,
+                context_size,
+                msp_min_size,
+                nuc_min_size,
+                with_scores,
+            ),
+            prob_threshold=prob_threshold,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
         ),
-        prob_threshold,
-        mode,
-        context_size,
-        min_llr,
-        min_opps,
-        unify_threshold,
     )
 
 

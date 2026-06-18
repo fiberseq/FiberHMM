@@ -25,6 +25,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _flush_streaming_chunk_and_report_progress,
     _fused_drain_chunk_factory,
     _fused_worker_args,
+    _fused_worker_args_from_request,
     _new_apply_streaming_executor,
     _new_fused_streaming_executor,
     _new_streaming_chunk_buffers,
@@ -46,6 +47,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _StreamingApplyWorkerArgs,
     _StreamingChunkBuffers,
     _StreamingFlushProgress,
+    _StreamingFusedWorkerArgs,
     _StreamingPayloadResult,
     _StreamingPosteriorStats,
     _StreamingPosteriorWriter,
@@ -108,6 +110,27 @@ def test_apply_worker_args_match_payload_worker_contract():
 
 
 def test_fused_worker_args_include_recall_contract():
+    common_args = _StreamingWorkerCommonArgs(
+        edge_trim=12,
+        circular=False,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=62,
+        nuc_min_size=87,
+        with_scores=False,
+    )
+    assert _fused_worker_args_from_request(
+        _StreamingFusedWorkerArgs(
+            common=common_args,
+            prob_threshold=126,
+            min_llr=4.5,
+            min_opps=6,
+            unify_threshold=91,
+        )
+    ) == (
+        12, False, "pacbio-fiber", 7, 62, 87, False, 126,
+        "pacbio-fiber", 7, 4.5, 6, 91,
+    )
     assert _fused_worker_args(
         12, False, "pacbio-fiber", 7, 62, 87, False, 126, 4.5, 6, 91
     ) == (
