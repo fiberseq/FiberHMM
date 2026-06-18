@@ -893,6 +893,131 @@ def test_save_training_example_pdf_page_writes_pdf(tmp_path):
     assert pdf_path.stat().st_size > 0
 
 
+def test_save_training_stats_pdf_pages_orchestrates_model_and_examples(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        train,
+        "_save_training_model_parameter_page",
+        lambda *args: calls.append(("model", args)),
+    )
+    monkeypatch.setattr(
+        train,
+        "_save_training_example_pdf_page",
+        lambda *args: calls.append(("example", args)),
+    )
+    plt = object()
+    pdf = object()
+    model = object()
+    emission_probs = np.ones((2, 4))
+    sampled_reads = ["read-a", "read-b", "read-c"]
+    encoded_reads = ["enc-a", "enc-b"]
+    all_states = ["states-a", "states-b"]
+
+    n_plotted = train._save_training_stats_pdf_pages(
+        plt,
+        pdf,
+        model,
+        emission_probs,
+        sampled_reads,
+        encoded_reads,
+        all_states,
+        [10],
+        [20],
+        n_examples=5,
+        rectangle_cls="Rectangle",
+        patch_collection_cls="PatchCollection",
+        patch_cls="Patch",
+    )
+
+    assert n_plotted == 2
+    assert calls[0] == (
+        "model",
+        (plt, pdf, model, emission_probs, [10], [20]),
+    )
+    assert calls[1] == (
+        "example",
+        (
+            plt,
+            pdf,
+            model,
+            "read-a",
+            "states-a",
+            "enc-a",
+            0,
+            "Rectangle",
+            "PatchCollection",
+            "Patch",
+        ),
+    )
+    assert calls[2][1][3:7] == ("read-b", "states-b", "enc-b", 1)
+
+
+def test_save_training_stats_example_png_writes_only_when_examples_exist(
+    monkeypatch,
+    capsys,
+):
+    calls = []
+    monkeypatch.setattr(
+        train,
+        "_save_training_example_png",
+        lambda *args: calls.append(args) or "/tmp/example.png",
+    )
+
+    train._save_training_stats_example_png(
+        "plt",
+        "/tmp/plots",
+        "model",
+        ["read-a"],
+        ["enc-a"],
+        ["states-a"],
+        "Rectangle",
+        "PatchCollection",
+    )
+    train._save_training_stats_example_png(
+        "plt",
+        "/tmp/plots",
+        "model",
+        [],
+        [],
+        [],
+        "Rectangle",
+        "PatchCollection",
+    )
+
+    assert calls == [(
+        "plt",
+        "/tmp/plots",
+        "model",
+        "read-a",
+        "states-a",
+        "enc-a",
+        "Rectangle",
+        "PatchCollection",
+    )]
+    assert "Saved: /tmp/example.png" in capsys.readouterr().out
+
+
+def test_write_training_stats_summary_report_delegates_and_reports(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(
+        train,
+        "_write_training_stats_summary",
+        lambda *args: calls.append(args),
+    )
+
+    train._write_training_stats_summary_report(
+        "summary.txt",
+        "model",
+        "emissions",
+        ["read-a"],
+        [10],
+        [20],
+    )
+
+    assert calls == [("summary.txt", "model", "emissions", ["read-a"], [10], [20])]
+    assert "Saved: summary.txt" in capsys.readouterr().out
+
+
 def test_training_config_includes_base_model_only_when_used():
     args = SimpleNamespace(
         context_size=3,

@@ -1172,6 +1172,92 @@ def _save_training_example_pdf_page(
     plt.close(fig)
 
 
+def _save_training_stats_pdf_pages(
+    plt,
+    pdf,
+    model: FiberHMM,
+    emission_probs: np.ndarray,
+    sampled_reads: list,
+    encoded_reads: list,
+    all_states: list,
+    all_footprint_sizes: list,
+    all_msp_sizes: list,
+    n_examples: int,
+    rectangle_cls,
+    patch_collection_cls,
+    patch_cls,
+) -> int:
+    _save_training_model_parameter_page(
+        plt,
+        pdf,
+        model,
+        emission_probs,
+        all_footprint_sizes,
+        all_msp_sizes,
+    )
+
+    n_to_plot = min(n_examples, len(sampled_reads), len(all_states))
+    for idx in range(n_to_plot):
+        _save_training_example_pdf_page(
+            plt,
+            pdf,
+            model,
+            sampled_reads[idx],
+            all_states[idx],
+            encoded_reads[idx],
+            idx,
+            rectangle_cls,
+            patch_collection_cls,
+            patch_cls,
+        )
+    return n_to_plot
+
+
+def _save_training_stats_example_png(
+    plt,
+    plots_dir: str,
+    model: FiberHMM,
+    sampled_reads: list,
+    encoded_reads: list,
+    all_states: list,
+    rectangle_cls,
+    patch_collection_cls,
+) -> None:
+    if len(sampled_reads) == 0 or len(all_states) == 0:
+        return
+
+    png_path = _save_training_example_png(
+        plt,
+        plots_dir,
+        model,
+        sampled_reads[0],
+        all_states[0],
+        encoded_reads[0],
+        rectangle_cls,
+        patch_collection_cls,
+    )
+    print(f"  Saved: {png_path}")
+
+
+def _write_training_stats_summary_report(
+    summary_path: str,
+    model: FiberHMM,
+    emission_probs: np.ndarray,
+    sampled_reads: list,
+    all_footprint_sizes: list,
+    all_msp_sizes: list,
+) -> None:
+    _write_training_stats_summary(
+        summary_path,
+        model,
+        emission_probs,
+        sampled_reads,
+        all_footprint_sizes,
+        all_msp_sizes,
+    )
+    print(f"  Saved: {summary_path}")
+
+
 def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads: list,
                             emission_probs: np.ndarray, output_dir: str,
                             n_examples: int = 5, mode: str = 'pacbio-fiber'):
@@ -1211,55 +1297,44 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
     )
 
     with PdfPages(pdf_path) as pdf:
-        # Page 1: Model parameters
-        _save_training_model_parameter_page(
+        _save_training_stats_pdf_pages(
             plt,
             pdf,
             model,
             emission_probs,
+            sampled_reads,
+            encoded_reads,
+            all_states,
             all_footprint_sizes,
             all_msp_sizes,
+            n_examples,
+            Rectangle,
+            PatchCollection,
+            Patch,
         )
-
-        # Page 2+: Example reads with overview and zoom panels
-        n_to_plot = min(n_examples, len(sampled_reads), len(all_states))
-
-        for idx in range(n_to_plot):
-            _save_training_example_pdf_page(
-                plt,
-                pdf,
-                model,
-                sampled_reads[idx],
-                all_states[idx],
-                encoded_reads[idx],
-                idx,
-                Rectangle,
-                PatchCollection,
-                Patch,
-            )
 
     print(f"  Saved: {pdf_path}")
 
     # Also save a standalone PNG of the first example (simplified version)
-    if len(sampled_reads) > 0 and len(all_states) > 0:
-        png_path = _save_training_example_png(
-            plt,
-            plots_dir,
-            model,
-            sampled_reads[0],
-            all_states[0],
-            encoded_reads[0],
-            Rectangle,
-            PatchCollection,
-        )
-        print(f"  Saved: {png_path}")
+    _save_training_stats_example_png(
+        plt,
+        plots_dir,
+        model,
+        sampled_reads,
+        encoded_reads,
+        all_states,
+        Rectangle,
+        PatchCollection,
+    )
 
     # Write text summary
-    _write_training_stats_summary(
-        paths['summary'], model, emission_probs, sampled_reads,
+    _write_training_stats_summary_report(
+        paths['summary'],
+        model,
+        emission_probs,
+        sampled_reads,
         all_footprint_sizes, all_msp_sizes,
     )
-    print(f"  Saved: {paths['summary']}")
 
 
 def _model_json_record(model):
