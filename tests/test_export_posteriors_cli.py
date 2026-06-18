@@ -89,14 +89,14 @@ def test_export_posteriors_regions_by_chrom_preserves_order():
 
 
 def test_footprint_reference_intervals_clamps_and_skips_invalid_positions():
-    starts, sizes = export_posteriors._footprint_reference_intervals(
+    intervals = export_posteriors._footprint_reference_intervals(
         fp_start_idx=np.array([0, 2, 3]),
         fp_end_idx=np.array([2, 4, 10]),
         ref_positions=np.array([100, 101, -1, 103, 104], dtype=np.int32),
     )
 
-    np.testing.assert_array_equal(starts, np.array([100, 103], dtype=np.int32))
-    np.testing.assert_array_equal(sizes, np.array([1, 1], dtype=np.int32))
+    np.testing.assert_array_equal(intervals.starts, np.array([100, 103], dtype=np.int32))
+    np.testing.assert_array_equal(intervals.sizes, np.array([1, 1], dtype=np.int32))
 
 
 def test_modified_base_positions_forward_filters_quality_and_parser_errors():

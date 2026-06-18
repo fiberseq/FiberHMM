@@ -116,6 +116,12 @@ class _H5BatchMetadata:
 
 
 @dataclass(frozen=True)
+class _FootprintReferenceIntervals:
+    starts: np.ndarray
+    sizes: np.ndarray
+
+
+@dataclass(frozen=True)
 class _ProcessedRegionPosteriors:
     chrom: str
     start: int
@@ -168,7 +174,7 @@ def _footprint_reference_intervals(
     fp_start_idx,
     fp_end_idx,
     ref_positions: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> _FootprintReferenceIntervals:
     fp_starts_ref = []
     fp_sizes_ref = []
 
@@ -184,9 +190,9 @@ def _footprint_reference_intervals(
                 fp_starts_ref.append(ref_s)
                 fp_sizes_ref.append(max(1, ref_e - ref_s))
 
-    return (
-        np.array(fp_starts_ref, dtype=np.int32),
-        np.array(fp_sizes_ref, dtype=np.int32),
+    return _FootprintReferenceIntervals(
+        starts=np.array(fp_starts_ref, dtype=np.int32),
+        sizes=np.array(fp_sizes_ref, dtype=np.int32),
     )
 
 
@@ -283,14 +289,19 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
 
     # Extract footprint intervals
     fp_start_idx, fp_end_idx = footprint_runs(states)
-    fp_starts_ref, fp_sizes_ref = _footprint_reference_intervals(
+    footprint_refs = _footprint_reference_intervals(
         fp_start_idx,
         fp_end_idx,
         ref_positions,
     )
 
     return _posterior_result_record(
-        read, strand, p_footprint, ref_positions, fp_starts_ref, fp_sizes_ref,
+        read,
+        strand,
+        p_footprint,
+        ref_positions,
+        footprint_refs.starts,
+        footprint_refs.sizes,
     )
 
 
