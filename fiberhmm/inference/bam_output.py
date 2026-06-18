@@ -549,6 +549,25 @@ def _convert_bigbed_score_fallback(
     return True
 
 
+def _convert_sorted_bed_to_bigbed_with_optional_fallback(
+    sorted_bed: str,
+    chrom_sizes: str,
+    autosql: str,
+    output_bb: str,
+    with_scores: bool,
+) -> bool:
+    bed_type = _bed_type_for_scores(with_scores)
+    converted = _convert_sorted_bed_to_bigbed(
+        sorted_bed, chrom_sizes, output_bb, bed_type, autosql
+    )
+    if converted:
+        return True
+
+    if with_scores:
+        return _convert_bigbed_score_fallback(sorted_bed, chrom_sizes, output_bb)
+    return False
+
+
 def convert_to_bigbed(bed_file: str, chrom_sizes: str, output_bb: str) -> bool:
     """Convert BED12 to bigBed format."""
     if not _bed_to_bigbed_available():
@@ -632,18 +651,9 @@ def convert_to_bigbed_with_schema(bed_file: str, chrom_sizes: str,
         # Sort BED file
         _sort_bed_for_bigbed(bed_file, sorted_bed)
 
-        # Use BED12+ type if we have scores
-        bed_type = _bed_type_for_scores(with_scores)
-        converted = _convert_sorted_bed_to_bigbed(
-            sorted_bed, chrom_sizes, output_bb, bed_type, autosql
+        return _convert_sorted_bed_to_bigbed_with_optional_fallback(
+            sorted_bed, chrom_sizes, autosql, output_bb, with_scores,
         )
-
-        if converted:
-            return True
-
-        if with_scores:
-            return _convert_bigbed_score_fallback(sorted_bed, chrom_sizes, output_bb)
-        return False
 
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         print(f"Error during bigBed conversion: {e}")
