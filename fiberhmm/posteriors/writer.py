@@ -16,26 +16,33 @@ Usage:
 
 import os
 
+AUTO_WRITER_FORMAT = 'auto'
+HDF5_WRITER_FORMAT = 'hdf5'
+TSV_WRITER_FORMAT = 'tsv'
+HDF5_OUTPUT_SUFFIXES = ('.h5', '.hdf5')
+POSTERIOR_WRITER_FORMATS = (HDF5_WRITER_FORMAT, TSV_WRITER_FORMAT)
+
 
 def _path_endswith(output_path: str, suffixes: tuple[str, ...]) -> bool:
     return os.fspath(output_path).lower().endswith(suffixes)
 
 
 def _is_hdf5_output_path(output_path: str) -> bool:
-    return _path_endswith(output_path, ('.h5', '.hdf5'))
+    return _path_endswith(output_path, HDF5_OUTPUT_SUFFIXES)
 
 
 def _resolve_writer_format(output_path: str, format: str) -> str:
-    format = 'auto' if format is None else str(format).strip().lower()
-    if format != 'auto':
+    format = AUTO_WRITER_FORMAT if format is None else str(format).strip().lower()
+    if format != AUTO_WRITER_FORMAT:
         return format
     if _is_hdf5_output_path(output_path):
-        return 'hdf5'
-    return 'tsv'
+        return HDF5_WRITER_FORMAT
+    return TSV_WRITER_FORMAT
 
 
 def _unknown_writer_format_message(format: str) -> str:
-    return f"Unknown posteriors format: {format!r}. Use 'hdf5' or 'tsv'."
+    valid_formats = " or ".join(repr(item) for item in POSTERIOR_WRITER_FORMATS)
+    return f"Unknown posteriors format: {format!r}. Use {valid_formats}."
 
 
 def create_writer(output_path: str, format: str = 'auto',
@@ -60,13 +67,13 @@ def create_writer(output_path: str, format: str = 'auto',
     """
     format = _resolve_writer_format(output_path, format)
 
-    if format == 'hdf5':
+    if format == HDF5_WRITER_FORMAT:
         from fiberhmm.posteriors.hdf5_backend import PosteriorWriter
         return PosteriorWriter(
             output_path, mode, context_size, edge_trim,
             source_bam, batch_size
         )
-    elif format == 'tsv':
+    elif format == TSV_WRITER_FORMAT:
         from fiberhmm.posteriors.tsv_backend import PosteriorsTSVWriter
         return PosteriorsTSVWriter(
             output_path, mode, context_size, edge_trim,
