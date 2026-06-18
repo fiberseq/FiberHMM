@@ -49,6 +49,18 @@ class _TsvCopyResult:
     header_written: bool
 
 
+@dataclass(frozen=True)
+class _PosteriorTsvRecord:
+    read_id: str
+    chrom: str
+    start: int
+    end: int
+    strand: str
+    posteriors: np.ndarray
+    fp_starts: np.ndarray
+    fp_sizes: np.ndarray
+
+
 def _open_text_file(path: str, mode: str) -> TextIO:
     """Open plain or gzip-compressed text files with consistent settings."""
     path = os.fspath(path)
@@ -111,21 +123,34 @@ def _metadata_from_tsv_line(line: str) -> Optional[dict]:
     return json.loads(line.split(':', 1)[1])
 
 
-def _posterior_record_from_fields(fields, dtype) -> dict:
+def _posterior_record_from_fields(fields, dtype) -> _PosteriorTsvRecord:
     (
         read_id, chrom, start, end, strand, post_b64,
         fp_starts_str, fp_sizes_str,
     ) = fields
 
+    return _PosteriorTsvRecord(
+        read_id=read_id,
+        chrom=chrom,
+        start=start,
+        end=end,
+        strand=strand,
+        posteriors=_decode_posteriors_b64(post_b64, dtype),
+        fp_starts=_parse_int_array(fp_starts_str),
+        fp_sizes=_parse_int_array(fp_sizes_str),
+    )
+
+
+def _posterior_record_dict(record: _PosteriorTsvRecord) -> dict:
     return {
-        'read_id': read_id,
-        'chrom': chrom,
-        'start': start,
-        'end': end,
-        'strand': strand,
-        'posteriors': _decode_posteriors_b64(post_b64, dtype),
-        'fp_starts': _parse_int_array(fp_starts_str),
-        'fp_sizes': _parse_int_array(fp_sizes_str),
+        'read_id': record.read_id,
+        'chrom': record.chrom,
+        'start': record.start,
+        'end': record.end,
+        'strand': record.strand,
+        'posteriors': record.posteriors,
+        'fp_starts': record.fp_starts,
+        'fp_sizes': record.fp_sizes,
     }
 
 
@@ -206,15 +231,21 @@ def _write_h5_metadata_from_tsv_metadata(h5_file, metadata: dict) -> None:
     )
 
 
-def _h5_posterior_record_dataset_specs(record: dict) -> list[tuple]:
+def _h5_posterior_record_dataset_specs(
+    record: _PosteriorTsvRecord,
+) -> list[tuple]:
     return [
-        ('posteriors', record['posteriors'], 4),
-        ('footprint_starts', record['fp_starts'], None),
-        ('footprint_sizes', record['fp_sizes'], None),
+        ('posteriors', record.posteriors, 4),
+        ('footprint_starts', record.fp_starts, None),
+        ('footprint_sizes', record.fp_sizes, None),
     ]
 
 
-def _write_h5_record_array_datasets(group, index: int, record: dict) -> None:
+def _write_h5_record_array_datasets(
+    group,
+    index: int,
+    record: _PosteriorTsvRecord,
+) -> None:
     idx = str(index)
     for group_name, data, compression_opts in _h5_posterior_record_dataset_specs(record):
         kwargs = {'compression': 'gzip'}
@@ -223,16 +254,20 @@ def _write_h5_record_array_datasets(group, index: int, record: dict) -> None:
         group[group_name].create_dataset(idx, data=data, **kwargs)
 
 
-def _write_h5_record_metadata(group, index: int, record: dict) -> None:
-    group['fiber_ids'][index] = record['read_id']
-    group['fiber_starts'][index] = record['start']
-    group['fiber_ends'][index] = record['end']
-    group['strands'][index] = record['strand']
+def _write_h5_record_metadata(
+    group,
+    index: int,
+    record: _PosteriorTsvRecord,
+) -> None:
+    group['fiber_ids'][index] = record.read_id
+    group['fiber_starts'][index] = record.start
+    group['fiber_ends'][index] = record.end
+    group['strands'][index] = record.strand
 
 
 def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
     record = _posterior_record_from_fields(fields, np.float16)
-    chrom = record['chrom']
+    chrom = record.chrom
 
     # Get index for this chromosome
     idx = chrom_indices[chrom]
@@ -346,7 +381,9 @@ def parse_posteriors_line(line: str) -> Optional[dict]:
     if fields is None:
         return None
 
-    return _posterior_record_from_fields(fields, np.float32)
+    return _posterior_record_dict(
+        _posterior_record_from_fields(fields, np.float32)
+    )
 
 
 def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:

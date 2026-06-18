@@ -193,27 +193,32 @@ def test_posterior_record_from_fields_decodes_with_requested_dtype():
     fields = tsv_backend._split_posteriors_line(line)
     record = tsv_backend._posterior_record_from_fields(fields, np.float16)
 
-    assert record["read_id"] == "read1"
-    assert record["chrom"] == "chr1"
-    assert record["start"] == 10
-    assert record["end"] == 13
-    assert record["strand"] == "-"
-    assert record["posteriors"].dtype == np.float16
+    assert record.read_id == "read1"
+    assert record.chrom == "chr1"
+    assert record.start == 10
+    assert record.end == 13
+    assert record.strand == "-"
+    assert record.posteriors.dtype == np.float16
     np.testing.assert_allclose(
-        record["posteriors"],
+        record.posteriors,
         [0.0, 127 / 255, 1.0],
         atol=1e-3,
     )
-    np.testing.assert_array_equal(record["fp_starts"], [10, 12])
-    np.testing.assert_array_equal(record["fp_sizes"], [1, 2])
+    np.testing.assert_array_equal(record.fp_starts, [10, 12])
+    np.testing.assert_array_equal(record.fp_sizes, [1, 2])
 
 
 def test_h5_posterior_record_dataset_specs_define_compressed_arrays():
-    record = {
-        "posteriors": np.array([0.1, 0.2], dtype=np.float16),
-        "fp_starts": np.array([4], dtype=np.int32),
-        "fp_sizes": np.array([5], dtype=np.int32),
-    }
+    record = tsv_backend._PosteriorTsvRecord(
+        read_id="read1",
+        chrom="chr1",
+        start=10,
+        end=20,
+        strand="-",
+        posteriors=np.array([0.1, 0.2], dtype=np.float16),
+        fp_starts=np.array([4], dtype=np.int32),
+        fp_sizes=np.array([5], dtype=np.int32),
+    )
 
     specs = tsv_backend._h5_posterior_record_dataset_specs(record)
 
@@ -222,11 +227,11 @@ def test_h5_posterior_record_dataset_specs_define_compressed_arrays():
         "footprint_starts",
         "footprint_sizes",
     ]
-    assert specs[0][1] is record["posteriors"]
+    assert specs[0][1] is record.posteriors
     assert specs[0][2] == 4
-    assert specs[1][1] is record["fp_starts"]
+    assert specs[1][1] is record.fp_starts
     assert specs[1][2] is None
-    assert specs[2][1] is record["fp_sizes"]
+    assert specs[2][1] is record.fp_sizes
     assert specs[2][2] is None
 
 
@@ -242,12 +247,16 @@ def test_write_h5_record_metadata_fills_preallocated_arrays(tmp_path):
         tsv_backend._write_h5_record_metadata(
             grp,
             0,
-            {
-                "read_id": "read1",
-                "start": 10,
-                "end": 20,
-                "strand": "-",
-            },
+            tsv_backend._PosteriorTsvRecord(
+                read_id="read1",
+                chrom="chr1",
+                start=10,
+                end=20,
+                strand="-",
+                posteriors=np.array([], dtype=np.float16),
+                fp_starts=np.array([], dtype=np.int32),
+                fp_sizes=np.array([], dtype=np.int32),
+            ),
         )
 
         assert _h5_text(grp["fiber_ids"][0]) == "read1"
