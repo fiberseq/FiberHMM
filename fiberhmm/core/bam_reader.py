@@ -325,6 +325,13 @@ class _HmmSymbolOffsets:
 
 
 @dataclass(frozen=True)
+class _DafTargetMasks:
+    is_deaminated: np.ndarray
+    is_non_deaminated: np.ndarray
+    reconstructed_sequence_int: np.ndarray
+
+
+@dataclass(frozen=True)
 class _MmHitPositions:
     positions: np.ndarray
     next_ml_idx: int
@@ -1254,7 +1261,7 @@ def _daf_target_masks(
     mod_mask: np.ndarray,
     deam_int: int,
     orig_int: int,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> _DafTargetMasks:
     is_deam_base = seq_int == deam_int  # T or A positions
     is_orig_base = seq_int == orig_int  # C or G positions
 
@@ -1263,7 +1270,11 @@ def _daf_target_masks(
 
     recon_int = seq_int.copy()
     recon_int[is_deaminated] = orig_int  # T->C or A->G
-    return is_deaminated, is_non_deaminated, recon_int
+    return _DafTargetMasks(
+        is_deaminated=is_deaminated,
+        is_non_deaminated=is_non_deaminated,
+        reconstructed_sequence_int=recon_int,
+    )
 
 
 def _encode_daf_vectorized_observations(seq_int: np.ndarray, mod_mask: np.ndarray,
@@ -1274,7 +1285,7 @@ def _encode_daf_vectorized_observations(seq_int: np.ndarray, mod_mask: np.ndarra
                                         use_rc: bool) -> np.ndarray:
     seq_len = len(seq_int)
 
-    is_deaminated, is_non_deaminated, recon_int = _daf_target_masks(
+    target_masks = _daf_target_masks(
         seq_int, mod_mask, deam_int, orig_int,
     )
 
@@ -1292,7 +1303,7 @@ def _encode_daf_vectorized_observations(seq_int: np.ndarray, mod_mask: np.ndarra
         return result
 
     # Target positions (need context codes)
-    target_mask = is_deaminated | is_non_deaminated
+    target_mask = target_masks.is_deaminated | target_masks.is_non_deaminated
     positions = np.arange(start, end)
     target_positions = positions[target_mask[start:end]]
 
@@ -1305,7 +1316,7 @@ def _encode_daf_vectorized_observations(seq_int: np.ndarray, mod_mask: np.ndarra
 
     valid_positions, codes = _context_codes_for_target_positions(
         target_positions,
-        recon_int,
+        target_masks.reconstructed_sequence_int,
         left_offsets,
         right_offsets,
         powers,
@@ -1316,11 +1327,11 @@ def _encode_daf_vectorized_observations(seq_int: np.ndarray, mod_mask: np.ndarra
         return result
 
     # Apply methylated codes to deaminated positions.
-    deam_at_valid = is_deaminated[valid_positions]
+    deam_at_valid = target_masks.is_deaminated[valid_positions]
     result[valid_positions[deam_at_valid]] = codes[deam_at_valid].astype(np.int32)
 
     # Apply unmethylated codes to non-deaminated positions.
-    non_deam_at_valid = is_non_deaminated[valid_positions]
+    non_deam_at_valid = target_masks.is_non_deaminated[valid_positions]
     result[valid_positions[non_deam_at_valid]] = (
         codes[non_deam_at_valid] + unmethylated_offset
     ).astype(np.int32)

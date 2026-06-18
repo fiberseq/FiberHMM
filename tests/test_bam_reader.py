@@ -189,17 +189,17 @@ def test_daf_target_masks_reconstruct_deaminated_bases():
     seq_int = bam_reader._sequence_base_int_array("TCAT")
     mod_mask = np.asarray([True, False, True, False], dtype=bool)
 
-    is_deaminated, is_non_deaminated, recon_int = _daf_target_masks(
+    masks = _daf_target_masks(
         seq_int,
         mod_mask,
         bam_reader._TARGET_BASE_INT["T"],
         bam_reader._TARGET_BASE_INT["C"],
     )
 
-    np.testing.assert_array_equal(is_deaminated, [True, False, False, False])
-    np.testing.assert_array_equal(is_non_deaminated, [False, True, False, False])
+    np.testing.assert_array_equal(masks.is_deaminated, [True, False, False, False])
+    np.testing.assert_array_equal(masks.is_non_deaminated, [False, True, False, False])
     np.testing.assert_array_equal(
-        recon_int,
+        masks.reconstructed_sequence_int,
         bam_reader._sequence_base_int_array("CCAT"),
     )
 
