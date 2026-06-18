@@ -5,6 +5,8 @@ Verify that package imports (fiberhmm.*) produce identical results
 to legacy flat imports.
 """
 
+from pathlib import Path
+
 import numpy as np
 
 from fiberhmm.core.bam_reader import (
@@ -16,6 +18,20 @@ from fiberhmm.core.bam_reader import (
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.model_io import load_model, load_model_with_metadata, save_model
 from fiberhmm.inference.engine import predict_footprints, predict_footprints_and_msps
+
+
+def test_pep604_optional_hints_are_postponed_for_py39_compat():
+    repo_root = Path(__file__).resolve().parents[1]
+    production_files = (repo_root / "fiberhmm").rglob("*.py")
+
+    for path in production_files:
+        text = path.read_text()
+        if " | None" not in text and "None | " not in text:
+            continue
+
+        assert "from __future__ import annotations" in text, str(
+            path.relative_to(repo_root)
+        )
 
 
 class TestPackageImports:

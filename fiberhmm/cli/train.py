@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import sys
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -748,7 +749,7 @@ def _plot_training_probability_area(
     footprint_prob,
     *,
     show_line: bool = False,
-    threshold_alpha: float | None = None,
+    threshold_alpha: Optional[float] = None,
 ) -> None:
     ax.fill_between(
         range(len(footprint_prob)),
