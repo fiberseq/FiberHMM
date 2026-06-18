@@ -697,18 +697,13 @@ def _extract_msps(read, bed_out, with_scores: bool,
 
 def _safe_mm_ml_per_mod(read) -> dict:
     """Parse MM/ML tags with FiberHMM's safe parser, returning per-mod arrays."""
-    from fiberhmm.core.bam_reader import parse_mm_ml_per_mod_type
+    from fiberhmm.core.bam_reader import _has_mm_ml_inputs, parse_mm_ml_per_mod_type
 
     tag_errors = (KeyError, ValueError)
     mm_tag = get_preferred_tag(read, 'MM', 'Mm', '', errors=tag_errors)
     ml_raw = get_preferred_tag(read, 'ML', 'Ml', None, errors=tag_errors)
-    if not mm_tag or ml_raw is None:
+    if not _has_mm_ml_inputs(mm_tag, ml_raw):
         return {}
-    try:
-        if len(ml_raw) == 0:
-            return {}
-    except TypeError:
-        pass
     seq = read.query_sequence
     if seq is None:
         return {}

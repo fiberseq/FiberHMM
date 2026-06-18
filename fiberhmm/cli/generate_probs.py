@@ -32,7 +32,7 @@ import pysam
 from tqdm import tqdm
 
 # Package imports
-from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
+from fiberhmm.core.bam_reader import _has_mm_ml_inputs, parse_mm_tag_query_positions
 from fiberhmm.core.tag_access import get_preferred_tag
 from fiberhmm.probabilities.context_counter import ContextCounter
 from fiberhmm.probabilities.output_paths import (
@@ -170,15 +170,13 @@ def _generate_probs_skip_reason(read, min_mapq: int, min_read_length: int):
 
 def _read_mm_ml_tags_or_skip(read):
     mm_tag = get_preferred_tag(read, 'MM', 'Mm')
-    if mm_tag is None:
+    if not mm_tag:
         return None, None, 'no_mm_tag'
 
     ml_raw = get_preferred_tag(read, 'ML', 'Ml')
-    if ml_raw is None:
+    if not _has_mm_ml_inputs(mm_tag, ml_raw):
         return mm_tag, None, 'no_ml_tag'
     ml_values = list(ml_raw)
-    if not ml_values:
-        return mm_tag, None, 'no_ml_tag'
 
     return mm_tag, ml_values, None
 

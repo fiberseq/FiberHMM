@@ -1842,6 +1842,19 @@ def test_parse_mod_positions_safe_avoids_numpy_tolist(monkeypatch):
     assert _parse_mod_positions_safe(read, {"a"}) == [(2, 200), (5, 180)]
 
 
+def test_safe_mm_ml_per_mod_skips_empty_numpy_ml(monkeypatch):
+    monkeypatch.setattr(
+        "fiberhmm.core.bam_reader.parse_mm_ml_per_mod_type",
+        lambda *args, **kwargs: pytest.fail("empty ML should not be parsed"),
+    )
+
+    read = _FakeReadWithSeq(seq="A" * 20)
+    read.set_tag("MM", "A+a,0;", value_type="Z")
+    read.set_tag("ML", np.asarray([], dtype=np.uint8))
+
+    assert extract_tags._safe_mm_ml_per_mod(read) == {}
+
+
 def test_deam_priority1_g_base_is_flavor_0():
     """Canonical base G -> flavor 0 (R / GA-dea) per FiberBrowser."""
     seq = list('A' * 100)

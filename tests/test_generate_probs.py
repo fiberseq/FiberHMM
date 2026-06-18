@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -173,6 +174,25 @@ def test_read_mm_ml_tags_or_skip_prefers_supported_tag_names():
         None,
         "no_ml_tag",
     )
+    assert _read_mm_ml_tags_or_skip(_Read({"MM": "", "ML": [200]})) == (
+        None,
+        None,
+        "no_mm_tag",
+    )
+
+
+def test_read_mm_ml_tags_or_skip_accepts_numpy_ml_values():
+    mm_tag, ml_values, skip_reason = _read_mm_ml_tags_or_skip(
+        _Read({"MM": "A+a,0;", "ML": np.asarray([200], dtype=np.uint8)}),
+    )
+
+    assert mm_tag == "A+a,0;"
+    assert [int(value) for value in ml_values] == [200]
+    assert skip_reason is None
+
+    assert _read_mm_ml_tags_or_skip(
+        _Read({"MM": "A+a,0;", "ML": np.asarray([], dtype=np.uint8)}),
+    ) == ("A+a,0;", None, "no_ml_tag")
 
 
 def test_target_bases_for_mode():
