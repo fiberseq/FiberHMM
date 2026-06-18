@@ -119,6 +119,10 @@ def _circular_read_length(fiber_read: Mapping[str, Any],
     )
 
 
+def _apply_result_is_circular(apply_result: Mapping[str, Any]) -> bool:
+    return bool(apply_result.get("circular"))
+
+
 def apply_result_has_footprints(apply_result: Optional[Mapping[str, Any]]) -> bool:
     """Return whether an HMM apply result has annotations worth writing."""
     if apply_result is None:
@@ -209,11 +213,7 @@ def build_fused_recall_result(
     refined nucs/MSPs/TFs back to the molecule. ``recall_nucs=False`` (the
     default) is byte-for-byte the original behavior.
     """
-    ns = apply_result["ns"]
-    nl = apply_result["nl"]
-    msps = apply_result["as"]
-    msp_lengths = apply_result["al"]
-    is_circular = bool(apply_result.get("circular"))
+    is_circular = _apply_result_is_circular(apply_result)
 
     if recall_nucs:
         if is_circular:

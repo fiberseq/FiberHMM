@@ -148,6 +148,13 @@ def test_circular_read_length_prefers_apply_metadata():
     assert fused_stages._circular_read_length(fiber_read, {}) == 100
 
 
+def test_apply_result_is_circular_uses_truthy_metadata_flag():
+    assert fused_stages._apply_result_is_circular({"circular": True}) is True
+    assert fused_stages._apply_result_is_circular({"circular": 1}) is True
+    assert fused_stages._apply_result_is_circular({"circular": False}) is False
+    assert fused_stages._apply_result_is_circular({}) is False
+
+
 def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatch):
     seen = {"interval_args": None, "scan_args": []}
 
