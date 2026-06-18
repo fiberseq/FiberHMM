@@ -275,15 +275,19 @@ def _fiber_read_skip_reason(fiber_read) -> Optional[str]:
     return None
 
 
+def _region_fiber_read_result(fiber_read):
+    skip_reason = _fiber_read_skip_reason(fiber_read)
+    if skip_reason:
+        return None, skip_reason
+    return fiber_read, None
+
+
 def _extract_region_fiber_read(read, mode: str, prob_threshold: int):
     try:
         fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
     except Exception:
         return None, 'extraction_failed'
-    skip_reason = _fiber_read_skip_reason(fiber_read)
-    if skip_reason:
-        return None, skip_reason
-    return fiber_read, None
+    return _region_fiber_read_result(fiber_read)
 
 
 def _extract_region_payload_fiber_read(payload, mode: str, prob_threshold: int):
@@ -293,10 +297,7 @@ def _extract_region_payload_fiber_read(payload, mode: str, prob_threshold: int):
         fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
     except Exception:
         return None, 'extraction_failed'
-    skip_reason = _fiber_read_skip_reason(fiber_read)
-    if skip_reason:
-        return None, skip_reason
-    return fiber_read, None
+    return _region_fiber_read_result(fiber_read)
 
 
 def _run_region_apply_read(
