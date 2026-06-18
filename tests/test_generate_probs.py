@@ -168,6 +168,11 @@ def test_read_mm_ml_tags_or_skip_prefers_supported_tag_names():
         None,
         "no_ml_tag",
     )
+    assert _read_mm_ml_tags_or_skip(_Read({"MM": "A+a,0;", "ML": []})) == (
+        "A+a,0;",
+        None,
+        "no_ml_tag",
+    )
 
 
 def test_target_bases_for_mode():

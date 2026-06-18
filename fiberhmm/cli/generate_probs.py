@@ -176,8 +176,11 @@ def _read_mm_ml_tags_or_skip(read):
     ml_raw = get_preferred_tag(read, 'ML', 'Ml')
     if ml_raw is None:
         return mm_tag, None, 'no_ml_tag'
+    ml_values = list(ml_raw)
+    if not ml_values:
+        return mm_tag, None, 'no_ml_tag'
 
-    return mm_tag, list(ml_raw), None
+    return mm_tag, ml_values, None
 
 
 def _target_bases_for_mode(mode: str) -> List[str]:
