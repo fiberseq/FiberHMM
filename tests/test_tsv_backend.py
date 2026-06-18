@@ -208,9 +208,11 @@ def test_scan_tsv_for_h5_collects_metadata_and_chrom_counts(tmp_path):
         encoding="utf-8",
     )
 
-    scan_result = tsv_backend._scan_tsv_for_h5(
-        str(tsv_path),
-        verbose=False,
+    scan_result = tsv_backend._scan_tsv_for_h5_from_request(
+        tsv_backend._TsvH5ScanRequest(
+            tsv_path=str(tsv_path),
+            verbose=False,
+        )
     )
 
     assert scan_result == tsv_backend._TsvH5ScanResult(
@@ -218,6 +220,29 @@ def test_scan_tsv_for_h5_collects_metadata_and_chrom_counts(tmp_path):
         chrom_counts={"chr2L": 2, "chr3R": 1},
         total_fibers=3,
     )
+
+
+def test_scan_tsv_for_h5_adapter_builds_request(monkeypatch):
+    sentinel = tsv_backend._TsvH5ScanResult(
+        metadata={},
+        chrom_counts={},
+        total_fibers=0,
+    )
+    calls = []
+
+    monkeypatch.setattr(
+        tsv_backend,
+        "_scan_tsv_for_h5_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert tsv_backend._scan_tsv_for_h5("input.tsv", verbose=False) == sentinel
+    assert calls == [
+        tsv_backend._TsvH5ScanRequest(
+            tsv_path="input.tsv",
+            verbose=False,
+        )
+    ]
 
 
 def test_posterior_record_from_fields_decodes_with_requested_dtype():

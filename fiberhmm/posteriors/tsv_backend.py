@@ -44,6 +44,12 @@ class _TsvH5ScanResult:
 
 
 @dataclass(frozen=True)
+class _TsvH5ScanRequest:
+    tsv_path: str
+    verbose: bool
+
+
+@dataclass(frozen=True)
 class _TsvCopyResult:
     copied_fibers: int
     header_written: bool
@@ -209,15 +215,17 @@ def _iter_tsv_posterior_fields(tsv_path: str):
                 yield fields
 
 
-def _scan_tsv_for_h5(tsv_path: str, verbose: bool):
-    if verbose:
-        print(f"  Scanning {tsv_path}...")
+def _scan_tsv_for_h5_from_request(
+    request: _TsvH5ScanRequest,
+) -> _TsvH5ScanResult:
+    if request.verbose:
+        print(f"  Scanning {request.tsv_path}...")
 
     metadata = {}
     chrom_counts = {}
     n_total = 0
 
-    with _open_text_file(tsv_path, 'rt') as infile:
+    with _open_text_file(request.tsv_path, 'rt') as infile:
         for line in infile:
             line_metadata = _metadata_from_tsv_line(line)
             if line_metadata is not None:
@@ -231,17 +239,26 @@ def _scan_tsv_for_h5(tsv_path: str, verbose: bool):
             chrom_counts[chrom] = chrom_counts.get(chrom, 0) + 1
             n_total += 1
 
-            if verbose and n_total % 500000 == 0:
+            if request.verbose and n_total % 500000 == 0:
                 print(f"\r    Counted {n_total:,} fibers...", end='')
                 sys.stdout.flush()
 
-    if verbose:
+    if request.verbose:
         print(f"\r    Found {n_total:,} fibers across {len(chrom_counts)} chromosomes")
 
     return _TsvH5ScanResult(
         metadata=metadata,
         chrom_counts=chrom_counts,
         total_fibers=n_total,
+    )
+
+
+def _scan_tsv_for_h5(tsv_path: str, verbose: bool):
+    return _scan_tsv_for_h5_from_request(
+        _TsvH5ScanRequest(
+            tsv_path=tsv_path,
+            verbose=verbose,
+        )
     )
 
 
@@ -465,7 +482,12 @@ def tsv_to_h5_from_request(request: _TsvToH5Request) -> int:
     import h5py
 
     # First pass: count fibers per chromosome
-    scan_result = _scan_tsv_for_h5(request.tsv_path, request.verbose)
+    scan_result = _scan_tsv_for_h5_from_request(
+        _TsvH5ScanRequest(
+            tsv_path=request.tsv_path,
+            verbose=request.verbose,
+        )
+    )
 
     # Create H5 file with pre-allocated structure
     if request.verbose:
