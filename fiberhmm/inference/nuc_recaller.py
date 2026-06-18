@@ -173,6 +173,14 @@ class _PhaseCutWindow:
 
 
 @dataclass(frozen=True)
+class _ReDerivedMspsRequest:
+    original_msps: Sequence[Interval]
+    accessible_from_splits: Sequence[Interval]
+    read_length: int
+    msp_min_size: int
+
+
+@dataclass(frozen=True)
 class _TilingFloors:
     msp: int
     nuc: int
@@ -737,12 +745,7 @@ def recall_nucs_in_read(
     )
 
 
-def rederive_msps(
-    original_msps: Sequence[Interval],
-    accessible_from_splits: Sequence[Interval],
-    read_length: int,
-    msp_min_size: int,
-) -> List[Interval]:
+def _rederive_msps_from_request(request: _ReDerivedMspsRequest) -> List[Interval]:
     """Re-derive MSPs from the new nucleosome boundaries.
 
     MSPs after nuc-recall = the original HMM MSPs unioned with the accessible
@@ -750,15 +753,36 @@ def rederive_msps(
     ``>= msp_min_size``. Returns (start, length) intervals.
     """
     iv: List[Interval] = []
-    for s_raw, length_raw in list(original_msps) + list(accessible_from_splits):
+    for s_raw, length_raw in (
+        list(request.original_msps) + list(request.accessible_from_splits)
+    ):
         span = _bounded_interval(
-            s_raw, length_raw, read_length, clamp_start=True,
+            s_raw,
+            length_raw,
+            request.read_length,
+            clamp_start=True,
         )
         if span is not None:
             iv.append((span.start, span.end))
     merged = merge_intervals(iv)
-    floor = max(1, int(msp_min_size))
+    floor = max(1, int(request.msp_min_size))
     return [(a, b - a) for a, b in merged if (b - a) >= floor]
+
+
+def rederive_msps(
+    original_msps: Sequence[Interval],
+    accessible_from_splits: Sequence[Interval],
+    read_length: int,
+    msp_min_size: int,
+) -> List[Interval]:
+    return _rederive_msps_from_request(
+        _ReDerivedMspsRequest(
+            original_msps=original_msps,
+            accessible_from_splits=accessible_from_splits,
+            read_length=read_length,
+            msp_min_size=msp_min_size,
+        )
+    )
 
 
 def unify_nuc_calls_with_tf_calls(

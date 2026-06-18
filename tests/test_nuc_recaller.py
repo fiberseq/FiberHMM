@@ -34,6 +34,8 @@ from fiberhmm.inference.nuc_recaller import (
     _recall_nuc_span,
     _recall_nuc_span_from_request,
     _recall_nuc_tables,
+    _rederive_msps_from_request,
+    _ReDerivedMspsRequest,
     _refine_fragment,
     _refine_fragment_from_request,
     _RefineFragmentRequest,
@@ -485,12 +487,22 @@ def test_phase_or_unsplit_subfragments_returns_original_when_disabled():
 
 
 def test_rederive_msps_merges_and_filters():
-    msps = rederive_msps(
+    request = _ReDerivedMspsRequest(
         original_msps=[(0, 10)],
         accessible_from_splits=[(10, 5), (200, 3)],
+        read_length=300,
+        msp_min_size=4,
+    )
+
+    msps = _rederive_msps_from_request(request)
+    adapted = rederive_msps(
+        original_msps=request.original_msps,
+        accessible_from_splits=request.accessible_from_splits,
         read_length=300, msp_min_size=4,
     )
+
     # (0,10)+(10,5) merge into one 15bp MSP; the 3bp patch is filtered out
+    assert adapted == msps
     assert (0, 15) in msps
     assert all(length >= 4 for _, length in msps)
 
