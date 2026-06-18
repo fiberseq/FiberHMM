@@ -118,6 +118,15 @@ class _RegionBed12Blocks:
 
 
 @dataclass(frozen=True)
+class _RegionBed12BlocksRequest:
+    ref_start: int
+    ref_end: int
+    starts: object
+    lengths: object
+    scores: object = None
+
+
+@dataclass(frozen=True)
 class _RegionBed12RowRequest:
     ref_name: str
     ref_start: int
@@ -518,20 +527,16 @@ def _region_read_route(read, start: int, end: int, filter_config: ReadFilterConf
     )
 
 
-def _region_bed12_blocks(
-    ref_start,
-    ref_end,
-    starts,
-    lengths,
-    scores=None,
+def _region_bed12_blocks_from_request(
+    request: _RegionBed12BlocksRequest,
 ) -> _RegionBed12Blocks:
-    read_length = ref_end - ref_start
+    read_length = request.ref_end - request.ref_start
     block_starts, block_sizes = _region_bed_block_components(
-        ref_start,
-        starts,
-        lengths,
+        request.ref_start,
+        request.starts,
+        request.lengths,
     )
-    score_list = _region_bed_score_list(scores)
+    score_list = _region_bed_score_list(request.scores)
 
     # BED12 requires blocks to span chromStart to chromEnd.
     _pad_region_bed12_to_read_span(
@@ -545,6 +550,24 @@ def _region_bed12_blocks(
         block_starts=block_starts,
         block_sizes=block_sizes,
         score_list=score_list,
+    )
+
+
+def _region_bed12_blocks(
+    ref_start,
+    ref_end,
+    starts,
+    lengths,
+    scores=None,
+) -> _RegionBed12Blocks:
+    return _region_bed12_blocks_from_request(
+        _RegionBed12BlocksRequest(
+            ref_start=ref_start,
+            ref_end=ref_end,
+            starts=starts,
+            lengths=lengths,
+            scores=scores,
+        )
     )
 
 
@@ -585,12 +608,14 @@ def _format_region_bed12_row_from_request(
     request: _RegionBed12RowRequest,
 ) -> str:
     """Format one region-worker BED12 row from reference-frame intervals."""
-    bed12_blocks = _region_bed12_blocks(
-        request.ref_start,
-        request.ref_end,
-        request.starts,
-        request.lengths,
-        request.scores,
+    bed12_blocks = _region_bed12_blocks_from_request(
+        _RegionBed12BlocksRequest(
+            ref_start=request.ref_start,
+            ref_end=request.ref_end,
+            starts=request.starts,
+            lengths=request.lengths,
+            scores=request.scores,
+        )
     )
     blocks = [
         (request.ref_start + start, request.ref_start + start + size)

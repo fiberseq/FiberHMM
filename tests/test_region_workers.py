@@ -32,6 +32,7 @@ from fiberhmm.inference.region_workers import (
     _region_bam_result_from_request,
     _region_bam_worker_runtime,
     _region_bed12_blocks,
+    _region_bed12_blocks_from_request,
     _region_bed12_row_from_read_result,
     _region_bed_block_components,
     _region_bed_read_filter_config,
@@ -42,6 +43,7 @@ from fiberhmm.inference.region_workers import (
     _RegionBamResultRequest,
     _RegionBamWorkerCounts,
     _RegionBed12Blocks,
+    _RegionBed12BlocksRequest,
     _RegionBed12RowRequest,
     _RegionFiberReadResult,
     _RegionPosteriorRecordRequest,
@@ -1060,12 +1062,14 @@ def test_region_bed12_row_pads_blocks_and_scores():
 
 
 def test_region_bed12_blocks_project_pad_and_scale_scores():
-    blocks = _region_bed12_blocks(
-        ref_start=100,
-        ref_end=200,
-        starts=[120, 180],
-        lengths=[10, 5],
-        scores=[0.5, 0.75],
+    blocks = _region_bed12_blocks_from_request(
+        _RegionBed12BlocksRequest(
+            ref_start=100,
+            ref_end=200,
+            starts=[120, 180],
+            lengths=[10, 5],
+            scores=[0.5, 0.75],
+        )
     )
 
     assert blocks == _RegionBed12Blocks(
