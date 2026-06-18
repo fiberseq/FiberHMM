@@ -375,6 +375,16 @@ class _StreamingPosteriorWriter:
 
 
 @dataclass(frozen=True)
+class _StreamingPosteriorWriterOpenRequest:
+    output_posteriors: Optional[str]
+    mode: str
+    context_size: int
+    edge_trim: int
+    input_bam: str
+    log: object
+
+
+@dataclass(frozen=True)
 class _StreamingPosteriorStats:
     n_fibers: int
     file_size_mb: float
@@ -735,21 +745,43 @@ def _open_streaming_posterior_writer(
     input_bam: str,
     log,
 ) -> _StreamingPosteriorWriter:
-    if not output_posteriors:
+    return _open_streaming_posterior_writer_from_request(
+        _StreamingPosteriorWriterOpenRequest(
+            output_posteriors=output_posteriors,
+            mode=mode,
+            context_size=context_size,
+            edge_trim=edge_trim,
+            input_bam=input_bam,
+            log=log,
+        )
+    )
+
+
+def _open_streaming_posterior_writer_from_request(
+    request: _StreamingPosteriorWriterOpenRequest,
+) -> _StreamingPosteriorWriter:
+    if not request.output_posteriors:
         return _StreamingPosteriorWriter(writer=None, enabled=False)
 
     if not HAS_POSTERIOR_WRITER:
         print(
             "WARNING: posterior_writer.py not found, skipping posteriors export",
-            file=log,
+            file=request.log,
         )
         return _StreamingPosteriorWriter(writer=None, enabled=False)
 
     writer = PosteriorWriter(
-        output_posteriors, mode, context_size,
-        edge_trim, input_bam, batch_size=1000,
+        request.output_posteriors,
+        request.mode,
+        request.context_size,
+        request.edge_trim,
+        request.input_bam,
+        batch_size=1000,
     )
-    print(f"Posteriors will be written to: {output_posteriors}", file=log)
+    print(
+        f"Posteriors will be written to: {request.output_posteriors}",
+        file=request.log,
+    )
     return _StreamingPosteriorWriter(writer=writer, enabled=True)
 
 

@@ -33,6 +33,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _new_fused_streaming_executor,
     _new_streaming_chunk_buffers,
     _open_streaming_posterior_writer,
+    _open_streaming_posterior_writer_from_request,
     _print_fused_chimera_summary,
     _print_streaming_completion_summary,
     _print_streaming_posterior_summary,
@@ -57,6 +58,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _StreamingPayloadResult,
     _StreamingPosteriorStats,
     _StreamingPosteriorWriter,
+    _StreamingPosteriorWriterOpenRequest,
     _StreamingProgressCheckpoint,
     _StreamingProgressRates,
     _StreamingReadCounts,
@@ -991,8 +993,15 @@ def test_open_streaming_posterior_writer_enables_worker_posteriors(monkeypatch):
     )
     log = io.StringIO()
 
-    posterior_output = _open_streaming_posterior_writer(
-        "out.h5", "deam", 4, 10, "in.bam", log,
+    posterior_output = _open_streaming_posterior_writer_from_request(
+        _StreamingPosteriorWriterOpenRequest(
+            output_posteriors="out.h5",
+            mode="deam",
+            context_size=4,
+            edge_trim=10,
+            input_bam="in.bam",
+            log=log,
+        )
     )
 
     assert isinstance(posterior_output.writer, FakePosteriorWriter)
