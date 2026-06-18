@@ -249,6 +249,22 @@ def _run_worker_fused_apply_stage(
     )
 
 
+def _run_fused_configured_apply_stage(
+    fiber_read,
+    config: _FusedPayloadWorkerConfig,
+):
+    return _run_worker_fused_apply_stage(
+        fiber_read,
+        config.edge_trim,
+        config.circular,
+        config.mode,
+        config.context_size,
+        config.msp_min_size,
+        config.nuc_min_size,
+        config.with_scores,
+    )
+
+
 def _build_worker_fused_recall_result(
     fiber_read,
     apply_result,
@@ -290,16 +306,7 @@ def _process_fused_payload_item(
     if fiber_read is None:
         return None
 
-    apply_result = _run_worker_fused_apply_stage(
-        fiber_read,
-        config.edge_trim,
-        config.circular,
-        config.mode,
-        config.context_size,
-        config.msp_min_size,
-        config.nuc_min_size,
-        config.with_scores,
-    )
+    apply_result = _run_fused_configured_apply_stage(fiber_read, config)
 
     # Match streaming semantics: if apply produced no footprints and no MSPs,
     # pass the read through unchanged and preserve any pre-existing tags.

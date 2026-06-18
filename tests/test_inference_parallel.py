@@ -1367,6 +1367,44 @@ def test_fused_payload_worker_config_preserves_chunk_arguments():
     )
 
 
+def test_run_fused_configured_apply_stage_forwards_config(monkeypatch):
+    fiber_read = {"query_sequence": "ACGT"}
+    seen = {}
+
+    def fake_apply(*args):
+        seen["args"] = args
+        return {"apply": True}
+
+    monkeypatch.setattr(streaming_workers, "_run_worker_fused_apply_stage", fake_apply)
+    config = streaming_workers._FusedPayloadWorkerConfig(
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
+        prob_threshold=128,
+        min_llr=4.5,
+        min_opps=5,
+        unify_threshold=90,
+    )
+
+    assert streaming_workers._run_fused_configured_apply_stage(
+        fiber_read, config,
+    ) == {"apply": True}
+    assert seen["args"] == (
+        fiber_read,
+        1,
+        True,
+        "pacbio-fiber",
+        7,
+        60,
+        85,
+        True,
+    )
+
+
 def test_build_worker_fused_recall_result_forwards_options(monkeypatch):
     fiber_read = {"query_sequence": "ACGT"}
     apply_result = {"ns": [1]}
