@@ -71,6 +71,17 @@ def test_load_recall_llr_tables_uses_recall_path_or_fallback(monkeypatch):
     assert loaded_paths == ["recall.json", "apply.json"]
 
 
+def test_resolve_recall_model_path_prefers_recall_then_fallback():
+    assert recall_tables._resolve_recall_model_path(
+        "recall.json",
+        "apply.json",
+    ) == "recall.json"
+    assert recall_tables._resolve_recall_model_path(
+        None,
+        "apply.json",
+    ) == "apply.json"
+
+
 def test_load_recall_llr_tables_requires_a_model_path():
     with pytest.raises(ValueError, match="one of recall_model_path"):
         recall_tables.load_recall_llr_tables(None, None)

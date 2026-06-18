@@ -21,15 +21,22 @@ def build_recall_llr_tables(model, emission_uplift: float = 1.0):
     return llr_hit, llr_miss
 
 
+def _resolve_recall_model_path(
+    recall_model_path: Optional[str],
+    fallback_model_path: Optional[str],
+) -> str:
+    model_path = recall_model_path or fallback_model_path
+    if model_path is None:
+        raise ValueError("one of recall_model_path or fallback_model_path is required")
+    return model_path
+
+
 def load_recall_llr_tables(
     recall_model_path: Optional[str],
     fallback_model_path: Optional[str],
     emission_uplift: float = 1.0,
 ):
     """Load the recall model path, falling back to the apply model, and build tables."""
-    model_path = recall_model_path or fallback_model_path
-    if model_path is None:
-        raise ValueError("one of recall_model_path or fallback_model_path is required")
-
+    model_path = _resolve_recall_model_path(recall_model_path, fallback_model_path)
     model, _, _ = load_model_with_metadata(model_path)
     return build_recall_llr_tables(model, emission_uplift)
