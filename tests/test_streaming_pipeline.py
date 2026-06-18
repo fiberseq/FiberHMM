@@ -24,11 +24,11 @@ from fiberhmm.inference.streaming_pipeline import (
     _drain_all_streaming_chunks,
     _drain_if_inflight_full,
     _finalize_apply_streaming_pipeline,
-    _finalize_fused_streaming_pipeline,
     _flush_streaming_chunk,
     _fused_drain_chunk_factory,
     _fused_worker_args,
     _fused_worker_args_from_request,
+    _FusedStreamingFinalizeRequest,
     _new_apply_streaming_executor,
     _new_fused_streaming_executor,
     _new_streaming_chunk_buffers,
@@ -400,13 +400,17 @@ def test_finalize_fused_streaming_pipeline_summarizes_and_reports_chimeras(
         lambda counters, got_log: calls.append(("chimera", counters, got_log)),
     )
 
-    assert _finalize_fused_streaming_pipeline(
+    request = _FusedStreamingFinalizeRequest(
         total_reads=10,
         skipped=2,
         counters={"reads_with_footprints": 5, "chimera": 3},
         start_time=5.0,
         skip_reasons={"low_mapq": 2},
         log=log,
+    )
+
+    assert streaming_pipeline._finalize_fused_streaming_pipeline_from_request(
+        request,
     ) == 5
 
     assert calls == [

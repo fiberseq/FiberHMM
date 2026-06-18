@@ -490,6 +490,16 @@ class _ApplyStreamingFinalizeRequest:
     log: object
 
 
+@dataclass(frozen=True)
+class _FusedStreamingFinalizeRequest:
+    total_reads: int
+    skipped: int
+    counters: dict
+    start_time: float
+    skip_reasons: dict
+    log: object
+
+
 def _flush_streaming_chunk_and_report_progress(
     context: _StreamingFlushContext,
     chunk_items,
@@ -1272,17 +1282,32 @@ def _finalize_fused_streaming_pipeline(
     skip_reasons: dict,
     log,
 ) -> int:
+    return _finalize_fused_streaming_pipeline_from_request(
+        _FusedStreamingFinalizeRequest(
+            total_reads=total_reads,
+            skipped=skipped,
+            counters=counters,
+            start_time=start_time,
+            skip_reasons=skip_reasons,
+            log=log,
+        )
+    )
+
+
+def _finalize_fused_streaming_pipeline_from_request(
+    request: _FusedStreamingFinalizeRequest,
+) -> int:
     reads_with_fp = _print_streaming_completion_summary(
         "Fused",
-        total_reads,
-        skipped,
-        counters,
-        time.time() - start_time,
+        request.total_reads,
+        request.skipped,
+        request.counters,
+        time.time() - request.start_time,
         "r/s",
-        skip_reasons,
-        log,
+        request.skip_reasons,
+        request.log,
     )
-    _print_fused_chimera_summary(counters, log)
+    _print_fused_chimera_summary(request.counters, request.log)
     return reads_with_fp
 
 
