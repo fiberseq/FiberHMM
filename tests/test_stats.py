@@ -312,6 +312,32 @@ def test_write_gap_stats_section_formats_when_present_only():
     assert empty_handle.getvalue() == ""
 
 
+def test_write_msp_stats_section_formats_when_present_only():
+    handle = io.StringIO()
+
+    stats_module._write_msp_stats_section(
+        handle,
+        {
+            "total_msps": 123,
+            "msp_size_median": 225,
+            "msp_size_mean": 250.5,
+        },
+    )
+
+    assert handle.getvalue() == (
+        "MSP (Large Accessible) Statistics\n"
+        "------------------------------\n"
+        "Total MSPs:                 123\n"
+        "MSP size (median):          225 bp\n"
+        "MSP size (mean):            250.5 bp\n"
+        "\n"
+    )
+
+    empty_handle = io.StringIO()
+    stats_module._write_msp_stats_section(empty_handle, {})
+    assert empty_handle.getvalue() == ""
+
+
 def test_plot_median_histogram_formats_axis_and_optional_range():
     class FakeAxis:
         def __init__(self):
