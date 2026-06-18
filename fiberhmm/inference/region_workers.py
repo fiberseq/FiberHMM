@@ -84,6 +84,13 @@ class _RegionPosteriorTsv:
 
 
 @dataclass(frozen=True)
+class _RegionPosteriorRecordRequest:
+    tsv_file: object
+    read: object
+    result: dict
+
+
+@dataclass(frozen=True)
 class _RegionReadRoute:
     route: str
     skip_reason: Optional[str]
@@ -313,7 +320,13 @@ def _write_footprinted_region_read(
     posterior_written = (
         tsv_file is not None
         and result.get('posteriors') is not None
-        and _write_region_posterior_record(tsv_file, read, result)
+        and _write_region_posterior_record_from_request(
+            _RegionPosteriorRecordRequest(
+                tsv_file=tsv_file,
+                read=read,
+                result=result,
+            )
+        )
     )
     outbam.write(read)
     return _FootprintedRegionWrite(1, bool(posterior_written))
@@ -629,23 +642,35 @@ def _fused_region_worker_runtime(params: dict) -> _FusedRegionWorkerRuntime:
     )
 
 
-def _write_region_posterior_record(tsv_file, read, result: dict) -> bool:
+def _write_region_posterior_record_from_request(
+    request: _RegionPosteriorRecordRequest,
+) -> bool:
     try:
-        tsv_file.write(
+        request.tsv_file.write(
             format_region_posterior_line(
-                read_name=read.query_name,
-                chrom=read.reference_name,
-                ref_start=read.reference_start,
-                ref_end=read.reference_end,
-                strand=result.get('strand', '.'),
-                posteriors=result['posteriors'],
-                footprint_starts=result['ns'],
-                footprint_sizes=result['nl'],
+                read_name=request.read.query_name,
+                chrom=request.read.reference_name,
+                ref_start=request.read.reference_start,
+                ref_end=request.read.reference_end,
+                strand=request.result.get('strand', '.'),
+                posteriors=request.result['posteriors'],
+                footprint_starts=request.result['ns'],
+                footprint_sizes=request.result['nl'],
             )
         )
         return True
     except Exception:
         return False
+
+
+def _write_region_posterior_record(tsv_file, read, result: dict) -> bool:
+    return _write_region_posterior_record_from_request(
+        _RegionPosteriorRecordRequest(
+            tsv_file=tsv_file,
+            read=read,
+            result=result,
+        )
+    )
 
 
 def _region_result_ns_scores(result: dict, with_scores: bool):

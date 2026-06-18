@@ -42,12 +42,14 @@ from fiberhmm.inference.region_workers import (
     _RegionBed12Blocks,
     _RegionBed12RowRequest,
     _RegionFiberReadResult,
+    _RegionPosteriorRecordRequest,
     _RegionPosteriorTsv,
     _RegionReadRoute,
     _run_fused_region_apply_read,
     _run_region_apply_read,
     _write_footprinted_region_read,
     _write_region_posterior_record,
+    _write_region_posterior_record_from_request,
     _write_unfootprinted_region_read,
 )
 
@@ -625,13 +627,15 @@ def test_write_footprinted_region_read_tags_writes_and_streams_posterior(monkeyp
     def fake_set_tags(got_read, got_result, with_scores, write_msps):
         calls["set_tags"] = (got_read, got_result, with_scores, write_msps)
 
-    def fake_write_posterior(got_tsv, got_read, got_result):
-        calls["posterior"] = (got_tsv, got_read, got_result)
+    def fake_write_posterior(request):
+        calls["posterior"] = request
         return True
 
     monkeypatch.setattr(region_workers, "set_legacy_apply_tags", fake_set_tags)
     monkeypatch.setattr(
-        region_workers, "_write_region_posterior_record", fake_write_posterior
+        region_workers,
+        "_write_region_posterior_record_from_request",
+        fake_write_posterior,
     )
 
     write_result = _write_footprinted_region_read(
@@ -641,7 +645,11 @@ def test_write_footprinted_region_read_tags_writes_and_streams_posterior(monkeyp
     assert write_result.written == 1
     assert write_result.posterior_written is True
     assert calls["set_tags"] == (read, result, True, False)
-    assert calls["posterior"] == (tsv_file, read, result)
+    assert calls["posterior"] == _RegionPosteriorRecordRequest(
+        tsv_file=tsv_file,
+        read=read,
+        result=result,
+    )
     assert outbam.written == [read]
 
 
@@ -1246,8 +1254,13 @@ def test_write_region_posterior_record_returns_success_status(monkeypatch):
 
     monkeypatch.setattr(region_workers, "format_region_posterior_line", fake_format)
     tsv = Tsv()
+    request = _RegionPosteriorRecordRequest(
+        tsv_file=tsv,
+        read=read,
+        result=result,
+    )
 
-    assert _write_region_posterior_record(tsv, read, result)
+    assert _write_region_posterior_record_from_request(request)
     assert tsv.lines == ["posterior-line\n"]
     assert seen == {
         "read_name": "read1",
@@ -1259,6 +1272,7 @@ def test_write_region_posterior_record_returns_success_status(monkeypatch):
         "footprint_starts": [1],
         "footprint_sizes": [2],
     }
+    assert _write_region_posterior_record(tsv, read, result)
     assert not _write_region_posterior_record(Tsv(fail=True), read, result)
 
 
