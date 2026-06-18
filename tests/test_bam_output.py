@@ -1108,7 +1108,9 @@ def test_concatenate_region_bams_uses_samtools_cat_first(monkeypatch, tmp_path):
         lambda *args, **kwargs: pytest.fail("unexpected merge fallback")
     )
 
-    bam_output._concatenate_region_bams(input_bam, output_bam, bam_files, str(tmp_path), verbose=False)
+    bam_output._concatenate_region_bams(
+        input_bam, output_bam, bam_files, str(tmp_path), verbose=False,
+    )
 
     assert output_bam and Path(output_bam).read_bytes() == b"cat"
     assert cat_calls == [(bam_files, output_bam, str(tmp_path / "bam_list.txt"))]
@@ -1140,7 +1142,9 @@ def test_concatenate_region_bams_removes_partial_before_pysam_fallback(monkeypat
         lambda *args, **kwargs: pytest.fail("unexpected merge fallback")
     )
 
-    bam_output._concatenate_region_bams(input_bam, output_bam, bam_files, str(tmp_path), verbose=False)
+    bam_output._concatenate_region_bams(
+        input_bam, output_bam, bam_files, str(tmp_path), verbose=False,
+    )
 
     assert Path(output_bam).read_bytes() == b"pysam"
 
@@ -1165,7 +1169,9 @@ def test_concatenate_region_bams_creates_output_dir_for_pysam_fallback(monkeypat
     monkeypatch.setattr(bam_output, "_samtools_cat_bams", fake_cat)
     monkeypatch.setattr(bam_output, "_concatenate_bams_with_pysam", fake_pysam)
 
-    bam_output._concatenate_region_bams(input_bam, output_bam, bam_files, str(tmp_path), verbose=False)
+    bam_output._concatenate_region_bams(
+        input_bam, output_bam, bam_files, str(tmp_path), verbose=False,
+    )
 
     assert Path(output_bam).read_bytes() == b"pysam"
 
@@ -1195,7 +1201,9 @@ def test_concatenate_region_bams_uses_merge_after_pysam_failure(monkeypatch, tmp
     monkeypatch.setattr(bam_output, "_concatenate_bams_with_pysam", fake_pysam)
     monkeypatch.setattr(bam_output, "_samtools_merge_bams", fake_merge)
 
-    bam_output._concatenate_region_bams(input_bam, output_bam, bam_files, str(tmp_path), verbose=False)
+    bam_output._concatenate_region_bams(
+        input_bam, output_bam, bam_files, str(tmp_path), verbose=False,
+    )
 
     assert Path(output_bam).read_bytes() == b"merge"
     assert merge_calls == [(bam_files, output_bam, str(tmp_path / "bam_list.txt"))]
@@ -1211,8 +1219,16 @@ def test_sort_and_index_bam_direct_samtools_index_success(monkeypatch, tmp_path)
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
-    monkeypatch.setattr(bam_output.pysam, "index", lambda *args, **kwargs: pytest.fail("unexpected pysam.index"))
-    monkeypatch.setattr(bam_output.pysam, "sort", lambda *args, **kwargs: pytest.fail("unexpected pysam.sort"))
+    monkeypatch.setattr(
+        bam_output.pysam,
+        "index",
+        lambda *args, **kwargs: pytest.fail("unexpected pysam.index"),
+    )
+    monkeypatch.setattr(
+        bam_output.pysam,
+        "sort",
+        lambda *args, **kwargs: pytest.fail("unexpected pysam.sort"),
+    )
 
     bam_output._sort_and_index_bam(str(output_bam), verbose=False, threads=3)
 
@@ -1236,9 +1252,21 @@ def test_sort_and_index_bam_sorts_when_direct_index_reports_unsorted(monkeypatch
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
-    monkeypatch.setattr(bam_output.os, "replace", lambda src, dst: replacements.append((src, dst)))
-    monkeypatch.setattr(bam_output.pysam, "index", lambda *args, **kwargs: pytest.fail("unexpected pysam.index"))
-    monkeypatch.setattr(bam_output.pysam, "sort", lambda *args, **kwargs: pytest.fail("unexpected pysam.sort"))
+    monkeypatch.setattr(
+        bam_output.os,
+        "replace",
+        lambda src, dst: replacements.append((src, dst)),
+    )
+    monkeypatch.setattr(
+        bam_output.pysam,
+        "index",
+        lambda *args, **kwargs: pytest.fail("unexpected pysam.index"),
+    )
+    monkeypatch.setattr(
+        bam_output.pysam,
+        "sort",
+        lambda *args, **kwargs: pytest.fail("unexpected pysam.sort"),
+    )
 
     bam_output._sort_and_index_bam(str(output_bam), verbose=False, threads=2)
 
@@ -1263,7 +1291,11 @@ def test_sort_and_index_bam_falls_back_to_pysam_when_samtools_missing(monkeypatc
 
     monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
     monkeypatch.setattr(bam_output.pysam, "index", lambda path: indexed.append(path))
-    monkeypatch.setattr(bam_output.pysam, "sort", lambda *args, **kwargs: pytest.fail("unexpected pysam.sort"))
+    monkeypatch.setattr(
+        bam_output.pysam,
+        "sort",
+        lambda *args, **kwargs: pytest.fail("unexpected pysam.sort"),
+    )
 
     bam_output._sort_and_index_bam(str(output_bam), verbose=False, threads=4)
 
@@ -1288,8 +1320,16 @@ def test_sort_and_index_bam_uses_pysam_sort_when_samtools_sort_fails(monkeypatch
 
     monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
     monkeypatch.setattr(bam_output.pysam, "sort", lambda *args: pysam_sorts.append(args))
-    monkeypatch.setattr(bam_output.pysam, "index", lambda *args, **kwargs: pytest.fail("unexpected pysam.index"))
-    monkeypatch.setattr(bam_output.os, "replace", lambda src, dst: replacements.append((src, dst)))
+    monkeypatch.setattr(
+        bam_output.pysam,
+        "index",
+        lambda *args, **kwargs: pytest.fail("unexpected pysam.index"),
+    )
+    monkeypatch.setattr(
+        bam_output.os,
+        "replace",
+        lambda src, dst: replacements.append((src, dst)),
+    )
 
     bam_output._sort_and_index_bam(str(output_bam), verbose=False, threads=2)
 

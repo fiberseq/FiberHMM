@@ -11,14 +11,13 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.bam_reader import get_bam_chrom_sizes
+from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.inference.reference_mapping import (
     build_query_to_ref,
     scored_interval_spans,
 )
-from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.bed import bed12_row
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
-
 
 _BED12_RECORD_COLUMNS = (
     'chrom',
@@ -56,7 +55,11 @@ def _samtools_merge_cmd(output_bam: str, list_file: str) -> List[str]:
     return ['samtools', 'merge', '-f', '-b', list_file, output_bam]
 
 
-def _run_samtools_index(output_bam: str, threads: int, check: bool = False) -> subprocess.CompletedProcess:
+def _run_samtools_index(
+    output_bam: str,
+    threads: int,
+    check: bool = False,
+) -> subprocess.CompletedProcess:
     """Run `samtools index` with the shared command shape."""
     return subprocess.run(
         _samtools_index_cmd(output_bam, threads),
