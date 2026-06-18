@@ -16,6 +16,7 @@ from fiberhmm.inference.region_workers import (
     _extract_region_fiber_read,
     _extract_region_payload_fiber_read,
     _format_region_bed12_row,
+    _format_region_bed12_row_from_request,
     _fused_region_recall_config,
     _fused_region_worker_runtime,
     _new_region_skip_reasons,
@@ -39,6 +40,7 @@ from fiberhmm.inference.region_workers import (
     _region_result_ns_scores,
     _RegionBamWorkerCounts,
     _RegionBed12Blocks,
+    _RegionBed12RowRequest,
     _RegionFiberReadResult,
     _RegionPosteriorTsv,
     _RegionReadRoute,
@@ -964,15 +966,17 @@ def test_build_fused_region_recall_result_uses_worker_configs(monkeypatch):
 
 
 def test_region_bed12_row_pads_blocks_and_scores():
-    row = _format_region_bed12_row(
-        ref_name="chr1",
-        ref_start=100,
-        ref_end=200,
-        read_id="read1",
-        strand="+",
-        starts=[120, 180],
-        lengths=[10, 5],
-        scores=[0.5, 0.75],
+    row = _format_region_bed12_row_from_request(
+        _RegionBed12RowRequest(
+            ref_name="chr1",
+            ref_start=100,
+            ref_end=200,
+            read_id="read1",
+            strand="+",
+            starts=[120, 180],
+            lengths=[10, 5],
+            scores=[0.5, 0.75],
+        )
     )
 
     assert row.split("\t") == [

@@ -97,6 +97,18 @@ class _RegionBed12Blocks:
 
 
 @dataclass(frozen=True)
+class _RegionBed12RowRequest:
+    ref_name: str
+    ref_start: int
+    ref_end: int
+    read_id: str
+    strand: str
+    starts: object
+    lengths: object
+    scores: object = None
+
+
+@dataclass(frozen=True)
 class _RegionFiberReadResult:
     fiber_read: object | None
     skip_reason: Optional[str]
@@ -502,14 +514,19 @@ def _region_bed_score_list(scores):
     return [int(score * 1000) for score in scores]
 
 
-def _format_region_bed12_row(ref_name, ref_start, ref_end, read_id, strand,
-                             starts, lengths, scores=None):
+def _format_region_bed12_row_from_request(
+    request: _RegionBed12RowRequest,
+) -> str:
     """Format one region-worker BED12 row from reference-frame intervals."""
     bed12_blocks = _region_bed12_blocks(
-        ref_start, ref_end, starts, lengths, scores,
+        request.ref_start,
+        request.ref_end,
+        request.starts,
+        request.lengths,
+        request.scores,
     )
     blocks = [
-        (ref_start + start, ref_start + start + size)
+        (request.ref_start + start, request.ref_start + start + size)
         for start, size in zip(
             bed12_blocks.block_starts,
             bed12_blocks.block_sizes,
@@ -519,15 +536,31 @@ def _format_region_bed12_row(ref_name, ref_start, ref_end, read_id, strand,
     if bed12_blocks.score_list is not None:
         extra = (','.join(str(score) for score in bed12_blocks.score_list),)
     return bed12_row(
-        ref_name,
-        ref_start,
-        ref_end,
-        read_id,
+        request.ref_name,
+        request.ref_start,
+        request.ref_end,
+        request.read_id,
         0,
-        strand,
+        request.strand,
         blocks,
         extra,
         item_rgb='0,0,0',
+    )
+
+
+def _format_region_bed12_row(ref_name, ref_start, ref_end, read_id, strand,
+                             starts, lengths, scores=None):
+    return _format_region_bed12_row_from_request(
+        _RegionBed12RowRequest(
+            ref_name=ref_name,
+            ref_start=ref_start,
+            ref_end=ref_end,
+            read_id=read_id,
+            strand=strand,
+            starts=starts,
+            lengths=lengths,
+            scores=scores,
+        )
     )
 
 
@@ -624,15 +657,17 @@ def _region_result_ns_scores(result: dict, with_scores: bool):
 
 def _region_bed12_row_from_read_result(read, result: dict, with_scores: bool) -> str:
     strand = '-' if read.is_reverse else '+'
-    return _format_region_bed12_row(
-        read.reference_name,
-        read.reference_start,
-        read.reference_end,
-        read.query_name,
-        strand,
-        result['ns'],
-        result['nl'],
-        _region_result_ns_scores(result, with_scores),
+    return _format_region_bed12_row_from_request(
+        _RegionBed12RowRequest(
+            ref_name=read.reference_name,
+            ref_start=read.reference_start,
+            ref_end=read.reference_end,
+            read_id=read.query_name,
+            strand=strand,
+            starts=result['ns'],
+            lengths=result['nl'],
+            scores=_region_result_ns_scores(result, with_scores),
+        )
     )
 
 
