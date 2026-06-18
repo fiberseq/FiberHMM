@@ -240,6 +240,87 @@ def test_add_training_state_blocks_uses_state_specs_and_sets_limits():
     assert ax.ylim == (0, 1)
 
 
+def test_plot_training_size_distribution_uses_shared_histogram_layout():
+    class FakeAxis:
+        def __init__(self):
+            self.hist_calls = []
+            self.vlines = []
+            self.xlabel = None
+            self.ylabel = None
+            self.title = None
+            self.legend_called = False
+            self.xlim = None
+
+        def hist(self, sizes, **kwargs):
+            self.hist_calls.append((sizes, kwargs))
+
+        def axvline(self, value, **kwargs):
+            self.vlines.append((value, kwargs))
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_ylabel(self, value):
+            self.ylabel = value
+
+        def set_title(self, value):
+            self.title = value
+
+        def legend(self):
+            self.legend_called = True
+
+        def set_xlim(self, start, end):
+            self.xlim = (start, end)
+
+    ax = FakeAxis()
+    train._plot_training_size_distribution(
+        ax,
+        [10, 30],
+        color="firebrick",
+        x_label="Footprint Size (bp)",
+        title_prefix="Footprint Sizes",
+        include_nucleosome_marker=True,
+    )
+
+    sizes, hist_kwargs = ax.hist_calls[0]
+    assert sizes == [10, 30]
+    np.testing.assert_array_equal(hist_kwargs["bins"], [0, 10, 20, 30])
+    assert hist_kwargs["color"] == "firebrick"
+    assert hist_kwargs["alpha"] == 0.7
+    assert hist_kwargs["edgecolor"] == "white"
+    assert ax.vlines == [
+        (
+            20.0,
+            {"color": "black", "linestyle": "--", "label": "Median: 20bp"},
+        ),
+        (
+            147,
+            {
+                "color": "blue",
+                "linestyle": ":",
+                "alpha": 0.7,
+                "label": "Nucleosome (147bp)",
+            },
+        ),
+    ]
+    assert ax.xlabel == "Footprint Size (bp)"
+    assert ax.ylabel == "Count"
+    assert ax.title == "Footprint Sizes (n=2)"
+    assert ax.legend_called
+    assert ax.xlim == (0, 500)
+
+    empty_ax = FakeAxis()
+    train._plot_training_size_distribution(
+        empty_ax,
+        [],
+        color="forestgreen",
+        x_label="MSP Size (bp)",
+        title_prefix="MSP Sizes",
+    )
+    assert empty_ax.hist_calls == []
+    assert empty_ax.vlines == []
+
+
 def test_training_stats_paths_are_under_plots_dir():
     assert train._training_stats_paths("/tmp/out") == {
         "plots_dir": "/tmp/out/plots",

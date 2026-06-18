@@ -661,6 +661,41 @@ def _add_training_state_blocks(
     ax.set_ylim(0, 1)
 
 
+def _plot_training_size_distribution(
+    ax,
+    sizes: list,
+    color: str,
+    x_label: str,
+    title_prefix: str,
+    include_nucleosome_marker: bool = False,
+) -> None:
+    if len(sizes) == 0:
+        return
+
+    bins = np.arange(0, min(500, max(sizes) + 10), 10)
+    median_size = np.median(sizes)
+    ax.hist(sizes, bins=bins, color=color, alpha=0.7, edgecolor='white')
+    ax.axvline(
+        median_size,
+        color='black',
+        linestyle='--',
+        label=f'Median: {median_size:.0f}bp',
+    )
+    if include_nucleosome_marker:
+        ax.axvline(
+            147,
+            color='blue',
+            linestyle=':',
+            alpha=0.7,
+            label='Nucleosome (147bp)',
+        )
+    ax.set_xlabel(x_label)
+    ax.set_ylabel('Count')
+    ax.set_title(f'{title_prefix} (n={len(sizes):,})')
+    ax.legend()
+    ax.set_xlim(0, 500)
+
+
 def _training_stats_paths(output_dir: str) -> dict:
     plots_dir = os.path.join(output_dir, 'plots')
     return {
@@ -798,30 +833,24 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
 
         # 3. Footprint size distribution
         ax = axes[1, 0]
-        if len(all_footprint_sizes) > 0:
-            bins = np.arange(0, min(500, max(all_footprint_sizes) + 10), 10)
-            ax.hist(all_footprint_sizes, bins=bins, color='firebrick', alpha=0.7, edgecolor='white')
-            ax.axvline(np.median(all_footprint_sizes), color='black', linestyle='--',
-                      label=f'Median: {np.median(all_footprint_sizes):.0f}bp')
-            ax.axvline(147, color='blue', linestyle=':', alpha=0.7, label='Nucleosome (147bp)')
-            ax.set_xlabel('Footprint Size (bp)')
-            ax.set_ylabel('Count')
-            ax.set_title(f'Footprint Sizes (n={len(all_footprint_sizes):,})')
-            ax.legend()
-            ax.set_xlim(0, 500)
+        _plot_training_size_distribution(
+            ax,
+            all_footprint_sizes,
+            color='firebrick',
+            x_label='Footprint Size (bp)',
+            title_prefix='Footprint Sizes',
+            include_nucleosome_marker=True,
+        )
 
         # 4. MSP size distribution
         ax = axes[1, 1]
-        if len(all_msp_sizes) > 0:
-            bins = np.arange(0, min(500, max(all_msp_sizes) + 10), 10)
-            ax.hist(all_msp_sizes, bins=bins, color='forestgreen', alpha=0.7, edgecolor='white')
-            ax.axvline(np.median(all_msp_sizes), color='black', linestyle='--',
-                      label=f'Median: {np.median(all_msp_sizes):.0f}bp')
-            ax.set_xlabel('MSP Size (bp)')
-            ax.set_ylabel('Count')
-            ax.set_title(f'MSP Sizes (n={len(all_msp_sizes):,})')
-            ax.legend()
-            ax.set_xlim(0, 500)
+        _plot_training_size_distribution(
+            ax,
+            all_msp_sizes,
+            color='forestgreen',
+            x_label='MSP Size (bp)',
+            title_prefix='MSP Sizes',
+        )
 
         plt.tight_layout()
         pdf.savefig(fig)
