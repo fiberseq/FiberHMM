@@ -106,6 +106,15 @@ class _MaAnnotationBlock:
 
 
 @dataclass(frozen=True)
+class _WrappedGroupSpan:
+    start: int
+    length: int
+
+    def as_tuple(self) -> Tuple[int, int]:
+        return self.start, self.length
+
+
+@dataclass(frozen=True)
 class _ExtractRegionResult:
     temp_bed_paths: dict
     n_reads: int
@@ -276,9 +285,12 @@ def _is_wrapped_circular_group(name: str, pieces, read_length: int) -> bool:
     )
 
 
-def _wrapped_group_span(pieces, read_length: int) -> Tuple[int, int]:
+def _wrapped_group_span(pieces, read_length: int) -> _WrappedGroupSpan:
     end_piece = max(pieces, key=lambda a: a['start'])
-    return end_piece['start'], min(read_length, sum(p['length'] for p in pieces))
+    return _WrappedGroupSpan(
+        start=end_piece['start'],
+        length=min(read_length, sum(p['length'] for p in pieces)),
+    )
 
 
 def _annotate_circular_parts(annotations, read_length: int):
@@ -300,7 +312,9 @@ def _annotate_circular_parts(annotations, read_length: int):
         circ_id = '.'
         if is_wrapped_group:
             circ_id = name
-            mol_start, mol_length = _wrapped_group_span(pieces, read_length)
+            wrapped_span = _wrapped_group_span(pieces, read_length)
+            mol_start = wrapped_span.start
+            mol_length = wrapped_span.length
         ann['circ_id'] = circ_id
         ann['circ_part'] = circ_part
         ann['circ_parts'] = circ_parts
