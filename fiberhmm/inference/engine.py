@@ -138,6 +138,15 @@ class _CircularResultTrack:
     legacy_scores: Optional[np.ndarray]
 
 
+@dataclass(frozen=True)
+class _SingleReadResultRequest:
+    fp_result: dict
+    strand: str
+    encoded: np.ndarray
+    return_posteriors: bool
+    include_encoded: bool
+
+
 def _new_mode_detection_counts() -> dict:
     return {
         't_minus_a': 0,
@@ -925,23 +934,38 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
     return _extract_mm_ml_fiber_read(read, query_sequence, mode, prob_threshold)
 
 
+def _single_read_result_from_request(request: _SingleReadResultRequest) -> dict:
+    result = _base_single_read_fields(request.fp_result)
+    if request.fp_result.get('circular'):
+        result.update(_circular_single_read_fields(request.fp_result))
+
+    if (
+        request.return_posteriors
+        and request.fp_result.get('posteriors') is not None
+    ):
+        result['posteriors'] = request.fp_result['posteriors']
+        result['strand'] = request.strand
+
+    if request.include_encoded:
+        result['encoded'] = request.encoded
+        result['strand'] = request.strand
+
+    return result
+
+
 def _single_read_result_from_prediction(fp_result: dict, strand: str,
                                         encoded: np.ndarray,
                                         return_posteriors: bool,
                                         include_encoded: bool) -> dict:
-    result = _base_single_read_fields(fp_result)
-    if fp_result.get('circular'):
-        result.update(_circular_single_read_fields(fp_result))
-
-    if return_posteriors and fp_result.get('posteriors') is not None:
-        result['posteriors'] = fp_result['posteriors']
-        result['strand'] = strand
-
-    if include_encoded:
-        result['encoded'] = encoded
-        result['strand'] = strand
-
-    return result
+    return _single_read_result_from_request(
+        _SingleReadResultRequest(
+            fp_result=fp_result,
+            strand=strand,
+            encoded=encoded,
+            return_posteriors=return_posteriors,
+            include_encoded=include_encoded,
+        ),
+    )
 
 
 def _base_single_read_fields(fp_result: dict) -> dict:

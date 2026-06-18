@@ -53,10 +53,13 @@ def test_single_read_result_from_prediction_includes_optional_fields():
     }
     encoded = np.array([1, 2, 3])
 
-    result = engine._single_read_result_from_prediction(
-        fp_result, strand="+", encoded=encoded,
+    request = engine._SingleReadResultRequest(
+        fp_result=fp_result,
+        strand="+",
+        encoded=encoded,
         return_posteriors=True, include_encoded=True,
     )
+    result = engine._single_read_result_from_request(request)
 
     np.testing.assert_array_equal(result["ns"], [1])
     np.testing.assert_array_equal(result["nl"], [10])
@@ -65,6 +68,13 @@ def test_single_read_result_from_prediction_includes_optional_fields():
     assert result["strand"] == "+"
     np.testing.assert_array_equal(result["posteriors"], [0.1, 0.9])
     np.testing.assert_array_equal(result["encoded"], [1, 2, 3])
+
+    adapter_result = engine._single_read_result_from_prediction(
+        fp_result, strand="+", encoded=encoded,
+        return_posteriors=True, include_encoded=True,
+    )
+    np.testing.assert_array_equal(adapter_result["encoded"], result["encoded"])
+    assert adapter_result["strand"] == result["strand"]
 
 
 def test_base_single_read_fields_maps_linear_prediction_fields():
