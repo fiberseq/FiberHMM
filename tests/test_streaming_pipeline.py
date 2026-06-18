@@ -2,6 +2,7 @@
 Correctness tests for the streaming producer-consumer pipeline.
 """
 
+from collections import deque
 import io
 import pysam
 import sys
@@ -11,6 +12,9 @@ from fiberhmm.inference.streaming_pipeline import (
     _apply_worker_args,
     _buffer_processable_read,
     _buffer_streaming_read,
+    _drain_all_streaming_chunks,
+    _drain_if_inflight_full,
+    _flush_streaming_chunk,
     _fused_worker_args,
     _new_apply_streaming_executor,
     _new_fused_streaming_executor,
@@ -257,6 +261,74 @@ def test_new_streaming_chunk_buffers_returns_independent_lists():
     buffers[2].append(False)
 
     assert _new_streaming_chunk_buffers() == ([], [], [])
+
+
+def test_drain_if_inflight_full_only_drains_at_capacity():
+    inflight = deque(["old"])
+    drained = []
+
+    _drain_if_inflight_full(inflight, max_inflight=2, drain_chunk=drained.append)
+    assert drained == []
+
+    _drain_if_inflight_full(
+        inflight,
+        max_inflight=1,
+        drain_chunk=lambda: drained.append(inflight.popleft()),
+    )
+    assert drained == ["old"]
+    assert list(inflight) == []
+
+
+def test_flush_streaming_chunk_drains_submits_and_returns_new_buffers():
+    class Executor:
+        def __init__(self):
+            self.submitted = []
+
+        def submit(self, worker_fn, *args):
+            self.submitted.append((worker_fn, args))
+            return "future"
+
+    inflight = deque(["old"])
+    drained = []
+    executor = Executor()
+    worker_fn = object()
+    chunk_items = ["payload"]
+    chunk_reads = ["read"]
+    chunk_skip_flags = [False]
+
+    new_buffers = _flush_streaming_chunk(
+        inflight,
+        executor,
+        worker_fn,
+        chunk_items,
+        chunk_reads,
+        chunk_skip_flags,
+        ("arg",),
+        max_inflight=1,
+        drain_chunk=lambda: drained.append(inflight.popleft()),
+    )
+
+    assert drained == ["old"]
+    assert executor.submitted == [(worker_fn, (chunk_items, "arg"))]
+    assert list(inflight) == [
+        ("future", chunk_reads, chunk_items, chunk_skip_flags)
+    ]
+    assert new_buffers == ([], [], [])
+    assert new_buffers[0] is not chunk_items
+    assert new_buffers[1] is not chunk_reads
+    assert new_buffers[2] is not chunk_skip_flags
+
+
+def test_drain_all_streaming_chunks_repeats_until_empty():
+    inflight = deque(["a", "b", "c"])
+    drained = []
+
+    _drain_all_streaming_chunks(
+        inflight, lambda: drained.append(inflight.popleft()),
+    )
+
+    assert drained == ["a", "b", "c"]
+    assert list(inflight) == []
 
 
 def test_streaming_log_for_output_uses_stderr_for_stdout_bam():

@@ -7,7 +7,7 @@ import sys
 import time
 from collections import deque
 from concurrent.futures import Future, ProcessPoolExecutor
-from typing import Optional, Set, Tuple
+from typing import Callable, Optional, Set, Tuple
 
 import pysam
 
@@ -105,6 +105,44 @@ def _submit_streaming_chunk(inflight, executor, worker_fn, chunk_items,
     else:
         future = _completed_empty_future()
     inflight.append((future, chunk_read_objs, chunk_items, chunk_skip_flags))
+
+
+def _drain_if_inflight_full(
+    inflight,
+    max_inflight: int,
+    drain_chunk: Callable[[], None],
+) -> None:
+    if len(inflight) >= max_inflight:
+        drain_chunk()
+
+
+def _flush_streaming_chunk(
+    inflight,
+    executor,
+    worker_fn,
+    chunk_items,
+    chunk_read_objs,
+    chunk_skip_flags,
+    worker_args,
+    max_inflight: int,
+    drain_chunk: Callable[[], None],
+) -> tuple[list, list, list]:
+    _drain_if_inflight_full(inflight, max_inflight, drain_chunk)
+    _submit_streaming_chunk(
+        inflight,
+        executor,
+        worker_fn,
+        chunk_items,
+        chunk_read_objs,
+        chunk_skip_flags,
+        worker_args,
+    )
+    return _new_streaming_chunk_buffers()
+
+
+def _drain_all_streaming_chunks(inflight, drain_chunk: Callable[[], None]) -> None:
+    while inflight:
+        drain_chunk()
 
 
 def _worker_common_args(
@@ -494,6 +532,10 @@ def _process_bam_streaming_pipeline_fused(
                 msp_min_size, nuc_min_size, with_scores,
                 prob_threshold, min_llr, min_opps, unify_threshold,
             )
+            drain_chunk = lambda: _drain_oldest_fused_chunk(
+                inflight, outbam, with_scores,
+                also_write_legacy, downstream_compat, counters,
+            )
             last_progress_reads = 0
             last_progress_time = time.time()
 
@@ -519,22 +561,18 @@ def _process_bam_streaming_pipeline_fused(
                         break
 
                     if len(chunk_read_objs) >= chunk_size:
-                        if len(inflight) >= max_inflight:
-                            _drain_oldest_fused_chunk(
-                                inflight, outbam, with_scores,
-                                also_write_legacy, downstream_compat, counters,
-                            )
-                        _submit_streaming_chunk(
-                            inflight,
-                            executor,
-                            _process_fused_payload_chunk_worker,
-                            chunk_payloads,
-                            chunk_read_objs,
-                            chunk_skip_flags,
-                            worker_args,
-                        )
                         chunk_payloads, chunk_read_objs, chunk_skip_flags = (
-                            _new_streaming_chunk_buffers()
+                            _flush_streaming_chunk(
+                                inflight,
+                                executor,
+                                _process_fused_payload_chunk_worker,
+                                chunk_payloads,
+                                chunk_read_objs,
+                                chunk_skip_flags,
+                                worker_args,
+                                max_inflight,
+                                drain_chunk,
+                            )
                         )
 
                         now = time.time()
@@ -554,12 +592,7 @@ def _process_bam_streaming_pipeline_fused(
                         )
 
                 if chunk_read_objs:
-                    if len(inflight) >= max_inflight:
-                        _drain_oldest_fused_chunk(
-                            inflight, outbam, with_scores,
-                            also_write_legacy, downstream_compat, counters,
-                        )
-                    _submit_streaming_chunk(
+                    _flush_streaming_chunk(
                         inflight,
                         executor,
                         _process_fused_payload_chunk_worker,
@@ -567,13 +600,11 @@ def _process_bam_streaming_pipeline_fused(
                         chunk_read_objs,
                         chunk_skip_flags,
                         worker_args,
+                        max_inflight,
+                        drain_chunk,
                     )
 
-                while inflight:
-                    _drain_oldest_fused_chunk(
-                        inflight, outbam, with_scores,
-                        also_write_legacy, downstream_compat, counters,
-                    )
+                _drain_all_streaming_chunks(inflight, drain_chunk)
             finally:
                 try:
                     executor.shutdown(wait=True)
@@ -677,6 +708,10 @@ def _process_bam_streaming_pipeline(
                 msp_min_size, nuc_min_size, with_scores,
                 return_posteriors, prob_threshold,
             )
+            drain_chunk = lambda: _drain_oldest_chunk(
+                inflight, outbam, with_scores, write_msps,
+                posterior_writer, counters,
+            )
             skipped = 0
             last_progress_reads = 0
             last_progress_time = time.time()
@@ -703,23 +738,18 @@ def _process_bam_streaming_pipeline(
                         break
 
                     if len(chunk_read_objs) >= chunk_size:
-                        if len(inflight) >= max_inflight:
-                            _drain_oldest_chunk(
-                                inflight, outbam, with_scores, write_msps,
-                                posterior_writer, counters
-                            )
-
-                        _submit_streaming_chunk(
-                            inflight,
-                            executor,
-                            _process_payload_chunk_worker,
-                            chunk_reads,
-                            chunk_read_objs,
-                            chunk_skip_flags,
-                            worker_args,
-                        )
                         chunk_reads, chunk_read_objs, chunk_skip_flags = (
-                            _new_streaming_chunk_buffers()
+                            _flush_streaming_chunk(
+                                inflight,
+                                executor,
+                                _process_payload_chunk_worker,
+                                chunk_reads,
+                                chunk_read_objs,
+                                chunk_skip_flags,
+                                worker_args,
+                                max_inflight,
+                                drain_chunk,
+                            )
                         )
 
                         now = time.time()
@@ -739,13 +769,7 @@ def _process_bam_streaming_pipeline(
                         )
 
                 if chunk_read_objs:
-                    if len(inflight) >= max_inflight:
-                        _drain_oldest_chunk(
-                            inflight, outbam, with_scores, write_msps,
-                            posterior_writer, counters
-                        )
-
-                    _submit_streaming_chunk(
+                    _flush_streaming_chunk(
                         inflight,
                         executor,
                         _process_payload_chunk_worker,
@@ -753,13 +777,11 @@ def _process_bam_streaming_pipeline(
                         chunk_read_objs,
                         chunk_skip_flags,
                         worker_args,
+                        max_inflight,
+                        drain_chunk,
                     )
 
-                while inflight:
-                    _drain_oldest_chunk(
-                        inflight, outbam, with_scores, write_msps,
-                        posterior_writer, counters
-                    )
+                _drain_all_streaming_chunks(inflight, drain_chunk)
 
             finally:
                 try:
