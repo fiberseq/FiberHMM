@@ -1242,6 +1242,30 @@ def _record_extract_region_result(
             temp_beds_by_type[t].append((region_index, tb))
 
 
+def _handle_extract_region_future(
+    future,
+    region_index: int,
+    extract_types,
+    total_features: dict,
+    temp_beds_by_type: dict,
+) -> int:
+    try:
+        temp_bed_paths, n_reads, n_feats = future.result()
+    except Exception as e:
+        print(f"Worker error: {e}")
+        return 0
+
+    _record_extract_region_result(
+        extract_types,
+        region_index,
+        temp_bed_paths,
+        n_feats,
+        total_features,
+        temp_beds_by_type,
+    )
+    return n_reads
+
+
 def _extract_progress_message(
     completed: int,
     total_regions: int,
@@ -1301,19 +1325,13 @@ def _run_extract_region_pool(
 
         for future in as_completed(futures):
             completed += 1
-            try:
-                temp_bed_paths, n_reads, n_feats = future.result()
-                total_reads += n_reads
-                _record_extract_region_result(
-                    extract_types,
-                    futures[future],
-                    temp_bed_paths,
-                    n_feats,
-                    total_features,
-                    temp_beds_by_type,
-                )
-            except Exception as e:
-                print(f"Worker error: {e}")
+            total_reads += _handle_extract_region_future(
+                future,
+                futures[future],
+                extract_types,
+                total_features,
+                temp_beds_by_type,
+            )
 
             elapsed = time.time() - start_time
             print(

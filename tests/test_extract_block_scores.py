@@ -853,6 +853,56 @@ def test_extract_parallel_result_helpers_track_features_and_nonempty_beds(tmp_pa
     assert temp_beds_by_type == {"tf": [(7, str(nonempty))], "msp": []}
 
 
+def test_handle_extract_region_future_records_success_and_worker_errors(
+    tmp_path,
+    capsys,
+):
+    class Future:
+        def __init__(self, result=None, error=None):
+            self._result = result
+            self._error = error
+
+        def result(self):
+            if self._error is not None:
+                raise self._error
+            return self._result
+
+    nonempty = tmp_path / "region_1_tf.bed"
+    nonempty.write_text("chr1\t0\t10\n")
+    total_features = extract_tags._new_extract_feature_counts(["tf", "msp"])
+    temp_beds_by_type = extract_tags._new_extract_temp_beds_by_type(["tf", "msp"])
+
+    n_reads = extract_tags._handle_extract_region_future(
+        Future((
+            {"tf": str(nonempty), "msp": str(tmp_path / "missing.bed")},
+            5,
+            {"tf": 2, "msp": 0},
+        )),
+        region_index=1,
+        extract_types=["tf", "msp"],
+        total_features=total_features,
+        temp_beds_by_type=temp_beds_by_type,
+    )
+
+    assert n_reads == 5
+    assert total_features == {"tf": 2, "msp": 0}
+    assert temp_beds_by_type == {"tf": [(1, str(nonempty))], "msp": []}
+    assert capsys.readouterr().out == ""
+
+    n_reads = extract_tags._handle_extract_region_future(
+        Future(error=RuntimeError("worker failed")),
+        region_index=2,
+        extract_types=["tf", "msp"],
+        total_features=total_features,
+        temp_beds_by_type=temp_beds_by_type,
+    )
+
+    assert n_reads == 0
+    assert total_features == {"tf": 2, "msp": 0}
+    assert temp_beds_by_type == {"tf": [(1, str(nonempty))], "msp": []}
+    assert "Worker error: worker failed" in capsys.readouterr().out
+
+
 def test_extract_progress_message_formats_counts_and_zero_elapsed():
     message = extract_tags._extract_progress_message(
         completed=2,
