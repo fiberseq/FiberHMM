@@ -186,6 +186,18 @@ class _RecallTfQualityInputs:
 
 
 @dataclass
+class _LegacyRecallTagWriteRequest:
+    read: object
+    read_length: int
+    kept_nucs: Sequence[Tuple[int, int]]
+    msps: Sequence[Tuple[int, int]]
+    tf_intervals: Sequence[Tuple[int, int]]
+    nq_for_kept_nucs: Optional[Sequence[int]]
+    nq_values: Sequence[int]
+    downstream_compat: bool
+
+
+@dataclass
 class _RawLegacyRecallTags:
     nuc_starts: Sequence[int]
     nuc_lengths: Sequence[int]
@@ -1056,46 +1068,67 @@ def _write_legacy_recall_tags(read, read_length: int,
                               nq_for_kept_nucs: Optional[Sequence[int]],
                               nq_values: Sequence[int],
                               downstream_compat: bool) -> None:
+    _write_legacy_recall_tags_from_request(
+        _LegacyRecallTagWriteRequest(
+            read=read,
+            read_length=read_length,
+            kept_nucs=kept_nucs,
+            msps=msps,
+            tf_intervals=tf_intervals,
+            nq_for_kept_nucs=nq_for_kept_nucs,
+            nq_values=nq_values,
+            downstream_compat=downstream_compat,
+        ),
+    )
+
+
+def _write_legacy_recall_tags_from_request(
+    request: _LegacyRecallTagWriteRequest,
+) -> None:
     import array as pyarray
 
     # Build the ns/nl track. In default mode it's nucleosomes only.
     # In downstream_compat mode, TF calls are merged in, sorted by start.
-    if downstream_compat and tf_intervals:
-        combined = list(kept_nucs) + list(tf_intervals)
+    if request.downstream_compat and request.tf_intervals:
+        combined = list(request.kept_nucs) + list(request.tf_intervals)
     else:
-        combined = list(kept_nucs)
-    legacy_nuc_rows = _split_legacy_interval_rows(combined, read_length)
+        combined = list(request.kept_nucs)
+    legacy_nuc_rows = _split_legacy_interval_rows(combined, request.read_length)
     ns, nl = _legacy_starts_lengths(legacy_nuc_rows)
 
-    legacy_msp_rows = _split_legacy_interval_rows(msps, read_length)
+    legacy_msp_rows = _split_legacy_interval_rows(request.msps, request.read_length)
     a_s, a_l = _legacy_starts_lengths(legacy_msp_rows)
 
     if ns:
-        read.set_tag('ns', pyarray.array('I', ns))
-        read.set_tag('nl', pyarray.array('I', nl))
+        request.read.set_tag('ns', pyarray.array('I', ns))
+        request.read.set_tag('nl', pyarray.array('I', nl))
     else:
-        clear_tags(read, ('ns', 'nl', 'nq'))
+        clear_tags(request.read, ('ns', 'nl', 'nq'))
     if a_s:
-        read.set_tag('as', pyarray.array('I', a_s))
-        read.set_tag('al', pyarray.array('I', a_l))
+        request.read.set_tag('as', pyarray.array('I', a_s))
+        request.read.set_tag('al', pyarray.array('I', a_l))
     else:
-        clear_tags(read, ('as', 'al', 'aq'))
+        clear_tags(request.read, ('as', 'al', 'aq'))
     # nq must have len == len(ns) per fibertools invariant. If we wrote
     # new ns/nl without fresh scores, drop any stale nq from the input BAM
     # to avoid len(nq) != len(ns) failing ft validate (see fibertools-rs
     # bamannotations.rs set_qual assert).
-    if ns and nq_for_kept_nucs is not None:
-        legacy_nq_rows = _split_legacy_interval_rows(kept_nucs, read_length, nq_values)
+    if ns and request.nq_for_kept_nucs is not None:
+        legacy_nq_rows = _split_legacy_interval_rows(
+            request.kept_nucs,
+            request.read_length,
+            request.nq_values,
+        )
         legacy_nq = [row.score for row in legacy_nq_rows]
         if len(legacy_nq) != len(ns):
             legacy_nq = [0] * len(ns)
-        read.set_tag('nq', pyarray.array('B', legacy_nq))
+        request.read.set_tag('nq', pyarray.array('B', legacy_nq))
     elif ns:
-        clear_tags(read, ('nq',))
+        clear_tags(request.read, ('nq',))
     # Same for aq: stale per-msp qualities from input would mismatch
     # the refreshed as/al length.
     if a_s:
-        clear_tags(read, ('aq',))
+        clear_tags(request.read, ('aq',))
 
 
 def write_ma_tags(read, read_length: int,

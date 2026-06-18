@@ -662,6 +662,43 @@ def test_raw_legacy_recall_tags_handles_missing_and_present_tags():
     assert tags.msp_lengths == [5]
 
 
+def test_write_legacy_recall_tags_request_writes_compat_tracks():
+    read = _FakeRead()
+    request = tf_recaller._LegacyRecallTagWriteRequest(
+        read=read,
+        read_length=500,
+        kept_nucs=[(50, 120)],
+        msps=[(180, 20)],
+        tf_intervals=[(10, 30)],
+        nq_for_kept_nucs=None,
+        nq_values=[],
+        downstream_compat=True,
+    )
+
+    tf_recaller._write_legacy_recall_tags_from_request(request)
+
+    assert list(read.get_tag('ns')) == [10, 50]
+    assert list(read.get_tag('nl')) == [30, 120]
+    assert list(read.get_tag('as')) == [180]
+    assert list(read.get_tag('al')) == [20]
+    assert not read.has_tag('nq')
+    assert not read.has_tag('aq')
+
+    adapter_read = _FakeRead()
+    tf_recaller._write_legacy_recall_tags(
+        adapter_read,
+        500,
+        [(50, 120)],
+        [(180, 20)],
+        [(10, 30)],
+        None,
+        [],
+        True,
+    )
+    assert list(adapter_read.get_tag('ns')) == list(read.get_tag('ns'))
+    assert list(adapter_read.get_tag('nl')) == list(read.get_tag('nl'))
+
+
 def test_spec_mode_emits_ma_aq_and_clean_legacy():
     read = _FakeRead()
     nucs = [(50, 120)]
