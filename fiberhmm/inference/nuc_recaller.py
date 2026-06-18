@@ -55,6 +55,14 @@ class _NucRecallParams:
 
 
 @dataclass(frozen=True)
+class _NucRecallTables:
+    nhit: np.ndarray
+    nmiss: np.ndarray
+    llr_hit: np.ndarray
+    llr_miss: np.ndarray
+
+
+@dataclass(frozen=True)
 class _RefinedFragment:
     nuc: NucCall | None
     access: List[Interval]
@@ -286,29 +294,27 @@ def _recall_nuc_span(
     obs,
     s: int,
     e: int,
-    nhit,
-    nmiss,
-    llr_hit,
-    llr_miss,
+    tables: _NucRecallTables,
     params: _NucRecallParams,
 ) -> Tuple[List[NucCall], List[Interval]]:
     nucs: List[NucCall] = []
     access: List[Interval] = []
 
     split = _split_on_accessible_cuts(
-        obs, s, e, nhit, nmiss, params.split_min_llr, params.split_min_opps,
+        obs, s, e, tables.nhit, tables.nmiss,
+        params.split_min_llr, params.split_min_opps,
     )
     access.extend(split.access)
 
     for a, b in split.fragments:
         phase = _phase_or_unsplit_subfragments(
-            obs, a, b, nhit, nmiss, params.phase_nrl,
+            obs, a, b, tables.nhit, tables.nmiss, params.phase_nrl,
             params.phase_min_llr, params.phase_min_opps, params.phase_window,
         )
         access.extend(phase.cuts)
         for sa, sb in phase.fragments:
             refined = _refine_fragment(
-                obs, sa, sb, llr_hit, llr_miss,
+                obs, sa, sb, tables.llr_hit, tables.llr_miss,
                 params.nuc_min_size, params.edge_min_llr, params.edge_min_opps,
             )
             if refined.nuc is not None:
@@ -343,15 +349,21 @@ def _recall_nuc_params(
     )
 
 
+def _recall_nuc_tables(llr_hit: np.ndarray, llr_miss: np.ndarray) -> _NucRecallTables:
+    return _NucRecallTables(
+        nhit=-llr_hit,
+        nmiss=-llr_miss,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+    )
+
+
 def _recall_bounded_nuc_spans(
     obs,
     ns: Sequence[int],
     nl: Sequence[int],
     read_length: int,
-    nhit,
-    nmiss,
-    llr_hit,
-    llr_miss,
+    tables: _NucRecallTables,
     params: _NucRecallParams,
 ) -> Tuple[List[NucCall], List[Interval]]:
     nucs: List[NucCall] = []
@@ -366,7 +378,7 @@ def _recall_bounded_nuc_spans(
         s, e = span
 
         span_nucs, span_access = _recall_nuc_span(
-            obs, s, e, nhit, nmiss, llr_hit, llr_miss, params,
+            obs, s, e, tables, params,
         )
         nucs.extend(span_nucs)
         access.extend(span_access)
@@ -409,8 +421,7 @@ def recall_nucs_in_read(
     a predicted linker -- a cut still requires real local evidence there, so a
     signal-desert is never split.
     """
-    nhit = -llr_hit
-    nmiss = -llr_miss
+    tables = _recall_nuc_tables(llr_hit, llr_miss)
     params = _recall_nuc_params(
         split_min_llr=split_min_llr,
         split_min_opps=split_min_opps,
@@ -423,7 +434,7 @@ def recall_nucs_in_read(
         phase_window=phase_window,
     )
     return _recall_bounded_nuc_spans(
-        obs, ns, nl, read_length, nhit, nmiss, llr_hit, llr_miss, params,
+        obs, ns, nl, read_length, tables, params,
     )
 
 

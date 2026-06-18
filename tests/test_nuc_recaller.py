@@ -20,6 +20,7 @@ from fiberhmm.inference.nuc_recaller import (
     _recall_bounded_nuc_spans,
     _recall_nuc_params,
     _recall_nuc_span,
+    _recall_nuc_tables,
     _residue_intervals_around_nuc,
     _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
@@ -102,6 +103,7 @@ def test_split_on_accessible_cuts_returns_fragments_and_cut_access():
 def test_recall_nuc_span_matches_single_read_wrapper():
     obs = _obs((MISS, 60), (HIT, 6), (MISS, 60))
     llr_hit, llr_miss = _llr_tables()
+    tables = _recall_nuc_tables(llr_hit, llr_miss)
     params = _NucRecallParams(
         split_min_llr=4.0,
         split_min_opps=3,
@@ -118,10 +120,7 @@ def test_recall_nuc_span_matches_single_read_wrapper():
         obs,
         0,
         len(obs),
-        -llr_hit,
-        -llr_miss,
-        llr_hit,
-        llr_miss,
+        tables,
         params,
     )
     read_nucs, read_access = recall_nucs_in_read(
@@ -182,8 +181,8 @@ def test_recall_bounded_nuc_spans_skips_invalid_spans(monkeypatch):
     )
     calls = []
 
-    def fake_span(obs_arg, s, e, nhit, nmiss, hit, miss, params_arg):
-        calls.append((obs_arg, s, e, nhit, nmiss, hit, miss, params_arg))
+    def fake_span(obs_arg, s, e, tables_arg, params_arg):
+        calls.append((obs_arg, s, e, tables_arg, params_arg))
         return [NucCall(s, e - s, 1, 2, 3)], [(s, 1)]
 
     monkeypatch.setattr(
@@ -196,10 +195,7 @@ def test_recall_bounded_nuc_spans_skips_invalid_spans(monkeypatch):
         ns=[0, 5, 9, 12],
         nl=[3, 0, 5, 2],
         read_length=10,
-        nhit=-llr_hit,
-        nmiss=-llr_miss,
-        llr_hit=llr_hit,
-        llr_miss=llr_miss,
+        tables=_recall_nuc_tables(llr_hit, llr_miss),
         params=params,
     )
 
