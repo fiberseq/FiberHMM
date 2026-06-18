@@ -17,6 +17,7 @@ import os
 import pickle
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +36,14 @@ from fiberhmm.probabilities.output_paths import (
     probability_table_path as _probability_table_path,
 )
 from fiberhmm.probabilities.utils import get_base_name, setup_output_dirs
+
+
+@dataclass(frozen=True)
+class _EmissionEstimate:
+    p_acc: float
+    p_inacc: float
+    diagnostics: dict
+
 
 # =============================================================================
 # convert subcommand
@@ -430,7 +439,7 @@ def _estimate_emission_probs(target_rates, accessibility_priors, min_observation
 
     if len(merged) < 10:
         print(f"  Warning: Only {len(merged)} contexts with sufficient data")
-        return 0.5, 0.1, diagnostics
+        return _EmissionEstimate(0.5, 0.1, diagnostics)
 
     x = merged['p_accessible'].values
     y = merged['ratio'].values
@@ -466,11 +475,11 @@ def _estimate_emission_probs(target_rates, accessibility_priors, min_observation
             p_acc, p_inacc = p_inacc, p_acc
             diagnostics['swapped'] = True
 
-        return float(p_acc), float(p_inacc), diagnostics
+        return _EmissionEstimate(float(p_acc), float(p_inacc), diagnostics)
 
     except np.linalg.LinAlgError:
         print("  Warning: Regression failed, using fallback")
-        return 0.5, 0.1, diagnostics
+        return _EmissionEstimate(0.5, 0.1, diagnostics)
 
 
 def _passes_transfer_base_filters(read, min_mapq: int) -> bool:
@@ -963,14 +972,23 @@ def _estimate_transfer_context_size(
             print(f"  Warning: No accessibility priors for {base}")
             continue
 
-        p_acc, p_inacc, diag = _estimate_emission_probs(
+        estimate = _estimate_emission_probs(
             target_rates,
             priors,
             args.min_observations,
         )
 
-        regression_data[base] = _transfer_regression_record(diag, p_acc, p_inacc)
-        _print_transfer_emission_summary(base, diag, p_acc, p_inacc)
+        regression_data[base] = _transfer_regression_record(
+            estimate.diagnostics,
+            estimate.p_acc,
+            estimate.p_inacc,
+        )
+        _print_transfer_emission_summary(
+            base,
+            estimate.diagnostics,
+            estimate.p_acc,
+            estimate.p_inacc,
+        )
 
         combined_file = _write_transfer_probability_tables(
             tables_dir,
@@ -978,8 +996,8 @@ def _estimate_transfer_context_size(
             base,
             context_size,
             target_rates,
-            p_acc,
-            p_inacc,
+            estimate.p_acc,
+            estimate.p_inacc,
         )
         print(f"    Output: {combined_file}")
 

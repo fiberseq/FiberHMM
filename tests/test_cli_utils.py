@@ -345,14 +345,14 @@ def test_estimate_emission_probs_falls_back_with_too_few_contexts(capsys):
         {"context": "AAA", "p_accessible": 0.5, "total_bp": 100},
     ])
 
-    p_acc, p_inacc, diagnostics = _estimate_emission_probs(
+    estimate = _estimate_emission_probs(
         target_rates,
         accessibility,
         min_observations=100,
     )
 
-    assert (p_acc, p_inacc) == (0.5, 0.1)
-    assert diagnostics["n_contexts"] == 1
+    assert (estimate.p_acc, estimate.p_inacc) == (0.5, 0.1)
+    assert estimate.diagnostics["n_contexts"] == 1
     assert "Only 1 contexts" in capsys.readouterr().out
 
 
@@ -371,16 +371,16 @@ def test_estimate_emission_probs_fits_linear_accessibility_model():
         "total_bp": np.full(len(contexts), 200),
     })
 
-    p_acc, p_inacc, diagnostics = _estimate_emission_probs(
+    estimate = _estimate_emission_probs(
         target_rates,
         accessibility,
         min_observations=100,
     )
 
-    assert p_acc == pytest.approx(0.5)
-    assert p_inacc == pytest.approx(0.1)
-    assert diagnostics["n_contexts"] == 12
-    assert diagnostics["r_squared"] == pytest.approx(1.0)
+    assert estimate.p_acc == pytest.approx(0.5)
+    assert estimate.p_inacc == pytest.approx(0.1)
+    assert estimate.diagnostics["n_contexts"] == 12
+    assert estimate.diagnostics["r_squared"] == pytest.approx(1.0)
 
 
 def test_passes_transfer_base_filters_checks_primary_mapq_and_sequence():
@@ -738,10 +738,10 @@ def test_estimate_transfer_context_size_writes_available_bases(monkeypatch, caps
     monkeypatch.setattr(
         cli_utils,
         "_estimate_emission_probs",
-        lambda rates, priors, min_observations: (
-            0.7,
-            0.2,
-            {
+        lambda rates, priors, min_observations: cli_utils._EmissionEstimate(
+            p_acc=0.7,
+            p_inacc=0.2,
+            diagnostics={
                 "n_contexts": len(priors),
                 "r_squared": 0.9,
                 "x": np.array([0.6]),
