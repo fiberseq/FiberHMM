@@ -696,6 +696,42 @@ def _plot_training_size_distribution(
     ax.set_xlim(0, 500)
 
 
+def _plot_training_transition_matrix(ax, trans: np.ndarray) -> None:
+    ax.imshow(trans, cmap='Blues', vmin=0, vmax=1)
+    ax.set_xticks([0, 1])
+    ax.set_yticks([0, 1])
+    ax.set_xticklabels(['Footprint', 'Accessible'])
+    ax.set_yticklabels(['Footprint', 'Accessible'])
+    ax.set_xlabel('To State')
+    ax.set_ylabel('From State')
+    ax.set_title('Transition Probabilities')
+
+    for i in range(2):
+        for j in range(2):
+            ax.text(
+                j,
+                i,
+                f'{trans[i, j]:.4f}',
+                ha='center',
+                va='center',
+                color='white' if trans[i, j] > 0.5 else 'black',
+                fontsize=12,
+            )
+
+    expected_fp, expected_msp = _expected_model_durations(trans)
+    ax.text(
+        0.5,
+        -0.3,
+        (
+            f'Expected durations: Footprint={expected_fp:.0f}bp, '
+            f'MSP={expected_msp:.0f}bp'
+        ),
+        transform=ax.transAxes,
+        ha='center',
+        fontsize=10,
+    )
+
+
 def _training_stats_paths(output_dir: str) -> dict:
     plots_dir = os.path.join(output_dir, 'plots')
     return {
@@ -796,25 +832,7 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         # 1. Transition matrix
         ax = axes[0, 0]
         trans = model.transmat_
-        ax.imshow(trans, cmap='Blues', vmin=0, vmax=1)
-        ax.set_xticks([0, 1])
-        ax.set_yticks([0, 1])
-        ax.set_xticklabels(['Footprint', 'Accessible'])
-        ax.set_yticklabels(['Footprint', 'Accessible'])
-        ax.set_xlabel('To State')
-        ax.set_ylabel('From State')
-        ax.set_title('Transition Probabilities')
-
-        # Add text annotations
-        for i in range(2):
-            for j in range(2):
-                ax.text(j, i, f'{trans[i, j]:.4f}', ha='center', va='center',
-                       color='white' if trans[i, j] > 0.5 else 'black', fontsize=12)
-
-        # Calculate expected durations
-        expected_fp, expected_msp = _expected_model_durations(trans)
-        ax.text(0.5, -0.3, f'Expected durations: Footprint={expected_fp:.0f}bp, MSP={expected_msp:.0f}bp',
-               transform=ax.transAxes, ha='center', fontsize=10)
+        _plot_training_transition_matrix(ax, trans)
 
         # 2. Emission probability distribution
         ax = axes[0, 1]

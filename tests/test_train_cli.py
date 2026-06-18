@@ -321,6 +321,78 @@ def test_plot_training_size_distribution_uses_shared_histogram_layout():
     assert empty_ax.vlines == []
 
 
+def test_plot_training_transition_matrix_formats_heatmap_and_annotations():
+    transform = object()
+
+    class FakeAxis:
+        def __init__(self):
+            self.transAxes = transform
+            self.imshow_call = None
+            self.xticks = None
+            self.yticks = None
+            self.xticklabels = None
+            self.yticklabels = None
+            self.xlabel = None
+            self.ylabel = None
+            self.title = None
+            self.text_calls = []
+
+        def imshow(self, matrix, **kwargs):
+            self.imshow_call = (matrix, kwargs)
+
+        def set_xticks(self, values):
+            self.xticks = values
+
+        def set_yticks(self, values):
+            self.yticks = values
+
+        def set_xticklabels(self, values):
+            self.xticklabels = values
+
+        def set_yticklabels(self, values):
+            self.yticklabels = values
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_ylabel(self, value):
+            self.ylabel = value
+
+        def set_title(self, value):
+            self.title = value
+
+        def text(self, x, y, value, **kwargs):
+            self.text_calls.append((x, y, value, kwargs))
+
+    ax = FakeAxis()
+    trans = np.array([[0.8, 0.2], [0.25, 0.75]])
+
+    train._plot_training_transition_matrix(ax, trans)
+
+    matrix, imshow_kwargs = ax.imshow_call
+    np.testing.assert_array_equal(matrix, trans)
+    assert imshow_kwargs == {"cmap": "Blues", "vmin": 0, "vmax": 1}
+    assert ax.xticks == [0, 1]
+    assert ax.yticks == [0, 1]
+    assert ax.xticklabels == ["Footprint", "Accessible"]
+    assert ax.yticklabels == ["Footprint", "Accessible"]
+    assert ax.xlabel == "To State"
+    assert ax.ylabel == "From State"
+    assert ax.title == "Transition Probabilities"
+    assert [(x, y, value, kwargs["color"]) for x, y, value, kwargs in ax.text_calls[:4]] == [
+        (0, 0, "0.8000", "white"),
+        (1, 0, "0.2000", "black"),
+        (0, 1, "0.2500", "black"),
+        (1, 1, "0.7500", "white"),
+    ]
+    assert ax.text_calls[4] == (
+        0.5,
+        -0.3,
+        "Expected durations: Footprint=5bp, MSP=4bp",
+        {"transform": transform, "ha": "center", "fontsize": 10},
+    )
+
+
 def test_training_stats_paths_are_under_plots_dir():
     assert train._training_stats_paths("/tmp/out") == {
         "plots_dir": "/tmp/out/plots",
