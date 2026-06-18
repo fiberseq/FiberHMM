@@ -242,6 +242,15 @@ def _chrom_pos_from_genome_offset(chroms: list, cum_lengths: np.ndarray,
     return chrom, int(pos)
 
 
+def _training_sampling_index(ref_lengths: dict) -> tuple:
+    main_chroms = _training_sampling_chrom_lengths(ref_lengths)
+    chroms = list(main_chroms.keys())
+    lengths = np.array([main_chroms[c] for c in chroms])
+    cum_lengths = np.cumsum(lengths)
+    total_length = cum_lengths[-1]
+    return chroms, cum_lengths, total_length
+
+
 def _training_reference_span(read):
     if read.reference_end is None or read.reference_start is None:
         return None
@@ -376,13 +385,7 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         # Get reference lengths from header
         ref_lengths = dict(zip(bam.references, bam.lengths))
-        main_chroms = _training_sampling_chrom_lengths(ref_lengths)
-
-        # Calculate cumulative lengths for weighted random selection
-        chroms = list(main_chroms.keys())
-        lengths = np.array([main_chroms[c] for c in chroms])
-        cum_lengths = np.cumsum(lengths)
-        total_length = cum_lengths[-1]
+        chroms, cum_lengths, total_length = _training_sampling_index(ref_lengths)
 
         # Over-sample positions since not all will yield valid reads
         n_attempts = n_samples * 20

@@ -1251,6 +1251,18 @@ def test_chrom_pos_from_genome_offset_maps_cumulative_lengths():
     )
 
 
+def test_training_sampling_index_filters_and_accumulates_lengths():
+    chroms, cum_lengths, total_length = train._training_sampling_index({
+        "chr1": 1_000_000,
+        "chrUn_random": 2_000_000,
+        "chr2": 3_000_000,
+    })
+
+    assert chroms == ["chr1", "chr2"]
+    np.testing.assert_array_equal(cum_lengths, [1_000_000, 4_000_000])
+    assert total_length == 4_000_000
+
+
 def test_training_sample_filter_helper_applies_alignment_filters():
     def read(**overrides):
         attrs = {
