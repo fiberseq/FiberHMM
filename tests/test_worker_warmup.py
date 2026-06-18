@@ -82,3 +82,57 @@ def test_warm_up_model_posteriors_skips_without_numba(monkeypatch):
 
     assert model.predict_lengths == []
     assert model.predict_proba_lengths == []
+
+
+def test_warm_up_tf_recaller_runs_dummy_scan(monkeypatch):
+    monkeypatch.setattr("fiberhmm.core.hmm.HAS_NUMBA", True)
+    calls = []
+
+    def fake_call(obs, lo, hi, llr_hit, llr_miss, **kwargs):
+        calls.append((obs, lo, hi, llr_hit, llr_miss, kwargs))
+        return []
+
+    monkeypatch.setattr(
+        "fiberhmm.inference.tf_recaller.call_tfs_in_interval",
+        fake_call,
+    )
+    llr_hit = np.array([1.0])
+    llr_miss = np.array([-1.0])
+
+    worker_warmup.warm_up_tf_recaller(llr_hit, llr_miss)
+
+    assert len(calls) == 1
+    obs, lo, hi, got_hit, got_miss, kwargs = calls[0]
+    assert obs.shape == (16,)
+    assert lo == 0
+    assert hi == 16
+    assert got_hit is llr_hit
+    assert got_miss is llr_miss
+    assert kwargs == {"min_llr": 4.0, "min_opps": 3}
+
+
+def test_warm_up_tf_recaller_skips_without_numba(monkeypatch):
+    monkeypatch.setattr("fiberhmm.core.hmm.HAS_NUMBA", False)
+    calls = []
+    monkeypatch.setattr(
+        "fiberhmm.inference.tf_recaller.call_tfs_in_interval",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    worker_warmup.warm_up_tf_recaller(np.array([1.0]), np.array([-1.0]))
+
+    assert calls == []
+
+
+def test_warm_up_tf_recaller_ignores_warmup_failures(monkeypatch):
+    monkeypatch.setattr("fiberhmm.core.hmm.HAS_NUMBA", True)
+
+    def fail_call(*args, **kwargs):
+        raise RuntimeError("tf warmup failed")
+
+    monkeypatch.setattr(
+        "fiberhmm.inference.tf_recaller.call_tfs_in_interval",
+        fail_call,
+    )
+
+    worker_warmup.warm_up_tf_recaller(np.array([1.0]), np.array([-1.0]))

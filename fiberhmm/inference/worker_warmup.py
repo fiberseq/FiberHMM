@@ -50,7 +50,10 @@ def warm_up_tf_recaller(llr_hit, llr_miss) -> None:
     if HAS_NUMBA:
         from fiberhmm.inference.tf_recaller import call_tfs_in_interval
 
-        _ = call_tfs_in_interval(
-            _tf_warmup_obs(), 0, 16,
-            llr_hit, llr_miss, min_llr=4.0, min_opps=3,
-        )
+        try:
+            _ = call_tfs_in_interval(
+                _tf_warmup_obs(), 0, 16,
+                llr_hit, llr_miss, min_llr=4.0, min_opps=3,
+            )
+        except Exception:
+            pass
