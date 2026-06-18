@@ -118,6 +118,52 @@ def _positive_log10_observations(totals) -> np.ndarray:
     return np.log10(positive + 1)
 
 
+def _positive_median(values):
+    values = np.asarray(values)
+    positive = values[values > 0]
+    if len(positive) == 0:
+        return None
+    return np.median(positive)
+
+
+def _plot_probability_ratio_histograms(
+    ax,
+    acc_ratios,
+    inacc_ratios,
+    accessible_label: str = 'Accessible',
+    inaccessible_label: str = 'Inaccessible',
+    show_positive_medians: bool = True,
+) -> None:
+    bins = np.linspace(0, 1, 51)
+    ax.hist(
+        acc_ratios,
+        bins=bins,
+        alpha=0.6,
+        label=accessible_label,
+        color='forestgreen',
+        edgecolor='white',
+    )
+    ax.hist(
+        inacc_ratios,
+        bins=bins,
+        alpha=0.6,
+        label=inaccessible_label,
+        color='firebrick',
+        edgecolor='white',
+    )
+
+    if not show_positive_medians:
+        return
+
+    acc_median = _positive_median(acc_ratios)
+    if acc_median is not None:
+        ax.axvline(acc_median, color='green', linestyle='--', linewidth=2)
+
+    inacc_median = _positive_median(inacc_ratios)
+    if inacc_median is not None:
+        ax.axvline(inacc_median, color='red', linestyle='--', linewidth=2)
+
+
 def _write_probability_ratio_summary(handle, label: str, ratios: np.ndarray) -> None:
     if len(ratios) == 0:
         return
@@ -275,13 +321,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
             acc_ratios = acc_probs['ratio'].values
             inacc_ratios = inacc_probs['ratio'].values
 
-            bins = np.linspace(0, 1, 51)
-            ax.hist(acc_ratios, bins=bins, alpha=0.6, label='Accessible', color='forestgreen', edgecolor='white')
-            ax.hist(inacc_ratios, bins=bins, alpha=0.6, label='Inaccessible', color='firebrick', edgecolor='white')
-            if len(acc_ratios[acc_ratios > 0]) > 0:
-                ax.axvline(np.median(acc_ratios[acc_ratios > 0]), color='green', linestyle='--', linewidth=2)
-            if len(inacc_ratios[inacc_ratios > 0]) > 0:
-                ax.axvline(np.median(inacc_ratios[inacc_ratios > 0]), color='red', linestyle='--', linewidth=2)
+            _plot_probability_ratio_histograms(ax, acc_ratios, inacc_ratios)
             ax.set_xlabel('P(methylation | context)')
             ax.set_ylabel('Number of contexts')
             ax.set_title('Emission Probability Distributions')
@@ -423,13 +463,14 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
 
         fig, ax = plt.subplots(figsize=(8, 5))
 
-        bins = np.linspace(0, 1, 51)
-        ax.hist(acc_probs['ratio'].values, bins=bins, alpha=0.6,
-               label=f'Accessible (n={acc.total_positions:,})',
-               color='forestgreen', edgecolor='white')
-        ax.hist(inacc_probs['ratio'].values, bins=bins, alpha=0.6,
-               label=f'Inaccessible (n={inacc.total_positions:,})',
-               color='firebrick', edgecolor='white')
+        _plot_probability_ratio_histograms(
+            ax,
+            acc_probs['ratio'].values,
+            inacc_probs['ratio'].values,
+            accessible_label=f'Accessible (n={acc.total_positions:,})',
+            inaccessible_label=f'Inaccessible (n={inacc.total_positions:,})',
+            show_positive_medians=False,
+        )
 
         ax.set_xlabel('P(methylation | context)', fontsize=12)
         ax.set_ylabel('Number of contexts', fontsize=12)

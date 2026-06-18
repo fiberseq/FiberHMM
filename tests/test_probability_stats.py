@@ -253,3 +253,49 @@ def test_positive_log10_observations_filters_zero_totals():
     logged = stats._positive_log10_observations([0, 9, 99])
 
     assert logged.round(3).tolist() == [1.0, 2.0]
+
+
+def test_probability_ratio_histograms_share_bins_colors_and_optional_medians():
+    class FakeAxis:
+        def __init__(self):
+            self.hist_calls = []
+            self.vlines = []
+
+        def hist(self, values, **kwargs):
+            self.hist_calls.append((values, kwargs))
+
+        def axvline(self, value, **kwargs):
+            self.vlines.append((value, kwargs))
+
+    ax = FakeAxis()
+    stats._plot_probability_ratio_histograms(
+        ax,
+        np.array([0.0, 0.2, 0.8]),
+        np.array([0.0, 0.1, 0.3]),
+    )
+
+    assert len(ax.hist_calls) == 2
+    np.testing.assert_array_equal(ax.hist_calls[0][0], [0.0, 0.2, 0.8])
+    np.testing.assert_allclose(ax.hist_calls[0][1]["bins"], np.linspace(0, 1, 51))
+    assert ax.hist_calls[0][1]["label"] == "Accessible"
+    assert ax.hist_calls[0][1]["color"] == "forestgreen"
+    assert ax.hist_calls[1][1]["label"] == "Inaccessible"
+    assert ax.hist_calls[1][1]["color"] == "firebrick"
+    assert ax.vlines == [
+        (0.5, {"color": "green", "linestyle": "--", "linewidth": 2}),
+        (0.2, {"color": "red", "linestyle": "--", "linewidth": 2}),
+    ]
+
+    no_median_ax = FakeAxis()
+    stats._plot_probability_ratio_histograms(
+        no_median_ax,
+        np.array([0.1]),
+        np.array([0.2]),
+        accessible_label="A",
+        inaccessible_label="B",
+        show_positive_medians=False,
+    )
+
+    assert no_median_ax.hist_calls[0][1]["label"] == "A"
+    assert no_median_ax.hist_calls[1][1]["label"] == "B"
+    assert no_median_ax.vlines == []
