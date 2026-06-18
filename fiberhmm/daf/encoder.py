@@ -103,6 +103,17 @@ class _DafEncodeSummaryRequest:
     elapsed: float
 
 
+@dataclass(frozen=True)
+class _DafProgressReportRequest:
+    total: int
+    reads_processed: int
+    elapsed: float
+    ct: int
+    ga: int
+    skipped: int
+    log: object
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -587,6 +598,20 @@ def _daf_progress_rate(reads_processed: int, elapsed: float):
     return reads_processed / elapsed
 
 
+def _print_daf_progress_from_request(
+    request: _DafProgressReportRequest,
+) -> None:
+    rate = _daf_progress_rate(request.reads_processed, request.elapsed)
+    if rate is None:
+        return
+    print(
+        f"  [{request.total:,} reads] {rate:,.0f} reads/sec "
+        f"(CT={request.ct:,} GA={request.ga:,} skip={request.skipped:,})",
+        file=request.log,
+    )
+    request.log.flush()
+
+
 def _print_daf_progress(
     total: int,
     reads_processed: int,
@@ -596,15 +621,17 @@ def _print_daf_progress(
     skipped: int,
     log,
 ) -> None:
-    rate = _daf_progress_rate(reads_processed, elapsed)
-    if rate is None:
-        return
-    print(
-        f"  [{total:,} reads] {rate:,.0f} reads/sec "
-        f"(CT={ct_count:,} GA={ga_count:,} skip={skipped:,})",
-        file=log,
+    _print_daf_progress_from_request(
+        _DafProgressReportRequest(
+            total=total,
+            reads_processed=reads_processed,
+            elapsed=elapsed,
+            ct=ct_count,
+            ga=ga_count,
+            skipped=skipped,
+            log=log,
+        )
     )
-    log.flush()
 
 
 def _print_daf_encode_summary(summary: dict, log) -> None:
@@ -738,14 +765,16 @@ def _maybe_print_daf_encode_progress(
 
     now = time.time()
     elapsed = now - last_progress
-    _print_daf_progress(
-        counts.total,
-        10000,
-        elapsed,
-        counts.ct,
-        counts.ga,
-        counts.skipped,
-        log,
+    _print_daf_progress_from_request(
+        _DafProgressReportRequest(
+            total=counts.total,
+            reads_processed=10000,
+            elapsed=elapsed,
+            ct=counts.ct,
+            ga=counts.ga,
+            skipped=counts.skipped,
+            log=log,
+        )
     )
     return now
 
