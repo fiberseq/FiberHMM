@@ -12,6 +12,7 @@ _SKIP_CHROM_PATTERNS = (
     'CHRUN_', 'UN_', 'SCAFFOLD', 'CONTIG',
     '_GL', '_KI', '_JH', '_KB',  # Common GenBank accession prefixes
 )
+_DROSOPHILA_CHROM_RE = re.compile(r'^[234][LR]?$')
 
 
 def _normalized_chromosome_name(chrom: str) -> str:
@@ -31,7 +32,7 @@ def _is_sex_or_mito_chromosome(chrom: str) -> bool:
 
 
 def _is_drosophila_chromosome(chrom: str) -> bool:
-    return re.match(r'^[234][LR]?$', chrom) is not None
+    return _DROSOPHILA_CHROM_RE.match(chrom) is not None
 
 
 def _is_c_elegans_chromosome(chrom: str) -> bool:
