@@ -1207,6 +1207,7 @@ def test_probability_output_path_helpers():
 
 def test_sample_set_bookkeeping_helpers():
     assert _max_reads_per_file(0, 3) == 0
+    assert _max_reads_per_file(10, 0) == 0
     assert _max_reads_per_file(10, 3) == 3
     assert _max_reads_per_file(2, 5) == 1
 

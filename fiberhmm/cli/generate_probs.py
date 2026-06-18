@@ -256,7 +256,7 @@ def _probability_counter_summary(counter: ContextCounter) -> dict:
 
 
 def _max_reads_per_file(max_reads: int, n_files: int) -> int:
-    if max_reads <= 0:
+    if max_reads <= 0 or n_files <= 0:
         return 0
     return max(1, max_reads // n_files)
 
