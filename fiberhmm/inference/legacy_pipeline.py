@@ -141,6 +141,24 @@ class _LegacyChunkResultsRequest:
     return_posteriors: bool
 
 
+@dataclass(frozen=True)
+class _ProcessAndWriteLegacyChunkRequest:
+    chunk_reads: list
+    chunk_read_objs: list
+    outbam: object
+    model: object
+    executor: object | None
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    with_scores: bool
+    return_posteriors: bool
+    write_msps: bool
+
+
 def _new_legacy_chunk_buffers() -> _LegacyChunkBuffers:
     return _LegacyChunkBuffers(fiber_reads=[], read_objs=[])
 
@@ -159,40 +177,68 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
     If return_posteriors=True, posterior_records carries the per-read
     records needed by the caller to write posteriors.
     """
+    return _process_and_write_chunk_from_request(
+        _ProcessAndWriteLegacyChunkRequest(
+            chunk_reads=chunk_reads,
+            chunk_read_objs=chunk_read_objs,
+            outbam=outbam,
+            model=model,
+            executor=executor,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+            return_posteriors=return_posteriors,
+            write_msps=write_msps,
+        )
+    )
 
-    chunk_result = _process_legacy_chunk_results(
-        chunk_reads,
-        model,
-        executor,
-        edge_trim,
-        circular,
-        mode,
-        context_size,
-        msp_min_size,
-        nuc_min_size,
-        with_scores,
-        return_posteriors,
+
+def _process_and_write_chunk_from_request(
+    request: _ProcessAndWriteLegacyChunkRequest,
+) -> _ProcessedLegacyChunk:
+    chunk_result = _process_legacy_chunk_results_from_request(
+        _LegacyChunkResultsRequest(
+            chunk_reads=request.chunk_reads,
+            model=request.model,
+            executor=request.executor,
+            edge_trim=request.edge_trim,
+            circular=request.circular,
+            mode=request.mode,
+            context_size=request.context_size,
+            msp_min_size=request.msp_min_size,
+            nuc_min_size=request.nuc_min_size,
+            with_scores=request.with_scores,
+            return_posteriors=request.return_posteriors,
+        )
     )
 
     # Write annotated reads
     write_counts = _write_processed_legacy_reads_from_request(
         _ProcessedLegacyReadsWriteRequest(
-            chunk_read_objs=chunk_read_objs,
+            chunk_read_objs=request.chunk_read_objs,
             results=chunk_result.results,
-            outbam=outbam,
-            with_scores=with_scores,
-            write_msps=write_msps,
+            outbam=request.outbam,
+            with_scores=request.with_scores,
+            write_msps=request.write_msps,
         )
     )
 
     # Return results for posteriors if requested
-    if return_posteriors:
+    if request.return_posteriors:
         return _ProcessedLegacyChunk(
             reads_with_footprints=write_counts.reads_with_footprints,
             no_footprints=write_counts.no_footprints,
             worker_failures=chunk_result.worker_failures,
             posterior_records=list(
-                zip(chunk_read_objs, chunk_reads, chunk_result.results),
+                zip(
+                    request.chunk_read_objs,
+                    request.chunk_reads,
+                    chunk_result.results,
+                ),
             ),
         )
     return _ProcessedLegacyChunk(

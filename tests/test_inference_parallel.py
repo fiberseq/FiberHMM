@@ -1106,6 +1106,112 @@ def test_process_direct_legacy_chunk_results_runs_single_read(monkeypatch):
     ]
 
 
+def test_process_and_write_chunk_uses_requests_and_records_posteriors(monkeypatch):
+    chunk_reads = ["fiber"]
+    chunk_read_objs = ["read"]
+    outbam = object()
+    model = object()
+    executor = object()
+    result_calls = []
+    write_calls = []
+
+    def fake_process_results(request):
+        result_calls.append(request)
+        return legacy_pipeline._LegacyChunkResult(
+            results=[{"ns": [1]}],
+            worker_failures=2,
+        )
+
+    def fake_write_reads(request):
+        write_calls.append(request)
+        return legacy_pipeline._LegacyWriteCounts(
+            reads_with_footprints=1,
+            no_footprints=0,
+        )
+
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_process_legacy_chunk_results_from_request",
+        fake_process_results,
+    )
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_write_processed_legacy_reads_from_request",
+        fake_write_reads,
+    )
+    request = legacy_pipeline._ProcessAndWriteLegacyChunkRequest(
+        chunk_reads=chunk_reads,
+        chunk_read_objs=chunk_read_objs,
+        outbam=outbam,
+        model=model,
+        executor=executor,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=True,
+        write_msps=False,
+    )
+
+    assert legacy_pipeline._process_and_write_chunk_from_request(
+        request,
+    ) == legacy_pipeline._ProcessedLegacyChunk(
+        reads_with_footprints=1,
+        no_footprints=0,
+        worker_failures=2,
+        posterior_records=[("read", "fiber", {"ns": [1]})],
+    )
+    assert result_calls == [
+        legacy_pipeline._LegacyChunkResultsRequest(
+            chunk_reads=chunk_reads,
+            model=model,
+            executor=executor,
+            edge_trim=11,
+            circular=True,
+            mode="daf",
+            context_size=5,
+            msp_min_size=61,
+            nuc_min_size=87,
+            with_scores=True,
+            return_posteriors=True,
+        )
+    ]
+    assert write_calls == [
+        legacy_pipeline._ProcessedLegacyReadsWriteRequest(
+            chunk_read_objs=chunk_read_objs,
+            results=[{"ns": [1]}],
+            outbam=outbam,
+            with_scores=True,
+            write_msps=False,
+        )
+    ]
+
+    assert legacy_pipeline._process_and_write_chunk(
+        chunk_reads,
+        chunk_read_objs,
+        outbam,
+        model,
+        executor,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=False,
+        write_msps=False,
+    ) == legacy_pipeline._ProcessedLegacyChunk(
+        reads_with_footprints=1,
+        no_footprints=0,
+        worker_failures=2,
+        posterior_records=None,
+    )
+
+
 def test_process_legacy_chunk_and_record_updates_counts_and_posteriors(monkeypatch):
     chunk_reads = ["fiber"]
     chunk_read_objs = ["read"]
