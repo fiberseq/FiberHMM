@@ -121,6 +121,36 @@ class _BamIndexRequest:
     bam_size_gb: float
 
 
+def _bam_sort_request(
+    output_bam: str,
+    sorted_bam: str,
+    threads: int,
+    verbose: bool,
+    bam_size_gb: float,
+) -> _BamSortRequest:
+    return _BamSortRequest(
+        output_bam=output_bam,
+        sorted_bam=sorted_bam,
+        threads=threads,
+        verbose=verbose,
+        bam_size_gb=bam_size_gb,
+    )
+
+
+def _bam_index_request(
+    output_bam: str,
+    threads: int,
+    verbose: bool,
+    bam_size_gb: float,
+) -> _BamIndexRequest:
+    return _BamIndexRequest(
+        output_bam=output_bam,
+        threads=threads,
+        verbose=verbose,
+        bam_size_gb=bam_size_gb,
+    )
+
+
 _BED12_RECORD_COLUMNS = (
     'chrom',
     'chromStart',
@@ -321,13 +351,7 @@ def _sort_bam_with_fallback(
     bam_size_gb: float,
 ) -> None:
     _sort_bam_with_fallback_from_request(
-        _BamSortRequest(
-            output_bam=output_bam,
-            sorted_bam=sorted_bam,
-            threads=threads,
-            verbose=verbose,
-            bam_size_gb=bam_size_gb,
-        )
+        _bam_sort_request(output_bam, sorted_bam, threads, verbose, bam_size_gb)
     )
 
 
@@ -340,12 +364,12 @@ def _sort_bam_to_temp_and_replace(
 ) -> None:
     try:
         _sort_bam_with_fallback_from_request(
-            _BamSortRequest(
-                output_bam=output_bam,
-                sorted_bam=sorted_bam,
-                threads=threads,
-                verbose=verbose,
-                bam_size_gb=bam_size_gb,
+            _bam_sort_request(
+                output_bam,
+                sorted_bam,
+                threads,
+                verbose,
+                bam_size_gb,
             )
         )
         os.replace(sorted_bam, output_bam)
@@ -383,12 +407,7 @@ def _index_sorted_bam(
     bam_size_gb: float,
 ) -> None:
     _index_sorted_bam_from_request(
-        _BamIndexRequest(
-            output_bam=output_bam,
-            threads=threads,
-            verbose=verbose,
-            bam_size_gb=bam_size_gb,
-        )
+        _bam_index_request(output_bam, threads, verbose, bam_size_gb)
     )
 
 
@@ -459,12 +478,7 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
         output_bam, sorted_bam, threads, verbose, bam_size_gb,
     )
     _index_sorted_bam_from_request(
-        _BamIndexRequest(
-            output_bam=output_bam,
-            threads=threads,
-            verbose=verbose,
-            bam_size_gb=bam_size_gb,
-        )
+        _bam_index_request(output_bam, threads, verbose, bam_size_gb)
     )
 
 
