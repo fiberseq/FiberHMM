@@ -464,6 +464,34 @@ def test_convert_to_bigbed_sorts_without_shell(monkeypatch, tmp_path):
     assert not sorted_bed.exists()
 
 
+def test_convert_to_bigbed_removes_failed_output(monkeypatch, tmp_path):
+    bed = tmp_path / "calls.bed"
+    chrom_sizes = tmp_path / "chrom.sizes"
+    output_bb = tmp_path / "calls.bb"
+    sorted_bed = Path(str(bed) + ".sorted")
+    bed.write_text("chr1\t10\t20\n")
+    chrom_sizes.write_text("chr1\t100\n")
+    output_bb.write_text("stale")
+
+    monkeypatch.setattr(bam_output.shutil, "which", lambda name: f"/bin/{name}")
+
+    def fake_run(cmd, *args, **kwargs):
+        if cmd[0] == "sort":
+            sorted_bed.write_text(bed.read_text())
+            return subprocess.CompletedProcess(cmd, 0)
+        if cmd[0] == "bedToBigBed":
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="bad input")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(bam_output.subprocess, "run", fake_run)
+
+    assert not bam_output.convert_to_bigbed(
+        str(bed), str(chrom_sizes), str(output_bb),
+    )
+    assert not output_bb.exists()
+    assert not sorted_bed.exists()
+
+
 def test_convert_to_bigbed_with_schema_falls_back_without_shell(monkeypatch, tmp_path):
     bed = tmp_path / "calls.bed"
     chrom_sizes = tmp_path / "chrom.sizes"

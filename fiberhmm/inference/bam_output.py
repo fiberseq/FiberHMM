@@ -542,6 +542,15 @@ def _run_bed_to_bigbed(
     )
 
 
+def _remove_failed_bigbed_output(output_bb: str) -> None:
+    if not os.path.exists(output_bb):
+        return
+    try:
+        os.remove(output_bb)
+    except OSError as e:
+        print(f"Warning: Could not remove failed bigBed output {output_bb}: {e}")
+
+
 def _bed_to_bigbed_available() -> bool:
     if not shutil.which('bedToBigBed'):
         print("Warning: bedToBigBed not found in PATH. Skipping bigBed conversion.")
@@ -564,6 +573,7 @@ def _convert_sorted_bed_to_bigbed(
         return True
 
     print(f"bedToBigBed error: {result.stderr}")
+    _remove_failed_bigbed_output(output_bb)
     return False
 
 
@@ -595,6 +605,7 @@ def _convert_bigbed_score_fallback(
     print("Trying fallback to standard BED12...")
     result = _run_bed_to_bigbed(sorted_bed, chrom_sizes, output_bb)
     if result.returncode != 0:
+        _remove_failed_bigbed_output(output_bb)
         return False
 
     print("Fallback succeeded (scores in BED only, not bigBed)")
