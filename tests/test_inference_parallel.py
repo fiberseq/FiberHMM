@@ -2242,11 +2242,15 @@ def test_drain_oldest_with_recorder_records_failures_and_order():
         )
     ])
 
-    streaming_drain._drain_oldest_with_recorder(
-        inflight,
-        outbam,
-        counters,
-        lambda read, got_result: recorded.append((read, got_result)),
+    streaming_drain._drain_oldest_with_recorder_from_request(
+        streaming_drain._DrainOldestWithRecorderRequest(
+            inflight=inflight,
+            outbam=outbam,
+            counters=counters,
+            record_result=lambda read, got_result: recorded.append(
+                (read, got_result)
+            ),
+        )
     )
 
     assert not inflight

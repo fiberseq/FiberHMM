@@ -53,6 +53,14 @@ class _DrainChunkInOrderRequest:
     record_result: object
 
 
+@dataclass(frozen=True)
+class _DrainOldestWithRecorderRequest:
+    inflight: object
+    outbam: object
+    counters: object
+    record_result: object
+
+
 def _increment_counter(counters, key: str, amount: int = 1) -> None:
     counters[key] = counters.get(key, 0) + amount
 
@@ -186,17 +194,32 @@ def _drain_chunk_in_order_from_request(
         _write_passthrough(request.outbam, read_obj, request.counters)
 
 
+def _drain_oldest_with_recorder_from_request(
+    request: _DrainOldestWithRecorderRequest,
+) -> None:
+    chunk = _pop_inflight_chunk(request.inflight)
+    _record_worker_failures(request.counters, chunk.worker_failures)
+    _drain_chunk_in_order_from_request(
+        _DrainChunkInOrderRequest(
+            chunk_read_objs=chunk.read_objs,
+            chunk_items=chunk.items,
+            chunk_skip_flags=chunk.skip_flags,
+            results=chunk.results,
+            outbam=request.outbam,
+            counters=request.counters,
+            record_result=request.record_result,
+        )
+    )
+
+
 def _drain_oldest_with_recorder(inflight, outbam, counters, record_result) -> None:
-    chunk = _pop_inflight_chunk(inflight)
-    _record_worker_failures(counters, chunk.worker_failures)
-    _drain_chunk_in_order(
-        chunk.read_objs,
-        chunk.items,
-        chunk.skip_flags,
-        chunk.results,
-        outbam,
-        counters,
-        record_result,
+    _drain_oldest_with_recorder_from_request(
+        _DrainOldestWithRecorderRequest(
+            inflight=inflight,
+            outbam=outbam,
+            counters=counters,
+            record_result=record_result,
+        )
     )
 
 
