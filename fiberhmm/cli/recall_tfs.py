@@ -116,6 +116,17 @@ class _RecallWorkerConfig:
 
 
 @dataclass(frozen=True)
+class _RecallSingleThreadRequest:
+    bam_in: object
+    bam_out: object
+    header_text: str | None
+    worker_config: _RecallWorkerConfig
+    also_write_legacy: bool
+    downstream_compat: bool
+    max_reads: int
+
+
+@dataclass(frozen=True)
 class _RecallApplyResultRequest:
     read: object
     result: object
@@ -415,30 +426,56 @@ def _write_recall_result(
     )
 
 
-def _single_thread_loop(bam_in, bam_out, _header_text,
-                        llr_hit, llr_miss, mode, k,
-                        min_llr, min_opps, unify_threshold,
-                        also_write_legacy, downstream_compat, max_reads):
+def _single_thread_loop_from_request(
+    request: _RecallSingleThreadRequest,
+):
     """Single-threaded path.  No IPC — process reads directly."""
-    _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold)
+    _worker_init_from_config(request.worker_config)
     n_reads = 0
     total = _new_stats()
-    for read in bam_in:
-        if max_reads and n_reads >= max_reads:
+    for read in request.bam_in:
+        if request.max_reads and n_reads >= request.max_reads:
             break
-        result, stats = _process_payload_safely(_make_payload(read, mode))
+        result, stats = _process_payload_safely(
+            _make_payload(read, request.worker_config.mode),
+        )
         _write_recall_result_from_request(
             _RecallWriteResultRequest(
                 read=read,
                 result=result,
-                bam_out=bam_out,
-                also_write_legacy=also_write_legacy,
-                downstream_compat=downstream_compat,
+                bam_out=request.bam_out,
+                also_write_legacy=request.also_write_legacy,
+                downstream_compat=request.downstream_compat,
             )
         )
         n_reads += 1
         _add_stats(total, stats)
     return _stats_summary(n_reads, total)
+
+
+def _single_thread_loop(bam_in, bam_out, header_text,
+                        llr_hit, llr_miss, mode, k,
+                        min_llr, min_opps, unify_threshold,
+                        also_write_legacy, downstream_compat, max_reads):
+    return _single_thread_loop_from_request(
+        _RecallSingleThreadRequest(
+            bam_in=bam_in,
+            bam_out=bam_out,
+            header_text=header_text,
+            worker_config=_RecallWorkerConfig(
+                llr_hit=llr_hit,
+                llr_miss=llr_miss,
+                mode=mode,
+                k=k,
+                min_llr=min_llr,
+                min_opps=min_opps,
+                unify_threshold=unify_threshold,
+            ),
+            also_write_legacy=also_write_legacy,
+            downstream_compat=downstream_compat,
+            max_reads=max_reads,
+        ),
+    )
 
 
 def _submit_recall_chunk(pool, pending, reads_chunk, payloads_chunk):

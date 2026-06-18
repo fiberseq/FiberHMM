@@ -579,23 +579,73 @@ def test_recall_tfs_single_thread_passes_failed_reads_through(monkeypatch):
         lambda request: applied.append((request.read.query_name, request.result)),
     )
 
+    assert recall_tfs._single_thread_loop_from_request(
+        recall_tfs._RecallSingleThreadRequest(
+            bam_in=reads,
+            bam_out=FakeOut(),
+            header_text=None,
+            worker_config=recall_tfs._RecallWorkerConfig(
+                llr_hit=None,
+                llr_miss=None,
+                mode="pacbio-fiber",
+                k=3,
+                min_llr=5.0,
+                min_opps=3,
+                unify_threshold=90,
+            ),
+            also_write_legacy=True,
+            downstream_compat=False,
+            max_reads=0,
+        )
+    ) == recall_tfs._RecallProcessingSummary(2, 1, 2, 3, 1)
+    assert written == reads
+    assert applied == [("ok", "result")]
+
+
+def test_recall_tfs_single_thread_loop_adapter_builds_request(monkeypatch):
+    sentinel = object()
+    calls = []
+
+    monkeypatch.setattr(
+        recall_tfs,
+        "_single_thread_loop_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
     assert recall_tfs._single_thread_loop(
-        reads,
-        FakeOut(),
-        None,
-        None,
-        None,
-        "pacbio-fiber",
-        3,
-        5.0,
+        "bam-in",
+        "bam-out",
+        "header",
+        "hit",
+        "miss",
+        "daf",
+        5,
+        4.5,
         3,
         90,
         True,
         False,
-        0,
-    ) == recall_tfs._RecallProcessingSummary(2, 1, 2, 3, 1)
-    assert written == reads
-    assert applied == [("ok", "result")]
+        10,
+    ) is sentinel
+    assert calls == [
+        recall_tfs._RecallSingleThreadRequest(
+            bam_in="bam-in",
+            bam_out="bam-out",
+            header_text="header",
+            worker_config=recall_tfs._RecallWorkerConfig(
+                llr_hit="hit",
+                llr_miss="miss",
+                mode="daf",
+                k=5,
+                min_llr=4.5,
+                min_opps=3,
+                unify_threshold=90,
+            ),
+            also_write_legacy=True,
+            downstream_compat=False,
+            max_reads=10,
+        ),
+    ]
 
 
 def test_recall_tfs_closes_bams_when_processing_fails(monkeypatch):
