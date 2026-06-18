@@ -1770,31 +1770,13 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
     print()
 
 
-def _build_extract_tags_parser():
-    parser = argparse.ArgumentParser(
-        description='Extract tags from FiberHMM-tagged BAMs to BED12/bigBed',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-    # Default: extract all types to bigBed in same directory as input
-    python extract_tags.py -i tagged.bam
-
-    # Extract only nucleosomes
-    python extract_tags.py -i tagged.bam --nucleosome
-
-    # Extract to specific directory with 8 cores
-    python extract_tags.py -i tagged.bam -o output/ -c 8
-
-    # Keep BED files (in addition to bigBed)
-    python extract_tags.py -i tagged.bam --keep-bed
-        """
-    )
-
+def _add_extract_input_arguments(parser) -> None:
     parser.add_argument('-i', '--input', required=True, help='Input tagged BAM file')
     parser.add_argument('-o', '--outdir', default=None, help='Output directory (default: same as input)')
     parser.add_argument('-c', '--cores', type=int, default=1, help='Number of CPU cores')
 
-    # Tag types (default: all)
+
+def _add_extract_type_arguments(parser) -> None:
     parser.add_argument('--nucleosome', '--footprint', dest='nucleosome',
                         action='store_true',
                         help='Extract nucleosomes (ns/nl or MA nuc tags). '
@@ -1822,13 +1804,15 @@ Examples:
                              '0 = R/GA-dea, 1 = Y/CT-dea, matching FiberBrowser flavor codes.')
     parser.add_argument('--all', action='store_true', help='Extract all tag types (default if none specified)')
 
-    # Output options (default: bigbed)
+
+def _add_extract_output_arguments(parser) -> None:
     parser.add_argument('--bed-only', action='store_true', help='Output BED only (no bigBed)')
     parser.add_argument('--keep-bed', action='store_true', help='Keep BED files when creating bigBed')
     # Legacy flag for compatibility
     parser.add_argument('--bigbed', action='store_true', help=argparse.SUPPRESS)
 
-    # Filtering
+
+def _add_extract_filter_arguments(parser) -> None:
     parser.add_argument('-q', '--min-mapq', type=int, default=0, help='Min mapping quality (default: 0, no filtering)')
     parser.add_argument('-p', '--prob-threshold', type=int, default=125,
                         help='Min probability for m6a/m5c (0-255)')
@@ -1852,11 +1836,37 @@ Examples:
                              'Default: BAM basename stem. Lets downstream tools match '
                              'a bigBed to its source without filename parsing.')
 
-    # Region options
+
+def _add_extract_region_arguments(parser) -> None:
     parser.add_argument('--region-size', type=int, default=10_000_000, help='Region size for parallel')
     parser.add_argument('--skip-scaffolds', action='store_true', help='Skip scaffold chromosomes')
     parser.add_argument('--chroms', type=str, help='Comma-separated chromosomes to process')
 
+
+def _build_extract_tags_parser():
+    parser = argparse.ArgumentParser(
+        description='Extract tags from FiberHMM-tagged BAMs to BED12/bigBed',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    # Default: extract all types to bigBed in same directory as input
+    python extract_tags.py -i tagged.bam
+
+    # Extract only nucleosomes
+    python extract_tags.py -i tagged.bam --nucleosome
+
+    # Extract to specific directory with 8 cores
+    python extract_tags.py -i tagged.bam -o output/ -c 8
+
+    # Keep BED files (in addition to bigBed)
+    python extract_tags.py -i tagged.bam --keep-bed
+        """
+    )
+    _add_extract_input_arguments(parser)
+    _add_extract_type_arguments(parser)
+    _add_extract_output_arguments(parser)
+    _add_extract_filter_arguments(parser)
+    _add_extract_region_arguments(parser)
     return parser
 
 

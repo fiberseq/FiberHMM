@@ -436,6 +436,43 @@ def test_build_extract_tags_parser_defaults_and_aliases():
     assert args.min_tq == 50
 
 
+def test_build_extract_tags_parser_output_filter_and_region_toggles():
+    parser = extract_tags._build_extract_tags_parser()
+
+    args = parser.parse_args([
+        "-i",
+        "input.bam",
+        "--all",
+        "--keep-bed",
+        "--no-block-scores",
+        "--no-scores",
+        "--circular-groups",
+        "--sample-name",
+        "sample-a",
+        "--region-size",
+        "12345",
+        "--skip-scaffolds",
+        "--min-mapq",
+        "20",
+        "--prob-threshold",
+        "180",
+        "--min-tq",
+        "80",
+    ])
+
+    assert args.all is True
+    assert args.keep_bed is True
+    assert args.block_scores is False
+    assert args.no_scores is True
+    assert args.circular_groups is True
+    assert args.sample_name == "sample-a"
+    assert args.region_size == 12345
+    assert args.skip_scaffolds is True
+    assert args.min_mapq == 20
+    assert args.prob_threshold == 180
+    assert args.min_tq == 80
+
+
 def test_extract_cli_setup_helpers_build_paths_and_filters(tmp_path):
     input_bam = tmp_path / "sample_footprints.bam"
     input_bam.write_text("")
