@@ -134,6 +134,15 @@ class _MaGroupedRowRequest:
 
 
 @dataclass(frozen=True)
+class _LegacyIntervalRowWriteRequest:
+    read: object
+    bed_out: object
+    blocks: object
+    with_scores: bool
+    extra_columns: object = ()
+
+
+@dataclass(frozen=True)
 class _WrappedGroupSpan:
     start: int
     length: int
@@ -495,21 +504,36 @@ def _mean_block_score(blocks, with_scores: bool) -> int:
 
 def _write_legacy_interval_row(read, bed_out, blocks, with_scores: bool,
                                extra_columns=()):
+    _write_legacy_interval_row_from_request(
+        _LegacyIntervalRowWriteRequest(
+            read=read,
+            bed_out=bed_out,
+            blocks=blocks,
+            with_scores=with_scores,
+            extra_columns=extra_columns,
+        ),
+    )
+
+
+def _write_legacy_interval_row_from_request(
+    request: _LegacyIntervalRowWriteRequest,
+) -> None:
+    blocks = request.blocks
     chrom_start = blocks[0][0]
     chrom_end = blocks[-1][1]
-    mean_score = _mean_block_score(blocks, with_scores)
-    strand = '-' if read.is_reverse else '+'
+    mean_score = _mean_block_score(blocks, request.with_scores)
+    strand = '-' if request.read.is_reverse else '+'
     row = _bed12_row(
-        read.reference_name,
+        request.read.reference_name,
         chrom_start,
         chrom_end,
-        read.query_name,
+        request.read.query_name,
         mean_score,
         strand,
         [(s, e) for s, e, _ in blocks],
-        extra_columns,
+        request.extra_columns,
     )
-    bed_out.write(row + "\n")
+    request.bed_out.write(row + "\n")
 
 
 def _ma_annotation_blocks(target_name: str, annotations, query_to_ref, min_tq: int):

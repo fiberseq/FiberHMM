@@ -398,6 +398,37 @@ def test_ma_annotation_blocks_filters_empty_blocks():
     ]
 
 
+def test_write_legacy_interval_row_request_writes_bed12():
+    read = _FakeRead(read_id='read-a', is_reverse=True)
+    blocks = [(100, 110, 20), (120, 130, 80)]
+    buf = io.StringIO()
+
+    extract_tags._write_legacy_interval_row_from_request(
+        extract_tags._LegacyIntervalRowWriteRequest(
+            read=read,
+            bed_out=buf,
+            blocks=blocks,
+            with_scores=True,
+            extra_columns=['extra'],
+        )
+    )
+
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    assert cols[:6] == ['chr1', '100', '130', 'read-a', '50', '-']
+    assert cols[9:12] == ['2', '10,10', '0,20']
+    assert cols[12:] == ['extra']
+
+    adapter_buf = io.StringIO()
+    extract_tags._write_legacy_interval_row(
+        read,
+        adapter_buf,
+        blocks,
+        with_scores=True,
+        extra_columns=['extra'],
+    )
+    assert adapter_buf.getvalue() == buf.getvalue()
+
+
 def test_write_ma_grouped_row_sorts_blocks_and_writes_score_columns():
     read = _FakeRead(read_id='read-a', ref_start=1_000)
     blocks = [
