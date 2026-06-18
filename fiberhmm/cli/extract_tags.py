@@ -124,6 +124,16 @@ class _MaAnnotationBlockRequest:
 
 
 @dataclass(frozen=True)
+class _MaGroupedRowRequest:
+    read: object
+    bed_out: object
+    target_name: str
+    blocks: object
+    with_scores: bool
+    block_scores: bool
+
+
+@dataclass(frozen=True)
 class _WrappedGroupSpan:
     start: int
     length: int
@@ -548,6 +558,30 @@ def _write_ma_circular_rows(
     return len(blocks)
 
 
+def _write_ma_grouped_row_from_request(
+    request: _MaGroupedRowRequest,
+) -> int:
+    blocks = sorted(request.blocks, key=lambda block: block.ref_start)
+    chrom_start = blocks[0].ref_start
+    chrom_end = blocks[-1].ref_end
+    mean_score = _mean_block_score(blocks, request.with_scores)
+    extra = []
+    if request.block_scores:
+        extra.extend(_ma_block_score_columns(request.target_name, blocks))
+    row = _bed12_row(
+        request.read.reference_name,
+        chrom_start,
+        chrom_end,
+        request.read.query_name,
+        mean_score,
+        '-' if request.read.is_reverse else '+',
+        [(block.ref_start, block.ref_end) for block in blocks],
+        extra,
+    )
+    request.bed_out.write(row + "\n")
+    return len(blocks)
+
+
 def _write_ma_grouped_row(
     read,
     bed_out,
@@ -556,25 +590,16 @@ def _write_ma_grouped_row(
     with_scores: bool,
     block_scores: bool,
 ) -> int:
-    blocks = sorted(blocks, key=lambda block: block.ref_start)
-    chrom_start = blocks[0].ref_start
-    chrom_end = blocks[-1].ref_end
-    mean_score = _mean_block_score(blocks, with_scores)
-    extra = []
-    if block_scores:
-        extra.extend(_ma_block_score_columns(target_name, blocks))
-    row = _bed12_row(
-        read.reference_name,
-        chrom_start,
-        chrom_end,
-        read.query_name,
-        mean_score,
-        '-' if read.is_reverse else '+',
-        [(block.ref_start, block.ref_end) for block in blocks],
-        extra,
+    return _write_ma_grouped_row_from_request(
+        _MaGroupedRowRequest(
+            read=read,
+            bed_out=bed_out,
+            target_name=target_name,
+            blocks=blocks,
+            with_scores=with_scores,
+            block_scores=block_scores,
+        )
     )
-    bed_out.write(row + "\n")
-    return len(blocks)
 
 
 def _extract_ma_interval_type(
@@ -605,8 +630,15 @@ def _extract_ma_interval_type(
             read, bed_out, target_name, blocks, with_scores, block_scores,
         )
 
-    return _write_ma_grouped_row(
-        read, bed_out, target_name, blocks, with_scores, block_scores,
+    return _write_ma_grouped_row_from_request(
+        _MaGroupedRowRequest(
+            read=read,
+            bed_out=bed_out,
+            target_name=target_name,
+            blocks=blocks,
+            with_scores=with_scores,
+            block_scores=block_scores,
+        )
     )
 
 

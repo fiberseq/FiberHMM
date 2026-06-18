@@ -406,14 +406,27 @@ def test_write_ma_grouped_row_sorts_blocks_and_writes_score_columns():
     ]
     buf = io.StringIO()
 
-    assert extract_tags._write_ma_grouped_row(
-        read, buf, 'tf', blocks, with_scores=True, block_scores=True,
+    assert extract_tags._write_ma_grouped_row_from_request(
+        extract_tags._MaGroupedRowRequest(
+            read=read,
+            bed_out=buf,
+            target_name='tf',
+            blocks=blocks,
+            with_scores=True,
+            block_scores=True,
+        )
     ) == 2
 
     cols = buf.getvalue().rstrip('\n').split('\t')
     assert cols[:6] == ['chr1', '1000', '1015', 'read-a', '60', '+']
     assert cols[9:12] == ['2', '3,5', '0,10']
     assert cols[12:15] == ['30,90', '3,1', '4,2']
+
+    adapter_buf = io.StringIO()
+    assert extract_tags._write_ma_grouped_row(
+        read, adapter_buf, 'tf', blocks, with_scores=True, block_scores=True,
+    ) == 2
+    assert adapter_buf.getvalue() == buf.getvalue()
 
 
 def test_ma_circular_row_helpers_build_extra_columns_and_names():
