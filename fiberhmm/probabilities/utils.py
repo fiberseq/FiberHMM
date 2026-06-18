@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Set, Tuple
 
 # Reverse complement lookup
-_RC_TABLE = str.maketrans('ACGT', 'TGCA')
+_RC_TABLE = str.maketrans('ACGTacgtNn', 'TGCAtgcaNn')
 _FIBER_PROBABILITY_MODES = ('pacbio-fiber', 'nanopore-fiber')
 
 

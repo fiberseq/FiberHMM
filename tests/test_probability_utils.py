@@ -23,6 +23,7 @@ from fiberhmm.probabilities.utils import (
 def test_reverse_complement_preserves_existing_base_mapping():
     assert reverse_complement("ACGT") == "ACGT"
     assert reverse_complement("TCA") == "TGA"
+    assert reverse_complement("acgtnN") == "Nnacgt"
 
 
 def test_detect_strand_and_base_for_fiber_modes():
