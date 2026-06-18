@@ -379,10 +379,8 @@ def test_finalize_daf_encode_run_writes_summary_and_finalizes_output(monkeypatch
     monkeypatch.setattr(encoder.time, "time", lambda: 15.0)
     monkeypatch.setattr(
         encoder,
-        "_maybe_finalize_daf_output",
-        lambda output_bam, io_threads, got_log: calls.append(
-            (output_bam, io_threads, got_log)
-        ),
+        "_maybe_finalize_daf_output_from_request",
+        lambda request: calls.append(request),
     )
 
     summary = encoder._finalize_daf_encode_run_from_request(
@@ -398,7 +396,13 @@ def test_finalize_daf_encode_run_writes_summary_and_finalizes_output(monkeypatch
     assert summary["elapsed"] == 5.0
     assert summary["mean_deam_rate"] == 0.03
     assert "fiberhmm-daf-encode summary" in log.getvalue()
-    assert calls == [("out.bam", 3, log)]
+    assert calls == [
+        encoder._DafOutputFinalizationRequest(
+            output_bam="out.bam",
+            io_threads=3,
+            log=log,
+        ),
+    ]
 
 
 def test_finalize_daf_encode_run_adapter_builds_request(monkeypatch):
@@ -919,13 +923,40 @@ def test_maybe_finalize_daf_output_sorts_only_existing_files(monkeypatch, tmp_pa
     log = io.StringIO()
     output_bam = tmp_path / "encoded.bam"
 
-    encoder._maybe_finalize_daf_output("-", 4, log)
-    encoder._maybe_finalize_daf_output(str(output_bam), 4, log)
+    encoder._maybe_finalize_daf_output_from_request(
+        encoder._DafOutputFinalizationRequest("-", 4, log)
+    )
+    encoder._maybe_finalize_daf_output_from_request(
+        encoder._DafOutputFinalizationRequest(str(output_bam), 4, log)
+    )
     output_bam.write_bytes(b"bam")
-    encoder._maybe_finalize_daf_output(str(output_bam), 4, log)
+    encoder._maybe_finalize_daf_output_from_request(
+        encoder._DafOutputFinalizationRequest(str(output_bam), 4, log)
+    )
 
     assert calls == [(str(output_bam), True, 4)]
     assert "Finalizing output BAM" in log.getvalue()
+
+
+def test_maybe_finalize_daf_output_adapter_builds_request(monkeypatch):
+    calls = []
+    log = io.StringIO()
+
+    monkeypatch.setattr(
+        encoder,
+        "_maybe_finalize_daf_output_from_request",
+        lambda request: calls.append(request),
+    )
+
+    encoder._maybe_finalize_daf_output("out.bam", 4, log)
+
+    assert calls == [
+        encoder._DafOutputFinalizationRequest(
+            output_bam="out.bam",
+            io_threads=4,
+            log=log,
+        ),
+    ]
 
 
 def test_aligned_pairs_from_fasta_fetches_reference_span_once():

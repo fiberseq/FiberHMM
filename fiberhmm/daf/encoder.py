@@ -202,6 +202,13 @@ class _DafEncodeFinalizationRequest:
     log: object
 
 
+@dataclass(frozen=True)
+class _DafOutputFinalizationRequest:
+    output_bam: object
+    io_threads: int
+    log: object
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -1035,12 +1042,25 @@ def _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta) -> None:
     )
 
 
-def _maybe_finalize_daf_output(output_bam, io_threads: int, log) -> None:
-    if output_bam == "-" or not os.path.isfile(output_bam):
+def _maybe_finalize_daf_output_from_request(
+    request: _DafOutputFinalizationRequest,
+) -> None:
+    if request.output_bam == "-" or not os.path.isfile(request.output_bam):
         return
 
-    print("\nFinalizing output BAM...", file=log)
-    _sort_and_index_bam(output_bam, verbose=True, threads=io_threads)
+    print("\nFinalizing output BAM...", file=request.log)
+    _sort_and_index_bam(request.output_bam, verbose=True,
+                        threads=request.io_threads)
+
+
+def _maybe_finalize_daf_output(output_bam, io_threads: int, log) -> None:
+    _maybe_finalize_daf_output_from_request(
+        _DafOutputFinalizationRequest(
+            output_bam=output_bam,
+            io_threads=io_threads,
+            log=log,
+        ),
+    )
 
 
 def _open_daf_encode_handles_from_request(
@@ -1093,10 +1113,12 @@ def _finalize_daf_encode_run_from_request(
         time.time() - request.start_time,
     )
     _print_daf_encode_summary(summary, request.log)
-    _maybe_finalize_daf_output(
-        request.output_bam,
-        request.io_threads,
-        request.log,
+    _maybe_finalize_daf_output_from_request(
+        _DafOutputFinalizationRequest(
+            output_bam=request.output_bam,
+            io_threads=request.io_threads,
+            log=request.log,
+        ),
     )
     return summary
 
