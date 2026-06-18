@@ -242,6 +242,22 @@ class _LoadedApplyModel:
     mode: str
 
 
+@dataclass(frozen=True)
+class _ApplyRuntime:
+    model_path: str
+    train_rids: set
+    mode: str
+    context_size: int
+    msp_min_size: int
+    with_scores: bool
+    dataset: str
+    db_path: str | None
+    chroms_set: set[str] | None
+    use_streaming: bool
+    process_unmapped: bool
+    output_bam: str
+
+
 def _load_apply_model_with_summary(model_path: str):
     print(f"Loading model from {model_path}")
     model, model_context_size, model_mode = load_model_with_metadata(model_path)
@@ -548,7 +564,7 @@ def _prepare_apply_io(args):
     return stdout_mode, n_cores
 
 
-def _resolve_apply_runtime(args, n_cores: int, stdout_mode: bool) -> dict:
+def _resolve_apply_runtime(args, n_cores: int, stdout_mode: bool) -> _ApplyRuntime:
     model_path = _resolve_model_path(args)
 
     # Load model with metadata
@@ -603,20 +619,20 @@ def _resolve_apply_runtime(args, n_cores: int, stdout_mode: bool) -> dict:
     # === MAIN PROCESSING ===
     output_bam = _resolve_output_bam(args, dataset, stdout_mode)
 
-    return {
-        'model_path': model_path,
-        'train_rids': train_rids,
-        'mode': mode,
-        'context_size': context_size,
-        'msp_min_size': msp_min_size,
-        'with_scores': with_scores,
-        'dataset': dataset,
-        'db_path': db_path,
-        'chroms_set': chroms_set,
-        'use_streaming': use_streaming,
-        'process_unmapped': process_unmapped,
-        'output_bam': output_bam,
-    }
+    return _ApplyRuntime(
+        model_path=model_path,
+        train_rids=train_rids,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        with_scores=with_scores,
+        dataset=dataset,
+        db_path=db_path,
+        chroms_set=chroms_set,
+        use_streaming=use_streaming,
+        process_unmapped=process_unmapped,
+        output_bam=output_bam,
+    )
 
 
 def main():
@@ -629,25 +645,25 @@ def main():
     runtime = _resolve_apply_runtime(args, n_cores, stdout_mode)
     _run_apply_processing(
         args,
-        runtime['output_bam'],
-        runtime['model_path'],
-        runtime['train_rids'],
-        runtime['mode'],
-        runtime['context_size'],
-        runtime['msp_min_size'],
-        runtime['with_scores'],
+        runtime.output_bam,
+        runtime.model_path,
+        runtime.train_rids,
+        runtime.mode,
+        runtime.context_size,
+        runtime.msp_min_size,
+        runtime.with_scores,
         n_cores,
-        runtime['chroms_set'],
-        runtime['use_streaming'],
-        runtime['process_unmapped'],
+        runtime.chroms_set,
+        runtime.use_streaming,
+        runtime.process_unmapped,
         stdout_mode,
     )
     _finalize_apply_outputs(
         args,
-        runtime['output_bam'],
-        runtime['dataset'],
-        runtime['with_scores'],
-        runtime['db_path'],
+        runtime.output_bam,
+        runtime.dataset,
+        runtime.with_scores,
+        runtime.db_path,
         stdout_mode,
     )
 

@@ -7,6 +7,7 @@ import pytest
 
 from fiberhmm.cli.apply import (
     _apply_processing_kwargs,
+    _ApplyRuntime,
     _context_size_message,
     _dataset_name,
     _ddda_notice_needed,
@@ -559,20 +560,20 @@ def test_resolve_apply_runtime_wires_setup_outputs(monkeypatch):
 
     runtime = _resolve_apply_runtime(args, n_cores=4, stdout_mode=False)
 
-    assert runtime == {
-        "model_path": "model.json",
-        "train_rids": {"read-a"},
-        "mode": "daf",
-        "context_size": 5,
-        "msp_min_size": 0,
-        "with_scores": True,
-        "dataset": "sample",
-        "db_path": "scores.db",
-        "chroms_set": {"chr1"},
-        "use_streaming": True,
-        "process_unmapped": False,
-        "output_bam": "out.bam",
-    }
+    assert runtime == _ApplyRuntime(
+        model_path="model.json",
+        train_rids={"read-a"},
+        mode="daf",
+        context_size=5,
+        msp_min_size=0,
+        with_scores=True,
+        dataset="sample",
+        db_path="scores.db",
+        chroms_set={"chr1"},
+        use_streaming=True,
+        process_unmapped=False,
+        output_bam="out.bam",
+    )
     assert args.mode == "daf"
     assert calls[0] == ("ddda", "model.json", None)
     assert calls[2][0] == "settings"
