@@ -25,9 +25,21 @@ class _LegacyIntervalGroup:
 
 
 @dataclass(frozen=True)
+class _LegacyApplyIntervalGroups:
+    nucs: _LegacyIntervalGroup
+    msps: _LegacyIntervalGroup
+
+
+@dataclass(frozen=True)
 class _FilteredNucIntervals:
     intervals: list[Interval]
     scores: Optional[list[int]]
+
+
+@dataclass(frozen=True)
+class _FusedRecallTagIntervals:
+    kept_nucs: list[Interval]
+    msps: list[Interval]
 
 
 def _flip_legacy_intervals_to_molecular(
@@ -208,14 +220,14 @@ def _legacy_apply_interval_groups(
     result: dict,
     read,
     with_scores: bool,
-) -> tuple[_LegacyIntervalGroup, _LegacyIntervalGroup]:
+) -> _LegacyApplyIntervalGroups:
     nucs = _legacy_interval_group(
         result, "ns", "nl", "ns_scores", read, with_scores,
     )
     msps = _legacy_interval_group(
         result, "as", "al", "as_scores", read, with_scores,
     )
-    return nucs, msps
+    return _LegacyApplyIntervalGroups(nucs=nucs, msps=msps)
 
 
 def _legacy_interval_group(
@@ -254,14 +266,21 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     # FiberHMM works in SEQ (query_sequence) coordinates; ns/nl/as/al must be
     # written in molecular (original-fiber) frame for fibertools. Flip + re-sort
     # for reverse-mapped reads (forward reads are unchanged).
-    nucs, msps = _legacy_apply_interval_groups(
+    groups = _legacy_apply_interval_groups(
         result,
         read,
         with_scores,
     )
 
     _write_legacy_interval_tags(
-        read, "ns", "nl", "nq", nucs.starts, nucs.lengths, nucs.scores, with_scores,
+        read,
+        "ns",
+        "nl",
+        "nq",
+        groups.nucs.starts,
+        groups.nucs.lengths,
+        groups.nucs.scores,
+        with_scores,
     )
     if write_msps:
         _write_legacy_interval_tags(
@@ -269,9 +288,9 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
             "as",
             "al",
             "aq",
-            msps.starts,
-            msps.lengths,
-            msps.scores,
+            groups.msps.starts,
+            groups.msps.lengths,
+            groups.msps.scores,
             with_scores,
         )
 
@@ -349,10 +368,10 @@ def _result_intervals(
     )
 
 
-def _fused_recall_tag_intervals(result: dict) -> tuple[list[Interval], list[Interval]]:
+def _fused_recall_tag_intervals(result: dict) -> _FusedRecallTagIntervals:
     kept_nucs = _result_intervals(result, "circular_ns", "ns", "nl")
     msps = _result_intervals(result, "circular_as", "as", "al")
-    return kept_nucs, msps
+    return _FusedRecallTagIntervals(kept_nucs=kept_nucs, msps=msps)
 
 
 def write_fused_recall_tags(
@@ -363,13 +382,13 @@ def write_fused_recall_tags(
     downstream_compat: bool,
 ) -> None:
     """Apply a fused apply+TF-recall result to a pysam read."""
-    kept_nucs, msps = _fused_recall_tag_intervals(result)
+    intervals = _fused_recall_tag_intervals(result)
     write_ma_tags(
         read,
         read_length=read_length,
         tf_calls=result["tf_calls"],
-        kept_nucs=kept_nucs,
-        msps=msps,
+        kept_nucs=intervals.kept_nucs,
+        msps=intervals.msps,
         nq_for_kept_nucs=result.get("nq_for_kept_nucs"),
         also_write_legacy=also_write_legacy,
         downstream_compat=downstream_compat,

@@ -196,12 +196,17 @@ def test_legacy_apply_interval_groups_prepares_nucs_msps_and_scores():
         "as_scores": np.asarray([0.5]),
     }
 
-    nucs, msps = _legacy_apply_interval_groups(result, read, with_scores=True)
-    nucs_without_scores, msps_without_scores = _legacy_apply_interval_groups(
+    groups = _legacy_apply_interval_groups(result, read, with_scores=True)
+    groups_without_scores = _legacy_apply_interval_groups(
         result,
         read,
         with_scores=False,
     )
+
+    nucs = groups.nucs
+    msps = groups.msps
+    nucs_without_scores = groups_without_scores.nucs
+    msps_without_scores = groups_without_scores.msps
 
     assert nucs.starts == [10]
     assert nucs.lengths == [30]
@@ -258,12 +263,18 @@ def test_fused_recall_tag_intervals_prefer_circular_intervals_when_present():
         "al": np.asarray([6], dtype=np.int32),
     }
 
-    assert _fused_recall_tag_intervals(result) == ([(10, 5)], [(20, 6)])
+    intervals = _fused_recall_tag_intervals(result)
+
+    assert intervals.kept_nucs == [(10, 5)]
+    assert intervals.msps == [(20, 6)]
 
     result["circular_ns"] = [(90, 20)]
     result["circular_as"] = [(80, 10)]
 
-    assert _fused_recall_tag_intervals(result) == ([(90, 20)], [(80, 10)])
+    intervals = _fused_recall_tag_intervals(result)
+
+    assert intervals.kept_nucs == [(90, 20)]
+    assert intervals.msps == [(80, 10)]
 
 
 def test_result_intervals_prefers_circular_key_before_arrays():
