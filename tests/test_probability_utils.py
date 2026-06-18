@@ -1,5 +1,7 @@
 """Tests for probability-generation utility helpers."""
 
+from pathlib import Path
+
 from fiberhmm.probabilities.output_paths import (
     _probability_counter_suffix,
     _probability_filename,
@@ -67,6 +69,7 @@ def test_standard_output_dirs_returns_layout_without_creating(tmp_path):
 
 def test_get_base_name_handles_trailing_slash_and_empty_path():
     assert get_base_name("/tmp/example/") == "example"
+    assert get_base_name(Path("/tmp/example")) == "example"
     assert get_base_name("", default="fallback") == "fallback"
 
 

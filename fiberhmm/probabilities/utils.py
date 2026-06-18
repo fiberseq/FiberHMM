@@ -108,5 +108,6 @@ def get_base_name(output_path: str, default: str = "probs") -> str:
     Returns:
         Base name string for output files
     """
+    output_path = os.fspath(output_path)
     base_name = os.path.basename(output_path.rstrip('/'))
     return base_name if base_name else default
