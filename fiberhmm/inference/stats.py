@@ -403,15 +403,9 @@ def _plot_footprint_overview_pdf_page(stats: "FootprintStats", plt, pdf) -> None
     plt.close(fig)
 
 
-def _plot_quality_msp_pdf_page(stats: "FootprintStats", plt, pdf) -> None:
-    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
-    fig.suptitle(
-        'FiberHMM Quality and MSP Statistics', fontsize=14, fontweight='bold',
-    )
-
-    ax = axes[0, 0]
-    if stats.footprint_scores:
-        scores = np.array(stats.footprint_scores)
+def _plot_footprint_quality_pdf_panel(ax, footprint_scores) -> None:
+    if footprint_scores:
+        scores = np.array(footprint_scores)
         _plot_median_histogram(
             ax,
             scores,
@@ -429,9 +423,10 @@ def _plot_quality_msp_pdf_page(stats: "FootprintStats", plt, pdf) -> None:
             'Footprint Quality Distribution',
         )
 
-    ax = axes[0, 1]
-    if stats.msp_sizes:
-        msp_sizes = np.array(stats.msp_sizes)
+
+def _plot_msp_size_pdf_panel(ax, msp_size_values) -> None:
+    if msp_size_values:
+        msp_sizes = np.array(msp_size_values)
         _plot_median_histogram(
             ax,
             msp_sizes,
@@ -446,9 +441,10 @@ def _plot_quality_msp_pdf_page(stats: "FootprintStats", plt, pdf) -> None:
     else:
         _plot_no_data_message(ax, 'No MSP data', 'MSP Size Distribution')
 
-    ax = axes[1, 0]
-    if stats.read_lengths:
-        lengths = np.array(stats.read_lengths)
+
+def _plot_read_length_pdf_panel(ax, read_lengths) -> None:
+    if read_lengths:
+        lengths = np.array(read_lengths)
         _plot_median_histogram(
             ax,
             lengths,
@@ -460,8 +456,17 @@ def _plot_quality_msp_pdf_page(stats: "FootprintStats", plt, pdf) -> None:
             median_suffix=' bp',
         )
 
-    ax = axes[1, 1]
-    _plot_footprint_size_bins(ax, stats.footprint_sizes)
+
+def _plot_quality_msp_pdf_page(stats: "FootprintStats", plt, pdf) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+    fig.suptitle(
+        'FiberHMM Quality and MSP Statistics', fontsize=14, fontweight='bold',
+    )
+
+    _plot_footprint_quality_pdf_panel(axes[0, 0], stats.footprint_scores)
+    _plot_msp_size_pdf_panel(axes[0, 1], stats.msp_sizes)
+    _plot_read_length_pdf_panel(axes[1, 0], stats.read_lengths)
+    _plot_footprint_size_bins(axes[1, 1], stats.footprint_sizes)
 
     plt.tight_layout()
     pdf.savefig(fig)
