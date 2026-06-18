@@ -134,6 +134,41 @@ def test_shuffled_training_arrays_are_deterministic_int_arrays():
         assert sorted(values.tolist()) == [1, 1, 2, 3, 3]
 
 
+def test_train_hmm_model_set_wraps_trainer_and_tuple_adapter(monkeypatch):
+    calls = []
+    model = SimpleNamespace(startprob_=[0.4, 0.6], transmat_=[[0.9, 0.1]])
+    emissions = np.array([[0.1, 0.9], [0.8, 0.2]])
+    train_arrays = {0: np.array([1, 2]), 1: np.array([2, 3])}
+
+    def fake_train_hmm_models(
+        got_emissions,
+        got_arrays,
+        n_iterations,
+        use_legacy,
+    ):
+        calls.append((got_emissions, got_arrays, n_iterations, use_legacy))
+        return model, [model]
+
+    monkeypatch.setattr(train, "train_hmm_models", fake_train_hmm_models)
+
+    model_set = train._train_hmm_model_set(
+        emissions,
+        train_arrays,
+        use_legacy=True,
+    )
+
+    assert model_set == train._TrainingModelSet(model, [model])
+    assert model_set.as_tuple() == (model, [model])
+    assert train.train_hmm(emissions, train_arrays, use_legacy=False) == (
+        model,
+        [model],
+    )
+    assert calls == [
+        (emissions, train_arrays, 2, True),
+        (emissions, train_arrays, 2, False),
+    ]
+
+
 def test_training_strand_for_read_detects_only_daf_mode(monkeypatch):
     read = SimpleNamespace(query_sequence="ACGT", m6a_query_positions={1})
 

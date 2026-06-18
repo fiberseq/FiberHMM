@@ -65,6 +65,9 @@ class _TrainingModelSet:
     best_model: object
     all_models: list
 
+    def as_tuple(self) -> tuple:
+        return self.best_model, self.all_models
+
 
 @dataclass(frozen=True)
 class _TrainingSamplingIndex:
@@ -721,6 +724,15 @@ def train_hmm(emission_probs: np.ndarray, train_arrays: dict,
     Train HMM models and return best one.
     Returns (best_model, all_models).
     """
+    return _train_hmm_model_set(emission_probs, train_arrays, use_legacy).as_tuple()
+
+
+def _train_hmm_model_set(
+    emission_probs: np.ndarray,
+    train_arrays: dict,
+    use_legacy: bool = False,
+) -> _TrainingModelSet:
+    """Train HMM models and return the selected model with all candidates."""
     print(f"Training with {'hmmlearn (legacy)' if use_legacy else 'native'} implementation")
 
     best_model, models = train_hmm_models(
@@ -734,7 +746,7 @@ def train_hmm(emission_probs: np.ndarray, train_arrays: dict,
     print(f"Start probabilities: {best_model.startprob_}")
     print(f"Transition matrix:\n{best_model.transmat_}")
 
-    return best_model, models
+    return _TrainingModelSet(best_model, models)
 
 
 def _state_runs(states):
