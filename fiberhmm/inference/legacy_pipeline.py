@@ -21,7 +21,6 @@ from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.posterior_records import posterior_fiber_data
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.skip_reasons import (
-    BASE_SKIP_REASON_KEYS,
     NO_FOOTPRINTS_SKIP_REASON,
     new_skip_reasons,
 )
@@ -531,9 +530,6 @@ class _LegacyPipelineResult:
     skipped: int
     worker_failures: int
     posterior_stats: object | None
-
-
-_LEGACY_SKIP_REASON_KEYS = BASE_SKIP_REASON_KEYS + (NO_FOOTPRINTS_SKIP_REASON,)
 
 
 def _new_legacy_skip_reasons() -> dict:
