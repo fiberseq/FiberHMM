@@ -37,6 +37,13 @@ class _QueryIntervalMappingRequest:
     query_to_ref: object
 
 
+@dataclass(frozen=True)
+class _ScoredIntervalRecordRequest:
+    block: Tuple[int, int]
+    scores: object
+    index: int
+
+
 def build_query_to_ref(read):
     """Build the fast query-position to reference-position lookup for a read."""
     return cigar_to_query_ref(read)
@@ -154,12 +161,28 @@ def _interval_score(scores, index: int) -> int:
     return int(scores[index]) if scores is not None and index < len(scores) else 0
 
 
+def _scored_interval_record_from_request(
+    request: _ScoredIntervalRecordRequest,
+) -> _ScoredIntervalRecord:
+    return _ScoredIntervalRecord(
+        request.block[0],
+        request.block[1],
+        _interval_score(request.scores, request.index),
+    )
+
+
 def _scored_interval_record(
     block: Tuple[int, int],
     scores,
     index: int,
 ) -> _ScoredIntervalRecord:
-    return _ScoredIntervalRecord(block[0], block[1], _interval_score(scores, index))
+    return _scored_interval_record_from_request(
+        _ScoredIntervalRecordRequest(
+            block=block,
+            scores=scores,
+            index=index,
+        )
+    )
 
 
 def _scored_intervals(starts, lengths, scores, query_to_ref, mapper) -> List[Tuple[int, int, int]]:
