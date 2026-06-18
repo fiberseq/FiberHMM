@@ -1,7 +1,7 @@
 """FiberHMM footprint statistics and QC plotting."""
 
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pysam
@@ -560,23 +560,23 @@ def _save_footprint_size_png(stats: "FootprintStats", plt, output_prefix: str) -
     return True
 
 
+@dataclass
 class FootprintStats:
     """Collects footprint statistics from sampled reads."""
 
-    def __init__(self):
-        self.footprint_sizes = []
-        self.gap_sizes = []  # gaps between footprints (accessible regions)
-        self.footprints_per_read = []
-        self.msps_per_read = []
-        self.msp_sizes = []
-        self.footprint_scores = []
-        self.msp_scores = []
-        self.read_lengths = []
-        self.footprint_coverage = []  # fraction of read covered by footprints
-        self.methylation_in_footprints = []  # methylation density in footprints
-        self.methylation_in_accessible = []  # methylation density in accessible
-        self.total_reads_sampled = 0
-        self.reads_with_footprints = 0
+    footprint_sizes: list = field(default_factory=list)
+    gap_sizes: list = field(default_factory=list)
+    footprints_per_read: list = field(default_factory=list)
+    msps_per_read: list = field(default_factory=list)
+    msp_sizes: list = field(default_factory=list)
+    footprint_scores: list = field(default_factory=list)
+    msp_scores: list = field(default_factory=list)
+    read_lengths: list = field(default_factory=list)
+    footprint_coverage: list = field(default_factory=list)
+    methylation_in_footprints: list = field(default_factory=list)
+    methylation_in_accessible: list = field(default_factory=list)
+    total_reads_sampled: int = 0
+    reads_with_footprints: int = 0
 
     def add_read(self, read_length: int, ns: np.ndarray, nl: np.ndarray,
                  as_starts: np.ndarray = None, al_lengths: np.ndarray = None,
