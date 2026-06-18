@@ -1131,6 +1131,30 @@ def test_run_worker_single_read_forwards_apply_arguments(monkeypatch):
     }
 
 
+def test_payload_worker_config_preserves_chunk_arguments():
+    assert streaming_workers._payload_worker_config(
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
+        return_posteriors=False,
+        prob_threshold=128,
+    ) == streaming_workers._PayloadWorkerConfig(
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
+        return_posteriors=False,
+        prob_threshold=128,
+    )
+
+
 def test_process_payload_item_runs_parse_and_apply(monkeypatch):
     payload = {"read_id": "read1"}
     fiber_read = {"query_sequence": "ACGT"}

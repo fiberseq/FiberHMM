@@ -65,6 +65,30 @@ class _FusedPayloadWorkerConfig:
     unify_threshold: int
 
 
+def _payload_worker_config(
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    with_scores: bool,
+    return_posteriors: bool,
+    prob_threshold: int,
+) -> _PayloadWorkerConfig:
+    return _PayloadWorkerConfig(
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        with_scores=with_scores,
+        return_posteriors=return_posteriors,
+        prob_threshold=prob_threshold,
+    )
+
+
 def _process_worker_items(items, process_item):
     results = []
     read_failures = 0
@@ -439,16 +463,16 @@ def _process_payload_chunk_worker(
     """
     global _worker_model
 
-    config = _PayloadWorkerConfig(
-        edge_trim=edge_trim,
-        circular=circular,
-        mode=mode,
-        context_size=context_size,
-        msp_min_size=msp_min_size,
-        nuc_min_size=nuc_min_size,
-        with_scores=with_scores,
-        return_posteriors=return_posteriors,
-        prob_threshold=prob_threshold,
+    config = _payload_worker_config(
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        nuc_min_size,
+        with_scores,
+        return_posteriors,
+        prob_threshold,
     )
 
     def process_item(payload):
