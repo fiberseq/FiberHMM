@@ -740,16 +740,16 @@ def test_format_footprint_bed12_row_omits_scores_when_disabled():
 
 
 def test_normalize_bed12_blocks_sorts_merges_scores_and_pads():
-    starts, sizes, scores = bam_output._normalize_bed12_blocks(
+    blocks = bam_output._normalize_bed12_blocks(
         block_starts=[20, 0, 5],
         block_sizes=[5, 10, 20],
         valid_scores=[100, 50, 80],
         read_length=30,
     )
 
-    assert starts == [0, 29]
-    assert sizes == [25, 1]
-    assert scores == [82, 0]
+    assert blocks.starts == [0, 29]
+    assert blocks.sizes == [25, 1]
+    assert blocks.scores == [82, 0]
 
 
 def test_bed12_components_from_ref_blocks_builds_offsets_and_scores():

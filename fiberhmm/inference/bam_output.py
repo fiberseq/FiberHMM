@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from typing import Callable, List, Optional, Sequence
 
 import numpy as np
@@ -19,6 +20,14 @@ from fiberhmm.inference.reference_mapping import (
 from fiberhmm.io.bed import bed12_row
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 from fiberhmm.io.path_status import path_size_gb
+
+
+@dataclass(frozen=True)
+class _Bed12Blocks:
+    starts: List[int]
+    sizes: List[int]
+    scores: List[int]
+
 
 _BED12_RECORD_COLUMNS = (
     'chrom',
@@ -759,17 +768,24 @@ def _format_bed_score_column(scores: Sequence[int]) -> str:
 def _sort_bed12_blocks(block_starts, block_sizes, valid_scores):
     if valid_scores:
         sorted_indices = sorted(range(len(block_starts)), key=lambda i: block_starts[i])
-        return (
-            [block_starts[i] for i in sorted_indices],
-            [block_sizes[i] for i in sorted_indices],
-            [valid_scores[i] for i in sorted_indices],
+        return _Bed12Blocks(
+            starts=[block_starts[i] for i in sorted_indices],
+            sizes=[block_sizes[i] for i in sorted_indices],
+            scores=[valid_scores[i] for i in sorted_indices],
         )
 
     sorted_pairs = sorted(zip(block_starts, block_sizes))
-    return [p[0] for p in sorted_pairs], [p[1] for p in sorted_pairs], []
+    return _Bed12Blocks(
+        starts=[p[0] for p in sorted_pairs],
+        sizes=[p[1] for p in sorted_pairs],
+        scores=[],
+    )
 
 
-def _merge_bed12_blocks(block_starts, block_sizes, valid_scores):
+def _merge_bed12_blocks(blocks: _Bed12Blocks) -> _Bed12Blocks:
+    block_starts = blocks.starts
+    block_sizes = blocks.sizes
+    valid_scores = blocks.scores
     merged_starts = [block_starts[0]]
     merged_sizes = [block_sizes[0]]
     merged_scores = [valid_scores[0]] if valid_scores else []
@@ -790,12 +806,20 @@ def _merge_bed12_blocks(block_starts, block_sizes, valid_scores):
             if valid_scores:
                 merged_scores.append(valid_scores[i])
 
-    return merged_starts, merged_sizes, merged_scores
+    return _Bed12Blocks(
+        starts=merged_starts,
+        sizes=merged_sizes,
+        scores=merged_scores,
+    )
 
 
-def _pad_bed12_blocks(block_starts, block_sizes, valid_scores, read_length: int):
+def _pad_bed12_blocks(blocks: _Bed12Blocks, read_length: int) -> _Bed12Blocks:
     # BED12 requires blocks to span chromStart to chromEnd. Add 1bp padding
     # blocks at start/end if needed.
+    block_starts = list(blocks.starts)
+    block_sizes = list(blocks.sizes)
+    valid_scores = list(blocks.scores)
+
     if block_starts[0] != 0:
         block_starts.insert(0, 0)
         block_sizes.insert(0, 1)
@@ -809,17 +833,24 @@ def _pad_bed12_blocks(block_starts, block_sizes, valid_scores, read_length: int)
         if valid_scores:
             valid_scores.append(0)
 
-    return block_starts, block_sizes, valid_scores
+    return _Bed12Blocks(
+        starts=block_starts,
+        sizes=block_sizes,
+        scores=valid_scores,
+    )
 
 
-def _normalize_bed12_blocks(block_starts, block_sizes, valid_scores, read_length: int):
-    block_starts, block_sizes, valid_scores = _sort_bed12_blocks(
+def _normalize_bed12_blocks(
+    block_starts,
+    block_sizes,
+    valid_scores,
+    read_length: int,
+) -> _Bed12Blocks:
+    sorted_blocks = _sort_bed12_blocks(
         block_starts, block_sizes, valid_scores,
     )
-    block_starts, block_sizes, valid_scores = _merge_bed12_blocks(
-        block_starts, block_sizes, valid_scores,
-    )
-    return _pad_bed12_blocks(block_starts, block_sizes, valid_scores, read_length)
+    merged_blocks = _merge_bed12_blocks(sorted_blocks)
+    return _pad_bed12_blocks(merged_blocks, read_length)
 
 
 def _bed12_components_from_ref_blocks(blocks, with_scores: bool):
@@ -849,7 +880,7 @@ def _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores: bool) -> Opti
     chrom_start, chrom_end, block_starts, block_sizes, valid_scores = components
 
     read_length = chrom_end - chrom_start
-    block_starts, block_sizes, valid_scores = _normalize_bed12_blocks(
+    normalized_blocks = _normalize_bed12_blocks(
         block_starts,
         block_sizes,
         valid_scores,
@@ -862,9 +893,9 @@ def _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores: bool) -> Opti
         chrom_end,
         read.query_name,
         strand,
-        block_starts,
-        block_sizes,
-        valid_scores,
+        normalized_blocks.starts,
+        normalized_blocks.sizes,
+        normalized_blocks.scores,
         with_scores,
     )
 
