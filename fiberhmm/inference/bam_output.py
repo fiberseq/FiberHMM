@@ -137,6 +137,20 @@ def _sort_bam_with_fallback(
             print(f"  Sorted (pysam) in {sort_time:.1f}s")
 
 
+def _sort_bam_to_temp_and_replace(
+    output_bam: str,
+    sorted_bam: str,
+    threads: int,
+    verbose: bool,
+    bam_size_gb: float,
+) -> None:
+    try:
+        _sort_bam_with_fallback(output_bam, sorted_bam, threads, verbose, bam_size_gb)
+        os.replace(sorted_bam, output_bam)
+    finally:
+        _remove_file_if_exists(sorted_bam)
+
+
 def _index_sorted_bam(
     output_bam: str,
     threads: int,
@@ -222,8 +236,9 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
 
     # Sort using samtools (faster than pysam for large files)
     sorted_bam = _sorted_bam_temp_path(output_bam)
-    _sort_bam_with_fallback(output_bam, sorted_bam, threads, verbose, bam_size_gb)
-    os.replace(sorted_bam, output_bam)
+    _sort_bam_to_temp_and_replace(
+        output_bam, sorted_bam, threads, verbose, bam_size_gb,
+    )
     _index_sorted_bam(output_bam, threads, verbose, bam_size_gb)
 
 
