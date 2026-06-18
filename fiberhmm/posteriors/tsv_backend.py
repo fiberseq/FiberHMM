@@ -64,6 +64,13 @@ class _TsvConcatRequest:
 
 
 @dataclass(frozen=True)
+class _TsvToH5Request:
+    tsv_path: str
+    h5_path: str
+    verbose: bool = True
+
+
+@dataclass(frozen=True)
 class _PosteriorTsvFields:
     read_id: str
     chrom: str
@@ -453,6 +460,50 @@ def parse_posteriors_line(line: str) -> Optional[dict]:
     )
 
 
+def tsv_to_h5_from_request(request: _TsvToH5Request) -> int:
+    """Implementation for TSV-to-H5 conversion."""
+    import h5py
+
+    # First pass: count fibers per chromosome
+    scan_result = _scan_tsv_for_h5(request.tsv_path, request.verbose)
+
+    # Create H5 file with pre-allocated structure
+    if request.verbose:
+        print(f"  Writing {request.h5_path}...")
+
+    with h5py.File(request.h5_path, 'w') as f:
+        _write_h5_metadata_from_tsv_metadata(f, scan_result.metadata)
+
+        dt = h5py.special_dtype(vlen=str)
+
+        chrom_indices = _create_h5_chrom_groups(
+            f, scan_result.chrom_counts, dt,
+        )
+
+        n_written = 0
+
+        for fields in _iter_tsv_posterior_fields(request.tsv_path):
+            _write_h5_posterior_record(f, chrom_indices, fields)
+            n_written += 1
+
+            if request.verbose and n_written % 100000 == 0:
+                print(
+                    f"\r    Written {n_written:,} / "
+                    f"{scan_result.total_fibers:,} fibers...",
+                    end='',
+                )
+                sys.stdout.flush()
+
+    file_size = path_size_mb(request.h5_path)
+    if request.verbose:
+        print(
+            f"\r    Done: {n_written:,} fibers -> "
+            f"{request.h5_path} ({file_size:.1f} MB)"
+        )
+
+    return n_written
+
+
 def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
     """
     Convert posteriors TSV to HDF5 format.
@@ -467,43 +518,13 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
     Returns:
         Number of fibers converted
     """
-    import h5py
-
-    # First pass: count fibers per chromosome
-    scan_result = _scan_tsv_for_h5(tsv_path, verbose)
-
-    # Create H5 file with pre-allocated structure
-    if verbose:
-        print(f"  Writing {h5_path}...")
-
-    with h5py.File(h5_path, 'w') as f:
-        _write_h5_metadata_from_tsv_metadata(f, scan_result.metadata)
-
-        dt = h5py.special_dtype(vlen=str)
-
-        chrom_indices = _create_h5_chrom_groups(
-            f, scan_result.chrom_counts, dt,
-        )
-
-        n_written = 0
-
-        for fields in _iter_tsv_posterior_fields(tsv_path):
-            _write_h5_posterior_record(f, chrom_indices, fields)
-            n_written += 1
-
-            if verbose and n_written % 100000 == 0:
-                print(
-                    f"\r    Written {n_written:,} / "
-                    f"{scan_result.total_fibers:,} fibers...",
-                    end='',
-                )
-                sys.stdout.flush()
-
-    file_size = path_size_mb(h5_path)
-    if verbose:
-        print(f"\r    Done: {n_written:,} fibers -> {h5_path} ({file_size:.1f} MB)")
-
-    return n_written
+    return tsv_to_h5_from_request(
+        _TsvToH5Request(
+            tsv_path=tsv_path,
+            h5_path=h5_path,
+            verbose=verbose,
+        ),
+    )
 
 
 def _copy_tsv_records_from_request(

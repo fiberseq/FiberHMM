@@ -407,7 +407,13 @@ def test_tsv_to_h5_writes_metadata_and_arrays(tmp_path):
             fp_sizes=np.array([3], dtype=np.int32),
         )
 
-    assert tsv_backend.tsv_to_h5(str(tsv_path), str(h5_path), verbose=False) == 1
+    assert tsv_backend.tsv_to_h5_from_request(
+        tsv_backend._TsvToH5Request(
+            tsv_path=str(tsv_path),
+            h5_path=str(h5_path),
+            verbose=False,
+        )
+    ) == 1
 
     with h5py.File(h5_path, "r") as h5:
         assert h5.attrs["mode"] == "daf"
@@ -432,6 +438,30 @@ def test_tsv_to_h5_writes_metadata_and_arrays(tmp_path):
             h5["chr1"]["footprint_sizes"]["0"][:],
             np.array([3], dtype=np.int32),
         )
+
+
+def test_tsv_to_h5_adapter_builds_request(monkeypatch):
+    sentinel = 3
+    calls = []
+
+    monkeypatch.setattr(
+        tsv_backend,
+        "tsv_to_h5_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert tsv_backend.tsv_to_h5(
+        "input.tsv.gz",
+        "output.h5",
+        verbose=False,
+    ) == sentinel
+    assert calls == [
+        tsv_backend._TsvToH5Request(
+            tsv_path="input.tsv.gz",
+            h5_path="output.h5",
+            verbose=False,
+        ),
+    ]
 
 
 def test_copy_tsv_records_writes_header_once_and_counts_records(tmp_path):
