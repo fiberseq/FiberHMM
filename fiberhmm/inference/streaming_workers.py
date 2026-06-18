@@ -38,6 +38,19 @@ _worker_recall_state = {}
 
 
 @dataclass(frozen=True)
+class _PayloadWorkerConfig:
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    with_scores: bool
+    return_posteriors: bool
+    prob_threshold: int
+
+
+@dataclass(frozen=True)
 class _FusedPayloadWorkerConfig:
     edge_trim: int
     circular: bool
@@ -105,6 +118,27 @@ def _run_worker_single_read(
         nuc_min_size=nuc_min_size,
         with_scores=with_scores,
         return_posteriors=return_posteriors,
+    )
+
+
+def _process_payload_item(payload, config: _PayloadWorkerConfig):
+    fiber_read = _payload_fiber_read_result(
+        payload,
+        config.mode,
+        config.prob_threshold,
+    )
+    if fiber_read is None:
+        return None
+    return _run_worker_single_read(
+        fiber_read,
+        config.edge_trim,
+        config.circular,
+        config.mode,
+        config.context_size,
+        config.msp_min_size,
+        config.nuc_min_size,
+        config.with_scores,
+        config.return_posteriors,
     )
 
 
@@ -405,20 +439,19 @@ def _process_payload_chunk_worker(
     """
     global _worker_model
 
+    config = _PayloadWorkerConfig(
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        with_scores=with_scores,
+        return_posteriors=return_posteriors,
+        prob_threshold=prob_threshold,
+    )
+
     def process_item(payload):
-        fiber_read = _payload_fiber_read_result(payload, mode, prob_threshold)
-        if fiber_read is None:
-            return None
-        return _run_worker_single_read(
-            fiber_read,
-            edge_trim,
-            circular,
-            mode,
-            context_size,
-            msp_min_size,
-            nuc_min_size,
-            with_scores,
-            return_posteriors,
-        )
+        return _process_payload_item(payload, config)
 
     return _process_worker_items(chunk_payloads, process_item)

@@ -1131,6 +1131,53 @@ def test_run_worker_single_read_forwards_apply_arguments(monkeypatch):
     }
 
 
+def test_process_payload_item_runs_parse_and_apply(monkeypatch):
+    payload = {"read_id": "read1"}
+    fiber_read = {"query_sequence": "ACGT"}
+    seen = {}
+    config = streaming_workers._PayloadWorkerConfig(
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
+        return_posteriors=True,
+        prob_threshold=128,
+    )
+
+    def fake_extract(*args):
+        seen["extract"] = args
+        return fiber_read
+
+    def fake_process(*args):
+        seen["process"] = args
+        return {"apply": True}
+
+    monkeypatch.setattr(
+        streaming_workers, "_payload_fiber_read_result", fake_extract,
+    )
+    monkeypatch.setattr(streaming_workers, "_run_worker_single_read", fake_process)
+
+    assert streaming_workers._process_payload_item(
+        payload,
+        config,
+    ) == {"apply": True}
+    assert seen["extract"] == (payload, "pacbio-fiber", 128)
+    assert seen["process"] == (
+        fiber_read,
+        1,
+        True,
+        "pacbio-fiber",
+        7,
+        60,
+        85,
+        True,
+        True,
+    )
+
+
 def test_fused_recall_state_preserves_tables_and_thresholds():
     hit = object()
     miss = object()
