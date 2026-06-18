@@ -57,6 +57,130 @@ def _model_and_path_for_processing(model_or_path):
     return model_or_path, None
 
 
+def _legacy_model_for_processing(model, model_path: Optional[str], n_cores: int):
+    if model is None and model_path is not None and n_cores <= 1:
+        return freeze_model_for_inference(load_model(model_path))
+    return model
+
+
+def _dispatch_region_parallel_if_requested(
+    *,
+    region_parallel: bool,
+    model_path: Optional[str],
+    input_bam: str,
+    output_bam: str,
+    train_rids: Set[str],
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    min_mapq: int,
+    prob_threshold: int,
+    min_read_length: int,
+    with_scores: bool,
+    n_cores: int,
+    region_size: int,
+    skip_scaffolds: bool,
+    chroms: Optional[Set[str]],
+    primary_only: bool,
+    output_posteriors: Optional[str],
+    write_msps: bool,
+    io_threads: int,
+) -> Optional[Tuple[int, int]]:
+    if not region_parallel:
+        return None
+    if model_path is None:
+        print("Warning: region_parallel requires model path, falling back to standard parallel")
+        return None
+
+    return _process_bam_region_parallel(
+        input_bam=input_bam,
+        output_bam=output_bam,
+        model_path=model_path,
+        train_rids=train_rids,
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        min_mapq=min_mapq,
+        prob_threshold=prob_threshold,
+        min_read_length=min_read_length,
+        with_scores=with_scores,
+        n_cores=n_cores,
+        region_size=region_size,
+        skip_scaffolds=skip_scaffolds,
+        chroms=chroms,
+        primary_only=primary_only,
+        output_posteriors=output_posteriors,
+        write_msps=write_msps,
+        io_threads=io_threads,
+    )
+
+
+def _dispatch_streaming_pipeline_if_requested(
+    *,
+    streaming_pipeline: bool,
+    model_path: Optional[str],
+    input_bam: str,
+    output_bam: str,
+    train_rids: Set[str],
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    min_mapq: int,
+    prob_threshold: int,
+    min_read_length: int,
+    with_scores: bool,
+    n_cores: int,
+    chunk_size: int,
+    io_threads: int,
+    primary_only: bool,
+    output_posteriors: Optional[str],
+    write_msps: bool,
+    max_reads: Optional[int],
+    debug_timing: bool,
+    process_unmapped: bool,
+) -> Optional[Tuple[int, int]]:
+    if not streaming_pipeline:
+        return None
+    if model_path is None:
+        print("Warning: streaming_pipeline requires model path, falling back to standard parallel")
+        return None
+
+    return _process_bam_streaming_pipeline(
+        input_bam=input_bam,
+        output_bam=output_bam,
+        model_path=model_path,
+        train_rids=train_rids,
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        min_mapq=min_mapq,
+        prob_threshold=prob_threshold,
+        min_read_length=min_read_length,
+        with_scores=with_scores,
+        n_cores=n_cores,
+        chunk_size=chunk_size,
+        io_threads=io_threads,
+        primary_only=primary_only,
+        output_posteriors=output_posteriors,
+        write_msps=write_msps,
+        max_reads=max_reads,
+        debug_timing=debug_timing,
+        process_unmapped=process_unmapped,
+    )
+
+
 def process_bam_for_footprints(input_bam: str, output_bam: str,
                                 model_or_path, train_rids: Set[str],
                                 edge_trim: int, circular: bool,
@@ -102,92 +226,56 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
 
     # Get model path for workers
     model, model_path = _model_and_path_for_processing(model_or_path)
+    pipeline_kwargs = {
+        'input_bam': input_bam,
+        'output_bam': output_bam,
+        'train_rids': train_rids,
+        'edge_trim': edge_trim,
+        'circular': circular,
+        'mode': mode,
+        'context_size': context_size,
+        'msp_min_size': msp_min_size,
+        'nuc_min_size': nuc_min_size,
+        'min_mapq': min_mapq,
+        'prob_threshold': prob_threshold,
+        'min_read_length': min_read_length,
+        'with_scores': with_scores,
+        'n_cores': n_cores,
+        'primary_only': primary_only,
+        'output_posteriors': output_posteriors,
+        'write_msps': write_msps,
+        'io_threads': io_threads,
+    }
 
-    # Dispatch to region-parallel if requested (requires model_path for workers)
-    if region_parallel:
-        if model_path is None:
-            print("Warning: region_parallel requires model path, falling back to standard parallel")
-        else:
-            return _process_bam_region_parallel(
-                input_bam=input_bam,
-                output_bam=output_bam,
-                model_path=model_path,
-                train_rids=train_rids,
-                edge_trim=edge_trim,
-                circular=circular,
-                mode=mode,
-                context_size=context_size,
-                msp_min_size=msp_min_size,
-                nuc_min_size=nuc_min_size,
-                min_mapq=min_mapq,
-                prob_threshold=prob_threshold,
-                min_read_length=min_read_length,
-                with_scores=with_scores,
-                n_cores=n_cores,
-                region_size=region_size,
-                skip_scaffolds=skip_scaffolds,
-                chroms=chroms,
-                primary_only=primary_only,
-                output_posteriors=output_posteriors,
-                write_msps=write_msps,
-                io_threads=io_threads
-            )
-
-    # Dispatch to streaming pipeline if requested (requires model_path for workers)
-    if streaming_pipeline:
-        if model_path is None:
-            print("Warning: streaming_pipeline requires model path, falling back to standard parallel")
-        else:
-            return _process_bam_streaming_pipeline(
-                input_bam=input_bam,
-                output_bam=output_bam,
-                model_path=model_path,
-                train_rids=train_rids,
-                edge_trim=edge_trim,
-                circular=circular,
-                mode=mode,
-                context_size=context_size,
-                msp_min_size=msp_min_size,
-                nuc_min_size=nuc_min_size,
-                min_mapq=min_mapq,
-                prob_threshold=prob_threshold,
-                min_read_length=min_read_length,
-                with_scores=with_scores,
-                n_cores=n_cores,
-                chunk_size=chunk_size,
-                io_threads=io_threads,
-                primary_only=primary_only,
-                output_posteriors=output_posteriors,
-                write_msps=write_msps,
-                max_reads=max_reads,
-                debug_timing=debug_timing,
-                process_unmapped=process_unmapped,
-            )
-
-    if model is None and model_path is not None and n_cores <= 1:
-        model = freeze_model_for_inference(load_model(model_path))
-
-    return _process_bam_legacy_pipeline(
-        input_bam=input_bam,
-        output_bam=output_bam,
-        model=model,
+    result = _dispatch_region_parallel_if_requested(
+        region_parallel=region_parallel,
         model_path=model_path,
-        train_rids=train_rids,
-        edge_trim=edge_trim,
-        circular=circular,
-        mode=mode,
-        context_size=context_size,
-        msp_min_size=msp_min_size,
-        nuc_min_size=nuc_min_size,
-        min_mapq=min_mapq,
-        prob_threshold=prob_threshold,
-        min_read_length=min_read_length,
-        with_scores=with_scores,
-        n_cores=n_cores,
+        region_size=region_size,
+        skip_scaffolds=skip_scaffolds,
+        chroms=chroms,
+        **pipeline_kwargs,
+    )
+    if result is not None:
+        return result
+
+    result = _dispatch_streaming_pipeline_if_requested(
+        streaming_pipeline=streaming_pipeline,
+        model_path=model_path,
+        chunk_size=chunk_size,
         max_reads=max_reads,
         debug_timing=debug_timing,
-        primary_only=primary_only,
-        output_posteriors=output_posteriors,
-        write_msps=write_msps,
-        io_threads=io_threads,
+        process_unmapped=process_unmapped,
+        **pipeline_kwargs,
+    )
+    if result is not None:
+        return result
+
+    model = _legacy_model_for_processing(model, model_path, n_cores)
+
+    return _process_bam_legacy_pipeline(
+        model=model,
+        model_path=model_path,
+        max_reads=max_reads,
+        debug_timing=debug_timing,
+        **pipeline_kwargs,
     )
