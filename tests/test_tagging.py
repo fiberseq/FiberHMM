@@ -14,6 +14,8 @@ from fiberhmm.inference.tagging import (
     _fused_recall_tag_intervals,
     _legacy_apply_interval_groups,
     _legacy_interval_group,
+    _legacy_interval_group_from_request,
+    _LegacyIntervalGroupRequest,
     _linear_intervals_overlap,
     _MolecularLegacyRequest,
     _nuc_overlaps_any_circular_interval,
@@ -261,7 +263,16 @@ def test_legacy_interval_group_resolves_keyed_arrays_and_scores():
         "lengths": np.asarray([30], dtype=np.int32),
         "scores": np.asarray([0.25]),
     }
+    request = _LegacyIntervalGroupRequest(
+        result=result,
+        start_key="starts",
+        length_key="lengths",
+        score_key="scores",
+        read=read,
+        with_scores=True,
+    )
 
+    requested_group = _legacy_interval_group_from_request(request)
     group = _legacy_interval_group(
         result,
         "starts",
@@ -279,6 +290,7 @@ def test_legacy_interval_group_resolves_keyed_arrays_and_scores():
         with_scores=False,
     )
 
+    assert requested_group == group
     assert group.starts == [10]
     assert group.lengths == [30]
     assert group.scores == [0.25]

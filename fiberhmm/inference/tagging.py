@@ -34,6 +34,16 @@ class _MolecularLegacyRequest:
 
 
 @dataclass(frozen=True)
+class _LegacyIntervalGroupRequest:
+    result: dict
+    start_key: str
+    length_key: str
+    score_key: str
+    read: object
+    with_scores: bool
+
+
+@dataclass(frozen=True)
 class _LegacyApplyIntervalGroups:
     nucs: _LegacyIntervalGroup
     msps: _LegacyIntervalGroup
@@ -248,13 +258,41 @@ def _legacy_apply_interval_groups(
     read,
     with_scores: bool,
 ) -> _LegacyApplyIntervalGroups:
-    nucs = _legacy_interval_group(
-        result, "ns", "nl", "ns_scores", read, with_scores,
+    nucs = _legacy_interval_group_from_request(
+        _LegacyIntervalGroupRequest(
+            result=result,
+            start_key="ns",
+            length_key="nl",
+            score_key="ns_scores",
+            read=read,
+            with_scores=with_scores,
+        )
     )
-    msps = _legacy_interval_group(
-        result, "as", "al", "as_scores", read, with_scores,
+    msps = _legacy_interval_group_from_request(
+        _LegacyIntervalGroupRequest(
+            result=result,
+            start_key="as",
+            length_key="al",
+            score_key="as_scores",
+            read=read,
+            with_scores=with_scores,
+        )
     )
     return _LegacyApplyIntervalGroups(nucs=nucs, msps=msps)
+
+
+def _legacy_interval_group_from_request(
+    request: _LegacyIntervalGroupRequest,
+) -> _LegacyIntervalGroup:
+    return _to_molecular_legacy_from_request(
+        _MolecularLegacyRequest(
+            starts=request.result[request.start_key],
+            lengths=request.result[request.length_key],
+            scores=request.result.get(request.score_key),
+            read=request.read,
+            with_scores=request.with_scores,
+        )
+    )
 
 
 def _legacy_interval_group(
@@ -265,12 +303,15 @@ def _legacy_interval_group(
     read,
     with_scores: bool,
 ) -> _LegacyIntervalGroup:
-    return _to_molecular_legacy(
-        result[start_key],
-        result[length_key],
-        result.get(score_key),
-        read,
-        with_scores,
+    return _legacy_interval_group_from_request(
+        _LegacyIntervalGroupRequest(
+            result=result,
+            start_key=start_key,
+            length_key=length_key,
+            score_key=score_key,
+            read=read,
+            with_scores=with_scores,
+        )
     )
 
 
