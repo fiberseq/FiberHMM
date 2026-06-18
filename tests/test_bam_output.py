@@ -790,6 +790,18 @@ def test_extract_bed_from_tagged_bam_closes_bam_when_output_open_fails(
 
 
 def test_format_footprint_bed12_row_preserves_scores_and_item_rgb():
+    request = bam_output._FootprintBed12RowRequest(
+        chrom="chr1",
+        chrom_start=100,
+        chrom_end=150,
+        name="read1",
+        strand="+",
+        block_starts=[0, 40],
+        block_sizes=[10, 10],
+        valid_scores=[255, 128],
+        with_scores=True,
+    )
+    requested_row = bam_output._format_footprint_bed12_row_from_request(request)
     row = bam_output._format_footprint_bed12_row(
         chrom="chr1",
         chrom_start=100,
@@ -802,6 +814,7 @@ def test_format_footprint_bed12_row_preserves_scores_and_item_rgb():
         with_scores=True,
     )
 
+    assert requested_row == row
     assert row.split("\t") == [
         "chr1",
         "100",

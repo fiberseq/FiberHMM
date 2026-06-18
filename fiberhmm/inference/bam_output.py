@@ -44,6 +44,19 @@ class _FootprintBedTags:
 
 
 @dataclass(frozen=True)
+class _FootprintBed12RowRequest:
+    chrom: str
+    chrom_start: int
+    chrom_end: int
+    name: str
+    strand: str
+    block_starts: object
+    block_sizes: object
+    valid_scores: object
+    with_scores: bool
+
+
+@dataclass(frozen=True)
 class _ScoreBlockValues:
     block_starts: List[int]
     block_sizes: List[int]
@@ -958,6 +971,31 @@ def convert_to_bigbed_with_schema(bed_file: str, chrom_sizes: str,
     )
 
 
+def _format_footprint_bed12_row_from_request(
+    request: _FootprintBed12RowRequest,
+) -> str:
+    score = len(request.block_starts)
+    blocks = _bed_blocks_from_relative(
+        request.chrom_start,
+        request.block_starts,
+        request.block_sizes,
+    )
+    extra = ()
+    if request.with_scores and request.valid_scores:
+        extra = (_format_bed_score_column(request.valid_scores),)
+    return bed12_row(
+        request.chrom,
+        request.chrom_start,
+        request.chrom_end,
+        request.name,
+        score,
+        request.strand,
+        blocks,
+        extra,
+        item_rgb="0,0,0",
+    )
+
+
 def _format_footprint_bed12_row(
     chrom: str,
     chrom_start: int,
@@ -969,21 +1007,18 @@ def _format_footprint_bed12_row(
     valid_scores,
     with_scores: bool,
 ) -> str:
-    score = len(block_starts)
-    blocks = _bed_blocks_from_relative(chrom_start, block_starts, block_sizes)
-    extra = ()
-    if with_scores and valid_scores:
-        extra = (_format_bed_score_column(valid_scores),)
-    return bed12_row(
-        chrom,
-        chrom_start,
-        chrom_end,
-        name,
-        score,
-        strand,
-        blocks,
-        extra,
-        item_rgb="0,0,0",
+    return _format_footprint_bed12_row_from_request(
+        _FootprintBed12RowRequest(
+            chrom=chrom,
+            chrom_start=chrom_start,
+            chrom_end=chrom_end,
+            name=name,
+            strand=strand,
+            block_starts=block_starts,
+            block_sizes=block_sizes,
+            valid_scores=valid_scores,
+            with_scores=with_scores,
+        )
     )
 
 
@@ -1127,16 +1162,18 @@ def _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores: bool) -> Opti
         read_length,
     )
 
-    return _format_footprint_bed12_row(
-        chrom,
-        components.chrom_start,
-        components.chrom_end,
-        read.query_name,
-        strand,
-        normalized_blocks.starts,
-        normalized_blocks.sizes,
-        normalized_blocks.scores,
-        with_scores,
+    return _format_footprint_bed12_row_from_request(
+        _FootprintBed12RowRequest(
+            chrom=chrom,
+            chrom_start=components.chrom_start,
+            chrom_end=components.chrom_end,
+            name=read.query_name,
+            strand=strand,
+            block_starts=normalized_blocks.starts,
+            block_sizes=normalized_blocks.sizes,
+            valid_scores=normalized_blocks.scores,
+            with_scores=with_scores,
+        )
     )
 
 
