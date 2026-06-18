@@ -1626,7 +1626,47 @@ def test_streaming_dispatch_does_not_load_model_in_parent(monkeypatch):
 
 def test_footprint_pipeline_kwargs_preserve_common_options():
     train_rids = {"read-a"}
+    options = parallel._FootprintPipelineOptions(
+        input_bam="in.bam",
+        output_bam="out.bam",
+        train_rids=train_rids,
+        edge_trim=2,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=30,
+        nuc_min_size=90,
+        min_mapq=20,
+        prob_threshold=128,
+        min_read_length=50,
+        with_scores=True,
+        n_cores=4,
+        primary_only=True,
+        output_posteriors="post.h5",
+        write_msps=False,
+        io_threads=3,
+    )
 
+    assert parallel._footprint_pipeline_options(
+        input_bam="in.bam",
+        output_bam="out.bam",
+        train_rids=train_rids,
+        edge_trim=2,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=30,
+        nuc_min_size=90,
+        min_mapq=20,
+        prob_threshold=128,
+        min_read_length=50,
+        with_scores=True,
+        n_cores=4,
+        primary_only=True,
+        output_posteriors="post.h5",
+        write_msps=False,
+        io_threads=3,
+    ) == options
     assert parallel._footprint_pipeline_kwargs(
         input_bam="in.bam",
         output_bam="out.bam",

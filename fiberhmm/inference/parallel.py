@@ -61,6 +61,50 @@ class _ProcessingModelSource:
     path: Optional[str]
 
 
+@dataclass(frozen=True)
+class _FootprintPipelineOptions:
+    input_bam: str
+    output_bam: str
+    train_rids: Set[str]
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    min_mapq: int
+    prob_threshold: int
+    min_read_length: int
+    with_scores: bool
+    n_cores: int
+    primary_only: bool
+    output_posteriors: Optional[str]
+    write_msps: bool
+    io_threads: int
+
+    def as_kwargs(self) -> dict:
+        return {
+            'input_bam': self.input_bam,
+            'output_bam': self.output_bam,
+            'train_rids': self.train_rids,
+            'edge_trim': self.edge_trim,
+            'circular': self.circular,
+            'mode': self.mode,
+            'context_size': self.context_size,
+            'msp_min_size': self.msp_min_size,
+            'nuc_min_size': self.nuc_min_size,
+            'min_mapq': self.min_mapq,
+            'prob_threshold': self.prob_threshold,
+            'min_read_length': self.min_read_length,
+            'with_scores': self.with_scores,
+            'n_cores': self.n_cores,
+            'primary_only': self.primary_only,
+            'output_posteriors': self.output_posteriors,
+            'write_msps': self.write_msps,
+            'io_threads': self.io_threads,
+        }
+
+
 __all__ = (
     "ReadFilterConfig",
     "_MP_CONTEXT",
@@ -220,6 +264,49 @@ def _dispatch_streaming_pipeline_if_requested(
     )
 
 
+def _footprint_pipeline_options(
+    *,
+    input_bam: str,
+    output_bam: str,
+    train_rids: Set[str],
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    min_mapq: int,
+    prob_threshold: int,
+    min_read_length: int,
+    with_scores: bool,
+    n_cores: int,
+    primary_only: bool,
+    output_posteriors: Optional[str],
+    write_msps: bool,
+    io_threads: int,
+) -> _FootprintPipelineOptions:
+    return _FootprintPipelineOptions(
+        input_bam=input_bam,
+        output_bam=output_bam,
+        train_rids=train_rids,
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        min_mapq=min_mapq,
+        prob_threshold=prob_threshold,
+        min_read_length=min_read_length,
+        with_scores=with_scores,
+        n_cores=n_cores,
+        primary_only=primary_only,
+        output_posteriors=output_posteriors,
+        write_msps=write_msps,
+        io_threads=io_threads,
+    )
+
+
 def _footprint_pipeline_kwargs(
     *,
     input_bam: str,
@@ -241,26 +328,26 @@ def _footprint_pipeline_kwargs(
     write_msps: bool,
     io_threads: int,
 ) -> dict:
-    return {
-        'input_bam': input_bam,
-        'output_bam': output_bam,
-        'train_rids': train_rids,
-        'edge_trim': edge_trim,
-        'circular': circular,
-        'mode': mode,
-        'context_size': context_size,
-        'msp_min_size': msp_min_size,
-        'nuc_min_size': nuc_min_size,
-        'min_mapq': min_mapq,
-        'prob_threshold': prob_threshold,
-        'min_read_length': min_read_length,
-        'with_scores': with_scores,
-        'n_cores': n_cores,
-        'primary_only': primary_only,
-        'output_posteriors': output_posteriors,
-        'write_msps': write_msps,
-        'io_threads': io_threads,
-    }
+    return _footprint_pipeline_options(
+        input_bam=input_bam,
+        output_bam=output_bam,
+        train_rids=train_rids,
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        min_mapq=min_mapq,
+        prob_threshold=prob_threshold,
+        min_read_length=min_read_length,
+        with_scores=with_scores,
+        n_cores=n_cores,
+        primary_only=primary_only,
+        output_posteriors=output_posteriors,
+        write_msps=write_msps,
+        io_threads=io_threads,
+    ).as_kwargs()
 
 
 def _dispatch_requested_parallel_pipeline(
