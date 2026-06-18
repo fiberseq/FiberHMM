@@ -15,6 +15,7 @@ from fiberhmm.core.model_io import (
     _call_model_hook_if_present,
     _json_save_path,
     _json_save_redirect_warning,
+    _model_and_metadata_from_mapping,
     _model_attr_array,
     _model_file_format,
     _model_json_record,
@@ -240,6 +241,26 @@ class TestLoadSaveRoundTrip:
             [[0.7, 0.3]],
         )
         assert _model_attr_array(obj, "missing") is None
+
+    def test_model_and_metadata_from_mapping_returns_named_loaded_model(self, sample_model):
+        loaded = _model_and_metadata_from_mapping({
+            "n_states": sample_model.n_states,
+            "startprob": sample_model.startprob_,
+            "transmat": sample_model.transmat_,
+            "emissionprob": sample_model.emissionprob_,
+            "context_size": 5,
+            "mode": "daf",
+        })
+
+        assert loaded.context_size == 5
+        assert loaded.mode == "daf"
+        model, context_size, mode = loaded.as_tuple()
+        assert model is loaded.model
+        assert context_size == 5
+        assert mode == "daf"
+        np.testing.assert_allclose(model.startprob_, sample_model.startprob_)
+        np.testing.assert_allclose(model.transmat_, sample_model.transmat_)
+        np.testing.assert_allclose(model.emissionprob_, sample_model.emissionprob_)
 
 
 class TestModeAliases:

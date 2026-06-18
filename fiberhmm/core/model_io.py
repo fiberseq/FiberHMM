@@ -39,6 +39,16 @@ class _ModelMetadata:
 
 
 @dataclass(frozen=True)
+class _LoadedModel:
+    model: FiberHMM
+    context_size: int
+    mode: str
+
+    def as_tuple(self) -> Tuple[FiberHMM, int, str]:
+        return self.model, self.context_size, self.mode
+
+
+@dataclass(frozen=True)
 class _JsonSavePath:
     filepath: str
     old_path: str
@@ -67,8 +77,8 @@ def load_model(filepath: str, normalize: bool = True) -> FiberHMM:
     Returns:
         FiberHMM model instance
     """
-    model, _, _ = _load_model_and_metadata_by_extension(filepath)
-    return _prepare_loaded_model(model, normalize)
+    loaded = _load_model_and_metadata_by_extension(filepath)
+    return _prepare_loaded_model(loaded.model, normalize)
 
 
 def _normalize_model_if_requested(model: FiberHMM, normalize: bool) -> FiberHMM:
@@ -113,7 +123,7 @@ def _model_file_format(filepath: str) -> str:
     return 'pickle'
 
 
-def _load_model_and_metadata_by_extension(filepath: str) -> Tuple[FiberHMM, int, str]:
+def _load_model_and_metadata_by_extension(filepath: str) -> _LoadedModel:
     file_format = _model_file_format(filepath)
     if file_format == 'npz':
         return _load_npz_with_metadata(filepath)
@@ -156,10 +166,10 @@ def _metadata_from_mapping(data) -> _ModelMetadata:
     return _ModelMetadata(int(context_size), mode)
 
 
-def _model_and_metadata_from_mapping(data) -> Tuple[FiberHMM, int, str]:
+def _model_and_metadata_from_mapping(data) -> _LoadedModel:
     model = _model_from_mapping(data)
     metadata = _metadata_from_mapping(data)
-    return model, metadata.context_size, metadata.mode
+    return _LoadedModel(model, metadata.context_size, metadata.mode)
 
 
 def _read_json(filepath: str) -> dict:
@@ -189,11 +199,10 @@ def _normalize_mode(mode) -> str:
 
 def _load_npz(filepath: str) -> FiberHMM:
     """Load model from NPZ format."""
-    model, _, _ = _load_npz_with_metadata(filepath)
-    return model
+    return _load_npz_with_metadata(filepath).model
 
 
-def _load_npz_with_metadata(filepath: str) -> Tuple[FiberHMM, int, str]:
+def _load_npz_with_metadata(filepath: str) -> _LoadedModel:
     """Load model and metadata from NPZ format."""
     with np.load(filepath, allow_pickle=False) as data:
         return _model_and_metadata_from_mapping(data)
@@ -201,11 +210,10 @@ def _load_npz_with_metadata(filepath: str) -> Tuple[FiberHMM, int, str]:
 
 def _load_json(filepath: str) -> FiberHMM:
     """Load model from JSON format."""
-    model, _, _ = _load_json_with_metadata(filepath)
-    return model
+    return _load_json_with_metadata(filepath).model
 
 
-def _load_json_with_metadata(filepath: str) -> Tuple[FiberHMM, int, str]:
+def _load_json_with_metadata(filepath: str) -> _LoadedModel:
     """Load model and metadata from JSON format."""
     data = _read_json(filepath)
     return _model_and_metadata_from_mapping(data)
@@ -213,22 +221,21 @@ def _load_json_with_metadata(filepath: str) -> Tuple[FiberHMM, int, str]:
 
 def _load_pickle(filepath: str) -> FiberHMM:
     """Load model from pickle format (legacy)."""
-    model, _, _ = _load_pickle_with_metadata(filepath)
-    return model
+    return _load_pickle_with_metadata(filepath).model
 
 
 def _pickle_payload_has_metadata(obj) -> bool:
     return isinstance(obj, dict) and 'model' in obj
 
 
-def _load_pickle_with_metadata(filepath: str) -> Tuple[FiberHMM, int, str]:
+def _load_pickle_with_metadata(filepath: str) -> _LoadedModel:
     """Load model and metadata from pickle format (legacy)."""
     obj = _read_pickle(filepath)
     if _pickle_payload_has_metadata(obj):
         model = _coerce_loaded_model(obj['model'])
         metadata = _metadata_from_mapping(obj)
-        return model, metadata.context_size, metadata.mode
-    return _coerce_loaded_model(obj), DEFAULT_CONTEXT_SIZE, DEFAULT_MODE
+        return _LoadedModel(model, metadata.context_size, metadata.mode)
+    return _LoadedModel(_coerce_loaded_model(obj), DEFAULT_CONTEXT_SIZE, DEFAULT_MODE)
 
 
 def _model_attr_array(obj, *attr_names):
@@ -346,9 +353,14 @@ def load_model_with_metadata(filepath: str, normalize: bool = True) -> Tuple[Fib
     Returns:
         (model, context_size, mode)
     """
-    model, context_size, mode = _load_model_and_metadata_by_extension(filepath)
+    loaded = _load_model_and_metadata_by_extension(filepath)
+    model, context_size, mode = loaded.as_tuple()
 
     # Normalize old mode names to new names
     mode = _normalize_mode(mode)
 
-    return _prepare_loaded_model(model, normalize), context_size, mode
+    return (
+        _prepare_loaded_model(model, normalize),
+        context_size,
+        mode,
+    )
