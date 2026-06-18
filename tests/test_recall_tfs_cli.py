@@ -359,6 +359,16 @@ def test_recall_tfs_json_metadata_fallback_uses_case_insensitive_suffix(tmp_path
     assert recall_tfs._resolve_model_metadata(str(model_path)) == ("daf", 5)
 
 
+def test_recall_tfs_json_metadata_fallback_keeps_defaults_for_nulls(tmp_path):
+    model_path = tmp_path / "model.json"
+    model_path.write_text(
+        json.dumps({"mode": None, "context_size": None}),
+        encoding="utf-8",
+    )
+
+    assert recall_tfs._resolve_model_metadata(str(model_path)) == ("pacbio-fiber", 3)
+
+
 def test_recall_tfs_run_processing_dispatches_single_and_parallel(monkeypatch):
     args = SimpleNamespace(
         min_opps=3,

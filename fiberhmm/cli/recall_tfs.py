@@ -467,9 +467,11 @@ def _resolve_model_metadata(model_path):
         try:
             with open(model_path) as f:
                 d = json.load(f)
-            mode = d.get('mode', mode)
-            k = int(d.get('context_size', k))
-        except (OSError, ValueError):
+            mode = d.get('mode') or mode
+            context_size = d.get('context_size')
+            if context_size is not None:
+                k = int(context_size)
+        except (OSError, TypeError, ValueError):
             pass
     return mode, k
 
