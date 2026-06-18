@@ -78,6 +78,7 @@ from fiberhmm.io.ma_tags import (
     parse_aq_array,
     parse_ma_tag,
 )
+from fiberhmm.io.path_status import path_is_nonempty_file
 
 _MM_SUBTYPE_RE = re.compile(r'([ACGTUN])([+-])([a-z0-9]+|\d+)', re.IGNORECASE)
 
@@ -1244,7 +1245,7 @@ def _record_extract_region_result(
     for t in extract_types:
         total_features[t] += n_feats.get(t, 0)
         tb = temp_bed_paths.get(t)
-        if tb and os.path.exists(tb) and os.path.getsize(tb) > 0:
+        if tb and path_is_nonempty_file(tb):
             temp_beds_by_type[t].append((region_index, tb))
 
 
@@ -1412,7 +1413,7 @@ def _sort_bed_in_place(out_path: str) -> None:
 
 
 def _bed_file_has_content(out_path: str) -> bool:
-    return os.path.getsize(out_path) > 0
+    return path_is_nonempty_file(out_path)
 
 
 def _finalize_extract_type_bed(extract_type: str, region_beds, out_path: str) -> None:

@@ -842,23 +842,33 @@ def test_submit_extract_region_futures_maps_region_indices():
 def test_extract_parallel_result_helpers_track_features_and_nonempty_beds(tmp_path):
     nonempty = tmp_path / "region_0_tf.bed"
     empty = tmp_path / "region_0_msp.bed"
+    directory = tmp_path / "region_0_deam.bed"
     nonempty.write_text("chr1\t0\t10\n")
     empty.write_text("")
-    extract_types = ["tf", "msp"]
+    directory.mkdir()
+    extract_types = ["tf", "msp", "deam"]
     total_features = extract_tags._new_extract_feature_counts(extract_types)
     temp_beds_by_type = extract_tags._new_extract_temp_beds_by_type(extract_types)
 
     extract_tags._record_extract_region_result(
         extract_types,
         region_index=7,
-        temp_bed_paths={"tf": str(nonempty), "msp": str(empty)},
-        n_feats={"tf": 3},
+        temp_bed_paths={
+            "tf": str(nonempty),
+            "msp": str(empty),
+            "deam": str(directory),
+        },
+        n_feats={"tf": 3, "deam": 1},
         total_features=total_features,
         temp_beds_by_type=temp_beds_by_type,
     )
 
-    assert total_features == {"tf": 3, "msp": 0}
-    assert temp_beds_by_type == {"tf": [(7, str(nonempty))], "msp": []}
+    assert total_features == {"tf": 3, "msp": 0, "deam": 1}
+    assert temp_beds_by_type == {
+        "tf": [(7, str(nonempty))],
+        "msp": [],
+        "deam": [],
+    }
 
 
 def test_handle_extract_region_future_records_success_and_worker_errors(
@@ -1036,6 +1046,21 @@ def test_finalize_extract_type_bed_skips_sort_for_empty_output(monkeypatch, tmp_
     extract_tags._finalize_extract_type_bed("tf", [], str(out_path))
 
     assert out_path.read_text() == ""
+
+
+def test_bed_file_has_content_requires_regular_nonempty_file(tmp_path):
+    empty = tmp_path / "empty.bed"
+    directory = tmp_path / "directory.bed"
+    nonempty = tmp_path / "nonempty.bed"
+
+    empty.write_text("")
+    directory.mkdir()
+    nonempty.write_text("chr1\t0\t10\n")
+
+    assert not extract_tags._bed_file_has_content(str(tmp_path / "missing.bed"))
+    assert not extract_tags._bed_file_has_content(str(empty))
+    assert not extract_tags._bed_file_has_content(str(directory))
+    assert extract_tags._bed_file_has_content(str(nonempty))
 
 
 def test_sort_bed_in_place_removes_temp_file_when_sort_fails(monkeypatch, tmp_path):
