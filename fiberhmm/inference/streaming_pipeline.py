@@ -953,23 +953,23 @@ def _process_bam_streaming_pipeline(
         with pysam.AlignmentFile(_output_target, "wb",
                                  header=append_coord_marker(inbam.header),
                                  threads=io_threads) as outbam:
-
-            posterior_writer, return_posteriors = _open_streaming_posterior_writer(
-                output_posteriors, mode, context_size, edge_trim, input_bam, _log,
-            )
-
-            executor = _new_apply_streaming_executor(
-                model_path, n_cores, debug_timing,
-            )
-
-            worker_args = _apply_worker_args(
-                edge_trim, circular, mode, context_size,
-                msp_min_size, nuc_min_size, with_scores,
-                return_posteriors, prob_threshold,
-            )
             skipped = 0
 
             try:
+                posterior_writer, return_posteriors = _open_streaming_posterior_writer(
+                    output_posteriors, mode, context_size, edge_trim, input_bam, _log,
+                )
+
+                executor = _new_apply_streaming_executor(
+                    model_path, n_cores, debug_timing,
+                )
+
+                worker_args = _apply_worker_args(
+                    edge_trim, circular, mode, context_size,
+                    msp_min_size, nuc_min_size, with_scores,
+                    return_posteriors, prob_threshold,
+                )
+
                 total_reads, skipped = _run_streaming_worker_loop(
                     inbam.fetch(until_eof=True),
                     filter_config,

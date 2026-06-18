@@ -5,6 +5,7 @@ Correctness tests for the streaming producer-consumer pipeline.
 from collections import deque
 import io
 import pysam
+import pytest
 import sys
 
 from fiberhmm.inference import streaming_pipeline
@@ -824,6 +825,63 @@ def test_new_apply_streaming_executor_configures_pool(monkeypatch):
         "initializer": streaming_pipeline._init_bam_worker,
         "initargs": ("model.pkl", True),
     }
+
+
+def test_apply_streaming_closes_posterior_writer_on_executor_setup_failure(
+    monkeypatch,
+):
+    class FakeAlignmentFile:
+        def __init__(self, *args, **kwargs):
+            self.header = {"HD": {"SO": "coordinate"}}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def fetch(self, **kwargs):
+            return []
+
+    class Writer:
+        def __init__(self):
+            self.closed = 0
+
+        def close(self):
+            self.closed += 1
+            return (0, 0.0)
+
+    writer = Writer()
+    monkeypatch.setattr(streaming_pipeline.pysam, "set_verbosity", lambda value: None)
+    monkeypatch.setattr(streaming_pipeline.pysam, "AlignmentFile", FakeAlignmentFile)
+    monkeypatch.setattr(streaming_pipeline, "append_coord_marker", lambda header: header)
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_open_streaming_posterior_writer",
+        lambda *args: (writer, True),
+    )
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_new_apply_streaming_executor",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("executor failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="executor failed"):
+        streaming_pipeline._process_bam_streaming_pipeline(
+            input_bam="in.bam",
+            output_bam="out.bam",
+            model_path="model.json",
+            train_rids=set(),
+            edge_trim=0,
+            circular=False,
+            mode="daf",
+            context_size=5,
+            msp_min_size=0,
+            n_cores=1,
+            output_posteriors="post.h5",
+        )
+
+    assert writer.closed == 1
 
 
 def test_apply_drain_chunk_factory_calls_apply_drain(monkeypatch):
