@@ -5,7 +5,11 @@ import numpy as np
 import pytest
 
 from fiberhmm.inference import legacy_pipeline, parallel, streaming_pipeline
-from fiberhmm.inference.posterior_records import posterior_fiber_data
+from fiberhmm.inference.posterior_records import (
+    _PosteriorFiberDataRequest,
+    posterior_fiber_data,
+    posterior_fiber_data_from_request,
+)
 from fiberhmm.posteriors import hdf5_backend
 
 
@@ -31,16 +35,22 @@ def test_posterior_fiber_data_uses_writer_contract_fields():
     starts = np.array([3], dtype=np.int32)
     lengths = np.array([20], dtype=np.int32)
 
-    record = posterior_fiber_data(
-        Read(),
-        {
-            "strand": "+",
-            "posteriors": posteriors,
-            "ns": starts,
-            "nl": lengths,
-        },
-        ref_positions,
+    read = Read()
+    result = {
+        "strand": "+",
+        "posteriors": posteriors,
+        "ns": starts,
+        "nl": lengths,
+    }
+
+    record = posterior_fiber_data_from_request(
+        _PosteriorFiberDataRequest(
+            read_obj=read,
+            result=result,
+            ref_positions=ref_positions,
+        )
     )
+    wrapped_record = posterior_fiber_data(read, result, ref_positions)
 
     assert record["read_name"] == "read-1"
     assert record["ref_start"] == 100
@@ -50,6 +60,8 @@ def test_posterior_fiber_data_uses_writer_contract_fields():
     assert record["ref_positions"] is ref_positions
     assert record["footprint_starts"] is starts
     assert record["footprint_sizes"] is lengths
+    assert wrapped_record["posteriors"] is posteriors
+    assert wrapped_record["ref_positions"] is ref_positions
 
 
 def test_posterior_chrom_group_helper_controls_ref_positions(tmp_path):
