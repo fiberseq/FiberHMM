@@ -231,6 +231,10 @@ def test_shutdown_legacy_resources_closes_executor_and_posteriors():
             calls.append(("close",))
             return (123, 1.5)
 
+    assert legacy_pipeline._legacy_posterior_stats_from_close_result(None) is None
+    assert legacy_pipeline._legacy_posterior_stats_from_close_result(
+        (123, 1.5),
+    ) == legacy_pipeline._LegacyPosteriorStats(123, 1.5)
     assert legacy_pipeline._shutdown_legacy_resources(
         Executor(),
         Writer(),

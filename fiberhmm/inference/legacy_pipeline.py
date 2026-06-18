@@ -348,6 +348,16 @@ def _legacy_executor_for_config(
     return None
 
 
+def _legacy_posterior_stats_from_close_result(closed_stats):
+    if closed_stats is None:
+        return None
+    n_fibers, file_size_mb = closed_stats
+    return _LegacyPosteriorStats(
+        n_fibers=n_fibers,
+        file_size_mb=file_size_mb,
+    )
+
+
 def _shutdown_legacy_resources(executor, posterior_writer):
     posterior_stats = None
     try:
@@ -355,13 +365,9 @@ def _shutdown_legacy_resources(executor, posterior_writer):
             executor.shutdown(wait=True)
     finally:
         if posterior_writer is not None:
-            closed_stats = posterior_writer.close()
-            if closed_stats is not None:
-                n_fibers, file_size_mb = closed_stats
-                posterior_stats = _LegacyPosteriorStats(
-                    n_fibers=n_fibers,
-                    file_size_mb=file_size_mb,
-                )
+            posterior_stats = _legacy_posterior_stats_from_close_result(
+                posterior_writer.close(),
+            )
     return posterior_stats
 
 
