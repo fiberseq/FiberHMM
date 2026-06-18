@@ -56,6 +56,14 @@ class _FilteredNucIntervals:
 
 
 @dataclass(frozen=True)
+class _NucTfOverlapFilterRequest:
+    nucs: Iterable[Interval]
+    unify_threshold: int
+    ns_scores: Optional[Sequence[float]]
+    overlaps_tf: Callable[[Interval], bool]
+
+
+@dataclass(frozen=True)
 class _FusedRecallTagIntervals:
     kept_nucs: list[Interval]
     msps: list[Interval]
@@ -198,22 +206,39 @@ def _should_keep_nuc_interval(
     return interval[1] >= unify_threshold or not overlaps_tf(interval)
 
 
+def _filter_nucs_with_tf_overlap_from_request(
+    request: _NucTfOverlapFilterRequest,
+) -> _FilteredNucIntervals:
+    score_values = scores_to_u8(request.ns_scores)
+    kept: list[Interval] = []
+    kept_scores: Optional[list[int]] = [] if score_values is not None else None
+
+    for idx, (s_raw, length_raw) in enumerate(request.nucs):
+        interval = (int(s_raw), int(length_raw))
+        if _should_keep_nuc_interval(
+            interval,
+            request.unify_threshold,
+            request.overlaps_tf,
+        ):
+            _append_kept_interval(kept, kept_scores, interval, score_values, idx)
+
+    return _FilteredNucIntervals(kept, kept_scores)
+
+
 def _filter_nucs_with_tf_overlap(
     nucs: Iterable[Interval],
     unify_threshold: int,
     ns_scores: Optional[Sequence[float]],
     overlaps_tf: Callable[[Interval], bool],
 ) -> _FilteredNucIntervals:
-    score_values = scores_to_u8(ns_scores)
-    kept: list[Interval] = []
-    kept_scores: Optional[list[int]] = [] if score_values is not None else None
-
-    for idx, (s_raw, length_raw) in enumerate(nucs):
-        interval = (int(s_raw), int(length_raw))
-        if _should_keep_nuc_interval(interval, unify_threshold, overlaps_tf):
-            _append_kept_interval(kept, kept_scores, interval, score_values, idx)
-
-    return _FilteredNucIntervals(kept, kept_scores)
+    return _filter_nucs_with_tf_overlap_from_request(
+        _NucTfOverlapFilterRequest(
+            nucs=nucs,
+            unify_threshold=unify_threshold,
+            ns_scores=ns_scores,
+            overlaps_tf=overlaps_tf,
+        )
+    )
 
 
 def _tf_linear_intervals(tf_calls: Sequence[TFCall]) -> list[Interval]:
@@ -382,11 +407,13 @@ def unify_nucs_with_tf_calls(
     def overlaps_tf(interval: Interval) -> bool:
         return _nuc_overlaps_any_linear_interval(interval, tf_intervals)
 
-    filtered = _filter_nucs_with_tf_overlap(
-        zip(ns, nl),
-        unify_threshold,
-        ns_scores,
-        overlaps_tf,
+    filtered = _filter_nucs_with_tf_overlap_from_request(
+        _NucTfOverlapFilterRequest(
+            nucs=zip(ns, nl),
+            unify_threshold=unify_threshold,
+            ns_scores=ns_scores,
+            overlaps_tf=overlaps_tf,
+        )
     )
     return filtered.intervals, filtered.scores
 
@@ -406,11 +433,13 @@ def unify_circular_nucs_with_tf_calls(
             interval, tf_intervals, read_length,
         )
 
-    filtered = _filter_nucs_with_tf_overlap(
-        nucs,
-        unify_threshold,
-        ns_scores,
-        overlaps_tf,
+    filtered = _filter_nucs_with_tf_overlap_from_request(
+        _NucTfOverlapFilterRequest(
+            nucs=nucs,
+            unify_threshold=unify_threshold,
+            ns_scores=ns_scores,
+            overlaps_tf=overlaps_tf,
+        )
     )
     return filtered.intervals, filtered.scores
 

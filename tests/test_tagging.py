@@ -10,6 +10,8 @@ from fiberhmm.inference.tag_utils import _clear_tag, clear_tags
 from fiberhmm.inference.tagging import (
     STALE_SPEC_TAGS,
     _clear_stale_spec_tags,
+    _filter_nucs_with_tf_overlap,
+    _filter_nucs_with_tf_overlap_from_request,
     _flip_legacy_intervals_to_molecular,
     _fused_recall_tag_intervals,
     _legacy_apply_interval_groups,
@@ -20,6 +22,7 @@ from fiberhmm.inference.tagging import (
     _MolecularLegacyRequest,
     _nuc_overlaps_any_circular_interval,
     _nuc_overlaps_any_linear_interval,
+    _NucTfOverlapFilterRequest,
     _result_intervals,
     _should_keep_nuc_interval,
     _tf_circular_intervals,
@@ -372,6 +375,30 @@ def test_should_keep_nuc_interval_applies_length_and_overlap_policy():
     assert not _should_keep_nuc_interval((20, 10), 90, overlaps_tf)
     assert _should_keep_nuc_interval((20, 100), 90, overlaps_tf)
     assert _should_keep_nuc_interval((40, 10), 90, overlaps_tf)
+
+
+def test_filter_nucs_with_tf_overlap_request_matches_adapter():
+    def overlaps_tf(interval):
+        return interval == (15, 20)
+
+    request = _NucTfOverlapFilterRequest(
+        nucs=[(0, 10), (15, 20), (100, 120)],
+        unify_threshold=90,
+        ns_scores=np.asarray([0.25, 0.5]),
+        overlaps_tf=overlaps_tf,
+    )
+
+    requested = _filter_nucs_with_tf_overlap_from_request(request)
+    adapted = _filter_nucs_with_tf_overlap(
+        [(0, 10), (15, 20), (100, 120)],
+        90,
+        np.asarray([0.25, 0.5]),
+        overlaps_tf,
+    )
+
+    assert requested == adapted
+    assert requested.intervals == [(0, 10), (100, 120)]
+    assert requested.scores == [63, 0]
 
 
 def test_unify_nucs_with_tf_calls_drops_short_overlaps_and_carries_scores():
