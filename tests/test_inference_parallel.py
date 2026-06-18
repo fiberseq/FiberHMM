@@ -61,6 +61,16 @@ def test_parallel_reexports_multiprocessing_context():
     assert parallel._MP_CONTEXT is mp_context._MP_CONTEXT
 
 
+def test_mp_context_helpers_normalize_override_and_default_policy():
+    assert mp_context._normalize_mp_context_override(" Spawn ") == "spawn"
+    assert mp_context._normalize_mp_context_override("forkserver") == "forkserver"
+    assert mp_context._normalize_mp_context_override("invalid") is None
+    assert mp_context._normalize_mp_context_override("") is None
+
+    assert mp_context._default_mp_context_name((3, 13)) == "fork"
+    assert mp_context._default_mp_context_name((3, 14)) == "spawn"
+
+
 def test_model_and_path_for_processing_splits_path_and_loaded_model():
     assert _model_and_path_for_processing("model.json") == (None, "model.json")
 

@@ -3,6 +3,10 @@
 import multiprocessing
 import os
 import sys
+from typing import Optional
+
+
+_VALID_MP_CONTEXTS = ('spawn', 'fork', 'forkserver')
 
 
 # Multiprocessing start method:
@@ -26,16 +30,25 @@ import sys
 # is high, fork is the macOS default). Override via env var
 # FIBERHMM_MP_CONTEXT=spawn|fork. Set =spawn explicitly if you hit a worker
 # segfault during processing.
+def _normalize_mp_context_override(value: str) -> Optional[str]:
+    override = value.strip().lower()
+    return override if override in _VALID_MP_CONTEXTS else None
+
+
+def _default_mp_context_name(version_info=None) -> str:
+    version_info = sys.version_info if version_info is None else version_info
+    if version_info >= (3, 14):
+        return 'spawn'
+    # Python <3.14: fork is much faster and segfaults are rare.
+    return 'fork'
+
+
 def _select_mp_context() -> 'multiprocessing.context.BaseContext':
-    override = os.environ.get('FIBERHMM_MP_CONTEXT', '').strip().lower()
-    if override in ('spawn', 'fork', 'forkserver'):
-        return multiprocessing.get_context(override)
-    if sys.version_info >= (3, 14):
-        return multiprocessing.get_context('spawn')
-    if sys.platform == 'darwin':
-        return multiprocessing.get_context('fork')
-    # Linux, Python <3.14: fork is much faster and segfaults are rare.
-    return multiprocessing.get_context('fork')
+    override = _normalize_mp_context_override(
+        os.environ.get('FIBERHMM_MP_CONTEXT', ''),
+    )
+    context_name = override or _default_mp_context_name()
+    return multiprocessing.get_context(context_name)
 
 
 _MP_CONTEXT = _select_mp_context()
