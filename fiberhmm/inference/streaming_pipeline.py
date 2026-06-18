@@ -238,6 +238,50 @@ def _stream_reads_to_workers(
     return total_reads, skipped
 
 
+def _run_streaming_worker_loop(
+    reads,
+    filter_config: ReadFilterConfig,
+    mode: str,
+    ref_fasta,
+    executor,
+    worker_fn,
+    worker_args,
+    max_reads: Optional[int],
+    chunk_size: int,
+    max_inflight: int,
+    drain_chunk_factory,
+    skip_reasons: dict,
+    log,
+    progress_label: str,
+    rate_unit: str,
+    start_time: float,
+) -> tuple[int, int]:
+    inflight = deque()
+    drain_chunk = drain_chunk_factory(inflight)
+    try:
+        return _stream_reads_to_workers(
+            reads,
+            filter_config,
+            mode,
+            ref_fasta,
+            inflight,
+            executor,
+            worker_fn,
+            worker_args,
+            max_reads,
+            chunk_size,
+            max_inflight,
+            drain_chunk,
+            skip_reasons,
+            log,
+            progress_label,
+            rate_unit,
+            start_time,
+        )
+    finally:
+        executor.shutdown(wait=True)
+
+
 def _worker_common_args(
     edge_trim: int,
     circular: bool,
@@ -616,31 +660,28 @@ def _process_bam_streaming_pipeline_fused(
                 n_cores,
             )
 
-            inflight = deque()
             worker_args = _fused_worker_args(
                 edge_trim, circular, mode, context_size,
                 msp_min_size, nuc_min_size, with_scores,
                 prob_threshold, min_llr, min_opps, unify_threshold,
             )
-            drain_chunk = lambda: _drain_oldest_fused_chunk(
-                inflight, outbam, with_scores,
-                also_write_legacy, downstream_compat, counters,
-            )
 
             try:
-                total_reads, skipped = _stream_reads_to_workers(
+                total_reads, skipped = _run_streaming_worker_loop(
                     inbam.fetch(until_eof=True),
                     filter_config,
                     mode,
                     ref_fasta,
-                    inflight,
                     executor,
                     _process_fused_payload_chunk_worker,
                     worker_args,
                     max_reads,
                     chunk_size,
                     max_inflight,
-                    drain_chunk,
+                    lambda inflight: lambda: _drain_oldest_fused_chunk(
+                        inflight, outbam, with_scores,
+                        also_write_legacy, downstream_compat, counters,
+                    ),
                     skip_reasons,
                     _log,
                     "Fused",
@@ -648,12 +689,9 @@ def _process_bam_streaming_pipeline_fused(
                     start_time,
                 )
             finally:
-                try:
-                    executor.shutdown(wait=True)
-                finally:
-                    if ref_fasta is not None:
-                        ref_fasta.close()
-                        ref_fasta = None
+                if ref_fasta is not None:
+                    ref_fasta.close()
+                    ref_fasta = None
 
     reads_with_fp = _print_streaming_completion_summary(
         "Fused",
@@ -741,32 +779,29 @@ def _process_bam_streaming_pipeline(
                 model_path, n_cores, debug_timing,
             )
 
-            inflight = deque()
             worker_args = _apply_worker_args(
                 edge_trim, circular, mode, context_size,
                 msp_min_size, nuc_min_size, with_scores,
                 return_posteriors, prob_threshold,
             )
-            drain_chunk = lambda: _drain_oldest_chunk(
-                inflight, outbam, with_scores, write_msps,
-                posterior_writer, counters,
-            )
             skipped = 0
 
             try:
-                total_reads, skipped = _stream_reads_to_workers(
+                total_reads, skipped = _run_streaming_worker_loop(
                     inbam.fetch(until_eof=True),
                     filter_config,
                     mode,
                     ref_fasta,
-                    inflight,
                     executor,
                     _process_payload_chunk_worker,
                     worker_args,
                     max_reads,
                     chunk_size,
                     max_inflight,
-                    drain_chunk,
+                    lambda inflight: lambda: _drain_oldest_chunk(
+                        inflight, outbam, with_scores, write_msps,
+                        posterior_writer, counters,
+                    ),
                     skip_reasons,
                     _log,
                     "Processed",
@@ -775,12 +810,9 @@ def _process_bam_streaming_pipeline(
                 )
 
             finally:
-                try:
-                    executor.shutdown(wait=True)
-                finally:
-                    if posterior_writer:
-                        posterior_stats = posterior_writer.close()
-                        posterior_writer = None
+                if posterior_writer:
+                    posterior_stats = posterior_writer.close()
+                    posterior_writer = None
 
     reads_with_footprints = _print_streaming_completion_summary(
         "Processed",

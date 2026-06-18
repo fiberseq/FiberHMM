@@ -22,6 +22,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _open_streaming_posterior_writer,
     _print_streaming_completion_summary,
     _print_streaming_progress,
+    _run_streaming_worker_loop,
     _streaming_completion_message,
     _streaming_filter_config,
     _streaming_log_for_output,
@@ -417,6 +418,77 @@ def test_stream_reads_to_workers_buffers_submits_and_reports_progress(monkeypatc
     assert list(inflight) == []
     assert progress_calls[0][1:5] == ("Processed", 2, 1, 1)
     assert progress_calls[0][9] == "reads/s"
+
+
+def test_run_streaming_worker_loop_builds_inflight_and_shuts_down(monkeypatch):
+    class Executor:
+        def __init__(self):
+            self.shutdown_calls = []
+
+        def shutdown(self, **kwargs):
+            self.shutdown_calls.append(kwargs)
+
+    executor = Executor()
+    drain_calls = []
+    seen = {}
+
+    def drain_chunk_factory(inflight):
+        seen["inflight"] = inflight
+
+        def drain_chunk():
+            drain_calls.append(list(inflight))
+
+        return drain_chunk
+
+    def fake_stream_reads(
+        reads,
+        filter_config,
+        mode,
+        ref_fasta,
+        inflight,
+        got_executor,
+        worker_fn,
+        worker_args,
+        max_reads,
+        chunk_size,
+        max_inflight,
+        drain_chunk,
+        skip_reasons,
+        log,
+        progress_label,
+        rate_unit,
+        start_time,
+    ):
+        inflight.append("future")
+        drain_chunk()
+        return 5, 1
+
+    monkeypatch.setattr(
+        streaming_pipeline, "_stream_reads_to_workers", fake_stream_reads,
+    )
+
+    assert _run_streaming_worker_loop(
+        reads=["r1"],
+        filter_config=object(),
+        mode="daf",
+        ref_fasta=None,
+        executor=executor,
+        worker_fn=object(),
+        worker_args=("arg",),
+        max_reads=None,
+        chunk_size=2,
+        max_inflight=3,
+        drain_chunk_factory=drain_chunk_factory,
+        skip_reasons={},
+        log=io.StringIO(),
+        progress_label="Processed",
+        rate_unit="reads/s",
+        start_time=10.0,
+    ) == (5, 1)
+
+    assert isinstance(seen["inflight"], deque)
+    assert drain_calls == [["future"]]
+    assert executor.shutdown_calls == [{"wait": True}]
 
 
 def test_streaming_log_for_output_uses_stderr_for_stdout_bam():
