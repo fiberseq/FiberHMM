@@ -11,7 +11,7 @@ from fiberhmm.cli.common import add_version_args
 from fiberhmm.daf.encoder import process_bam_daf_encode
 
 
-def parse_args(argv=None):
+def _build_daf_encode_parser():
     parser = argparse.ArgumentParser(
         prog="fiberhmm-daf-encode",
         description=(
@@ -69,7 +69,11 @@ Examples:
         help='Force conversion strand: CT (+ strand), GA (- strand), '
              'or auto (per-read consensus, default: auto)',
     )
+    return parser
 
+
+def parse_args(argv=None):
+    parser = _build_daf_encode_parser()
     return parser.parse_args(argv)
 
 
