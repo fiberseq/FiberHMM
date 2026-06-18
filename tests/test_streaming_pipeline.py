@@ -48,6 +48,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _StreamingPosteriorWriter,
     _StreamingProgressCheckpoint,
     _StreamingProgressRates,
+    _StreamingReadCounts,
     _worker_common_args,
 )
 
@@ -664,7 +665,7 @@ def test_stream_reads_to_workers_buffers_submits_and_reports_progress(monkeypatc
     worker_fn = object()
     skip_reasons = {}
 
-    total_reads, skipped = _stream_reads_to_workers(
+    counts = _stream_reads_to_workers(
         ["p1", "skip", "p2"],
         object(),
         "daf",
@@ -684,7 +685,7 @@ def test_stream_reads_to_workers_buffers_submits_and_reports_progress(monkeypatc
         start_time=10.0,
     )
 
-    assert (total_reads, skipped) == (2, 1)
+    assert counts == _StreamingReadCounts(processed=2, skipped=1)
     assert skip_reasons == {"low_mapq": 1}
     assert executor.submitted == [
         (worker_fn, (["payload-p1", "payload-p2"], "arg"), "future-0")
@@ -743,7 +744,7 @@ def test_run_streaming_worker_loop_builds_inflight_and_shuts_down(monkeypatch):
     ):
         inflight.append("future")
         drain_chunk()
-        return 5, 1
+        return _StreamingReadCounts(processed=5, skipped=1)
 
     monkeypatch.setattr(
         streaming_pipeline, "_stream_reads_to_workers", fake_stream_reads,
@@ -766,7 +767,7 @@ def test_run_streaming_worker_loop_builds_inflight_and_shuts_down(monkeypatch):
         progress_label="Processed",
         rate_unit="reads/s",
         start_time=10.0,
-    ) == (5, 1)
+    ) == _StreamingReadCounts(processed=5, skipped=1)
 
     assert isinstance(seen["inflight"], deque)
     assert drain_calls == [["future"]]

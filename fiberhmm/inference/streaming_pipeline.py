@@ -73,6 +73,12 @@ class _StreamingFlushProgress:
     last_progress_time: float
 
 
+@dataclass(frozen=True)
+class _StreamingReadCounts:
+    processed: int
+    skipped: int
+
+
 def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, reason) -> int:
     chunk_read_objs.append(read)
     chunk_skip_flags.append(True)
@@ -270,7 +276,7 @@ def _stream_reads_to_workers(
     progress_label: str,
     rate_unit: str,
     start_time: float,
-) -> tuple[int, int]:
+) -> _StreamingReadCounts:
     total_reads = 0
     skipped = 0
     chunk_buffers = _new_streaming_chunk_buffers()
@@ -338,7 +344,7 @@ def _stream_reads_to_workers(
         )
 
     _drain_all_streaming_chunks(inflight, drain_chunk)
-    return total_reads, skipped
+    return _StreamingReadCounts(processed=total_reads, skipped=skipped)
 
 
 def _run_streaming_worker_loop(
@@ -358,7 +364,7 @@ def _run_streaming_worker_loop(
     progress_label: str,
     rate_unit: str,
     start_time: float,
-) -> tuple[int, int]:
+) -> _StreamingReadCounts:
     inflight = deque()
     drain_chunk = drain_chunk_factory(inflight)
     try:
@@ -908,7 +914,7 @@ def _process_bam_streaming_pipeline_fused(
                     prob_threshold, min_llr, min_opps, unify_threshold,
                 )
 
-                total_reads, skipped = _run_streaming_worker_loop(
+                read_counts = _run_streaming_worker_loop(
                     inbam.fetch(until_eof=True),
                     filter_config,
                     mode,
@@ -932,6 +938,8 @@ def _process_bam_streaming_pipeline_fused(
                     "r/s",
                     start_time,
                 )
+                total_reads = read_counts.processed
+                skipped = read_counts.skipped
             finally:
                 _close_ref_fasta(ref_fasta)
                 ref_fasta = None
@@ -1027,7 +1035,7 @@ def _process_bam_streaming_pipeline(
                     return_posteriors, prob_threshold,
                 )
 
-                total_reads, skipped = _run_streaming_worker_loop(
+                read_counts = _run_streaming_worker_loop(
                     inbam.fetch(until_eof=True),
                     filter_config,
                     mode,
@@ -1051,6 +1059,8 @@ def _process_bam_streaming_pipeline(
                     "reads/s",
                     start_time,
                 )
+                total_reads = read_counts.processed
+                skipped = read_counts.skipped
 
             finally:
                 posterior_stats = _close_streaming_posterior_writer(
