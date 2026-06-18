@@ -266,6 +266,15 @@ def _accumulate_filter_stats(combined_stats, filter_stats: Dict[str, int]) -> No
         combined_stats[key] += value
 
 
+def _remove_temporary_probability_counter_file(tmp_file: str) -> None:
+    if not os.path.exists(tmp_file):
+        return
+    try:
+        os.remove(tmp_file)
+    except OSError as e:
+        print(f"Warning: Could not remove temporary probability counter {tmp_file}: {e}")
+
+
 def _remove_temporary_probability_counters(
     output_dir: str,
     base_name: str,
@@ -280,8 +289,7 @@ def _remove_temporary_probability_counters(
                 base,
                 temporary=True,
             )
-            if os.path.exists(tmp_file):
-                os.remove(tmp_file)
+            _remove_temporary_probability_counter_file(tmp_file)
 
 
 def _save_temporary_probability_counters(

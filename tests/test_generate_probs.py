@@ -1,4 +1,5 @@
 from collections import defaultdict
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -639,6 +640,39 @@ def test_remove_temporary_probability_counters_removes_expected_files(tmp_path):
 
     assert all(not path.exists() for path in paths)
     assert keep.exists()
+
+
+def test_remove_temporary_probability_counters_continues_after_remove_failure(
+    monkeypatch, tmp_path, capsys,
+):
+    output_dir = str(tmp_path)
+    base_name = "sample"
+    blocked = Path(
+        _probability_counter_path(
+            output_dir, base_name, "accessible", "A", temporary=True,
+        )
+    )
+    removable = Path(
+        _probability_counter_path(
+            output_dir, base_name, "inaccessible", "A", temporary=True,
+        )
+    )
+    blocked.write_text("counter")
+    removable.write_text("counter")
+    real_remove = os.remove
+
+    def remove_or_fail(path):
+        if path == str(blocked):
+            raise PermissionError("locked")
+        real_remove(path)
+
+    monkeypatch.setattr(os, "remove", remove_or_fail)
+
+    _remove_temporary_probability_counters(output_dir, base_name, ["A"])
+
+    assert blocked.exists()
+    assert not removable.exists()
+    assert "temporary probability counter" in capsys.readouterr().out
 
 
 def test_save_temporary_probability_counters_uses_probability_paths():
