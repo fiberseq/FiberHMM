@@ -143,6 +143,15 @@ class _ProbabilityDistributionPdfPageRequest:
     inaccessible_probs: 'pd.DataFrame'
 
 
+@dataclass(frozen=True)
+class _ProbabilityCountsPdfPageRequest:
+    plt: object
+    pdf: object
+    base: str
+    accessible_probs: 'pd.DataFrame'
+    inaccessible_probs: 'pd.DataFrame'
+
+
 def _probability_tables_for_base(
     accessible_counters,
     inaccessible_counters,
@@ -627,27 +636,44 @@ def _write_probability_counts_pdf_page(
     acc_probs,
     inacc_probs,
 ):
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+    return _write_probability_counts_pdf_page_from_request(
+        _ProbabilityCountsPdfPageRequest(
+            plt=plt,
+            pdf=pdf,
+            base=base,
+            accessible_probs=acc_probs,
+            inaccessible_probs=inacc_probs,
+        ),
+    )
+
+
+def _write_probability_counts_pdf_page_from_request(
+    request: _ProbabilityCountsPdfPageRequest,
+):
+    fig, axes = request.plt.subplots(2, 2, figsize=(11, 8.5))
     try:
         fig.suptitle(
-            f'{base}-centered Context Counts',
+            f'{request.base}-centered Context Counts',
             fontsize=14,
             fontweight='bold',
         )
 
-        acc_total = _context_observation_totals(acc_probs)
-        inacc_total = _context_observation_totals(inacc_probs)
-        merged = _merged_probability_table(acc_probs, inacc_probs)
+        acc_total = _context_observation_totals(request.accessible_probs)
+        inacc_total = _context_observation_totals(request.inaccessible_probs)
+        merged = _merged_probability_table(
+            request.accessible_probs,
+            request.inaccessible_probs,
+        )
 
         _plot_observations_per_context(axes[0, 0], acc_total, inacc_total)
         _plot_context_coverage(axes[0, 1], acc_total.values, inacc_total.values)
         _plot_probability_vs_coverage(axes[1, 0], merged)
         _plot_context_frequency_comparison(axes[1, 1], merged)
 
-        plt.tight_layout()
-        pdf.savefig(fig)
+        request.plt.tight_layout()
+        request.pdf.savefig(fig)
     finally:
-        plt.close(fig)
+        request.plt.close(fig)
 
 
 def _save_probability_distribution_png_from_request(

@@ -373,7 +373,15 @@ def test_probability_pdf_page_helpers_orchestrate_plot_sections(monkeypatch):
             inaccessible_probs=inacc,
         )
     )
-    stats._write_probability_counts_pdf_page(plt, pdf, "A", acc, inacc)
+    stats._write_probability_counts_pdf_page_from_request(
+        stats._ProbabilityCountsPdfPageRequest(
+            plt=plt,
+            pdf=pdf,
+            base="A",
+            accessible_probs=acc,
+            inaccessible_probs=inacc,
+        )
+    )
 
     assert plt.subplots_calls == [
         ((2, 2), {"figsize": (11, 8.5)}),
