@@ -258,6 +258,30 @@ def test_index_sorted_bam_falls_back_to_pysam_when_samtools_missing(monkeypatch,
     monkeypatch.setattr(bam_output.pysam, "index", lambda path: indexed.append(path))
     monkeypatch.setattr(bam_output.time, "time", lambda: 22.0)
 
+    bam_output._index_sorted_bam_from_request(
+        bam_output._BamIndexRequest(
+            output_bam="out.bam",
+            threads=2,
+            verbose=True,
+            bam_size_gb=4.0,
+        )
+    )
+
+    assert indexed == ["out.bam"]
+    out = capsys.readouterr().out
+    assert "Indexing sorted BAM" in out
+    assert "Index created in 0.0s" in out
+
+
+def test_index_sorted_bam_adapter_builds_request(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        bam_output,
+        "_index_sorted_bam_from_request",
+        calls.append,
+    )
+
     bam_output._index_sorted_bam(
         "out.bam",
         threads=2,
@@ -265,10 +289,14 @@ def test_index_sorted_bam_falls_back_to_pysam_when_samtools_missing(monkeypatch,
         bam_size_gb=4.0,
     )
 
-    assert indexed == ["out.bam"]
-    out = capsys.readouterr().out
-    assert "Indexing sorted BAM" in out
-    assert "Index created in 0.0s" in out
+    assert calls == [
+        bam_output._BamIndexRequest(
+            output_bam="out.bam",
+            threads=2,
+            verbose=True,
+            bam_size_gb=4.0,
+        )
+    ]
 
 
 def test_index_bam_if_already_sorted_uses_pysam_for_non_sort_errors(

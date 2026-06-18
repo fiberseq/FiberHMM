@@ -85,6 +85,14 @@ class _BamSortRequest:
     bam_size_gb: float
 
 
+@dataclass(frozen=True)
+class _BamIndexRequest:
+    output_bam: str
+    threads: int
+    verbose: bool
+    bam_size_gb: float
+
+
 _BED12_RECORD_COLUMNS = (
     'chrom',
     'chromStart',
@@ -317,26 +325,43 @@ def _sort_bam_to_temp_and_replace(
         _remove_file_if_exists(sorted_bam)
 
 
+def _index_sorted_bam_from_request(
+    request: _BamIndexRequest,
+) -> None:
+    if request.verbose:
+        print("  Indexing sorted BAM...")
+        sys.stdout.flush()
+
+    idx_start = time.time()
+    try:
+        _run_samtools_index(
+            request.output_bam,
+            request.threads,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pysam.index(request.output_bam)
+
+    if request.verbose:
+        idx_time = time.time() - idx_start
+        speed = _throughput_gbs(request.bam_size_gb, idx_time)
+        print(f"  ✓ Index created in {idx_time:.1f}s ({speed:.2f} GB/s)")
+
+
 def _index_sorted_bam(
     output_bam: str,
     threads: int,
     verbose: bool,
     bam_size_gb: float,
 ) -> None:
-    if verbose:
-        print("  Indexing sorted BAM...")
-        sys.stdout.flush()
-
-    idx_start = time.time()
-    try:
-        _run_samtools_index(output_bam, threads, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        pysam.index(output_bam)
-
-    if verbose:
-        idx_time = time.time() - idx_start
-        speed = _throughput_gbs(bam_size_gb, idx_time)
-        print(f"  ✓ Index created in {idx_time:.1f}s ({speed:.2f} GB/s)")
+    _index_sorted_bam_from_request(
+        _BamIndexRequest(
+            output_bam=output_bam,
+            threads=threads,
+            verbose=verbose,
+            bam_size_gb=bam_size_gb,
+        )
+    )
 
 
 def _index_bam_if_already_sorted(
@@ -405,7 +430,14 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
     _sort_bam_to_temp_and_replace(
         output_bam, sorted_bam, threads, verbose, bam_size_gb,
     )
-    _index_sorted_bam(output_bam, threads, verbose, bam_size_gb)
+    _index_sorted_bam_from_request(
+        _BamIndexRequest(
+            output_bam=output_bam,
+            threads=threads,
+            verbose=verbose,
+            bam_size_gb=bam_size_gb,
+        )
+    )
 
 
 def _write_bam_list_file(bam_files: List[str], list_file: str) -> None:
