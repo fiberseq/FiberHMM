@@ -33,7 +33,19 @@ from __future__ import annotations
 
 import os
 import tempfile
+from dataclasses import dataclass
 from typing import Optional
+
+
+@dataclass(frozen=True)
+class _AutoSqlSchemaRequest:
+    table_name: str
+    description: str
+    extract_type: Optional[str] = None
+    block_scores: bool = False
+    sample_name: Optional[str] = None
+    circular_groups: bool = False
+
 
 _BED12_FIELDS = """    string  chrom;       "Reference chromosome / contig"
     uint    chromStart;  "Start position on the reference (0-based)"
@@ -138,20 +150,40 @@ def _schema_fields(
     return fields
 
 
+def _make_schema_from_request(request: _AutoSqlSchemaRequest) -> str:
+    fields = _schema_fields(
+        request.extract_type,
+        request.block_scores,
+        request.circular_groups,
+    )
+    description = _schema_description(
+        request.description,
+        request.sample_name,
+    )
+    description = _escape_autosql_description(description)
+    return (
+        f'table {request.table_name}\n'
+        f'"{description}"\n'
+        f'(\n'
+        f'{fields}'
+        f')\n'
+    )
+
+
 def _make_schema(table_name: str, description: str,
                  extract_type: Optional[str] = None,
                  block_scores: bool = False,
                  sample_name: Optional[str] = None,
                  circular_groups: bool = False) -> str:
-    fields = _schema_fields(extract_type, block_scores, circular_groups)
-    description = _schema_description(description, sample_name)
-    description = _escape_autosql_description(description)
-    return (
-        f'table {table_name}\n'
-        f'"{description}"\n'
-        f'(\n'
-        f'{fields}'
-        f')\n'
+    return _make_schema_from_request(
+        _AutoSqlSchemaRequest(
+            table_name=table_name,
+            description=description,
+            extract_type=extract_type,
+            block_scores=block_scores,
+            sample_name=sample_name,
+            circular_groups=circular_groups,
+        )
     )
 
 
@@ -221,11 +253,16 @@ def get_schema(extract_type: str, block_scores: bool = False,
     desc = _DESCRIPTIONS.get(extract_type)
     if desc is None:
         return None
-    return _make_schema(f'fiberhmm_{extract_type}', desc,
-                        extract_type=extract_type,
-                        block_scores=block_scores,
-                        sample_name=sample_name,
-                        circular_groups=circular_groups)
+    return _make_schema_from_request(
+        _AutoSqlSchemaRequest(
+            table_name=f'fiberhmm_{extract_type}',
+            description=desc,
+            extract_type=extract_type,
+            block_scores=block_scores,
+            sample_name=sample_name,
+            circular_groups=circular_groups,
+        )
+    )
 
 
 def _autosql_variant_suffix(block_scores: bool, circular_groups: bool) -> str:

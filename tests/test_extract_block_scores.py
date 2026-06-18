@@ -31,9 +31,12 @@ from fiberhmm.io.autosql import (
     _autosql_file_name,
     _autosql_file_suffix,
     _autosql_variant_suffix,
+    _AutoSqlSchemaRequest,
     _canonical_autosql_type,
     _create_autosql_output_path,
     _escape_autosql_description,
+    _make_schema,
+    _make_schema_from_request,
     _schema_description,
     _schema_fields,
     get_schema,
@@ -1433,6 +1436,32 @@ def test_schema_fields_add_block_score_and_circular_columns():
     circular_fields = _schema_fields('msp', circular_groups=True)
     assert 'blockAq' not in circular_fields
     assert 'circId' in circular_fields
+
+
+def test_make_autosql_schema_from_request_matches_adapter():
+    request = _AutoSqlSchemaRequest(
+        table_name='fiberhmm_tf',
+        description='TF "calls"',
+        extract_type='tf',
+        block_scores=True,
+        sample_name='sample-a',
+        circular_groups=True,
+    )
+
+    schema = _make_schema_from_request(request)
+
+    assert schema == _make_schema(
+        'fiberhmm_tf',
+        'TF "calls"',
+        extract_type='tf',
+        block_scores=True,
+        sample_name='sample-a',
+        circular_groups=True,
+    )
+    assert 'table fiberhmm_tf' in schema
+    assert 'Sample: sample-a. TF \\"calls\\"' in schema
+    assert 'blockTq' in schema
+    assert 'circId' in schema
 
 
 # ------------------- footprint --------------------------------------
