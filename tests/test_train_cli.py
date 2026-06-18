@@ -1008,7 +1008,7 @@ def test_save_training_example_pdf_page_closes_on_save_failure(monkeypatch):
     monkeypatch.setattr(
         train,
         "_training_example_pdf_layout",
-        lambda *args: (fig, "grid"),
+        lambda *args: train._TrainingExamplePdfLayout(fig, "grid"),
     )
     monkeypatch.setattr(
         train,

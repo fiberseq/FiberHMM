@@ -93,6 +93,12 @@ class _TrainingExamplePlotData:
     footprint_prob: np.ndarray
 
 
+@dataclass(frozen=True)
+class _TrainingExamplePdfLayout:
+    fig: object
+    gridspec: object
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Train FiberHMM model from PacBio BAM files',
@@ -1151,7 +1157,13 @@ def _save_training_example_png(
     return png_path
 
 
-def _training_example_pdf_layout(plt, idx: int, read, seq_len, m6a_positions):
+def _training_example_pdf_layout(
+    plt,
+    idx: int,
+    read,
+    seq_len,
+    m6a_positions,
+) -> _TrainingExamplePdfLayout:
     fig = plt.figure(figsize=(14, 16))
     gs = fig.add_gridspec(
         6,
@@ -1169,7 +1181,7 @@ def _training_example_pdf_layout(plt, idx: int, read, seq_len, m6a_positions):
         fontsize=11,
         y=0.98,
     )
-    return fig, gs
+    return _TrainingExamplePdfLayout(fig, gs)
 
 
 def _add_training_example_overview_pdf_panels(
@@ -1312,13 +1324,13 @@ def _save_training_example_pdf_page(
 ) -> None:
     plot_data = _training_example_plot_data(model, read, encoded)
 
-    fig, gs = _training_example_pdf_layout(
+    layout = _training_example_pdf_layout(
         plt, idx, read, plot_data.seq_len, plot_data.m6a_positions,
     )
     try:
         overview_axes = _add_training_example_overview_pdf_panels(
-            fig,
-            gs,
+            layout.fig,
+            layout.gridspec,
             plot_data.seq_len,
             plot_data.m6a_positions,
             plot_data.footprint_prob,
@@ -1334,8 +1346,8 @@ def _save_training_example_pdf_page(
 
         for w_idx, window in enumerate(zoom_windows):
             _add_training_example_zoom_pdf_panel(
-                fig,
-                gs,
+                layout.fig,
+                layout.gridspec,
                 w_idx,
                 window,
                 plot_data.m6a_positions,
@@ -1346,9 +1358,9 @@ def _save_training_example_pdf_page(
                 patch_collection_cls,
             )
 
-        pdf.savefig(fig)
+        pdf.savefig(layout.fig)
     finally:
-        plt.close(fig)
+        plt.close(layout.fig)
 
 
 def _save_training_stats_pdf_pages(
