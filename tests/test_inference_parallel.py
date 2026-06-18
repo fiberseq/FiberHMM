@@ -550,6 +550,18 @@ def test_process_legacy_chunk_buffer_skips_empty_and_delegates(monkeypatch):
     }
 
 
+def test_new_legacy_chunk_buffers_returns_independent_lists():
+    buffers = legacy_pipeline._new_legacy_chunk_buffers()
+    assert buffers == legacy_pipeline._LegacyChunkBuffers(fiber_reads=[], read_objs=[])
+
+    buffers.fiber_reads.append("fiber")
+    buffers.read_objs.append("read")
+
+    assert legacy_pipeline._new_legacy_chunk_buffers() == (
+        legacy_pipeline._LegacyChunkBuffers(fiber_reads=[], read_objs=[])
+    )
+
+
 def test_process_legacy_reads_buffers_skips_chunks_and_progress(monkeypatch):
     outbam = _OutBam()
     filter_config = object()

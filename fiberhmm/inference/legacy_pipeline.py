@@ -88,6 +88,16 @@ class _LegacyChunkRecordResult:
     worker_failures: int
 
 
+@dataclass(frozen=True)
+class _LegacyChunkBuffers:
+    fiber_reads: list
+    read_objs: list
+
+
+def _new_legacy_chunk_buffers() -> _LegacyChunkBuffers:
+    return _LegacyChunkBuffers(fiber_reads=[], read_objs=[])
+
+
 def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                               outbam, model, executor,
                               edge_trim: int, circular: bool,
@@ -546,8 +556,7 @@ def _process_legacy_reads(
     reads_with_footprints = 0
     skipped = 0
     worker_failures = 0
-    chunk_reads = []
-    chunk_read_objs = []
+    chunk_buffers = _new_legacy_chunk_buffers()
     chunk_kwargs = _legacy_chunk_buffer_kwargs(
         outbam, model, executor, edge_trim, circular, mode, context_size,
         msp_min_size, skip_reasons, posterior_writer, nuc_min_size,
@@ -564,17 +573,17 @@ def _process_legacy_reads(
             )
             continue
 
-        chunk_reads.append(fiber_result.fiber_read)
-        chunk_read_objs.append(read)
+        chunk_buffers.fiber_reads.append(fiber_result.fiber_read)
+        chunk_buffers.read_objs.append(read)
         total_reads += 1
 
         if max_reads and total_reads >= max_reads:
             break
 
-        if len(chunk_reads) >= chunk_size:
+        if len(chunk_buffers.fiber_reads) >= chunk_size:
             chunk_result = _process_legacy_chunk_buffer(
-                chunk_reads,
-                chunk_read_objs,
+                chunk_buffers.fiber_reads,
+                chunk_buffers.read_objs,
                 **chunk_kwargs,
             )
             reads_with_footprints += chunk_result.reads_with_footprints
@@ -582,12 +591,11 @@ def _process_legacy_reads(
 
             _print_legacy_progress(total_reads, skipped, start_time)
 
-            chunk_reads = []
-            chunk_read_objs = []
+            chunk_buffers = _new_legacy_chunk_buffers()
 
     chunk_result = _process_legacy_chunk_buffer(
-        chunk_reads,
-        chunk_read_objs,
+        chunk_buffers.fiber_reads,
+        chunk_buffers.read_objs,
         **chunk_kwargs,
     )
     reads_with_footprints += chunk_result.reads_with_footprints
