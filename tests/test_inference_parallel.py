@@ -1628,7 +1628,10 @@ def test_worker_recall_tables_reads_current_state(monkeypatch):
         "llr_miss": miss,
     })
 
-    assert streaming_workers._worker_recall_tables() == (hit, miss)
+    assert streaming_workers._worker_recall_tables() == streaming_workers._WorkerRecallTables(
+        llr_hit=hit,
+        llr_miss=miss,
+    )
 
 
 def test_run_worker_fused_apply_stage_forwards_arguments(monkeypatch):

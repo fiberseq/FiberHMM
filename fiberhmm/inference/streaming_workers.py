@@ -65,6 +65,12 @@ class _FusedPayloadWorkerConfig:
     unify_threshold: int
 
 
+@dataclass(frozen=True)
+class _WorkerRecallTables:
+    llr_hit: object
+    llr_miss: object
+
+
 def _payload_worker_config(
     edge_trim: int,
     circular: bool,
@@ -223,7 +229,10 @@ def _worker_recall_options(nuc_min_size: int, msp_min_size: int) -> dict:
 
 
 def _worker_recall_tables():
-    return _worker_recall_state['llr_hit'], _worker_recall_state['llr_miss']
+    return _WorkerRecallTables(
+        llr_hit=_worker_recall_state['llr_hit'],
+        llr_miss=_worker_recall_state['llr_miss'],
+    )
 
 
 def _run_worker_fused_apply_stage(
@@ -483,7 +492,7 @@ def _process_fused_payload_chunk_worker(
 
     # Model/params set once per worker; TF LLR tables attached to the
     # worker globals via _init_fused_worker.
-    llr_hit, llr_miss = _worker_recall_tables()
+    recall_tables = _worker_recall_tables()
     config = _fused_payload_worker_config(
         edge_trim,
         circular,
@@ -499,7 +508,12 @@ def _process_fused_payload_chunk_worker(
     )
 
     def process_item(payload):
-        return _process_fused_payload_item(payload, config, llr_hit, llr_miss)
+        return _process_fused_payload_item(
+            payload,
+            config,
+            recall_tables.llr_hit,
+            recall_tables.llr_miss,
+        )
 
     return _process_worker_items(chunk_payloads, process_item)
 
