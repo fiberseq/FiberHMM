@@ -1008,6 +1008,32 @@ class _LegacyPipelineResult:
     posterior_stats: object | None
 
 
+@dataclass(frozen=True)
+class _LegacyBamProcessingRequest:
+    input_bam: str
+    output_bam: str
+    model: object
+    model_path: Optional[str]
+    filter_config: ReadFilterConfig
+    skip_reasons: dict
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    prob_threshold: int
+    with_scores: bool
+    n_cores: int
+    max_reads: Optional[int]
+    debug_timing: bool
+    output_posteriors: Optional[str]
+    write_msps: bool
+    io_threads: int
+    start_time: float
+    chunk_size: int
+
+
 def _new_legacy_skip_reasons() -> dict:
     return new_skip_reasons(NO_FOOTPRINTS_SKIP_REASON)
 
@@ -1081,45 +1107,89 @@ def _run_legacy_bam_processing(
     start_time: float,
     chunk_size: int,
 ) -> _LegacyPipelineResult:
+    return _run_legacy_bam_processing_from_request(
+        _LegacyBamProcessingRequest(
+            input_bam=input_bam,
+            output_bam=output_bam,
+            model=model,
+            model_path=model_path,
+            filter_config=filter_config,
+            skip_reasons=skip_reasons,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            prob_threshold=prob_threshold,
+            with_scores=with_scores,
+            n_cores=n_cores,
+            max_reads=max_reads,
+            debug_timing=debug_timing,
+            output_posteriors=output_posteriors,
+            write_msps=write_msps,
+            io_threads=io_threads,
+            start_time=start_time,
+            chunk_size=chunk_size,
+        )
+    )
+
+
+def _run_legacy_bam_processing_from_request(
+    request: _LegacyBamProcessingRequest,
+) -> _LegacyPipelineResult:
     executor = None
     posterior_writer = None
     posterior_stats = None
 
-    with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
-        with pysam.AlignmentFile(output_bam, "wb",
+    with pysam.AlignmentFile(
+        request.input_bam,
+        "rb",
+        threads=request.io_threads,
+        check_sq=False,
+    ) as inbam:
+        with pysam.AlignmentFile(request.output_bam, "wb",
                                  header=append_coord_marker(inbam.header),
-                                 threads=io_threads) as outbam:
+                                 threads=request.io_threads) as outbam:
             try:
                 posterior_output = _open_legacy_posterior_writer(
-                    output_posteriors, mode, context_size, edge_trim, input_bam,
+                    request.output_posteriors,
+                    request.mode,
+                    request.context_size,
+                    request.edge_trim,
+                    request.input_bam,
                 )
                 posterior_writer = posterior_output.writer
                 return_posteriors = posterior_output.enabled
                 executor = _legacy_executor_for_config(
-                    model_path, n_cores, debug_timing,
+                    request.model_path,
+                    request.n_cores,
+                    request.debug_timing,
                 )
 
-                read_result = _process_legacy_reads(
-                    inbam,
-                    outbam,
-                    model,
-                    executor,
-                    filter_config,
-                    mode,
-                    prob_threshold,
-                    edge_trim,
-                    circular,
-                    context_size,
-                    msp_min_size,
-                    skip_reasons,
-                    posterior_writer,
-                    start_time,
-                    max_reads,
-                    chunk_size,
-                    nuc_min_size=nuc_min_size,
-                    with_scores=with_scores,
-                    return_posteriors=return_posteriors,
-                    write_msps=write_msps,
+                read_result = _process_legacy_reads_from_request(
+                    _LegacyReadsRequest(
+                        reads=inbam,
+                        outbam=outbam,
+                        model=request.model,
+                        executor=executor,
+                        filter_config=request.filter_config,
+                        mode=request.mode,
+                        prob_threshold=request.prob_threshold,
+                        edge_trim=request.edge_trim,
+                        circular=request.circular,
+                        context_size=request.context_size,
+                        msp_min_size=request.msp_min_size,
+                        skip_reasons=request.skip_reasons,
+                        posterior_writer=posterior_writer,
+                        start_time=request.start_time,
+                        max_reads=request.max_reads,
+                        chunk_size=request.chunk_size,
+                        nuc_min_size=request.nuc_min_size,
+                        with_scores=request.with_scores,
+                        return_posteriors=return_posteriors,
+                        write_msps=request.write_msps,
+                    )
                 )
             finally:
                 posterior_stats = _shutdown_legacy_resources(

@@ -356,32 +356,105 @@ def test_run_legacy_bam_processing_closes_posterior_on_executor_setup_failure(
     )
 
     with pytest.raises(RuntimeError, match="executor failed"):
-        legacy_pipeline._run_legacy_bam_processing(
-            input_bam="in.bam",
-            output_bam="out.bam",
-            model=object(),
-            model_path="model.json",
-            filter_config=ReadFilterConfig(),
-            skip_reasons=legacy_pipeline._new_legacy_skip_reasons(),
-            edge_trim=0,
-            circular=False,
-            mode="daf",
-            context_size=5,
-            msp_min_size=0,
-            nuc_min_size=0,
-            prob_threshold=0,
-            with_scores=False,
-            n_cores=2,
-            max_reads=None,
-            debug_timing=False,
-            output_posteriors="post.h5",
-            write_msps=True,
-            io_threads=1,
-            start_time=10.0,
-            chunk_size=1,
+        legacy_pipeline._run_legacy_bam_processing_from_request(
+            legacy_pipeline._LegacyBamProcessingRequest(
+                input_bam="in.bam",
+                output_bam="out.bam",
+                model=object(),
+                model_path="model.json",
+                filter_config=ReadFilterConfig(),
+                skip_reasons=legacy_pipeline._new_legacy_skip_reasons(),
+                edge_trim=0,
+                circular=False,
+                mode="daf",
+                context_size=5,
+                msp_min_size=0,
+                nuc_min_size=0,
+                prob_threshold=0,
+                with_scores=False,
+                n_cores=2,
+                max_reads=None,
+                debug_timing=False,
+                output_posteriors="post.h5",
+                write_msps=True,
+                io_threads=1,
+                start_time=10.0,
+                chunk_size=1,
+            )
         )
 
     assert writer.closed == 1
+
+
+def test_run_legacy_bam_processing_builds_request(monkeypatch):
+    calls = []
+    model = object()
+    filter_config = ReadFilterConfig()
+    skip_reasons = legacy_pipeline._new_legacy_skip_reasons()
+    pipeline_result = legacy_pipeline._LegacyPipelineResult(
+        total_reads=1,
+        reads_with_footprints=2,
+        skipped=3,
+        worker_failures=4,
+        posterior_stats=None,
+    )
+
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_run_legacy_bam_processing_from_request",
+        lambda request: calls.append(request) or pipeline_result,
+    )
+
+    assert legacy_pipeline._run_legacy_bam_processing(
+        input_bam="in.bam",
+        output_bam="out.bam",
+        model=model,
+        model_path="model.json",
+        filter_config=filter_config,
+        skip_reasons=skip_reasons,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=87,
+        prob_threshold=128,
+        with_scores=True,
+        n_cores=2,
+        max_reads=10,
+        debug_timing=True,
+        output_posteriors="post.h5",
+        write_msps=False,
+        io_threads=1,
+        start_time=10.0,
+        chunk_size=100,
+    ) is pipeline_result
+    assert calls == [
+        legacy_pipeline._LegacyBamProcessingRequest(
+            input_bam="in.bam",
+            output_bam="out.bam",
+            model=model,
+            model_path="model.json",
+            filter_config=filter_config,
+            skip_reasons=skip_reasons,
+            edge_trim=11,
+            circular=True,
+            mode="daf",
+            context_size=5,
+            msp_min_size=61,
+            nuc_min_size=87,
+            prob_threshold=128,
+            with_scores=True,
+            n_cores=2,
+            max_reads=10,
+            debug_timing=True,
+            output_posteriors="post.h5",
+            write_msps=False,
+            io_threads=1,
+            start_time=10.0,
+            chunk_size=100,
+        )
+    ]
 
 
 def test_process_bam_legacy_pipeline_uses_default_chunk_size(monkeypatch):
