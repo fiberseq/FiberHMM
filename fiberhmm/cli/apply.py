@@ -247,18 +247,20 @@ def _context_size_message(context_size: int) -> str:
 
 def _resolve_context_size(args, model_context_size: int) -> int:
     if args.context_size is not None:
-        context_size = args.context_size
+        context_size = int(args.context_size)
         if context_size != model_context_size:
             print(f"  WARNING: Overriding model context size {model_context_size} with {context_size}")
     else:
-        context_size = model_context_size
+        context_size = int(model_context_size)
     print(f"  Context size: {_context_size_message(context_size)}")
     return context_size
 
 
 def _resolve_mode(args, model_mode: str) -> str:
-    if args.mode is not None:
-        mode = args.mode
+    arg_mode = str(args.mode).strip() if args.mode is not None else None
+    model_mode = str(model_mode).strip() if model_mode is not None else None
+    if arg_mode:
+        mode = arg_mode
         if mode != model_mode:
             print(f"  NOTE: Command line mode '{mode}' overrides model mode '{model_mode}'")
     elif model_mode and model_mode != 'unknown':

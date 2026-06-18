@@ -175,7 +175,7 @@ def test_apply_ddda_notice_detection_and_output(capsys):
 
 
 def test_apply_context_size_override_warns(capsys):
-    args = SimpleNamespace(context_size=5)
+    args = SimpleNamespace(context_size="5")
 
     assert _context_size_message(5) == "k=5 (11-mer)"
     assert _resolve_context_size(args, model_context_size=3) == 5
@@ -185,7 +185,7 @@ def test_apply_context_size_override_warns(capsys):
 
 
 def test_apply_mode_override_warns(capsys):
-    args = SimpleNamespace(mode="daf")
+    args = SimpleNamespace(mode=" daf ")
 
     assert _resolve_mode(args, model_mode="pacbio-fiber") == "daf"
     out = capsys.readouterr().out
@@ -198,6 +198,11 @@ def test_apply_mode_defaults_without_model_metadata(capsys):
 
     assert _resolve_mode(args, model_mode="unknown") == "pacbio-fiber"
     assert "defaulting to 'pacbio-fiber'" in capsys.readouterr().out
+
+    assert _resolve_mode(args, model_mode=" nanopore-fiber ") == "nanopore-fiber"
+
+    args = SimpleNamespace(mode=" ")
+    assert _resolve_mode(args, model_mode="daf") == "daf"
 
 
 def test_apply_strand_detection_message_by_mode():
