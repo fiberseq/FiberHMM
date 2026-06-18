@@ -139,6 +139,12 @@ def _metadata_from_mapping(data) -> Tuple[int, str]:
     return int(context_size), mode
 
 
+def _model_and_metadata_from_mapping(data) -> Tuple[FiberHMM, int, str]:
+    model = _model_from_mapping(data)
+    context_size, mode = _metadata_from_mapping(data)
+    return model, context_size, mode
+
+
 def _read_json(filepath: str) -> dict:
     with open(filepath, 'r') as f:
         return json.load(f)
@@ -170,9 +176,7 @@ def _load_npz(filepath: str) -> FiberHMM:
 def _load_npz_with_metadata(filepath: str) -> Tuple[FiberHMM, int, str]:
     """Load model and metadata from NPZ format."""
     with np.load(filepath, allow_pickle=False) as data:
-        model = _model_from_mapping(data)
-        context_size, mode = _metadata_from_mapping(data)
-        return model, context_size, mode
+        return _model_and_metadata_from_mapping(data)
 
 
 def _load_json(filepath: str) -> FiberHMM:
@@ -184,9 +188,7 @@ def _load_json(filepath: str) -> FiberHMM:
 def _load_json_with_metadata(filepath: str) -> Tuple[FiberHMM, int, str]:
     """Load model and metadata from JSON format."""
     data = _read_json(filepath)
-    model = _model_from_mapping(data)
-    context_size, mode = _metadata_from_mapping(data)
-    return model, context_size, mode
+    return _model_and_metadata_from_mapping(data)
 
 
 def _load_pickle(filepath: str) -> FiberHMM:
