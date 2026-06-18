@@ -32,6 +32,7 @@ from fiberhmm.io.ma_tags import (
     format_ma_tag,
     llr_to_tq,
     parse_aq_array,
+    parse_an_tag,
     parse_ma_tag,
     tq_to_llr,
 )
@@ -280,6 +281,11 @@ def test_parse_ma_chunk_splits_head_and_intervals():
 
     with pytest.raises(ValueError, match="missing colon"):
         _parse_ma_chunk("tf.QQQ")
+
+
+def test_parse_an_tag_strips_tokens_and_preserves_empty_names():
+    assert parse_an_tag("") == []
+    assert parse_an_tag("tf_a, ., tf_b,") == ["tf_a", "", "tf_b", ""]
 
 
 def test_parse_ma_read_length_reports_bad_token():

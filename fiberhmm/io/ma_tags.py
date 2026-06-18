@@ -295,7 +295,10 @@ def parse_an_tag(an_string: str) -> List[str]:
     """Parse an AN:Z string into names aligned with MA annotations."""
     if not an_string:
         return []
-    return [tok if tok != '.' else '' for tok in an_string.split(',')]
+    return [
+        tok if tok != '.' else ''
+        for tok in (item.strip() for item in an_string.split(','))
+    ]
 
 
 def format_aq_array(nq_values: Sequence[int],
