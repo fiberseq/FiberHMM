@@ -612,6 +612,39 @@ def _save_probability_distribution_pngs(
     return png_paths
 
 
+def _write_probability_plot_outputs(
+    plt,
+    PdfPages,
+    plots_dir: str,
+    base_name: str,
+    accessible_counters: Dict[str, 'ContextCounter'],
+    inaccessible_counters: Dict[str, 'ContextCounter'],
+    context_size: int,
+) -> str:
+    pdf_path = _probability_stats_output_path(
+        plots_dir, base_name, context_size, "pdf",
+    )
+    _write_probability_stats_pdf(
+        plt,
+        PdfPages,
+        pdf_path,
+        accessible_counters,
+        inaccessible_counters,
+        context_size,
+    )
+    print(f"  Plots: {pdf_path}")
+
+    _save_probability_distribution_pngs(
+        plt,
+        plots_dir,
+        base_name,
+        accessible_counters,
+        inaccessible_counters,
+        context_size,
+    )
+    return pdf_path
+
+
 def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
                                 inaccessible_counters: Dict[str, 'ContextCounter'],
                                 plots_dir: str, base_name: str, context_size: int = 3,
@@ -652,24 +685,9 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
         print("  Install with: pip install matplotlib")
         return
 
-    pdf_path = _probability_stats_output_path(
-        plots_dir, base_name, context_size, "pdf",
-    )
-
-    _write_probability_stats_pdf(
+    _write_probability_plot_outputs(
         plt,
         PdfPages,
-        pdf_path,
-        accessible_counters,
-        inaccessible_counters,
-        context_size,
-    )
-
-    print(f"  Plots: {pdf_path}")
-
-    # Also save a simple PNG of the key distribution
-    _save_probability_distribution_pngs(
-        plt,
         plots_dir,
         base_name,
         accessible_counters,

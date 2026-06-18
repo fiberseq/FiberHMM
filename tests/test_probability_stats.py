@@ -493,6 +493,50 @@ def test_probability_distribution_pngs_collect_paths(monkeypatch):
     assert inaccessible["C"].context_sizes == [5]
 
 
+def test_write_probability_plot_outputs_writes_pdf_and_pngs(monkeypatch, capsys):
+    table = pd.DataFrame({
+        "context": ["AAA"],
+        "ratio": [0.8],
+        "hit": [8],
+        "nohit": [2],
+    })
+    accessible = {"A": _FakeCounter(10, 8, {}, table)}
+    inaccessible = {"A": _FakeCounter(10, 2, {}, table)}
+    calls = []
+
+    monkeypatch.setattr(
+        stats,
+        "_write_probability_stats_pdf",
+        lambda *args: calls.append(("pdf", args)),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_save_probability_distribution_pngs",
+        lambda *args: calls.append(("png", args)) or ["plot.png"],
+    )
+
+    plt = object()
+    pdf_pages = object()
+    assert stats._write_probability_plot_outputs(
+        plt,
+        pdf_pages,
+        "plots",
+        "run",
+        accessible,
+        inaccessible,
+        context_size=4,
+    ) == "plots/run_k4_stats.pdf"
+
+    assert calls == [
+        (
+            "pdf",
+            (plt, pdf_pages, "plots/run_k4_stats.pdf", accessible, inaccessible, 4),
+        ),
+        ("png", (plt, "plots", "run", accessible, inaccessible, 4)),
+    ]
+    assert "Plots: plots/run_k4_stats.pdf" in capsys.readouterr().out
+
+
 def test_merged_probability_table_aligns_contexts_and_totals():
     acc = pd.DataFrame({
         "context": ["AAA", "AAC"],
