@@ -119,7 +119,7 @@ class _RecallWorkerConfig:
 class _RecallSingleThreadRequest:
     bam_in: object
     bam_out: object
-    header_text: str | None
+    header_text: object
     worker_config: _RecallWorkerConfig
     also_write_legacy: bool
     downstream_compat: bool
