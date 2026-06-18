@@ -279,8 +279,7 @@ class TestPredictFootprintsAndMsps:
         confidence = np.array([0.7, 0.8, 0.9, 0.6, 0.5], dtype=np.float32)
 
         result = engine._linear_prediction_result(
-            states,
-            confidence,
+            engine._PredictionOutputs(states, confidence, None),
             msp_min_size=1,
             with_scores=True,
             nuc_min_size=1,
