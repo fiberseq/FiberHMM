@@ -226,6 +226,7 @@ def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
 
 
 def _posterior_tsv_output_path(output_path: str, compress: bool) -> str:
+    output_path = os.fspath(output_path)
     is_gzip_path = output_path.lower().endswith('.gz')
     if compress or is_gzip_path:
         return output_path if is_gzip_path else output_path + '.gz'
@@ -252,6 +253,7 @@ class PosteriorsTSVWriter:
             source_bam: Source BAM filename
             compress: If True, gzip compress the output
         """
+        output_path = os.fspath(output_path)
         self.output_path = output_path
         self.compress = compress or output_path.lower().endswith('.gz')
         self.output_path = _posterior_tsv_output_path(output_path, compress)

@@ -20,7 +20,7 @@ def _h5_text(value):
     return value
 
 
-def test_posterior_tsv_output_path_respects_compression_flag():
+def test_posterior_tsv_output_path_respects_compression_flag(tmp_path):
     assert tsv_backend._posterior_tsv_output_path(
         "out.tsv", compress=False,
     ) == "out.tsv"
@@ -33,6 +33,9 @@ def test_posterior_tsv_output_path_respects_compression_flag():
     assert tsv_backend._posterior_tsv_output_path(
         "out.tsv.GZ", compress=False,
     ) == "out.tsv.GZ"
+    assert tsv_backend._posterior_tsv_output_path(
+        tmp_path / "out.tsv", compress=True,
+    ) == str(tmp_path / "out.tsv.gz")
 
 
 class _TrackingHandle:
@@ -96,13 +99,14 @@ def test_tsv_to_h5_closes_gzip_inputs_when_conversion_fails(monkeypatch, tmp_pat
 def test_tsv_writer_reuses_region_posterior_row_format(tmp_path):
     output_path = tmp_path / "posteriors.tsv"
     writer = tsv_backend.PosteriorsTSVWriter(
-        str(output_path),
+        output_path,
         mode="pacbio-fiber",
         context_size=3,
         edge_trim=10,
         source_bam="input.bam",
         compress=False,
     )
+    assert writer.output_path == str(output_path)
     writer.write_fiber(
         read_id="read1",
         chrom="chr1",
