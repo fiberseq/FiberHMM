@@ -38,6 +38,7 @@ def test_samtools_command_builders_preserve_thread_args():
 
 def test_sorted_bam_temp_path_preserves_bam_suffix_convention():
     assert bam_output._sorted_bam_temp_path("out.bam") == "out.sorted.bam"
+    assert bam_output._sorted_bam_temp_path("out.BAM") == "out.sorted.bam"
     assert bam_output._sorted_bam_temp_path("out.cram") == "out.cram.sorted.bam"
 
 
