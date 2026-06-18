@@ -290,7 +290,9 @@ def test_region_work_item_builders_use_stable_temp_names(tmp_path):
 
 def test_region_result_has_existing_tsv_requires_path_and_file(tmp_path):
     missing = tmp_path / "missing.tsv"
+    empty = tmp_path / "empty.tsv"
     existing = tmp_path / "region.tsv"
+    empty.write_text("")
     existing.write_text("read\tposterior\n")
 
     assert not region_pipeline._region_result_has_existing_tsv(
@@ -298,6 +300,9 @@ def test_region_result_has_existing_tsv_requires_path_and_file(tmp_path):
     )
     assert not region_pipeline._region_result_has_existing_tsv(
         region_pipeline.RegionBamResult("region.bam", 1, 1, 1, str(missing))
+    )
+    assert not region_pipeline._region_result_has_existing_tsv(
+        region_pipeline.RegionBamResult("region.bam", 1, 1, 1, str(empty))
     )
     assert region_pipeline._region_result_has_existing_tsv(
         region_pipeline.RegionBamResult("region.bam", 1, 1, 1, str(existing))

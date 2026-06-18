@@ -312,7 +312,11 @@ def _ordered_existing_temp_paths(indexed_paths) -> list:
 
 
 def _region_result_has_existing_tsv(result: RegionBamResult) -> bool:
-    return bool(result.temp_tsv_path and os.path.exists(result.temp_tsv_path))
+    return bool(
+        result.temp_tsv_path
+        and os.path.exists(result.temp_tsv_path)
+        and os.path.getsize(result.temp_tsv_path) > 0
+    )
 
 
 def _submit_region_futures(executor, worker, work_items) -> dict:
