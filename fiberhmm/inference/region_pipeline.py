@@ -73,6 +73,22 @@ class _RegionProgressConfig:
     rate_precision: int = 1
 
 
+@dataclass(frozen=True)
+class _RegionResultCollectionRequest:
+    executor: object
+    worker: object
+    work_items: object
+    aggregation: object
+    result_type: object
+    total_regions: int
+    start_time: float
+    pool_start: float
+    ready_message: str
+    include_tsv: bool
+    progress_config: Optional[_RegionProgressConfig]
+    error_prefix: Optional[str]
+
+
 def _base_region_worker_params(
     *,
     edge_trim: int,
@@ -384,36 +400,61 @@ def _collect_region_results(
     progress_config: Optional[_RegionProgressConfig] = None,
     error_prefix: Optional[str] = None,
 ) -> None:
-    futures = _submit_region_futures(executor, worker, work_items)
+    _collect_region_results_from_request(
+        _RegionResultCollectionRequest(
+            executor=executor,
+            worker=worker,
+            work_items=work_items,
+            aggregation=aggregation,
+            result_type=result_type,
+            total_regions=total_regions,
+            start_time=start_time,
+            pool_start=pool_start,
+            ready_message=ready_message,
+            include_tsv=include_tsv,
+            progress_config=progress_config,
+            error_prefix=error_prefix,
+        )
+    )
+
+
+def _collect_region_results_from_request(
+    request: _RegionResultCollectionRequest,
+) -> None:
+    futures = _submit_region_futures(
+        request.executor,
+        request.worker,
+        request.work_items,
+    )
     first_result_time = None
-    progress_config = progress_config or _RegionProgressConfig()
+    progress_config = request.progress_config or _RegionProgressConfig()
 
     for future in as_completed(futures):
         try:
-            result = result_type.from_value(future.result())
+            result = request.result_type.from_value(future.result())
             _add_region_result_to_aggregation(
-                aggregation,
+                request.aggregation,
                 futures[future],
                 result,
-                include_tsv=include_tsv,
+                include_tsv=request.include_tsv,
             )
 
             first_result_time = _report_workers_ready_once(
                 first_result_time,
-                pool_start,
-                ready_message,
+                request.pool_start,
+                request.ready_message,
             )
             _print_region_progress(
-                aggregation,
-                total_regions,
-                start_time,
+                request.aggregation,
+                request.total_regions,
+                request.start_time,
                 footprint_label=progress_config.footprint_label,
                 rate_unit=progress_config.rate_unit,
                 rate_precision=progress_config.rate_precision,
             )
         except Exception as e:
-            if error_prefix:
-                print(f"\n{error_prefix}: {e}")
+            if request.error_prefix:
+                print(f"\n{request.error_prefix}: {e}")
             raise
 
 

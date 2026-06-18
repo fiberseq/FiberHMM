@@ -449,20 +449,23 @@ def test_collect_region_results_aggregates_and_reports_progress(monkeypatch, tmp
     aggregation = region_pipeline.RegionBamAggregation()
     worker = object()
 
-    region_pipeline._collect_region_results(
-        executor,
-        worker,
-        ["item0", "item1"],
-        aggregation,
-        region_pipeline.RegionBamResult,
-        total_regions=2,
-        start_time=10.0,
-        pool_start=9.0,
-        ready_message="Processing regions...",
-        include_tsv=True,
-        progress_config=region_pipeline._RegionProgressConfig(
-            footprint_label="With FP",
-        ),
+    region_pipeline._collect_region_results_from_request(
+        region_pipeline._RegionResultCollectionRequest(
+            executor=executor,
+            worker=worker,
+            work_items=["item0", "item1"],
+            aggregation=aggregation,
+            result_type=region_pipeline.RegionBamResult,
+            total_regions=2,
+            start_time=10.0,
+            pool_start=9.0,
+            ready_message="Processing regions...",
+            include_tsv=True,
+            progress_config=region_pipeline._RegionProgressConfig(
+                footprint_label="With FP",
+            ),
+            error_prefix=None,
+        )
     )
 
     assert executor.submitted == [(worker, "item0"), (worker, "item1")]
