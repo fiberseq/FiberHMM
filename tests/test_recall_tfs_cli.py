@@ -146,7 +146,13 @@ def test_recall_tfs_stats_helpers_accumulate_summary():
     recall_tfs._add_stats(total, {"tf": 5})
 
     assert total == {"v2": 1, "tf": 7, "demoted": 3, "failed": 4}
-    assert recall_tfs._stats_tuple(9, total) == (9, 1, 7, 3, 4)
+    assert recall_tfs._stats_summary(9, total) == recall_tfs._RecallProcessingSummary(
+        n_reads=9,
+        n_v2=1,
+        n_tf=7,
+        n_demoted=3,
+        n_failed=4,
+    )
 
 
 def test_recall_tfs_record_recall_stats_counts_demoted_short_nucs():
@@ -400,11 +406,11 @@ def test_recall_tfs_run_processing_dispatches_single_and_parallel(monkeypatch):
 
     def fake_single(*call_args):
         calls.append(("single", call_args))
-        return (1, 2, 3, 4, 5)
+        return recall_tfs._RecallProcessingSummary(1, 2, 3, 4, 5)
 
     def fake_parallel(*call_args):
         calls.append(("parallel", call_args))
-        return (6, 7, 8, 9, 10)
+        return recall_tfs._RecallProcessingSummary(6, 7, 8, 9, 10)
 
     monkeypatch.setattr(recall_tfs, "_single_thread_loop", fake_single)
     monkeypatch.setattr(recall_tfs, "_parallel_loop", fake_parallel)
@@ -421,10 +427,10 @@ def test_recall_tfs_run_processing_dispatches_single_and_parallel(monkeypatch):
         True,
     )
     assert recall_tfs._run_recall_processing(args, 1, *common_args) == (
-        1, 2, 3, 4, 5,
+        recall_tfs._RecallProcessingSummary(1, 2, 3, 4, 5)
     )
     assert recall_tfs._run_recall_processing(args, 4, *common_args) == (
-        6, 7, 8, 9, 10,
+        recall_tfs._RecallProcessingSummary(6, 7, 8, 9, 10)
     )
     assert calls[0] == (
         "single",
@@ -443,7 +449,9 @@ def test_recall_tfs_run_processing_dispatches_single_and_parallel(monkeypatch):
 
 
 def test_recall_tfs_print_summary_reports_failures(capsys):
-    recall_tfs._print_recall_summary(10, 4, 3, 2, 1)
+    recall_tfs._print_recall_summary(
+        recall_tfs._RecallProcessingSummary(10, 4, 3, 2, 1)
+    )
 
     err = capsys.readouterr().err
     assert "processed 10 reads" in err
@@ -498,7 +506,7 @@ def test_recall_tfs_single_thread_passes_failed_reads_through(monkeypatch):
         True,
         False,
         0,
-    ) == (2, 1, 2, 3, 1)
+    ) == recall_tfs._RecallProcessingSummary(2, 1, 2, 3, 1)
     assert written == reads
     assert applied == [("ok", "result")]
 

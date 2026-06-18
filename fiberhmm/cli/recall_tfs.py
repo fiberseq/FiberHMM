@@ -88,6 +88,15 @@ class _RecallResult:
     nq_for_kept: object
 
 
+@dataclass(frozen=True)
+class _RecallProcessingSummary:
+    n_reads: int
+    n_v2: int
+    n_tf: int
+    n_demoted: int
+    n_failed: int
+
+
 def _new_stats():
     return {key: 0 for key in _STATS_KEYS}
 
@@ -103,13 +112,13 @@ def _add_stats(total, stats):
         total[key] += stats.get(key, 0)
 
 
-def _stats_tuple(n_reads, stats):
-    return (
-        n_reads,
-        stats['v2'],
-        stats['tf'],
-        stats['demoted'],
-        stats['failed'],
+def _stats_summary(n_reads, stats):
+    return _RecallProcessingSummary(
+        n_reads=n_reads,
+        n_v2=stats['v2'],
+        n_tf=stats['tf'],
+        n_demoted=stats['demoted'],
+        n_failed=stats['failed'],
     )
 
 
@@ -332,7 +341,7 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
         )
         n_reads += 1
         _add_stats(total, stats)
-    return _stats_tuple(n_reads, total)
+    return _stats_summary(n_reads, total)
 
 
 def _submit_recall_chunk(pool, pending, reads_chunk, payloads_chunk):
@@ -412,7 +421,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         while pending:
             _drain_one()
 
-    return _stats_tuple(n_reads, total)
+    return _stats_summary(n_reads, total)
 
 
 def parse_args():
@@ -597,15 +606,17 @@ def _run_recall_processing(
     )
 
 
-def _print_recall_summary(n_reads, n_v2, n_tf, n_demoted, n_failed) -> None:
+def _print_recall_summary(summary: _RecallProcessingSummary) -> None:
     print(
-        f"[recall_tfs] processed {n_reads} reads; {n_v2} carried v2 tags; "
-        f"{n_tf} TF calls emitted; {n_demoted} v2 short nucs demoted to tf+",
+        f"[recall_tfs] processed {summary.n_reads} reads; "
+        f"{summary.n_v2} carried v2 tags; "
+        f"{summary.n_tf} TF calls emitted; "
+        f"{summary.n_demoted} v2 short nucs demoted to tf+",
         file=sys.stderr,
     )
-    if n_failed:
+    if summary.n_failed:
         print(
-            f"[recall_tfs] warning: {n_failed} reads passed through unchanged "
+            f"[recall_tfs] warning: {summary.n_failed} reads passed through unchanged "
             "after recall errors",
             file=sys.stderr,
         )
@@ -648,7 +659,7 @@ def main():
         header_text = str(bam_in.header)
         also_write_legacy = _also_write_legacy(args)
 
-        n_reads, n_v2, n_tf, n_demoted, n_failed = _run_recall_processing(
+        summary = _run_recall_processing(
             args,
             n_cores,
             bam_in,
@@ -666,7 +677,7 @@ def main():
         if bam_out is not None:
             bam_out.close()
 
-    _print_recall_summary(n_reads, n_v2, n_tf, n_demoted, n_failed)
+    _print_recall_summary(summary)
 
 
 if __name__ == '__main__':
