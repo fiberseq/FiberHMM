@@ -127,11 +127,15 @@ def format_posterior_metadata_line(metadata: dict) -> str:
     return f"#metadata:{json.dumps(metadata)}\n"
 
 
+def _region_tsv_file_has_records(path: str) -> bool:
+    return os.path.isfile(path) and os.path.getsize(path) > 0
+
+
 def _valid_region_tsv_files(temp_tsv_files: Iterable[tuple[int, str]]) -> list[tuple[int, str]]:
     return [
         (idx, path)
         for idx, path in sorted(temp_tsv_files, key=lambda item: item[0])
-        if os.path.exists(path) and os.path.getsize(path) > 0
+        if _region_tsv_file_has_records(path)
     ]
 
 

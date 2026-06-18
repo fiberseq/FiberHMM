@@ -119,17 +119,20 @@ def test_merge_region_posteriors_tsv_orders_regions_and_preserves_input_list(tmp
     first = tmp_path / "region_0.tsv"
     second = tmp_path / "region_1.tsv"
     empty = tmp_path / "empty.tsv"
+    directory = tmp_path / "region_dir.tsv"
     output = tmp_path / "posteriors.h5"
 
     first.write_text("read_a\tchr1\t1\t5\t+\tAAE=\t1\t4\n")
     second.write_text("read_b\tchr1\t5\t9\t-\tAgM=\t2\t4\n")
     empty.write_text("")
+    directory.mkdir()
 
     temp_files = [
         (1, str(second)),
         (0, str(first)),
         (2, str(empty)),
         (3, str(tmp_path / "missing.tsv")),
+        (4, str(directory)),
     ]
     original_order = list(temp_files)
 
