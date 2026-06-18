@@ -853,7 +853,25 @@ def test_write_processed_legacy_reads_tags_results_and_counts(monkeypatch):
         tagged.append((read.query_name, result, with_scores, write_msps))
 
     monkeypatch.setattr(legacy_pipeline, "set_legacy_apply_tags", fake_set_tags)
+    request = legacy_pipeline._ProcessedLegacyReadsWriteRequest(
+        chunk_read_objs=reads,
+        results=[{"ns": [1]}, None],
+        outbam=outbam,
+        with_scores=True,
+        write_msps=False,
+    )
 
+    assert legacy_pipeline._write_processed_legacy_reads_from_request(
+        request,
+    ) == legacy_pipeline._LegacyWriteCounts(
+        reads_with_footprints=1,
+        no_footprints=1,
+    )
+    assert tagged == [("read1", {"ns": [1]}, True, False)]
+    assert outbam.written == reads
+
+    tagged.clear()
+    outbam = _OutBam()
     assert legacy_pipeline._write_processed_legacy_reads(
         reads,
         [{"ns": [1]}, None],

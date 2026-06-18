@@ -78,6 +78,15 @@ class _LegacyWriteCounts:
 
 
 @dataclass(frozen=True)
+class _ProcessedLegacyReadsWriteRequest:
+    chunk_read_objs: list
+    results: list
+    outbam: object
+    with_scores: bool
+    write_msps: bool
+
+
+@dataclass(frozen=True)
 class _ProcessedLegacyChunk:
     reads_with_footprints: int
     no_footprints: int
@@ -166,12 +175,14 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
     )
 
     # Write annotated reads
-    write_counts = _write_processed_legacy_reads(
-        chunk_read_objs,
-        chunk_result.results,
-        outbam,
-        with_scores,
-        write_msps,
+    write_counts = _write_processed_legacy_reads_from_request(
+        _ProcessedLegacyReadsWriteRequest(
+            chunk_read_objs=chunk_read_objs,
+            results=chunk_result.results,
+            outbam=outbam,
+            with_scores=with_scores,
+            write_msps=write_msps,
+        )
     )
 
     # Return results for posteriors if requested
@@ -319,16 +330,35 @@ def _write_processed_legacy_reads(
     with_scores: bool,
     write_msps: bool,
 ) -> _LegacyWriteCounts:
+    return _write_processed_legacy_reads_from_request(
+        _ProcessedLegacyReadsWriteRequest(
+            chunk_read_objs=chunk_read_objs,
+            results=results,
+            outbam=outbam,
+            with_scores=with_scores,
+            write_msps=write_msps,
+        )
+    )
+
+
+def _write_processed_legacy_reads_from_request(
+    request: _ProcessedLegacyReadsWriteRequest,
+) -> _LegacyWriteCounts:
     reads_with_footprints = 0
     no_footprints = 0
-    for read_obj, result in zip(chunk_read_objs, results):
+    for read_obj, result in zip(request.chunk_read_objs, request.results):
         if result is not None:
-            set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
+            set_legacy_apply_tags(
+                read_obj,
+                result,
+                request.with_scores,
+                request.write_msps,
+            )
             reads_with_footprints += 1
         else:
             no_footprints += 1
 
-        outbam.write(read_obj)
+        request.outbam.write(read_obj)
 
     return _LegacyWriteCounts(reads_with_footprints, no_footprints)
 
