@@ -72,6 +72,14 @@ class _FootprintBed12RowRequest:
 
 
 @dataclass(frozen=True)
+class _TaggedBamBedExtractRequest:
+    input_bam: str
+    output_bed: str
+    with_scores: bool
+    n_cores: int
+
+
+@dataclass(frozen=True)
 class _ScoreBlockValues:
     block_starts: List[int]
     block_sizes: List[int]
@@ -1327,13 +1335,28 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
     Returns:
         Number of reads with footprints written
     """
-    import pysam
+    return extract_bed_from_tagged_bam_from_request(
+        _TaggedBamBedExtractRequest(
+            input_bam=input_bam,
+            output_bed=output_bed,
+            with_scores=with_scores,
+            n_cores=n_cores,
+        )
+    )
 
+
+def extract_bed_from_tagged_bam_from_request(
+    request: _TaggedBamBedExtractRequest,
+) -> int:
     count = 0
 
-    with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as bam, open(output_bed, 'w') as out:
+    with pysam.AlignmentFile(
+        request.input_bam,
+        "rb",
+        check_sq=False,
+    ) as bam, open(request.output_bed, 'w') as out:
         for read in bam:
-            line = _bed12_line_from_tagged_read(read, with_scores)
+            line = _bed12_line_from_tagged_read(read, request.with_scores)
             if line is None:
                 continue
 
