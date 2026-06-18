@@ -211,6 +211,42 @@ def _plot_log_odds_distribution(ax, merged) -> None:
     ax.legend()
 
 
+def _plot_top_differentiating_contexts(ax, merged) -> None:
+    if len(merged) == 0:
+        return
+
+    top_contexts = _top_differentiating_contexts(merged)
+    contexts = top_contexts['context'].values
+    acc_vals = top_contexts['ratio_acc'].values
+    inacc_vals = top_contexts['ratio_inacc'].values
+
+    y_pos = np.arange(len(contexts))
+    width = 0.35
+
+    ax.barh(
+        y_pos - width / 2,
+        inacc_vals,
+        width,
+        label='Inaccessible',
+        color='firebrick',
+        alpha=0.8,
+    )
+    ax.barh(
+        y_pos + width / 2,
+        acc_vals,
+        width,
+        label='Accessible',
+        color='forestgreen',
+        alpha=0.8,
+    )
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(contexts, fontsize=7, fontfamily='monospace')
+    ax.set_xlabel('P(methylation)')
+    ax.set_title('Top Differentiating Contexts')
+    ax.legend(loc='lower right')
+    ax.set_xlim(0, 1)
+
+
 def _write_probability_ratio_summary(handle, label: str, ratios: np.ndarray) -> None:
     if len(ratios) == 0:
         return
@@ -385,25 +421,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
 
             # 4. Top differentiating contexts (use merged)
             ax = axes[1, 1]
-            if len(merged) > 0:
-                # Find contexts with best separation
-                top_contexts = _top_differentiating_contexts(merged)
-
-                contexts = top_contexts['context'].values
-                acc_vals = top_contexts['ratio_acc'].values
-                inacc_vals = top_contexts['ratio_inacc'].values
-
-                y_pos = np.arange(len(contexts))
-                width = 0.35
-
-                ax.barh(y_pos - width/2, inacc_vals, width, label='Inaccessible', color='firebrick', alpha=0.8)
-                ax.barh(y_pos + width/2, acc_vals, width, label='Accessible', color='forestgreen', alpha=0.8)
-                ax.set_yticks(y_pos)
-                ax.set_yticklabels(contexts, fontsize=7, fontfamily='monospace')
-                ax.set_xlabel('P(methylation)')
-                ax.set_title('Top Differentiating Contexts')
-                ax.legend(loc='lower right')
-                ax.set_xlim(0, 1)
+            _plot_top_differentiating_contexts(ax, merged)
 
             plt.tight_layout()
             pdf.savefig(fig)

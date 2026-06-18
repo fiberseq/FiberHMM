@@ -415,3 +415,75 @@ def test_log_odds_distribution_plots_filtered_values_and_empty_noop():
     stats._plot_log_odds_distribution(empty_ax, pd.DataFrame())
     assert empty_ax.hist_calls == []
     assert empty_ax.vlines == []
+
+
+def test_top_differentiating_contexts_plot_ranks_and_labels():
+    class FakeAxis:
+        def __init__(self):
+            self.barh_calls = []
+            self.yticks = None
+            self.yticklabels = None
+            self.xlabel = None
+            self.title = None
+            self.legend_kwargs = None
+            self.xlim = None
+
+        def barh(self, y_pos, values, width, **kwargs):
+            self.barh_calls.append((y_pos, values, width, kwargs))
+
+        def set_yticks(self, values):
+            self.yticks = values
+
+        def set_yticklabels(self, values, **kwargs):
+            self.yticklabels = (values, kwargs)
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_title(self, value):
+            self.title = value
+
+        def legend(self, **kwargs):
+            self.legend_kwargs = kwargs
+
+        def set_xlim(self, start, end):
+            self.xlim = (start, end)
+
+    merged = pd.DataFrame({
+        "context": ["AAA", "AAC", "AAG"],
+        "ratio_acc": [0.8, 0.2, 0.7],
+        "ratio_inacc": [0.2, 0.1, 0.6],
+    })
+    ax = FakeAxis()
+
+    stats._plot_top_differentiating_contexts(ax, merged)
+
+    inacc_y, inacc_values, width, inacc_kwargs = ax.barh_calls[0]
+    acc_y, acc_values, _, acc_kwargs = ax.barh_calls[1]
+    np.testing.assert_allclose(inacc_y, [-0.175, 0.825, 1.825])
+    np.testing.assert_allclose(acc_y, [0.175, 1.175, 2.175])
+    np.testing.assert_allclose(inacc_values, [0.2, 0.1, 0.6])
+    np.testing.assert_allclose(acc_values, [0.8, 0.2, 0.7])
+    assert width == 0.35
+    assert inacc_kwargs == {
+        "label": "Inaccessible",
+        "color": "firebrick",
+        "alpha": 0.8,
+    }
+    assert acc_kwargs == {
+        "label": "Accessible",
+        "color": "forestgreen",
+        "alpha": 0.8,
+    }
+    np.testing.assert_array_equal(ax.yticks, [0, 1, 2])
+    values, kwargs = ax.yticklabels
+    assert values.tolist() == ["AAA", "AAC", "AAG"]
+    assert kwargs == {"fontsize": 7, "fontfamily": "monospace"}
+    assert ax.xlabel == "P(methylation)"
+    assert ax.title == "Top Differentiating Contexts"
+    assert ax.legend_kwargs == {"loc": "lower right"}
+    assert ax.xlim == (0, 1)
+
+    empty_ax = FakeAxis()
+    stats._plot_top_differentiating_contexts(empty_ax, pd.DataFrame())
+    assert empty_ax.barh_calls == []
