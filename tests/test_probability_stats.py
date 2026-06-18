@@ -487,3 +487,51 @@ def test_top_differentiating_contexts_plot_ranks_and_labels():
     empty_ax = FakeAxis()
     stats._plot_top_differentiating_contexts(empty_ax, pd.DataFrame())
     assert empty_ax.barh_calls == []
+
+
+def test_observations_per_context_plot_uses_positive_log_totals():
+    class FakeAxis:
+        def __init__(self):
+            self.hist_calls = []
+            self.xlabel = None
+            self.ylabel = None
+            self.title = None
+            self.legend_called = False
+
+        def hist(self, values, **kwargs):
+            self.hist_calls.append((values, kwargs))
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_ylabel(self, value):
+            self.ylabel = value
+
+        def set_title(self, value):
+            self.title = value
+
+        def legend(self):
+            self.legend_called = True
+
+    ax = FakeAxis()
+
+    stats._plot_observations_per_context(ax, [0, 9, 99], [4, 0])
+
+    np.testing.assert_allclose(ax.hist_calls[0][0], [1.0, 2.0])
+    assert ax.hist_calls[0][1] == {
+        "bins": 50,
+        "alpha": 0.6,
+        "label": "Accessible",
+        "color": "forestgreen",
+    }
+    np.testing.assert_allclose(ax.hist_calls[1][0], [np.log10(5)])
+    assert ax.hist_calls[1][1] == {
+        "bins": 50,
+        "alpha": 0.6,
+        "label": "Inaccessible",
+        "color": "firebrick",
+    }
+    assert ax.xlabel == "Log10(observations + 1)"
+    assert ax.ylabel == "Number of contexts"
+    assert ax.title == "Observations per Context"
+    assert ax.legend_called

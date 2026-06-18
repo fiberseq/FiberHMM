@@ -247,6 +247,27 @@ def _plot_top_differentiating_contexts(ax, merged) -> None:
     ax.set_xlim(0, 1)
 
 
+def _plot_observations_per_context(ax, acc_total, inacc_total) -> None:
+    ax.hist(
+        _positive_log10_observations(acc_total),
+        bins=50,
+        alpha=0.6,
+        label='Accessible',
+        color='forestgreen',
+    )
+    ax.hist(
+        _positive_log10_observations(inacc_total),
+        bins=50,
+        alpha=0.6,
+        label='Inaccessible',
+        color='firebrick',
+    )
+    ax.set_xlabel('Log10(observations + 1)')
+    ax.set_ylabel('Number of contexts')
+    ax.set_title('Observations per Context')
+    ax.legend()
+
+
 def _write_probability_ratio_summary(handle, label: str, ratios: np.ndarray) -> None:
     if len(ratios) == 0:
         return
@@ -436,14 +457,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
             acc_total = _context_observation_totals(acc_probs)
             inacc_total = _context_observation_totals(inacc_probs)
 
-            ax.hist(_positive_log10_observations(acc_total), bins=50, alpha=0.6,
-                   label='Accessible', color='forestgreen')
-            ax.hist(_positive_log10_observations(inacc_total), bins=50, alpha=0.6,
-                   label='Inaccessible', color='firebrick')
-            ax.set_xlabel('Log10(observations + 1)')
-            ax.set_ylabel('Number of contexts')
-            ax.set_title('Observations per Context')
-            ax.legend()
+            _plot_observations_per_context(ax, acc_total, inacc_total)
 
             # Cumulative coverage
             ax = axes[0, 1]
