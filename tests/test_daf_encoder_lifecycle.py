@@ -717,6 +717,38 @@ def test_daf_encode_closes_input_and_reference_when_md_check_fails(monkeypatch):
     assert handles["fasta"].closed
 
 
+def test_process_bam_daf_encode_adapter_builds_request(monkeypatch):
+    sentinel = {"total": 0}
+    calls = []
+
+    monkeypatch.setattr(
+        encoder,
+        "process_bam_daf_encode_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert encoder.process_bam_daf_encode(
+        "input.bam",
+        "output.bam",
+        reference="reference.fa",
+        min_mapq=10,
+        min_read_length=500,
+        io_threads=2,
+        force_strand="CT",
+    ) is sentinel
+    assert calls == [
+        encoder._DafEncodeRunRequest(
+            input_bam="input.bam",
+            output_bam="output.bam",
+            reference="reference.fa",
+            min_mapq=10,
+            min_read_length=500,
+            io_threads=2,
+            force_strand="CT",
+        ),
+    ]
+
+
 def test_open_daf_encode_handles_closes_partial_setup_on_failure(monkeypatch):
     handles = {
         "fasta": _FakeHandle(),

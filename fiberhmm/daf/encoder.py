@@ -182,6 +182,17 @@ class _DafEncodeHandleOpenRequest:
     log: object
 
 
+@dataclass(frozen=True)
+class _DafEncodeRunRequest:
+    input_bam: object
+    output_bam: object
+    reference: object = None
+    min_mapq: int = 20
+    min_read_length: int = 1000
+    io_threads: int = 4
+    force_strand: object = None
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -1078,6 +1089,60 @@ def _finalize_daf_encode_run(
     return summary
 
 
+def process_bam_daf_encode_from_request(
+    request: _DafEncodeRunRequest,
+):
+    """Implementation for a DAF encode run described by a request object."""
+    # Keep all progress/log output off stdout so "-" remains a clean BAM stream.
+    _log = sys.stderr
+
+    counts = _new_daf_encode_counts()
+
+    start_time = time.time()
+    last_progress = start_time
+
+    handles = None
+
+    try:
+        handles = _open_daf_encode_handles(
+            request.input_bam,
+            request.output_bam,
+            request.reference,
+            request.io_threads,
+            _log,
+        )
+
+        last_progress = _stream_daf_encode_reads(
+            handles.inbam,
+            handles.outbam,
+            handles.pbar,
+            counts,
+            request.min_mapq,
+            request.min_read_length,
+            request.force_strand,
+            handles.ref_fasta,
+            _log,
+            last_progress,
+        )
+
+    finally:
+        if handles is not None:
+            _close_daf_encode_handles(
+                handles.pbar,
+                handles.outbam,
+                handles.inbam,
+                handles.ref_fasta,
+            )
+
+    return _finalize_daf_encode_run(
+        counts,
+        start_time,
+        request.output_bam,
+        request.io_threads,
+        _log,
+    )
+
+
 def process_bam_daf_encode(
     input_bam,
     output_bam,
@@ -1111,44 +1176,17 @@ def process_bam_daf_encode(
     dict
         Summary statistics: total, encoded, ct, ga, skipped, mean_deam_rate.
     """
-    # Keep all progress/log output off stdout so "-" remains a clean BAM stream.
-    _log = sys.stderr
-
-    counts = _new_daf_encode_counts()
-
-    start_time = time.time()
-    last_progress = start_time
-
-    handles = None
-
-    try:
-        handles = _open_daf_encode_handles(
-            input_bam, output_bam, reference, io_threads, _log,
-        )
-
-        last_progress = _stream_daf_encode_reads(
-            handles.inbam,
-            handles.outbam,
-            handles.pbar,
-            counts,
-            min_mapq,
-            min_read_length,
-            force_strand,
-            handles.ref_fasta,
-            _log,
-            last_progress,
-        )
-
-    finally:
-        if handles is not None:
-            _close_daf_encode_handles(
-                handles.pbar,
-                handles.outbam,
-                handles.inbam,
-                handles.ref_fasta,
-            )
-
-    return _finalize_daf_encode_run(counts, start_time, output_bam, io_threads, _log)
+    return process_bam_daf_encode_from_request(
+        _DafEncodeRunRequest(
+            input_bam=input_bam,
+            output_bam=output_bam,
+            reference=reference,
+            min_mapq=min_mapq,
+            min_read_length=min_read_length,
+            io_threads=io_threads,
+            force_strand=force_strand,
+        ),
+    )
 
 
 def _first_mapped_reads_have_md_tag(inbam, max_reads: int = 10) -> bool:
