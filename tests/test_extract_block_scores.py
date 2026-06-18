@@ -415,6 +415,27 @@ def test_selected_extract_types_defaults_and_preserves_cli_order():
     )
 
 
+def test_build_extract_tags_parser_defaults_and_aliases():
+    parser = extract_tags._build_extract_tags_parser()
+
+    args = parser.parse_args([
+        "-i",
+        "input.bam",
+        "--footprint",
+        "--bed-only",
+        "--chroms",
+        "chr2L,chr3R",
+    ])
+
+    assert args.input == "input.bam"
+    assert args.nucleosome is True
+    assert args.bed_only is True
+    assert args.chroms == "chr2L,chr3R"
+    assert args.cores == 1
+    assert args.block_scores is True
+    assert args.min_tq == 50
+
+
 def test_extract_cli_setup_helpers_build_paths_and_filters(tmp_path):
     input_bam = tmp_path / "sample_footprints.bam"
     input_bam.write_text("")

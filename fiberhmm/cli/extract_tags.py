@@ -1747,7 +1747,7 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
     print()
 
 
-def main():
+def _build_extract_tags_parser():
     parser = argparse.ArgumentParser(
         description='Extract tags from FiberHMM-tagged BAMs to BED12/bigBed',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1834,6 +1834,11 @@ Examples:
     parser.add_argument('--skip-scaffolds', action='store_true', help='Skip scaffold chromosomes')
     parser.add_argument('--chroms', type=str, help='Comma-separated chromosomes to process')
 
+    return parser
+
+
+def main():
+    parser = _build_extract_tags_parser()
     args = parser.parse_args()
 
     # Validate input
