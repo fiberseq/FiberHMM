@@ -1039,29 +1039,29 @@ def test_streaming_payload_or_skip_filters_and_builds_payload(monkeypatch):
 
     monkeypatch.setattr(streaming_pipeline, "make_apply_payload", fake_make_payload)
 
-    payload, reason = streaming_pipeline._streaming_payload_or_skip(
+    payload_result = streaming_pipeline._streaming_payload_or_skip(
         _streaming_read(), config, "daf", ref_fasta="ref.fa",
     )
-    assert payload == {"read_id": "read1"}
-    assert reason is None
+    assert payload_result.payload == {"read_id": "read1"}
+    assert payload_result.skip_reason is None
     assert built == [("read1", "daf", "ref.fa")]
 
-    payload, reason = streaming_pipeline._streaming_payload_or_skip(
+    payload_result = streaming_pipeline._streaming_payload_or_skip(
         _streaming_read(mapping_quality=0), config, "daf",
     )
-    assert payload is None
-    assert reason == "low_mapq"
+    assert payload_result.payload is None
+    assert payload_result.skip_reason == "low_mapq"
     assert built == [("read1", "daf", "ref.fa")]
 
     monkeypatch.setattr(
         streaming_pipeline, "make_apply_payload",
         lambda read, mode, ref_fasta: None,
     )
-    payload, reason = streaming_pipeline._streaming_payload_or_skip(
+    payload_result = streaming_pipeline._streaming_payload_or_skip(
         _streaming_read(), config, "daf",
     )
-    assert payload is None
-    assert reason == "no_modifications"
+    assert payload_result.payload is None
+    assert payload_result.skip_reason == "no_modifications"
 
 
 def test_streaming_chunk_submission_uses_completed_future_for_empty_items():
