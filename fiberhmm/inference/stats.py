@@ -202,6 +202,23 @@ def _write_msp_stats_section(handle, summary: dict) -> None:
     handle.write("\n")
 
 
+def _write_footprint_quality_section(handle, summary: dict) -> None:
+    if 'footprint_score_median' not in summary:
+        return
+
+    handle.write("Footprint Quality Scores\n")
+    handle.write("-" * 30 + "\n")
+    handle.write(
+        f"Score (median):             "
+        f"{summary['footprint_score_median']:.3f}\n"
+    )
+    handle.write(
+        f"Score (mean ± std):         "
+        f"{summary['footprint_score_mean']:.3f} ± "
+        f"{summary['footprint_score_std']:.3f}\n"
+    )
+
+
 def _plot_median_histogram(
     ax,
     values,
@@ -630,12 +647,7 @@ class FootprintStats:
             _write_footprint_stats_section(f, summary)
             _write_gap_stats_section(f, summary)
             _write_msp_stats_section(f, summary)
-
-            if 'footprint_score_median' in summary:
-                f.write("Footprint Quality Scores\n")
-                f.write("-" * 30 + "\n")
-                f.write(f"Score (median):             {summary['footprint_score_median']:.3f}\n")
-                f.write(f"Score (mean ± std):         {summary['footprint_score_mean']:.3f} ± {summary['footprint_score_std']:.3f}\n")
+            _write_footprint_quality_section(f, summary)
 
     def plot_distributions(self, output_prefix: str):
         """Generate distribution plots."""

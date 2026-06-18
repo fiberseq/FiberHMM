@@ -351,6 +351,30 @@ def test_write_msp_stats_section_formats_when_present_only():
     assert empty_handle.getvalue() == ""
 
 
+def test_write_footprint_quality_section_formats_when_present_only():
+    handle = io.StringIO()
+
+    stats_module._write_footprint_quality_section(
+        handle,
+        {
+            "footprint_score_median": 0.5,
+            "footprint_score_mean": 0.625,
+            "footprint_score_std": 0.125,
+        },
+    )
+
+    assert handle.getvalue() == (
+        "Footprint Quality Scores\n"
+        "------------------------------\n"
+        "Score (median):             0.500\n"
+        "Score (mean ± std):         0.625 ± 0.125\n"
+    )
+
+    empty_handle = io.StringIO()
+    stats_module._write_footprint_quality_section(empty_handle, {})
+    assert empty_handle.getvalue() == ""
+
+
 def test_plot_median_histogram_formats_axis_and_optional_range():
     class FakeAxis:
         def __init__(self):
