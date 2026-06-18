@@ -54,9 +54,16 @@ def test_trim_context_extracts_centered_subcontext():
 
 
 def test_daf_reconstruction_bases_by_strand():
-    assert _daf_reconstruction_bases("+") == ("T", "C")
-    assert _daf_reconstruction_bases(".") == ("T", "C")
-    assert _daf_reconstruction_bases("-") == ("A", "G")
+    plus_bases = _daf_reconstruction_bases("+")
+    ambiguous_bases = _daf_reconstruction_bases(".")
+    minus_bases = _daf_reconstruction_bases("-")
+
+    assert plus_bases.deaminated == "T"
+    assert plus_bases.original == "C"
+    assert ambiguous_bases.deaminated == "T"
+    assert ambiguous_bases.original == "C"
+    assert minus_bases.deaminated == "A"
+    assert minus_bases.original == "G"
 
 
 def test_daf_c_context_orientation_by_strand():

@@ -25,6 +25,12 @@ class _EncodedProbabilityTable:
     probabilities: pd.DataFrame
 
 
+@dataclass(frozen=True)
+class _DafReconstructionBases:
+    deaminated: str
+    original: str
+
+
 def _reconstruct_deaminated_sequence(
     seq_upper: str,
     mod_positions: Set[int],
@@ -64,10 +70,10 @@ def _trim_context(full_context: str, trim: int) -> str:
     return full_context[trim:len(full_context) - trim]
 
 
-def _daf_reconstruction_bases(strand: str) -> Tuple[str, str]:
+def _daf_reconstruction_bases(strand: str) -> _DafReconstructionBases:
     if strand == '-':
-        return 'A', 'G'
-    return 'T', 'C'
+        return _DafReconstructionBases(deaminated='A', original='G')
+    return _DafReconstructionBases(deaminated='T', original='C')
 
 
 def _daf_c_context_from_strand_context(context: str, strand: str) -> str:
@@ -298,17 +304,17 @@ class ContextCounter:
 
         seq_upper = sequence.upper()
         seq_len = len(sequence)
-        deam_base, orig_base = _daf_reconstruction_bases(strand)
+        bases = _daf_reconstruction_bases(strand)
 
         reconstructed = _reconstruct_deaminated_sequence(
-            seq_upper, mod_positions, deam_base, orig_base,
+            seq_upper, mod_positions, bases.deaminated, bases.original,
         )
         for i, context in self._iter_contexts(
             reconstructed,
             0,
             seq_len,
             edge_trim,
-            center_base=orig_base,
+            center_base=bases.original,
         ):
             c_context = _daf_c_context_from_strand_context(context, strand)
             self._record_context(c_context, i in mod_positions)
