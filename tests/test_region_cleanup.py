@@ -731,6 +731,38 @@ def test_merge_region_posterior_outputs_reports_tsv_and_conversion(
     assert f"tsv2h5 {tsv_path} {output_posteriors}" in out
 
 
+def test_merge_region_posterior_outputs_skips_non_file_report(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    temp_tsvs = [(0, "region_0.tsv")]
+    output_posteriors = str(tmp_path / "out.tsv.gz")
+    tsv_path = tmp_path / "out.tsv.gz"
+    tsv_path.mkdir()
+
+    monkeypatch.setattr(region_pipeline.time, "time", lambda: 10.0)
+    monkeypatch.setattr(region_pipeline, "_merge_region_posteriors_tsv", lambda *args: 0)
+    monkeypatch.setattr(
+        region_pipeline,
+        "region_posteriors_tsv_output_path",
+        lambda output: str(tsv_path),
+    )
+
+    region_pipeline._merge_region_posterior_outputs(
+        temp_tsvs,
+        output_posteriors,
+        mode="pacbio-fiber",
+        context_size=3,
+        edge_trim=10,
+        input_bam="input.bam",
+    )
+
+    out = capsys.readouterr().out
+    assert "Merging 1 posterior files..." in out
+    assert "Posteriors:" not in out
+
+
 def test_finalize_region_bam_parallel_run_finishes_outputs_and_posteriors(
     monkeypatch,
     capsys,
@@ -991,7 +1023,7 @@ def test_finalize_region_bam_output_concatenates_reports_and_indexes(
         region_pipeline, "_concatenate_region_bams", fake_concatenate
     )
     monkeypatch.setattr(region_pipeline, "_sort_and_index_bam", fake_sort)
-    monkeypatch.setattr(region_pipeline.os.path, "exists", lambda path: True)
+    monkeypatch.setattr(region_pipeline, "path_is_regular_file", lambda path: True)
     monkeypatch.setattr(
         region_pipeline.os.path,
         "getsize",

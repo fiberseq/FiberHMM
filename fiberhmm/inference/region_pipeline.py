@@ -35,7 +35,7 @@ from fiberhmm.inference.region_workers import (
 )
 from fiberhmm.inference.skip_reasons import iter_nonzero_skip_reasons
 from fiberhmm.io.bam_index import ensure_bam_index
-from fiberhmm.io.path_status import path_is_nonempty_file
+from fiberhmm.io.path_status import path_is_nonempty_file, path_is_regular_file
 from fiberhmm.posteriors.region_tsv import (
     merge_region_posteriors_tsv as _merge_region_posteriors_tsv,
 )
@@ -494,7 +494,7 @@ def _merge_region_posterior_outputs(
 
     # Region posterior export always materializes a compressed TSV first.
     tsv_path = region_posteriors_tsv_output_path(output_posteriors)
-    if not os.path.exists(tsv_path):
+    if not path_is_regular_file(tsv_path):
         return
 
     file_size = os.path.getsize(tsv_path) / (1024 * 1024)
@@ -519,7 +519,7 @@ def _finalize_region_bam_output(
     _concatenate_region_bams(input_bam, output_bam, non_empty_bams, temp_dir)
     sys.stdout.flush()
 
-    if os.path.exists(output_bam):
+    if path_is_regular_file(output_bam):
         output_size_gb = os.path.getsize(output_bam) / (1024**3)
         print(f"Output BAM: {output_size_gb:.2f}GB")
 
