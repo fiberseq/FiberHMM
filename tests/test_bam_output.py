@@ -21,16 +21,50 @@ def test_samtools_index_error_requires_sort_detection():
 
 
 def test_samtools_command_builders_preserve_thread_args():
+    assert bam_output._samtools_index_cmd_from_request(
+        bam_output._SamtoolsIndexCommandRequest(
+            output_bam="out.bam",
+            threads=8,
+        )
+    ) == [
+        "samtools", "index", "-@", "8", "out.bam",
+    ]
     assert bam_output._samtools_index_cmd("out.bam", 8) == [
         "samtools", "index", "-@", "8", "out.bam",
     ]
+    assert bam_output._samtools_sort_cmd_from_request(
+        bam_output._SamtoolsSortCommandRequest(
+            output_bam="out.bam",
+            sorted_bam="out.sorted.bam",
+            threads=4,
+        )
+    ) == [
+        "samtools", "sort", "-@", "4", "-o", "out.sorted.bam", "out.bam",
+    ]
     assert bam_output._samtools_sort_cmd("out.bam", "out.sorted.bam", 4) == [
         "samtools", "sort", "-@", "4", "-o", "out.sorted.bam", "out.bam",
+    ]
+    assert bam_output._samtools_cat_cmd_from_request(
+        bam_output._SamtoolsCatCommandRequest(
+            bam_files=["a.bam", "b.bam"],
+            output_bam="out.bam",
+            list_file="list.txt",
+        )
+    ) == [
+        "samtools", "cat", "-h", "a.bam", "-b", "list.txt", "-o", "out.bam",
     ]
     assert bam_output._samtools_cat_cmd(
         ["a.bam", "b.bam"], "out.bam", "list.txt",
     ) == [
         "samtools", "cat", "-h", "a.bam", "-b", "list.txt", "-o", "out.bam",
+    ]
+    assert bam_output._samtools_merge_cmd_from_request(
+        bam_output._SamtoolsMergeCommandRequest(
+            output_bam="out.bam",
+            list_file="list.txt",
+        )
+    ) == [
+        "samtools", "merge", "-f", "-b", "list.txt", "out.bam",
     ]
     assert bam_output._samtools_merge_cmd("out.bam", "list.txt") == [
         "samtools", "merge", "-f", "-b", "list.txt", "out.bam",

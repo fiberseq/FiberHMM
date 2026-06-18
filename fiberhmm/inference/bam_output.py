@@ -50,6 +50,32 @@ class _ScoreBlockValues:
     block_scores: List[int]
 
 
+@dataclass(frozen=True)
+class _SamtoolsIndexCommandRequest:
+    output_bam: str
+    threads: int
+
+
+@dataclass(frozen=True)
+class _SamtoolsSortCommandRequest:
+    output_bam: str
+    sorted_bam: str
+    threads: int
+
+
+@dataclass(frozen=True)
+class _SamtoolsCatCommandRequest:
+    bam_files: List[str]
+    output_bam: str
+    list_file: str
+
+
+@dataclass(frozen=True)
+class _SamtoolsMergeCommandRequest:
+    output_bam: str
+    list_file: str
+
+
 _BED12_RECORD_COLUMNS = (
     'chrom',
     'chromStart',
@@ -66,12 +92,58 @@ _BED12_RECORD_COLUMNS = (
 )
 
 
+def _samtools_index_cmd_from_request(
+    request: _SamtoolsIndexCommandRequest,
+) -> List[str]:
+    return ['samtools', 'index', '-@', str(request.threads), request.output_bam]
+
+
 def _samtools_index_cmd(output_bam: str, threads: int) -> List[str]:
-    return ['samtools', 'index', '-@', str(threads), output_bam]
+    return _samtools_index_cmd_from_request(
+        _SamtoolsIndexCommandRequest(
+            output_bam=output_bam,
+            threads=threads,
+        )
+    )
+
+
+def _samtools_sort_cmd_from_request(
+    request: _SamtoolsSortCommandRequest,
+) -> List[str]:
+    return [
+        'samtools',
+        'sort',
+        '-@',
+        str(request.threads),
+        '-o',
+        request.sorted_bam,
+        request.output_bam,
+    ]
 
 
 def _samtools_sort_cmd(output_bam: str, sorted_bam: str, threads: int) -> List[str]:
-    return ['samtools', 'sort', '-@', str(threads), '-o', sorted_bam, output_bam]
+    return _samtools_sort_cmd_from_request(
+        _SamtoolsSortCommandRequest(
+            output_bam=output_bam,
+            sorted_bam=sorted_bam,
+            threads=threads,
+        )
+    )
+
+
+def _samtools_cat_cmd_from_request(
+    request: _SamtoolsCatCommandRequest,
+) -> List[str]:
+    return [
+        'samtools',
+        'cat',
+        '-h',
+        request.bam_files[0],
+        '-b',
+        request.list_file,
+        '-o',
+        request.output_bam,
+    ]
 
 
 def _samtools_cat_cmd(
@@ -79,11 +151,35 @@ def _samtools_cat_cmd(
     output_bam: str,
     list_file: str,
 ) -> List[str]:
-    return ['samtools', 'cat', '-h', bam_files[0], '-b', list_file, '-o', output_bam]
+    return _samtools_cat_cmd_from_request(
+        _SamtoolsCatCommandRequest(
+            bam_files=bam_files,
+            output_bam=output_bam,
+            list_file=list_file,
+        )
+    )
+
+
+def _samtools_merge_cmd_from_request(
+    request: _SamtoolsMergeCommandRequest,
+) -> List[str]:
+    return [
+        'samtools',
+        'merge',
+        '-f',
+        '-b',
+        request.list_file,
+        request.output_bam,
+    ]
 
 
 def _samtools_merge_cmd(output_bam: str, list_file: str) -> List[str]:
-    return ['samtools', 'merge', '-f', '-b', list_file, output_bam]
+    return _samtools_merge_cmd_from_request(
+        _SamtoolsMergeCommandRequest(
+            output_bam=output_bam,
+            list_file=list_file,
+        )
+    )
 
 
 def _run_samtools_index(
