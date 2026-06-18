@@ -115,18 +115,45 @@ def _process_legacy_chunk_results(
         results, worker_failures = coerce_worker_chunk_result(future.result())
     else:
         # Single-threaded: process directly
-        results = []
+        results = _process_direct_legacy_chunk_results(
+            chunk_reads,
+            model,
+            edge_trim,
+            circular,
+            mode,
+            context_size,
+            msp_min_size,
+            nuc_min_size,
+            with_scores,
+            return_posteriors,
+        )
         worker_failures = 0
-        for fiber_read in chunk_reads:
-            result = _process_single_read(
-                fiber_read, model, edge_trim, circular,
-                mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
-                with_scores=with_scores,
-                return_posteriors=return_posteriors
-            )
-            results.append(result)
 
     return results, worker_failures
+
+
+def _process_direct_legacy_chunk_results(
+    chunk_reads: list,
+    model,
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    with_scores: bool,
+    return_posteriors: bool,
+) -> list:
+    results = []
+    for fiber_read in chunk_reads:
+        result = _process_single_read(
+            fiber_read, model, edge_trim, circular,
+            mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+            return_posteriors=return_posteriors,
+        )
+        results.append(result)
+    return results
 
 
 def _write_processed_legacy_reads(

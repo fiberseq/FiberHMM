@@ -673,13 +673,15 @@ def test_process_legacy_chunk_results_uses_executor_when_available():
 
 
 def test_process_legacy_chunk_results_runs_direct_without_executor(monkeypatch):
-    seen = []
+    calls = []
 
-    def fake_process(*args, **kwargs):
-        seen.append((args, kwargs))
-        return {"ns": [len(seen)]}
+    def fake_direct(*args):
+        calls.append(args)
+        return [{"ns": [1]}, {"ns": [2]}]
 
-    monkeypatch.setattr(legacy_pipeline, "_process_single_read", fake_process)
+    monkeypatch.setattr(
+        legacy_pipeline, "_process_direct_legacy_chunk_results", fake_direct,
+    )
     model = object()
 
     results, worker_failures = legacy_pipeline._process_legacy_chunk_results(
@@ -698,6 +700,44 @@ def test_process_legacy_chunk_results_runs_direct_without_executor(monkeypatch):
 
     assert results == [{"ns": [1]}, {"ns": [2]}]
     assert worker_failures == 0
+    assert calls == [(
+        ["fiber-a", "fiber-b"],
+        model,
+        11,
+        True,
+        "daf",
+        5,
+        61,
+        87,
+        True,
+        True,
+    )]
+
+
+def test_process_direct_legacy_chunk_results_runs_single_read(monkeypatch):
+    seen = []
+
+    def fake_process(*args, **kwargs):
+        seen.append((args, kwargs))
+        return {"ns": [len(seen)]}
+
+    monkeypatch.setattr(legacy_pipeline, "_process_single_read", fake_process)
+    model = object()
+
+    results = legacy_pipeline._process_direct_legacy_chunk_results(
+        ["fiber-a", "fiber-b"],
+        model=model,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=True,
+    )
+
+    assert results == [{"ns": [1]}, {"ns": [2]}]
     assert seen == [
         (
             ("fiber-a", model, 11, True, "daf", 5, 61),
