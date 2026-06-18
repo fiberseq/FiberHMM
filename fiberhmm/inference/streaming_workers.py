@@ -142,6 +142,24 @@ class _PayloadChunkWorkerRequest:
     prob_threshold: int
 
 
+@dataclass(frozen=True)
+class _FusedPayloadChunkWorkerRequest:
+    chunk_payloads: list
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    with_scores: bool
+    prob_threshold: int
+    recall_mode: object
+    recall_context_size: object
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+
+
 def _payload_worker_config(
     edge_trim: int,
     circular: bool,
@@ -666,23 +684,46 @@ def _process_fused_payload_chunk_worker(
         'tf_calls':  list of TFCall objects
         'ns_scores', 'as_scores': optional nq/aq scores if with_scores
     """
+    return _process_fused_payload_chunk_worker_from_request(
+        _FusedPayloadChunkWorkerRequest(
+            chunk_payloads=chunk_payloads,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+            prob_threshold=prob_threshold,
+            recall_mode=recall_mode,
+            recall_context_size=recall_context_size,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
+        )
+    )
+
+
+def _process_fused_payload_chunk_worker_from_request(
+    request: _FusedPayloadChunkWorkerRequest,
+) -> WorkerChunkResult:
     global _worker_model, _worker_recall_state
 
     # Model/params set once per worker; TF LLR tables attached to the
     # worker globals via _init_fused_worker.
     recall_tables = _worker_recall_tables()
     config = _fused_payload_worker_config(
-        edge_trim,
-        circular,
-        mode,
-        context_size,
-        msp_min_size,
-        nuc_min_size,
-        with_scores,
-        prob_threshold,
-        min_llr,
-        min_opps,
-        unify_threshold,
+        request.edge_trim,
+        request.circular,
+        request.mode,
+        request.context_size,
+        request.msp_min_size,
+        request.nuc_min_size,
+        request.with_scores,
+        request.prob_threshold,
+        request.min_llr,
+        request.min_opps,
+        request.unify_threshold,
     )
 
     def process_item(payload):
@@ -693,7 +734,7 @@ def _process_fused_payload_chunk_worker(
             recall_tables.llr_miss,
         )
 
-    return _process_worker_items(chunk_payloads, process_item)
+    return _process_worker_items(request.chunk_payloads, process_item)
 
 
 def _process_payload_chunk_worker(
