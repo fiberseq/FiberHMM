@@ -96,8 +96,8 @@ def test_converted_model_json_payload_coerces_arrays_and_metadata():
         "transmat": [[0.9, 0.1], [0.2, 0.8]],
         "emissionprob": [[0.4, 0.6], [0.7, 0.3]],
         "n_states": "2",
-        "context_size": "3",
-        "mode": "daf",
+        "context_size": None,
+        "mode": " daf ",
     }
     startprob, transmat, emissionprob = _raw_model_parameter_arrays(data)
 

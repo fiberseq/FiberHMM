@@ -117,6 +117,11 @@ def _converted_model_json_payload(
     transmat: np.ndarray,
     emissionprob: np.ndarray,
 ) -> dict:
+    context_size = data.get('context_size', 3)
+    if context_size is None:
+        context_size = 3
+    mode = data.get('mode', 'pacbio-fiber')
+    mode = str(mode).strip() if mode is not None else 'pacbio-fiber'
     return {
         'model_type': 'FiberHMM',
         'version': '2.0',
@@ -124,8 +129,8 @@ def _converted_model_json_payload(
         'startprob': startprob.tolist(),
         'transmat': transmat.tolist(),
         'emissionprob': emissionprob.tolist(),
-        'context_size': int(data['context_size']),
-        'mode': str(data['mode']),
+        'context_size': int(context_size),
+        'mode': mode or 'pacbio-fiber',
     }
 
 
