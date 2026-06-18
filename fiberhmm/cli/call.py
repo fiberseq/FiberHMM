@@ -196,11 +196,18 @@ def _resolve_recall_model(args):
 
 
 def _call_mode_or_default(args_mode, model_mode) -> str:
-    return args_mode or model_mode or 'pacbio-fiber'
+    for mode in (args_mode, model_mode, 'pacbio-fiber'):
+        if mode is None:
+            continue
+        mode = str(mode).strip()
+        if mode:
+            return mode
 
 
 def _call_context_size_or_default(args_context_size, model_k) -> int:
-    return args_context_size or int(model_k or 3)
+    if args_context_size is not None:
+        return int(args_context_size)
+    return int(model_k if model_k is not None else 3)
 
 
 def _resolve_call_mode_context(args, model_k, model_mode):

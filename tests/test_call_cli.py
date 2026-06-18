@@ -230,10 +230,13 @@ def test_call_model_resolution_requires_model_or_enzyme(capsys):
 
 
 def test_call_mode_context_resolution_uses_overrides_metadata_and_defaults():
-    assert _call_mode_or_default("daf", "pacbio-fiber") == "daf"
+    assert _call_mode_or_default(" daf ", "pacbio-fiber") == "daf"
     assert _call_mode_or_default(None, "nanopore-fiber") == "nanopore-fiber"
+    assert _call_mode_or_default("", " nanopore-fiber ") == "nanopore-fiber"
     assert _call_mode_or_default(None, None) == "pacbio-fiber"
     assert _call_context_size_or_default(5, 3) == 5
+    assert _call_context_size_or_default("5", 3) == 5
+    assert _call_context_size_or_default(0, 4) == 0
     assert _call_context_size_or_default(None, 4) == 4
     assert _call_context_size_or_default(None, None) == 3
 
