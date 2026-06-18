@@ -526,10 +526,12 @@ def test_concatenate_tsvs_skips_missing_and_directory_inputs(tmp_path):
     empty.write_text("", encoding="utf-8")
     directory.mkdir()
 
-    n_fibers = tsv_backend.concatenate_tsvs(
-        [str(missing), str(directory), str(empty), str(good)],
-        str(output_path),
-        delete_inputs=True,
+    n_fibers = tsv_backend.concatenate_tsvs_from_request(
+        tsv_backend._TsvConcatRequest(
+            input_files=[str(missing), str(directory), str(empty), str(good)],
+            output_path=str(output_path),
+            delete_inputs=True,
+        )
     )
 
     assert n_fibers == 1
@@ -539,6 +541,30 @@ def test_concatenate_tsvs_skips_missing_and_directory_inputs(tmp_path):
     assert directory.exists()
 
 
+def test_concatenate_tsvs_adapter_builds_request(monkeypatch):
+    sentinel = 7
+    calls = []
+
+    monkeypatch.setattr(
+        tsv_backend,
+        "concatenate_tsvs_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert tsv_backend.concatenate_tsvs(
+        ["first.tsv", "second.tsv"],
+        "out.tsv",
+        delete_inputs=True,
+    ) == sentinel
+    assert calls == [
+        tsv_backend._TsvConcatRequest(
+            input_files=["first.tsv", "second.tsv"],
+            output_path="out.tsv",
+            delete_inputs=True,
+        ),
+    ]
+
+
 def test_concatenate_tsvs_deletes_inputs_only_after_success(monkeypatch, tmp_path):
     first_path = tmp_path / "first.tsv"
     second_path = tmp_path / "second.tsv"
@@ -546,16 +572,16 @@ def test_concatenate_tsvs_deletes_inputs_only_after_success(monkeypatch, tmp_pat
     first_path.write_text("#header\nread1\tchr1\n", encoding="utf-8")
     second_path.write_text("read2\tchr2\n", encoding="utf-8")
 
-    def fake_copy(inpath, outfile, header_written):
-        if inpath == str(first_path):
-            outfile.write("read1\tchr1\n")
+    def fake_copy(request):
+        if request.inpath == str(first_path):
+            request.outfile.write("read1\tchr1\n")
             return tsv_backend._TsvCopyResult(
                 copied_fibers=1,
                 header_written=True,
             )
         raise RuntimeError("copy failed")
 
-    monkeypatch.setattr(tsv_backend, "_copy_tsv_records", fake_copy)
+    monkeypatch.setattr(tsv_backend, "_copy_tsv_records_from_request", fake_copy)
 
     with pytest.raises(RuntimeError, match="copy failed"):
         tsv_backend.concatenate_tsvs(

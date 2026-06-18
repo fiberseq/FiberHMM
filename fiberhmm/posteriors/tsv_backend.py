@@ -57,6 +57,13 @@ class _TsvCopyRequest:
 
 
 @dataclass(frozen=True)
+class _TsvConcatRequest:
+    input_files: object
+    output_path: str
+    delete_inputs: bool = False
+
+
+@dataclass(frozen=True)
 class _PosteriorTsvFields:
     read_id: str
     chrom: str
@@ -542,6 +549,36 @@ def _remove_concatenated_tsv_inputs(input_files: list[str]) -> None:
         os.remove(inpath)
 
 
+def concatenate_tsvs_from_request(
+    request: _TsvConcatRequest,
+) -> int:
+    """Implementation for a TSV concatenation request."""
+    n_fibers = 0
+    header_written = False
+    copied_inputs = []
+
+    with _open_text_file(request.output_path, 'wt') as outfile:
+        for inpath in request.input_files:
+            if not path_is_regular_file(inpath):
+                continue
+
+            copy_result = _copy_tsv_records_from_request(
+                _TsvCopyRequest(
+                    inpath=inpath,
+                    outfile=outfile,
+                    header_written=header_written,
+                ),
+            )
+            n_fibers += copy_result.copied_fibers
+            header_written = copy_result.header_written
+            copied_inputs.append(inpath)
+
+    if request.delete_inputs:
+        _remove_concatenated_tsv_inputs(copied_inputs)
+
+    return n_fibers
+
+
 def concatenate_tsvs(input_files: list, output_path: str,
                      delete_inputs: bool = False) -> int:
     """
@@ -555,26 +592,13 @@ def concatenate_tsvs(input_files: list, output_path: str,
     Returns:
         Total number of fibers
     """
-    n_fibers = 0
-    header_written = False
-    copied_inputs = []
-
-    with _open_text_file(output_path, 'wt') as outfile:
-        for inpath in input_files:
-            if not path_is_regular_file(inpath):
-                continue
-
-            copy_result = _copy_tsv_records(
-                inpath, outfile, header_written,
-            )
-            n_fibers += copy_result.copied_fibers
-            header_written = copy_result.header_written
-            copied_inputs.append(inpath)
-
-    if delete_inputs:
-        _remove_concatenated_tsv_inputs(copied_inputs)
-
-    return n_fibers
+    return concatenate_tsvs_from_request(
+        _TsvConcatRequest(
+            input_files=input_files,
+            output_path=output_path,
+            delete_inputs=delete_inputs,
+        ),
+    )
 
 
 def main():
