@@ -42,6 +42,17 @@ class _PosteriorFiberAddRequest:
     result: dict
 
 
+@dataclass(frozen=True)
+class _DrainChunkInOrderRequest:
+    chunk_read_objs: object
+    chunk_items: object
+    chunk_skip_flags: object
+    results: object
+    outbam: object
+    counters: object
+    record_result: object
+
+
 def _increment_counter(counters, key: str, amount: int = 1) -> None:
     counters[key] = counters.get(key, 0) + amount
 
@@ -143,17 +154,36 @@ def _drain_chunk_in_order(
     counters,
     record_result,
 ) -> None:
-    result_iter = iter(results)
-    item_iter = iter(chunk_items)
+    _drain_chunk_in_order_from_request(
+        _DrainChunkInOrderRequest(
+            chunk_read_objs=chunk_read_objs,
+            chunk_items=chunk_items,
+            chunk_skip_flags=chunk_skip_flags,
+            results=results,
+            outbam=outbam,
+            counters=counters,
+            record_result=record_result,
+        )
+    )
 
-    for read_obj, is_skipped in zip(chunk_read_objs, chunk_skip_flags):
+
+def _drain_chunk_in_order_from_request(
+    request: _DrainChunkInOrderRequest,
+) -> None:
+    result_iter = iter(request.results)
+    item_iter = iter(request.chunk_items)
+
+    for read_obj, is_skipped in zip(
+        request.chunk_read_objs,
+        request.chunk_skip_flags,
+    ):
         if is_skipped:
-            _write_passthrough(outbam, read_obj, counters)
+            _write_passthrough(request.outbam, read_obj, request.counters)
             continue
 
         next(item_iter)
-        record_result(read_obj, next(result_iter))
-        _write_passthrough(outbam, read_obj, counters)
+        request.record_result(read_obj, next(result_iter))
+        _write_passthrough(request.outbam, read_obj, request.counters)
 
 
 def _drain_oldest_with_recorder(inflight, outbam, counters, record_result) -> None:

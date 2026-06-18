@@ -2207,14 +2207,18 @@ def test_drain_chunk_in_order_interleaves_skips_and_results():
     counters = {}
     recorded = []
 
-    streaming_drain._drain_chunk_in_order(
-        [skipped_read, processed_read],
-        [{"payload": "processed"}],
-        [True, False],
-        [result],
-        outbam,
-        counters,
-        lambda read, got_result: recorded.append((read, got_result)),
+    streaming_drain._drain_chunk_in_order_from_request(
+        streaming_drain._DrainChunkInOrderRequest(
+            chunk_read_objs=[skipped_read, processed_read],
+            chunk_items=[{"payload": "processed"}],
+            chunk_skip_flags=[True, False],
+            results=[result],
+            outbam=outbam,
+            counters=counters,
+            record_result=lambda read, got_result: recorded.append(
+                (read, got_result)
+            ),
+        )
     )
 
     assert outbam.written == [skipped_read, processed_read]
