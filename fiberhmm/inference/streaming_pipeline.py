@@ -648,6 +648,53 @@ def _print_streaming_completion_summary(
     return reads_with_footprints
 
 
+def _print_streaming_posterior_summary(
+    posterior_stats,
+    output_posteriors: Optional[str],
+    log,
+) -> None:
+    if not posterior_stats:
+        return
+    n_fibers, file_size = posterior_stats
+    print(
+        f"Posteriors: {n_fibers:,} fibers -> "
+        f"{output_posteriors} ({file_size:.1f} MB)",
+        file=log,
+    )
+
+
+def _finalize_apply_streaming_pipeline(
+    *,
+    total_reads: int,
+    skipped: int,
+    counters: dict,
+    start_time: float,
+    skip_reasons: dict,
+    output_bam: str,
+    process_unmapped: bool,
+    n_cores: int,
+    posterior_stats,
+    output_posteriors: Optional[str],
+    log,
+) -> int:
+    reads_with_footprints = _print_streaming_completion_summary(
+        "Processed",
+        total_reads,
+        skipped,
+        counters,
+        time.time() - start_time,
+        "reads/s",
+        skip_reasons,
+        log,
+    )
+
+    if output_bam != '-' and not process_unmapped:
+        _sort_and_index_bam(output_bam, threads=n_cores)
+
+    _print_streaming_posterior_summary(posterior_stats, output_posteriors, log)
+    return reads_with_footprints
+
+
 def _process_bam_streaming_pipeline_fused(
     input_bam: str, output_bam: str,
     model_path: str, recall_model_path: str,
@@ -871,22 +918,18 @@ def _process_bam_streaming_pipeline(
                     posterior_stats = posterior_writer.close()
                     posterior_writer = None
 
-    reads_with_footprints = _print_streaming_completion_summary(
-        "Processed",
-        total_reads,
-        skipped,
-        counters,
-        time.time() - start_time,
-        "reads/s",
-        skip_reasons,
-        _log,
+    reads_with_footprints = _finalize_apply_streaming_pipeline(
+        total_reads=total_reads,
+        skipped=skipped,
+        counters=counters,
+        start_time=start_time,
+        skip_reasons=skip_reasons,
+        output_bam=output_bam,
+        process_unmapped=process_unmapped,
+        n_cores=n_cores,
+        posterior_stats=posterior_stats,
+        output_posteriors=output_posteriors,
+        log=_log,
     )
-
-    if output_bam != '-' and not process_unmapped:
-        _sort_and_index_bam(output_bam, threads=n_cores)
-
-    if posterior_stats:
-        n_fibers, file_size = posterior_stats
-        print(f"Posteriors: {n_fibers:,} fibers -> {output_posteriors} ({file_size:.1f} MB)", file=_log)
 
     return total_reads, reads_with_footprints

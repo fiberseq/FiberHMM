@@ -14,6 +14,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _buffer_streaming_read,
     _drain_all_streaming_chunks,
     _drain_if_inflight_full,
+    _finalize_apply_streaming_pipeline,
     _flush_streaming_chunk,
     _flush_streaming_chunk_and_report_progress,
     _fused_worker_args,
@@ -22,6 +23,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _new_streaming_chunk_buffers,
     _open_streaming_posterior_writer,
     _print_streaming_completion_summary,
+    _print_streaming_posterior_summary,
     _print_streaming_progress,
     _run_streaming_worker_loop,
     _streaming_completion_message,
@@ -153,6 +155,113 @@ def test_print_streaming_completion_summary_reports_failures_and_skips():
         "  Skip reasons:\n"
         "    low_mapq: 3 (23.1%)\n"
     )
+
+
+def test_print_streaming_posterior_summary_handles_empty_and_values():
+    log = io.StringIO()
+
+    _print_streaming_posterior_summary(None, "out.h5", log)
+    assert log.getvalue() == ""
+
+    _print_streaming_posterior_summary((1234, 5.678), "out.h5", log)
+    assert log.getvalue() == (
+        "Posteriors: 1,234 fibers -> out.h5 (5.7 MB)\n"
+    )
+
+
+def test_finalize_apply_streaming_pipeline_summarizes_sorts_and_reports_posteriors(
+    monkeypatch,
+):
+    calls = []
+    log = io.StringIO()
+
+    monkeypatch.setattr(streaming_pipeline.time, "time", lambda: 15.0)
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_print_streaming_completion_summary",
+        lambda *args: calls.append(("summary", args)) or 7,
+    )
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_sort_and_index_bam",
+        lambda output_bam, threads: calls.append(("sort", output_bam, threads)),
+    )
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_print_streaming_posterior_summary",
+        lambda stats, path, got_log: calls.append(("posteriors", stats, path, got_log)),
+    )
+
+    assert _finalize_apply_streaming_pipeline(
+        total_reads=10,
+        skipped=2,
+        counters={"reads_with_footprints": 7},
+        start_time=5.0,
+        skip_reasons={"low_mapq": 2},
+        output_bam="out.bam",
+        process_unmapped=False,
+        n_cores=3,
+        posterior_stats=(4, 1.5),
+        output_posteriors="post.h5",
+        log=log,
+    ) == 7
+
+    assert calls == [
+        (
+            "summary",
+            (
+                "Processed",
+                10,
+                2,
+                {"reads_with_footprints": 7},
+                10.0,
+                "reads/s",
+                {"low_mapq": 2},
+                log,
+            ),
+        ),
+        ("sort", "out.bam", 3),
+        ("posteriors", (4, 1.5), "post.h5", log),
+    ]
+
+
+def test_finalize_apply_streaming_pipeline_skips_sort_for_stdout_or_unmapped(
+    monkeypatch,
+):
+    calls = []
+
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_print_streaming_completion_summary",
+        lambda *args: 0,
+    )
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_sort_and_index_bam",
+        lambda *args: calls.append(("sort", args)),
+    )
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_print_streaming_posterior_summary",
+        lambda *args: calls.append(("posteriors", args)),
+    )
+
+    for output_bam, process_unmapped in [("-", False), ("out.bam", True)]:
+        _finalize_apply_streaming_pipeline(
+            total_reads=0,
+            skipped=0,
+            counters={"reads_with_footprints": 0},
+            start_time=0.0,
+            skip_reasons={},
+            output_bam=output_bam,
+            process_unmapped=process_unmapped,
+            n_cores=1,
+            posterior_stats=None,
+            output_posteriors=None,
+            log=io.StringIO(),
+        )
+
+    assert [call[0] for call in calls] == ["posteriors", "posteriors"]
 
 
 def test_streaming_filter_config_captures_read_filter_settings():
