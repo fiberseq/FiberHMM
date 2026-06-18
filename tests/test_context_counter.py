@@ -15,8 +15,8 @@ from fiberhmm.probabilities.context_counter import (
     _missing_probability_rows,
     _position_weight,
     _probability_dataframe_from_counts,
-    _probability_table_with_missing_contexts,
     _probability_row,
+    _probability_table_with_missing_contexts,
     _reconstruct_deaminated_sequence,
     _trim_context,
 )

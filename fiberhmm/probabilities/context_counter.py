@@ -339,7 +339,11 @@ class ContextCounter:
         )
         return _probability_dataframe_from_counts(aggregated)
 
-    def get_encoding_table(self, context_size: int = 3, fill_missing: bool = False) -> Tuple[Dict[str, int], pd.DataFrame]:
+    def get_encoding_table(
+        self,
+        context_size: int = 3,
+        fill_missing: bool = False,
+    ) -> Tuple[Dict[str, int], pd.DataFrame]:
         """
         Get encoding lookup table and probabilities for a context size.
 
