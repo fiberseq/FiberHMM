@@ -361,9 +361,17 @@ def test_aq_values_sequence_normalizes_none_and_generators():
 def test_aq_annotation_values_advances_by_spec_width():
     aq = [10, 20, 30]
 
-    assert _aq_annotation_values(aq, 0, 0, len(aq)) == ([], 0)
-    assert _aq_annotation_values(aq, 0, 2, len(aq)) == ([10, 20], 2)
-    assert _aq_annotation_values(aq, 2, 3, len(aq)) == ([30], 5)
+    empty = _aq_annotation_values(aq, 0, 0, len(aq))
+    assert empty.values == []
+    assert empty.next_idx == 0
+
+    full = _aq_annotation_values(aq, 0, 2, len(aq))
+    assert full.values == [10, 20]
+    assert full.next_idx == 2
+
+    short = _aq_annotation_values(aq, 2, 3, len(aq))
+    assert short.values == [30]
+    assert short.next_idx == 5
 
 
 # ------------------- merge_intervals -------------------------------

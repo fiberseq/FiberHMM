@@ -73,6 +73,12 @@ class _MaChunk:
     intervals: List[Tuple[int, int]]
 
 
+@dataclass(frozen=True)
+class _AqAnnotationValues:
+    values: List[int]
+    next_idx: int
+
+
 def llr_to_tq(llr: float) -> int:
     """Encode an LLR (nats) into the tq quality byte."""
     return max(0, min(255, int(round(llr * TQ_SCALE))))
@@ -401,11 +407,19 @@ def _aq_values_sequence(aq):
     return aq_values
 
 
-def _aq_annotation_values(aq_values, idx: int, width: int, aq_len: int):
+def _aq_annotation_values(
+    aq_values,
+    idx: int,
+    width: int,
+    aq_len: int,
+) -> _AqAnnotationValues:
     if width == 0:
-        return [], idx
+        return _AqAnnotationValues(values=[], next_idx=idx)
     end = min(idx + width, aq_len)
-    return [int(aq_values[i]) for i in range(idx, end)], idx + width
+    return _AqAnnotationValues(
+        values=[int(aq_values[i]) for i in range(idx, end)],
+        next_idx=idx + width,
+    )
 
 
 def parse_aq_array(aq, qual_spec_per_type: Sequence[str],
@@ -422,6 +436,7 @@ def parse_aq_array(aq, qual_spec_per_type: Sequence[str],
     for spec, n in zip(qual_spec_per_type, n_annotations_per_type):
         n_q = len(spec)
         for _ in range(n):
-            values, idx = _aq_annotation_values(aq_values, idx, n_q, aq_len)
-            result.append(values)
+            annotation = _aq_annotation_values(aq_values, idx, n_q, aq_len)
+            result.append(annotation.values)
+            idx = annotation.next_idx
     return result
