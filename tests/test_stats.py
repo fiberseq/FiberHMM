@@ -159,6 +159,39 @@ def test_add_read_to_footprint_stats_updates_accumulator():
     np.testing.assert_allclose(stats.msp_scores, [128 / 255])
 
 
+def test_collect_sampled_footprint_stats_from_request_filters_and_limits(monkeypatch):
+    handle = _FakeBam([
+        _fake_read(is_unmapped=True),
+        _FakeRead({"ns": [1], "nl": [4]}),
+        _FakeRead({"ns": [10], "nl": [6]}),
+        _FakeRead({"ns": [20], "nl": [8]}),
+    ])
+    random_values = iter([0.9, 0.1, 0.1])
+
+    monkeypatch.setattr(
+        stats_module.pysam,
+        "AlignmentFile",
+        lambda *args, **kwargs: handle,
+    )
+    stats = stats_module.FootprintStats()
+
+    result = stats_module._collect_sampled_footprint_stats_from_request(
+        stats_module._StatsSamplingPassRequest(
+            bam_path="input.bam",
+            stats=stats,
+            n_samples=1,
+            sample_prob=0.5,
+            with_scores=False,
+            random_float=lambda: next(random_values),
+        )
+    )
+
+    assert result is stats
+    assert handle.closed
+    assert stats.total_reads_sampled == 1
+    assert stats.footprint_sizes == [6]
+
+
 def test_footprint_size_bin_counts_use_stable_labels():
     bins = stats_module._footprint_size_bin_counts(
         [0, 19, 20, 149, 500, 9999],
