@@ -479,6 +479,16 @@ class _ProbabilitySampleFileResult:
     stats: dict
 
 
+@dataclass(frozen=True)
+class _ProbabilitySampleSetResult:
+    reads: int
+    scanned: int
+    stats: dict
+
+    def as_tuple(self) -> Tuple[int, int, dict]:
+        return self.reads, self.scanned, self.stats
+
+
 def _process_probability_sample_file(
     bam_file: str,
     counters: Dict[str, ContextCounter],
@@ -509,7 +519,8 @@ def _process_probability_sample_file(
 
 
 def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
-                mode: str, args, max_reads: int = 0, verbose: bool = False) -> Tuple[int, dict]:
+                mode: str, args, max_reads: int = 0,
+                verbose: bool = False) -> Tuple[int, dict]:
     """
     Process a BAM file and update counters.
 
@@ -574,7 +585,7 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
     return reads_processed, filter_stats
 
 
-def process_sample_set(
+def _process_sample_set_result(
     bam_files: List[str],
     counters: Dict[str, ContextCounter],
     mode: str,
@@ -582,11 +593,11 @@ def process_sample_set(
     sample_name: str,
     output_dir: str,
     base_name: str,
-) -> Tuple[int, int, dict]:
+) -> _ProbabilitySampleSetResult:
     """Process a set of BAM files for one sample type.
 
     Returns:
-        (total_processed, total_scanned, combined_filter_stats)
+        Named result containing total processed reads, scanned reads, and stats.
     """
     total_reads = 0
     total_scanned = 0
@@ -613,7 +624,36 @@ def process_sample_set(
         if _read_limit_reached(args.max_reads, total_reads):
             break
 
-    return total_reads, total_scanned, dict(combined_stats)
+    return _ProbabilitySampleSetResult(
+        total_reads,
+        total_scanned,
+        dict(combined_stats),
+    )
+
+
+def process_sample_set(
+    bam_files: List[str],
+    counters: Dict[str, ContextCounter],
+    mode: str,
+    args,
+    sample_name: str,
+    output_dir: str,
+    base_name: str,
+) -> Tuple[int, int, dict]:
+    """Process a set of BAM files for one sample type.
+
+    Returns:
+        (total_processed, total_scanned, combined_filter_stats)
+    """
+    return _process_sample_set_result(
+        bam_files,
+        counters,
+        mode,
+        args,
+        sample_name,
+        output_dir,
+        base_name,
+    ).as_tuple()
 
 
 def _print_probability_generation_header(args, output_dir: str, tables_dir: str,
@@ -687,10 +727,15 @@ def _process_probability_sample_group(
     print("=" * 60)
 
     counters = _new_probability_counters(target_bases, max_context)
-    reads, scanned, stats = process_sample_set(
+    sample_result = _process_sample_set_result(
         bam_files, counters, mode, args, sample_name, output_dir, base_name,
     )
-    return _ProbabilitySampleResult(counters, reads, scanned, stats)
+    return _ProbabilitySampleResult(
+        counters,
+        sample_result.reads,
+        sample_result.scanned,
+        sample_result.stats,
+    )
 
 
 def _print_probability_results_summary(

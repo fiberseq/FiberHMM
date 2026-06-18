@@ -39,11 +39,13 @@ from fiberhmm.cli.generate_probs import (
     _ProbabilityRunContext,
     _ProbabilitySampleFileResult,
     _ProbabilitySampleResult,
+    _ProbabilitySampleSetResult,
     _process_probability_control_groups,
     _process_probability_read,
     _process_probability_read_or_skip,
     _process_probability_sample_file,
     _process_probability_sample_group,
+    _process_sample_set_result,
     _processed_reads_summary_line,
     _progress_postfix,
     _read_limit_reached,
@@ -62,6 +64,7 @@ from fiberhmm.cli.generate_probs import (
     _write_probability_table,
     _write_probability_tables_for_base,
     _write_sample_probability_table,
+    process_sample_set,
 )
 
 
@@ -455,17 +458,17 @@ def test_new_probability_counters_builds_context_counters():
 def test_process_probability_sample_group_prints_and_delegates(monkeypatch, capsys):
     calls = []
 
-    def fake_process_sample_set(
+    def fake_process_sample_set_result(
         bam_files, counters, mode, args, sample_name, output_dir, base_name,
     ):
         calls.append(
             (bam_files, counters, mode, args, sample_name, output_dir, base_name)
         )
-        return 7, 11, {"processed": 7}
+        return _ProbabilitySampleSetResult(7, 11, {"processed": 7})
 
     monkeypatch.setattr(
-        "fiberhmm.cli.generate_probs.process_sample_set",
-        fake_process_sample_set,
+        "fiberhmm.cli.generate_probs._process_sample_set_result",
+        fake_process_sample_set_result,
     )
     args = SimpleNamespace()
 
@@ -1015,6 +1018,123 @@ def test_process_probability_sample_file_delegates_reports_and_saves(
     out = capsys.readouterr().out
     assert "Processing: sample.bam" in out
     assert "Processed 7 reads (scanned 11)" in out
+
+
+def test_process_sample_set_result_accumulates_and_stops_at_read_limit(monkeypatch):
+    import fiberhmm.cli.generate_probs as generate_probs
+
+    calls = []
+    counters = {"A": object()}
+    args = SimpleNamespace(max_reads=10)
+    file_results = {
+        "first.bam": _ProbabilitySampleFileResult(
+            4,
+            {"scanned": 5, "processed": 4, "low_mapq": 1},
+        ),
+        "second.bam": _ProbabilitySampleFileResult(
+            6,
+            {"scanned": 8, "processed": 6, "no_mm_tag": 2},
+        ),
+        "third.bam": _ProbabilitySampleFileResult(
+            9,
+            {"scanned": 20, "processed": 9},
+        ),
+    }
+
+    def fake_process_sample_file(
+        bam_file,
+        got_counters,
+        mode,
+        got_args,
+        max_per_file,
+        sample_name,
+        output_dir,
+        base_name,
+    ):
+        calls.append(
+            (
+                bam_file,
+                got_counters,
+                mode,
+                got_args,
+                max_per_file,
+                sample_name,
+                output_dir,
+                base_name,
+            )
+        )
+        return file_results[bam_file]
+
+    monkeypatch.setattr(
+        generate_probs,
+        "_process_probability_sample_file",
+        fake_process_sample_file,
+    )
+
+    result = _process_sample_set_result(
+        ["first.bam", "second.bam", "third.bam"],
+        counters,
+        "daf",
+        args,
+        "accessible",
+        "out",
+        "run",
+    )
+
+    assert result == _ProbabilitySampleSetResult(
+        10,
+        13,
+        {"scanned": 13, "processed": 10, "low_mapq": 1, "no_mm_tag": 2},
+    )
+    assert result.as_tuple() == (
+        10,
+        13,
+        {"scanned": 13, "processed": 10, "low_mapq": 1, "no_mm_tag": 2},
+    )
+    assert [call[0] for call in calls] == ["first.bam", "second.bam"]
+    assert all(call[1] is counters for call in calls)
+    assert [call[4] for call in calls] == [3, 3]
+    assert calls[0][5:] == ("accessible", "out", "run")
+
+
+def test_process_sample_set_preserves_tuple_return(monkeypatch):
+    import fiberhmm.cli.generate_probs as generate_probs
+
+    calls = []
+
+    def fake_process_sample_set_result(*args):
+        calls.append(args)
+        return _ProbabilitySampleSetResult(7, 11, {"processed": 7})
+
+    monkeypatch.setattr(
+        generate_probs,
+        "_process_sample_set_result",
+        fake_process_sample_set_result,
+    )
+
+    args = SimpleNamespace()
+    counters = {"A": object()}
+
+    assert process_sample_set(
+        ["sample.bam"],
+        counters,
+        "pacbio-fiber",
+        args,
+        "accessible",
+        "out",
+        "run",
+    ) == (7, 11, {"processed": 7})
+    assert calls == [
+        (
+            ["sample.bam"],
+            counters,
+            "pacbio-fiber",
+            args,
+            "accessible",
+            "out",
+            "run",
+        )
+    ]
 
 
 def test_read_limit_reached_treats_zero_as_unlimited():
