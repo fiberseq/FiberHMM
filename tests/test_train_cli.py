@@ -1269,9 +1269,15 @@ def test_model_json_record_uses_plain_lists():
         emissionprob_=np.array([[0.1, 0.2], [0.8, 0.9]]),
     )
 
-    record = train._model_json_record(model)
+    record_value = train._model_json_record_value(model)
 
-    assert record == {
+    assert record_value == train._TrainingModelJsonRecord(
+        n_states=2,
+        startprob=[0.4, 0.6],
+        transmat=[[0.9, 0.1], [0.2, 0.8]],
+        emissionprob=[[0.1, 0.2], [0.8, 0.9]],
+    )
+    assert train._model_json_record(model) == {
         "n_states": 2,
         "startprob": [0.4, 0.6],
         "transmat": [[0.9, 0.1], [0.2, 0.8]],

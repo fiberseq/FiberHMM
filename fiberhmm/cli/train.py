@@ -174,6 +174,22 @@ class _TrainingOutputPaths:
 
 
 @dataclass(frozen=True)
+class _TrainingModelJsonRecord:
+    n_states: int
+    startprob: list
+    transmat: list
+    emissionprob: list
+
+    def as_dict(self) -> dict:
+        return {
+            'n_states': self.n_states,
+            'startprob': self.startprob,
+            'transmat': self.transmat,
+            'emissionprob': self.emissionprob,
+        }
+
+
+@dataclass(frozen=True)
 class _TrainingConfig:
     context_size: int
     mode: str
@@ -1666,13 +1682,17 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
     )
 
 
+def _model_json_record_value(model) -> _TrainingModelJsonRecord:
+    return _TrainingModelJsonRecord(
+        n_states=model.n_states,
+        startprob=model.startprob_.tolist(),
+        transmat=model.transmat_.tolist(),
+        emissionprob=model.emissionprob_.tolist(),
+    )
+
+
 def _model_json_record(model):
-    return {
-        'n_states': model.n_states,
-        'startprob': model.startprob_.tolist(),
-        'transmat': model.transmat_.tolist(),
-        'emissionprob': model.emissionprob_.tolist(),
-    }
+    return _model_json_record_value(model).as_dict()
 
 
 def _training_config_record(args) -> _TrainingConfig:
@@ -1726,7 +1746,7 @@ def _save_training_outputs(best_model, all_models, args, train_rids) -> None:
     print("  Saved: best-model.npz (numpy format)")
 
     # Save all models as JSON list
-    all_models_data = [_model_json_record(m) for m in all_models]
+    all_models_data = [_model_json_record_value(m).as_dict() for m in all_models]
     with open(paths.all_models, 'w') as f:
         json.dump(all_models_data, f)
 
