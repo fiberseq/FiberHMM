@@ -86,6 +86,12 @@ class _PhaseSplit:
     cuts: List[Interval]
 
 
+@dataclass(frozen=True)
+class _TilingFloors:
+    msp: int
+    nuc: int
+
+
 def _fragments_after_cuts(a: int, b: int,
                           cut_spans: Iterable[Tuple[int, int]]) -> List[Interval]:
     frags: List[Interval] = []
@@ -508,8 +514,11 @@ def _ordered_positive_nuc_calls(nuc_calls) -> List[NucCall]:
                   key=lambda n: (n.start, -(n.start + n.length)))
 
 
-def _tiling_floors(msp_min_size, nuc_min_size) -> Tuple[int, int]:
-    return max(1, int(msp_min_size)), max(1, int(nuc_min_size))
+def _tiling_floors(msp_min_size, nuc_min_size) -> _TilingFloors:
+    return _TilingFloors(
+        msp=max(1, int(msp_min_size)),
+        nuc=max(1, int(nuc_min_size)),
+    )
 
 
 def _clip_ordered_nuc_calls_for_tiling(
@@ -554,11 +563,11 @@ def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
         reverts to MSP), so no sub-nucleosome nuc+ calls leak out.
     Returns ``(kept_nucs, msp_intervals)``.
     """
-    floor, nfloor = _tiling_floors(msp_min_size, nuc_min_size)
+    floors = _tiling_floors(msp_min_size, nuc_min_size)
     ordered = _ordered_positive_nuc_calls(nuc_calls)
-    kept = _clip_ordered_nuc_calls_for_tiling(ordered, span_lo, nfloor)
+    kept = _clip_ordered_nuc_calls_for_tiling(ordered, span_lo, floors.nuc)
 
-    return kept, _msp_gaps_between_nucs(kept, span_lo, span_hi, floor)
+    return kept, _msp_gaps_between_nucs(kept, span_lo, span_hi, floors.msp)
 
 
 def _circular_uncovered_cut(calls, read_length: int) -> int:
@@ -640,18 +649,18 @@ def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
         tiler would emit overlapping/wrapped pieces.
     """
     rl = int(read_length)
-    floor, nfloor = _tiling_floors(msp_min_size, nuc_min_size)
+    floors = _tiling_floors(msp_min_size, nuc_min_size)
     calls = [n for n in nuc_calls if n.length > 0]
     if rl <= 0:
         return list(calls), []
     if not calls:
         # no nucleosomes -> the entire molecule tiles as one accessible MSP
-        return [], _whole_molecule_msp(rl, floor)
+        return [], _whole_molecule_msp(rl, floors.msp)
     whole = _whole_molecule_nuc_candidate(calls, rl)
     if whole is not None:
-        if rl >= nfloor:
+        if rl >= floors.nuc:
             return [_whole_molecule_nuc_call(whole, rl)], []
-        return [], _whole_molecule_msp(rl, floor)
+        return [], _whole_molecule_msp(rl, floors.msp)
 
     # Prefer an uncovered cut point (no call straddles it); fall back to 0 when
     # the circle is fully covered. Either way, straddlers are split below, so a
