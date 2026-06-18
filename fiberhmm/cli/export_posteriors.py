@@ -23,6 +23,7 @@ import argparse
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
@@ -91,6 +92,14 @@ def _regions_by_chrom(regions: List[Tuple[str, int, int]]) -> Dict[str, List[Tup
     return grouped
 
 
+@dataclass(frozen=True)
+class _ExportRun:
+    mode: str
+    context_size: int
+    regions: List[Tuple[str, int, int]]
+    params: dict
+
+
 def _prepare_export_run(
     input_bam: str,
     model_path: str,
@@ -103,7 +112,7 @@ def _prepare_export_run(
     output_format: str,
     verbose: bool,
     core_note: str = "",
-) -> Tuple[str, int, List[Tuple[str, int, int]], dict]:
+) -> _ExportRun:
     _, model_context_size, model_mode = load_model_with_metadata(model_path, normalize=True)
     mode_override = str(mode_override).strip() if mode_override is not None else None
     model_mode = str(model_mode).strip() if model_mode is not None else None
@@ -129,7 +138,7 @@ def _prepare_export_run(
         'context_size': context_size,
         'edge_trim': edge_trim,
     }
-    return mode, context_size, regions, params
+    return _ExportRun(mode, context_size, regions, params)
 
 
 def _footprint_reference_intervals(
@@ -685,14 +694,14 @@ def export_posteriors_tsv(
     from fiberhmm.posteriors.tsv_backend import PosteriorsTSVWriter
 
     output_path = os.fspath(output_path)
-    mode, context_size, regions, params = _prepare_export_run(
+    run = _prepare_export_run(
         input_bam, model_path, chroms, region_size, mode_override,
         context_size_override, edge_trim, n_cores, "TSV", verbose,
     )
 
     compress = output_path.lower().endswith('.gz')
     writer = PosteriorsTSVWriter(
-        output_path, mode=mode, context_size=context_size,
+        output_path, mode=run.mode, context_size=run.context_size,
         edge_trim=edge_trim, source_bam=input_bam, compress=compress
     )
 
@@ -710,7 +719,10 @@ def export_posteriors_tsv(
             )
 
     try:
-        _process_regions(regions, input_bam, model_path, params, n_cores, verbose, on_results)
+        _process_regions(
+            run.regions, input_bam, model_path, run.params, n_cores, verbose,
+            on_results,
+        )
     finally:
         total = writer.close()
 
@@ -841,14 +853,14 @@ def export_posteriors_hdf5(
         write_hdf5_file_metadata,
     )
 
-    mode, context_size, regions, params = _prepare_export_run(
+    run = _prepare_export_run(
         input_bam, model_path, chroms, region_size, mode_override,
         context_size_override, edge_trim, n_cores, "HDF5", verbose,
         core_note=" with streaming/batched writes",
     )
 
     # Group regions by chromosome
-    regions_by_chrom = _regions_by_chrom(regions)
+    regions_by_chrom = _regions_by_chrom(run.regions)
 
     # Track per-chromosome data
     chrom_fiber_counts, chrom_metadata, write_buffers = _new_h5_export_chrom_state(
@@ -858,8 +870,8 @@ def export_posteriors_hdf5(
     with h5py.File(output_h5, 'w') as f:
         _initialize_h5_export_file(
             f,
-            mode,
-            context_size,
+            run.mode,
+            run.context_size,
             edge_trim,
             input_bam,
             model_path,
@@ -870,10 +882,10 @@ def export_posteriors_hdf5(
 
         _process_h5_export_region_batches(
             f,
-            regions,
+            run.regions,
             input_bam,
             model_path,
-            params,
+            run.params,
             n_cores,
             verbose,
             regions_by_chrom,

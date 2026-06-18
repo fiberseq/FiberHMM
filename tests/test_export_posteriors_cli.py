@@ -54,7 +54,7 @@ def test_prepare_export_run_normalizes_overrides(monkeypatch):
         lambda input_bam, region_size, chroms=None: [("chr1", 0, region_size)],
     )
 
-    mode, context_size, regions, params = export_posteriors._prepare_export_run(
+    run = export_posteriors._prepare_export_run(
         "input.bam",
         "model.json",
         chroms={"chr1"},
@@ -67,10 +67,12 @@ def test_prepare_export_run_normalizes_overrides(monkeypatch):
         verbose=False,
     )
 
-    assert mode == "daf"
-    assert context_size == 0
-    assert regions == [("chr1", 0, 25)]
-    assert params == {"mode": "daf", "context_size": 0, "edge_trim": 10}
+    assert run == export_posteriors._ExportRun(
+        mode="daf",
+        context_size=0,
+        regions=[("chr1", 0, 25)],
+        params={"mode": "daf", "context_size": 0, "edge_trim": 10},
+    )
 
 
 def test_export_posteriors_regions_by_chrom_preserves_order():
