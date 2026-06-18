@@ -1013,6 +1013,24 @@ def test_finalize_extract_type_bed_skips_sort_for_empty_output(monkeypatch, tmp_
     assert out_path.read_text() == ""
 
 
+def test_sort_bed_in_place_removes_temp_file_when_sort_fails(monkeypatch, tmp_path):
+    out_path = tmp_path / "tf.bed"
+    sorted_path = tmp_path / "tf.bed.sorted"
+    out_path.write_text("chr2\t20\t30\n")
+
+    def fail_sort(cmd, check):
+        assert cmd[-1] == str(sorted_path)
+        sorted_path.write_text("partial\n")
+        raise extract_tags.subprocess.CalledProcessError(2, cmd)
+
+    monkeypatch.setattr(extract_tags.subprocess, "run", fail_sort)
+
+    with pytest.raises(extract_tags.subprocess.CalledProcessError):
+        extract_tags._sort_bed_in_place(str(out_path))
+
+    assert not sorted_path.exists()
+
+
 def test_normalize_parallel_extract_args_handles_aliases_and_backcompat_paths():
     output_beds, extract_types = extract_tags._normalize_parallel_extract_args(
         "footprints.bed",

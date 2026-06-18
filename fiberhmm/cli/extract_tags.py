@@ -1379,11 +1379,19 @@ def _write_concatenated_region_beds(out_path: str, region_beds) -> None:
 
 def _sort_bed_in_place(out_path: str) -> None:
     sorted_bed = out_path + '.sorted'
-    subprocess.run(
-        ['sort', '-k1,1', '-k2,2n', out_path, '-o', sorted_bed],
-        check=True,
-    )
-    os.replace(sorted_bed, out_path)
+    try:
+        subprocess.run(
+            ['sort', '-k1,1', '-k2,2n', out_path, '-o', sorted_bed],
+            check=True,
+        )
+        os.replace(sorted_bed, out_path)
+    except BaseException:
+        if os.path.exists(sorted_bed):
+            try:
+                os.remove(sorted_bed)
+            except (PermissionError, OSError) as e:
+                print(f"  Warning: Could not remove temporary sorted BED: {e}")
+        raise
 
 
 def _bed_file_has_content(out_path: str) -> bool:
