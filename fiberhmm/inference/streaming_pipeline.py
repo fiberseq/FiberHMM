@@ -71,6 +71,10 @@ def _completed_empty_future() -> Future:
     return future
 
 
+def _new_streaming_chunk_buffers() -> tuple[list, list, list]:
+    return [], [], []
+
+
 def _submit_streaming_chunk(inflight, executor, worker_fn, chunk_items,
                             chunk_read_objs, chunk_skip_flags, worker_args) -> None:
     if chunk_items:
@@ -356,9 +360,9 @@ def _process_bam_streaming_pipeline_fused(
             )
 
             inflight = deque()
-            chunk_payloads = []
-            chunk_read_objs = []
-            chunk_skip_flags = []
+            chunk_payloads, chunk_read_objs, chunk_skip_flags = (
+                _new_streaming_chunk_buffers()
+            )
             last_progress_reads = 0
             last_progress_time = time.time()
 
@@ -402,9 +406,9 @@ def _process_bam_streaming_pipeline_fused(
                                 unify_threshold,
                             ),
                         )
-                        chunk_payloads = []
-                        chunk_read_objs = []
-                        chunk_skip_flags = []
+                        chunk_payloads, chunk_read_objs, chunk_skip_flags = (
+                            _new_streaming_chunk_buffers()
+                        )
 
                         now = time.time()
                         last_progress_reads, last_progress_time = (
@@ -559,9 +563,9 @@ def _process_bam_streaming_pipeline(
             )
 
             inflight = deque()
-            chunk_reads = []
-            chunk_read_objs = []
-            chunk_skip_flags = []
+            chunk_reads, chunk_read_objs, chunk_skip_flags = (
+                _new_streaming_chunk_buffers()
+            )
             skipped = 0
             last_progress_reads = 0
             last_progress_time = time.time()
@@ -606,9 +610,9 @@ def _process_bam_streaming_pipeline(
                                 return_posteriors, prob_threshold,
                             ),
                         )
-                        chunk_reads = []
-                        chunk_read_objs = []
-                        chunk_skip_flags = []
+                        chunk_reads, chunk_read_objs, chunk_skip_flags = (
+                            _new_streaming_chunk_buffers()
+                        )
 
                         now = time.time()
                         last_progress_reads, last_progress_time = (

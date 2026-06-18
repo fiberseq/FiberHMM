@@ -11,6 +11,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _apply_worker_args,
     _buffer_processable_read,
     _fused_worker_args,
+    _new_streaming_chunk_buffers,
     _print_streaming_progress,
     _streaming_completion_message,
     _streaming_filter_config,
@@ -144,6 +145,17 @@ def test_buffer_processable_read_keeps_chunk_lists_aligned():
     assert payloads == [payload]
     assert reads == [read]
     assert skip_flags == [False]
+
+
+def test_new_streaming_chunk_buffers_returns_independent_lists():
+    buffers = _new_streaming_chunk_buffers()
+    assert buffers == ([], [], [])
+
+    buffers[0].append("payload")
+    buffers[1].append("read")
+    buffers[2].append(False)
+
+    assert _new_streaming_chunk_buffers() == ([], [], [])
 
 
 def test_streaming_log_for_output_uses_stderr_for_stdout_bam():
