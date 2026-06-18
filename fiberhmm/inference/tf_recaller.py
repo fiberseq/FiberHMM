@@ -104,6 +104,17 @@ class TFCall:
 
 
 @dataclass
+class _TfIntervalScanRequest:
+    obs: np.ndarray
+    lo: int
+    hi: int
+    llr_hit: np.ndarray
+    llr_miss: np.ndarray
+    min_llr: float
+    min_opps: int
+
+
+@dataclass
 class _TagOutputFrame:
     nuc_intervals: List[Tuple[int, int]]
     msp_intervals: List[Tuple[int, int]]
@@ -612,15 +623,31 @@ def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
     Thin Python wrapper around ``_call_tfs_numba``; builds TFCall objects
     from the numpy result arrays.
     """
-    if hi <= lo:
+    return call_tfs_in_interval_from_request(
+        _TfIntervalScanRequest(
+            obs=obs,
+            lo=lo,
+            hi=hi,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            min_llr=min_llr,
+            min_opps=min_opps,
+        )
+    )
+
+
+def call_tfs_in_interval_from_request(
+    request: _TfIntervalScanRequest,
+) -> List[TFCall]:
+    if request.hi <= request.lo:
         return []
     # Ensure dtypes numba can bind to cleanly
-    obs_arr = np.ascontiguousarray(obs, dtype=np.int32)
-    hit_arr = np.ascontiguousarray(llr_hit, dtype=np.float64)
-    miss_arr = np.ascontiguousarray(llr_miss, dtype=np.float64)
+    obs_arr = np.ascontiguousarray(request.obs, dtype=np.int32)
+    hit_arr = np.ascontiguousarray(request.llr_hit, dtype=np.float64)
+    miss_arr = np.ascontiguousarray(request.llr_miss, dtype=np.float64)
     starts, ends, llrs, opps_arr, l_amb, r_amb = _call_tfs_numba(
-        obs_arr, int(lo), int(hi), hit_arr, miss_arr,
-        float(min_llr), int(min_opps),
+        obs_arr, int(request.lo), int(request.hi), hit_arr, miss_arr,
+        float(request.min_llr), int(request.min_opps),
     )
     calls: List[TFCall] = []
     for i in range(len(starts)):
