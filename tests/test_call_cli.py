@@ -241,20 +241,17 @@ def test_call_mode_context_resolution_uses_overrides_metadata_and_defaults():
     assert _call_context_size_or_default(None, None) == 3
 
     args = SimpleNamespace(mode="daf", context_size=5)
-    assert _resolve_call_mode_context(args, model_k=3, model_mode="pacbio-fiber") == (
-        "daf",
-        5,
-    )
+    context = _resolve_call_mode_context(args, model_k=3, model_mode="pacbio-fiber")
+    assert context.mode == "daf"
+    assert context.k == 5
 
     args = SimpleNamespace(mode=None, context_size=None)
-    assert _resolve_call_mode_context(args, model_k=4, model_mode="nanopore-fiber") == (
-        "nanopore-fiber",
-        4,
-    )
-    assert _resolve_call_mode_context(args, model_k=None, model_mode=None) == (
-        "pacbio-fiber",
-        3,
-    )
+    context = _resolve_call_mode_context(args, model_k=4, model_mode="nanopore-fiber")
+    assert context.mode == "nanopore-fiber"
+    assert context.k == 4
+    context = _resolve_call_mode_context(args, model_k=None, model_mode=None)
+    assert context.mode == "pacbio-fiber"
+    assert context.k == 3
 
 
 def test_call_region_parallel_helpers(capsys):
@@ -474,7 +471,7 @@ def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
     monkeypatch.setattr(
         call,
         "_resolve_call_mode_context",
-        lambda got_args, model_k, model_mode: ("daf", 5),
+        lambda got_args, model_k, model_mode: call._CallModeContext("daf", 5),
     )
     monkeypatch.setattr(call, "resolve_recall_defaults", lambda got_args: (6.0, 1.2))
     monkeypatch.setattr(call, "_resolve_recall_nucs", lambda got_args: True)

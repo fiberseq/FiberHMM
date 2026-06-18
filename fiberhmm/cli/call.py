@@ -51,6 +51,12 @@ class _CallRuntime:
     common_kwargs: dict
 
 
+@dataclass(frozen=True)
+class _CallModeContext:
+    mode: str
+    k: int
+
+
 def _add_call_io_args(p) -> None:
     p.add_argument('-i', '--input', required=True,
                    help='Input BAM. Use "-" for stdin (streaming mode).')
@@ -227,9 +233,9 @@ def _call_context_size_or_default(args_context_size, model_k) -> int:
 
 
 def _resolve_call_mode_context(args, model_k, model_mode):
-    return (
-        _call_mode_or_default(args.mode, model_mode),
-        _call_context_size_or_default(args.context_size, model_k),
+    return _CallModeContext(
+        mode=_call_mode_or_default(args.mode, model_mode),
+        k=_call_context_size_or_default(args.context_size, model_k),
     )
 
 
@@ -586,7 +592,7 @@ def _resolve_call_runtime(args, argv) -> _CallRuntime:
 
     # Resolve mode/k from model metadata
     _, model_k, model_mode = load_model_with_metadata(apply_model_path)
-    mode, k = _resolve_call_mode_context(args, model_k, model_mode)
+    mode_context = _resolve_call_mode_context(args, model_k, model_mode)
 
     min_llr, uplift = resolve_recall_defaults(args)
     recall_nucs = _resolve_recall_nucs(args)
@@ -595,22 +601,27 @@ def _resolve_call_runtime(args, argv) -> _CallRuntime:
     # auto estimation): the DAF path needs R/Y in the stored sequence, MD tags,
     # or --reference. If none are available every read is silently skipped, so
     # error out in under a second with an actionable message.
-    if _should_check_daf_inputs(mode, args.input):
+    if _should_check_daf_inputs(mode_context.mode, args.input):
         _check_daf_inputs(args.input, args.reference)
 
     # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
     phase_nrl = _resolve_phase_nrl(
-        args, apply_model_path, recall_model_path, mode, k, recall_nucs,
+        args,
+        apply_model_path,
+        recall_model_path,
+        mode_context.mode,
+        mode_context.k,
+        recall_nucs,
     )
     pg_record = _build_pg_record(
-        mode, recall_nucs, phase_nrl, args.keep_chimeras, argv,
+        mode_context.mode, recall_nucs, phase_nrl, args.keep_chimeras, argv,
     )
     also_write_legacy = should_write_legacy_tags(args)
     common_kwargs = _call_fused_common_kwargs(
         args,
         recall_model_path,
-        mode,
-        k,
+        mode_context.mode,
+        mode_context.k,
         min_llr,
         uplift,
         also_write_legacy,
@@ -622,8 +633,8 @@ def _resolve_call_runtime(args, argv) -> _CallRuntime:
     return _CallRuntime(
         apply_model_path=apply_model_path,
         recall_model_path=recall_model_path,
-        mode=mode,
-        k=k,
+        mode=mode_context.mode,
+        k=mode_context.k,
         min_llr=min_llr,
         uplift=uplift,
         recall_nucs=recall_nucs,
