@@ -279,6 +279,23 @@ def test_ma_interval_and_quals_helpers_preserve_genomic_order():
 
 
 def test_ma_annotation_record_normalizes_reverse_read_annotation():
+    expected = {
+        "start": 85,
+        "length": 5,
+        "quals": [1, 3, 2],
+        "name": "call-a",
+        "read_length": 100,
+    }
+    assert extract_tags._ma_annotation_record_from_request(
+        extract_tags._MaAnnotationRecordRequest(
+            start=10,
+            length=5,
+            quals=[1, 2, 3],
+            name="call-a",
+            read_length=100,
+            is_reverse=True,
+        )
+    ) == expected
     assert extract_tags._ma_annotation_record(
         10,
         5,
@@ -286,13 +303,7 @@ def test_ma_annotation_record_normalizes_reverse_read_annotation():
         "call-a",
         read_length=100,
         is_reverse=True,
-    ) == {
-        "start": 85,
-        "length": 5,
-        "quals": [1, 3, 2],
-        "name": "call-a",
-        "read_length": 100,
-    }
+    ) == expected
 
 
 def test_ma_annotation_quality_values_pad_triplets_and_ignore_msp_quals():

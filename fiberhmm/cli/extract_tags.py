@@ -106,6 +106,16 @@ class _MaAnnotationBlock:
 
 
 @dataclass(frozen=True)
+class _MaAnnotationRecordRequest:
+    start: int
+    length: int
+    quals: object
+    name: str
+    read_length: int
+    is_reverse: bool
+
+
+@dataclass(frozen=True)
 class _WrappedGroupSpan:
     start: int
     length: int
@@ -197,6 +207,27 @@ def _ma_quals_in_genomic_order(quals, is_reverse: bool) -> list:
     return q_out
 
 
+def _ma_annotation_record_from_request(
+    request: _MaAnnotationRecordRequest,
+) -> dict:
+    # MA is molecular frame; flip to SEQ (query) for ref mapping.
+    a_start, a_len = _ma_interval_to_seq(
+        int(request.start),
+        int(request.length),
+        request.read_length,
+        request.is_reverse,
+    )
+    # The BED is genomic, so emit QQQ edge bytes in GENOMIC left/right order:
+    # on a reverse read the molecular 5' edge is the genomic-right edge.
+    return {
+        'start': a_start,
+        'length': a_len,
+        'quals': _ma_quals_in_genomic_order(request.quals, request.is_reverse),
+        'name': request.name,
+        'read_length': request.read_length,
+    }
+
+
 def _ma_annotation_record(
     start: int,
     length: int,
@@ -205,19 +236,16 @@ def _ma_annotation_record(
     read_length: int,
     is_reverse: bool,
 ) -> dict:
-    # MA is molecular frame; flip to SEQ (query) for ref mapping.
-    a_start, a_len = _ma_interval_to_seq(
-        int(start), int(length), read_length, is_reverse,
+    return _ma_annotation_record_from_request(
+        _MaAnnotationRecordRequest(
+            start=start,
+            length=length,
+            quals=quals,
+            name=name,
+            read_length=read_length,
+            is_reverse=is_reverse,
+        )
     )
-    # The BED is genomic, so emit QQQ edge bytes in GENOMIC left/right order:
-    # on a reverse read the molecular 5' edge is the genomic-right edge.
-    return {
-        'start': a_start,
-        'length': a_len,
-        'quals': _ma_quals_in_genomic_order(quals, is_reverse),
-        'name': name,
-        'read_length': read_length,
-    }
 
 
 def _parse_ma_annotations(read, target_name: str):
@@ -249,8 +277,15 @@ def _parse_ma_annotations(read, target_name: str):
             )
             if name == target_name:
                 annotations.append(
-                    _ma_annotation_record(
-                        s, length, quals, ann_name, read_length, is_reverse,
+                    _ma_annotation_record_from_request(
+                        _MaAnnotationRecordRequest(
+                            start=s,
+                            length=length,
+                            quals=quals,
+                            name=ann_name,
+                            read_length=read_length,
+                            is_reverse=is_reverse,
+                        )
                     )
                 )
             ann_idx += 1
