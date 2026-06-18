@@ -285,6 +285,33 @@ def test_write_footprint_stats_section_formats_size_and_coverage():
     )
 
 
+def test_write_gap_stats_section_formats_when_present_only():
+    handle = io.StringIO()
+
+    stats_module._write_gap_stats_section(
+        handle,
+        {
+            "total_gaps": 42,
+            "gap_size_median": 75,
+            "gap_size_mean": 80.25,
+            "gap_size_std": 12.5,
+        },
+    )
+
+    assert handle.getvalue() == (
+        "Gap (Accessible Region) Statistics\n"
+        "------------------------------\n"
+        "Total gaps:                 42\n"
+        "Gap size (median):          75 bp\n"
+        "Gap size (mean ± std):      80.2 ± 12.5 bp\n"
+        "\n"
+    )
+
+    empty_handle = io.StringIO()
+    stats_module._write_gap_stats_section(empty_handle, {})
+    assert empty_handle.getvalue() == ""
+
+
 def test_plot_median_histogram_formats_axis_and_optional_range():
     class FakeAxis:
         def __init__(self):

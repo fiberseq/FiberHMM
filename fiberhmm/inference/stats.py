@@ -162,6 +162,18 @@ def _write_footprint_stats_section(handle, summary: dict) -> None:
     handle.write("\n")
 
 
+def _write_gap_stats_section(handle, summary: dict) -> None:
+    if 'total_gaps' not in summary:
+        return
+
+    handle.write("Gap (Accessible Region) Statistics\n")
+    handle.write("-" * 30 + "\n")
+    handle.write(f"Total gaps:                 {summary['total_gaps']:,}\n")
+    handle.write(f"Gap size (median):          {summary['gap_size_median']:.0f} bp\n")
+    handle.write(f"Gap size (mean ± std):      {summary['gap_size_mean']:.1f} ± {summary['gap_size_std']:.1f} bp\n")
+    handle.write("\n")
+
+
 def _plot_median_histogram(
     ax,
     values,
@@ -421,14 +433,7 @@ class FootprintStats:
 
             _write_read_stats_section(f, summary)
             _write_footprint_stats_section(f, summary)
-
-            if 'total_gaps' in summary:
-                f.write("Gap (Accessible Region) Statistics\n")
-                f.write("-" * 30 + "\n")
-                f.write(f"Total gaps:                 {summary['total_gaps']:,}\n")
-                f.write(f"Gap size (median):          {summary['gap_size_median']:.0f} bp\n")
-                f.write(f"Gap size (mean ± std):      {summary['gap_size_mean']:.1f} ± {summary['gap_size_std']:.1f} bp\n")
-                f.write("\n")
+            _write_gap_stats_section(f, summary)
 
             if 'total_msps' in summary:
                 f.write("MSP (Large Accessible) Statistics\n")
