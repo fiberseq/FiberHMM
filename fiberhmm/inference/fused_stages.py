@@ -99,6 +99,24 @@ class _TfRecallStageRequest:
     unify_threshold: int
 
 
+@dataclass(frozen=True)
+class _FusedRecallResultRequest:
+    fiber_read: Mapping[str, Any]
+    apply_result: Mapping[str, Any]
+    llr_hit: Any
+    llr_miss: Any
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+    with_scores: bool
+    recall_nucs: bool = False
+    split_min_llr: float = 4.0
+    split_min_opps: int = 3
+    nuc_min_size: int = 85
+    msp_min_size: int = 0
+    phase_nrl: int = 0
+
+
 def _analyzed_span(apply_result, read_length, kept):
     """Extent (lo, hi) the read was annotated over -- the union of the original
     HMM footprints/MSPs and the final nucleosomes -- used to tile MSPs."""
@@ -357,31 +375,58 @@ def build_fused_recall_result(
     refined nucs/MSPs/TFs back to the molecule. ``recall_nucs=False`` (the
     default) is byte-for-byte the original behavior.
     """
-    is_circular = _apply_result_is_circular(apply_result)
+    return build_fused_recall_result_from_request(
+        _FusedRecallResultRequest(
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
+            with_scores=with_scores,
+            recall_nucs=recall_nucs,
+            split_min_llr=split_min_llr,
+            split_min_opps=split_min_opps,
+            nuc_min_size=nuc_min_size,
+            msp_min_size=msp_min_size,
+            phase_nrl=phase_nrl,
+        ),
+    )
 
-    if recall_nucs:
+
+def build_fused_recall_result_from_request(
+    request: _FusedRecallResultRequest,
+) -> dict:
+    is_circular = _apply_result_is_circular(request.apply_result)
+
+    if request.recall_nucs:
         if is_circular:
             return _build_fused_recall_result_with_nucs_circular(
-                fiber_read, apply_result, llr_hit, llr_miss,
-                min_llr, min_opps, unify_threshold,
-                split_min_llr, split_min_opps, nuc_min_size, msp_min_size,
-                phase_nrl,
+                request.fiber_read, request.apply_result, request.llr_hit,
+                request.llr_miss, request.min_llr, request.min_opps,
+                request.unify_threshold, request.split_min_llr,
+                request.split_min_opps, request.nuc_min_size,
+                request.msp_min_size, request.phase_nrl,
             )
         return _build_fused_recall_result_with_nucs(
-            fiber_read, apply_result, llr_hit, llr_miss,
-            min_llr, min_opps, unify_threshold,
-            split_min_llr, split_min_opps, nuc_min_size, msp_min_size,
-            phase_nrl,
+            request.fiber_read, request.apply_result, request.llr_hit,
+            request.llr_miss, request.min_llr, request.min_opps,
+            request.unify_threshold, request.split_min_llr,
+            request.split_min_opps, request.nuc_min_size,
+            request.msp_min_size, request.phase_nrl,
         )
 
     if is_circular:
         return _build_fused_recall_result_without_nucs_circular(
-            fiber_read, apply_result, llr_hit, llr_miss,
-            min_llr, min_opps, unify_threshold, with_scores,
+            request.fiber_read, request.apply_result, request.llr_hit,
+            request.llr_miss, request.min_llr, request.min_opps,
+            request.unify_threshold, request.with_scores,
         )
     return _build_fused_recall_result_without_nucs_linear(
-        fiber_read, apply_result, llr_hit, llr_miss,
-        min_llr, min_opps, unify_threshold, with_scores,
+        request.fiber_read, request.apply_result, request.llr_hit,
+        request.llr_miss, request.min_llr, request.min_opps,
+        request.unify_threshold, request.with_scores,
     )
 
 
