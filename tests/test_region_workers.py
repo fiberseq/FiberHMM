@@ -46,6 +46,7 @@ from fiberhmm.inference.region_workers import (
     _RegionFiberReadResult,
     _RegionPosteriorRecordRequest,
     _RegionPosteriorTsv,
+    _RegionReadFilterConfigRequest,
     _RegionReadRoute,
     _RegionReadRouteRequest,
     _run_fused_region_apply_read,
@@ -166,6 +167,41 @@ def test_region_bam_worker_runtime_builds_apply_output_and_filter_configs():
         process_unmapped=False,
         train_rids=train_rids,
     )
+
+
+def test_region_read_filter_config_request_controls_training_ids():
+    params = {
+        "min_mapq": "11",
+        "min_read_length": "101",
+        "primary_only": True,
+        "train_rids": {"read1"},
+    }
+
+    requested = region_workers._region_read_filter_config_from_request(
+        _RegionReadFilterConfigRequest(
+            params=params,
+            require_train_rids=False,
+        )
+    )
+    adapted = region_workers._region_read_filter_config(
+        params,
+        require_train_rids=True,
+    )
+
+    assert requested == ReadFilterConfig(
+        min_mapq=11,
+        min_read_length=101,
+        primary_only=True,
+        process_unmapped=False,
+        train_rids={"read1"},
+    )
+    assert adapted == requested
+    assert region_workers._region_read_filter_config_from_request(
+        _RegionReadFilterConfigRequest(
+            params={key: value for key, value in params.items() if key != "train_rids"},
+            require_train_rids=False,
+        )
+    ).train_rids == set()
 
 
 def test_new_region_skip_reasons_includes_region_extras():

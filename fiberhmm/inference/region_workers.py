@@ -105,6 +105,12 @@ class _RegionReadRouteRequest:
 
 
 @dataclass(frozen=True)
+class _RegionReadFilterConfigRequest:
+    params: dict
+    require_train_rids: bool
+
+
+@dataclass(frozen=True)
 class _RegionBed12Blocks:
     block_starts: list
     block_sizes: list
@@ -625,17 +631,32 @@ def _format_region_bed12_row(ref_name, ref_start, ref_end, read_id, strand,
     )
 
 
-def _region_read_filter_config(params: dict, *, require_train_rids: bool) -> ReadFilterConfig:
+def _region_read_filter_config_from_request(
+    request: _RegionReadFilterConfigRequest,
+) -> ReadFilterConfig:
     train_rids = (
-        params['train_rids'] if require_train_rids
-        else params.get('train_rids') or set()
+        request.params['train_rids'] if request.require_train_rids
+        else request.params.get('train_rids') or set()
     )
     return ReadFilterConfig(
-        min_mapq=int(params['min_mapq']),
-        min_read_length=int(params['min_read_length']),
-        primary_only=params.get('primary_only', False),
+        min_mapq=int(request.params['min_mapq']),
+        min_read_length=int(request.params['min_read_length']),
+        primary_only=request.params.get('primary_only', False),
         process_unmapped=False,
         train_rids=train_rids,
+    )
+
+
+def _region_read_filter_config(
+    params: dict,
+    *,
+    require_train_rids: bool,
+) -> ReadFilterConfig:
+    return _region_read_filter_config_from_request(
+        _RegionReadFilterConfigRequest(
+            params=params,
+            require_train_rids=require_train_rids,
+        )
     )
 
 
@@ -656,7 +677,12 @@ def _region_bam_worker_runtime(
     return _RegionBamWorkerRuntime(
         apply_config=_region_apply_config(params),
         output_config=_region_bam_output_config(params, temp_tsv_path),
-        filter_config=_region_read_filter_config(params, require_train_rids=True),
+        filter_config=_region_read_filter_config_from_request(
+            _RegionReadFilterConfigRequest(
+                params=params,
+                require_train_rids=True,
+            )
+        ),
     )
 
 
@@ -685,7 +711,12 @@ def _fused_region_worker_runtime(params: dict) -> _FusedRegionWorkerRuntime:
             apply_config.nuc_min_size,
             apply_config.msp_min_size,
         ),
-        filter_config=_region_read_filter_config(params, require_train_rids=False),
+        filter_config=_region_read_filter_config_from_request(
+            _RegionReadFilterConfigRequest(
+                params=params,
+                require_train_rids=False,
+            )
+        ),
         ref_fasta=params.get('ref_fasta'),
     )
 
