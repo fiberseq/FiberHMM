@@ -129,6 +129,19 @@ class _FusedPayloadItemProcessRequest:
 
 
 @dataclass(frozen=True)
+class _ReadChunkWorkerRequest:
+    chunk_reads: list
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    with_scores: bool
+    return_posteriors: bool
+
+
+@dataclass(frozen=True)
 class _PayloadChunkWorkerRequest:
     chunk_payloads: list
     edge_trim: int
@@ -637,22 +650,40 @@ def _process_chunk_worker(
     unchanged without footprint tags, with the failure count reported
     separately in WorkerChunkResult.
     """
+    return _process_chunk_worker_from_request(
+        _ReadChunkWorkerRequest(
+            chunk_reads=chunk_reads,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+            return_posteriors=return_posteriors,
+        )
+    )
+
+
+def _process_chunk_worker_from_request(
+    request: _ReadChunkWorkerRequest,
+) -> WorkerChunkResult:
     global _worker_model
 
     def process_item(fiber_read):
         return _run_worker_single_read(
             fiber_read,
-            edge_trim,
-            circular,
-            mode,
-            context_size,
-            msp_min_size,
-            nuc_min_size,
-            with_scores,
-            return_posteriors,
+            request.edge_trim,
+            request.circular,
+            request.mode,
+            request.context_size,
+            request.msp_min_size,
+            request.nuc_min_size,
+            request.with_scores,
+            request.return_posteriors,
         )
 
-    return _process_worker_items(chunk_reads, process_item)
+    return _process_worker_items(request.chunk_reads, process_item)
 
 
 def _process_fused_payload_chunk_worker(
