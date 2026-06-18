@@ -1485,8 +1485,8 @@ def _remove_bigbed_autosql_file(as_file: Optional[str]) -> None:
         return
     try:
         os.remove(as_file)
-    except Exception:
-        pass
+    except (PermissionError, OSError) as e:
+        print(f"  Warning: Could not remove temp file {as_file}: {e}")
 
 
 def _remove_bigbed_sizes_file(sizes_file: str) -> None:

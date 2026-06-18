@@ -1107,6 +1107,23 @@ def test_bigbed_command_helpers_count_extra_fields_and_schema_files():
     assert not os.path.exists(as_file)
 
 
+def test_remove_bigbed_autosql_file_warns_on_cleanup_failure(
+    monkeypatch, tmp_path, capsys,
+):
+    as_file = tmp_path / "schema.as"
+    as_file.write_text("schema")
+
+    def fail_remove(path):
+        assert path == str(as_file)
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(extract_tags.os, "remove", fail_remove)
+
+    extract_tags._remove_bigbed_autosql_file(str(as_file))
+
+    assert "Could not remove temp file" in capsys.readouterr().out
+
+
 # ------------------- autoSQL schemas --------------------------------
 
 def test_autosql_default_is_bed12_only():
