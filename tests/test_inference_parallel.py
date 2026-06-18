@@ -629,7 +629,12 @@ def test_process_legacy_reads_buffers_skips_chunks_and_progress(monkeypatch):
         write_msps=False,
     )
 
-    assert result == (3, 3, 1, 2)
+    assert result == legacy_pipeline._LegacyReadProcessingResult(
+        total_reads=3,
+        reads_with_footprints=3,
+        skipped=1,
+        worker_failures=2,
+    )
     assert outbam.written == ["skip"]
     assert skip_reasons["low_mapq"] == 1
     assert skip_reasons["no_footprints"] == 2

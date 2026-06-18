@@ -459,6 +459,14 @@ def _legacy_chunk_buffer_kwargs(
     }
 
 
+@dataclass(frozen=True)
+class _LegacyReadProcessingResult:
+    total_reads: int
+    reads_with_footprints: int
+    skipped: int
+    worker_failures: int
+
+
 def _process_legacy_reads(
     reads,
     outbam,
@@ -480,7 +488,7 @@ def _process_legacy_reads(
     with_scores: bool = False,
     return_posteriors: bool = False,
     write_msps: bool = True,
-) -> Tuple[int, int, int, int]:
+) -> _LegacyReadProcessingResult:
     total_reads = 0
     reads_with_footprints = 0
     skipped = 0
@@ -532,7 +540,12 @@ def _process_legacy_reads(
     reads_with_footprints += n_fp
     worker_failures += n_failed
 
-    return total_reads, reads_with_footprints, skipped, worker_failures
+    return _LegacyReadProcessingResult(
+        total_reads=total_reads,
+        reads_with_footprints=reads_with_footprints,
+        skipped=skipped,
+        worker_failures=worker_failures,
+    )
 
 
 @dataclass(frozen=True)
@@ -626,29 +639,27 @@ def _run_legacy_bam_processing(
                     model_path, n_cores, debug_timing,
                 )
 
-                total_reads, reads_with_footprints, skipped, worker_failures = (
-                    _process_legacy_reads(
-                        inbam,
-                        outbam,
-                        model,
-                        executor,
-                        filter_config,
-                        mode,
-                        prob_threshold,
-                        edge_trim,
-                        circular,
-                        context_size,
-                        msp_min_size,
-                        skip_reasons,
-                        posterior_writer,
-                        start_time,
-                        max_reads,
-                        chunk_size,
-                        nuc_min_size=nuc_min_size,
-                        with_scores=with_scores,
-                        return_posteriors=return_posteriors,
-                        write_msps=write_msps,
-                    )
+                read_result = _process_legacy_reads(
+                    inbam,
+                    outbam,
+                    model,
+                    executor,
+                    filter_config,
+                    mode,
+                    prob_threshold,
+                    edge_trim,
+                    circular,
+                    context_size,
+                    msp_min_size,
+                    skip_reasons,
+                    posterior_writer,
+                    start_time,
+                    max_reads,
+                    chunk_size,
+                    nuc_min_size=nuc_min_size,
+                    with_scores=with_scores,
+                    return_posteriors=return_posteriors,
+                    write_msps=write_msps,
                 )
             finally:
                 posterior_stats = _shutdown_legacy_resources(
@@ -656,10 +667,10 @@ def _run_legacy_bam_processing(
                 )
 
     return _LegacyPipelineResult(
-        total_reads=total_reads,
-        reads_with_footprints=reads_with_footprints,
-        skipped=skipped,
-        worker_failures=worker_failures,
+        total_reads=read_result.total_reads,
+        reads_with_footprints=read_result.reads_with_footprints,
+        skipped=read_result.skipped,
+        worker_failures=read_result.worker_failures,
         posterior_stats=posterior_stats,
     )
 
