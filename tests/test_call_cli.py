@@ -507,19 +507,19 @@ def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
 
     runtime = _resolve_call_runtime(args, ["fiberhmm-call", "-i", "in.bam"])
 
-    assert runtime == {
-        "apply_model_path": "apply.json",
-        "recall_model_path": "recall.json",
-        "mode": "daf",
-        "k": 5,
-        "min_llr": 6.0,
-        "uplift": 1.2,
-        "recall_nucs": True,
-        "phase_nrl": 185,
-        "pg_record": pg_record,
-        "also_write_legacy": False,
-        "common_kwargs": {"shared": True},
-    }
+    assert runtime == call._CallRuntime(
+        apply_model_path="apply.json",
+        recall_model_path="recall.json",
+        mode="daf",
+        k=5,
+        min_llr=6.0,
+        uplift=1.2,
+        recall_nucs=True,
+        phase_nrl=185,
+        pg_record=pg_record,
+        also_write_legacy=False,
+        common_kwargs={"shared": True},
+    )
     assert calls[:3] == [
         ("check", "in.bam", "ref.fa"),
         ("phase", "apply.json", "recall.json", "daf", 5, True),

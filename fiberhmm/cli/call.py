@@ -23,6 +23,7 @@ Examples:
 """
 import argparse
 import sys
+from dataclasses import dataclass
 
 from fiberhmm.cli.common import resolve_chroms_set
 from fiberhmm.cli.recall_config import resolve_recall_defaults, should_write_legacy_tags
@@ -33,6 +34,21 @@ from fiberhmm.inference.parallel import (
 )
 from fiberhmm.models import SUPPORTED_ENZYMES
 from fiberhmm.models import get_model_path as _get_bundled_model
+
+
+@dataclass(frozen=True)
+class _CallRuntime:
+    apply_model_path: str
+    recall_model_path: str
+    mode: str
+    k: int
+    min_llr: float
+    uplift: float
+    recall_nucs: bool
+    phase_nrl: int
+    pg_record: dict
+    also_write_legacy: bool
+    common_kwargs: dict
 
 
 def _add_call_io_args(p) -> None:
@@ -564,7 +580,7 @@ def _index_streaming_call_output(args, stdout_mode: bool) -> None:
         pass
 
 
-def _resolve_call_runtime(args, argv) -> dict:
+def _resolve_call_runtime(args, argv) -> _CallRuntime:
     apply_model_path = _resolve_apply_model(args)
     recall_model_path = _resolve_recall_model(args)
 
@@ -603,19 +619,19 @@ def _resolve_call_runtime(args, argv) -> dict:
         pg_record,
     )
 
-    return {
-        'apply_model_path': apply_model_path,
-        'recall_model_path': recall_model_path,
-        'mode': mode,
-        'k': k,
-        'min_llr': min_llr,
-        'uplift': uplift,
-        'recall_nucs': recall_nucs,
-        'phase_nrl': phase_nrl,
-        'pg_record': pg_record,
-        'also_write_legacy': also_write_legacy,
-        'common_kwargs': common_kwargs,
-    }
+    return _CallRuntime(
+        apply_model_path=apply_model_path,
+        recall_model_path=recall_model_path,
+        mode=mode,
+        k=k,
+        min_llr=min_llr,
+        uplift=uplift,
+        recall_nucs=recall_nucs,
+        phase_nrl=phase_nrl,
+        pg_record=pg_record,
+        also_write_legacy=also_write_legacy,
+        common_kwargs=common_kwargs,
+    )
 
 
 def main():
@@ -629,15 +645,15 @@ def main():
 
     print(
         _call_banner_text(
-            apply_model_path=runtime['apply_model_path'],
-            recall_model_path=runtime['recall_model_path'],
-            mode=runtime['mode'],
-            k=runtime['k'],
+            apply_model_path=runtime.apply_model_path,
+            recall_model_path=runtime.recall_model_path,
+            mode=runtime.mode,
+            k=runtime.k,
             enzyme=args.enzyme,
-            min_llr=runtime['min_llr'],
+            min_llr=runtime.min_llr,
             min_opps=args.min_opps,
             unify_threshold=args.unify_threshold,
-            uplift=runtime['uplift'],
+            uplift=runtime.uplift,
             cores=args.cores,
             io_threads=args.io_threads,
             circular=args.circular,
@@ -647,7 +663,7 @@ def main():
     )
 
     n_reads, n_fp = _run_call_pipeline(
-        args, runtime['apply_model_path'], runtime['common_kwargs'],
+        args, runtime.apply_model_path, runtime.common_kwargs,
     )
     _index_streaming_call_output(args, stdout_mode)
 
