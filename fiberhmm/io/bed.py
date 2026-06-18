@@ -1,16 +1,26 @@
 """BED formatting helpers shared by CLI and inference code."""
 
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class _Bed12BlockFields:
+    count: int
+    sizes: str
+    starts: str
+
 
 def _bed12_block_fields(blocks, chrom_start):
-    block_count = len(blocks)
-    block_sizes = ','.join(str(end - start) for start, end, *_ in blocks)
-    block_starts = ','.join(str(start - chrom_start) for start, *_ in blocks)
-    return block_count, block_sizes, block_starts
+    return _Bed12BlockFields(
+        count=len(blocks),
+        sizes=','.join(str(end - start) for start, end, *_ in blocks),
+        starts=','.join(str(start - chrom_start) for start, *_ in blocks),
+    )
 
 
 def _bed12_core_columns(ref_name, chrom_start, chrom_end, read_id, score, strand,
                         blocks, item_rgb='0'):
-    block_count, block_sizes, block_starts = _bed12_block_fields(
+    block_fields = _bed12_block_fields(
         blocks, chrom_start,
     )
     return [
@@ -23,9 +33,9 @@ def _bed12_core_columns(ref_name, chrom_start, chrom_end, read_id, score, strand
         chrom_start,
         chrom_end,
         item_rgb,
-        block_count,
-        block_sizes,
-        block_starts,
+        block_fields.count,
+        block_fields.sizes,
+        block_fields.starts,
     ]
 
 

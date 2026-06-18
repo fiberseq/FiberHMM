@@ -6,11 +6,11 @@ from fiberhmm.io.bed import _bed12_block_fields, _bed12_core_columns, bed12_row
 
 
 def test_bed12_block_fields_format_count_sizes_and_relative_starts():
-    assert _bed12_block_fields([(100, 110), (140, 150)], 100) == (
-        2,
-        "10,10",
-        "0,40",
-    )
+    block_fields = _bed12_block_fields([(100, 110), (140, 150)], 100)
+
+    assert block_fields.count == 2
+    assert block_fields.sizes == "10,10"
+    assert block_fields.starts == "0,40"
 
 
 def test_bed12_core_columns_preserve_standard_field_order():
