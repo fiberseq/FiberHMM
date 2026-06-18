@@ -22,6 +22,7 @@ from fiberhmm.inference.region_workers import (
     _process_region_bed_read,
     _format_region_bed12_row,
     _RegionBamWorkerCounts,
+    _new_region_skip_reasons,
     _pad_region_bed12_to_read_span,
     _region_apply_config,
     _region_bam_output_config,
@@ -153,6 +154,14 @@ def test_region_bam_worker_runtime_builds_apply_output_and_filter_configs():
         process_unmapped=False,
         train_rids=train_rids,
     )
+
+
+def test_new_region_skip_reasons_includes_region_extras():
+    skip_reasons = _new_region_skip_reasons()
+
+    assert skip_reasons["no_footprints"] == 0
+    assert skip_reasons["chimera"] == 0
+    assert skip_reasons["low_mapq"] == 0
 
 
 def test_open_region_posterior_tsv_opens_only_when_enabled(tmp_path):

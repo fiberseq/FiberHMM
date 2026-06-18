@@ -32,7 +32,6 @@ from fiberhmm.inference.region_types import (
     RegionBedWorkItem,
 )
 from fiberhmm.inference.skip_reasons import (
-    BASE_SKIP_REASON_KEYS,
     CHIMERA_SKIP_REASON,
     NO_FOOTPRINTS_SKIP_REASON,
     new_skip_reasons,
@@ -56,10 +55,6 @@ _PRE_OWNERSHIP_SKIP_REASONS = {"unmapped", "secondary_supplementary"}
 _REGION_ROUTE_PROCESS = "process"
 _REGION_ROUTE_SKIP = "skip"
 _REGION_ROUTE_OUTSIDE = "outside_region"
-_REGION_SKIP_REASON_KEYS = BASE_SKIP_REASON_KEYS + (
-    NO_FOOTPRINTS_SKIP_REASON,
-    CHIMERA_SKIP_REASON,
-)
 
 
 @dataclass(frozen=True)
