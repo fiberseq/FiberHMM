@@ -116,7 +116,9 @@ def _process_legacy_chunk_results(
             chunk_reads, edge_trim, circular, mode, context_size, msp_min_size,
             nuc_min_size, with_scores, return_posteriors
         )
-        results, worker_failures = coerce_worker_chunk_result(future.result())
+        worker_result = coerce_worker_chunk_result(future.result())
+        results = worker_result.results
+        worker_failures = worker_result.read_failures
     else:
         # Single-threaded: process directly
         results = _process_direct_legacy_chunk_results(

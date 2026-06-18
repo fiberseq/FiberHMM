@@ -95,10 +95,10 @@ def _add_posterior_fiber_if_available(posterior_writer, read_obj, result: dict) 
 
 def _pop_inflight_chunk(inflight):
     future, chunk_read_objs, chunk_items, chunk_skip_flags = inflight.popleft()
-    results, worker_failures = coerce_worker_chunk_result(future.result())
+    worker_result = coerce_worker_chunk_result(future.result())
     return _InflightChunk(
-        results=results,
-        worker_failures=worker_failures,
+        results=worker_result.results,
+        worker_failures=worker_result.read_failures,
         read_objs=chunk_read_objs,
         items=chunk_items,
         skip_flags=chunk_skip_flags,

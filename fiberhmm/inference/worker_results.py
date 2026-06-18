@@ -1,6 +1,6 @@
 """Small result containers shared by multiprocessing worker drains."""
 
-from typing import NamedTuple, Tuple
+from typing import NamedTuple
 
 
 class WorkerChunkResult(NamedTuple):
@@ -10,8 +10,8 @@ class WorkerChunkResult(NamedTuple):
     read_failures: int = 0
 
 
-def coerce_worker_chunk_result(value) -> Tuple[list, int]:
+def coerce_worker_chunk_result(value) -> WorkerChunkResult:
     """Accept current structured worker results and legacy bare result lists."""
     if isinstance(value, WorkerChunkResult):
-        return value.results, int(value.read_failures)
-    return value, 0
+        return value
+    return WorkerChunkResult(value, 0)

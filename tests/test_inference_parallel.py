@@ -52,8 +52,10 @@ class _Executor:
 
 
 def test_worker_chunk_result_coerces_legacy_lists():
-    assert coerce_worker_chunk_result([None]) == ([None], 0)
-    assert coerce_worker_chunk_result(WorkerChunkResult([None], 2)) == ([None], 2)
+    assert coerce_worker_chunk_result([None]) == WorkerChunkResult([None], 0)
+    assert coerce_worker_chunk_result(
+        WorkerChunkResult([None], 2)
+    ) == WorkerChunkResult([None], 2)
 
 
 def test_parallel_reexports_multiprocessing_context():
