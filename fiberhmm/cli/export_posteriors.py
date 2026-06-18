@@ -150,6 +150,20 @@ class _PosteriorResultRecordRequest:
 
 
 @dataclass(frozen=True)
+class _PosteriorReadEncodingRequest:
+    read: object
+    mode: str
+    context_size: int
+    edge_trim: int
+
+
+@dataclass(frozen=True)
+class _EncodedPosteriorRead:
+    strand: str
+    encoded: np.ndarray
+
+
+@dataclass(frozen=True)
 class _ProcessedRegionPosteriors:
     chrom: str
     start: int
@@ -287,6 +301,37 @@ def _posterior_sequence_or_none(read, min_length: int = 100):
     return sequence
 
 
+def _encoded_posterior_read_from_request(
+    request: _PosteriorReadEncodingRequest,
+) -> Optional[_EncodedPosteriorRead]:
+    sequence = _posterior_sequence_or_none(request.read)
+    if sequence is None:
+        return None
+
+    mod_positions = _modified_base_positions_forward(request.read)
+    if len(mod_positions) < 10:
+        return None
+
+    strand = _posterior_read_strand(
+        request.mode,
+        sequence,
+        mod_positions,
+        bool(request.read.is_reverse),
+    )
+    encoded = encode_from_query_sequence(
+        sequence,
+        mod_positions,
+        request.edge_trim,
+        mode=request.mode,
+        strand=strand,
+        context_size=request.context_size,
+        is_reverse=bool(request.read.is_reverse),
+    )
+    if len(encoded) == 0:
+        return None
+    return _EncodedPosteriorRead(strand=strand, encoded=encoded)
+
+
 def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
                                   context_size: int, edge_trim: int) -> Optional[Dict]:
     """
@@ -296,39 +341,26 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
     if not is_primary_mapped_alignment(read):
         return None
 
-    sequence = _posterior_sequence_or_none(read)
-    if sequence is None:
-        return None
-
-    # Get modification positions from MM/ML tags
-    mod_positions = _modified_base_positions_forward(read)
-
-    if len(mod_positions) < 10:
-        return None
-
-    strand = _posterior_read_strand(
-        mode, sequence, mod_positions, bool(read.is_reverse),
+    encoded_read = _encoded_posterior_read_from_request(
+        _PosteriorReadEncodingRequest(
+            read=read,
+            mode=mode,
+            context_size=context_size,
+            edge_trim=edge_trim,
+        )
     )
-
-    # Encode read
-    encoded = encode_from_query_sequence(
-        sequence, mod_positions, edge_trim,
-        mode=mode, strand=strand, context_size=context_size,
-        is_reverse=bool(read.is_reverse),
-    )
-
-    if len(encoded) == 0:
+    if encoded_read is None:
         return None
 
     # Get posteriors using forward-backward
-    posteriors = model.predict_proba(encoded)
+    posteriors = model.predict_proba(encoded_read.encoded)
     p_footprint = posteriors[:, 0].astype(np.float16)
 
     # Get reference position mapping
     ref_positions = get_reference_positions_array(read)
 
     # Viterbi path for footprint intervals
-    states = model.predict(encoded)
+    states = model.predict(encoded_read.encoded)
 
     # Extract footprint intervals
     fp_start_idx, fp_end_idx = footprint_runs(states)
@@ -340,7 +372,7 @@ def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
 
     return _posterior_result_record(
         read,
-        strand,
+        encoded_read.strand,
         p_footprint,
         ref_positions,
         footprint_refs.starts,

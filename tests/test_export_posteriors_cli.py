@@ -181,6 +181,67 @@ def test_posterior_sequence_or_none_applies_min_length_filter():
     ) == "A" * 100
 
 
+def test_encoded_posterior_read_filters_and_encodes(monkeypatch):
+    read = SimpleNamespace(query_sequence="A" * 120, is_reverse=True)
+    encoded = np.array([1, 2, 3], dtype=np.int32)
+    calls = {}
+
+    monkeypatch.setattr(
+        export_posteriors,
+        "_modified_base_positions_forward",
+        lambda got_read: set(range(10)),
+    )
+
+    def fake_strand(mode, sequence, mod_positions, is_reverse):
+        calls["strand"] = (mode, sequence, mod_positions, is_reverse)
+        return "strand"
+
+    def fake_encode(sequence, mod_positions, edge_trim, **kwargs):
+        calls["encode"] = (sequence, mod_positions, edge_trim, kwargs)
+        return encoded
+
+    monkeypatch.setattr(export_posteriors, "_posterior_read_strand", fake_strand)
+    monkeypatch.setattr(export_posteriors, "encode_from_query_sequence", fake_encode)
+
+    result = export_posteriors._encoded_posterior_read_from_request(
+        export_posteriors._PosteriorReadEncodingRequest(
+            read=read,
+            mode="daf",
+            context_size=5,
+            edge_trim=7,
+        )
+    )
+
+    assert result.strand == "strand"
+    assert result.encoded is encoded
+    assert calls["strand"] == ("daf", "A" * 120, set(range(10)), True)
+    assert calls["encode"] == (
+        "A" * 120,
+        set(range(10)),
+        7,
+        {
+            "mode": "daf",
+            "strand": "strand",
+            "context_size": 5,
+            "is_reverse": True,
+        },
+    )
+
+    monkeypatch.setattr(
+        export_posteriors,
+        "_modified_base_positions_forward",
+        lambda got_read: set(range(9)),
+    )
+    assert export_posteriors._encoded_posterior_read_from_request(
+        export_posteriors._PosteriorReadEncodingRequest(
+            read=read,
+            mode="daf",
+            context_size=5,
+            edge_trim=7,
+        )
+    ) is None
+
+
 def test_h5_batch_metadata_helpers_append_and_concatenate():
     batch_metadata = export_posteriors._h5_batch_metadata([
         {"read_name": "read-a", "ref_start": 10, "ref_end": 15, "strand": "+"},
