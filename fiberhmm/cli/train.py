@@ -972,22 +972,7 @@ def _save_training_example_png(
     return png_path
 
 
-def _save_training_example_pdf_page(
-    plt,
-    pdf,
-    model: FiberHMM,
-    read,
-    states,
-    encoded,
-    idx: int,
-    rectangle_cls,
-    patch_collection_cls,
-    patch_cls,
-) -> None:
-    seq_len, m6a_positions, footprint_prob = _training_example_plot_data(
-        model, read, encoded,
-    )
-
+def _training_example_pdf_layout(plt, idx: int, read, seq_len, m6a_positions):
     fig = plt.figure(figsize=(14, 16))
     gs = fig.add_gridspec(
         6,
@@ -1000,13 +985,25 @@ def _save_training_example_pdf_page(
         top=0.93,
         bottom=0.04,
     )
-
     fig.suptitle(
         _training_example_title(idx, read, seq_len, m6a_positions),
         fontsize=11,
         y=0.98,
     )
+    return fig, gs
 
+
+def _add_training_example_overview_pdf_panels(
+    fig,
+    gs,
+    seq_len,
+    m6a_positions,
+    footprint_prob,
+    states,
+    rectangle_cls,
+    patch_collection_cls,
+    patch_cls,
+):
     ax_overview_m6a = fig.add_subplot(gs[0, :])
     if len(m6a_positions) > 0:
         ax_overview_m6a.eventplot(
@@ -1055,62 +1052,121 @@ def _save_training_example_pdf_page(
         'Overview: Footprint Probability', fontsize=10, loc='left',
     )
 
+    return ax_overview_m6a, ax_overview_fp, ax_overview_prob
+
+
+def _add_training_example_zoom_pdf_panel(
+    fig,
+    gs,
+    w_idx: int,
+    window,
+    m6a_positions,
+    states,
+    footprint_prob,
+    overview_axes,
+    rectangle_cls,
+    patch_collection_cls,
+):
+    w_start, w_end, w_len = window
+    ax_zoom_m6a = fig.add_subplot(gs[3, w_idx])
+    m6a_in_window = _relative_positions_in_window(m6a_positions, w_start, w_end)
+    if len(m6a_in_window) > 0:
+        ax_zoom_m6a.eventplot(
+            [m6a_in_window],
+            colors='purple',
+            lineoffsets=0.5,
+            linelengths=0.8,
+            linewidths=1.0,
+        )
+    ax_zoom_m6a.set_xlim(0, w_len)
+    ax_zoom_m6a.set_ylim(0, 1)
+    ax_zoom_m6a.set_ylabel('m6A', fontsize=8)
+    ax_zoom_m6a.set_yticks([])
+    ax_zoom_m6a.set_xticklabels([])
+    ax_zoom_m6a.set_title(
+        f'Zoom {w_idx + 1}: {w_start:,}-{w_end:,}bp', fontsize=9,
+    )
+
+    _add_training_zoom_highlight(
+        overview_axes,
+        w_start,
+        w_end,
+        _TRAINING_ZOOM_COLORS[w_idx],
+    )
+
+    ax_zoom_fp = fig.add_subplot(gs[4, w_idx])
+    window_states = states[w_start:w_end]
+    _add_training_state_blocks(
+        ax_zoom_fp, window_states, w_len, rectangle_cls, patch_collection_cls,
+    )
+    ax_zoom_fp.set_ylabel('State', fontsize=8)
+    ax_zoom_fp.set_yticks([])
+    ax_zoom_fp.set_xticklabels([])
+
+    ax_zoom_prob = fig.add_subplot(gs[5, w_idx])
+    window_prob = footprint_prob[w_start:w_end]
+    _plot_training_probability_area(
+        ax_zoom_prob,
+        window_prob,
+        show_line=True,
+        threshold_alpha=0.5,
+    )
+    ax_zoom_prob.set_xlim(0, w_len)
+    ax_zoom_prob.set_ylim(0, 1)
+    ax_zoom_prob.set_ylabel('P(FP)', fontsize=8)
+    ax_zoom_prob.set_yticks([0, 0.5, 1])
+    ax_zoom_prob.tick_params(axis='y', labelsize=7)
+    ax_zoom_prob.set_xlabel('Position (bp)', fontsize=8)
+
+
+def _save_training_example_pdf_page(
+    plt,
+    pdf,
+    model: FiberHMM,
+    read,
+    states,
+    encoded,
+    idx: int,
+    rectangle_cls,
+    patch_collection_cls,
+    patch_cls,
+) -> None:
+    seq_len, m6a_positions, footprint_prob = _training_example_plot_data(
+        model, read, encoded,
+    )
+
+    fig, gs = _training_example_pdf_layout(
+        plt, idx, read, seq_len, m6a_positions,
+    )
+    overview_axes = _add_training_example_overview_pdf_panels(
+        fig,
+        gs,
+        seq_len,
+        m6a_positions,
+        footprint_prob,
+        states,
+        rectangle_cls,
+        patch_collection_cls,
+        patch_cls,
+    )
+
     zoom_windows = _training_zoom_window_bounds(
         seq_len, window_size=1000, n_windows=3, seed=idx,
     )
 
-    for w_idx, (w_start, w_end, w_len) in enumerate(zoom_windows):
-        ax_zoom_m6a = fig.add_subplot(gs[3, w_idx])
-        m6a_in_window = _relative_positions_in_window(
-            m6a_positions, w_start, w_end,
+    for w_idx, window in enumerate(zoom_windows):
+        _add_training_example_zoom_pdf_panel(
+            fig,
+            gs,
+            w_idx,
+            window,
+            m6a_positions,
+            states,
+            footprint_prob,
+            overview_axes,
+            rectangle_cls,
+            patch_collection_cls,
         )
-        if len(m6a_in_window) > 0:
-            ax_zoom_m6a.eventplot(
-                [m6a_in_window],
-                colors='purple',
-                lineoffsets=0.5,
-                linelengths=0.8,
-                linewidths=1.0,
-            )
-        ax_zoom_m6a.set_xlim(0, w_len)
-        ax_zoom_m6a.set_ylim(0, 1)
-        ax_zoom_m6a.set_ylabel('m6A', fontsize=8)
-        ax_zoom_m6a.set_yticks([])
-        ax_zoom_m6a.set_xticklabels([])
-        ax_zoom_m6a.set_title(
-            f'Zoom {w_idx + 1}: {w_start:,}-{w_end:,}bp', fontsize=9,
-        )
-
-        _add_training_zoom_highlight(
-            (ax_overview_m6a, ax_overview_fp, ax_overview_prob),
-            w_start,
-            w_end,
-            _TRAINING_ZOOM_COLORS[w_idx],
-        )
-
-        ax_zoom_fp = fig.add_subplot(gs[4, w_idx])
-        window_states = states[w_start:w_end]
-        _add_training_state_blocks(
-            ax_zoom_fp, window_states, w_len, rectangle_cls, patch_collection_cls,
-        )
-        ax_zoom_fp.set_ylabel('State', fontsize=8)
-        ax_zoom_fp.set_yticks([])
-        ax_zoom_fp.set_xticklabels([])
-
-        ax_zoom_prob = fig.add_subplot(gs[5, w_idx])
-        window_prob = footprint_prob[w_start:w_end]
-        _plot_training_probability_area(
-            ax_zoom_prob,
-            window_prob,
-            show_line=True,
-            threshold_alpha=0.5,
-        )
-        ax_zoom_prob.set_xlim(0, w_len)
-        ax_zoom_prob.set_ylim(0, 1)
-        ax_zoom_prob.set_ylabel('P(FP)', fontsize=8)
-        ax_zoom_prob.set_yticks([0, 0.5, 1])
-        ax_zoom_prob.tick_params(axis='y', labelsize=7)
-        ax_zoom_prob.set_xlabel('Position (bp)', fontsize=8)
 
     pdf.savefig(fig)
     plt.close(fig)
