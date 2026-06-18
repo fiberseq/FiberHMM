@@ -385,18 +385,50 @@ def test_finalize_daf_encode_run_writes_summary_and_finalizes_output(monkeypatch
         ),
     )
 
-    summary = encoder._finalize_daf_encode_run(
-        counts,
-        start_time=10.0,
-        output_bam="out.bam",
-        io_threads=3,
-        log=log,
+    summary = encoder._finalize_daf_encode_run_from_request(
+        encoder._DafEncodeFinalizationRequest(
+            counts=counts,
+            start_time=10.0,
+            output_bam="out.bam",
+            io_threads=3,
+            log=log,
+        )
     )
 
     assert summary["elapsed"] == 5.0
     assert summary["mean_deam_rate"] == 0.03
     assert "fiberhmm-daf-encode summary" in log.getvalue()
     assert calls == [("out.bam", 3, log)]
+
+
+def test_finalize_daf_encode_run_adapter_builds_request(monkeypatch):
+    counts = encoder._new_daf_encode_counts()
+    log = io.StringIO()
+    sentinel = {"total": 0}
+    calls = []
+
+    monkeypatch.setattr(
+        encoder,
+        "_finalize_daf_encode_run_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert encoder._finalize_daf_encode_run(
+        counts,
+        start_time=10.0,
+        output_bam="out.bam",
+        io_threads=3,
+        log=log,
+    ) is sentinel
+    assert calls == [
+        encoder._DafEncodeFinalizationRequest(
+            counts=counts,
+            start_time=10.0,
+            output_bam="out.bam",
+            io_threads=3,
+            log=log,
+        ),
+    ]
 
 
 def test_apply_daf_encoding_to_read_preserves_qualities_and_sets_st_tag():

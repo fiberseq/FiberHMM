@@ -193,6 +193,15 @@ class _DafEncodeRunRequest:
     force_strand: object = None
 
 
+@dataclass(frozen=True)
+class _DafEncodeFinalizationRequest:
+    counts: _DafEncodeCounts
+    start_time: float
+    output_bam: object
+    io_threads: int
+    log: object
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -1076,6 +1085,22 @@ def _open_daf_encode_handles(input_bam, output_bam, reference, io_threads: int, 
     )
 
 
+def _finalize_daf_encode_run_from_request(
+    request: _DafEncodeFinalizationRequest,
+) -> dict:
+    summary = _daf_encode_summary_from_counts(
+        request.counts,
+        time.time() - request.start_time,
+    )
+    _print_daf_encode_summary(summary, request.log)
+    _maybe_finalize_daf_output(
+        request.output_bam,
+        request.io_threads,
+        request.log,
+    )
+    return summary
+
+
 def _finalize_daf_encode_run(
     counts: _DafEncodeCounts,
     start_time: float,
@@ -1083,10 +1108,15 @@ def _finalize_daf_encode_run(
     io_threads: int,
     log,
 ) -> dict:
-    summary = _daf_encode_summary_from_counts(counts, time.time() - start_time)
-    _print_daf_encode_summary(summary, log)
-    _maybe_finalize_daf_output(output_bam, io_threads, log)
-    return summary
+    return _finalize_daf_encode_run_from_request(
+        _DafEncodeFinalizationRequest(
+            counts=counts,
+            start_time=start_time,
+            output_bam=output_bam,
+            io_threads=io_threads,
+            log=log,
+        ),
+    )
 
 
 def process_bam_daf_encode_from_request(
