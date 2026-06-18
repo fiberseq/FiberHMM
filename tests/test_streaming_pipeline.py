@@ -42,6 +42,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _streaming_progress_message,
     _streaming_progress_rates,
     _streaming_rate,
+    _StreamingPayloadResult,
     _StreamingPosteriorWriter,
     _worker_common_args,
 )
@@ -390,7 +391,7 @@ def test_buffer_streaming_read_adds_processable_payload(monkeypatch):
 
     def fake_payload_or_skip(read_arg, filter_arg, mode_arg, ref_arg):
         calls.append((read_arg, filter_arg, mode_arg, ref_arg))
-        return payload, None
+        return _StreamingPayloadResult(payload=payload, skip_reason=None)
 
     monkeypatch.setattr(
         streaming_pipeline,
@@ -425,7 +426,10 @@ def test_buffer_streaming_read_tracks_skipped_read(monkeypatch):
     monkeypatch.setattr(
         streaming_pipeline,
         "_streaming_payload_or_skip",
-        lambda read, filter_config, mode, ref_fasta: (None, "low_mapq"),
+        lambda read, filter_config, mode, ref_fasta: _StreamingPayloadResult(
+            payload=None,
+            skip_reason="low_mapq",
+        ),
     )
 
     chunk_items = []

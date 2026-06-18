@@ -41,6 +41,12 @@ except ImportError:
     HAS_POSTERIOR_WRITER = False
 
 
+@dataclass(frozen=True)
+class _StreamingPayloadResult:
+    payload: object | None
+    skip_reason: Optional[str]
+
+
 def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, reason) -> int:
     chunk_read_objs.append(read)
     chunk_skip_flags.append(True)
@@ -56,16 +62,19 @@ def _buffer_processable_read(chunk_items, chunk_read_objs, chunk_skip_flags, pay
 
 
 def _streaming_payload_or_skip(read, filter_config: ReadFilterConfig,
-                               mode: str, ref_fasta=None):
+                               mode: str, ref_fasta=None) -> _StreamingPayloadResult:
     skip_reason = streaming_skip_reason(read, filter_config)
     if skip_reason:
-        return None, skip_reason
+        return _StreamingPayloadResult(payload=None, skip_reason=skip_reason)
 
     payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
     if payload is None:
-        return None, 'no_modifications'
+        return _StreamingPayloadResult(
+            payload=None,
+            skip_reason='no_modifications',
+        )
 
-    return payload, None
+    return _StreamingPayloadResult(payload=payload, skip_reason=None)
 
 
 def _buffer_streaming_read(
@@ -78,16 +87,24 @@ def _buffer_streaming_read(
     chunk_skip_flags,
     skip_reasons,
 ) -> tuple[int, int]:
-    payload, skip_reason = _streaming_payload_or_skip(
+    payload_result = _streaming_payload_or_skip(
         read, filter_config, mode, ref_fasta,
     )
-    if skip_reason:
+    if payload_result.skip_reason:
         return 0, _buffer_skipped_read(
-            chunk_read_objs, chunk_skip_flags, skip_reasons, read, skip_reason,
+            chunk_read_objs,
+            chunk_skip_flags,
+            skip_reasons,
+            read,
+            payload_result.skip_reason,
         )
 
     return _buffer_processable_read(
-        chunk_items, chunk_read_objs, chunk_skip_flags, payload, read,
+        chunk_items,
+        chunk_read_objs,
+        chunk_skip_flags,
+        payload_result.payload,
+        read,
     ), 0
 
 
