@@ -19,6 +19,7 @@ import pytest
 try:
     from fiberhmm.core.hmm import (
         FiberHMM,
+        _baum_welch_estep_python,
         _fit_training_iteration,
         _hmmlearn_uses_categorical,
         _hmmlearn_version_tuple,
@@ -43,6 +44,7 @@ except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
     from hmm import (
         FiberHMM,
+        _baum_welch_estep_python,
         _fit_training_iteration,
         _hmmlearn_uses_categorical,
         _hmmlearn_version_tuple,
@@ -195,6 +197,29 @@ class TestModelTraining:
         np.testing.assert_allclose(startprob.sum(), 1.0)
         np.testing.assert_allclose(transmat.sum(axis=1), [1.0, 1.0])
         assert np.all(transmat > 0)
+
+    def test_baum_welch_estep_python_returns_expected_counts(
+        self,
+        simple_emission_probs,
+        simple_observations,
+    ):
+        model = FiberHMM()
+        model.emissionprob_ = simple_emission_probs
+        model.startprob_ = np.array([0.5, 0.5])
+        model.transmat_ = np.array([[0.8, 0.2], [0.2, 0.8]])
+        model._compute_log_probs()
+
+        obs = simple_observations.flatten().astype(int)
+        start_counts, trans_counts, log_prob = _baum_welch_estep_python(
+            model,
+            obs,
+        )
+
+        assert start_counts.shape == (2,)
+        assert trans_counts.shape == (2, 2)
+        np.testing.assert_allclose(start_counts.sum(), 1.0)
+        np.testing.assert_allclose(trans_counts.sum(), len(obs) - 1)
+        np.testing.assert_allclose(log_prob, model.score(obs))
 
     def test_methylated_emission_means_use_first_half_only(self):
         means = _methylated_emission_means(np.array([

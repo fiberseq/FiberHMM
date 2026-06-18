@@ -727,27 +727,10 @@ class FiberHMM:
                         trans_counts += tc
                         log_prob_total += lp
                     else:
-                        # Pure Python fallback
-                        alpha, log_prob = self._forward(seq)
-                        beta = self._backward(seq)
-                        log_prob_total += log_prob
-
-                        # Posterior probabilities
-                        gamma = alpha + beta
-                        gamma -= _logsumexp(gamma, axis=1, keepdims=True)
-                        gamma = np.exp(gamma)
-
-                        # Start counts
-                        start_counts += gamma[0]
-
-                        # Transition counts - vectorized
-                        for t in range(len(seq) - 1):
-                            log_xi = (alpha[t, :, np.newaxis] +
-                                     self._log_transmat +
-                                     self._log_emissionprob[:, seq[t+1]] +
-                                     beta[t+1, :])
-                            log_xi -= log_prob
-                            trans_counts += np.exp(log_xi)
+                        sc, tc, lp = _baum_welch_estep_python(self, seq)
+                        start_counts += sc
+                        trans_counts += tc
+                        log_prob_total += lp
 
             # M-step: update parameters
             self.startprob_ = _normalized_start_counts(start_counts)
@@ -909,6 +892,29 @@ def _normalized_transition_counts(trans_counts: np.ndarray) -> np.ndarray:
     transmat = trans_counts / trans_sums
     transmat = np.clip(transmat, 1e-10, 1.0)
     return transmat / transmat.sum(axis=1, keepdims=True)
+
+
+def _baum_welch_estep_python(model, seq: np.ndarray):
+    alpha, log_prob = model._forward(seq)
+    beta = model._backward(seq)
+
+    gamma = alpha + beta
+    gamma -= _logsumexp(gamma, axis=1, keepdims=True)
+    gamma = np.exp(gamma)
+
+    start_counts = gamma[0]
+    trans_counts = np.zeros((model.n_states, model.n_states))
+    for t in range(len(seq) - 1):
+        log_xi = (
+            alpha[t, :, np.newaxis]
+            + model._log_transmat
+            + model._log_emissionprob[:, seq[t + 1]]
+            + beta[t + 1, :]
+        )
+        log_xi -= log_prob
+        trans_counts += np.exp(log_xi)
+
+    return start_counts, trans_counts, log_prob
 
 
 def _methylated_emission_means(emissionprob: np.ndarray) -> Tuple[float, float]:
