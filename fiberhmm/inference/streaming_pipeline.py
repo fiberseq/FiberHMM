@@ -86,6 +86,15 @@ class _SkippedReadBufferRequest:
 
 
 @dataclass(frozen=True)
+class _StreamingChunkSubmitRequest:
+    inflight: object
+    executor: object
+    worker_fn: object
+    buffers: _StreamingChunkBuffers
+    worker_args: tuple
+
+
+@dataclass(frozen=True)
 class _StreamingFlushProgress:
     buffers: _StreamingChunkBuffers
     last_progress_reads: int
@@ -265,18 +274,40 @@ def _new_streaming_chunk_buffers() -> _StreamingChunkBuffers:
     return _StreamingChunkBuffers(items=[], read_objs=[], skip_flags=[])
 
 
-def _submit_streaming_chunk(inflight, executor, worker_fn, chunk_items,
-                            chunk_read_objs, chunk_skip_flags, worker_args) -> None:
-    if chunk_items:
-        future = executor.submit(worker_fn, chunk_items, *worker_args)
+def _submit_streaming_chunk_from_request(
+    request: _StreamingChunkSubmitRequest,
+) -> None:
+    if request.buffers.items:
+        future = request.executor.submit(
+            request.worker_fn,
+            request.buffers.items,
+            *request.worker_args,
+        )
     else:
         future = _completed_empty_future()
-    inflight.append(
+    request.inflight.append(
         _SubmittedChunk(
             future=future,
-            read_objs=chunk_read_objs,
-            items=chunk_items,
-            skip_flags=chunk_skip_flags,
+            read_objs=request.buffers.read_objs,
+            items=request.buffers.items,
+            skip_flags=request.buffers.skip_flags,
+        )
+    )
+
+
+def _submit_streaming_chunk(inflight, executor, worker_fn, chunk_items,
+                            chunk_read_objs, chunk_skip_flags, worker_args) -> None:
+    _submit_streaming_chunk_from_request(
+        _StreamingChunkSubmitRequest(
+            inflight=inflight,
+            executor=executor,
+            worker_fn=worker_fn,
+            buffers=_StreamingChunkBuffers(
+                items=chunk_items,
+                read_objs=chunk_read_objs,
+                skip_flags=chunk_skip_flags,
+            ),
+            worker_args=worker_args,
         )
     )
 
@@ -302,14 +333,18 @@ def _flush_streaming_chunk(
     drain_chunk: Callable[[], None],
 ) -> _StreamingChunkBuffers:
     _drain_if_inflight_full(inflight, max_inflight, drain_chunk)
-    _submit_streaming_chunk(
-        inflight,
-        executor,
-        worker_fn,
-        chunk_items,
-        chunk_read_objs,
-        chunk_skip_flags,
-        worker_args,
+    _submit_streaming_chunk_from_request(
+        _StreamingChunkSubmitRequest(
+            inflight=inflight,
+            executor=executor,
+            worker_fn=worker_fn,
+            buffers=_StreamingChunkBuffers(
+                items=chunk_items,
+                read_objs=chunk_read_objs,
+                skip_flags=chunk_skip_flags,
+            ),
+            worker_args=worker_args,
+        )
     )
     return _new_streaming_chunk_buffers()
 

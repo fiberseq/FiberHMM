@@ -51,6 +51,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _streaming_rate,
     _StreamingApplyWorkerArgs,
     _StreamingChunkBuffers,
+    _StreamingChunkSubmitRequest,
     _StreamingFlushProgress,
     _StreamingFusedWorkerArgs,
     _StreamingPayloadResult,
@@ -61,6 +62,8 @@ from fiberhmm.inference.streaming_pipeline import (
     _StreamingReadCounts,
     _StreamingReadDelta,
     _StreamingWorkerCommonArgs,
+    _submit_streaming_chunk,
+    _submit_streaming_chunk_from_request,
     _worker_common_args,
     _worker_common_args_from_request,
 )
@@ -601,6 +604,64 @@ def test_drain_if_inflight_full_only_drains_at_capacity():
     )
     assert drained == ["old"]
     assert list(inflight) == []
+
+
+def test_submit_streaming_chunk_records_worker_or_empty_future():
+    class Executor:
+        def __init__(self):
+            self.submitted = []
+
+        def submit(self, worker_fn, *args):
+            self.submitted.append((worker_fn, args))
+            return "future"
+
+    executor = Executor()
+    inflight = deque()
+    worker_fn = object()
+    buffers = _StreamingChunkBuffers(
+        items=["payload"],
+        read_objs=["read"],
+        skip_flags=[False],
+    )
+
+    _submit_streaming_chunk_from_request(
+        _StreamingChunkSubmitRequest(
+            inflight=inflight,
+            executor=executor,
+            worker_fn=worker_fn,
+            buffers=buffers,
+            worker_args=("arg",),
+        )
+    )
+
+    assert executor.submitted == [(worker_fn, (buffers.items, "arg"))]
+    assert list(inflight) == [
+        streaming_pipeline._SubmittedChunk(
+            future="future",
+            read_objs=buffers.read_objs,
+            items=buffers.items,
+            skip_flags=buffers.skip_flags,
+        )
+    ]
+
+    empty_inflight = deque()
+    _submit_streaming_chunk(
+        empty_inflight,
+        executor,
+        worker_fn,
+        [],
+        ["skipped"],
+        [True],
+        ("arg",),
+    )
+
+    assert executor.submitted == [(worker_fn, (buffers.items, "arg"))]
+    assert len(empty_inflight) == 1
+    submitted = empty_inflight[0]
+    assert submitted.future.result() == []
+    assert submitted.read_objs == ["skipped"]
+    assert submitted.items == []
+    assert submitted.skip_flags == [True]
 
 
 def test_flush_streaming_chunk_drains_submits_and_returns_new_buffers():
