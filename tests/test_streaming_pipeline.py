@@ -16,6 +16,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _apply_worker_args,
     _apply_worker_args_from_request,
     _buffer_processable_read,
+    _buffer_processable_read_from_request,
     _buffer_streaming_read,
     _drain_all_streaming_chunks,
     _drain_if_inflight_full,
@@ -34,6 +35,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _print_streaming_completion_summary,
     _print_streaming_posterior_summary,
     _print_streaming_progress,
+    _ProcessableReadBufferRequest,
     _run_streaming_worker_loop,
     _should_sort_streaming_output,
     _stream_reads_to_workers,
@@ -432,13 +434,34 @@ def test_buffer_processable_read_keeps_chunk_lists_aligned():
     skip_flags = []
     read = object()
     payload = {"read": "read1"}
+    request = _ProcessableReadBufferRequest(
+        chunk_items=payloads,
+        chunk_read_objs=reads,
+        chunk_skip_flags=skip_flags,
+        payload=payload,
+        read=read,
+    )
 
-    added = _buffer_processable_read(payloads, reads, skip_flags, payload, read)
+    added = _buffer_processable_read_from_request(request)
 
     assert added == 1
     assert payloads == [payload]
     assert reads == [read]
     assert skip_flags == [False]
+
+    wrapper_payloads = []
+    wrapper_reads = []
+    wrapper_skip_flags = []
+    assert _buffer_processable_read(
+        wrapper_payloads,
+        wrapper_reads,
+        wrapper_skip_flags,
+        payload,
+        read,
+    ) == 1
+    assert wrapper_payloads == [payload]
+    assert wrapper_reads == [read]
+    assert wrapper_skip_flags == [False]
 
 
 def test_buffer_streaming_read_adds_processable_payload(monkeypatch):

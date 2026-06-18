@@ -68,6 +68,15 @@ class _StreamingChunkBuffers:
 
 
 @dataclass(frozen=True)
+class _ProcessableReadBufferRequest:
+    chunk_items: list
+    chunk_read_objs: list
+    chunk_skip_flags: list
+    payload: object
+    read: object
+
+
+@dataclass(frozen=True)
 class _StreamingFlushProgress:
     buffers: _StreamingChunkBuffers
     last_progress_reads: int
@@ -149,11 +158,25 @@ def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, 
     return 1
 
 
-def _buffer_processable_read(chunk_items, chunk_read_objs, chunk_skip_flags, payload, read) -> int:
-    chunk_items.append(payload)
-    chunk_read_objs.append(read)
-    chunk_skip_flags.append(False)
+def _buffer_processable_read_from_request(
+    request: _ProcessableReadBufferRequest,
+) -> int:
+    request.chunk_items.append(request.payload)
+    request.chunk_read_objs.append(request.read)
+    request.chunk_skip_flags.append(False)
     return 1
+
+
+def _buffer_processable_read(chunk_items, chunk_read_objs, chunk_skip_flags, payload, read) -> int:
+    return _buffer_processable_read_from_request(
+        _ProcessableReadBufferRequest(
+            chunk_items=chunk_items,
+            chunk_read_objs=chunk_read_objs,
+            chunk_skip_flags=chunk_skip_flags,
+            payload=payload,
+            read=read,
+        )
+    )
 
 
 def _streaming_payload_or_skip(read, filter_config: ReadFilterConfig,
