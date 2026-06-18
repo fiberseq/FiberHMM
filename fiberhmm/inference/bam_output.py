@@ -317,7 +317,7 @@ def _remove_partial_output_bam(output_bam: str, verbose: bool = True) -> None:
         os.remove(output_bam)
         if verbose:
             print("    Removed partial output file")
-    except Exception as rm_err:
+    except OSError as rm_err:
         if verbose:
             print(f"    Warning: Could not remove partial file: {rm_err}")
 

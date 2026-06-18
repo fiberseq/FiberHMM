@@ -249,6 +249,47 @@ def test_remove_file_if_exists_handles_missing_and_present_files(tmp_path):
     assert not present.exists()
 
 
+def test_remove_partial_output_bam_reports_success_and_filesystem_errors(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    partial = tmp_path / "partial.bam"
+    partial.write_text("partial")
+
+    bam_output._remove_partial_output_bam(str(partial))
+
+    assert not partial.exists()
+    assert "Removed partial output file" in capsys.readouterr().out
+
+    partial.write_text("partial")
+    monkeypatch.setattr(
+        bam_output.os,
+        "remove",
+        lambda path: (_ for _ in ()).throw(PermissionError("locked")),
+    )
+
+    bam_output._remove_partial_output_bam(str(partial))
+
+    assert "Could not remove partial file: locked" in capsys.readouterr().out
+
+
+def test_remove_partial_output_bam_propagates_unexpected_remove_errors(
+    monkeypatch,
+    tmp_path,
+):
+    partial = tmp_path / "partial.bam"
+    partial.write_text("partial")
+    monkeypatch.setattr(
+        bam_output.os,
+        "remove",
+        lambda path: (_ for _ in ()).throw(RuntimeError("unexpected")),
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected"):
+        bam_output._remove_partial_output_bam(str(partial))
+
+
 def test_raise_if_command_failed_preserves_process_output():
     ok = subprocess.CompletedProcess(["samtools"], 0, stdout="ok", stderr="")
     bam_output._raise_if_command_failed(ok, "samtools ok")
