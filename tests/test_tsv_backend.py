@@ -385,16 +385,21 @@ def test_copy_tsv_records_writes_header_once_and_counts_records(tmp_path):
     second_path.write_text("#other-header\n\nread2\tchr2\n", encoding="utf-8")
     output = io.StringIO()
 
-    n_first, header_written = tsv_backend._copy_tsv_records(
+    first_result = tsv_backend._copy_tsv_records(
         str(first_path), output, header_written=False,
     )
-    n_second, header_written = tsv_backend._copy_tsv_records(
-        str(second_path), output, header_written=header_written,
+    second_result = tsv_backend._copy_tsv_records(
+        str(second_path), output, header_written=first_result.header_written,
     )
 
-    assert n_first == 1
-    assert n_second == 1
-    assert header_written
+    assert first_result == tsv_backend._TsvCopyResult(
+        copied_fibers=1,
+        header_written=True,
+    )
+    assert second_result == tsv_backend._TsvCopyResult(
+        copied_fibers=1,
+        header_written=True,
+    )
     assert output.getvalue() == "#header\nread1\tchr1\nread2\tchr2\n"
 
 
@@ -456,7 +461,10 @@ def test_concatenate_tsvs_deletes_inputs_only_after_success(monkeypatch, tmp_pat
     def fake_copy(inpath, outfile, header_written):
         if inpath == str(first_path):
             outfile.write("read1\tchr1\n")
-            return 1, True
+            return tsv_backend._TsvCopyResult(
+                copied_fibers=1,
+                header_written=True,
+            )
         raise RuntimeError("copy failed")
 
     monkeypatch.setattr(tsv_backend, "_copy_tsv_records", fake_copy)

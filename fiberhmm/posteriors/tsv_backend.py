@@ -43,6 +43,12 @@ class _TsvH5ScanResult:
     total_fibers: int
 
 
+@dataclass(frozen=True)
+class _TsvCopyResult:
+    copied_fibers: int
+    header_written: bool
+
+
 def _open_text_file(path: str, mode: str) -> TextIO:
     """Open plain or gzip-compressed text files with consistent settings."""
     path = os.fspath(path)
@@ -396,7 +402,11 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
     return n_written
 
 
-def _copy_tsv_records(inpath: str, outfile, header_written: bool) -> tuple[int, bool]:
+def _copy_tsv_records(
+    inpath: str,
+    outfile,
+    header_written: bool,
+) -> _TsvCopyResult:
     n_fibers = 0
     with _open_text_file(inpath, 'rt') as infile:
         for line in infile:
@@ -411,7 +421,10 @@ def _copy_tsv_records(inpath: str, outfile, header_written: bool) -> tuple[int, 
                 outfile.write(line)
                 n_fibers += 1
 
-    return n_fibers, header_written
+    return _TsvCopyResult(
+        copied_fibers=n_fibers,
+        header_written=header_written,
+    )
 
 
 def _remove_concatenated_tsv_inputs(input_files: list[str]) -> None:
@@ -441,10 +454,11 @@ def concatenate_tsvs(input_files: list, output_path: str,
             if not path_is_regular_file(inpath):
                 continue
 
-            n_copied, header_written = _copy_tsv_records(
+            copy_result = _copy_tsv_records(
                 inpath, outfile, header_written,
             )
-            n_fibers += n_copied
+            n_fibers += copy_result.copied_fibers
+            header_written = copy_result.header_written
             copied_inputs.append(inpath)
 
     if delete_inputs:
