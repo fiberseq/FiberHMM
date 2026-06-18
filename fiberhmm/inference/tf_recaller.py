@@ -115,6 +115,24 @@ class _TagOutputFrame:
     nuc_er_values: Optional[List[int]]
 
 
+@dataclass
+class _RecallTagPayload:
+    kept_nucs: List[Tuple[int, int]]
+    msps: List[Tuple[int, int]]
+    tf_intervals: List[Tuple[int, int]]
+    nq_values: List[int]
+    nuc_qqq: bool
+    ma_nucs: List[Tuple[int, int]]
+    ma_msps: List[Tuple[int, int]]
+    ma_tfs: List[Tuple[int, int]]
+    nuc_names: List[str]
+    msp_names: List[str]
+    tf_names: List[str]
+    nuc_q_split: Optional[List[Sequence[int]]]
+    tf_q_split: Optional[List[Sequence[int]]]
+    needs_an: bool
+
+
 def _split_named_intervals(
     intervals: Sequence[Tuple[int, int]],
     prefix: str,
@@ -757,6 +775,117 @@ def _recall_tf_quality_inputs(tf_calls: Sequence[TFCall]):
     )
 
 
+def _build_recall_tag_payload(
+    read,
+    read_length: int,
+    tf_calls: Sequence[TFCall],
+    kept_nucs: Sequence[Tuple[int, int]],
+    msps: Sequence[Tuple[int, int]],
+    nq_for_kept_nucs: Optional[Sequence[int]],
+    nuc_el_for_kept: Optional[Sequence[int]],
+    nuc_er_for_kept: Optional[Sequence[int]],
+) -> _RecallTagPayload:
+    nq_values, nuc_qqq, nuc_el_values, nuc_er_values = _recall_nuc_quality_inputs(
+        kept_nucs, nq_for_kept_nucs, nuc_el_for_kept, nuc_er_for_kept,
+    )
+    tf_intervals, tq_vals, el_vals, er_vals = _recall_tf_quality_inputs(tf_calls)
+
+    # FiberHMM works in SEQ coords internally. Tags are written in molecular
+    # frame and sorted within each annotation type for fibertools/spec readers.
+    output_frame = _prepare_tag_output_frame(
+        read,
+        read_length,
+        kept_nucs,
+        msps,
+        tf_intervals,
+        nq_values,
+        tq_vals,
+        el_vals,
+        er_vals,
+        nuc_el_values if nuc_qqq else None,
+        nuc_er_values if nuc_qqq else None,
+    )
+
+    nuc_q_rows = _nuc_quality_rows(
+        output_frame.nq_values,
+        nuc_qqq,
+        output_frame.nuc_el_values if nuc_qqq else None,
+        output_frame.nuc_er_values if nuc_qqq else None,
+    )
+    tf_q_rows = _tf_quality_rows(
+        output_frame.tq_values,
+        output_frame.tf_el_values,
+        output_frame.tf_er_values,
+    )
+    ma_nucs, nuc_names, nuc_q_split, nuc_split = _split_named_intervals(
+        output_frame.nuc_intervals, "nuc", read_length, nuc_q_rows,
+    )
+    ma_msps, msp_names, _msp_q_split, msp_split = _split_named_intervals(
+        output_frame.msp_intervals, "msp", read_length, None,
+    )
+    ma_tfs, tf_names, tf_q_split, tf_split = _split_named_intervals(
+        output_frame.tf_intervals, "tf", read_length, tf_q_rows,
+    )
+
+    return _RecallTagPayload(
+        kept_nucs=output_frame.nuc_intervals,
+        msps=output_frame.msp_intervals,
+        tf_intervals=output_frame.tf_intervals,
+        nq_values=output_frame.nq_values,
+        nuc_qqq=nuc_qqq,
+        ma_nucs=ma_nucs,
+        ma_msps=ma_msps,
+        ma_tfs=ma_tfs,
+        nuc_names=nuc_names,
+        msp_names=msp_names,
+        tf_names=tf_names,
+        nuc_q_split=nuc_q_split,
+        tf_q_split=tf_q_split,
+        needs_an=nuc_split or msp_split or tf_split,
+    )
+
+
+def _write_spec_recall_tags(
+    read,
+    read_length: int,
+    payload: _RecallTagPayload,
+) -> None:
+    # Spec mode: write MA + AQ. The fiberseq Molecular-annotation spec
+    # requires MA to contain at least one annotation, and AQ only when some
+    # annotation type specifies quality values.
+    has_any_annotation = bool(payload.ma_nucs or payload.ma_msps or payload.ma_tfs)
+    if not has_any_annotation:
+        clear_tags(read, ('MA', 'AQ', 'AN'))
+        return
+
+    ma = format_ma_tag(
+        read_length=read_length,
+        nuc_intervals=payload.ma_nucs,
+        msp_intervals=payload.ma_msps,
+        tf_intervals=payload.ma_tfs,
+        nuc_qual_spec='QQQ' if payload.nuc_qqq else 'Q',
+    )
+    read.set_tag('MA', ma, value_type='Z')
+    if payload.needs_an:
+        names = payload.nuc_names + payload.msp_names + payload.tf_names
+        read.set_tag('AN', format_an_tag(names), value_type='Z')
+    else:
+        clear_tags(read, ('AN',))
+
+    has_quality = bool(payload.ma_nucs or payload.ma_tfs)
+    if has_quality:
+        read.set_tag(
+            'AQ',
+            _format_split_aq(
+                payload.nuc_q_split,
+                payload.tf_q_split,
+                payload.nuc_qqq,
+            ),
+        )
+    else:
+        clear_tags(read, ('AQ',))
+
+
 def _write_legacy_recall_tags(read, read_length: int,
                               kept_nucs: Sequence[Tuple[int, int]],
                               msps: Sequence[Tuple[int, int]],
@@ -847,94 +976,19 @@ def write_ma_tags(read, read_length: int,
             "(compat mode writes TF calls into the legacy ns/nl track)."
         )
 
-    nq_values, nuc_qqq, nuc_el_values, nuc_er_values = _recall_nuc_quality_inputs(
-        kept_nucs, nq_for_kept_nucs, nuc_el_for_kept, nuc_er_for_kept,
-    )
-
-    tf_intervals, tq_vals, el_vals, er_vals = _recall_tf_quality_inputs(tf_calls)
-
-    # FiberHMM works in SEQ coords internally. Tags are written in molecular
-    # frame and sorted within each annotation type for fibertools/spec readers.
-    output_frame = _prepare_tag_output_frame(
+    payload = _build_recall_tag_payload(
         read,
         read_length,
+        tf_calls,
         kept_nucs,
         msps,
-        tf_intervals,
-        nq_values,
-        tq_vals,
-        el_vals,
-        er_vals,
-        nuc_el_values if nuc_qqq else None,
-        nuc_er_values if nuc_qqq else None,
+        nq_for_kept_nucs,
+        nuc_el_for_kept,
+        nuc_er_for_kept,
     )
-    kept_nucs = output_frame.nuc_intervals
-    msps = output_frame.msp_intervals
-    tf_intervals = output_frame.tf_intervals
-    nq_values = output_frame.nq_values
-    tq_vals = output_frame.tq_values
-    el_vals = output_frame.tf_el_values
-    er_vals = output_frame.tf_er_values
-    if nuc_qqq:
-        nuc_el_values = output_frame.nuc_el_values or []
-        nuc_er_values = output_frame.nuc_er_values or []
-
-    nuc_q_rows = _nuc_quality_rows(
-        nq_values,
-        nuc_qqq,
-        nuc_el_values if nuc_qqq else None,
-        nuc_er_values if nuc_qqq else None,
-    )
-    tf_q_rows = _tf_quality_rows(tq_vals, el_vals, er_vals)
-    ma_nucs, nuc_names, nuc_q_split, nuc_split = _split_named_intervals(
-        kept_nucs, "nuc", read_length, nuc_q_rows,
-    )
-    ma_msps, msp_names, _msp_q_split, msp_split = _split_named_intervals(
-        msps, "msp", read_length, None,
-    )
-    ma_tfs, tf_names, tf_q_split, tf_split = _split_named_intervals(
-        tf_intervals, "tf", read_length, tf_q_rows,
-    )
-    needs_an = nuc_split or msp_split or tf_split
 
     if not downstream_compat:
-        # Spec mode: write MA + AQ. The fiberseq Molecular-annotation spec
-        # (https://github.com/fiberseq/Molecular-annotation-spec) requires:
-        #   - the MA string to contain >= 1 annotation (regex
-        #     ^\d+;(...annotation...;?)+$), so don't emit MA for reads with
-        #     no nucs/msps/tfs at all
-        #   - AQ to only be present if SOME annotation type specifies P or Q
-        #     (we use Q on nuc+ and tf+; if neither has any annotations and
-        #     only msp+ is emitted, AQ stays unwritten)
-        has_any_annotation = bool(ma_nucs or ma_msps or ma_tfs)
-        if not has_any_annotation:
-            # Strip any stale tags, leave the read with no MA/AQ
-            clear_tags(read, ('MA', 'AQ', 'AN'))
-        else:
-            ma = format_ma_tag(
-                read_length=read_length,
-                nuc_intervals=ma_nucs,
-                msp_intervals=ma_msps,
-                tf_intervals=ma_tfs,
-                nuc_qual_spec='QQQ' if nuc_qqq else 'Q',
-            )
-            read.set_tag('MA', ma, value_type='Z')
-            if needs_an:
-                read.set_tag('AN', format_an_tag(nuc_names + msp_names + tf_names),
-                             value_type='Z')
-            else:
-                clear_tags(read, ('AN',))
-            # AQ only carries values for nuc+Q and tf+QQQ. If neither is
-            # present in this read, no quality type is in MA -> spec says
-            # AQ must not be written.
-            has_quality = bool(ma_nucs or ma_tfs)
-            if has_quality:
-                read.set_tag(
-                    'AQ',
-                    _format_split_aq(nuc_q_split, tf_q_split, nuc_qqq),
-                )
-            else:
-                clear_tags(read, ('AQ',))
+        _write_spec_recall_tags(read, read_length, payload)
     else:
         # Compat mode: strip any stale MA/AQ so consumers that see both
         # tags don't get out-of-sync views.
@@ -944,10 +998,10 @@ def write_ma_tags(read, read_length: int,
         _write_legacy_recall_tags(
             read,
             read_length,
-            kept_nucs,
-            msps,
-            tf_intervals,
+            payload.kept_nucs,
+            payload.msps,
+            payload.tf_intervals,
             nq_for_kept_nucs,
-            nq_values,
+            payload.nq_values,
             downstream_compat,
         )
