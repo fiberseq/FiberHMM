@@ -46,6 +46,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _StreamingFlushProgress,
     _StreamingPayloadResult,
     _StreamingPosteriorWriter,
+    _StreamingProgressCheckpoint,
     _StreamingProgressRates,
     _worker_common_args,
 )
@@ -133,7 +134,7 @@ def test_print_streaming_progress_writes_message_and_returns_checkpoint():
         rate_unit="reads/s",
     )
 
-    assert checkpoint == (120, 30.0)
+    assert checkpoint == _StreamingProgressCheckpoint(reads=120, time=30.0)
     assert log.getvalue() == (
         "\r  Processed: 120 | Skipped: 5 | Inflight: 2 | "
         "10 reads/s (avg 6)"
@@ -551,7 +552,7 @@ def test_flush_streaming_chunk_and_report_progress(monkeypatch):
 
     def fake_progress(*args):
         calls.append(("progress", args))
-        return 20, 30.0
+        return _StreamingProgressCheckpoint(reads=20, time=30.0)
 
     monkeypatch.setattr(
         streaming_pipeline, "_flush_streaming_chunk", fake_flush,
@@ -649,7 +650,7 @@ def test_stream_reads_to_workers_buffers_submits_and_reports_progress(monkeypatc
         progress_calls.append(args)
         total_reads = args[2]
         now = args[8]
-        return total_reads, now
+        return _StreamingProgressCheckpoint(reads=total_reads, time=now)
 
     monkeypatch.setattr(
         streaming_pipeline, "_buffer_streaming_read", fake_buffer_read,

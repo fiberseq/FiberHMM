@@ -54,6 +54,12 @@ class _StreamingProgressRates:
 
 
 @dataclass(frozen=True)
+class _StreamingProgressCheckpoint:
+    reads: int
+    time: float
+
+
+@dataclass(frozen=True)
 class _StreamingChunkBuffers:
     items: list
     read_objs: list
@@ -227,7 +233,7 @@ def _flush_streaming_chunk_and_report_progress(
         context.drain_chunk,
     )
     now = time.time()
-    last_progress_reads, last_progress_time = _print_streaming_progress(
+    checkpoint = _print_streaming_progress(
         context.log,
         context.progress_label,
         total_reads,
@@ -241,8 +247,8 @@ def _flush_streaming_chunk_and_report_progress(
     )
     return _StreamingFlushProgress(
         buffers=buffers,
-        last_progress_reads=last_progress_reads,
-        last_progress_time=last_progress_time,
+        last_progress_reads=checkpoint.reads,
+        last_progress_time=checkpoint.time,
     )
 
 
@@ -677,7 +683,7 @@ def _print_streaming_progress(
     last_progress_time: float,
     now: float,
     rate_unit: str,
-) -> tuple[int, float]:
+) -> _StreamingProgressCheckpoint:
     rates = _streaming_progress_rates(
         total_reads, last_progress_reads, start_time, last_progress_time, now,
     )
@@ -695,7 +701,7 @@ def _print_streaming_progress(
         file=log,
     )
     log.flush()
-    return total_reads, now
+    return _StreamingProgressCheckpoint(reads=total_reads, time=now)
 
 
 def _streaming_rate(total_reads: int, elapsed: float) -> float:
