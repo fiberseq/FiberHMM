@@ -43,6 +43,7 @@ try:
         _mm_target_base,
         _mm_walk_context,
         _modified_base_quality_passes,
+        _nanopore_m6a_targets,
         _print_mm_parse_debug,
         _reverse_complement_context,
         detect_daf_strand,
@@ -80,6 +81,7 @@ except ImportError:
         _mm_target_base,
         _mm_walk_context,
         _modified_base_quality_passes,
+        _nanopore_m6a_targets,
         _print_mm_parse_debug,
         _reverse_complement_context,
         detect_daf_strand,
@@ -144,6 +146,20 @@ def test_context_codes_for_target_positions_filters_and_reverse_complements():
 
     np.testing.assert_array_equal(valid_positions, [])
     np.testing.assert_array_equal(codes, [])
+
+
+def test_nanopore_m6a_targets_name_forward_and_reverse_settings():
+    forward = _nanopore_m6a_targets(False)
+    reverse = _nanopore_m6a_targets(True)
+
+    assert forward.target_int == 0
+    assert forward.reverse_complement_target_int == 0
+    assert not forward.use_reverse_complement
+    assert forward.target_base == "A"
+    assert reverse.target_int == 99
+    assert reverse.reverse_complement_target_int == 2
+    assert reverse.use_reverse_complement
+    assert reverse.target_base == "T"
 
 
 def test_assign_context_codes_for_target_base_updates_only_matches():

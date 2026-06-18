@@ -311,6 +311,14 @@ class _DafStrandParams:
 
 
 @dataclass(frozen=True)
+class _NanoporeM6aTargets:
+    target_int: int
+    reverse_complement_target_int: int
+    use_reverse_complement: bool
+    target_base: str
+
+
+@dataclass(frozen=True)
 class _MmHitPositions:
     positions: np.ndarray
     next_ml_idx: int
@@ -1067,11 +1075,21 @@ def _encode_pacbio_m6a_observations(sequence: str, mod_positions: Set[int],
                                  unmethylated_offset)
 
 
-def _nanopore_m6a_targets(is_reverse: bool) -> Tuple[int, int, bool, str]:
+def _nanopore_m6a_targets(is_reverse: bool) -> _NanoporeM6aTargets:
     if is_reverse:
         # Basecalled A's are stored as T's in SAM SEQ for reverse-aligned reads.
-        return 99, 2, True, 'T'
-    return 0, 0, False, 'A'
+        return _NanoporeM6aTargets(
+            target_int=99,
+            reverse_complement_target_int=2,
+            use_reverse_complement=True,
+            target_base='T',
+        )
+    return _NanoporeM6aTargets(
+        target_int=0,
+        reverse_complement_target_int=0,
+        use_reverse_complement=False,
+        target_base='A',
+    )
 
 
 def _encode_nanopore_m6a_observations(sequence: str, mod_positions: Set[int],
@@ -1082,16 +1100,23 @@ def _encode_nanopore_m6a_observations(sequence: str, mod_positions: Set[int],
     # positions with RC context to recover basecalled-forward emission space.
     seq_len = len(sequence)
     mod_mask = _mod_positions_mask(mod_positions, seq_len)
-    target_int, rc_target_int, do_rc, target_base = _nanopore_m6a_targets(is_reverse)
+    targets = _nanopore_m6a_targets(is_reverse)
     if _HAS_NUMBA:
         return _m6a_context_codes_numba(
             _sequence_base_int_array(sequence), mod_mask,
             context_size, edge_trim, non_target_code, unmethylated_offset,
-            target_int, rc_target_int, do_rc,
+            targets.target_int,
+            targets.reverse_complement_target_int,
+            targets.use_reverse_complement,
         )
 
     context_codes = _encode_vectorized(
-        sequence, target_base, context_size, edge_trim, non_target_code, do_rc,
+        sequence,
+        targets.target_base,
+        context_size,
+        edge_trim,
+        non_target_code,
+        targets.use_reverse_complement,
     )
     return _apply_m6a_mod_status(context_codes, mod_mask, non_target_code,
                                  unmethylated_offset)
