@@ -441,8 +441,12 @@ def test_copy_tsv_records_writes_header_once_and_counts_records(tmp_path):
     second_path.write_text("#other-header\n\nread2\tchr2\n", encoding="utf-8")
     output = io.StringIO()
 
-    first_result = tsv_backend._copy_tsv_records(
-        str(first_path), output, header_written=False,
+    first_result = tsv_backend._copy_tsv_records_from_request(
+        tsv_backend._TsvCopyRequest(
+            inpath=str(first_path),
+            outfile=output,
+            header_written=False,
+        )
     )
     second_result = tsv_backend._copy_tsv_records(
         str(second_path), output, header_written=first_result.header_written,
@@ -457,6 +461,34 @@ def test_copy_tsv_records_writes_header_once_and_counts_records(tmp_path):
         header_written=True,
     )
     assert output.getvalue() == "#header\nread1\tchr1\nread2\tchr2\n"
+
+
+def test_copy_tsv_records_adapter_builds_request(monkeypatch):
+    output = io.StringIO()
+    sentinel = tsv_backend._TsvCopyResult(
+        copied_fibers=1,
+        header_written=True,
+    )
+    calls = []
+
+    monkeypatch.setattr(
+        tsv_backend,
+        "_copy_tsv_records_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert tsv_backend._copy_tsv_records(
+        "input.tsv",
+        output,
+        header_written=False,
+    ) == sentinel
+    assert calls == [
+        tsv_backend._TsvCopyRequest(
+            inpath="input.tsv",
+            outfile=output,
+            header_written=False,
+        ),
+    ]
 
 
 def test_concatenate_tsvs_closes_input_and_output_when_read_fails(monkeypatch, tmp_path):

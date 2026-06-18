@@ -50,6 +50,13 @@ class _TsvCopyResult:
 
 
 @dataclass(frozen=True)
+class _TsvCopyRequest:
+    inpath: str
+    outfile: object
+    header_written: bool
+
+
+@dataclass(frozen=True)
 class _PosteriorTsvFields:
     read_id: str
     chrom: str
@@ -492,28 +499,41 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
     return n_written
 
 
-def _copy_tsv_records(
-    inpath: str,
-    outfile,
-    header_written: bool,
+def _copy_tsv_records_from_request(
+    request: _TsvCopyRequest,
 ) -> _TsvCopyResult:
     n_fibers = 0
-    with _open_text_file(inpath, 'rt') as infile:
+    header_written = request.header_written
+    with _open_text_file(request.inpath, 'rt') as infile:
         for line in infile:
             if not line.strip():
                 continue
             if line.startswith('#'):
                 # Only write header from first file
                 if not header_written:
-                    outfile.write(line)
+                    request.outfile.write(line)
                     header_written = True
             else:
-                outfile.write(line)
+                request.outfile.write(line)
                 n_fibers += 1
 
     return _TsvCopyResult(
         copied_fibers=n_fibers,
         header_written=header_written,
+    )
+
+
+def _copy_tsv_records(
+    inpath: str,
+    outfile,
+    header_written: bool,
+) -> _TsvCopyResult:
+    return _copy_tsv_records_from_request(
+        _TsvCopyRequest(
+            inpath=inpath,
+            outfile=outfile,
+            header_written=header_written,
+        ),
     )
 
 
