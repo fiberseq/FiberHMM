@@ -249,14 +249,14 @@ def test_daf_encode_counts_accumulate_read_stats_and_build_summary():
     counts = encoder._new_daf_encode_counts()
     encoder._accumulate_daf_read_stats(
         counts,
-        {
-            "encoded": 1,
-            "skipped": 0,
-            "ct": 1,
-            "ga": 0,
-            "total_deam": 3,
-            "total_bases": 100,
-        },
+        encoder._DafEncodeReadStats(
+            encoded=1,
+            skipped=0,
+            ct=1,
+            ga=0,
+            total_deam=3,
+            total_bases=100,
+        ),
     )
     encoder._accumulate_daf_read_stats(counts, encoder._daf_skipped_read_stats())
 
@@ -338,22 +338,26 @@ def test_apply_daf_encoding_to_read_preserves_qualities_and_sets_st_tag():
 
 
 def test_daf_encoded_read_stats_counts_selected_strand_and_bases():
-    assert encoder._daf_encoded_read_stats(_daf_read(query_length=4), "CT", 2) == {
-        "encoded": 1,
-        "skipped": 0,
-        "ct": 1,
-        "ga": 0,
-        "total_deam": 2,
-        "total_bases": 4,
-    }
-    assert encoder._daf_encoded_read_stats(_daf_read(query_length=None), "GA", 3) == {
-        "encoded": 1,
-        "skipped": 0,
-        "ct": 0,
-        "ga": 1,
-        "total_deam": 3,
-        "total_bases": 0,
-    }
+    assert encoder._daf_encoded_read_stats(
+        _daf_read(query_length=4), "CT", 2,
+    ) == encoder._DafEncodeReadStats(
+        encoded=1,
+        skipped=0,
+        ct=1,
+        ga=0,
+        total_deam=2,
+        total_bases=4,
+    )
+    assert encoder._daf_encoded_read_stats(
+        _daf_read(query_length=None), "GA", 3,
+    ) == encoder._DafEncodeReadStats(
+        encoded=1,
+        skipped=0,
+        ct=0,
+        ga=1,
+        total_deam=3,
+        total_bases=0,
+    )
 
 
 def test_process_daf_encode_read_writes_encoded_read_and_returns_stats(monkeypatch):
@@ -372,14 +376,14 @@ def test_process_daf_encode_read_writes_encoded_read_and_returns_stats(monkeypat
 
     assert encoder._process_daf_encode_read(
         handle, progress, read, 20, 1000,
-    ) == {
-        "encoded": 1,
-        "skipped": 0,
-        "ct": 1,
-        "ga": 0,
-        "total_deam": 1,
-        "total_bases": 4,
-    }
+    ) == encoder._DafEncodeReadStats(
+        encoded=1,
+        skipped=0,
+        ct=1,
+        ga=0,
+        total_deam=1,
+        total_bases=4,
+    )
     assert handle.written == [read]
     assert progress.n == 1
     assert read.query_sequence == "AYGT"
@@ -415,14 +419,14 @@ def test_stream_daf_encode_reads_accumulates_stats(monkeypatch):
     counts = encoder._new_daf_encode_counts()
     calls = []
     stats = [
-        {
-            "encoded": 1,
-            "skipped": 0,
-            "ct": 1,
-            "ga": 0,
-            "total_deam": 2,
-            "total_bases": 100,
-        },
+        encoder._DafEncodeReadStats(
+            encoded=1,
+            skipped=0,
+            ct=1,
+            ga=0,
+            total_deam=2,
+            total_bases=100,
+        ),
         encoder._daf_skipped_read_stats(),
     ]
 

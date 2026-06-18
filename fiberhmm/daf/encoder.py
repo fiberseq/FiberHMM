@@ -60,6 +60,16 @@ class _DafEncodeHandles:
     pbar: object
 
 
+@dataclass(frozen=True)
+class _DafEncodeReadStats:
+    encoded: int
+    skipped: int
+    ct: int
+    ga: int
+    total_deam: int
+    total_bases: int
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -476,10 +486,13 @@ def _new_daf_encode_counts() -> dict:
     return counts
 
 
-def _accumulate_daf_read_stats(counts: dict, read_stats: dict) -> None:
+def _accumulate_daf_read_stats(
+    counts: dict,
+    read_stats: _DafEncodeReadStats,
+) -> None:
     counts["total"] += 1
     for field in _DAF_ENCODE_STAT_FIELDS:
-        counts[field] += read_stats[field]
+        counts[field] += getattr(read_stats, field)
 
 
 def _daf_encode_summary_from_counts(counts: dict, elapsed: float) -> dict:
@@ -553,26 +566,30 @@ def _apply_daf_encoding_to_read(read, new_seq: str, st_tag: str) -> None:
     read.set_tag("st", st_tag, value_type="Z")
 
 
-def _daf_encoded_read_stats(read, st_tag: str, n_deam: int) -> dict:
-    return {
-        "encoded": 1,
-        "skipped": 0,
-        "ct": 1 if st_tag == "CT" else 0,
-        "ga": 0 if st_tag == "CT" else 1,
-        "total_deam": n_deam,
-        "total_bases": read.query_length or 0,
-    }
+def _daf_encoded_read_stats(
+    read,
+    st_tag: str,
+    n_deam: int,
+) -> _DafEncodeReadStats:
+    return _DafEncodeReadStats(
+        encoded=1,
+        skipped=0,
+        ct=1 if st_tag == "CT" else 0,
+        ga=0 if st_tag == "CT" else 1,
+        total_deam=n_deam,
+        total_bases=read.query_length or 0,
+    )
 
 
-def _daf_skipped_read_stats() -> dict:
-    return {
-        "encoded": 0,
-        "skipped": 1,
-        "ct": 0,
-        "ga": 0,
-        "total_deam": 0,
-        "total_bases": 0,
-    }
+def _daf_skipped_read_stats() -> _DafEncodeReadStats:
+    return _DafEncodeReadStats(
+        encoded=0,
+        skipped=1,
+        ct=0,
+        ga=0,
+        total_deam=0,
+        total_bases=0,
+    )
 
 
 def _process_daf_encode_read(
@@ -583,7 +600,7 @@ def _process_daf_encode_read(
     min_read_length: int,
     force_strand=None,
     ref_fasta=None,
-) -> dict:
+) -> _DafEncodeReadStats:
     skip_reason = _daf_encode_skip_reason(read, min_mapq, min_read_length)
     if skip_reason:
         _write_skipped_daf_read(outbam, pbar, read)
