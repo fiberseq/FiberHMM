@@ -1,10 +1,14 @@
 """Tests for BAM index helpers."""
 
-from fiberhmm.io.bam_index import bam_index_exists, bam_index_paths
+from fiberhmm.io.bam_index import _bam_index_paths, bam_index_exists, bam_index_paths
 
 
 def test_bam_index_exists_checks_adjacent_and_replaced_suffixes(tmp_path):
     bam_path = tmp_path / "sample.bam"
+    path_candidates = _bam_index_paths(bam_path)
+
+    assert path_candidates.adjacent == str(tmp_path / "sample.bam.bai")
+    assert path_candidates.replaced_suffix == str(tmp_path / "sample.bai")
     assert bam_index_paths(bam_path) == (
         str(tmp_path / "sample.bam.bai"),
         str(tmp_path / "sample.bai"),

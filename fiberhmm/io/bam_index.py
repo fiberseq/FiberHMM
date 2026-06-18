@@ -3,17 +3,38 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 
 
-def bam_index_paths(bam_path: str) -> tuple[str, str]:
+@dataclass(frozen=True)
+class _BamIndexPaths:
+    adjacent: str
+    replaced_suffix: str
+
+    def as_tuple(self) -> tuple[str, str]:
+        return self.adjacent, self.replaced_suffix
+
+
+def _bam_index_paths(bam_path: str) -> _BamIndexPaths:
     bam_path = os.fspath(bam_path)
     stem, suffix = os.path.splitext(bam_path)
     suffix_index_path = stem + '.bai' if suffix.lower() == '.bam' else bam_path + '.bai'
-    return bam_path + '.bai', suffix_index_path
+    return _BamIndexPaths(
+        adjacent=bam_path + '.bai',
+        replaced_suffix=suffix_index_path,
+    )
+
+
+def bam_index_paths(bam_path: str) -> tuple[str, str]:
+    return _bam_index_paths(bam_path).as_tuple()
 
 
 def bam_index_exists(bam_path: str) -> bool:
-    return any(os.path.exists(path) for path in bam_index_paths(bam_path))
+    paths = _bam_index_paths(bam_path)
+    return (
+        os.path.exists(paths.adjacent)
+        or os.path.exists(paths.replaced_suffix)
+    )
 
 
 def ensure_bam_index(bam_path: str, message: str) -> None:
