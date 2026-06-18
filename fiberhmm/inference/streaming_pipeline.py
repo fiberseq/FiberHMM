@@ -475,6 +475,21 @@ class _StreamingPosteriorStats:
         return self.n_fibers, self.file_size_mb
 
 
+@dataclass(frozen=True)
+class _ApplyStreamingFinalizeRequest:
+    total_reads: int
+    skipped: int
+    counters: dict
+    start_time: float
+    skip_reasons: dict
+    output_bam: str
+    process_unmapped: bool
+    n_cores: int
+    posterior_stats: object
+    output_posteriors: Optional[str]
+    log: object
+
+
 def _flush_streaming_chunk_and_report_progress(
     context: _StreamingFlushContext,
     chunk_items,
@@ -1198,21 +1213,45 @@ def _finalize_apply_streaming_pipeline(
     output_posteriors: Optional[str],
     log,
 ) -> int:
-    reads_with_footprints = _print_streaming_completion_summary(
-        "Processed",
-        total_reads,
-        skipped,
-        counters,
-        time.time() - start_time,
-        "reads/s",
-        skip_reasons,
-        log,
+    return _finalize_apply_streaming_pipeline_from_request(
+        _ApplyStreamingFinalizeRequest(
+            total_reads=total_reads,
+            skipped=skipped,
+            counters=counters,
+            start_time=start_time,
+            skip_reasons=skip_reasons,
+            output_bam=output_bam,
+            process_unmapped=process_unmapped,
+            n_cores=n_cores,
+            posterior_stats=posterior_stats,
+            output_posteriors=output_posteriors,
+            log=log,
+        )
     )
 
-    if _should_sort_streaming_output(output_bam, process_unmapped):
-        _sort_and_index_bam(output_bam, threads=n_cores)
 
-    _print_streaming_posterior_summary(posterior_stats, output_posteriors, log)
+def _finalize_apply_streaming_pipeline_from_request(
+    request: _ApplyStreamingFinalizeRequest,
+) -> int:
+    reads_with_footprints = _print_streaming_completion_summary(
+        "Processed",
+        request.total_reads,
+        request.skipped,
+        request.counters,
+        time.time() - request.start_time,
+        "reads/s",
+        request.skip_reasons,
+        request.log,
+    )
+
+    if _should_sort_streaming_output(request.output_bam, request.process_unmapped):
+        _sort_and_index_bam(request.output_bam, threads=request.n_cores)
+
+    _print_streaming_posterior_summary(
+        request.posterior_stats,
+        request.output_posteriors,
+        request.log,
+    )
     return reads_with_footprints
 
 

@@ -15,6 +15,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _apply_drain_chunk_factory,
     _apply_worker_args,
     _apply_worker_args_from_request,
+    _ApplyStreamingFinalizeRequest,
     _buffer_processable_read,
     _buffer_processable_read_from_request,
     _buffer_skipped_read,
@@ -292,7 +293,7 @@ def test_finalize_apply_streaming_pipeline_summarizes_sorts_and_reports_posterio
         lambda stats, path, got_log: calls.append(("posteriors", stats, path, got_log)),
     )
 
-    assert _finalize_apply_streaming_pipeline(
+    request = _ApplyStreamingFinalizeRequest(
         total_reads=10,
         skipped=2,
         counters={"reads_with_footprints": 7},
@@ -304,6 +305,10 @@ def test_finalize_apply_streaming_pipeline_summarizes_sorts_and_reports_posterio
         posterior_stats=(4, 1.5),
         output_posteriors="post.h5",
         log=log,
+    )
+
+    assert streaming_pipeline._finalize_apply_streaming_pipeline_from_request(
+        request,
     ) == 7
 
     assert calls == [
