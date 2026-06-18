@@ -50,24 +50,25 @@ def query_interval_to_ref_block(qstart, length, query_to_ref) -> Optional[Tuple[
     return _ref_positions_to_half_open_span(ref_start, ref_end)
 
 
-def _first_ref_in_query_interval(qstart, length, query_to_ref) -> Optional[int]:
+def _ref_in_query_interval(qstart, length, query_to_ref, *, reverse: bool) -> Optional[int]:
     qstart, qend = _query_interval_bounds(qstart, length)
-    length = qend - qstart
-    for offset in range(length):
-        ref_pos = query_to_ref_lookup(query_to_ref, qstart + offset)
+    query_positions = (
+        range(qend - 1, qstart - 1, -1)
+        if reverse else range(qstart, qend)
+    )
+    for qpos in query_positions:
+        ref_pos = query_to_ref_lookup(query_to_ref, qpos)
         if ref_pos is not None:
             return ref_pos
     return None
+
+
+def _first_ref_in_query_interval(qstart, length, query_to_ref) -> Optional[int]:
+    return _ref_in_query_interval(qstart, length, query_to_ref, reverse=False)
 
 
 def _last_ref_in_query_interval(qstart, length, query_to_ref) -> Optional[int]:
-    qstart, qend = _query_interval_bounds(qstart, length)
-    length = qend - qstart
-    for offset in range(length):
-        ref_pos = query_to_ref_lookup(query_to_ref, qend - 1 - offset)
-        if ref_pos is not None:
-            return ref_pos
-    return None
+    return _ref_in_query_interval(qstart, length, query_to_ref, reverse=True)
 
 
 def query_interval_to_ref_span(qstart, length, query_to_ref) -> Optional[Tuple[int, int]]:
