@@ -470,6 +470,30 @@ def test_stream_daf_encode_reads_accumulates_stats(monkeypatch):
     assert all(call[5:] == ("CT", "ref") for call in calls)
 
 
+def test_close_daf_encode_handles_closes_all_after_close_error():
+    class Handle(_FakeHandle):
+        def __init__(self, error=None):
+            super().__init__()
+            self.error = error
+
+        def close(self):
+            super().close()
+            if self.error is not None:
+                raise self.error
+
+    handles = [
+        Handle(RuntimeError("progress close failed")),
+        Handle(RuntimeError("output close failed")),
+        Handle(),
+        Handle(),
+    ]
+
+    with pytest.raises(RuntimeError, match="progress close failed"):
+        encoder._close_daf_encode_handles(*handles)
+
+    assert all(handle.closed for handle in handles)
+
+
 def test_write_skipped_daf_read_writes_updates_and_returns_increment():
     handle = _FakeHandle()
     handle.written = []

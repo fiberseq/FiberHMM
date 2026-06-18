@@ -638,14 +638,18 @@ def _stream_daf_encode_reads(
 
 
 def _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta) -> None:
-    if pbar is not None:
-        pbar.close()
-    if outbam:
-        outbam.close()
-    if inbam:
-        inbam.close()
-    if ref_fasta:
-        ref_fasta.close()
+    close_error = None
+    for handle in (pbar, outbam, inbam, ref_fasta):
+        if handle is None:
+            continue
+        try:
+            handle.close()
+        except Exception as error:
+            if close_error is None:
+                close_error = error
+
+    if close_error is not None:
+        raise close_error
 
 
 def _maybe_finalize_daf_output(output_bam, io_threads: int, log) -> None:
