@@ -51,8 +51,10 @@ def test_nuc_call_quality_lists_preserve_nq_el_er_order():
         SimpleNamespace(nq=4, el=5, er=6),
     ]
 
-    assert fused_stages._nuc_call_quality_lists(nucs) == (
-        [1, 4], [2, 5], [3, 6],
+    assert fused_stages._nuc_call_quality_lists(nucs) == fused_stages._NucCallQualityLists(
+        nq_values=[1, 4],
+        el_values=[2, 5],
+        er_values=[3, 6],
     )
 
 

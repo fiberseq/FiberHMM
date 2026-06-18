@@ -38,6 +38,13 @@ class _IntervalBounds:
     ends: list[int]
 
 
+@dataclass(frozen=True)
+class _NucCallQualityLists:
+    nq_values: list
+    el_values: list
+    er_values: list
+
+
 def _analyzed_span(apply_result, read_length, kept):
     """Extent (lo, hi) the read was annotated over -- the union of the original
     HMM footprints/MSPs and the final nucleosomes -- used to tile MSPs."""
@@ -86,19 +93,19 @@ def _apply_result_msp_pairs(apply_result: Mapping[str, Any]):
 
 
 def _nuc_call_quality_lists(nuc_calls):
-    return (
-        [k.nq for k in nuc_calls],
-        [k.el for k in nuc_calls],
-        [k.er for k in nuc_calls],
+    return _NucCallQualityLists(
+        nq_values=[k.nq for k in nuc_calls],
+        el_values=[k.el for k in nuc_calls],
+        er_values=[k.er for k in nuc_calls],
     )
 
 
 def _nuc_call_quality_fields(nuc_calls):
-    nq_for_kept, nuc_el_for_kept, nuc_er_for_kept = _nuc_call_quality_lists(nuc_calls)
+    qualities = _nuc_call_quality_lists(nuc_calls)
     return {
-        "nq_for_kept_nucs": nq_for_kept,
-        "nuc_el_for_kept": nuc_el_for_kept,
-        "nuc_er_for_kept": nuc_er_for_kept,
+        "nq_for_kept_nucs": qualities.nq_values,
+        "nuc_el_for_kept": qualities.el_values,
+        "nuc_er_for_kept": qualities.er_values,
     }
 
 
