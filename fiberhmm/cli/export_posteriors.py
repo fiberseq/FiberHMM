@@ -471,7 +471,8 @@ def _fiber_overlap_indices(
     end: int,
     min_overlap: int,
 ) -> np.ndarray:
-    overlaps = (ends > start + min_overlap) & (starts < end - min_overlap)
+    overlap_lengths = np.minimum(ends, end) - np.maximum(starts, start)
+    overlaps = overlap_lengths >= min_overlap
     return np.where(overlaps)[0]
 
 

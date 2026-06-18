@@ -303,6 +303,26 @@ def test_fiber_region_index_helpers_select_expected_records():
         np.array([1, 2, 3]),
     )
     np.testing.assert_array_equal(
+        export_posteriors._fiber_overlap_indices(
+            starts,
+            ends,
+            start=8,
+            end=9,
+            min_overlap=1,
+        ),
+        np.array([0]),
+    )
+    np.testing.assert_array_equal(
+        export_posteriors._fiber_overlap_indices(
+            starts,
+            ends,
+            start=8,
+            end=10,
+            min_overlap=2,
+        ),
+        np.array([], dtype=np.int64),
+    )
+    np.testing.assert_array_equal(
         export_posteriors._fiber_spanning_indices(
             starts,
             ends,
