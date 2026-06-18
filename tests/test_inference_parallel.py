@@ -140,8 +140,14 @@ def test_open_legacy_posterior_writer_enables_posteriors(monkeypatch, capsys):
         raising=False,
     )
 
-    posterior_output = legacy_pipeline._open_legacy_posterior_writer(
-        "out.h5", "daf", 5, 11, "input.bam",
+    posterior_output = legacy_pipeline._open_legacy_posterior_writer_from_request(
+        legacy_pipeline._LegacyPosteriorWriterOpenRequest(
+            output_posteriors="out.h5",
+            mode="daf",
+            context_size=5,
+            edge_trim=11,
+            input_bam="input.bam",
+        )
     )
 
     assert isinstance(posterior_output.writer, FakePosteriorWriter)

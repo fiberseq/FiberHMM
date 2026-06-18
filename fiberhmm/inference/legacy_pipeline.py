@@ -51,6 +51,15 @@ class _LegacyPosteriorWriter:
 
 
 @dataclass(frozen=True)
+class _LegacyPosteriorWriterOpenRequest:
+    output_posteriors: Optional[str]
+    mode: str
+    context_size: int
+    edge_trim: int
+    input_bam: str
+
+
+@dataclass(frozen=True)
 class _LegacyFiberReadResult:
     fiber_read: object | None
     skip_reason: Optional[str]
@@ -314,7 +323,21 @@ def _open_legacy_posterior_writer(
     edge_trim: int,
     input_bam: str,
 ) -> _LegacyPosteriorWriter:
-    if not output_posteriors:
+    return _open_legacy_posterior_writer_from_request(
+        _LegacyPosteriorWriterOpenRequest(
+            output_posteriors=output_posteriors,
+            mode=mode,
+            context_size=context_size,
+            edge_trim=edge_trim,
+            input_bam=input_bam,
+        )
+    )
+
+
+def _open_legacy_posterior_writer_from_request(
+    request: _LegacyPosteriorWriterOpenRequest,
+) -> _LegacyPosteriorWriter:
+    if not request.output_posteriors:
         return _LegacyPosteriorWriter(writer=None, enabled=False)
 
     if not HAS_POSTERIOR_WRITER:
@@ -322,10 +345,14 @@ def _open_legacy_posterior_writer(
         return _LegacyPosteriorWriter(writer=None, enabled=False)
 
     writer = PosteriorWriter(
-        output_posteriors, mode, context_size,
-        edge_trim, input_bam, batch_size=1000
+        request.output_posteriors,
+        request.mode,
+        request.context_size,
+        request.edge_trim,
+        request.input_bam,
+        batch_size=1000,
     )
-    print(f"Posteriors will be written to: {output_posteriors}")
+    print(f"Posteriors will be written to: {request.output_posteriors}")
     return _LegacyPosteriorWriter(writer=writer, enabled=True)
 
 
