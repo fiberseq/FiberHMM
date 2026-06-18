@@ -977,29 +977,31 @@ def _save_training_model_parameter_page(
     all_msp_sizes: list,
 ) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
-    fig.suptitle('FiberHMM Training Results', fontsize=14, fontweight='bold')
+    try:
+        fig.suptitle('FiberHMM Training Results', fontsize=14, fontweight='bold')
 
-    _plot_training_transition_matrix(axes[0, 0], model.transmat_)
-    _plot_training_emission_distribution(axes[0, 1], emission_probs)
-    _plot_training_size_distribution(
-        axes[1, 0],
-        all_footprint_sizes,
-        color='firebrick',
-        x_label='Footprint Size (bp)',
-        title_prefix='Footprint Sizes',
-        include_nucleosome_marker=True,
-    )
-    _plot_training_size_distribution(
-        axes[1, 1],
-        all_msp_sizes,
-        color='forestgreen',
-        x_label='MSP Size (bp)',
-        title_prefix='MSP Sizes',
-    )
+        _plot_training_transition_matrix(axes[0, 0], model.transmat_)
+        _plot_training_emission_distribution(axes[0, 1], emission_probs)
+        _plot_training_size_distribution(
+            axes[1, 0],
+            all_footprint_sizes,
+            color='firebrick',
+            x_label='Footprint Size (bp)',
+            title_prefix='Footprint Sizes',
+            include_nucleosome_marker=True,
+        )
+        _plot_training_size_distribution(
+            axes[1, 1],
+            all_msp_sizes,
+            color='forestgreen',
+            x_label='MSP Size (bp)',
+            title_prefix='MSP Sizes',
+        )
 
-    plt.tight_layout()
-    pdf.savefig(fig)
-    plt.close(fig)
+        plt.tight_layout()
+        pdf.savefig(fig)
+    finally:
+        plt.close(fig)
 
 
 def _save_training_example_png(
@@ -1022,42 +1024,43 @@ def _save_training_example_png(
         figsize=(14, 6),
         gridspec_kw={'height_ratios': [1, 1.5, 1]},
     )
-
-    ax = axes[0]
-    if len(m6a_positions) > 0:
-        ax.eventplot(
-            [m6a_positions],
-            colors='purple',
-            lineoffsets=0.5,
-            linelengths=0.8,
-            linewidths=0.3,
-        )
-    ax.set_xlim(0, seq_len)
-    ax.set_ylim(0, 1)
-    ax.set_ylabel('m6A')
-    ax.set_yticks([])
-    ax.set_xticklabels([])
-    ax.set_title(f'Example: {read.read_id[:40]}... ({seq_len:,}bp)', fontsize=10)
-
-    ax = axes[1]
-    _add_training_state_blocks(
-        ax, states, seq_len, rectangle_cls, patch_collection_cls,
-    )
-    ax.set_ylabel('State')
-    ax.set_yticks([])
-    ax.set_xticklabels([])
-
-    ax = axes[2]
-    _plot_training_probability_area(ax, footprint_prob)
-    ax.set_xlim(0, seq_len)
-    ax.set_ylim(0, 1)
-    ax.set_ylabel('P(FP)')
-    ax.set_xlabel('Position (bp)')
-
-    plt.tight_layout()
     png_path = os.path.join(plots_dir, 'example_read.png')
-    plt.savefig(png_path, dpi=150)
-    plt.close(fig)
+    try:
+        ax = axes[0]
+        if len(m6a_positions) > 0:
+            ax.eventplot(
+                [m6a_positions],
+                colors='purple',
+                lineoffsets=0.5,
+                linelengths=0.8,
+                linewidths=0.3,
+            )
+        ax.set_xlim(0, seq_len)
+        ax.set_ylim(0, 1)
+        ax.set_ylabel('m6A')
+        ax.set_yticks([])
+        ax.set_xticklabels([])
+        ax.set_title(f'Example: {read.read_id[:40]}... ({seq_len:,}bp)', fontsize=10)
+
+        ax = axes[1]
+        _add_training_state_blocks(
+            ax, states, seq_len, rectangle_cls, patch_collection_cls,
+        )
+        ax.set_ylabel('State')
+        ax.set_yticks([])
+        ax.set_xticklabels([])
+
+        ax = axes[2]
+        _plot_training_probability_area(ax, footprint_prob)
+        ax.set_xlim(0, seq_len)
+        ax.set_ylim(0, 1)
+        ax.set_ylabel('P(FP)')
+        ax.set_xlabel('Position (bp)')
+
+        plt.tight_layout()
+        plt.savefig(png_path, dpi=150)
+    finally:
+        plt.close(fig)
     return png_path
 
 
@@ -1227,38 +1230,40 @@ def _save_training_example_pdf_page(
     fig, gs = _training_example_pdf_layout(
         plt, idx, read, seq_len, m6a_positions,
     )
-    overview_axes = _add_training_example_overview_pdf_panels(
-        fig,
-        gs,
-        seq_len,
-        m6a_positions,
-        footprint_prob,
-        states,
-        rectangle_cls,
-        patch_collection_cls,
-        patch_cls,
-    )
-
-    zoom_windows = _training_zoom_window_bounds(
-        seq_len, window_size=1000, n_windows=3, seed=idx,
-    )
-
-    for w_idx, window in enumerate(zoom_windows):
-        _add_training_example_zoom_pdf_panel(
+    try:
+        overview_axes = _add_training_example_overview_pdf_panels(
             fig,
             gs,
-            w_idx,
-            window,
+            seq_len,
             m6a_positions,
-            states,
             footprint_prob,
-            overview_axes,
+            states,
             rectangle_cls,
             patch_collection_cls,
+            patch_cls,
         )
 
-    pdf.savefig(fig)
-    plt.close(fig)
+        zoom_windows = _training_zoom_window_bounds(
+            seq_len, window_size=1000, n_windows=3, seed=idx,
+        )
+
+        for w_idx, window in enumerate(zoom_windows):
+            _add_training_example_zoom_pdf_panel(
+                fig,
+                gs,
+                w_idx,
+                window,
+                m6a_positions,
+                states,
+                footprint_prob,
+                overview_axes,
+                rectangle_cls,
+                patch_collection_cls,
+            )
+
+        pdf.savefig(fig)
+    finally:
+        plt.close(fig)
 
 
 def _save_training_stats_pdf_pages(

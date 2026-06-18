@@ -755,6 +755,54 @@ def test_save_training_model_parameter_page_orchestrates_plots(monkeypatch):
     assert plt.closed == [plt.fig]
 
 
+def test_save_training_model_parameter_page_closes_on_pdf_failure(monkeypatch):
+    axes = np.array([
+        [object(), object()],
+        [object(), object()],
+    ], dtype=object)
+
+    class FakeFigure:
+        def suptitle(self, *args, **kwargs):
+            pass
+
+    class FakePlt:
+        def __init__(self):
+            self.fig = FakeFigure()
+            self.closed = []
+
+        def subplots(self, *args, **kwargs):
+            return self.fig, axes
+
+        def tight_layout(self):
+            pass
+
+        def close(self, fig):
+            self.closed.append(fig)
+
+    class FailingPdf:
+        def savefig(self, fig):
+            raise RuntimeError("pdf save failed")
+
+    monkeypatch.setattr(train, "_plot_training_transition_matrix", lambda *args: None)
+    monkeypatch.setattr(train, "_plot_training_emission_distribution", lambda *args: None)
+    monkeypatch.setattr(train, "_plot_training_size_distribution", lambda *args, **kwargs: None)
+
+    plt = FakePlt()
+    model = SimpleNamespace(transmat_=np.array([[0.8, 0.2], [0.1, 0.9]]))
+
+    with pytest.raises(RuntimeError, match="pdf save failed"):
+        train._save_training_model_parameter_page(
+            plt,
+            FailingPdf(),
+            model,
+            np.ones((2, 4)),
+            [10],
+            [20],
+        )
+
+    assert plt.closed == [plt.fig]
+
+
 def test_save_training_example_png_orchestrates_panels(monkeypatch, tmp_path):
     class FakeAxis:
         def __init__(self):
@@ -928,6 +976,54 @@ def test_save_training_example_pdf_page_writes_pdf(tmp_path):
 
     plt.close("all")
     assert pdf_path.stat().st_size > 0
+
+
+def test_save_training_example_pdf_page_closes_on_save_failure(monkeypatch):
+    class FakePlt:
+        def __init__(self):
+            self.closed = []
+
+        def close(self, fig):
+            self.closed.append(fig)
+
+    class FailingPdf:
+        def savefig(self, fig):
+            raise RuntimeError("example pdf save failed")
+
+    fig = object()
+    monkeypatch.setattr(
+        train,
+        "_training_example_plot_data",
+        lambda *args: (10, [], np.zeros(10)),
+    )
+    monkeypatch.setattr(
+        train,
+        "_training_example_pdf_layout",
+        lambda *args: (fig, "grid"),
+    )
+    monkeypatch.setattr(
+        train,
+        "_add_training_example_overview_pdf_panels",
+        lambda *args: ("overview",),
+    )
+    monkeypatch.setattr(train, "_training_zoom_window_bounds", lambda *args, **kwargs: [])
+
+    plt = FakePlt()
+    with pytest.raises(RuntimeError, match="example pdf save failed"):
+        train._save_training_example_pdf_page(
+            plt,
+            FailingPdf(),
+            model=object(),
+            read=SimpleNamespace(read_id="read-1"),
+            states=np.zeros(10, dtype=int),
+            encoded=np.arange(10),
+            idx=0,
+            rectangle_cls="Rectangle",
+            patch_collection_cls="PatchCollection",
+            patch_cls="Patch",
+        )
+
+    assert plt.closed == [fig]
 
 
 def test_save_training_stats_pdf_pages_orchestrates_model_and_examples(monkeypatch):
