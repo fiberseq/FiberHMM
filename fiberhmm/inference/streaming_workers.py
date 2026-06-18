@@ -89,6 +89,20 @@ class _FusedConfiguredApplyStageRequest:
     config: _FusedPayloadWorkerConfig
 
 
+@dataclass(frozen=True)
+class _WorkerFusedRecallResultRequest:
+    fiber_read: object
+    apply_result: object
+    llr_hit: object
+    llr_miss: object
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+    with_scores: bool
+    nuc_min_size: int
+    msp_min_size: int
+
+
 def _payload_worker_config(
     edge_trim: int,
     circular: bool,
@@ -323,6 +337,22 @@ def _run_fused_configured_apply_stage(
     )
 
 
+def _build_worker_fused_recall_result_from_request(
+    request: _WorkerFusedRecallResultRequest,
+):
+    return build_fused_recall_result(
+        request.fiber_read,
+        request.apply_result,
+        request.llr_hit,
+        request.llr_miss,
+        request.min_llr,
+        request.min_opps,
+        request.unify_threshold,
+        request.with_scores,
+        **_worker_recall_options(request.nuc_min_size, request.msp_min_size),
+    )
+
+
 def _build_worker_fused_recall_result(
     fiber_read,
     apply_result,
@@ -335,16 +365,19 @@ def _build_worker_fused_recall_result(
     nuc_min_size: int,
     msp_min_size: int,
 ):
-    return build_fused_recall_result(
-        fiber_read,
-        apply_result,
-        llr_hit,
-        llr_miss,
-        min_llr,
-        min_opps,
-        unify_threshold,
-        with_scores,
-        **_worker_recall_options(nuc_min_size, msp_min_size),
+    return _build_worker_fused_recall_result_from_request(
+        _WorkerFusedRecallResultRequest(
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
+            with_scores=with_scores,
+            nuc_min_size=nuc_min_size,
+            msp_min_size=msp_min_size,
+        )
     )
 
 

@@ -1816,17 +1816,19 @@ def test_build_worker_fused_recall_result_forwards_options(monkeypatch):
         "phase_nrl": 185,
     })
 
-    assert streaming_workers._build_worker_fused_recall_result(
-        fiber_read,
-        apply_result,
-        hit,
-        miss,
-        min_llr=4.0,
-        min_opps=3,
-        unify_threshold=90,
-        with_scores=True,
-        nuc_min_size=85,
-        msp_min_size=20,
+    assert streaming_workers._build_worker_fused_recall_result_from_request(
+        streaming_workers._WorkerFusedRecallResultRequest(
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit=hit,
+            llr_miss=miss,
+            min_llr=4.0,
+            min_opps=3,
+            unify_threshold=90,
+            with_scores=True,
+            nuc_min_size=85,
+            msp_min_size=20,
+        )
     ) == {"recall": True}
     assert seen["args"] == (
         fiber_read,
@@ -1846,6 +1848,22 @@ def test_build_worker_fused_recall_result_forwards_options(monkeypatch):
         "msp_min_size": 20,
         "phase_nrl": 185,
     }
+    seen.clear()
+
+    assert streaming_workers._build_worker_fused_recall_result(
+        fiber_read,
+        apply_result,
+        hit,
+        miss,
+        min_llr=4.0,
+        min_opps=3,
+        unify_threshold=90,
+        with_scores=True,
+        nuc_min_size=85,
+        msp_min_size=20,
+    ) == {"recall": True}
+    assert seen["args"][0] is fiber_read
+    assert seen["args"][1] is apply_result
 
 
 def test_build_fused_configured_recall_result_forwards_config(monkeypatch):
