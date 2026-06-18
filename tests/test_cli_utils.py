@@ -15,6 +15,7 @@ from fiberhmm.cli.utils import (
     _dispatch_utils_command,
     _estimate_emission_probs,
     _estimate_transfer_context_size,
+    _exit_if_missing_or_non_file,
     _load_raw_model_by_suffix,
     _load_transfer_accessibility_inputs,
     _maybe_generate_transfer_stats,
@@ -161,6 +162,38 @@ def test_converted_model_json_payload_coerces_arrays_and_metadata():
         "context_size": 3,
         "mode": "daf",
     }
+
+
+def test_exit_if_missing_or_non_file_reports_clear_errors(tmp_path, capsys):
+    missing = tmp_path / "missing.json"
+    directory = tmp_path / "model.json"
+    model_file = tmp_path / "real.json"
+
+    directory.mkdir()
+    model_file.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(SystemExit):
+        _exit_if_missing_or_non_file(
+            missing,
+            missing_prefix="Input file not found",
+            non_file_prefix="Input path is not a file",
+        )
+    assert "Input file not found" in capsys.readouterr().err
+
+    with pytest.raises(SystemExit):
+        _exit_if_missing_or_non_file(
+            directory,
+            missing_prefix="File not found",
+            non_file_prefix="Path is not a file",
+        )
+    assert "Path is not a file" in capsys.readouterr().err
+
+    _exit_if_missing_or_non_file(
+        model_file,
+        missing_prefix="File not found",
+        non_file_prefix="Path is not a file",
+    )
+    assert capsys.readouterr().err == ""
 
 
 def test_build_utils_parser_parses_subcommands():

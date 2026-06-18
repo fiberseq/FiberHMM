@@ -26,6 +26,7 @@ from tqdm import tqdm
 from fiberhmm.core.model_io import load_model_with_metadata, save_model
 from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
+from fiberhmm.io.path_status import path_is_regular_file
 from fiberhmm.probabilities.output_paths import (
     combined_probability_table_path as _combined_probability_table_path,
 )
@@ -137,14 +138,31 @@ def _converted_model_json_payload(
     }
 
 
+def _exit_if_missing_or_non_file(
+    path,
+    *,
+    missing_prefix: str,
+    non_file_prefix: str,
+) -> None:
+    path = Path(path)
+    if not path.exists():
+        print(f"Error: {missing_prefix}: {path}", file=sys.stderr)
+        sys.exit(1)
+    if not path_is_regular_file(path):
+        print(f"Error: {non_file_prefix}: {path}", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_convert(args):
     """Convert pickle/NPZ model to JSON."""
     input_path = Path(args.input)
     output_path = Path(args.output)
 
-    if not input_path.exists():
-        print(f"Error: Input file not found: {input_path}", file=sys.stderr)
-        sys.exit(1)
+    _exit_if_missing_or_non_file(
+        input_path,
+        missing_prefix="Input file not found",
+        non_file_prefix="Input path is not a file",
+    )
 
     print(f"Loading model from {input_path}...")
 
@@ -191,9 +209,11 @@ def cmd_inspect(args):
     """Inspect a model file: print metadata, parameters, emission summary."""
     filepath = args.model
 
-    if not os.path.exists(filepath):
-        print(f"Error: File not found: {filepath}", file=sys.stderr)
-        sys.exit(1)
+    _exit_if_missing_or_non_file(
+        filepath,
+        missing_prefix="File not found",
+        non_file_prefix="Path is not a file",
+    )
 
     model, context_size, mode = load_model_with_metadata(filepath, normalize=False)
 
@@ -1079,9 +1099,11 @@ def cmd_adjust(args):
     """Adjust emission probabilities in a model."""
     filepath = args.model
 
-    if not os.path.exists(filepath):
-        print(f"Error: File not found: {filepath}", file=sys.stderr)
-        sys.exit(1)
+    _exit_if_missing_or_non_file(
+        filepath,
+        missing_prefix="File not found",
+        non_file_prefix="Path is not a file",
+    )
 
     model, context_size, mode = load_model_with_metadata(filepath, normalize=False)
 
