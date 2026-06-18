@@ -578,7 +578,10 @@ class TestMMTagParsing:
         assert padded_spec.n_mods == 2
         assert _mm_target_base(spec.base_mod) == "A"
         assert _mm_target_base("") is None
-        assert _mm_base_and_mod_code(spec.base_mod) == ("A", "a")
+        base_mod = _mm_base_and_mod_code(spec.base_mod)
+        assert base_mod.base == "A"
+        assert base_mod.mod_code == "a"
+        assert base_mod.as_tuple() == ("A", "a")
         assert _mm_base_and_mod_code("A") is None
         assert _mm_mod_spec_parts("A+a.") is None
         assert _mm_mod_spec_parts(" ,0") is None

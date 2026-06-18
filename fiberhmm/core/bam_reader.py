@@ -282,10 +282,19 @@ class _MmMlSlice:
 
 @dataclass(frozen=True)
 class _MmModTypePositions:
-    base_and_mod: Optional[Tuple[str, str]]
+    base_and_mod: Optional["_MmBaseModCode"]
     positions: np.ndarray
     qualities: np.ndarray
     next_ml_idx: int
+
+
+@dataclass(frozen=True)
+class _MmBaseModCode:
+    base: str
+    mod_code: str
+
+    def as_tuple(self) -> Tuple[str, str]:
+        return self.base, self.mod_code
 
 
 @dataclass(frozen=True)
@@ -371,10 +380,10 @@ def _mm_target_base(base_mod: str) -> Optional[str]:
     return base_mod[0].upper()
 
 
-def _mm_base_and_mod_code(base_mod: str) -> Optional[Tuple[str, str]]:
+def _mm_base_and_mod_code(base_mod: str) -> Optional[_MmBaseModCode]:
     if len(base_mod) < 3:
         return None
-    return base_mod[0].upper(), base_mod[2]
+    return _MmBaseModCode(base=base_mod[0].upper(), mod_code=base_mod[2])
 
 
 def _cached_base_positions(cache: Dict[str, np.ndarray], target_base: str,
@@ -534,9 +543,8 @@ def _mm_mod_type_positions_for_spec(
             ml_idx + n_mods,
         )
 
-    target_base, _mod_code = base_and_mod
     base_positions = _cached_base_positions(
-        base_positions_cache, target_base, seq_bytes,
+        base_positions_cache, base_and_mod.base, seq_bytes,
     )
     ml_slice = _mm_ml_slice_for_spec(ml_arr_all, ml_idx, n_mods)
     valid_positions = _mm_valid_positions_and_qualities(
@@ -623,7 +631,7 @@ def parse_mm_ml_per_mod_type(
         # Multiple mod specs for the same (base, mod_code) are concatenated.
         _append_mm_mod_result(
             result,
-            mod_positions.base_and_mod,
+            mod_positions.base_and_mod.as_tuple(),
             mod_positions.positions,
             mod_positions.qualities,
         )
