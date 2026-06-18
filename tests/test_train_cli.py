@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -36,6 +37,7 @@ def test_probability_counter_path_detection_is_case_insensitive():
     assert train._is_probability_counter_path("sample.probs.pkl")
     assert train._is_probability_counter_path("sample.PROBS.PKL")
     assert train._is_probability_counter_path("sample.PKL")
+    assert train._is_probability_counter_path(Path("sample.probs.pkl"))
     assert not train._is_probability_counter_path("sample.tsv")
 
 

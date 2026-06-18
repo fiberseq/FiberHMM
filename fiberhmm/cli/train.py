@@ -128,6 +128,7 @@ def _load_legacy_probability_table(filepath: str) -> pd.DataFrame:
 
 
 def _is_probability_counter_path(filepath: str) -> bool:
+    filepath = os.fspath(filepath)
     filepath_lower = filepath.lower()
     return filepath_lower.endswith('.probs.pkl') or filepath_lower.endswith('.pkl')
 
