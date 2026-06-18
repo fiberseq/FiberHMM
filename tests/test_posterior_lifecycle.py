@@ -253,6 +253,43 @@ def test_hdf5_fiber_array_dataset_helper_writes_expected_groups(tmp_path):
             np.testing.assert_array_equal(grp["footprint_sizes"][index][:], [20])
 
 
+def test_fiber_metadata_dataset_request_writes_final_arrays(tmp_path):
+    with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
+        grp = h5.create_group("chr1")
+        hdf5_backend.write_fiber_metadata_datasets_from_request(
+            hdf5_backend._FiberMetadataDatasetWriteRequest(
+                group=grp,
+                fiber_ids=["read1", "read2"],
+                starts=[10, 20],
+                ends=[15, 25],
+                strands=["+", "-"],
+            )
+        )
+
+        assert grp.attrs["n_fibers"] == 2
+        assert [_h5_text(value) for value in grp["fiber_ids"][:]] == [
+            "read1",
+            "read2",
+        ]
+        np.testing.assert_array_equal(grp["fiber_starts"][:], [10, 20])
+        np.testing.assert_array_equal(grp["fiber_ends"][:], [15, 25])
+        assert [_h5_text(value) for value in grp["strands"][:]] == ["+", "-"]
+
+        empty_grp = h5.create_group("empty")
+        hdf5_backend.write_fiber_metadata_datasets_from_request(
+            hdf5_backend._FiberMetadataDatasetWriteRequest(
+                group=empty_grp,
+                fiber_ids=[],
+                starts=[],
+                ends=[],
+                strands=[],
+            )
+        )
+
+        assert empty_grp.attrs["n_fibers"] == 0
+        assert list(empty_grp.keys()) == []
+
+
 def test_hdf5_chrom_fiber_metadata_helper_writes_final_arrays(tmp_path):
     meta = hdf5_backend._ChromMetadata(
         ids=["read1", "read2"],

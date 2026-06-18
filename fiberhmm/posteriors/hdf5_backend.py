@@ -54,6 +54,16 @@ class _Hdf5FileMetadataRequest:
     model_path: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class _FiberMetadataDatasetWriteRequest:
+    group: object
+    fiber_ids: object
+    starts: object
+    ends: object
+    strands: object
+    n_fibers: Optional[int] = None
+
+
 def write_fiber_metadata_datasets(
     group,
     fiber_ids,
@@ -62,17 +72,36 @@ def write_fiber_metadata_datasets(
     strands,
     n_fibers: Optional[int] = None,
 ) -> None:
-    n = len(fiber_ids) if n_fibers is None else int(n_fibers)
+    write_fiber_metadata_datasets_from_request(
+        _FiberMetadataDatasetWriteRequest(
+            group=group,
+            fiber_ids=fiber_ids,
+            starts=starts,
+            ends=ends,
+            strands=strands,
+            n_fibers=n_fibers,
+        )
+    )
+
+
+def write_fiber_metadata_datasets_from_request(
+    request: _FiberMetadataDatasetWriteRequest,
+) -> None:
+    n = (
+        len(request.fiber_ids)
+        if request.n_fibers is None
+        else int(request.n_fibers)
+    )
     if n == 0:
-        group.attrs['n_fibers'] = 0
+        request.group.attrs['n_fibers'] = 0
         return
 
     dt = h5py.special_dtype(vlen=str)
-    group.create_dataset('fiber_ids', data=fiber_ids, dtype=dt)
-    _create_gzip_dataset(group, 'fiber_starts', _int32_array(starts))
-    _create_gzip_dataset(group, 'fiber_ends', _int32_array(ends))
-    group.create_dataset('strands', data=strands, dtype=dt)
-    group.attrs['n_fibers'] = n
+    request.group.create_dataset('fiber_ids', data=request.fiber_ids, dtype=dt)
+    _create_gzip_dataset(request.group, 'fiber_starts', _int32_array(request.starts))
+    _create_gzip_dataset(request.group, 'fiber_ends', _int32_array(request.ends))
+    request.group.create_dataset('strands', data=request.strands, dtype=dt)
+    request.group.attrs['n_fibers'] = n
 
 
 def _hdf5_file_metadata_attrs(
