@@ -842,6 +842,26 @@ def _kept_legacy_nuc_interval(
     return start, length
 
 
+def _kept_legacy_nuc_intervals(
+    starts,
+    lengths,
+    tf_calls: Sequence[TFCall],
+    unify_threshold: int,
+) -> List[Tuple[int, int]]:
+    kept_nucs: List[Tuple[int, int]] = []
+    tf_intervals = [(call.start, call.start + call.length) for call in tf_calls]
+    for start, length in zip(starts, lengths):
+        kept = _kept_legacy_nuc_interval(
+            start,
+            length,
+            tf_intervals,
+            unify_threshold,
+        )
+        if kept is not None:
+            kept_nucs.append(kept)
+    return kept_nucs
+
+
 def recall_read(
     read,
     llr_hit: np.ndarray,
@@ -939,17 +959,12 @@ def recall_read_from_request(
         seq_tags.msp_starts,
         seq_tags.msp_lengths,
     )
-    kept_nucs: List[Tuple[int, int]] = []
-    tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
-    for s, length in zip(seq_tags.nuc_starts, seq_tags.nuc_lengths):
-        kept = _kept_legacy_nuc_interval(
-            s,
-            length,
-            tf_intervals,
-            request.unify_threshold,
-        )
-        if kept is not None:
-            kept_nucs.append(kept)
+    kept_nucs = _kept_legacy_nuc_intervals(
+        seq_tags.nuc_starts,
+        seq_tags.nuc_lengths,
+        tf_calls,
+        request.unify_threshold,
+    )
 
     return tf_calls, kept_nucs, msps
 

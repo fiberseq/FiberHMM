@@ -285,6 +285,28 @@ def test_kept_legacy_nuc_interval_applies_tf_overlap_policy():
     )
 
 
+def test_kept_legacy_nuc_intervals_filters_against_tf_calls():
+    tf_calls = [
+        TFCall(
+            start=20,
+            length=10,
+            llr=5.0,
+            n_opps=3,
+            left_ambiguity=0,
+            right_ambiguity=1,
+        )
+    ]
+
+    kept = tf_recaller._kept_legacy_nuc_intervals(
+        starts=[10, 30, 100, 200],
+        lengths=[80, 15, 90, 0],
+        tf_calls=tf_calls,
+        unify_threshold=90,
+    )
+
+    assert kept == [(30, 15), (100, 90)]
+
+
 def test_nuc_aq_has_edge_qualities_detects_schema_mode():
     assert not _nuc_aq_has_edge_qualities([], [])
     assert not _nuc_aq_has_edge_qualities(None, None)
