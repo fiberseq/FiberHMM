@@ -121,6 +121,15 @@ class _BamIndexRequest:
     bam_size_gb: float
 
 
+@dataclass(frozen=True)
+class _RegionBamConcatRequest:
+    input_bam: str
+    output_bam: str
+    bam_files: List[str]
+    temp_dir: str
+    verbose: bool
+
+
 def _bam_sort_request(
     output_bam: str,
     sorted_bam: str,
@@ -744,35 +753,56 @@ def _concatenate_region_bams(
     verbose: bool = True,
 ) -> None:
     """Concatenate sorted region BAMs with fast external tools and fallbacks."""
+    _concatenate_region_bams_from_request(
+        _RegionBamConcatRequest(
+            input_bam=input_bam,
+            output_bam=output_bam,
+            bam_files=bam_files,
+            temp_dir=temp_dir,
+            verbose=verbose,
+        )
+    )
+
+
+def _concatenate_region_bams_from_request(
+    request: _RegionBamConcatRequest,
+) -> None:
     import time
 
-    total_temp_size_gb = _total_file_size_gb(bam_files)
+    total_temp_size_gb = _total_file_size_gb(request.bam_files)
 
-    if verbose:
-        print(f"Concatenating {len(bam_files)} region BAMs ({total_temp_size_gb:.1f}GB total)...")
+    if request.verbose:
+        print(
+            f"Concatenating {len(request.bam_files)} region BAMs "
+            f"({total_temp_size_gb:.1f}GB total)..."
+        )
         sys.stdout.flush()
 
     concat_start = time.time()
 
-    if _concatenate_trivial_region_bams(input_bam, output_bam, bam_files):
+    if _concatenate_trivial_region_bams(
+        request.input_bam,
+        request.output_bam,
+        request.bam_files,
+    ):
         return
 
-    bam_list_file = os.path.join(temp_dir, 'bam_list.txt')
+    bam_list_file = os.path.join(request.temp_dir, 'bam_list.txt')
     if _try_samtools_cat_region_bams(
-        bam_files,
-        output_bam,
+        request.bam_files,
+        request.output_bam,
         bam_list_file,
         concat_start,
-        verbose,
+        request.verbose,
     ):
         return
 
     _concatenate_region_bams_with_fallbacks(
-        bam_files,
-        output_bam,
+        request.bam_files,
+        request.output_bam,
         bam_list_file,
         concat_start,
-        verbose,
+        request.verbose,
     )
 
 
