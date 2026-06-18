@@ -536,6 +536,30 @@ def _process_probability_sample_group(
     return counters, reads, scanned, stats
 
 
+def _print_probability_results_summary(
+    accessible_reads: int,
+    accessible_scanned: int,
+    inaccessible_reads: int,
+    inaccessible_scanned: int,
+) -> None:
+    print("\n" + "=" * 60)
+    print("Results Summary")
+    print("=" * 60)
+
+    print("\nAccessible (naked DNA):")
+    print(
+        f"  Reads processed: {accessible_reads:,} "
+        f"(scanned {accessible_scanned:,}, "
+        f"{100 * accessible_reads / max(1, accessible_scanned):.1f}% pass rate)"
+    )
+    print("Inaccessible (native):")
+    print(
+        f"  Reads processed: {inaccessible_reads:,} "
+        f"(scanned {inaccessible_scanned:,}, "
+        f"{100 * inaccessible_reads / max(1, inaccessible_scanned):.1f}% pass rate)"
+    )
+
+
 def main():
     args = parse_args()
 
@@ -592,17 +616,12 @@ def main():
         )
     )
 
-    # Report and save results
-    print("\n" + "=" * 60)
-    print("Results Summary")
-    print("=" * 60)
-
-    print("\nAccessible (naked DNA):")
-    print(f"  Reads processed: {accessible_reads:,} (scanned {accessible_scanned:,}, "
-          f"{100*accessible_reads/max(1,accessible_scanned):.1f}% pass rate)")
-    print("Inaccessible (native):")
-    print(f"  Reads processed: {inaccessible_reads:,} (scanned {inaccessible_scanned:,}, "
-          f"{100*inaccessible_reads/max(1,inaccessible_scanned):.1f}% pass rate)")
+    _print_probability_results_summary(
+        accessible_reads,
+        accessible_scanned,
+        inaccessible_reads,
+        inaccessible_scanned,
+    )
 
     for base in target_bases:
         acc = accessible_counters[base]

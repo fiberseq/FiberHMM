@@ -23,6 +23,7 @@ from fiberhmm.cli.generate_probs import (
     _print_daf_diagnostics,
     _probability_read_tags_or_skip,
     _probability_counter_summary,
+    _print_probability_results_summary,
     _progress_postfix,
     _process_probability_sample_group,
     _process_probability_read,
@@ -238,6 +239,22 @@ def test_process_probability_sample_group_prints_and_delegates(monkeypatch, caps
     output = capsys.readouterr().out
     assert "Processing ACCESSIBLE samples (naked DNA)" in output
     assert "This estimates P(methylation | accessible)" in output
+
+
+def test_print_probability_results_summary_formats_pass_rates(capsys):
+    _print_probability_results_summary(
+        accessible_reads=50,
+        accessible_scanned=100,
+        inaccessible_reads=5,
+        inaccessible_scanned=0,
+    )
+
+    output = capsys.readouterr().out
+    assert "Results Summary" in output
+    assert "Accessible (naked DNA):" in output
+    assert "Reads processed: 50 (scanned 100, 50.0% pass rate)" in output
+    assert "Inaccessible (native):" in output
+    assert "Reads processed: 5 (scanned 0, 500.0% pass rate)" in output
 
 
 def test_record_mm_tag_types_counts_non_empty_specs():
