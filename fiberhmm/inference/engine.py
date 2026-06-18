@@ -121,6 +121,17 @@ class _PredictionOutputs:
 
 
 @dataclass(frozen=True)
+class _FootprintsAndMspsRequest:
+    model: FiberHMM
+    encoded_read: np.ndarray
+    msp_min_size: int = 147
+    with_scores: bool = False
+    return_posteriors: bool = False
+    nuc_min_size: int = 85
+    circular_read_length: Optional[int] = None
+
+
+@dataclass(frozen=True)
 class _EncodingInputs:
     sequence: str
     mod_positions: object
@@ -638,30 +649,50 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
             'states': raw HMM state array
             'posteriors': P(footprint) per position (if return_posteriors)
     """
+    return predict_footprints_and_msps_from_request(
+        _FootprintsAndMspsRequest(
+            model=model,
+            encoded_read=encoded_read,
+            msp_min_size=msp_min_size,
+            with_scores=with_scores,
+            return_posteriors=return_posteriors,
+            nuc_min_size=nuc_min_size,
+            circular_read_length=circular_read_length,
+        ),
+    )
+
+
+def predict_footprints_and_msps_from_request(
+    request: _FootprintsAndMspsRequest,
+) -> dict:
+    """Run named HMM footprint/MSP prediction options."""
     result = _empty_interval_result(include_predictions=True)
 
-    if len(encoded_read) == 0:
+    if len(request.encoded_read) == 0:
         return result
 
     # Predict states (0 = footprint, 1 = accessible)
     # Use predict_with_posteriors if we need posteriors or scores (shares computation)
     prediction = _predict_state_outputs(
-        model, encoded_read, with_scores, return_posteriors,
+        request.model,
+        request.encoded_read,
+        request.with_scores,
+        request.return_posteriors,
     )
 
-    if return_posteriors:
+    if request.return_posteriors:
         # P(footprint) = posteriors_full[:, 0]
         result['posteriors'] = _footprint_posterior_track(prediction.posteriors)
 
-    if circular_read_length is not None:
+    if request.circular_read_length is not None:
         result.update(
             _circular_prediction_result(
                 prediction,
-                circular_read_length,
-                msp_min_size,
-                with_scores,
-                return_posteriors,
-                nuc_min_size=nuc_min_size,
+                request.circular_read_length,
+                request.msp_min_size,
+                request.with_scores,
+                request.return_posteriors,
+                nuc_min_size=request.nuc_min_size,
             )
         )
         return result
@@ -669,9 +700,9 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
     result.update(
         _linear_prediction_result(
             prediction,
-            msp_min_size,
-            with_scores,
-            nuc_min_size=nuc_min_size,
+            request.msp_min_size,
+            request.with_scores,
+            nuc_min_size=request.nuc_min_size,
         )
     )
 

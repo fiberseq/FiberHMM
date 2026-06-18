@@ -359,6 +359,48 @@ class TestPredictFootprintsAndMsps:
         assert len(result['footprint_starts']) == 0
         assert len(result['msp_starts']) == 0
 
+    def test_request_path_matches_public_adapter(self, simple_model):
+        obs = np.array([0, 0, 0, 3, 3, 3, 3, 3, 0, 0, 0], dtype=np.int32)
+
+        request = engine._FootprintsAndMspsRequest(
+            model=simple_model,
+            encoded_read=obs,
+            msp_min_size=10,
+            with_scores=True,
+            return_posteriors=True,
+            nuc_min_size=1,
+        )
+        from_request = engine.predict_footprints_and_msps_from_request(request)
+        from_adapter = predict_footprints_and_msps(
+            simple_model,
+            obs,
+            msp_min_size=10,
+            with_scores=True,
+            return_posteriors=True,
+            nuc_min_size=1,
+        )
+
+        def assert_optional_array_equal(left, right):
+            if left is None or right is None:
+                assert left is right
+                return
+            np.testing.assert_allclose(left, right)
+
+        for key in (
+            "footprint_starts",
+            "footprint_sizes",
+            "msp_starts",
+            "msp_sizes",
+            "states",
+        ):
+            np.testing.assert_array_equal(from_request[key], from_adapter[key])
+        for key in (
+            "footprint_scores",
+            "msp_scores",
+            "posteriors",
+        ):
+            assert_optional_array_equal(from_request[key], from_adapter[key])
+
     def test_predict_state_outputs_uses_plain_predict_when_possible(self):
         class FakeModel:
             def predict(self, encoded):
