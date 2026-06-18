@@ -140,6 +140,58 @@ def _add_positive_count_summary(summary: dict, prefix: str, values) -> None:
     summary[f'{prefix}_mean'] = np.mean(positive_values)
 
 
+def _add_footprint_summary_distributions(summary: dict, stats) -> None:
+    _add_numeric_summary(
+        summary,
+        'read_length',
+        stats.read_lengths,
+        include_std=True,
+    )
+
+    _add_numeric_summary(
+        summary,
+        'footprint_size',
+        stats.footprint_sizes,
+        total_key='total_footprints',
+        include_std=True,
+        include_minmax=True,
+        include_iqr=True,
+    )
+
+    if stats.footprints_per_read:
+        _add_positive_count_summary(
+            summary, 'footprints_per_read', stats.footprints_per_read,
+        )
+
+    _add_numeric_summary(
+        summary,
+        'gap_size',
+        stats.gap_sizes,
+        total_key='total_gaps',
+        include_std=True,
+    )
+
+    _add_numeric_summary(
+        summary,
+        'msp_size',
+        stats.msp_sizes,
+        total_key='total_msps',
+    )
+
+    _add_numeric_summary(
+        summary,
+        'footprint_coverage',
+        stats.footprint_coverage,
+    )
+
+    _add_numeric_summary(
+        summary,
+        'footprint_score',
+        stats.footprint_scores,
+        include_std=True,
+    )
+
+
 def _write_read_stats_section(handle, summary: dict) -> None:
     handle.write("Read Statistics\n")
     handle.write("-" * 30 + "\n")
@@ -625,56 +677,7 @@ class FootprintStats:
             self.reads_with_footprints,
         )
 
-        _add_numeric_summary(
-            summary,
-            'read_length',
-            self.read_lengths,
-            include_std=True,
-        )
-
-        _add_numeric_summary(
-            summary,
-            'footprint_size',
-            self.footprint_sizes,
-            total_key='total_footprints',
-            include_std=True,
-            include_minmax=True,
-            include_iqr=True,
-        )
-
-        if self.footprints_per_read:
-            _add_positive_count_summary(
-                summary, 'footprints_per_read', self.footprints_per_read,
-            )
-
-        _add_numeric_summary(
-            summary,
-            'gap_size',
-            self.gap_sizes,
-            total_key='total_gaps',
-            include_std=True,
-        )
-
-        _add_numeric_summary(
-            summary,
-            'msp_size',
-            self.msp_sizes,
-            total_key='total_msps',
-        )
-
-        _add_numeric_summary(
-            summary,
-            'footprint_coverage',
-            self.footprint_coverage,
-        )
-
-        _add_numeric_summary(
-            summary,
-            'footprint_score',
-            self.footprint_scores,
-            include_std=True,
-        )
-
+        _add_footprint_summary_distributions(summary, self)
         return summary
 
     def write_summary(self, filepath: str):

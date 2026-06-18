@@ -239,6 +239,29 @@ def test_add_positive_count_summary_ignores_zero_values():
     assert "empty_median" not in summary
 
 
+def test_add_footprint_summary_distributions_populates_sections():
+    stats = stats_module.FootprintStats()
+    stats.read_lengths = [100, 200]
+    stats.footprint_sizes = [10, 20]
+    stats.footprints_per_read = [0, 2]
+    stats.gap_sizes = [5, 15]
+    stats.msp_sizes = [40]
+    stats.footprint_coverage = [0.1, 0.3]
+    stats.footprint_scores = [0.25, 0.75]
+    summary = {}
+
+    stats_module._add_footprint_summary_distributions(summary, stats)
+
+    assert summary["read_length_median"] == 150
+    assert summary["total_footprints"] == 2
+    assert summary["footprint_size_min"] == 10
+    assert summary["footprints_per_read_median"] == 2
+    assert summary["total_gaps"] == 2
+    assert summary["total_msps"] == 1
+    assert summary["footprint_coverage_mean"] == np.mean([0.1, 0.3])
+    assert summary["footprint_score_std"] == np.std([0.25, 0.75])
+
+
 def test_write_read_stats_section_formats_counts_and_lengths():
     handle = io.StringIO()
 
