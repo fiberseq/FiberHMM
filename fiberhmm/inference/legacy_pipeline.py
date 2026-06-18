@@ -39,6 +39,9 @@ except ImportError:
     HAS_POSTERIOR_WRITER = False
 
 
+_LEGACY_DEFAULT_CHUNK_SIZE = 2000
+
+
 def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                               outbam, model, executor,
                               edge_trim: int, circular: bool,
@@ -685,7 +688,7 @@ def _process_bam_legacy_pipeline(
         train_rids=train_rids,
     )
 
-    chunk_size = 2000  # Reads per chunk
+    chunk_size = _LEGACY_DEFAULT_CHUNK_SIZE
     start_time = time.time()
 
     print("Processing and writing BAM (streaming)...")

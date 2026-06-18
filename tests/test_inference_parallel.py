@@ -298,6 +298,52 @@ def test_run_legacy_bam_processing_closes_posterior_on_executor_setup_failure(
     assert writer.closed == 1
 
 
+def test_process_bam_legacy_pipeline_uses_default_chunk_size(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_run_legacy_bam_processing",
+        lambda **kwargs: calls.append(kwargs) or legacy_pipeline._LegacyPipelineResult(
+            total_reads=10,
+            reads_with_footprints=4,
+            skipped=1,
+            worker_failures=0,
+            posterior_stats=None,
+        ),
+    )
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_print_legacy_completion_summary",
+        lambda *args: None,
+    )
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_sort_and_index_bam",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_print_legacy_posterior_summary",
+        lambda *args: None,
+    )
+
+    assert legacy_pipeline._process_bam_legacy_pipeline(
+        input_bam="in.bam",
+        output_bam="out.bam",
+        model=object(),
+        model_path="model.json",
+        train_rids=set(),
+        edge_trim=0,
+        circular=False,
+        mode="daf",
+        context_size=5,
+        msp_min_size=0,
+    ) == (10, 4)
+
+    assert calls[0]["chunk_size"] == legacy_pipeline._LEGACY_DEFAULT_CHUNK_SIZE
+
+
 def test_legacy_progress_and_completion_messages_format_counts():
     assert legacy_pipeline._legacy_processing_rate(10, 2.0) == 5.0
     assert legacy_pipeline._legacy_processing_rate(10, 0.0) == 0
