@@ -239,6 +239,20 @@ class _RecallReadRequest:
 
 
 @dataclass
+class _RecallObservationEncodingRequest:
+    read: object
+    extracted: tuple
+    mode: str
+    context_size: int
+
+
+@dataclass
+class _EncodedRecallObservation:
+    obs: np.ndarray
+    read_length: int
+
+
+@dataclass
 class _PreferredMmMlTags:
     mm_tag: object
     ml_tag: object
@@ -838,6 +852,22 @@ def _passthrough_legacy_recall_intervals(
     return nucs, msps
 
 
+def _encoded_recall_observation_from_request(
+    request: _RecallObservationEncodingRequest,
+) -> _EncodedRecallObservation:
+    mod_pos, strand, seq = request.extracted
+    obs = encode_from_query_sequence(
+        seq,
+        mod_pos,
+        edge_trim=10,
+        mode=request.mode,
+        strand=strand,
+        context_size=request.context_size,
+        is_reverse=bool(request.read.is_reverse),
+    )
+    return _EncodedRecallObservation(obs=obs, read_length=len(seq))
+
+
 def _kept_legacy_nuc_interval(
     start,
     length,
@@ -929,30 +959,27 @@ def recall_read_from_request(
         nucs, msps = _passthrough_legacy_recall_intervals(seq_tags)
         return [], nucs, msps
 
-    mod_pos, strand, seq = extracted
-    obs = encode_from_query_sequence(
-        seq,
-        mod_pos,
-        edge_trim=10,
-        mode=request.mode,
-        strand=strand,
-        context_size=request.context_size,
-        is_reverse=bool(request.read.is_reverse),
+    encoded = _encoded_recall_observation_from_request(
+        _RecallObservationEncodingRequest(
+            read=request.read,
+            extracted=extracted,
+            mode=request.mode,
+            context_size=request.context_size,
+        )
     )
-    read_len = len(seq)
 
     intervals = build_scan_intervals(
         seq_tags.nuc_starts,
         seq_tags.nuc_lengths,
         seq_tags.msp_starts,
         seq_tags.msp_lengths,
-        read_len,
+        encoded.read_length,
         unify_threshold=request.unify_threshold,
     )
 
     tf_calls = _call_tfs_in_intervals_from_request(
         _TfIntervalBatchScanRequest(
-            obs,
+            encoded.obs,
             intervals,
             request.llr_hit,
             request.llr_miss,

@@ -284,6 +284,45 @@ def test_passthrough_legacy_recall_intervals_filters_nucs_and_msps():
     )
 
 
+def test_encoded_recall_observation_from_request_forwards_encoding_options(
+    monkeypatch,
+):
+    read = _FakeRead()
+    read.is_reverse = True
+    obs = np.array([1, 2, 3])
+    calls = []
+
+    def fake_encode(*args, **kwargs):
+        calls.append((args, kwargs))
+        return obs
+
+    monkeypatch.setattr(tf_recaller, "encode_from_query_sequence", fake_encode)
+
+    encoded = tf_recaller._encoded_recall_observation_from_request(
+        tf_recaller._RecallObservationEncodingRequest(
+            read=read,
+            extracted=([2, 5], "-", "ACGTAC"),
+            mode="daf",
+            context_size=6,
+        )
+    )
+
+    assert encoded.obs is obs
+    assert encoded.read_length == 6
+    assert calls == [
+        (
+            ("ACGTAC", [2, 5]),
+            {
+                "edge_trim": 10,
+                "mode": "daf",
+                "strand": "-",
+                "context_size": 6,
+                "is_reverse": True,
+            },
+        )
+    ]
+
+
 def test_kept_legacy_nuc_interval_applies_tf_overlap_policy():
     tf_intervals = [(20, 30)]
 
