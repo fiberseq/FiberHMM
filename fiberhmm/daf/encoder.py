@@ -653,6 +653,19 @@ def _maybe_finalize_daf_output(output_bam, io_threads: int, log) -> None:
     _sort_and_index_bam(output_bam, verbose=True, threads=io_threads)
 
 
+def _finalize_daf_encode_run(
+    counts: dict,
+    start_time: float,
+    output_bam,
+    io_threads: int,
+    log,
+) -> dict:
+    summary = _daf_encode_summary_from_counts(counts, time.time() - start_time)
+    _print_daf_encode_summary(summary, log)
+    _maybe_finalize_daf_output(output_bam, io_threads, log)
+    return summary
+
+
 def process_bam_daf_encode(
     input_bam,
     output_bam,
@@ -726,16 +739,7 @@ def process_bam_daf_encode(
     finally:
         _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta)
 
-    elapsed = time.time() - start_time
-
-    # Summary
-    summary = _daf_encode_summary_from_counts(counts, elapsed)
-    _print_daf_encode_summary(summary, _log)
-
-    # Sort + index if writing to a file (not stdout)
-    _maybe_finalize_daf_output(output_bam, io_threads, _log)
-
-    return summary
+    return _finalize_daf_encode_run(counts, start_time, output_bam, io_threads, _log)
 
 
 def _first_mapped_reads_have_md_tag(inbam, max_reads: int = 10) -> bool:

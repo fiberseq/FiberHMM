@@ -275,6 +275,43 @@ def test_daf_encode_counts_accumulate_read_stats_and_build_summary():
     }
 
 
+def test_finalize_daf_encode_run_writes_summary_and_finalizes_output(monkeypatch):
+    counts = encoder._new_daf_encode_counts()
+    counts.update({
+        "total": 2,
+        "encoded": 1,
+        "ct": 1,
+        "ga": 0,
+        "skipped": 1,
+        "total_deam": 3,
+        "total_bases": 100,
+    })
+    calls = []
+    log = io.StringIO()
+
+    monkeypatch.setattr(encoder.time, "time", lambda: 15.0)
+    monkeypatch.setattr(
+        encoder,
+        "_maybe_finalize_daf_output",
+        lambda output_bam, io_threads, got_log: calls.append(
+            (output_bam, io_threads, got_log)
+        ),
+    )
+
+    summary = encoder._finalize_daf_encode_run(
+        counts,
+        start_time=10.0,
+        output_bam="out.bam",
+        io_threads=3,
+        log=log,
+    )
+
+    assert summary["elapsed"] == 5.0
+    assert summary["mean_deam_rate"] == 0.03
+    assert "fiberhmm-daf-encode summary" in log.getvalue()
+    assert calls == [("out.bam", 3, log)]
+
+
 def test_apply_daf_encoding_to_read_preserves_qualities_and_sets_st_tag():
     class FakeRead:
         def __init__(self):
