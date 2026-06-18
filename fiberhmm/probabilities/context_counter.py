@@ -8,12 +8,12 @@ from typing import Dict, Iterator, List, Optional, Set, Tuple
 import numpy as np
 import pandas as pd
 
-from fiberhmm.probabilities.utils import (
-    detect_strand_and_base,
-    get_base_name,
-    reverse_complement,
-    setup_output_dirs,
-)
+from fiberhmm.probabilities import utils as _probability_utils
+
+detect_strand_and_base = _probability_utils.detect_strand_and_base
+get_base_name = _probability_utils.get_base_name
+reverse_complement = _probability_utils.reverse_complement
+setup_output_dirs = _probability_utils.setup_output_dirs
 
 _PROBABILITY_TABLE_COLUMNS = ['context', 'hit', 'nohit', 'ratio', 'encode']
 
