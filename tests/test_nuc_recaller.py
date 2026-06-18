@@ -7,6 +7,7 @@ from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
     _AccessibleSplitRequest,
+    _assemble_nuc_msp_tiling_from_request,
     _bounded_interval,
     _BoundedInterval,
     _BoundedNucSpansRecallRequest,
@@ -16,6 +17,7 @@ from fiberhmm.inference.nuc_recaller import (
     _keep_nuc_against_circular_intervals,
     _msp_gaps_between_nucs,
     _nuc_from_protected_calls,
+    _NucMspTilingRequest,
     _NucRecallParams,
     _NucRecallResult,
     _NucsInReadRecallRequest,
@@ -671,6 +673,38 @@ def test_clip_ordered_nuc_calls_for_tiling_clips_overlap_and_drops_short():
         NucCall(10, 50, 1, 2, 3),
         NucCall(60, 30, 4, 0, 6),
     ]
+
+
+def test_assemble_nuc_msp_tiling_request_matches_adapter():
+    nucs = [
+        NucCall(10, 50, 1, 2, 3),
+        NucCall(40, 50, 4, 5, 6),
+        NucCall(95, 10, 7, 8, 9),
+    ]
+    request = _NucMspTilingRequest(
+        nuc_calls=nucs,
+        span_lo=0,
+        span_hi=120,
+        msp_min_size=5,
+        nuc_min_size=20,
+    )
+
+    requested = _assemble_nuc_msp_tiling_from_request(request)
+    adapted = assemble_nuc_msp_tiling(
+        nucs,
+        span_lo=0,
+        span_hi=120,
+        msp_min_size=5,
+        nuc_min_size=20,
+    )
+
+    assert requested == adapted
+    kept, msps = requested
+    assert kept == [
+        NucCall(10, 50, 1, 2, 3),
+        NucCall(60, 30, 4, 0, 6),
+    ]
+    assert msps == [(0, 10), (90, 30)]
 
 
 def test_circular_tiling_no_overlap_for_wrapped_nuc():

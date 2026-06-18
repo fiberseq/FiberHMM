@@ -187,6 +187,15 @@ class _TilingFloors:
 
 
 @dataclass(frozen=True)
+class _NucMspTilingRequest:
+    nuc_calls: Sequence[NucCall]
+    span_lo: int
+    span_hi: int
+    msp_min_size: int
+    nuc_min_size: int = 85
+
+
+@dataclass(frozen=True)
 class _CircularTilingFrame:
     nucs: List[NucCall]
     msps: List[Interval]
@@ -852,8 +861,9 @@ def _clip_ordered_nuc_calls_for_tiling(
     return kept
 
 
-def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
-                            nuc_min_size=85):
+def _assemble_nuc_msp_tiling_from_request(
+    request: _NucMspTilingRequest,
+):
     """Produce non-overlapping nucleosomes + complementary MSPs that TILE
     ``[span_lo, span_hi)``.
 
@@ -873,11 +883,33 @@ def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
         reverts to MSP), so no sub-nucleosome nuc+ calls leak out.
     Returns ``(kept_nucs, msp_intervals)``.
     """
-    floors = _tiling_floors(msp_min_size, nuc_min_size)
-    ordered = _ordered_positive_nuc_calls(nuc_calls)
-    kept = _clip_ordered_nuc_calls_for_tiling(ordered, span_lo, floors.nuc)
+    floors = _tiling_floors(request.msp_min_size, request.nuc_min_size)
+    ordered = _ordered_positive_nuc_calls(request.nuc_calls)
+    kept = _clip_ordered_nuc_calls_for_tiling(
+        ordered,
+        request.span_lo,
+        floors.nuc,
+    )
 
-    return kept, _msp_gaps_between_nucs(kept, span_lo, span_hi, floors.msp)
+    return kept, _msp_gaps_between_nucs(
+        kept,
+        request.span_lo,
+        request.span_hi,
+        floors.msp,
+    )
+
+
+def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
+                            nuc_min_size=85):
+    return _assemble_nuc_msp_tiling_from_request(
+        _NucMspTilingRequest(
+            nuc_calls=nuc_calls,
+            span_lo=span_lo,
+            span_hi=span_hi,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+        )
+    )
 
 
 def _circular_uncovered_cut(calls, read_length: int) -> int:
