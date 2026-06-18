@@ -38,6 +38,7 @@ from fiberhmm.cli.generate_probs import (
     _process_probability_read_or_skip,
     _process_probability_sample_file,
     _process_probability_sample_group,
+    _processed_reads_summary_line,
     _progress_postfix,
     _read_limit_reached,
     _read_mm_ml_tags_or_skip,
@@ -491,6 +492,12 @@ def test_print_probability_results_summary_formats_pass_rates(capsys):
     assert "Reads processed: 50 (scanned 100, 50.0% pass rate)" in output
     assert "Inaccessible (native):" in output
     assert "Reads processed: 5 (scanned 0, 500.0% pass rate)" in output
+
+
+def test_processed_reads_summary_line_formats_counts_and_pass_rate():
+    assert _processed_reads_summary_line(1234, 2000) == (
+        "  Reads processed: 1,234 (scanned 2,000, 61.7% pass rate)"
+    )
 
 
 def test_print_probability_completion_message_formats_next_steps(capsys):

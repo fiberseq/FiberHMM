@@ -664,16 +664,16 @@ def _print_probability_results_summary(
     print("=" * 60)
 
     print("\nAccessible (naked DNA):")
-    print(
-        f"  Reads processed: {accessible_reads:,} "
-        f"(scanned {accessible_scanned:,}, "
-        f"{100 * accessible_reads / max(1, accessible_scanned):.1f}% pass rate)"
-    )
+    print(_processed_reads_summary_line(accessible_reads, accessible_scanned))
     print("Inaccessible (native):")
-    print(
-        f"  Reads processed: {inaccessible_reads:,} "
-        f"(scanned {inaccessible_scanned:,}, "
-        f"{100 * inaccessible_reads / max(1, inaccessible_scanned):.1f}% pass rate)"
+    print(_processed_reads_summary_line(inaccessible_reads, inaccessible_scanned))
+
+
+def _processed_reads_summary_line(reads_processed: int, reads_scanned: int) -> str:
+    pass_rate = _safe_percent(reads_processed, reads_scanned)
+    return (
+        f"  Reads processed: {reads_processed:,} "
+        f"(scanned {reads_scanned:,}, {pass_rate:.1f}% pass rate)"
     )
 
 
