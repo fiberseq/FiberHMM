@@ -752,6 +752,47 @@ class _ProbabilityControlGroupResults:
     inaccessible: _ProbabilitySampleResult
 
 
+@dataclass(frozen=True)
+class _ProbabilitySampleGroupPlan:
+    section_label: str
+    sample_description: str
+    estimate_description: str
+    bam_files: List[str]
+    target_bases: list
+    max_context: int
+    mode: str
+    sample_name: str
+    output_dir: str
+    base_name: str
+
+
+def _process_probability_sample_group_plan(
+    args,
+    plan: _ProbabilitySampleGroupPlan,
+) -> _ProbabilitySampleResult:
+    print("\n" + "=" * 60)
+    print(f"Processing {plan.section_label} samples ({plan.sample_description})")
+    print(f"  This estimates {plan.estimate_description}")
+    print("=" * 60)
+
+    counters = _new_probability_counters(plan.target_bases, plan.max_context)
+    sample_result = _process_sample_set_result(
+        plan.bam_files,
+        counters,
+        plan.mode,
+        args,
+        plan.sample_name,
+        plan.output_dir,
+        plan.base_name,
+    )
+    return _ProbabilitySampleResult(
+        counters,
+        sample_result.reads,
+        sample_result.scanned,
+        sample_result.stats,
+    )
+
+
 def _process_probability_sample_group(
     section_label: str,
     sample_description: str,
@@ -765,20 +806,20 @@ def _process_probability_sample_group(
     output_dir: str,
     base_name: str,
 ) -> _ProbabilitySampleResult:
-    print("\n" + "=" * 60)
-    print(f"Processing {section_label} samples ({sample_description})")
-    print(f"  This estimates {estimate_description}")
-    print("=" * 60)
-
-    counters = _new_probability_counters(target_bases, max_context)
-    sample_result = _process_sample_set_result(
-        bam_files, counters, mode, args, sample_name, output_dir, base_name,
-    )
-    return _ProbabilitySampleResult(
-        counters,
-        sample_result.reads,
-        sample_result.scanned,
-        sample_result.stats,
+    return _process_probability_sample_group_plan(
+        args,
+        _ProbabilitySampleGroupPlan(
+            section_label=section_label,
+            sample_description=sample_description,
+            estimate_description=estimate_description,
+            bam_files=bam_files,
+            target_bases=target_bases,
+            max_context=max_context,
+            mode=mode,
+            sample_name=sample_name,
+            output_dir=output_dir,
+            base_name=base_name,
+        ),
     )
 
 
@@ -1062,32 +1103,36 @@ def _process_probability_control_groups(
     args,
     run: _ProbabilityRunContext,
 ) -> _ProbabilityControlGroupResults:
-    accessible_result = _process_probability_sample_group(
-        "ACCESSIBLE",
-        "naked/dechromatinized DNA",
-        "P(methylation | accessible)",
-        args.accessible,
-        run.target_bases,
-        run.max_context,
-        args.mode,
+    accessible_result = _process_probability_sample_group_plan(
         args,
-        "accessible",
-        run.output_dir,
-        run.base_name,
+        _ProbabilitySampleGroupPlan(
+            section_label="ACCESSIBLE",
+            sample_description="naked/dechromatinized DNA",
+            estimate_description="P(methylation | accessible)",
+            bam_files=args.accessible,
+            target_bases=run.target_bases,
+            max_context=run.max_context,
+            mode=args.mode,
+            sample_name="accessible",
+            output_dir=run.output_dir,
+            base_name=run.base_name,
+        ),
     )
 
-    inaccessible_result = _process_probability_sample_group(
-        "INACCESSIBLE",
-        "untreated/native chromatin",
-        "P(methylation | inaccessible) = background rate",
-        args.inaccessible,
-        run.target_bases,
-        run.max_context,
-        args.mode,
+    inaccessible_result = _process_probability_sample_group_plan(
         args,
-        "inaccessible",
-        run.output_dir,
-        run.base_name,
+        _ProbabilitySampleGroupPlan(
+            section_label="INACCESSIBLE",
+            sample_description="untreated/native chromatin",
+            estimate_description="P(methylation | inaccessible) = background rate",
+            bam_files=args.inaccessible,
+            target_bases=run.target_bases,
+            max_context=run.max_context,
+            mode=args.mode,
+            sample_name="inaccessible",
+            output_dir=run.output_dir,
+            base_name=run.base_name,
+        ),
     )
 
     return _ProbabilityControlGroupResults(accessible_result, inaccessible_result)

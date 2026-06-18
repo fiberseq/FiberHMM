@@ -40,6 +40,7 @@ from fiberhmm.cli.generate_probs import (
     _ProbabilityReadTags,
     _ProbabilityRunContext,
     _ProbabilitySampleFileResult,
+    _ProbabilitySampleGroupPlan,
     _ProbabilitySampleResult,
     _ProbabilitySampleSetResult,
     _process_bam_result,
@@ -48,6 +49,7 @@ from fiberhmm.cli.generate_probs import (
     _process_probability_read_or_skip,
     _process_probability_sample_file,
     _process_probability_sample_group,
+    _process_probability_sample_group_plan,
     _process_sample_set_result,
     _processed_reads_summary_line,
     _progress_postfix,
@@ -313,14 +315,14 @@ def test_process_probability_control_groups_delegates_both_sample_types(monkeypa
 
     calls = []
 
-    def fake_process(*args):
-        calls.append(args)
-        label = args[8]
+    def fake_process(args, plan):
+        calls.append((args, plan))
+        label = plan.sample_name
         return _ProbabilitySampleResult({label: "counters"}, 10, 20, {label: 1})
 
     monkeypatch.setattr(
         generate_probs,
-        "_process_probability_sample_group",
+        "_process_probability_sample_group_plan",
         fake_process,
     )
     args = SimpleNamespace(
@@ -345,27 +347,35 @@ def test_process_probability_control_groups_delegates_both_sample_types(monkeypa
     assert results.inaccessible == _ProbabilitySampleResult(
         {"inaccessible": "counters"}, 10, 20, {"inaccessible": 1},
     )
-    assert calls[0][0:9] == (
-        "ACCESSIBLE",
-        "naked/dechromatinized DNA",
-        "P(methylation | accessible)",
-        ["acc1.bam"],
-        ["A"],
-        5,
-        "pacbio-fiber",
+    assert calls[0] == (
         args,
-        "accessible",
+        _ProbabilitySampleGroupPlan(
+            section_label="ACCESSIBLE",
+            sample_description="naked/dechromatinized DNA",
+            estimate_description="P(methylation | accessible)",
+            bam_files=["acc1.bam"],
+            target_bases=["A"],
+            max_context=5,
+            mode="pacbio-fiber",
+            sample_name="accessible",
+            output_dir="out",
+            base_name="run",
+        ),
     )
-    assert calls[1][0:9] == (
-        "INACCESSIBLE",
-        "untreated/native chromatin",
-        "P(methylation | inaccessible) = background rate",
-        ["inacc1.bam"],
-        ["A"],
-        5,
-        "pacbio-fiber",
+    assert calls[1] == (
         args,
-        "inaccessible",
+        _ProbabilitySampleGroupPlan(
+            section_label="INACCESSIBLE",
+            sample_description="untreated/native chromatin",
+            estimate_description="P(methylation | inaccessible) = background rate",
+            bam_files=["inacc1.bam"],
+            target_bases=["A"],
+            max_context=5,
+            mode="pacbio-fiber",
+            sample_name="inaccessible",
+            output_dir="out",
+            base_name="run",
+        ),
     )
 
 
@@ -502,7 +512,7 @@ def test_process_probability_sample_group_prints_and_delegates(monkeypatch, caps
     )
     args = SimpleNamespace()
 
-    result = _process_probability_sample_group(
+    plan = _ProbabilitySampleGroupPlan(
         section_label="ACCESSIBLE",
         sample_description="naked DNA",
         estimate_description="P(methylation | accessible)",
@@ -510,11 +520,12 @@ def test_process_probability_sample_group_prints_and_delegates(monkeypatch, caps
         target_bases=["A"],
         max_context=4,
         mode="pacbio-fiber",
-        args=args,
         sample_name="accessible",
         output_dir="out",
         base_name="run",
     )
+
+    result = _process_probability_sample_group_plan(args, plan)
 
     assert result.reads == 7
     assert result.scanned == 11
@@ -527,6 +538,19 @@ def test_process_probability_sample_group_prints_and_delegates(monkeypatch, caps
     output = capsys.readouterr().out
     assert "Processing ACCESSIBLE samples (naked DNA)" in output
     assert "This estimates P(methylation | accessible)" in output
+    assert _process_probability_sample_group(
+        section_label="ACCESSIBLE",
+        sample_description="naked DNA",
+        estimate_description="P(methylation | accessible)",
+        bam_files=["a.bam"],
+        target_bases=["A"],
+        max_context=4,
+        mode="pacbio-fiber",
+        args=args,
+        sample_name="accessible",
+        output_dir="out",
+        base_name="run",
+    ).reads == 7
 
 
 def test_print_probability_results_summary_formats_pass_rates(capsys):
