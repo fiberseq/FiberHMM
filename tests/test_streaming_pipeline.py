@@ -42,6 +42,8 @@ from fiberhmm.inference.streaming_pipeline import (
     _streaming_progress_message,
     _streaming_progress_rates,
     _streaming_rate,
+    _StreamingChunkBuffers,
+    _StreamingFlushProgress,
     _StreamingPayloadResult,
     _StreamingPosteriorWriter,
     _StreamingProgressRates,
@@ -457,13 +459,15 @@ def test_buffer_streaming_read_tracks_skipped_read(monkeypatch):
 
 def test_new_streaming_chunk_buffers_returns_independent_lists():
     buffers = _new_streaming_chunk_buffers()
-    assert buffers == ([], [], [])
+    assert buffers == _StreamingChunkBuffers(items=[], read_objs=[], skip_flags=[])
 
-    buffers[0].append("payload")
-    buffers[1].append("read")
-    buffers[2].append(False)
+    buffers.items.append("payload")
+    buffers.read_objs.append("read")
+    buffers.skip_flags.append(False)
 
-    assert _new_streaming_chunk_buffers() == ([], [], [])
+    assert _new_streaming_chunk_buffers() == _StreamingChunkBuffers(
+        items=[], read_objs=[], skip_flags=[],
+    )
 
 
 def test_drain_if_inflight_full_only_drains_at_capacity():
@@ -516,10 +520,10 @@ def test_flush_streaming_chunk_drains_submits_and_returns_new_buffers():
     assert list(inflight) == [
         ("future", chunk_reads, chunk_items, chunk_skip_flags)
     ]
-    assert new_buffers == ([], [], [])
-    assert new_buffers[0] is not chunk_items
-    assert new_buffers[1] is not chunk_reads
-    assert new_buffers[2] is not chunk_skip_flags
+    assert new_buffers == _StreamingChunkBuffers(items=[], read_objs=[], skip_flags=[])
+    assert new_buffers.items is not chunk_items
+    assert new_buffers.read_objs is not chunk_reads
+    assert new_buffers.skip_flags is not chunk_skip_flags
 
 
 def test_drain_all_streaming_chunks_repeats_until_empty():
@@ -543,7 +547,7 @@ def test_flush_streaming_chunk_and_report_progress(monkeypatch):
     def fake_flush(*args):
         calls.append(("flush", args))
         inflight.append("new")
-        return [], [], []
+        return _StreamingChunkBuffers(items=[], read_objs=[], skip_flags=[])
 
     def fake_progress(*args):
         calls.append(("progress", args))
@@ -579,7 +583,11 @@ def test_flush_streaming_chunk_and_report_progress(monkeypatch):
         3,
         10,
         2.0,
-    ) == ([], [], [], 20, 30.0)
+    ) == _StreamingFlushProgress(
+        buffers=_StreamingChunkBuffers(items=[], read_objs=[], skip_flags=[]),
+        last_progress_reads=20,
+        last_progress_time=30.0,
+    )
 
     assert calls[0][0] == "flush"
     assert calls[0][1][:8] == (

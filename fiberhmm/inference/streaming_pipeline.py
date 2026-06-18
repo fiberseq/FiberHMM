@@ -53,6 +53,20 @@ class _StreamingProgressRates:
     average: float
 
 
+@dataclass(frozen=True)
+class _StreamingChunkBuffers:
+    items: list
+    read_objs: list
+    skip_flags: list
+
+
+@dataclass(frozen=True)
+class _StreamingFlushProgress:
+    buffers: _StreamingChunkBuffers
+    last_progress_reads: int
+    last_progress_time: float
+
+
 def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, reason) -> int:
     chunk_read_objs.append(read)
     chunk_skip_flags.append(True)
@@ -120,8 +134,8 @@ def _completed_empty_future() -> Future:
     return future
 
 
-def _new_streaming_chunk_buffers() -> tuple[list, list, list]:
-    return [], [], []
+def _new_streaming_chunk_buffers() -> _StreamingChunkBuffers:
+    return _StreamingChunkBuffers(items=[], read_objs=[], skip_flags=[])
 
 
 def _submit_streaming_chunk(inflight, executor, worker_fn, chunk_items,
@@ -152,7 +166,7 @@ def _flush_streaming_chunk(
     worker_args,
     max_inflight: int,
     drain_chunk: Callable[[], None],
-) -> tuple[list, list, list]:
+) -> _StreamingChunkBuffers:
     _drain_if_inflight_full(inflight, max_inflight, drain_chunk)
     _submit_streaming_chunk(
         inflight,
@@ -200,8 +214,8 @@ def _flush_streaming_chunk_and_report_progress(
     skipped: int,
     last_progress_reads: int,
     last_progress_time: float,
-) -> tuple[list, list, list, int, float]:
-    chunk_items, chunk_read_objs, chunk_skip_flags = _flush_streaming_chunk(
+) -> _StreamingFlushProgress:
+    buffers = _flush_streaming_chunk(
         context.inflight,
         context.executor,
         context.worker_fn,
@@ -225,12 +239,10 @@ def _flush_streaming_chunk_and_report_progress(
         now,
         context.rate_unit,
     )
-    return (
-        chunk_items,
-        chunk_read_objs,
-        chunk_skip_flags,
-        last_progress_reads,
-        last_progress_time,
+    return _StreamingFlushProgress(
+        buffers=buffers,
+        last_progress_reads=last_progress_reads,
+        last_progress_time=last_progress_time,
     )
 
 
@@ -255,7 +267,7 @@ def _stream_reads_to_workers(
 ) -> tuple[int, int]:
     total_reads = 0
     skipped = 0
-    chunk_items, chunk_read_objs, chunk_skip_flags = _new_streaming_chunk_buffers()
+    chunk_buffers = _new_streaming_chunk_buffers()
     last_progress_reads = 0
     last_progress_time = time.time()
     flush_context = _StreamingFlushContext(
@@ -277,9 +289,9 @@ def _stream_reads_to_workers(
             filter_config,
             mode,
             ref_fasta,
-            chunk_items,
-            chunk_read_objs,
-            chunk_skip_flags,
+            chunk_buffers.items,
+            chunk_buffers.read_objs,
+            chunk_buffers.skip_flags,
             skip_reasons,
         )
         skipped += skipped_delta
@@ -291,32 +303,29 @@ def _stream_reads_to_workers(
         if max_reads and total_reads >= max_reads:
             break
 
-        if len(chunk_read_objs) >= chunk_size:
-            (
-                chunk_items,
-                chunk_read_objs,
-                chunk_skip_flags,
-                last_progress_reads,
-                last_progress_time,
-            ) = _flush_streaming_chunk_and_report_progress(
+        if len(chunk_buffers.read_objs) >= chunk_size:
+            flush_progress = _flush_streaming_chunk_and_report_progress(
                 flush_context,
-                chunk_items,
-                chunk_read_objs,
-                chunk_skip_flags,
+                chunk_buffers.items,
+                chunk_buffers.read_objs,
+                chunk_buffers.skip_flags,
                 total_reads,
                 skipped,
                 last_progress_reads,
                 last_progress_time,
             )
+            chunk_buffers = flush_progress.buffers
+            last_progress_reads = flush_progress.last_progress_reads
+            last_progress_time = flush_progress.last_progress_time
 
-    if chunk_read_objs:
+    if chunk_buffers.read_objs:
         _flush_streaming_chunk(
             inflight,
             executor,
             worker_fn,
-            chunk_items,
-            chunk_read_objs,
-            chunk_skip_flags,
+            chunk_buffers.items,
+            chunk_buffers.read_objs,
+            chunk_buffers.skip_flags,
             worker_args,
             max_inflight,
             drain_chunk,
