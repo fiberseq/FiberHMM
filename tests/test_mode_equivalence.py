@@ -40,7 +40,12 @@ def _process_with_mode(bam_path, model_path, output_path,
 class TestModeEquivalence:
     """All processing modes must produce identical HMM results."""
 
-    def test_streaming_vs_region_parallel(self, synthetic_bam_small, benchmark_model_path, tmp_path):
+    def test_streaming_vs_region_parallel(
+        self,
+        synthetic_bam_small,
+        benchmark_model_path,
+        tmp_path,
+    ):
         """Streaming pipeline and region-parallel produce identical tags per read."""
         out_stream = str(tmp_path / "streaming.bam")
         out_region = str(tmp_path / "region.bam")

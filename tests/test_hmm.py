@@ -593,7 +593,11 @@ class TestPredictionMethods:
 
         assert len(path) == len(simple_observations)
         assert posteriors.shape == (len(simple_observations), 2)
-        np.testing.assert_allclose(posteriors.sum(axis=1), np.ones(len(simple_observations)), rtol=1e-5)
+        np.testing.assert_allclose(
+            posteriors.sum(axis=1),
+            np.ones(len(simple_observations)),
+            rtol=1e-5,
+        )
 
     def test_posterior_matrix_matches_predict_proba(self, trained_model, simple_observations):
         """Private posterior helper stays aligned with public predict_proba."""

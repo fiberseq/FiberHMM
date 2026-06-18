@@ -799,7 +799,11 @@ class FiberHMM:
             'n_states': self.n_states,
             'startprob_': self.startprob_.tolist() if self.startprob_ is not None else None,
             'transmat_': self.transmat_.tolist() if self.transmat_ is not None else None,
-            'emissionprob_': self.emissionprob_.tolist() if self.emissionprob_ is not None else None,
+            'emissionprob_': (
+                self.emissionprob_.tolist()
+                if self.emissionprob_ is not None
+                else None
+            ),
             'model_type': 'FiberHMM_native'
         }
 
