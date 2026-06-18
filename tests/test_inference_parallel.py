@@ -2418,9 +2418,14 @@ def test_record_fused_result_tags_chimeras_or_counts_no_footprints(monkeypatch):
 
     monkeypatch.setattr(streaming_drain, "write_fused_recall_tags", fake_write_tags)
 
-    streaming_drain._record_fused_result(
-        read, result, also_write_legacy=True, downstream_compat=False,
-        counters=counters,
+    streaming_drain._record_fused_result_from_request(
+        streaming_drain._FusedResultRecordRequest(
+            read_obj=read,
+            result=result,
+            also_write_legacy=True,
+            downstream_compat=False,
+            counters=counters,
+        )
     )
     streaming_drain._record_fused_result(
         read, streaming_workers.CHIMERA_RESULT,

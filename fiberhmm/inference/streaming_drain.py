@@ -71,6 +71,15 @@ class _ApplyResultRecordRequest:
     counters: object
 
 
+@dataclass(frozen=True)
+class _FusedResultRecordRequest:
+    read_obj: object
+    result: object
+    also_write_legacy: bool
+    downstream_compat: bool
+    counters: object
+
+
 def _increment_counter(counters, key: str, amount: int = 1) -> None:
     counters[key] = counters.get(key, 0) + amount
 
@@ -273,6 +282,24 @@ def _record_apply_result(
     )
 
 
+def _record_fused_result_from_request(
+    request: _FusedResultRecordRequest,
+) -> None:
+    if request.result == CHIMERA_RESULT:
+        _record_chimera(request.counters)
+    elif request.result is not None:
+        write_fused_recall_tags(
+            request.read_obj,
+            read_length=_fused_read_length(request.read_obj),
+            result=request.result,
+            also_write_legacy=request.also_write_legacy,
+            downstream_compat=request.downstream_compat,
+        )
+        _record_reads_with_footprints(request.counters)
+    else:
+        _record_no_footprints(request.counters)
+
+
 def _record_fused_result(
     read_obj,
     result,
@@ -280,19 +307,15 @@ def _record_fused_result(
     downstream_compat,
     counters,
 ) -> None:
-    if result == CHIMERA_RESULT:
-        _record_chimera(counters)
-    elif result is not None:
-        write_fused_recall_tags(
-            read_obj,
-            read_length=_fused_read_length(read_obj),
+    _record_fused_result_from_request(
+        _FusedResultRecordRequest(
+            read_obj=read_obj,
             result=result,
             also_write_legacy=also_write_legacy,
             downstream_compat=downstream_compat,
+            counters=counters,
         )
-        _record_reads_with_footprints(counters)
-    else:
-        _record_no_footprints(counters)
+    )
 
 
 def _drain_oldest_chunk(
