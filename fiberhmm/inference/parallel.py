@@ -181,6 +181,104 @@ def _dispatch_streaming_pipeline_if_requested(
     )
 
 
+def _footprint_pipeline_kwargs(
+    *,
+    input_bam: str,
+    output_bam: str,
+    train_rids: Set[str],
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    min_mapq: int,
+    prob_threshold: int,
+    min_read_length: int,
+    with_scores: bool,
+    n_cores: int,
+    primary_only: bool,
+    output_posteriors: Optional[str],
+    write_msps: bool,
+    io_threads: int,
+) -> dict:
+    return {
+        'input_bam': input_bam,
+        'output_bam': output_bam,
+        'train_rids': train_rids,
+        'edge_trim': edge_trim,
+        'circular': circular,
+        'mode': mode,
+        'context_size': context_size,
+        'msp_min_size': msp_min_size,
+        'nuc_min_size': nuc_min_size,
+        'min_mapq': min_mapq,
+        'prob_threshold': prob_threshold,
+        'min_read_length': min_read_length,
+        'with_scores': with_scores,
+        'n_cores': n_cores,
+        'primary_only': primary_only,
+        'output_posteriors': output_posteriors,
+        'write_msps': write_msps,
+        'io_threads': io_threads,
+    }
+
+
+def _dispatch_requested_parallel_pipeline(
+    *,
+    model_path: Optional[str],
+    region_parallel: bool,
+    region_size: int,
+    skip_scaffolds: bool,
+    chroms: Optional[Set[str]],
+    streaming_pipeline: bool,
+    chunk_size: int,
+    max_reads: Optional[int],
+    debug_timing: bool,
+    process_unmapped: bool,
+    pipeline_kwargs: dict,
+) -> Optional[Tuple[int, int]]:
+    result = _dispatch_region_parallel_if_requested(
+        region_parallel=region_parallel,
+        model_path=model_path,
+        region_size=region_size,
+        skip_scaffolds=skip_scaffolds,
+        chroms=chroms,
+        **pipeline_kwargs,
+    )
+    if result is not None:
+        return result
+
+    return _dispatch_streaming_pipeline_if_requested(
+        streaming_pipeline=streaming_pipeline,
+        model_path=model_path,
+        chunk_size=chunk_size,
+        max_reads=max_reads,
+        debug_timing=debug_timing,
+        process_unmapped=process_unmapped,
+        **pipeline_kwargs,
+    )
+
+
+def _dispatch_legacy_footprint_pipeline(
+    *,
+    model,
+    model_path: Optional[str],
+    n_cores: int,
+    max_reads: Optional[int],
+    debug_timing: bool,
+    pipeline_kwargs: dict,
+) -> Tuple[int, int]:
+    model = _legacy_model_for_processing(model, model_path, n_cores)
+    return _process_bam_legacy_pipeline(
+        model=model,
+        model_path=model_path,
+        max_reads=max_reads,
+        debug_timing=debug_timing,
+        **pipeline_kwargs,
+    )
+
+
 def process_bam_for_footprints(input_bam: str, output_bam: str,
                                 model_or_path, train_rids: Set[str],
                                 edge_trim: int, circular: bool,
@@ -226,56 +324,48 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
 
     # Get model path for workers
     model, model_path = _model_and_path_for_processing(model_or_path)
-    pipeline_kwargs = {
-        'input_bam': input_bam,
-        'output_bam': output_bam,
-        'train_rids': train_rids,
-        'edge_trim': edge_trim,
-        'circular': circular,
-        'mode': mode,
-        'context_size': context_size,
-        'msp_min_size': msp_min_size,
-        'nuc_min_size': nuc_min_size,
-        'min_mapq': min_mapq,
-        'prob_threshold': prob_threshold,
-        'min_read_length': min_read_length,
-        'with_scores': with_scores,
-        'n_cores': n_cores,
-        'primary_only': primary_only,
-        'output_posteriors': output_posteriors,
-        'write_msps': write_msps,
-        'io_threads': io_threads,
-    }
+    pipeline_kwargs = _footprint_pipeline_kwargs(
+        input_bam=input_bam,
+        output_bam=output_bam,
+        train_rids=train_rids,
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        min_mapq=min_mapq,
+        prob_threshold=prob_threshold,
+        min_read_length=min_read_length,
+        with_scores=with_scores,
+        n_cores=n_cores,
+        primary_only=primary_only,
+        output_posteriors=output_posteriors,
+        write_msps=write_msps,
+        io_threads=io_threads,
+    )
 
-    result = _dispatch_region_parallel_if_requested(
-        region_parallel=region_parallel,
+    result = _dispatch_requested_parallel_pipeline(
         model_path=model_path,
+        region_parallel=region_parallel,
         region_size=region_size,
         skip_scaffolds=skip_scaffolds,
         chroms=chroms,
-        **pipeline_kwargs,
-    )
-    if result is not None:
-        return result
-
-    result = _dispatch_streaming_pipeline_if_requested(
         streaming_pipeline=streaming_pipeline,
-        model_path=model_path,
         chunk_size=chunk_size,
         max_reads=max_reads,
         debug_timing=debug_timing,
         process_unmapped=process_unmapped,
-        **pipeline_kwargs,
+        pipeline_kwargs=pipeline_kwargs,
     )
     if result is not None:
         return result
 
-    model = _legacy_model_for_processing(model, model_path, n_cores)
-
-    return _process_bam_legacy_pipeline(
+    return _dispatch_legacy_footprint_pipeline(
         model=model,
         model_path=model_path,
+        n_cores=n_cores,
         max_reads=max_reads,
         debug_timing=debug_timing,
-        **pipeline_kwargs,
+        pipeline_kwargs=pipeline_kwargs,
     )

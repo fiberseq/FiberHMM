@@ -683,6 +683,116 @@ def test_streaming_dispatch_does_not_load_model_in_parent(monkeypatch):
     ) == ("streaming", "model.json")
 
 
+def test_footprint_pipeline_kwargs_preserve_common_options():
+    train_rids = {"read-a"}
+
+    assert parallel._footprint_pipeline_kwargs(
+        input_bam="in.bam",
+        output_bam="out.bam",
+        train_rids=train_rids,
+        edge_trim=2,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=30,
+        nuc_min_size=90,
+        min_mapq=20,
+        prob_threshold=128,
+        min_read_length=50,
+        with_scores=True,
+        n_cores=4,
+        primary_only=True,
+        output_posteriors="post.h5",
+        write_msps=False,
+        io_threads=3,
+    ) == {
+        "input_bam": "in.bam",
+        "output_bam": "out.bam",
+        "train_rids": train_rids,
+        "edge_trim": 2,
+        "circular": True,
+        "mode": "daf",
+        "context_size": 5,
+        "msp_min_size": 30,
+        "nuc_min_size": 90,
+        "min_mapq": 20,
+        "prob_threshold": 128,
+        "min_read_length": 50,
+        "with_scores": True,
+        "n_cores": 4,
+        "primary_only": True,
+        "output_posteriors": "post.h5",
+        "write_msps": False,
+        "io_threads": 3,
+    }
+
+
+def test_requested_parallel_pipeline_prefers_region_dispatch(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        parallel,
+        "_dispatch_region_parallel_if_requested",
+        lambda **kwargs: calls.append(("region", kwargs)) or ("region", 1),
+    )
+    monkeypatch.setattr(
+        parallel,
+        "_dispatch_streaming_pipeline_if_requested",
+        lambda **kwargs: pytest.fail("streaming should not run after region match"),
+    )
+
+    assert parallel._dispatch_requested_parallel_pipeline(
+        model_path="model.json",
+        region_parallel=True,
+        region_size=100,
+        skip_scaffolds=True,
+        chroms={"chr1"},
+        streaming_pipeline=True,
+        chunk_size=10,
+        max_reads=25,
+        debug_timing=True,
+        process_unmapped=True,
+        pipeline_kwargs={"input_bam": "in.bam"},
+    ) == ("region", 1)
+
+    assert calls[0][0] == "region"
+    assert calls[0][1]["region_size"] == 100
+    assert calls[0][1]["input_bam"] == "in.bam"
+
+
+def test_requested_parallel_pipeline_falls_through_to_streaming(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        parallel,
+        "_dispatch_region_parallel_if_requested",
+        lambda **kwargs: calls.append(("region", kwargs)) or None,
+    )
+    monkeypatch.setattr(
+        parallel,
+        "_dispatch_streaming_pipeline_if_requested",
+        lambda **kwargs: calls.append(("streaming", kwargs)) or ("streaming", 2),
+    )
+
+    assert parallel._dispatch_requested_parallel_pipeline(
+        model_path="model.json",
+        region_parallel=False,
+        region_size=100,
+        skip_scaffolds=False,
+        chroms=None,
+        streaming_pipeline=True,
+        chunk_size=10,
+        max_reads=25,
+        debug_timing=True,
+        process_unmapped=True,
+        pipeline_kwargs={"input_bam": "in.bam"},
+    ) == ("streaming", 2)
+
+    assert [call[0] for call in calls] == ["region", "streaming"]
+    assert calls[1][1]["chunk_size"] == 10
+    assert calls[1][1]["input_bam"] == "in.bam"
+
+
 def test_region_dispatch_does_not_load_model_in_parent(monkeypatch):
     monkeypatch.setattr(
         parallel,
