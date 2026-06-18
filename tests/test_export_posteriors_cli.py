@@ -246,6 +246,48 @@ def test_fiber_posterior_methods_delegate_projection_and_coverage():
         fiber.project_to_reference(10, 13)
 
 
+def test_posterior_reader_loads_h5_records_and_closes_idempotently(tmp_path):
+    h5_path = tmp_path / "posteriors.h5"
+    with h5py.File(h5_path, "w") as h5:
+        h5.attrs["mode"] = "daf"
+        h5.attrs["context_size"] = 5
+        h5.attrs["format_version"] = 2
+        grp = hdf5_backend.create_posterior_chrom_group(h5, "chr1")
+        grp.attrs["n_fibers"] = 1
+        string_dtype = h5py.special_dtype(vlen=str)
+        grp.create_dataset("fiber_ids", data=["read-1"], dtype=string_dtype)
+        grp.create_dataset("fiber_starts", data=np.array([10], dtype=np.int32))
+        grp.create_dataset("fiber_ends", data=np.array([12], dtype=np.int32))
+        grp.create_dataset("strands", data=["+"], dtype=string_dtype)
+        grp["posteriors"].create_dataset(
+            "0", data=np.array([0.1, 0.9], dtype=np.float16),
+        )
+        grp["ref_positions"].create_dataset(
+            "0", data=np.array([10, 11], dtype=np.int32),
+        )
+        grp["footprint_starts"].create_dataset(
+            "0", data=np.array([0], dtype=np.int32),
+        )
+        grp["footprint_sizes"].create_dataset(
+            "0", data=np.array([2], dtype=np.int32),
+        )
+
+    reader = export_posteriors.PosteriorReader(str(h5_path))
+
+    assert reader.mode == "daf"
+    assert reader.context_size == 5
+    assert reader.format_version == 2
+    assert reader.chromosomes == ["chr1"]
+    assert reader.get_n_fibers("chr1") == 1
+    fibers = reader.get_fibers_overlapping("chr1", 10, 12)
+    assert [fiber.fiber_id for fiber in fibers] == ["read-1"]
+
+    reader.close()
+    reader.close()
+    with pytest.raises(RuntimeError, match="PosteriorReader is closed"):
+        reader.get_n_fibers("chr1")
+
+
 def test_fiber_region_index_helpers_select_expected_records():
     starts = np.array([0, 10, 20, 30], dtype=np.int32)
     ends = np.array([9, 25, 40, 50], dtype=np.int32)

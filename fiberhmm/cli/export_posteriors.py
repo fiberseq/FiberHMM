@@ -928,14 +928,26 @@ class PosteriorReader:
         import h5py
         self.h5_path = h5_path
         self.h5 = h5py.File(h5_path, 'r')
+        self._closed = False
 
         self.mode = self.h5.attrs.get('mode', 'pacbio-fiber')
         self.context_size = self.h5.attrs.get('context_size', 3)
         self.format_version = self.h5.attrs.get('format_version', 1)
-
         self._chrom_info = {}
+
+        try:
+            self._load_chrom_info()
+        except BaseException:
+            self.close()
+            raise
+
+    def _raise_if_closed(self) -> None:
+        if self._closed:
+            raise RuntimeError("PosteriorReader is closed")
+
+    def _load_chrom_info(self) -> None:
+        import h5py as _h5py
         for chrom in self.h5.keys():
-            import h5py as _h5py
             if isinstance(self.h5[chrom], _h5py.Group):
                 grp = self.h5[chrom]
                 n_fibers = grp.attrs.get('n_fibers', 0)
@@ -948,15 +960,18 @@ class PosteriorReader:
 
     @property
     def chromosomes(self) -> List[str]:
+        self._raise_if_closed()
         return list(self._chrom_info.keys())
 
     def get_n_fibers(self, chrom: str) -> int:
+        self._raise_if_closed()
         if chrom not in self._chrom_info:
             return 0
         return self._chrom_info[chrom]['n_fibers']
 
     def get_fibers_overlapping(self, chrom: str, start: int, end: int,
                                 min_overlap: int = 1) -> List['FiberPosterior']:
+        self._raise_if_closed()
         if chrom not in self._chrom_info:
             return []
 
@@ -972,6 +987,7 @@ class PosteriorReader:
         return self._load_fibers(chrom, indices)
 
     def get_fibers_spanning(self, chrom: str, start: int, end: int) -> List['FiberPosterior']:
+        self._raise_if_closed()
         if chrom not in self._chrom_info:
             return []
 
@@ -981,6 +997,7 @@ class PosteriorReader:
         return self._load_fibers(chrom, indices)
 
     def _load_fibers(self, chrom: str, indices: np.ndarray) -> List['FiberPosterior']:
+        self._raise_if_closed()
         grp = self.h5[chrom]
         ids = grp['fiber_ids']
         starts = grp['fiber_starts']
@@ -1021,13 +1038,17 @@ class PosteriorReader:
         return fibers
 
     def close(self):
+        if self._closed:
+            return
         self.h5.close()
+        self._closed = True
 
     def __enter__(self):
         return self
 
     def __exit__(self, *args):
         self.close()
+        return False
 
 
 class FiberPosterior:
