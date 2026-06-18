@@ -17,6 +17,7 @@ from fiberhmm.cli.generate_probs import (
     _count_items_desc,
     _finalize_probability_bam_run,
     _generate_probability_stats_for_contexts,
+    _generate_probability_stats_for_plan,
     _generate_probs_skip_reason,
     _max_reads_per_file,
     _maybe_update_probability_progress,
@@ -43,6 +44,7 @@ from fiberhmm.cli.generate_probs import (
     _ProbabilitySampleGroupPlan,
     _ProbabilitySampleResult,
     _ProbabilitySampleSetResult,
+    _ProbabilityStatsPlan,
     _process_bam_result,
     _process_probability_control_groups,
     _process_probability_read,
@@ -405,7 +407,7 @@ def test_save_probability_run_outputs_routes_tables_cleanup_and_stats(monkeypatc
     )
     monkeypatch.setattr(
         generate_probs,
-        "_generate_probability_stats_for_contexts",
+        "_generate_probability_stats_for_plan",
         lambda *args: calls.append(("stats", args)),
     )
     monkeypatch.setattr(
@@ -481,7 +483,15 @@ def test_save_probability_run_outputs_routes_tables_cleanup_and_stats(monkeypatc
     assert calls[4] == ("cleanup", ("out", "run", ["A", "C"]))
     assert calls[5] == (
         "stats",
-        ([2, 3], accessible_counters, inaccessible_counters, "plots", "run"),
+        (
+            _ProbabilityStatsPlan(
+                context_sizes=[2, 3],
+                accessible_counters=accessible_counters,
+                inaccessible_counters=inaccessible_counters,
+                plots_dir="plots",
+                base_name="run",
+            ),
+        ),
     )
     assert calls[6] == ("done", ())
 
@@ -1457,9 +1467,15 @@ def test_generate_probability_stats_for_contexts_delegates_each_context(monkeypa
         fake_generate_probability_stats,
     )
 
-    _generate_probability_stats_for_contexts(
-        [3, 5], accessible, inaccessible, "plots", "run",
+    plan = _ProbabilityStatsPlan(
+        context_sizes=[3, 5],
+        accessible_counters=accessible,
+        inaccessible_counters=inaccessible,
+        plots_dir="plots",
+        base_name="run",
     )
+
+    _generate_probability_stats_for_plan(plan)
 
     assert calls == [
         ((accessible, inaccessible, "plots", "run"), {"context_size": 3}),
@@ -1469,6 +1485,10 @@ def test_generate_probability_stats_for_contexts_delegates_each_context(monkeypa
     assert "Generating statistics and plots:" in output
     assert "k=3 (7-mer):" in output
     assert "k=5 (11-mer):" in output
+    _generate_probability_stats_for_contexts(
+        [3, 5], accessible, inaccessible, "plots", "run",
+    )
+    assert len(calls) == 4
 
 
 def test_write_probability_table_uses_stable_probability_columns(tmp_path):

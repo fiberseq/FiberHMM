@@ -1030,6 +1030,31 @@ def _save_probability_outputs_for_base(
     )
 
 
+@dataclass(frozen=True)
+class _ProbabilityStatsPlan:
+    context_sizes: List[int]
+    accessible_counters: Dict[str, ContextCounter]
+    inaccessible_counters: Dict[str, ContextCounter]
+    plots_dir: str
+    base_name: str
+
+
+def _generate_probability_stats_for_plan(
+    plan: _ProbabilityStatsPlan,
+) -> None:
+    print("\n" + "-" * 60)
+    print("Generating statistics and plots:")
+    for ctx_size in plan.context_sizes:
+        print(f"\n  k={ctx_size} ({2*ctx_size+1}-mer):")
+        generate_probability_stats(
+            plan.accessible_counters,
+            plan.inaccessible_counters,
+            plan.plots_dir,
+            plan.base_name,
+            context_size=ctx_size,
+        )
+
+
 def _generate_probability_stats_for_contexts(
     context_sizes: List[int],
     accessible_counters: Dict[str, ContextCounter],
@@ -1037,17 +1062,15 @@ def _generate_probability_stats_for_contexts(
     plots_dir: str,
     base_name: str,
 ) -> None:
-    print("\n" + "-" * 60)
-    print("Generating statistics and plots:")
-    for ctx_size in context_sizes:
-        print(f"\n  k={ctx_size} ({2*ctx_size+1}-mer):")
-        generate_probability_stats(
-            accessible_counters,
-            inaccessible_counters,
-            plots_dir,
-            base_name,
-            context_size=ctx_size,
+    _generate_probability_stats_for_plan(
+        _ProbabilityStatsPlan(
+            context_sizes=context_sizes,
+            accessible_counters=accessible_counters,
+            inaccessible_counters=inaccessible_counters,
+            plots_dir=plots_dir,
+            base_name=base_name,
         )
+    )
 
 
 def _print_probability_completion_message() -> None:
@@ -1182,12 +1205,14 @@ def _save_probability_run_outputs(
     )
 
     if args.stats:
-        _generate_probability_stats_for_contexts(
-            args.context_sizes,
-            accessible_result.counters,
-            inaccessible_result.counters,
-            run.plots_dir,
-            run.base_name,
+        _generate_probability_stats_for_plan(
+            _ProbabilityStatsPlan(
+                context_sizes=args.context_sizes,
+                accessible_counters=accessible_result.counters,
+                inaccessible_counters=inaccessible_result.counters,
+                plots_dir=run.plots_dir,
+                base_name=run.base_name,
+            )
         )
 
     _print_probability_completion_message()
