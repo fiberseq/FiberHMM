@@ -440,8 +440,14 @@ def test_flush_h5_chrom_buffer_writes_and_clears(monkeypatch):
 
     monkeypatch.setattr(export_posteriors, "_write_batch_to_h5", fake_write_batch)
 
-    assert export_posteriors._flush_h5_chrom_buffer(
-        h5_file, "chr1", buffers, counts, metadata,
+    assert export_posteriors._flush_h5_chrom_buffer_from_request(
+        export_posteriors._H5ChromBufferFlushRequest(
+            h5_file=h5_file,
+            chrom="chr1",
+            write_buffers=buffers,
+            chrom_fiber_counts=counts,
+            chrom_metadata=metadata,
+        )
     ) == 2
 
     assert calls == [(h5_file["chr1"], [{"read_name": "a"}, {"read_name": "b"}], 5)]
@@ -453,6 +459,13 @@ def test_flush_h5_chrom_buffer_writes_and_clears(monkeypatch):
         export_posteriors._concat_h5_metadata_arrays(metadata["chr1"]["starts"]),
         np.array([10, 20], dtype=np.int32),
     )
+    adapter_buffers = {"chr1": [{"read_name": "c"}]}
+    adapter_counts = {"chr1": 0}
+    adapter_metadata = {"chr1": {"ids": [], "starts": [], "ends": [], "strands": []}}
+    assert export_posteriors._flush_h5_chrom_buffer(
+        h5_file, "chr1", adapter_buffers, adapter_counts, adapter_metadata,
+    ) == 1
+    assert adapter_buffers["chr1"] == []
 
 
 def test_flush_h5_chrom_buffer_skips_empty_buffer(monkeypatch):

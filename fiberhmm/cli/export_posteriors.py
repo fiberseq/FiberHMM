@@ -116,6 +116,15 @@ class _H5BatchMetadata:
 
 
 @dataclass(frozen=True)
+class _H5ChromBufferFlushRequest:
+    h5_file: object
+    chrom: str
+    write_buffers: dict
+    chrom_fiber_counts: dict
+    chrom_metadata: dict
+
+
+@dataclass(frozen=True)
 class _FootprintReferenceIntervals:
     starts: np.ndarray
     sizes: np.ndarray
@@ -584,19 +593,36 @@ def _fiber_spanning_indices(
 
 def _flush_h5_chrom_buffer(h5_file, chrom: str, write_buffers: dict,
                            chrom_fiber_counts: dict, chrom_metadata: dict) -> int:
+    return _flush_h5_chrom_buffer_from_request(
+        _H5ChromBufferFlushRequest(
+            h5_file=h5_file,
+            chrom=chrom,
+            write_buffers=write_buffers,
+            chrom_fiber_counts=chrom_fiber_counts,
+            chrom_metadata=chrom_metadata,
+        ),
+    )
+
+
+def _flush_h5_chrom_buffer_from_request(
+    request: _H5ChromBufferFlushRequest,
+) -> int:
     """Write one chromosome buffer to HDF5 and update metadata sidecars."""
-    buffer = write_buffers[chrom]
+    buffer = request.write_buffers[request.chrom]
     if not buffer:
         return 0
 
-    grp = h5_file[chrom]
-    start_idx = chrom_fiber_counts[chrom]
+    grp = request.h5_file[request.chrom]
+    start_idx = request.chrom_fiber_counts[request.chrom]
     batch_metadata = _write_batch_to_h5(grp, buffer, start_idx)
-    _append_h5_batch_metadata(chrom_metadata[chrom], batch_metadata)
+    _append_h5_batch_metadata(
+        request.chrom_metadata[request.chrom],
+        batch_metadata,
+    )
 
     n_written = len(buffer)
-    chrom_fiber_counts[chrom] += n_written
-    write_buffers[chrom] = []
+    request.chrom_fiber_counts[request.chrom] += n_written
+    request.write_buffers[request.chrom] = []
     return n_written
 
 
