@@ -96,6 +96,39 @@ def test_probability_tables_for_base_fetches_accessible_and_inaccessible_tables(
     assert inacc.context_sizes == [4]
 
 
+def test_base_probability_contexts_iterates_ordered_counter_pairs():
+    acc_a_table = pd.DataFrame({"context": ["AAA"], "ratio": [0.8]})
+    acc_c_table = pd.DataFrame({"context": ["CCC"], "ratio": [0.7]})
+    inacc_a_table = pd.DataFrame({"context": ["AAA"], "ratio": [0.2]})
+    inacc_c_table = pd.DataFrame({"context": ["CCC"], "ratio": [0.1]})
+    acc_a = _FakeCounter(0, 0, {}, acc_a_table)
+    acc_c = _FakeCounter(0, 0, {}, acc_c_table)
+    inacc_a = _FakeCounter(0, 0, {}, inacc_a_table)
+    inacc_c = _FakeCounter(0, 0, {}, inacc_c_table)
+
+    contexts = list(
+        stats._base_probability_contexts(
+            {"A": acc_a, "C": acc_c},
+            {"A": inacc_a, "C": inacc_c},
+            context_size=3,
+        )
+    )
+
+    assert [context.base for context in contexts] == ["A", "C"]
+    assert contexts[0].accessible_counter is acc_a
+    assert contexts[0].inaccessible_counter is inacc_a
+    assert contexts[0].probability_tables.accessible is acc_a_table
+    assert contexts[0].probability_tables.inaccessible is inacc_a_table
+    assert contexts[1].accessible_counter is acc_c
+    assert contexts[1].inaccessible_counter is inacc_c
+    assert contexts[1].probability_tables.accessible is acc_c_table
+    assert contexts[1].probability_tables.inaccessible is inacc_c_table
+    assert acc_a.context_sizes == [3]
+    assert acc_c.context_sizes == [3]
+    assert inacc_a.context_sizes == [3]
+    assert inacc_c.context_sizes == [3]
+
+
 def test_write_probability_ratio_summary_formats_nonempty_ratios_only():
     handle = io.StringIO()
 

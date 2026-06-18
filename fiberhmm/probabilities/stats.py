@@ -9,7 +9,7 @@ Contains:
 
 import os
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING, Dict, Iterator
 
 import numpy as np
 
@@ -82,6 +82,14 @@ class _ProbabilityTablesForBase:
     inaccessible: 'pd.DataFrame'
 
 
+@dataclass(frozen=True)
+class _BaseProbabilityContext:
+    base: str
+    accessible_counter: 'ContextCounter'
+    inaccessible_counter: 'ContextCounter'
+    probability_tables: _ProbabilityTablesForBase
+
+
 def _probability_tables_for_base(
     accessible_counters,
     inaccessible_counters,
@@ -91,6 +99,22 @@ def _probability_tables_for_base(
     _, acc_probs = accessible_counters[base].get_encoding_table(context_size)
     _, inacc_probs = inaccessible_counters[base].get_encoding_table(context_size)
     return _ProbabilityTablesForBase(acc_probs, inacc_probs)
+
+
+def _base_probability_contexts(
+    accessible_counters: Dict[str, 'ContextCounter'],
+    inaccessible_counters: Dict[str, 'ContextCounter'],
+    context_size: int,
+) -> Iterator[_BaseProbabilityContext]:
+    for base in accessible_counters.keys():
+        yield _BaseProbabilityContext(
+            base=base,
+            accessible_counter=accessible_counters[base],
+            inaccessible_counter=inaccessible_counters[base],
+            probability_tables=_probability_tables_for_base(
+                accessible_counters, inaccessible_counters, base, context_size,
+            ),
+        )
 
 
 def _filtered_log_odds(merged, eps: float = 0.001) -> np.ndarray:
@@ -452,15 +476,15 @@ def _write_probability_stats_summary(summary_file: str,
         )
         f.write("=" * 60 + "\n\n")
 
-        for base in accessible_counters.keys():
-            acc = accessible_counters[base]
-            inacc = inaccessible_counters[base]
-
-            probability_tables = _probability_tables_for_base(
-                accessible_counters, inaccessible_counters, base, context_size,
-            )
+        for base_context in _base_probability_contexts(
+            accessible_counters, inaccessible_counters, context_size,
+        ):
+            probability_tables = base_context.probability_tables
             _write_base_probability_summary(
-                f, base, acc, inacc,
+                f,
+                base_context.base,
+                base_context.accessible_counter,
+                base_context.inaccessible_counter,
                 probability_tables.accessible,
                 probability_tables.inaccessible,
                 context_size,
@@ -594,18 +618,18 @@ def _write_probability_stats_pdf(
     context_size: int,
 ) -> str:
     with pdf_pages_factory(pdf_path) as pdf:
-        for base in accessible_counters.keys():
-            probability_tables = _probability_tables_for_base(
-                accessible_counters, inaccessible_counters, base, context_size,
-            )
+        for base_context in _base_probability_contexts(
+            accessible_counters, inaccessible_counters, context_size,
+        ):
+            probability_tables = base_context.probability_tables
 
             _write_probability_distribution_pdf_page(
-                plt, pdf, base, context_size,
+                plt, pdf, base_context.base, context_size,
                 probability_tables.accessible,
                 probability_tables.inaccessible,
             )
             _write_probability_counts_pdf_page(
-                plt, pdf, base,
+                plt, pdf, base_context.base,
                 probability_tables.accessible,
                 probability_tables.inaccessible,
             )
@@ -621,18 +645,16 @@ def _save_probability_distribution_pngs(
     context_size: int,
 ) -> list[str]:
     png_paths = []
-    for base in accessible_counters.keys():
-        acc = accessible_counters[base]
-        inacc = inaccessible_counters[base]
-
-        probability_tables = _probability_tables_for_base(
-            accessible_counters, inaccessible_counters, base, context_size,
-        )
+    for base_context in _base_probability_contexts(
+        accessible_counters, inaccessible_counters, context_size,
+    ):
+        probability_tables = base_context.probability_tables
 
         png_paths.append(
             _save_probability_distribution_png(
-                plt, plots_dir, base_name, base, context_size,
-                acc, inacc,
+                plt, plots_dir, base_name, base_context.base, context_size,
+                base_context.accessible_counter,
+                base_context.inaccessible_counter,
                 probability_tables.accessible,
                 probability_tables.inaccessible,
             )
