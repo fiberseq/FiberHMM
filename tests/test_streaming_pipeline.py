@@ -45,6 +45,20 @@ from fiberhmm.inference.streaming_pipeline import (
 from fiberhmm.inference.parallel import process_bam_for_footprints
 
 
+class _FakeAlignmentFile:
+    def __init__(self, *args, **kwargs):
+        self.header = {"HD": {"SO": "coordinate"}}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def fetch(self, **kwargs):
+        return []
+
+
 def test_apply_worker_args_match_payload_worker_contract():
     assert _worker_common_args(
         11, True, "deam", 5, 61, 86, True,
@@ -830,19 +844,6 @@ def test_new_apply_streaming_executor_configures_pool(monkeypatch):
 def test_apply_streaming_closes_posterior_writer_on_executor_setup_failure(
     monkeypatch,
 ):
-    class FakeAlignmentFile:
-        def __init__(self, *args, **kwargs):
-            self.header = {"HD": {"SO": "coordinate"}}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def fetch(self, **kwargs):
-            return []
-
     class Writer:
         def __init__(self):
             self.closed = 0
@@ -853,7 +854,7 @@ def test_apply_streaming_closes_posterior_writer_on_executor_setup_failure(
 
     writer = Writer()
     monkeypatch.setattr(streaming_pipeline.pysam, "set_verbosity", lambda value: None)
-    monkeypatch.setattr(streaming_pipeline.pysam, "AlignmentFile", FakeAlignmentFile)
+    monkeypatch.setattr(streaming_pipeline.pysam, "AlignmentFile", _FakeAlignmentFile)
     monkeypatch.setattr(streaming_pipeline, "append_coord_marker", lambda header: header)
     monkeypatch.setattr(
         streaming_pipeline,
@@ -882,6 +883,61 @@ def test_apply_streaming_closes_posterior_writer_on_executor_setup_failure(
         )
 
     assert writer.closed == 1
+
+
+def test_fused_streaming_closes_reference_on_executor_setup_failure(
+    monkeypatch,
+):
+    class FakeFastaFile:
+        def __init__(self, path):
+            self.path = path
+            self.closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    fasta = FakeFastaFile("ref.fa")
+    monkeypatch.setattr(streaming_pipeline.pysam, "set_verbosity", lambda value: None)
+    monkeypatch.setattr(streaming_pipeline.pysam, "AlignmentFile", _FakeAlignmentFile)
+    monkeypatch.setattr(streaming_pipeline.pysam, "FastaFile", lambda path: fasta)
+    monkeypatch.setattr(streaming_pipeline, "maybe_append_pg", lambda header, pg: header)
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_new_fused_streaming_executor",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("executor failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="executor failed"):
+        streaming_pipeline._process_bam_streaming_pipeline_fused(
+            input_bam="in.bam",
+            output_bam="out.bam",
+            model_path="model.json",
+            recall_model_path=None,
+            train_rids=set(),
+            edge_trim=0,
+            circular=False,
+            mode="daf",
+            context_size=5,
+            msp_min_size=0,
+            nuc_min_size=0,
+            min_mapq=0,
+            prob_threshold=0,
+            min_read_length=0,
+            with_scores=False,
+            min_llr=0.0,
+            min_opps=0,
+            unify_threshold=0,
+            emission_uplift=1.0,
+            also_write_legacy=True,
+            downstream_compat=True,
+            max_reads=None,
+            n_cores=1,
+            chunk_size=1,
+            io_threads=1,
+            ref_fasta_path="ref.fa",
+        )
+
+    assert fasta.closed == 1
 
 
 def test_apply_drain_chunk_factory_calls_apply_drain(monkeypatch):

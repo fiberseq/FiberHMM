@@ -828,30 +828,30 @@ def _process_bam_streaming_pipeline_fused(
         with pysam.AlignmentFile(_output_target, "wb",
                                  header=maybe_append_pg(inbam.header, pg_record),
                                  threads=io_threads) as outbam:
-            if ref_fasta_path:
-                ref_fasta = pysam.FastaFile(ref_fasta_path)
-
-            executor = _new_fused_streaming_executor(
-                model_path,
-                recall_model_path,
-                emission_uplift,
-                recall_nucs,
-                split_min_llr,
-                split_min_opps,
-                filter_chimeras,
-                chimera_min_seg,
-                chimera_purity,
-                phase_nrl,
-                n_cores,
-            )
-
-            worker_args = _fused_worker_args(
-                edge_trim, circular, mode, context_size,
-                msp_min_size, nuc_min_size, with_scores,
-                prob_threshold, min_llr, min_opps, unify_threshold,
-            )
-
             try:
+                if ref_fasta_path:
+                    ref_fasta = pysam.FastaFile(ref_fasta_path)
+
+                executor = _new_fused_streaming_executor(
+                    model_path,
+                    recall_model_path,
+                    emission_uplift,
+                    recall_nucs,
+                    split_min_llr,
+                    split_min_opps,
+                    filter_chimeras,
+                    chimera_min_seg,
+                    chimera_purity,
+                    phase_nrl,
+                    n_cores,
+                )
+
+                worker_args = _fused_worker_args(
+                    edge_trim, circular, mode, context_size,
+                    msp_min_size, nuc_min_size, with_scores,
+                    prob_threshold, min_llr, min_opps, unify_threshold,
+                )
+
                 total_reads, skipped = _run_streaming_worker_loop(
                     inbam.fetch(until_eof=True),
                     filter_config,
