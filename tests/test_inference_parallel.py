@@ -1851,6 +1851,33 @@ def test_drain_chunk_in_order_interleaves_skips_and_results():
     assert recorded == [(processed_read, result)]
 
 
+def test_drain_oldest_with_recorder_records_failures_and_order():
+    skipped_read = object()
+    processed_read = object()
+    result = {"ns": [1]}
+    outbam = _OutBam()
+    counters = {}
+    recorded = []
+    inflight = deque([(
+        _done_future(WorkerChunkResult([result], read_failures=2)),
+        [skipped_read, processed_read],
+        [{"payload": "processed"}],
+        [True, False],
+    )])
+
+    streaming_drain._drain_oldest_with_recorder(
+        inflight,
+        outbam,
+        counters,
+        lambda read, got_result: recorded.append((read, got_result)),
+    )
+
+    assert not inflight
+    assert outbam.written == [skipped_read, processed_read]
+    assert counters == {"worker_failures": 2, "written": 2}
+    assert recorded == [(processed_read, result)]
+
+
 def test_record_apply_result_tags_posteriors_or_counts_no_footprints(monkeypatch):
     read = object()
     result = {"ns": [1]}

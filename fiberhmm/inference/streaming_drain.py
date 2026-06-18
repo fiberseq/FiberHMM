@@ -110,6 +110,26 @@ def _drain_chunk_in_order(
         _write_passthrough(outbam, read_obj, counters)
 
 
+def _drain_oldest_with_recorder(inflight, outbam, counters, record_result) -> None:
+    (
+        results,
+        worker_failures,
+        chunk_read_objs,
+        chunk_items,
+        chunk_skip_flags,
+    ) = _pop_inflight_chunk(inflight)
+    _record_worker_failures(counters, worker_failures)
+    _drain_chunk_in_order(
+        chunk_read_objs,
+        chunk_items,
+        chunk_skip_flags,
+        results,
+        outbam,
+        counters,
+        record_result,
+    )
+
+
 def _record_apply_result(
     read_obj,
     result,
@@ -167,30 +187,13 @@ def _drain_oldest_chunk(
     interleaved with processed reads at their correct positions. This preserves
     coordinate sort order when the input is coordinate sorted.
     """
-    (
-        results,
-        worker_failures,
-        chunk_read_objs,
-        chunk_reads,
-        chunk_skip_flags,
-    ) = _pop_inflight_chunk(inflight)
-    _record_worker_failures(counters, worker_failures)
-
     def record_result(read_obj, result):
         _record_apply_result(
             read_obj, result, with_scores, write_msps, posterior_writer,
             counters,
         )
 
-    _drain_chunk_in_order(
-        chunk_read_objs,
-        chunk_reads,
-        chunk_skip_flags,
-        results,
-        outbam,
-        counters,
-        record_result,
-    )
+    _drain_oldest_with_recorder(inflight, outbam, counters, record_result)
 
 
 def _drain_oldest_fused_chunk(
@@ -202,26 +205,9 @@ def _drain_oldest_fused_chunk(
     counters,
 ):
     """Drain one fused apply+recall chunk and write reads in input order."""
-    (
-        results,
-        worker_failures,
-        chunk_read_objs,
-        chunk_payloads,
-        chunk_skip_flags,
-    ) = _pop_inflight_chunk(inflight)
-    _record_worker_failures(counters, worker_failures)
-
     def record_result(read_obj, result):
         _record_fused_result(
             read_obj, result, also_write_legacy, downstream_compat, counters,
         )
 
-    _drain_chunk_in_order(
-        chunk_read_objs,
-        chunk_payloads,
-        chunk_skip_flags,
-        results,
-        outbam,
-        counters,
-        record_result,
-    )
+    _drain_oldest_with_recorder(inflight, outbam, counters, record_result)
