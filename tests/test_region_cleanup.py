@@ -336,6 +336,44 @@ def test_submit_region_futures_maps_futures_to_region_indices():
     ]
 
 
+def test_add_region_result_to_aggregation_handles_optional_tsv(tmp_path):
+    class Aggregation:
+        def __init__(self):
+            self.calls = []
+
+        def add_result(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+
+    tsv_path = tmp_path / "region.tsv"
+    tsv_path.write_text("read\tposterior\n")
+    result = region_pipeline.RegionBamResult(
+        "region.bam",
+        total_reads=10,
+        reads_with_footprints=4,
+        written=10,
+        temp_tsv_path=str(tsv_path),
+    )
+    aggregation = Aggregation()
+
+    region_pipeline._add_region_result_to_aggregation(
+        aggregation,
+        2,
+        result,
+        include_tsv=True,
+    )
+    region_pipeline._add_region_result_to_aggregation(
+        aggregation,
+        3,
+        result,
+        include_tsv=False,
+    )
+
+    assert aggregation.calls == [
+        ((2, result), {"include_tsv": True}),
+        ((3, result), {}),
+    ]
+
+
 def test_collect_region_results_aggregates_and_reports_progress(monkeypatch, tmp_path):
     class Future:
         def __init__(self, value):

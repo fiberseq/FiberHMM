@@ -322,6 +322,24 @@ def _submit_region_futures(executor, worker, work_items) -> dict:
     }
 
 
+def _add_region_result_to_aggregation(
+    aggregation,
+    region_index: int,
+    result,
+    *,
+    include_tsv: bool = False,
+) -> None:
+    if include_tsv:
+        aggregation.add_result(
+            region_index,
+            result,
+            include_tsv=_region_result_has_existing_tsv(result),
+        )
+        return
+
+    aggregation.add_result(region_index, result)
+
+
 def _collect_region_results(
     executor,
     worker,
@@ -344,14 +362,12 @@ def _collect_region_results(
     for future in as_completed(futures):
         try:
             result = result_type.from_value(future.result())
-            if include_tsv:
-                aggregation.add_result(
-                    futures[future],
-                    result,
-                    include_tsv=_region_result_has_existing_tsv(result),
-                )
-            else:
-                aggregation.add_result(futures[future], result)
+            _add_region_result_to_aggregation(
+                aggregation,
+                futures[future],
+                result,
+                include_tsv=include_tsv,
+            )
 
             first_result_time = _report_workers_ready_once(
                 first_result_time,
