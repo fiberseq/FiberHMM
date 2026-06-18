@@ -8,6 +8,7 @@ from fiberhmm.inference.reference_mapping import (
     _query_interval_bounds,
     _ref_positions_to_half_open_span,
     _scored_interval_record,
+    _ScoredIntervalRecord,
     query_interval_to_ref_block,
     query_interval_to_ref_span,
     query_to_ref_lookup,
@@ -41,9 +42,15 @@ def test_query_interval_bounds_normalizes_numeric_inputs():
 
 
 def test_scored_interval_record_attaches_score_or_default():
-    assert _scored_interval_record((10, 12), [7], 0) == (10, 12, 7)
-    assert _scored_interval_record((10, 12), [7], 1) == (10, 12, 0)
-    assert _scored_interval_record((10, 12), None, 0) == (10, 12, 0)
+    assert _scored_interval_record((10, 12), [7], 0) == _ScoredIntervalRecord(
+        10, 12, 7,
+    )
+    assert _scored_interval_record((10, 12), [7], 1) == _ScoredIntervalRecord(
+        10, 12, 0,
+    )
+    assert _scored_interval_record((10, 12), None, 0) == _ScoredIntervalRecord(
+        10, 12, 0,
+    )
 
 
 def test_exact_block_mapping_requires_aligned_endpoints():

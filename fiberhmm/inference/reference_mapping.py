@@ -14,6 +14,13 @@ class _QueryIntervalBounds:
     end: int
 
 
+@dataclass(frozen=True)
+class _ScoredIntervalRecord:
+    start: int
+    end: int
+    score: int
+
+
 def build_query_to_ref(read):
     """Build the fast query-position to reference-position lookup for a read."""
     return cigar_to_query_ref(read)
@@ -103,19 +110,19 @@ def _scored_interval_record(
     block: Tuple[int, int],
     scores,
     index: int,
-) -> Tuple[int, int, int]:
-    return block[0], block[1], _interval_score(scores, index)
+) -> _ScoredIntervalRecord:
+    return _ScoredIntervalRecord(block[0], block[1], _interval_score(scores, index))
 
 
 def _scored_intervals(starts, lengths, scores, query_to_ref, mapper) -> List[Tuple[int, int, int]]:
-    blocks = []
+    records = []
     for i, (qstart, length) in enumerate(zip(starts, lengths)):
         block = mapper(qstart, length, query_to_ref)
         if block is None:
             continue
-        blocks.append(_scored_interval_record(block, scores, i))
-    blocks.sort(key=lambda x: x[0])
-    return blocks
+        records.append(_scored_interval_record(block, scores, i))
+    records.sort(key=lambda record: record.start)
+    return [(record.start, record.end, record.score) for record in records]
 
 
 def scored_interval_blocks(starts, lengths, scores, query_to_ref) -> List[Tuple[int, int, int]]:
