@@ -298,6 +298,12 @@ class _MmBaseModCode:
 
 
 @dataclass(frozen=True)
+class _DafDeaminationBaseCounts:
+    t: int
+    a: int
+
+
+@dataclass(frozen=True)
 class _MmHitPositions:
     positions: np.ndarray
     next_ml_idx: int
@@ -809,17 +815,20 @@ def detect_daf_strand(sequence: str, mod_positions: Set[int]) -> str:
     if not mod_positions:
         return '.'
 
-    t_count, a_count = _daf_deamination_base_counts(sequence, mod_positions)
+    counts = _daf_deamination_base_counts(sequence, mod_positions)
 
-    if t_count > a_count:
+    if counts.t > counts.a:
         return '+'  # C->T deamination, + strand
-    elif a_count > t_count:
+    elif counts.a > counts.t:
         return '-'  # G->A deamination, - strand
     else:
         return '.'
 
 
-def _daf_deamination_base_counts(sequence: str, mod_positions: Set[int]) -> tuple:
+def _daf_deamination_base_counts(
+    sequence: str,
+    mod_positions: Set[int],
+) -> _DafDeaminationBaseCounts:
     seq_upper = sequence.upper()
     t_count = 0
     a_count = 0
@@ -831,7 +840,7 @@ def _daf_deamination_base_counts(sequence: str, mod_positions: Set[int]) -> tupl
                 t_count += 1
             elif base == 'A':
                 a_count += 1
-    return t_count, a_count
+    return _DafDeaminationBaseCounts(t=t_count, a=a_count)
 
 
 def daf_strand_from_tag(st_tag: Optional[str]) -> str:
