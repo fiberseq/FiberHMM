@@ -1517,6 +1517,15 @@ def _remove_bigbed_sizes_file(sizes_file: str) -> None:
         print(f"  Warning: Could not remove temp file {sizes_file}: {e}")
 
 
+def _remove_failed_bigbed_output(bigbed_path: str) -> None:
+    if not os.path.exists(bigbed_path):
+        return
+    try:
+        os.remove(bigbed_path)
+    except (PermissionError, OSError) as e:
+        print(f"  Warning: Could not remove failed bigBed output {bigbed_path}: {e}")
+
+
 def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           n_cores: int = 1, region_size: int = 10_000_000,
                           min_mapq: int = 0, prob_threshold: int = 125,
@@ -1645,6 +1654,7 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
 
         if result.returncode != 0:
             print(f"bedToBigBed error: {result.stderr}")
+            _remove_failed_bigbed_output(bigbed_path)
             return False
 
         return True
@@ -1652,6 +1662,7 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
     except FileNotFoundError:
         print("Warning: bedToBigBed not found in PATH. Skipping bigBed conversion.")
         print("Install with: conda install -c bioconda ucsc-bedtobigbed")
+        _remove_failed_bigbed_output(bigbed_path)
         return False
 
     finally:

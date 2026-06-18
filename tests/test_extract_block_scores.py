@@ -1159,6 +1159,31 @@ def test_remove_bigbed_autosql_file_warns_on_cleanup_failure(
     assert "Could not remove temp file" in capsys.readouterr().out
 
 
+def test_bed_to_bigbed_removes_failed_output(monkeypatch, tmp_path, capsys):
+    bed_path = tmp_path / "calls.bed"
+    bigbed_path = tmp_path / "calls.bb"
+    sizes_path = tmp_path / "calls.bed.sizes"
+    bed_path.write_text("chr1\t0\t10\n")
+    bigbed_path.write_text("stale")
+
+    monkeypatch.setattr(
+        extract_tags.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=1, stderr="bad input"),
+    )
+
+    assert not extract_tags.bed_to_bigbed(
+        str(bed_path),
+        str(bigbed_path),
+        {"chr1": 100},
+        extract_type=None,
+    )
+
+    assert not bigbed_path.exists()
+    assert not sizes_path.exists()
+    assert "bedToBigBed error: bad input" in capsys.readouterr().out
+
+
 # ------------------- autoSQL schemas --------------------------------
 
 def test_autosql_default_is_bed12_only():
