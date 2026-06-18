@@ -306,11 +306,11 @@ def _training_mod_query_positions(read, prob_threshold: int, mode: str) -> set:
 
 
 def _training_mm_ml_query_positions(read, prob_threshold: int, mode: str) -> set:
-    from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
+    from fiberhmm.core.bam_reader import _has_mm_ml_inputs, parse_mm_tag_query_positions
 
     mm_tag = get_preferred_tag(read, 'MM', 'Mm')
     ml_tag = get_preferred_tag(read, 'ML', 'Ml')
-    if mm_tag and ml_tag is not None:
+    if _has_mm_ml_inputs(mm_tag, ml_tag):
         return set(parse_mm_tag_query_positions(
             mm_tag, ml_tag, read.query_sequence,
             read.is_reverse, prob_threshold, mode=mode,

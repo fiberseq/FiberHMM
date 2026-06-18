@@ -1475,6 +1475,16 @@ def test_training_mod_query_positions_prefers_pysam_then_mm_fallback(monkeypatch
     assert train._training_mm_ml_query_positions(read, 125, "pacbio-fiber") == {1}
     assert captured["ml_tag"] == b"\xc8"
 
+    read_empty_ml = TaggedRead({"MM": "A+a,0;", "ML": np.asarray([], dtype=np.uint8)})
+    monkeypatch.setattr(
+        bam_reader,
+        "parse_mm_tag_query_positions",
+        lambda *args, **kwargs: pytest.fail("empty ML fallback should not parse"),
+    )
+    assert train._training_mm_ml_query_positions(
+        read_empty_ml, 125, "pacbio-fiber",
+    ) == set()
+
 
 def test_training_sample_candidate_filters_duplicates_and_requires_mods(monkeypatch):
     read = SimpleNamespace(query_name="read1")
