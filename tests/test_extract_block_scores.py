@@ -693,20 +693,18 @@ def test_run_extract_tags_parallel_passes_resolved_settings(monkeypatch):
         lambda **kwargs: calls.append(kwargs) or (12, {"tf": 3}),
     )
 
-    output_beds, bb_paths, n_reads, n_features = (
-        extract_tags._run_extract_tags_parallel(args, settings)
-    )
+    result = extract_tags._run_extract_tags_parallel(args, settings)
 
-    assert n_reads == 12
-    assert n_features == {"tf": 3}
-    assert output_beds == {
+    assert result.n_reads == 12
+    assert result.feature_counts == {"tf": 3}
+    assert result.output_beds == {
         "tf": os.path.join("tracks", "sample_tf.bed"),
         "msp": os.path.join("tracks", "sample_msp.bed"),
     }
-    assert bb_paths["tf"] == os.path.join("tracks", "sample_tf.bb")
+    assert result.bigbed_paths["tf"] == os.path.join("tracks", "sample_tf.bb")
     assert calls == [{
         "input_bam": "input.bam",
-        "output_beds": output_beds,
+        "output_beds": result.output_beds,
         "extract_types": ["tf", "msp"],
         "n_cores": 4,
         "region_size": 5000,

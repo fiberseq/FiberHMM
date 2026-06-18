@@ -2108,6 +2108,14 @@ class _ExtractRunSettings:
     chrom_sizes: Dict[str, int]
 
 
+@dataclass(frozen=True)
+class _ExtractTagsRunResult:
+    output_beds: dict
+    bigbed_paths: dict
+    n_reads: int
+    feature_counts: dict
+
+
 def _prepare_extract_run_settings(args) -> _ExtractRunSettings:
     if not os.path.exists(args.input):
         print(f"Error: Input file not found: {args.input}")
@@ -2151,7 +2159,7 @@ def _prepare_extract_tag_diagnostics(args, extract_types: list):
     return diag
 
 
-def _run_extract_tags_parallel(args, settings: _ExtractRunSettings):
+def _run_extract_tags_parallel(args, settings: _ExtractRunSettings) -> _ExtractTagsRunResult:
     output_beds = _extract_output_paths(
         settings.outdir,
         settings.dataset,
@@ -2180,7 +2188,12 @@ def _run_extract_tags_parallel(args, settings: _ExtractRunSettings):
         skip_scaffolds=args.skip_scaffolds,
         chroms=settings.chroms,
     )
-    return output_beds, bb_paths, n_reads, n_features
+    return _ExtractTagsRunResult(
+        output_beds=output_beds,
+        bigbed_paths=bb_paths,
+        n_reads=n_reads,
+        feature_counts=n_features,
+    )
 
 
 def _finalize_extract_outputs(args, settings: _ExtractRunSettings,
@@ -2224,11 +2237,17 @@ def main():
     # opens the BAM once, iterates once, builds the query->ref mapping
     # once per read, and writes to N per-type output BEDs.  N× faster
     # than running the old one-type-at-a-time loop.
-    output_beds, bb_paths, _, n_features = _run_extract_tags_parallel(
+    result = _run_extract_tags_parallel(
         args,
         settings,
     )
-    _finalize_extract_outputs(args, settings, output_beds, bb_paths, n_features)
+    _finalize_extract_outputs(
+        args,
+        settings,
+        result.output_beds,
+        result.bigbed_paths,
+        result.feature_counts,
+    )
 
     print("\nDone!")
 
