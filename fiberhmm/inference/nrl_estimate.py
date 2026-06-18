@@ -105,6 +105,49 @@ def _phase_nrl_spacings_for_read(
     return _nuc_center_spacings(nucs)
 
 
+def _collect_phase_nrl_spacings(
+    bam,
+    model,
+    llr_hit,
+    llr_miss,
+    *,
+    mode: str,
+    context_size: int,
+    split_min_llr: float,
+    split_min_opps: int,
+    nuc_min_size: int,
+    msp_min_size: int,
+    prob_threshold: int,
+    edge_trim: int,
+    sample_target: int,
+) -> tuple[list[float], int]:
+    spacings = []
+    n_reads = 0
+    for read in bam.fetch(until_eof=True):
+        read_spacings = _phase_nrl_spacings_for_read(
+            read,
+            model,
+            llr_hit,
+            llr_miss,
+            mode=mode,
+            context_size=context_size,
+            split_min_llr=split_min_llr,
+            split_min_opps=split_min_opps,
+            nuc_min_size=nuc_min_size,
+            msp_min_size=msp_min_size,
+            prob_threshold=prob_threshold,
+            edge_trim=edge_trim,
+        )
+        if read_spacings is None:
+            continue
+
+        spacings.extend(read_spacings)
+        n_reads += 1
+        if n_reads >= sample_target:
+            break
+    return spacings, n_reads
+
+
 def estimate_phase_nrl(
     input_bam: str,
     apply_model_path: str,
@@ -136,31 +179,23 @@ def estimate_phase_nrl(
         apply_model_path,
     )
 
-    spacings = []
-    n_reads = 0
     bam = pysam.AlignmentFile(input_bam, 'rb', check_sq=False)
     try:
-        for read in bam.fetch(until_eof=True):
-            read_spacings = _phase_nrl_spacings_for_read(
-                read,
-                model,
-                llr_hit,
-                llr_miss,
-                mode=mode,
-                context_size=context_size,
-                split_min_llr=split_min_llr,
-                split_min_opps=split_min_opps,
-                nuc_min_size=nuc_min_size,
-                msp_min_size=msp_min_size,
-                prob_threshold=prob_threshold,
-                edge_trim=edge_trim,
-            )
-            if read_spacings is None:
-                continue
-            spacings.extend(read_spacings)
-            n_reads += 1
-            if n_reads >= sample_target:
-                break
+        spacings, n_reads = _collect_phase_nrl_spacings(
+            bam,
+            model,
+            llr_hit,
+            llr_miss,
+            mode=mode,
+            context_size=context_size,
+            split_min_llr=split_min_llr,
+            split_min_opps=split_min_opps,
+            nuc_min_size=nuc_min_size,
+            msp_min_size=msp_min_size,
+            prob_threshold=prob_threshold,
+            edge_trim=edge_trim,
+            sample_target=sample_target,
+        )
     finally:
         bam.close()
 

@@ -149,3 +149,46 @@ def test_phase_nrl_spacings_for_read_runs_apply_and_recall(monkeypatch):
         "split_min_opps": 3,
         "nuc_min_size": 85,
     }
+
+
+def test_collect_phase_nrl_spacings_counts_usable_reads_only(monkeypatch):
+    reads = ["skip", "with_pairs", "no_pairs", "after_limit"]
+    calls = []
+
+    class FakeBam:
+        def fetch(self, until_eof=False):
+            assert until_eof is True
+            return iter(reads)
+
+    def fake_spacings(read, *args, **kwargs):
+        calls.append((read, args, kwargs))
+        return {
+            "skip": None,
+            "with_pairs": [170.0, 185.0],
+            "no_pairs": [],
+            "after_limit": [200.0],
+        }[read]
+
+    monkeypatch.setattr(nrl_estimate, "_phase_nrl_spacings_for_read", fake_spacings)
+
+    spacings, n_reads = nrl_estimate._collect_phase_nrl_spacings(
+        FakeBam(),
+        model="model",
+        llr_hit="hit",
+        llr_miss="miss",
+        mode="daf",
+        context_size=3,
+        split_min_llr=4.0,
+        split_min_opps=3,
+        nuc_min_size=85,
+        msp_min_size=0,
+        prob_threshold=128,
+        edge_trim=10,
+        sample_target=2,
+    )
+
+    assert spacings == [170.0, 185.0]
+    assert n_reads == 2
+    assert [call[0] for call in calls] == ["skip", "with_pairs", "no_pairs"]
+    assert calls[1][1] == ("model", "hit", "miss")
+    assert calls[1][2]["split_min_opps"] == 3
