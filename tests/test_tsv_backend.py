@@ -364,8 +364,8 @@ def test_tsv_to_h5_writes_metadata_and_arrays(tmp_path):
 def test_copy_tsv_records_writes_header_once_and_counts_records(tmp_path):
     first_path = tmp_path / "first.tsv"
     second_path = tmp_path / "second.tsv"
-    first_path.write_text("#header\nread1\tchr1\n", encoding="utf-8")
-    second_path.write_text("#other-header\nread2\tchr2\n", encoding="utf-8")
+    first_path.write_text("#header\n\nread1\tchr1\n", encoding="utf-8")
+    second_path.write_text("#other-header\n\nread2\tchr2\n", encoding="utf-8")
     output = io.StringIO()
 
     n_first, header_written = tsv_backend._copy_tsv_records(

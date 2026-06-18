@@ -375,6 +375,8 @@ def _copy_tsv_records(inpath: str, outfile, header_written: bool) -> tuple[int, 
     n_fibers = 0
     with _open_text_file(inpath, 'rt') as infile:
         for line in infile:
+            if not line.strip():
+                continue
             if line.startswith('#'):
                 # Only write header from first file
                 if not header_written:
