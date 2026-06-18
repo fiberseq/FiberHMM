@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 
 def get_preferred_tag(read, primary: str, fallback: str, default=None,
                       errors=(KeyError,)):
@@ -18,7 +20,9 @@ def get_preferred_tag(read, primary: str, fallback: str, default=None,
 
 def compact_ml_value(value):
     """Convert ML-like byte arrays to bytes without materializing Python ints."""
-    try:
+    if isinstance(value, (bytes, bytearray, memoryview)):
         return bytes(value)
-    except TypeError:
+    try:
+        return np.asarray(value, dtype=np.uint8).reshape(-1).tobytes()
+    except (TypeError, ValueError):
         return value
