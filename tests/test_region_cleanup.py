@@ -1030,7 +1030,7 @@ def test_run_region_bed_worker_pool_wires_bed_contract(monkeypatch):
         fake_run_region_worker_pool,
     )
 
-    aggregation = region_pipeline._run_region_bed_worker_pool(
+    request = region_pipeline._RegionBedWorkerPoolRequest(
         n_cores=2,
         model_path="model.json",
         params={"mode": "m6a"},
@@ -1038,6 +1038,8 @@ def test_run_region_bed_worker_pool_wires_bed_contract(monkeypatch):
         total_regions=1,
         start_time=10.0,
     )
+
+    aggregation = region_pipeline._run_region_bed_worker_pool_from_request(request)
 
     assert aggregation.total_reads == 8
     assert aggregation.reads_with_footprints == 3
@@ -1052,6 +1054,17 @@ def test_run_region_bed_worker_pool_wires_bed_contract(monkeypatch):
     assert kwargs["start_time"] == 10.0
     assert kwargs["ready_message"] == "Processing regions..."
     assert kwargs["error_prefix"] == "Error processing region"
+
+    calls.clear()
+    assert region_pipeline._run_region_bed_worker_pool(
+        n_cores=2,
+        model_path="model.json",
+        params={"mode": "m6a"},
+        work_items=["region"],
+        total_regions=1,
+        start_time=10.0,
+    ).total_reads == 8
+    assert calls[0]["n_cores"] == 2
 
 
 def test_run_fused_region_bam_worker_pool_wires_fused_contract(monkeypatch):

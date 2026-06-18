@@ -118,6 +118,16 @@ class _RegionBamWorkerPoolRequest:
     include_tsv: bool
 
 
+@dataclass(frozen=True)
+class _RegionBedWorkerPoolRequest:
+    n_cores: int
+    model_path: str
+    params: dict
+    work_items: object
+    total_regions: int
+    start_time: float
+
+
 def _base_region_worker_params(
     *,
     edge_trim: int,
@@ -813,19 +823,34 @@ def _run_region_bed_worker_pool(
     total_regions: int,
     start_time: float,
 ) -> RegionBedAggregation:
+    return _run_region_bed_worker_pool_from_request(
+        _RegionBedWorkerPoolRequest(
+            n_cores=n_cores,
+            model_path=model_path,
+            params=params,
+            work_items=work_items,
+            total_regions=total_regions,
+            start_time=start_time,
+        )
+    )
+
+
+def _run_region_bed_worker_pool_from_request(
+    request: _RegionBedWorkerPoolRequest,
+) -> RegionBedAggregation:
     aggregation = RegionBedAggregation()
     _run_region_worker_pool(
-        n_cores=n_cores,
+        n_cores=request.n_cores,
         initializer=_init_region_worker,
-        initargs=(model_path, params),
+        initargs=(request.model_path, request.params),
         worker=_process_region_to_bed,
-        work_items=work_items,
+        work_items=request.work_items,
         aggregation=aggregation,
         result_type=RegionBedResult,
-        total_regions=total_regions,
-        start_time=start_time,
+        total_regions=request.total_regions,
+        start_time=request.start_time,
         init_message=(
-            f"  Initializing {n_cores} worker processes "
+            f"  Initializing {request.n_cores} worker processes "
             "(loading HMM model in each)..."
         ),
         ready_message="Processing regions...",
