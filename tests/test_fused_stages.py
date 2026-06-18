@@ -30,6 +30,56 @@ def test_apply_result_has_footprints_detects_nucs_or_msps():
     assert fused_stages.apply_result_has_footprints(msp_only) is True
 
 
+def test_run_hmm_apply_stage_request_delegates_single_read(monkeypatch):
+    calls = []
+    fiber_read = {"query_sequence": "AAAA"}
+
+    monkeypatch.setattr(
+        fused_stages,
+        "_process_single_read",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or {"ns": [1]},
+    )
+
+    request = fused_stages._HmmApplyStageRequest(
+        fiber_read=fiber_read,
+        model="model",
+        edge_trim=10,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=0,
+        nuc_min_size=85,
+        with_scores=True,
+    )
+
+    assert fused_stages.run_hmm_apply_stage_from_request(request) == {"ns": [1]}
+    assert calls == [
+        (
+            (fiber_read, "model", 10, True, "daf", 5, 0),
+            {
+                "nuc_min_size": 85,
+                "with_scores": True,
+                "return_posteriors": False,
+                "include_encoded": True,
+            },
+        ),
+    ]
+    calls.clear()
+
+    assert fused_stages.run_hmm_apply_stage(
+        fiber_read,
+        "model",
+        edge_trim=10,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=0,
+        nuc_min_size=85,
+        with_scores=True,
+    ) == {"ns": [1]}
+    assert len(calls) == 1
+
+
 def test_apply_result_interval_bounds_collects_nucs_and_msps():
     bounds = fused_stages._apply_result_interval_bounds({
         "ns": np.asarray([10], dtype=np.int32),

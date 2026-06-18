@@ -71,6 +71,19 @@ class _TiledIntervalArrays:
     msp_lengths: Any
 
 
+@dataclass(frozen=True)
+class _HmmApplyStageRequest:
+    fiber_read: Mapping[str, Any]
+    model: Any
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    with_scores: bool
+
+
 def _analyzed_span(apply_result, read_length, kept):
     """Extent (lo, hi) the read was annotated over -- the union of the original
     HMM footprints/MSPs and the final nucleosomes -- used to tile MSPs."""
@@ -200,6 +213,25 @@ def apply_result_has_footprints(apply_result: Optional[Mapping[str, Any]]) -> bo
     return len(apply_result["ns"]) > 0 or len(apply_result["as"]) > 0
 
 
+def run_hmm_apply_stage_from_request(
+    request: _HmmApplyStageRequest,
+) -> Optional[dict]:
+    """Run the HMM apply stage and keep encoded observations for recall."""
+    return _process_single_read(
+        request.fiber_read,
+        request.model,
+        request.edge_trim,
+        request.circular,
+        request.mode,
+        request.context_size,
+        request.msp_min_size,
+        nuc_min_size=request.nuc_min_size,
+        with_scores=request.with_scores,
+        return_posteriors=False,
+        include_encoded=True,
+    )
+
+
 def run_hmm_apply_stage(
     fiber_read: Mapping[str, Any],
     model,
@@ -211,19 +243,18 @@ def run_hmm_apply_stage(
     nuc_min_size: int,
     with_scores: bool,
 ) -> Optional[dict]:
-    """Run the HMM apply stage and keep encoded observations for recall."""
-    return _process_single_read(
-        fiber_read,
-        model,
-        edge_trim,
-        circular,
-        mode,
-        context_size,
-        msp_min_size,
-        nuc_min_size=nuc_min_size,
-        with_scores=with_scores,
-        return_posteriors=False,
-        include_encoded=True,
+    return run_hmm_apply_stage_from_request(
+        _HmmApplyStageRequest(
+            fiber_read=fiber_read,
+            model=model,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+        ),
     )
 
 
