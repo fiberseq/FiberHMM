@@ -89,6 +89,16 @@ class _MaTagRequest:
     tf_qual_spec: str = 'QQQ'
 
 
+@dataclass(frozen=True)
+class _AqArrayRequest:
+    nq_values: Sequence[int]
+    tf_q_values: Sequence[int] = ()
+    tf_lq_values: Sequence[int] = ()
+    tf_rq_values: Sequence[int] = ()
+    nuc_lq_values: Sequence[int] = ()
+    nuc_rq_values: Sequence[int] = ()
+
+
 def llr_to_tq(llr: float) -> int:
     """Encode an LLR (nats) into the tq quality byte."""
     return max(0, min(255, int(round(llr * TQ_SCALE))))
@@ -381,13 +391,39 @@ def format_aq_array(nq_values: Sequence[int],
     nuc+QQQ schema), each nucleosome instead emits three bytes (nq, el, er),
     mirroring the TF layout. The three nuc arrays must then be equal length.
     """
+    return format_aq_array_from_request(
+        _AqArrayRequest(
+            nq_values=nq_values,
+            tf_q_values=tf_q_values,
+            tf_lq_values=tf_lq_values,
+            tf_rq_values=tf_rq_values,
+            nuc_lq_values=nuc_lq_values,
+            nuc_rq_values=nuc_rq_values,
+        ),
+    )
+
+
+def format_aq_array_from_request(request: _AqArrayRequest) -> array.array:
+    """Build the AQ:B:C array from named quality arrays."""
     out = array.array('B')
-    if _nuc_aq_has_edge_qualities(nuc_lq_values, nuc_rq_values):
-        _append_quality_rows(out, "nuc", nq_values, nuc_lq_values, nuc_rq_values)
+    if _nuc_aq_has_edge_qualities(request.nuc_lq_values, request.nuc_rq_values):
+        _append_quality_rows(
+            out,
+            "nuc",
+            request.nq_values,
+            request.nuc_lq_values,
+            request.nuc_rq_values,
+        )
     else:
-        _append_quality_rows(out, "nuc", nq_values)
-    if _has_values(tf_q_values):
-        _append_quality_rows(out, "TF", tf_q_values, tf_lq_values, tf_rq_values)
+        _append_quality_rows(out, "nuc", request.nq_values)
+    if _has_values(request.tf_q_values):
+        _append_quality_rows(
+            out,
+            "TF",
+            request.tf_q_values,
+            request.tf_lq_values,
+            request.tf_rq_values,
+        )
     return out
 
 
