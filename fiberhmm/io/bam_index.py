@@ -6,6 +6,7 @@ import os
 
 
 def bam_index_paths(bam_path: str) -> tuple[str, str]:
+    bam_path = os.fspath(bam_path)
     stem, suffix = os.path.splitext(bam_path)
     suffix_index_path = stem + '.bai' if suffix.lower() == '.bam' else bam_path + '.bai'
     return bam_path + '.bai', suffix_index_path
@@ -16,6 +17,7 @@ def bam_index_exists(bam_path: str) -> bool:
 
 
 def ensure_bam_index(bam_path: str, message: str) -> None:
+    bam_path = os.fspath(bam_path)
     if bam_index_exists(bam_path):
         return
     print(message)
