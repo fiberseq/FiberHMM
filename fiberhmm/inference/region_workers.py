@@ -91,6 +91,15 @@ class _FusedRegionRecallConfig:
 
 
 @dataclass(frozen=True)
+class _FusedRegionWorkerRuntime:
+    apply_config: _RegionApplyConfig
+    recall_config: _FusedRegionRecallConfig
+    recall_options: dict
+    filter_config: ReadFilterConfig
+    ref_fasta: Optional[object]
+
+
+@dataclass(frozen=True)
 class _RegionBamReadDelta:
     total_reads: int = 0
     reads_with_footprints: int = 0
@@ -425,6 +434,21 @@ def _region_fused_recall_options(
         'msp_min_size': msp_min_size,
         'phase_nrl': int(params.get('phase_nrl', 0)),
     }
+
+
+def _fused_region_worker_runtime(params: dict) -> _FusedRegionWorkerRuntime:
+    apply_config = _region_apply_config(params, with_scores_default=False)
+    return _FusedRegionWorkerRuntime(
+        apply_config=apply_config,
+        recall_config=_fused_region_recall_config(params),
+        recall_options=_region_fused_recall_options(
+            params,
+            apply_config.nuc_min_size,
+            apply_config.msp_min_size,
+        ),
+        filter_config=_region_read_filter_config(params, require_train_rids=False),
+        ref_fasta=params.get('ref_fasta'),
+    )
 
 
 def _write_region_posterior_record(tsv_file, read, result: dict) -> bool:
@@ -909,28 +933,20 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         llr_hit = _worker_recall_state['llr_hit']
         llr_miss = _worker_recall_state['llr_miss']
 
-        apply_config = _region_apply_config(params, with_scores_default=False)
-        recall_config = _fused_region_recall_config(params)
-        ref_fasta = params.get('ref_fasta')
+        runtime = _fused_region_worker_runtime(params)
 
         pysam.set_verbosity(0)
 
         counts = _RegionBamWorkerCounts()
         skip_reasons = _new_region_skip_reasons()
-        filter_config = _region_read_filter_config(params, require_train_rids=False)
-        recall_options = _region_fused_recall_options(
-            params,
-            apply_config.nuc_min_size,
-            apply_config.msp_min_size,
-        )
 
         with pysam.AlignmentFile(
-            input_bam, "rb", threads=apply_config.io_threads, check_sq=False
+            input_bam, "rb", threads=runtime.apply_config.io_threads, check_sq=False
         ) as inbam:
             with pysam.AlignmentFile(
                     temp_bam_path, "wb",
                     header=maybe_append_pg(inbam.header, params.get('pg_record')),
-                    threads=apply_config.io_threads) as outbam:
+                    threads=runtime.apply_config.io_threads) as outbam:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)
                 except ValueError:
@@ -943,11 +959,11 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         model,
                         llr_hit,
                         llr_miss,
-                        apply_config,
-                        recall_config,
-                        recall_options,
-                        ref_fasta,
-                        filter_config,
+                        runtime.apply_config,
+                        runtime.recall_config,
+                        runtime.recall_options,
+                        runtime.ref_fasta,
+                        runtime.filter_config,
                         start,
                         end,
                         skip_reasons,

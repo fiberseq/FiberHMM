@@ -12,6 +12,7 @@ from fiberhmm.inference.region_workers import (
     _extract_region_fiber_read,
     _extract_region_payload_fiber_read,
     _fused_region_recall_config,
+    _fused_region_worker_runtime,
     _open_region_posterior_tsv,
     _process_fused_region_bam_read,
     _process_region_bam_read,
@@ -776,6 +777,56 @@ def test_region_fused_recall_options_uses_defaults_and_casts_values():
         "msp_min_size": 25,
         "phase_nrl": 185,
     }
+
+
+def test_fused_region_worker_runtime_builds_worker_configs():
+    ref_fasta = object()
+
+    runtime = _fused_region_worker_runtime({
+        "edge_trim": "2",
+        "circular": True,
+        "mode": "pacbio-fiber",
+        "context_size": "6",
+        "msp_min_size": "21",
+        "nuc_min_size": "90",
+        "prob_threshold": "128",
+        "io_threads": "3",
+        "min_llr": "2.5",
+        "min_opps": "4",
+        "unify_threshold": "7",
+        "also_write_legacy": False,
+        "downstream_compat": True,
+        "recall_nucs": True,
+        "split_min_llr": "5.5",
+        "split_min_opps": "6",
+        "phase_nrl": "185",
+        "min_mapq": "11",
+        "min_read_length": "101",
+        "primary_only": True,
+        "train_rids": {"read1"},
+        "ref_fasta": ref_fasta,
+    })
+
+    assert runtime.apply_config.with_scores is False
+    assert runtime.apply_config.io_threads == 3
+    assert runtime.recall_config.min_llr == 2.5
+    assert runtime.recall_config.min_opps == 4
+    assert runtime.recall_options == {
+        "recall_nucs": True,
+        "split_min_llr": 5.5,
+        "split_min_opps": 6,
+        "nuc_min_size": 90,
+        "msp_min_size": 21,
+        "phase_nrl": 185,
+    }
+    assert runtime.filter_config == ReadFilterConfig(
+        min_mapq=11,
+        min_read_length=101,
+        primary_only=True,
+        process_unmapped=False,
+        train_rids={"read1"},
+    )
+    assert runtime.ref_fasta is ref_fasta
 
 
 def test_write_region_posterior_record_returns_success_status(monkeypatch):
