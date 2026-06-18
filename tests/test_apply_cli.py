@@ -12,6 +12,7 @@ from fiberhmm.cli.apply import (
     _ApplyIO,
     _ApplyProcessingPlan,
     _ApplyProcessingResult,
+    _ApplyProcessingSettings,
     _ApplyRuntime,
     _context_size_message,
     _dataset_name,
@@ -27,6 +28,7 @@ from fiberhmm.cli.apply import (
     _print_numba_status,
     _print_processing_result,
     _print_processing_settings,
+    _print_processing_settings_record,
     _print_region_filter_settings,
     _print_scores_db_summary,
     _processing_status_message,
@@ -240,6 +242,23 @@ def test_apply_print_processing_settings_reports_mode_specific_options(capsys):
         stats=True,
     )
 
+    settings = _ApplyProcessingSettings(
+        mode="daf",
+        context_size=3,
+        n_cores=4,
+        msp_min_size=0,
+        with_scores=True,
+        db_path="scores.db",
+    )
+    _print_processing_settings_record(args, settings)
+
+    out = capsys.readouterr().out
+    assert "Mode: daf (DAF-seq deamination" in out
+    assert "Circular mode: enabled" in out
+    assert "Confidence scores: enabled" in out
+    assert "Scores database: scores.db" in out
+    assert "Strand detection: automatic" in out
+
     _print_processing_settings(
         args,
         mode="daf",
@@ -249,13 +268,7 @@ def test_apply_print_processing_settings_reports_mode_specific_options(capsys):
         with_scores=True,
         db_path="scores.db",
     )
-
-    out = capsys.readouterr().out
-    assert "Mode: daf (DAF-seq deamination" in out
-    assert "Circular mode: enabled" in out
-    assert "Confidence scores: enabled" in out
-    assert "Scores database: scores.db" in out
-    assert "Strand detection: automatic" in out
+    assert capsys.readouterr().out == out
 
 
 def test_apply_load_training_read_ids(tmp_path, capsys):
@@ -571,8 +584,8 @@ def test_resolve_apply_runtime_wires_setup_outputs(monkeypatch):
     )
     monkeypatch.setattr(
         apply,
-        "_print_processing_settings",
-        lambda *call_args: calls.append(("settings", call_args)),
+        "_print_processing_settings_record",
+        lambda got_args, settings: calls.append(("settings", settings)),
     )
     monkeypatch.setattr(apply, "_resolve_chroms_set", lambda chroms: {"chr1"})
     monkeypatch.setattr(
@@ -614,7 +627,17 @@ def test_resolve_apply_runtime_wires_setup_outputs(monkeypatch):
     )
     assert args.mode == "daf"
     assert calls[0] == ("ddda", "model.json", None)
-    assert calls[2][0] == "settings"
+    assert calls[2] == (
+        "settings",
+        _ApplyProcessingSettings(
+            mode="daf",
+            context_size=5,
+            n_cores=4,
+            msp_min_size=0,
+            with_scores=True,
+            db_path="scores.db",
+        ),
+    )
     assert calls[3] == ("regions", {"chr1"})
 
 

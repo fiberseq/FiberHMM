@@ -267,6 +267,16 @@ class _ApplyIO:
 
 
 @dataclass(frozen=True)
+class _ApplyProcessingSettings:
+    mode: str
+    context_size: int
+    n_cores: int
+    msp_min_size: int
+    with_scores: bool
+    db_path: str | None = None
+
+
+@dataclass(frozen=True)
 class _ApplyProcessingPlan:
     output_bam: str
     model_path: str
@@ -354,6 +364,35 @@ def _msp_output_message(no_msps: bool, msp_min_size: int) -> str:
     return f"MSP min size: {msp_min_size} bp"
 
 
+def _print_processing_settings_record(
+    args,
+    settings: _ApplyProcessingSettings,
+) -> None:
+    mode_desc = mode_description(settings.mode)
+
+    print(f"\nProcessing: {args.input}")
+    print(f"  Mode: {settings.mode} ({mode_desc})")
+    print(f"  Context: {_context_size_message(settings.context_size)}")
+    print(f"  Output: {args.outdir}")
+    print(f"  Cores: {settings.n_cores}")
+    print(f"  Edge trim: {args.edge_trim} bp")
+    print(f"  Min MAPQ: {args.min_mapq}")
+    print(f"  Mod prob threshold: {args.prob_threshold}/255")
+    if args.circular:
+        print("  Circular mode: enabled")
+    if settings.with_scores:
+        print("  Confidence scores: enabled")
+    if args.scores_db:
+        print(f"  Scores database: {settings.db_path}")
+    strand_message = _strand_detection_message(settings.mode)
+    if strand_message:
+        print(f"  {strand_message}")
+    print(f"  {_msp_output_message(args.no_msps, settings.msp_min_size)}")
+    if args.stats:
+        print("  Stats: enabled")
+    print()
+
+
 def _print_processing_settings(
     args,
     mode: str,
@@ -363,29 +402,15 @@ def _print_processing_settings(
     with_scores: bool,
     db_path: str = None,
 ) -> None:
-    mode_desc = mode_description(mode)
-
-    print(f"\nProcessing: {args.input}")
-    print(f"  Mode: {mode} ({mode_desc})")
-    print(f"  Context: {_context_size_message(context_size)}")
-    print(f"  Output: {args.outdir}")
-    print(f"  Cores: {n_cores}")
-    print(f"  Edge trim: {args.edge_trim} bp")
-    print(f"  Min MAPQ: {args.min_mapq}")
-    print(f"  Mod prob threshold: {args.prob_threshold}/255")
-    if args.circular:
-        print("  Circular mode: enabled")
-    if with_scores:
-        print("  Confidence scores: enabled")
-    if args.scores_db:
-        print(f"  Scores database: {db_path}")
-    strand_message = _strand_detection_message(mode)
-    if strand_message:
-        print(f"  {strand_message}")
-    print(f"  {_msp_output_message(args.no_msps, msp_min_size)}")
-    if args.stats:
-        print("  Stats: enabled")
-    print()
+    settings = _ApplyProcessingSettings(
+        mode=mode,
+        context_size=context_size,
+        n_cores=n_cores,
+        msp_min_size=msp_min_size,
+        with_scores=with_scores,
+        db_path=db_path,
+    )
+    _print_processing_settings_record(args, settings)
 
 
 def _load_training_read_ids(train_reads):
@@ -684,8 +709,16 @@ def _resolve_apply_runtime(args, n_cores: int, stdout_mode: bool) -> _ApplyRunti
 
     db_path = _resolve_scores_db_path(args, dataset)
 
-    _print_processing_settings(
-        args, mode, context_size, n_cores, msp_min_size, with_scores, db_path,
+    _print_processing_settings_record(
+        args,
+        _ApplyProcessingSettings(
+            mode=mode,
+            context_size=context_size,
+            n_cores=n_cores,
+            msp_min_size=msp_min_size,
+            with_scores=with_scores,
+            db_path=db_path,
+        ),
     )
 
     # Parse chromosomes
