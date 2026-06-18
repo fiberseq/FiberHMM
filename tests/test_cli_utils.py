@@ -435,6 +435,14 @@ def test_target_mod_positions_from_bam_read_uses_mm_ml_tags(monkeypatch):
     read.tags = {}
     assert _target_mod_positions_from_bam_read(read, 125, "pacbio-fiber") is None
 
+    read.tags = {"MM": "A+a,0;", "ML": np.asarray([], dtype=np.uint8)}
+    monkeypatch.setattr(
+        bam_reader,
+        "parse_mm_tag_query_positions",
+        lambda *args, **kwargs: pytest.fail("empty ML should not be parsed"),
+    )
+    assert _target_mod_positions_from_bam_read(read, 125, "pacbio-fiber") == set()
+
 
 def test_transfer_progress_postfix_formats_optional_footprint_counts():
     assert _transfer_progress_postfix(12345) == {"reads": "12,345"}
