@@ -742,14 +742,16 @@ def test_write_probability_plot_outputs_writes_pdf_and_pngs(monkeypatch, capsys)
 
     plt = object()
     pdf_pages = object()
-    assert stats._write_probability_plot_outputs(
-        plt,
-        pdf_pages,
-        "plots",
-        "run",
-        accessible,
-        inaccessible,
-        context_size=4,
+    assert stats._write_probability_plot_outputs_from_request(
+        stats._ProbabilityPlotOutputsRequest(
+            plt=plt,
+            pdf_pages_factory=pdf_pages,
+            plots_dir="plots",
+            base_name="run",
+            accessible_counters=accessible,
+            inaccessible_counters=inaccessible,
+            context_size=4,
+        )
     ) == "plots/run_k4_stats.pdf"
 
     assert calls == [

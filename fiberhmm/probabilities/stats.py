@@ -152,6 +152,17 @@ class _ProbabilityCountsPdfPageRequest:
     inaccessible_probs: 'pd.DataFrame'
 
 
+@dataclass(frozen=True)
+class _ProbabilityPlotOutputsRequest:
+    plt: object
+    pdf_pages_factory: object
+    plots_dir: str
+    base_name: str
+    accessible_counters: Dict[str, 'ContextCounter']
+    inaccessible_counters: Dict[str, 'ContextCounter']
+    context_size: int
+
+
 def _probability_tables_for_base(
     accessible_counters,
     inaccessible_counters,
@@ -800,26 +811,45 @@ def _write_probability_plot_outputs(
     inaccessible_counters: Dict[str, 'ContextCounter'],
     context_size: int,
 ) -> str:
+    return _write_probability_plot_outputs_from_request(
+        _ProbabilityPlotOutputsRequest(
+            plt=plt,
+            pdf_pages_factory=PdfPages,
+            plots_dir=plots_dir,
+            base_name=base_name,
+            accessible_counters=accessible_counters,
+            inaccessible_counters=inaccessible_counters,
+            context_size=context_size,
+        ),
+    )
+
+
+def _write_probability_plot_outputs_from_request(
+    request: _ProbabilityPlotOutputsRequest,
+) -> str:
     pdf_path = _probability_stats_output_path(
-        plots_dir, base_name, context_size, "pdf",
+        request.plots_dir,
+        request.base_name,
+        request.context_size,
+        "pdf",
     )
     _write_probability_stats_pdf(
-        plt,
-        PdfPages,
+        request.plt,
+        request.pdf_pages_factory,
         pdf_path,
-        accessible_counters,
-        inaccessible_counters,
-        context_size,
+        request.accessible_counters,
+        request.inaccessible_counters,
+        request.context_size,
     )
     print(f"  Plots: {pdf_path}")
 
     _save_probability_distribution_pngs(
-        plt,
-        plots_dir,
-        base_name,
-        accessible_counters,
-        inaccessible_counters,
-        context_size,
+        request.plt,
+        request.plots_dir,
+        request.base_name,
+        request.accessible_counters,
+        request.inaccessible_counters,
+        request.context_size,
     )
     return pdf_path
 
