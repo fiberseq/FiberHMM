@@ -41,12 +41,12 @@ def test_counter_rate_summary_and_writer_format_counts_and_rate():
     summary = stats._counter_rate_summary(counter)
     handle = io.StringIO()
 
-    assert summary == {
-        "total_positions": 1000,
-        "total_modified": 250,
-        "rate": 0.25,
-        "unique_contexts": 2,
-    }
+    assert summary == stats._CounterRateSummary(
+        total_positions=1000,
+        total_modified=250,
+        rate=0.25,
+        unique_contexts=2,
+    )
 
     stats._write_counter_rate_summary(handle, "Accessible", summary)
 

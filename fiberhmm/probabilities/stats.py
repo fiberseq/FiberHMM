@@ -43,23 +43,35 @@ def _probability_ratios_with_data(prob_table) -> np.ndarray:
     return ratios[_context_observation_totals(prob_table) > 0]
 
 
-def _counter_rate_summary(counter: 'ContextCounter') -> dict:
+@dataclass(frozen=True)
+class _CounterRateSummary:
+    total_positions: int
+    total_modified: int
+    rate: float
+    unique_contexts: int
+
+
+def _counter_rate_summary(counter: 'ContextCounter') -> _CounterRateSummary:
     rate = _modification_rate(counter)
-    return {
-        'total_positions': counter.total_positions,
-        'total_modified': counter.total_modified,
-        'rate': rate,
-        'unique_contexts': len(counter.counts),
-    }
+    return _CounterRateSummary(
+        total_positions=counter.total_positions,
+        total_modified=counter.total_modified,
+        rate=rate,
+        unique_contexts=len(counter.counts),
+    )
 
 
-def _write_counter_rate_summary(handle, label: str, summary: dict) -> None:
+def _write_counter_rate_summary(
+    handle,
+    label: str,
+    summary: _CounterRateSummary,
+) -> None:
     handle.write(f"\n{label}:\n")
-    handle.write(f"  Total positions:     {summary['total_positions']:,}\n")
-    handle.write(f"  Modified positions:  {summary['total_modified']:,}\n")
-    rate = summary['rate']
+    handle.write(f"  Total positions:     {summary.total_positions:,}\n")
+    handle.write(f"  Modified positions:  {summary.total_modified:,}\n")
+    rate = summary.rate
     handle.write(f"  Modification rate:   {rate:.4f} ({rate*100:.2f}%)\n")
-    handle.write(f"  Unique contexts:     {summary['unique_contexts']:,}\n")
+    handle.write(f"  Unique contexts:     {summary.unique_contexts:,}\n")
 
 
 def _merged_probability_table(acc_probs, inacc_probs):
@@ -439,8 +451,8 @@ def _write_base_probability_summary(
 ) -> None:
     acc_summary = _counter_rate_summary(acc)
     inacc_summary = _counter_rate_summary(inacc)
-    acc_rate = acc_summary['rate']
-    inacc_rate = inacc_summary['rate']
+    acc_rate = acc_summary.rate
+    inacc_rate = inacc_summary.rate
 
     handle.write(f"{base}-centered Contexts\n")
     handle.write("-" * 40 + "\n")
