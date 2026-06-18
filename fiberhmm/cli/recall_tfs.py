@@ -43,6 +43,7 @@ import multiprocessing as mp
 import os
 import sys
 from collections import deque
+from dataclasses import dataclass
 
 import pysam
 
@@ -77,6 +78,14 @@ from fiberhmm.io.ma_tags import flip_intervals_to_seq
 _WORKER = {}
 _STATS_KEYS = ('v2', 'tf', 'demoted', 'failed')
 _PAYLOAD_TAG_NAMES = ('MM', 'Mm', 'ML', 'Ml', 'ns', 'nl', 'as', 'al', 'nq', 'st')
+
+
+@dataclass(frozen=True)
+class _RecallResult:
+    tf_calls: object
+    kept_nucs: object
+    msps: object
+    nq_for_kept: object
 
 
 def _new_stats():
@@ -233,7 +242,7 @@ def _make_payload(read, mode=None) -> dict:
 def _process_payload_record(payload) -> tuple:
     """Worker: compute TF calls from a compact payload.
 
-    Returns ((tf_calls, kept_nucs, msps, nq_for_kept), stats).
+    Returns (_RecallResult, stats).
     No pysam SAM serialization — only recall_read() + Python arithmetic.
     write_ma_tags() is intentionally left to the main process so the
     serialized return value stays small (<1 KB for typical call counts).
@@ -262,7 +271,7 @@ def _process_payload_record(payload) -> tuple:
 
     nq_for_kept = _kept_nuc_nq_from_legacy(tags, read, kept_nucs)
 
-    return (tf_calls, kept_nucs, msps, nq_for_kept), stats
+    return _RecallResult(tf_calls, kept_nucs, msps, nq_for_kept), stats
 
 
 def _process_payload_chunk(payloads):
@@ -282,14 +291,13 @@ def _read_sequence_length(read) -> int:
 
 def _apply_result(read, result, also_write_legacy, downstream_compat):
     """Apply compact worker result to a pysam read in place (main process)."""
-    tf_calls, kept_nucs, msps, nq_for_kept = result
     write_ma_tags(
         read,
         read_length=_read_sequence_length(read),
-        tf_calls=tf_calls,
-        kept_nucs=kept_nucs,
-        msps=msps,
-        nq_for_kept_nucs=nq_for_kept,
+        tf_calls=result.tf_calls,
+        kept_nucs=result.kept_nucs,
+        msps=result.msps,
+        nq_for_kept_nucs=result.nq_for_kept,
         also_write_legacy=also_write_legacy,
         downstream_compat=downstream_compat,
     )

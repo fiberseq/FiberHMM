@@ -104,10 +104,10 @@ def test_recall_tfs_reverse_read_preserves_nq(monkeypatch):
         "is_reverse": True,
         "tags": {"ns": [100], "nl": [50], "nq": [77]},   # molecular nuc (100,50)
     }
-    (tf_calls, kept_nucs, msps, nq_for_kept), _ = recall_tfs._process_payload_record(payload)
+    result, _ = recall_tfs._process_payload_record(payload)
     # molecular (100,50) flips to SEQ (850,50) on a 1000 bp reverse read
-    assert kept_nucs == [(850, 50)]
-    assert nq_for_kept == [77]
+    assert result.kept_nucs == [(850, 50)]
+    assert result.nq_for_kept == [77]
 
 
 def test_recall_tfs_kept_nuc_nq_from_legacy_defaults_missing_matches():
