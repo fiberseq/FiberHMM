@@ -74,6 +74,12 @@ class _TrainingSamplingIndex:
 
 
 @dataclass(frozen=True)
+class _ChromPosition:
+    chrom: str
+    position: int
+
+
+@dataclass(frozen=True)
 class _StateRun:
     start: int
     end: int
@@ -357,7 +363,7 @@ def _chrom_pos_from_genome_offset(chroms: list, cum_lengths: np.ndarray,
         pos = genome_pos - cum_lengths[chrom_idx - 1]
     else:
         pos = genome_pos
-    return chrom, int(pos)
+    return _ChromPosition(chrom=chrom, position=int(pos))
 
 
 def _training_sampling_index(ref_lengths: dict) -> _TrainingSamplingIndex:
@@ -508,14 +514,14 @@ def _sample_training_reads_for_positions(
 
         attempts += 1
 
-        chrom, pos = _chrom_pos_from_genome_offset(
+        chrom_pos = _chrom_pos_from_genome_offset(
             chroms, cum_lengths, int(genome_pos),
         )
 
         fiber_read = _sample_training_read_at_position(
             bam,
-            chrom,
-            pos,
+            chrom_pos.chrom,
+            chrom_pos.position,
             seen_read_ids,
             min_mapq,
             min_read_length,

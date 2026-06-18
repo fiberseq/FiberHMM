@@ -1394,12 +1394,13 @@ def test_chrom_pos_from_genome_offset_maps_cumulative_lengths():
     chroms = ["chr1", "chr2", "chr3"]
     cum_lengths = np.array([100, 250, 300])
 
-    assert train._chrom_pos_from_genome_offset(chroms, cum_lengths, 50) == (
-        "chr1", 50,
-    )
-    assert train._chrom_pos_from_genome_offset(chroms, cum_lengths, 125) == (
-        "chr2", 25,
-    )
+    chr1_pos = train._chrom_pos_from_genome_offset(chroms, cum_lengths, 50)
+    chr2_pos = train._chrom_pos_from_genome_offset(chroms, cum_lengths, 125)
+
+    assert chr1_pos.chrom == "chr1"
+    assert chr1_pos.position == 50
+    assert chr2_pos.chrom == "chr2"
+    assert chr2_pos.position == 25
 
 
 def test_training_sampling_index_filters_and_accumulates_lengths():
