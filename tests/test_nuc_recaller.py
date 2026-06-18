@@ -13,6 +13,7 @@ from fiberhmm.inference.nuc_recaller import (
     _msp_gaps_between_nucs,
     _nuc_from_protected_calls,
     _NucRecallParams,
+    _NucRecallResult,
     _ordered_positive_nuc_calls,
     _phase_cut_window,
     _phase_or_unsplit_subfragments,
@@ -116,7 +117,7 @@ def test_recall_nuc_span_matches_single_read_wrapper():
         phase_window=35,
     )
 
-    span_nucs, span_access = _recall_nuc_span(
+    span_result = _recall_nuc_span(
         obs,
         0,
         len(obs),
@@ -135,8 +136,8 @@ def test_recall_nuc_span_matches_single_read_wrapper():
         nuc_min_size=40,
     )
 
-    assert span_nucs == read_nucs
-    assert span_access == read_access
+    assert span_result.nucs == read_nucs
+    assert span_result.access == read_access
 
 
 def test_recall_nuc_params_captures_thresholds():
@@ -183,14 +184,17 @@ def test_recall_bounded_nuc_spans_skips_invalid_spans(monkeypatch):
 
     def fake_span(obs_arg, s, e, tables_arg, params_arg):
         calls.append((obs_arg, s, e, tables_arg, params_arg))
-        return [NucCall(s, e - s, 1, 2, 3)], [(s, 1)]
+        return _NucRecallResult(
+            nucs=[NucCall(s, e - s, 1, 2, 3)],
+            access=[(s, 1)],
+        )
 
     monkeypatch.setattr(
         "fiberhmm.inference.nuc_recaller._recall_nuc_span",
         fake_span,
     )
 
-    nucs, access = _recall_bounded_nuc_spans(
+    result = _recall_bounded_nuc_spans(
         obs,
         ns=[0, 5, 9, 12],
         nl=[3, 0, 5, 2],
@@ -200,8 +204,8 @@ def test_recall_bounded_nuc_spans_skips_invalid_spans(monkeypatch):
     )
 
     assert [(call[1], call[2]) for call in calls] == [(0, 3), (9, 10)]
-    assert nucs == [NucCall(0, 3, 1, 2, 3), NucCall(9, 1, 1, 2, 3)]
-    assert access == [(0, 1), (9, 1)]
+    assert result.nucs == [NucCall(0, 3, 1, 2, 3), NucCall(9, 1, 1, 2, 3)]
+    assert result.access == [(0, 1), (9, 1)]
 
 
 def test_total_call_llr_sums_call_scores():

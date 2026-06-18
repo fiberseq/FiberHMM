@@ -63,6 +63,12 @@ class _NucRecallTables:
 
 
 @dataclass(frozen=True)
+class _NucRecallResult:
+    nucs: List[NucCall]
+    access: List[Interval]
+
+
+@dataclass(frozen=True)
 class _RefinedFragment:
     nuc: NucCall | None
     access: List[Interval]
@@ -296,7 +302,7 @@ def _recall_nuc_span(
     e: int,
     tables: _NucRecallTables,
     params: _NucRecallParams,
-) -> Tuple[List[NucCall], List[Interval]]:
+) -> _NucRecallResult:
     nucs: List[NucCall] = []
     access: List[Interval] = []
 
@@ -321,7 +327,7 @@ def _recall_nuc_span(
                 nucs.append(refined.nuc)
             access.extend(refined.access)
 
-    return nucs, access
+    return _NucRecallResult(nucs=nucs, access=access)
 
 
 def _recall_nuc_params(
@@ -365,7 +371,7 @@ def _recall_bounded_nuc_spans(
     read_length: int,
     tables: _NucRecallTables,
     params: _NucRecallParams,
-) -> Tuple[List[NucCall], List[Interval]]:
+) -> _NucRecallResult:
     nucs: List[NucCall] = []
     access: List[Interval] = []
 
@@ -377,13 +383,13 @@ def _recall_bounded_nuc_spans(
             continue
         s, e = span
 
-        span_nucs, span_access = _recall_nuc_span(
+        span_result = _recall_nuc_span(
             obs, s, e, tables, params,
         )
-        nucs.extend(span_nucs)
-        access.extend(span_access)
+        nucs.extend(span_result.nucs)
+        access.extend(span_result.access)
 
-    return nucs, access
+    return _NucRecallResult(nucs=nucs, access=access)
 
 
 def recall_nucs_in_read(
@@ -433,9 +439,10 @@ def recall_nucs_in_read(
         phase_min_opps=phase_min_opps,
         phase_window=phase_window,
     )
-    return _recall_bounded_nuc_spans(
+    result = _recall_bounded_nuc_spans(
         obs, ns, nl, read_length, tables, params,
     )
+    return result.nucs, result.access
 
 
 def rederive_msps(
