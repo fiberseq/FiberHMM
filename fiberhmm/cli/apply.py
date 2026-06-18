@@ -4,6 +4,8 @@ FiberHMM apply_model CLI entry point.
 Applies trained HMM to call chromatin footprints from fiber-seq BAM files.
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import sys
@@ -256,6 +258,12 @@ class _ApplyRuntime:
     use_streaming: bool
     process_unmapped: bool
     output_bam: str
+
+
+@dataclass(frozen=True)
+class _ApplyIO:
+    stdout_mode: bool
+    n_cores: int
 
 
 def _load_apply_model_with_summary(model_path: str):
@@ -561,7 +569,7 @@ def _prepare_apply_io(args):
     if not stdout_mode:
         os.makedirs(args.outdir, exist_ok=True)
 
-    return stdout_mode, n_cores
+    return _ApplyIO(stdout_mode, n_cores)
 
 
 def _resolve_apply_runtime(args, n_cores: int, stdout_mode: bool) -> _ApplyRuntime:
@@ -640,9 +648,9 @@ def main():
 
     # Handle stdout output mode — redirect all prints to stderr
     # so they don't corrupt the BAM stream
-    stdout_mode, n_cores = _prepare_apply_io(args)
+    io = _prepare_apply_io(args)
 
-    runtime = _resolve_apply_runtime(args, n_cores, stdout_mode)
+    runtime = _resolve_apply_runtime(args, io.n_cores, io.stdout_mode)
     _run_apply_processing(
         args,
         runtime.output_bam,
@@ -652,11 +660,11 @@ def main():
         runtime.context_size,
         runtime.msp_min_size,
         runtime.with_scores,
-        n_cores,
+        io.n_cores,
         runtime.chroms_set,
         runtime.use_streaming,
         runtime.process_unmapped,
-        stdout_mode,
+        io.stdout_mode,
     )
     _finalize_apply_outputs(
         args,
@@ -664,7 +672,7 @@ def main():
         runtime.dataset,
         runtime.with_scores,
         runtime.db_path,
-        stdout_mode,
+        io.stdout_mode,
     )
 
 

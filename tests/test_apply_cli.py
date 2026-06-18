@@ -7,6 +7,7 @@ import pytest
 
 from fiberhmm.cli.apply import (
     _apply_processing_kwargs,
+    _ApplyIO,
     _ApplyRuntime,
     _context_size_message,
     _dataset_name,
@@ -117,12 +118,11 @@ def test_prepare_apply_io_resolves_cores_and_creates_output_dir(monkeypatch, tmp
     monkeypatch.setattr(apply, "_resolve_apply_cores", lambda cores: 7)
     outdir = tmp_path / "apply-out"
 
-    stdout_mode, n_cores = _prepare_apply_io(
+    io = _prepare_apply_io(
         SimpleNamespace(outdir=str(outdir), cores=0)
     )
 
-    assert stdout_mode is False
-    assert n_cores == 7
+    assert io == _ApplyIO(stdout_mode=False, n_cores=7)
     assert outdir.is_dir()
 
 
