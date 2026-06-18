@@ -216,6 +216,52 @@ def test_prepare_tag_output_frame_request_flips_reverse_read():
     ) == frame
 
 
+def test_build_recall_tag_payload_request_matches_adapter():
+    class ForwardRead:
+        is_reverse = False
+
+    read = ForwardRead()
+    tf_calls = [
+        TFCall(
+            start=60,
+            length=10,
+            llr=5.0,
+            n_opps=5,
+            left_ambiguity=2,
+            right_ambiguity=3,
+        ),
+    ]
+    request = tf_recaller._RecallTagPayloadRequest(
+        read=read,
+        read_length=100,
+        tf_calls=tf_calls,
+        kept_nucs=[(10, 20)],
+        msps=[(40, 10)],
+        nq_for_kept_nucs=[201],
+        nuc_el_for_kept=[240],
+        nuc_er_for_kept=[120],
+    )
+
+    payload = tf_recaller._build_recall_tag_payload_from_request(request)
+
+    assert payload == tf_recaller._build_recall_tag_payload(
+        read,
+        100,
+        tf_calls,
+        [(10, 20)],
+        [(40, 10)],
+        [201],
+        [240],
+        [120],
+    )
+    assert payload.kept_nucs == [(10, 20)]
+    assert payload.msps == [(40, 10)]
+    assert payload.tf_intervals == [(60, 10)]
+    assert payload.nuc_qqq is True
+    assert payload.nuc_q_split == [[201, 240, 120]]
+    assert payload.tf_q_split == [[50, ambiguity_to_edge(2), ambiguity_to_edge(3)]]
+
+
 def test_positive_length_intervals_filters_and_normalizes():
     assert tf_recaller._positive_length_intervals(
         np.array([5, 10, 15]),

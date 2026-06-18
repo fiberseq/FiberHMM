@@ -150,6 +150,18 @@ class _RecallTagPayload:
 
 
 @dataclass
+class _RecallTagPayloadRequest:
+    read: object
+    read_length: int
+    tf_calls: Sequence[TFCall]
+    kept_nucs: Sequence[Tuple[int, int]]
+    msps: Sequence[Tuple[int, int]]
+    nq_for_kept_nucs: Optional[Sequence[int]]
+    nuc_el_for_kept: Optional[Sequence[int]]
+    nuc_er_for_kept: Optional[Sequence[int]]
+
+
+@dataclass
 class _SplitNamedIntervals:
     intervals: List[Tuple[int, int]]
     names: List[str]
@@ -948,18 +960,38 @@ def _build_recall_tag_payload(
     nuc_el_for_kept: Optional[Sequence[int]],
     nuc_er_for_kept: Optional[Sequence[int]],
 ) -> _RecallTagPayload:
-    nuc_quality = _recall_nuc_quality_inputs(
-        kept_nucs, nq_for_kept_nucs, nuc_el_for_kept, nuc_er_for_kept,
+    return _build_recall_tag_payload_from_request(
+        _RecallTagPayloadRequest(
+            read=read,
+            read_length=read_length,
+            tf_calls=tf_calls,
+            kept_nucs=kept_nucs,
+            msps=msps,
+            nq_for_kept_nucs=nq_for_kept_nucs,
+            nuc_el_for_kept=nuc_el_for_kept,
+            nuc_er_for_kept=nuc_er_for_kept,
+        ),
     )
-    tf_quality = _recall_tf_quality_inputs(tf_calls)
+
+
+def _build_recall_tag_payload_from_request(
+    request: _RecallTagPayloadRequest,
+) -> _RecallTagPayload:
+    nuc_quality = _recall_nuc_quality_inputs(
+        request.kept_nucs,
+        request.nq_for_kept_nucs,
+        request.nuc_el_for_kept,
+        request.nuc_er_for_kept,
+    )
+    tf_quality = _recall_tf_quality_inputs(request.tf_calls)
 
     # FiberHMM works in SEQ coords internally. Tags are written in molecular
     # frame and sorted within each annotation type for fibertools/spec readers.
     output_frame = _prepare_tag_output_frame(
-        read,
-        read_length,
-        kept_nucs,
-        msps,
+        request.read,
+        request.read_length,
+        request.kept_nucs,
+        request.msps,
         tf_quality.intervals,
         nuc_quality.nq_values,
         tf_quality.tq_values,
@@ -971,7 +1003,7 @@ def _build_recall_tag_payload(
 
     return _recall_tag_payload_from_output_frame(
         output_frame,
-        read_length,
+        request.read_length,
         nuc_quality.nuc_qqq,
     )
 
