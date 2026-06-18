@@ -13,7 +13,7 @@ load_model_with_metadata are re-exported from this module.
 
 import json
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
@@ -865,10 +865,11 @@ class FiberHMM:
         return model
 
 
+@dataclass
 class TrainingMonitor:
     """Tracks training progress."""
-    def __init__(self):
-        self.history = []
+
+    history: list = field(default_factory=list)
 
 
 def _logsumexp(a: np.ndarray, axis: Optional[int] = None,
