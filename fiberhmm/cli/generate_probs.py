@@ -914,6 +914,59 @@ def _probability_counters_have_data(
     )
 
 
+@dataclass(frozen=True)
+class _ProbabilityBaseOutputPlan:
+    output_dir: str
+    tables_dir: str
+    base_name: str
+    base: str
+    context_sizes: List[int]
+    accessible_counter: object
+    inaccessible_counter: object
+
+
+def _save_probability_outputs_for_base_plan(
+    plan: _ProbabilityBaseOutputPlan,
+) -> bool:
+    _print_probability_base_summary(
+        plan.base, plan.accessible_counter, plan.inaccessible_counter,
+    )
+
+    plan.accessible_counter.save(
+        _probability_counter_path(
+            plan.output_dir, plan.base_name, "accessible", plan.base,
+        )
+    )
+    plan.inaccessible_counter.save(
+        _probability_counter_path(
+            plan.output_dir, plan.base_name, "inaccessible", plan.base,
+        )
+    )
+
+    if not _probability_counters_have_data(
+        plan.accessible_counter, plan.inaccessible_counter,
+    ):
+        print(
+            f"\n  WARNING: No data for {plan.base}-centered contexts, "
+            f"skipping TSV generation"
+        )
+        print(
+            f"           This may indicate the MM tags don't contain "
+            f"{plan.base} modifications"
+        )
+        return False
+
+    _write_probability_tables_for_base(
+        plan.tables_dir,
+        plan.base_name,
+        plan.base,
+        plan.context_sizes,
+        plan.accessible_counter,
+        plan.inaccessible_counter,
+    )
+    return True
+
+
 def _save_probability_outputs_for_base(
     output_dir: str,
     tables_dir: str,
@@ -923,33 +976,17 @@ def _save_probability_outputs_for_base(
     accessible_counter: ContextCounter,
     inaccessible_counter: ContextCounter,
 ) -> bool:
-    _print_probability_base_summary(
-        base, accessible_counter, inaccessible_counter,
+    return _save_probability_outputs_for_base_plan(
+        _ProbabilityBaseOutputPlan(
+            output_dir=output_dir,
+            tables_dir=tables_dir,
+            base_name=base_name,
+            base=base,
+            context_sizes=context_sizes,
+            accessible_counter=accessible_counter,
+            inaccessible_counter=inaccessible_counter,
+        )
     )
-
-    accessible_counter.save(
-        _probability_counter_path(output_dir, base_name, "accessible", base)
-    )
-    inaccessible_counter.save(
-        _probability_counter_path(output_dir, base_name, "inaccessible", base)
-    )
-
-    if not _probability_counters_have_data(
-        accessible_counter, inaccessible_counter,
-    ):
-        print(f"\n  WARNING: No data for {base}-centered contexts, skipping TSV generation")
-        print(f"           This may indicate the MM tags don't contain {base} modifications")
-        return False
-
-    _write_probability_tables_for_base(
-        tables_dir,
-        base_name,
-        base,
-        context_sizes,
-        accessible_counter,
-        inaccessible_counter,
-    )
-    return True
 
 
 def _generate_probability_stats_for_contexts(
@@ -1072,14 +1109,16 @@ def _save_probability_run_outputs(
     )
 
     for base in run.target_bases:
-        _save_probability_outputs_for_base(
-            run.output_dir,
-            run.tables_dir,
-            run.base_name,
-            base,
-            args.context_sizes,
-            accessible_result.counters[base],
-            inaccessible_result.counters[base],
+        _save_probability_outputs_for_base_plan(
+            _ProbabilityBaseOutputPlan(
+                output_dir=run.output_dir,
+                tables_dir=run.tables_dir,
+                base_name=run.base_name,
+                base=base,
+                context_sizes=args.context_sizes,
+                accessible_counter=accessible_result.counters[base],
+                inaccessible_counter=inaccessible_result.counters[base],
+            )
         )
 
     _write_combined_probability_tables(

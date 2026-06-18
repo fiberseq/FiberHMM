@@ -34,6 +34,7 @@ from fiberhmm.cli.generate_probs import (
     _probability_read_tags_or_skip,
     _probability_table_path,
     _ProbabilityBamResult,
+    _ProbabilityBaseOutputPlan,
     _ProbabilityControlGroupResults,
     _ProbabilityCounterSummary,
     _ProbabilityReadTags,
@@ -58,6 +59,7 @@ from fiberhmm.cli.generate_probs import (
     _remove_temporary_probability_counters,
     _safe_percent,
     _save_probability_outputs_for_base,
+    _save_probability_outputs_for_base_plan,
     _save_probability_run_outputs,
     _save_temporary_probability_counters,
     _setup_probability_run,
@@ -378,7 +380,7 @@ def test_save_probability_run_outputs_routes_tables_cleanup_and_stats(monkeypatc
     )
     monkeypatch.setattr(
         generate_probs,
-        "_save_probability_outputs_for_base",
+        "_save_probability_outputs_for_base_plan",
         lambda *args: calls.append(("save_base", args)),
     )
     monkeypatch.setattr(
@@ -426,8 +428,34 @@ def test_save_probability_run_outputs_routes_tables_cleanup_and_stats(monkeypatc
 
     assert calls[0] == ("summary", (11, 13, 17, 19))
     assert calls[1:3] == [
-        ("save_base", ("out", "tables", "run", "A", [2, 3], "accA", "inaccA")),
-        ("save_base", ("out", "tables", "run", "C", [2, 3], "accC", "inaccC")),
+        (
+            "save_base",
+            (
+                _ProbabilityBaseOutputPlan(
+                    output_dir="out",
+                    tables_dir="tables",
+                    base_name="run",
+                    base="A",
+                    context_sizes=[2, 3],
+                    accessible_counter="accA",
+                    inaccessible_counter="inaccA",
+                ),
+            ),
+        ),
+        (
+            "save_base",
+            (
+                _ProbabilityBaseOutputPlan(
+                    output_dir="out",
+                    tables_dir="tables",
+                    base_name="run",
+                    base="C",
+                    context_sizes=[2, 3],
+                    accessible_counter="accC",
+                    inaccessible_counter="inaccC",
+                ),
+            ),
+        ),
     ]
     assert calls[3] == (
         "combined",
@@ -586,9 +614,17 @@ def test_save_probability_outputs_for_base_saves_and_writes_tables(monkeypatch):
         lambda *args: table_writes.append(args),
     )
 
-    wrote_tables = _save_probability_outputs_for_base(
-        "out", "out/tables", "run", "A", [3, 4], accessible, inaccessible,
+    plan = _ProbabilityBaseOutputPlan(
+        output_dir="out",
+        tables_dir="out/tables",
+        base_name="run",
+        base="A",
+        context_sizes=[3, 4],
+        accessible_counter=accessible,
+        inaccessible_counter=inaccessible,
     )
+
+    wrote_tables = _save_probability_outputs_for_base_plan(plan)
 
     assert wrote_tables
     assert summaries == [("A", accessible, inaccessible)]
@@ -597,6 +633,9 @@ def test_save_probability_outputs_for_base_saves_and_writes_tables(monkeypatch):
     ]
     assert accessible.saved_paths == ["out/run_accessible_A.probs.pkl"]
     assert inaccessible.saved_paths == ["out/run_inaccessible_A.probs.pkl"]
+    assert _save_probability_outputs_for_base(
+        "out", "out/tables", "run", "A", [3, 4], accessible, inaccessible,
+    )
 
 
 def test_save_probability_outputs_for_base_warns_without_data(monkeypatch, capsys):
@@ -609,8 +648,16 @@ def test_save_probability_outputs_for_base_warns_without_data(monkeypatch, capsy
         lambda *args: table_writes.append(args),
     )
 
-    wrote_tables = _save_probability_outputs_for_base(
-        "out", "out/tables", "run", "C", [3], accessible, inaccessible,
+    wrote_tables = _save_probability_outputs_for_base_plan(
+        _ProbabilityBaseOutputPlan(
+            output_dir="out",
+            tables_dir="out/tables",
+            base_name="run",
+            base="C",
+            context_sizes=[3],
+            accessible_counter=accessible,
+            inaccessible_counter=inaccessible,
+        )
     )
 
     assert not wrote_tables
