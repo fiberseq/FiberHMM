@@ -305,7 +305,13 @@ def test_hdf5_chrom_fiber_metadata_helper_writes_final_arrays(tmp_path):
 
     with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
         grp = hdf5_backend.create_posterior_chrom_group(h5, "chr1")
-        hdf5_backend._write_chrom_fiber_metadata(grp, meta, n_fibers=2)
+        hdf5_backend._write_chrom_fiber_metadata_from_request(
+            hdf5_backend._ChromFiberMetadataWriteRequest(
+                group=grp,
+                meta=meta,
+                n_fibers=2,
+            )
+        )
 
         assert grp.attrs["n_fibers"] == 2
         assert [_h5_text(value) for value in grp["fiber_ids"][:]] == [

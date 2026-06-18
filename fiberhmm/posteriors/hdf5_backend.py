@@ -206,6 +206,13 @@ class _ChromMetadata:
 
 
 @dataclass(frozen=True)
+class _ChromFiberMetadataWriteRequest:
+    group: object
+    meta: _ChromMetadata
+    n_fibers: int
+
+
+@dataclass(frozen=True)
 class _FiberArrayDatasetSpec:
     group_name: str
     data: np.ndarray
@@ -296,13 +303,27 @@ def _write_chrom_fiber_metadata(
     meta: _ChromMetadata,
     n_fibers: int,
 ) -> None:
-    write_fiber_metadata_datasets(
-        group,
-        meta.ids,
-        meta.starts,
-        meta.ends,
-        meta.strands,
-        n_fibers=n_fibers,
+    _write_chrom_fiber_metadata_from_request(
+        _ChromFiberMetadataWriteRequest(
+            group=group,
+            meta=meta,
+            n_fibers=n_fibers,
+        )
+    )
+
+
+def _write_chrom_fiber_metadata_from_request(
+    request: _ChromFiberMetadataWriteRequest,
+) -> None:
+    write_fiber_metadata_datasets_from_request(
+        _FiberMetadataDatasetWriteRequest(
+            group=request.group,
+            fiber_ids=request.meta.ids,
+            starts=request.meta.starts,
+            ends=request.meta.ends,
+            strands=request.meta.strands,
+            n_fibers=request.n_fibers,
+        )
     )
 
 
