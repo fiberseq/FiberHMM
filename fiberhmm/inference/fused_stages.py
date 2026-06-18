@@ -125,6 +125,18 @@ class _FusedRecallResultRequest:
 
 
 @dataclass(frozen=True)
+class _FusedNoNucsResultRequest:
+    fiber_read: Mapping[str, Any]
+    apply_result: Mapping[str, Any]
+    llr_hit: Any
+    llr_miss: Any
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+    with_scores: bool
+
+
+@dataclass(frozen=True)
 class _OptionalApplyScoreFieldsRequest:
     apply_result: Mapping[str, Any]
     enabled: bool
@@ -497,29 +509,29 @@ def build_fused_recall_result_from_request(
             request.msp_min_size, request.phase_nrl,
         )
 
+    no_nucs_request = _FusedNoNucsResultRequest(
+        fiber_read=request.fiber_read,
+        apply_result=request.apply_result,
+        llr_hit=request.llr_hit,
+        llr_miss=request.llr_miss,
+        min_llr=request.min_llr,
+        min_opps=request.min_opps,
+        unify_threshold=request.unify_threshold,
+        with_scores=request.with_scores,
+    )
     if is_circular:
-        return _build_fused_recall_result_without_nucs_circular(
-            request.fiber_read, request.apply_result, request.llr_hit,
-            request.llr_miss, request.min_llr, request.min_opps,
-            request.unify_threshold, request.with_scores,
+        return _build_fused_recall_result_without_nucs_circular_from_request(
+            no_nucs_request,
         )
-    return _build_fused_recall_result_without_nucs_linear(
-        request.fiber_read, request.apply_result, request.llr_hit,
-        request.llr_miss, request.min_llr, request.min_opps,
-        request.unify_threshold, request.with_scores,
+    return _build_fused_recall_result_without_nucs_linear_from_request(
+        no_nucs_request,
     )
 
 
-def _build_fused_recall_result_without_nucs_linear(
-    fiber_read: Mapping[str, Any],
-    apply_result: Mapping[str, Any],
-    llr_hit,
-    llr_miss,
-    min_llr: float,
-    min_opps: int,
-    unify_threshold: int,
-    with_scores: bool,
+def _build_fused_recall_result_without_nucs_linear_from_request(
+    request: _FusedNoNucsResultRequest,
 ) -> dict:
+    apply_result = request.apply_result
     ns = apply_result["ns"]
     nl = apply_result["nl"]
     msps = apply_result["as"]
@@ -530,25 +542,25 @@ def _build_fused_recall_result_without_nucs_linear(
         nl,
         msps,
         msp_lengths,
-        len(fiber_read["query_sequence"]),
-        llr_hit,
-        llr_miss,
-        min_llr,
-        min_opps,
-        unify_threshold,
+        len(request.fiber_read["query_sequence"]),
+        request.llr_hit,
+        request.llr_miss,
+        request.min_llr,
+        request.min_opps,
+        request.unify_threshold,
     )
 
     score_fields = _optional_apply_score_fields_from_request(
         _OptionalApplyScoreFieldsRequest(
             apply_result=apply_result,
-            enabled=with_scores,
+            enabled=request.with_scores,
         )
     )
     kept_nucs, nq_for_kept = unify_nucs_with_tf_calls(
         ns,
         nl,
         tf_calls,
-        unify_threshold,
+        request.unify_threshold,
         score_fields["ns_scores"],
     )
     kept_starts, kept_lengths = split_intervals(kept_nucs)
@@ -564,7 +576,7 @@ def _build_fused_recall_result_without_nucs_linear(
     }
 
 
-def _build_fused_recall_result_without_nucs_circular(
+def _build_fused_recall_result_without_nucs_linear(
     fiber_read: Mapping[str, Any],
     apply_result: Mapping[str, Any],
     llr_hit,
@@ -574,7 +586,25 @@ def _build_fused_recall_result_without_nucs_circular(
     unify_threshold: int,
     with_scores: bool,
 ) -> dict:
-    read_length = _circular_read_length(fiber_read, apply_result)
+    return _build_fused_recall_result_without_nucs_linear_from_request(
+        _FusedNoNucsResultRequest(
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
+            with_scores=with_scores,
+        )
+    )
+
+
+def _build_fused_recall_result_without_nucs_circular_from_request(
+    request: _FusedNoNucsResultRequest,
+) -> dict:
+    apply_result = request.apply_result
+    read_length = _circular_read_length(request.fiber_read, apply_result)
     tiled = _tiled_interval_arrays(apply_result)
     tf_calls = run_tf_recall_stage(
         apply_result["encoded"],
@@ -583,29 +613,41 @@ def _build_fused_recall_result_without_nucs_circular(
         tiled.msp_starts,
         tiled.msp_lengths,
         len(apply_result["encoded"]),
-        llr_hit,
-        llr_miss,
-        min_llr,
-        min_opps,
-        unify_threshold,
+        request.llr_hit,
+        request.llr_miss,
+        request.min_llr,
+        request.min_opps,
+        request.unify_threshold,
     )
     tf_calls = project_center_tf_calls(tf_calls, read_length)
     kept_nucs, nq_for_kept = unify_circular_nucs_with_tf_calls(
         apply_result.get("circular_ns", []),
         tf_calls,
-        unify_threshold,
+        request.unify_threshold,
         read_length,
-        _optional_apply_scores(apply_result, "circular_ns_scores", with_scores),
+        _optional_apply_scores(
+            apply_result,
+            "circular_ns_scores",
+            request.with_scores,
+        ),
     )
     kept_starts, kept_lengths, kept_scores = split_intervals_for_legacy(
         kept_nucs,
         read_length,
-        _optional_apply_scores(apply_result, "circular_ns_scores", with_scores),
+        _optional_apply_scores(
+            apply_result,
+            "circular_ns_scores",
+            request.with_scores,
+        ),
     )
     msp_starts, msp_lengths_split, msp_scores = split_intervals_for_legacy(
         apply_result.get("circular_as", []),
         read_length,
-        _optional_apply_scores(apply_result, "circular_as_scores", with_scores),
+        _optional_apply_scores(
+            apply_result,
+            "circular_as_scores",
+            request.with_scores,
+        ),
     )
     return {
         "ns": kept_starts,
@@ -621,6 +663,30 @@ def _build_fused_recall_result_without_nucs_circular(
         "circular_ns": kept_nucs,
         "circular_as": apply_result.get("circular_as", []),
     }
+
+
+def _build_fused_recall_result_without_nucs_circular(
+    fiber_read: Mapping[str, Any],
+    apply_result: Mapping[str, Any],
+    llr_hit,
+    llr_miss,
+    min_llr: float,
+    min_opps: int,
+    unify_threshold: int,
+    with_scores: bool,
+) -> dict:
+    return _build_fused_recall_result_without_nucs_circular_from_request(
+        _FusedNoNucsResultRequest(
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
+            with_scores=with_scores,
+        )
+    )
 
 
 def _build_fused_recall_result_with_nucs(

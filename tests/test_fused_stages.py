@@ -468,15 +468,22 @@ def test_build_fused_recall_result_request_dispatches(monkeypatch):
 
         return inner
 
+    def fake_request_branch(label):
+        def inner(request):
+            calls.append((label, request))
+            return {"branch": label}
+
+        return inner
+
     monkeypatch.setattr(
         fused_stages,
-        "_build_fused_recall_result_without_nucs_linear",
-        fake_branch("linear"),
+        "_build_fused_recall_result_without_nucs_linear_from_request",
+        fake_request_branch("linear"),
     )
     monkeypatch.setattr(
         fused_stages,
-        "_build_fused_recall_result_without_nucs_circular",
-        fake_branch("circular"),
+        "_build_fused_recall_result_without_nucs_circular_from_request",
+        fake_request_branch("circular"),
     )
     monkeypatch.setattr(
         fused_stages,
@@ -507,24 +514,34 @@ def test_build_fused_recall_result_request_dispatches(monkeypatch):
             phase_nrl=147,
         )
 
+    def assert_no_nucs_request(call, label, apply_result):
+        assert call[0] == label
+        request = call[1]
+        assert request == fused_stages._FusedNoNucsResultRequest(
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit="hit",
+            llr_miss="miss",
+            min_llr=4.0,
+            min_opps=3,
+            unify_threshold=90,
+            with_scores=True,
+        )
+        assert request.fiber_read is fiber_read
+        assert request.apply_result is apply_result
+
     linear_apply = {"circular": False}
     circular_apply = {"circular": True}
 
     assert fused_stages.build_fused_recall_result_from_request(
         request_for(linear_apply, recall_nucs=False),
     ) == {"branch": "linear"}
-    assert calls[-1] == (
-        "linear",
-        (fiber_read, linear_apply, "hit", "miss", 4.0, 3, 90, True),
-    )
+    assert_no_nucs_request(calls[-1], "linear", linear_apply)
 
     assert fused_stages.build_fused_recall_result_from_request(
         request_for(circular_apply, recall_nucs=False),
     ) == {"branch": "circular"}
-    assert calls[-1] == (
-        "circular",
-        (fiber_read, circular_apply, "hit", "miss", 4.0, 3, 90, True),
-    )
+    assert_no_nucs_request(calls[-1], "circular", circular_apply)
 
     assert fused_stages.build_fused_recall_result_from_request(
         request_for(linear_apply, recall_nucs=True),
