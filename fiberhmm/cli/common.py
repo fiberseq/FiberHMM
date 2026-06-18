@@ -32,7 +32,10 @@ def resolve_core_count(requested_cores: int, cpu_count_func=None) -> int:
 
 def resolve_chroms_set(chroms):
     """Normalize an optional CLI chromosome list into a de-duplicated set."""
-    return set(chroms) if chroms else None
+    if not chroms:
+        return None
+    chroms_set = {chrom.strip() for chrom in chroms if chrom.strip()}
+    return chroms_set or None
 
 
 def _context_sizes_default(default) -> list:

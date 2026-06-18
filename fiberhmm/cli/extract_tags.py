@@ -1103,7 +1103,8 @@ def _extract_dataset_name(input_path: str) -> str:
 def _parse_chroms_filter(chroms_arg: Optional[str]) -> Optional[Set[str]]:
     if not chroms_arg:
         return None
-    return set(chroms_arg.split(','))
+    chroms = {chrom.strip() for chrom in chroms_arg.split(',') if chrom.strip()}
+    return chroms or None
 
 
 def _extract_output_paths(outdir: str, dataset: str, extract_types, suffix: str) -> dict:

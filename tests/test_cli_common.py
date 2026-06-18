@@ -136,7 +136,12 @@ class TestAddParallelArgs:
     def test_resolve_chroms_set(self):
         assert resolve_chroms_set(None) is None
         assert resolve_chroms_set([]) is None
+        assert resolve_chroms_set(["", "  "]) is None
         assert resolve_chroms_set(["chr2", "chr1", "chr2"]) == {"chr1", "chr2"}
+        assert resolve_chroms_set(["chr2", " chr1 ", "chr2"]) == {
+            "chr1",
+            "chr2",
+        }
 
 
 class TestAddContextArgs:
