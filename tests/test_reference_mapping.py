@@ -47,6 +47,8 @@ def test_exact_block_mapping_requires_aligned_endpoints():
     assert query_interval_to_ref_block(0, 4, q2r) == (100, 104)
     assert query_interval_to_ref_block(1, 3, q2r) is None
     assert query_interval_to_ref_block(2, 3, q2r) is None
+    assert query_interval_to_ref_block(1, 0, q2r) is None
+    assert query_interval_to_ref_block(2, -1, q2r) is None
 
 
 def test_span_mapping_scans_inward_past_unaligned_edges():

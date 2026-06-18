@@ -39,6 +39,8 @@ def _query_interval_bounds(qstart, length) -> Tuple[int, int]:
 def query_interval_to_ref_block(qstart, length, query_to_ref) -> Optional[Tuple[int, int]]:
     """Map a query interval to a reference block using exact aligned endpoints."""
     qstart, qend = _query_interval_bounds(qstart, length)
+    if qend <= qstart:
+        return None
     ref_start = query_to_ref_lookup(query_to_ref, qstart)
     ref_end = query_to_ref_lookup(query_to_ref, qend - 1)
     if ref_start is None or ref_end is None:
