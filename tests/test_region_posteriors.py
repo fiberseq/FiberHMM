@@ -95,10 +95,17 @@ def test_region_tsv_header_and_record_copy_helpers(tmp_path):
     assert header_lines[1].startswith("#read_id\tchrom")
 
     records = tmp_path / "records.tsv"
-    records.write_text("read1\tchr1\t1\t2\t+\tAA==\t\t\n", encoding="utf-8")
+    records.write_text(
+        "#metadata:{}\n"
+        "#read_id\tchrom\n"
+        "\n"
+        "read1\tchr1\t1\t2\t+\tAA==\t\t\n",
+        encoding="utf-8",
+    )
 
     assert region_tsv._copy_region_tsv_records(output, str(records)) == 1
     assert output.getvalue().endswith("read1\tchr1\t1\t2\t+\tAA==\t\t\n")
+    assert "#metadata:{}" not in output.getvalue()
 
 
 def test_merge_region_posteriors_tsv_orders_regions_and_preserves_input_list(tmp_path):

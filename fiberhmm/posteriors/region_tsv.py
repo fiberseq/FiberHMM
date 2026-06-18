@@ -150,10 +150,16 @@ def _write_region_tsv_header(
     outfile.write(REGION_POSTERIORS_HEADER)
 
 
+def _is_region_tsv_record_line(line: str) -> bool:
+    return bool(line.strip()) and not line.startswith("#")
+
+
 def _copy_region_tsv_records(outfile, tsv_path: str) -> int:
     n_fibers = 0
     with open(tsv_path, "r") as infile:
         for line in infile:
+            if not _is_region_tsv_record_line(line):
+                continue
             outfile.write(line)
             n_fibers += 1
     return n_fibers
