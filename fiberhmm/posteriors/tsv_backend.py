@@ -50,6 +50,30 @@ class _TsvCopyResult:
 
 
 @dataclass(frozen=True)
+class _PosteriorTsvFields:
+    read_id: str
+    chrom: str
+    start: int
+    end: int
+    strand: str
+    post_b64: str
+    fp_starts: str
+    fp_sizes: str
+
+    def as_tuple(self) -> tuple:
+        return (
+            self.read_id,
+            self.chrom,
+            self.start,
+            self.end,
+            self.strand,
+            self.post_b64,
+            self.fp_starts,
+            self.fp_sizes,
+        )
+
+
+@dataclass(frozen=True)
 class _PosteriorTsvRecord:
     read_id: str
     chrom: str
@@ -83,15 +107,15 @@ def _split_posteriors_line(line: str):
     read_id, chrom, start, end, strand, post_b64 = parts[:6]
     fp_starts_str = parts[6] if len(parts) > 6 else ''
     fp_sizes_str = parts[7] if len(parts) > 7 else ''
-    return (
-        read_id,
-        chrom,
-        int(start),
-        int(end),
-        strand,
-        post_b64,
-        fp_starts_str,
-        fp_sizes_str,
+    return _PosteriorTsvFields(
+        read_id=read_id,
+        chrom=chrom,
+        start=int(start),
+        end=int(end),
+        strand=strand,
+        post_b64=post_b64,
+        fp_starts=fp_starts_str,
+        fp_sizes=fp_sizes_str,
     )
 
 
@@ -124,20 +148,15 @@ def _metadata_from_tsv_line(line: str) -> Optional[dict]:
 
 
 def _posterior_record_from_fields(fields, dtype) -> _PosteriorTsvRecord:
-    (
-        read_id, chrom, start, end, strand, post_b64,
-        fp_starts_str, fp_sizes_str,
-    ) = fields
-
     return _PosteriorTsvRecord(
-        read_id=read_id,
-        chrom=chrom,
-        start=start,
-        end=end,
-        strand=strand,
-        posteriors=_decode_posteriors_b64(post_b64, dtype),
-        fp_starts=_parse_int_array(fp_starts_str),
-        fp_sizes=_parse_int_array(fp_sizes_str),
+        read_id=fields.read_id,
+        chrom=fields.chrom,
+        start=fields.start,
+        end=fields.end,
+        strand=fields.strand,
+        posteriors=_decode_posteriors_b64(fields.post_b64, dtype),
+        fp_starts=_parse_int_array(fields.fp_starts),
+        fp_sizes=_parse_int_array(fields.fp_sizes),
     )
 
 

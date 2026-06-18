@@ -193,6 +193,7 @@ def test_posterior_record_from_fields_decodes_with_requested_dtype():
     fields = tsv_backend._split_posteriors_line(line)
     record = tsv_backend._posterior_record_from_fields(fields, np.float16)
 
+    assert fields.as_tuple()[:5] == ("read1", "chr1", 10, 13, "-")
     assert record.read_id == "read1"
     assert record.chrom == "chr1"
     assert record.start == 10
@@ -300,7 +301,11 @@ def test_iter_tsv_posterior_fields_skips_non_records(tmp_path):
     fields = list(tsv_backend._iter_tsv_posterior_fields(str(tsv_path)))
 
     assert len(fields) == 1
-    assert fields[0][:5] == ("read1", "chr2L", 0, 3, "+")
+    assert fields[0].read_id == "read1"
+    assert fields[0].chrom == "chr2L"
+    assert fields[0].start == 0
+    assert fields[0].end == 3
+    assert fields[0].strand == "+"
 
 
 def test_posterior_tsv_metadata_uses_source_bam_basename():
