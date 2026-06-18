@@ -2,24 +2,22 @@
 
 from __future__ import annotations
 
+from dataclasses import InitVar, dataclass, field
 
+
+@dataclass(slots=True)
 class PayloadRead:
     """Minimal duck-type for the pysam.AlignedSegment surface workers need."""
 
-    __slots__ = ('query_name', 'query_sequence', 'is_reverse', '_tags',
-                 '_daf_md_result')
+    query_sequence: object
+    is_reverse: bool
+    tags: InitVar[object]
+    query_name: object = None
+    daf_md_result: InitVar[object] = None
+    _tags: object = field(init=False, repr=False)
+    _daf_md_result: object = field(init=False, repr=False)
 
-    def __init__(
-        self,
-        query_sequence,
-        is_reverse,
-        tags,
-        query_name=None,
-        daf_md_result=None,
-    ):
-        self.query_name = query_name
-        self.query_sequence = query_sequence
-        self.is_reverse = is_reverse
+    def __post_init__(self, tags, daf_md_result) -> None:
         self._tags = tags
         self._daf_md_result = daf_md_result
 
