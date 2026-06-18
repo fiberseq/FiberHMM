@@ -5,12 +5,20 @@ Contains helper functions used by generate_probs, bootstrap_probs, and transfer_
 """
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Set, Tuple
 
 # Reverse complement lookup
 _RC_TABLE = str.maketrans('ACGTacgtNn', 'TGCAtgcaNn')
 _FIBER_PROBABILITY_MODES = ('pacbio-fiber', 'nanopore-fiber')
+
+
+@dataclass(frozen=True)
+class _ProbabilityOutputDirs:
+    output: Path
+    tables: Path
+    plots: Path
 
 
 def reverse_complement(seq: str) -> str:
@@ -73,9 +81,13 @@ def detect_strand_and_base(sequence: str, mod_positions: Set[int], mode: str) ->
     return '.', 'A'
 
 
-def _standard_output_dirs(output_path: str) -> Tuple[Path, Path, Path]:
+def _standard_output_dirs(output_path: str) -> _ProbabilityOutputDirs:
     output_dir = Path(output_path)
-    return output_dir, output_dir / "tables", output_dir / "plots"
+    return _ProbabilityOutputDirs(
+        output=output_dir,
+        tables=output_dir / "tables",
+        plots=output_dir / "plots",
+    )
 
 
 def setup_output_dirs(output_path: str) -> Tuple[Path, Path, Path]:
@@ -88,13 +100,13 @@ def setup_output_dirs(output_path: str) -> Tuple[Path, Path, Path]:
     Returns:
         (output_dir, tables_dir, plots_dir) as Path objects
     """
-    output_dir, tables_dir, plots_dir = _standard_output_dirs(output_path)
+    dirs = _standard_output_dirs(output_path)
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    tables_dir.mkdir(exist_ok=True)
-    plots_dir.mkdir(exist_ok=True)
+    dirs.output.mkdir(parents=True, exist_ok=True)
+    dirs.tables.mkdir(exist_ok=True)
+    dirs.plots.mkdir(exist_ok=True)
 
-    return output_dir, tables_dir, plots_dir
+    return dirs.output, dirs.tables, dirs.plots
 
 
 def get_base_name(output_path: str, default: str = "probs") -> str:

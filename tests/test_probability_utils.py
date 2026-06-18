@@ -59,12 +59,12 @@ def test_output_directory_helpers(tmp_path):
 
 
 def test_standard_output_dirs_returns_layout_without_creating(tmp_path):
-    output_dir, tables_dir, plots_dir = _standard_output_dirs(str(tmp_path / "run"))
+    dirs = _standard_output_dirs(str(tmp_path / "run"))
 
-    assert output_dir == tmp_path / "run"
-    assert tables_dir == output_dir / "tables"
-    assert plots_dir == output_dir / "plots"
-    assert not output_dir.exists()
+    assert dirs.output == tmp_path / "run"
+    assert dirs.tables == dirs.output / "tables"
+    assert dirs.plots == dirs.output / "plots"
+    assert not dirs.output.exists()
 
 
 def test_get_base_name_handles_trailing_slash_and_empty_path():
