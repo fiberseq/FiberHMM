@@ -24,6 +24,12 @@ class _LegacyIntervalGroup:
     scores: Optional[list[float]]
 
 
+@dataclass(frozen=True)
+class _FilteredNucIntervals:
+    intervals: list[Interval]
+    scores: Optional[list[int]]
+
+
 def _flip_legacy_intervals_to_molecular(
     starts: Sequence[int],
     lengths: Sequence[int],
@@ -148,7 +154,7 @@ def _filter_nucs_with_tf_overlap(
     unify_threshold: int,
     ns_scores: Optional[Sequence[float]],
     overlaps_tf: Callable[[Interval], bool],
-) -> tuple[list[Interval], Optional[list[int]]]:
+) -> _FilteredNucIntervals:
     score_values = scores_to_u8(ns_scores)
     kept: list[Interval] = []
     kept_scores: Optional[list[int]] = [] if score_values is not None else None
@@ -158,7 +164,7 @@ def _filter_nucs_with_tf_overlap(
         if _should_keep_nuc_interval(interval, unify_threshold, overlaps_tf):
             _append_kept_interval(kept, kept_scores, interval, score_values, idx)
 
-    return kept, kept_scores
+    return _FilteredNucIntervals(kept, kept_scores)
 
 
 def _tf_linear_intervals(tf_calls: Sequence[TFCall]) -> list[Interval]:
@@ -289,12 +295,13 @@ def unify_nucs_with_tf_calls(
     def overlaps_tf(interval: Interval) -> bool:
         return _nuc_overlaps_any_linear_interval(interval, tf_intervals)
 
-    return _filter_nucs_with_tf_overlap(
+    filtered = _filter_nucs_with_tf_overlap(
         zip(ns, nl),
         unify_threshold,
         ns_scores,
         overlaps_tf,
     )
+    return filtered.intervals, filtered.scores
 
 
 def unify_circular_nucs_with_tf_calls(
@@ -312,12 +319,13 @@ def unify_circular_nucs_with_tf_calls(
             interval, tf_intervals, read_length,
         )
 
-    return _filter_nucs_with_tf_overlap(
+    filtered = _filter_nucs_with_tf_overlap(
         nucs,
         unify_threshold,
         ns_scores,
         overlaps_tf,
     )
+    return filtered.intervals, filtered.scores
 
 
 def split_intervals(intervals: Sequence[Interval]) -> tuple[np.ndarray, np.ndarray]:
