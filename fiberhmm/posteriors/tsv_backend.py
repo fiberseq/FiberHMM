@@ -127,6 +127,15 @@ class _H5PosteriorRecordWriteRequest:
 
 
 @dataclass(frozen=True)
+class _TsvH5RecordsWriteRequest:
+    tsv_path: str
+    h5_file: object
+    chrom_indices: dict
+    total_fibers: int
+    verbose: bool
+
+
+@dataclass(frozen=True)
 class _H5PosteriorRecordDatasetSpec:
     group_name: str
     data: np.ndarray
@@ -393,6 +402,32 @@ def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
     )
 
 
+def _write_h5_records_from_tsv_request(
+    request: _TsvH5RecordsWriteRequest,
+) -> int:
+    n_written = 0
+
+    for fields in _iter_tsv_posterior_fields(request.tsv_path):
+        _write_h5_posterior_record_from_request(
+            _H5PosteriorRecordWriteRequest(
+                h5_file=request.h5_file,
+                chrom_indices=request.chrom_indices,
+                fields=fields,
+            )
+        )
+        n_written += 1
+
+        if request.verbose and n_written % 100000 == 0:
+            print(
+                f"\r    Written {n_written:,} / "
+                f"{request.total_fibers:,} fibers...",
+                end='',
+            )
+            sys.stdout.flush()
+
+    return n_written
+
+
 def _posterior_tsv_output_path(output_path: str, compress: bool) -> str:
     output_path = os.fspath(output_path)
     is_gzip_path = output_path.lower().endswith('.gz')
@@ -544,25 +579,15 @@ def tsv_to_h5_from_request(request: _TsvToH5Request) -> int:
             )
         )
 
-        n_written = 0
-
-        for fields in _iter_tsv_posterior_fields(request.tsv_path):
-            _write_h5_posterior_record_from_request(
-                _H5PosteriorRecordWriteRequest(
-                    h5_file=f,
-                    chrom_indices=chrom_indices,
-                    fields=fields,
-                )
+        n_written = _write_h5_records_from_tsv_request(
+            _TsvH5RecordsWriteRequest(
+                tsv_path=request.tsv_path,
+                h5_file=f,
+                chrom_indices=chrom_indices,
+                total_fibers=scan_result.total_fibers,
+                verbose=request.verbose,
             )
-            n_written += 1
-
-            if request.verbose and n_written % 100000 == 0:
-                print(
-                    f"\r    Written {n_written:,} / "
-                    f"{scan_result.total_fibers:,} fibers...",
-                    end='',
-                )
-                sys.stdout.flush()
+        )
 
     file_size = path_size_mb(request.h5_path)
     if request.verbose:

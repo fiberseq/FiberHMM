@@ -410,6 +410,69 @@ def test_write_h5_posterior_record_adapter_builds_request(monkeypatch):
     ]
 
 
+def test_write_h5_records_from_tsv_request_streams_records(monkeypatch):
+    h5_file = object()
+    chrom_indices = {"chr1": 0}
+    fields = [
+        tsv_backend._PosteriorTsvFields(
+            read_id="read1",
+            chrom="chr1",
+            start=10,
+            end=13,
+            strand="+",
+            post_b64="abc",
+            fp_starts="",
+            fp_sizes="",
+        ),
+        tsv_backend._PosteriorTsvFields(
+            read_id="read2",
+            chrom="chr1",
+            start=20,
+            end=23,
+            strand="-",
+            post_b64="def",
+            fp_starts="1",
+            fp_sizes="2",
+        ),
+    ]
+    calls = []
+
+    monkeypatch.setattr(
+        tsv_backend,
+        "_iter_tsv_posterior_fields",
+        lambda path: iter(fields),
+    )
+    monkeypatch.setattr(
+        tsv_backend,
+        "_write_h5_posterior_record_from_request",
+        lambda request: calls.append(request),
+    )
+
+    n_written = tsv_backend._write_h5_records_from_tsv_request(
+        tsv_backend._TsvH5RecordsWriteRequest(
+            tsv_path="input.tsv",
+            h5_file=h5_file,
+            chrom_indices=chrom_indices,
+            total_fibers=2,
+            verbose=False,
+        )
+    )
+
+    assert n_written == 2
+    assert calls == [
+        tsv_backend._H5PosteriorRecordWriteRequest(
+            h5_file=h5_file,
+            chrom_indices=chrom_indices,
+            fields=fields[0],
+        ),
+        tsv_backend._H5PosteriorRecordWriteRequest(
+            h5_file=h5_file,
+            chrom_indices=chrom_indices,
+            fields=fields[1],
+        ),
+    ]
+
+
 def test_chrom_from_countable_tsv_line_filters_non_data_rows():
     assert tsv_backend._chrom_from_countable_tsv_line("#metadata:{}\n") is None
     assert tsv_backend._chrom_from_countable_tsv_line("read_without_chrom\n") is None
