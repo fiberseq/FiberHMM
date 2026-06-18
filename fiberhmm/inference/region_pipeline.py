@@ -569,10 +569,20 @@ def _concatenate_region_beds(output_bed: str, non_empty_beds: list[str]) -> None
     print(f"Concatenating {len(non_empty_beds)} region BED files...")
     sys.stdout.flush()
 
-    with open(output_bed, 'wb') as fout:
-        for bed_path in non_empty_beds:
-            with open(bed_path, 'rb') as fin:
-                shutil.copyfileobj(fin, fout)
+    temp_output = output_bed + ".tmp"
+    try:
+        with open(temp_output, 'wb') as fout:
+            for bed_path in non_empty_beds:
+                with open(bed_path, 'rb') as fin:
+                    shutil.copyfileobj(fin, fout)
+        os.replace(temp_output, output_bed)
+    except BaseException:
+        if os.path.exists(temp_output):
+            try:
+                os.remove(temp_output)
+            except OSError as e:
+                print(f"Warning: Could not remove temporary BED {temp_output}: {e}")
+        raise
 
 
 def _finalize_region_bam_parallel_run(

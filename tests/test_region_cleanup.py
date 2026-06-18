@@ -1071,6 +1071,23 @@ def test_concatenate_region_beds_writes_inputs_in_order(tmp_path, capsys):
     assert "Concatenating 2 region BED files..." in capsys.readouterr().out
 
 
+def test_concatenate_region_beds_preserves_output_on_copy_failure(tmp_path):
+    bed_a = tmp_path / "a.bed"
+    missing = tmp_path / "missing.bed"
+    output = tmp_path / "out.bed"
+    temp_output = tmp_path / "out.bed.tmp"
+    bed_a.write_bytes(b"chr1\t0\t10\n")
+    output.write_bytes(b"old\n")
+
+    with pytest.raises(FileNotFoundError):
+        region_pipeline._concatenate_region_beds(
+            str(output), [str(bed_a), str(missing)],
+        )
+
+    assert output.read_bytes() == b"old\n"
+    assert not temp_output.exists()
+
+
 def test_region_parallel_bam_cleans_temp_dir_on_worker_failure(monkeypatch, tmp_path):
     temp_dirs = _install_failing_region_pool(monkeypatch, tmp_path)
     input_bam = _indexed_input_bam(tmp_path)
