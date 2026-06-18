@@ -483,6 +483,48 @@ def test_ma_circular_row_helpers_build_extra_columns_and_names():
     assert extract_tags._ma_circular_row_name('read1', 'tf', ann) == 'read1'
 
 
+def test_write_ma_circular_rows_request_writes_extra_columns():
+    read = _FakeRead(read_id='read-a')
+    ann = {
+        'circ_id': 'call-a',
+        'circ_part': 1,
+        'circ_parts': 2,
+        'mol_start': 90,
+        'mol_length': 30,
+    }
+    blocks = [
+        extract_tags._MaAnnotationBlock(100, 110, 60, (60, 7, 8), ann),
+    ]
+    buf = io.StringIO()
+
+    assert extract_tags._write_ma_circular_rows_from_request(
+        extract_tags._MaCircularRowsWriteRequest(
+            read=read,
+            bed_out=buf,
+            target_name='tf',
+            blocks=blocks,
+            with_scores=True,
+            block_scores=True,
+        )
+    ) == 1
+
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    assert cols[:6] == ['chr1', '100', '110', 'read-a|tf|call-a|1/2', '60', '+']
+    assert cols[9:12] == ['1', '10', '0']
+    assert cols[12:] == ['60', '7', '8', 'call-a', '1', '2', '90', '30']
+
+    adapter_buf = io.StringIO()
+    assert extract_tags._write_ma_circular_rows(
+        read,
+        adapter_buf,
+        'tf',
+        blocks,
+        with_scores=True,
+        block_scores=True,
+    ) == 1
+    assert adapter_buf.getvalue() == buf.getvalue()
+
+
 def test_circular_annotation_group_helpers_detect_wrapped_named_pieces():
     left = {'name': 'call-a', 'start': 0, 'length': 15}
     right = {'name': 'call-a', 'start': 85, 'length': 15}

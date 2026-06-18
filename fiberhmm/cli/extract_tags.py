@@ -143,6 +143,16 @@ class _LegacyIntervalRowWriteRequest:
 
 
 @dataclass(frozen=True)
+class _MaCircularRowsWriteRequest:
+    read: object
+    bed_out: object
+    target_name: str
+    blocks: object
+    with_scores: bool
+    block_scores: bool
+
+
+@dataclass(frozen=True)
 class _WrappedGroupSpan:
     start: int
     length: int
@@ -560,26 +570,45 @@ def _write_ma_circular_rows(
     with_scores: bool,
     block_scores: bool,
 ) -> int:
-    ref_name = read.reference_name
-    strand = '-' if read.is_reverse else '+'
-    read_id = read.query_name
+    return _write_ma_circular_rows_from_request(
+        _MaCircularRowsWriteRequest(
+            read=read,
+            bed_out=bed_out,
+            target_name=target_name,
+            blocks=blocks,
+            with_scores=with_scores,
+            block_scores=block_scores,
+        ),
+    )
 
-    for block in sorted(blocks, key=lambda block: block.ref_start):
+
+def _write_ma_circular_rows_from_request(
+    request: _MaCircularRowsWriteRequest,
+) -> int:
+    ref_name = request.read.reference_name
+    strand = '-' if request.read.is_reverse else '+'
+    read_id = request.read.query_name
+
+    for block in sorted(request.blocks, key=lambda block: block.ref_start):
         extra = _ma_circular_extra_columns(
             block.qvals,
             block.annotation,
-            block_scores,
+            request.block_scores,
         )
-        name = _ma_circular_row_name(read_id, target_name, block.annotation)
+        name = _ma_circular_row_name(
+            read_id,
+            request.target_name,
+            block.annotation,
+        )
         row = _bed12_row(
             ref_name, block.ref_start, block.ref_end, name,
-            block.score if with_scores else 0,
+            block.score if request.with_scores else 0,
             strand,
             [(block.ref_start, block.ref_end)],
             extra,
         )
-        bed_out.write(row + "\n")
-    return len(blocks)
+        request.bed_out.write(row + "\n")
+    return len(request.blocks)
 
 
 def _write_ma_grouped_row_from_request(
