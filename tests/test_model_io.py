@@ -373,22 +373,19 @@ class TestModeAliases:
 
 class TestSaveRedirect:
     def test_json_save_path_helper_redirects_legacy_extensions(self):
-        assert _json_save_path("/tmp/model.json") == (
-            "/tmp/model.json",
-            "/tmp/model.json",
-        )
-        assert _json_save_path("/tmp/model.JSON") == (
-            "/tmp/model.JSON",
-            "/tmp/model.JSON",
-        )
-        assert _json_save_path("/tmp/model.npz") == (
-            "/tmp/model.json",
-            "/tmp/model.npz",
-        )
-        assert _json_save_path(Path("/tmp/model.npz")) == (
-            "/tmp/model.json",
-            "/tmp/model.npz",
-        )
+        json_path = _json_save_path("/tmp/model.json")
+        upper_json_path = _json_save_path("/tmp/model.JSON")
+        npz_path = _json_save_path("/tmp/model.npz")
+        pathlib_npz_path = _json_save_path(Path("/tmp/model.npz"))
+
+        assert json_path.filepath == "/tmp/model.json"
+        assert json_path.old_path == "/tmp/model.json"
+        assert upper_json_path.filepath == "/tmp/model.JSON"
+        assert upper_json_path.old_path == "/tmp/model.JSON"
+        assert npz_path.filepath == "/tmp/model.json"
+        assert npz_path.old_path == "/tmp/model.npz"
+        assert pathlib_npz_path.filepath == "/tmp/model.json"
+        assert pathlib_npz_path.old_path == "/tmp/model.npz"
 
     def test_json_save_redirect_warning_names_both_paths(self):
         message = _json_save_redirect_warning("/tmp/model.json", "/tmp/model.npz")

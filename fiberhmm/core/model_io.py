@@ -37,6 +37,12 @@ class _ModelMetadata:
     context_size: int
     mode: str
 
+
+@dataclass(frozen=True)
+class _JsonSavePath:
+    filepath: str
+    old_path: str
+
 # =============================================================================
 # Loading functions (all formats supported for backward compatibility)
 # =============================================================================
@@ -264,12 +270,12 @@ def _convert_hmmlearn_model(hmmlearn_model) -> FiberHMM:
 # Saving functions (JSON only; legacy formats removed)
 # =============================================================================
 
-def _json_save_path(filepath: str) -> Tuple[str, str]:
+def _json_save_path(filepath: str) -> _JsonSavePath:
     filepath = os.fspath(filepath)
     if filepath.lower().endswith('.json'):
-        return filepath, filepath
+        return _JsonSavePath(filepath, filepath)
     base, _ = os.path.splitext(filepath)
-    return base + '.json', filepath
+    return _JsonSavePath(base + '.json', filepath)
 
 
 def _json_save_redirect_warning(filepath: str, old_path: str) -> str:
@@ -296,11 +302,13 @@ def save_model(model: FiberHMM, filepath: str,
         context_size: Context size used for training (saved as metadata)
         mode: Analysis mode used for training (saved as metadata)
     """
-    filepath, old_path = _json_save_path(filepath)
-    if old_path != filepath:
-        warnings.warn(_json_save_redirect_warning(filepath, old_path))
+    save_path = _json_save_path(filepath)
+    if save_path.old_path != save_path.filepath:
+        warnings.warn(
+            _json_save_redirect_warning(save_path.filepath, save_path.old_path)
+        )
 
-    _save_json(model, filepath, context_size, mode)
+    _save_json(model, save_path.filepath, context_size, mode)
 
 
 def _model_json_record(model: FiberHMM, context_size: int, mode: str) -> dict:
