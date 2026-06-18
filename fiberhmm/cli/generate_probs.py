@@ -507,6 +507,35 @@ def _print_probability_generation_header(args, output_dir: str, tables_dir: str,
         print(f"  - {f}")
 
 
+def _new_probability_counters(target_bases: list, max_context: int) -> dict:
+    return {base: ContextCounter(max_context, base) for base in target_bases}
+
+
+def _process_probability_sample_group(
+    section_label: str,
+    sample_description: str,
+    estimate_description: str,
+    bam_files: List[str],
+    target_bases: list,
+    max_context: int,
+    mode: str,
+    args,
+    sample_name: str,
+    output_dir: str,
+    base_name: str,
+) -> tuple:
+    print("\n" + "=" * 60)
+    print(f"Processing {section_label} samples ({sample_description})")
+    print(f"  This estimates {estimate_description}")
+    print("=" * 60)
+
+    counters = _new_probability_counters(target_bases, max_context)
+    reads, scanned, stats = process_sample_set(
+        bam_files, counters, mode, args, sample_name, output_dir, base_name,
+    )
+    return counters, reads, scanned, stats
+
+
 def main():
     args = parse_args()
 
@@ -531,25 +560,37 @@ def main():
     if args.mode == 'daf':
         print("  (G-strand reads will be reverse complemented to C-centered contexts)")
 
-    # Process ACCESSIBLE samples (naked DNA)
-    print("\n" + "=" * 60)
-    print("Processing ACCESSIBLE samples (naked/dechromatinized DNA)")
-    print("  This estimates P(methylation | accessible)")
-    print("=" * 60)
+    accessible_counters, accessible_reads, accessible_scanned, accessible_stats = (
+        _process_probability_sample_group(
+            "ACCESSIBLE",
+            "naked/dechromatinized DNA",
+            "P(methylation | accessible)",
+            args.accessible,
+            target_bases,
+            max_context,
+            args.mode,
+            args,
+            "accessible",
+            output_dir,
+            base_name,
+        )
+    )
 
-    accessible_counters = {base: ContextCounter(max_context, base) for base in target_bases}
-    accessible_reads, accessible_scanned, accessible_stats = process_sample_set(
-        args.accessible, accessible_counters, args.mode, args, "accessible", output_dir, base_name)
-
-    # Process INACCESSIBLE samples (untreated/native)
-    print("\n" + "=" * 60)
-    print("Processing INACCESSIBLE samples (untreated/native chromatin)")
-    print("  This estimates P(methylation | inaccessible) = background rate")
-    print("=" * 60)
-
-    inaccessible_counters = {base: ContextCounter(max_context, base) for base in target_bases}
-    inaccessible_reads, inaccessible_scanned, inaccessible_stats = process_sample_set(
-        args.inaccessible, inaccessible_counters, args.mode, args, "inaccessible", output_dir, base_name)
+    inaccessible_counters, inaccessible_reads, inaccessible_scanned, inaccessible_stats = (
+        _process_probability_sample_group(
+            "INACCESSIBLE",
+            "untreated/native chromatin",
+            "P(methylation | inaccessible) = background rate",
+            args.inaccessible,
+            target_bases,
+            max_context,
+            args.mode,
+            args,
+            "inaccessible",
+            output_dir,
+            base_name,
+        )
+    )
 
     # Report and save results
     print("\n" + "=" * 60)

@@ -16,6 +16,7 @@ from fiberhmm.cli.generate_probs import (
     _max_reads_per_file,
     _maybe_update_probability_progress,
     _new_filter_stats,
+    _new_probability_counters,
     _probability_counter_path,
     _probability_table_path,
     _print_probability_generation_header,
@@ -23,6 +24,7 @@ from fiberhmm.cli.generate_probs import (
     _probability_read_tags_or_skip,
     _probability_counter_summary,
     _progress_postfix,
+    _process_probability_sample_group,
     _process_probability_read,
     _read_limit_reached,
     _read_reference_span,
@@ -184,6 +186,58 @@ def test_print_probability_generation_header_lists_settings_and_inputs(capsys):
     assert "Accessible samples (naked/dechromatinized): 2 files" in output
     assert "  - acc1.bam" in output
     assert "Inaccessible samples (untreated/native): 1 files" in output
+
+
+def test_new_probability_counters_builds_context_counters():
+    counters = _new_probability_counters(["A", "C"], max_context=5)
+
+    assert sorted(counters) == ["A", "C"]
+    assert counters["A"].center_base == "A"
+    assert counters["A"].max_context == 5
+    assert counters["C"].center_base == "C"
+
+
+def test_process_probability_sample_group_prints_and_delegates(monkeypatch, capsys):
+    calls = []
+
+    def fake_process_sample_set(
+        bam_files, counters, mode, args, sample_name, output_dir, base_name,
+    ):
+        calls.append(
+            (bam_files, counters, mode, args, sample_name, output_dir, base_name)
+        )
+        return 7, 11, {"processed": 7}
+
+    monkeypatch.setattr(
+        "fiberhmm.cli.generate_probs.process_sample_set",
+        fake_process_sample_set,
+    )
+    args = SimpleNamespace()
+
+    counters, reads, scanned, stats = _process_probability_sample_group(
+        section_label="ACCESSIBLE",
+        sample_description="naked DNA",
+        estimate_description="P(methylation | accessible)",
+        bam_files=["a.bam"],
+        target_bases=["A"],
+        max_context=4,
+        mode="pacbio-fiber",
+        args=args,
+        sample_name="accessible",
+        output_dir="out",
+        base_name="run",
+    )
+
+    assert reads == 7
+    assert scanned == 11
+    assert stats == {"processed": 7}
+    assert counters["A"].center_base == "A"
+    assert calls[0][0] == ["a.bam"]
+    assert calls[0][1] is counters
+    assert calls[0][2:] == ("pacbio-fiber", args, "accessible", "out", "run")
+    output = capsys.readouterr().out
+    assert "Processing ACCESSIBLE samples (naked DNA)" in output
+    assert "This estimates P(methylation | accessible)" in output
 
 
 def test_record_mm_tag_types_counts_non_empty_specs():
