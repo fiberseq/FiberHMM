@@ -532,17 +532,19 @@ def test_stream_daf_encode_reads_accumulates_stats(monkeypatch):
         fake_process_read,
     )
 
-    last_progress = encoder._stream_daf_encode_reads(
-        inbam,
-        handle,
-        progress,
-        counts,
-        20,
-        1000,
-        "CT",
-        "ref",
-        io.StringIO(),
-        5.0,
+    last_progress = encoder._stream_daf_encode_reads_from_request(
+        encoder._DafStreamReadsRequest(
+            inbam=inbam,
+            outbam=handle,
+            pbar=progress,
+            counts=counts,
+            min_mapq=20,
+            min_read_length=1000,
+            force_strand="CT",
+            ref_fasta="ref",
+            log=io.StringIO(),
+            last_progress=5.0,
+        )
     )
 
     assert last_progress == 5.0
@@ -573,6 +575,46 @@ def test_stream_daf_encode_reads_accumulates_stats(monkeypatch):
             min_read_length=1000,
             force_strand="CT",
             ref_fasta="ref",
+        ),
+    ]
+
+
+def test_stream_daf_encode_reads_adapter_builds_request(monkeypatch):
+    sentinel = object()
+    calls = []
+    counts = encoder._new_daf_encode_counts()
+    log = io.StringIO()
+
+    monkeypatch.setattr(
+        encoder,
+        "_stream_daf_encode_reads_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert encoder._stream_daf_encode_reads(
+        "inbam",
+        "outbam",
+        "pbar",
+        counts,
+        20,
+        1000,
+        "CT",
+        "ref",
+        log,
+        5.0,
+    ) is sentinel
+    assert calls == [
+        encoder._DafStreamReadsRequest(
+            inbam="inbam",
+            outbam="outbam",
+            pbar="pbar",
+            counts=counts,
+            min_mapq=20,
+            min_read_length=1000,
+            force_strand="CT",
+            ref_fasta="ref",
+            log=log,
+            last_progress=5.0,
         ),
     ]
 

@@ -151,6 +151,20 @@ class _DafEncodeReadRequest:
     ref_fasta: object = None
 
 
+@dataclass(frozen=True)
+class _DafStreamReadsRequest:
+    inbam: object
+    outbam: object
+    pbar: object
+    counts: _DafEncodeCounts
+    min_mapq: int
+    min_read_length: int
+    force_strand: object
+    ref_fasta: object
+    log: object
+    last_progress: float
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -902,6 +916,32 @@ def _maybe_print_daf_encode_progress(
     return now
 
 
+def _stream_daf_encode_reads_from_request(
+    request: _DafStreamReadsRequest,
+) -> float:
+    last_progress = request.last_progress
+    for read in request.inbam.fetch(until_eof=True):
+        read_stats = _process_daf_encode_read_from_request(
+            _DafEncodeReadRequest(
+                outbam=request.outbam,
+                pbar=request.pbar,
+                read=read,
+                min_mapq=request.min_mapq,
+                min_read_length=request.min_read_length,
+                force_strand=request.force_strand,
+                ref_fasta=request.ref_fasta,
+            )
+        )
+        _accumulate_daf_read_stats(request.counts, read_stats)
+        last_progress = _maybe_print_daf_encode_progress(
+            request.counts,
+            last_progress,
+            request.log,
+        )
+
+    return last_progress
+
+
 def _stream_daf_encode_reads(
     inbam,
     outbam,
@@ -914,26 +954,20 @@ def _stream_daf_encode_reads(
     log,
     last_progress: float,
 ) -> float:
-    for read in inbam.fetch(until_eof=True):
-        read_stats = _process_daf_encode_read_from_request(
-            _DafEncodeReadRequest(
-                outbam=outbam,
-                pbar=pbar,
-                read=read,
-                min_mapq=min_mapq,
-                min_read_length=min_read_length,
-                force_strand=force_strand,
-                ref_fasta=ref_fasta,
-            )
-        )
-        _accumulate_daf_read_stats(counts, read_stats)
-        last_progress = _maybe_print_daf_encode_progress(
-            counts,
-            last_progress,
-            log,
-        )
-
-    return last_progress
+    return _stream_daf_encode_reads_from_request(
+        _DafStreamReadsRequest(
+            inbam=inbam,
+            outbam=outbam,
+            pbar=pbar,
+            counts=counts,
+            min_mapq=min_mapq,
+            min_read_length=min_read_length,
+            force_strand=force_strand,
+            ref_fasta=ref_fasta,
+            log=log,
+            last_progress=last_progress,
+        ),
+    )
 
 
 def _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta) -> None:
