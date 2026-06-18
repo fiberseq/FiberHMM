@@ -660,12 +660,14 @@ def test_h5_region_buffer_flushes_at_batch_size():
     buffers = {"chr1": [{"read_name": "existing"}]}
     flushed = []
 
-    export_posteriors._buffer_h5_region_results(
-        "chr1",
-        [{"read_name": "new"}],
-        buffers,
-        write_batch_size=3,
-        flush_buffer=flushed.append,
+    export_posteriors._buffer_h5_region_results_from_request(
+        export_posteriors._H5RegionBufferRequest(
+            chrom="chr1",
+            results=[{"read_name": "new"}],
+            write_buffers=buffers,
+            write_batch_size=3,
+            flush_buffer=flushed.append,
+        )
     )
 
     assert buffers["chr1"] == [{"read_name": "existing"}, {"read_name": "new"}]

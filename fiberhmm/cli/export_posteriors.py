@@ -125,6 +125,15 @@ class _H5ChromBufferFlushRequest:
 
 
 @dataclass(frozen=True)
+class _H5RegionBufferRequest:
+    chrom: str
+    results: object
+    write_buffers: dict
+    write_batch_size: int
+    flush_buffer: object
+
+
+@dataclass(frozen=True)
 class _FootprintReferenceIntervals:
     starts: np.ndarray
     sizes: np.ndarray
@@ -643,9 +652,23 @@ def _buffer_h5_region_results(
     write_batch_size: int,
     flush_buffer,
 ) -> None:
-    write_buffers[chrom].extend(results)
-    if len(write_buffers[chrom]) >= write_batch_size:
-        flush_buffer(chrom)
+    _buffer_h5_region_results_from_request(
+        _H5RegionBufferRequest(
+            chrom=chrom,
+            results=results,
+            write_buffers=write_buffers,
+            write_batch_size=write_batch_size,
+            flush_buffer=flush_buffer,
+        ),
+    )
+
+
+def _buffer_h5_region_results_from_request(
+    request: _H5RegionBufferRequest,
+) -> None:
+    request.write_buffers[request.chrom].extend(request.results)
+    if len(request.write_buffers[request.chrom]) >= request.write_batch_size:
+        request.flush_buffer(request.chrom)
 
 
 def _write_h5_chrom_metadata(
