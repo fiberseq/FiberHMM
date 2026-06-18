@@ -563,6 +563,55 @@ def _save_probability_distribution_png(
     return png_path
 
 
+def _write_probability_stats_pdf(
+    plt,
+    pdf_pages_factory,
+    pdf_path: str,
+    accessible_counters: Dict[str, 'ContextCounter'],
+    inaccessible_counters: Dict[str, 'ContextCounter'],
+    context_size: int,
+) -> str:
+    with pdf_pages_factory(pdf_path) as pdf:
+        for base in accessible_counters.keys():
+            acc_probs, inacc_probs = _probability_tables_for_base(
+                accessible_counters, inaccessible_counters, base, context_size,
+            )
+
+            _write_probability_distribution_pdf_page(
+                plt, pdf, base, context_size, acc_probs, inacc_probs,
+            )
+            _write_probability_counts_pdf_page(
+                plt, pdf, base, acc_probs, inacc_probs,
+            )
+    return pdf_path
+
+
+def _save_probability_distribution_pngs(
+    plt,
+    plots_dir: str,
+    base_name: str,
+    accessible_counters: Dict[str, 'ContextCounter'],
+    inaccessible_counters: Dict[str, 'ContextCounter'],
+    context_size: int,
+) -> list[str]:
+    png_paths = []
+    for base in accessible_counters.keys():
+        acc = accessible_counters[base]
+        inacc = inaccessible_counters[base]
+
+        acc_probs, inacc_probs = _probability_tables_for_base(
+            accessible_counters, inaccessible_counters, base, context_size,
+        )
+
+        png_paths.append(
+            _save_probability_distribution_png(
+                plt, plots_dir, base_name, base, context_size,
+                acc, inacc, acc_probs, inacc_probs,
+            )
+        )
+    return png_paths
+
+
 def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
                                 inaccessible_counters: Dict[str, 'ContextCounter'],
                                 plots_dir: str, base_name: str, context_size: int = 3,
@@ -607,31 +656,23 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
         plots_dir, base_name, context_size, "pdf",
     )
 
-    with PdfPages(pdf_path) as pdf:
-        for base in accessible_counters.keys():
-            acc_probs, inacc_probs = _probability_tables_for_base(
-                accessible_counters, inaccessible_counters, base, context_size,
-            )
-
-            _write_probability_distribution_pdf_page(
-                plt, pdf, base, context_size, acc_probs, inacc_probs,
-            )
-            _write_probability_counts_pdf_page(
-                plt, pdf, base, acc_probs, inacc_probs,
-            )
+    _write_probability_stats_pdf(
+        plt,
+        PdfPages,
+        pdf_path,
+        accessible_counters,
+        inaccessible_counters,
+        context_size,
+    )
 
     print(f"  Plots: {pdf_path}")
 
     # Also save a simple PNG of the key distribution
-    for base in accessible_counters.keys():
-        acc = accessible_counters[base]
-        inacc = inaccessible_counters[base]
-
-        acc_probs, inacc_probs = _probability_tables_for_base(
-            accessible_counters, inaccessible_counters, base, context_size,
-        )
-
-        _save_probability_distribution_png(
-            plt, plots_dir, base_name, base, context_size,
-            acc, inacc, acc_probs, inacc_probs,
-        )
+    _save_probability_distribution_pngs(
+        plt,
+        plots_dir,
+        base_name,
+        accessible_counters,
+        inaccessible_counters,
+        context_size,
+    )

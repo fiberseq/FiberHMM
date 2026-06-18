@@ -384,6 +384,115 @@ def test_save_probability_distribution_png_writes_expected_path(monkeypatch, cap
     assert f"Plot: {png_path}" in capsys.readouterr().out
 
 
+def test_probability_stats_pdf_writer_iterates_bases(monkeypatch):
+    table = pd.DataFrame({
+        "context": ["AAA"],
+        "ratio": [0.8],
+        "hit": [8],
+        "nohit": [2],
+    })
+    accessible = {
+        "A": _FakeCounter(10, 8, {}, table),
+        "C": _FakeCounter(20, 10, {}, table),
+    }
+    inaccessible = {
+        "A": _FakeCounter(10, 2, {}, table),
+        "C": _FakeCounter(20, 4, {}, table),
+    }
+    calls = []
+    pages = []
+
+    class FakePdfPages:
+        def __init__(self, path):
+            self.path = path
+            self.pdf = _FakeProbabilityPdf()
+            self.closed = False
+            pages.append(self)
+
+        def __enter__(self):
+            return self.pdf
+
+        def __exit__(self, exc_type, exc, tb):
+            self.closed = True
+
+    monkeypatch.setattr(
+        stats,
+        "_write_probability_distribution_pdf_page",
+        lambda plt, pdf, base, k, acc, inacc: calls.append((
+            "dist", plt, pdf, base, k, acc, inacc,
+        )),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_write_probability_counts_pdf_page",
+        lambda plt, pdf, base, acc, inacc: calls.append((
+            "counts", plt, pdf, base, acc, inacc,
+        )),
+    )
+
+    plt = object()
+    path = stats._write_probability_stats_pdf(
+        plt,
+        FakePdfPages,
+        "plots/run_k3_stats.pdf",
+        accessible,
+        inaccessible,
+        context_size=3,
+    )
+
+    assert path == "plots/run_k3_stats.pdf"
+    assert pages[0].path == "plots/run_k3_stats.pdf"
+    assert pages[0].closed is True
+    assert [call[0:4] for call in calls] == [
+        ("dist", plt, pages[0].pdf, "A"),
+        ("counts", plt, pages[0].pdf, "A"),
+        ("dist", plt, pages[0].pdf, "C"),
+        ("counts", plt, pages[0].pdf, "C"),
+    ]
+    assert accessible["A"].context_sizes == [3]
+    assert inaccessible["C"].context_sizes == [3]
+
+
+def test_probability_distribution_pngs_collect_paths(monkeypatch):
+    table = pd.DataFrame({
+        "context": ["AAA"],
+        "ratio": [0.8],
+        "hit": [8],
+        "nohit": [2],
+    })
+    accessible = {
+        "A": _FakeCounter(10, 8, {}, table),
+        "C": _FakeCounter(20, 10, {}, table),
+    }
+    inaccessible = {
+        "A": _FakeCounter(10, 2, {}, table),
+        "C": _FakeCounter(20, 4, {}, table),
+    }
+    calls = []
+
+    def fake_save(plt, plots_dir, base_name, base, context_size, *args):
+        calls.append((plt, plots_dir, base_name, base, context_size, args))
+        return f"{plots_dir}/{base_name}_{base}.png"
+
+    monkeypatch.setattr(stats, "_save_probability_distribution_png", fake_save)
+
+    plt = object()
+    assert stats._save_probability_distribution_pngs(
+        plt,
+        "plots",
+        "run",
+        accessible,
+        inaccessible,
+        context_size=5,
+    ) == ["plots/run_A.png", "plots/run_C.png"]
+    assert [call[:5] for call in calls] == [
+        (plt, "plots", "run", "A", 5),
+        (plt, "plots", "run", "C", 5),
+    ]
+    assert accessible["A"].context_sizes == [5]
+    assert inaccessible["C"].context_sizes == [5]
+
+
 def test_merged_probability_table_aligns_contexts_and_totals():
     acc = pd.DataFrame({
         "context": ["AAA", "AAC"],
