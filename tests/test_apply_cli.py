@@ -13,6 +13,7 @@ from fiberhmm.cli.apply import (
     _finalize_apply_outputs,
     _load_apply_model_with_summary,
     _load_training_read_ids,
+    _LoadedApplyModel,
     _msp_output_message,
     _prepare_apply_io,
     _print_apply_done,
@@ -66,7 +67,7 @@ def test_apply_load_model_with_summary_reports_parameters(monkeypatch, capsys):
         lambda path: (model, 3, "pacbio-fiber"),
     )
 
-    assert _load_apply_model_with_summary("model.json") == (
+    assert _load_apply_model_with_summary("model.json") == _LoadedApplyModel(
         model, 3, "pacbio-fiber",
     )
 
@@ -507,7 +508,7 @@ def test_resolve_apply_runtime_wires_setup_outputs(monkeypatch):
     monkeypatch.setattr(
         apply,
         "_load_apply_model_with_summary",
-        lambda path: ("model", 4, "model-mode"),
+        lambda path: _LoadedApplyModel("model", 4, "model-mode"),
     )
     monkeypatch.setattr(
         apply,
