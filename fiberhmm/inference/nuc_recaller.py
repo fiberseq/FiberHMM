@@ -381,6 +381,10 @@ def _ordered_positive_nuc_calls(nuc_calls) -> List[NucCall]:
                   key=lambda n: (n.start, -(n.start + n.length)))
 
 
+def _tiling_floors(msp_min_size, nuc_min_size) -> Tuple[int, int]:
+    return max(1, int(msp_min_size)), max(1, int(nuc_min_size))
+
+
 def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
                             nuc_min_size=85):
     """Produce non-overlapping nucleosomes + complementary MSPs that TILE
@@ -402,8 +406,7 @@ def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
         reverts to MSP), so no sub-nucleosome nuc+ calls leak out.
     Returns ``(kept_nucs, msp_intervals)``.
     """
-    floor = max(1, int(msp_min_size))
-    nfloor = max(1, int(nuc_min_size))
+    floor, nfloor = _tiling_floors(msp_min_size, nuc_min_size)
     ordered = _ordered_positive_nuc_calls(nuc_calls)
     kept = []
     last_end = span_lo
@@ -501,8 +504,7 @@ def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
         tiler would emit overlapping/wrapped pieces.
     """
     rl = int(read_length)
-    floor = max(1, int(msp_min_size))
-    nfloor = max(1, int(nuc_min_size))
+    floor, nfloor = _tiling_floors(msp_min_size, nuc_min_size)
     calls = [n for n in nuc_calls if n.length > 0]
     if rl <= 0:
         return list(calls), []
