@@ -99,6 +99,13 @@ class _AqArrayRequest:
     nuc_rq_values: Sequence[int] = ()
 
 
+@dataclass(frozen=True)
+class _AqParseRequest:
+    aq: object
+    qual_spec_per_type: Sequence[str]
+    n_annotations_per_type: Sequence[int]
+
+
 def llr_to_tq(llr: float) -> int:
     """Encode an LLR (nats) into the tq quality byte."""
     return max(0, min(255, int(round(llr * TQ_SCALE))))
@@ -492,11 +499,25 @@ def parse_aq_array(aq, qual_spec_per_type: Sequence[str],
     Walks the AQ bytes consuming ``len(qual_spec)`` bytes per annotation,
     in the same order as the MA string.
     """
+    return parse_aq_array_from_request(
+        _AqParseRequest(
+            aq=aq,
+            qual_spec_per_type=qual_spec_per_type,
+            n_annotations_per_type=n_annotations_per_type,
+        ),
+    )
+
+
+def parse_aq_array_from_request(request: _AqParseRequest) -> List[List[int]]:
+    """Parse AQ bytes from named schema/count inputs."""
     result: List[List[int]] = []
     idx = 0
-    aq_values = _aq_values_sequence(aq)
+    aq_values = _aq_values_sequence(request.aq)
     aq_len = len(aq_values)
-    for spec, n in zip(qual_spec_per_type, n_annotations_per_type):
+    for spec, n in zip(
+        request.qual_spec_per_type,
+        request.n_annotations_per_type,
+    ):
         n_q = len(spec)
         for _ in range(n):
             annotation = _aq_annotation_values(aq_values, idx, n_q, aq_len)

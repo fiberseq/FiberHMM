@@ -499,6 +499,20 @@ def test_parse_aq_array_reads_only_consumed_quality_bytes():
     assert aq.accessed == [0, 1, 2, 3]
 
 
+def test_parse_aq_array_request_matches_adapter():
+    request = ma_tags._AqParseRequest(
+        aq=[200, 180, 45, 180, 220],
+        qual_spec_per_type=['Q', '', 'QQQ'],
+        n_annotations_per_type=[2, 0, 1],
+    )
+
+    assert ma_tags.parse_aq_array_from_request(request) == parse_aq_array(
+        [200, 180, 45, 180, 220],
+        ['Q', '', 'QQQ'],
+        [2, 0, 1],
+    )
+
+
 def test_parse_aq_array_preserves_short_quality_arrays():
     assert parse_aq_array([7], ['QQQ'], [1]) == [[7]]
 
