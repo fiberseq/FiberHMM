@@ -127,6 +127,17 @@ class _RecallSingleThreadRequest:
 
 
 @dataclass(frozen=True)
+class _RecallProcessingRequest:
+    args: object
+    n_cores: int
+    bam_in: object
+    bam_out: object
+    header_text: str
+    worker_config: _RecallWorkerConfig
+    also_write_legacy: bool
+
+
+@dataclass(frozen=True)
 class _RecallApplyResultRequest:
     read: object
     result: object
@@ -735,6 +746,32 @@ def _also_write_legacy(args):
     return should_write_legacy_tags(args)
 
 
+def _run_recall_processing_from_request(
+    request: _RecallProcessingRequest,
+):
+    args = request.args
+    config = request.worker_config
+    if request.n_cores == 1:
+        return _single_thread_loop_from_request(
+            _RecallSingleThreadRequest(
+                bam_in=request.bam_in,
+                bam_out=request.bam_out,
+                header_text=request.header_text,
+                worker_config=config,
+                also_write_legacy=request.also_write_legacy,
+                downstream_compat=args.downstream_compat,
+                max_reads=args.max_reads,
+            ),
+        )
+    return _parallel_loop(
+        request.bam_in, request.bam_out, request.header_text,
+        config.llr_hit, config.llr_miss, config.mode, config.k,
+        config.min_llr, config.min_opps, config.unify_threshold,
+        request.also_write_legacy, args.downstream_compat, args.max_reads,
+        request.n_cores, args.chunk_size,
+    )
+
+
 def _run_recall_processing(
     args,
     n_cores: int,
@@ -748,19 +785,24 @@ def _run_recall_processing(
     min_llr: float,
     also_write_legacy: bool,
 ):
-    if n_cores == 1:
-        return _single_thread_loop(
-            bam_in, bam_out, header_text,
-            llr_hit, llr_miss, mode, k,
-            min_llr, args.min_opps, args.unify_threshold,
-            also_write_legacy, args.downstream_compat, args.max_reads,
-        )
-    return _parallel_loop(
-        bam_in, bam_out, header_text,
-        llr_hit, llr_miss, mode, k,
-        min_llr, args.min_opps, args.unify_threshold,
-        also_write_legacy, args.downstream_compat, args.max_reads,
-        n_cores, args.chunk_size,
+    return _run_recall_processing_from_request(
+        _RecallProcessingRequest(
+            args=args,
+            n_cores=n_cores,
+            bam_in=bam_in,
+            bam_out=bam_out,
+            header_text=header_text,
+            worker_config=_RecallWorkerConfig(
+                llr_hit=llr_hit,
+                llr_miss=llr_miss,
+                mode=mode,
+                k=k,
+                min_llr=min_llr,
+                min_opps=args.min_opps,
+                unify_threshold=args.unify_threshold,
+            ),
+            also_write_legacy=also_write_legacy,
+        ),
     )
 
 

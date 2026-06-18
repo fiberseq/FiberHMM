@@ -493,39 +493,61 @@ def test_recall_tfs_run_processing_dispatches_single_and_parallel(monkeypatch):
     )
     calls = []
 
-    def fake_single(*call_args):
-        calls.append(("single", call_args))
+    def fake_single(request):
+        calls.append(("single", request))
         return recall_tfs._RecallProcessingSummary(1, 2, 3, 4, 5)
 
     def fake_parallel(*call_args):
         calls.append(("parallel", call_args))
         return recall_tfs._RecallProcessingSummary(6, 7, 8, 9, 10)
 
-    monkeypatch.setattr(recall_tfs, "_single_thread_loop", fake_single)
+    monkeypatch.setattr(recall_tfs, "_single_thread_loop_from_request", fake_single)
     monkeypatch.setattr(recall_tfs, "_parallel_loop", fake_parallel)
 
-    common_args = (
-        "bam-in",
-        "bam-out",
-        "header",
-        "hit",
-        "miss",
-        "daf",
-        3,
-        4.5,
-        True,
+    worker_config = recall_tfs._RecallWorkerConfig(
+        llr_hit="hit",
+        llr_miss="miss",
+        mode="daf",
+        k=3,
+        min_llr=4.5,
+        min_opps=3,
+        unify_threshold=90,
     )
-    assert recall_tfs._run_recall_processing(args, 1, *common_args) == (
+    request = recall_tfs._RecallProcessingRequest(
+        args=args,
+        n_cores=1,
+        bam_in="bam-in",
+        bam_out="bam-out",
+        header_text="header",
+        worker_config=worker_config,
+        also_write_legacy=True,
+    )
+
+    assert recall_tfs._run_recall_processing_from_request(request) == (
         recall_tfs._RecallProcessingSummary(1, 2, 3, 4, 5)
     )
-    assert recall_tfs._run_recall_processing(args, 4, *common_args) == (
+    parallel_request = recall_tfs._RecallProcessingRequest(
+        args=args,
+        n_cores=4,
+        bam_in="bam-in",
+        bam_out="bam-out",
+        header_text="header",
+        worker_config=worker_config,
+        also_write_legacy=True,
+    )
+    assert recall_tfs._run_recall_processing_from_request(parallel_request) == (
         recall_tfs._RecallProcessingSummary(6, 7, 8, 9, 10)
     )
     assert calls[0] == (
         "single",
-        (
-            "bam-in", "bam-out", "header", "hit", "miss", "daf", 3,
-            4.5, 3, 90, True, False, 10,
+        recall_tfs._RecallSingleThreadRequest(
+            bam_in="bam-in",
+            bam_out="bam-out",
+            header_text="header",
+            worker_config=worker_config,
+            also_write_legacy=True,
+            downstream_compat=False,
+            max_reads=10,
         ),
     )
     assert calls[1] == (
@@ -535,6 +557,57 @@ def test_recall_tfs_run_processing_dispatches_single_and_parallel(monkeypatch):
             4.5, 3, 90, True, False, 10, 4, 256,
         ),
     )
+
+
+def test_recall_tfs_run_processing_adapter_builds_request(monkeypatch):
+    args = SimpleNamespace(
+        min_opps=3,
+        unify_threshold=90,
+        downstream_compat=False,
+        max_reads=10,
+        chunk_size=256,
+    )
+    sentinel = object()
+    calls = []
+
+    monkeypatch.setattr(
+        recall_tfs,
+        "_run_recall_processing_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert recall_tfs._run_recall_processing(
+        args,
+        4,
+        "bam-in",
+        "bam-out",
+        "header",
+        "hit",
+        "miss",
+        "daf",
+        3,
+        4.5,
+        True,
+    ) is sentinel
+    assert calls == [
+        recall_tfs._RecallProcessingRequest(
+            args=args,
+            n_cores=4,
+            bam_in="bam-in",
+            bam_out="bam-out",
+            header_text="header",
+            worker_config=recall_tfs._RecallWorkerConfig(
+                llr_hit="hit",
+                llr_miss="miss",
+                mode="daf",
+                k=3,
+                min_llr=4.5,
+                min_opps=3,
+                unify_threshold=90,
+            ),
+            also_write_legacy=True,
+        ),
+    ]
 
 
 def test_recall_tfs_print_summary_reports_failures(capsys):
@@ -698,7 +771,7 @@ def test_recall_tfs_closes_bams_when_processing_fails(monkeypatch):
     def fail_processing(*args, **kwargs):
         raise RuntimeError("processing failed")
 
-    monkeypatch.setattr(recall_tfs, "_single_thread_loop", fail_processing)
+    monkeypatch.setattr(recall_tfs, "_single_thread_loop_from_request", fail_processing)
 
     with pytest.raises(RuntimeError, match="processing failed"):
         recall_tfs.main()
