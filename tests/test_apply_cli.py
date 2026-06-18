@@ -7,7 +7,10 @@ import pytest
 
 from fiberhmm.cli.apply import (
     _apply_processing_kwargs,
+    _apply_processing_kwargs_for_plan,
+    _apply_processing_plan_from_runtime,
     _ApplyIO,
+    _ApplyProcessingPlan,
     _ApplyProcessingResult,
     _ApplyRuntime,
     _context_size_message,
@@ -36,7 +39,7 @@ from fiberhmm.cli.apply import (
     _resolve_output_bam,
     _resolve_process_unmapped,
     _resolve_scores_db_path,
-    _run_apply_processing,
+    _run_apply_processing_plan,
     _scores_db_counts,
     _scores_enabled,
     _stats_output_prefix,
@@ -391,8 +394,7 @@ def test_apply_processing_kwargs_preserve_pipeline_arguments():
         chunk_size=2000,
     )
 
-    assert _apply_processing_kwargs(
-        args,
+    plan = _ApplyProcessingPlan(
         output_bam="out.bam",
         model_path="model.json",
         train_rids={"read-a"},
@@ -404,7 +406,8 @@ def test_apply_processing_kwargs_preserve_pipeline_arguments():
         chroms_set={"chr1"},
         use_streaming=True,
         process_unmapped=True,
-    ) == {
+    )
+    expected_kwargs = {
         "input_bam": "input.bam",
         "output_bam": "out.bam",
         "model_or_path": "model.json",
@@ -435,8 +438,39 @@ def test_apply_processing_kwargs_preserve_pipeline_arguments():
         "process_unmapped": True,
     }
 
+    runtime = _ApplyRuntime(
+        model_path="model.json",
+        train_rids={"read-a"},
+        mode="daf",
+        context_size=3,
+        msp_min_size=0,
+        with_scores=True,
+        dataset="sample",
+        db_path="scores.db",
+        chroms_set={"chr1"},
+        use_streaming=True,
+        process_unmapped=True,
+        output_bam="out.bam",
+    )
+    assert _apply_processing_plan_from_runtime(runtime, n_cores=4) == plan
+    assert _apply_processing_kwargs_for_plan(args, plan) == expected_kwargs
+    assert _apply_processing_kwargs(
+        args,
+        output_bam="out.bam",
+        model_path="model.json",
+        train_rids={"read-a"},
+        mode="daf",
+        context_size=3,
+        msp_min_size=0,
+        with_scores=True,
+        n_cores=4,
+        chroms_set={"chr1"},
+        use_streaming=True,
+        process_unmapped=True,
+    ) == expected_kwargs
 
-def test_run_apply_processing_delegates_pipeline_and_reports_result(
+
+def test_run_apply_processing_plan_delegates_pipeline_and_reports_result(
     monkeypatch,
     capsys,
 ):
@@ -472,8 +506,7 @@ def test_run_apply_processing_delegates_pipeline_and_reports_result(
         lambda *args: calls.append(("result", args)),
     )
 
-    assert _run_apply_processing(
-        args,
+    plan = _ApplyProcessingPlan(
         output_bam="out.bam",
         model_path="model.json",
         train_rids={"read-a"},
@@ -485,8 +518,9 @@ def test_run_apply_processing_delegates_pipeline_and_reports_result(
         chroms_set={"chr1"},
         use_streaming=True,
         process_unmapped=True,
-        stdout_mode=False,
-    ) == (10, 4)
+    )
+
+    assert _run_apply_processing_plan(args, plan, stdout_mode=False) == (10, 4)
     assert _ApplyProcessingResult(10, 4).as_tuple() == (10, 4)
 
     assert calls[0][0] == "process"

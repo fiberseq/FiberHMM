@@ -267,6 +267,21 @@ class _ApplyIO:
 
 
 @dataclass(frozen=True)
+class _ApplyProcessingPlan:
+    output_bam: str
+    model_path: str
+    train_rids: set
+    mode: str
+    context_size: int
+    msp_min_size: int
+    with_scores: bool
+    n_cores: int
+    chroms_set: set | None
+    use_streaming: bool
+    process_unmapped: bool
+
+
+@dataclass(frozen=True)
 class _ScoresDbCounts:
     reads: int
     footprints: int
@@ -489,36 +504,91 @@ def _apply_processing_kwargs(
     use_streaming: bool,
     process_unmapped: bool,
 ) -> dict:
+    plan = _ApplyProcessingPlan(
+        output_bam=output_bam,
+        model_path=model_path,
+        train_rids=train_rids,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        with_scores=with_scores,
+        n_cores=n_cores,
+        chroms_set=chroms_set,
+        use_streaming=use_streaming,
+        process_unmapped=process_unmapped,
+    )
+    return _apply_processing_kwargs_for_plan(args, plan)
+
+
+def _apply_processing_plan_from_runtime(
+    runtime: _ApplyRuntime,
+    n_cores: int,
+) -> _ApplyProcessingPlan:
+    return _ApplyProcessingPlan(
+        output_bam=runtime.output_bam,
+        model_path=runtime.model_path,
+        train_rids=runtime.train_rids,
+        mode=runtime.mode,
+        context_size=runtime.context_size,
+        msp_min_size=runtime.msp_min_size,
+        with_scores=runtime.with_scores,
+        n_cores=n_cores,
+        chroms_set=runtime.chroms_set,
+        use_streaming=runtime.use_streaming,
+        process_unmapped=runtime.process_unmapped,
+    )
+
+
+def _apply_processing_kwargs_for_plan(args, plan: _ApplyProcessingPlan) -> dict:
     return {
         'input_bam': args.input,
-        'output_bam': output_bam,
-        'model_or_path': model_path,
-        'train_rids': train_rids,
+        'output_bam': plan.output_bam,
+        'model_or_path': plan.model_path,
+        'train_rids': plan.train_rids,
         'edge_trim': args.edge_trim,
         'circular': args.circular,
-        'mode': mode,
-        'context_size': context_size,
-        'msp_min_size': msp_min_size,
+        'mode': plan.mode,
+        'context_size': plan.context_size,
+        'msp_min_size': plan.msp_min_size,
         'nuc_min_size': args.nuc_min_size,
         'min_mapq': args.min_mapq,
         'prob_threshold': args.prob_threshold,
         'min_read_length': args.min_read_length,
-        'with_scores': with_scores,
-        'n_cores': n_cores,
+        'with_scores': plan.with_scores,
+        'n_cores': plan.n_cores,
         'max_reads': args.max_reads,
         'debug_timing': args.debug_timing,
         'region_parallel': False,
         'region_size': args.region_size,
         'skip_scaffolds': args.skip_scaffolds,
-        'chroms': chroms_set,
+        'chroms': plan.chroms_set,
         'primary_only': args.primary,
         'output_posteriors': args.output_posteriors,
         'write_msps': not args.no_msps,
         'io_threads': args.io_threads,
-        'streaming_pipeline': use_streaming,
+        'streaming_pipeline': plan.use_streaming,
         'chunk_size': args.chunk_size,
-        'process_unmapped': process_unmapped,
+        'process_unmapped': plan.process_unmapped,
     }
+
+
+def _run_apply_processing_plan(
+    args,
+    plan: _ApplyProcessingPlan,
+    stdout_mode: bool,
+):
+    print(_processing_status_message(args.max_reads))
+    total_reads, reads_with_footprints = process_bam_for_footprints(
+        **_apply_processing_kwargs_for_plan(args, plan)
+    )
+    result = _ApplyProcessingResult(total_reads, reads_with_footprints)
+    _print_processing_result(
+        result.total_reads,
+        result.reads_with_footprints,
+        plan.output_bam,
+        stdout_mode,
+    )
+    return result.as_tuple()
 
 
 def _run_apply_processing(
@@ -536,31 +606,20 @@ def _run_apply_processing(
     process_unmapped: bool,
     stdout_mode: bool,
 ):
-    print(_processing_status_message(args.max_reads))
-    total_reads, reads_with_footprints = process_bam_for_footprints(
-        **_apply_processing_kwargs(
-            args,
-            output_bam,
-            model_path,
-            train_rids,
-            mode,
-            context_size,
-            msp_min_size,
-            with_scores,
-            n_cores,
-            chroms_set,
-            use_streaming,
-            process_unmapped,
-        )
+    plan = _ApplyProcessingPlan(
+        output_bam=output_bam,
+        model_path=model_path,
+        train_rids=train_rids,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        with_scores=with_scores,
+        n_cores=n_cores,
+        chroms_set=chroms_set,
+        use_streaming=use_streaming,
+        process_unmapped=process_unmapped,
     )
-    result = _ApplyProcessingResult(total_reads, reads_with_footprints)
-    _print_processing_result(
-        result.total_reads,
-        result.reads_with_footprints,
-        output_bam,
-        stdout_mode,
-    )
-    return result.as_tuple()
+    return _run_apply_processing_plan(args, plan, stdout_mode)
 
 
 def _finalize_apply_outputs(
@@ -670,21 +729,8 @@ def main():
     io = _prepare_apply_io(args)
 
     runtime = _resolve_apply_runtime(args, io.n_cores, io.stdout_mode)
-    _run_apply_processing(
-        args,
-        runtime.output_bam,
-        runtime.model_path,
-        runtime.train_rids,
-        runtime.mode,
-        runtime.context_size,
-        runtime.msp_min_size,
-        runtime.with_scores,
-        io.n_cores,
-        runtime.chroms_set,
-        runtime.use_streaming,
-        runtime.process_unmapped,
-        io.stdout_mode,
-    )
+    processing_plan = _apply_processing_plan_from_runtime(runtime, io.n_cores)
+    _run_apply_processing_plan(args, processing_plan, io.stdout_mode)
     _finalize_apply_outputs(
         args,
         runtime.output_bam,
