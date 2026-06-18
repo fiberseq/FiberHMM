@@ -771,14 +771,49 @@ def test_open_daf_encode_handles_returns_named_handles(monkeypatch):
         lambda output, log: handles["progress"],
     )
 
-    opened = encoder._open_daf_encode_handles(
-        "input.bam", "output.bam", "reference.fa", 4, io.StringIO(),
+    opened = encoder._open_daf_encode_handles_from_request(
+        encoder._DafEncodeHandleOpenRequest(
+            input_bam="input.bam",
+            output_bam="output.bam",
+            reference="reference.fa",
+            io_threads=4,
+            log=io.StringIO(),
+        )
     )
 
     assert opened.ref_fasta is handles["fasta"]
     assert opened.inbam is handles["bam"]
     assert opened.outbam is handles["out"]
     assert opened.pbar is handles["progress"]
+
+
+def test_open_daf_encode_handles_adapter_builds_request(monkeypatch):
+    sentinel = object()
+    calls = []
+    log = io.StringIO()
+
+    monkeypatch.setattr(
+        encoder,
+        "_open_daf_encode_handles_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert encoder._open_daf_encode_handles(
+        "input.bam",
+        "output.bam",
+        "reference.fa",
+        4,
+        log,
+    ) is sentinel
+    assert calls == [
+        encoder._DafEncodeHandleOpenRequest(
+            input_bam="input.bam",
+            output_bam="output.bam",
+            reference="reference.fa",
+            io_threads=4,
+            log=log,
+        ),
+    ]
 
 
 def test_open_daf_encode_handles_closes_partial_setup_on_system_exit(monkeypatch):

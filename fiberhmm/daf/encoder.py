@@ -173,6 +173,15 @@ class _DafEncodeHandleCloseRequest:
     ref_fasta: object
 
 
+@dataclass(frozen=True)
+class _DafEncodeHandleOpenRequest:
+    input_bam: object
+    output_bam: object
+    reference: object
+    io_threads: int
+    log: object
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -1014,21 +1023,46 @@ def _maybe_finalize_daf_output(output_bam, io_threads: int, log) -> None:
     _sort_and_index_bam(output_bam, verbose=True, threads=io_threads)
 
 
-def _open_daf_encode_handles(input_bam, output_bam, reference, io_threads: int, log):
+def _open_daf_encode_handles_from_request(
+    request: _DafEncodeHandleOpenRequest,
+):
     ref_fasta = None
     inbam = None
     outbam = None
     pbar = None
     try:
-        ref_fasta = _open_daf_reference(reference)
-        inbam = _open_daf_input_bam(input_bam, io_threads)
-        _check_md_tag(inbam, ref_fasta, log)
-        outbam = _open_daf_output_bam(output_bam, inbam, io_threads)
-        pbar = _new_daf_encode_progress(output_bam, log)
+        ref_fasta = _open_daf_reference(request.reference)
+        inbam = _open_daf_input_bam(request.input_bam, request.io_threads)
+        _check_md_tag(inbam, ref_fasta, request.log)
+        outbam = _open_daf_output_bam(
+            request.output_bam,
+            inbam,
+            request.io_threads,
+        )
+        pbar = _new_daf_encode_progress(request.output_bam, request.log)
         return _DafEncodeHandles(ref_fasta, inbam, outbam, pbar)
     except BaseException:
-        _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta)
+        _close_daf_encode_handles_from_request(
+            _DafEncodeHandleCloseRequest(
+                pbar=pbar,
+                outbam=outbam,
+                inbam=inbam,
+                ref_fasta=ref_fasta,
+            ),
+        )
         raise
+
+
+def _open_daf_encode_handles(input_bam, output_bam, reference, io_threads: int, log):
+    return _open_daf_encode_handles_from_request(
+        _DafEncodeHandleOpenRequest(
+            input_bam=input_bam,
+            output_bam=output_bam,
+            reference=reference,
+            io_threads=io_threads,
+            log=log,
+        ),
+    )
 
 
 def _finalize_daf_encode_run(
