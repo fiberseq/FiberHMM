@@ -64,6 +64,13 @@ class _FiberMetadataDatasetWriteRequest:
     n_fibers: Optional[int] = None
 
 
+@dataclass(frozen=True)
+class _PosteriorChromGroupCreateRequest:
+    h5_file: object
+    chrom: str
+    include_ref_positions: bool = True
+
+
 def write_fiber_metadata_datasets(
     group,
     fiber_ids,
@@ -172,8 +179,20 @@ def create_posterior_chrom_group(
     *,
     include_ref_positions: bool = True,
 ):
-    grp = h5_file.create_group(chrom)
-    for name in _posterior_chrom_subgroups(include_ref_positions):
+    return create_posterior_chrom_group_from_request(
+        _PosteriorChromGroupCreateRequest(
+            h5_file=h5_file,
+            chrom=chrom,
+            include_ref_positions=include_ref_positions,
+        )
+    )
+
+
+def create_posterior_chrom_group_from_request(
+    request: _PosteriorChromGroupCreateRequest,
+):
+    grp = request.h5_file.create_group(request.chrom)
+    for name in _posterior_chrom_subgroups(request.include_ref_positions):
         grp.create_group(name)
     return grp
 

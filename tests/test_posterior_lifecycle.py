@@ -54,7 +54,12 @@ def test_posterior_fiber_data_uses_writer_contract_fields():
 
 def test_posterior_chrom_group_helper_controls_ref_positions(tmp_path):
     with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
-        with_ref = hdf5_backend.create_posterior_chrom_group(h5, "chr1")
+        with_ref = hdf5_backend.create_posterior_chrom_group_from_request(
+            hdf5_backend._PosteriorChromGroupCreateRequest(
+                h5_file=h5,
+                chrom="chr1",
+            )
+        )
         without_ref = hdf5_backend.create_posterior_chrom_group(
             h5,
             "chr2",
