@@ -650,6 +650,11 @@ class _FakePdf:
         self.saved.append(fig)
 
 
+class _FailingPdf:
+    def savefig(self, fig):
+        raise RuntimeError("pdf save failed")
+
+
 class _FakePngPyplot:
     def __init__(self):
         self.subplots_calls = []
@@ -671,6 +676,11 @@ class _FakePngPyplot:
 
     def close(self, fig):
         self.closed.append(fig)
+
+
+class _FailingPngPyplot(_FakePngPyplot):
+    def savefig(self, *args, **kwargs):
+        raise RuntimeError("png save failed")
 
 
 def test_plot_footprint_overview_pdf_page_builds_all_panels(monkeypatch):
@@ -715,6 +725,38 @@ def test_plot_footprint_overview_pdf_page_builds_all_panels(monkeypatch):
     assert no_data_calls == []
     assert plt.tight_layout_calls == 1
     assert pdf.saved == [plt.fig]
+    assert plt.closed == [plt.fig]
+
+
+def test_plot_footprint_overview_pdf_page_closes_on_save_failure(monkeypatch):
+    calls = []
+    for name in (
+        "_plot_footprint_size_pdf_panel",
+        "_plot_gap_size_pdf_panel",
+        "_plot_footprints_per_read_pdf_panel",
+        "_plot_footprint_coverage_pdf_panel",
+    ):
+        monkeypatch.setattr(
+            stats_module,
+            name,
+            lambda *args, _name=name: calls.append((_name, args)),
+        )
+
+    stats = stats_module.FootprintStats()
+    stats.footprint_sizes = [10]
+    plt = _FakePyplot()
+
+    with pytest.raises(RuntimeError, match="pdf save failed"):
+        stats_module._plot_footprint_overview_pdf_page(
+            stats, plt, _FailingPdf(),
+        )
+
+    assert [call[0] for call in calls] == [
+        "_plot_footprint_size_pdf_panel",
+        "_plot_gap_size_pdf_panel",
+        "_plot_footprints_per_read_pdf_panel",
+        "_plot_footprint_coverage_pdf_panel",
+    ]
     assert plt.closed == [plt.fig]
 
 
@@ -842,6 +884,35 @@ def test_plot_quality_msp_pdf_page_marks_missing_score_and_msp_data(monkeypatch)
     assert pdf.saved == [plt.fig]
 
 
+def test_plot_quality_msp_pdf_page_closes_on_save_failure(monkeypatch):
+    calls = []
+    for name in (
+        "_plot_footprint_quality_pdf_panel",
+        "_plot_msp_size_pdf_panel",
+        "_plot_read_length_pdf_panel",
+        "_plot_footprint_size_bins",
+    ):
+        monkeypatch.setattr(
+            stats_module,
+            name,
+            lambda *args, _name=name: calls.append((_name, args)),
+        )
+
+    stats = stats_module.FootprintStats()
+    plt = _FakePyplot()
+
+    with pytest.raises(RuntimeError, match="pdf save failed"):
+        stats_module._plot_quality_msp_pdf_page(stats, plt, _FailingPdf())
+
+    assert [call[0] for call in calls] == [
+        "_plot_footprint_quality_pdf_panel",
+        "_plot_msp_size_pdf_panel",
+        "_plot_read_length_pdf_panel",
+        "_plot_footprint_size_bins",
+    ]
+    assert plt.closed == [plt.fig]
+
+
 def test_save_footprint_size_png_writes_only_when_sizes_exist(monkeypatch):
     plot_calls = []
     monkeypatch.setattr(
@@ -865,6 +936,24 @@ def test_save_footprint_size_png_writes_only_when_sizes_exist(monkeypatch):
     assert plt.savefig_calls == [
         (("out/run_footprint_sizes.png",), {"dpi": 150})
     ]
+    assert plt.closed == [plt.fig]
+
+
+def test_save_footprint_size_png_closes_on_save_failure(monkeypatch):
+    plot_calls = []
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_footprint_size_png_axis",
+        lambda ax, values: plot_calls.append((ax, values)),
+    )
+    stats = stats_module.FootprintStats()
+    stats.footprint_sizes = [10, 20, 30]
+    plt = _FailingPngPyplot()
+
+    with pytest.raises(RuntimeError, match="png save failed"):
+        stats_module._save_footprint_size_png(stats, plt, "out/run")
+
+    assert plot_calls == [("png-axis", [10, 20, 30])]
     assert plt.closed == [plt.fig]
 
 

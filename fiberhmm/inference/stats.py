@@ -418,22 +418,24 @@ def _plot_footprint_overview_pdf_page(stats: "FootprintStats", plt, pdf) -> None
         return
 
     fig, axes = plt.subplots(2, 2, figsize=(10, 8))
-    fig.suptitle(
-        'FiberHMM Footprint Statistics', fontsize=14, fontweight='bold',
-    )
+    try:
+        fig.suptitle(
+            'FiberHMM Footprint Statistics', fontsize=14, fontweight='bold',
+        )
 
-    _plot_footprint_size_pdf_panel(axes[0, 0], stats.footprint_sizes)
-    _plot_gap_size_pdf_panel(axes[0, 1], stats.gap_sizes)
-    _plot_footprints_per_read_pdf_panel(
-        axes[1, 0], stats.footprints_per_read,
-    )
-    _plot_footprint_coverage_pdf_panel(
-        axes[1, 1], stats.footprint_coverage,
-    )
+        _plot_footprint_size_pdf_panel(axes[0, 0], stats.footprint_sizes)
+        _plot_gap_size_pdf_panel(axes[0, 1], stats.gap_sizes)
+        _plot_footprints_per_read_pdf_panel(
+            axes[1, 0], stats.footprints_per_read,
+        )
+        _plot_footprint_coverage_pdf_panel(
+            axes[1, 1], stats.footprint_coverage,
+        )
 
-    plt.tight_layout()
-    pdf.savefig(fig)
-    plt.close(fig)
+        plt.tight_layout()
+        pdf.savefig(fig)
+    finally:
+        plt.close(fig)
 
 
 def _plot_footprint_quality_pdf_panel(ax, footprint_scores) -> None:
@@ -492,18 +494,20 @@ def _plot_read_length_pdf_panel(ax, read_lengths) -> None:
 
 def _plot_quality_msp_pdf_page(stats: "FootprintStats", plt, pdf) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(10, 8))
-    fig.suptitle(
-        'FiberHMM Quality and MSP Statistics', fontsize=14, fontweight='bold',
-    )
+    try:
+        fig.suptitle(
+            'FiberHMM Quality and MSP Statistics', fontsize=14, fontweight='bold',
+        )
 
-    _plot_footprint_quality_pdf_panel(axes[0, 0], stats.footprint_scores)
-    _plot_msp_size_pdf_panel(axes[0, 1], stats.msp_sizes)
-    _plot_read_length_pdf_panel(axes[1, 0], stats.read_lengths)
-    _plot_footprint_size_bins(axes[1, 1], stats.footprint_sizes)
+        _plot_footprint_quality_pdf_panel(axes[0, 0], stats.footprint_scores)
+        _plot_msp_size_pdf_panel(axes[0, 1], stats.msp_sizes)
+        _plot_read_length_pdf_panel(axes[1, 0], stats.read_lengths)
+        _plot_footprint_size_bins(axes[1, 1], stats.footprint_sizes)
 
-    plt.tight_layout()
-    pdf.savefig(fig)
-    plt.close(fig)
+        plt.tight_layout()
+        pdf.savefig(fig)
+    finally:
+        plt.close(fig)
 
 
 def _save_footprint_size_png(stats: "FootprintStats", plt, output_prefix: str) -> bool:
@@ -511,10 +515,12 @@ def _save_footprint_size_png(stats: "FootprintStats", plt, output_prefix: str) -
         return False
 
     fig, ax = plt.subplots(figsize=(8, 5))
-    _plot_footprint_size_png_axis(ax, stats.footprint_sizes)
-    plt.tight_layout()
-    plt.savefig(f"{output_prefix}_footprint_sizes.png", dpi=150)
-    plt.close(fig)
+    try:
+        _plot_footprint_size_png_axis(ax, stats.footprint_sizes)
+        plt.tight_layout()
+        plt.savefig(f"{output_prefix}_footprint_sizes.png", dpi=150)
+    finally:
+        plt.close(fig)
     return True
 
 
