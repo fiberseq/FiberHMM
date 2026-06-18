@@ -63,6 +63,14 @@ class _NucCallArrays:
     lengths: np.ndarray
 
 
+@dataclass(frozen=True)
+class _TiledIntervalArrays:
+    nuc_starts: Any
+    nuc_lengths: Any
+    msp_starts: Any
+    msp_lengths: Any
+
+
 def _analyzed_span(apply_result, read_length, kept):
     """Extent (lo, hi) the read was annotated over -- the union of the original
     HMM footprints/MSPs and the final nucleosomes -- used to tile MSPs."""
@@ -103,11 +111,11 @@ def _interval_ends(intervals):
 
 
 def _tiled_interval_arrays(apply_result: Mapping[str, Any]):
-    return (
-        apply_result.get("tiled_ns", apply_result["ns"]),
-        apply_result.get("tiled_nl", apply_result["nl"]),
-        apply_result.get("tiled_as", apply_result["as"]),
-        apply_result.get("tiled_al", apply_result["al"]),
+    return _TiledIntervalArrays(
+        nuc_starts=apply_result.get("tiled_ns", apply_result["ns"]),
+        nuc_lengths=apply_result.get("tiled_nl", apply_result["nl"]),
+        msp_starts=apply_result.get("tiled_as", apply_result["as"]),
+        msp_lengths=apply_result.get("tiled_al", apply_result["al"]),
     )
 
 
@@ -363,13 +371,13 @@ def _build_fused_recall_result_without_nucs_circular(
     with_scores: bool,
 ) -> dict:
     read_length = _circular_read_length(fiber_read, apply_result)
-    tiled_ns, tiled_nl, tiled_as, tiled_al = _tiled_interval_arrays(apply_result)
+    tiled = _tiled_interval_arrays(apply_result)
     tf_calls = run_tf_recall_stage(
         apply_result["encoded"],
-        tiled_ns,
-        tiled_nl,
-        tiled_as,
-        tiled_al,
+        tiled.nuc_starts,
+        tiled.nuc_lengths,
+        tiled.msp_starts,
+        tiled.msp_lengths,
         len(apply_result["encoded"]),
         llr_hit,
         llr_miss,
@@ -508,12 +516,12 @@ def _build_fused_recall_result_with_nucs_circular(
     obs = apply_result["encoded"]                     # 3x tiled observations
     tiled_len = len(obs)
     read_length = _circular_read_length(fiber_read, apply_result)
-    tiled_ns, tiled_nl, tiled_as, tiled_al = _tiled_interval_arrays(apply_result)
-    tiled_msps = _interval_pairs(tiled_as, tiled_al)
+    tiled = _tiled_interval_arrays(apply_result)
+    tiled_msps = _interval_pairs(tiled.msp_starts, tiled.msp_lengths)
 
     # 1) split + edge-refine in tiled coordinates (+ optional Pass-2 phase prior)
     tiled_nucs, tiled_access = recall_nucs_in_read(
-        obs, tiled_ns, tiled_nl, tiled_len, llr_hit, llr_miss,
+        obs, tiled.nuc_starts, tiled.nuc_lengths, tiled_len, llr_hit, llr_miss,
         split_min_llr=split_min_llr, split_min_opps=split_min_opps,
         nuc_min_size=nuc_min_size, phase_nrl=phase_nrl,
     )

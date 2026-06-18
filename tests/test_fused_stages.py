@@ -184,10 +184,10 @@ def test_tiled_interval_arrays_prefers_tiled_values():
         "al": np.asarray([30], dtype=np.int32),
     }
     result = fused_stages._tiled_interval_arrays(base)
-    assert result[0] is base["ns"]
-    assert result[1] is base["nl"]
-    assert result[2] is base["as"]
-    assert result[3] is base["al"]
+    assert result.nuc_starts is base["ns"]
+    assert result.nuc_lengths is base["nl"]
+    assert result.msp_starts is base["as"]
+    assert result.msp_lengths is base["al"]
 
     tiled = {
         **base,
@@ -197,10 +197,10 @@ def test_tiled_interval_arrays_prefers_tiled_values():
         "tiled_al": np.asarray([130], dtype=np.int32),
     }
     result = fused_stages._tiled_interval_arrays(tiled)
-    assert result[0] is tiled["tiled_ns"]
-    assert result[1] is tiled["tiled_nl"]
-    assert result[2] is tiled["tiled_as"]
-    assert result[3] is tiled["tiled_al"]
+    assert result.nuc_starts is tiled["tiled_ns"]
+    assert result.nuc_lengths is tiled["tiled_nl"]
+    assert result.msp_starts is tiled["tiled_as"]
+    assert result.msp_lengths is tiled["tiled_al"]
 
 
 def test_apply_result_msp_pairs_reads_apply_msp_arrays():
