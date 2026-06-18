@@ -6,6 +6,7 @@ import base64
 import gzip
 import json
 import os
+from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 import numpy as np
@@ -16,6 +17,12 @@ from fiberhmm.posteriors.writer import _resolve_writer_format
 REGION_POSTERIORS_HEADER = (
     "#read_id\tchrom\tstart\tend\tstrand\tposteriors_b64\tfp_starts\tfp_sizes\n"
 )
+
+
+@dataclass(frozen=True)
+class _IndexedRegionTsvFile:
+    region_index: int
+    path: str
 
 
 def _posterior_probabilities_b64(posteriors: np.ndarray) -> str:
@@ -128,9 +135,11 @@ def format_posterior_metadata_line(metadata: dict) -> str:
     return f"#metadata:{json.dumps(metadata)}\n"
 
 
-def _valid_region_tsv_files(temp_tsv_files: Iterable[tuple[int, str]]) -> list[tuple[int, str]]:
+def _valid_region_tsv_files(
+    temp_tsv_files: Iterable[tuple[int, str]],
+) -> list[_IndexedRegionTsvFile]:
     return [
-        (idx, path)
+        _IndexedRegionTsvFile(region_index=idx, path=path)
         for idx, path in sorted(temp_tsv_files, key=lambda item: item[0])
         if path_is_nonempty_file(path)
     ]
@@ -192,7 +201,7 @@ def merge_region_posteriors_tsv(
         )
 
         n_fibers = 0
-        for _region_idx, tsv_path in valid_files:
-            n_fibers += _copy_region_tsv_records(outfile, tsv_path)
+        for tsv_file in valid_files:
+            n_fibers += _copy_region_tsv_records(outfile, tsv_file.path)
 
     return n_fibers

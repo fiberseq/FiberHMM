@@ -136,6 +136,11 @@ def test_merge_region_posteriors_tsv_orders_regions_and_preserves_input_list(tmp
     ]
     original_order = list(temp_files)
 
+    assert region_tsv._valid_region_tsv_files(temp_files) == [
+        region_tsv._IndexedRegionTsvFile(0, str(first)),
+        region_tsv._IndexedRegionTsvFile(1, str(second)),
+    ]
+
     n_fibers = merge_region_posteriors_tsv(
         temp_files,
         str(output),
