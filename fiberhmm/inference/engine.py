@@ -237,6 +237,39 @@ def _add_footprint_track(result: dict, states: np.ndarray,
     return fp_starts, fp_ends
 
 
+def _add_msp_track(
+    result: dict,
+    read_length: int,
+    fp_starts: np.ndarray,
+    fp_ends: np.ndarray,
+    confidence: Optional[np.ndarray],
+    msp_min_size: int,
+    with_scores: bool,
+    nuc_min_size: int,
+) -> None:
+    nuc_starts, nuc_ends = _nuc_boundaries_from_footprint_runs(
+        fp_starts,
+        fp_ends,
+        nuc_min_size,
+    )
+
+    msp_starts_arr, msp_sizes_arr = _msp_intervals_from_nuc_boundaries(
+        nuc_starts, nuc_ends, read_length, msp_min_size,
+    )
+
+    if len(msp_starts_arr) > 0:
+        result['msp_starts'] = msp_starts_arr
+        result['msp_sizes'] = msp_sizes_arr
+
+        if with_scores and confidence is not None:
+            result['msp_scores'] = _mean_interval_scores(
+                confidence,
+                msp_starts_arr,
+                msp_starts_arr + msp_sizes_arr,
+                invert=True,
+            )
+
+
 def predict_footprints(model: FiberHMM, encoded_read: np.ndarray,
                        with_scores: bool = False) -> Tuple[np.ndarray, np.ndarray, int, Optional[np.ndarray]]:
     """
@@ -300,28 +333,16 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
 
     # Find MSPs (accessible regions between nucleosome-sized footprints)
     # Only footprints >= nuc_min_size act as MSP boundaries
-    if len(states) > 0:
-        nuc_starts, nuc_ends = _nuc_boundaries_from_footprint_runs(
-            fp_starts,
-            fp_ends,
-            nuc_min_size,
-        )
-
-        msp_starts_arr, msp_sizes_arr = _msp_intervals_from_nuc_boundaries(
-            nuc_starts, nuc_ends, len(states), msp_min_size,
-        )
-
-        if len(msp_starts_arr) > 0:
-            result['msp_starts'] = msp_starts_arr
-            result['msp_sizes'] = msp_sizes_arr
-
-            if with_scores and confidence is not None:
-                result['msp_scores'] = _mean_interval_scores(
-                    confidence,
-                    msp_starts_arr,
-                    msp_starts_arr + msp_sizes_arr,
-                    invert=True,
-                )
+    _add_msp_track(
+        result,
+        len(states),
+        fp_starts,
+        fp_ends,
+        confidence,
+        msp_min_size,
+        with_scores,
+        nuc_min_size,
+    )
 
     return result
 
