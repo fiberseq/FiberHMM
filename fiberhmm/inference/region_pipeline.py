@@ -526,6 +526,19 @@ def _finalize_region_bam_output(
     _sort_and_index_bam(output_bam, threads=n_cores)
 
 
+def _fused_region_total_summary(
+    aggregation: RegionBamAggregation,
+    start_time: float,
+) -> str:
+    elapsed = time.time() - start_time
+    rate = _read_rate(aggregation.total_reads, elapsed)
+    return (
+        f"  Total: {aggregation.total_reads:,} reads, "
+        f"{aggregation.reads_with_footprints:,} with footprints, "
+        f"{rate:.1f} r/s"
+    )
+
+
 def _finalize_fused_region_bam_output(
     input_bam: str,
     output_bam: str,
@@ -545,13 +558,7 @@ def _finalize_fused_region_bam_output(
     except pysam.SamtoolsError:
         pass
 
-    elapsed = time.time() - start_time
-    rate = _read_rate(aggregation.total_reads, elapsed)
-    print(
-        f"  Total: {aggregation.total_reads:,} reads, "
-        f"{aggregation.reads_with_footprints:,} with footprints, "
-        f"{rate:.1f} r/s"
-    )
+    print(_fused_region_total_summary(aggregation, start_time))
 
 
 def _concatenate_region_beds(output_bed: str, non_empty_beds: list[str]) -> None:
