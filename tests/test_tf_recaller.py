@@ -278,9 +278,12 @@ def test_parse_ma_interval_list_skips_empty_tokens_and_reports_bad_intervals():
 
 
 def test_parse_ma_chunk_splits_head_and_intervals():
-    assert _parse_ma_chunk("tf.QQQ:1-10,21-5") == (
-        "tf", ".", "QQQ", [(0, 10), (20, 5)],
-    )
+    chunk = _parse_ma_chunk("tf.QQQ:1-10,21-5")
+
+    assert chunk.name == "tf"
+    assert chunk.strand == "."
+    assert chunk.qual_spec == "QQQ"
+    assert chunk.intervals == [(0, 10), (20, 5)]
 
     with pytest.raises(ValueError, match="missing colon"):
         _parse_ma_chunk("tf.QQQ")

@@ -51,10 +51,26 @@ is ambiguous to the upper end of that 30 bp range).
 from __future__ import annotations
 
 import array
+from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
 TQ_SCALE = 10.0          # tq = round(LLR * TQ_SCALE); saturates at LLR=25.5 nats
 EDGE_AMBIGUITY_SAT = 30  # bp; el/er = 0 at ambiguity >= this
+
+
+@dataclass(frozen=True)
+class _MaHead:
+    name: str
+    strand: str
+    qual_spec: str
+
+
+@dataclass(frozen=True)
+class _MaChunk:
+    name: str
+    strand: str
+    qual_spec: str
+    intervals: List[Tuple[int, int]]
 
 
 def llr_to_tq(llr: float) -> int:
@@ -135,10 +151,14 @@ def _ma_annotation_parts(
     ]
 
 
-def _parse_ma_head(head: str) -> Tuple[str, str, str]:
+def _parse_ma_head(head: str) -> _MaHead:
     for i, c in enumerate(head):
         if c in '+-.':
-            return head[:i], c, head[i + 1:]
+            return _MaHead(
+                name=head[:i],
+                strand=c,
+                qual_spec=head[i + 1:],
+            )
     raise ValueError(f'MA head missing strand: {head!r}')
 
 
@@ -159,14 +179,19 @@ def _parse_ma_interval_list(data: str) -> List[Tuple[int, int]]:
     return intervals
 
 
-def _parse_ma_chunk(chunk: str) -> Tuple[str, str, str, List[Tuple[int, int]]]:
+def _parse_ma_chunk(chunk: str) -> _MaChunk:
     if ':' not in chunk:
         raise ValueError(f'MA chunk missing colon: {chunk!r}')
     head, data = chunk.split(':', 1)
     head = head.strip()
-    name, strand, qual_spec = _parse_ma_head(head)
+    parsed_head = _parse_ma_head(head)
     intervals = _parse_ma_interval_list(data)
-    return name, strand, qual_spec, intervals
+    return _MaChunk(
+        name=parsed_head.name,
+        strand=parsed_head.strand,
+        qual_spec=parsed_head.qual_spec,
+        intervals=intervals,
+    )
 
 
 def _parse_ma_read_length(token: str) -> int:
@@ -357,10 +382,15 @@ def parse_ma_tag(ma_string: str) -> dict:
         chunk = chunk.strip()
         if not chunk:
             continue
-        name, strand, qual_spec, intervals = _parse_ma_chunk(chunk)
-        out['raw_types'].append((name, strand, qual_spec, intervals))
-        if name in out:
-            out[name].extend(intervals)
+        parsed_chunk = _parse_ma_chunk(chunk)
+        out['raw_types'].append((
+            parsed_chunk.name,
+            parsed_chunk.strand,
+            parsed_chunk.qual_spec,
+            parsed_chunk.intervals,
+        ))
+        if parsed_chunk.name in out:
+            out[parsed_chunk.name].extend(parsed_chunk.intervals)
     return out
 
 
