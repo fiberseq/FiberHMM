@@ -28,6 +28,7 @@ try:
         _context_codes_for_target_positions,
         _daf_deamination_base_counts,
         _has_mm_ml_inputs,
+        _hmm_symbol_offsets,
         _iter_mm_mod_specs,
         _mm_base_indices,
         _mm_ml_slice_for_spec,
@@ -60,6 +61,7 @@ except ImportError:
         _context_codes_for_target_positions,
         _daf_deamination_base_counts,
         _has_mm_ml_inputs,
+        _hmm_symbol_offsets,
         _iter_mm_mod_specs,
         _mm_base_indices,
         _mm_ml_slice_for_spec,
@@ -476,6 +478,10 @@ class TestContextEncoder:
 
 class TestHexamerLookup:
     """Test hexamer lookup table construction."""
+
+    def test_hmm_symbol_offsets_follow_context_code_count(self):
+        assert _hmm_symbol_offsets(1) == (16, 17)
+        assert _hmm_symbol_offsets(3) == (4096, 4097)
 
     def test_build_hexamer_lookup(self):
         """Test basic hexamer lookup table."""

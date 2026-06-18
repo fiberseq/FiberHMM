@@ -870,10 +870,7 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
         4^(2k)+1 to 2*4^(2k): Unmodified target base with context
         2*4^(2k)+1: Non-target position (unmodified version)
     """
-    # Calculate code offsets based on context size
-    n_codes = ContextEncoder.get_n_codes(context_size)
-    non_target_code = n_codes  # 4^(2k)
-    unmethylated_offset = n_codes + 1  # 4^(2k) + 1
+    non_target_code, unmethylated_offset = _hmm_symbol_offsets(context_size)
 
     # Determine target base based on mode
     if mode == 'pacbio-fiber':
@@ -896,6 +893,11 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
 
     else:
         raise ValueError(f"Unknown mode: {mode}")
+
+
+def _hmm_symbol_offsets(context_size: int) -> tuple:
+    n_codes = ContextEncoder.get_n_codes(context_size)
+    return n_codes, n_codes + 1
 
 
 def _sequence_base_int_array(sequence: str, *, uppercase: bool = False,
