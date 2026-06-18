@@ -100,7 +100,8 @@ def _add_apply_processing_args(parser) -> None:
 
 def _add_apply_output_args(parser) -> None:
     parser.add_argument('--scores', action='store_true',
-                        help='Compute per-footprint confidence scores (slower but more informative)')
+                        help='Compute per-footprint confidence scores '
+                             '(slower but more informative)')
     parser.add_argument('--scores-db', action='store_true',
                         help='Output SQLite database with detailed per-footprint scores')
     parser.add_argument('--msp-min-size', type=int, default=0,
@@ -114,7 +115,8 @@ def _add_apply_output_args(parser) -> None:
                              'split MSPs; smaller footprints are absorbed (default: 85)')
     parser.add_argument('--no-msps', action='store_true',
                         help='Do not write MSP tags (as/al/aq) to output BAM. '
-                             'Useful for Fiber-seq where MSPs are computed differently by fibertools')
+                             'Useful for Fiber-seq where MSPs are computed '
+                             'differently by fibertools')
 
 
 def _add_apply_stats_args(parser) -> None:
@@ -249,7 +251,10 @@ def _resolve_context_size(args, model_context_size: int) -> int:
     if args.context_size is not None:
         context_size = int(args.context_size)
         if context_size != model_context_size:
-            print(f"  WARNING: Overriding model context size {model_context_size} with {context_size}")
+            print(
+                f"  WARNING: Overriding model context size "
+                f"{model_context_size} with {context_size}"
+            )
     else:
         context_size = int(model_context_size)
     print(f"  Context size: {_context_size_message(context_size)}")
