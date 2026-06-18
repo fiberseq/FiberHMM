@@ -376,6 +376,70 @@ def _write_legacy_interval_row(read, bed_out, blocks, with_scores: bool,
     bed_out.write(row + "\n")
 
 
+def _ma_annotation_blocks(target_name: str, annotations, query_to_ref, min_tq: int):
+    blocks = []
+    for ann in annotations:
+        block = _ma_annotation_block(target_name, ann, query_to_ref, min_tq)
+        if block is not None:
+            blocks.append(block)
+    return blocks
+
+
+def _write_ma_circular_rows(
+    read,
+    bed_out,
+    target_name: str,
+    blocks,
+    with_scores: bool,
+    block_scores: bool,
+) -> int:
+    ref_name = read.reference_name
+    strand = '-' if read.is_reverse else '+'
+    read_id = read.query_name
+
+    for ref_start, ref_end, score, qvals, ann in sorted(blocks, key=lambda x: x[0]):
+        extra = _ma_circular_extra_columns(qvals, ann, block_scores)
+        name = _ma_circular_row_name(read_id, target_name, ann)
+        row = _bed12_row(
+            ref_name, ref_start, ref_end, name,
+            score if with_scores else 0,
+            strand,
+            [(ref_start, ref_end)],
+            extra,
+        )
+        bed_out.write(row + "\n")
+    return len(blocks)
+
+
+def _write_ma_grouped_row(
+    read,
+    bed_out,
+    target_name: str,
+    blocks,
+    with_scores: bool,
+    block_scores: bool,
+) -> int:
+    blocks = sorted(blocks, key=lambda x: x[0])
+    chrom_start = blocks[0][0]
+    chrom_end = blocks[-1][1]
+    mean_score = _mean_block_score(blocks, with_scores)
+    extra = []
+    if block_scores:
+        extra.extend(_ma_block_score_columns(target_name, blocks))
+    row = _bed12_row(
+        read.reference_name,
+        chrom_start,
+        chrom_end,
+        read.query_name,
+        mean_score,
+        '-' if read.is_reverse else '+',
+        [(b[0], b[1]) for b in blocks],
+        extra,
+    )
+    bed_out.write(row + "\n")
+    return len(blocks)
+
+
 def _extract_ma_interval_type(
     read,
     bed_out,
@@ -395,52 +459,18 @@ def _extract_ma_interval_type(
     read_length = max((a.get('read_length', 0) for a in annotations), default=0)
     annotations = _annotate_circular_parts(annotations, read_length)
 
-    ref_name = read.reference_name
-    strand = '-' if read.is_reverse else '+'
-    read_id = read.query_name
-
-    blocks = []
-    for ann in annotations:
-        block = _ma_annotation_block(target_name, ann, query_to_ref, min_tq)
-        if block is not None:
-            blocks.append(block)
-
+    blocks = _ma_annotation_blocks(target_name, annotations, query_to_ref, min_tq)
     if not blocks:
         return 0
 
     if circular_groups:
-        for ref_start, ref_end, score, qvals, ann in sorted(blocks, key=lambda x: x[0]):
-            extra = _ma_circular_extra_columns(qvals, ann, block_scores)
-            name = _ma_circular_row_name(read_id, target_name, ann)
-            row = _bed12_row(
-                ref_name, ref_start, ref_end, name,
-                score if with_scores else 0,
-                strand,
-                [(ref_start, ref_end)],
-                extra,
-            )
-            bed_out.write(row + "\n")
-        return len(blocks)
+        return _write_ma_circular_rows(
+            read, bed_out, target_name, blocks, with_scores, block_scores,
+        )
 
-    blocks.sort(key=lambda x: x[0])
-    chrom_start = blocks[0][0]
-    chrom_end = blocks[-1][1]
-    mean_score = _mean_block_score(blocks, with_scores)
-    extra = []
-    if block_scores:
-        extra.extend(_ma_block_score_columns(target_name, blocks))
-    row = _bed12_row(
-        ref_name,
-        chrom_start,
-        chrom_end,
-        read_id,
-        mean_score,
-        strand,
-        [(b[0], b[1]) for b in blocks],
-        extra,
+    return _write_ma_grouped_row(
+        read, bed_out, target_name, blocks, with_scores, block_scores,
     )
-    bed_out.write(row + "\n")
-    return len(blocks)
 
 
 def _extract_region_worker(args) -> Tuple[dict, int, dict]:

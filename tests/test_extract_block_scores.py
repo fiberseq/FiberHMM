@@ -340,6 +340,39 @@ def test_ma_annotation_block_builds_ref_block_or_returns_none():
     assert extract_tags._ma_annotation_block('nuc', ann, {}, 255) is None
 
 
+def test_ma_annotation_blocks_filters_empty_blocks():
+    read = _FakeRead()
+    keep = {'start': 10, 'length': 5, 'quals': [60, 10, 5]}
+    low_tq = {'start': 20, 'length': 5, 'quals': [40, 10, 5]}
+    unmapped = {'start': 30, 'length': 5, 'quals': [80, 10, 5]}
+    query_to_ref = _identity_map(read)
+    query_to_ref[30:35] = -1
+
+    blocks = extract_tags._ma_annotation_blocks(
+        'tf', [keep, low_tq, unmapped], query_to_ref, min_tq=50,
+    )
+
+    assert blocks == [(1_000_010, 1_000_015, 60, (60, 10, 5), keep)]
+
+
+def test_write_ma_grouped_row_sorts_blocks_and_writes_score_columns():
+    read = _FakeRead(read_id='read-a', ref_start=1_000)
+    blocks = [
+        (1_010, 1_015, 90, (90, 1, 2), {}),
+        (1_000, 1_003, 30, (30, 3, 4), {}),
+    ]
+    buf = io.StringIO()
+
+    assert extract_tags._write_ma_grouped_row(
+        read, buf, 'tf', blocks, with_scores=True, block_scores=True,
+    ) == 2
+
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    assert cols[:6] == ['chr1', '1000', '1015', 'read-a', '60', '+']
+    assert cols[9:12] == ['2', '3,5', '0,10']
+    assert cols[12:15] == ['30,90', '3,1', '4,2']
+
+
 def test_ma_circular_row_helpers_build_extra_columns_and_names():
     ann = {
         'circ_id': 'call-a',
