@@ -64,11 +64,15 @@ def test_format_region_posterior_line_matches_tsv_parser():
 def test_region_posteriors_tsv_output_path():
     assert region_posteriors_tsv_output_path("out.h5") == "out.tsv.gz"
     assert region_posteriors_tsv_output_path("out.hdf5") == "out.tsv.gz"
+    assert region_posteriors_tsv_output_path("out.H5") == "out.tsv.gz"
     assert region_posteriors_tsv_output_path("out.tsv") == "out.tsv.gz"
+    assert region_posteriors_tsv_output_path("out.TSV") == "out.TSV.gz"
     assert region_posteriors_tsv_output_path("out.tsv.gz") == "out.tsv.gz"
+    assert region_posteriors_tsv_output_path("out.TSV.GZ") == "out.TSV.GZ"
     assert region_posteriors_tsv_output_path("out") == "out.tsv.gz"
     assert region_posteriors_needs_h5_conversion("out.h5")
     assert region_posteriors_needs_h5_conversion("out.hdf5")
+    assert region_posteriors_needs_h5_conversion("out.HDF5")
     assert not region_posteriors_needs_h5_conversion("out.tsv.gz")
 
 

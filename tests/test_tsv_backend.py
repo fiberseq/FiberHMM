@@ -30,6 +30,9 @@ def test_posterior_tsv_output_path_respects_compression_flag():
     assert tsv_backend._posterior_tsv_output_path(
         "out.tsv.gz", compress=False,
     ) == "out.tsv.gz"
+    assert tsv_backend._posterior_tsv_output_path(
+        "out.tsv.GZ", compress=False,
+    ) == "out.tsv.GZ"
 
 
 class _TrackingHandle:

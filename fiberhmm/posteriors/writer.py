@@ -14,9 +14,15 @@ Usage:
         writer.write_fiber(...)
 """
 
+import os
+
+
+def _path_endswith(output_path: str, suffixes: tuple[str, ...]) -> bool:
+    return os.fspath(output_path).lower().endswith(suffixes)
+
 
 def _is_hdf5_output_path(output_path: str) -> bool:
-    return output_path.endswith('.h5') or output_path.endswith('.hdf5')
+    return _path_endswith(output_path, ('.h5', '.hdf5'))
 
 
 def _resolve_writer_format(output_path: str, format: str) -> str:

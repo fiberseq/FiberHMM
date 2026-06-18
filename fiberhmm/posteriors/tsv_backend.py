@@ -37,7 +37,7 @@ from fiberhmm.posteriors.region_tsv import (
 def _open_text_file(path: str, mode: str) -> TextIO:
     """Open plain or gzip-compressed text files with consistent settings."""
     path = os.fspath(path)
-    if path.endswith('.gz'):
+    if path.lower().endswith('.gz'):
         kwargs = {}
         if any(flag in mode for flag in ('w', 'a', 'x')):
             kwargs['compresslevel'] = 4
@@ -223,8 +223,9 @@ def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
 
 
 def _posterior_tsv_output_path(output_path: str, compress: bool) -> str:
-    if compress or output_path.endswith('.gz'):
-        return output_path if output_path.endswith('.gz') else output_path + '.gz'
+    is_gzip_path = output_path.lower().endswith('.gz')
+    if compress or is_gzip_path:
+        return output_path if is_gzip_path else output_path + '.gz'
     return output_path
 
 
@@ -249,7 +250,7 @@ class PosteriorsTSVWriter:
             compress: If True, gzip compress the output
         """
         self.output_path = output_path
-        self.compress = compress or output_path.endswith('.gz')
+        self.compress = compress or output_path.lower().endswith('.gz')
         self.output_path = _posterior_tsv_output_path(output_path, compress)
         self._file = _open_text_file(self.output_path, 'wt')
         self._closed = False

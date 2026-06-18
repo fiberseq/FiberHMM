@@ -95,9 +95,10 @@ def region_posteriors_tsv_output_path(output_path: str) -> str:
     if region_posteriors_needs_h5_conversion(output_path):
         root, _ext = os.path.splitext(output_path)
         return root + ".tsv.gz"
-    if output_path.endswith(".tsv"):
+    output_path_lower = output_path.lower()
+    if output_path_lower.endswith(".tsv"):
         return output_path + ".gz"
-    if output_path.endswith(".tsv.gz"):
+    if output_path_lower.endswith(".tsv.gz"):
         return output_path
     return output_path + ".tsv.gz"
 
