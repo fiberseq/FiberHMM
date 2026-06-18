@@ -351,7 +351,15 @@ def test_ma_block_score_columns_match_annotation_shape():
 
 def test_ma_annotation_block_builds_ref_block_or_returns_none():
     ann = {'start': 10, 'length': 5, 'quals': [60, 7, 8]}
-    block = extract_tags._ma_annotation_block('tf', ann, _identity_map(_FakeRead()), 50)
+    query_to_ref = _identity_map(_FakeRead())
+    block = extract_tags._ma_annotation_block_from_request(
+        extract_tags._MaAnnotationBlockRequest(
+            target_name='tf',
+            annotation=ann,
+            query_to_ref=query_to_ref,
+            min_tq=50,
+        )
+    )
 
     assert block == extract_tags._MaAnnotationBlock(
         1_000_010,
@@ -360,6 +368,7 @@ def test_ma_annotation_block_builds_ref_block_or_returns_none():
         (60, 7, 8),
         ann,
     )
+    assert extract_tags._ma_annotation_block('tf', ann, query_to_ref, 50) == block
     assert extract_tags._ma_annotation_block(
         'tf', ann, _identity_map(_FakeRead()), 61,
     ) is None

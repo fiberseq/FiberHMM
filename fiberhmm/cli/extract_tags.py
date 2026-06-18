@@ -116,6 +116,14 @@ class _MaAnnotationRecordRequest:
 
 
 @dataclass(frozen=True)
+class _MaAnnotationBlockRequest:
+    target_name: str
+    annotation: object
+    query_to_ref: object
+    min_tq: int
+
+
+@dataclass(frozen=True)
 class _WrappedGroupSpan:
     start: int
     length: int
@@ -398,23 +406,40 @@ def _ma_block_score_columns(target_name: str, blocks) -> list:
     return [','.join(str(block.qvals[0]) for block in blocks)]
 
 
-def _ma_annotation_block(target_name: str, ann, query_to_ref, min_tq: int):
-    quals = ann['quals']
-    if not _ma_annotation_passes_min_tq(target_name, quals, min_tq):
+def _ma_annotation_block_from_request(
+    request: _MaAnnotationBlockRequest,
+):
+    quals = request.annotation['quals']
+    if not _ma_annotation_passes_min_tq(
+        request.target_name,
+        quals,
+        request.min_tq,
+    ):
         return None
 
-    block = _annotation_to_ref_block(ann, query_to_ref)
+    block = _annotation_to_ref_block(request.annotation, request.query_to_ref)
     if block is None:
         return None
 
     ref_start, ref_end = block
-    quality_values = _ma_annotation_quality_values(target_name, quals)
+    quality_values = _ma_annotation_quality_values(request.target_name, quals)
     return _MaAnnotationBlock(
         ref_start,
         ref_end,
         quality_values.score,
         quality_values.qvals,
-        ann,
+        request.annotation,
+    )
+
+
+def _ma_annotation_block(target_name: str, ann, query_to_ref, min_tq: int):
+    return _ma_annotation_block_from_request(
+        _MaAnnotationBlockRequest(
+            target_name=target_name,
+            annotation=ann,
+            query_to_ref=query_to_ref,
+            min_tq=min_tq,
+        )
     )
 
 
@@ -480,7 +505,14 @@ def _write_legacy_interval_row(read, bed_out, blocks, with_scores: bool,
 def _ma_annotation_blocks(target_name: str, annotations, query_to_ref, min_tq: int):
     blocks = []
     for ann in annotations:
-        block = _ma_annotation_block(target_name, ann, query_to_ref, min_tq)
+        block = _ma_annotation_block_from_request(
+            _MaAnnotationBlockRequest(
+                target_name=target_name,
+                annotation=ann,
+                query_to_ref=query_to_ref,
+                min_tq=min_tq,
+            )
+        )
         if block is not None:
             blocks.append(block)
     return blocks
