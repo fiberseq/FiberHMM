@@ -279,6 +279,80 @@ def test_apply_result_is_circular_uses_truthy_metadata_flag():
     assert fused_stages._apply_result_is_circular({}) is False
 
 
+def test_run_tf_recall_stage_request_scans_intervals(monkeypatch):
+    calls = []
+    obs = np.asarray([0, 1, 2], dtype=np.int64)
+    ns = np.asarray([10], dtype=np.int32)
+    nl = np.asarray([20], dtype=np.int32)
+    msps = np.asarray([30], dtype=np.int32)
+    msp_lengths = np.asarray([5], dtype=np.int32)
+
+    def fake_build_scan_intervals(*args, **kwargs):
+        calls.append(("intervals", args, kwargs))
+        return [(10, 20), (30, 40)]
+
+    def fake_call_tfs_in_interval(*args):
+        calls.append(("scan", args))
+        return [args[1]]
+
+    monkeypatch.setattr(
+        fused_stages,
+        "build_scan_intervals",
+        fake_build_scan_intervals,
+    )
+    monkeypatch.setattr(
+        fused_stages,
+        "call_tfs_in_interval",
+        fake_call_tfs_in_interval,
+    )
+
+    request = fused_stages._TfRecallStageRequest(
+        obs=obs,
+        ns=ns,
+        nl=nl,
+        msps=msps,
+        msp_lengths=msp_lengths,
+        read_length=100,
+        llr_hit="hit",
+        llr_miss="miss",
+        min_llr=4.0,
+        min_opps=3,
+        unify_threshold=90,
+    )
+
+    assert fused_stages.run_tf_recall_stage_from_request(request) == [10, 30]
+    label, interval_args, interval_kwargs = calls[0]
+    assert label == "intervals"
+    assert interval_args[0] is ns
+    assert interval_args[1] is nl
+    assert interval_args[2] is msps
+    assert interval_args[3] is msp_lengths
+    assert interval_args[4] == 100
+    assert interval_kwargs == {"unify_threshold": 90}
+    assert calls[1][0] == "scan"
+    assert calls[1][1][0] is obs
+    assert calls[1][1][1:] == (10, 20, "hit", "miss", 4.0, 3)
+    assert calls[2][0] == "scan"
+    assert calls[2][1][0] is obs
+    assert calls[2][1][1:] == (30, 40, "hit", "miss", 4.0, 3)
+    calls.clear()
+
+    assert fused_stages.run_tf_recall_stage(
+        obs,
+        ns,
+        nl,
+        msps,
+        msp_lengths,
+        100,
+        "hit",
+        "miss",
+        4.0,
+        3,
+        90,
+    ) == [10, 30]
+    assert len(calls) == 3
+
+
 def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatch):
     seen = {"interval_args": None, "scan_args": []}
 

@@ -84,6 +84,21 @@ class _HmmApplyStageRequest:
     with_scores: bool
 
 
+@dataclass(frozen=True)
+class _TfRecallStageRequest:
+    obs: Any
+    ns: Sequence[int]
+    nl: Sequence[int]
+    msps: Sequence[int]
+    msp_lengths: Sequence[int]
+    read_length: int
+    llr_hit: Any
+    llr_miss: Any
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+
+
 def _analyzed_span(apply_result, read_length, kept):
     """Extent (lo, hi) the read was annotated over -- the union of the original
     HMM footprints/MSPs and the final nucleosomes -- used to tile MSPs."""
@@ -258,6 +273,34 @@ def run_hmm_apply_stage(
     )
 
 
+def run_tf_recall_stage_from_request(
+    request: _TfRecallStageRequest,
+) -> list:
+    """Build recall scan intervals and run the TF LLR scan over each one."""
+    intervals = build_scan_intervals(
+        request.ns,
+        request.nl,
+        request.msps,
+        request.msp_lengths,
+        request.read_length,
+        unify_threshold=request.unify_threshold,
+    )
+    tf_calls = []
+    for lo, hi in intervals:
+        tf_calls.extend(
+            call_tfs_in_interval(
+                request.obs,
+                lo,
+                hi,
+                request.llr_hit,
+                request.llr_miss,
+                request.min_llr,
+                request.min_opps,
+            )
+        )
+    return tf_calls
+
+
 def run_tf_recall_stage(
     obs,
     ns: Sequence[int],
@@ -271,21 +314,21 @@ def run_tf_recall_stage(
     min_opps: int,
     unify_threshold: int,
 ) -> list:
-    """Build recall scan intervals and run the TF LLR scan over each one."""
-    intervals = build_scan_intervals(
-        ns,
-        nl,
-        msps,
-        msp_lengths,
-        read_length,
-        unify_threshold=unify_threshold,
+    return run_tf_recall_stage_from_request(
+        _TfRecallStageRequest(
+            obs=obs,
+            ns=ns,
+            nl=nl,
+            msps=msps,
+            msp_lengths=msp_lengths,
+            read_length=read_length,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
+        ),
     )
-    tf_calls = []
-    for lo, hi in intervals:
-        tf_calls.extend(
-            call_tfs_in_interval(obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps)
-        )
-    return tf_calls
 
 
 def build_fused_recall_result(
