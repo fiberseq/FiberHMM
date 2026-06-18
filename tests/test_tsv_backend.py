@@ -403,3 +403,29 @@ def test_concatenate_tsvs_closes_input_and_output_when_read_fails(monkeypatch, t
 
     assert input_handle.closed
     assert output_handle.closed
+
+
+def test_concatenate_tsvs_deletes_inputs_only_after_success(monkeypatch, tmp_path):
+    first_path = tmp_path / "first.tsv"
+    second_path = tmp_path / "second.tsv"
+    output_path = tmp_path / "output.tsv"
+    first_path.write_text("#header\nread1\tchr1\n", encoding="utf-8")
+    second_path.write_text("read2\tchr2\n", encoding="utf-8")
+
+    def fake_copy(inpath, outfile, header_written):
+        if inpath == str(first_path):
+            outfile.write("read1\tchr1\n")
+            return 1, True
+        raise RuntimeError("copy failed")
+
+    monkeypatch.setattr(tsv_backend, "_copy_tsv_records", fake_copy)
+
+    with pytest.raises(RuntimeError, match="copy failed"):
+        tsv_backend.concatenate_tsvs(
+            [str(first_path), str(second_path)],
+            str(output_path),
+            delete_inputs=True,
+        )
+
+    assert first_path.exists()
+    assert second_path.exists()

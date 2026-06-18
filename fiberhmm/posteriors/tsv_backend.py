@@ -386,6 +386,11 @@ def _copy_tsv_records(inpath: str, outfile, header_written: bool) -> tuple[int, 
     return n_fibers, True
 
 
+def _remove_concatenated_tsv_inputs(input_files: list[str]) -> None:
+    for inpath in input_files:
+        os.remove(inpath)
+
+
 def concatenate_tsvs(input_files: list, output_path: str,
                      delete_inputs: bool = False) -> int:
     """
@@ -401,6 +406,7 @@ def concatenate_tsvs(input_files: list, output_path: str,
     """
     n_fibers = 0
     header_written = False
+    copied_inputs = []
 
     with _open_text_file(output_path, 'wt') as outfile:
         for inpath in input_files:
@@ -411,9 +417,10 @@ def concatenate_tsvs(input_files: list, output_path: str,
                 inpath, outfile, header_written,
             )
             n_fibers += n_copied
+            copied_inputs.append(inpath)
 
-            if delete_inputs:
-                os.remove(inpath)
+    if delete_inputs:
+        _remove_concatenated_tsv_inputs(copied_inputs)
 
     return n_fibers
 
