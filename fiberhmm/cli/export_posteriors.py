@@ -49,12 +49,12 @@ from fiberhmm.core.bam_reader import (
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model_with_metadata
 from fiberhmm.inference.engine import footprint_runs
+from fiberhmm.inference.parallel import _get_genome_regions
 from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.inference.worker_warmup import (
     disable_numba_cache_locking,
     warm_up_model_posteriors,
 )
-from fiberhmm.inference.parallel import _get_genome_regions
 
 
 def _detect_format(output_path: str, format_arg: str) -> str:
@@ -830,6 +830,7 @@ def export_posteriors_hdf5(
     Memory usage stays bounded regardless of BAM size.
     """
     import h5py
+
     from fiberhmm.posteriors.hdf5_backend import (
         create_posterior_chrom_group,
         write_fiber_metadata_datasets,
@@ -1091,7 +1092,10 @@ class FiberPosterior:
         self.footprint_sizes = footprint_sizes
 
     def __repr__(self):
-        return f"FiberPosterior({self.fiber_id}, {self.start}-{self.end}, {len(self.posteriors)} positions)"
+        return (
+            f"FiberPosterior({self.fiber_id}, {self.start}-{self.end}, "
+            f"{len(self.posteriors)} positions)"
+        )
 
     def project_to_reference(self, region_start: int, region_end: int,
                               method: str = 'max') -> np.ndarray:
