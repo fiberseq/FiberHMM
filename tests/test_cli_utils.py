@@ -4,12 +4,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fiberhmm.core import bam_reader
 from fiberhmm.cli.utils import (
     AccessibilityCounter,
     _accessibility_prior_row,
-    _accessibility_priors_for_base,
     _accessibility_priors_dataframe,
+    _accessibility_priors_for_base,
     _aggregate_accessibility_counts,
     _build_utils_parser,
     _converted_model_json_payload,
@@ -29,14 +28,15 @@ from fiberhmm.cli.utils import (
     _scale_emission_probabilities,
     _target_bases_for_transfer_mode,
     _target_mod_positions_from_bam_read,
-    _trim_accessibility_context,
     _transfer_context_index,
     _transfer_probability_frame,
     _transfer_progress_postfix,
     _transfer_read_limit_reached,
+    _trim_accessibility_context,
     _write_regression_stats_summary,
     _write_transfer_probability_tables,
 )
+from fiberhmm.core import bam_reader
 
 
 def test_target_bases_for_transfer_mode():

@@ -46,17 +46,17 @@ from collections import deque
 
 import pysam
 
-from fiberhmm.cli.model_selection import resolve_model_path as _resolve_cli_model_path
 from fiberhmm.cli.common import resolve_core_count
+from fiberhmm.cli.model_selection import resolve_model_path as _resolve_cli_model_path
 from fiberhmm.cli.recall_config import (
     resolve_recall_defaults as _shared_resolve_recall_defaults,
+)
+from fiberhmm.cli.recall_config import (
     should_write_legacy_tags,
 )
 from fiberhmm.core.bam_reader import _has_mm_ml_inputs
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.core.tag_access import compact_ml_value
-from fiberhmm.io.bam_header import append_coord_marker
-from fiberhmm.io.ma_tags import flip_intervals_to_seq
 from fiberhmm.inference.payload_read import PayloadRead
 from fiberhmm.inference.recall_tables import (
     build_recall_llr_tables as _shared_build_recall_llr_tables,
@@ -67,6 +67,8 @@ from fiberhmm.inference.tf_recaller import (
     recall_read,
     write_ma_tags,
 )
+from fiberhmm.io.bam_header import append_coord_marker
+from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 # ---------------------------------------------------------------------------
 # Per-worker global state (set by the initializer; avoids repickling arrays)

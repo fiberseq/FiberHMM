@@ -28,6 +28,8 @@ from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 from fiberhmm.probabilities.output_paths import (
     combined_probability_table_path as _combined_probability_table_path,
+)
+from fiberhmm.probabilities.output_paths import (
     probability_table_path as _probability_table_path,
 )
 from fiberhmm.probabilities.utils import get_base_name, setup_output_dirs

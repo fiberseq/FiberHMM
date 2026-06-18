@@ -18,8 +18,8 @@ from fiberhmm.inference.tf_recaller import (
     write_ma_tags,
 )
 from fiberhmm.io.ma_tags import (
-    _aq_annotation_values,
     EDGE_AMBIGUITY_SAT,
+    _aq_annotation_values,
     _aq_values_sequence,
     _format_ma_annotation_part,
     _ma_annotation_parts,
@@ -31,8 +31,8 @@ from fiberhmm.io.ma_tags import (
     format_aq_array,
     format_ma_tag,
     llr_to_tq,
-    parse_aq_array,
     parse_an_tag,
+    parse_aq_array,
     parse_ma_tag,
     tq_to_llr,
 )

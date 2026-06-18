@@ -1,9 +1,9 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 import numpy as np
 import pandas as pd
+import pytest
 
 from fiberhmm.cli import train
 from fiberhmm.core import bam_reader

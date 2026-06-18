@@ -37,7 +37,11 @@ from fiberhmm.core.tag_access import get_preferred_tag
 from fiberhmm.probabilities.context_counter import ContextCounter
 from fiberhmm.probabilities.output_paths import (
     combined_probability_table_path as _combined_probability_table_path,
+)
+from fiberhmm.probabilities.output_paths import (
     probability_counter_path as _probability_counter_path,
+)
+from fiberhmm.probabilities.output_paths import (
     probability_table_path as _probability_table_path,
 )
 from fiberhmm.probabilities.stats import generate_probability_stats
@@ -46,7 +50,6 @@ from fiberhmm.probabilities.utils import (
     get_base_name,
     setup_output_dirs,
 )
-
 
 FILTER_STAT_KEYS = (
     'scanned',
