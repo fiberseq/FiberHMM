@@ -38,6 +38,7 @@ from fiberhmm.inference.region_workers import (
     _region_read_route,
     _region_result_ns_scores,
     _RegionBamWorkerCounts,
+    _RegionBed12Blocks,
     _RegionPosteriorTsv,
     _RegionReadRoute,
     _run_fused_region_apply_read,
@@ -966,7 +967,7 @@ def test_region_bed12_row_pads_blocks_and_scores():
 
 
 def test_region_bed12_blocks_project_pad_and_scale_scores():
-    block_starts, block_sizes, score_list = _region_bed12_blocks(
+    blocks = _region_bed12_blocks(
         ref_start=100,
         ref_end=200,
         starts=[120, 180],
@@ -974,20 +975,24 @@ def test_region_bed12_blocks_project_pad_and_scale_scores():
         scores=[0.5, 0.75],
     )
 
-    assert block_starts == [0, 20, 80, 99]
-    assert block_sizes == [1, 10, 5, 1]
-    assert score_list == [0, 500, 750, 0]
+    assert blocks == _RegionBed12Blocks(
+        block_starts=[0, 20, 80, 99],
+        block_sizes=[1, 10, 5, 1],
+        score_list=[0, 500, 750, 0],
+    )
 
-    block_starts, block_sizes, score_list = _region_bed12_blocks(
+    unpadded = _region_bed12_blocks(
         ref_start=100,
         ref_end=130,
         starts=[100],
         lengths=[30],
     )
 
-    assert block_starts == [0]
-    assert block_sizes == [30]
-    assert score_list is None
+    assert unpadded == _RegionBed12Blocks(
+        block_starts=[0],
+        block_sizes=[30],
+        score_list=None,
+    )
 
 
 def test_region_bed_block_components_project_reference_offsets():

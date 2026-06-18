@@ -90,6 +90,13 @@ class _RegionReadRoute:
 
 
 @dataclass(frozen=True)
+class _RegionBed12Blocks:
+    block_starts: list
+    block_sizes: list
+    score_list: Optional[list]
+
+
+@dataclass(frozen=True)
 class _RegionBamWorkerRuntime:
     apply_config: _RegionApplyConfig
     output_config: _RegionBamOutputConfig
@@ -409,7 +416,13 @@ def _region_read_route(read, start: int, end: int, filter_config: ReadFilterConf
     return _RegionReadRoute(route=_REGION_ROUTE_PROCESS, skip_reason=None)
 
 
-def _region_bed12_blocks(ref_start, ref_end, starts, lengths, scores=None):
+def _region_bed12_blocks(
+    ref_start,
+    ref_end,
+    starts,
+    lengths,
+    scores=None,
+) -> _RegionBed12Blocks:
     read_length = ref_end - ref_start
     block_starts, block_sizes = _region_bed_block_components(
         ref_start,
@@ -426,7 +439,11 @@ def _region_bed12_blocks(ref_start, ref_end, starts, lengths, scores=None):
         read_length,
     )
 
-    return block_starts, block_sizes, score_list
+    return _RegionBed12Blocks(
+        block_starts=block_starts,
+        block_sizes=block_sizes,
+        score_list=score_list,
+    )
 
 
 def _pad_region_bed12_to_read_span(
@@ -465,16 +482,19 @@ def _region_bed_score_list(scores):
 def _format_region_bed12_row(ref_name, ref_start, ref_end, read_id, strand,
                              starts, lengths, scores=None):
     """Format one region-worker BED12 row from reference-frame intervals."""
-    block_starts, block_sizes, score_list = _region_bed12_blocks(
+    bed12_blocks = _region_bed12_blocks(
         ref_start, ref_end, starts, lengths, scores,
     )
     blocks = [
         (ref_start + start, ref_start + start + size)
-        for start, size in zip(block_starts, block_sizes)
+        for start, size in zip(
+            bed12_blocks.block_starts,
+            bed12_blocks.block_sizes,
+        )
     ]
     extra = ()
-    if score_list is not None:
-        extra = (','.join(str(score) for score in score_list),)
+    if bed12_blocks.score_list is not None:
+        extra = (','.join(str(score) for score in bed12_blocks.score_list),)
     return bed12_row(
         ref_name,
         ref_start,
