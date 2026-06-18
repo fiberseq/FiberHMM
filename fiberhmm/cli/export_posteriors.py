@@ -652,6 +652,98 @@ def export_posteriors_tsv(
     return total
 
 
+def _initialize_h5_export_file(
+    h5_file,
+    mode: str,
+    context_size: int,
+    edge_trim: int,
+    input_bam: str,
+    model_path: str,
+    regions_by_chrom,
+    write_hdf5_file_metadata,
+    create_posterior_chrom_group,
+) -> None:
+    write_hdf5_file_metadata(
+        h5_file,
+        mode=mode,
+        context_size=context_size,
+        edge_trim=edge_trim,
+        source_bam=input_bam,
+        model_path=model_path,
+    )
+
+    for chrom in regions_by_chrom:
+        create_posterior_chrom_group(h5_file, chrom)
+
+
+def _process_h5_export_region_batches(
+    h5_file,
+    regions,
+    input_bam: str,
+    model_path: str,
+    params: dict,
+    n_cores: int,
+    verbose: bool,
+    regions_by_chrom,
+    write_buffers,
+    chrom_fiber_counts,
+    chrom_metadata,
+    write_batch_size: int,
+) -> None:
+    def flush_buffer(chrom):
+        _flush_h5_chrom_buffer(
+            h5_file, chrom, write_buffers, chrom_fiber_counts, chrom_metadata
+        )
+
+    def on_results(chrom, results):
+        _buffer_h5_region_results(
+            chrom, results, write_buffers, write_batch_size, flush_buffer,
+        )
+
+    _process_regions(
+        regions,
+        input_bam,
+        model_path,
+        params,
+        n_cores,
+        verbose,
+        on_results,
+    )
+
+    for chrom in regions_by_chrom:
+        flush_buffer(chrom)
+
+
+def _write_h5_export_metadata(
+    h5_file,
+    regions_by_chrom,
+    chrom_metadata,
+    chrom_fiber_counts,
+    write_fiber_metadata_datasets,
+    verbose: bool,
+) -> None:
+    if verbose:
+        print("Finalizing metadata...")
+
+    for chrom in regions_by_chrom:
+        _write_h5_chrom_metadata(
+            h5_file,
+            chrom,
+            chrom_metadata,
+            chrom_fiber_counts,
+            write_fiber_metadata_datasets,
+        )
+
+
+def _print_h5_export_summary(output_h5: str, total_fibers: int,
+                             verbose: bool) -> None:
+    if not verbose:
+        return
+
+    file_size = os.path.getsize(output_h5) / (1024 * 1024)
+    print(f"Wrote {output_h5} ({file_size:.1f} MB, {total_fibers:,} fibers)")
+
+
 def export_posteriors_hdf5(
     input_bam: str,
     model_path: str,
@@ -693,53 +785,44 @@ def export_posteriors_hdf5(
     )
 
     with h5py.File(output_h5, 'w') as f:
-        write_hdf5_file_metadata(
+        _initialize_h5_export_file(
             f,
-            mode=mode,
-            context_size=context_size,
-            edge_trim=edge_trim,
-            source_bam=input_bam,
-            model_path=model_path,
+            mode,
+            context_size,
+            edge_trim,
+            input_bam,
+            model_path,
+            regions_by_chrom,
+            write_hdf5_file_metadata,
+            create_posterior_chrom_group,
         )
 
-        # Pre-create chromosome groups
-        for chrom in regions_by_chrom:
-            create_posterior_chrom_group(f, chrom)
+        _process_h5_export_region_batches(
+            f,
+            regions,
+            input_bam,
+            model_path,
+            params,
+            n_cores,
+            verbose,
+            regions_by_chrom,
+            write_buffers,
+            chrom_fiber_counts,
+            chrom_metadata,
+            write_batch_size,
+        )
 
-        def flush_buffer(chrom):
-            _flush_h5_chrom_buffer(
-                f, chrom, write_buffers, chrom_fiber_counts, chrom_metadata
-            )
-
-        def on_results(chrom, results):
-            _buffer_h5_region_results(
-                chrom, results, write_buffers, write_batch_size, flush_buffer,
-            )
-
-        _process_regions(regions, input_bam, model_path, params, n_cores, verbose, on_results)
-
-        # Flush remaining buffers
-        for chrom in regions_by_chrom:
-            flush_buffer(chrom)
-
-        # Finalize metadata (fast - just concatenating pre-built arrays)
-        if verbose:
-            print("Finalizing metadata...")
-
-        for chrom in regions_by_chrom:
-            _write_h5_chrom_metadata(
-                f,
-                chrom,
-                chrom_metadata,
-                chrom_fiber_counts,
-                write_fiber_metadata_datasets,
-            )
+        _write_h5_export_metadata(
+            f,
+            regions_by_chrom,
+            chrom_metadata,
+            chrom_fiber_counts,
+            write_fiber_metadata_datasets,
+            verbose,
+        )
 
     total_fibers = sum(chrom_fiber_counts.values())
-
-    if verbose:
-        file_size = os.path.getsize(output_h5) / (1024 * 1024)
-        print(f"Wrote {output_h5} ({file_size:.1f} MB, {total_fibers:,} fibers)")
+    _print_h5_export_summary(output_h5, total_fibers, verbose)
 
     return total_fibers
 

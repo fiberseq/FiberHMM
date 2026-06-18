@@ -365,6 +365,158 @@ def test_new_h5_export_chrom_state_initializes_parallel_trackers():
     assert buffers == {"chr2": [], "chr1": []}
 
 
+def test_initialize_h5_export_file_writes_metadata_and_groups():
+    h5_file = object()
+    calls = []
+
+    def fake_write_metadata(got_file, **kwargs):
+        calls.append(("metadata", got_file, kwargs))
+
+    def fake_create_group(got_file, chrom):
+        calls.append(("group", got_file, chrom))
+
+    export_posteriors._initialize_h5_export_file(
+        h5_file,
+        "daf",
+        4,
+        100,
+        "reads.bam",
+        "model.json",
+        {"chr2": [(0, 10)], "chr1": [(5, 15)]},
+        fake_write_metadata,
+        fake_create_group,
+    )
+
+    assert calls == [
+        (
+            "metadata",
+            h5_file,
+            {
+                "mode": "daf",
+                "context_size": 4,
+                "edge_trim": 100,
+                "source_bam": "reads.bam",
+                "model_path": "model.json",
+            },
+        ),
+        ("group", h5_file, "chr2"),
+        ("group", h5_file, "chr1"),
+    ]
+
+
+def test_process_h5_export_region_batches_buffers_and_flushes(monkeypatch):
+    calls = []
+
+    def fake_process_regions(*args):
+        calls.append(("process", args[:-1]))
+        on_results = args[-1]
+        on_results("chr1", [{"read_name": "a"}])
+        on_results("chr2", [{"read_name": "b"}])
+
+    def fake_buffer(chrom, results, buffers, batch_size, flush_buffer):
+        calls.append(("buffer", chrom, list(results), batch_size))
+        buffers[chrom].extend(results)
+        if chrom == "chr1":
+            flush_buffer(chrom)
+
+    def fake_flush(h5_file, chrom, buffers, counts, metadata):
+        calls.append(("flush", chrom, list(buffers[chrom])))
+        buffers[chrom] = []
+
+    monkeypatch.setattr(export_posteriors, "_process_regions", fake_process_regions)
+    monkeypatch.setattr(
+        export_posteriors,
+        "_buffer_h5_region_results",
+        fake_buffer,
+    )
+    monkeypatch.setattr(export_posteriors, "_flush_h5_chrom_buffer", fake_flush)
+
+    buffers = {"chr1": [], "chr2": []}
+    export_posteriors._process_h5_export_region_batches(
+        "h5",
+        [("chr1", 0, 10), ("chr2", 0, 10)],
+        "reads.bam",
+        "model.json",
+        {"mode": "daf"},
+        4,
+        True,
+        {"chr1": [(0, 10)], "chr2": [(0, 10)]},
+        buffers,
+        {"chr1": 0, "chr2": 0},
+        {"chr1": {}, "chr2": {}},
+        1000,
+    )
+
+    assert calls[0] == (
+        "process",
+        (
+            [("chr1", 0, 10), ("chr2", 0, 10)],
+            "reads.bam",
+            "model.json",
+            {"mode": "daf"},
+            4,
+            True,
+        ),
+    )
+    assert calls[1:5] == [
+        ("buffer", "chr1", [{"read_name": "a"}], 1000),
+        ("flush", "chr1", [{"read_name": "a"}]),
+        ("buffer", "chr2", [{"read_name": "b"}], 1000),
+        ("flush", "chr1", []),
+    ]
+    assert calls[5] == ("flush", "chr2", [{"read_name": "b"}])
+
+
+def test_write_h5_export_metadata_delegates_each_chrom(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(
+        export_posteriors,
+        "_write_h5_chrom_metadata",
+        lambda *args: calls.append(args),
+    )
+
+    export_posteriors._write_h5_export_metadata(
+        "h5",
+        {"chr1": [(0, 10)], "chr2": [(0, 10)]},
+        {"chr1": "meta1", "chr2": "meta2"},
+        {"chr1": 1, "chr2": 2},
+        "writer",
+        verbose=True,
+    )
+
+    assert calls == [
+        (
+            "h5",
+            "chr1",
+            {"chr1": "meta1", "chr2": "meta2"},
+            {"chr1": 1, "chr2": 2},
+            "writer",
+        ),
+        (
+            "h5",
+            "chr2",
+            {"chr1": "meta1", "chr2": "meta2"},
+            {"chr1": 1, "chr2": 2},
+            "writer",
+        ),
+    ]
+    assert "Finalizing metadata" in capsys.readouterr().out
+
+
+def test_print_h5_export_summary_respects_verbose(tmp_path, capsys):
+    output_h5 = tmp_path / "posteriors.h5"
+    output_h5.write_bytes(b"0" * 1024 * 1024)
+
+    export_posteriors._print_h5_export_summary(str(output_h5), 1234, False)
+    assert capsys.readouterr().out == ""
+
+    export_posteriors._print_h5_export_summary(str(output_h5), 1234, True)
+    out = capsys.readouterr().out
+    assert str(output_h5) in out
+    assert "1.0 MB" in out
+    assert "1,234 fibers" in out
+
+
 def test_h5_region_buffer_flushes_at_batch_size():
     buffers = {"chr1": [{"read_name": "existing"}]}
     flushed = []
