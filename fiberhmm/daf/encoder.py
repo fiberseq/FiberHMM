@@ -668,7 +668,7 @@ def _open_daf_encode_handles(input_bam, output_bam, reference, io_threads: int, 
         outbam = _open_daf_output_bam(output_bam, inbam, io_threads)
         pbar = _new_daf_encode_progress(output_bam, log)
         return ref_fasta, inbam, outbam, pbar
-    except Exception:
+    except BaseException:
         _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta)
         raise
 
