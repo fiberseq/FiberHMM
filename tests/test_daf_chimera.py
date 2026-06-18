@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 from fiberhmm.daf.encoder import (
+    _daf_chimera_breakpoint_matches,
+    _daf_chimera_breakpoint_matches_from_request,
     _daf_chimera_segment_counts,
     _daf_chimera_segment_counts_from_request,
+    _DafChimeraBreakpointRequest,
     _DafChimeraSegmentCounts,
     _DafChimeraSegmentCountsRequest,
     _has_min_daf_chimera_events,
@@ -39,6 +42,29 @@ def test_chimera_segment_counts_split_left_and_right_strands():
 
     assert _daf_chimera_segment_counts_from_request(request) == expected
     assert _daf_chimera_segment_counts(4, 6, 7, 5) == expected
+
+
+def test_chimera_breakpoint_request_matches_adapter_and_orientation():
+    ct_then_ga = _DafChimeraBreakpointRequest(
+        ct_left=5,
+        left_total=5,
+        nct=5,
+        nga=5,
+        min_seg_events=5,
+        purity=0.8,
+    )
+    ga_then_ct = _DafChimeraBreakpointRequest(
+        ct_left=0,
+        left_total=5,
+        nct=5,
+        nga=5,
+        min_seg_events=5,
+        purity=0.8,
+    )
+
+    assert _daf_chimera_breakpoint_matches_from_request(ct_then_ga)
+    assert _daf_chimera_breakpoint_matches(5, 5, 5, 5, 5, 0.8)
+    assert _daf_chimera_breakpoint_matches_from_request(ga_then_ct)
 
 
 def test_clean_ct_read_not_chimera():

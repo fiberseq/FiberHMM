@@ -49,6 +49,16 @@ class _DafChimeraSegmentCountsRequest:
 
 
 @dataclass(frozen=True)
+class _DafChimeraBreakpointRequest:
+    ct_left: int
+    left_total: int
+    nct: int
+    nga: int
+    min_seg_events: int
+    purity: float
+
+
+@dataclass(frozen=True)
 class _DafMismatchPositions:
     ct: list[int]
     ga: list[int]
@@ -370,37 +380,62 @@ def _daf_chimera_segment_counts(ct_left, left_n, nct, nga):
     )
 
 
-def _daf_chimera_breakpoint_matches(ct_left, left_n, nct, nga,
-                                    min_seg_events: int,
-                                    purity: float) -> bool:
-    segment_counts = _daf_chimera_segment_counts(
-        ct_left, left_n, nct, nga,
+def _daf_chimera_breakpoint_matches_from_request(
+    request: _DafChimeraBreakpointRequest,
+) -> bool:
+    segment_counts = _daf_chimera_segment_counts_from_request(
+        _DafChimeraSegmentCountsRequest(
+            ct_left=request.ct_left,
+            left_total=request.left_total,
+            nct=request.nct,
+            nga=request.nga,
+        )
     )
 
     ct_then_ga = (
-        _is_pure_daf_segment(ct_left, left_n, min_seg_events, purity)
+        _is_pure_daf_segment(
+            request.ct_left,
+            request.left_total,
+            request.min_seg_events,
+            request.purity,
+        )
         and _is_pure_daf_segment(
             segment_counts.ga_right,
             segment_counts.right_total,
-            min_seg_events,
-            purity,
+            request.min_seg_events,
+            request.purity,
         )
     )
     ga_then_ct = (
         _is_pure_daf_segment(
             segment_counts.ga_left,
-            left_n,
-            min_seg_events,
-            purity,
+            request.left_total,
+            request.min_seg_events,
+            request.purity,
         )
         and _is_pure_daf_segment(
             segment_counts.ct_right,
             segment_counts.right_total,
-            min_seg_events,
-            purity,
+            request.min_seg_events,
+            request.purity,
         )
     )
     return ct_then_ga or ga_then_ct
+
+
+def _daf_chimera_breakpoint_matches(ct_left, left_n, nct, nga,
+                                    min_seg_events: int,
+                                    purity: float) -> bool:
+    return _daf_chimera_breakpoint_matches_from_request(
+        _DafChimeraBreakpointRequest(
+            ct_left=ct_left,
+            left_total=left_n,
+            nct=nct,
+            nga=nga,
+            min_seg_events=min_seg_events,
+            purity=purity,
+        )
+    )
 
 
 def is_daf_chimera(ct_positions, ga_positions,
@@ -438,13 +473,15 @@ def is_daf_chimera(ct_positions, ga_positions,
         right_n = n - k
         if left_n < min_seg_events or right_n < min_seg_events:
             continue
-        if _daf_chimera_breakpoint_matches(
-            ct_left,
-            left_n,
-            nct,
-            nga,
-            min_seg_events,
-            purity,
+        if _daf_chimera_breakpoint_matches_from_request(
+            _DafChimeraBreakpointRequest(
+                ct_left=ct_left,
+                left_total=left_n,
+                nct=nct,
+                nga=nga,
+                min_seg_events=min_seg_events,
+                purity=purity,
+            )
         ):
             return True
     return False
