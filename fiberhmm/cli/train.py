@@ -136,6 +136,14 @@ class _TrainingExamplePlotData:
 
 
 @dataclass(frozen=True)
+class _TrainingExampleTitleRequest:
+    index: int
+    read: object
+    seq_len: int
+    m6a_positions: list
+
+
+@dataclass(frozen=True)
 class _TrainingExamplePdfLayout:
     fig: object
     gridspec: object
@@ -977,13 +985,27 @@ def _training_example_plot_data(model, read, encoded) -> _TrainingExamplePlotDat
     return _TrainingExamplePlotData(seq_len, m6a_positions, footprint_prob)
 
 
+def _training_example_title_from_request(
+    request: _TrainingExampleTitleRequest,
+) -> str:
+    return (
+        f'Example Read {request.index + 1}: {request.read.read_id[:50]}...\n'
+        f'Length: {request.seq_len:,}bp | '
+        f'Chromosome: {request.read.chrom}:'
+        f'{request.read.ref_start:,}-{request.read.ref_end:,} | '
+        f'm6A calls: {len(request.m6a_positions):,}'
+    )
+
+
 def _training_example_title(idx: int, read, seq_len: int,
                             m6a_positions: list) -> str:
-    return (
-        f'Example Read {idx + 1}: {read.read_id[:50]}...\n'
-        f'Length: {seq_len:,}bp | '
-        f'Chromosome: {read.chrom}:{read.ref_start:,}-{read.ref_end:,} | '
-        f'm6A calls: {len(m6a_positions):,}'
+    return _training_example_title_from_request(
+        _TrainingExampleTitleRequest(
+            index=idx,
+            read=read,
+            seq_len=seq_len,
+            m6a_positions=m6a_positions,
+        )
     )
 
 
@@ -1328,7 +1350,14 @@ def _training_example_pdf_layout(
         bottom=0.04,
     )
     fig.suptitle(
-        _training_example_title(idx, read, seq_len, m6a_positions),
+        _training_example_title_from_request(
+            _TrainingExampleTitleRequest(
+                index=idx,
+                read=read,
+                seq_len=seq_len,
+                m6a_positions=m6a_positions,
+            )
+        ),
         fontsize=11,
         y=0.98,
     )

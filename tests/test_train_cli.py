@@ -313,8 +313,17 @@ def test_training_example_title_formats_read_context():
         ref_start=1234,
         ref_end=5678,
     )
+    request = train._TrainingExampleTitleRequest(
+        index=2,
+        read=read,
+        seq_len=12345,
+        m6a_positions=[1, 2, 3],
+    )
+    requested = train._training_example_title_from_request(request)
+    adapted = train._training_example_title(2, read, 12345, [1, 2, 3])
 
-    assert train._training_example_title(2, read, 12345, [1, 2, 3]) == (
+    assert requested == adapted
+    assert adapted == (
         "Example Read 3: read-abcdefghijklmnopqrstuvwxyz0123456789...\n"
         "Length: 12,345bp | Chromosome: chr2L:1,234-5,678 | m6A calls: 3"
     )
