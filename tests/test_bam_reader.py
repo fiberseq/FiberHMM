@@ -557,14 +557,18 @@ class TestMMTagParsing:
 
         assert base_mod == "A+a."
         np.testing.assert_array_equal(skips, [0, 5, 3])
+        padded_base_mod, padded_skips = _mm_mod_spec_parts(" A+a. , 0, 5, ")
+        assert padded_base_mod == "A+a."
+        np.testing.assert_array_equal(padded_skips, [0, 5])
         assert _mm_target_base(base_mod) == "A"
         assert _mm_target_base("") is None
         assert _mm_base_and_mod_code(base_mod) == ("A", "a")
         assert _mm_base_and_mod_code("A") is None
         assert _mm_mod_spec_parts("A+a.") is None
+        assert _mm_mod_spec_parts(" ,0") is None
 
     def test_iter_mm_mod_specs_skips_empty_and_malformed_specs(self):
-        specs = list(_iter_mm_mod_specs("A+a,0,5;;bad;C+m?,2;"))
+        specs = list(_iter_mm_mod_specs(" A+a,0,5 ; ;bad; C+m?,2 ;"))
 
         assert [base_mod for base_mod, _, _ in specs] == ["A+a", "C+m?"]
         assert [n_mods for _, _, n_mods in specs] == [2, 1]

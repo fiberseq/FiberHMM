@@ -302,14 +302,15 @@ def _mm_skip_counts(raw_counts) -> np.ndarray:
 
 
 def _mm_mod_spec_parts(mod_spec: str):
-    parts = mod_spec.split(',')
-    if len(parts) < 2:
+    parts = [part.strip() for part in mod_spec.split(',')]
+    if len(parts) < 2 or not parts[0]:
         return None
     return parts[0], _mm_skip_counts(parts[1:])
 
 
 def _iter_mm_mod_specs(mm_tag: str) -> Iterator[Tuple[str, np.ndarray, int]]:
     for mod_spec in mm_tag.split(';'):
+        mod_spec = mod_spec.strip()
         if not mod_spec:
             continue
         parts = _mm_mod_spec_parts(mod_spec)
