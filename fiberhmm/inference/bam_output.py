@@ -159,17 +159,12 @@ def _index_sorted_bam(
         print(f"  ✓ Index created in {idx_time:.1f}s ({speed:.2f} GB/s)")
 
 
-def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4):
-    """
-    Index a BAM file, sorting first only if needed.
-
-    For region-parallel processing, the output should already be sorted
-    since regions are processed and concatenated in order. Try indexing
-    first to save time; only sort if indexing fails.
-    """
-    bam_size_gb = _file_size_gb(output_bam)
-
-    # Try indexing directly first (using samtools with threads for speed)
+def _index_bam_if_already_sorted(
+    output_bam: str,
+    threads: int,
+    verbose: bool,
+    bam_size_gb: float,
+) -> bool:
     try:
         if verbose:
             print(f"  Indexing BAM ({bam_size_gb:.1f}GB) - trying direct index (no sort)...")
@@ -181,31 +176,43 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
             if verbose:
                 idx_time = time.time() - idx_start
                 speed = _throughput_gbs(bam_size_gb, idx_time)
-                print(f"  ✓ Index created in {idx_time:.1f}s ({speed:.2f} GB/s) - BAM was already sorted!")
-            return
+                print(
+                    f"  ✓ Index created in {idx_time:.1f}s "
+                    f"({speed:.2f} GB/s) - BAM was already sorted!"
+                )
+            return True
 
-        # samtools failed - check if it's a sort issue
         if _samtools_index_error_requires_sort(result.stderr):
             if verbose:
                 print("  ✗ Direct index failed - BAM is NOT sorted")
                 print(f"    Error: {result.stderr.strip()}")
-            # Fall through to sorting
-        else:
-            # Some other error, try pysam
-            if verbose:
-                print(f"  samtools index error: {result.stderr.strip()}, trying pysam...")
-            if _try_pysam_index(output_bam, verbose, idx_start):
-                return
+            return False
+
+        if verbose:
+            print(f"  samtools index error: {result.stderr.strip()}, trying pysam...")
+        return _try_pysam_index(output_bam, verbose, idx_start)
 
     except FileNotFoundError:
-        # samtools not found, try pysam
         if verbose:
             print("  samtools not found, using pysam...")
         idx_start = time.time()
-        if _try_pysam_index(output_bam, verbose, idx_start):
-            return
+        return _try_pysam_index(output_bam, verbose, idx_start)
     except pysam.utils.SamtoolsError:
-        pass
+        return False
+
+
+def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4):
+    """
+    Index a BAM file, sorting first only if needed.
+
+    For region-parallel processing, the output should already be sorted
+    since regions are processed and concatenated in order. Try indexing
+    first to save time; only sort if indexing fails.
+    """
+    bam_size_gb = _file_size_gb(output_bam)
+
+    if _index_bam_if_already_sorted(output_bam, threads, verbose, bam_size_gb):
+        return
 
     # Indexing failed - BAM is not sorted, need to sort first
     if verbose:

@@ -138,6 +138,42 @@ def test_index_sorted_bam_falls_back_to_pysam_when_samtools_missing(monkeypatch,
     assert "Index created in 0.0s" in out
 
 
+def test_index_bam_if_already_sorted_uses_pysam_for_non_sort_errors(
+    monkeypatch,
+    capsys,
+):
+    pysam_attempts = []
+
+    def fail_samtools_index(output_bam, threads):
+        return subprocess.CompletedProcess(
+            ["samtools", "index", output_bam],
+            1,
+            stdout="",
+            stderr="permission denied",
+        )
+
+    def fake_try_pysam_index(output_bam, verbose, idx_start):
+        pysam_attempts.append((output_bam, verbose, idx_start))
+        return True
+
+    monkeypatch.setattr(bam_output, "_run_samtools_index", fail_samtools_index)
+    monkeypatch.setattr(bam_output, "_try_pysam_index", fake_try_pysam_index)
+    monkeypatch.setattr(bam_output.time, "time", lambda: 5.0)
+
+    indexed = bam_output._index_bam_if_already_sorted(
+        "out.bam",
+        threads=2,
+        verbose=True,
+        bam_size_gb=1.0,
+    )
+
+    assert indexed
+    assert pysam_attempts == [("out.bam", True, 5.0)]
+    out = capsys.readouterr().out
+    assert "trying direct index" in out
+    assert "permission denied, trying pysam" in out
+
+
 def test_sorted_bed_temp_path_appends_sorted_suffix():
     assert bam_output._sorted_bed_temp_path("calls.bed") == "calls.bed.sorted"
 
