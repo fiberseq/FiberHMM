@@ -6,6 +6,7 @@ import array
 import numpy as np
 import pytest
 
+import fiberhmm.io.ma_tags as ma_tags
 from fiberhmm.inference import tf_recaller
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
@@ -359,6 +360,26 @@ def test_format_and_parse_ma_tag():
     assert parsed['msp'] == msps
     assert parsed['tf'] == tfs
     assert parse_ma_tag('4521; nuc.Q:44-147 ; tf.QQQ:51-20; ')['tf'] == tfs
+
+
+def test_format_ma_tag_request_matches_adapter():
+    request = ma_tags._MaTagRequest(
+        read_length=4521,
+        nuc_intervals=[(43, 147)],
+        msp_intervals=[(1, 42)],
+        tf_intervals=[(50, 20)],
+        nuc_qual_spec='QQQ',
+        tf_qual_spec='Q',
+    )
+
+    assert ma_tags.format_ma_tag_from_request(request) == format_ma_tag(
+        read_length=4521,
+        nuc_intervals=[(43, 147)],
+        msp_intervals=[(1, 42)],
+        tf_intervals=[(50, 20)],
+        nuc_qual_spec='QQQ',
+        tf_qual_spec='Q',
+    )
 
 
 def test_format_ma_annotation_part_handles_empty_and_quality_specs():

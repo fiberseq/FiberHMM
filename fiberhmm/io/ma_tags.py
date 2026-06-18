@@ -79,6 +79,16 @@ class _AqAnnotationValues:
     next_idx: int
 
 
+@dataclass(frozen=True)
+class _MaTagRequest:
+    read_length: int
+    nuc_intervals: Sequence[Tuple[int, int]]
+    msp_intervals: Sequence[Tuple[int, int]]
+    tf_intervals: Sequence[Tuple[int, int]] = ()
+    nuc_qual_spec: str = 'Q'
+    tf_qual_spec: str = 'QQQ'
+
+
 def llr_to_tq(llr: float) -> int:
     """Encode an LLR (nats) into the tq quality byte."""
     return max(0, min(255, int(round(llr * TQ_SCALE))))
@@ -304,14 +314,31 @@ def format_ma_tag(read_length: int,
 
     Coordinates are converted from 0-based (internal) to 1-based (spec).
     """
+    return format_ma_tag_from_request(
+        _MaTagRequest(
+            read_length=read_length,
+            nuc_intervals=nuc_intervals,
+            msp_intervals=msp_intervals,
+            tf_intervals=tf_intervals,
+            nuc_qual_spec=nuc_qual_spec,
+            tf_qual_spec=tf_qual_spec,
+        ),
+    )
+
+
+def format_ma_tag_from_request(request: _MaTagRequest) -> str:
+    """Build the MA:Z string from named formatting inputs."""
     # Strand field is '.' (unknown): nuc/msp/tf are strand-agnostic molecular
     # features, matching fibertools. (Versions <= 2.13.1 wrote '+'; the parser
     # still accepts it.)
-    parts = [str(int(read_length))]
+    parts = [str(int(request.read_length))]
     parts.extend(
         _ma_annotation_parts(
-            nuc_intervals, msp_intervals, tf_intervals,
-            nuc_qual_spec, tf_qual_spec,
+            request.nuc_intervals,
+            request.msp_intervals,
+            request.tf_intervals,
+            request.nuc_qual_spec,
+            request.tf_qual_spec,
         )
     )
     return ';'.join(parts)
