@@ -30,6 +30,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _print_streaming_posterior_summary,
     _print_streaming_progress,
     _run_streaming_worker_loop,
+    _should_sort_streaming_output,
     _streaming_completion_message,
     _streaming_filter_config,
     _streaming_log_for_output,
@@ -171,6 +172,12 @@ def test_print_streaming_posterior_summary_handles_empty_and_values():
     assert log.getvalue() == (
         "Posteriors: 1,234 fibers -> out.h5 (5.7 MB)\n"
     )
+
+
+def test_should_sort_streaming_output_skips_stdout_and_unmapped_passthrough():
+    assert _should_sort_streaming_output("out.bam", process_unmapped=False) is True
+    assert _should_sort_streaming_output("-", process_unmapped=False) is False
+    assert _should_sort_streaming_output("out.bam", process_unmapped=True) is False
 
 
 def test_finalize_apply_streaming_pipeline_summarizes_sorts_and_reports_posteriors(

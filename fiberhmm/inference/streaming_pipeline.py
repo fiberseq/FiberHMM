@@ -709,6 +709,10 @@ def _print_streaming_posterior_summary(
     )
 
 
+def _should_sort_streaming_output(output_bam: str, process_unmapped: bool) -> bool:
+    return output_bam != '-' and not process_unmapped
+
+
 def _finalize_apply_streaming_pipeline(
     *,
     total_reads: int,
@@ -734,7 +738,7 @@ def _finalize_apply_streaming_pipeline(
         log,
     )
 
-    if output_bam != '-' and not process_unmapped:
+    if _should_sort_streaming_output(output_bam, process_unmapped):
         _sort_and_index_bam(output_bam, threads=n_cores)
 
     _print_streaming_posterior_summary(posterior_stats, output_posteriors, log)
