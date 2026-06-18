@@ -13,9 +13,17 @@ load_model_with_metadata are re-exported from this module.
 
 import json
 import warnings
+from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
+
+
+@dataclass(frozen=True)
+class _RandomTrainingParameters:
+    start_probs: np.ndarray
+    transition_probs: np.ndarray
+
 
 # Use tqdm for progress bars if available
 try:
@@ -1047,9 +1055,12 @@ def _try_create_hmmlearn(emission_probs: np.ndarray):
         return None
 
 
-def _random_training_parameters(seed: int) -> Tuple[np.ndarray, np.ndarray]:
+def _random_training_parameters(seed: int) -> _RandomTrainingParameters:
     np.random.seed(seed)
-    return np.random.dirichlet((1, 1)), np.random.dirichlet((1, 1), 2)
+    return _RandomTrainingParameters(
+        start_probs=np.random.dirichlet((1, 1)),
+        transition_probs=np.random.dirichlet((1, 1), 2),
+    )
 
 
 def _new_training_model(emission_probs: np.ndarray, use_legacy: bool):
@@ -1065,10 +1076,10 @@ def _initialized_training_model(
     use_legacy: bool,
     seed: int,
 ):
-    start_probs, transition_probs = _random_training_parameters(seed)
+    random_parameters = _random_training_parameters(seed)
     model = _new_training_model(emission_probs, use_legacy)
-    model.startprob_ = start_probs
-    model.transmat_ = transition_probs
+    model.startprob_ = random_parameters.start_probs
+    model.transmat_ = random_parameters.transition_probs
     return model
 
 

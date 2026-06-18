@@ -300,13 +300,19 @@ class TestModelTraining:
         np.testing.assert_array_equal(multinomial.emissionprob_, emission_probs)
 
     def test_random_training_parameters_are_seeded_and_normalized(self):
-        start_a, trans_a = _random_training_parameters(3)
-        start_b, trans_b = _random_training_parameters(3)
+        params_a = _random_training_parameters(3)
+        params_b = _random_training_parameters(3)
 
-        np.testing.assert_array_equal(start_a, start_b)
-        np.testing.assert_array_equal(trans_a, trans_b)
-        np.testing.assert_allclose(start_a.sum(), 1.0)
-        np.testing.assert_allclose(trans_a.sum(axis=1), [1.0, 1.0])
+        np.testing.assert_array_equal(params_a.start_probs, params_b.start_probs)
+        np.testing.assert_array_equal(
+            params_a.transition_probs,
+            params_b.transition_probs,
+        )
+        np.testing.assert_allclose(params_a.start_probs.sum(), 1.0)
+        np.testing.assert_allclose(
+            params_a.transition_probs.sum(axis=1),
+            [1.0, 1.0],
+        )
 
     def test_training_data_for_iteration_cycles_dict_inputs(self):
         arrays = {
@@ -324,12 +330,12 @@ class TestModelTraining:
         emission_probs = np.array([[0.8, 0.2], [0.2, 0.8]])
 
         model = _initialized_training_model(emission_probs, use_legacy=False, seed=4)
-        expected_start, expected_trans = _random_training_parameters(4)
+        expected = _random_training_parameters(4)
 
         assert isinstance(model, FiberHMM)
         np.testing.assert_array_equal(model.emissionprob_, emission_probs)
-        np.testing.assert_allclose(model.startprob_, expected_start)
-        np.testing.assert_allclose(model.transmat_, expected_trans)
+        np.testing.assert_allclose(model.startprob_, expected.start_probs)
+        np.testing.assert_allclose(model.transmat_, expected.transition_probs)
         np.testing.assert_array_equal(
             _training_observation_matrix(np.array([1, 2, 3])),
             np.array([[1], [2], [3]]),
