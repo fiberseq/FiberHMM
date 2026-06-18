@@ -729,6 +729,16 @@ def _generate_probability_stats_for_contexts(
         )
 
 
+def _print_probability_completion_message() -> None:
+    print("\n" + "=" * 60)
+    print("Done!")
+    print("=" * 60)
+    print("\nNext steps:")
+    print("  1. Review the modification rates - accessible should be HIGH,")
+    print("     inaccessible should be LOW (background miscall rate)")
+    print("  2. Use the *_probs.tsv files with train_model.py to build HMM")
+
+
 def main():
     args = parse_args()
 
@@ -825,13 +835,7 @@ def main():
             base_name,
         )
 
-    print("\n" + "=" * 60)
-    print("Done!")
-    print("=" * 60)
-    print("\nNext steps:")
-    print("  1. Review the modification rates - accessible should be HIGH,")
-    print("     inaccessible should be LOW (background miscall rate)")
-    print("  2. Use the *_probs.tsv files with train_model.py to build HMM")
+    _print_probability_completion_message()
 
 
 if __name__ == '__main__':

@@ -20,6 +20,7 @@ from fiberhmm.cli.generate_probs import (
     _new_probability_counters,
     _probability_counter_path,
     _probability_table_path,
+    _print_probability_completion_message,
     _print_probability_generation_header,
     _print_daf_diagnostics,
     _print_probability_base_summary,
@@ -268,6 +269,16 @@ def test_print_probability_results_summary_formats_pass_rates(capsys):
     assert "Reads processed: 50 (scanned 100, 50.0% pass rate)" in output
     assert "Inaccessible (native):" in output
     assert "Reads processed: 5 (scanned 0, 500.0% pass rate)" in output
+
+
+def test_print_probability_completion_message_formats_next_steps(capsys):
+    _print_probability_completion_message()
+
+    output = capsys.readouterr().out
+    assert "Done!" in output
+    assert "Next steps:" in output
+    assert "accessible should be HIGH" in output
+    assert "Use the *_probs.tsv files with train_model.py" in output
 
 
 def test_print_probability_base_summary_formats_counter_totals(capsys):
