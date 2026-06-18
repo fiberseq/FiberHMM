@@ -42,6 +42,10 @@ _SEQ_REQUIRED = {'hia5'}
 _SEQ_DEFAULT  = 'pacbio'   # default when --seq omitted for hia5
 
 
+def _normalize_model_token(value: str) -> str:
+    return value.strip().lower()
+
+
 def _seq_key_for_enzyme(enz: str, seq: str | None) -> str | None:
     if enz in _SEQ_REQUIRED:
         if seq is None:
@@ -51,7 +55,7 @@ def _seq_key_for_enzyme(enz: str, seq: str | None) -> str | None:
                 stacklevel=3,
             )
             return _SEQ_DEFAULT
-        return seq.lower()
+        return _normalize_model_token(seq)
     return None
 
 
@@ -80,7 +84,7 @@ def _missing_bundled_model_message(path: str) -> str:
 
 
 def _bundled_model_key(enzyme: str, seq: str | None) -> tuple[str, str | None]:
-    enz = enzyme.lower()
+    enz = _normalize_model_token(enzyme)
     return enz, _seq_key_for_enzyme(enz, seq)
 
 
@@ -109,7 +113,7 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
     FileNotFoundError
         If the bundled file is missing from the installation.
     """
-    t = tool.lower()
+    t = _normalize_model_token(tool)
 
     key = _bundled_model_key(enzyme, seq)
     entry = _BUNDLED.get(key)

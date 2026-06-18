@@ -9,6 +9,10 @@ def test_bundled_model_key_normalizes_enzyme_and_seq():
     with pytest.warns(UserWarning, match="defaulting to 'pacbio'"):
         assert models._bundled_model_key("HIA5", None) == ("hia5", "pacbio")
 
+    assert models._bundled_model_key(" HIA5 ", " NanoPore ") == (
+        "hia5",
+        "nanopore",
+    )
     assert models._bundled_model_key("DddB", "nanopore") == ("dddb", None)
 
 
@@ -49,7 +53,7 @@ def test_get_model_path_defaults_hia5_seq_with_warning():
 
 
 def test_get_model_path_uses_hia5_seq_and_ignores_seq_for_dddb():
-    assert models.get_model_path("hia5", tool="recall", seq="nanopore").endswith(
+    assert models.get_model_path(" hia5 ", tool=" recall ", seq=" nanopore ").endswith(
         "hia5_nanopore.json"
     )
     assert models.get_model_path("dddb", tool="apply", seq="pacbio").endswith(
