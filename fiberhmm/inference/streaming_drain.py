@@ -61,6 +61,16 @@ class _DrainOldestWithRecorderRequest:
     record_result: object
 
 
+@dataclass(frozen=True)
+class _ApplyResultRecordRequest:
+    read_obj: object
+    result: object
+    with_scores: bool
+    write_msps: bool
+    posterior_writer: object
+    counters: object
+
+
 def _increment_counter(counters, key: str, amount: int = 1) -> None:
     counters[key] = counters.get(key, 0) + amount
 
@@ -223,6 +233,26 @@ def _drain_oldest_with_recorder(inflight, outbam, counters, record_result) -> No
     )
 
 
+def _record_apply_result_from_request(
+    request: _ApplyResultRecordRequest,
+) -> None:
+    if request.result is not None:
+        set_legacy_apply_tags(
+            request.read_obj,
+            request.result,
+            request.with_scores,
+            request.write_msps,
+        )
+        _record_reads_with_footprints(request.counters)
+        _add_posterior_fiber_if_available(
+            request.posterior_writer,
+            request.read_obj,
+            request.result,
+        )
+    else:
+        _record_no_footprints(request.counters)
+
+
 def _record_apply_result(
     read_obj,
     result,
@@ -231,16 +261,16 @@ def _record_apply_result(
     posterior_writer,
     counters,
 ) -> None:
-    if result is not None:
-        set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
-        _record_reads_with_footprints(counters)
-        _add_posterior_fiber_if_available(
-            posterior_writer,
-            read_obj,
-            result,
+    _record_apply_result_from_request(
+        _ApplyResultRecordRequest(
+            read_obj=read_obj,
+            result=result,
+            with_scores=with_scores,
+            write_msps=write_msps,
+            posterior_writer=posterior_writer,
+            counters=counters,
         )
-    else:
-        _record_no_footprints(counters)
+    )
 
 
 def _record_fused_result(

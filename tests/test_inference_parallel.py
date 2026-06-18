@@ -2375,9 +2375,15 @@ def test_record_apply_result_tags_posteriors_or_counts_no_footprints(monkeypatch
         fake_add_posterior,
     )
 
-    streaming_drain._record_apply_result(
-        read, result, with_scores=True, write_msps=False,
-        posterior_writer="writer", counters=counters,
+    streaming_drain._record_apply_result_from_request(
+        streaming_drain._ApplyResultRecordRequest(
+            read_obj=read,
+            result=result,
+            with_scores=True,
+            write_msps=False,
+            posterior_writer="writer",
+            counters=counters,
+        )
     )
     streaming_drain._record_apply_result(
         read, None, with_scores=True, write_msps=False,
