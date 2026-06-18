@@ -661,6 +661,54 @@ def _write_combined_probability_tables(
             print(f"  {combined_file} ({len(combined)} contexts)")
 
 
+def _probability_counters_have_data(
+    accessible_counter: ContextCounter,
+    inaccessible_counter: ContextCounter,
+) -> bool:
+    return (
+        accessible_counter.total_positions > 0
+        or inaccessible_counter.total_positions > 0
+    )
+
+
+def _save_probability_outputs_for_base(
+    output_dir: str,
+    tables_dir: str,
+    base_name: str,
+    base: str,
+    context_sizes: List[int],
+    accessible_counter: ContextCounter,
+    inaccessible_counter: ContextCounter,
+) -> bool:
+    _print_probability_base_summary(
+        base, accessible_counter, inaccessible_counter,
+    )
+
+    accessible_counter.save(
+        _probability_counter_path(output_dir, base_name, "accessible", base)
+    )
+    inaccessible_counter.save(
+        _probability_counter_path(output_dir, base_name, "inaccessible", base)
+    )
+
+    if not _probability_counters_have_data(
+        accessible_counter, inaccessible_counter,
+    ):
+        print(f"\n  WARNING: No data for {base}-centered contexts, skipping TSV generation")
+        print(f"           This may indicate the MM tags don't contain {base} modifications")
+        return False
+
+    _write_probability_tables_for_base(
+        tables_dir,
+        base_name,
+        base,
+        context_sizes,
+        accessible_counter,
+        inaccessible_counter,
+    )
+    return True
+
+
 def main():
     args = parse_args()
 
@@ -725,27 +773,14 @@ def main():
     )
 
     for base in target_bases:
-        acc = accessible_counters[base]
-        inacc = inaccessible_counters[base]
-        _print_probability_base_summary(base, acc, inacc)
-
-        # Save full counters (PKL files in output root)
-        acc.save(_probability_counter_path(output_dir, base_name, "accessible", base))
-        inacc.save(_probability_counter_path(output_dir, base_name, "inaccessible", base))
-
-        # Skip if no data for this base
-        if acc.total_positions == 0 and inacc.total_positions == 0:
-            print(f"\n  WARNING: No data for {base}-centered contexts, skipping TSV generation")
-            print(f"           This may indicate the MM tags don't contain {base} modifications")
-            continue
-
-        _write_probability_tables_for_base(
+        _save_probability_outputs_for_base(
+            output_dir,
             tables_dir,
             base_name,
             base,
             args.context_sizes,
-            acc,
-            inacc,
+            accessible_counters[base],
+            inaccessible_counters[base],
         )
 
     _write_combined_probability_tables(

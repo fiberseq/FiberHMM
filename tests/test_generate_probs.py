@@ -24,6 +24,7 @@ from fiberhmm.cli.generate_probs import (
     _print_probability_base_summary,
     _probability_read_tags_or_skip,
     _probability_counter_summary,
+    _probability_counters_have_data,
     _print_probability_results_summary,
     _progress_postfix,
     _process_probability_sample_group,
@@ -35,6 +36,7 @@ from fiberhmm.cli.generate_probs import (
     _record_mm_tag_types,
     _remove_temporary_probability_counters,
     _safe_percent,
+    _save_probability_outputs_for_base,
     _save_temporary_probability_counters,
     _target_bases_for_mode,
     _write_combined_probability_tables,
@@ -289,6 +291,71 @@ def test_print_probability_base_summary_formats_counter_totals(capsys):
     assert "Inaccessible:" in output
     assert "Positions: 10" in output
     assert "Rate: 0.1000" in output
+
+
+def test_probability_counters_have_data_checks_either_sample():
+    accessible = _Counter()
+    inaccessible = _Counter()
+    assert not _probability_counters_have_data(accessible, inaccessible)
+
+    accessible.total_positions = 1
+    assert _probability_counters_have_data(accessible, inaccessible)
+
+    accessible.total_positions = 0
+    inaccessible.total_positions = 1
+    assert _probability_counters_have_data(accessible, inaccessible)
+
+
+def test_save_probability_outputs_for_base_saves_and_writes_tables(monkeypatch):
+    accessible = _Counter()
+    inaccessible = _Counter()
+    accessible.total_positions = 10
+    summaries = []
+    table_writes = []
+
+    monkeypatch.setattr(
+        "fiberhmm.cli.generate_probs._print_probability_base_summary",
+        lambda *args: summaries.append(args),
+    )
+    monkeypatch.setattr(
+        "fiberhmm.cli.generate_probs._write_probability_tables_for_base",
+        lambda *args: table_writes.append(args),
+    )
+
+    wrote_tables = _save_probability_outputs_for_base(
+        "out", "out/tables", "run", "A", [3, 4], accessible, inaccessible,
+    )
+
+    assert wrote_tables
+    assert summaries == [("A", accessible, inaccessible)]
+    assert table_writes == [
+        ("out/tables", "run", "A", [3, 4], accessible, inaccessible)
+    ]
+    assert accessible.saved_paths == ["out/run_accessible_A.probs.pkl"]
+    assert inaccessible.saved_paths == ["out/run_inaccessible_A.probs.pkl"]
+
+
+def test_save_probability_outputs_for_base_warns_without_data(monkeypatch, capsys):
+    accessible = _Counter()
+    inaccessible = _Counter()
+    table_writes = []
+
+    monkeypatch.setattr(
+        "fiberhmm.cli.generate_probs._write_probability_tables_for_base",
+        lambda *args: table_writes.append(args),
+    )
+
+    wrote_tables = _save_probability_outputs_for_base(
+        "out", "out/tables", "run", "C", [3], accessible, inaccessible,
+    )
+
+    assert not wrote_tables
+    assert table_writes == []
+    assert accessible.saved_paths == ["out/run_accessible_C.probs.pkl"]
+    assert inaccessible.saved_paths == ["out/run_inaccessible_C.probs.pkl"]
+    output = capsys.readouterr().out
+    assert "WARNING: No data for C-centered contexts" in output
+    assert "MM tags don't contain C modifications" in output
 
 
 def test_record_mm_tag_types_counts_non_empty_specs():
