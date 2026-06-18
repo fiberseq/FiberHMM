@@ -30,6 +30,13 @@ class _Bed12Blocks:
 
 
 @dataclass(frozen=True)
+class _Bed12BlockSortRequest:
+    block_starts: object
+    block_sizes: object
+    valid_scores: object
+
+
+@dataclass(frozen=True)
 class _Bed12Components:
     chrom_start: int
     chrom_end: int
@@ -1034,20 +1041,35 @@ def _format_bed_score_column(scores: Sequence[int]) -> str:
     return ','.join(str(score) for score in scaled_scores)
 
 
-def _sort_bed12_blocks(block_starts, block_sizes, valid_scores):
-    if valid_scores:
-        sorted_indices = sorted(range(len(block_starts)), key=lambda i: block_starts[i])
+def _sort_bed12_blocks_from_request(
+    request: _Bed12BlockSortRequest,
+) -> _Bed12Blocks:
+    if request.valid_scores:
+        sorted_indices = sorted(
+            range(len(request.block_starts)),
+            key=lambda i: request.block_starts[i],
+        )
         return _Bed12Blocks(
-            starts=[block_starts[i] for i in sorted_indices],
-            sizes=[block_sizes[i] for i in sorted_indices],
-            scores=[valid_scores[i] for i in sorted_indices],
+            starts=[request.block_starts[i] for i in sorted_indices],
+            sizes=[request.block_sizes[i] for i in sorted_indices],
+            scores=[request.valid_scores[i] for i in sorted_indices],
         )
 
-    sorted_pairs = sorted(zip(block_starts, block_sizes))
+    sorted_pairs = sorted(zip(request.block_starts, request.block_sizes))
     return _Bed12Blocks(
         starts=[p[0] for p in sorted_pairs],
         sizes=[p[1] for p in sorted_pairs],
         scores=[],
+    )
+
+
+def _sort_bed12_blocks(block_starts, block_sizes, valid_scores):
+    return _sort_bed12_blocks_from_request(
+        _Bed12BlockSortRequest(
+            block_starts=block_starts,
+            block_sizes=block_sizes,
+            valid_scores=valid_scores,
+        )
     )
 
 

@@ -853,6 +853,28 @@ def test_format_footprint_bed12_row_omits_scores_when_disabled():
     assert row.split("\t")[4] == "1"
 
 
+def test_sort_bed12_blocks_request_keeps_scores_aligned():
+    request = bam_output._Bed12BlockSortRequest(
+        block_starts=[20, 0, 5],
+        block_sizes=[5, 10, 20],
+        valid_scores=[100, 50, 80],
+    )
+
+    requested = bam_output._sort_bed12_blocks_from_request(request)
+    adapted = bam_output._sort_bed12_blocks(
+        [20, 0, 5],
+        [5, 10, 20],
+        [100, 50, 80],
+    )
+
+    assert requested == adapted
+    assert requested == bam_output._Bed12Blocks(
+        starts=[0, 5, 20],
+        sizes=[10, 20, 5],
+        scores=[50, 80, 100],
+    )
+
+
 def test_normalize_bed12_blocks_sorts_merges_scores_and_pads():
     blocks = bam_output._normalize_bed12_blocks(
         block_starts=[20, 0, 5],
