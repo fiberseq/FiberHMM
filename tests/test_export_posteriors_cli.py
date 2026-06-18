@@ -699,6 +699,89 @@ def test_completed_region_future_helpers_callback_and_update_progress(capsys):
     assert "Error processing ('chr3', 5, 15): worker failed" in capsys.readouterr().out
 
 
+def test_process_regions_parallel_closes_progress_on_poll_failure(monkeypatch):
+    progress_instances = []
+
+    class Progress:
+        def __init__(self, *args, **kwargs):
+            self.closed = False
+            progress_instances.append(self)
+
+        def close(self):
+            self.closed = True
+
+    class FakeExecutor:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def submit(self, fn, args):
+            return object()
+
+    def fail_completed(pending):
+        assert pending
+        raise RuntimeError("poll failed")
+
+    monkeypatch.setattr(export_posteriors, "ProcessPoolExecutor", FakeExecutor)
+    monkeypatch.setattr(export_posteriors, "tqdm", Progress)
+    monkeypatch.setattr(export_posteriors, "_completed_region_futures", fail_completed)
+
+    with pytest.raises(RuntimeError, match="poll failed"):
+        export_posteriors._process_regions_parallel(
+            [("chr1", 0, 10)],
+            "input.bam",
+            "model.json",
+            {"mode": "daf"},
+            n_cores=2,
+            verbose=False,
+            result_callback=lambda *_: pytest.fail("unexpected callback"),
+        )
+
+    assert progress_instances
+    assert progress_instances[0].closed
+
+
+def test_process_regions_serial_closes_progress_on_worker_failure(monkeypatch):
+    progress_instances = []
+
+    class Progress:
+        def __init__(self, iterable, *args, **kwargs):
+            self.iterable = iterable
+            self.closed = False
+            progress_instances.append(self)
+
+        def __iter__(self):
+            return iter(self.iterable)
+
+        def close(self):
+            self.closed = True
+
+    def fail_worker(args):
+        raise RuntimeError("worker failed")
+
+    monkeypatch.setattr(export_posteriors, "tqdm", Progress)
+    monkeypatch.setattr(export_posteriors, "_init_worker", lambda *args: None)
+    monkeypatch.setattr(export_posteriors, "_process_region_worker", fail_worker)
+
+    with pytest.raises(RuntimeError, match="worker failed"):
+        export_posteriors._process_regions_serial(
+            [("chr1", 0, 10)],
+            "input.bam",
+            "model.json",
+            {"mode": "daf"},
+            verbose=False,
+            result_callback=lambda *_: pytest.fail("unexpected callback"),
+        )
+
+    assert progress_instances
+    assert progress_instances[0].closed
+
+
 def test_export_posteriors_tsv_closes_writer_when_region_processing_fails(
     monkeypatch, tmp_path
 ):

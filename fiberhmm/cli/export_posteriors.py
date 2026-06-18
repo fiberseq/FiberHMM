@@ -553,30 +553,35 @@ def _write_h5_chrom_metadata(
     )
 
 
-def _process_regions(regions, input_bam, model_path, params,
-                     n_cores, verbose, result_callback):
-    """Process all regions and call result_callback(chrom, results) for each."""
-    if n_cores > 1:
-        with ProcessPoolExecutor(
-            max_workers=n_cores,
-            initializer=_init_worker,
-            initargs=(model_path, params)
-        ) as executor:
-            pending = {}
-            region_iter = iter(regions)
-            max_pending = n_cores * 2
+def _process_regions_parallel(
+    regions,
+    input_bam,
+    model_path,
+    params,
+    n_cores,
+    verbose,
+    result_callback,
+) -> None:
+    with ProcessPoolExecutor(
+        max_workers=n_cores,
+        initializer=_init_worker,
+        initargs=(model_path, params)
+    ) as executor:
+        pending = {}
+        region_iter = iter(regions)
+        max_pending = n_cores * 2
 
-            _submit_initial_regions(
-                executor,
-                region_iter,
-                input_bam,
-                pending,
-                max_pending,
-                len(regions),
-            )
+        _submit_initial_regions(
+            executor,
+            region_iter,
+            input_bam,
+            pending,
+            max_pending,
+            len(regions),
+        )
 
-            pbar = tqdm(total=len(regions), desc="Processing regions", disable=not verbose)
-
+        pbar = tqdm(total=len(regions), desc="Processing regions", disable=not verbose)
+        try:
             while pending:
                 done = _completed_region_futures(pending)
 
@@ -589,15 +594,52 @@ def _process_regions(regions, input_bam, model_path, params,
                         future, pending, result_callback, pbar,
                     )
                     _submit_next_region(executor, region_iter, input_bam, pending)
-
+        finally:
             pbar.close()
-    else:
-        _init_worker(model_path, params)
-        for chrom, start, end in tqdm(regions, desc="Processing regions", disable=not verbose):
+
+
+def _process_regions_serial(
+    regions,
+    input_bam,
+    model_path,
+    params,
+    verbose,
+    result_callback,
+) -> None:
+    _init_worker(model_path, params)
+    pbar = tqdm(regions, desc="Processing regions", disable=not verbose)
+    try:
+        for chrom, start, end in pbar:
             args = (chrom, start, end, input_bam)
             _, _, _, results = _process_region_worker(args)
             result_callback(chrom, results)
             del results
+    finally:
+        pbar.close()
+
+
+def _process_regions(regions, input_bam, model_path, params,
+                     n_cores, verbose, result_callback):
+    """Process all regions and call result_callback(chrom, results) for each."""
+    if n_cores > 1:
+        return _process_regions_parallel(
+            regions,
+            input_bam,
+            model_path,
+            params,
+            n_cores,
+            verbose,
+            result_callback,
+        )
+
+    return _process_regions_serial(
+        regions,
+        input_bam,
+        model_path,
+        params,
+        verbose,
+        result_callback,
+    )
 
 
 def export_posteriors_tsv(
