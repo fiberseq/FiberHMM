@@ -58,6 +58,10 @@ def _positive_counts(values) -> list:
     return [x for x in values if x > 0]
 
 
+def _has_values(values) -> bool:
+    return values is not None and len(values) > 0
+
+
 def _footprint_coverage_fraction(total_fp_bases, read_length: int) -> float:
     return total_fp_bases / read_length if read_length > 0 else 0
 
@@ -186,7 +190,10 @@ def _write_gap_stats_section(handle, summary: dict) -> None:
     handle.write("-" * 30 + "\n")
     handle.write(f"Total gaps:                 {summary['total_gaps']:,}\n")
     handle.write(f"Gap size (median):          {summary['gap_size_median']:.0f} bp\n")
-    handle.write(f"Gap size (mean ± std):      {summary['gap_size_mean']:.1f} ± {summary['gap_size_std']:.1f} bp\n")
+    handle.write(
+        f"Gap size (mean ± std):      "
+        f"{summary['gap_size_mean']:.1f} ± {summary['gap_size_std']:.1f} bp\n"
+    )
     handle.write("\n")
 
 
@@ -366,7 +373,7 @@ def _plot_footprint_size_pdf_panel(ax, footprint_sizes) -> None:
 
 
 def _plot_gap_size_pdf_panel(ax, gap_sizes) -> None:
-    if gap_sizes:
+    if _has_values(gap_sizes):
         gaps = np.array(gap_sizes)
         _plot_median_histogram(
             ax,
@@ -398,7 +405,7 @@ def _plot_footprints_per_read_pdf_panel(ax, footprints_per_read) -> None:
 
 
 def _plot_footprint_coverage_pdf_panel(ax, footprint_coverage) -> None:
-    if footprint_coverage:
+    if _has_values(footprint_coverage):
         coverage = np.array(footprint_coverage) * 100
         _plot_median_histogram(
             ax,
@@ -414,7 +421,7 @@ def _plot_footprint_coverage_pdf_panel(ax, footprint_coverage) -> None:
 
 
 def _plot_footprint_overview_pdf_page(stats: "FootprintStats", plt, pdf) -> None:
-    if not stats.footprint_sizes:
+    if not _has_values(stats.footprint_sizes):
         return
 
     fig, axes = plt.subplots(2, 2, figsize=(10, 8))
@@ -439,7 +446,7 @@ def _plot_footprint_overview_pdf_page(stats: "FootprintStats", plt, pdf) -> None
 
 
 def _plot_footprint_quality_pdf_panel(ax, footprint_scores) -> None:
-    if footprint_scores:
+    if _has_values(footprint_scores):
         scores = np.array(footprint_scores)
         _plot_median_histogram(
             ax,
@@ -460,7 +467,7 @@ def _plot_footprint_quality_pdf_panel(ax, footprint_scores) -> None:
 
 
 def _plot_msp_size_pdf_panel(ax, msp_size_values) -> None:
-    if msp_size_values:
+    if _has_values(msp_size_values):
         msp_sizes = np.array(msp_size_values)
         _plot_median_histogram(
             ax,
@@ -478,7 +485,7 @@ def _plot_msp_size_pdf_panel(ax, msp_size_values) -> None:
 
 
 def _plot_read_length_pdf_panel(ax, read_lengths) -> None:
-    if read_lengths:
+    if _has_values(read_lengths):
         lengths = np.array(read_lengths)
         _plot_median_histogram(
             ax,
@@ -511,7 +518,7 @@ def _plot_quality_msp_pdf_page(stats: "FootprintStats", plt, pdf) -> None:
 
 
 def _save_footprint_size_png(stats: "FootprintStats", plt, output_prefix: str) -> bool:
-    if not stats.footprint_sizes:
+    if not _has_values(stats.footprint_sizes):
         return False
 
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -698,7 +705,10 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
 
     sample_prob = _stats_sampling_probability(total_reads, n_samples)
 
-    print(f"  Sampling ~{min(n_samples, total_reads):,} reads from {total_reads:,} total ({sample_prob*100:.1f}%)")
+    print(
+        f"  Sampling ~{min(n_samples, total_reads):,} reads from "
+        f"{total_reads:,} total ({sample_prob * 100:.1f}%)"
+    )
 
     # Second pass: collect stats from sampled reads
     sampled = 0

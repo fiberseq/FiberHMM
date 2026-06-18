@@ -845,6 +845,44 @@ def test_plot_quality_msp_pdf_page_builds_metric_panels(monkeypatch):
     assert plt.closed == [plt.fig]
 
 
+def test_plot_metric_panels_accept_numpy_arrays(monkeypatch):
+    plot_calls = []
+    no_data_calls = []
+
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_median_histogram",
+        lambda ax, values, **kwargs: plot_calls.append((ax, values, kwargs)),
+    )
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_no_data_message",
+        lambda *args: no_data_calls.append(args),
+    )
+
+    stats_module._plot_gap_size_pdf_panel("gap", np.asarray([10, 20]))
+    stats_module._plot_footprint_coverage_pdf_panel("coverage", np.asarray([0.1, 0.2]))
+    stats_module._plot_footprint_quality_pdf_panel("quality", np.asarray([0.7, 0.9]))
+    stats_module._plot_msp_size_pdf_panel("msp", np.asarray([100, 200]))
+    stats_module._plot_read_length_pdf_panel("read", np.asarray([1000, 2000]))
+
+    assert [call[0] for call in plot_calls] == [
+        "gap",
+        "coverage",
+        "quality",
+        "msp",
+        "read",
+    ]
+    assert [call[2]["title"] for call in plot_calls] == [
+        "Gap (Accessible) Size Distribution",
+        "Read Coverage by Footprints",
+        "Footprint Quality Distribution",
+        "MSP Size Distribution",
+        "Read Length Distribution",
+    ]
+    assert no_data_calls == []
+
+
 def test_plot_quality_msp_pdf_page_marks_missing_score_and_msp_data(monkeypatch):
     plot_calls = []
     no_data_calls = []
