@@ -171,7 +171,7 @@ def test_collect_phase_nrl_spacings_counts_usable_reads_only(monkeypatch):
 
     monkeypatch.setattr(nrl_estimate, "_phase_nrl_spacings_for_read", fake_spacings)
 
-    spacings, n_reads = nrl_estimate._collect_phase_nrl_spacings(
+    sample = nrl_estimate._collect_phase_nrl_spacings(
         FakeBam(),
         model="model",
         llr_hit="hit",
@@ -187,8 +187,10 @@ def test_collect_phase_nrl_spacings_counts_usable_reads_only(monkeypatch):
         sample_target=2,
     )
 
-    assert spacings == [170.0, 185.0]
-    assert n_reads == 2
+    assert sample == nrl_estimate._PhaseNrlSpacingSample(
+        spacings=[170.0, 185.0],
+        reads_used=2,
+    )
     assert [call[0] for call in calls] == ["skip", "with_pairs", "no_pairs"]
     assert calls[1][1] == ("model", "hit", "miss")
     assert calls[1][2]["split_min_opps"] == 3

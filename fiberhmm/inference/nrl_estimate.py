@@ -9,6 +9,7 @@ too small.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
@@ -24,6 +25,12 @@ from fiberhmm.inference.recall_tables import load_recall_llr_tables
 # Window (bp) for the primary nucleosome-repeat peak: excludes sub-nucleosomal
 # gaps and 2x+ merge spacings so the estimate tracks the single-repeat mode.
 _PEAK_LO, _PEAK_HI = 120, 260
+
+
+@dataclass(frozen=True)
+class _PhaseNrlSpacingSample:
+    spacings: list[float]
+    reads_used: int
 
 
 def _phase_nrl_peak_spacings(spacings) -> np.ndarray:
@@ -145,7 +152,7 @@ def _collect_phase_nrl_spacings(
         n_reads += 1
         if n_reads >= sample_target:
             break
-    return spacings, n_reads
+    return _PhaseNrlSpacingSample(spacings=spacings, reads_used=n_reads)
 
 
 def estimate_phase_nrl(
@@ -181,7 +188,7 @@ def estimate_phase_nrl(
 
     bam = pysam.AlignmentFile(input_bam, 'rb', check_sq=False)
     try:
-        spacings, n_reads = _collect_phase_nrl_spacings(
+        sample = _collect_phase_nrl_spacings(
             bam,
             model,
             llr_hit,
@@ -202,8 +209,8 @@ def estimate_phase_nrl(
     # Robust central estimate: histogram mode (10bp bins) cross-checked against
     # the in-peak median, then clamped to the anchored band.
     return _phase_nrl_result(
-        spacings,
-        n_reads,
+        sample.spacings,
+        sample.reads_used,
         anchor=anchor,
         clamp_lo=clamp_lo,
         clamp_hi=clamp_hi,
