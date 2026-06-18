@@ -20,6 +20,7 @@ try:
     from fiberhmm.core.bam_reader import (
         HEXAMER_LOOKUP_A,
         ContextEncoder,
+        _assign_context_codes_for_target_base,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
         _append_mm_mod_result,
@@ -53,6 +54,7 @@ except ImportError:
     from bam_reader import (
         HEXAMER_LOOKUP_A,
         ContextEncoder,
+        _assign_context_codes_for_target_base,
         _build_hexamer_lookup,
         _build_hexamer_lookup_with_rc,
         _append_mm_mod_result,
@@ -136,6 +138,29 @@ def test_context_codes_for_target_positions_filters_and_reverse_complements():
 
     np.testing.assert_array_equal(valid_positions, [])
     np.testing.assert_array_equal(codes, [])
+
+
+def test_assign_context_codes_for_target_base_updates_only_matches():
+    seq_int = bam_reader._sequence_base_int_array("AACGT")
+    encoded = np.full(5, 99, dtype=np.int32)
+    positions = np.asarray([1, 2, 3], dtype=np.int64)
+    left_offsets = np.asarray([-1], dtype=np.int64)
+    right_offsets = np.asarray([1], dtype=np.int64)
+    powers = np.asarray([1], dtype=np.int64)
+
+    _assign_context_codes_for_target_base(
+        encoded,
+        seq_int,
+        positions,
+        bam_reader._TARGET_BASE_INT["A"],
+        left_offsets,
+        right_offsets,
+        powers,
+        k=1,
+        use_rc=False,
+    )
+
+    np.testing.assert_array_equal(encoded, [99, 1, 99, 99, 99])
 
 
 def test_has_mm_ml_inputs_handles_empty_and_numpy_ml_tags():

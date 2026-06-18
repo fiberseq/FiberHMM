@@ -1068,6 +1068,30 @@ def _context_codes_for_target_positions(
     return target_pos[valid_mask], codes
 
 
+def _assign_context_codes_for_target_base(
+    encoded: np.ndarray,
+    seq_int: np.ndarray,
+    positions: np.ndarray,
+    target_int: int,
+    left_offsets: np.ndarray,
+    right_offsets: np.ndarray,
+    powers: np.ndarray,
+    k: int,
+    *,
+    use_rc: bool,
+) -> None:
+    target_pos = positions[seq_int[positions] == target_int]
+    if len(target_pos) == 0:
+        return
+
+    valid_positions, codes = _context_codes_for_target_positions(
+        target_pos, seq_int, left_offsets, right_offsets, powers, k,
+        use_rc=use_rc,
+    )
+    if len(valid_positions) > 0:
+        encoded[valid_positions] = codes.astype(np.int32)
+
+
 def _encode_daf_vectorized_observations(seq_int: np.ndarray, mod_mask: np.ndarray,
                                         context_size: int, edge_trim: int,
                                         non_target_code: int,
@@ -1336,36 +1360,19 @@ def _encode_vectorized(sequence: str, target_base: str, context_size: int,
     right_offsets = np.arange(1, k + 1)
 
     # Process primary target base (A in m6a mode)
-    is_target = seq_int[positions] == target_int
-    target_pos = positions[is_target]
-
-    if len(target_pos) > 0:
-        # For A positions: use forward context codes
-        valid_positions, codes = _context_codes_for_target_positions(
-            target_pos, seq_int, left_offsets, right_offsets, powers, k,
-            use_rc=False,
-        )
-
-        if len(valid_positions) > 0:
-            me_encode[valid_positions] = codes.astype(np.int32)
+    _assign_context_codes_for_target_base(
+        me_encode, seq_int, positions, target_int,
+        left_offsets, right_offsets, powers, k, use_rc=False,
+    )
 
     # For m6a mode: also process T positions with reverse complement context
     # T positions represent m6A on the opposite strand - Hia5 methylates both strands
     # The context should be RC to match the A-centered context on the opposite strand
     if include_rc:
-        rc_target_int = 2  # T = 2 (using A=0, C=1, T=2, G=3 encoding)
-        is_rc_target = seq_int[positions] == rc_target_int
-        rc_target_pos = positions[is_rc_target]
-
-        if len(rc_target_pos) > 0:
-            # For T positions, use RC encoding to map to A-centered codes
-            valid_rc_positions, rc_codes = _context_codes_for_target_positions(
-                rc_target_pos, seq_int, left_offsets, right_offsets, powers, k,
-                use_rc=True,
-            )
-
-            if len(valid_rc_positions) > 0:
-                me_encode[valid_rc_positions] = rc_codes.astype(np.int32)
+        _assign_context_codes_for_target_base(
+            me_encode, seq_int, positions, _TARGET_BASE_INT['T'],
+            left_offsets, right_offsets, powers, k, use_rc=True,
+        )
 
     return me_encode
 
