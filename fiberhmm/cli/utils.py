@@ -51,6 +51,20 @@ class _RegressionInputs:
     diagnostics: dict
 
 
+@dataclass(frozen=True)
+class _EmissionStats:
+    minimum: float
+    maximum: float
+    mean: float
+
+
+@dataclass(frozen=True)
+class _EmissionScalingResult:
+    adjusted: np.ndarray
+    before: _EmissionStats
+    after: _EmissionStats
+
+
 # =============================================================================
 # convert subcommand
 # =============================================================================
@@ -766,7 +780,11 @@ def _generate_regression_stats(regression_data, plots_dir, base_name, context_si
 
 
 def _emission_stats(values):
-    return values.min(), values.max(), values.mean()
+    return _EmissionStats(
+        minimum=values.min(),
+        maximum=values.max(),
+        mean=values.mean(),
+    )
 
 
 def _scale_emission_probabilities(emissionprob, target_state, scale):
@@ -781,7 +799,11 @@ def _scale_emission_probabilities(emissionprob, target_state, scale):
         adjusted *= scale
         adjusted = np.clip(adjusted, 0, 1)
         after_stats = _emission_stats(adjusted)
-    return adjusted, before_stats, after_stats
+    return _EmissionScalingResult(
+        adjusted=adjusted,
+        before=before_stats,
+        after=after_stats,
+    )
 
 
 def _accessibility_priors_for_base(base: str, context_size: int,
@@ -1145,16 +1167,23 @@ def cmd_adjust(args):
     print(f"  Target: {args.state} (state {'all' if target_state is None else target_state})")
     print(f"  Scale factor: {scale}")
 
-    model.emissionprob_, before_stats, after_stats = _scale_emission_probabilities(
+    scaling_result = _scale_emission_probabilities(
         model.emissionprob_,
         target_state,
         scale,
     )
+    model.emissionprob_ = scaling_result.adjusted
 
-    print(f"  Before: min={before_stats[0]:.6f}, max={before_stats[1]:.6f}, "
-          f"mean={before_stats[2]:.6f}")
-    print(f"  After:  min={after_stats[0]:.6f}, max={after_stats[1]:.6f}, "
-          f"mean={after_stats[2]:.6f}")
+    print(
+        f"  Before: min={scaling_result.before.minimum:.6f}, "
+        f"max={scaling_result.before.maximum:.6f}, "
+        f"mean={scaling_result.before.mean:.6f}",
+    )
+    print(
+        f"  After:  min={scaling_result.after.minimum:.6f}, "
+        f"max={scaling_result.after.maximum:.6f}, "
+        f"mean={scaling_result.after.mean:.6f}",
+    )
 
     output_path = args.output
     save_model(model, output_path, context_size=context_size, mode=mode)

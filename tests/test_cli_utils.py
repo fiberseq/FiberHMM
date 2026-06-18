@@ -498,12 +498,16 @@ def test_scale_emission_probabilities_scales_one_state_and_clips():
         [0.6, 0.8],
     ])
 
-    adjusted, before, after = _scale_emission_probabilities(emission, 1, 2.0)
+    result = _scale_emission_probabilities(emission, 1, 2.0)
 
     np.testing.assert_allclose(emission, [[0.2, 0.4], [0.6, 0.8]])
-    np.testing.assert_allclose(adjusted, [[0.2, 0.4], [1.0, 1.0]])
-    np.testing.assert_allclose(before, (0.6, 0.8, 0.7))
-    np.testing.assert_allclose(after, (1.0, 1.0, 1.0))
+    np.testing.assert_allclose(result.adjusted, [[0.2, 0.4], [1.0, 1.0]])
+    assert result.before.minimum == pytest.approx(0.6)
+    assert result.before.maximum == pytest.approx(0.8)
+    assert result.before.mean == pytest.approx(0.7)
+    assert result.after.minimum == pytest.approx(1.0)
+    assert result.after.maximum == pytest.approx(1.0)
+    assert result.after.mean == pytest.approx(1.0)
 
 
 def test_scale_emission_probabilities_scales_all_states():
@@ -512,11 +516,15 @@ def test_scale_emission_probabilities_scales_all_states():
         [0.6, 0.8],
     ])
 
-    adjusted, before, after = _scale_emission_probabilities(emission, None, 0.5)
+    result = _scale_emission_probabilities(emission, None, 0.5)
 
-    np.testing.assert_allclose(adjusted, [[0.1, 0.2], [0.3, 0.4]])
-    np.testing.assert_allclose(before, (0.2, 0.8, 0.5))
-    np.testing.assert_allclose(after, (0.1, 0.4, 0.25))
+    np.testing.assert_allclose(result.adjusted, [[0.1, 0.2], [0.3, 0.4]])
+    assert result.before.minimum == pytest.approx(0.2)
+    assert result.before.maximum == pytest.approx(0.8)
+    assert result.before.mean == pytest.approx(0.5)
+    assert result.after.minimum == pytest.approx(0.1)
+    assert result.after.maximum == pytest.approx(0.4)
+    assert result.after.mean == pytest.approx(0.25)
 
 
 def test_accessibility_priors_for_base_filters_tsv_and_counter():
