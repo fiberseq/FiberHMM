@@ -234,6 +234,70 @@ def test_shutdown_legacy_resources_closes_posteriors_after_executor_error():
     assert calls == [("shutdown", True), ("close",)]
 
 
+def test_run_legacy_bam_processing_closes_posterior_on_executor_setup_failure(
+    monkeypatch,
+):
+    class FakeAlignmentFile:
+        def __init__(self, *args, **kwargs):
+            self.header = {"HD": {"SO": "coordinate"}}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class Writer:
+        def __init__(self):
+            self.closed = 0
+
+        def close(self):
+            self.closed += 1
+            return (0, 0.0)
+
+    writer = Writer()
+    monkeypatch.setattr(legacy_pipeline.pysam, "AlignmentFile", FakeAlignmentFile)
+    monkeypatch.setattr(legacy_pipeline, "append_coord_marker", lambda header: header)
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_open_legacy_posterior_writer",
+        lambda *args: (writer, True),
+    )
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_legacy_executor_for_config",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("executor failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="executor failed"):
+        legacy_pipeline._run_legacy_bam_processing(
+            input_bam="in.bam",
+            output_bam="out.bam",
+            model=object(),
+            model_path="model.json",
+            filter_config=ReadFilterConfig(),
+            skip_reasons=legacy_pipeline._new_legacy_skip_reasons(),
+            edge_trim=0,
+            circular=False,
+            mode="daf",
+            context_size=5,
+            msp_min_size=0,
+            nuc_min_size=0,
+            prob_threshold=0,
+            with_scores=False,
+            n_cores=2,
+            max_reads=None,
+            debug_timing=False,
+            output_posteriors="post.h5",
+            write_msps=True,
+            io_threads=1,
+            start_time=10.0,
+            chunk_size=1,
+        )
+
+    assert writer.closed == 1
+
+
 def test_legacy_progress_and_completion_messages_format_counts():
     assert legacy_pipeline._legacy_processing_rate(10, 2.0) == 5.0
     assert legacy_pipeline._legacy_processing_rate(10, 0.0) == 0

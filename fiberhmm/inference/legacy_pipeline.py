@@ -602,20 +602,22 @@ def _run_legacy_bam_processing(
     start_time: float,
     chunk_size: int,
 ) -> _LegacyPipelineResult:
+    executor = None
+    posterior_writer = None
     posterior_stats = None
 
     with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
         with pysam.AlignmentFile(output_bam, "wb",
                                  header=append_coord_marker(inbam.header),
                                  threads=io_threads) as outbam:
-            posterior_writer, return_posteriors = _open_legacy_posterior_writer(
-                output_posteriors, mode, context_size, edge_trim, input_bam,
-            )
-            executor = _legacy_executor_for_config(
-                model_path, n_cores, debug_timing,
-            )
-
             try:
+                posterior_writer, return_posteriors = _open_legacy_posterior_writer(
+                    output_posteriors, mode, context_size, edge_trim, input_bam,
+                )
+                executor = _legacy_executor_for_config(
+                    model_path, n_cores, debug_timing,
+                )
+
                 total_reads, reads_with_footprints, skipped, worker_failures = (
                     _process_legacy_reads(
                         inbam,
