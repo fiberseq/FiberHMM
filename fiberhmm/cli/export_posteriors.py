@@ -680,6 +680,7 @@ def export_posteriors_tsv(
     """Export posterior probabilities to gzipped TSV."""
     from fiberhmm.posteriors.tsv_backend import PosteriorsTSVWriter
 
+    output_path = os.fspath(output_path)
     mode, context_size, regions, params = _prepare_export_run(
         input_bam, model_path, chroms, region_size, mode_override,
         context_size_override, edge_trim, n_cores, "TSV", verbose,

@@ -922,11 +922,12 @@ def test_export_posteriors_tsv_closes_writer_when_region_processing_fails(
         export_posteriors.export_posteriors_tsv(
             input_bam="input.bam",
             model_path="model.json",
-            output_path=str(tmp_path / "posteriors.tsv.gz"),
+            output_path=tmp_path / "posteriors.tsv.gz",
             n_cores=1,
             verbose=False,
         )
 
     assert instances
+    assert instances[0].output_path == str(tmp_path / "posteriors.tsv.gz")
     assert instances[0].closed
     assert instances[0].close_count == 1
