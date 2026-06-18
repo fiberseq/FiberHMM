@@ -578,6 +578,121 @@ def test_plot_footprint_size_png_axis_uses_export_styling():
     assert ax.legend_kwargs == {"fontsize": 11}
 
 
+class _FakeFigure:
+    def __init__(self):
+        self.suptitles = []
+
+    def suptitle(self, *args, **kwargs):
+        self.suptitles.append((args, kwargs))
+
+
+class _FakePyplot:
+    def __init__(self):
+        self.subplots_calls = []
+        self.tight_layout_calls = 0
+        self.closed = []
+        self.fig = _FakeFigure()
+        self.axes = np.array([["00", "01"], ["10", "11"]], dtype=object)
+
+    def subplots(self, *args, **kwargs):
+        self.subplots_calls.append((args, kwargs))
+        return self.fig, self.axes
+
+    def tight_layout(self):
+        self.tight_layout_calls += 1
+
+    def close(self, fig):
+        self.closed.append(fig)
+
+
+class _FakePdf:
+    def __init__(self):
+        self.saved = []
+
+    def savefig(self, fig):
+        self.saved.append(fig)
+
+
+def test_plot_footprint_overview_pdf_page_builds_all_panels(monkeypatch):
+    plot_calls = []
+    no_data_calls = []
+
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_median_histogram",
+        lambda ax, values, **kwargs: plot_calls.append((ax, values, kwargs)),
+    )
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_no_data_message",
+        lambda *args: no_data_calls.append(args),
+    )
+    stats = stats_module.FootprintStats()
+    stats.footprint_sizes = [10, 20, 30]
+    stats.gap_sizes = [5, 15]
+    stats.footprints_per_read = [0, 2, 3]
+    stats.footprint_coverage = [0.1, 0.3]
+    plt = _FakePyplot()
+    pdf = _FakePdf()
+
+    stats_module._plot_footprint_overview_pdf_page(stats, plt, pdf)
+
+    assert plt.subplots_calls == [((2, 2), {"figsize": (10, 8)})]
+    assert plt.fig.suptitles == [
+        (
+            ("FiberHMM Footprint Statistics",),
+            {"fontsize": 14, "fontweight": "bold"},
+        )
+    ]
+    assert [call[0] for call in plot_calls] == ["00", "01", "10", "11"]
+    assert [call[2]["title"] for call in plot_calls] == [
+        "Footprint Size Distribution",
+        "Gap (Accessible) Size Distribution",
+        "Footprints per Read",
+        "Read Coverage by Footprints",
+    ]
+    np.testing.assert_array_equal(plot_calls[3][1], [10, 30])
+    assert no_data_calls == []
+    assert plt.tight_layout_calls == 1
+    assert pdf.saved == [plt.fig]
+    assert plt.closed == [plt.fig]
+
+
+def test_plot_footprint_overview_pdf_page_skips_empty_and_marks_missing_gap(monkeypatch):
+    plot_calls = []
+    no_data_calls = []
+
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_median_histogram",
+        lambda ax, values, **kwargs: plot_calls.append((ax, values, kwargs)),
+    )
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_no_data_message",
+        lambda *args: no_data_calls.append(args),
+    )
+    plt = _FakePyplot()
+    pdf = _FakePdf()
+
+    stats_module._plot_footprint_overview_pdf_page(
+        stats_module.FootprintStats(), plt, pdf,
+    )
+
+    assert plt.subplots_calls == []
+    assert pdf.saved == []
+
+    stats = stats_module.FootprintStats()
+    stats.footprint_sizes = [10, 20]
+    stats_module._plot_footprint_overview_pdf_page(stats, plt, pdf)
+
+    assert [call[2]["title"] for call in plot_calls] == [
+        "Footprint Size Distribution",
+    ]
+    assert no_data_calls == [("01", "No gap data", "Gap Size Distribution")]
+    assert pdf.saved == [plt.fig]
+
+
 def test_stats_sampling_probability_handles_full_and_partial_samples():
     assert stats_module._stats_sampling_probability(10, 100) == 1.0
     assert stats_module._stats_sampling_probability(100, 10) == 0.1

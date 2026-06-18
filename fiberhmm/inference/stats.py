@@ -317,6 +317,79 @@ def _add_read_to_footprint_stats(
     )
 
 
+def _plot_footprint_overview_pdf_page(stats: "FootprintStats", plt, pdf) -> None:
+    if not stats.footprint_sizes:
+        return
+
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+    fig.suptitle(
+        'FiberHMM Footprint Statistics', fontsize=14, fontweight='bold',
+    )
+
+    ax = axes[0, 0]
+    sizes = np.array(stats.footprint_sizes)
+    _plot_median_histogram(
+        ax,
+        sizes,
+        bins=50,
+        hist_range=(0, min(500, np.percentile(sizes, 99))),
+        color='steelblue',
+        xlabel='Footprint Size (bp)',
+        title='Footprint Size Distribution',
+        median_format='.0f',
+        median_suffix=' bp',
+    )
+
+    ax = axes[0, 1]
+    if stats.gap_sizes:
+        gaps = np.array(stats.gap_sizes)
+        _plot_median_histogram(
+            ax,
+            gaps,
+            bins=50,
+            hist_range=(0, min(500, np.percentile(gaps, 99))),
+            color='coral',
+            xlabel='Gap Size (bp)',
+            title='Gap (Accessible) Size Distribution',
+            median_format='.0f',
+            median_suffix=' bp',
+        )
+    else:
+        _plot_no_data_message(ax, 'No gap data', 'Gap Size Distribution')
+
+    ax = axes[1, 0]
+    fp_per_read = _positive_counts(stats.footprints_per_read)
+    if fp_per_read:
+        _plot_median_histogram(
+            ax,
+            fp_per_read,
+            bins=range(0, min(50, max(fp_per_read)+2)),
+            color='forestgreen',
+            xlabel='Footprints per Read',
+            title='Footprints per Read',
+            median_format='.1f',
+        )
+
+    ax = axes[1, 1]
+    if stats.footprint_coverage:
+        coverage = np.array(stats.footprint_coverage) * 100
+        _plot_median_histogram(
+            ax,
+            coverage,
+            bins=50,
+            hist_range=(0, 100),
+            color='purple',
+            xlabel='Footprint Coverage (%)',
+            title='Read Coverage by Footprints',
+            median_format='.1f',
+            median_suffix='%',
+        )
+
+    plt.tight_layout()
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
 class FootprintStats:
     """Collects footprint statistics from sampled reads."""
 
@@ -470,77 +543,7 @@ class FootprintStats:
         pdf_path = f"{output_prefix}_stats.pdf"
 
         with PdfPages(pdf_path) as pdf:
-            # Page 1: Footprint size distribution
-            if self.footprint_sizes:
-                fig, axes = plt.subplots(2, 2, figsize=(10, 8))
-                fig.suptitle('FiberHMM Footprint Statistics', fontsize=14, fontweight='bold')
-
-                # Footprint size histogram
-                ax = axes[0, 0]
-                sizes = np.array(self.footprint_sizes)
-                _plot_median_histogram(
-                    ax,
-                    sizes,
-                    bins=50,
-                    hist_range=(0, min(500, np.percentile(sizes, 99))),
-                    color='steelblue',
-                    xlabel='Footprint Size (bp)',
-                    title='Footprint Size Distribution',
-                    median_format='.0f',
-                    median_suffix=' bp',
-                )
-
-                # Gap size histogram
-                ax = axes[0, 1]
-                if self.gap_sizes:
-                    gaps = np.array(self.gap_sizes)
-                    _plot_median_histogram(
-                        ax,
-                        gaps,
-                        bins=50,
-                        hist_range=(0, min(500, np.percentile(gaps, 99))),
-                        color='coral',
-                        xlabel='Gap Size (bp)',
-                        title='Gap (Accessible) Size Distribution',
-                        median_format='.0f',
-                        median_suffix=' bp',
-                    )
-                else:
-                    _plot_no_data_message(ax, 'No gap data', 'Gap Size Distribution')
-
-                # Footprints per read
-                ax = axes[1, 0]
-                fp_per_read = _positive_counts(self.footprints_per_read)
-                if fp_per_read:
-                    _plot_median_histogram(
-                        ax,
-                        fp_per_read,
-                        bins=range(0, min(50, max(fp_per_read)+2)),
-                        color='forestgreen',
-                        xlabel='Footprints per Read',
-                        title='Footprints per Read',
-                        median_format='.1f',
-                    )
-
-                # Footprint coverage
-                ax = axes[1, 1]
-                if self.footprint_coverage:
-                    coverage = np.array(self.footprint_coverage) * 100
-                    _plot_median_histogram(
-                        ax,
-                        coverage,
-                        bins=50,
-                        hist_range=(0, 100),
-                        color='purple',
-                        xlabel='Footprint Coverage (%)',
-                        title='Read Coverage by Footprints',
-                        median_format='.1f',
-                        median_suffix='%',
-                    )
-
-                plt.tight_layout()
-                pdf.savefig(fig)
-                plt.close(fig)
+            _plot_footprint_overview_pdf_page(self, plt, pdf)
 
             # Page 2: Quality scores and MSPs
             fig, axes = plt.subplots(2, 2, figsize=(10, 8))
