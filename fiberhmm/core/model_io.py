@@ -167,7 +167,7 @@ def _coerce_loaded_model(obj) -> FiberHMM:
 def _normalize_mode(mode) -> str:
     if mode is None:
         return DEFAULT_MODE
-    mode_name = str(mode)
+    mode_name = str(mode).strip()
     return MODE_ALIASES.get(mode_name, mode_name)
 
 

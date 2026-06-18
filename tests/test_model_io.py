@@ -278,6 +278,24 @@ class TestModeAliases:
         _, _, mode = load_model_with_metadata(filepath, normalize=False)
         assert mode == 'pacbio-fiber'
 
+    def test_mode_alias_ignores_surrounding_whitespace(self, sample_model, tmp_path):
+        filepath = str(tmp_path / "model.json")
+        data = {
+            'model_type': 'FiberHMM',
+            'version': '2.0',
+            'n_states': 2,
+            'startprob': sample_model.startprob_.tolist(),
+            'transmat': sample_model.transmat_.tolist(),
+            'emissionprob': sample_model.emissionprob_.tolist(),
+            'context_size': 3,
+            'mode': ' nanopore ',
+        }
+        with open(filepath, 'w') as f:
+            json.dump(data, f)
+
+        _, _, mode = load_model_with_metadata(filepath, normalize=False)
+        assert mode == 'nanopore-fiber'
+
     def test_m6a_alias(self, sample_model, tmp_path):
         filepath = str(tmp_path / "model.json")
         data = {
