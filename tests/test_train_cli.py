@@ -1242,7 +1242,9 @@ def test_run_training_or_base_model_uses_base_model_path(monkeypatch):
     monkeypatch.setattr(
         train,
         "_build_model_from_base",
-        lambda path, emissions, context_size: (best_model, [best_model]),
+        lambda path, emissions, context_size: train._TrainingModelSet(
+            best_model, [best_model],
+        ),
     )
     args = SimpleNamespace(base_model="base.json", context_size=3)
     emission_probs = np.ones((2, 4))
@@ -1667,13 +1669,14 @@ def test_build_model_from_base_copies_transitions_and_replaces_emissions(monkeyp
         lambda path, normalize=False: base_model,
     )
 
-    model, all_models = train._build_model_from_base(
+    model_set = train._build_model_from_base(
         "base-model.json",
         emission_probs,
         context_size=3,
     )
 
-    assert all_models == [model]
+    model = model_set.best_model
+    assert model_set.all_models == [model]
     np.testing.assert_array_equal(model.startprob_, [0.7, 0.3])
     np.testing.assert_array_equal(model.transmat_, [[0.95, 0.05], [0.1, 0.9]])
     assert model.emissionprob_ is emission_probs

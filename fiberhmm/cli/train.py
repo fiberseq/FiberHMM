@@ -61,6 +61,12 @@ class _TrainingRunResult:
 
 
 @dataclass(frozen=True)
+class _TrainingModelSet:
+    best_model: object
+    all_models: list
+
+
+@dataclass(frozen=True)
 class _TrainingSamplingIndex:
     chroms: list
     cum_lengths: np.ndarray
@@ -1623,8 +1629,11 @@ def _save_training_outputs(best_model, all_models, args, train_rids) -> None:
         json.dump(_training_config(args), f, indent=2)
 
 
-def _build_model_from_base(base_model_path: str, emission_probs: np.ndarray,
-                           context_size: int):
+def _build_model_from_base(
+    base_model_path: str,
+    emission_probs: np.ndarray,
+    context_size: int,
+) -> _TrainingModelSet:
     print(f"\nLoading base model: {base_model_path}")
     base_model = load_model(base_model_path, normalize=False)
 
@@ -1646,7 +1655,7 @@ def _build_model_from_base(base_model_path: str, emission_probs: np.ndarray,
     print(f"  Kept transmat:\n{best_model.transmat_}")
     print(f"  Replaced emissions: {emission_probs.shape}")
 
-    return best_model, [best_model]
+    return _TrainingModelSet(best_model, [best_model])
 
 
 def _print_training_header(args) -> None:
@@ -1689,14 +1698,14 @@ def _run_training_or_base_model(
     emission_probs: np.ndarray,
 ) -> _TrainingRunResult:
     if args.base_model:
-        best_model, all_models = _build_model_from_base(
+        model_set = _build_model_from_base(
             args.base_model,
             emission_probs,
             args.context_size,
         )
         return _TrainingRunResult(
-            best_model=best_model,
-            all_models=all_models,
+            best_model=model_set.best_model,
+            all_models=model_set.all_models,
             train_rids=[],
             valid_reads=[],
             encoded_reads=[],
