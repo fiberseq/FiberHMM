@@ -100,6 +100,13 @@ def _nuc_call_arrays(nuc_calls):
     )
 
 
+def _nuc_call_start_length_lists(nuc_calls):
+    return (
+        [k.start for k in nuc_calls],
+        [k.length for k in nuc_calls],
+    )
+
+
 def _optional_apply_scores(apply_result: Mapping[str, Any], key: str, enabled: bool):
     return apply_result.get(key) if enabled else None
 
@@ -391,8 +398,7 @@ def _build_fused_recall_result_with_nucs(
     msp_starts, msp_len = _interval_pair_lists(new_msps)
 
     # 3) TF recall over the cleaner accessible space + short refined nucs
-    refined_ns = [nc.start for nc in nuc_calls]
-    refined_nl = [nc.length for nc in nuc_calls]
+    refined_ns, refined_nl = _nuc_call_start_length_lists(nuc_calls)
     tf_calls = run_tf_recall_stage(
         obs, refined_ns, refined_nl, msp_starts, msp_len, read_length,
         llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
@@ -459,9 +465,10 @@ def _build_fused_recall_result_with_nucs_circular(
     # 2) re-derive MSPs (still tiled), then 3) TF recall on the refined structure
     tiled_new_msps = rederive_msps(tiled_msps, tiled_access, tiled_len, msp_min_size)
     tiled_msp_starts, tiled_msp_lengths = _interval_pair_lists(tiled_new_msps)
+    tiled_nuc_starts, tiled_nuc_lengths = _nuc_call_start_length_lists(tiled_nucs)
     tiled_tf = run_tf_recall_stage(
         obs,
-        [nc.start for nc in tiled_nucs], [nc.length for nc in tiled_nucs],
+        tiled_nuc_starts, tiled_nuc_lengths,
         tiled_msp_starts, tiled_msp_lengths,
         tiled_len, llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
     )

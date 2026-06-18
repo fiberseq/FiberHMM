@@ -81,6 +81,18 @@ def test_nuc_call_arrays_preserve_start_length_order_and_dtype():
     np.testing.assert_array_equal(lengths, [20, 5])
 
 
+def test_nuc_call_start_length_lists_preserve_plain_values():
+    nucs = [
+        SimpleNamespace(start=np.int32(10), length=np.int64(20)),
+        SimpleNamespace(start=40, length=5),
+    ]
+
+    starts, lengths = fused_stages._nuc_call_start_length_lists(nucs)
+
+    assert starts == [np.int32(10), 40]
+    assert lengths == [np.int64(20), 5]
+
+
 def test_optional_apply_scores_respects_enabled_flag():
     apply_result = {"ns_scores": np.asarray([0.25], dtype=np.float32)}
 
