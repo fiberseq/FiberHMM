@@ -392,6 +392,81 @@ def test_plot_no_data_message_centers_text_and_sets_title():
     assert ax.title == "Gap Size Distribution"
 
 
+def test_plot_footprint_size_bins_uses_threshold_and_labels():
+    transform = object()
+
+    class FakeAxis:
+        def __init__(self):
+            self.transAxes = transform
+            self.barh_calls = []
+            self.yticks = None
+            self.yticklabels = None
+            self.xlabel = None
+            self.ylabel = None
+            self.title = None
+            self.text_calls = []
+
+        def barh(self, y_pos, values, **kwargs):
+            self.barh_calls.append((y_pos, values, kwargs))
+
+        def set_yticks(self, values):
+            self.yticks = values
+
+        def set_yticklabels(self, values):
+            self.yticklabels = values
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_ylabel(self, value):
+            self.ylabel = value
+
+        def set_title(self, value):
+            self.title = value
+
+        def text(self, x, y, message, **kwargs):
+            self.text_calls.append((x, y, message, kwargs))
+
+    ax = FakeAxis()
+
+    stats_module._plot_footprint_size_bins(ax, [10] * 101)
+
+    y_pos, counts, kwargs = ax.barh_calls[0]
+    assert list(y_pos) == list(range(10))
+    assert counts.tolist() == [101, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    assert kwargs == {"color": "steelblue", "alpha": 0.8}
+    assert list(ax.yticks) == list(range(10))
+    assert ax.yticklabels == [
+        "0-20",
+        "20-40",
+        "40-60",
+        "60-80",
+        "80-100",
+        "100-150",
+        "150-200",
+        "200-300",
+        "300-500",
+        "500+",
+    ]
+    assert ax.xlabel == "Count"
+    assert ax.ylabel == "Size Range (bp)"
+    assert ax.title == "Footprint Size Bins"
+
+    small_ax = FakeAxis()
+    stats_module._plot_footprint_size_bins(small_ax, [10] * 100)
+
+    assert small_ax.barh_calls == []
+    assert small_ax.text_calls == [
+        (
+            0.5,
+            0.5,
+            "Insufficient data",
+            {"ha": "center", "va": "center", "transform": transform},
+        )
+    ]
+    assert small_ax.title == "Footprint Size Bins"
+
+
 def test_stats_sampling_probability_handles_full_and_partial_samples():
     assert stats_module._stats_sampling_probability(10, 100) == 1.0
     assert stats_module._stats_sampling_probability(100, 10) == 0.1

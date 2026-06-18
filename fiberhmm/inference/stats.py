@@ -203,6 +203,20 @@ def _plot_no_data_message(ax, message: str, title: str) -> None:
     ax.set_title(title)
 
 
+def _plot_footprint_size_bins(ax, footprint_sizes) -> None:
+    if len(footprint_sizes) <= 100:
+        _plot_no_data_message(ax, 'Insufficient data', 'Footprint Size Bins')
+        return
+
+    labels, counts = _footprint_size_bin_counts(footprint_sizes)
+    ax.barh(range(len(labels)), counts, color='steelblue', alpha=0.8)
+    ax.set_yticks(range(len(labels)))
+    ax.set_yticklabels(labels)
+    ax.set_xlabel('Count')
+    ax.set_ylabel('Size Range (bp)')
+    ax.set_title('Footprint Size Bins')
+
+
 def _stats_sampling_probability(total_reads: int, n_samples: int) -> float:
     if total_reads <= n_samples:
         return 1.0
@@ -555,16 +569,7 @@ class FootprintStats:
 
             # Footprint size vs count (2D histogram)
             ax = axes[1, 1]
-            if len(self.footprint_sizes) > 100:
-                labels, counts = _footprint_size_bin_counts(self.footprint_sizes)
-                ax.barh(range(len(labels)), counts, color='steelblue', alpha=0.8)
-                ax.set_yticks(range(len(labels)))
-                ax.set_yticklabels(labels)
-                ax.set_xlabel('Count')
-                ax.set_ylabel('Size Range (bp)')
-                ax.set_title('Footprint Size Bins')
-            else:
-                _plot_no_data_message(ax, 'Insufficient data', 'Footprint Size Bins')
+            _plot_footprint_size_bins(ax, self.footprint_sizes)
 
             plt.tight_layout()
             pdf.savefig(fig)
