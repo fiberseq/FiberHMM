@@ -92,7 +92,7 @@ def test_viterbi_state_size_stats_skips_empty_reads():
         def predict(self, encoded):
             return encoded
 
-    footprint_sizes, msp_sizes, states = train._viterbi_state_size_stats(
+    stats = train._viterbi_state_size_stats(
         FakeModel(),
         [
             np.array([0, 0, 1, 1]),
@@ -101,11 +101,11 @@ def test_viterbi_state_size_stats_skips_empty_reads():
         ],
     )
 
-    assert footprint_sizes == [2, 2]
-    assert msp_sizes == [2, 1]
-    assert len(states) == 2
-    np.testing.assert_array_equal(states[0], [0, 0, 1, 1])
-    np.testing.assert_array_equal(states[1], [1, 0, 0])
+    assert stats.footprint_sizes == [2, 2]
+    assert stats.msp_sizes == [2, 1]
+    assert len(stats.states) == 2
+    np.testing.assert_array_equal(stats.states[0], [0, 0, 1, 1])
+    np.testing.assert_array_equal(stats.states[1], [1, 0, 0])
 
 
 def test_nonzero_emissions_by_state_filters_zero_entries():

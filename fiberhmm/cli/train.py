@@ -67,6 +67,13 @@ class _TrainingSamplingIndex:
     total_length: int
 
 
+@dataclass(frozen=True)
+class _ViterbiStateSizeStats:
+    footprint_sizes: list
+    msp_sizes: list
+    states: list
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Train FiberHMM model from PacBio BAM files',
@@ -708,7 +715,10 @@ def _expected_model_durations(transmat: np.ndarray) -> tuple:
     )
 
 
-def _viterbi_state_size_stats(model: FiberHMM, encoded_reads: list) -> tuple:
+def _viterbi_state_size_stats(
+    model: FiberHMM,
+    encoded_reads: list,
+) -> _ViterbiStateSizeStats:
     all_footprint_sizes = []
     all_msp_sizes = []
     all_states = []
@@ -722,7 +732,11 @@ def _viterbi_state_size_stats(model: FiberHMM, encoded_reads: list) -> tuple:
         all_footprint_sizes.extend(fp_sizes)
         all_msp_sizes.extend(msp_sizes)
 
-    return all_footprint_sizes, all_msp_sizes, all_states
+    return _ViterbiStateSizeStats(
+        all_footprint_sizes,
+        all_msp_sizes,
+        all_states,
+    )
 
 
 def _nonzero_emissions_by_state(emission_probs: np.ndarray) -> tuple:
@@ -1434,9 +1448,7 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
 
     # Run Viterbi on all encoded reads to get footprint statistics
     print("  Running Viterbi on training reads...")
-    all_footprint_sizes, all_msp_sizes, all_states = _viterbi_state_size_stats(
-        model, encoded_reads,
-    )
+    viterbi_stats = _viterbi_state_size_stats(model, encoded_reads)
 
     with PdfPages(pdf_path) as pdf:
         _save_training_stats_pdf_pages(
@@ -1446,9 +1458,9 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
             emission_probs,
             sampled_reads,
             encoded_reads,
-            all_states,
-            all_footprint_sizes,
-            all_msp_sizes,
+            viterbi_stats.states,
+            viterbi_stats.footprint_sizes,
+            viterbi_stats.msp_sizes,
             n_examples,
             Rectangle,
             PatchCollection,
@@ -1464,7 +1476,7 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         model,
         sampled_reads,
         encoded_reads,
-        all_states,
+        viterbi_stats.states,
         Rectangle,
         PatchCollection,
     )
@@ -1475,7 +1487,8 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         model,
         emission_probs,
         sampled_reads,
-        all_footprint_sizes, all_msp_sizes,
+        viterbi_stats.footprint_sizes,
+        viterbi_stats.msp_sizes,
     )
 
 
