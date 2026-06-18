@@ -738,7 +738,7 @@ def _daf_deamination_base_counts(sequence: str, mod_positions: Set[int]) -> tupl
     a_count = 0
 
     for pos in mod_positions:
-        if pos < len(seq_upper):
+        if 0 <= pos < len(seq_upper):
             base = seq_upper[pos]
             if base == 'T':
                 t_count += 1

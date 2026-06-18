@@ -725,7 +725,7 @@ class TestDAFStrandDetection:
         assert strand == '.'
 
     def test_deamination_base_counts_ignore_out_of_range_positions(self):
-        assert _daf_deamination_base_counts("taCG", {0, 1, 2, 99}) == (1, 1)
+        assert _daf_deamination_base_counts("taCG", {-1, 0, 1, 2, 99}) == (1, 1)
 
 
 class TestSequenceEncoding:
