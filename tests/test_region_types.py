@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from fiberhmm.inference.region_types import (
     RegionBamAggregation,
     RegionBamResult,
@@ -52,6 +54,21 @@ def test_region_bed_work_item_and_result_coerce_legacy_tuples():
     assert result.temp_bed_path == "tmp.bed"
     assert result.total_reads == 5
     assert result.reads_with_footprints == 4
+
+
+@pytest.mark.parametrize(
+    ("factory", "value", "message"),
+    [
+        (RegionBamWorkItem, ("chr1", "in.bam"), "RegionBamWorkItem"),
+        (RegionBamWorkItem, (("chr1", 10), "in.bam", "tmp.bam"), "GenomicRegion"),
+        (RegionBamResult, ("tmp.bam", 1, 2), "RegionBamResult"),
+        (RegionBedWorkItem, ("chr1", "in.bam"), "RegionBedWorkItem"),
+        (RegionBedResult, ("tmp.bed", 1), "RegionBedResult"),
+    ],
+)
+def test_region_contract_coercion_rejects_bad_tuple_lengths(factory, value, message):
+    with pytest.raises(ValueError, match=message):
+        factory.from_value(value)
 
 
 def test_region_bam_aggregation_accumulates_counts_paths_and_skips():

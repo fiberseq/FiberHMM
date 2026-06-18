@@ -24,7 +24,8 @@ class RegionBamWorkItem:
     ) -> "RegionBamWorkItem":
         if isinstance(value, cls):
             return value
-        if len(value) == 3:
+        value_len = _validate_field_count(value, "RegionBamWorkItem", (3, 4))
+        if value_len == 3:
             region, input_bam, temp_bam_path = value
             temp_tsv_path = None
         else:
@@ -49,12 +50,13 @@ class RegionBamResult:
     ) -> "RegionBamResult":
         if isinstance(value, cls):
             return value
-        if len(value) == 6:
+        value_len = _validate_field_count(value, "RegionBamResult", (4, 5, 6))
+        if value_len == 6:
             (
                 temp_bam_path, total_reads, reads_with_footprints,
                 written, temp_tsv_path, skip_reasons,
             ) = value
-        elif len(value) == 5:
+        elif value_len == 5:
             (
                 temp_bam_path, total_reads, reads_with_footprints,
                 written, temp_tsv_path,
@@ -124,6 +126,7 @@ class RegionBedWorkItem:
     ) -> "RegionBedWorkItem":
         if isinstance(value, cls):
             return value
+        _validate_field_count(value, "RegionBedWorkItem", (3,))
         region, input_bam, temp_bed_path = value
         return cls(_coerce_region(region), input_bam, temp_bed_path)
 
@@ -142,6 +145,7 @@ class RegionBedResult:
     ) -> "RegionBedResult":
         if isinstance(value, cls):
             return value
+        _validate_field_count(value, "RegionBedResult", (3,))
         temp_bed_path, total_reads, reads_with_footprints = value
         return cls(temp_bed_path, total_reads, reads_with_footprints)
 
@@ -168,8 +172,17 @@ class RegionBedAggregation:
 
 
 def _coerce_region(region: tuple) -> GenomicRegion:
+    _validate_field_count(region, "GenomicRegion", (3,))
     chrom, start, end = region
     return chrom, int(start), int(end)
+
+
+def _validate_field_count(value: tuple, label: str, allowed_counts: Tuple[int, ...]) -> int:
+    count = len(value)
+    if count in allowed_counts:
+        return count
+    allowed = " or ".join(str(n) for n in allowed_counts)
+    raise ValueError(f"{label} must have {allowed} fields; got {count}")
 
 
 def _accumulate_read_totals(target, result) -> None:
