@@ -235,13 +235,13 @@ class TestPredictFootprintsAndMsps:
             def predict_with_posteriors(self, encoded):
                 raise AssertionError("posterior path should not run")
 
-        states, confidence, posteriors = engine._predict_state_outputs(
+        prediction = engine._predict_state_outputs(
             FakeModel(), np.array([2, 3]), with_scores=False, return_posteriors=False,
         )
 
-        np.testing.assert_array_equal(states, [1, 0])
-        assert confidence is None
-        assert posteriors is None
+        np.testing.assert_array_equal(prediction.states, [1, 0])
+        assert prediction.confidence is None
+        assert prediction.posteriors is None
 
     def test_predict_state_outputs_derives_confidence_from_posteriors(self):
         class FakeModel:
@@ -251,13 +251,16 @@ class TestPredictFootprintsAndMsps:
                     np.array([[0.8, 0.2], [0.1, 0.9]], dtype=np.float32),
                 )
 
-        states, confidence, posteriors = engine._predict_state_outputs(
+        prediction = engine._predict_state_outputs(
             FakeModel(), np.array([2, 3]), with_scores=True, return_posteriors=False,
         )
 
-        np.testing.assert_array_equal(states, [0, 1])
-        np.testing.assert_allclose(confidence, [0.8, 0.9])
-        np.testing.assert_allclose(posteriors, [[0.8, 0.2], [0.1, 0.9]])
+        np.testing.assert_array_equal(prediction.states, [0, 1])
+        np.testing.assert_allclose(prediction.confidence, [0.8, 0.9])
+        np.testing.assert_allclose(
+            prediction.posteriors,
+            [[0.8, 0.2], [0.1, 0.9]],
+        )
 
     def test_footprint_posterior_track_extracts_first_column_as_float16(self):
         posteriors = np.array([

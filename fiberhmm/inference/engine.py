@@ -102,6 +102,13 @@ class _FootprintRunBoundaries:
     ends: np.ndarray
 
 
+@dataclass(frozen=True)
+class _PredictionOutputs:
+    states: np.ndarray
+    confidence: Optional[np.ndarray]
+    posteriors: Optional[np.ndarray]
+
+
 def _new_mode_detection_counts() -> dict:
     return {
         't_minus_a': 0,
@@ -465,14 +472,15 @@ def _extract_footprints_from_states_circular(
 
 
 def _predict_state_outputs(model: FiberHMM, encoded_read: np.ndarray,
-                           with_scores: bool, return_posteriors: bool):
+                           with_scores: bool,
+                           return_posteriors: bool) -> _PredictionOutputs:
     if with_scores or return_posteriors:
         states, posteriors_full = model.predict_with_posteriors(encoded_read)
         confidence = posteriors_full[np.arange(len(states)), states]
-        return states, confidence, posteriors_full
+        return _PredictionOutputs(states, confidence, posteriors_full)
 
     states = model.predict(encoded_read)
-    return states, None, None
+    return _PredictionOutputs(states, None, None)
 
 
 def _footprint_posterior_track(posteriors_full: np.ndarray,
@@ -569,20 +577,20 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
 
     # Predict states (0 = footprint, 1 = accessible)
     # Use predict_with_posteriors if we need posteriors or scores (shares computation)
-    states, confidence, posteriors_full = _predict_state_outputs(
+    prediction = _predict_state_outputs(
         model, encoded_read, with_scores, return_posteriors,
     )
 
     if return_posteriors:
         # P(footprint) = posteriors_full[:, 0]
-        result['posteriors'] = _footprint_posterior_track(posteriors_full)
+        result['posteriors'] = _footprint_posterior_track(prediction.posteriors)
 
     if circular_read_length is not None:
         result.update(
             _circular_prediction_result(
-                states,
-                confidence,
-                posteriors_full,
+                prediction.states,
+                prediction.confidence,
+                prediction.posteriors,
                 circular_read_length,
                 msp_min_size,
                 with_scores,
@@ -594,8 +602,8 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
 
     result.update(
         _linear_prediction_result(
-            states,
-            confidence,
+            prediction.states,
+            prediction.confidence,
             msp_min_size,
             with_scores,
             nuc_min_size=nuc_min_size,
