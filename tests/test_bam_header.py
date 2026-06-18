@@ -43,13 +43,13 @@ def test_append_pg_record_assigns_unique_id_and_chains_previous_pg():
 def test_new_pg_record_builds_unique_id_and_default_program_name():
     record = _new_pg_record(
         [{"ID": "fiberhmm", "PN": "fiberhmm"}],
-        {"VN": "1.0", "CL": "fiberhmm call"},
+        {"PN": " ", "VN": " 1.0 ", "CL": " ", "DS": " desc "},
     )
 
     assert record == {
         "ID": "fiberhmm.2",
         "VN": "1.0",
-        "CL": "fiberhmm call",
+        "DS": "desc",
         "PP": "fiberhmm",
     }
 

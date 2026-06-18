@@ -23,12 +23,21 @@ def _next_pg_id(pgs, base: str) -> str:
     return pid
 
 
+def _record_text(record: dict, key: str) -> Optional[str]:
+    value = record.get(key)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _pg_fields_from_record(record: dict) -> dict:
-    return {
-        key: str(record[key])
-        for key in ('PN', 'VN', 'CL', 'DS')
-        if record.get(key)
-    }
+    fields = {}
+    for key in ('PN', 'VN', 'CL', 'DS'):
+        value = _record_text(record, key)
+        if value is not None:
+            fields[key] = value
+    return fields
 
 
 def _last_pg_id(pgs) -> Optional[str]:
@@ -38,7 +47,7 @@ def _last_pg_id(pgs) -> Optional[str]:
 
 
 def _new_pg_record(pgs, record: dict) -> dict:
-    base = record.get('PN') or 'fiberhmm'
+    base = _record_text(record, 'PN') or 'fiberhmm'
     pg = {'ID': _next_pg_id(pgs, base)}
     pg.update(_pg_fields_from_record(record))
 
