@@ -29,6 +29,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _streaming_progress_message,
     _streaming_progress_rates,
     _streaming_rate,
+    _stream_reads_to_workers,
     _worker_common_args,
 )
 from fiberhmm.inference.parallel import process_bam_for_footprints
@@ -329,6 +330,93 @@ def test_drain_all_streaming_chunks_repeats_until_empty():
 
     assert drained == ["a", "b", "c"]
     assert list(inflight) == []
+
+
+def test_stream_reads_to_workers_buffers_submits_and_reports_progress(monkeypatch):
+    class Executor:
+        def __init__(self):
+            self.submitted = []
+
+        def submit(self, worker_fn, *args):
+            future = f"future-{len(self.submitted)}"
+            self.submitted.append((worker_fn, args, future))
+            return future
+
+    def fake_buffer_read(
+        read,
+        filter_config,
+        mode,
+        ref_fasta,
+        chunk_items,
+        chunk_read_objs,
+        chunk_skip_flags,
+        skip_reasons,
+    ):
+        chunk_read_objs.append(read)
+        if read == "skip":
+            chunk_skip_flags.append(True)
+            skip_reasons["low_mapq"] = skip_reasons.get("low_mapq", 0) + 1
+            return 0, 1
+        chunk_items.append(f"payload-{read}")
+        chunk_skip_flags.append(False)
+        return 1, 0
+
+    progress_calls = []
+
+    def fake_print_progress(*args):
+        progress_calls.append(args)
+        total_reads = args[2]
+        now = args[8]
+        return total_reads, now
+
+    monkeypatch.setattr(
+        streaming_pipeline, "_buffer_streaming_read", fake_buffer_read,
+    )
+    monkeypatch.setattr(
+        streaming_pipeline, "_print_streaming_progress", fake_print_progress,
+    )
+    inflight = deque()
+    drained = []
+    executor = Executor()
+    worker_fn = object()
+    skip_reasons = {}
+
+    total_reads, skipped = _stream_reads_to_workers(
+        ["p1", "skip", "p2"],
+        object(),
+        "daf",
+        object(),
+        inflight,
+        executor,
+        worker_fn,
+        ("arg",),
+        max_reads=None,
+        chunk_size=2,
+        max_inflight=10,
+        drain_chunk=lambda: drained.append(inflight.popleft()),
+        skip_reasons=skip_reasons,
+        log=io.StringIO(),
+        progress_label="Processed",
+        rate_unit="reads/s",
+        start_time=10.0,
+    )
+
+    assert (total_reads, skipped) == (2, 1)
+    assert skip_reasons == {"low_mapq": 1}
+    assert executor.submitted == [
+        (worker_fn, (["payload-p1", "payload-p2"], "arg"), "future-0")
+    ]
+    assert drained == [
+        (
+            "future-0",
+            ["p1", "skip", "p2"],
+            ["payload-p1", "payload-p2"],
+            [False, True, False],
+        )
+    ]
+    assert list(inflight) == []
+    assert progress_calls[0][1:5] == ("Processed", 2, 1, 1)
+    assert progress_calls[0][9] == "reads/s"
 
 
 def test_streaming_log_for_output_uses_stderr_for_stdout_bam():

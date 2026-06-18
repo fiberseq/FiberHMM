@@ -145,6 +145,99 @@ def _drain_all_streaming_chunks(inflight, drain_chunk: Callable[[], None]) -> No
         drain_chunk()
 
 
+def _stream_reads_to_workers(
+    reads,
+    filter_config: ReadFilterConfig,
+    mode: str,
+    ref_fasta,
+    inflight,
+    executor,
+    worker_fn,
+    worker_args,
+    max_reads: Optional[int],
+    chunk_size: int,
+    max_inflight: int,
+    drain_chunk: Callable[[], None],
+    skip_reasons: dict,
+    log,
+    progress_label: str,
+    rate_unit: str,
+    start_time: float,
+) -> tuple[int, int]:
+    total_reads = 0
+    skipped = 0
+    chunk_items, chunk_read_objs, chunk_skip_flags = _new_streaming_chunk_buffers()
+    last_progress_reads = 0
+    last_progress_time = time.time()
+
+    for read in reads:
+        processed_delta, skipped_delta = _buffer_streaming_read(
+            read,
+            filter_config,
+            mode,
+            ref_fasta,
+            chunk_items,
+            chunk_read_objs,
+            chunk_skip_flags,
+            skip_reasons,
+        )
+        skipped += skipped_delta
+        if skipped_delta:
+            continue
+
+        total_reads += processed_delta
+
+        if max_reads and total_reads >= max_reads:
+            break
+
+        if len(chunk_read_objs) >= chunk_size:
+            chunk_items, chunk_read_objs, chunk_skip_flags = (
+                _flush_streaming_chunk(
+                    inflight,
+                    executor,
+                    worker_fn,
+                    chunk_items,
+                    chunk_read_objs,
+                    chunk_skip_flags,
+                    worker_args,
+                    max_inflight,
+                    drain_chunk,
+                )
+            )
+
+            now = time.time()
+            last_progress_reads, last_progress_time = (
+                _print_streaming_progress(
+                    log,
+                    progress_label,
+                    total_reads,
+                    skipped,
+                    len(inflight),
+                    last_progress_reads,
+                    start_time,
+                    last_progress_time,
+                    now,
+                    rate_unit,
+                )
+            )
+
+    if chunk_read_objs:
+        _flush_streaming_chunk(
+            inflight,
+            executor,
+            worker_fn,
+            chunk_items,
+            chunk_read_objs,
+            chunk_skip_flags,
+            worker_args,
+            max_inflight,
+            drain_chunk,
+        )
+
+    _drain_all_streaming_chunks(inflight, drain_chunk)
+    return total_reads, skipped
+
+
 def _worker_common_args(
     edge_trim: int,
     circular: bool,
@@ -524,9 +617,6 @@ def _process_bam_streaming_pipeline_fused(
             )
 
             inflight = deque()
-            chunk_payloads, chunk_read_objs, chunk_skip_flags = (
-                _new_streaming_chunk_buffers()
-            )
             worker_args = _fused_worker_args(
                 edge_trim, circular, mode, context_size,
                 msp_min_size, nuc_min_size, with_scores,
@@ -536,75 +626,27 @@ def _process_bam_streaming_pipeline_fused(
                 inflight, outbam, with_scores,
                 also_write_legacy, downstream_compat, counters,
             )
-            last_progress_reads = 0
-            last_progress_time = time.time()
 
             try:
-                for read in inbam.fetch(until_eof=True):
-                    processed_delta, skipped_delta = _buffer_streaming_read(
-                        read,
-                        filter_config,
-                        mode,
-                        ref_fasta,
-                        chunk_payloads,
-                        chunk_read_objs,
-                        chunk_skip_flags,
-                        skip_reasons,
-                    )
-                    skipped += skipped_delta
-                    if skipped_delta:
-                        continue
-
-                    total_reads += processed_delta
-
-                    if max_reads and total_reads >= max_reads:
-                        break
-
-                    if len(chunk_read_objs) >= chunk_size:
-                        chunk_payloads, chunk_read_objs, chunk_skip_flags = (
-                            _flush_streaming_chunk(
-                                inflight,
-                                executor,
-                                _process_fused_payload_chunk_worker,
-                                chunk_payloads,
-                                chunk_read_objs,
-                                chunk_skip_flags,
-                                worker_args,
-                                max_inflight,
-                                drain_chunk,
-                            )
-                        )
-
-                        now = time.time()
-                        last_progress_reads, last_progress_time = (
-                            _print_streaming_progress(
-                                _log,
-                                "Fused",
-                                total_reads,
-                                skipped,
-                                len(inflight),
-                                last_progress_reads,
-                                start_time,
-                                last_progress_time,
-                                now,
-                                "r/s",
-                            )
-                        )
-
-                if chunk_read_objs:
-                    _flush_streaming_chunk(
-                        inflight,
-                        executor,
-                        _process_fused_payload_chunk_worker,
-                        chunk_payloads,
-                        chunk_read_objs,
-                        chunk_skip_flags,
-                        worker_args,
-                        max_inflight,
-                        drain_chunk,
-                    )
-
-                _drain_all_streaming_chunks(inflight, drain_chunk)
+                total_reads, skipped = _stream_reads_to_workers(
+                    inbam.fetch(until_eof=True),
+                    filter_config,
+                    mode,
+                    ref_fasta,
+                    inflight,
+                    executor,
+                    _process_fused_payload_chunk_worker,
+                    worker_args,
+                    max_reads,
+                    chunk_size,
+                    max_inflight,
+                    drain_chunk,
+                    skip_reasons,
+                    _log,
+                    "Fused",
+                    "r/s",
+                    start_time,
+                )
             finally:
                 try:
                     executor.shutdown(wait=True)
@@ -700,9 +742,6 @@ def _process_bam_streaming_pipeline(
             )
 
             inflight = deque()
-            chunk_reads, chunk_read_objs, chunk_skip_flags = (
-                _new_streaming_chunk_buffers()
-            )
             worker_args = _apply_worker_args(
                 edge_trim, circular, mode, context_size,
                 msp_min_size, nuc_min_size, with_scores,
@@ -713,75 +752,27 @@ def _process_bam_streaming_pipeline(
                 posterior_writer, counters,
             )
             skipped = 0
-            last_progress_reads = 0
-            last_progress_time = time.time()
 
             try:
-                for read in inbam.fetch(until_eof=True):
-                    processed_delta, skipped_delta = _buffer_streaming_read(
-                        read,
-                        filter_config,
-                        mode,
-                        ref_fasta,
-                        chunk_reads,
-                        chunk_read_objs,
-                        chunk_skip_flags,
-                        skip_reasons,
-                    )
-                    skipped += skipped_delta
-                    if skipped_delta:
-                        continue
-
-                    total_reads += processed_delta
-
-                    if max_reads and total_reads >= max_reads:
-                        break
-
-                    if len(chunk_read_objs) >= chunk_size:
-                        chunk_reads, chunk_read_objs, chunk_skip_flags = (
-                            _flush_streaming_chunk(
-                                inflight,
-                                executor,
-                                _process_payload_chunk_worker,
-                                chunk_reads,
-                                chunk_read_objs,
-                                chunk_skip_flags,
-                                worker_args,
-                                max_inflight,
-                                drain_chunk,
-                            )
-                        )
-
-                        now = time.time()
-                        last_progress_reads, last_progress_time = (
-                            _print_streaming_progress(
-                                _log,
-                                "Processed",
-                                total_reads,
-                                skipped,
-                                len(inflight),
-                                last_progress_reads,
-                                start_time,
-                                last_progress_time,
-                                now,
-                                "reads/s",
-                            )
-                        )
-
-                if chunk_read_objs:
-                    _flush_streaming_chunk(
-                        inflight,
-                        executor,
-                        _process_payload_chunk_worker,
-                        chunk_reads,
-                        chunk_read_objs,
-                        chunk_skip_flags,
-                        worker_args,
-                        max_inflight,
-                        drain_chunk,
-                    )
-
-                _drain_all_streaming_chunks(inflight, drain_chunk)
+                total_reads, skipped = _stream_reads_to_workers(
+                    inbam.fetch(until_eof=True),
+                    filter_config,
+                    mode,
+                    ref_fasta,
+                    inflight,
+                    executor,
+                    _process_payload_chunk_worker,
+                    worker_args,
+                    max_reads,
+                    chunk_size,
+                    max_inflight,
+                    drain_chunk,
+                    skip_reasons,
+                    _log,
+                    "Processed",
+                    "reads/s",
+                    start_time,
+                )
 
             finally:
                 try:
