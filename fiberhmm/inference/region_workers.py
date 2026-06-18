@@ -304,6 +304,27 @@ def _extract_region_payload_fiber_read(payload, mode: str, prob_threshold: int):
     return fiber_read, None
 
 
+def _run_region_apply_read(
+    fiber_read,
+    model,
+    apply_config: _RegionApplyConfig,
+    *,
+    return_posteriors: bool = False,
+):
+    return _process_single_read(
+        fiber_read,
+        model,
+        apply_config.edge_trim,
+        apply_config.circular,
+        apply_config.mode,
+        apply_config.context_size,
+        apply_config.msp_min_size,
+        nuc_min_size=apply_config.nuc_min_size,
+        with_scores=apply_config.with_scores,
+        return_posteriors=return_posteriors,
+    )
+
+
 def _read_starts_in_region(read, start: int, end: int) -> bool:
     return int(start) <= int(read.reference_start) < int(end)
 
@@ -542,12 +563,10 @@ def _process_region_bam_read(
     if skip_reason:
         return _skipped_region_bam_delta(outbam, read, skip_reasons, skip_reason)
 
-    result = _process_single_read(
-        fiber_read, model, apply_config.edge_trim,
-        apply_config.circular, apply_config.mode,
-        apply_config.context_size, apply_config.msp_min_size,
-        nuc_min_size=apply_config.nuc_min_size,
-        with_scores=apply_config.with_scores,
+    result = _run_region_apply_read(
+        fiber_read,
+        model,
+        apply_config,
         return_posteriors=return_posteriors,
     )
 
@@ -588,13 +607,7 @@ def _process_region_bed_read(
     if skip_reason:
         return _RegionBedReadDelta()
 
-    result = _process_single_read(
-        fiber_read, model, apply_config.edge_trim,
-        apply_config.circular, apply_config.mode,
-        apply_config.context_size, apply_config.msp_min_size,
-        nuc_min_size=apply_config.nuc_min_size,
-        with_scores=apply_config.with_scores,
-    )
+    result = _run_region_apply_read(fiber_read, model, apply_config)
 
     if result is not None and len(result['ns']) > 0:
         bed_out.write(
