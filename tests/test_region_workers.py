@@ -196,6 +196,22 @@ def test_open_region_posterior_tsv_opens_only_when_enabled(tmp_path):
     assert bad_enabled is False
 
 
+def test_open_region_posterior_tsv_propagates_unexpected_errors(monkeypatch, tmp_path):
+    tsv_path = tmp_path / "region.tsv"
+    enabled_config = _region_bam_output_config(
+        {"return_posteriors": True},
+        str(tsv_path),
+    )
+
+    def raise_runtime_error(*args, **kwargs):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(region_workers, "open", raise_runtime_error, raising=False)
+
+    with pytest.raises(RuntimeError, match="unexpected"):
+        _open_region_posterior_tsv(enabled_config, str(tsv_path))
+
+
 def test_process_region_to_bam_closes_tsv_once_when_fetch_region_missing(
     monkeypatch,
 ):

@@ -185,7 +185,7 @@ def _open_region_posterior_tsv(
         return None, False
     try:
         return open(temp_tsv_path, 'w'), True
-    except Exception:
+    except OSError:
         return None, False
 
 
