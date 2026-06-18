@@ -817,8 +817,6 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         read_iter = inbam.fetch(chrom, start, end)
                     except ValueError:
                         # Region not in BAM (e.g., unplaced contigs).
-                        if tsv_file:
-                            tsv_file.close()
                         return RegionBamResult(temp_bam_path, 0, 0, 0)
 
                     for read in read_iter:

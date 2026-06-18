@@ -2,9 +2,10 @@
 
 from types import SimpleNamespace
 
+import fiberhmm.inference.region_workers as region_workers
 from fiberhmm.inference.engine import CHIMERA_SKIP
 from fiberhmm.inference.read_filters import ReadFilterConfig
-from fiberhmm.inference.region_types import RegionBamResult
+from fiberhmm.inference.region_types import RegionBamResult, RegionBamWorkItem
 from fiberhmm.inference.region_workers import (
     _REGION_ROUTE_OUTSIDE,
     _REGION_ROUTE_PROCESS,
@@ -182,6 +183,67 @@ def test_open_region_posterior_tsv_opens_only_when_enabled(tmp_path):
     )
     assert bad_file is None
     assert bad_enabled is False
+
+
+def test_process_region_to_bam_closes_tsv_once_when_fetch_region_missing(
+    monkeypatch,
+):
+    class TsvFile:
+        def __init__(self):
+            self.closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    class AlignmentFile:
+        def __init__(self, *args, **kwargs):
+            self.header = {"HD": {"SO": "coordinate"}}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def fetch(self, *args):
+            raise ValueError("missing region")
+
+    tsv_file = TsvFile()
+    params = {
+        "edge_trim": 0,
+        "circular": False,
+        "mode": "pacbio-fiber",
+        "context_size": 3,
+        "msp_min_size": 10,
+        "nuc_min_size": 85,
+        "prob_threshold": 0,
+        "with_scores": False,
+        "io_threads": 1,
+        "return_posteriors": True,
+        "write_msps": True,
+        "min_mapq": 0,
+        "min_read_length": 0,
+        "primary_only": False,
+        "train_rids": set(),
+    }
+
+    monkeypatch.setattr(region_workers.pysam, "set_verbosity", lambda value: None)
+    monkeypatch.setattr(region_workers.pysam, "AlignmentFile", AlignmentFile)
+    monkeypatch.setattr(region_workers, "append_coord_marker", lambda header: header)
+    monkeypatch.setattr(
+        region_workers,
+        "_open_region_posterior_tsv",
+        lambda *args: (tsv_file, True),
+    )
+    monkeypatch.setattr(region_workers, "_worker_model", object())
+    monkeypatch.setattr(region_workers, "_worker_region_params", params)
+
+    result = region_workers._process_region_to_bam(
+        RegionBamWorkItem(("missing", 0, 100), "input.bam", "region.bam", "post.tsv"),
+    )
+
+    assert result == RegionBamResult("region.bam", 0, 0, 0)
+    assert tsv_file.closed == 1
 
 
 def test_region_bam_result_from_counts_includes_tsv_only_when_written():
