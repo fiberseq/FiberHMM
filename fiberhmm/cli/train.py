@@ -636,6 +636,31 @@ def _training_example_plot_data(model, read, encoded):
     return seq_len, m6a_positions, footprint_prob
 
 
+def _add_training_state_blocks(
+    ax,
+    region_states,
+    region_len: int,
+    rectangle_cls,
+    patch_collection_cls,
+) -> None:
+    patches = []
+    colors = []
+    for start, width, color in _state_block_specs(region_states):
+        patches.append(rectangle_cls((start, 0), width, 1))
+        colors.append(color)
+
+    if patches:
+        collection = patch_collection_cls(
+            patches,
+            facecolors=colors,
+            edgecolors='lightgray',
+            linewidths=0.3,
+        )
+        ax.add_collection(collection)
+    ax.set_xlim(0, region_len)
+    ax.set_ylim(0, 1)
+
+
 def _training_stats_paths(output_dir: str) -> dict:
     plots_dir = os.path.join(output_dir, 'plots')
     return {
@@ -814,22 +839,6 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
                 model, read, encoded,
             )
 
-            # Helper function to draw state blocks
-            def draw_state_blocks(ax, region_states, region_len):
-                """Draw footprint (green) and accessible (white) blocks."""
-                patches = []
-                colors_list = []
-                for start, width, color in _state_block_specs(region_states):
-                    patches.append(Rectangle((start, 0), width, 1))
-                    colors_list.append(color)
-
-                if patches:
-                    collection = PatchCollection(patches, facecolors=colors_list,
-                                                edgecolors='lightgray', linewidths=0.3)
-                    ax.add_collection(collection)
-                ax.set_xlim(0, region_len)
-                ax.set_ylim(0, 1)
-
             # Create figure: 4 rows (overview) + 3 rows per zoom (3 zooms = 9 rows) = 13 rows
             # But let's use GridSpec for better control
             fig = plt.figure(figsize=(14, 16))
@@ -861,7 +870,9 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
 
             # Overview: Footprints
             ax_overview_fp = fig.add_subplot(gs[1, :])
-            draw_state_blocks(ax_overview_fp, states, seq_len)
+            _add_training_state_blocks(
+                ax_overview_fp, states, seq_len, Rectangle, PatchCollection,
+            )
             ax_overview_fp.set_ylabel('State', fontsize=9)
             ax_overview_fp.set_yticks([])
             ax_overview_fp.set_title('Overview: Footprints (green) vs Accessible (white)', fontsize=10, loc='left')
@@ -921,7 +932,9 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
                 # Footprints
                 ax_zoom_fp = fig.add_subplot(gs[4, w_idx])
                 window_states = states[w_start:w_end]
-                draw_state_blocks(ax_zoom_fp, window_states, w_len)
+                _add_training_state_blocks(
+                    ax_zoom_fp, window_states, w_len, Rectangle, PatchCollection,
+                )
                 ax_zoom_fp.set_ylabel('State', fontsize=8)
                 ax_zoom_fp.set_yticks([])
                 ax_zoom_fp.set_xticklabels([])
@@ -973,16 +986,7 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
 
         # Footprints
         ax = axes[1]
-        patches = []
-        colors = []
-        for start, width, color in _state_block_specs(states):
-            patches.append(Rectangle((start, 0), width, 1))
-            colors.append(color)
-        if patches:
-            collection = PatchCollection(patches, facecolors=colors, edgecolors='lightgray', linewidths=0.3)
-            ax.add_collection(collection)
-        ax.set_xlim(0, seq_len)
-        ax.set_ylim(0, 1)
+        _add_training_state_blocks(ax, states, seq_len, Rectangle, PatchCollection)
         ax.set_ylabel('State')
         ax.set_yticks([])
         ax.set_xticklabels([])

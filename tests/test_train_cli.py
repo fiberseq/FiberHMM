@@ -184,6 +184,62 @@ def test_training_example_plot_data_sorts_positions_and_uses_footprint_probs():
     np.testing.assert_array_equal(footprint_prob, [0.2, 0.7])
 
 
+def test_add_training_state_blocks_uses_state_specs_and_sets_limits():
+    rectangles = []
+    collections = []
+
+    class FakeRectangle:
+        def __init__(self, xy, width, height):
+            self.xy = xy
+            self.width = width
+            self.height = height
+            rectangles.append(self)
+
+    class FakePatchCollection:
+        def __init__(self, patches, **kwargs):
+            self.patches = patches
+            self.kwargs = kwargs
+            collections.append(self)
+
+    class FakeAxis:
+        def __init__(self):
+            self.added = []
+            self.xlim = None
+            self.ylim = None
+
+        def add_collection(self, collection):
+            self.added.append(collection)
+
+        def set_xlim(self, start, end):
+            self.xlim = (start, end)
+
+        def set_ylim(self, start, end):
+            self.ylim = (start, end)
+
+    ax = FakeAxis()
+    train._add_training_state_blocks(
+        ax,
+        [0, 0, 1],
+        10,
+        FakeRectangle,
+        FakePatchCollection,
+    )
+
+    assert [(rect.xy, rect.width, rect.height) for rect in rectangles] == [
+        ((0, 0), 2, 1),
+        ((2, 0), 1, 1),
+    ]
+    assert collections[0].patches == rectangles
+    assert collections[0].kwargs == {
+        "facecolors": ["forestgreen", "white"],
+        "edgecolors": "lightgray",
+        "linewidths": 0.3,
+    }
+    assert ax.added == collections
+    assert ax.xlim == (0, 10)
+    assert ax.ylim == (0, 1)
+
+
 def test_training_stats_paths_are_under_plots_dir():
     assert train._training_stats_paths("/tmp/out") == {
         "plots_dir": "/tmp/out/plots",
