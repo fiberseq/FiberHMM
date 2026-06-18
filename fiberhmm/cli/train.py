@@ -94,6 +94,16 @@ class _StateRun:
 
 
 @dataclass(frozen=True)
+class _StateBlockSpec:
+    start: int
+    width: int
+    color: str
+
+    def as_tuple(self) -> tuple:
+        return self.start, self.width, self.color
+
+
+@dataclass(frozen=True)
 class _StateRunLengths:
     footprint_sizes: list
     msp_sizes: list
@@ -777,11 +787,19 @@ def _state_run_lengths(states) -> _StateRunLengths:
     return _StateRunLengths(footprint_sizes, msp_sizes)
 
 
-def _state_block_specs(states) -> list:
+def _state_block_spec_records(states) -> list:
     return [
-        (run.start, run.length, 'forestgreen' if run.state == 0 else 'white')
+        _StateBlockSpec(
+            start=run.start,
+            width=run.length,
+            color='forestgreen' if run.state == 0 else 'white',
+        )
         for run in _state_runs(states)
     ]
+
+
+def _state_block_specs(states) -> list:
+    return [spec.as_tuple() for spec in _state_block_spec_records(states)]
 
 
 def _expected_state_duration(stay_prob: float) -> float:

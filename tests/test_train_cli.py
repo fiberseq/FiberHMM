@@ -72,6 +72,12 @@ def test_state_run_lengths_splits_footprint_and_msp_lengths():
 
 
 def test_state_block_specs_include_plot_widths_and_colors():
+    assert train._state_block_spec_records([]) == []
+    assert train._state_block_spec_records([0, 0, 1, 0]) == [
+        train._StateBlockSpec(0, 2, "forestgreen"),
+        train._StateBlockSpec(2, 1, "white"),
+        train._StateBlockSpec(3, 1, "forestgreen"),
+    ]
     assert train._state_block_specs([]) == []
     assert train._state_block_specs([0, 0, 1, 0]) == [
         (0, 2, "forestgreen"),
