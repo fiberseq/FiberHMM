@@ -211,7 +211,11 @@ def test_training_zoom_window_bounds_add_end_and_length():
         seed=0,
     )
 
-    assert bounds == [(0, 500, 500), (0, 500, 500), (0, 500, 500)]
+    assert bounds == [
+        train._TrainingZoomWindow(0, 500, 500),
+        train._TrainingZoomWindow(0, 500, 500),
+        train._TrainingZoomWindow(0, 500, 500),
+    ]
 
     starts = train._training_zoom_window_starts(
         seq_len=6000,
@@ -224,7 +228,10 @@ def test_training_zoom_window_bounds_add_end_and_length():
         window_size=1000,
         n_windows=3,
         seed=7,
-    ) == [(start, start + 1000, 1000) for start in starts]
+    ) == [
+        train._TrainingZoomWindow(start, start + 1000, 1000)
+        for start in starts
+    ]
 
 
 def test_relative_positions_in_window_filters_and_offsets():

@@ -99,6 +99,13 @@ class _TrainingExamplePdfLayout:
     gridspec: object
 
 
+@dataclass(frozen=True)
+class _TrainingZoomWindow:
+    start: int
+    end: int
+    length: int
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Train FiberHMM model from PacBio BAM files',
@@ -800,10 +807,10 @@ def _training_zoom_window_starts(seq_len: int, window_size: int,
 def _training_zoom_window_bounds(seq_len: int, window_size: int,
                                  n_windows: int, seed: int) -> list:
     return [
-        (
-            start,
-            min(start + window_size, seq_len),
-            min(window_size, seq_len - start),
+        _TrainingZoomWindow(
+            start=start,
+            end=min(start + window_size, seq_len),
+            length=min(window_size, seq_len - start),
         )
         for start in _training_zoom_window_starts(
             seq_len, window_size, n_windows, seed,
@@ -1258,9 +1265,10 @@ def _add_training_example_zoom_pdf_panel(
     rectangle_cls,
     patch_collection_cls,
 ):
-    w_start, w_end, w_len = window
     ax_zoom_m6a = fig.add_subplot(gs[3, w_idx])
-    m6a_in_window = _relative_positions_in_window(m6a_positions, w_start, w_end)
+    m6a_in_window = _relative_positions_in_window(
+        m6a_positions, window.start, window.end,
+    )
     if len(m6a_in_window) > 0:
         ax_zoom_m6a.eventplot(
             [m6a_in_window],
@@ -1269,40 +1277,42 @@ def _add_training_example_zoom_pdf_panel(
             linelengths=0.8,
             linewidths=1.0,
         )
-    ax_zoom_m6a.set_xlim(0, w_len)
+    ax_zoom_m6a.set_xlim(0, window.length)
     ax_zoom_m6a.set_ylim(0, 1)
     ax_zoom_m6a.set_ylabel('m6A', fontsize=8)
     ax_zoom_m6a.set_yticks([])
     ax_zoom_m6a.set_xticklabels([])
     ax_zoom_m6a.set_title(
-        f'Zoom {w_idx + 1}: {w_start:,}-{w_end:,}bp', fontsize=9,
+        f'Zoom {w_idx + 1}: {window.start:,}-{window.end:,}bp',
+        fontsize=9,
     )
 
     _add_training_zoom_highlight(
         overview_axes,
-        w_start,
-        w_end,
+        window.start,
+        window.end,
         _TRAINING_ZOOM_COLORS[w_idx],
     )
 
     ax_zoom_fp = fig.add_subplot(gs[4, w_idx])
-    window_states = states[w_start:w_end]
+    window_states = states[window.start:window.end]
     _add_training_state_blocks(
-        ax_zoom_fp, window_states, w_len, rectangle_cls, patch_collection_cls,
+        ax_zoom_fp, window_states, window.length, rectangle_cls,
+        patch_collection_cls,
     )
     ax_zoom_fp.set_ylabel('State', fontsize=8)
     ax_zoom_fp.set_yticks([])
     ax_zoom_fp.set_xticklabels([])
 
     ax_zoom_prob = fig.add_subplot(gs[5, w_idx])
-    window_prob = footprint_prob[w_start:w_end]
+    window_prob = footprint_prob[window.start:window.end]
     _plot_training_probability_area(
         ax_zoom_prob,
         window_prob,
         show_line=True,
         threshold_alpha=0.5,
     )
-    ax_zoom_prob.set_xlim(0, w_len)
+    ax_zoom_prob.set_xlim(0, window.length)
     ax_zoom_prob.set_ylim(0, 1)
     ax_zoom_prob.set_ylabel('P(FP)', fontsize=8)
     ax_zoom_prob.set_yticks([0, 0.5, 1])
