@@ -79,15 +79,15 @@ def _load_pickle_model_raw(filepath):
 
 def _load_npz_model_raw(filepath):
     """Load model from NPZ file (raw dict)."""
-    data = np.load(filepath, allow_pickle=True)
-    return {
-        'startprob': data['startprob'],
-        'transmat': data['transmat'],
-        'emissionprob': data['emissionprob'],
-        'n_states': int(data.get('n_states', 2)),
-        'context_size': int(data.get('context_size', 3)),
-        'mode': str(data.get('mode', 'pacbio-fiber')),
-    }
+    with np.load(filepath, allow_pickle=True) as data:
+        return {
+            'startprob': data['startprob'],
+            'transmat': data['transmat'],
+            'emissionprob': data['emissionprob'],
+            'n_states': int(data.get('n_states', 2)),
+            'context_size': int(data.get('context_size', 3)),
+            'mode': str(data.get('mode', 'pacbio-fiber')),
+        }
 
 
 def _load_raw_model_by_suffix(input_path: Path):

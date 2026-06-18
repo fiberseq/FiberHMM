@@ -90,6 +90,47 @@ def test_load_raw_model_by_suffix_falls_back_to_npz(monkeypatch, tmp_path):
     assert calls == [("pickle", "model.legacy"), ("npz", "model.legacy")]
 
 
+def test_load_npz_model_raw_closes_archive(monkeypatch):
+    import fiberhmm.cli.utils as cli_utils
+
+    class FakeNpz:
+        def __init__(self):
+            self.closed = False
+            self.values = {
+                "startprob": np.array([0.4, 0.6]),
+                "transmat": np.array([[0.9, 0.1], [0.2, 0.8]]),
+                "emissionprob": np.array([[0.3, 0.7], [0.8, 0.2]]),
+                "n_states": 2,
+                "context_size": 3,
+                "mode": "daf",
+            }
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            self.closed = True
+
+        def __getitem__(self, key):
+            return self.values[key]
+
+        def get(self, key, default=None):
+            return self.values.get(key, default)
+
+    fake_npz = FakeNpz()
+    monkeypatch.setattr(
+        cli_utils.np,
+        "load",
+        lambda path, allow_pickle: fake_npz,
+    )
+
+    data = cli_utils._load_npz_model_raw("model.npz")
+
+    assert fake_npz.closed
+    assert data["context_size"] == 3
+    assert data["mode"] == "daf"
+
+
 def test_converted_model_json_payload_coerces_arrays_and_metadata():
     data = {
         "startprob": [0.25, 0.75],
