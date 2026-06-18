@@ -450,6 +450,32 @@ def _footprint_posterior_track(posteriors_full: np.ndarray,
     return posteriors_full[start:end, 0].astype(np.float16)
 
 
+def _circular_prediction_result(
+    states: np.ndarray,
+    confidence: Optional[np.ndarray],
+    posteriors_full: Optional[np.ndarray],
+    circular_read_length: int,
+    msp_min_size: int,
+    with_scores: bool,
+    return_posteriors: bool,
+    nuc_min_size: int,
+) -> dict:
+    result = _extract_footprints_from_states_circular(
+        states,
+        confidence,
+        circular_read_length,
+        msp_min_size,
+        with_scores,
+        nuc_min_size=nuc_min_size,
+    )
+    if return_posteriors and posteriors_full is not None:
+        n = int(circular_read_length)
+        result['posteriors'] = _footprint_posterior_track(
+            posteriors_full, n, 2 * n,
+        )
+    return result
+
+
 def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
                                  msp_min_size: int = 147,
                                  with_scores: bool = False,
@@ -502,20 +528,17 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
 
     if circular_read_length is not None:
         result.update(
-            _extract_footprints_from_states_circular(
+            _circular_prediction_result(
                 states,
                 confidence,
+                posteriors_full,
                 circular_read_length,
                 msp_min_size,
                 with_scores,
+                return_posteriors,
                 nuc_min_size=nuc_min_size,
             )
         )
-        if return_posteriors and posteriors_full is not None:
-            n = int(circular_read_length)
-            result['posteriors'] = _footprint_posterior_track(
-                posteriors_full, n, 2 * n,
-            )
         return result
 
     result['states'] = states
