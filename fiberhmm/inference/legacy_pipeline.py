@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from typing import Optional, Set, Tuple
 
 import numpy as np
@@ -223,6 +224,17 @@ def _legacy_executor_for_config(
     return None
 
 
+def _shutdown_legacy_resources(executor, posterior_writer):
+    posterior_stats = None
+    try:
+        if executor:
+            executor.shutdown(wait=True)
+    finally:
+        if posterior_writer:
+            posterior_stats = posterior_writer.close()
+    return posterior_stats
+
+
 def _legacy_processing_rate(total_reads: int, elapsed: float) -> float:
     return total_reads / elapsed if elapsed > 0 else 0
 
@@ -385,11 +397,36 @@ def _process_legacy_reads(
     return total_reads, reads_with_footprints, skipped, worker_failures
 
 
+@dataclass(frozen=True)
+class _LegacyPipelineResult:
+    total_reads: int
+    reads_with_footprints: int
+    skipped: int
+    worker_failures: int
+    posterior_stats: object | None
+
+
 _LEGACY_SKIP_REASON_KEYS = BASE_SKIP_REASON_KEYS + (NO_FOOTPRINTS_SKIP_REASON,)
 
 
 def _new_legacy_skip_reasons() -> dict:
     return new_skip_reasons(NO_FOOTPRINTS_SKIP_REASON)
+
+
+def _legacy_filter_config(
+    *,
+    min_mapq: int,
+    min_read_length: int,
+    primary_only: bool,
+    train_rids: Set[str],
+) -> ReadFilterConfig:
+    return ReadFilterConfig(
+        min_mapq=min_mapq,
+        min_read_length=min_read_length,
+        primary_only=primary_only,
+        process_unmapped=False,
+        train_rids=train_rids,
+    )
 
 
 def _write_skipped_legacy_read(outbam, read, skip_reasons: dict, reason: str) -> int:
@@ -414,63 +451,39 @@ def _legacy_fiber_read_or_skip(read, filter_config: ReadFilterConfig,
     return fiber_read, None
 
 
-def _process_bam_legacy_pipeline(
+def _run_legacy_bam_processing(
     input_bam: str,
     output_bam: str,
     model,
     model_path: Optional[str],
-    train_rids: Set[str],
+    filter_config: ReadFilterConfig,
+    skip_reasons: dict,
     edge_trim: int,
     circular: bool,
     mode: str,
     context_size: int,
     msp_min_size: int,
-    nuc_min_size: int = 85,
-    min_mapq: int = 0,
-    prob_threshold: int = 0,
-    min_read_length: int = 0,
-    with_scores: bool = False,
-    n_cores: int = 1,
-    max_reads: Optional[int] = None,
-    debug_timing: bool = False,
-    primary_only: bool = False,
-    output_posteriors: Optional[str] = None,
-    write_msps: bool = True,
-    io_threads: int = 4,
-) -> Tuple[int, int]:
-    """Process a BAM through the legacy chunked apply path."""
-    # Track skip reasons
-    skip_reasons = _new_legacy_skip_reasons()
-    filter_config = ReadFilterConfig(
-        min_mapq=min_mapq,
-        min_read_length=min_read_length,
-        primary_only=primary_only,
-        process_unmapped=False,
-        train_rids=train_rids,
-    )
-
-    chunk_size = 2000  # Reads per chunk
-    start_time = time.time()
-
-    # Initialized after BAM handles open so failure cleanup is centralized in
-    # the processing finally block.
-    posterior_writer = None
+    nuc_min_size: int,
+    prob_threshold: int,
+    with_scores: bool,
+    n_cores: int,
+    max_reads: Optional[int],
+    debug_timing: bool,
+    output_posteriors: Optional[str],
+    write_msps: bool,
+    io_threads: int,
+    start_time: float,
+    chunk_size: int,
+) -> _LegacyPipelineResult:
     posterior_stats = None
-    return_posteriors = False
 
-    print("Processing and writing BAM (streaming)...")
-    sys.stdout.flush()
-
-    # Open input and output BAMs
     with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
         with pysam.AlignmentFile(output_bam, "wb",
                                  header=append_coord_marker(inbam.header),
                                  threads=io_threads) as outbam:
-
             posterior_writer, return_posteriors = _open_legacy_posterior_writer(
                 output_posteriors, mode, context_size, edge_trim, input_bam,
             )
-
             executor = _legacy_executor_for_config(
                 model_path, n_cores, debug_timing,
             )
@@ -500,21 +513,89 @@ def _process_bam_legacy_pipeline(
                         write_msps=write_msps,
                     )
                 )
-
             finally:
-                try:
-                    if executor:
-                        executor.shutdown(wait=True)
-                finally:
-                    if posterior_writer:
-                        posterior_stats = posterior_writer.close()
-                        posterior_writer = None
+                posterior_stats = _shutdown_legacy_resources(
+                    executor, posterior_writer,
+                )
+
+    return _LegacyPipelineResult(
+        total_reads=total_reads,
+        reads_with_footprints=reads_with_footprints,
+        skipped=skipped,
+        worker_failures=worker_failures,
+        posterior_stats=posterior_stats,
+    )
+
+
+def _process_bam_legacy_pipeline(
+    input_bam: str,
+    output_bam: str,
+    model,
+    model_path: Optional[str],
+    train_rids: Set[str],
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int = 85,
+    min_mapq: int = 0,
+    prob_threshold: int = 0,
+    min_read_length: int = 0,
+    with_scores: bool = False,
+    n_cores: int = 1,
+    max_reads: Optional[int] = None,
+    debug_timing: bool = False,
+    primary_only: bool = False,
+    output_posteriors: Optional[str] = None,
+    write_msps: bool = True,
+    io_threads: int = 4,
+) -> Tuple[int, int]:
+    """Process a BAM through the legacy chunked apply path."""
+    skip_reasons = _new_legacy_skip_reasons()
+    filter_config = _legacy_filter_config(
+        min_mapq=min_mapq,
+        min_read_length=min_read_length,
+        primary_only=primary_only,
+        train_rids=train_rids,
+    )
+
+    chunk_size = 2000  # Reads per chunk
+    start_time = time.time()
+
+    print("Processing and writing BAM (streaming)...")
+    sys.stdout.flush()
+
+    result = _run_legacy_bam_processing(
+        input_bam=input_bam,
+        output_bam=output_bam,
+        model=model,
+        model_path=model_path,
+        filter_config=filter_config,
+        skip_reasons=skip_reasons,
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        prob_threshold=prob_threshold,
+        with_scores=with_scores,
+        n_cores=n_cores,
+        max_reads=max_reads,
+        debug_timing=debug_timing,
+        output_posteriors=output_posteriors,
+        write_msps=write_msps,
+        io_threads=io_threads,
+        start_time=start_time,
+        chunk_size=chunk_size,
+    )
 
     _print_legacy_completion_summary(
-        total_reads,
-        skipped,
-        reads_with_footprints,
-        worker_failures,
+        result.total_reads,
+        result.skipped,
+        result.reads_with_footprints,
+        result.worker_failures,
         skip_reasons,
         time.time() - start_time,
     )
@@ -522,6 +603,6 @@ def _process_bam_legacy_pipeline(
     # Index the output BAM (sort first if needed)
     _sort_and_index_bam(output_bam, threads=n_cores)
 
-    _print_legacy_posterior_summary(posterior_stats, output_posteriors)
+    _print_legacy_posterior_summary(result.posterior_stats, output_posteriors)
 
-    return total_reads, reads_with_footprints
+    return result.total_reads, result.reads_with_footprints

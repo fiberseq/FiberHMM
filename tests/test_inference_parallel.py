@@ -178,6 +178,62 @@ def test_legacy_executor_helpers_configure_parallel_pool(monkeypatch):
     )
 
 
+def test_legacy_filter_config_preserves_apply_filters():
+    train_rids = {"read-a"}
+
+    config = legacy_pipeline._legacy_filter_config(
+        min_mapq=20,
+        min_read_length=100,
+        primary_only=True,
+        train_rids=train_rids,
+    )
+
+    assert config == ReadFilterConfig(
+        min_mapq=20,
+        min_read_length=100,
+        primary_only=True,
+        process_unmapped=False,
+        train_rids=train_rids,
+    )
+
+
+def test_shutdown_legacy_resources_closes_executor_and_posteriors():
+    calls = []
+
+    class Executor:
+        def shutdown(self, wait):
+            calls.append(("shutdown", wait))
+
+    class Writer:
+        def close(self):
+            calls.append(("close",))
+            return ("posteriors", 1.5)
+
+    assert legacy_pipeline._shutdown_legacy_resources(
+        Executor(),
+        Writer(),
+    ) == ("posteriors", 1.5)
+    assert calls == [("shutdown", True), ("close",)]
+
+
+def test_shutdown_legacy_resources_closes_posteriors_after_executor_error():
+    calls = []
+
+    class Executor:
+        def shutdown(self, wait):
+            calls.append(("shutdown", wait))
+            raise RuntimeError("shutdown failed")
+
+    class Writer:
+        def close(self):
+            calls.append(("close",))
+
+    with pytest.raises(RuntimeError, match="shutdown failed"):
+        legacy_pipeline._shutdown_legacy_resources(Executor(), Writer())
+
+    assert calls == [("shutdown", True), ("close",)]
+
+
 def test_legacy_progress_and_completion_messages_format_counts():
     assert legacy_pipeline._legacy_processing_rate(10, 2.0) == 5.0
     assert legacy_pipeline._legacy_processing_rate(10, 0.0) == 0
