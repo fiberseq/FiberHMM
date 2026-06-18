@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional
 
 import pysam
@@ -59,6 +60,78 @@ _REGION_SKIP_REASON_KEYS = BASE_SKIP_REASON_KEYS + (
     NO_FOOTPRINTS_SKIP_REASON,
     CHIMERA_SKIP_REASON,
 )
+
+
+@dataclass(frozen=True)
+class _RegionApplyConfig:
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    prob_threshold: int
+    with_scores: bool
+    io_threads: int
+
+
+@dataclass(frozen=True)
+class _RegionBamOutputConfig:
+    return_posteriors: bool
+    write_msps: bool
+
+
+@dataclass(frozen=True)
+class _FusedRegionRecallConfig:
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+    also_write_legacy: bool
+    downstream_compat: bool
+
+
+def _region_apply_config(
+    params: dict,
+    *,
+    with_scores_default: Optional[bool] = None,
+) -> _RegionApplyConfig:
+    with_scores = (
+        params['with_scores'] if with_scores_default is None
+        else params.get('with_scores', with_scores_default)
+    )
+    return _RegionApplyConfig(
+        edge_trim=int(params['edge_trim']),
+        circular=params['circular'],
+        mode=params['mode'],
+        context_size=int(params['context_size']),
+        msp_min_size=int(params['msp_min_size']),
+        nuc_min_size=int(params.get('nuc_min_size', 85)),
+        prob_threshold=int(params['prob_threshold']),
+        with_scores=with_scores,
+        io_threads=int(params.get('io_threads', 4)),
+    )
+
+
+def _region_bam_output_config(
+    params: dict,
+    temp_tsv_path: Optional[str],
+) -> _RegionBamOutputConfig:
+    return _RegionBamOutputConfig(
+        return_posteriors=bool(
+            params.get('return_posteriors', False) and temp_tsv_path is not None
+        ),
+        write_msps=params.get('write_msps', True),
+    )
+
+
+def _fused_region_recall_config(params: dict) -> _FusedRegionRecallConfig:
+    return _FusedRegionRecallConfig(
+        min_llr=float(params['min_llr']),
+        min_opps=int(params['min_opps']),
+        unify_threshold=int(params['unify_threshold']),
+        also_write_legacy=params['also_write_legacy'],
+        downstream_compat=params['downstream_compat'],
+    )
 
 
 def _new_region_skip_reasons() -> dict:
@@ -384,18 +457,9 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         model = _worker_model
         params = _worker_region_params
 
-        # Unpack parameters.
-        edge_trim = int(params['edge_trim'])
-        circular = params['circular']
-        mode = params['mode']
-        context_size = int(params['context_size'])
-        msp_min_size = int(params['msp_min_size'])
-        nuc_min_size = int(params.get('nuc_min_size', 85))
-        prob_threshold = int(params['prob_threshold'])
-        with_scores = params['with_scores']
-        return_posteriors = params.get('return_posteriors', False) and temp_tsv_path is not None
-        write_msps = params.get('write_msps', True)
-        io_threads = int(params.get('io_threads', 4))
+        apply_config = _region_apply_config(params)
+        output_config = _region_bam_output_config(params, temp_tsv_path)
+        return_posteriors = output_config.return_posteriors
 
         total_reads = 0
         reads_with_footprints = 0
@@ -410,17 +474,19 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
 
         # Open posteriors TSV file for streaming writes (if requested).
         tsv_file = None
-        if return_posteriors and temp_tsv_path:
+        if output_config.return_posteriors and temp_tsv_path:
             try:
                 tsv_file = open(temp_tsv_path, 'w')
             except Exception:
                 return_posteriors = False  # Can't write, disable.
 
         try:
-            with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
+            with pysam.AlignmentFile(
+                input_bam, "rb", threads=apply_config.io_threads, check_sq=False
+            ) as inbam:
                 with pysam.AlignmentFile(temp_bam_path, "wb",
                                          header=append_coord_marker(inbam.header),
-                                         threads=io_threads) as outbam:
+                                         threads=apply_config.io_threads) as outbam:
 
                     # Fetch reads from this region using the index.
                     try:
@@ -445,7 +511,7 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                             continue
 
                         fiber_read, skip_reason = _extract_region_fiber_read(
-                            read, mode, prob_threshold,
+                            read, apply_config.mode, apply_config.prob_threshold,
                         )
                         if skip_reason:
                             written, skipped = _record_skipped_region_read(
@@ -457,9 +523,11 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         total_reads += 1
 
                         result = _process_single_read(
-                            fiber_read, model, edge_trim, circular,
-                            mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
-                            with_scores=with_scores,
+                            fiber_read, model, apply_config.edge_trim,
+                            apply_config.circular, apply_config.mode,
+                            apply_config.context_size, apply_config.msp_min_size,
+                            nuc_min_size=apply_config.nuc_min_size,
+                            with_scores=apply_config.with_scores,
                             return_posteriors=return_posteriors,
                         )
 
@@ -467,8 +535,8 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                             reads_with_footprints += 1
                             written_delta, posterior_written = (
                                 _write_footprinted_region_read(
-                                    outbam, read, result, with_scores, write_msps,
-                                    tsv_file,
+                                    outbam, read, result, apply_config.with_scores,
+                                    output_config.write_msps, tsv_file,
                                 )
                             )
                             written += written_delta
@@ -528,15 +596,7 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
         model = _worker_model
         params = _worker_region_params
 
-        edge_trim = int(params['edge_trim'])
-        circular = params['circular']
-        mode = params['mode']
-        context_size = int(params['context_size'])
-        msp_min_size = int(params['msp_min_size'])
-        nuc_min_size = int(params.get('nuc_min_size', 85))
-        prob_threshold = int(params['prob_threshold'])
-        with_scores = params['with_scores']
-        io_threads = int(params.get('io_threads', 4))
+        apply_config = _region_apply_config(params)
         filter_config = _region_bed_read_filter_config(params)
 
         total_reads = 0
@@ -544,7 +604,9 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
 
         pysam.set_verbosity(0)
 
-        with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
+        with pysam.AlignmentFile(
+            input_bam, "rb", threads=apply_config.io_threads, check_sq=False
+        ) as inbam:
             with open(temp_bed_path, 'w') as bed_out:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)
@@ -559,7 +621,7 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
                         continue
 
                     fiber_read, skip_reason = _extract_region_fiber_read(
-                        read, mode, prob_threshold,
+                        read, apply_config.mode, apply_config.prob_threshold,
                     )
                     if skip_reason:
                         continue
@@ -567,16 +629,18 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
                     total_reads += 1
 
                     result = _process_single_read(
-                        fiber_read, model, edge_trim, circular,
-                        mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
-                        with_scores=with_scores,
+                        fiber_read, model, apply_config.edge_trim,
+                        apply_config.circular, apply_config.mode,
+                        apply_config.context_size, apply_config.msp_min_size,
+                        nuc_min_size=apply_config.nuc_min_size,
+                        with_scores=apply_config.with_scores,
                     )
 
                     if result is not None and len(result['ns']) > 0:
                         reads_with_footprints += 1
                         bed_out.write(
                             _region_bed12_row_from_read_result(
-                                read, result, with_scores,
+                                read, result, apply_config.with_scores,
                             ) + "\n"
                         )
 
@@ -663,21 +727,9 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         llr_hit = _worker_recall_state['llr_hit']
         llr_miss = _worker_recall_state['llr_miss']
 
-        edge_trim = int(params['edge_trim'])
-        circular = params['circular']
-        mode = params['mode']
+        apply_config = _region_apply_config(params, with_scores_default=False)
+        recall_config = _fused_region_recall_config(params)
         ref_fasta = params.get('ref_fasta')
-        context_size = int(params['context_size'])
-        msp_min_size = int(params['msp_min_size'])
-        nuc_min_size = int(params.get('nuc_min_size', 85))
-        prob_threshold = int(params['prob_threshold'])
-        with_scores = params.get('with_scores', False)
-        io_threads = int(params.get('io_threads', 4))
-        min_llr = float(params['min_llr'])
-        min_opps = int(params['min_opps'])
-        unify_threshold = int(params['unify_threshold'])
-        also_write_legacy = params['also_write_legacy']
-        downstream_compat = params['downstream_compat']
 
         pysam.set_verbosity(0)
 
@@ -688,11 +740,13 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         skip_reasons = _new_region_skip_reasons()
         filter_config = _region_read_filter_config(params, require_train_rids=False)
 
-        with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
+        with pysam.AlignmentFile(
+            input_bam, "rb", threads=apply_config.io_threads, check_sq=False
+        ) as inbam:
             with pysam.AlignmentFile(
                     temp_bam_path, "wb",
                     header=maybe_append_pg(inbam.header, params.get('pg_record')),
-                    threads=io_threads) as outbam:
+                    threads=apply_config.io_threads) as outbam:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)
                 except ValueError:
@@ -711,9 +765,11 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                     if route == _REGION_ROUTE_OUTSIDE:
                         continue
 
-                    payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
+                    payload = make_apply_payload(
+                        read, mode=apply_config.mode, ref_fasta=ref_fasta,
+                    )
                     fiber_read, skip_reason = _extract_region_payload_fiber_read(
-                        payload, mode, prob_threshold,
+                        payload, apply_config.mode, apply_config.prob_threshold,
                     )
                     if skip_reason:
                         written, skipped = _record_skipped_region_read(
@@ -725,13 +781,13 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         apply_result = run_hmm_apply_stage(
                             fiber_read,
                             model,
-                            edge_trim,
-                            circular,
-                            mode,
-                            context_size,
-                            msp_min_size,
-                            nuc_min_size,
-                            with_scores,
+                            apply_config.edge_trim,
+                            apply_config.circular,
+                            apply_config.mode,
+                            apply_config.context_size,
+                            apply_config.msp_min_size,
+                            apply_config.nuc_min_size,
+                            apply_config.with_scores,
                         )
                     except Exception:
                         written, skipped = _record_skipped_region_read(
@@ -753,20 +809,22 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         apply_result,
                         llr_hit,
                         llr_miss,
-                        min_llr,
-                        min_opps,
-                        unify_threshold,
-                        with_scores,
+                        recall_config.min_llr,
+                        recall_config.min_opps,
+                        recall_config.unify_threshold,
+                        apply_config.with_scores,
                         **_region_fused_recall_options(
-                            params, nuc_min_size, msp_min_size,
+                            params,
+                            apply_config.nuc_min_size,
+                            apply_config.msp_min_size,
                         ),
                     )
                     write_fused_recall_tags(
                         read,
                         read_length=len(fiber_read['query_sequence']),
                         result=fused_result,
-                        also_write_legacy=also_write_legacy,
-                        downstream_compat=downstream_compat,
+                        also_write_legacy=recall_config.also_write_legacy,
+                        downstream_compat=recall_config.downstream_compat,
                     )
                     outbam.write(read)
                     written += 1

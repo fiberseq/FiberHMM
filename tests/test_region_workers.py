@@ -10,9 +10,12 @@ from fiberhmm.inference.region_workers import (
     _REGION_ROUTE_SKIP,
     _extract_region_fiber_read,
     _extract_region_payload_fiber_read,
+    _fused_region_recall_config,
     _region_bed12_row_from_read_result,
     _format_region_bed12_row,
     _pad_region_bed12_to_read_span,
+    _region_apply_config,
+    _region_bam_output_config,
     _region_bed_block_components,
     _region_bed_read_filter_config,
     _region_bed_score_list,
@@ -41,6 +44,67 @@ def _route_read(**overrides):
     }
     attrs.update(overrides)
     return SimpleNamespace(**attrs)
+
+
+def test_region_apply_config_casts_worker_params_and_fused_score_default():
+    params = {
+        "edge_trim": "2",
+        "circular": True,
+        "mode": "pacbio-fiber",
+        "context_size": "6",
+        "msp_min_size": "21",
+        "nuc_min_size": "90",
+        "prob_threshold": "128",
+        "with_scores": True,
+        "io_threads": "3",
+    }
+
+    config = _region_apply_config(params)
+
+    assert config.edge_trim == 2
+    assert config.circular is True
+    assert config.mode == "pacbio-fiber"
+    assert config.context_size == 6
+    assert config.msp_min_size == 21
+    assert config.nuc_min_size == 90
+    assert config.prob_threshold == 128
+    assert config.with_scores is True
+    assert config.io_threads == 3
+
+    fused_config = _region_apply_config(
+        {key: value for key, value in params.items() if key != "with_scores"},
+        with_scores_default=False,
+    )
+
+    assert fused_config.with_scores is False
+
+
+def test_region_bam_output_config_gates_posteriors_on_temp_path():
+    assert _region_bam_output_config(
+        {"return_posteriors": True, "write_msps": False},
+        "region.tsv",
+    ).return_posteriors is True
+    assert _region_bam_output_config(
+        {"return_posteriors": True},
+        None,
+    ).return_posteriors is False
+    assert _region_bam_output_config({}, "region.tsv").write_msps is True
+
+
+def test_fused_region_recall_config_casts_worker_params():
+    config = _fused_region_recall_config({
+        "min_llr": "2.5",
+        "min_opps": "4",
+        "unify_threshold": "7",
+        "also_write_legacy": False,
+        "downstream_compat": True,
+    })
+
+    assert config.min_llr == 2.5
+    assert config.min_opps == 4
+    assert config.unify_threshold == 7
+    assert config.also_write_legacy is False
+    assert config.downstream_compat is True
 
 
 def test_region_read_route_preserves_skip_and_ownership_order():
