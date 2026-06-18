@@ -247,6 +247,12 @@ def test_region_work_item_builders_use_stable_temp_names(tmp_path):
         temp_dir,
         include_tsv=True,
     )
+    bed_item = region_pipeline._region_bed_work_item(
+        regions[1],
+        "input.bam",
+        temp_dir,
+        13,
+    )
     bed_items = region_pipeline._region_bed_work_items(regions, "input.bam", temp_dir)
 
     assert bam_item.region == regions[0]
@@ -261,6 +267,8 @@ def test_region_work_item_builders_use_stable_temp_names(tmp_path):
         str(tmp_path / "region_000000.tsv"),
         str(tmp_path / "region_000001.tsv"),
     ]
+    assert bed_item.region == regions[1]
+    assert bed_item.temp_bed_path == str(tmp_path / "region_000013.bed")
     assert [item.temp_bed_path for item in bed_items] == [
         str(tmp_path / "region_000000.bed"),
         str(tmp_path / "region_000001.bed"),

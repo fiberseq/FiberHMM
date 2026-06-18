@@ -283,9 +283,22 @@ def _region_bam_work_items(
     ]
 
 
+def _region_bed_work_item(
+    region,
+    input_bam: str,
+    temp_dir: str,
+    index: int,
+) -> RegionBedWorkItem:
+    return RegionBedWorkItem(
+        (region[0], region[1], region[2]),
+        input_bam,
+        _region_temp_path(temp_dir, index, 'bed'),
+    )
+
+
 def _region_bed_work_items(regions, input_bam: str, temp_dir: str) -> list[RegionBedWorkItem]:
     return [
-        RegionBedWorkItem(region, input_bam, _region_temp_path(temp_dir, i, 'bed'))
+        _region_bed_work_item(region, input_bam, temp_dir, i)
         for i, region in enumerate(regions)
     ]
 
