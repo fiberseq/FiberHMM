@@ -107,6 +107,17 @@ class _RegionWorkerPoolRequest:
     error_prefix: Optional[str]
 
 
+@dataclass(frozen=True)
+class _RegionBamWorkerPoolRequest:
+    n_cores: int
+    model_path: str
+    params: dict
+    work_items: object
+    total_regions: int
+    start_time: float
+    include_tsv: bool
+
+
 def _base_region_worker_params(
     *,
     edge_trim: int,
@@ -755,23 +766,39 @@ def _run_region_bam_worker_pool(
     start_time: float,
     include_tsv: bool = True,
 ) -> RegionBamAggregation:
+    return _run_region_bam_worker_pool_from_request(
+        _RegionBamWorkerPoolRequest(
+            n_cores=n_cores,
+            model_path=model_path,
+            params=params,
+            work_items=work_items,
+            total_regions=total_regions,
+            start_time=start_time,
+            include_tsv=include_tsv,
+        )
+    )
+
+
+def _run_region_bam_worker_pool_from_request(
+    request: _RegionBamWorkerPoolRequest,
+) -> RegionBamAggregation:
     aggregation = RegionBamAggregation()
     _run_region_worker_pool(
-        n_cores=n_cores,
+        n_cores=request.n_cores,
         initializer=_init_region_worker,
-        initargs=(model_path, params),
+        initargs=(request.model_path, request.params),
         worker=_process_region_to_bam,
-        work_items=work_items,
+        work_items=request.work_items,
         aggregation=aggregation,
         result_type=RegionBamResult,
-        total_regions=total_regions,
-        start_time=start_time,
+        total_regions=request.total_regions,
+        start_time=request.start_time,
         init_message=(
-            f"  Initializing {n_cores} worker processes "
+            f"  Initializing {request.n_cores} worker processes "
             "(loading HMM model in each)..."
         ),
         ready_message="Processing regions...",
-        include_tsv=include_tsv,
+        include_tsv=request.include_tsv,
         error_prefix="Error processing region",
     )
     return aggregation

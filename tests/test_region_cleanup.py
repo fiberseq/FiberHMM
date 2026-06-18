@@ -976,7 +976,7 @@ def test_run_region_bam_worker_pool_wires_legacy_contract(monkeypatch):
         fake_run_region_worker_pool,
     )
 
-    aggregation = region_pipeline._run_region_bam_worker_pool(
+    request = region_pipeline._RegionBamWorkerPoolRequest(
         n_cores=3,
         model_path="model.json",
         params={"mode": "daf"},
@@ -985,6 +985,8 @@ def test_run_region_bam_worker_pool_wires_legacy_contract(monkeypatch):
         start_time=10.0,
         include_tsv=True,
     )
+
+    aggregation = region_pipeline._run_region_bam_worker_pool_from_request(request)
 
     assert aggregation.total_reads == 12
     assert aggregation.reads_with_footprints == 5
@@ -1000,6 +1002,18 @@ def test_run_region_bam_worker_pool_wires_legacy_contract(monkeypatch):
     assert kwargs["ready_message"] == "Processing regions..."
     assert kwargs["include_tsv"] is True
     assert kwargs["error_prefix"] == "Error processing region"
+
+    calls.clear()
+    assert region_pipeline._run_region_bam_worker_pool(
+        n_cores=3,
+        model_path="model.json",
+        params={"mode": "daf"},
+        work_items=["region"],
+        total_regions=1,
+        start_time=10.0,
+        include_tsv=True,
+    ).total_reads == 12
+    assert calls[0]["n_cores"] == 3
 
 
 def test_run_region_bed_worker_pool_wires_bed_contract(monkeypatch):
