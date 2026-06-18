@@ -62,6 +62,12 @@ class _RegionTsvCopyRequest:
     tsv_path: str
 
 
+@dataclass(frozen=True)
+class _RegionTsvWriteRequest:
+    tsv_path: str
+    posteriors_data: object
+
+
 def _posterior_probabilities_b64(posteriors: np.ndarray) -> str:
     post_u8 = np.clip(posteriors * 255, 0, 255).astype(np.uint8)
     return base64.b64encode(post_u8.tobytes()).decode("ascii")
@@ -143,10 +149,12 @@ def format_region_posterior_line(
     )
 
 
-def write_region_posteriors_tsv(tsv_path: str, posteriors_data: Iterable[dict]) -> None:
-    """Write region-worker posterior records without metadata/header rows."""
-    with open(tsv_path, "w") as handle:
-        for fiber in posteriors_data:
+def write_region_posteriors_tsv_from_request(
+    request: _RegionTsvWriteRequest,
+) -> None:
+    """Implementation for writing region-worker posterior records."""
+    with open(request.tsv_path, "w") as handle:
+        for fiber in request.posteriors_data:
             handle.write(
                 format_region_posterior_line_from_record(
                     _RegionPosteriorLineRecord(
@@ -161,6 +169,16 @@ def write_region_posteriors_tsv(tsv_path: str, posteriors_data: Iterable[dict]) 
                     )
                 )
             )
+
+
+def write_region_posteriors_tsv(tsv_path: str, posteriors_data: Iterable[dict]) -> None:
+    """Write region-worker posterior records without metadata/header rows."""
+    write_region_posteriors_tsv_from_request(
+        _RegionTsvWriteRequest(
+            tsv_path=tsv_path,
+            posteriors_data=posteriors_data,
+        ),
+    )
 
 
 def region_posteriors_tsv_output_path(output_path: str) -> str:

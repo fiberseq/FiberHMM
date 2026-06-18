@@ -86,6 +86,49 @@ def test_format_region_posterior_line_matches_tsv_parser():
     ) == line
 
 
+def test_write_region_posteriors_tsv_request_writes_records(monkeypatch, tmp_path):
+    tsv_path = tmp_path / "region.tsv"
+    posteriors_data = [{
+        "read_name": "read1",
+        "chrom": "chr2",
+        "ref_start": 10,
+        "ref_end": 20,
+        "strand": "+",
+        "posteriors": np.array([0.0, 1.0], dtype=np.float32),
+        "footprint_starts": np.array([2], dtype=np.int32),
+        "footprint_sizes": np.array([3], dtype=np.int32),
+    }]
+
+    region_tsv.write_region_posteriors_tsv_from_request(
+        region_tsv._RegionTsvWriteRequest(
+            tsv_path=str(tsv_path),
+            posteriors_data=posteriors_data,
+        )
+    )
+
+    parsed = parse_posteriors_line(tsv_path.read_text(encoding="utf-8"))
+    assert parsed["read_id"] == "read1"
+    assert parsed["chrom"] == "chr2"
+    np.testing.assert_array_equal(parsed["fp_starts"], [2])
+    np.testing.assert_array_equal(parsed["fp_sizes"], [3])
+
+    calls = []
+    monkeypatch.setattr(
+        region_tsv,
+        "write_region_posteriors_tsv_from_request",
+        lambda request: calls.append(request),
+    )
+    adapter_data = [{"read_name": "read2"}]
+    region_tsv.write_region_posteriors_tsv("adapter.tsv", adapter_data)
+
+    assert calls == [
+        region_tsv._RegionTsvWriteRequest(
+            tsv_path="adapter.tsv",
+            posteriors_data=adapter_data,
+        ),
+    ]
+
+
 def test_region_posteriors_tsv_output_path(tmp_path):
     assert region_posteriors_tsv_output_path("out.h5") == "out.tsv.gz"
     assert region_posteriors_tsv_output_path("out.hdf5") == "out.tsv.gz"
