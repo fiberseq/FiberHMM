@@ -42,12 +42,22 @@ class _PhaseNrlEstimateResult:
     source: str
 
 
+@dataclass(frozen=True)
+class _PhaseNrlPeakEstimate:
+    nrl: int
+    ci: tuple[float, float]
+
+
 def _phase_nrl_peak_spacings(spacings) -> np.ndarray:
     sp = np.asarray(spacings, dtype=np.float64)
     return sp[(sp >= _PEAK_LO) & (sp <= _PEAK_HI)]
 
 
-def _phase_nrl_estimate_from_peak(peak: np.ndarray, clamp_lo: int, clamp_hi: int):
+def _phase_nrl_estimate_from_peak(
+    peak: np.ndarray,
+    clamp_lo: int,
+    clamp_hi: int,
+) -> _PhaseNrlPeakEstimate:
     bins = np.arange(_PEAK_LO, _PEAK_HI + 10, 10)
     hist, edges = np.histogram(peak, bins=bins)
     mode = float(edges[int(np.argmax(hist))] + 5)
@@ -55,7 +65,7 @@ def _phase_nrl_estimate_from_peak(peak: np.ndarray, clamp_lo: int, clamp_hi: int
     est = 0.5 * (mode + median)
     nrl = int(round(np.clip(est, clamp_lo, clamp_hi)))
     ci = (float(np.percentile(peak, 25)), float(np.percentile(peak, 75)))
-    return nrl, ci
+    return _PhaseNrlPeakEstimate(nrl=nrl, ci=ci)
 
 
 def _nuc_center_spacings(nucs) -> list[float]:
@@ -86,10 +96,10 @@ def _phase_nrl_result(
             source='anchor',
         )
 
-    nrl, ci = _phase_nrl_estimate_from_peak(peak, clamp_lo, clamp_hi)
+    peak_estimate = _phase_nrl_estimate_from_peak(peak, clamp_lo, clamp_hi)
     return _PhaseNrlEstimateResult(
-        nrl=nrl,
-        ci=ci,
+        nrl=peak_estimate.nrl,
+        ci=peak_estimate.ci,
         n_pairs=int(peak.size),
         n_reads=n_reads,
         source='estimated',
