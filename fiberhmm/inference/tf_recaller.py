@@ -158,6 +158,14 @@ class _RecallTfQualityInputs:
     er_values: List[int]
 
 
+@dataclass
+class _RawLegacyRecallTags:
+    nuc_starts: Sequence[int]
+    nuc_lengths: Sequence[int]
+    msp_starts: Sequence[int]
+    msp_lengths: Sequence[int]
+
+
 def _split_named_intervals(
     intervals: Sequence[Tuple[int, int]],
     prefix: str,
@@ -604,7 +612,7 @@ def _raw_legacy_recall_tags(read):
         al_raw = read.get_tag('al')
     except KeyError:
         as_raw, al_raw = (), ()
-    return ns_raw, nl_raw, as_raw, al_raw
+    return _RawLegacyRecallTags(ns_raw, nl_raw, as_raw, al_raw)
 
 
 def _positive_length_intervals(starts, lengths) -> List[Tuple[int, int]]:
@@ -652,15 +660,23 @@ def recall_read(
                               (>= unify_threshold OR no overlapping TF call)
         - msp_intervals: v2 MSPs unchanged
     """
-    ns_raw, nl_raw, as_raw, al_raw = _raw_legacy_recall_tags(read)
+    raw_tags = _raw_legacy_recall_tags(read)
 
-    if len(ns_raw) == 0 and len(as_raw) == 0:
+    if len(raw_tags.nuc_starts) == 0 and len(raw_tags.msp_starts) == 0:
         return [], [], []
 
     # Tags are stored molecular frame; recall works in SEQ (query) frame, and
     # write_ma_tags flips back to molecular on output. Flip on read here.
-    ns_raw, nl_raw = flip_intervals_to_seq(ns_raw, nl_raw, read)
-    as_raw, al_raw = flip_intervals_to_seq(as_raw, al_raw, read)
+    ns_raw, nl_raw = flip_intervals_to_seq(
+        raw_tags.nuc_starts,
+        raw_tags.nuc_lengths,
+        read,
+    )
+    as_raw, al_raw = flip_intervals_to_seq(
+        raw_tags.msp_starts,
+        raw_tags.msp_lengths,
+        read,
+    )
 
     extracted = extract_modifications(read, mode, context_size)
     if extracted is None:

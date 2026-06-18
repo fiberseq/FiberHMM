@@ -546,16 +546,24 @@ class _FakeRead:
 def test_raw_legacy_recall_tags_handles_missing_and_present_tags():
     read = _FakeRead()
 
-    assert tf_recaller._raw_legacy_recall_tags(read) == ((), (), (), ())
+    tags = tf_recaller._raw_legacy_recall_tags(read)
+
+    assert tags.nuc_starts == ()
+    assert tags.nuc_lengths == ()
+    assert tags.msp_starts == ()
+    assert tags.msp_lengths == ()
 
     read.set_tag('ns', [10])
     read.set_tag('nl', [20])
     read.set_tag('as', [40])
     read.set_tag('al', [5])
 
-    assert tf_recaller._raw_legacy_recall_tags(read) == (
-        [10], [20], [40], [5],
-    )
+    tags = tf_recaller._raw_legacy_recall_tags(read)
+
+    assert tags.nuc_starts == [10]
+    assert tags.nuc_lengths == [20]
+    assert tags.msp_starts == [40]
+    assert tags.msp_lengths == [5]
 
 
 def test_spec_mode_emits_ma_aq_and_clean_legacy():
