@@ -25,6 +25,7 @@ from fiberhmm.inference.skip_reasons import (
 from fiberhmm.inference.streaming_drain import (
     _drain_oldest_chunk,
     _drain_oldest_fused_chunk,
+    _SubmittedChunk,
 )
 from fiberhmm.inference.streaming_workers import (
     _init_bam_worker,
@@ -156,7 +157,14 @@ def _submit_streaming_chunk(inflight, executor, worker_fn, chunk_items,
         future = executor.submit(worker_fn, chunk_items, *worker_args)
     else:
         future = _completed_empty_future()
-    inflight.append((future, chunk_read_objs, chunk_items, chunk_skip_flags))
+    inflight.append(
+        _SubmittedChunk(
+            future=future,
+            read_objs=chunk_read_objs,
+            items=chunk_items,
+            skip_flags=chunk_skip_flags,
+        )
+    )
 
 
 def _drain_if_inflight_full(

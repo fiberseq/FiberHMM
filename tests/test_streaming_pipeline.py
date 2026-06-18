@@ -520,7 +520,12 @@ def test_flush_streaming_chunk_drains_submits_and_returns_new_buffers():
     assert drained == ["old"]
     assert executor.submitted == [(worker_fn, (chunk_items, "arg"))]
     assert list(inflight) == [
-        ("future", chunk_reads, chunk_items, chunk_skip_flags)
+        streaming_pipeline._SubmittedChunk(
+            future="future",
+            read_objs=chunk_reads,
+            items=chunk_items,
+            skip_flags=chunk_skip_flags,
+        )
     ]
     assert new_buffers == _StreamingChunkBuffers(items=[], read_objs=[], skip_flags=[])
     assert new_buffers.items is not chunk_items
@@ -691,11 +696,11 @@ def test_stream_reads_to_workers_buffers_submits_and_reports_progress(monkeypatc
         (worker_fn, (["payload-p1", "payload-p2"], "arg"), "future-0")
     ]
     assert drained == [
-        (
-            "future-0",
-            ["p1", "skip", "p2"],
-            ["payload-p1", "payload-p2"],
-            [False, True, False],
+        streaming_pipeline._SubmittedChunk(
+            future="future-0",
+            read_objs=["p1", "skip", "p2"],
+            items=["payload-p1", "payload-p2"],
+            skip_flags=[False, True, False],
         )
     ]
     assert list(inflight) == []

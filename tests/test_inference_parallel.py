@@ -1087,12 +1087,12 @@ def test_streaming_chunk_submission_uses_completed_future_for_empty_items():
         ("arg",),
     )
 
-    future, read_objs, chunk_items, skip_flags = inflight.pop()
+    submitted = inflight.pop()
     assert executor.submitted == []
-    assert future.result() == []
-    assert read_objs == ["read"]
-    assert chunk_items == []
-    assert skip_flags == [True]
+    assert submitted.future.result() == []
+    assert submitted.read_objs == ["read"]
+    assert submitted.items == []
+    assert submitted.skip_flags == [True]
 
 
 def test_streaming_chunk_submission_submits_nonempty_items():
@@ -1110,12 +1110,12 @@ def test_streaming_chunk_submission_submits_nonempty_items():
         ("arg",),
     )
 
-    future, read_objs, chunk_items, skip_flags = inflight.pop()
+    submitted = inflight.pop()
     assert executor.submitted == [(worker_fn, (["payload"], "arg"))]
-    assert future.result() == ("submitted", worker_fn, (["payload"], "arg"))
-    assert read_objs == ["read"]
-    assert chunk_items == ["payload"]
-    assert skip_flags == [False]
+    assert submitted.future.result() == ("submitted", worker_fn, (["payload"], "arg"))
+    assert submitted.read_objs == ["read"]
+    assert submitted.items == ["payload"]
+    assert submitted.skip_flags == [False]
 
 
 def test_streaming_dispatch_does_not_load_model_in_parent(monkeypatch):
@@ -2144,12 +2144,14 @@ def test_pop_inflight_chunk_coerces_worker_result_and_removes_entry():
     read = object()
     chunk_items = [{"payload": "ok"}]
     skip_flags = [False]
-    inflight = deque([(
-        _done_future(WorkerChunkResult([{"ok": True}], read_failures=2)),
-        [read],
-        chunk_items,
-        skip_flags,
-    )])
+    inflight = deque([
+        streaming_drain._SubmittedChunk(
+            future=_done_future(WorkerChunkResult([{"ok": True}], read_failures=2)),
+            read_objs=[read],
+            items=chunk_items,
+            skip_flags=skip_flags,
+        )
+    ])
 
     assert streaming_drain._pop_inflight_chunk(
         inflight
@@ -2193,12 +2195,14 @@ def test_drain_oldest_with_recorder_records_failures_and_order():
     outbam = _OutBam()
     counters = {}
     recorded = []
-    inflight = deque([(
-        _done_future(WorkerChunkResult([result], read_failures=2)),
-        [skipped_read, processed_read],
-        [{"payload": "processed"}],
-        [True, False],
-    )])
+    inflight = deque([
+        streaming_drain._SubmittedChunk(
+            future=_done_future(WorkerChunkResult([result], read_failures=2)),
+            read_objs=[skipped_read, processed_read],
+            items=[{"payload": "processed"}],
+            skip_flags=[True, False],
+        )
+    ])
 
     streaming_drain._drain_oldest_with_recorder(
         inflight,
@@ -2296,12 +2300,14 @@ def test_streaming_drain_counts_worker_failures_and_passes_read_through():
     read = object()
     outbam = _OutBam()
     counters = {"reads_with_footprints": 0, "no_footprints": 0, "written": 0}
-    inflight = deque([(
-        _done_future(WorkerChunkResult([None], read_failures=1)),
-        [read],
-        [{"payload": "bad"}],
-        [False],
-    )])
+    inflight = deque([
+        streaming_drain._SubmittedChunk(
+            future=_done_future(WorkerChunkResult([None], read_failures=1)),
+            read_objs=[read],
+            items=[{"payload": "bad"}],
+            skip_flags=[False],
+        )
+    ])
 
     _drain_oldest_chunk(inflight, outbam, False, True, None, counters)
 
@@ -2318,12 +2324,14 @@ def test_fused_drain_counts_worker_failures_and_passes_read_through():
     read = object()
     outbam = _OutBam()
     counters = {"reads_with_footprints": 0, "no_footprints": 0, "written": 0}
-    inflight = deque([(
-        _done_future(WorkerChunkResult([None], read_failures=1)),
-        [read],
-        [{"payload": "bad"}],
-        [False],
-    )])
+    inflight = deque([
+        streaming_drain._SubmittedChunk(
+            future=_done_future(WorkerChunkResult([None], read_failures=1)),
+            read_objs=[read],
+            items=[{"payload": "bad"}],
+            skip_flags=[False],
+        )
+    ])
 
     _drain_oldest_fused_chunk(inflight, outbam, False, True, True, counters)
 
