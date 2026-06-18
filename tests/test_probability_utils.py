@@ -39,9 +39,16 @@ def test_detect_strand_and_base_for_fiber_modes():
 
 def test_detect_strand_and_base_for_daf_modes():
     assert _daf_position_counts("TAA", {-1, 0, 1, 99}) == (1, 1)
-    assert _daf_strand_base_from_counts(2, 1) == ("+", "C")
-    assert _daf_strand_base_from_counts(1, 2) == ("-", "G")
-    assert _daf_strand_base_from_counts(2, 2) == (".", "C")
+    plus_result = _daf_strand_base_from_counts(2, 1)
+    minus_result = _daf_strand_base_from_counts(1, 2)
+    ambiguous_result = _daf_strand_base_from_counts(2, 2)
+
+    assert plus_result.strand == "+"
+    assert plus_result.target_base == "C"
+    assert minus_result.strand == "-"
+    assert minus_result.target_base == "G"
+    assert ambiguous_result.strand == "."
+    assert ambiguous_result.target_base == "C"
     assert detect_strand_and_base("TTA", {0, 1}, "daf") == ("+", "C")
     assert detect_strand_and_base("TAA", {1, 2}, "daf") == ("-", "G")
     assert detect_strand_and_base("TAA", {0, 1}, "daf") == (".", "C")

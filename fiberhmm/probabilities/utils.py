@@ -21,6 +21,12 @@ class _ProbabilityOutputDirs:
     plots: Path
 
 
+@dataclass(frozen=True)
+class _DafStrandBase:
+    strand: str
+    target_base: str
+
+
 def reverse_complement(seq: str) -> str:
     """Return reverse complement of a DNA sequence."""
     return seq.translate(_RC_TABLE)[::-1]
@@ -34,12 +40,12 @@ def _count_mod_positions_at_base(seq_upper: str, mod_positions: Set[int], base: 
     )
 
 
-def _daf_strand_base_from_counts(t_count: int, a_count: int) -> Tuple[str, str]:
+def _daf_strand_base_from_counts(t_count: int, a_count: int) -> _DafStrandBase:
     if t_count > a_count:
-        return '+', 'C'
+        return _DafStrandBase('+', 'C')
     if a_count > t_count:
-        return '-', 'G'
-    return '.', 'C'
+        return _DafStrandBase('-', 'G')
+    return _DafStrandBase('.', 'C')
 
 
 def _daf_position_counts(seq_upper: str, mod_positions: Set[int]) -> Tuple[int, int]:
@@ -76,7 +82,8 @@ def detect_strand_and_base(sequence: str, mod_positions: Set[int], mode: str) ->
 
     if mode == 'daf':
         t_count, a_count = _daf_position_counts(seq_upper, mod_positions)
-        return _daf_strand_base_from_counts(t_count, a_count)
+        strand_base = _daf_strand_base_from_counts(t_count, a_count)
+        return strand_base.strand, strand_base.target_base
 
     return '.', 'A'
 
