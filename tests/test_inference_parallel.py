@@ -494,45 +494,53 @@ def test_process_legacy_chunk_buffer_skips_empty_and_delegates(monkeypatch):
         or legacy_pipeline._LegacyChunkRecordResult(3, 1),
     )
 
-    assert legacy_pipeline._process_legacy_chunk_buffer(
-        [],
-        [],
-        outbam,
-        model,
-        executor,
-        1,
-        False,
-        "daf",
-        5,
-        30,
-        skip_reasons,
-        posterior_writer,
+    empty_request = legacy_pipeline._LegacyChunkBufferRequest(
+        chunk_reads=[],
+        chunk_read_objs=[],
+        outbam=outbam,
+        model=model,
+        executor=executor,
+        edge_trim=1,
+        circular=False,
+        mode="daf",
+        context_size=5,
+        msp_min_size=30,
+        skip_reasons=skip_reasons,
+        posterior_writer=posterior_writer,
         nuc_min_size=90,
         with_scores=True,
         return_posteriors=True,
         write_msps=False,
+    )
+
+    assert legacy_pipeline._process_legacy_chunk_buffer_from_request(
+        empty_request,
     ) == legacy_pipeline._LegacyChunkRecordResult(0, 0)
     assert calls == []
 
     chunk_reads = ["fiber"]
     chunk_read_objs = ["read"]
-    assert legacy_pipeline._process_legacy_chunk_buffer(
-        chunk_reads,
-        chunk_read_objs,
-        outbam,
-        model,
-        executor,
-        1,
-        False,
-        "daf",
-        5,
-        30,
-        skip_reasons,
-        posterior_writer,
+    request = legacy_pipeline._LegacyChunkBufferRequest(
+        chunk_reads=chunk_reads,
+        chunk_read_objs=chunk_read_objs,
+        outbam=outbam,
+        model=model,
+        executor=executor,
+        edge_trim=1,
+        circular=False,
+        mode="daf",
+        context_size=5,
+        msp_min_size=30,
+        skip_reasons=skip_reasons,
+        posterior_writer=posterior_writer,
         nuc_min_size=90,
         with_scores=True,
         return_posteriors=True,
         write_msps=False,
+    )
+
+    assert legacy_pipeline._process_legacy_chunk_buffer_from_request(
+        request,
     ) == legacy_pipeline._LegacyChunkRecordResult(3, 1)
 
     args, kwargs = calls[0]
@@ -556,6 +564,27 @@ def test_process_legacy_chunk_buffer_skips_empty_and_delegates(monkeypatch):
         "return_posteriors": True,
         "write_msps": False,
     }
+
+    calls.clear()
+    assert legacy_pipeline._process_legacy_chunk_buffer(
+        chunk_reads,
+        chunk_read_objs,
+        outbam,
+        model,
+        executor,
+        1,
+        False,
+        "daf",
+        5,
+        30,
+        skip_reasons,
+        posterior_writer,
+        nuc_min_size=90,
+        with_scores=True,
+        return_posteriors=True,
+        write_msps=False,
+    ) == legacy_pipeline._LegacyChunkRecordResult(3, 1)
+    assert calls
 
 
 def test_new_legacy_chunk_buffers_returns_independent_lists():

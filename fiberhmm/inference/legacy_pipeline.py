@@ -179,6 +179,26 @@ class _LegacyChunkRecordRequest:
     write_msps: bool
 
 
+@dataclass(frozen=True)
+class _LegacyChunkBufferRequest:
+    chunk_reads: list
+    chunk_read_objs: list
+    outbam: object
+    model: object
+    executor: object | None
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    skip_reasons: dict
+    posterior_writer: object
+    nuc_min_size: int
+    with_scores: bool
+    return_posteriors: bool
+    write_msps: bool
+
+
 def _new_legacy_chunk_buffers() -> _LegacyChunkBuffers:
     return _LegacyChunkBuffers(fiber_reads=[], read_objs=[])
 
@@ -703,25 +723,50 @@ def _process_legacy_chunk_buffer(
     return_posteriors: bool,
     write_msps: bool,
 ) -> _LegacyChunkRecordResult:
-    if not chunk_reads:
+    return _process_legacy_chunk_buffer_from_request(
+        _LegacyChunkBufferRequest(
+            chunk_reads=chunk_reads,
+            chunk_read_objs=chunk_read_objs,
+            outbam=outbam,
+            model=model,
+            executor=executor,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            skip_reasons=skip_reasons,
+            posterior_writer=posterior_writer,
+            nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+            return_posteriors=return_posteriors,
+            write_msps=write_msps,
+        )
+    )
+
+
+def _process_legacy_chunk_buffer_from_request(
+    request: _LegacyChunkBufferRequest,
+) -> _LegacyChunkRecordResult:
+    if not request.chunk_reads:
         return _LegacyChunkRecordResult(0, 0)
     return _process_legacy_chunk_and_record(
-        chunk_reads,
-        chunk_read_objs,
-        outbam,
-        model,
-        executor,
-        edge_trim,
-        circular,
-        mode,
-        context_size,
-        msp_min_size,
-        skip_reasons,
-        posterior_writer,
-        nuc_min_size=nuc_min_size,
-        with_scores=with_scores,
-        return_posteriors=return_posteriors,
-        write_msps=write_msps,
+        request.chunk_reads,
+        request.chunk_read_objs,
+        request.outbam,
+        request.model,
+        request.executor,
+        request.edge_trim,
+        request.circular,
+        request.mode,
+        request.context_size,
+        request.msp_min_size,
+        request.skip_reasons,
+        request.posterior_writer,
+        nuc_min_size=request.nuc_min_size,
+        with_scores=request.with_scores,
+        return_posteriors=request.return_posteriors,
+        write_msps=request.write_msps,
     )
 
 
