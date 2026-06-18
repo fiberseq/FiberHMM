@@ -259,9 +259,7 @@ _COMPLEMENT_TABLE = str.maketrans('ACGTacgtNn', 'TGCAtgcaNn')
 def _ml_tag_to_uint8_array(ml_tag) -> np.ndarray:
     if isinstance(ml_tag, (bytes, bytearray, memoryview)):
         return np.frombuffer(ml_tag, dtype=np.uint8)
-    if isinstance(ml_tag, np.ndarray):
-        return ml_tag
-    return np.asarray(ml_tag, dtype=np.uint8)
+    return np.asarray(ml_tag, dtype=np.uint8).reshape(-1)
 
 
 def _has_mm_ml_inputs(mm_tag: str, ml_tag) -> bool:

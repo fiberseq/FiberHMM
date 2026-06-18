@@ -32,6 +32,7 @@ try:
         _has_mm_ml_inputs,
         _hmm_symbol_offsets,
         _iter_mm_mod_specs,
+        _ml_tag_to_uint8_array,
         _mm_base_indices,
         _mm_ml_slice_for_spec,
         _mm_qualities_for_valid_positions,
@@ -67,6 +68,7 @@ except ImportError:
         _has_mm_ml_inputs,
         _hmm_symbol_offsets,
         _iter_mm_mod_specs,
+        _ml_tag_to_uint8_array,
         _mm_base_indices,
         _mm_ml_slice_for_spec,
         _mm_qualities_for_valid_positions,
@@ -191,6 +193,18 @@ def test_has_mm_ml_inputs_handles_empty_and_numpy_ml_tags():
     assert not _has_mm_ml_inputs("A+a,0;", np.asarray([], dtype=np.uint8))
     assert _has_mm_ml_inputs("A+a,0;", np.asarray([128, 255], dtype=np.uint8))
     assert _has_mm_ml_inputs("A+a,0;", 128)
+
+
+def test_ml_tag_to_uint8_array_promotes_scalar_values():
+    np.testing.assert_array_equal(_ml_tag_to_uint8_array(128), [128])
+    np.testing.assert_array_equal(
+        _ml_tag_to_uint8_array(np.asarray(128, dtype=np.uint8)),
+        [128],
+    )
+
+    assert parse_mm_tag_query_positions(
+        "A+a,0;", 128, "A", False, 1, mode="pacbio-fiber",
+    ) == {0}
 
 
 def test_mm_walk_context_builds_forward_and_reverse_search_sequences():
