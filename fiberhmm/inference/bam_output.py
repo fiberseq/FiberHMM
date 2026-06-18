@@ -338,7 +338,7 @@ def _ensure_output_dir_writable(output_bam: str, verbose: bool = True) -> None:
         with open(test_file, 'w') as f:
             f.write('test')
         os.remove(test_file)
-    except Exception as write_err:
+    except OSError as write_err:
         if verbose:
             print(f"    ERROR: Cannot write to output directory: {write_err}")
             print(f"    Directory: {output_dir_path}")

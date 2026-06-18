@@ -290,6 +290,51 @@ def test_remove_partial_output_bam_propagates_unexpected_remove_errors(
         bam_output._remove_partial_output_bam(str(partial))
 
 
+def test_ensure_output_dir_writable_creates_and_probes_directory(tmp_path):
+    output_bam = tmp_path / "nested" / "out.bam"
+
+    bam_output._ensure_output_dir_writable(str(output_bam))
+
+    assert output_bam.parent.is_dir()
+    assert not (output_bam.parent / ".write_test").exists()
+
+
+def test_ensure_output_dir_writable_reports_filesystem_errors(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    output_bam = tmp_path / "out.bam"
+
+    monkeypatch.setattr(
+        bam_output.os,
+        "remove",
+        lambda path: (_ for _ in ()).throw(PermissionError("locked")),
+    )
+
+    with pytest.raises(PermissionError, match="locked"):
+        bam_output._ensure_output_dir_writable(str(output_bam))
+
+    out = capsys.readouterr().out
+    assert "Cannot write to output directory: locked" in out
+    assert f"Directory: {tmp_path}" in out
+
+
+def test_ensure_output_dir_writable_propagates_unexpected_errors(
+    monkeypatch,
+    tmp_path,
+):
+    output_bam = tmp_path / "out.bam"
+    monkeypatch.setattr(
+        bam_output.os,
+        "remove",
+        lambda path: (_ for _ in ()).throw(RuntimeError("unexpected")),
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected"):
+        bam_output._ensure_output_dir_writable(str(output_bam))
+
+
 def test_raise_if_command_failed_preserves_process_output():
     ok = subprocess.CompletedProcess(["samtools"], 0, stdout="ok", stderr="")
     bam_output._raise_if_command_failed(ok, "samtools ok")
