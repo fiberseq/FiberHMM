@@ -117,6 +117,21 @@ class _TagOutputFrame:
 
 
 @dataclass
+class _TagOutputFrameRequest:
+    read: object
+    read_length: int
+    kept_nucs: Sequence[Tuple[int, int]]
+    msps: Sequence[Tuple[int, int]]
+    tf_intervals: Sequence[Tuple[int, int]]
+    nq_values: Sequence[int]
+    tq_values: Sequence[int]
+    tf_el_values: Sequence[int]
+    tf_er_values: Sequence[int]
+    nuc_el_values: Optional[Sequence[int]] = None
+    nuc_er_values: Optional[Sequence[int]] = None
+
+
+@dataclass
 class _RecallTagPayload:
     kept_nucs: List[Tuple[int, int]]
     msps: List[Tuple[int, int]]
@@ -215,43 +230,78 @@ def _prepare_tag_output_frame(
     nuc_el_values: Optional[Sequence[int]] = None,
     nuc_er_values: Optional[Sequence[int]] = None,
 ) -> _TagOutputFrame:
+    return _prepare_tag_output_frame_from_request(
+        _TagOutputFrameRequest(
+            read=read,
+            read_length=read_length,
+            kept_nucs=kept_nucs,
+            msps=msps,
+            tf_intervals=tf_intervals,
+            nq_values=nq_values,
+            tq_values=tq_values,
+            tf_el_values=tf_el_values,
+            tf_er_values=tf_er_values,
+            nuc_el_values=nuc_el_values,
+            nuc_er_values=nuc_er_values,
+        ),
+    )
+
+
+def _prepare_tag_output_frame_from_request(
+    request: _TagOutputFrameRequest,
+) -> _TagOutputFrame:
     """Convert internal SEQ-frame calls to sorted molecular-frame tag rows."""
-    nuc_qqq = nuc_el_values is not None and nuc_er_values is not None
-    if not read_length:
+    nuc_qqq = (
+        request.nuc_el_values is not None
+        and request.nuc_er_values is not None
+    )
+    if not request.read_length:
         return _TagOutputFrame(
-            nuc_intervals=list(kept_nucs),
-            msp_intervals=list(msps),
-            tf_intervals=list(tf_intervals),
-            nq_values=list(nq_values),
-            tq_values=list(tq_values),
-            tf_el_values=list(tf_el_values),
-            tf_er_values=list(tf_er_values),
-            nuc_el_values=list(nuc_el_values) if nuc_el_values is not None else None,
-            nuc_er_values=list(nuc_er_values) if nuc_er_values is not None else None,
+            nuc_intervals=list(request.kept_nucs),
+            msp_intervals=list(request.msps),
+            tf_intervals=list(request.tf_intervals),
+            nq_values=list(request.nq_values),
+            tq_values=list(request.tq_values),
+            tf_el_values=list(request.tf_el_values),
+            tf_er_values=list(request.tf_er_values),
+            nuc_el_values=list(request.nuc_el_values)
+            if request.nuc_el_values is not None else None,
+            nuc_er_values=list(request.nuc_er_values)
+            if request.nuc_er_values is not None else None,
         )
 
-    rev = bool(getattr(read, 'is_reverse', False))
+    rev = bool(getattr(request.read, 'is_reverse', False))
 
     def _mol(start, length):
         if rev:
-            return flip_interval_frame(start, length, read_length)
+            return flip_interval_frame(start, length, request.read_length)
         return int(start), int(length)
 
     nuc_recs = sorted(
-        (_mol(start, length), nq_values[i],
-         (nuc_er_values[i] if rev else nuc_el_values[i]) if nuc_qqq else None,
-         (nuc_el_values[i] if rev else nuc_er_values[i]) if nuc_qqq else None)
-        for i, (start, length) in enumerate(kept_nucs)
+        (
+            _mol(start, length),
+            request.nq_values[i],
+            (request.nuc_er_values[i] if rev else request.nuc_el_values[i])
+            if nuc_qqq else None,
+            (request.nuc_el_values[i] if rev else request.nuc_er_values[i])
+            if nuc_qqq else None,
+        )
+        for i, (start, length) in enumerate(request.kept_nucs)
     )
     tf_recs = sorted(
-        (_mol(start, length), tq_values[i],
-         tf_er_values[i] if rev else tf_el_values[i],
-         tf_el_values[i] if rev else tf_er_values[i])
-        for i, (start, length) in enumerate(tf_intervals)
+        (
+            _mol(start, length),
+            request.tq_values[i],
+            request.tf_er_values[i] if rev else request.tf_el_values[i],
+            request.tf_el_values[i] if rev else request.tf_er_values[i],
+        )
+        for i, (start, length) in enumerate(request.tf_intervals)
     )
     return _TagOutputFrame(
         nuc_intervals=[r[0] for r in nuc_recs],
-        msp_intervals=sorted(_mol(start, length) for start, length in msps),
+        msp_intervals=sorted(
+            _mol(start, length) for start, length in request.msps
+        ),
         tf_intervals=[r[0] for r in tf_recs],
         nq_values=[r[1] for r in nuc_recs],
         tq_values=[r[1] for r in tf_recs],

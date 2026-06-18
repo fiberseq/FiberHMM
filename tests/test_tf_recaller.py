@@ -170,6 +170,52 @@ def test_recall_tag_payload_from_output_frame_splits_wrapped_annotations():
     assert payload.needs_an is True
 
 
+def test_prepare_tag_output_frame_request_flips_reverse_read():
+    class ReverseRead:
+        is_reverse = True
+
+    request = tf_recaller._TagOutputFrameRequest(
+        read=ReverseRead(),
+        read_length=100,
+        kept_nucs=[(10, 20)],
+        msps=[(35, 15)],
+        tf_intervals=[(60, 10)],
+        nq_values=[200],
+        tq_values=[50],
+        tf_el_values=[246],
+        tf_er_values=[238],
+        nuc_el_values=[240],
+        nuc_er_values=[120],
+    )
+
+    frame = tf_recaller._prepare_tag_output_frame_from_request(request)
+
+    assert frame == tf_recaller._TagOutputFrame(
+        nuc_intervals=[(70, 20)],
+        msp_intervals=[(50, 15)],
+        tf_intervals=[(30, 10)],
+        nq_values=[200],
+        tq_values=[50],
+        tf_el_values=[238],
+        tf_er_values=[246],
+        nuc_el_values=[120],
+        nuc_er_values=[240],
+    )
+    assert tf_recaller._prepare_tag_output_frame(
+        request.read,
+        request.read_length,
+        request.kept_nucs,
+        request.msps,
+        request.tf_intervals,
+        request.nq_values,
+        request.tq_values,
+        request.tf_el_values,
+        request.tf_er_values,
+        request.nuc_el_values,
+        request.nuc_er_values,
+    ) == frame
+
+
 def test_positive_length_intervals_filters_and_normalizes():
     assert tf_recaller._positive_length_intervals(
         np.array([5, 10, 15]),
