@@ -57,6 +57,15 @@ class _CallModeContext:
     k: int
 
 
+@dataclass
+class _DafSniffResult:
+    has_ry: bool = False
+    has_md: bool = False
+    md_bad: int = 0
+    md_total: int = 0
+    checked: int = 0
+
+
 def _add_call_io_args(p) -> None:
     p.add_argument('-i', '--input', required=True,
                    help='Input BAM. Use "-" for stdin (streaming mode).')
@@ -394,14 +403,8 @@ def _call_banner_text(apply_model_path, recall_model_path, mode, k, enzyme,
     )
 
 
-def _new_daf_sniff_result() -> dict:
-    return {
-        'has_ry': False,
-        'has_md': False,
-        'md_bad': 0,
-        'md_total': 0,
-        'checked': 0,
-    }
+def _new_daf_sniff_result() -> _DafSniffResult:
+    return _DafSniffResult()
 
 
 def _sniff_daf_input_sources(input_bam: str, n_sniff: int = 10):
@@ -417,14 +420,14 @@ def _sniff_daf_input_sources(input_bam: str, n_sniff: int = 10):
                     continue
                 seq = read.query_sequence
                 if seq and ('R' in seq or 'Y' in seq):
-                    result['has_ry'] = True
+                    result.has_ry = True
                 if read.has_tag('MD'):
-                    result['has_md'] = True
-                    result['md_total'] += 1
+                    result.has_md = True
+                    result.md_total += 1
                     if not md_matches_cigar(read):
-                        result['md_bad'] += 1
-                result['checked'] += 1
-                if result['checked'] >= n_sniff:
+                        result.md_bad += 1
+                result.checked += 1
+                if result.checked >= n_sniff:
                     break
     except (ValueError, OSError):
         # Let downstream error handling report a clear message about the BAM.
@@ -432,17 +435,17 @@ def _sniff_daf_input_sources(input_bam: str, n_sniff: int = 10):
     return result
 
 
-def _daf_sources_available(sniff: dict, has_ref: bool) -> bool:
-    return bool(sniff['has_ry'] or sniff['has_md'] or has_ref)
+def _daf_sources_available(sniff: _DafSniffResult, has_ref: bool) -> bool:
+    return bool(sniff.has_ry or sniff.has_md or has_ref)
 
 
-def _should_warn_stale_daf_md(sniff: dict, has_ref: bool) -> bool:
-    return bool(sniff['md_bad'] and not sniff['has_ry'] and not has_ref)
+def _should_warn_stale_daf_md(sniff: _DafSniffResult, has_ref: bool) -> bool:
+    return bool(sniff.md_bad and not sniff.has_ry and not has_ref)
 
 
-def _stale_daf_md_warning_message(sniff: dict) -> str:
+def _stale_daf_md_warning_message(sniff: _DafSniffResult) -> str:
     return (
-        f"  NOTE: {sniff['md_bad']}/{sniff['md_total']} "
+        f"  NOTE: {sniff.md_bad}/{sniff.md_total} "
         f"of the sniffed reads with MD tags\n"
         f"  have MD/CIGAR length mismatches (typical of consensus BAMs\n"
         f"  where MD is stale after CIGAR was recomputed). Those reads\n"
@@ -496,7 +499,7 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
         return
 
     print(
-        _missing_daf_source_message(input_bam, sniff['checked']),
+        _missing_daf_source_message(input_bam, sniff.checked),
         file=sys.stderr,
     )
     sys.exit(2)

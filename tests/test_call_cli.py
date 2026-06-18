@@ -26,6 +26,7 @@ from fiberhmm.cli.call import (
     _check_region_parallel_file_io,
     _chimera_filter_state,
     _daf_sources_available,
+    _DafSniffResult,
     _index_streaming_call_output,
     _invalid_phase_nrl_message,
     _is_phase_nrl_off,
@@ -106,8 +107,8 @@ def test_daf_input_sniff_accepts_iupac_encoding(tmp_path):
     )
 
     sniff = _sniff_daf_input_sources(input_bam, n_sniff=4)
-    assert sniff["has_ry"] is True
-    assert sniff["checked"] == 4
+    assert sniff.has_ry is True
+    assert sniff.checked == 4
 
     _check_daf_inputs(input_bam, n_sniff=4)
 
@@ -148,25 +149,19 @@ def test_daf_input_sniff_rejects_missing_deamination_source(tmp_path, capsys):
 
 def test_daf_input_predicates_cover_sources_and_md_warning():
     sniff_result = _new_daf_sniff_result()
-    assert sniff_result == {
-        "has_ry": False,
-        "has_md": False,
-        "md_bad": 0,
-        "md_total": 0,
-        "checked": 0,
-    }
-    sniff_result["has_ry"] = True
-    assert _new_daf_sniff_result()["has_ry"] is False
+    assert sniff_result == _DafSniffResult()
+    sniff_result.has_ry = True
+    assert _new_daf_sniff_result().has_ry is False
 
-    sniff = {"has_ry": False, "has_md": False, "md_bad": 0}
+    sniff = _DafSniffResult()
     assert not _daf_sources_available(sniff, has_ref=False)
     assert _daf_sources_available(sniff, has_ref=True)
 
-    sniff = {"has_ry": True, "has_md": False, "md_bad": 2}
+    sniff = _DafSniffResult(has_ry=True, md_bad=2)
     assert _daf_sources_available(sniff, has_ref=False)
     assert not _should_warn_stale_daf_md(sniff, has_ref=False)
 
-    sniff = {"has_ry": False, "has_md": True, "md_bad": 2}
+    sniff = _DafSniffResult(has_md=True, md_bad=2)
     assert _daf_sources_available(sniff, has_ref=False)
     assert _should_warn_stale_daf_md(sniff, has_ref=False)
     assert not _should_warn_stale_daf_md(sniff, has_ref=True)
@@ -182,7 +177,9 @@ def test_missing_daf_source_message_mentions_all_recovery_paths():
 
 
 def test_stale_daf_md_warning_message_mentions_counts_and_recovery():
-    message = _stale_daf_md_warning_message({"md_bad": 2, "md_total": 5})
+    message = _stale_daf_md_warning_message(
+        _DafSniffResult(md_bad=2, md_total=5),
+    )
 
     assert "2/5" in message
     assert "MD/CIGAR length mismatches" in message
