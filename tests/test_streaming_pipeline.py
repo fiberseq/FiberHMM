@@ -15,6 +15,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _drain_all_streaming_chunks,
     _drain_if_inflight_full,
     _flush_streaming_chunk,
+    _flush_streaming_chunk_and_report_progress,
     _fused_worker_args,
     _new_apply_streaming_executor,
     _new_fused_streaming_executor,
@@ -331,6 +332,78 @@ def test_drain_all_streaming_chunks_repeats_until_empty():
 
     assert drained == ["a", "b", "c"]
     assert list(inflight) == []
+
+
+def test_flush_streaming_chunk_and_report_progress(monkeypatch):
+    calls = []
+    inflight = deque(["old"])
+    executor = object()
+    worker_fn = object()
+
+    def fake_flush(*args):
+        calls.append(("flush", args))
+        inflight.append("new")
+        return [], [], []
+
+    def fake_progress(*args):
+        calls.append(("progress", args))
+        return 20, 30.0
+
+    monkeypatch.setattr(
+        streaming_pipeline, "_flush_streaming_chunk", fake_flush,
+    )
+    monkeypatch.setattr(
+        streaming_pipeline, "_print_streaming_progress", fake_progress,
+    )
+    monkeypatch.setattr(streaming_pipeline.time, "time", lambda: 25.0)
+
+    context = streaming_pipeline._StreamingFlushContext(
+        inflight=inflight,
+        executor=executor,
+        worker_fn=worker_fn,
+        worker_args=("arg",),
+        max_inflight=4,
+        drain_chunk=lambda: None,
+        log=io.StringIO(),
+        progress_label="Processed",
+        start_time=1.0,
+        rate_unit="reads/s",
+    )
+
+    assert _flush_streaming_chunk_and_report_progress(
+        context,
+        ["payload"],
+        ["read"],
+        [False],
+        20,
+        3,
+        10,
+        2.0,
+    ) == ([], [], [], 20, 30.0)
+
+    assert calls[0][0] == "flush"
+    assert calls[0][1][:8] == (
+        inflight,
+        executor,
+        worker_fn,
+        ["payload"],
+        ["read"],
+        [False],
+        ("arg",),
+        4,
+    )
+    assert calls[1][0] == "progress"
+    assert calls[1][1][1:10] == (
+        "Processed",
+        20,
+        3,
+        2,
+        10,
+        1.0,
+        2.0,
+        25.0,
+        "reads/s",
+    )
 
 
 def test_stream_reads_to_workers_buffers_submits_and_reports_progress(monkeypatch):

@@ -7,6 +7,7 @@ import sys
 import time
 from collections import deque
 from concurrent.futures import Future, ProcessPoolExecutor
+from dataclasses import dataclass
 from typing import Callable, Optional, Set, Tuple
 
 import pysam
@@ -145,6 +146,63 @@ def _drain_all_streaming_chunks(inflight, drain_chunk: Callable[[], None]) -> No
         drain_chunk()
 
 
+@dataclass(frozen=True)
+class _StreamingFlushContext:
+    inflight: object
+    executor: object
+    worker_fn: object
+    worker_args: tuple
+    max_inflight: int
+    drain_chunk: Callable[[], None]
+    log: object
+    progress_label: str
+    start_time: float
+    rate_unit: str
+
+
+def _flush_streaming_chunk_and_report_progress(
+    context: _StreamingFlushContext,
+    chunk_items,
+    chunk_read_objs,
+    chunk_skip_flags,
+    total_reads: int,
+    skipped: int,
+    last_progress_reads: int,
+    last_progress_time: float,
+) -> tuple[list, list, list, int, float]:
+    chunk_items, chunk_read_objs, chunk_skip_flags = _flush_streaming_chunk(
+        context.inflight,
+        context.executor,
+        context.worker_fn,
+        chunk_items,
+        chunk_read_objs,
+        chunk_skip_flags,
+        context.worker_args,
+        context.max_inflight,
+        context.drain_chunk,
+    )
+    now = time.time()
+    last_progress_reads, last_progress_time = _print_streaming_progress(
+        context.log,
+        context.progress_label,
+        total_reads,
+        skipped,
+        len(context.inflight),
+        last_progress_reads,
+        context.start_time,
+        last_progress_time,
+        now,
+        context.rate_unit,
+    )
+    return (
+        chunk_items,
+        chunk_read_objs,
+        chunk_skip_flags,
+        last_progress_reads,
+        last_progress_time,
+    )
+
+
 def _stream_reads_to_workers(
     reads,
     filter_config: ReadFilterConfig,
@@ -169,6 +227,18 @@ def _stream_reads_to_workers(
     chunk_items, chunk_read_objs, chunk_skip_flags = _new_streaming_chunk_buffers()
     last_progress_reads = 0
     last_progress_time = time.time()
+    flush_context = _StreamingFlushContext(
+        inflight=inflight,
+        executor=executor,
+        worker_fn=worker_fn,
+        worker_args=worker_args,
+        max_inflight=max_inflight,
+        drain_chunk=drain_chunk,
+        log=log,
+        progress_label=progress_label,
+        start_time=start_time,
+        rate_unit=rate_unit,
+    )
 
     for read in reads:
         processed_delta, skipped_delta = _buffer_streaming_read(
@@ -191,34 +261,21 @@ def _stream_reads_to_workers(
             break
 
         if len(chunk_read_objs) >= chunk_size:
-            chunk_items, chunk_read_objs, chunk_skip_flags = (
-                _flush_streaming_chunk(
-                    inflight,
-                    executor,
-                    worker_fn,
-                    chunk_items,
-                    chunk_read_objs,
-                    chunk_skip_flags,
-                    worker_args,
-                    max_inflight,
-                    drain_chunk,
-                )
-            )
-
-            now = time.time()
-            last_progress_reads, last_progress_time = (
-                _print_streaming_progress(
-                    log,
-                    progress_label,
-                    total_reads,
-                    skipped,
-                    len(inflight),
-                    last_progress_reads,
-                    start_time,
-                    last_progress_time,
-                    now,
-                    rate_unit,
-                )
+            (
+                chunk_items,
+                chunk_read_objs,
+                chunk_skip_flags,
+                last_progress_reads,
+                last_progress_time,
+            ) = _flush_streaming_chunk_and_report_progress(
+                flush_context,
+                chunk_items,
+                chunk_read_objs,
+                chunk_skip_flags,
+                total_reads,
+                skipped,
+                last_progress_reads,
+                last_progress_time,
             )
 
     if chunk_read_objs:
