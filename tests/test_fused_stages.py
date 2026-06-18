@@ -277,6 +277,97 @@ def test_promote_large_tf_nucs_request_appends_promoted_after_kept(monkeypatch):
     assert calls["drop"] == (["nuc"], ["promoted_nuc"], 90)
 
 
+def test_run_nuc_recall_and_tf_stage_names_recall_flow(monkeypatch):
+    calls = {}
+    obs = np.asarray([0, 1, 2], dtype=np.int8)
+    nuc = SimpleNamespace(start=10, length=20)
+    input_msps = [(0, 5)]
+
+    def fake_recall(*args, **kwargs):
+        calls["recall"] = (args, kwargs)
+        return [nuc], "access"
+
+    def fake_rederive(*args):
+        calls["rederive"] = args
+        return [(5, 10), (30, 20)]
+
+    def fake_tf_stage(*args):
+        calls["tf"] = args
+        return ["tf"]
+
+    def fake_promote(request):
+        calls["promote"] = request
+        return ["kept_tf"], ["kept_nuc"]
+
+    monkeypatch.setattr(fused_stages, "recall_nucs_in_read", fake_recall)
+    monkeypatch.setattr(fused_stages, "rederive_msps", fake_rederive)
+    monkeypatch.setattr(fused_stages, "run_tf_recall_stage", fake_tf_stage)
+    monkeypatch.setattr(
+        fused_stages,
+        "_promote_large_tf_nucs_from_request",
+        fake_promote,
+    )
+
+    request = fused_stages._NucRecallAndTfStageRequest(
+        obs=obs,
+        nuc_starts=[1],
+        nuc_lengths=[2],
+        input_msps=input_msps,
+        analysis_length=100,
+        llr_hit="hit",
+        llr_miss="miss",
+        min_llr=4.0,
+        min_opps=3,
+        unify_threshold=90,
+        split_min_llr=5.0,
+        split_min_opps=4,
+        nuc_min_size=85,
+        msp_min_size=10,
+        phase_nrl=147,
+    )
+
+    result = fused_stages._run_nuc_recall_and_tf_stage_from_request(request)
+
+    assert calls["recall"][0] == (obs, [1], [2], 100, "hit", "miss")
+    assert calls["recall"][1] == {
+        "split_min_llr": 5.0,
+        "split_min_opps": 4,
+        "nuc_min_size": 85,
+        "phase_nrl": 147,
+    }
+    assert calls["rederive"] == (input_msps, "access", 100, 10)
+    assert calls["tf"] == (
+        obs,
+        [10],
+        [20],
+        [5, 30],
+        [10, 20],
+        100,
+        "hit",
+        "miss",
+        4.0,
+        3,
+        90,
+    )
+    promote_request = calls["promote"]
+    assert promote_request.tf_calls == ["tf"]
+    assert promote_request.nuc_calls == [nuc]
+    assert promote_request.obs is obs
+    assert promote_request.llr_hit == "hit"
+    assert promote_request.llr_miss == "miss"
+    assert promote_request.unify_threshold == 90
+    assert promote_request.nuc_min_size == 85
+    assert result == fused_stages._NucRecallAndTfStageResult(
+        nuc_calls=["kept_nuc"],
+        msps=[(5, 10), (30, 20)],
+        msp_pairs=fused_stages._IntervalPairLists(
+            starts=[5, 30],
+            lengths=[10, 20],
+        ),
+        tf_calls=["kept_tf"],
+    )
+
+
 def test_interval_pairs_casts_parallel_arrays_to_int_pairs():
     pairs = fused_stages._interval_pairs(
         np.asarray([1, 2], dtype=np.int32),

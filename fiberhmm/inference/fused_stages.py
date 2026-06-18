@@ -181,6 +181,33 @@ class _PromoteLargeTfNucsRequest:
     nuc_min_size: int
 
 
+@dataclass(frozen=True)
+class _NucRecallAndTfStageRequest:
+    obs: Any
+    nuc_starts: Sequence[int]
+    nuc_lengths: Sequence[int]
+    input_msps: Sequence[tuple[int, int]]
+    analysis_length: int
+    llr_hit: Any
+    llr_miss: Any
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+    split_min_llr: float
+    split_min_opps: int
+    nuc_min_size: int
+    msp_min_size: int
+    phase_nrl: int
+
+
+@dataclass(frozen=True)
+class _NucRecallAndTfStageResult:
+    nuc_calls: Any
+    msps: Any
+    msp_pairs: _IntervalPairLists
+    tf_calls: list
+
+
 def _analyzed_span_from_request(
     request: _AnalyzedSpanRequest,
 ) -> _AnalyzedSpan:
@@ -370,6 +397,61 @@ def _promote_large_tf_nucs(
             unify_threshold=unify_threshold,
             nuc_min_size=nuc_min_size,
         )
+    )
+
+
+def _run_nuc_recall_and_tf_stage_from_request(
+    request: _NucRecallAndTfStageRequest,
+) -> _NucRecallAndTfStageResult:
+    nuc_calls, access = recall_nucs_in_read(
+        request.obs,
+        request.nuc_starts,
+        request.nuc_lengths,
+        request.analysis_length,
+        request.llr_hit,
+        request.llr_miss,
+        split_min_llr=request.split_min_llr,
+        split_min_opps=request.split_min_opps,
+        nuc_min_size=request.nuc_min_size,
+        phase_nrl=request.phase_nrl,
+    )
+    new_msps = rederive_msps(
+        request.input_msps,
+        access,
+        request.analysis_length,
+        request.msp_min_size,
+    )
+    msp_pairs = _interval_pair_lists(new_msps)
+    nuc_starts, nuc_lengths = _nuc_call_start_length_lists(nuc_calls)
+    tf_calls = run_tf_recall_stage(
+        request.obs,
+        nuc_starts,
+        nuc_lengths,
+        msp_pairs.starts,
+        msp_pairs.lengths,
+        request.analysis_length,
+        request.llr_hit,
+        request.llr_miss,
+        request.min_llr,
+        request.min_opps,
+        request.unify_threshold,
+    )
+    tf_calls, nuc_calls = _promote_large_tf_nucs_from_request(
+        _PromoteLargeTfNucsRequest(
+            tf_calls=tf_calls,
+            nuc_calls=nuc_calls,
+            obs=request.obs,
+            llr_hit=request.llr_hit,
+            llr_miss=request.llr_miss,
+            unify_threshold=request.unify_threshold,
+            nuc_min_size=request.nuc_min_size,
+        )
+    )
+    return _NucRecallAndTfStageResult(
+        nuc_calls=nuc_calls,
+        msps=new_msps,
+        msp_pairs=msp_pairs,
+        tf_calls=tf_calls,
     )
 
 
@@ -754,52 +836,30 @@ def _build_fused_recall_result_with_nucs_from_request(
     nl = apply_result["nl"]
     orig_msps = _apply_result_msp_pairs(apply_result)
 
-    # 1) split + edge-refine footprints (+ optional Pass-2 phase prior)
-    nuc_calls, access = recall_nucs_in_read(
-        obs, ns, nl, read_length, request.llr_hit, request.llr_miss,
-        split_min_llr=request.split_min_llr,
-        split_min_opps=request.split_min_opps,
-        nuc_min_size=request.nuc_min_size,
-        phase_nrl=request.phase_nrl,
-    )
-
-    # 2) re-derive MSPs from the new nucleosome boundaries
-    new_msps = rederive_msps(orig_msps, access, read_length, request.msp_min_size)
-    msp_pairs = _interval_pair_lists(new_msps)
-
-    # 3) TF recall over the cleaner accessible space + short refined nucs
-    refined_ns, refined_nl = _nuc_call_start_length_lists(nuc_calls)
-    tf_calls = run_tf_recall_stage(
-        obs,
-        refined_ns,
-        refined_nl,
-        msp_pairs.starts,
-        msp_pairs.lengths,
-        read_length,
-        request.llr_hit,
-        request.llr_miss,
-        request.min_llr,
-        request.min_opps,
-        request.unify_threshold,
-    )
-
-    # 3b) promote nucleosome-sized TF leaks (>= unify_threshold) back to nuc+
-    tf_calls, nuc_calls = _promote_large_tf_nucs_from_request(
-        _PromoteLargeTfNucsRequest(
-            tf_calls=tf_calls,
-            nuc_calls=nuc_calls,
+    recalled = _run_nuc_recall_and_tf_stage_from_request(
+        _NucRecallAndTfStageRequest(
             obs=obs,
+            nuc_starts=ns,
+            nuc_lengths=nl,
+            input_msps=orig_msps,
+            analysis_length=read_length,
             llr_hit=request.llr_hit,
             llr_miss=request.llr_miss,
+            min_llr=request.min_llr,
+            min_opps=request.min_opps,
             unify_threshold=request.unify_threshold,
+            split_min_llr=request.split_min_llr,
+            split_min_opps=request.split_min_opps,
             nuc_min_size=request.nuc_min_size,
+            msp_min_size=request.msp_min_size,
+            phase_nrl=request.phase_nrl,
         )
     )
 
     # 4) unify: drop short refined nucs overlapped by a TF call (carry nq/el/er)
     kept = unify_nuc_calls_with_tf_calls(
-        nuc_calls,
-        tf_calls,
+        recalled.nuc_calls,
+        recalled.tf_calls,
         request.unify_threshold,
     )
 
@@ -831,7 +891,7 @@ def _build_fused_recall_result_with_nucs_from_request(
         "ns_scores": None,
         "as_scores": None,
         **_nuc_call_quality_fields(kept),
-        "tf_calls": tf_calls,
+        "tf_calls": recalled.tf_calls,
     }
 
 
@@ -879,59 +939,32 @@ def _build_fused_recall_result_with_nucs_circular_from_request(
     tiled = _tiled_interval_arrays(apply_result)
     tiled_msps = _interval_pairs(tiled.msp_starts, tiled.msp_lengths)
 
-    # 1) split + edge-refine in tiled coordinates (+ optional Pass-2 phase prior)
-    tiled_nucs, tiled_access = recall_nucs_in_read(
-        obs,
-        tiled.nuc_starts,
-        tiled.nuc_lengths,
-        tiled_len,
-        request.llr_hit,
-        request.llr_miss,
-        split_min_llr=request.split_min_llr,
-        split_min_opps=request.split_min_opps,
-        nuc_min_size=request.nuc_min_size,
-        phase_nrl=request.phase_nrl,
-    )
-
-    # 2) re-derive MSPs (still tiled), then 3) TF recall on the refined structure
-    tiled_new_msps = rederive_msps(
-        tiled_msps,
-        tiled_access,
-        tiled_len,
-        request.msp_min_size,
-    )
-    tiled_msp_pairs = _interval_pair_lists(tiled_new_msps)
-    tiled_nuc_starts, tiled_nuc_lengths = _nuc_call_start_length_lists(tiled_nucs)
-    tiled_tf = run_tf_recall_stage(
-        obs,
-        tiled_nuc_starts, tiled_nuc_lengths,
-        tiled_msp_pairs.starts, tiled_msp_pairs.lengths,
-        tiled_len,
-        request.llr_hit,
-        request.llr_miss,
-        request.min_llr,
-        request.min_opps,
-        request.unify_threshold,
-    )
-    # 3b) promote nucleosome-sized TF leaks back to nuc+ (still tiled)
-    tiled_tf, tiled_nucs = _promote_large_tf_nucs_from_request(
-        _PromoteLargeTfNucsRequest(
-            tf_calls=tiled_tf,
-            nuc_calls=tiled_nucs,
+    recalled = _run_nuc_recall_and_tf_stage_from_request(
+        _NucRecallAndTfStageRequest(
             obs=obs,
+            nuc_starts=tiled.nuc_starts,
+            nuc_lengths=tiled.nuc_lengths,
+            input_msps=tiled_msps,
+            analysis_length=tiled_len,
             llr_hit=request.llr_hit,
             llr_miss=request.llr_miss,
+            min_llr=request.min_llr,
+            min_opps=request.min_opps,
             unify_threshold=request.unify_threshold,
+            split_min_llr=request.split_min_llr,
+            split_min_opps=request.split_min_opps,
             nuc_min_size=request.nuc_min_size,
+            msp_min_size=request.msp_min_size,
+            phase_nrl=request.phase_nrl,
         )
     )
 
     # 4) project everything from tiled -> molecule
-    tf_calls = project_center_tf_calls(tiled_tf, read_length)
-    proj_nucs = project_center_nuc_calls(tiled_nucs, read_length)
+    tf_calls = project_center_tf_calls(recalled.tf_calls, read_length)
+    proj_nucs = project_center_nuc_calls(recalled.nuc_calls, read_length)
     proj_msps = project_center_runs(
-        tiled_msp_pairs.starts,
-        _interval_ends(tiled_new_msps),
+        recalled.msp_pairs.starts,
+        _interval_ends(recalled.msps),
         read_length,
     )
 
