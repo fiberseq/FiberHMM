@@ -195,18 +195,13 @@ def test_print_daf_progress_formats_rate_counts_and_skips_zero_elapsed():
 
 def test_maybe_print_daf_encode_progress_reports_only_intervals(monkeypatch):
     log = io.StringIO()
-    counts = {
-        "total": 9999,
-        "ct": 1,
-        "ga": 2,
-        "skipped": 3,
-    }
+    counts = encoder._DafEncodeCounts(total=9999, ct=1, ga=2, skipped=3)
 
     assert encoder._maybe_print_daf_encode_progress(counts, 10.0, log) == 10.0
     assert log.getvalue() == ""
 
     monkeypatch.setattr(encoder.time, "time", lambda: 12.0)
-    counts["total"] = 10_000
+    counts.total = 10_000
 
     assert encoder._maybe_print_daf_encode_progress(counts, 10.0, log) == 12.0
     assert "CT=1 GA=2 skip=3" in log.getvalue()
@@ -260,15 +255,15 @@ def test_daf_encode_counts_accumulate_read_stats_and_build_summary():
     )
     encoder._accumulate_daf_read_stats(counts, encoder._daf_skipped_read_stats())
 
-    assert counts == {
-        "total": 2,
-        "encoded": 1,
-        "skipped": 1,
-        "ct": 1,
-        "ga": 0,
-        "total_deam": 3,
-        "total_bases": 100,
-    }
+    assert counts == encoder._DafEncodeCounts(
+        total=2,
+        encoded=1,
+        skipped=1,
+        ct=1,
+        ga=0,
+        total_deam=3,
+        total_bases=100,
+    )
     assert encoder._daf_encode_summary_from_counts(counts, elapsed=4.0) == {
         "total": 2,
         "encoded": 1,
@@ -281,16 +276,15 @@ def test_daf_encode_counts_accumulate_read_stats_and_build_summary():
 
 
 def test_finalize_daf_encode_run_writes_summary_and_finalizes_output(monkeypatch):
-    counts = encoder._new_daf_encode_counts()
-    counts.update({
-        "total": 2,
-        "encoded": 1,
-        "ct": 1,
-        "ga": 0,
-        "skipped": 1,
-        "total_deam": 3,
-        "total_bases": 100,
-    })
+    counts = encoder._DafEncodeCounts(
+        total=2,
+        encoded=1,
+        ct=1,
+        ga=0,
+        skipped=1,
+        total_deam=3,
+        total_bases=100,
+    )
     calls = []
     log = io.StringIO()
 
@@ -466,15 +460,15 @@ def test_stream_daf_encode_reads_accumulates_stats(monkeypatch):
     )
 
     assert last_progress == 5.0
-    assert counts == {
-        "total": 2,
-        "encoded": 1,
-        "skipped": 1,
-        "ct": 1,
-        "ga": 0,
-        "total_deam": 2,
-        "total_bases": 100,
-    }
+    assert counts == encoder._DafEncodeCounts(
+        total=2,
+        encoded=1,
+        skipped=1,
+        ct=1,
+        ga=0,
+        total_deam=2,
+        total_bases=100,
+    )
     assert [call[2] for call in calls] == reads
     assert all(call[5:] == ("CT", "ref") for call in calls)
 

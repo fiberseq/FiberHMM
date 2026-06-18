@@ -70,6 +70,17 @@ class _DafEncodeReadStats:
     total_bases: int
 
 
+@dataclass
+class _DafEncodeCounts:
+    total: int = 0
+    encoded: int = 0
+    skipped: int = 0
+    ct: int = 0
+    ga: int = 0
+    total_deam: int = 0
+    total_bases: int = 0
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -480,30 +491,31 @@ def _daf_encode_summary(total: int, encoded: int, ct_count: int, ga_count: int,
     }
 
 
-def _new_daf_encode_counts() -> dict:
-    counts = {"total": 0}
-    counts.update({field: 0 for field in _DAF_ENCODE_STAT_FIELDS})
-    return counts
+def _new_daf_encode_counts() -> _DafEncodeCounts:
+    return _DafEncodeCounts()
 
 
 def _accumulate_daf_read_stats(
-    counts: dict,
+    counts: _DafEncodeCounts,
     read_stats: _DafEncodeReadStats,
 ) -> None:
-    counts["total"] += 1
+    counts.total += 1
     for field in _DAF_ENCODE_STAT_FIELDS:
-        counts[field] += getattr(read_stats, field)
+        setattr(counts, field, getattr(counts, field) + getattr(read_stats, field))
 
 
-def _daf_encode_summary_from_counts(counts: dict, elapsed: float) -> dict:
+def _daf_encode_summary_from_counts(
+    counts: _DafEncodeCounts,
+    elapsed: float,
+) -> dict:
     return _daf_encode_summary(
-        counts["total"],
-        counts["encoded"],
-        counts["ct"],
-        counts["ga"],
-        counts["skipped"],
-        counts["total_deam"],
-        counts["total_bases"],
+        counts.total,
+        counts.encoded,
+        counts.ct,
+        counts.ga,
+        counts.skipped,
+        counts.total_deam,
+        counts.total_bases,
         elapsed,
     )
 
@@ -659,19 +671,23 @@ def _new_daf_encode_progress(output_bam, log):
     )
 
 
-def _maybe_print_daf_encode_progress(counts: dict, last_progress: float, log):
-    if counts["total"] == 0 or counts["total"] % 10000 != 0:
+def _maybe_print_daf_encode_progress(
+    counts: _DafEncodeCounts,
+    last_progress: float,
+    log,
+):
+    if counts.total == 0 or counts.total % 10000 != 0:
         return last_progress
 
     now = time.time()
     elapsed = now - last_progress
     _print_daf_progress(
-        counts["total"],
+        counts.total,
         10000,
         elapsed,
-        counts["ct"],
-        counts["ga"],
-        counts["skipped"],
+        counts.ct,
+        counts.ga,
+        counts.skipped,
         log,
     )
     return now
@@ -681,7 +697,7 @@ def _stream_daf_encode_reads(
     inbam,
     outbam,
     pbar,
-    counts: dict,
+    counts: _DafEncodeCounts,
     min_mapq: int,
     min_read_length: int,
     force_strand,
@@ -750,7 +766,7 @@ def _open_daf_encode_handles(input_bam, output_bam, reference, io_threads: int, 
 
 
 def _finalize_daf_encode_run(
-    counts: dict,
+    counts: _DafEncodeCounts,
     start_time: float,
     output_bam,
     io_threads: int,
