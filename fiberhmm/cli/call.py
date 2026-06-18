@@ -74,6 +74,19 @@ class _CallBannerSettings:
     region_parallel: bool
 
 
+@dataclass(frozen=True)
+class _CallFusedCommonSettings:
+    recall_model_path: str | None
+    mode: str
+    context_size: int
+    min_llr: float
+    emission_uplift: float
+    also_write_legacy: bool
+    recall_nucs: bool
+    phase_nrl: int
+    pg_record: dict
+
+
 @dataclass
 class _DafSniffResult:
     has_ry: bool = False
@@ -565,6 +578,46 @@ def _should_check_daf_inputs(mode: str, input_path: str) -> bool:
     return mode == 'daf' and input_path != '-'
 
 
+def _call_fused_common_kwargs_from_settings(
+    args,
+    settings: _CallFusedCommonSettings,
+) -> dict:
+    return {
+        'input_bam': args.input,
+        'output_bam': args.output,
+        'recall_model_path': settings.recall_model_path,
+        'train_rids': set(),
+        'edge_trim': args.edge_trim,
+        'circular': args.circular,
+        'mode': settings.mode,
+        'context_size': settings.context_size,
+        'msp_min_size': args.msp_min_size,
+        'nuc_min_size': args.nuc_min_size,
+        'min_mapq': args.min_mapq,
+        'prob_threshold': args.prob_threshold,
+        'min_read_length': args.min_read_length,
+        'with_scores': args.with_scores,
+        'min_llr': settings.min_llr,
+        'min_opps': args.min_opps,
+        'unify_threshold': args.unify_threshold,
+        'emission_uplift': settings.emission_uplift,
+        'also_write_legacy': settings.also_write_legacy,
+        'downstream_compat': args.downstream_compat,
+        'n_cores': args.cores,
+        'io_threads': args.io_threads,
+        'primary_only': args.primary,
+        'ref_fasta_path': args.reference,
+        'recall_nucs': settings.recall_nucs,
+        'split_min_llr': args.split_min_llr,
+        'split_min_opps': args.split_min_opps,
+        'filter_chimeras': not args.keep_chimeras,
+        'chimera_min_seg': args.chimera_min_seg,
+        'chimera_purity': args.chimera_purity,
+        'phase_nrl': settings.phase_nrl,
+        'pg_record': settings.pg_record,
+    }
+
+
 def _call_fused_common_kwargs(
     args,
     recall_model_path,
@@ -577,40 +630,20 @@ def _call_fused_common_kwargs(
     phase_nrl: int,
     pg_record,
 ) -> dict:
-    return {
-        'input_bam': args.input,
-        'output_bam': args.output,
-        'recall_model_path': recall_model_path,
-        'train_rids': set(),
-        'edge_trim': args.edge_trim,
-        'circular': args.circular,
-        'mode': mode,
-        'context_size': context_size,
-        'msp_min_size': args.msp_min_size,
-        'nuc_min_size': args.nuc_min_size,
-        'min_mapq': args.min_mapq,
-        'prob_threshold': args.prob_threshold,
-        'min_read_length': args.min_read_length,
-        'with_scores': args.with_scores,
-        'min_llr': min_llr,
-        'min_opps': args.min_opps,
-        'unify_threshold': args.unify_threshold,
-        'emission_uplift': emission_uplift,
-        'also_write_legacy': also_write_legacy,
-        'downstream_compat': args.downstream_compat,
-        'n_cores': args.cores,
-        'io_threads': args.io_threads,
-        'primary_only': args.primary,
-        'ref_fasta_path': args.reference,
-        'recall_nucs': recall_nucs,
-        'split_min_llr': args.split_min_llr,
-        'split_min_opps': args.split_min_opps,
-        'filter_chimeras': not args.keep_chimeras,
-        'chimera_min_seg': args.chimera_min_seg,
-        'chimera_purity': args.chimera_purity,
-        'phase_nrl': phase_nrl,
-        'pg_record': pg_record,
-    }
+    return _call_fused_common_kwargs_from_settings(
+        args,
+        _CallFusedCommonSettings(
+            recall_model_path=recall_model_path,
+            mode=mode,
+            context_size=context_size,
+            min_llr=min_llr,
+            emission_uplift=emission_uplift,
+            also_write_legacy=also_write_legacy,
+            recall_nucs=recall_nucs,
+            phase_nrl=phase_nrl,
+            pg_record=pg_record,
+        ),
+    )
 
 
 def _run_call_pipeline(args, apply_model_path: str, common_kwargs: dict):
@@ -676,17 +709,19 @@ def _resolve_call_runtime(args, argv) -> _CallRuntime:
         mode_context.mode, recall_nucs, phase_nrl, args.keep_chimeras, argv,
     )
     also_write_legacy = should_write_legacy_tags(args)
-    common_kwargs = _call_fused_common_kwargs(
+    common_kwargs = _call_fused_common_kwargs_from_settings(
         args,
-        recall_model_path,
-        mode_context.mode,
-        mode_context.k,
-        min_llr,
-        uplift,
-        also_write_legacy,
-        recall_nucs,
-        phase_nrl,
-        pg_record,
+        _CallFusedCommonSettings(
+            recall_model_path=recall_model_path,
+            mode=mode_context.mode,
+            context_size=mode_context.k,
+            min_llr=min_llr,
+            emission_uplift=uplift,
+            also_write_legacy=also_write_legacy,
+            recall_nucs=recall_nucs,
+            phase_nrl=phase_nrl,
+            pg_record=pg_record,
+        ),
     )
 
     return _CallRuntime(

@@ -20,11 +20,13 @@ from fiberhmm.cli.call import (
     _call_context_size_or_default,
     _call_enzyme_label,
     _call_fused_common_kwargs,
+    _call_fused_common_kwargs_from_settings,
     _call_mode_label,
     _call_mode_or_default,
     _call_pg_description,
     _call_recall_model_label,
     _CallBannerSettings,
+    _CallFusedCommonSettings,
     _check_daf_inputs,
     _check_region_parallel_file_io,
     _chimera_filter_state,
@@ -477,8 +479,7 @@ def test_call_fused_common_kwargs_preserve_shared_pipeline_arguments():
         chimera_purity=0.85,
     )
 
-    kwargs = _call_fused_common_kwargs(
-        args,
+    settings = _CallFusedCommonSettings(
         recall_model_path="recall.json",
         mode="daf",
         context_size=3,
@@ -489,6 +490,7 @@ def test_call_fused_common_kwargs_preserve_shared_pipeline_arguments():
         phase_nrl=185,
         pg_record=pg_record,
     )
+    kwargs = _call_fused_common_kwargs_from_settings(args, settings)
 
     assert kwargs["input_bam"] == "in.bam"
     assert kwargs["output_bam"] == "out.bam"
@@ -500,6 +502,18 @@ def test_call_fused_common_kwargs_preserve_shared_pipeline_arguments():
     assert kwargs["filter_chimeras"] is True
     assert kwargs["phase_nrl"] == 185
     assert kwargs["pg_record"] is pg_record
+    assert _call_fused_common_kwargs(
+        args,
+        recall_model_path="recall.json",
+        mode="daf",
+        context_size=3,
+        min_llr=5.0,
+        emission_uplift=1.0,
+        also_write_legacy=True,
+        recall_nucs=True,
+        phase_nrl=185,
+        pg_record=pg_record,
+    ) == kwargs
 
 
 def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
@@ -550,8 +564,10 @@ def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
     monkeypatch.setattr(call, "should_write_legacy_tags", lambda got_args: False)
     monkeypatch.setattr(
         call,
-        "_call_fused_common_kwargs",
-        lambda *call_args: calls.append(("common", call_args)) or {"shared": True},
+        "_call_fused_common_kwargs_from_settings",
+        lambda got_args, settings: calls.append(
+            ("common", got_args, settings)
+        ) or {"shared": True},
     )
 
     runtime = _resolve_call_runtime(args, ["fiberhmm-call", "-i", "in.bam"])
@@ -576,7 +592,18 @@ def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
     ]
     assert calls[3] == (
         "common",
-        (args, "recall.json", "daf", 5, 6.0, 1.2, False, True, 185, pg_record),
+        args,
+        _CallFusedCommonSettings(
+            recall_model_path="recall.json",
+            mode="daf",
+            context_size=5,
+            min_llr=6.0,
+            emission_uplift=1.2,
+            also_write_legacy=False,
+            recall_nucs=True,
+            phase_nrl=185,
+            pg_record=pg_record,
+        ),
     )
 
 
