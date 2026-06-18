@@ -34,7 +34,10 @@ def test_ref_positions_to_half_open_span_orders_positions():
 
 
 def test_query_interval_bounds_normalizes_numeric_inputs():
-    assert _query_interval_bounds("2", "3") == (2, 5)
+    bounds = _query_interval_bounds("2", "3")
+
+    assert bounds.start == 2
+    assert bounds.end == 5
 
 
 def test_scored_interval_record_attaches_score_or_default():
