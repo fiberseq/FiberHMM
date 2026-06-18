@@ -1763,7 +1763,7 @@ def test_requested_parallel_pipeline_prefers_region_dispatch(monkeypatch):
 
     assert calls[0][0] == "region"
     assert calls[0][1]["region_size"] == 100
-    assert calls[0][1]["input_bam"] == "in.bam"
+    assert calls[0][1]["pipeline_options"].input_bam == "in.bam"
 
 
 def test_requested_parallel_pipeline_falls_through_to_streaming(monkeypatch):
@@ -1796,7 +1796,7 @@ def test_requested_parallel_pipeline_falls_through_to_streaming(monkeypatch):
 
     assert [call[0] for call in calls] == ["region", "streaming"]
     assert calls[1][1]["chunk_size"] == 10
-    assert calls[1][1]["input_bam"] == "in.bam"
+    assert calls[1][1]["pipeline_options"].input_bam == "in.bam"
 
 
 def test_region_dispatch_does_not_load_model_in_parent(monkeypatch):
