@@ -85,6 +85,13 @@ class _PosteriorTsvRecord:
     fp_sizes: np.ndarray
 
 
+@dataclass(frozen=True)
+class _H5PosteriorRecordDatasetSpec:
+    group_name: str
+    data: np.ndarray
+    compression_opts: Optional[int]
+
+
 def _open_text_file(path: str, mode: str) -> TextIO:
     """Open plain or gzip-compressed text files with consistent settings."""
     path = os.fspath(path)
@@ -252,11 +259,23 @@ def _write_h5_metadata_from_tsv_metadata(h5_file, metadata: dict) -> None:
 
 def _h5_posterior_record_dataset_specs(
     record: _PosteriorTsvRecord,
-) -> list[tuple]:
+) -> list[_H5PosteriorRecordDatasetSpec]:
     return [
-        ('posteriors', record.posteriors, 4),
-        ('footprint_starts', record.fp_starts, None),
-        ('footprint_sizes', record.fp_sizes, None),
+        _H5PosteriorRecordDatasetSpec(
+            group_name='posteriors',
+            data=record.posteriors,
+            compression_opts=4,
+        ),
+        _H5PosteriorRecordDatasetSpec(
+            group_name='footprint_starts',
+            data=record.fp_starts,
+            compression_opts=None,
+        ),
+        _H5PosteriorRecordDatasetSpec(
+            group_name='footprint_sizes',
+            data=record.fp_sizes,
+            compression_opts=None,
+        ),
     ]
 
 
@@ -266,11 +285,11 @@ def _write_h5_record_array_datasets(
     record: _PosteriorTsvRecord,
 ) -> None:
     idx = str(index)
-    for group_name, data, compression_opts in _h5_posterior_record_dataset_specs(record):
+    for spec in _h5_posterior_record_dataset_specs(record):
         kwargs = {'compression': 'gzip'}
-        if compression_opts is not None:
-            kwargs['compression_opts'] = compression_opts
-        group[group_name].create_dataset(idx, data=data, **kwargs)
+        if spec.compression_opts is not None:
+            kwargs['compression_opts'] = spec.compression_opts
+        group[spec.group_name].create_dataset(idx, data=spec.data, **kwargs)
 
 
 def _write_h5_record_metadata(

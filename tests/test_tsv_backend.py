@@ -223,17 +223,17 @@ def test_h5_posterior_record_dataset_specs_define_compressed_arrays():
 
     specs = tsv_backend._h5_posterior_record_dataset_specs(record)
 
-    assert [name for name, _, _ in specs] == [
+    assert [spec.group_name for spec in specs] == [
         "posteriors",
         "footprint_starts",
         "footprint_sizes",
     ]
-    assert specs[0][1] is record.posteriors
-    assert specs[0][2] == 4
-    assert specs[1][1] is record.fp_starts
-    assert specs[1][2] is None
-    assert specs[2][1] is record.fp_sizes
-    assert specs[2][2] is None
+    assert specs[0].data is record.posteriors
+    assert specs[0].compression_opts == 4
+    assert specs[1].data is record.fp_starts
+    assert specs[1].compression_opts is None
+    assert specs[2].data is record.fp_sizes
+    assert specs[2].compression_opts is None
 
 
 def test_write_h5_record_metadata_fills_preallocated_arrays(tmp_path):
