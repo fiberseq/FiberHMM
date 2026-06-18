@@ -170,24 +170,30 @@ def test_posterior_sequence_or_none_applies_min_length_filter():
 
 
 def test_h5_batch_metadata_helpers_append_and_concatenate():
-    ids, starts, ends, strands = export_posteriors._h5_batch_metadata([
+    batch_metadata = export_posteriors._h5_batch_metadata([
         {"read_name": "read-a", "ref_start": 10, "ref_end": 15, "strand": "+"},
         {"read_name": "read-b", "ref_start": 20, "ref_end": 25, "strand": "-"},
     ])
 
-    assert ids == ["read-a", "read-b"]
-    assert strands == ["+", "-"]
-    np.testing.assert_array_equal(starts, np.array([10, 20], dtype=np.int32))
-    np.testing.assert_array_equal(ends, np.array([15, 25], dtype=np.int32))
+    assert batch_metadata.ids == ["read-a", "read-b"]
+    assert batch_metadata.strands == ["+", "-"]
+    np.testing.assert_array_equal(
+        batch_metadata.starts, np.array([10, 20], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        batch_metadata.ends, np.array([15, 25], dtype=np.int32),
+    )
 
     meta = {"ids": [], "starts": [], "ends": [], "strands": []}
 
     export_posteriors._append_h5_batch_metadata(
         meta,
-        ids=["read-a", "read-b"],
-        starts=np.array([10, 20], dtype=np.int32),
-        ends=np.array([15, 25], dtype=np.int32),
-        strands=["+", "-"],
+        export_posteriors._H5BatchMetadata(
+            ids=["read-a", "read-b"],
+            starts=np.array([10, 20], dtype=np.int32),
+            ends=np.array([15, 25], dtype=np.int32),
+            strands=["+", "-"],
+        ),
     )
 
     assert meta["ids"] == ["read-a", "read-b"]
@@ -413,11 +419,11 @@ def test_flush_h5_chrom_buffer_writes_and_clears(monkeypatch):
 
     def fake_write_batch(grp, fibers, start_idx):
         calls.append((grp, list(fibers), start_idx))
-        return (
-            ["read-a", "read-b"],
-            np.array([10, 20], dtype=np.int32),
-            np.array([15, 25], dtype=np.int32),
-            ["+", "-"],
+        return export_posteriors._H5BatchMetadata(
+            ids=["read-a", "read-b"],
+            starts=np.array([10, 20], dtype=np.int32),
+            ends=np.array([15, 25], dtype=np.int32),
+            strands=["+", "-"],
         )
 
     monkeypatch.setattr(export_posteriors, "_write_batch_to_h5", fake_write_batch)

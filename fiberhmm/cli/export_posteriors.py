@@ -107,6 +107,14 @@ class _H5ExportChromState:
     write_buffers: dict
 
 
+@dataclass(frozen=True)
+class _H5BatchMetadata:
+    ids: list
+    starts: np.ndarray
+    ends: np.ndarray
+    strands: list
+
+
 def _prepare_export_run(
     input_bam: str,
     model_path: str,
@@ -378,7 +386,7 @@ def _h5_batch_metadata(fibers: List[Dict]):
         ends[i] = fiber['ref_end']
         strands.append(fiber['strand'])
 
-    return fiber_ids, starts, ends, strands
+    return _H5BatchMetadata(fiber_ids, starts, ends, strands)
 
 
 def _write_h5_fiber_arrays(grp, index: int, fiber: Dict) -> None:
@@ -405,22 +413,24 @@ def _write_batch_to_h5(grp, fibers: List[Dict], start_idx: int):
     """
     n = len(fibers)
     if n == 0:
-        return
+        return _H5BatchMetadata(
+            [], np.array([], dtype=np.int32), np.array([], dtype=np.int32), [],
+        )
 
-    fiber_ids, starts, ends, strands = _h5_batch_metadata(fibers)
+    batch_metadata = _h5_batch_metadata(fibers)
 
     for i, fiber in enumerate(fibers):
         idx = start_idx + i
         _write_h5_fiber_arrays(grp, idx, fiber)
 
-    return fiber_ids, starts, ends, strands
+    return batch_metadata
 
 
-def _append_h5_batch_metadata(meta: dict, ids, starts, ends, strands) -> None:
-    meta['ids'].extend(ids)
-    meta['starts'].append(starts)
-    meta['ends'].append(ends)
-    meta['strands'].extend(strands)
+def _append_h5_batch_metadata(meta: dict, batch_metadata: _H5BatchMetadata) -> None:
+    meta['ids'].extend(batch_metadata.ids)
+    meta['starts'].append(batch_metadata.starts)
+    meta['ends'].append(batch_metadata.ends)
+    meta['strands'].extend(batch_metadata.strands)
 
 
 def _concat_h5_metadata_arrays(arrays) -> np.ndarray:
@@ -537,15 +547,8 @@ def _flush_h5_chrom_buffer(h5_file, chrom: str, write_buffers: dict,
 
     grp = h5_file[chrom]
     start_idx = chrom_fiber_counts[chrom]
-    ids, starts, ends, strands = _write_batch_to_h5(grp, buffer, start_idx)
-
-    _append_h5_batch_metadata(
-        chrom_metadata[chrom],
-        ids,
-        starts,
-        ends,
-        strands,
-    )
+    batch_metadata = _write_batch_to_h5(grp, buffer, start_idx)
+    _append_h5_batch_metadata(chrom_metadata[chrom], batch_metadata)
 
     n_written = len(buffer)
     chrom_fiber_counts[chrom] += n_written
