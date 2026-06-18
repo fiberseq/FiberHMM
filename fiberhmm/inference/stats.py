@@ -162,6 +162,42 @@ def _write_footprint_stats_section(handle, summary: dict) -> None:
     handle.write("\n")
 
 
+def _plot_median_histogram(
+    ax,
+    values,
+    *,
+    bins,
+    hist_range=None,
+    color: str,
+    xlabel: str,
+    title: str,
+    median_format: str,
+    median_suffix: str = '',
+) -> None:
+    values = np.array(values)
+    hist_kwargs = {
+        'bins': bins,
+        'color': color,
+        'edgecolor': 'white',
+        'alpha': 0.8,
+    }
+    if hist_range is not None:
+        hist_kwargs['range'] = hist_range
+
+    median = np.median(values)
+    ax.hist(values, **hist_kwargs)
+    ax.axvline(
+        median,
+        color='red',
+        linestyle='--',
+        label=f'Median: {median:{median_format}}{median_suffix}',
+    )
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('Count')
+    ax.set_title(title)
+    ax.legend()
+
+
 def _stats_sampling_probability(total_reads: int, n_samples: int) -> float:
     if total_reads <= n_samples:
         return 1.0
@@ -390,27 +426,33 @@ class FootprintStats:
                 # Footprint size histogram
                 ax = axes[0, 0]
                 sizes = np.array(self.footprint_sizes)
-                ax.hist(sizes, bins=50, range=(0, min(500, np.percentile(sizes, 99))),
-                       color='steelblue', edgecolor='white', alpha=0.8)
-                ax.axvline(np.median(sizes), color='red', linestyle='--',
-                          label=f'Median: {np.median(sizes):.0f} bp')
-                ax.set_xlabel('Footprint Size (bp)')
-                ax.set_ylabel('Count')
-                ax.set_title('Footprint Size Distribution')
-                ax.legend()
+                _plot_median_histogram(
+                    ax,
+                    sizes,
+                    bins=50,
+                    hist_range=(0, min(500, np.percentile(sizes, 99))),
+                    color='steelblue',
+                    xlabel='Footprint Size (bp)',
+                    title='Footprint Size Distribution',
+                    median_format='.0f',
+                    median_suffix=' bp',
+                )
 
                 # Gap size histogram
                 ax = axes[0, 1]
                 if self.gap_sizes:
                     gaps = np.array(self.gap_sizes)
-                    ax.hist(gaps, bins=50, range=(0, min(500, np.percentile(gaps, 99))),
-                           color='coral', edgecolor='white', alpha=0.8)
-                    ax.axvline(np.median(gaps), color='red', linestyle='--',
-                              label=f'Median: {np.median(gaps):.0f} bp')
-                    ax.set_xlabel('Gap Size (bp)')
-                    ax.set_ylabel('Count')
-                    ax.set_title('Gap (Accessible) Size Distribution')
-                    ax.legend()
+                    _plot_median_histogram(
+                        ax,
+                        gaps,
+                        bins=50,
+                        hist_range=(0, min(500, np.percentile(gaps, 99))),
+                        color='coral',
+                        xlabel='Gap Size (bp)',
+                        title='Gap (Accessible) Size Distribution',
+                        median_format='.0f',
+                        median_suffix=' bp',
+                    )
                 else:
                     ax.text(0.5, 0.5, 'No gap data', ha='center', va='center', transform=ax.transAxes)
                     ax.set_title('Gap Size Distribution')
@@ -419,27 +461,31 @@ class FootprintStats:
                 ax = axes[1, 0]
                 fp_per_read = _positive_counts(self.footprints_per_read)
                 if fp_per_read:
-                    ax.hist(fp_per_read, bins=range(0, min(50, max(fp_per_read)+2)),
-                           color='forestgreen', edgecolor='white', alpha=0.8)
-                    ax.axvline(np.median(fp_per_read), color='red', linestyle='--',
-                              label=f'Median: {np.median(fp_per_read):.1f}')
-                    ax.set_xlabel('Footprints per Read')
-                    ax.set_ylabel('Count')
-                    ax.set_title('Footprints per Read')
-                    ax.legend()
+                    _plot_median_histogram(
+                        ax,
+                        fp_per_read,
+                        bins=range(0, min(50, max(fp_per_read)+2)),
+                        color='forestgreen',
+                        xlabel='Footprints per Read',
+                        title='Footprints per Read',
+                        median_format='.1f',
+                    )
 
                 # Footprint coverage
                 ax = axes[1, 1]
                 if self.footprint_coverage:
                     coverage = np.array(self.footprint_coverage) * 100
-                    ax.hist(coverage, bins=50, range=(0, 100),
-                           color='purple', edgecolor='white', alpha=0.8)
-                    ax.axvline(np.median(coverage), color='red', linestyle='--',
-                              label=f'Median: {np.median(coverage):.1f}%')
-                    ax.set_xlabel('Footprint Coverage (%)')
-                    ax.set_ylabel('Count')
-                    ax.set_title('Read Coverage by Footprints')
-                    ax.legend()
+                    _plot_median_histogram(
+                        ax,
+                        coverage,
+                        bins=50,
+                        hist_range=(0, 100),
+                        color='purple',
+                        xlabel='Footprint Coverage (%)',
+                        title='Read Coverage by Footprints',
+                        median_format='.1f',
+                        median_suffix='%',
+                    )
 
                 plt.tight_layout()
                 pdf.savefig(fig)
@@ -453,14 +499,16 @@ class FootprintStats:
             ax = axes[0, 0]
             if self.footprint_scores:
                 scores = np.array(self.footprint_scores)
-                ax.hist(scores, bins=50, range=(0, 1),
-                       color='gold', edgecolor='white', alpha=0.8)
-                ax.axvline(np.median(scores), color='red', linestyle='--',
-                          label=f'Median: {np.median(scores):.3f}')
-                ax.set_xlabel('Footprint Confidence Score')
-                ax.set_ylabel('Count')
-                ax.set_title('Footprint Quality Distribution')
-                ax.legend()
+                _plot_median_histogram(
+                    ax,
+                    scores,
+                    bins=50,
+                    hist_range=(0, 1),
+                    color='gold',
+                    xlabel='Footprint Confidence Score',
+                    title='Footprint Quality Distribution',
+                    median_format='.3f',
+                )
             else:
                 ax.text(0.5, 0.5, 'No score data\n(use --scores flag)',
                        ha='center', va='center', transform=ax.transAxes)
@@ -470,14 +518,17 @@ class FootprintStats:
             ax = axes[0, 1]
             if self.msp_sizes:
                 msp_sizes = np.array(self.msp_sizes)
-                ax.hist(msp_sizes, bins=50, range=(0, min(2000, np.percentile(msp_sizes, 99))),
-                       color='teal', edgecolor='white', alpha=0.8)
-                ax.axvline(np.median(msp_sizes), color='red', linestyle='--',
-                          label=f'Median: {np.median(msp_sizes):.0f} bp')
-                ax.set_xlabel('MSP Size (bp)')
-                ax.set_ylabel('Count')
-                ax.set_title('MSP Size Distribution')
-                ax.legend()
+                _plot_median_histogram(
+                    ax,
+                    msp_sizes,
+                    bins=50,
+                    hist_range=(0, min(2000, np.percentile(msp_sizes, 99))),
+                    color='teal',
+                    xlabel='MSP Size (bp)',
+                    title='MSP Size Distribution',
+                    median_format='.0f',
+                    median_suffix=' bp',
+                )
             else:
                 ax.text(0.5, 0.5, 'No MSP data', ha='center', va='center', transform=ax.transAxes)
                 ax.set_title('MSP Size Distribution')
@@ -486,14 +537,16 @@ class FootprintStats:
             ax = axes[1, 0]
             if self.read_lengths:
                 lengths = np.array(self.read_lengths)
-                ax.hist(lengths, bins=50,
-                       color='slategray', edgecolor='white', alpha=0.8)
-                ax.axvline(np.median(lengths), color='red', linestyle='--',
-                          label=f'Median: {np.median(lengths):.0f} bp')
-                ax.set_xlabel('Read Length (bp)')
-                ax.set_ylabel('Count')
-                ax.set_title('Read Length Distribution')
-                ax.legend()
+                _plot_median_histogram(
+                    ax,
+                    lengths,
+                    bins=50,
+                    color='slategray',
+                    xlabel='Read Length (bp)',
+                    title='Read Length Distribution',
+                    median_format='.0f',
+                    median_suffix=' bp',
+                )
 
             # Footprint size vs count (2D histogram)
             ax = axes[1, 1]

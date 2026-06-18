@@ -285,6 +285,83 @@ def test_write_footprint_stats_section_formats_size_and_coverage():
     )
 
 
+def test_plot_median_histogram_formats_axis_and_optional_range():
+    class FakeAxis:
+        def __init__(self):
+            self.hist_calls = []
+            self.vlines = []
+            self.xlabel = None
+            self.ylabel = None
+            self.title = None
+            self.legend_called = False
+
+        def hist(self, values, **kwargs):
+            self.hist_calls.append((values, kwargs))
+
+        def axvline(self, value, **kwargs):
+            self.vlines.append((value, kwargs))
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_ylabel(self, value):
+            self.ylabel = value
+
+        def set_title(self, value):
+            self.title = value
+
+        def legend(self):
+            self.legend_called = True
+
+    ax = FakeAxis()
+
+    stats_module._plot_median_histogram(
+        ax,
+        [10, 20, 30],
+        bins=50,
+        hist_range=(0, 100),
+        color="steelblue",
+        xlabel="Footprint Size (bp)",
+        title="Footprint Size Distribution",
+        median_format=".0f",
+        median_suffix=" bp",
+    )
+
+    values, hist_kwargs = ax.hist_calls[0]
+    np.testing.assert_array_equal(values, [10, 20, 30])
+    assert hist_kwargs == {
+        "bins": 50,
+        "color": "steelblue",
+        "edgecolor": "white",
+        "alpha": 0.8,
+        "range": (0, 100),
+    }
+    assert ax.vlines == [
+        (
+            20.0,
+            {"color": "red", "linestyle": "--", "label": "Median: 20 bp"},
+        )
+    ]
+    assert ax.xlabel == "Footprint Size (bp)"
+    assert ax.ylabel == "Count"
+    assert ax.title == "Footprint Size Distribution"
+    assert ax.legend_called
+
+    no_range_ax = FakeAxis()
+    stats_module._plot_median_histogram(
+        no_range_ax,
+        [0.1, 0.3],
+        bins=10,
+        color="gold",
+        xlabel="Score",
+        title="Score Distribution",
+        median_format=".2f",
+    )
+
+    assert "range" not in no_range_ax.hist_calls[0][1]
+    assert no_range_ax.vlines[0][1]["label"] == "Median: 0.20"
+
+
 def test_stats_sampling_probability_handles_full_and_partial_samples():
     assert stats_module._stats_sampling_probability(10, 100) == 1.0
     assert stats_module._stats_sampling_probability(100, 10) == 0.1
