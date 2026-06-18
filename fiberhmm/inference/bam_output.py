@@ -36,6 +36,13 @@ class _Bed12Components:
     blocks: _Bed12Blocks
 
 
+@dataclass(frozen=True)
+class _FootprintBedTags:
+    starts: List[int]
+    lengths: List[int]
+    scores: Optional[List[int]]
+
+
 _BED12_RECORD_COLUMNS = (
     'chrom',
     'chromStart',
@@ -913,7 +920,10 @@ def _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores: bool) -> Opti
     )
 
 
-def _read_footprint_tags_for_bed(read, with_scores: bool):
+def _read_footprint_tags_for_bed(
+    read,
+    with_scores: bool,
+) -> Optional[_FootprintBedTags]:
     try:
         ns, nl = flip_intervals_to_seq(
             read.get_tag('ns'), read.get_tag('nl'), read)
@@ -929,7 +939,7 @@ def _read_footprint_tags_for_bed(read, with_scores: bool):
             nq = read.get_tag('nq')
         except KeyError:
             pass
-    return ns, nl, nq
+    return _FootprintBedTags(starts=ns, lengths=nl, scores=nq)
 
 
 def _bed12_line_from_tagged_read(read, with_scores: bool) -> Optional[str]:
@@ -939,9 +949,14 @@ def _bed12_line_from_tagged_read(read, with_scores: bool) -> Optional[str]:
     tags = _read_footprint_tags_for_bed(read, with_scores)
     if tags is None:
         return None
-    ns, nl, nq = tags
 
-    return _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores)
+    return _footprint_bed12_line_from_read(
+        read,
+        tags.starts,
+        tags.lengths,
+        tags.scores,
+        with_scores,
+    )
 
 
 def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,

@@ -847,14 +847,21 @@ def test_read_footprint_tags_for_bed_handles_missing_empty_and_scores(monkeypatc
     ) is None
 
     monkeypatch.setattr(bam_output, "flip_intervals_to_seq", lambda *_: ([10], [5]))
-    assert bam_output._read_footprint_tags_for_bed(
+    tags = bam_output._read_footprint_tags_for_bed(
         Read({"ns": [1], "nl": [2]}),
         with_scores=True,
-    ) == ([10], [5], None)
-    assert bam_output._read_footprint_tags_for_bed(
+    )
+    assert tags.starts == [10]
+    assert tags.lengths == [5]
+    assert tags.scores is None
+
+    scored_tags = bam_output._read_footprint_tags_for_bed(
         Read({"ns": [1], "nl": [2], "nq": [255]}),
         with_scores=True,
-    ) == ([10], [5], [255])
+    )
+    assert scored_tags.starts == [10]
+    assert scored_tags.lengths == [5]
+    assert scored_tags.scores == [255]
 
 
 def test_bed12_line_from_tagged_read_filters_and_formats(monkeypatch):
@@ -868,7 +875,11 @@ def test_bed12_line_from_tagged_read_filters_and_formats(monkeypatch):
     monkeypatch.setattr(
         bam_output,
         "_read_footprint_tags_for_bed",
-        lambda got_read, with_scores: ([10], [5], [255]),
+        lambda got_read, with_scores: bam_output._FootprintBedTags(
+            starts=[10],
+            lengths=[5],
+            scores=[255],
+        ),
     )
 
     def fake_line(got_read, ns, nl, nq, with_scores):
