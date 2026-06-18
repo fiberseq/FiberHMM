@@ -1034,6 +1034,13 @@ class _LegacyBamProcessingRequest:
     chunk_size: int
 
 
+@dataclass(frozen=True)
+class _LegacyBamReadLoopRequest:
+    pipeline_request: _LegacyBamProcessingRequest
+    inbam: object
+    outbam: object
+
+
 def _new_legacy_skip_reasons() -> dict:
     return new_skip_reasons(NO_FOOTPRINTS_SKIP_REASON)
 
@@ -1138,10 +1145,6 @@ def _run_legacy_bam_processing(
 def _run_legacy_bam_processing_from_request(
     request: _LegacyBamProcessingRequest,
 ) -> _LegacyPipelineResult:
-    executor = None
-    posterior_writer = None
-    posterior_stats = None
-
     with pysam.AlignmentFile(
         request.input_bam,
         "rb",
@@ -1151,50 +1154,65 @@ def _run_legacy_bam_processing_from_request(
         with pysam.AlignmentFile(request.output_bam, "wb",
                                  header=append_coord_marker(inbam.header),
                                  threads=request.io_threads) as outbam:
-            try:
-                posterior_output = _open_legacy_posterior_writer(
-                    request.output_posteriors,
-                    request.mode,
-                    request.context_size,
-                    request.edge_trim,
-                    request.input_bam,
+            return _run_legacy_bam_read_loop_from_request(
+                _LegacyBamReadLoopRequest(
+                    pipeline_request=request,
+                    inbam=inbam,
+                    outbam=outbam,
                 )
-                posterior_writer = posterior_output.writer
-                return_posteriors = posterior_output.enabled
-                executor = _legacy_executor_for_config(
-                    request.model_path,
-                    request.n_cores,
-                    request.debug_timing,
-                )
+            )
 
-                read_result = _process_legacy_reads_from_request(
-                    _LegacyReadsRequest(
-                        reads=inbam,
-                        outbam=outbam,
-                        model=request.model,
-                        executor=executor,
-                        filter_config=request.filter_config,
-                        mode=request.mode,
-                        prob_threshold=request.prob_threshold,
-                        edge_trim=request.edge_trim,
-                        circular=request.circular,
-                        context_size=request.context_size,
-                        msp_min_size=request.msp_min_size,
-                        skip_reasons=request.skip_reasons,
-                        posterior_writer=posterior_writer,
-                        start_time=request.start_time,
-                        max_reads=request.max_reads,
-                        chunk_size=request.chunk_size,
-                        nuc_min_size=request.nuc_min_size,
-                        with_scores=request.with_scores,
-                        return_posteriors=return_posteriors,
-                        write_msps=request.write_msps,
-                    )
-                )
-            finally:
-                posterior_stats = _shutdown_legacy_resources(
-                    executor, posterior_writer,
-                )
+
+def _run_legacy_bam_read_loop_from_request(
+    request: _LegacyBamReadLoopRequest,
+) -> _LegacyPipelineResult:
+    pipeline_request = request.pipeline_request
+    executor = None
+    posterior_writer = None
+    posterior_stats = None
+    try:
+        posterior_output = _open_legacy_posterior_writer(
+            pipeline_request.output_posteriors,
+            pipeline_request.mode,
+            pipeline_request.context_size,
+            pipeline_request.edge_trim,
+            pipeline_request.input_bam,
+        )
+        posterior_writer = posterior_output.writer
+        executor = _legacy_executor_for_config(
+            pipeline_request.model_path,
+            pipeline_request.n_cores,
+            pipeline_request.debug_timing,
+        )
+
+        read_result = _process_legacy_reads_from_request(
+            _LegacyReadsRequest(
+                reads=request.inbam,
+                outbam=request.outbam,
+                model=pipeline_request.model,
+                executor=executor,
+                filter_config=pipeline_request.filter_config,
+                mode=pipeline_request.mode,
+                prob_threshold=pipeline_request.prob_threshold,
+                edge_trim=pipeline_request.edge_trim,
+                circular=pipeline_request.circular,
+                context_size=pipeline_request.context_size,
+                msp_min_size=pipeline_request.msp_min_size,
+                skip_reasons=pipeline_request.skip_reasons,
+                posterior_writer=posterior_writer,
+                start_time=pipeline_request.start_time,
+                max_reads=pipeline_request.max_reads,
+                chunk_size=pipeline_request.chunk_size,
+                nuc_min_size=pipeline_request.nuc_min_size,
+                with_scores=pipeline_request.with_scores,
+                return_posteriors=posterior_output.enabled,
+                write_msps=pipeline_request.write_msps,
+            )
+        )
+    finally:
+        posterior_stats = _shutdown_legacy_resources(
+            executor, posterior_writer,
+        )
 
     return _LegacyPipelineResult(
         total_reads=read_result.total_reads,

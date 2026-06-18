@@ -411,6 +411,120 @@ def test_run_legacy_bam_processing_closes_posterior_on_executor_setup_failure(
     assert writer.closed == 1
 
 
+def test_run_legacy_bam_read_loop_opens_runs_and_shutdowns(monkeypatch):
+    writer = object()
+    executor = object()
+    inbam = object()
+    outbam = object()
+    filter_config = ReadFilterConfig(min_mapq=7)
+    skip_reasons = legacy_pipeline._new_legacy_skip_reasons()
+    posterior_stats = legacy_pipeline._LegacyPosteriorStats(
+        n_fibers=2,
+        file_size_mb=0.5,
+    )
+    read_result = legacy_pipeline._LegacyReadProcessingResult(
+        total_reads=3,
+        reads_with_footprints=2,
+        skipped=1,
+        worker_failures=0,
+    )
+    pipeline_request = legacy_pipeline._LegacyBamProcessingRequest(
+        input_bam="in.bam",
+        output_bam="out.bam",
+        model="model",
+        model_path="model.json",
+        filter_config=filter_config,
+        skip_reasons=skip_reasons,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=87,
+        prob_threshold=128,
+        with_scores=True,
+        n_cores=2,
+        max_reads=10,
+        debug_timing=True,
+        output_posteriors="post.h5",
+        write_msps=False,
+        io_threads=1,
+        start_time=10.0,
+        chunk_size=100,
+    )
+    calls = []
+
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_open_legacy_posterior_writer",
+        lambda *args: calls.append(("open", args))
+        or legacy_pipeline._LegacyPosteriorWriter(writer=writer, enabled=True),
+    )
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_legacy_executor_for_config",
+        lambda *args: calls.append(("executor", args)) or executor,
+    )
+
+    def fake_process_reads(request):
+        calls.append(("process", request))
+        return read_result
+
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_process_legacy_reads_from_request",
+        fake_process_reads,
+    )
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_shutdown_legacy_resources",
+        lambda *args: calls.append(("shutdown", args)) or posterior_stats,
+    )
+
+    result = legacy_pipeline._run_legacy_bam_read_loop_from_request(
+        legacy_pipeline._LegacyBamReadLoopRequest(
+            pipeline_request=pipeline_request,
+            inbam=inbam,
+            outbam=outbam,
+        )
+    )
+
+    assert result == legacy_pipeline._LegacyPipelineResult(
+        total_reads=3,
+        reads_with_footprints=2,
+        skipped=1,
+        worker_failures=0,
+        posterior_stats=posterior_stats,
+    )
+    assert calls[:2] == [
+        ("open", ("post.h5", "daf", 5, 11, "in.bam")),
+        ("executor", ("model.json", 2, True)),
+    ]
+    process_request = calls[2][1]
+    assert calls[2][0] == "process"
+    assert process_request.reads is inbam
+    assert process_request.outbam is outbam
+    assert process_request.model == "model"
+    assert process_request.executor is executor
+    assert process_request.filter_config is filter_config
+    assert process_request.mode == "daf"
+    assert process_request.prob_threshold == 128
+    assert process_request.edge_trim == 11
+    assert process_request.circular is True
+    assert process_request.context_size == 5
+    assert process_request.msp_min_size == 61
+    assert process_request.skip_reasons is skip_reasons
+    assert process_request.posterior_writer is writer
+    assert process_request.start_time == 10.0
+    assert process_request.max_reads == 10
+    assert process_request.chunk_size == 100
+    assert process_request.nuc_min_size == 87
+    assert process_request.with_scores is True
+    assert process_request.return_posteriors is True
+    assert process_request.write_msps is False
+    assert calls[3] == ("shutdown", (executor, writer))
+
+
 def test_run_legacy_bam_processing_builds_request(monkeypatch):
     calls = []
     model = object()
