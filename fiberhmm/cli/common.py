@@ -26,7 +26,7 @@ def resolve_core_count(requested_cores: int, cpu_count_func=None) -> int:
         cpu_count_func = (
             multiprocessing.cpu_count if cpu_count_func is None else cpu_count_func
         )
-        return int(cpu_count_func())
+        return max(1, int(cpu_count_func()))
     return max(1, requested_cores)
 
 

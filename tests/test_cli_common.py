@@ -129,6 +129,7 @@ class TestAddParallelArgs:
 
     def test_resolve_core_count(self):
         assert resolve_core_count(0, cpu_count_func=lambda: 12) == 12
+        assert resolve_core_count(0, cpu_count_func=lambda: 0) == 1
         assert resolve_core_count(-3, cpu_count_func=lambda: 12) == 1
         assert resolve_core_count(4, cpu_count_func=lambda: 12) == 4
 
