@@ -67,18 +67,18 @@ def _training_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     return None
 
 
+_STREAMING_SKIP_REASON_CHECKS = (
+    _unmapped_skip_reason,
+    _alignment_skip_reason,
+    _length_skip_reason,
+    _training_skip_reason,
+)
+
+
 def streaming_skip_reason(read, config: ReadFilterConfig) -> Optional[str]:
     """Return the skip reason for a streaming read, or None if processable."""
-    reason = _unmapped_skip_reason(read, config)
-    if reason is not None:
-        return reason
-
-    reason = _alignment_skip_reason(read, config)
-    if reason is not None:
-        return reason
-
-    reason = _length_skip_reason(read, config)
-    if reason is not None:
-        return reason
-
-    return _training_skip_reason(read, config)
+    for check in _STREAMING_SKIP_REASON_CHECKS:
+        reason = check(read, config)
+        if reason is not None:
+            return reason
+    return None
