@@ -582,6 +582,47 @@ def _print_probability_base_summary(
     print(f"    Unique contexts: {inacc_summary['unique_contexts']:,}")
 
 
+def _write_probability_tables_for_base(
+    tables_dir: str,
+    base_name: str,
+    base: str,
+    context_sizes: List[int],
+    accessible_counter: ContextCounter,
+    inaccessible_counter: ContextCounter,
+) -> None:
+    tsv_context_label = _context_size_label(
+        context_sizes, include_mer_span=False,
+    )
+    print(f"\n  Generating TSV files for {tsv_context_label}...")
+    for ctx_size in context_sizes:
+        _, acc_probs = accessible_counter.get_encoding_table(ctx_size)
+        acc_tsv = _probability_table_path(
+            tables_dir,
+            base_name,
+            "accessible",
+            base,
+            ctx_size,
+        )
+        _write_probability_table(acc_probs, acc_tsv)
+
+        _, inacc_probs = inaccessible_counter.get_encoding_table(ctx_size)
+        inacc_tsv = _probability_table_path(
+            tables_dir,
+            base_name,
+            "inaccessible",
+            base,
+            ctx_size,
+        )
+        _write_probability_table(inacc_probs, inacc_tsv)
+
+        n_acc = len(acc_probs)
+        n_inacc = len(inacc_probs)
+        print(
+            f"    k={ctx_size} ({2*ctx_size + 1}-mer): "
+            f"{n_acc} accessible, {n_inacc} inaccessible contexts"
+        )
+
+
 def main():
     args = parse_args()
 
@@ -660,37 +701,14 @@ def main():
             print(f"           This may indicate the MM tags don't contain {base} modifications")
             continue
 
-        # Save TSV files for requested context sizes
-        tsv_context_label = _context_size_label(
-            args.context_sizes, include_mer_span=False,
+        _write_probability_tables_for_base(
+            tables_dir,
+            base_name,
+            base,
+            args.context_sizes,
+            acc,
+            inacc,
         )
-        print(f"\n  Generating TSV files for {tsv_context_label}...")
-        for ctx_size in args.context_sizes:
-            # Accessible probabilities
-            _, acc_probs = acc.get_encoding_table(ctx_size)
-            acc_tsv = _probability_table_path(
-                tables_dir,
-                base_name,
-                "accessible",
-                base,
-                ctx_size,
-            )
-            _write_probability_table(acc_probs, acc_tsv)
-
-            # Inaccessible probabilities
-            _, inacc_probs = inacc.get_encoding_table(ctx_size)
-            inacc_tsv = _probability_table_path(
-                tables_dir,
-                base_name,
-                "inaccessible",
-                base,
-                ctx_size,
-            )
-            _write_probability_table(inacc_probs, inacc_tsv)
-
-            n_acc = len(acc_probs)
-            n_inacc = len(inacc_probs)
-            print(f"    k={ctx_size} ({2*ctx_size + 1}-mer): {n_acc} accessible, {n_inacc} inaccessible contexts")
 
     # Also create combined probability files for direct use with train_model.py
     print("\n" + "-" * 60)

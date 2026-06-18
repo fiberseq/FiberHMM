@@ -37,6 +37,7 @@ from fiberhmm.cli.generate_probs import (
     _safe_percent,
     _save_temporary_probability_counters,
     _target_bases_for_mode,
+    _write_probability_tables_for_base,
     _write_probability_table,
 )
 
@@ -64,16 +65,23 @@ class _Read:
 
 
 class _Counter:
-    def __init__(self):
+    def __init__(self, tables=None):
         self.processed = []
         self.processed_daf = []
         self.saved_paths = []
+        self.tables = tables or {}
+        self.total_positions = 0
+        self.total_modified = 0
+        self.counts = {}
 
     def process_read(self, sequence, mod_positions, edge_trim):
         self.processed.append((sequence, mod_positions, edge_trim))
 
     def process_read_daf(self, sequence, mod_positions, strand, edge_trim):
         self.processed_daf.append((sequence, mod_positions, strand, edge_trim))
+
+    def get_encoding_table(self, context_size):
+        return {}, self.tables[context_size].copy()
 
     def save(self, path):
         self.saved_paths.append(path)
@@ -509,6 +517,53 @@ def test_write_probability_table_uses_stable_probability_columns(tmp_path):
         "encode\tcontext\thit\tnohit\tratio\n"
         "7\tAAA\t1\t3\t0.25\n"
     )
+
+
+def test_write_probability_tables_for_base_writes_each_context(monkeypatch, capsys):
+    acc_k3 = pd.DataFrame({
+        "encode": [0, 1],
+        "context": ["AAA", "AAT"],
+        "hit": [3, 4],
+        "nohit": [7, 6],
+        "ratio": [0.3, 0.4],
+    })
+    inacc_k3 = pd.DataFrame({
+        "encode": [0],
+        "context": ["AAA"],
+        "hit": [1],
+        "nohit": [9],
+        "ratio": [0.1],
+    })
+    acc_k4 = acc_k3.head(1)
+    inacc_k4 = inacc_k3.head(0)
+    accessible = _Counter(tables={3: acc_k3, 4: acc_k4})
+    inaccessible = _Counter(tables={3: inacc_k3, 4: inacc_k4})
+    writes = []
+
+    def fake_write_probability_table(probs, output_path):
+        writes.append((probs, output_path))
+
+    monkeypatch.setattr(
+        "fiberhmm.cli.generate_probs._write_probability_table",
+        fake_write_probability_table,
+    )
+
+    _write_probability_tables_for_base(
+        "out/tables", "run", "A", [3, 4], accessible, inaccessible,
+    )
+
+    assert [path for _, path in writes] == [
+        "out/tables/run_accessible_A_k3.tsv",
+        "out/tables/run_inaccessible_A_k3.tsv",
+        "out/tables/run_accessible_A_k4.tsv",
+        "out/tables/run_inaccessible_A_k4.tsv",
+    ]
+    pd.testing.assert_frame_equal(writes[0][0], acc_k3)
+    pd.testing.assert_frame_equal(writes[1][0], inacc_k3)
+    output = capsys.readouterr().out
+    assert "Generating TSV files for k=3 to k=4" in output
+    assert "k=3 (7-mer): 2 accessible, 1 inaccessible contexts" in output
+    assert "k=4 (9-mer): 1 accessible, 0 inaccessible contexts" in output
 
 
 def test_probability_counter_summary_reports_totals_rate_and_contexts():
