@@ -33,6 +33,7 @@ from fiberhmm.io.autosql import (
     _autosql_variant_suffix,
     _canonical_autosql_type,
     _create_autosql_output_path,
+    _escape_autosql_description,
     _schema_description,
     _schema_fields,
     get_schema,
@@ -1308,6 +1309,16 @@ def test_schema_description_prepends_sample_marker_when_present():
     assert _schema_description("Track description", "sample-a") == (
         "Sample: sample-a. Track description"
     )
+
+
+def test_autosql_description_escapes_quoted_sample_names():
+    assert _escape_autosql_description('Sample "A"\nline\\2') == (
+        'Sample \\"A\\" line\\\\2'
+    )
+
+    schema = get_schema('tf', sample_name='run "A"\nline\\2')
+    assert 'Sample: run \\"A\\" line\\\\2. ' in schema
+    assert '"Sample: run "A"' not in schema
 
 
 def test_schema_fields_add_block_score_and_circular_columns():

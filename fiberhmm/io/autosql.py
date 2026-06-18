@@ -114,6 +114,16 @@ def _schema_description(description: str, sample_name: Optional[str] = None) -> 
     return f'Sample: {sample_name}. {description}'
 
 
+def _escape_autosql_description(description: str) -> str:
+    return (
+        description
+        .replace('\\', '\\\\')
+        .replace('"', '\\"')
+        .replace('\r', ' ')
+        .replace('\n', ' ')
+    )
+
+
 def _schema_fields(
     extract_type: Optional[str] = None,
     block_scores: bool = False,
@@ -134,6 +144,7 @@ def _make_schema(table_name: str, description: str,
                  circular_groups: bool = False) -> str:
     fields = _schema_fields(extract_type, block_scores, circular_groups)
     description = _schema_description(description, sample_name)
+    description = _escape_autosql_description(description)
     return (
         f'table {table_name}\n'
         f'"{description}"\n'
