@@ -20,9 +20,11 @@ from fiberhmm.inference.region_workers import (
     _format_region_bed12_row,
     _format_region_bed12_row_from_request,
     _fused_region_recall_config,
+    _fused_region_recall_write_delta_from_request,
     _fused_region_worker_runtime,
     _FusedRegionApplyReadRequest,
     _FusedRegionRecallResultRequest,
+    _FusedRegionRecallWriteRequest,
     _new_region_skip_reasons,
     _open_region_posterior_tsv,
     _pad_region_bed12_to_read_span,
@@ -616,6 +618,78 @@ def test_process_fused_region_bam_read_writes_recalled_tags(monkeypatch):
         fiber_read, apply_result, [1], [2], 2.5, 4, 7, False
     )
     assert calls["build"][1] == recall_options
+    assert calls["tags"] == (
+        read,
+        {
+            "read_length": 4,
+            "result": fused_result,
+            "also_write_legacy": False,
+            "downstream_compat": True,
+        },
+    )
+
+
+def test_fused_region_recall_write_delta_builds_tags_and_writes(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    read = _route_read()
+    outbam = SimpleNamespace(written=[])
+    outbam.write = outbam.written.append
+    fiber_read = {"query_sequence": "ACGT"}
+    apply_result = {"ns": [10], "nl": [5]}
+    fused_result = {"ma": "tag"}
+    recall_options = {"recall_nucs": True}
+    apply_config = _apply_config(with_scores=False)
+    recall_config = _fused_region_recall_config({
+        "min_llr": 2.5,
+        "min_opps": 4,
+        "unify_threshold": 7,
+        "also_write_legacy": False,
+        "downstream_compat": True,
+    })
+    calls = {}
+
+    def fake_build(*args):
+        calls["build"] = args
+        return fused_result
+
+    def fake_write_tags(got_read, **kwargs):
+        calls["tags"] = (got_read, kwargs)
+
+    monkeypatch.setattr(
+        region_workers,
+        "_build_fused_region_recall_result",
+        fake_build,
+    )
+    monkeypatch.setattr(region_workers, "write_fused_recall_tags", fake_write_tags)
+
+    delta = _fused_region_recall_write_delta_from_request(
+        _FusedRegionRecallWriteRequest(
+            read=read,
+            outbam=outbam,
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit=[1],
+            llr_miss=[2],
+            apply_config=apply_config,
+            recall_config=recall_config,
+            recall_options=recall_options,
+        )
+    )
+
+    assert delta.total_reads == 1
+    assert delta.reads_with_footprints == 1
+    assert delta.written == 1
+    assert outbam.written == [read]
+    assert calls["build"] == (
+        fiber_read,
+        apply_result,
+        [1],
+        [2],
+        apply_config,
+        recall_config,
+        recall_options,
+    )
     assert calls["tags"] == (
         read,
         {

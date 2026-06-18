@@ -188,6 +188,19 @@ class _FusedRegionRecallResultRequest:
 
 
 @dataclass(frozen=True)
+class _FusedRegionRecallWriteRequest:
+    read: object
+    outbam: object
+    fiber_read: dict
+    apply_result: dict
+    llr_hit: object
+    llr_miss: object
+    apply_config: _RegionApplyConfig
+    recall_config: _FusedRegionRecallConfig
+    recall_options: dict
+
+
+@dataclass(frozen=True)
 class _RegionBamReadDelta:
     total_reads: int = 0
     reads_with_footprints: int = 0
@@ -620,6 +633,33 @@ def _build_fused_region_recall_result(
             recall_config=recall_config,
             recall_options=recall_options,
         )
+    )
+
+
+def _fused_region_recall_write_delta_from_request(
+    request: _FusedRegionRecallWriteRequest,
+) -> _RegionBamReadDelta:
+    fused_result = _build_fused_region_recall_result(
+        request.fiber_read,
+        request.apply_result,
+        request.llr_hit,
+        request.llr_miss,
+        request.apply_config,
+        request.recall_config,
+        request.recall_options,
+    )
+    write_fused_recall_tags(
+        request.read,
+        read_length=len(request.fiber_read['query_sequence']),
+        result=fused_result,
+        also_write_legacy=request.recall_config.also_write_legacy,
+        downstream_compat=request.recall_config.downstream_compat,
+    )
+    request.outbam.write(request.read)
+    return _RegionBamReadDelta(
+        total_reads=1,
+        reads_with_footprints=1,
+        written=1,
     )
 
 
@@ -1198,27 +1238,18 @@ def _process_fused_region_bam_read_from_request(
         )
         return _RegionBamReadDelta(total_reads=1, written=written)
 
-    fused_result = _build_fused_region_recall_result(
-        fiber_result.fiber_read,
-        apply_result,
-        request.llr_hit,
-        request.llr_miss,
-        request.apply_config,
-        request.recall_config,
-        request.recall_options,
-    )
-    write_fused_recall_tags(
-        request.read,
-        read_length=len(fiber_result.fiber_read['query_sequence']),
-        result=fused_result,
-        also_write_legacy=request.recall_config.also_write_legacy,
-        downstream_compat=request.recall_config.downstream_compat,
-    )
-    request.outbam.write(request.read)
-    return _RegionBamReadDelta(
-        total_reads=1,
-        reads_with_footprints=1,
-        written=1,
+    return _fused_region_recall_write_delta_from_request(
+        _FusedRegionRecallWriteRequest(
+            read=request.read,
+            outbam=request.outbam,
+            fiber_read=fiber_result.fiber_read,
+            apply_result=apply_result,
+            llr_hit=request.llr_hit,
+            llr_miss=request.llr_miss,
+            apply_config=request.apply_config,
+            recall_config=request.recall_config,
+            recall_options=request.recall_options,
+        )
     )
 
 
