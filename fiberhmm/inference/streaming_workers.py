@@ -128,6 +128,20 @@ class _FusedPayloadItemProcessRequest:
     llr_miss: object
 
 
+@dataclass(frozen=True)
+class _PayloadChunkWorkerRequest:
+    chunk_payloads: list
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    with_scores: bool
+    return_posteriors: bool
+    prob_threshold: int
+
+
 def _payload_worker_config(
     edge_trim: int,
     circular: bool,
@@ -703,21 +717,40 @@ def _process_payload_chunk_worker(
     None for reads that have no usable modification data or hit a per-read
     worker failure.
     """
+    return _process_payload_chunk_worker_from_request(
+        _PayloadChunkWorkerRequest(
+            chunk_payloads=chunk_payloads,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+            return_posteriors=return_posteriors,
+            prob_threshold=prob_threshold,
+        )
+    )
+
+
+def _process_payload_chunk_worker_from_request(
+    request: _PayloadChunkWorkerRequest,
+) -> WorkerChunkResult:
     global _worker_model
 
     config = _payload_worker_config(
-        edge_trim,
-        circular,
-        mode,
-        context_size,
-        msp_min_size,
-        nuc_min_size,
-        with_scores,
-        return_posteriors,
-        prob_threshold,
+        request.edge_trim,
+        request.circular,
+        request.mode,
+        request.context_size,
+        request.msp_min_size,
+        request.nuc_min_size,
+        request.with_scores,
+        request.return_posteriors,
+        request.prob_threshold,
     )
 
     def process_item(payload):
         return _process_payload_item(payload, config)
 
-    return _process_worker_items(chunk_payloads, process_item)
+    return _process_worker_items(request.chunk_payloads, process_item)
