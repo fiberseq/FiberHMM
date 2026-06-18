@@ -166,14 +166,16 @@ def test_scan_tsv_for_h5_collects_metadata_and_chrom_counts(tmp_path):
         encoding="utf-8",
     )
 
-    metadata, chrom_counts, n_total = tsv_backend._scan_tsv_for_h5(
+    scan_result = tsv_backend._scan_tsv_for_h5(
         str(tsv_path),
         verbose=False,
     )
 
-    assert metadata == {"mode": "daf", "context_size": 5, "edge_trim": 12}
-    assert chrom_counts == {"chr2L": 2, "chr3R": 1}
-    assert n_total == 3
+    assert scan_result == tsv_backend._TsvH5ScanResult(
+        metadata={"mode": "daf", "context_size": 5, "edge_trim": 12},
+        chrom_counts={"chr2L": 2, "chr3R": 1},
+        total_fibers=3,
+    )
 
 
 def test_posterior_record_from_fields_decodes_with_requested_dtype():

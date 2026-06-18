@@ -22,6 +22,7 @@ import gzip
 import json
 import os
 import sys
+from dataclasses import dataclass
 from typing import Optional, TextIO
 
 import numpy as np
@@ -33,6 +34,13 @@ from fiberhmm.posteriors.region_tsv import (
     format_posterior_metadata_line,
     format_region_posterior_line,
 )
+
+
+@dataclass(frozen=True)
+class _TsvH5ScanResult:
+    metadata: dict
+    chrom_counts: dict
+    total_fibers: int
 
 
 def _open_text_file(path: str, mode: str) -> TextIO:
@@ -152,7 +160,11 @@ def _scan_tsv_for_h5(tsv_path: str, verbose: bool):
     if verbose:
         print(f"\r    Found {n_total:,} fibers across {len(chrom_counts)} chromosomes")
 
-    return metadata, chrom_counts, n_total
+    return _TsvH5ScanResult(
+        metadata=metadata,
+        chrom_counts=chrom_counts,
+        total_fibers=n_total,
+    )
 
 
 def _create_h5_chrom_groups(h5_file, chrom_counts, string_dtype):
@@ -348,18 +360,20 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
     import h5py
 
     # First pass: count fibers per chromosome
-    metadata, chrom_counts, n_total = _scan_tsv_for_h5(tsv_path, verbose)
+    scan_result = _scan_tsv_for_h5(tsv_path, verbose)
 
     # Create H5 file with pre-allocated structure
     if verbose:
         print(f"  Writing {h5_path}...")
 
     with h5py.File(h5_path, 'w') as f:
-        _write_h5_metadata_from_tsv_metadata(f, metadata)
+        _write_h5_metadata_from_tsv_metadata(f, scan_result.metadata)
 
         dt = h5py.special_dtype(vlen=str)
 
-        chrom_indices = _create_h5_chrom_groups(f, chrom_counts, dt)
+        chrom_indices = _create_h5_chrom_groups(
+            f, scan_result.chrom_counts, dt,
+        )
 
         n_written = 0
 
@@ -368,7 +382,11 @@ def tsv_to_h5(tsv_path: str, h5_path: str, verbose: bool = True) -> int:
             n_written += 1
 
             if verbose and n_written % 100000 == 0:
-                print(f"\r    Written {n_written:,} / {n_total:,} fibers...", end='')
+                print(
+                    f"\r    Written {n_written:,} / "
+                    f"{scan_result.total_fibers:,} fibers...",
+                    end='',
+                )
                 sys.stdout.flush()
 
     file_size = path_size_mb(h5_path)
