@@ -1873,12 +1873,12 @@ def test_build_fused_configured_recall_result_forwards_config(monkeypatch):
     miss = object()
     seen = {}
 
-    def fake_build(*args):
-        seen["args"] = args
+    def fake_build(request):
+        seen["request"] = request
         return {"recall": True}
 
     monkeypatch.setattr(
-        streaming_workers, "_build_worker_fused_recall_result", fake_build,
+        streaming_workers, "_build_worker_fused_recall_result_from_request", fake_build,
     )
     config = streaming_workers._FusedPayloadWorkerConfig(
         edge_trim=1,
@@ -1894,6 +1894,31 @@ def test_build_fused_configured_recall_result_forwards_config(monkeypatch):
         unify_threshold=90,
     )
 
+    assert streaming_workers._build_fused_configured_recall_result_from_request(
+        streaming_workers._FusedConfiguredRecallResultRequest(
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit=hit,
+            llr_miss=miss,
+            config=config,
+        )
+    ) == {"recall": True}
+    assert seen["request"] == streaming_workers._WorkerFusedRecallResultRequest(
+        fiber_read=fiber_read,
+        apply_result=apply_result,
+        llr_hit=hit,
+        llr_miss=miss,
+        min_llr=4.5,
+        min_opps=5,
+        unify_threshold=90,
+        with_scores=True,
+        nuc_min_size=85,
+        msp_min_size=60,
+    )
+    assert seen["request"].fiber_read is fiber_read
+    assert seen["request"].apply_result is apply_result
+    seen.clear()
+
     assert streaming_workers._build_fused_configured_recall_result(
         fiber_read,
         apply_result,
@@ -1901,18 +1926,7 @@ def test_build_fused_configured_recall_result_forwards_config(monkeypatch):
         miss,
         config,
     ) == {"recall": True}
-    assert seen["args"] == (
-        fiber_read,
-        apply_result,
-        hit,
-        miss,
-        4.5,
-        5,
-        90,
-        True,
-        85,
-        60,
-    )
+    assert seen["request"].fiber_read is fiber_read
 
 
 def test_process_fused_fiber_read_applies_and_recalls_or_passes_through(monkeypatch):
@@ -1997,8 +2011,8 @@ def test_process_fused_payload_item_runs_parse_apply_and_recall(monkeypatch):
         seen["apply"] = request
         return apply_result
 
-    def fake_build(*args):
-        seen["build"] = args
+    def fake_build(request):
+        seen["build"] = request
         return {"recall": True}
 
     monkeypatch.setattr(
@@ -2011,7 +2025,7 @@ def test_process_fused_payload_item_runs_parse_apply_and_recall(monkeypatch):
         streaming_workers, "apply_result_has_footprints", lambda result: True,
     )
     monkeypatch.setattr(
-        streaming_workers, "_build_worker_fused_recall_result", fake_build,
+        streaming_workers, "_build_worker_fused_recall_result_from_request", fake_build,
     )
 
     assert streaming_workers._process_fused_payload_item(
@@ -2032,18 +2046,20 @@ def test_process_fused_payload_item_runs_parse_apply_and_recall(monkeypatch):
         with_scores=True,
     )
     assert seen["apply"].fiber_read is fiber_read
-    assert seen["build"] == (
-        fiber_read,
-        apply_result,
-        hit,
-        miss,
-        4.0,
-        3,
-        90,
-        True,
-        85,
-        60,
+    assert seen["build"] == streaming_workers._WorkerFusedRecallResultRequest(
+        fiber_read=fiber_read,
+        apply_result=apply_result,
+        llr_hit=hit,
+        llr_miss=miss,
+        min_llr=4.0,
+        min_opps=3,
+        unify_threshold=90,
+        with_scores=True,
+        nuc_min_size=85,
+        msp_min_size=60,
     )
+    assert seen["build"].fiber_read is fiber_read
+    assert seen["build"].apply_result is apply_result
 
 
 def test_fused_payload_worker_counts_per_read_failures(monkeypatch):

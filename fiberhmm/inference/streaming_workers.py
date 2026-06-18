@@ -103,6 +103,15 @@ class _WorkerFusedRecallResultRequest:
     msp_min_size: int
 
 
+@dataclass(frozen=True)
+class _FusedConfiguredRecallResultRequest:
+    fiber_read: object
+    apply_result: object
+    llr_hit: object
+    llr_miss: object
+    config: _FusedPayloadWorkerConfig
+
+
 def _payload_worker_config(
     edge_trim: int,
     circular: bool,
@@ -381,6 +390,26 @@ def _build_worker_fused_recall_result(
     )
 
 
+def _build_fused_configured_recall_result_from_request(
+    request: _FusedConfiguredRecallResultRequest,
+):
+    config = request.config
+    return _build_worker_fused_recall_result_from_request(
+        _WorkerFusedRecallResultRequest(
+            fiber_read=request.fiber_read,
+            apply_result=request.apply_result,
+            llr_hit=request.llr_hit,
+            llr_miss=request.llr_miss,
+            min_llr=config.min_llr,
+            min_opps=config.min_opps,
+            unify_threshold=config.unify_threshold,
+            with_scores=config.with_scores,
+            nuc_min_size=config.nuc_min_size,
+            msp_min_size=config.msp_min_size,
+        )
+    )
+
+
 def _build_fused_configured_recall_result(
     fiber_read,
     apply_result,
@@ -388,17 +417,14 @@ def _build_fused_configured_recall_result(
     llr_miss,
     config: _FusedPayloadWorkerConfig,
 ):
-    return _build_worker_fused_recall_result(
-        fiber_read,
-        apply_result,
-        llr_hit,
-        llr_miss,
-        config.min_llr,
-        config.min_opps,
-        config.unify_threshold,
-        config.with_scores,
-        config.nuc_min_size,
-        config.msp_min_size,
+    return _build_fused_configured_recall_result_from_request(
+        _FusedConfiguredRecallResultRequest(
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            config=config,
+        )
     )
 
 
