@@ -57,6 +57,9 @@ from fiberhmm.inference.worker_warmup import (
 )
 from fiberhmm.io.path_status import path_size_mb
 
+EXPORT_FORMAT_CHOICES = ('auto', 'hdf5', 'tsv')
+HDF5_OUTPUT_SUFFIXES = ('.h5', '.hdf5')
+
 
 def _detect_format(output_path: str, format_arg: str) -> str:
     """Detect output format from extension or explicit --format."""
@@ -64,7 +67,7 @@ def _detect_format(output_path: str, format_arg: str) -> str:
     if format_arg != 'auto':
         return format_arg
     output_path_lower = os.fspath(output_path).lower()
-    if output_path_lower.endswith('.h5') or output_path_lower.endswith('.hdf5'):
+    if output_path_lower.endswith(HDF5_OUTPUT_SUFFIXES):
         return 'hdf5'
     return 'tsv'
 
@@ -1135,7 +1138,7 @@ def main():
                             'for --enzyme/--seq.')
     parser.add_argument('-o', '--output', required=True,
                        help='Output file (.tsv.gz for TSV, .h5/.hdf5 for HDF5)')
-    parser.add_argument('--format', choices=['auto', 'hdf5', 'tsv'], default='auto',
+    parser.add_argument('--format', choices=EXPORT_FORMAT_CHOICES, default='auto',
                        help="Output format (default: auto-detect from extension)")
 
     from fiberhmm.models import SUPPORTED_ENZYMES as _ENZYMES
