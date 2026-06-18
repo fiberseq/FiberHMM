@@ -128,6 +128,18 @@ class _RegionBedWorkerPoolRequest:
     start_time: float
 
 
+@dataclass(frozen=True)
+class _FusedRegionBamWorkerPoolRequest:
+    n_cores: int
+    apply_model_path: str
+    recall_model_path: Optional[str]
+    emission_uplift: float
+    params: dict
+    work_items: object
+    total_regions: int
+    start_time: float
+
+
 def _base_region_worker_params(
     *,
     edge_trim: int,
@@ -870,19 +882,41 @@ def _run_fused_region_bam_worker_pool(
     total_regions: int,
     start_time: float,
 ) -> RegionBamAggregation:
+    return _run_fused_region_bam_worker_pool_from_request(
+        _FusedRegionBamWorkerPoolRequest(
+            n_cores=n_cores,
+            apply_model_path=apply_model_path,
+            recall_model_path=recall_model_path,
+            emission_uplift=emission_uplift,
+            params=params,
+            work_items=work_items,
+            total_regions=total_regions,
+            start_time=start_time,
+        )
+    )
+
+
+def _run_fused_region_bam_worker_pool_from_request(
+    request: _FusedRegionBamWorkerPoolRequest,
+) -> RegionBamAggregation:
     aggregation = RegionBamAggregation()
     _run_region_worker_pool(
-        n_cores=n_cores,
+        n_cores=request.n_cores,
         initializer=_init_fused_region_worker,
-        initargs=(apply_model_path, recall_model_path, emission_uplift, params),
+        initargs=(
+            request.apply_model_path,
+            request.recall_model_path,
+            request.emission_uplift,
+            request.params,
+        ),
         worker=_process_region_to_bam_fused,
-        work_items=work_items,
+        work_items=request.work_items,
         aggregation=aggregation,
         result_type=RegionBamResult,
-        total_regions=total_regions,
-        start_time=start_time,
+        total_regions=request.total_regions,
+        start_time=request.start_time,
         init_message=(
-            f"  Initializing {n_cores} workers "
+            f"  Initializing {request.n_cores} workers "
             "(loading apply model + LLR tables)..."
         ),
         ready_message="Processing...",

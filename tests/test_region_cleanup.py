@@ -1081,7 +1081,7 @@ def test_run_fused_region_bam_worker_pool_wires_fused_contract(monkeypatch):
         fake_run_region_worker_pool,
     )
 
-    aggregation = region_pipeline._run_fused_region_bam_worker_pool(
+    request = region_pipeline._FusedRegionBamWorkerPoolRequest(
         n_cores=3,
         apply_model_path="apply.json",
         recall_model_path="recall.json",
@@ -1090,6 +1090,10 @@ def test_run_fused_region_bam_worker_pool_wires_fused_contract(monkeypatch):
         work_items=["region"],
         total_regions=1,
         start_time=10.0,
+    )
+
+    aggregation = region_pipeline._run_fused_region_bam_worker_pool_from_request(
+        request,
     )
 
     assert aggregation.total_reads == 12
@@ -1114,6 +1118,19 @@ def test_run_fused_region_bam_worker_pool_wires_fused_contract(monkeypatch):
         rate_unit="r/s",
         rate_precision=0,
     )
+
+    calls.clear()
+    assert region_pipeline._run_fused_region_bam_worker_pool(
+        n_cores=3,
+        apply_model_path="apply.json",
+        recall_model_path="recall.json",
+        emission_uplift=1.5,
+        params={"mode": "daf"},
+        work_items=["region"],
+        total_regions=1,
+        start_time=10.0,
+    ).total_reads == 12
+    assert calls[0]["n_cores"] == 3
 
 
 def test_finalize_region_bam_output_concatenates_reports_and_indexes(
