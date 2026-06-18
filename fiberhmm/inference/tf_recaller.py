@@ -166,6 +166,12 @@ class _RawLegacyRecallTags:
     msp_lengths: Sequence[int]
 
 
+@dataclass
+class _PreferredMmMlTags:
+    mm_tag: object
+    ml_tag: object
+
+
 def _split_named_intervals(
     intervals: Sequence[Tuple[int, int]],
     prefix: str,
@@ -573,7 +579,7 @@ def _preferred_mm_ml_tags(read):
     ml_tag = get_preferred_tag(read, 'ML', 'Ml', None)
     if not _has_mm_ml_inputs(mm_tag, ml_tag):
         return None
-    return mm_tag, ml_tag
+    return _PreferredMmMlTags(mm_tag, ml_tag)
 
 
 def _extract_mm_ml_or_daf_md_modifications(read, seq: str, mode: str):
@@ -582,7 +588,7 @@ def _extract_mm_ml_or_daf_md_modifications(read, seq: str, mode: str):
         if mode == 'daf':
             return _extract_daf_md_modifications(read, seq)
         return None
-    return _extract_mm_ml_modifications(read, seq, mode, tags[0], tags[1])
+    return _extract_mm_ml_modifications(read, seq, mode, tags.mm_tag, tags.ml_tag)
 
 
 def extract_modifications(read, mode: str, context_size: int = 3
