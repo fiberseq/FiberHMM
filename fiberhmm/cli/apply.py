@@ -266,6 +266,12 @@ class _ApplyIO:
     n_cores: int
 
 
+@dataclass(frozen=True)
+class _ScoresDbCounts:
+    reads: int
+    footprints: int
+
+
 def _load_apply_model_with_summary(model_path: str):
     print(f"Loading model from {model_path}")
     model, model_context_size, model_mode = load_model_with_metadata(model_path)
@@ -394,16 +400,16 @@ def _scores_db_counts(db_path: str):
         n_footprints = cursor.fetchone()[0]
     finally:
         conn.close()
-    return n_reads, n_footprints
+    return _ScoresDbCounts(reads=n_reads, footprints=n_footprints)
 
 
 def _print_scores_db_summary(db_path: str) -> None:
     if not db_path or not os.path.exists(db_path):
         return
 
-    n_reads, n_footprints = _scores_db_counts(db_path)
+    counts = _scores_db_counts(db_path)
     print(f"Scores DB: {db_path}")
-    print(f"  {n_reads:,} reads, {n_footprints:,} footprints")
+    print(f"  {counts.reads:,} reads, {counts.footprints:,} footprints")
 
 
 def _processing_status_message(max_reads) -> str:

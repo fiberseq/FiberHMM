@@ -289,7 +289,9 @@ def test_apply_scores_db_summary_helpers(tmp_path, capsys):
     finally:
         conn.close()
 
-    assert _scores_db_counts(str(db_path)) == (2, 3)
+    counts = _scores_db_counts(str(db_path))
+    assert counts.reads == 2
+    assert counts.footprints == 3
 
     _print_scores_db_summary(str(db_path))
     out = capsys.readouterr().out
