@@ -220,7 +220,8 @@ def cmd_inspect(args):
     print()
 
     emissionprob = model.emissionprob_
-    print(f"Emission probabilities: {emissionprob.shape[0]} states x {emissionprob.shape[1]} symbols")
+    n_states, n_symbols = emissionprob.shape
+    print(f"Emission probabilities: {n_states} states x {n_symbols} symbols")
     for i in range(emissionprob.shape[0]):
         label = "inaccessible" if i == 0 else "accessible"
         row = emissionprob[i]
@@ -686,7 +687,8 @@ def _write_regression_stats_summary(
                 f.write("\n  Estimated emission probabilities:\n")
                 f.write(f"    P(m|accessible):   {data['p_acc']:.4f}\n")
                 f.write(f"    P(m|inaccessible): {data['p_inacc']:.4f}\n")
-                f.write(f"    Enrichment ratio:  {data['p_acc']/max(0.001, data['p_inacc']):.1f}x\n")
+                enrichment_ratio = data['p_acc'] / max(0.001, data['p_inacc'])
+                f.write(f"    Enrichment ratio:  {enrichment_ratio:.1f}x\n")
                 if diag.get('swapped'):
                     f.write("    Warning: Values were swapped (acc < inacc before swap)\n")
             f.write("\n")
