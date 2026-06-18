@@ -1613,6 +1613,31 @@ def test_looks_like_fiber_seq_detects_hia5_bams():
     assert _looks_like_fiber_seq(mixed) is False
 
 
+def test_maybe_auto_skip_deam_for_fiber_seq_respects_explicit_deam(capsys):
+    fiber_diag = {
+        'mm_subtypes': ['A+a', 'C+m'],
+        'has_ry_in_seq': 0,
+    }
+    extract_types = ['nucleosome', 'deam', 'm6a']
+
+    skipped = extract_tags._maybe_auto_skip_deam_for_fiber_seq(
+        extract_types, explicit_deam=False, diag=fiber_diag,
+    )
+
+    assert skipped is True
+    assert extract_types == ['nucleosome', 'm6a']
+    assert "Auto-skipping --deam" in capsys.readouterr().out
+
+    explicit_types = ['deam', 'm6a']
+    skipped = extract_tags._maybe_auto_skip_deam_for_fiber_seq(
+        explicit_types, explicit_deam=True, diag=fiber_diag,
+    )
+
+    assert skipped is False
+    assert explicit_types == ['deam', 'm6a']
+    assert capsys.readouterr().out == ""
+
+
 def test_md_tag_ref_length_parser():
     """Parser should correctly sum matches, mismatches, and deletions."""
     from fiberhmm.daf.encoder import _md_tag_ref_length

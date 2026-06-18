@@ -1552,6 +1552,28 @@ def _looks_like_fiber_seq(diag: Dict[str, object]) -> bool:
     return (has_m6a or has_m5c) and not has_u_code and not has_ry
 
 
+def _maybe_auto_skip_deam_for_fiber_seq(
+    extract_types: list,
+    explicit_deam: bool,
+    diag: Dict[str, object],
+) -> bool:
+    if (
+        'deam' not in extract_types
+        or explicit_deam
+        or not _looks_like_fiber_seq(diag)
+    ):
+        return False
+
+    extract_types.remove('deam')
+    print(
+        "Auto-skipping --deam: BAM looks like fiber-seq (MM/ML has "
+        "m6A/5mC subtypes, no dU code, no R/Y). Hia5 is a methyltransferase, "
+        "not a deaminase -- no deamination calls to extract. Pass --deam "
+        "explicitly to override."
+    )
+    return True
+
+
 def _new_tag_diagnostic_counts() -> Dict[str, object]:
     return {
         'reads_scanned': 0,
@@ -1884,15 +1906,7 @@ def main():
     # (pysam AssertionError → heap corruption → lost m6a/m5c writes). If the
     # user explicitly passed --deam we honor their intent; if --deam was
     # swept in by --all / default we drop it here.
-    if ('deam' in extract_types and not args.deam
-            and _looks_like_fiber_seq(diag)):
-        extract_types.remove('deam')
-        print(
-            "Auto-skipping --deam: BAM looks like fiber-seq (MM/ML has "
-            "m6A/5mC subtypes, no dU code, no R/Y). Hia5 is a methyltransferase, "
-            "not a deaminase -- no deamination calls to extract. Pass --deam "
-            "explicitly to override."
-        )
+    _maybe_auto_skip_deam_for_fiber_seq(extract_types, args.deam, diag)
 
     _print_tag_diagnostic(diag, extract_types)
 
