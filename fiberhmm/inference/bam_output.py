@@ -344,6 +344,25 @@ def _log_pysam_concat_failure(output_bam: str, error: Exception) -> None:
     print("  Attempting manual BAM concatenation via samtools merge...")
 
 
+def _elapsed_seconds_since(start_time: float) -> float:
+    import time
+
+    return time.time() - start_time
+
+
+def _log_samtools_cat_success(output_bam: str, elapsed_seconds: float) -> None:
+    output_size_gb = _file_size_gb(output_bam)
+    speed_gbs = _throughput_gbs(output_size_gb, elapsed_seconds)
+    print(
+        f"  Concatenated with samtools cat in {elapsed_seconds:.1f}s "
+        f"({output_size_gb:.1f}GB, {speed_gbs:.2f} GB/s)"
+    )
+
+
+def _log_concat_method_success(method: str, elapsed_seconds: float) -> None:
+    print(f"  Concatenated with {method} in {elapsed_seconds:.1f}s")
+
+
 def _write_empty_bam_from_input_header(input_bam: str, output_bam: str) -> None:
     """Create an empty BAM using the input BAM header."""
     with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as inbam:
@@ -417,13 +436,7 @@ def _concatenate_region_bams(
         _samtools_cat_bams(bam_files, output_bam, bam_list_file)
 
         if verbose:
-            concat_time = time.time() - concat_start
-            output_size_gb = _file_size_gb(output_bam)
-            speed_gbs = _throughput_gbs(output_size_gb, concat_time)
-            print(
-                f"  Concatenated with samtools cat in {concat_time:.1f}s "
-                f"({output_size_gb:.1f}GB, {speed_gbs:.2f} GB/s)"
-            )
+            _log_samtools_cat_success(output_bam, _elapsed_seconds_since(concat_start))
         return
 
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
@@ -432,8 +445,7 @@ def _concatenate_region_bams(
     try:
         _concatenate_bams_with_pysam(bam_files, output_bam, verbose=verbose)
         if verbose:
-            concat_time = time.time() - concat_start
-            print(f"  Concatenated with pysam in {concat_time:.1f}s")
+            _log_concat_method_success("pysam", _elapsed_seconds_since(concat_start))
 
     except Exception as pysam_err:
         if verbose:
@@ -442,8 +454,10 @@ def _concatenate_region_bams(
         try:
             _samtools_merge_bams(bam_files, output_bam, bam_list_file)
             if verbose:
-                concat_time = time.time() - concat_start
-                print(f"  Concatenated with samtools merge in {concat_time:.1f}s")
+                _log_concat_method_success(
+                    "samtools merge",
+                    _elapsed_seconds_since(concat_start),
+                )
         except Exception as merge_err:
             if verbose:
                 print(f"  ERROR: All concatenation methods failed: {merge_err}")

@@ -854,6 +854,18 @@ def test_samtools_merge_bams_cleans_list_when_samtools_missing(monkeypatch, tmp_
     assert not Path(list_file).exists()
 
 
+def test_concat_success_logging_reports_method_size_and_speed(monkeypatch, capsys):
+    monkeypatch.setattr(bam_output, "_file_size_gb", lambda path: 2.0)
+
+    bam_output._log_samtools_cat_success("out.bam", 4.0)
+    bam_output._log_concat_method_success("pysam", 1.25)
+
+    assert capsys.readouterr().out.splitlines() == [
+        "  Concatenated with samtools cat in 4.0s (2.0GB, 0.50 GB/s)",
+        "  Concatenated with pysam in 1.2s",
+    ]
+
+
 def test_concatenate_region_bams_writes_empty_bam_from_input_header(monkeypatch, tmp_path):
     input_bam = str(tmp_path / "input.bam")
     output_bam = str(tmp_path / "out.bam")
