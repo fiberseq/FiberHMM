@@ -171,6 +171,23 @@ def test_region_posteriors_tsv_output_path(tmp_path):
     assert not region_posteriors_needs_h5_conversion("out.tsv.gz")
 
 
+def test_posterior_tsv_metadata_request_uses_source_bam_basename(tmp_path):
+    assert region_tsv._posterior_tsv_metadata_from_request(
+        region_tsv._PosteriorTsvMetadataRequest(
+            mode="daf",
+            context_size=5,
+            edge_trim=12,
+            source_bam=tmp_path / "input.bam",
+        )
+    ) == {
+        "mode": "daf",
+        "context_size": 5,
+        "edge_trim": 12,
+        "source_bam": "input.bam",
+        "format_version": 1,
+    }
+
+
 def test_region_tsv_header_and_record_copy_helpers(tmp_path):
     output = io.StringIO()
 

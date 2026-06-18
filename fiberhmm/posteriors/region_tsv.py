@@ -38,6 +38,14 @@ class _RegionPosteriorLineRecord:
 
 
 @dataclass(frozen=True)
+class _PosteriorTsvMetadataRequest:
+    mode: str
+    context_size: int
+    edge_trim: int
+    source_bam: str
+
+
+@dataclass(frozen=True)
 class _RegionTsvHeaderRequest:
     outfile: object
     mode: str
@@ -209,11 +217,24 @@ def _posterior_tsv_metadata(
     edge_trim: int,
     source_bam: str,
 ) -> dict:
+    return _posterior_tsv_metadata_from_request(
+        _PosteriorTsvMetadataRequest(
+            mode=mode,
+            context_size=context_size,
+            edge_trim=edge_trim,
+            source_bam=source_bam,
+        )
+    )
+
+
+def _posterior_tsv_metadata_from_request(
+    request: _PosteriorTsvMetadataRequest,
+) -> dict:
     return {
-        "mode": mode,
-        "context_size": context_size,
-        "edge_trim": edge_trim,
-        "source_bam": os.path.basename(os.fspath(source_bam)),
+        "mode": request.mode,
+        "context_size": request.context_size,
+        "edge_trim": request.edge_trim,
+        "source_bam": os.path.basename(os.fspath(request.source_bam)),
         "format_version": 1,
     }
 
@@ -235,11 +256,13 @@ def _valid_region_tsv_files(
 def _write_region_tsv_header_from_request(
     request: _RegionTsvHeaderRequest,
 ) -> None:
-    metadata = _posterior_tsv_metadata(
-        request.mode,
-        request.context_size,
-        request.edge_trim,
-        request.source_bam,
+    metadata = _posterior_tsv_metadata_from_request(
+        _PosteriorTsvMetadataRequest(
+            mode=request.mode,
+            context_size=request.context_size,
+            edge_trim=request.edge_trim,
+            source_bam=request.source_bam,
+        )
     )
     request.outfile.write(format_posterior_metadata_line(metadata))
     request.outfile.write(REGION_POSTERIORS_HEADER)
