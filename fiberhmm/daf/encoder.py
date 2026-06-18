@@ -544,6 +544,115 @@ def _process_daf_encode_read(
     return _daf_encoded_read_stats(read, st_tag, n_deam)
 
 
+def _open_daf_reference(reference):
+    if reference:
+        return pysam.FastaFile(reference)
+    return None
+
+
+def _open_daf_input_bam(input_bam, io_threads: int):
+    return pysam.AlignmentFile(
+        input_bam,
+        "rb",
+        threads=io_threads,
+        check_sq=False,
+    )
+
+
+def _daf_output_target(output_bam):
+    if output_bam == "-":
+        return os.fdopen(1, "wb", closefd=False)
+    return output_bam
+
+
+def _open_daf_output_bam(output_bam, inbam, io_threads: int):
+    return pysam.AlignmentFile(
+        _daf_output_target(output_bam),
+        "wb",
+        header=inbam.header,
+        threads=io_threads,
+    )
+
+
+def _new_daf_encode_progress(output_bam, log):
+    return tqdm(
+        desc="Encoding",
+        unit=" reads",
+        file=log,
+        mininterval=2.0,
+        disable=(output_bam == "-"),
+    )
+
+
+def _maybe_print_daf_encode_progress(counts: dict, last_progress: float, log):
+    if counts["total"] == 0 or counts["total"] % 10000 != 0:
+        return last_progress
+
+    now = time.time()
+    elapsed = now - last_progress
+    _print_daf_progress(
+        counts["total"],
+        10000,
+        elapsed,
+        counts["ct"],
+        counts["ga"],
+        counts["skipped"],
+        log,
+    )
+    return now
+
+
+def _stream_daf_encode_reads(
+    inbam,
+    outbam,
+    pbar,
+    counts: dict,
+    min_mapq: int,
+    min_read_length: int,
+    force_strand,
+    ref_fasta,
+    log,
+    last_progress: float,
+) -> float:
+    for read in inbam.fetch(until_eof=True):
+        read_stats = _process_daf_encode_read(
+            outbam,
+            pbar,
+            read,
+            min_mapq,
+            min_read_length,
+            force_strand=force_strand,
+            ref_fasta=ref_fasta,
+        )
+        _accumulate_daf_read_stats(counts, read_stats)
+        last_progress = _maybe_print_daf_encode_progress(
+            counts,
+            last_progress,
+            log,
+        )
+
+    return last_progress
+
+
+def _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta) -> None:
+    if pbar is not None:
+        pbar.close()
+    if outbam:
+        outbam.close()
+    if inbam:
+        inbam.close()
+    if ref_fasta:
+        ref_fasta.close()
+
+
+def _maybe_finalize_daf_output(output_bam, io_threads: int, log) -> None:
+    if output_bam == "-" or not os.path.isfile(output_bam):
+        return
+
+    print("\nFinalizing output BAM...", file=log)
+    _sort_and_index_bam(output_bam, verbose=True, threads=io_threads)
+
+
 def process_bam_daf_encode(
     input_bam,
     output_bam,
@@ -577,8 +686,8 @@ def process_bam_daf_encode(
     dict
         Summary statistics: total, encoded, ct, ga, skipped, mean_deam_rate.
     """
-    # When writing to stdout, all logging goes to stderr
-    _log = sys.stderr if output_bam == "-" else sys.stderr
+    # Keep all progress/log output off stdout so "-" remains a clean BAM stream.
+    _log = sys.stderr
 
     counts = _new_daf_encode_counts()
 
@@ -591,65 +700,31 @@ def process_bam_daf_encode(
     pbar = None
 
     try:
-        if reference:
-            ref_fasta = pysam.FastaFile(reference)
+        ref_fasta = _open_daf_reference(reference)
 
-        # Open input
-        inbam = pysam.AlignmentFile(
-            input_bam, "rb", threads=io_threads, check_sq=False
-        )
+        inbam = _open_daf_input_bam(input_bam, io_threads)
 
         # Check MD tag on the first mapped read
         _check_md_tag(inbam, ref_fasta, _log)
 
-        # Open output — handle stdout specially
-        _output_target = output_bam
-        if output_bam == "-":
-            _output_target = os.fdopen(1, "wb", closefd=False)
+        outbam = _open_daf_output_bam(output_bam, inbam, io_threads)
+        pbar = _new_daf_encode_progress(output_bam, _log)
 
-        outbam = pysam.AlignmentFile(
-            _output_target, "wb", header=inbam.header, threads=io_threads
+        last_progress = _stream_daf_encode_reads(
+            inbam,
+            outbam,
+            pbar,
+            counts,
+            min_mapq,
+            min_read_length,
+            force_strand,
+            ref_fasta,
+            _log,
+            last_progress,
         )
-
-        pbar = tqdm(
-            desc="Encoding",
-            unit=" reads",
-            file=_log,
-            mininterval=2.0,
-            disable=(output_bam == "-"),
-        )
-
-        for read in inbam.fetch(until_eof=True):
-            read_stats = _process_daf_encode_read(
-                outbam,
-                pbar,
-                read,
-                min_mapq,
-                min_read_length,
-                force_strand=force_strand,
-                ref_fasta=ref_fasta,
-            )
-            _accumulate_daf_read_stats(counts, read_stats)
-
-            # Progress to stderr every 10k reads
-            if counts["total"] % 10000 == 0:
-                now = time.time()
-                elapsed = now - last_progress
-                _print_daf_progress(
-                    counts["total"], 10000, elapsed,
-                    counts["ct"], counts["ga"], counts["skipped"], _log,
-                )
-                last_progress = now
 
     finally:
-        if pbar is not None:
-            pbar.close()
-        if outbam:
-            outbam.close()
-        if inbam:
-            inbam.close()
-        if ref_fasta:
-            ref_fasta.close()
+        _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta)
 
     elapsed = time.time() - start_time
 
@@ -658,9 +733,7 @@ def process_bam_daf_encode(
     _print_daf_encode_summary(summary, _log)
 
     # Sort + index if writing to a file (not stdout)
-    if output_bam != "-" and os.path.isfile(output_bam):
-        print("\nFinalizing output BAM...", file=_log)
-        _sort_and_index_bam(output_bam, verbose=True, threads=io_threads)
+    _maybe_finalize_daf_output(output_bam, io_threads, _log)
 
     return summary
 

@@ -188,6 +188,25 @@ def test_print_daf_progress_formats_rate_counts_and_skips_zero_elapsed():
     assert log.getvalue() == ""
 
 
+def test_maybe_print_daf_encode_progress_reports_only_intervals(monkeypatch):
+    log = io.StringIO()
+    counts = {
+        "total": 9999,
+        "ct": 1,
+        "ga": 2,
+        "skipped": 3,
+    }
+
+    assert encoder._maybe_print_daf_encode_progress(counts, 10.0, log) == 10.0
+    assert log.getvalue() == ""
+
+    monkeypatch.setattr(encoder.time, "time", lambda: 12.0)
+    counts["total"] = 10_000
+
+    assert encoder._maybe_print_daf_encode_progress(counts, 10.0, log) == 12.0
+    assert "CT=1 GA=2 skip=3" in log.getvalue()
+
+
 def test_daf_encode_summary_and_report_format():
     summary = encoder._daf_encode_summary(
         total=100,
@@ -346,6 +365,74 @@ def test_process_daf_encode_read_writes_skipped_read(monkeypatch):
     assert progress.n == 1
 
 
+def test_stream_daf_encode_reads_accumulates_stats(monkeypatch):
+    reads = [object(), object()]
+    inbam = _FakeBam(reads)
+    handle = _FakeHandle()
+    progress = _FakeProgress()
+    counts = encoder._new_daf_encode_counts()
+    calls = []
+    stats = [
+        {
+            "encoded": 1,
+            "skipped": 0,
+            "ct": 1,
+            "ga": 0,
+            "total_deam": 2,
+            "total_bases": 100,
+        },
+        encoder._daf_skipped_read_stats(),
+    ]
+
+    def fake_process_read(
+        outbam,
+        pbar,
+        read,
+        min_mapq,
+        min_read_length,
+        force_strand=None,
+        ref_fasta=None,
+    ):
+        calls.append((
+            outbam,
+            pbar,
+            read,
+            min_mapq,
+            min_read_length,
+            force_strand,
+            ref_fasta,
+        ))
+        return stats.pop(0)
+
+    monkeypatch.setattr(encoder, "_process_daf_encode_read", fake_process_read)
+
+    last_progress = encoder._stream_daf_encode_reads(
+        inbam,
+        handle,
+        progress,
+        counts,
+        20,
+        1000,
+        "CT",
+        "ref",
+        io.StringIO(),
+        5.0,
+    )
+
+    assert last_progress == 5.0
+    assert counts == {
+        "total": 2,
+        "encoded": 1,
+        "skipped": 1,
+        "ct": 1,
+        "ga": 0,
+        "total_deam": 2,
+        "total_bases": 100,
+    }
+    assert [call[2] for call in calls] == reads
+    assert all(call[5:] == ("CT", "ref") for call in calls)
+
+
 def test_write_skipped_daf_read_writes_updates_and_returns_increment():
     handle = _FakeHandle()
     handle.written = []
@@ -385,6 +472,27 @@ def test_daf_encode_closes_input_and_reference_when_md_check_fails(monkeypatch):
 
     assert handles["bam"].closed
     assert handles["fasta"].closed
+
+
+def test_maybe_finalize_daf_output_sorts_only_existing_files(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        encoder,
+        "_sort_and_index_bam",
+        lambda output_bam, verbose, threads: calls.append(
+            (output_bam, verbose, threads)
+        ),
+    )
+    log = io.StringIO()
+    output_bam = tmp_path / "encoded.bam"
+
+    encoder._maybe_finalize_daf_output("-", 4, log)
+    encoder._maybe_finalize_daf_output(str(output_bam), 4, log)
+    output_bam.write_bytes(b"bam")
+    encoder._maybe_finalize_daf_output(str(output_bam), 4, log)
+
+    assert calls == [(str(output_bam), True, 4)]
+    assert "Finalizing output BAM" in log.getvalue()
 
 
 def test_aligned_pairs_from_fasta_fetches_reference_span_once():
