@@ -35,12 +35,7 @@ from fiberhmm.models import SUPPORTED_ENZYMES
 from fiberhmm.models import get_model_path as _get_bundled_model
 
 
-def parse_args():
-    p = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    # --- I/O ---
+def _add_call_io_args(p) -> None:
     p.add_argument('-i', '--input', required=True,
                    help='Input BAM. Use "-" for stdin (streaming mode).')
     p.add_argument('-o', '--output', required=True,
@@ -61,7 +56,8 @@ def parse_args():
                         'Ignored for BAMs that already have R/Y in the sequence '
                         'or have MD tags.')
 
-    # --- Apply params ---
+
+def _add_call_apply_args(p) -> None:
     p.add_argument('--mode', default=None,
                    help='Observation mode override. Default: from model.')
     p.add_argument('-k', '--context-size', type=int, default=None,
@@ -88,7 +84,8 @@ def parse_args():
     p.add_argument('--primary', action='store_true',
                    help='Skip secondary/supplementary alignments.')
 
-    # --- Recall params ---
+
+def _add_call_recall_args(p) -> None:
     p.add_argument('--min-llr', type=float, default=None,
                    help='Min LLR for TF call (default: enzyme preset).')
     p.add_argument('--min-opps', type=int, default=3,
@@ -102,7 +99,8 @@ def parse_args():
     p.add_argument('--downstream-compat', action='store_true',
                    help='Skip MA/AQ; write TF calls into legacy ns/nl track.')
 
-    # --- Nucleosome recall params ---
+
+def _add_call_nuc_recall_args(p) -> None:
     p.add_argument('--recall-nucs', action=argparse.BooleanOptionalAction, default=None,
                    help='Split over-merged nucleosomes + refine conservative edges '
                         '(emits nuc.QQQ), promote nucleosome-sized TF leaks to nuc, '
@@ -122,7 +120,8 @@ def parse_args():
                         'gated on >=1 local deamination event (never splits a '
                         'signal-desert).')
 
-    # --- DAF chimera filter (mode=daf only) ---
+
+def _add_call_chimera_args(p) -> None:
     p.add_argument('--keep-chimeras', action='store_true',
                    help='DAF only: keep strand-swap chimeric reads (C->T in one '
                         'segment + G->A in another). Default: filter them out and '
@@ -134,7 +133,8 @@ def parse_args():
                    help='DAF chimera: min same-strand purity per segment '
                         '(default 0.8).')
 
-    # --- Parallelism ---
+
+def _add_call_parallel_args(p) -> None:
     p.add_argument('-c', '--cores', type=int, default=4,
                    help='Worker processes (default 4).')
     p.add_argument('--chunk-size', type=int, default=500,
@@ -144,7 +144,8 @@ def parse_args():
     p.add_argument('--max-reads', type=int, default=0,
                    help='0 = no limit (default; streaming mode only)')
 
-    # --- Region-parallel mode ---
+
+def _add_call_region_args(p) -> None:
     p.add_argument('--region-parallel', action='store_true',
                    help='Process genomic regions in parallel (one worker per region). '
                         'Scales linearly with --cores up to chromosome count. '
@@ -157,6 +158,19 @@ def parse_args():
     p.add_argument('--chroms', nargs='+', default=None,
                    help='Only process these chromosomes (region-parallel mode).')
 
+
+def parse_args():
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    _add_call_io_args(p)
+    _add_call_apply_args(p)
+    _add_call_recall_args(p)
+    _add_call_nuc_recall_args(p)
+    _add_call_chimera_args(p)
+    _add_call_parallel_args(p)
+    _add_call_region_args(p)
     return p.parse_args()
 
 
