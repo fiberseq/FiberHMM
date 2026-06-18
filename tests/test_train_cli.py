@@ -249,13 +249,13 @@ def test_training_example_plot_data_sorts_positions_and_uses_footprint_probs():
 
     read = SimpleNamespace(query_sequence="AC", m6a_query_positions={1, 0})
 
-    seq_len, m6a_positions, footprint_prob = train._training_example_plot_data(
+    plot_data = train._training_example_plot_data(
         FakeModel(), read, np.array([3, 4]),
     )
 
-    assert seq_len == 2
-    assert m6a_positions == [0, 1]
-    np.testing.assert_array_equal(footprint_prob, [0.2, 0.7])
+    assert plot_data.seq_len == 2
+    assert plot_data.m6a_positions == [0, 1]
+    np.testing.assert_array_equal(plot_data.footprint_prob, [0.2, 0.7])
 
 
 def test_training_example_title_formats_read_context():
@@ -887,10 +887,10 @@ def test_save_training_example_png_orchestrates_panels(monkeypatch, tmp_path):
     monkeypatch.setattr(
         train,
         "_training_example_plot_data",
-        lambda model_arg, read_arg, encoded_arg: (
-            4,
-            [1, 3],
-            np.array([0.1, 0.6, 0.2, 0.8]),
+        lambda model_arg, read_arg, encoded_arg: train._TrainingExamplePlotData(
+            seq_len=4,
+            m6a_positions=[1, 3],
+            footprint_prob=np.array([0.1, 0.6, 0.2, 0.8]),
         ),
     )
     monkeypatch.setattr(
@@ -1003,7 +1003,7 @@ def test_save_training_example_pdf_page_closes_on_save_failure(monkeypatch):
     monkeypatch.setattr(
         train,
         "_training_example_plot_data",
-        lambda *args: (10, [], np.zeros(10)),
+        lambda *args: train._TrainingExamplePlotData(10, [], np.zeros(10)),
     )
     monkeypatch.setattr(
         train,

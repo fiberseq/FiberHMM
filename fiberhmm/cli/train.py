@@ -86,6 +86,13 @@ class _NonzeroEmissionsByState:
     msp: np.ndarray
 
 
+@dataclass(frozen=True)
+class _TrainingExamplePlotData:
+    seq_len: int
+    m6a_positions: list
+    footprint_prob: np.ndarray
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Train FiberHMM model from PacBio BAM files',
@@ -813,12 +820,12 @@ def _training_size_summary(total_label: str, size_label: str, sizes: list) -> st
     )
 
 
-def _training_example_plot_data(model, read, encoded):
+def _training_example_plot_data(model, read, encoded) -> _TrainingExamplePlotData:
     seq_len = len(read.query_sequence)
     m6a_positions = sorted(read.m6a_query_positions)
     posteriors = model.predict_proba(encoded)
     footprint_prob = posteriors[:, 0]
-    return seq_len, m6a_positions, footprint_prob
+    return _TrainingExamplePlotData(seq_len, m6a_positions, footprint_prob)
 
 
 def _training_example_title(idx: int, read, seq_len: int,
@@ -1093,9 +1100,7 @@ def _save_training_example_png(
     rectangle_cls,
     patch_collection_cls,
 ) -> str:
-    seq_len, m6a_positions, footprint_prob = _training_example_plot_data(
-        model, read, encoded,
-    )
+    plot_data = _training_example_plot_data(model, read, encoded)
 
     fig, axes = plt.subplots(
         3,
@@ -1106,32 +1111,35 @@ def _save_training_example_png(
     png_path = os.path.join(plots_dir, 'example_read.png')
     try:
         ax = axes[0]
-        if len(m6a_positions) > 0:
+        if len(plot_data.m6a_positions) > 0:
             ax.eventplot(
-                [m6a_positions],
+                [plot_data.m6a_positions],
                 colors='purple',
                 lineoffsets=0.5,
                 linelengths=0.8,
                 linewidths=0.3,
             )
-        ax.set_xlim(0, seq_len)
+        ax.set_xlim(0, plot_data.seq_len)
         ax.set_ylim(0, 1)
         ax.set_ylabel('m6A')
         ax.set_yticks([])
         ax.set_xticklabels([])
-        ax.set_title(f'Example: {read.read_id[:40]}... ({seq_len:,}bp)', fontsize=10)
+        ax.set_title(
+            f'Example: {read.read_id[:40]}... ({plot_data.seq_len:,}bp)',
+            fontsize=10,
+        )
 
         ax = axes[1]
         _add_training_state_blocks(
-            ax, states, seq_len, rectangle_cls, patch_collection_cls,
+            ax, states, plot_data.seq_len, rectangle_cls, patch_collection_cls,
         )
         ax.set_ylabel('State')
         ax.set_yticks([])
         ax.set_xticklabels([])
 
         ax = axes[2]
-        _plot_training_probability_area(ax, footprint_prob)
-        ax.set_xlim(0, seq_len)
+        _plot_training_probability_area(ax, plot_data.footprint_prob)
+        ax.set_xlim(0, plot_data.seq_len)
         ax.set_ylim(0, 1)
         ax.set_ylabel('P(FP)')
         ax.set_xlabel('Position (bp)')
@@ -1302,20 +1310,18 @@ def _save_training_example_pdf_page(
     patch_collection_cls,
     patch_cls,
 ) -> None:
-    seq_len, m6a_positions, footprint_prob = _training_example_plot_data(
-        model, read, encoded,
-    )
+    plot_data = _training_example_plot_data(model, read, encoded)
 
     fig, gs = _training_example_pdf_layout(
-        plt, idx, read, seq_len, m6a_positions,
+        plt, idx, read, plot_data.seq_len, plot_data.m6a_positions,
     )
     try:
         overview_axes = _add_training_example_overview_pdf_panels(
             fig,
             gs,
-            seq_len,
-            m6a_positions,
-            footprint_prob,
+            plot_data.seq_len,
+            plot_data.m6a_positions,
+            plot_data.footprint_prob,
             states,
             rectangle_cls,
             patch_collection_cls,
@@ -1323,7 +1329,7 @@ def _save_training_example_pdf_page(
         )
 
         zoom_windows = _training_zoom_window_bounds(
-            seq_len, window_size=1000, n_windows=3, seed=idx,
+            plot_data.seq_len, window_size=1000, n_windows=3, seed=idx,
         )
 
         for w_idx, window in enumerate(zoom_windows):
@@ -1332,9 +1338,9 @@ def _save_training_example_pdf_page(
                 gs,
                 w_idx,
                 window,
-                m6a_positions,
+                plot_data.m6a_positions,
                 states,
-                footprint_prob,
+                plot_data.footprint_prob,
                 overview_axes,
                 rectangle_cls,
                 patch_collection_cls,
