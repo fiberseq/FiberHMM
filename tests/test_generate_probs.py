@@ -21,6 +21,7 @@ from fiberhmm.cli.generate_probs import (
     _probability_table_path,
     _print_probability_generation_header,
     _print_daf_diagnostics,
+    _print_probability_base_summary,
     _probability_read_tags_or_skip,
     _probability_counter_summary,
     _print_probability_results_summary,
@@ -255,6 +256,30 @@ def test_print_probability_results_summary_formats_pass_rates(capsys):
     assert "Reads processed: 50 (scanned 100, 50.0% pass rate)" in output
     assert "Inaccessible (native):" in output
     assert "Reads processed: 5 (scanned 0, 500.0% pass rate)" in output
+
+
+def test_print_probability_base_summary_formats_counter_totals(capsys):
+    accessible = _Counter()
+    accessible.total_positions = 1234
+    accessible.total_modified = 432
+    accessible.counts = {"AAA": [1, 2], "AAC": [3, 4]}
+    inaccessible = _Counter()
+    inaccessible.total_positions = 10
+    inaccessible.total_modified = 1
+    inaccessible.counts = {"AAA": [1, 9]}
+
+    _print_probability_base_summary("A", accessible, inaccessible)
+
+    output = capsys.readouterr().out
+    assert "A-centered contexts:" in output
+    assert "Accessible:" in output
+    assert "Positions: 1,234" in output
+    assert "Modified: 432" in output
+    assert "Rate: 0.3501" in output
+    assert "Unique contexts: 2" in output
+    assert "Inaccessible:" in output
+    assert "Positions: 10" in output
+    assert "Rate: 0.1000" in output
 
 
 def test_record_mm_tag_types_counts_non_empty_specs():

@@ -560,6 +560,28 @@ def _print_probability_results_summary(
     )
 
 
+def _print_probability_base_summary(
+    base: str,
+    accessible_counter: ContextCounter,
+    inaccessible_counter: ContextCounter,
+) -> None:
+    acc_summary = _probability_counter_summary(accessible_counter)
+    inacc_summary = _probability_counter_summary(inaccessible_counter)
+
+    print(f"\n{base}-centered contexts:")
+    print("  Accessible:")
+    print(f"    Positions: {acc_summary['positions']:,}")
+    print(f"    Modified: {acc_summary['modified']:,}")
+    print(f"    Rate: {acc_summary['rate']:.4f}")
+    print(f"    Unique contexts: {acc_summary['unique_contexts']:,}")
+
+    print("  Inaccessible:")
+    print(f"    Positions: {inacc_summary['positions']:,}")
+    print(f"    Modified: {inacc_summary['modified']:,}")
+    print(f"    Rate: {inacc_summary['rate']:.4f}")
+    print(f"    Unique contexts: {inacc_summary['unique_contexts']:,}")
+
+
 def main():
     args = parse_args()
 
@@ -626,21 +648,7 @@ def main():
     for base in target_bases:
         acc = accessible_counters[base]
         inacc = inaccessible_counters[base]
-        acc_summary = _probability_counter_summary(acc)
-        inacc_summary = _probability_counter_summary(inacc)
-
-        print(f"\n{base}-centered contexts:")
-        print("  Accessible:")
-        print(f"    Positions: {acc_summary['positions']:,}")
-        print(f"    Modified: {acc_summary['modified']:,}")
-        print(f"    Rate: {acc_summary['rate']:.4f}")
-        print(f"    Unique contexts: {acc_summary['unique_contexts']:,}")
-
-        print("  Inaccessible:")
-        print(f"    Positions: {inacc_summary['positions']:,}")
-        print(f"    Modified: {inacc_summary['modified']:,}")
-        print(f"    Rate: {inacc_summary['rate']:.4f}")
-        print(f"    Unique contexts: {inacc_summary['unique_contexts']:,}")
+        _print_probability_base_summary(base, acc, inacc)
 
         # Save full counters (PKL files in output root)
         acc.save(_probability_counter_path(output_dir, base_name, "accessible", base))
