@@ -16,6 +16,7 @@ from fiberhmm.inference.region_workers import (
     _build_fused_region_recall_result_from_request,
     _extract_region_fiber_read,
     _extract_region_payload_fiber_read,
+    _FootprintedRegionReadWriteRequest,
     _format_region_bed12_row,
     _format_region_bed12_row_from_request,
     _fused_region_recall_config,
@@ -58,6 +59,7 @@ from fiberhmm.inference.region_workers import (
     _run_fused_region_apply_read_from_request,
     _run_region_apply_read,
     _write_footprinted_region_read,
+    _write_footprinted_region_read_from_request,
     _write_region_posterior_record,
     _write_region_posterior_record_from_request,
     _write_unfootprinted_region_read,
@@ -699,8 +701,15 @@ def test_write_footprinted_region_read_tags_writes_and_streams_posterior(monkeyp
         fake_write_posterior,
     )
 
-    write_result = _write_footprinted_region_read(
-        outbam, read, result, with_scores=True, write_msps=False, tsv_file=tsv_file
+    write_result = _write_footprinted_region_read_from_request(
+        _FootprintedRegionReadWriteRequest(
+            outbam=outbam,
+            read=read,
+            result=result,
+            with_scores=True,
+            write_msps=False,
+            tsv_file=tsv_file,
+        )
     )
 
     assert write_result.written == 1

@@ -208,6 +208,16 @@ class _FootprintedRegionWrite:
     posterior_written: bool
 
 
+@dataclass(frozen=True)
+class _FootprintedRegionReadWriteRequest:
+    outbam: object
+    read: object
+    result: dict
+    with_scores: bool
+    write_msps: bool
+    tsv_file: object
+
+
 @dataclass
 class _RegionBamWorkerCounts:
     total_reads: int = 0
@@ -376,6 +386,30 @@ def _write_unfootprinted_region_read(outbam, read, skip_reasons: dict) -> int:
     return 1
 
 
+def _write_footprinted_region_read_from_request(
+    request: _FootprintedRegionReadWriteRequest,
+) -> _FootprintedRegionWrite:
+    set_legacy_apply_tags(
+        request.read,
+        request.result,
+        request.with_scores,
+        request.write_msps,
+    )
+    posterior_written = (
+        request.tsv_file is not None
+        and request.result.get('posteriors') is not None
+        and _write_region_posterior_record_from_request(
+            _RegionPosteriorRecordRequest(
+                tsv_file=request.tsv_file,
+                read=request.read,
+                result=request.result,
+            )
+        )
+    )
+    request.outbam.write(request.read)
+    return _FootprintedRegionWrite(1, bool(posterior_written))
+
+
 def _write_footprinted_region_read(
     outbam,
     read,
@@ -384,20 +418,16 @@ def _write_footprinted_region_read(
     write_msps: bool,
     tsv_file,
 ) -> _FootprintedRegionWrite:
-    set_legacy_apply_tags(read, result, with_scores, write_msps)
-    posterior_written = (
-        tsv_file is not None
-        and result.get('posteriors') is not None
-        and _write_region_posterior_record_from_request(
-            _RegionPosteriorRecordRequest(
-                tsv_file=tsv_file,
-                read=read,
-                result=result,
-            )
+    return _write_footprinted_region_read_from_request(
+        _FootprintedRegionReadWriteRequest(
+            outbam=outbam,
+            read=read,
+            result=result,
+            with_scores=with_scores,
+            write_msps=write_msps,
+            tsv_file=tsv_file,
         )
     )
-    outbam.write(read)
-    return _FootprintedRegionWrite(1, bool(posterior_written))
 
 
 def _fiber_read_skip_reason(fiber_read) -> Optional[str]:
