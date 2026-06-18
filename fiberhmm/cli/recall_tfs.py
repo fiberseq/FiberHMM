@@ -121,6 +121,14 @@ class _RecallWriteResultRequest:
     downstream_compat: bool
 
 
+@dataclass(frozen=True)
+class _RecallDrainChunkRequest:
+    pending: object
+    bam_out: object
+    also_write_legacy: bool
+    downstream_compat: bool
+
+
 def _new_stats():
     return {key: 0 for key in _STATS_KEYS}
 
@@ -413,20 +421,33 @@ def _submit_recall_chunk(pool, pending, reads_chunk, payloads_chunk):
     pending.append((reads_chunk, future))
 
 
-def _drain_recall_chunk(pending, bam_out, also_write_legacy, downstream_compat):
-    reads_chunk, fut = pending.popleft()
+def _drain_recall_chunk_from_request(
+    request: _RecallDrainChunkRequest,
+):
+    reads_chunk, fut = request.pending.popleft()
     out_results, stats = fut.get()   # blocks until result is ready
     for read, result in zip(reads_chunk, out_results):
         _write_recall_result_from_request(
             _RecallWriteResultRequest(
                 read=read,
                 result=result,
-                bam_out=bam_out,
-                also_write_legacy=also_write_legacy,
-                downstream_compat=downstream_compat,
+                bam_out=request.bam_out,
+                also_write_legacy=request.also_write_legacy,
+                downstream_compat=request.downstream_compat,
             )
         )
     return len(reads_chunk), stats
+
+
+def _drain_recall_chunk(pending, bam_out, also_write_legacy, downstream_compat):
+    return _drain_recall_chunk_from_request(
+        _RecallDrainChunkRequest(
+            pending=pending,
+            bam_out=bam_out,
+            also_write_legacy=also_write_legacy,
+            downstream_compat=downstream_compat,
+        )
+    )
 
 
 def _parallel_loop(bam_in, bam_out, _header_text,
@@ -453,8 +474,13 @@ def _parallel_loop(bam_in, bam_out, _header_text,
 
     def _drain_one():
         nonlocal n_reads
-        chunk_reads, stats = _drain_recall_chunk(
-            pending, bam_out, also_write_legacy, downstream_compat
+        chunk_reads, stats = _drain_recall_chunk_from_request(
+            _RecallDrainChunkRequest(
+                pending=pending,
+                bam_out=bam_out,
+                also_write_legacy=also_write_legacy,
+                downstream_compat=downstream_compat,
+            )
         )
         n_reads += chunk_reads
         _add_stats(total, stats)

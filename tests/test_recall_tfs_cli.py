@@ -262,15 +262,21 @@ def test_recall_tfs_drain_chunk_writes_results_and_returns_stats(monkeypatch):
         def get(self):
             return ["result-a", None], stats
 
-    pending = deque([(reads, FakeFuture())])
     monkeypatch.setattr(
         recall_tfs,
         "_write_recall_result_from_request",
         lambda request: calls.append(request),
     )
 
-    assert recall_tfs._drain_recall_chunk(
-        pending, "bam-out", True, False,
+    pending = deque([(reads, FakeFuture())])
+    request = recall_tfs._RecallDrainChunkRequest(
+        pending=pending,
+        bam_out="bam-out",
+        also_write_legacy=True,
+        downstream_compat=False,
+    )
+    assert recall_tfs._drain_recall_chunk_from_request(
+        request,
     ) == (2, stats)
     assert list(pending) == []
     assert calls == [
@@ -289,6 +295,13 @@ def test_recall_tfs_drain_chunk_writes_results_and_returns_stats(monkeypatch):
             downstream_compat=False,
         ),
     ]
+
+    calls.clear()
+    pending = deque([(reads, FakeFuture())])
+    assert recall_tfs._drain_recall_chunk(
+        pending, "bam-out", True, False,
+    ) == (2, stats)
+    assert len(calls) == 2
 
 
 def test_recall_tfs_read_sequence_length_handles_missing_sequence():
