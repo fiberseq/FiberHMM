@@ -31,6 +31,12 @@ class _BestTrainingModel:
     logprob: float
 
 
+@dataclass(frozen=True)
+class _MethylatedEmissionMeans:
+    state_0: float
+    state_1: float
+
+
 # Use tqdm for progress bars if available
 try:
     from tqdm import tqdm
@@ -784,13 +790,17 @@ class FiberHMM:
         if self.emissionprob_ is None:
             return False
 
-        mean_0, mean_1 = _methylated_emission_means(self.emissionprob_)
+        methylated_means = _methylated_emission_means(self.emissionprob_)
 
         if verbose:
-            print(f"Methylated emission means: State 0 = {mean_0:.4f}, State 1 = {mean_1:.4f}")
+            print(
+                "Methylated emission means: "
+                f"State 0 = {methylated_means.state_0:.4f}, "
+                f"State 1 = {methylated_means.state_1:.4f}"
+            )
 
         # States are correct if State 0 has LOWER mean (footprint)
-        if mean_0 <= mean_1:
+        if methylated_means.state_0 <= methylated_means.state_1:
             if verbose:
                 print("States are in correct order (State 0 = footprint, State 1 = accessible)")
             return False
@@ -802,8 +812,12 @@ class FiberHMM:
         _swap_hmm_state_order(self)
 
         if verbose:
-            new_mean_0, new_mean_1 = _methylated_emission_means(self.emissionprob_)
-            print(f"After swap: State 0 = {new_mean_0:.4f}, State 1 = {new_mean_1:.4f}")
+            swapped_means = _methylated_emission_means(self.emissionprob_)
+            print(
+                "After swap: "
+                f"State 0 = {swapped_means.state_0:.4f}, "
+                f"State 1 = {swapped_means.state_1:.4f}"
+            )
 
         return True
 
@@ -937,13 +951,15 @@ def _baum_welch_estep_sequence(model, seq: np.ndarray):
     return _baum_welch_estep_python(model, seq)
 
 
-def _methylated_emission_means(emissionprob: np.ndarray) -> Tuple[float, float]:
+def _methylated_emission_means(
+    emissionprob: np.ndarray,
+) -> _MethylatedEmissionMeans:
     # Only the first half represents methylated observations. The second half
     # contains unmethylated complements, making full-row means uninformative.
     n_methylated = emissionprob.shape[1] // 2
-    return (
-        float(np.mean(emissionprob[0, :n_methylated])),
-        float(np.mean(emissionprob[1, :n_methylated])),
+    return _MethylatedEmissionMeans(
+        state_0=float(np.mean(emissionprob[0, :n_methylated])),
+        state_1=float(np.mean(emissionprob[1, :n_methylated])),
     )
 
 

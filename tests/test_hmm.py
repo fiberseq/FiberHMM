@@ -253,7 +253,8 @@ class TestModelTraining:
             [0.6, 0.8, 0.0, 0.0],
         ]))
 
-        assert means == pytest.approx((0.2, 0.7))
+        assert means.state_0 == pytest.approx(0.2)
+        assert means.state_1 == pytest.approx(0.7)
 
     def test_hmmlearn_version_selection(self):
         assert _hmmlearn_version_tuple("0.2.8") == (0, 2)
