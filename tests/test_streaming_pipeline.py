@@ -38,7 +38,6 @@ from fiberhmm.inference.streaming_pipeline import (
     _print_streaming_posterior_summary,
     _print_streaming_progress,
     _ProcessableReadBufferRequest,
-    _run_streaming_worker_loop,
     _should_sort_streaming_output,
     _SkippedReadBufferRequest,
     _stream_reads_to_workers,
@@ -65,6 +64,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _StreamingReadCounts,
     _StreamingReadDelta,
     _StreamingWorkerCommonArgs,
+    _StreamingWorkerLoopRequest,
     _StreamReadsToWorkersRequest,
     _submit_streaming_chunk,
     _submit_streaming_chunk_from_request,
@@ -982,7 +982,7 @@ def test_run_streaming_worker_loop_builds_inflight_and_shuts_down(monkeypatch):
         streaming_pipeline, "_stream_reads_to_workers", fake_stream_reads,
     )
 
-    assert _run_streaming_worker_loop(
+    request = _StreamingWorkerLoopRequest(
         reads=["r1"],
         filter_config=object(),
         mode="daf",
@@ -999,6 +999,10 @@ def test_run_streaming_worker_loop_builds_inflight_and_shuts_down(monkeypatch):
         progress_label="Processed",
         rate_unit="reads/s",
         start_time=10.0,
+    )
+
+    assert streaming_pipeline._run_streaming_worker_loop_from_request(
+        request,
     ) == _StreamingReadCounts(processed=5, skipped=1)
 
     assert isinstance(seen["inflight"], deque)

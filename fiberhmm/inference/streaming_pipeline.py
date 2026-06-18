@@ -431,6 +431,26 @@ class _StreamReadsToWorkersRequest:
 
 
 @dataclass(frozen=True)
+class _StreamingWorkerLoopRequest:
+    reads: object
+    filter_config: ReadFilterConfig
+    mode: str
+    ref_fasta: object
+    executor: object
+    worker_fn: object
+    worker_args: tuple
+    max_reads: Optional[int]
+    chunk_size: int
+    max_inflight: int
+    drain_chunk_factory: object
+    skip_reasons: dict
+    log: object
+    progress_label: str
+    rate_unit: str
+    start_time: float
+
+
+@dataclass(frozen=True)
 class _StreamingPosteriorWriter:
     writer: object | None
     enabled: bool
@@ -649,30 +669,55 @@ def _run_streaming_worker_loop(
     rate_unit: str,
     start_time: float,
 ) -> _StreamingReadCounts:
+    return _run_streaming_worker_loop_from_request(
+        _StreamingWorkerLoopRequest(
+            reads=reads,
+            filter_config=filter_config,
+            mode=mode,
+            ref_fasta=ref_fasta,
+            executor=executor,
+            worker_fn=worker_fn,
+            worker_args=worker_args,
+            max_reads=max_reads,
+            chunk_size=chunk_size,
+            max_inflight=max_inflight,
+            drain_chunk_factory=drain_chunk_factory,
+            skip_reasons=skip_reasons,
+            log=log,
+            progress_label=progress_label,
+            rate_unit=rate_unit,
+            start_time=start_time,
+        )
+    )
+
+
+def _run_streaming_worker_loop_from_request(
+    request: _StreamingWorkerLoopRequest,
+) -> _StreamingReadCounts:
     inflight = deque()
-    drain_chunk = drain_chunk_factory(inflight)
+    drain_chunk = request.drain_chunk_factory(inflight)
     try:
         return _stream_reads_to_workers(
-            reads,
-            filter_config,
-            mode,
-            ref_fasta,
+            request.reads,
+            request.filter_config,
+            request.mode,
+            request.ref_fasta,
             inflight,
-            executor,
-            worker_fn,
-            worker_args,
-            max_reads,
-            chunk_size,
-            max_inflight,
+            request.executor,
+            request.worker_fn,
+            request.worker_args,
+            request.max_reads,
+            request.chunk_size,
+            request.max_inflight,
             drain_chunk,
-            skip_reasons,
-            log,
-            progress_label,
-            rate_unit,
-            start_time,
+            request.skip_reasons,
+            request.log,
+            request.progress_label,
+            request.rate_unit,
+            request.start_time,
         )
     finally:
-        executor.shutdown(wait=True)
+        request.executor.shutdown(wait=True)
 
 
 def _worker_common_args_from_request(
