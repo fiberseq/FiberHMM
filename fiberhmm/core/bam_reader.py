@@ -304,6 +304,15 @@ class _DafDeaminationBaseCounts:
 
 
 @dataclass(frozen=True)
+class _DafIupacConversion:
+    mod_positions: Set[int]
+    sequence: str
+
+    def as_tuple(self) -> Tuple[Set[int], str]:
+        return self.mod_positions, self.sequence
+
+
+@dataclass(frozen=True)
 class _DafStrandParams:
     deaminated_base_int: int
     original_base_int: int
@@ -918,20 +927,23 @@ def _daf_iupac_strand(st_tag: Optional[str], seq_upper: str) -> str:
     return strand
 
 
-def _convert_daf_iupac_sequence(seq_upper: str) -> Tuple[Set[int], str]:
+def _convert_daf_iupac_sequence(seq_upper: str) -> _DafIupacConversion:
     seq_arr = np.frombuffer(seq_upper.encode('ascii'), dtype=np.uint8)
     y_mask = seq_arr == ord('Y')
     r_mask = seq_arr == ord('R')
     mod_mask = y_mask | r_mask
 
     if not np.any(mod_mask):
-        return set(), seq_upper
+        return _DafIupacConversion(set(), seq_upper)
 
     mod_positions = set(np.where(mod_mask)[0].tolist())
     out_arr = seq_arr.copy()
     out_arr[y_mask] = ord('T')
     out_arr[r_mask] = ord('A')
-    return mod_positions, out_arr.tobytes().decode('ascii')
+    return _DafIupacConversion(
+        mod_positions,
+        out_arr.tobytes().decode('ascii'),
+    )
 
 
 def extract_daf_iupac_positions(
@@ -958,9 +970,9 @@ def extract_daf_iupac_positions(
     """
     seq_upper = sequence.upper()
     strand = _daf_iupac_strand(st_tag, seq_upper)
-    mod_positions, converted = _convert_daf_iupac_sequence(seq_upper)
+    conversion = _convert_daf_iupac_sequence(seq_upper)
 
-    return mod_positions, strand, converted
+    return conversion.mod_positions, strand, conversion.sequence
 
 
 def encode_from_query_sequence(sequence: str, mod_positions: Set[int],

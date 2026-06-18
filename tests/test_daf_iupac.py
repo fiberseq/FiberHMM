@@ -68,8 +68,14 @@ class TestExtractDafIupacPositions:
         assert _daf_iupac_strand("XY", "AYYRC") == "."
 
     def test_convert_daf_iupac_sequence_returns_positions_and_acgt_sequence(self):
-        assert _convert_daf_iupac_sequence("ARYC") == ({1, 2}, "AATC")
-        assert _convert_daf_iupac_sequence("ACGT") == (set(), "ACGT")
+        conversion = _convert_daf_iupac_sequence("ARYC")
+        empty_conversion = _convert_daf_iupac_sequence("ACGT")
+
+        assert conversion.mod_positions == {1, 2}
+        assert conversion.sequence == "AATC"
+        assert conversion.as_tuple() == ({1, 2}, "AATC")
+        assert empty_conversion.mod_positions == set()
+        assert empty_conversion.sequence == "ACGT"
 
     def test_ct_strand_y_positions(self):
         """+ strand (CT): Y marks deaminated C → converted to T."""
