@@ -108,6 +108,20 @@ class _StreamingWorkerCommonArgs:
         )
 
 
+@dataclass(frozen=True)
+class _StreamingApplyWorkerArgs:
+    common: _StreamingWorkerCommonArgs
+    return_posteriors: bool
+    prob_threshold: int
+
+    def as_tuple(self) -> tuple:
+        return (
+            *self.common.as_tuple(),
+            self.return_posteriors,
+            self.prob_threshold,
+        )
+
+
 def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, reason) -> int:
     chunk_read_objs.append(read)
     chunk_skip_flags.append(True)
@@ -448,6 +462,26 @@ def _worker_common_args_from_request(
     return request.as_tuple()
 
 
+def _new_streaming_worker_common_args(
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    with_scores: bool,
+) -> _StreamingWorkerCommonArgs:
+    return _StreamingWorkerCommonArgs(
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        with_scores=with_scores,
+    )
+
+
 def _worker_common_args(
     edge_trim: int,
     circular: bool,
@@ -458,16 +492,22 @@ def _worker_common_args(
     with_scores: bool,
 ) -> tuple:
     return _worker_common_args_from_request(
-        _StreamingWorkerCommonArgs(
-            edge_trim=edge_trim,
-            circular=circular,
-            mode=mode,
-            context_size=context_size,
-            msp_min_size=msp_min_size,
-            nuc_min_size=nuc_min_size,
-            with_scores=with_scores,
+        _new_streaming_worker_common_args(
+            edge_trim,
+            circular,
+            mode,
+            context_size,
+            msp_min_size,
+            nuc_min_size,
+            with_scores,
         )
     )
+
+
+def _apply_worker_args_from_request(
+    request: _StreamingApplyWorkerArgs,
+) -> tuple:
+    return request.as_tuple()
 
 
 def _apply_worker_args(
@@ -481,13 +521,20 @@ def _apply_worker_args(
     return_posteriors: bool,
     prob_threshold: int,
 ) -> tuple:
-    return (
-        *_worker_common_args(
-            edge_trim, circular, mode, context_size,
-            msp_min_size, nuc_min_size, with_scores,
+    return _apply_worker_args_from_request(
+        _StreamingApplyWorkerArgs(
+            common=_new_streaming_worker_common_args(
+                edge_trim,
+                circular,
+                mode,
+                context_size,
+                msp_min_size,
+                nuc_min_size,
+                with_scores,
+            ),
+            return_posteriors=return_posteriors,
+            prob_threshold=prob_threshold,
         ),
-        return_posteriors,
-        prob_threshold,
     )
 
 

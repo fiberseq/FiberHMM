@@ -14,6 +14,7 @@ from fiberhmm.inference.parallel import process_bam_for_footprints
 from fiberhmm.inference.streaming_pipeline import (
     _apply_drain_chunk_factory,
     _apply_worker_args,
+    _apply_worker_args_from_request,
     _buffer_processable_read,
     _buffer_streaming_read,
     _drain_all_streaming_chunks,
@@ -42,6 +43,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _streaming_progress_message,
     _streaming_progress_rates,
     _streaming_rate,
+    _StreamingApplyWorkerArgs,
     _StreamingChunkBuffers,
     _StreamingFlushProgress,
     _StreamingPayloadResult,
@@ -88,6 +90,15 @@ def test_apply_worker_args_match_payload_worker_contract():
         11, True, "deam", 5, 61, 86, True,
     ) == (
         11, True, "deam", 5, 61, 86, True,
+    )
+    assert _apply_worker_args_from_request(
+        _StreamingApplyWorkerArgs(
+            common=common_args,
+            return_posteriors=False,
+            prob_threshold=127,
+        )
+    ) == (
+        11, True, "deam", 5, 61, 86, True, False, 127,
     )
     assert _apply_worker_args(
         11, True, "deam", 5, 61, 86, True, False, 127
