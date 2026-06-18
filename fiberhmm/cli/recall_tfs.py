@@ -127,6 +127,19 @@ class _RecallSingleThreadRequest:
 
 
 @dataclass(frozen=True)
+class _RecallParallelLoopRequest:
+    bam_in: object
+    bam_out: object
+    header_text: object
+    worker_config: _RecallWorkerConfig
+    also_write_legacy: bool
+    downstream_compat: bool
+    max_reads: int
+    n_cores: int
+    chunk_size: int
+
+
+@dataclass(frozen=True)
 class _RecallProcessingRequest:
     args: object
     n_cores: int
@@ -523,11 +536,9 @@ def _drain_recall_chunk(pending, bam_out, also_write_legacy, downstream_compat):
     )
 
 
-def _parallel_loop(bam_in, bam_out, _header_text,
-                   llr_hit, llr_miss, mode, k,
-                   min_llr, min_opps, unify_threshold,
-                   also_write_legacy, downstream_compat,
-                   max_reads, n_cores, chunk_size):
+def _parallel_loop_from_request(
+    request: _RecallParallelLoopRequest,
+):
     """Multi-core path with slim IPC and bounded in-flight queue.
 
     Uses apply_async + a bounded deque instead of imap to cap how many chunks
@@ -539,7 +550,8 @@ def _parallel_loop(bam_in, bam_out, _header_text,
     In-flight cap: n_cores + 2 chunks.  At chunk_size=1024 and n_cores=4,
     the worst-case working set is ~6 * 1024 pysam reads ≈ 180 MB, not 52 GB.
     """
-    MAX_INFLIGHT = n_cores + 2   # workers + small head-start headroom
+    config = request.worker_config
+    MAX_INFLIGHT = request.n_cores + 2   # workers + small head-start headroom
     pending: deque = deque()     # deque of (reads_chunk, AsyncResult)
 
     n_reads = 0
@@ -550,31 +562,31 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         chunk_reads, stats = _drain_recall_chunk_from_request(
             _RecallDrainChunkRequest(
                 pending=pending,
-                bam_out=bam_out,
-                also_write_legacy=also_write_legacy,
-                downstream_compat=downstream_compat,
+                bam_out=request.bam_out,
+                also_write_legacy=request.also_write_legacy,
+                downstream_compat=request.downstream_compat,
             )
         )
         n_reads += chunk_reads
         _add_stats(total, stats)
 
     with mp.Pool(
-        processes=n_cores,
-        initializer=_worker_init,
-        initargs=(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold),
+        processes=request.n_cores,
+        initializer=_worker_init_from_config,
+        initargs=(config,),
     ) as pool:
         buf_reads: list = []
         buf_payloads: list = []
         n = 0
 
-        for read in bam_in:
-            if max_reads and n >= max_reads:
+        for read in request.bam_in:
+            if request.max_reads and n >= request.max_reads:
                 break
             buf_reads.append(read)
-            buf_payloads.append(_make_payload(read, mode))
+            buf_payloads.append(_make_payload(read, config.mode))
             n += 1
 
-            if len(buf_reads) >= chunk_size:
+            if len(buf_reads) >= request.chunk_size:
                 _submit_recall_chunk(pool, pending, buf_reads, buf_payloads)
                 buf_reads, buf_payloads = [], []
 
@@ -591,6 +603,34 @@ def _parallel_loop(bam_in, bam_out, _header_text,
             _drain_one()
 
     return _stats_summary(n_reads, total)
+
+
+def _parallel_loop(bam_in, bam_out, header_text,
+                   llr_hit, llr_miss, mode, k,
+                   min_llr, min_opps, unify_threshold,
+                   also_write_legacy, downstream_compat,
+                   max_reads, n_cores, chunk_size):
+    return _parallel_loop_from_request(
+        _RecallParallelLoopRequest(
+            bam_in=bam_in,
+            bam_out=bam_out,
+            header_text=header_text,
+            worker_config=_RecallWorkerConfig(
+                llr_hit=llr_hit,
+                llr_miss=llr_miss,
+                mode=mode,
+                k=k,
+                min_llr=min_llr,
+                min_opps=min_opps,
+                unify_threshold=unify_threshold,
+            ),
+            also_write_legacy=also_write_legacy,
+            downstream_compat=downstream_compat,
+            max_reads=max_reads,
+            n_cores=n_cores,
+            chunk_size=chunk_size,
+        ),
+    )
 
 
 def parse_args():
@@ -763,12 +803,18 @@ def _run_recall_processing_from_request(
                 max_reads=args.max_reads,
             ),
         )
-    return _parallel_loop(
-        request.bam_in, request.bam_out, request.header_text,
-        config.llr_hit, config.llr_miss, config.mode, config.k,
-        config.min_llr, config.min_opps, config.unify_threshold,
-        request.also_write_legacy, args.downstream_compat, args.max_reads,
-        request.n_cores, args.chunk_size,
+    return _parallel_loop_from_request(
+        _RecallParallelLoopRequest(
+            bam_in=request.bam_in,
+            bam_out=request.bam_out,
+            header_text=request.header_text,
+            worker_config=config,
+            also_write_legacy=request.also_write_legacy,
+            downstream_compat=args.downstream_compat,
+            max_reads=args.max_reads,
+            n_cores=request.n_cores,
+            chunk_size=args.chunk_size,
+        ),
     )
 
 

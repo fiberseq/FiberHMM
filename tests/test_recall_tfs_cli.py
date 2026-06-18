@@ -497,12 +497,12 @@ def test_recall_tfs_run_processing_dispatches_single_and_parallel(monkeypatch):
         calls.append(("single", request))
         return recall_tfs._RecallProcessingSummary(1, 2, 3, 4, 5)
 
-    def fake_parallel(*call_args):
-        calls.append(("parallel", call_args))
+    def fake_parallel(request):
+        calls.append(("parallel", request))
         return recall_tfs._RecallProcessingSummary(6, 7, 8, 9, 10)
 
     monkeypatch.setattr(recall_tfs, "_single_thread_loop_from_request", fake_single)
-    monkeypatch.setattr(recall_tfs, "_parallel_loop", fake_parallel)
+    monkeypatch.setattr(recall_tfs, "_parallel_loop_from_request", fake_parallel)
 
     worker_config = recall_tfs._RecallWorkerConfig(
         llr_hit="hit",
@@ -552,11 +552,68 @@ def test_recall_tfs_run_processing_dispatches_single_and_parallel(monkeypatch):
     )
     assert calls[1] == (
         "parallel",
-        (
-            "bam-in", "bam-out", "header", "hit", "miss", "daf", 3,
-            4.5, 3, 90, True, False, 10, 4, 256,
+        recall_tfs._RecallParallelLoopRequest(
+            bam_in="bam-in",
+            bam_out="bam-out",
+            header_text="header",
+            worker_config=worker_config,
+            also_write_legacy=True,
+            downstream_compat=False,
+            max_reads=10,
+            n_cores=4,
+            chunk_size=256,
         ),
     )
+
+
+def test_recall_tfs_parallel_loop_adapter_builds_request(monkeypatch):
+    sentinel = object()
+    calls = []
+
+    monkeypatch.setattr(
+        recall_tfs,
+        "_parallel_loop_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert recall_tfs._parallel_loop(
+        "bam-in",
+        "bam-out",
+        "header",
+        "hit",
+        "miss",
+        "daf",
+        3,
+        4.5,
+        3,
+        90,
+        True,
+        False,
+        10,
+        4,
+        256,
+    ) is sentinel
+    assert calls == [
+        recall_tfs._RecallParallelLoopRequest(
+            bam_in="bam-in",
+            bam_out="bam-out",
+            header_text="header",
+            worker_config=recall_tfs._RecallWorkerConfig(
+                llr_hit="hit",
+                llr_miss="miss",
+                mode="daf",
+                k=3,
+                min_llr=4.5,
+                min_opps=3,
+                unify_threshold=90,
+            ),
+            also_write_legacy=True,
+            downstream_compat=False,
+            max_reads=10,
+            n_cores=4,
+            chunk_size=256,
+        ),
+    ]
 
 
 def test_recall_tfs_run_processing_adapter_builds_request(monkeypatch):
