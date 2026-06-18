@@ -467,6 +467,70 @@ def _concatenate_bams_with_pysam(
         print()
 
 
+def _try_samtools_cat_region_bams(
+    bam_files: List[str],
+    output_bam: str,
+    bam_list_file: str,
+    concat_start: float,
+    verbose: bool,
+) -> bool:
+    try:
+        _samtools_cat_bams(bam_files, output_bam, bam_list_file)
+    except (subprocess.CalledProcessError, FileNotFoundError) as error:
+        _prepare_pysam_concat_fallback(output_bam, error, verbose=verbose)
+        return False
+
+    if verbose:
+        _log_samtools_cat_success(output_bam, _elapsed_seconds_since(concat_start))
+    return True
+
+
+def _merge_region_bams_after_pysam_failure(
+    bam_files: List[str],
+    output_bam: str,
+    bam_list_file: str,
+    concat_start: float,
+    verbose: bool,
+) -> None:
+    try:
+        _samtools_merge_bams(bam_files, output_bam, bam_list_file)
+    except Exception as merge_err:
+        if verbose:
+            print(f"  ERROR: All concatenation methods failed: {merge_err}")
+        raise
+
+    if verbose:
+        _log_concat_method_success(
+            "samtools merge",
+            _elapsed_seconds_since(concat_start),
+        )
+
+
+def _concatenate_region_bams_with_fallbacks(
+    bam_files: List[str],
+    output_bam: str,
+    bam_list_file: str,
+    concat_start: float,
+    verbose: bool,
+) -> None:
+    try:
+        _concatenate_bams_with_pysam(bam_files, output_bam, verbose=verbose)
+    except Exception as pysam_err:
+        if verbose:
+            _log_pysam_concat_failure(output_bam, pysam_err)
+        _merge_region_bams_after_pysam_failure(
+            bam_files,
+            output_bam,
+            bam_list_file,
+            concat_start,
+            verbose,
+        )
+        return
+
+    if verbose:
+        _log_concat_method_success("pysam", _elapsed_seconds_since(concat_start))
+
+
 def _concatenate_region_bams(
     input_bam: str,
     output_bam: str,
@@ -489,36 +553,22 @@ def _concatenate_region_bams(
         return
 
     bam_list_file = os.path.join(temp_dir, 'bam_list.txt')
-    try:
-        _samtools_cat_bams(bam_files, output_bam, bam_list_file)
-
-        if verbose:
-            _log_samtools_cat_success(output_bam, _elapsed_seconds_since(concat_start))
+    if _try_samtools_cat_region_bams(
+        bam_files,
+        output_bam,
+        bam_list_file,
+        concat_start,
+        verbose,
+    ):
         return
 
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        _prepare_pysam_concat_fallback(output_bam, e, verbose=verbose)
-
-    try:
-        _concatenate_bams_with_pysam(bam_files, output_bam, verbose=verbose)
-        if verbose:
-            _log_concat_method_success("pysam", _elapsed_seconds_since(concat_start))
-
-    except Exception as pysam_err:
-        if verbose:
-            _log_pysam_concat_failure(output_bam, pysam_err)
-
-        try:
-            _samtools_merge_bams(bam_files, output_bam, bam_list_file)
-            if verbose:
-                _log_concat_method_success(
-                    "samtools merge",
-                    _elapsed_seconds_since(concat_start),
-                )
-        except Exception as merge_err:
-            if verbose:
-                print(f"  ERROR: All concatenation methods failed: {merge_err}")
-            raise
+    _concatenate_region_bams_with_fallbacks(
+        bam_files,
+        output_bam,
+        bam_list_file,
+        concat_start,
+        verbose,
+    )
 
 
 def write_bed12_records_direct(records: List[dict], filepath: str, with_scores: bool = False):
