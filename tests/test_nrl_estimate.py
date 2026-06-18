@@ -1,5 +1,7 @@
 """Tests for phase-NRL estimate post-processing helpers."""
 
+from types import SimpleNamespace
+
 import numpy as np
 
 from fiberhmm.inference import nrl_estimate
@@ -10,6 +12,16 @@ def test_phase_nrl_peak_spacings_filters_primary_repeat_window():
         nrl_estimate._phase_nrl_peak_spacings([90, 120, 185, 260, 300]),
         np.array([120, 185, 260], dtype=np.float64),
     )
+
+
+def test_nuc_center_spacings_sorts_calls_and_uses_centers():
+    nucs = [
+        SimpleNamespace(start=260, length=80),
+        SimpleNamespace(start=10, length=100),
+        SimpleNamespace(start=110, length=90),
+    ]
+
+    assert nrl_estimate._nuc_center_spacings(nucs) == [95.0, 145.0]
 
 
 def test_phase_nrl_result_uses_anchor_when_peak_has_too_few_pairs():

@@ -42,6 +42,15 @@ def _phase_nrl_estimate_from_peak(peak: np.ndarray, clamp_lo: int, clamp_hi: int
     return nrl, ci
 
 
+def _nuc_center_spacings(nucs) -> list[float]:
+    ordered = sorted(nucs, key=lambda n: n.start)
+    centers = [n.start + n.length / 2.0 for n in ordered]
+    return [
+        centers[i + 1] - centers[i]
+        for i in range(len(centers) - 1)
+    ]
+
+
 def _phase_nrl_result(
     spacings,
     n_reads: int,
@@ -112,11 +121,7 @@ def estimate_phase_nrl(
                 len(apply_result['encoded']), llr_hit, llr_miss,
                 split_min_llr=split_min_llr, split_min_opps=split_min_opps,
                 nuc_min_size=nuc_min_size)
-            nucs = sorted(nucs, key=lambda n: n.start)
-            for i in range(len(nucs) - 1):
-                c1 = nucs[i].start + nucs[i].length / 2.0
-                c2 = nucs[i + 1].start + nucs[i + 1].length / 2.0
-                spacings.append(c2 - c1)
+            spacings.extend(_nuc_center_spacings(nucs))
             n_reads += 1
             if n_reads >= sample_target:
                 break
