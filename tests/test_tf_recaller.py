@@ -578,6 +578,48 @@ def test_tf_call_from_scan_arrays_converts_types_and_lengths():
     )
 
 
+def test_call_tfs_in_intervals_scans_each_interval(monkeypatch):
+    obs = np.array([0, 1, 2], dtype=np.int32)
+    hit = np.array([1.0])
+    miss = np.array([-1.0])
+    calls = []
+
+    def fake_call(obs_arg, lo, hi, hit_arg, miss_arg, min_llr, min_opps):
+        calls.append((obs_arg, lo, hi, hit_arg, miss_arg, min_llr, min_opps))
+        return [
+            TFCall(
+                start=lo,
+                length=hi - lo,
+                llr=6.0,
+                n_opps=3,
+                left_ambiguity=0,
+                right_ambiguity=1,
+            )
+        ]
+
+    monkeypatch.setattr(tf_recaller, "call_tfs_in_interval", fake_call)
+
+    result = tf_recaller._call_tfs_in_intervals_from_request(
+        tf_recaller._TfIntervalBatchScanRequest(
+            obs=obs,
+            intervals=[(1, 3), (5, 8)],
+            llr_hit=hit,
+            llr_miss=miss,
+            min_llr=4.0,
+            min_opps=2,
+        )
+    )
+
+    assert [call.start for call in result] == [1, 5]
+    assert len(calls) == 2
+    assert all(call[0] is obs for call in calls)
+    assert calls[0][1:3] == (1, 3)
+    assert calls[1][1:3] == (5, 8)
+    assert all(call[3] is hit for call in calls)
+    assert all(call[4] is miss for call in calls)
+    assert all(call[5:] == (4.0, 2) for call in calls)
+
+
 def test_is_short_nuc_length_requires_positive_below_threshold():
     assert not tf_recaller._is_short_nuc_length(0, 90)
     assert tf_recaller._is_short_nuc_length(89, 90)
@@ -717,6 +759,38 @@ def test_raw_legacy_recall_tags_handles_missing_and_present_tags():
     assert tags.nuc_lengths == [20]
     assert tags.msp_starts == [40]
     assert tags.msp_lengths == [5]
+
+
+def test_seq_frame_legacy_recall_tags_flips_nucs_and_msps(monkeypatch):
+    read = _FakeRead()
+    raw_tags = tf_recaller._RawLegacyRecallTags(
+        nuc_starts=[10],
+        nuc_lengths=[20],
+        msp_starts=[40],
+        msp_lengths=[5],
+    )
+    calls = []
+
+    def fake_flip(starts, lengths, got_read):
+        calls.append((starts, lengths, got_read))
+        if starts == [10]:
+            return [170], [20]
+        return [155], [5]
+
+    monkeypatch.setattr(tf_recaller, "flip_intervals_to_seq", fake_flip)
+
+    seq_tags = tf_recaller._seq_frame_legacy_recall_tags(read, raw_tags)
+
+    assert calls == [
+        ([10], [20], read),
+        ([40], [5], read),
+    ]
+    assert seq_tags == tf_recaller._RawLegacyRecallTags(
+        nuc_starts=[170],
+        nuc_lengths=[20],
+        msp_starts=[155],
+        msp_lengths=[5],
+    )
 
 
 def test_write_legacy_recall_tags_request_writes_compat_tracks():

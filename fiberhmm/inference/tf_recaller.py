@@ -115,6 +115,16 @@ class _TfIntervalScanRequest:
 
 
 @dataclass
+class _TfIntervalBatchScanRequest:
+    obs: np.ndarray
+    intervals: Sequence[Tuple[int, int]]
+    llr_hit: np.ndarray
+    llr_miss: np.ndarray
+    min_llr: float
+    min_opps: int
+
+
+@dataclass
 class _TagOutputFrame:
     nuc_intervals: List[Tuple[int, int]]
     msp_intervals: List[Tuple[int, int]]
@@ -666,6 +676,25 @@ def call_tfs_in_interval_from_request(
     return calls
 
 
+def _call_tfs_in_intervals_from_request(
+    request: _TfIntervalBatchScanRequest,
+) -> List[TFCall]:
+    calls: List[TFCall] = []
+    for lo, hi in request.intervals:
+        calls.extend(
+            call_tfs_in_interval(
+                request.obs,
+                lo,
+                hi,
+                request.llr_hit,
+                request.llr_miss,
+                request.min_llr,
+                request.min_opps,
+            )
+        )
+    return calls
+
+
 def _extract_daf_iupac_modifications(read, seq: str):
     try:
         st_tag = read.get_tag('st')
@@ -764,6 +793,29 @@ def _raw_legacy_recall_tags(read):
     return _RawLegacyRecallTags(ns_raw, nl_raw, as_raw, al_raw)
 
 
+def _seq_frame_legacy_recall_tags(
+    read,
+    raw_tags: _RawLegacyRecallTags,
+) -> _RawLegacyRecallTags:
+    # Tags are stored molecular frame; recall works in SEQ (query) frame.
+    nuc_starts, nuc_lengths = flip_intervals_to_seq(
+        raw_tags.nuc_starts,
+        raw_tags.nuc_lengths,
+        read,
+    )
+    msp_starts, msp_lengths = flip_intervals_to_seq(
+        raw_tags.msp_starts,
+        raw_tags.msp_lengths,
+        read,
+    )
+    return _RawLegacyRecallTags(
+        nuc_starts,
+        nuc_lengths,
+        msp_starts,
+        msp_lengths,
+    )
+
+
 def _positive_length_intervals(starts, lengths) -> List[Tuple[int, int]]:
     return [
         (int(start), int(length))
@@ -831,18 +883,7 @@ def recall_read_from_request(
     if len(raw_tags.nuc_starts) == 0 and len(raw_tags.msp_starts) == 0:
         return [], [], []
 
-    # Tags are stored molecular frame; recall works in SEQ (query) frame, and
-    # write_ma_tags flips back to molecular on output. Flip on read here.
-    ns_raw, nl_raw = flip_intervals_to_seq(
-        raw_tags.nuc_starts,
-        raw_tags.nuc_lengths,
-        request.read,
-    )
-    as_raw, al_raw = flip_intervals_to_seq(
-        raw_tags.msp_starts,
-        raw_tags.msp_lengths,
-        request.read,
-    )
+    seq_tags = _seq_frame_legacy_recall_tags(request.read, raw_tags)
 
     extracted = extract_modifications(
         request.read,
@@ -851,8 +892,14 @@ def recall_read_from_request(
     )
     if extracted is None:
         # Pass through v2 calls unchanged
-        nucs = _positive_length_intervals(ns_raw, nl_raw)
-        msps = _positive_length_intervals(as_raw, al_raw)
+        nucs = _positive_length_intervals(
+            seq_tags.nuc_starts,
+            seq_tags.nuc_lengths,
+        )
+        msps = _positive_length_intervals(
+            seq_tags.msp_starts,
+            seq_tags.msp_lengths,
+        )
         return [], nucs, msps
 
     mod_pos, strand, seq = extracted
@@ -868,31 +915,33 @@ def recall_read_from_request(
     read_len = len(seq)
 
     intervals = build_scan_intervals(
-        ns_raw,
-        nl_raw,
-        as_raw,
-        al_raw,
+        seq_tags.nuc_starts,
+        seq_tags.nuc_lengths,
+        seq_tags.msp_starts,
+        seq_tags.msp_lengths,
         read_len,
         unify_threshold=request.unify_threshold,
     )
 
-    tf_calls: List[TFCall] = []
-    for lo, hi in intervals:
-        tf_calls.extend(call_tfs_in_interval(
+    tf_calls = _call_tfs_in_intervals_from_request(
+        _TfIntervalBatchScanRequest(
             obs,
-            lo,
-            hi,
+            intervals,
             request.llr_hit,
             request.llr_miss,
             request.min_llr,
             request.min_opps,
-        ))
+        )
+    )
 
     # Unify: drop v2 short-nucs (nl < threshold) that overlap any TF call.
-    msps = _positive_length_intervals(as_raw, al_raw)
+    msps = _positive_length_intervals(
+        seq_tags.msp_starts,
+        seq_tags.msp_lengths,
+    )
     kept_nucs: List[Tuple[int, int]] = []
     tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
-    for s, length in zip(ns_raw, nl_raw):
+    for s, length in zip(seq_tags.nuc_starts, seq_tags.nuc_lengths):
         kept = _kept_legacy_nuc_interval(
             s,
             length,
