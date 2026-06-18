@@ -6,11 +6,14 @@ from fiberhmm.inference.reference_mapping import (
     _first_ref_in_query_interval,
     _last_ref_in_query_interval,
     _query_interval_bounds,
+    _QueryIntervalMappingRequest,
     _ref_positions_to_half_open_span,
     _scored_interval_record,
     _ScoredIntervalRecord,
     query_interval_to_ref_block,
+    query_interval_to_ref_block_from_request,
     query_interval_to_ref_span,
+    query_interval_to_ref_span_from_request,
     query_to_ref_lookup,
     scored_interval_blocks,
     scored_interval_spans,
@@ -60,7 +63,13 @@ def test_scored_interval_record_attaches_score_or_default():
 
 def test_exact_block_mapping_requires_aligned_endpoints():
     q2r = np.array([100, -1, 102, 103, -1, 105], dtype=np.int64)
+    request = _QueryIntervalMappingRequest(
+        qstart=0,
+        length=4,
+        query_to_ref=q2r,
+    )
 
+    assert query_interval_to_ref_block_from_request(request) == (100, 104)
     assert query_interval_to_ref_block(0, 4, q2r) == (100, 104)
     assert query_interval_to_ref_block(1, 3, q2r) is None
     assert query_interval_to_ref_block(2, 3, q2r) is None
@@ -70,7 +79,13 @@ def test_exact_block_mapping_requires_aligned_endpoints():
 
 def test_span_mapping_scans_inward_past_unaligned_edges():
     q2r = np.array([100, -1, 102, 103, -1, 105], dtype=np.int64)
+    request = _QueryIntervalMappingRequest(
+        qstart=1,
+        length=3,
+        query_to_ref=q2r,
+    )
 
+    assert query_interval_to_ref_span_from_request(request) == (102, 104)
     assert query_interval_to_ref_span(1, 3, q2r) == (102, 104)
     assert query_interval_to_ref_span(2, 3, q2r) == (102, 104)
     assert query_interval_to_ref_span(1, 1, q2r) is None
