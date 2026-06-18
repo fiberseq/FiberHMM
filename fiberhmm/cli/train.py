@@ -810,6 +810,40 @@ def _write_training_stats_summary(summary_path: str, model: FiberHMM,
         f.write(_training_size_summary('MSPs', 'MSP sizes', all_msp_sizes))
 
 
+def _save_training_model_parameter_page(
+    plt,
+    pdf,
+    model: FiberHMM,
+    emission_probs: np.ndarray,
+    all_footprint_sizes: list,
+    all_msp_sizes: list,
+) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+    fig.suptitle('FiberHMM Training Results', fontsize=14, fontweight='bold')
+
+    _plot_training_transition_matrix(axes[0, 0], model.transmat_)
+    _plot_training_emission_distribution(axes[0, 1], emission_probs)
+    _plot_training_size_distribution(
+        axes[1, 0],
+        all_footprint_sizes,
+        color='firebrick',
+        x_label='Footprint Size (bp)',
+        title_prefix='Footprint Sizes',
+        include_nucleosome_marker=True,
+    )
+    _plot_training_size_distribution(
+        axes[1, 1],
+        all_msp_sizes,
+        color='forestgreen',
+        x_label='MSP Size (bp)',
+        title_prefix='MSP Sizes',
+    )
+
+    plt.tight_layout()
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
 def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads: list,
                             emission_probs: np.ndarray, output_dir: str,
                             n_examples: int = 5, mode: str = 'pacbio-fiber'):
@@ -850,42 +884,14 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
 
     with PdfPages(pdf_path) as pdf:
         # Page 1: Model parameters
-        fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
-        fig.suptitle('FiberHMM Training Results', fontsize=14, fontweight='bold')
-
-        # 1. Transition matrix
-        ax = axes[0, 0]
-        trans = model.transmat_
-        _plot_training_transition_matrix(ax, trans)
-
-        # 2. Emission probability distribution
-        ax = axes[0, 1]
-        _plot_training_emission_distribution(ax, emission_probs)
-
-        # 3. Footprint size distribution
-        ax = axes[1, 0]
-        _plot_training_size_distribution(
-            ax,
+        _save_training_model_parameter_page(
+            plt,
+            pdf,
+            model,
+            emission_probs,
             all_footprint_sizes,
-            color='firebrick',
-            x_label='Footprint Size (bp)',
-            title_prefix='Footprint Sizes',
-            include_nucleosome_marker=True,
-        )
-
-        # 4. MSP size distribution
-        ax = axes[1, 1]
-        _plot_training_size_distribution(
-            ax,
             all_msp_sizes,
-            color='forestgreen',
-            x_label='MSP Size (bp)',
-            title_prefix='MSP Sizes',
         )
-
-        plt.tight_layout()
-        pdf.savefig(fig)
-        plt.close(fig)
 
         # Page 2+: Example reads with overview and zoom panels
         n_to_plot = min(n_examples, len(sampled_reads), len(all_states))

@@ -475,6 +475,110 @@ def test_write_training_stats_summary(tmp_path):
     assert "MSP sizes: mean=20.0, median=20.0, range=20-20" in text
 
 
+def test_save_training_model_parameter_page_orchestrates_plots(monkeypatch):
+    axes = np.array([
+        [object(), object()],
+        [object(), object()],
+    ], dtype=object)
+
+    class FakeFigure:
+        def __init__(self):
+            self.suptitle_call = None
+
+        def suptitle(self, *args, **kwargs):
+            self.suptitle_call = (args, kwargs)
+
+    class FakePlt:
+        def __init__(self):
+            self.fig = FakeFigure()
+            self.subplots_call = None
+            self.tight_layout_called = False
+            self.closed = []
+
+        def subplots(self, *args, **kwargs):
+            self.subplots_call = (args, kwargs)
+            return self.fig, axes
+
+        def tight_layout(self):
+            self.tight_layout_called = True
+
+        def close(self, fig):
+            self.closed.append(fig)
+
+    class FakePdf:
+        def __init__(self):
+            self.saved = []
+
+        def savefig(self, fig):
+            self.saved.append(fig)
+
+    calls = []
+
+    monkeypatch.setattr(
+        train,
+        "_plot_training_transition_matrix",
+        lambda ax, trans: calls.append(("trans", ax, trans)),
+    )
+    monkeypatch.setattr(
+        train,
+        "_plot_training_emission_distribution",
+        lambda ax, emissions: calls.append(("emissions", ax, emissions)),
+    )
+
+    def fake_size_plot(ax, sizes, **kwargs):
+        calls.append(("sizes", ax, sizes, kwargs))
+
+    monkeypatch.setattr(train, "_plot_training_size_distribution", fake_size_plot)
+
+    plt = FakePlt()
+    pdf = FakePdf()
+    model = SimpleNamespace(transmat_=np.array([[0.8, 0.2], [0.1, 0.9]]))
+    emission_probs = np.array([[0.2], [0.3]])
+
+    train._save_training_model_parameter_page(
+        plt,
+        pdf,
+        model,
+        emission_probs,
+        [10, 20],
+        [30, 40],
+    )
+
+    assert plt.subplots_call == ((2, 2), {"figsize": (11, 8.5)})
+    assert plt.fig.suptitle_call == (
+        ("FiberHMM Training Results",),
+        {"fontsize": 14, "fontweight": "bold"},
+    )
+    assert calls[0][0:2] == ("trans", axes[0, 0])
+    np.testing.assert_array_equal(calls[0][2], model.transmat_)
+    assert calls[1][0:2] == ("emissions", axes[0, 1])
+    np.testing.assert_array_equal(calls[1][2], emission_probs)
+    assert calls[2] == (
+        "sizes",
+        axes[1, 0],
+        [10, 20],
+        {
+            "color": "firebrick",
+            "x_label": "Footprint Size (bp)",
+            "title_prefix": "Footprint Sizes",
+            "include_nucleosome_marker": True,
+        },
+    )
+    assert calls[3] == (
+        "sizes",
+        axes[1, 1],
+        [30, 40],
+        {
+            "color": "forestgreen",
+            "x_label": "MSP Size (bp)",
+            "title_prefix": "MSP Sizes",
+        },
+    )
+    assert plt.tight_layout_called
+    assert pdf.saved == [plt.fig]
+    assert plt.closed == [plt.fig]
+
+
 def test_training_config_includes_base_model_only_when_used():
     args = SimpleNamespace(
         context_size=3,
