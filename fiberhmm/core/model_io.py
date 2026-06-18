@@ -15,6 +15,7 @@ import json
 import os
 import pickle
 import warnings
+from dataclasses import dataclass
 from typing import Tuple
 
 import numpy as np
@@ -29,6 +30,12 @@ MODE_ALIASES = {
     'pacbio': 'pacbio-fiber',
     'm6a': 'pacbio-fiber',
 }
+
+
+@dataclass(frozen=True)
+class _ModelMetadata:
+    context_size: int
+    mode: str
 
 # =============================================================================
 # Loading functions (all formats supported for backward compatibility)
@@ -133,20 +140,20 @@ def _mapping_value(value):
     return value
 
 
-def _metadata_from_mapping(data) -> Tuple[int, str]:
+def _metadata_from_mapping(data) -> _ModelMetadata:
     context_size = _mapping_value(data.get('context_size', DEFAULT_CONTEXT_SIZE))
     if context_size is None:
         context_size = DEFAULT_CONTEXT_SIZE
     mode = _mapping_value(data.get('mode', DEFAULT_MODE))
     if mode is not None:
         mode = str(mode)
-    return int(context_size), mode
+    return _ModelMetadata(int(context_size), mode)
 
 
 def _model_and_metadata_from_mapping(data) -> Tuple[FiberHMM, int, str]:
     model = _model_from_mapping(data)
-    context_size, mode = _metadata_from_mapping(data)
-    return model, context_size, mode
+    metadata = _metadata_from_mapping(data)
+    return model, metadata.context_size, metadata.mode
 
 
 def _read_json(filepath: str) -> dict:
@@ -213,8 +220,8 @@ def _load_pickle_with_metadata(filepath: str) -> Tuple[FiberHMM, int, str]:
     obj = _read_pickle(filepath)
     if _pickle_payload_has_metadata(obj):
         model = _coerce_loaded_model(obj['model'])
-        context_size, mode = _metadata_from_mapping(obj)
-        return model, context_size, mode
+        metadata = _metadata_from_mapping(obj)
+        return model, metadata.context_size, metadata.mode
     return _coerce_loaded_model(obj), DEFAULT_CONTEXT_SIZE, DEFAULT_MODE
 
 
