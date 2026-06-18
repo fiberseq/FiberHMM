@@ -150,6 +150,14 @@ class _RecallNucQualityInputs:
     nuc_er_values: List[int]
 
 
+@dataclass
+class _RecallTfQualityInputs:
+    intervals: List[Tuple[int, int]]
+    tq_values: List[int]
+    el_values: List[int]
+    er_values: List[int]
+
+
 def _split_named_intervals(
     intervals: Sequence[Tuple[int, int]],
     prefix: str,
@@ -795,12 +803,12 @@ def _recall_nuc_quality_inputs(kept_nucs: Sequence[Tuple[int, int]],
     )
 
 
-def _recall_tf_quality_inputs(tf_calls: Sequence[TFCall]):
-    return (
-        [(c.start, c.length) for c in tf_calls],
-        [llr_to_tq(c.llr) for c in tf_calls],
-        [ambiguity_to_edge(c.left_ambiguity) for c in tf_calls],
-        [ambiguity_to_edge(c.right_ambiguity) for c in tf_calls],
+def _recall_tf_quality_inputs(tf_calls: Sequence[TFCall]) -> _RecallTfQualityInputs:
+    return _RecallTfQualityInputs(
+        intervals=[(c.start, c.length) for c in tf_calls],
+        tq_values=[llr_to_tq(c.llr) for c in tf_calls],
+        el_values=[ambiguity_to_edge(c.left_ambiguity) for c in tf_calls],
+        er_values=[ambiguity_to_edge(c.right_ambiguity) for c in tf_calls],
     )
 
 
@@ -861,7 +869,7 @@ def _build_recall_tag_payload(
     nuc_quality = _recall_nuc_quality_inputs(
         kept_nucs, nq_for_kept_nucs, nuc_el_for_kept, nuc_er_for_kept,
     )
-    tf_intervals, tq_vals, el_vals, er_vals = _recall_tf_quality_inputs(tf_calls)
+    tf_quality = _recall_tf_quality_inputs(tf_calls)
 
     # FiberHMM works in SEQ coords internally. Tags are written in molecular
     # frame and sorted within each annotation type for fibertools/spec readers.
@@ -870,11 +878,11 @@ def _build_recall_tag_payload(
         read_length,
         kept_nucs,
         msps,
-        tf_intervals,
+        tf_quality.intervals,
         nuc_quality.nq_values,
-        tq_vals,
-        el_vals,
-        er_vals,
+        tf_quality.tq_values,
+        tf_quality.el_values,
+        tf_quality.er_values,
         nuc_quality.nuc_el_values if nuc_quality.nuc_qqq else None,
         nuc_quality.nuc_er_values if nuc_quality.nuc_qqq else None,
     )
