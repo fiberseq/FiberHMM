@@ -65,6 +65,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _StreamingReadCounts,
     _StreamingReadDelta,
     _StreamingWorkerCommonArgs,
+    _StreamReadsToWorkersRequest,
     _submit_streaming_chunk,
     _submit_streaming_chunk_from_request,
     _worker_common_args,
@@ -874,15 +875,15 @@ def test_stream_reads_to_workers_buffers_submits_and_reports_progress(monkeypatc
     worker_fn = object()
     skip_reasons = {}
 
-    counts = _stream_reads_to_workers(
-        ["p1", "skip", "p2"],
-        object(),
-        "daf",
-        object(),
-        inflight,
-        executor,
-        worker_fn,
-        ("arg",),
+    request = _StreamReadsToWorkersRequest(
+        reads=["p1", "skip", "p2"],
+        filter_config=object(),
+        mode="daf",
+        ref_fasta=object(),
+        inflight=inflight,
+        executor=executor,
+        worker_fn=worker_fn,
+        worker_args=("arg",),
         max_reads=None,
         chunk_size=2,
         max_inflight=10,
@@ -893,6 +894,8 @@ def test_stream_reads_to_workers_buffers_submits_and_reports_progress(monkeypatc
         rate_unit="reads/s",
         start_time=10.0,
     )
+
+    counts = streaming_pipeline._stream_reads_to_workers_from_request(request)
 
     assert counts == _StreamingReadCounts(processed=2, skipped=1)
     assert skip_reasons == {"low_mapq": 1}
@@ -910,6 +913,26 @@ def test_stream_reads_to_workers_buffers_submits_and_reports_progress(monkeypatc
     assert list(inflight) == []
     assert progress_calls[0][1:5] == ("Processed", 2, 1, 1)
     assert progress_calls[0][9] == "reads/s"
+
+    assert _stream_reads_to_workers(
+        [],
+        object(),
+        "daf",
+        object(),
+        deque(),
+        executor,
+        worker_fn,
+        ("arg",),
+        max_reads=None,
+        chunk_size=2,
+        max_inflight=10,
+        drain_chunk=lambda: None,
+        skip_reasons={},
+        log=io.StringIO(),
+        progress_label="Processed",
+        rate_unit="reads/s",
+        start_time=10.0,
+    ) == _StreamingReadCounts(processed=0, skipped=0)
 
 
 def test_run_streaming_worker_loop_builds_inflight_and_shuts_down(monkeypatch):

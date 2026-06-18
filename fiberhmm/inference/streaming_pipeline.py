@@ -410,6 +410,27 @@ class _StreamingFlushAndProgressRequest:
 
 
 @dataclass(frozen=True)
+class _StreamReadsToWorkersRequest:
+    reads: object
+    filter_config: ReadFilterConfig
+    mode: str
+    ref_fasta: object
+    inflight: object
+    executor: object
+    worker_fn: object
+    worker_args: tuple
+    max_reads: Optional[int]
+    chunk_size: int
+    max_inflight: int
+    drain_chunk: Callable[[], None]
+    skip_reasons: dict
+    log: object
+    progress_label: str
+    rate_unit: str
+    start_time: float
+
+
+@dataclass(frozen=True)
 class _StreamingPosteriorWriter:
     writer: object | None
     enabled: bool
@@ -514,34 +535,60 @@ def _stream_reads_to_workers(
     rate_unit: str,
     start_time: float,
 ) -> _StreamingReadCounts:
+    return _stream_reads_to_workers_from_request(
+        _StreamReadsToWorkersRequest(
+            reads=reads,
+            filter_config=filter_config,
+            mode=mode,
+            ref_fasta=ref_fasta,
+            inflight=inflight,
+            executor=executor,
+            worker_fn=worker_fn,
+            worker_args=worker_args,
+            max_reads=max_reads,
+            chunk_size=chunk_size,
+            max_inflight=max_inflight,
+            drain_chunk=drain_chunk,
+            skip_reasons=skip_reasons,
+            log=log,
+            progress_label=progress_label,
+            rate_unit=rate_unit,
+            start_time=start_time,
+        )
+    )
+
+
+def _stream_reads_to_workers_from_request(
+    request: _StreamReadsToWorkersRequest,
+) -> _StreamingReadCounts:
     total_reads = 0
     skipped = 0
     chunk_buffers = _new_streaming_chunk_buffers()
     last_progress_reads = 0
     last_progress_time = time.time()
     flush_context = _StreamingFlushContext(
-        inflight=inflight,
-        executor=executor,
-        worker_fn=worker_fn,
-        worker_args=worker_args,
-        max_inflight=max_inflight,
-        drain_chunk=drain_chunk,
-        log=log,
-        progress_label=progress_label,
-        start_time=start_time,
-        rate_unit=rate_unit,
+        inflight=request.inflight,
+        executor=request.executor,
+        worker_fn=request.worker_fn,
+        worker_args=request.worker_args,
+        max_inflight=request.max_inflight,
+        drain_chunk=request.drain_chunk,
+        log=request.log,
+        progress_label=request.progress_label,
+        start_time=request.start_time,
+        rate_unit=request.rate_unit,
     )
 
-    for read in reads:
+    for read in request.reads:
         read_delta = _buffer_streaming_read(
             read,
-            filter_config,
-            mode,
-            ref_fasta,
+            request.filter_config,
+            request.mode,
+            request.ref_fasta,
             chunk_buffers.items,
             chunk_buffers.read_objs,
             chunk_buffers.skip_flags,
-            skip_reasons,
+            request.skip_reasons,
         )
         skipped += read_delta.skipped
         if read_delta.skipped:
@@ -549,10 +596,10 @@ def _stream_reads_to_workers(
 
         total_reads += read_delta.processed
 
-        if max_reads and total_reads >= max_reads:
+        if request.max_reads and total_reads >= request.max_reads:
             break
 
-        if len(chunk_buffers.read_objs) >= chunk_size:
+        if len(chunk_buffers.read_objs) >= request.chunk_size:
             flush_progress = _flush_streaming_chunk_and_report_progress(
                 flush_context,
                 chunk_buffers.items,
@@ -569,18 +616,18 @@ def _stream_reads_to_workers(
 
     if chunk_buffers.read_objs:
         _flush_streaming_chunk(
-            inflight,
-            executor,
-            worker_fn,
+            request.inflight,
+            request.executor,
+            request.worker_fn,
             chunk_buffers.items,
             chunk_buffers.read_objs,
             chunk_buffers.skip_flags,
-            worker_args,
-            max_inflight,
-            drain_chunk,
+            request.worker_args,
+            request.max_inflight,
+            request.drain_chunk,
         )
 
-    _drain_all_streaming_chunks(inflight, drain_chunk)
+    _drain_all_streaming_chunks(request.inflight, request.drain_chunk)
     return _StreamingReadCounts(processed=total_reads, skipped=skipped)
 
 
