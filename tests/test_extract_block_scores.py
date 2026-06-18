@@ -31,9 +31,11 @@ from fiberhmm.io.autosql import (
     _autosql_file_name,
     _autosql_file_suffix,
     _autosql_variant_suffix,
+    _AutoSqlOutputRequest,
     _AutoSqlSchemaRequest,
     _canonical_autosql_type,
     _create_autosql_output_path,
+    _create_autosql_output_path_from_request,
     _escape_autosql_description,
     _make_schema,
     _make_schema_from_request,
@@ -1387,12 +1389,20 @@ def test_autosql_file_name_and_suffix_helpers():
 
 def test_create_autosql_output_path_handles_tempfile_and_output_dir(tmp_path):
     out_dir = tmp_path / 'schemas'
-    fixed_path = _create_autosql_output_path(
-        'tf', '.bs', '.bs.as', str(out_dir),
+    request = _AutoSqlOutputRequest(
+        extract_type='tf',
+        variant='.bs',
+        suffix='.bs.as',
+        out_dir=str(out_dir),
     )
+
+    fixed_path = _create_autosql_output_path_from_request(request)
 
     assert fixed_path == str(out_dir / 'fiberhmm_tf.bs.as')
     assert out_dir.is_dir()
+    assert _create_autosql_output_path(
+        'tf', '.bs', '.bs.as', str(out_dir),
+    ) == fixed_path
 
     temp_path = _create_autosql_output_path('tf', '.bs', '.bs.as', None)
     try:

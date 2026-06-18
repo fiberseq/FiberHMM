@@ -47,6 +47,14 @@ class _AutoSqlSchemaRequest:
     circular_groups: bool = False
 
 
+@dataclass(frozen=True)
+class _AutoSqlOutputRequest:
+    extract_type: str
+    variant: str
+    suffix: str
+    out_dir: Optional[str]
+
+
 _BED12_FIELDS = """    string  chrom;       "Reference chromosome / contig"
     uint    chromStart;  "Start position on the reference (0-based)"
     uint    chromEnd;    "End position on the reference (exclusive)"
@@ -282,16 +290,32 @@ def _autosql_file_name(extract_type: str, variant: str) -> str:
     return f'fiberhmm_{extract_type}{variant}.as'
 
 
-def _create_autosql_output_path(extract_type: str, variant: str, suffix: str,
-                                out_dir: Optional[str]) -> str:
-    if out_dir is None:
-        fd, path = tempfile.mkstemp(prefix=f'fiberhmm_{extract_type}_',
-                                    suffix=suffix)
+def _create_autosql_output_path_from_request(
+    request: _AutoSqlOutputRequest,
+) -> str:
+    if request.out_dir is None:
+        fd, path = tempfile.mkstemp(prefix=f'fiberhmm_{request.extract_type}_',
+                                    suffix=request.suffix)
         os.close(fd)
         return path
 
-    os.makedirs(out_dir, exist_ok=True)
-    return os.path.join(out_dir, _autosql_file_name(extract_type, variant))
+    os.makedirs(request.out_dir, exist_ok=True)
+    return os.path.join(
+        request.out_dir,
+        _autosql_file_name(request.extract_type, request.variant),
+    )
+
+
+def _create_autosql_output_path(extract_type: str, variant: str, suffix: str,
+                                out_dir: Optional[str]) -> str:
+    return _create_autosql_output_path_from_request(
+        _AutoSqlOutputRequest(
+            extract_type=extract_type,
+            variant=variant,
+            suffix=suffix,
+            out_dir=out_dir,
+        )
+    )
 
 
 def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
@@ -314,7 +338,14 @@ def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
         return None
     variant = _autosql_variant_suffix(block_scores, circular_groups)
     suffix = _autosql_file_suffix(variant)
-    path = _create_autosql_output_path(extract_type, variant, suffix, out_dir)
+    path = _create_autosql_output_path_from_request(
+        _AutoSqlOutputRequest(
+            extract_type=extract_type,
+            variant=variant,
+            suffix=suffix,
+            out_dir=out_dir,
+        )
+    )
     with open(path, 'w') as f:
         f.write(schema)
     return path
