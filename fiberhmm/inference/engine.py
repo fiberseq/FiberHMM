@@ -476,6 +476,26 @@ def _circular_prediction_result(
     return result
 
 
+def _linear_prediction_result(
+    states: np.ndarray,
+    confidence: Optional[np.ndarray],
+    msp_min_size: int,
+    with_scores: bool,
+    nuc_min_size: int,
+) -> dict:
+    result = {'states': states}
+    result.update(
+        _extract_footprints_from_states(
+            states,
+            confidence,
+            msp_min_size,
+            with_scores,
+            nuc_min_size=nuc_min_size,
+        )
+    )
+    return result
+
+
 def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
                                  msp_min_size: int = 147,
                                  with_scores: bool = False,
@@ -541,11 +561,12 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
         )
         return result
 
-    result['states'] = states
-
     result.update(
-        _extract_footprints_from_states(
-            states, confidence, msp_min_size, with_scores,
+        _linear_prediction_result(
+            states,
+            confidence,
+            msp_min_size,
+            with_scores,
             nuc_min_size=nuc_min_size,
         )
     )

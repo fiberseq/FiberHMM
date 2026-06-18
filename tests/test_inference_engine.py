@@ -271,6 +271,32 @@ class TestPredictFootprintsAndMsps:
         assert track.dtype == np.float16
         np.testing.assert_allclose(track, [0.2, 0.3], atol=1e-3)
 
+    def test_linear_prediction_result_adds_states_to_interval_result(self):
+        states = np.array([1, 0, 0, 1, 1], dtype=np.int8)
+        confidence = np.array([0.7, 0.8, 0.9, 0.6, 0.5], dtype=np.float32)
+
+        result = engine._linear_prediction_result(
+            states,
+            confidence,
+            msp_min_size=1,
+            with_scores=True,
+            nuc_min_size=1,
+        )
+        expected = engine._extract_footprints_from_states(
+            states,
+            confidence,
+            msp_min_size=1,
+            with_scores=True,
+            nuc_min_size=1,
+        )
+
+        assert result["states"] is states
+        for key, expected_value in expected.items():
+            if isinstance(expected_value, np.ndarray):
+                np.testing.assert_array_equal(result[key], expected_value)
+            else:
+                assert result[key] == expected_value
+
     def test_center_copy_states_returns_middle_tile_as_int8(self):
         states = np.arange(12, dtype=np.int64)
         center = engine._center_copy_states(states, read_length=4)
