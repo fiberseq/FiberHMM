@@ -49,6 +49,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _StreamingProgressCheckpoint,
     _StreamingProgressRates,
     _StreamingReadCounts,
+    _StreamingReadDelta,
     _worker_common_args,
 )
 
@@ -407,7 +408,7 @@ def test_buffer_streaming_read_adds_processable_payload(monkeypatch):
     chunk_items = []
     chunk_reads = []
     skip_flags = []
-    processed, skipped = _buffer_streaming_read(
+    delta = _buffer_streaming_read(
         read,
         filter_config,
         "deam",
@@ -418,7 +419,7 @@ def test_buffer_streaming_read_adds_processable_payload(monkeypatch):
         {},
     )
 
-    assert (processed, skipped) == (1, 0)
+    assert delta == _StreamingReadDelta(processed=1, skipped=0)
     assert calls == [(read, filter_config, "deam", ref_fasta)]
     assert chunk_items == [payload]
     assert chunk_reads == [read]
@@ -441,7 +442,7 @@ def test_buffer_streaming_read_tracks_skipped_read(monkeypatch):
     chunk_reads = []
     skip_flags = []
     skip_reasons = {"low_mapq": 0}
-    processed, skipped = _buffer_streaming_read(
+    delta = _buffer_streaming_read(
         read,
         object(),
         "deam",
@@ -452,7 +453,7 @@ def test_buffer_streaming_read_tracks_skipped_read(monkeypatch):
         skip_reasons,
     )
 
-    assert (processed, skipped) == (0, 1)
+    assert delta == _StreamingReadDelta(processed=0, skipped=1)
     assert chunk_items == []
     assert chunk_reads == [read]
     assert skip_flags == [True]
@@ -645,10 +646,10 @@ def test_stream_reads_to_workers_buffers_submits_and_reports_progress(monkeypatc
         if read == "skip":
             chunk_skip_flags.append(True)
             skip_reasons["low_mapq"] = skip_reasons.get("low_mapq", 0) + 1
-            return 0, 1
+            return _StreamingReadDelta(processed=0, skipped=1)
         chunk_items.append(f"payload-{read}")
         chunk_skip_flags.append(False)
-        return 1, 0
+        return _StreamingReadDelta(processed=1, skipped=0)
 
     progress_calls = []
 

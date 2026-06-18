@@ -80,6 +80,12 @@ class _StreamingReadCounts:
     skipped: int
 
 
+@dataclass(frozen=True)
+class _StreamingReadDelta:
+    processed: int
+    skipped: int
+
+
 def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, reason) -> int:
     chunk_read_objs.append(read)
     chunk_skip_flags.append(True)
@@ -119,26 +125,32 @@ def _buffer_streaming_read(
     chunk_read_objs,
     chunk_skip_flags,
     skip_reasons,
-) -> tuple[int, int]:
+) -> _StreamingReadDelta:
     payload_result = _streaming_payload_or_skip(
         read, filter_config, mode, ref_fasta,
     )
     if payload_result.skip_reason:
-        return 0, _buffer_skipped_read(
-            chunk_read_objs,
-            chunk_skip_flags,
-            skip_reasons,
-            read,
-            payload_result.skip_reason,
+        return _StreamingReadDelta(
+            processed=0,
+            skipped=_buffer_skipped_read(
+                chunk_read_objs,
+                chunk_skip_flags,
+                skip_reasons,
+                read,
+                payload_result.skip_reason,
+            ),
         )
 
-    return _buffer_processable_read(
-        chunk_items,
-        chunk_read_objs,
-        chunk_skip_flags,
-        payload_result.payload,
-        read,
-    ), 0
+    return _StreamingReadDelta(
+        processed=_buffer_processable_read(
+            chunk_items,
+            chunk_read_objs,
+            chunk_skip_flags,
+            payload_result.payload,
+            read,
+        ),
+        skipped=0,
+    )
 
 
 def _completed_empty_future() -> Future:
@@ -304,7 +316,7 @@ def _stream_reads_to_workers(
     )
 
     for read in reads:
-        processed_delta, skipped_delta = _buffer_streaming_read(
+        read_delta = _buffer_streaming_read(
             read,
             filter_config,
             mode,
@@ -314,11 +326,11 @@ def _stream_reads_to_workers(
             chunk_buffers.skip_flags,
             skip_reasons,
         )
-        skipped += skipped_delta
-        if skipped_delta:
+        skipped += read_delta.skipped
+        if read_delta.skipped:
             continue
 
-        total_reads += processed_delta
+        total_reads += read_delta.processed
 
         if max_reads and total_reads >= max_reads:
             break
