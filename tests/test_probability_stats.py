@@ -499,17 +499,17 @@ def test_save_probability_distribution_png_writes_expected_path(monkeypatch, cap
     )
 
     plt = _FakeProbabilityPlt()
-    png_path = stats._save_probability_distribution_png(
-        plt,
-        "plots",
-        "run",
-        "A",
-        4,
-        acc,
-        inacc,
-        table,
-        table,
+    request = stats._ProbabilityDistributionPngRequest(
+        plots_dir="plots",
+        base_name="run",
+        base="A",
+        context_size=4,
+        accessible_counter=acc,
+        inaccessible_counter=inacc,
+        accessible_probs=table,
+        inaccessible_probs=table,
     )
+    png_path = stats._save_probability_distribution_png_from_request(plt, request)
 
     assert png_path == "plots/run_A_k4_distribution.png"
     assert plt.subplots_calls == [((), {"figsize": (8, 5)})]
@@ -519,6 +519,17 @@ def test_save_probability_distribution_png_writes_expected_path(monkeypatch, cap
         plt.axes[0, 0], acc, inacc, table, table, "A", 4,
     )]
     assert f"Plot: {png_path}" in capsys.readouterr().out
+    assert stats._save_probability_distribution_png(
+        plt,
+        "plots",
+        "run",
+        "A",
+        4,
+        acc,
+        inacc,
+        table,
+        table,
+    ) == png_path
 
 
 def test_save_probability_distribution_png_closes_figure_when_save_fails(
@@ -641,11 +652,15 @@ def test_probability_distribution_pngs_collect_paths(monkeypatch):
     }
     calls = []
 
-    def fake_save(plt, plots_dir, base_name, base, context_size, *args):
-        calls.append((plt, plots_dir, base_name, base, context_size, args))
-        return f"{plots_dir}/{base_name}_{base}.png"
+    def fake_save(plt, request):
+        calls.append((plt, request))
+        return f"{request.plots_dir}/{request.base_name}_{request.base}.png"
 
-    monkeypatch.setattr(stats, "_save_probability_distribution_png", fake_save)
+    monkeypatch.setattr(
+        stats,
+        "_save_probability_distribution_png_from_request",
+        fake_save,
+    )
 
     plt = object()
     assert stats._save_probability_distribution_pngs(
@@ -656,9 +671,33 @@ def test_probability_distribution_pngs_collect_paths(monkeypatch):
         inaccessible,
         context_size=5,
     ) == ["plots/run_A.png", "plots/run_C.png"]
-    assert [call[:5] for call in calls] == [
-        (plt, "plots", "run", "A", 5),
-        (plt, "plots", "run", "C", 5),
+    assert calls == [
+        (
+            plt,
+            stats._ProbabilityDistributionPngRequest(
+                plots_dir="plots",
+                base_name="run",
+                base="A",
+                context_size=5,
+                accessible_counter=accessible["A"],
+                inaccessible_counter=inaccessible["A"],
+                accessible_probs=table,
+                inaccessible_probs=table,
+            ),
+        ),
+        (
+            plt,
+            stats._ProbabilityDistributionPngRequest(
+                plots_dir="plots",
+                base_name="run",
+                base="C",
+                context_size=5,
+                accessible_counter=accessible["C"],
+                inaccessible_counter=inaccessible["C"],
+                accessible_probs=table,
+                inaccessible_probs=table,
+            ),
+        ),
     ]
     assert accessible["A"].context_sizes == [5]
     assert inaccessible["C"].context_sizes == [5]

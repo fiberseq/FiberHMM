@@ -121,6 +121,18 @@ class _ProbabilityStatsPathRequest:
         )
 
 
+@dataclass(frozen=True)
+class _ProbabilityDistributionPngRequest:
+    plots_dir: str
+    base_name: str
+    base: str
+    context_size: int
+    accessible_counter: 'ContextCounter'
+    inaccessible_counter: 'ContextCounter'
+    accessible_probs: 'pd.DataFrame'
+    inaccessible_probs: 'pd.DataFrame'
+
+
 def _probability_tables_for_base(
     accessible_counters,
     inaccessible_counters,
@@ -610,6 +622,36 @@ def _write_probability_counts_pdf_page(
         plt.close(fig)
 
 
+def _save_probability_distribution_png_from_request(
+    plt,
+    request: _ProbabilityDistributionPngRequest,
+) -> str:
+    fig, ax = plt.subplots(figsize=(8, 5))
+    png_path = _probability_distribution_plot_path(
+        request.plots_dir,
+        request.base_name,
+        request.base,
+        request.context_size,
+    )
+    try:
+        _plot_probability_distribution_png_axis(
+            ax,
+            request.accessible_counter,
+            request.inaccessible_counter,
+            request.accessible_probs,
+            request.inaccessible_probs,
+            request.base,
+            request.context_size,
+        )
+
+        plt.tight_layout()
+        plt.savefig(png_path, dpi=150)
+    finally:
+        plt.close(fig)
+    print(f"  Plot: {png_path}")
+    return png_path
+
+
 def _save_probability_distribution_png(
     plt,
     plots_dir: str,
@@ -621,21 +663,19 @@ def _save_probability_distribution_png(
     acc_probs,
     inacc_probs,
 ) -> str:
-    fig, ax = plt.subplots(figsize=(8, 5))
-    png_path = _probability_distribution_plot_path(
-        plots_dir, base_name, base, context_size,
+    return _save_probability_distribution_png_from_request(
+        plt,
+        _ProbabilityDistributionPngRequest(
+            plots_dir=plots_dir,
+            base_name=base_name,
+            base=base,
+            context_size=context_size,
+            accessible_counter=acc,
+            inaccessible_counter=inacc,
+            accessible_probs=acc_probs,
+            inaccessible_probs=inacc_probs,
+        ),
     )
-    try:
-        _plot_probability_distribution_png_axis(
-            ax, acc, inacc, acc_probs, inacc_probs, base, context_size,
-        )
-
-        plt.tight_layout()
-        plt.savefig(png_path, dpi=150)
-    finally:
-        plt.close(fig)
-    print(f"  Plot: {png_path}")
-    return png_path
 
 
 def _write_probability_stats_pdf(
@@ -680,12 +720,18 @@ def _save_probability_distribution_pngs(
         probability_tables = base_context.probability_tables
 
         png_paths.append(
-            _save_probability_distribution_png(
-                plt, plots_dir, base_name, base_context.base, context_size,
-                base_context.accessible_counter,
-                base_context.inaccessible_counter,
-                probability_tables.accessible,
-                probability_tables.inaccessible,
+            _save_probability_distribution_png_from_request(
+                plt,
+                _ProbabilityDistributionPngRequest(
+                    plots_dir=plots_dir,
+                    base_name=base_name,
+                    base=base_context.base,
+                    context_size=context_size,
+                    accessible_counter=base_context.accessible_counter,
+                    inaccessible_counter=base_context.inaccessible_counter,
+                    accessible_probs=probability_tables.accessible,
+                    inaccessible_probs=probability_tables.inaccessible,
+                ),
             )
         )
     return png_paths
