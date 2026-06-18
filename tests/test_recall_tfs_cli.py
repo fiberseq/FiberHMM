@@ -198,18 +198,30 @@ def test_recall_tfs_write_recall_result_passes_through_null_result(monkeypatch):
 
     monkeypatch.setattr(
         recall_tfs,
-        "_apply_result",
-        lambda read, result, also_write_legacy, downstream_compat: applied.append(
-            (read.query_name, result, also_write_legacy, downstream_compat)
-        ),
+        "_apply_result_from_request",
+        lambda request: applied.append(request),
     )
 
     out = FakeOut()
     recall_tfs._write_recall_result(reads[0], "result", out, True, False)
     recall_tfs._write_recall_result(reads[1], None, out, True, False)
+    recall_tfs._apply_result(reads[0], "adapter-result", False, True)
 
     assert written == ["annotated", "failed"]
-    assert applied == [("annotated", "result", True, False)]
+    assert applied == [
+        recall_tfs._RecallApplyResultRequest(
+            read=reads[0],
+            result="result",
+            also_write_legacy=True,
+            downstream_compat=False,
+        ),
+        recall_tfs._RecallApplyResultRequest(
+            read=reads[0],
+            result="adapter-result",
+            also_write_legacy=False,
+            downstream_compat=True,
+        ),
+    ]
 
 
 def test_recall_tfs_submit_chunk_enqueues_worker_future():
@@ -494,10 +506,8 @@ def test_recall_tfs_single_thread_passes_failed_reads_through(monkeypatch):
     monkeypatch.setattr(recall_tfs, "_process_payload_record", fake_process)
     monkeypatch.setattr(
         recall_tfs,
-        "_apply_result",
-        lambda read, result, also_write_legacy, downstream_compat: applied.append(
-            (read.query_name, result)
-        ),
+        "_apply_result_from_request",
+        lambda request: applied.append((request.read.query_name, request.result)),
     )
 
     assert recall_tfs._single_thread_loop(

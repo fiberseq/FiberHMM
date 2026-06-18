@@ -104,6 +104,14 @@ class _RecallModelConfig:
     context_size: int
 
 
+@dataclass(frozen=True)
+class _RecallApplyResultRequest:
+    read: object
+    result: object
+    also_write_legacy: bool
+    downstream_compat: bool
+
+
 def _new_stats():
     return {key: 0 for key in _STATS_KEYS}
 
@@ -305,17 +313,30 @@ def _read_sequence_length(read) -> int:
     return len(read.query_sequence) if read.query_sequence else 0
 
 
-def _apply_result(read, result, also_write_legacy, downstream_compat):
+def _apply_result_from_request(
+    request: _RecallApplyResultRequest,
+):
     """Apply compact worker result to a pysam read in place (main process)."""
     write_ma_tags(
-        read,
-        read_length=_read_sequence_length(read),
-        tf_calls=result.tf_calls,
-        kept_nucs=result.kept_nucs,
-        msps=result.msps,
-        nq_for_kept_nucs=result.nq_for_kept,
-        also_write_legacy=also_write_legacy,
-        downstream_compat=downstream_compat,
+        request.read,
+        read_length=_read_sequence_length(request.read),
+        tf_calls=request.result.tf_calls,
+        kept_nucs=request.result.kept_nucs,
+        msps=request.result.msps,
+        nq_for_kept_nucs=request.result.nq_for_kept,
+        also_write_legacy=request.also_write_legacy,
+        downstream_compat=request.downstream_compat,
+    )
+
+
+def _apply_result(read, result, also_write_legacy, downstream_compat):
+    _apply_result_from_request(
+        _RecallApplyResultRequest(
+            read=read,
+            result=result,
+            also_write_legacy=also_write_legacy,
+            downstream_compat=downstream_compat,
+        )
     )
 
 
@@ -327,7 +348,14 @@ def _write_recall_result(
     downstream_compat,
 ):
     if result is not None:
-        _apply_result(read, result, also_write_legacy, downstream_compat)
+        _apply_result_from_request(
+            _RecallApplyResultRequest(
+                read=read,
+                result=result,
+                also_write_legacy=also_write_legacy,
+                downstream_compat=downstream_compat,
+            )
+        )
     bam_out.write(read)
 
 
