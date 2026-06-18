@@ -83,6 +83,13 @@ from fiberhmm.io.path_status import path_is_nonempty_file, path_is_regular_file
 _MM_SUBTYPE_RE = re.compile(r'([ACGTUN])([+-])([a-z0-9]+|\d+)', re.IGNORECASE)
 
 
+@dataclass(frozen=True)
+class _MaAnnotationTagInputs:
+    ma: str
+    aq: object
+    an_names: list[str]
+
+
 def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
     """Extract chromosome sizes from BAM header."""
     if not os.path.exists(bam_path):
@@ -143,7 +150,7 @@ def _ma_annotation_tag_inputs(read):
         an_names = parse_an_tag(read.get_tag('AN')) if read.has_tag('AN') else []
     except KeyError:
         an_names = []
-    return ma_str, aq, an_names
+    return _MaAnnotationTagInputs(ma_str, aq, an_names)
 
 
 def _ma_interval_to_seq(start: int, length: int, read_length: int, is_reverse: bool):
@@ -187,16 +194,15 @@ def _parse_ma_annotations(read, target_name: str):
     tag_inputs = _ma_annotation_tag_inputs(read)
     if tag_inputs is None:
         return None
-    ma_str, aq, an_names = tag_inputs
 
     try:
-        parsed = parse_ma_tag(ma_str)
+        parsed = parse_ma_tag(tag_inputs.ma)
     except ValueError:
         return None
 
     qual_specs = [rt[2] for rt in parsed['raw_types']]
     n_per_type = [len(rt[3]) for rt in parsed['raw_types']]
-    per_annotation = parse_aq_array(aq, qual_specs, n_per_type)
+    per_annotation = parse_aq_array(tag_inputs.aq, qual_specs, n_per_type)
 
     annotations = []
     ann_idx = 0
@@ -205,7 +211,11 @@ def _parse_ma_annotations(read, target_name: str):
     for name, _strand, _qspec, intervals in parsed['raw_types']:
         for s, length in intervals:
             quals = per_annotation[ann_idx] if ann_idx < len(per_annotation) else []
-            ann_name = an_names[ann_idx] if ann_idx < len(an_names) else ''
+            ann_name = (
+                tag_inputs.an_names[ann_idx]
+                if ann_idx < len(tag_inputs.an_names)
+                else ''
+            )
             if name == target_name:
                 annotations.append(
                     _ma_annotation_record(

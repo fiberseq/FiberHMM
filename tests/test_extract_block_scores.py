@@ -250,16 +250,18 @@ def test_ma_annotation_tag_inputs_handles_required_and_optional_tags():
     assert extract_tags._ma_annotation_tag_inputs(read) is None
 
     read.set_tag('MA', '100;tf+Q:1-5')
-    assert extract_tags._ma_annotation_tag_inputs(read) == (
-        '100;tf+Q:1-5', [], [],
-    )
+    tag_inputs = extract_tags._ma_annotation_tag_inputs(read)
+    assert tag_inputs.ma == '100;tf+Q:1-5'
+    assert tag_inputs.aq == []
+    assert tag_inputs.an_names == []
 
     aq = array('B', [200])
     read.set_tag('AQ', aq)
     read.set_tag('AN', 'tf_a')
-    assert extract_tags._ma_annotation_tag_inputs(read) == (
-        '100;tf+Q:1-5', aq, ['tf_a'],
-    )
+    tag_inputs = extract_tags._ma_annotation_tag_inputs(read)
+    assert tag_inputs.ma == '100;tf+Q:1-5'
+    assert tag_inputs.aq is aq
+    assert tag_inputs.an_names == ['tf_a']
 
 
 def test_ma_interval_and_quals_helpers_preserve_genomic_order():
