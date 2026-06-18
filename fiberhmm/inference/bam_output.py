@@ -83,6 +83,7 @@ def _samtools_index_error_requires_sort(stderr: str) -> bool:
 
 
 def _sorted_bam_temp_path(output_bam: str) -> str:
+    output_bam = os.fspath(output_bam)
     if output_bam.lower().endswith('.bam'):
         return output_bam[:-4] + '.sorted.bam'
     return output_bam + '.sorted.bam'
