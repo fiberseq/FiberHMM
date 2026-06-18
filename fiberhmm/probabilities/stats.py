@@ -8,11 +8,14 @@ Contains:
 """
 
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict
 
 import numpy as np
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from fiberhmm.probabilities.context_counter import ContextCounter
 
 
@@ -73,11 +76,21 @@ def _merged_probability_table(acc_probs, inacc_probs):
     return merged
 
 
-def _probability_tables_for_base(accessible_counters, inaccessible_counters,
-                                 base: str, context_size: int):
+@dataclass(frozen=True)
+class _ProbabilityTablesForBase:
+    accessible: 'pd.DataFrame'
+    inaccessible: 'pd.DataFrame'
+
+
+def _probability_tables_for_base(
+    accessible_counters,
+    inaccessible_counters,
+    base: str,
+    context_size: int,
+) -> _ProbabilityTablesForBase:
     _, acc_probs = accessible_counters[base].get_encoding_table(context_size)
     _, inacc_probs = inaccessible_counters[base].get_encoding_table(context_size)
-    return acc_probs, inacc_probs
+    return _ProbabilityTablesForBase(acc_probs, inacc_probs)
 
 
 def _filtered_log_odds(merged, eps: float = 0.001) -> np.ndarray:
@@ -443,11 +456,14 @@ def _write_probability_stats_summary(summary_file: str,
             acc = accessible_counters[base]
             inacc = inaccessible_counters[base]
 
-            acc_probs, inacc_probs = _probability_tables_for_base(
+            probability_tables = _probability_tables_for_base(
                 accessible_counters, inaccessible_counters, base, context_size,
             )
             _write_base_probability_summary(
-                f, base, acc, inacc, acc_probs, inacc_probs, context_size,
+                f, base, acc, inacc,
+                probability_tables.accessible,
+                probability_tables.inaccessible,
+                context_size,
             )
 
 
@@ -579,15 +595,19 @@ def _write_probability_stats_pdf(
 ) -> str:
     with pdf_pages_factory(pdf_path) as pdf:
         for base in accessible_counters.keys():
-            acc_probs, inacc_probs = _probability_tables_for_base(
+            probability_tables = _probability_tables_for_base(
                 accessible_counters, inaccessible_counters, base, context_size,
             )
 
             _write_probability_distribution_pdf_page(
-                plt, pdf, base, context_size, acc_probs, inacc_probs,
+                plt, pdf, base, context_size,
+                probability_tables.accessible,
+                probability_tables.inaccessible,
             )
             _write_probability_counts_pdf_page(
-                plt, pdf, base, acc_probs, inacc_probs,
+                plt, pdf, base,
+                probability_tables.accessible,
+                probability_tables.inaccessible,
             )
     return pdf_path
 
@@ -605,14 +625,16 @@ def _save_probability_distribution_pngs(
         acc = accessible_counters[base]
         inacc = inaccessible_counters[base]
 
-        acc_probs, inacc_probs = _probability_tables_for_base(
+        probability_tables = _probability_tables_for_base(
             accessible_counters, inaccessible_counters, base, context_size,
         )
 
         png_paths.append(
             _save_probability_distribution_png(
                 plt, plots_dir, base_name, base, context_size,
-                acc, inacc, acc_probs, inacc_probs,
+                acc, inacc,
+                probability_tables.accessible,
+                probability_tables.inaccessible,
             )
         )
     return png_paths

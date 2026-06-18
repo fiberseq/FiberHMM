@@ -86,12 +86,12 @@ def test_probability_tables_for_base_fetches_accessible_and_inaccessible_tables(
     acc = _FakeCounter(0, 0, {}, acc_table)
     inacc = _FakeCounter(0, 0, {}, inacc_table)
 
-    got_acc, got_inacc = stats._probability_tables_for_base(
+    tables = stats._probability_tables_for_base(
         {"A": acc}, {"A": inacc}, "A", context_size=4,
     )
 
-    assert got_acc is acc_table
-    assert got_inacc is inacc_table
+    assert tables.accessible is acc_table
+    assert tables.inaccessible is inacc_table
     assert acc.context_sizes == [4]
     assert inacc.context_sizes == [4]
 
