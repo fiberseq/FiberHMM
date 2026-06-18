@@ -90,6 +90,12 @@ class _NucBoundaries:
     ends: np.ndarray
 
 
+@dataclass(frozen=True)
+class _MspIntervals:
+    starts: np.ndarray
+    sizes: np.ndarray
+
+
 def _new_mode_detection_counts() -> dict:
     return {
         't_minus_a': 0,
@@ -166,7 +172,7 @@ def _mean_interval_scores(confidence: np.ndarray, starts, ends,
 
 
 def _msp_intervals_from_nuc_boundaries(nuc_starts, nuc_ends, read_length: int,
-                                       msp_min_size: int) -> Tuple[np.ndarray, np.ndarray]:
+                                       msp_min_size: int) -> _MspIntervals:
     msp_start_list = []
     msp_size_list = []
 
@@ -189,12 +195,15 @@ def _msp_intervals_from_nuc_boundaries(nuc_starts, nuc_ends, read_length: int,
         msp_size_list.append(read_length)
 
     if not msp_start_list:
-        return np.array([], dtype=np.int32), np.array([], dtype=np.int32)
+        return _MspIntervals(
+            np.array([], dtype=np.int32),
+            np.array([], dtype=np.int32),
+        )
 
     starts = np.array(msp_start_list, dtype=np.int32)
     sizes = np.array(msp_size_list, dtype=np.int32)
     size_mask = sizes >= msp_min_size
-    return starts[size_mask], sizes[size_mask]
+    return _MspIntervals(starts[size_mask], sizes[size_mask])
 
 
 def _nuc_boundaries_from_footprint_runs(
@@ -263,22 +272,22 @@ def _add_msp_track(
         nuc_min_size,
     )
 
-    msp_starts_arr, msp_sizes_arr = _msp_intervals_from_nuc_boundaries(
+    msp_intervals = _msp_intervals_from_nuc_boundaries(
         nuc_boundaries.starts,
         nuc_boundaries.ends,
         read_length,
         msp_min_size,
     )
 
-    if len(msp_starts_arr) > 0:
-        result['msp_starts'] = msp_starts_arr
-        result['msp_sizes'] = msp_sizes_arr
+    if len(msp_intervals.starts) > 0:
+        result['msp_starts'] = msp_intervals.starts
+        result['msp_sizes'] = msp_intervals.sizes
 
         if with_scores and confidence is not None:
             result['msp_scores'] = _mean_interval_scores(
                 confidence,
-                msp_starts_arr,
-                msp_starts_arr + msp_sizes_arr,
+                msp_intervals.starts,
+                msp_intervals.starts + msp_intervals.sizes,
                 invert=True,
             )
 

@@ -314,6 +314,17 @@ class TestPredictFootprintsAndMsps:
         np.testing.assert_array_equal(boundaries.starts, [20])
         np.testing.assert_array_equal(boundaries.ends, [120])
 
+    def test_msp_intervals_from_nuc_boundaries_names_starts_and_sizes(self):
+        intervals = engine._msp_intervals_from_nuc_boundaries(
+            np.array([10, 30], dtype=np.int64),
+            np.array([20, 40], dtype=np.int64),
+            read_length=50,
+            msp_min_size=10,
+        )
+
+        np.testing.assert_array_equal(intervals.starts, [0, 20, 40])
+        np.testing.assert_array_equal(intervals.sizes, [10, 10, 10])
+
     def test_returns_dict_with_correct_keys(self, simple_model):
         obs = np.array([0, 0, 0, 3, 3, 3, 3, 3, 0, 0, 0], dtype=np.int32)
         result = predict_footprints_and_msps(simple_model, obs)
