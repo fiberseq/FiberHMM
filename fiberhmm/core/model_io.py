@@ -91,6 +91,7 @@ def load_model_for_inference(filepath: str, normalize: bool = True) -> FiberHMM:
 
 
 def _model_file_format(filepath: str) -> str:
+    filepath = os.fspath(filepath)
     normalized_path = filepath.lower()
     if normalized_path.endswith('.npz'):
         return 'npz'
@@ -257,6 +258,7 @@ def _convert_hmmlearn_model(hmmlearn_model) -> FiberHMM:
 # =============================================================================
 
 def _json_save_path(filepath: str) -> Tuple[str, str]:
+    filepath = os.fspath(filepath)
     if filepath.lower().endswith('.json'):
         return filepath, filepath
     base, _ = os.path.splitext(filepath)

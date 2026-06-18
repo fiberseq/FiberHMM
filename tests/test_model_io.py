@@ -5,6 +5,7 @@ import json
 import os
 import pickle
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -46,6 +47,7 @@ class TestLoadSaveRoundTrip:
         assert _model_file_format("model.NPZ") == "npz"
         assert _model_file_format("model.json") == "json"
         assert _model_file_format("model.JSON") == "json"
+        assert _model_file_format(Path("model.json")) == "json"
         assert _model_file_format("model.pkl") == "pickle"
         assert _model_file_format("model.legacy") == "pickle"
 
@@ -95,7 +97,7 @@ class TestLoadSaveRoundTrip:
         assert calls == ["normalize", "unfreeze"]
 
     def test_json_round_trip(self, sample_model, tmp_path):
-        filepath = str(tmp_path / "model.json")
+        filepath = tmp_path / "model.json"
         save_model(sample_model, filepath, context_size=3, mode='pacbio-fiber')
 
         loaded = load_model(filepath, normalize=False)
@@ -380,6 +382,10 @@ class TestSaveRedirect:
             "/tmp/model.JSON",
         )
         assert _json_save_path("/tmp/model.npz") == (
+            "/tmp/model.json",
+            "/tmp/model.npz",
+        )
+        assert _json_save_path(Path("/tmp/model.npz")) == (
             "/tmp/model.json",
             "/tmp/model.npz",
         )
