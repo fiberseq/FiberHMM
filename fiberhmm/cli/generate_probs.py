@@ -256,7 +256,9 @@ def _probability_counter_summary(counter: ContextCounter) -> dict:
 
 
 def _max_reads_per_file(max_reads: int, n_files: int) -> int:
-    return max_reads // n_files if max_reads > 0 else 0
+    if max_reads <= 0:
+        return 0
+    return max(1, max_reads // n_files)
 
 
 def _accumulate_filter_stats(combined_stats, filter_stats: Dict[str, int]) -> None:

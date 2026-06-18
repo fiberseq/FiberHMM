@@ -1174,6 +1174,7 @@ def test_probability_output_path_helpers():
 def test_sample_set_bookkeeping_helpers():
     assert _max_reads_per_file(0, 3) == 0
     assert _max_reads_per_file(10, 3) == 3
+    assert _max_reads_per_file(2, 5) == 1
 
     combined = defaultdict(int, {"scanned": 5, "processed": 2})
     _accumulate_filter_stats(combined, {"scanned": 4, "low_mapq": 1})
