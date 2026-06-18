@@ -21,6 +21,8 @@ Examples:
   # Stream to stdout for pipe to ft fire or samtools sort
   fiberhmm-call -i in.bam -o - --enzyme hia5 --seq pacbio | ft fire - -
 """
+from __future__ import annotations
+
 import argparse
 import sys
 from dataclasses import dataclass
@@ -85,6 +87,15 @@ class _CallFusedCommonSettings:
     recall_nucs: bool
     phase_nrl: int
     pg_record: dict
+
+
+@dataclass(frozen=True)
+class _CallPhaseNrlRequest:
+    apply_model_path: str
+    recall_model_path: str | None
+    mode: str
+    k: int
+    recall_nucs: bool
 
 
 @dataclass
@@ -318,13 +329,15 @@ def _invalid_phase_nrl_message(value) -> str:
     return f"  WARNING: invalid --phase-nrl {value!r}; using off."
 
 
-def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
-                       recall_nucs) -> int:
+def _resolve_phase_nrl_for_request(
+    args,
+    request: _CallPhaseNrlRequest,
+) -> int:
     """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off)."""
     raw = _normalize_phase_nrl_option(args.phase_nrl)
     if _is_phase_nrl_off(raw):
         return 0
-    if not recall_nucs:
+    if not request.recall_nucs:
         # phase rides on the nuc recaller; silently off when recall is off.
         return 0
     if raw != 'auto':
@@ -340,14 +353,28 @@ def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
         return 185
     from fiberhmm.inference.nrl_estimate import estimate_phase_nrl
     res = estimate_phase_nrl(
-        args.input, apply_model_path, recall_model_path,
-        mode=mode, context_size=k,
+        args.input, request.apply_model_path, request.recall_model_path,
+        mode=request.mode, context_size=request.k,
         split_min_llr=args.split_min_llr, split_min_opps=args.split_min_opps,
         nuc_min_size=args.nuc_min_size, msp_min_size=args.msp_min_size,
         prob_threshold=args.prob_threshold, edge_trim=args.edge_trim,
     )
     print(_phase_nrl_estimate_message(res), file=sys.stderr)
     return int(res['nrl'])
+
+
+def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
+                       recall_nucs) -> int:
+    return _resolve_phase_nrl_for_request(
+        args,
+        _CallPhaseNrlRequest(
+            apply_model_path=apply_model_path,
+            recall_model_path=recall_model_path,
+            mode=mode,
+            k=k,
+            recall_nucs=recall_nucs,
+        ),
+    )
 
 
 def _resolve_recall_nucs(args) -> bool:
@@ -697,13 +724,15 @@ def _resolve_call_runtime(args, argv) -> _CallRuntime:
         _check_daf_inputs(args.input, args.reference)
 
     # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
-    phase_nrl = _resolve_phase_nrl(
+    phase_nrl = _resolve_phase_nrl_for_request(
         args,
-        apply_model_path,
-        recall_model_path,
-        mode_context.mode,
-        mode_context.k,
-        recall_nucs,
+        _CallPhaseNrlRequest(
+            apply_model_path=apply_model_path,
+            recall_model_path=recall_model_path,
+            mode=mode_context.mode,
+            k=mode_context.k,
+            recall_nucs=recall_nucs,
+        ),
     )
     pg_record = _build_pg_record(
         mode_context.mode, recall_nucs, phase_nrl, args.keep_chimeras, argv,

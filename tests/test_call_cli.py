@@ -27,6 +27,7 @@ from fiberhmm.cli.call import (
     _call_recall_model_label,
     _CallBannerSettings,
     _CallFusedCommonSettings,
+    _CallPhaseNrlRequest,
     _check_daf_inputs,
     _check_region_parallel_file_io,
     _chimera_filter_state,
@@ -44,6 +45,8 @@ from fiberhmm.cli.call import (
     _resolve_call_chroms,
     _resolve_call_mode_context,
     _resolve_call_runtime,
+    _resolve_phase_nrl,
+    _resolve_phase_nrl_for_request,
     _resolve_recall_model,
     _resolve_recall_nucs,
     _run_call_pipeline,
@@ -282,6 +285,44 @@ def test_call_phase_nrl_literal_helpers():
     assert _invalid_phase_nrl_message("bad") == (
         "  WARNING: invalid --phase-nrl 'bad'; using off."
     )
+
+
+def test_resolve_phase_nrl_request_handles_non_auto_paths(capsys):
+    request = _CallPhaseNrlRequest(
+        apply_model_path="apply.json",
+        recall_model_path="recall.json",
+        mode="daf",
+        k=3,
+        recall_nucs=True,
+    )
+    args = SimpleNamespace(phase_nrl="off")
+
+    assert _resolve_phase_nrl_for_request(args, request) == 0
+
+    args.phase_nrl = "185"
+    assert _resolve_phase_nrl_for_request(args, request) == 185
+    assert _resolve_phase_nrl(
+        args,
+        apply_model_path="apply.json",
+        recall_model_path="recall.json",
+        mode="daf",
+        k=3,
+        recall_nucs=True,
+    ) == 185
+
+    args.phase_nrl = "auto"
+    disabled_request = _CallPhaseNrlRequest(
+        apply_model_path="apply.json",
+        recall_model_path="recall.json",
+        mode="daf",
+        k=3,
+        recall_nucs=False,
+    )
+    assert _resolve_phase_nrl_for_request(args, disabled_request) == 0
+
+    args.phase_nrl = "bad"
+    assert _resolve_phase_nrl_for_request(args, request) == 0
+    assert "invalid --phase-nrl 'bad'" in capsys.readouterr().err
 
 
 def test_phase_nrl_estimate_message_formats_ci_and_counts():
@@ -549,9 +590,9 @@ def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
     )
     monkeypatch.setattr(
         call,
-        "_resolve_phase_nrl",
-        lambda got_args, apply, recall, mode, k, recall_nucs: calls.append(
-            ("phase", apply, recall, mode, k, recall_nucs)
+        "_resolve_phase_nrl_for_request",
+        lambda got_args, request: calls.append(
+            ("phase", got_args, request)
         ) or 185,
     )
     monkeypatch.setattr(
@@ -587,7 +628,17 @@ def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
     )
     assert calls[:3] == [
         ("check", "in.bam", "ref.fa"),
-        ("phase", "apply.json", "recall.json", "daf", 5, True),
+        (
+            "phase",
+            args,
+            _CallPhaseNrlRequest(
+                apply_model_path="apply.json",
+                recall_model_path="recall.json",
+                mode="daf",
+                k=5,
+                recall_nucs=True,
+            ),
+        ),
         ("pg", "daf", True, 185, False, ["fiberhmm-call", "-i", "in.bam"]),
     ]
     assert calls[3] == (
