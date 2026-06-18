@@ -290,6 +290,27 @@ def _build_worker_fused_recall_result(
     )
 
 
+def _build_fused_configured_recall_result(
+    fiber_read,
+    apply_result,
+    llr_hit,
+    llr_miss,
+    config: _FusedPayloadWorkerConfig,
+):
+    return _build_worker_fused_recall_result(
+        fiber_read,
+        apply_result,
+        llr_hit,
+        llr_miss,
+        config.min_llr,
+        config.min_opps,
+        config.unify_threshold,
+        config.with_scores,
+        config.nuc_min_size,
+        config.msp_min_size,
+    )
+
+
 def _process_fused_payload_item(
     payload,
     config: _FusedPayloadWorkerConfig,
@@ -313,17 +334,12 @@ def _process_fused_payload_item(
     if not apply_result_has_footprints(apply_result):
         return None
 
-    return _build_worker_fused_recall_result(
+    return _build_fused_configured_recall_result(
         fiber_read,
         apply_result,
         llr_hit,
         llr_miss,
-        config.min_llr,
-        config.min_opps,
-        config.unify_threshold,
-        config.with_scores,
-        config.nuc_min_size,
-        config.msp_min_size,
+        config,
     )
 
 

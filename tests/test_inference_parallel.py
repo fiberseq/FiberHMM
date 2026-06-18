@@ -1457,6 +1457,55 @@ def test_build_worker_fused_recall_result_forwards_options(monkeypatch):
     }
 
 
+def test_build_fused_configured_recall_result_forwards_config(monkeypatch):
+    fiber_read = {"query_sequence": "ACGT"}
+    apply_result = {"ns": [1]}
+    hit = object()
+    miss = object()
+    seen = {}
+
+    def fake_build(*args):
+        seen["args"] = args
+        return {"recall": True}
+
+    monkeypatch.setattr(
+        streaming_workers, "_build_worker_fused_recall_result", fake_build,
+    )
+    config = streaming_workers._FusedPayloadWorkerConfig(
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
+        prob_threshold=128,
+        min_llr=4.5,
+        min_opps=5,
+        unify_threshold=90,
+    )
+
+    assert streaming_workers._build_fused_configured_recall_result(
+        fiber_read,
+        apply_result,
+        hit,
+        miss,
+        config,
+    ) == {"recall": True}
+    assert seen["args"] == (
+        fiber_read,
+        apply_result,
+        hit,
+        miss,
+        4.5,
+        5,
+        90,
+        True,
+        85,
+        60,
+    )
+
+
 def test_process_fused_payload_item_runs_parse_apply_and_recall(monkeypatch):
     payload = {"read_id": "read1"}
     fiber_read = {"query_sequence": "ACGT"}
