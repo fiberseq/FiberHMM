@@ -272,13 +272,21 @@ def _write_sample_probability_table(
     return probs
 
 
-def _probability_counter_summary(counter: ContextCounter) -> dict:
-    return {
-        'positions': counter.total_positions,
-        'modified': counter.total_modified,
-        'rate': counter.total_modified / max(1, counter.total_positions),
-        'unique_contexts': len(counter.counts),
-    }
+@dataclass(frozen=True)
+class _ProbabilityCounterSummary:
+    positions: int
+    modified: int
+    rate: float
+    unique_contexts: int
+
+
+def _probability_counter_summary(counter: ContextCounter) -> _ProbabilityCounterSummary:
+    return _ProbabilityCounterSummary(
+        positions=counter.total_positions,
+        modified=counter.total_modified,
+        rate=counter.total_modified / max(1, counter.total_positions),
+        unique_contexts=len(counter.counts),
+    )
 
 
 def _max_reads_per_file(max_reads: int, n_files: int) -> int:
@@ -719,16 +727,16 @@ def _print_probability_base_summary(
 
     print(f"\n{base}-centered contexts:")
     print("  Accessible:")
-    print(f"    Positions: {acc_summary['positions']:,}")
-    print(f"    Modified: {acc_summary['modified']:,}")
-    print(f"    Rate: {acc_summary['rate']:.4f}")
-    print(f"    Unique contexts: {acc_summary['unique_contexts']:,}")
+    print(f"    Positions: {acc_summary.positions:,}")
+    print(f"    Modified: {acc_summary.modified:,}")
+    print(f"    Rate: {acc_summary.rate:.4f}")
+    print(f"    Unique contexts: {acc_summary.unique_contexts:,}")
 
     print("  Inaccessible:")
-    print(f"    Positions: {inacc_summary['positions']:,}")
-    print(f"    Modified: {inacc_summary['modified']:,}")
-    print(f"    Rate: {inacc_summary['rate']:.4f}")
-    print(f"    Unique contexts: {inacc_summary['unique_contexts']:,}")
+    print(f"    Positions: {inacc_summary.positions:,}")
+    print(f"    Modified: {inacc_summary.modified:,}")
+    print(f"    Rate: {inacc_summary.rate:.4f}")
+    print(f"    Unique contexts: {inacc_summary.unique_contexts:,}")
 
 
 def _write_probability_tables_for_base(

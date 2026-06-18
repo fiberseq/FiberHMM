@@ -34,6 +34,7 @@ from fiberhmm.cli.generate_probs import (
     _probability_read_tags_or_skip,
     _probability_table_path,
     _ProbabilityControlGroupResults,
+    _ProbabilityCounterSummary,
     _ProbabilityReadTags,
     _ProbabilityRunContext,
     _ProbabilitySampleFileResult,
@@ -1224,17 +1225,17 @@ def test_probability_counter_summary_reports_totals_rate_and_contexts():
     counter.total_modified = 25
     counter.counts = {"AAA": [1, 2], "AAC": [3, 4]}
 
-    assert _probability_counter_summary(counter) == {
-        "positions": 100,
-        "modified": 25,
-        "rate": 0.25,
-        "unique_contexts": 2,
-    }
+    assert _probability_counter_summary(counter) == _ProbabilityCounterSummary(
+        positions=100,
+        modified=25,
+        rate=0.25,
+        unique_contexts=2,
+    )
 
     counter.total_positions = 0
     counter.total_modified = 1
     counter.counts = {}
-    assert _probability_counter_summary(counter)["rate"] == 1.0
+    assert _probability_counter_summary(counter).rate == 1.0
 
 
 def test_probability_output_path_helpers():
