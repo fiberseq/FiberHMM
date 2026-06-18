@@ -15,12 +15,15 @@ from fiberhmm.inference.tagging import (
     _legacy_apply_interval_groups,
     _legacy_interval_group,
     _linear_intervals_overlap,
+    _MolecularLegacyRequest,
     _nuc_overlaps_any_circular_interval,
     _nuc_overlaps_any_linear_interval,
     _result_intervals,
     _should_keep_nuc_interval,
     _tf_circular_intervals,
     _tf_linear_intervals,
+    _to_molecular_legacy,
+    _to_molecular_legacy_from_request,
     scores_to_u8,
     set_legacy_apply_tags,
     unify_circular_nucs_with_tf_calls,
@@ -85,6 +88,35 @@ def test_flip_legacy_intervals_to_molecular_sorts_and_reorders_scores():
     assert group.starts == [10, 85]
     assert group.lengths == [10, 5]
     assert group.scores == [0.75, 0.25]
+
+
+def test_to_molecular_legacy_request_matches_adapter():
+    class ReverseRead:
+        is_reverse = True
+        query_length = 100
+
+    read = ReverseRead()
+    request = _MolecularLegacyRequest(
+        starts=np.asarray([10, 80], dtype=np.int32),
+        lengths=np.asarray([5, 10], dtype=np.int32),
+        scores=np.asarray([0.25, 0.75], dtype=np.float64),
+        read=read,
+        with_scores=True,
+    )
+
+    requested = _to_molecular_legacy_from_request(request)
+    adapted = _to_molecular_legacy(
+        np.asarray([10, 80], dtype=np.int32),
+        np.asarray([5, 10], dtype=np.int32),
+        np.asarray([0.25, 0.75], dtype=np.float64),
+        read,
+        True,
+    )
+
+    assert requested == adapted
+    assert requested.starts == [10, 85]
+    assert requested.lengths == [10, 5]
+    assert requested.scores == [0.75, 0.25]
 
 
 def test_set_legacy_apply_tags_writes_unsigned_bam_arrays():

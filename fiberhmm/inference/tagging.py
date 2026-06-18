@@ -25,6 +25,15 @@ class _LegacyIntervalGroup:
 
 
 @dataclass(frozen=True)
+class _MolecularLegacyRequest:
+    starts: object
+    lengths: object
+    scores: object
+    read: object
+    with_scores: bool
+
+
+@dataclass(frozen=True)
 class _LegacyApplyIntervalGroups:
     nucs: _LegacyIntervalGroup
     msps: _LegacyIntervalGroup
@@ -59,19 +68,37 @@ def _flip_legacy_intervals_to_molecular(
     return _LegacyIntervalGroup(new_s, new_l, new_sc)
 
 
-def _to_molecular_legacy(starts, lengths, scores, read, with_scores) -> _LegacyIntervalGroup:
+def _to_molecular_legacy_from_request(
+    request: _MolecularLegacyRequest,
+) -> _LegacyIntervalGroup:
     """Convert parallel (start, length[, score]) legacy arrays to molecular
     frame for a reverse-mapped read (no-op for forward reads). Returns lists;
     scores are reordered to stay aligned with the re-sorted intervals."""
-    s_list = _array_to_ints(starts)
-    l_list = _array_to_ints(lengths)
-    sc = list(scores) if (with_scores and scores is not None) else None
-    if not s_list or not getattr(read, 'is_reverse', False):
+    s_list = _array_to_ints(request.starts)
+    l_list = _array_to_ints(request.lengths)
+    sc = (
+        list(request.scores)
+        if (request.with_scores and request.scores is not None)
+        else None
+    )
+    if not s_list or not getattr(request.read, 'is_reverse', False):
         return _LegacyIntervalGroup(s_list, l_list, sc)
-    read_length = _read_length_of(read)
+    read_length = _read_length_of(request.read)
     if not read_length:
         return _LegacyIntervalGroup(s_list, l_list, sc)
     return _flip_legacy_intervals_to_molecular(s_list, l_list, sc, read_length)
+
+
+def _to_molecular_legacy(starts, lengths, scores, read, with_scores) -> _LegacyIntervalGroup:
+    return _to_molecular_legacy_from_request(
+        _MolecularLegacyRequest(
+            starts=starts,
+            lengths=lengths,
+            scores=scores,
+            read=read,
+            with_scores=with_scores,
+        )
+    )
 
 
 def _array_to_ints(values) -> list[int]:
