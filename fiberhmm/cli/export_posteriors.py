@@ -100,6 +100,13 @@ class _ExportRun:
     params: dict
 
 
+@dataclass(frozen=True)
+class _H5ExportChromState:
+    fiber_counts: dict
+    metadata: dict
+    write_buffers: dict
+
+
 def _prepare_export_run(
     input_bam: str,
     model_path: str,
@@ -546,14 +553,14 @@ def _flush_h5_chrom_buffer(h5_file, chrom: str, write_buffers: dict,
     return n_written
 
 
-def _new_h5_export_chrom_state(regions_by_chrom: dict) -> tuple[dict, dict, dict]:
+def _new_h5_export_chrom_state(regions_by_chrom: dict) -> _H5ExportChromState:
     chrom_fiber_counts = {chrom: 0 for chrom in regions_by_chrom}
     chrom_metadata = {
         chrom: {'ids': [], 'starts': [], 'ends': [], 'strands': []}
         for chrom in regions_by_chrom
     }
     write_buffers = {chrom: [] for chrom in regions_by_chrom}
-    return chrom_fiber_counts, chrom_metadata, write_buffers
+    return _H5ExportChromState(chrom_fiber_counts, chrom_metadata, write_buffers)
 
 
 def _buffer_h5_region_results(
@@ -767,19 +774,25 @@ def _process_h5_export_region_batches(
     n_cores: int,
     verbose: bool,
     regions_by_chrom,
-    write_buffers,
-    chrom_fiber_counts,
-    chrom_metadata,
+    chrom_state: _H5ExportChromState,
     write_batch_size: int,
 ) -> None:
     def flush_buffer(chrom):
         _flush_h5_chrom_buffer(
-            h5_file, chrom, write_buffers, chrom_fiber_counts, chrom_metadata
+            h5_file,
+            chrom,
+            chrom_state.write_buffers,
+            chrom_state.fiber_counts,
+            chrom_state.metadata,
         )
 
     def on_results(chrom, results):
         _buffer_h5_region_results(
-            chrom, results, write_buffers, write_batch_size, flush_buffer,
+            chrom,
+            results,
+            chrom_state.write_buffers,
+            write_batch_size,
+            flush_buffer,
         )
 
     _process_regions(
@@ -799,8 +812,7 @@ def _process_h5_export_region_batches(
 def _write_h5_export_metadata(
     h5_file,
     regions_by_chrom,
-    chrom_metadata,
-    chrom_fiber_counts,
+    chrom_state: _H5ExportChromState,
     write_fiber_metadata_datasets,
     verbose: bool,
 ) -> None:
@@ -811,8 +823,8 @@ def _write_h5_export_metadata(
         _write_h5_chrom_metadata(
             h5_file,
             chrom,
-            chrom_metadata,
-            chrom_fiber_counts,
+            chrom_state.metadata,
+            chrom_state.fiber_counts,
             write_fiber_metadata_datasets,
         )
 
@@ -863,9 +875,7 @@ def export_posteriors_hdf5(
     regions_by_chrom = _regions_by_chrom(run.regions)
 
     # Track per-chromosome data
-    chrom_fiber_counts, chrom_metadata, write_buffers = _new_h5_export_chrom_state(
-        regions_by_chrom,
-    )
+    chrom_state = _new_h5_export_chrom_state(regions_by_chrom)
 
     with h5py.File(output_h5, 'w') as f:
         _initialize_h5_export_file(
@@ -889,22 +899,19 @@ def export_posteriors_hdf5(
             n_cores,
             verbose,
             regions_by_chrom,
-            write_buffers,
-            chrom_fiber_counts,
-            chrom_metadata,
+            chrom_state,
             write_batch_size,
         )
 
         _write_h5_export_metadata(
             f,
             regions_by_chrom,
-            chrom_metadata,
-            chrom_fiber_counts,
+            chrom_state,
             write_fiber_metadata_datasets,
             verbose,
         )
 
-    total_fibers = sum(chrom_fiber_counts.values())
+    total_fibers = sum(chrom_state.fiber_counts.values())
     _print_h5_export_summary(output_h5, total_fibers, verbose)
 
     return total_fibers

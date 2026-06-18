@@ -454,17 +454,17 @@ def test_flush_h5_chrom_buffer_skips_empty_buffer(monkeypatch):
 
 
 def test_new_h5_export_chrom_state_initializes_parallel_trackers():
-    counts, metadata, buffers = export_posteriors._new_h5_export_chrom_state({
+    state = export_posteriors._new_h5_export_chrom_state({
         "chr2": [(0, 10), (10, 20)],
         "chr1": [(5, 15)],
     })
 
-    assert counts == {"chr2": 0, "chr1": 0}
-    assert metadata == {
+    assert state.fiber_counts == {"chr2": 0, "chr1": 0}
+    assert state.metadata == {
         "chr2": {"ids": [], "starts": [], "ends": [], "strands": []},
         "chr1": {"ids": [], "starts": [], "ends": [], "strands": []},
     }
-    assert buffers == {"chr2": [], "chr1": []}
+    assert state.write_buffers == {"chr2": [], "chr1": []}
 
 
 def test_initialize_h5_export_file_writes_metadata_and_groups():
@@ -534,6 +534,11 @@ def test_process_h5_export_region_batches_buffers_and_flushes(monkeypatch):
     monkeypatch.setattr(export_posteriors, "_flush_h5_chrom_buffer", fake_flush)
 
     buffers = {"chr1": [], "chr2": []}
+    chrom_state = export_posteriors._H5ExportChromState(
+        fiber_counts={"chr1": 0, "chr2": 0},
+        metadata={"chr1": {}, "chr2": {}},
+        write_buffers=buffers,
+    )
     export_posteriors._process_h5_export_region_batches(
         "h5",
         [("chr1", 0, 10), ("chr2", 0, 10)],
@@ -543,9 +548,7 @@ def test_process_h5_export_region_batches_buffers_and_flushes(monkeypatch):
         4,
         True,
         {"chr1": [(0, 10)], "chr2": [(0, 10)]},
-        buffers,
-        {"chr1": 0, "chr2": 0},
-        {"chr1": {}, "chr2": {}},
+        chrom_state,
         1000,
     )
 
@@ -580,8 +583,11 @@ def test_write_h5_export_metadata_delegates_each_chrom(monkeypatch, capsys):
     export_posteriors._write_h5_export_metadata(
         "h5",
         {"chr1": [(0, 10)], "chr2": [(0, 10)]},
-        {"chr1": "meta1", "chr2": "meta2"},
-        {"chr1": 1, "chr2": 2},
+        export_posteriors._H5ExportChromState(
+            fiber_counts={"chr1": 1, "chr2": 2},
+            metadata={"chr1": "meta1", "chr2": "meta2"},
+            write_buffers={},
+        ),
         "writer",
         verbose=True,
     )
