@@ -1146,3 +1146,49 @@ def test_fused_region_parallel_bam_cleans_temp_dir_on_worker_failure(monkeypatch
 
     assert temp_dirs
     assert all(not temp_dir.exists() for temp_dir in temp_dirs)
+
+
+def test_fused_region_parallel_bam_cleans_temp_dir_on_setup_failure(
+    monkeypatch,
+    tmp_path,
+):
+    temp_dirs = _install_failing_region_pool(monkeypatch, tmp_path)
+    input_bam = _indexed_input_bam(tmp_path)
+
+    def fail_params(**kwargs):
+        raise RuntimeError("setup failed")
+
+    monkeypatch.setattr(region_pipeline, "_fused_region_worker_params", fail_params)
+
+    with pytest.raises(RuntimeError, match="setup failed"):
+        parallel._process_bam_region_parallel_fused(
+            input_bam=input_bam,
+            output_bam=str(tmp_path / "out.bam"),
+            apply_model_path="model.json",
+            recall_model_path=None,
+            train_rids=set(),
+            edge_trim=0,
+            circular=False,
+            mode="m6a",
+            context_size=6,
+            msp_min_size=0,
+            nuc_min_size=0,
+            min_mapq=0,
+            prob_threshold=0,
+            min_read_length=0,
+            with_scores=False,
+            min_llr=0.0,
+            min_opps=0,
+            unify_threshold=0,
+            emission_uplift=1.0,
+            also_write_legacy=True,
+            downstream_compat=True,
+            n_cores=1,
+            region_size=100,
+            skip_scaffolds=False,
+            chroms=None,
+            io_threads=1,
+        )
+
+    assert temp_dirs
+    assert all(not temp_dir.exists() for temp_dir in temp_dirs)

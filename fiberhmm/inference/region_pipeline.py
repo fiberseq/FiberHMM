@@ -936,39 +936,39 @@ def _process_bam_region_parallel_fused(
         ensure_index=False,
     )
 
-    params = _fused_region_worker_params(
-        edge_trim=edge_trim,
-        circular=circular,
-        mode=mode,
-        context_size=context_size,
-        msp_min_size=msp_min_size,
-        nuc_min_size=nuc_min_size,
-        min_mapq=min_mapq,
-        prob_threshold=prob_threshold,
-        min_read_length=min_read_length,
-        with_scores=with_scores,
-        train_rids=train_rids,
-        primary_only=primary_only,
-        io_threads=io_threads,
-        min_llr=min_llr,
-        min_opps=min_opps,
-        unify_threshold=unify_threshold,
-        also_write_legacy=also_write_legacy,
-        downstream_compat=downstream_compat,
-        recall_nucs=recall_nucs,
-        split_min_llr=split_min_llr,
-        split_min_opps=split_min_opps,
-        filter_chimeras=filter_chimeras,
-        chimera_min_seg=chimera_min_seg,
-        chimera_purity=chimera_purity,
-        phase_nrl=phase_nrl,
-        pg_record=pg_record,
-        ref_fasta_path=ref_fasta_path,
-    )
-
-    work_items = _region_bam_work_items(regions, input_bam, temp_dir)
-
     try:
+        params = _fused_region_worker_params(
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            min_mapq=min_mapq,
+            prob_threshold=prob_threshold,
+            min_read_length=min_read_length,
+            with_scores=with_scores,
+            train_rids=train_rids,
+            primary_only=primary_only,
+            io_threads=io_threads,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
+            also_write_legacy=also_write_legacy,
+            downstream_compat=downstream_compat,
+            recall_nucs=recall_nucs,
+            split_min_llr=split_min_llr,
+            split_min_opps=split_min_opps,
+            filter_chimeras=filter_chimeras,
+            chimera_min_seg=chimera_min_seg,
+            chimera_purity=chimera_purity,
+            phase_nrl=phase_nrl,
+            pg_record=pg_record,
+            ref_fasta_path=ref_fasta_path,
+        )
+
+        work_items = _region_bam_work_items(regions, input_bam, temp_dir)
+
         aggregation = _run_fused_region_bam_worker_pool(
             n_cores=n_cores,
             apply_model_path=apply_model_path,
