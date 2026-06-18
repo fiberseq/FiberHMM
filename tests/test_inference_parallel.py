@@ -225,12 +225,12 @@ def test_shutdown_legacy_resources_closes_executor_and_posteriors():
 
         def close(self):
             calls.append(("close",))
-            return ("posteriors", 1.5)
+            return (123, 1.5)
 
     assert legacy_pipeline._shutdown_legacy_resources(
         Executor(),
         Writer(),
-    ) == ("posteriors", 1.5)
+    ) == legacy_pipeline._LegacyPosteriorStats(123, 1.5)
     assert calls == [("shutdown", True), ("close",)]
 
 
@@ -456,7 +456,9 @@ def test_print_legacy_posterior_summary_handles_empty_and_values(capsys):
     legacy_pipeline._print_legacy_posterior_summary(None, "out.h5")
     assert capsys.readouterr().out == ""
 
-    legacy_pipeline._print_legacy_posterior_summary((1234, 5.678), "out.h5")
+    legacy_pipeline._print_legacy_posterior_summary(
+        legacy_pipeline._LegacyPosteriorStats(1234, 5.678), "out.h5",
+    )
     assert capsys.readouterr().out == (
         "Posteriors: 1,234 fibers -> out.h5 (5.7 MB)\n"
     )

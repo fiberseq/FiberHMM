@@ -50,6 +50,12 @@ class _LegacyChunkResult:
     worker_failures: int
 
 
+@dataclass(frozen=True)
+class _LegacyPosteriorStats:
+    n_fibers: int
+    file_size_mb: float
+
+
 def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                               outbam, model, executor,
                               edge_trim: int, circular: bool,
@@ -300,7 +306,13 @@ def _shutdown_legacy_resources(executor, posterior_writer):
             executor.shutdown(wait=True)
     finally:
         if posterior_writer is not None:
-            posterior_stats = posterior_writer.close()
+            closed_stats = posterior_writer.close()
+            if closed_stats is not None:
+                n_fibers, file_size_mb = closed_stats
+                posterior_stats = _LegacyPosteriorStats(
+                    n_fibers=n_fibers,
+                    file_size_mb=file_size_mb,
+                )
     return posterior_stats
 
 
@@ -381,8 +393,10 @@ def _print_legacy_posterior_summary(
 ) -> None:
     if not posterior_stats:
         return
-    n_fibers, file_size = posterior_stats
-    print(f"Posteriors: {n_fibers:,} fibers -> {output_posteriors} ({file_size:.1f} MB)")
+    print(
+        f"Posteriors: {posterior_stats.n_fibers:,} fibers -> "
+        f"{output_posteriors} ({posterior_stats.file_size_mb:.1f} MB)"
+    )
 
 
 def _process_legacy_chunk_buffer(
