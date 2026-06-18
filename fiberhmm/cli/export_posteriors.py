@@ -415,12 +415,12 @@ def _write_h5_fiber_arrays(grp, index: int, fiber: Dict) -> None:
     )
 
     idx = str(index)
-    for group_name, data, compression_opts in _fiber_array_dataset_specs(fiber):
+    for spec in _fiber_array_dataset_specs(fiber):
         _create_gzip_dataset(
-            grp[group_name],
+            grp[spec.group_name],
             idx,
-            data,
-            compression_opts=compression_opts,
+            spec.data,
+            compression_opts=spec.compression_opts,
         )
 
 

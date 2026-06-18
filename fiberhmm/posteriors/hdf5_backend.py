@@ -132,6 +132,13 @@ class _ChromMetadata:
     strands: List[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class _FiberArrayDatasetSpec:
+    group_name: str
+    data: np.ndarray
+    compression_opts: Optional[int]
+
+
 def _new_chrom_metadata() -> _ChromMetadata:
     return _ChromMetadata()
 
@@ -147,39 +154,39 @@ def _file_size_mb(path: str) -> float:
     return path_size_mb(path)
 
 
-def _fiber_array_dataset_specs(fiber: Dict) -> List[tuple]:
+def _fiber_array_dataset_specs(fiber: Dict) -> List[_FiberArrayDatasetSpec]:
     return [
-        (
-            'posteriors',
-            fiber['posteriors'].astype(np.float16),
-            4,
+        _FiberArrayDatasetSpec(
+            group_name='posteriors',
+            data=fiber['posteriors'].astype(np.float16),
+            compression_opts=4,
         ),
-        (
-            'ref_positions',
-            _int32_array(fiber.get('ref_positions')),
-            4,
+        _FiberArrayDatasetSpec(
+            group_name='ref_positions',
+            data=_int32_array(fiber.get('ref_positions')),
+            compression_opts=4,
         ),
-        (
-            'footprint_starts',
-            _int32_array(fiber.get('footprint_starts')),
-            None,
+        _FiberArrayDatasetSpec(
+            group_name='footprint_starts',
+            data=_int32_array(fiber.get('footprint_starts')),
+            compression_opts=None,
         ),
-        (
-            'footprint_sizes',
-            _int32_array(fiber.get('footprint_sizes')),
-            None,
+        _FiberArrayDatasetSpec(
+            group_name='footprint_sizes',
+            data=_int32_array(fiber.get('footprint_sizes')),
+            compression_opts=None,
         ),
     ]
 
 
 def _write_fiber_array_datasets(group, index: int, fiber: Dict) -> None:
     idx = str(index)
-    for group_name, data, compression_opts in _fiber_array_dataset_specs(fiber):
+    for spec in _fiber_array_dataset_specs(fiber):
         _create_gzip_dataset(
-            group[group_name],
+            group[spec.group_name],
             idx,
-            data,
-            compression_opts=compression_opts,
+            spec.data,
+            compression_opts=spec.compression_opts,
         )
 
 

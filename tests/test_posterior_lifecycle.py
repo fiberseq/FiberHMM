@@ -146,17 +146,23 @@ def test_fiber_array_dataset_specs_normalize_payload_arrays():
         }
     )
 
-    assert [name for name, data, opts in specs] == [
+    assert [spec.group_name for spec in specs] == [
         "posteriors",
         "ref_positions",
         "footprint_starts",
         "footprint_sizes",
     ]
-    assert [opts for name, data, opts in specs] == [4, 4, None, None]
-    assert specs[0][1].dtype == np.float16
-    np.testing.assert_array_equal(specs[1][1], np.array([10, -1], dtype=np.int32))
-    np.testing.assert_array_equal(specs[2][1], np.array([], dtype=np.int32))
-    np.testing.assert_array_equal(specs[3][1], np.array([20], dtype=np.int32))
+    assert [spec.compression_opts for spec in specs] == [4, 4, None, None]
+    assert specs[0].data.dtype == np.float16
+    np.testing.assert_array_equal(
+        specs[1].data,
+        np.array([10, -1], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(
+        specs[2].data,
+        np.array([], dtype=np.int32),
+    )
+    np.testing.assert_array_equal(specs[3].data, np.array([20], dtype=np.int32))
 
 
 def test_hdf5_fiber_array_dataset_helper_writes_expected_groups(tmp_path):
