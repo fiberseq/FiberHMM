@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
 import numpy as np
@@ -31,10 +32,18 @@ from fiberhmm.inference.tagging import (
 from fiberhmm.inference.tf_recaller import build_scan_intervals, call_tfs_in_interval
 
 
+@dataclass(frozen=True)
+class _IntervalBounds:
+    starts: list[int]
+    ends: list[int]
+
+
 def _analyzed_span(apply_result, read_length, kept):
     """Extent (lo, hi) the read was annotated over -- the union of the original
     HMM footprints/MSPs and the final nucleosomes -- used to tile MSPs."""
-    starts, ends = _apply_result_interval_bounds(apply_result)
+    bounds = _apply_result_interval_bounds(apply_result)
+    starts = list(bounds.starts)
+    ends = list(bounds.ends)
     for k in kept:
         starts.append(int(k.start))
         ends.append(int(k.start) + int(k.length))
@@ -48,7 +57,7 @@ def _apply_result_interval_bounds(apply_result):
         for s, length in zip(apply_result.get(ks, ()), apply_result.get(kl, ())):
             starts.append(int(s))
             ends.append(int(s) + int(length))
-    return starts, ends
+    return _IntervalBounds(starts=starts, ends=ends)
 
 
 def _interval_pair_lists(intervals):
