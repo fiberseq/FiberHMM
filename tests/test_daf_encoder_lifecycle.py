@@ -638,9 +638,42 @@ def test_close_daf_encode_handles_closes_all_after_close_error():
     ]
 
     with pytest.raises(RuntimeError, match="progress close failed"):
-        encoder._close_daf_encode_handles(*handles)
+        encoder._close_daf_encode_handles_from_request(
+            encoder._DafEncodeHandleCloseRequest(
+                pbar=handles[0],
+                outbam=handles[1],
+                inbam=handles[2],
+                ref_fasta=handles[3],
+            )
+        )
 
     assert all(handle.closed for handle in handles)
+
+
+def test_close_daf_encode_handles_adapter_builds_request(monkeypatch):
+    sentinel = object()
+    calls = []
+
+    monkeypatch.setattr(
+        encoder,
+        "_close_daf_encode_handles_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert encoder._close_daf_encode_handles(
+        "pbar",
+        "outbam",
+        "inbam",
+        "ref",
+    ) is None
+    assert calls == [
+        encoder._DafEncodeHandleCloseRequest(
+            pbar="pbar",
+            outbam="outbam",
+            inbam="inbam",
+            ref_fasta="ref",
+        ),
+    ]
 
 
 def test_write_skipped_daf_read_writes_updates_and_returns_increment():

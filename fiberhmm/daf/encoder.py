@@ -165,6 +165,14 @@ class _DafStreamReadsRequest:
     last_progress: float
 
 
+@dataclass(frozen=True)
+class _DafEncodeHandleCloseRequest:
+    pbar: object
+    outbam: object
+    inbam: object
+    ref_fasta: object
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -970,9 +978,11 @@ def _stream_daf_encode_reads(
     )
 
 
-def _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta) -> None:
+def _close_daf_encode_handles_from_request(
+    request: _DafEncodeHandleCloseRequest,
+) -> None:
     close_error = None
-    for handle in (pbar, outbam, inbam, ref_fasta):
+    for handle in (request.pbar, request.outbam, request.inbam, request.ref_fasta):
         if handle is None:
             continue
         try:
@@ -983,6 +993,17 @@ def _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta) -> None:
 
     if close_error is not None:
         raise close_error
+
+
+def _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta) -> None:
+    _close_daf_encode_handles_from_request(
+        _DafEncodeHandleCloseRequest(
+            pbar=pbar,
+            outbam=outbam,
+            inbam=inbam,
+            ref_fasta=ref_fasta,
+        ),
+    )
 
 
 def _maybe_finalize_daf_output(output_bam, io_threads: int, log) -> None:
