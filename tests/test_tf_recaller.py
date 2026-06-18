@@ -176,8 +176,10 @@ def test_kept_legacy_nuc_interval_applies_tf_overlap_policy():
 
 def test_nuc_aq_has_edge_qualities_detects_schema_mode():
     assert not _nuc_aq_has_edge_qualities([], [])
+    assert not _nuc_aq_has_edge_qualities(None, None)
     assert _nuc_aq_has_edge_qualities([1], [])
     assert _nuc_aq_has_edge_qualities([], [1])
+    assert _nuc_aq_has_edge_qualities(np.array([1]), np.array([]))
 
 
 def test_ma_tag_matches_spec_regex():

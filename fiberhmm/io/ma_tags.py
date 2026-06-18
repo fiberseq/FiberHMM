@@ -95,7 +95,10 @@ def _nuc_aq_has_edge_qualities(
     nuc_lq_values: Sequence[int],
     nuc_rq_values: Sequence[int],
 ) -> bool:
-    return bool(nuc_lq_values or nuc_rq_values)
+    return (
+        (nuc_lq_values is not None and len(nuc_lq_values) > 0)
+        or (nuc_rq_values is not None and len(nuc_rq_values) > 0)
+    )
 
 
 def _format_interval_list(intervals: Sequence[Tuple[int, int]]) -> str:
