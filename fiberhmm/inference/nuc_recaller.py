@@ -104,6 +104,12 @@ class _TilingFloors:
     nuc: int
 
 
+@dataclass(frozen=True)
+class _CircularTilingFrame:
+    nucs: List[NucCall]
+    msps: List[Interval]
+
+
 def _fragments_after_cuts(a: int, b: int,
                           cut_spans: Iterable[Tuple[int, int]]) -> List[Interval]:
     frags: List[Interval] = []
@@ -631,7 +637,12 @@ def _whole_molecule_nuc_candidate(calls, read_length: int):
     return next((n for n in calls if int(n.length) >= int(read_length)), None)
 
 
-def _restore_circular_tiling_frame(kept_rot, msp_rot, cut: int, read_length: int):
+def _restore_circular_tiling_frame(
+    kept_rot,
+    msp_rot,
+    cut: int,
+    read_length: int,
+) -> _CircularTilingFrame:
     kept = sorted(
         (
             NucCall(
@@ -646,7 +657,7 @@ def _restore_circular_tiling_frame(kept_rot, msp_rot, cut: int, read_length: int
         key=lambda n: n.start,
     )
     msps = sorted(((s + cut) % read_length, length) for s, length in msp_rot)
-    return kept, msps
+    return _CircularTilingFrame(nucs=kept, msps=msps)
 
 
 def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
@@ -691,7 +702,8 @@ def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
     kept_rot, msp_rot = assemble_nuc_msp_tiling(
         rotated, 0, rl, msp_min_size, nuc_min_size)
 
-    return _restore_circular_tiling_frame(kept_rot, msp_rot, cut, rl)
+    restored = _restore_circular_tiling_frame(kept_rot, msp_rot, cut, rl)
+    return restored.nucs, restored.msps
 
 
 def drop_short_nucs_overlapping_promoted(nuc_calls, promoted, unify_threshold):

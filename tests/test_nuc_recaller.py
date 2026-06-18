@@ -9,6 +9,7 @@ from fiberhmm.inference.nuc_recaller import (
     _bounded_interval,
     _BoundedInterval,
     _circular_uncovered_cut,
+    _CircularTilingFrame,
     _clip_ordered_nuc_calls_for_tiling,
     _keep_nuc_against_circular_intervals,
     _msp_gaps_between_nucs,
@@ -25,6 +26,7 @@ from fiberhmm.inference.nuc_recaller import (
     _recall_nuc_span,
     _recall_nuc_tables,
     _residue_intervals_around_nuc,
+    _restore_circular_tiling_frame,
     _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
     _total_call_llr,
@@ -566,6 +568,15 @@ def test_circular_rotation_helpers_choose_cut_and_split_straddlers():
         (190, 10, 200, 255, 0),
         (0, 90, 200, 0, 128),
     ]
+    assert _restore_circular_tiling_frame(
+        [NucCall(0, 90, 200, 0, 128)],
+        [(90, 100)],
+        cut=80,
+        read_length=rl,
+    ) == _CircularTilingFrame(
+        nucs=[NucCall(80, 90, 200, 0, 128)],
+        msps=[(170, 100)],
+    )
 
 
 def test_circular_tiling_empty_nucs_gives_whole_molecule_msp():
