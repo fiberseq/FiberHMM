@@ -582,3 +582,80 @@ def test_context_coverage_plot_uses_cumulative_percentages_and_guide():
     assert ax.ylabel == "Cumulative % of observations"
     assert ax.title == "Context Coverage (Lorenz-like)"
     assert ax.legend_called
+
+
+def test_probability_vs_coverage_plot_filters_high_coverage_contexts():
+    class FakeAxis:
+        def __init__(self):
+            self.scatter_calls = []
+            self.xscale = None
+            self.xlabel = None
+            self.ylabel = None
+            self.title = None
+            self.legend_called = False
+
+        def scatter(self, x_values, y_values, **kwargs):
+            self.scatter_calls.append((x_values, y_values, kwargs))
+
+        def set_xscale(self, value):
+            self.xscale = value
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_ylabel(self, value):
+            self.ylabel = value
+
+        def set_title(self, value):
+            self.title = value
+
+        def legend(self):
+            self.legend_called = True
+
+    merged = pd.DataFrame({
+        "total_acc": [101, 100, 200],
+        "total_inacc": [150, 300, 99],
+        "ratio_acc": [0.8, 0.4, 0.6],
+        "ratio_inacc": [0.2, 0.3, 0.5],
+    })
+    ax = FakeAxis()
+
+    stats._plot_probability_vs_coverage(ax, merged)
+
+    acc_x, acc_y, acc_kwargs = ax.scatter_calls[0]
+    inacc_x, inacc_y, inacc_kwargs = ax.scatter_calls[1]
+    assert acc_x.tolist() == [101]
+    assert acc_y.tolist() == [0.8]
+    assert inacc_x.tolist() == [150]
+    assert inacc_y.tolist() == [0.2]
+    assert acc_kwargs == {
+        "alpha": 0.5,
+        "s": 10,
+        "c": "forestgreen",
+        "label": "Accessible",
+    }
+    assert inacc_kwargs == {
+        "alpha": 0.5,
+        "s": 10,
+        "c": "firebrick",
+        "label": "Inaccessible",
+    }
+    assert ax.xscale == "log"
+    assert ax.xlabel == "Total observations (log scale)"
+    assert ax.ylabel == "Methylation probability"
+    assert ax.title == "Probability vs Coverage"
+    assert ax.legend_called
+
+    no_match_ax = FakeAxis()
+    stats._plot_probability_vs_coverage(
+        no_match_ax,
+        pd.DataFrame({
+            "total_acc": [100],
+            "total_inacc": [101],
+        }),
+    )
+    assert no_match_ax.scatter_calls == []
+
+    empty_ax = FakeAxis()
+    stats._plot_probability_vs_coverage(empty_ax, pd.DataFrame())
+    assert empty_ax.scatter_calls == []

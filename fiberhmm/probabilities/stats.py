@@ -292,6 +292,37 @@ def _plot_context_coverage(ax, acc_total, inacc_total) -> None:
     ax.legend()
 
 
+def _plot_probability_vs_coverage(ax, merged) -> None:
+    if len(merged) == 0:
+        return
+
+    mask = _contexts_with_min_observations(merged, 100)
+    if np.sum(mask) == 0:
+        return
+
+    ax.scatter(
+        merged.loc[mask, 'total_acc'],
+        merged.loc[mask, 'ratio_acc'],
+        alpha=0.5,
+        s=10,
+        c='forestgreen',
+        label='Accessible',
+    )
+    ax.scatter(
+        merged.loc[mask, 'total_inacc'],
+        merged.loc[mask, 'ratio_inacc'],
+        alpha=0.5,
+        s=10,
+        c='firebrick',
+        label='Inaccessible',
+    )
+    ax.set_xscale('log')
+    ax.set_xlabel('Total observations (log scale)')
+    ax.set_ylabel('Methylation probability')
+    ax.set_title('Probability vs Coverage')
+    ax.legend()
+
+
 def _write_probability_ratio_summary(handle, label: str, ratios: np.ndarray) -> None:
     if len(ratios) == 0:
         return
@@ -489,18 +520,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
 
             # Hit rate comparison - use merged data for alignment
             ax = axes[1, 0]
-            if len(merged) > 0:
-                mask = _contexts_with_min_observations(merged, 100)
-                if np.sum(mask) > 0:
-                    ax.scatter(merged.loc[mask, 'total_acc'], merged.loc[mask, 'ratio_acc'],
-                              alpha=0.5, s=10, c='forestgreen', label='Accessible')
-                    ax.scatter(merged.loc[mask, 'total_inacc'], merged.loc[mask, 'ratio_inacc'],
-                              alpha=0.5, s=10, c='firebrick', label='Inaccessible')
-                    ax.set_xscale('log')
-                    ax.set_xlabel('Total observations (log scale)')
-                    ax.set_ylabel('Methylation probability')
-                    ax.set_title('Probability vs Coverage')
-                    ax.legend()
+            _plot_probability_vs_coverage(ax, merged)
 
             # Context frequency comparison - use merged data
             ax = axes[1, 1]
