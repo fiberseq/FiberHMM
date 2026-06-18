@@ -328,7 +328,7 @@ def test_phase_cut_window_clips_to_fragment_and_rejects_tiny_windows():
 
 
 def test_phase_or_unsplit_subfragments_returns_original_when_disabled():
-    subs, cuts = _phase_or_unsplit_subfragments(
+    phase = _phase_or_unsplit_subfragments(
         np.array([], dtype=np.int32),
         10,
         90,
@@ -340,8 +340,8 @@ def test_phase_or_unsplit_subfragments_returns_original_when_disabled():
         phase_window=35,
     )
 
-    assert subs == [(10, 90)]
-    assert cuts == []
+    assert phase.fragments == [(10, 90)]
+    assert phase.cuts == []
 
 
 def test_rederive_msps_merges_and_filters():

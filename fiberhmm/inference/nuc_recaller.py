@@ -66,6 +66,12 @@ class _AccessibleSplit:
     access: List[Interval]
 
 
+@dataclass(frozen=True)
+class _PhaseSplit:
+    fragments: List[Interval]
+    cuts: List[Interval]
+
+
 def _fragments_after_cuts(a: int, b: int,
                           cut_spans: Iterable[Tuple[int, int]]) -> List[Interval]:
     frags: List[Interval] = []
@@ -219,22 +225,23 @@ def _phase_cut_window(a: int, b: int, pred: int, phase_window: int):
 
 
 def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
-                        phase_min_llr, phase_min_opps, phase_window):
+                        phase_min_llr, phase_min_opps,
+                        phase_window) -> _PhaseSplit:
     """Evidence-gated periodicity split of a long protected fragment.
 
     A fragment of length L >= 1.5*nrl is assumed to hold ``n = round(L/nrl)``
     nucleosomes. At each predicted internal linker (evenly spaced to fit L), scan
     a +-``phase_window`` bp window for an accessible run with the LOWERED
     ``phase_min_llr`` threshold; the strongest qualifying run becomes a cut.
-    Returns ``(subfragments, cut_intervals)``; with no qualifying cut the
-    fragment is returned whole (never split into a signal-desert).
+    Returns phase-split fragments plus cut intervals; with no qualifying cut
+    the fragment is returned whole (never split into a signal-desert).
     """
     L = b - a
     if L < int(1.5 * nrl):
-        return [(a, b)], []
+        return _PhaseSplit(fragments=[(a, b)], cuts=[])
     n = int(round(L / float(nrl)))
     if n < 2:
-        return [(a, b)], []
+        return _PhaseSplit(fragments=[(a, b)], cuts=[])
     spacing = L / float(n)
     cut_pairs: List[Interval] = []
     for i in range(1, n):
@@ -249,11 +256,11 @@ def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
             best = max(found, key=lambda c: c.llr)
             cut_pairs.append((best.start, best.start + best.length))
     if not cut_pairs:
-        return [(a, b)], []
+        return _PhaseSplit(fragments=[(a, b)], cuts=[])
     cut_pairs.sort()
     subs = _fragments_after_cuts(a, b, cut_pairs)
     cut_intervals = [(cs, ce - cs) for cs, ce in cut_pairs]
-    return subs, cut_intervals
+    return _PhaseSplit(fragments=subs, cuts=cut_intervals)
 
 
 def _phase_or_unsplit_subfragments(
@@ -266,13 +273,13 @@ def _phase_or_unsplit_subfragments(
     phase_min_llr: float,
     phase_min_opps: int,
     phase_window: int,
-):
+) -> _PhaseSplit:
     if phase_nrl > 0:
         return _phase_subfragments(
             obs, a, b, nhit, nmiss, phase_nrl,
             phase_min_llr, phase_min_opps, phase_window,
         )
-    return [(a, b)], []
+    return _PhaseSplit(fragments=[(a, b)], cuts=[])
 
 
 def _recall_nuc_span(
@@ -294,12 +301,12 @@ def _recall_nuc_span(
     access.extend(split.access)
 
     for a, b in split.fragments:
-        subs, phase_cuts = _phase_or_unsplit_subfragments(
+        phase = _phase_or_unsplit_subfragments(
             obs, a, b, nhit, nmiss, params.phase_nrl,
             params.phase_min_llr, params.phase_min_opps, params.phase_window,
         )
-        access.extend(phase_cuts)
-        for sa, sb in subs:
+        access.extend(phase.cuts)
+        for sa, sb in phase.fragments:
             refined = _refine_fragment(
                 obs, sa, sb, llr_hit, llr_miss,
                 params.nuc_min_size, params.edge_min_llr, params.edge_min_opps,
