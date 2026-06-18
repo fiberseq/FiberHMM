@@ -15,12 +15,25 @@ Usage:
 """
 
 import os
+from dataclasses import dataclass
 
 AUTO_WRITER_FORMAT = 'auto'
 HDF5_WRITER_FORMAT = 'hdf5'
 TSV_WRITER_FORMAT = 'tsv'
 HDF5_OUTPUT_SUFFIXES = ('.h5', '.hdf5')
 POSTERIOR_WRITER_FORMATS = (HDF5_WRITER_FORMAT, TSV_WRITER_FORMAT)
+
+
+@dataclass(frozen=True)
+class _PosteriorWriterRequest:
+    output_path: str
+    format: str = AUTO_WRITER_FORMAT
+    mode: str = 'pacbio-fiber'
+    context_size: int = 3
+    edge_trim: int = 10
+    source_bam: str = ''
+    batch_size: int = 1000
+    compress: bool = True
 
 
 def _path_endswith(output_path: str, suffixes: tuple[str, ...]) -> bool:
@@ -65,19 +78,42 @@ def create_writer(output_path: str, format: str = 'auto',
     Returns:
         Writer object (PosteriorWriter or PosteriorsTSVWriter)
     """
-    format = _resolve_writer_format(output_path, format)
+    return create_writer_from_request(
+        _PosteriorWriterRequest(
+            output_path=output_path,
+            format=format,
+            mode=mode,
+            context_size=context_size,
+            edge_trim=edge_trim,
+            source_bam=source_bam,
+            batch_size=batch_size,
+            compress=compress,
+        ),
+    )
+
+
+def create_writer_from_request(request: _PosteriorWriterRequest):
+    format = _resolve_writer_format(request.output_path, request.format)
 
     if format == HDF5_WRITER_FORMAT:
         from fiberhmm.posteriors.hdf5_backend import PosteriorWriter
         return PosteriorWriter(
-            output_path, mode, context_size, edge_trim,
-            source_bam, batch_size
+            request.output_path,
+            request.mode,
+            request.context_size,
+            request.edge_trim,
+            request.source_bam,
+            request.batch_size,
         )
     elif format == TSV_WRITER_FORMAT:
         from fiberhmm.posteriors.tsv_backend import PosteriorsTSVWriter
         return PosteriorsTSVWriter(
-            output_path, mode, context_size, edge_trim,
-            source_bam, compress
+            request.output_path,
+            request.mode,
+            request.context_size,
+            request.edge_trim,
+            request.source_bam,
+            request.compress,
         )
     else:
         raise ValueError(_unknown_writer_format_message(format))

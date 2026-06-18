@@ -31,4 +31,8 @@ def test_unknown_writer_format_message_names_valid_formats():
 
 def test_create_writer_rejects_unknown_format():
     with pytest.raises(ValueError, match="Unknown posteriors format"):
+        writer.create_writer_from_request(
+            writer._PosteriorWriterRequest("posteriors.out", format="unknown")
+        )
+    with pytest.raises(ValueError, match="Unknown posteriors format"):
         writer.create_writer("posteriors.out", format="unknown")
