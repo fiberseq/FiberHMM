@@ -17,6 +17,7 @@ from fiberhmm.inference.tagging import (
     _legacy_apply_interval_groups,
     _legacy_interval_group,
     _legacy_interval_group_from_request,
+    _LegacyApplyTagsRequest,
     _LegacyIntervalGroupRequest,
     _linear_intervals_overlap,
     _MolecularLegacyRequest,
@@ -31,6 +32,7 @@ from fiberhmm.inference.tagging import (
     _to_molecular_legacy_from_request,
     scores_to_u8,
     set_legacy_apply_tags,
+    set_legacy_apply_tags_from_request,
     unify_circular_nucs_with_tf_calls,
     unify_nucs_with_tf_calls,
 )
@@ -135,7 +137,14 @@ def test_set_legacy_apply_tags_writes_unsigned_bam_arrays():
         "as_scores": np.asarray([0.5]),
     }
 
-    set_legacy_apply_tags(read, result, with_scores=True, write_msps=True)
+    set_legacy_apply_tags_from_request(
+        _LegacyApplyTagsRequest(
+            read=read,
+            result=result,
+            with_scores=True,
+            write_msps=True,
+        )
+    )
 
     for tag in ("ns", "nl", "as", "al"):
         assert isinstance(read.tags[tag], pyarray.array)

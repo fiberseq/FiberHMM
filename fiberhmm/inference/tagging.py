@@ -50,6 +50,14 @@ class _LegacyApplyIntervalGroups:
 
 
 @dataclass(frozen=True)
+class _LegacyApplyTagsRequest:
+    read: object
+    result: dict
+    with_scores: bool
+    write_msps: bool = True
+
+
+@dataclass(frozen=True)
 class _FilteredNucIntervals:
     intervals: list[Interval]
     scores: Optional[list[int]]
@@ -344,7 +352,9 @@ def _clear_stale_spec_tags(read) -> None:
     clear_tags(read, STALE_SPEC_TAGS)
 
 
-def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True) -> None:
+def set_legacy_apply_tags_from_request(
+    request: _LegacyApplyTagsRequest,
+) -> None:
     """Write legacy apply tags (`ns/nl/as/al`, optional `nq/aq`) in place.
 
     This intentionally preserves the historical apply behavior: a non-empty
@@ -354,38 +364,54 @@ def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: boo
     # Apply recomputes the read structure, so any pre-existing MA/AN/AQ from a
     # prior fiberhmm-call/recall pass now refers to stale ns/nl coordinates.
     # Strip them so the BAM never carries an inconsistent annotation view.
-    _clear_stale_spec_tags(read)
+    _clear_stale_spec_tags(request.read)
 
     # FiberHMM works in SEQ (query_sequence) coordinates; ns/nl/as/al must be
     # written in molecular (original-fiber) frame for fibertools. Flip + re-sort
     # for reverse-mapped reads (forward reads are unchanged).
     groups = _legacy_apply_interval_groups(
-        result,
-        read,
-        with_scores,
+        request.result,
+        request.read,
+        request.with_scores,
     )
 
     _write_legacy_interval_tags(
-        read,
+        request.read,
         "ns",
         "nl",
         "nq",
         groups.nucs.starts,
         groups.nucs.lengths,
         groups.nucs.scores,
-        with_scores,
+        request.with_scores,
     )
-    if write_msps:
+    if request.write_msps:
         _write_legacy_interval_tags(
-            read,
+            request.read,
             "as",
             "al",
             "aq",
             groups.msps.starts,
             groups.msps.lengths,
             groups.msps.scores,
-            with_scores,
+            request.with_scores,
         )
+
+
+def set_legacy_apply_tags(
+    read,
+    result: dict,
+    with_scores: bool,
+    write_msps: bool = True,
+) -> None:
+    set_legacy_apply_tags_from_request(
+        _LegacyApplyTagsRequest(
+            read=read,
+            result=result,
+            with_scores=with_scores,
+            write_msps=write_msps,
+        )
+    )
 
 
 def unify_nucs_with_tf_calls(
