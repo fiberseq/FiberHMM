@@ -159,6 +159,26 @@ class _ProcessAndWriteLegacyChunkRequest:
     write_msps: bool
 
 
+@dataclass(frozen=True)
+class _LegacyChunkRecordRequest:
+    chunk_reads: list
+    chunk_read_objs: list
+    outbam: object
+    model: object
+    executor: object | None
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    skip_reasons: dict
+    posterior_writer: object
+    nuc_min_size: int
+    with_scores: bool
+    return_posteriors: bool
+    write_msps: bool
+
+
 def _new_legacy_chunk_buffers() -> _LegacyChunkBuffers:
     return _LegacyChunkBuffers(fiber_reads=[], read_objs=[])
 
@@ -451,24 +471,49 @@ def _process_legacy_chunk_and_record(
     return_posteriors: bool = False,
     write_msps: bool = True,
 ) -> _LegacyChunkRecordResult:
-    chunk = _process_and_write_chunk(
-        chunk_reads,
-        chunk_read_objs,
-        outbam,
-        model,
-        executor,
-        edge_trim,
-        circular,
-        mode,
-        context_size,
-        msp_min_size,
-        nuc_min_size=nuc_min_size,
-        with_scores=with_scores,
-        return_posteriors=return_posteriors,
-        write_msps=write_msps,
+    return _process_legacy_chunk_and_record_from_request(
+        _LegacyChunkRecordRequest(
+            chunk_reads=chunk_reads,
+            chunk_read_objs=chunk_read_objs,
+            outbam=outbam,
+            model=model,
+            executor=executor,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            skip_reasons=skip_reasons,
+            posterior_writer=posterior_writer,
+            nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+            return_posteriors=return_posteriors,
+            write_msps=write_msps,
+        )
     )
-    skip_reasons[NO_FOOTPRINTS_SKIP_REASON] += chunk.no_footprints
-    _write_chunk_posteriors(posterior_writer, chunk.posterior_records)
+
+
+def _process_legacy_chunk_and_record_from_request(
+    request: _LegacyChunkRecordRequest,
+) -> _LegacyChunkRecordResult:
+    chunk = _process_and_write_chunk(
+        request.chunk_reads,
+        request.chunk_read_objs,
+        request.outbam,
+        request.model,
+        request.executor,
+        request.edge_trim,
+        request.circular,
+        request.mode,
+        request.context_size,
+        request.msp_min_size,
+        nuc_min_size=request.nuc_min_size,
+        with_scores=request.with_scores,
+        return_posteriors=request.return_posteriors,
+        write_msps=request.write_msps,
+    )
+    request.skip_reasons[NO_FOOTPRINTS_SKIP_REASON] += chunk.no_footprints
+    _write_chunk_posteriors(request.posterior_writer, chunk.posterior_records)
     return _LegacyChunkRecordResult(
         reads_with_footprints=chunk.reads_with_footprints,
         worker_failures=chunk.worker_failures,

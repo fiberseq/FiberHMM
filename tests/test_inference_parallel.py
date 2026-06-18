@@ -1241,8 +1241,59 @@ def test_process_legacy_chunk_and_record_updates_counts_and_posteriors(monkeypat
         lambda writer, results: posterior_calls.append((writer, results)),
     )
     skip_reasons = legacy_pipeline._new_legacy_skip_reasons()
+    request = legacy_pipeline._LegacyChunkRecordRequest(
+        chunk_reads=chunk_reads,
+        chunk_read_objs=chunk_read_objs,
+        outbam=outbam,
+        model=model,
+        executor=executor,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        skip_reasons=skip_reasons,
+        posterior_writer=posterior_writer,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=True,
+        write_msps=False,
+    )
 
-    chunk_result = legacy_pipeline._process_legacy_chunk_and_record(
+    chunk_result = legacy_pipeline._process_legacy_chunk_and_record_from_request(
+        request,
+    )
+
+    assert chunk_result == legacy_pipeline._LegacyChunkRecordResult(2, 1)
+    assert skip_reasons["no_footprints"] == 3
+    assert posterior_calls == [(posterior_writer, chunk_results)]
+    assert process_calls == [
+        (
+            (
+                chunk_reads,
+                chunk_read_objs,
+                outbam,
+                model,
+                executor,
+                11,
+                True,
+                "daf",
+                5,
+                61,
+            ),
+            {
+                "nuc_min_size": 87,
+                "with_scores": True,
+                "return_posteriors": True,
+                "write_msps": False,
+            },
+        )
+    ]
+
+    skip_reasons = legacy_pipeline._new_legacy_skip_reasons()
+    process_calls.clear()
+    posterior_calls.clear()
+    assert legacy_pipeline._process_legacy_chunk_and_record(
         chunk_reads,
         chunk_read_objs,
         outbam,
@@ -1259,9 +1310,7 @@ def test_process_legacy_chunk_and_record_updates_counts_and_posteriors(monkeypat
         with_scores=True,
         return_posteriors=True,
         write_msps=False,
-    )
-
-    assert chunk_result == legacy_pipeline._LegacyChunkRecordResult(2, 1)
+    ) == legacy_pipeline._LegacyChunkRecordResult(2, 1)
     assert skip_reasons["no_footprints"] == 3
     assert posterior_calls == [(posterior_writer, chunk_results)]
     assert process_calls == [
