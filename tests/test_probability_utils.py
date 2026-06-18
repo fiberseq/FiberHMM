@@ -13,6 +13,7 @@ from fiberhmm.probabilities.output_paths import (
 from fiberhmm.probabilities.utils import (
     _daf_position_counts,
     _daf_strand_base_from_counts,
+    _DafPositionCounts,
     _is_fiber_probability_mode,
     _standard_output_dirs,
     detect_strand_and_base,
@@ -38,10 +39,13 @@ def test_detect_strand_and_base_for_fiber_modes():
 
 
 def test_detect_strand_and_base_for_daf_modes():
-    assert _daf_position_counts("TAA", {-1, 0, 1, 99}) == (1, 1)
-    plus_result = _daf_strand_base_from_counts(2, 1)
-    minus_result = _daf_strand_base_from_counts(1, 2)
-    ambiguous_result = _daf_strand_base_from_counts(2, 2)
+    assert _daf_position_counts("TAA", {-1, 0, 1, 99}) == _DafPositionCounts(
+        t=1,
+        a=1,
+    )
+    plus_result = _daf_strand_base_from_counts(_DafPositionCounts(t=2, a=1))
+    minus_result = _daf_strand_base_from_counts(_DafPositionCounts(t=1, a=2))
+    ambiguous_result = _daf_strand_base_from_counts(_DafPositionCounts(t=2, a=2))
 
     assert plus_result.strand == "+"
     assert plus_result.target_base == "C"

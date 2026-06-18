@@ -27,6 +27,12 @@ class _DafStrandBase:
     target_base: str
 
 
+@dataclass(frozen=True)
+class _DafPositionCounts:
+    t: int
+    a: int
+
+
 def reverse_complement(seq: str) -> str:
     """Return reverse complement of a DNA sequence."""
     return seq.translate(_RC_TABLE)[::-1]
@@ -40,18 +46,18 @@ def _count_mod_positions_at_base(seq_upper: str, mod_positions: Set[int], base: 
     )
 
 
-def _daf_strand_base_from_counts(t_count: int, a_count: int) -> _DafStrandBase:
-    if t_count > a_count:
+def _daf_strand_base_from_counts(counts: _DafPositionCounts) -> _DafStrandBase:
+    if counts.t > counts.a:
         return _DafStrandBase('+', 'C')
-    if a_count > t_count:
+    if counts.a > counts.t:
         return _DafStrandBase('-', 'G')
     return _DafStrandBase('.', 'C')
 
 
-def _daf_position_counts(seq_upper: str, mod_positions: Set[int]) -> Tuple[int, int]:
+def _daf_position_counts(seq_upper: str, mod_positions: Set[int]) -> _DafPositionCounts:
     t_count = _count_mod_positions_at_base(seq_upper, mod_positions, 'T')
     a_count = _count_mod_positions_at_base(seq_upper, mod_positions, 'A')
-    return t_count, a_count
+    return _DafPositionCounts(t=t_count, a=a_count)
 
 
 def _is_fiber_probability_mode(mode: str) -> bool:
@@ -81,8 +87,8 @@ def detect_strand_and_base(sequence: str, mod_positions: Set[int], mode: str) ->
     seq_upper = sequence.upper()
 
     if mode == 'daf':
-        t_count, a_count = _daf_position_counts(seq_upper, mod_positions)
-        strand_base = _daf_strand_base_from_counts(t_count, a_count)
+        counts = _daf_position_counts(seq_upper, mod_positions)
+        strand_base = _daf_strand_base_from_counts(counts)
         return strand_base.strand, strand_base.target_base
 
     return '.', 'A'
