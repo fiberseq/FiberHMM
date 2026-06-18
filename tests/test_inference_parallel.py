@@ -878,9 +878,10 @@ def test_process_legacy_chunk_results_uses_executor_when_available():
             return _done_future(WorkerChunkResult([{"ns": [1]}], read_failures=2))
 
     executor = Executor()
-    chunk_result = legacy_pipeline._process_legacy_chunk_results(
-        ["fiber"],
-        model=object(),
+    model = object()
+    request = legacy_pipeline._LegacyChunkResultsRequest(
+        chunk_reads=["fiber"],
+        model=model,
         executor=executor,
         edge_trim=11,
         circular=True,
@@ -892,6 +893,10 @@ def test_process_legacy_chunk_results_uses_executor_when_available():
         return_posteriors=False,
     )
 
+    chunk_result = legacy_pipeline._process_legacy_chunk_results_from_request(
+        request,
+    )
+
     assert chunk_result == legacy_pipeline._LegacyChunkResult(
         results=[{"ns": [1]}],
         worker_failures=2,
@@ -901,21 +906,40 @@ def test_process_legacy_chunk_results_uses_executor_when_available():
         (["fiber"], 11, True, "daf", 5, 61, 87, True, False),
     )]
 
+    executor = Executor()
+    assert legacy_pipeline._process_legacy_chunk_results(
+        ["fiber"],
+        model=model,
+        executor=executor,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=False,
+    ) == legacy_pipeline._LegacyChunkResult(
+        results=[{"ns": [1]}],
+        worker_failures=2,
+    )
+
 
 def test_process_legacy_chunk_results_runs_direct_without_executor(monkeypatch):
     calls = []
 
-    def fake_direct(*args):
-        calls.append(args)
+    def fake_direct(request):
+        calls.append(request)
         return [{"ns": [1]}, {"ns": [2]}]
 
     monkeypatch.setattr(
-        legacy_pipeline, "_process_direct_legacy_chunk_results", fake_direct,
+        legacy_pipeline,
+        "_process_direct_legacy_chunk_results_from_request",
+        fake_direct,
     )
     model = object()
-
-    chunk_result = legacy_pipeline._process_legacy_chunk_results(
-        ["fiber-a", "fiber-b"],
+    request = legacy_pipeline._LegacyChunkResultsRequest(
+        chunk_reads=["fiber-a", "fiber-b"],
         model=model,
         executor=None,
         edge_trim=11,
@@ -928,21 +952,59 @@ def test_process_legacy_chunk_results_runs_direct_without_executor(monkeypatch):
         return_posteriors=True,
     )
 
+    chunk_result = legacy_pipeline._process_legacy_chunk_results_from_request(
+        request,
+    )
+
     assert chunk_result == legacy_pipeline._LegacyChunkResult(
         results=[{"ns": [1]}, {"ns": [2]}],
         worker_failures=0,
     )
     assert calls == [(
+        legacy_pipeline._LegacyDirectChunkRequest(
+            chunk_reads=["fiber-a", "fiber-b"],
+            model=model,
+            edge_trim=11,
+            circular=True,
+            mode="daf",
+            context_size=5,
+            msp_min_size=61,
+            nuc_min_size=87,
+            with_scores=True,
+            return_posteriors=True,
+        )
+    )]
+
+    calls.clear()
+    assert legacy_pipeline._process_legacy_chunk_results(
         ["fiber-a", "fiber-b"],
-        model,
-        11,
-        True,
-        "daf",
-        5,
-        61,
-        87,
-        True,
-        True,
+        model=model,
+        executor=None,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=True,
+    ) == legacy_pipeline._LegacyChunkResult(
+        results=[{"ns": [1]}, {"ns": [2]}],
+        worker_failures=0,
+    )
+    assert calls == [(
+        legacy_pipeline._LegacyDirectChunkRequest(
+            chunk_reads=["fiber-a", "fiber-b"],
+            model=model,
+            edge_trim=11,
+            circular=True,
+            mode="daf",
+            context_size=5,
+            msp_min_size=61,
+            nuc_min_size=87,
+            with_scores=True,
+            return_posteriors=True,
+        )
     )]
 
 

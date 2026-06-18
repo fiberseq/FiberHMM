@@ -117,6 +117,21 @@ class _LegacyDirectChunkRequest:
     return_posteriors: bool
 
 
+@dataclass(frozen=True)
+class _LegacyChunkResultsRequest:
+    chunk_reads: list
+    model: object
+    executor: object | None
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    with_scores: bool
+    return_posteriors: bool
+
+
 def _new_legacy_chunk_buffers() -> _LegacyChunkBuffers:
     return _LegacyChunkBuffers(fiber_reads=[], read_objs=[])
 
@@ -190,29 +205,58 @@ def _process_legacy_chunk_results(
     with_scores: bool,
     return_posteriors: bool,
 ) -> _LegacyChunkResult:
-    if executor is not None:
+    return _process_legacy_chunk_results_from_request(
+        _LegacyChunkResultsRequest(
+            chunk_reads=chunk_reads,
+            model=model,
+            executor=executor,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+            return_posteriors=return_posteriors,
+        )
+    )
+
+
+def _process_legacy_chunk_results_from_request(
+    request: _LegacyChunkResultsRequest,
+) -> _LegacyChunkResult:
+    if request.executor is not None:
         # Parallel: submit chunk to worker
-        future = executor.submit(
+        future = request.executor.submit(
             _process_chunk_worker,
-            chunk_reads, edge_trim, circular, mode, context_size, msp_min_size,
-            nuc_min_size, with_scores, return_posteriors
+            request.chunk_reads,
+            request.edge_trim,
+            request.circular,
+            request.mode,
+            request.context_size,
+            request.msp_min_size,
+            request.nuc_min_size,
+            request.with_scores,
+            request.return_posteriors,
         )
         worker_result = coerce_worker_chunk_result(future.result())
         results = worker_result.results
         worker_failures = worker_result.read_failures
     else:
         # Single-threaded: process directly
-        results = _process_direct_legacy_chunk_results(
-            chunk_reads,
-            model,
-            edge_trim,
-            circular,
-            mode,
-            context_size,
-            msp_min_size,
-            nuc_min_size,
-            with_scores,
-            return_posteriors,
+        results = _process_direct_legacy_chunk_results_from_request(
+            _LegacyDirectChunkRequest(
+                chunk_reads=request.chunk_reads,
+                model=request.model,
+                edge_trim=request.edge_trim,
+                circular=request.circular,
+                mode=request.mode,
+                context_size=request.context_size,
+                msp_min_size=request.msp_min_size,
+                nuc_min_size=request.nuc_min_size,
+                with_scores=request.with_scores,
+                return_posteriors=request.return_posteriors,
+            )
         )
         worker_failures = 0
 
