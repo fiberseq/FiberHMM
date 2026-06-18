@@ -74,19 +74,26 @@ def parse_args():
     )
 
     # Two required inputs for the two states
-    parser.add_argument('--accessible', '-a', required=True, nargs='+',
-                        help='BAM file(s) from accessible/naked DNA (dechromatinized, MTase-treated)')
+    parser.add_argument(
+        '--accessible', '-a', required=True, nargs='+',
+        help='BAM file(s) from accessible/naked DNA (dechromatinized, MTase-treated)',
+    )
     parser.add_argument('--inaccessible', '-u', required=True, nargs='+',
                         help='BAM file(s) from inaccessible/untreated samples (native chromatin)')
-    parser.add_argument('-o', '--output', required=True,
-                        help='Output file prefix (will create _accessible.tsv and _inaccessible.tsv)')
+    parser.add_argument(
+        '-o', '--output', required=True,
+        help='Output file prefix (will create _accessible.tsv and _inaccessible.tsv)',
+    )
 
     # Context settings
     parser.add_argument('-k', '--context-sizes', type=int, nargs='+', default=[3, 4, 5, 6],
                         help='Context size(s) to compute (bases on each side: 3=7mer, 6=13mer). '
                              'Single value or list. Default: 3 4 5 6')
-    parser.add_argument('--mode', choices=['pacbio-fiber', 'nanopore-fiber', 'daf'], default='pacbio-fiber',
-                        help='Analysis mode: pacbio-fiber (PacBio), nanopore-fiber (Nanopore), daf (DAF-seq)')
+    parser.add_argument(
+        '--mode', choices=['pacbio-fiber', 'nanopore-fiber', 'daf'],
+        default='pacbio-fiber',
+        help='Analysis mode: pacbio-fiber (PacBio), nanopore-fiber (Nanopore), daf (DAF-seq)',
+    )
 
     # Sampling
     parser.add_argument('-n', '--max-reads', type=int, default=100000,
@@ -132,9 +139,10 @@ def _safe_percent(numerator: int, denominator: int) -> float:
 
 
 def _print_filter_stats(filter_stats: Dict[str, int], min_mapq: int, min_read_length: int) -> None:
+    processed_pct = _safe_percent(filter_stats['processed'], filter_stats['scanned'])
     print("\n    Filter Statistics:")
     print(f"      Total scanned:      {filter_stats['scanned']:>10,}")
-    print(f"      Passed all filters: {filter_stats['processed']:>10,} ({_safe_percent(filter_stats['processed'], filter_stats['scanned']):.1f}%)")
+    print(f"      Passed all filters: {filter_stats['processed']:>10,} ({processed_pct:.1f}%)")
     print("      ─────────────────────────────────")
     print(f"      Unmapped:           {filter_stats['unmapped']:>10,}")
     print(f"      Secondary:          {filter_stats['secondary']:>10,}")
@@ -539,8 +547,15 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
     return reads_processed, filter_stats
 
 
-def process_sample_set(bam_files: List[str], counters: Dict[str, ContextCounter],
-                       mode: str, args, sample_name: str, output_dir: str, base_name: str) -> Tuple[int, int, dict]:
+def process_sample_set(
+    bam_files: List[str],
+    counters: Dict[str, ContextCounter],
+    mode: str,
+    args,
+    sample_name: str,
+    output_dir: str,
+    base_name: str,
+) -> Tuple[int, int, dict]:
     """Process a set of BAM files for one sample type.
 
     Returns:
