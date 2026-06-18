@@ -57,6 +57,15 @@ class _RegionParallelRun:
     temp_dir: str
 
 
+@dataclass(frozen=True)
+class _RegionCompletionResult:
+    total_reads: int
+    reads_with_footprints: int
+
+    def as_tuple(self) -> Tuple[int, int]:
+        return self.total_reads, self.reads_with_footprints
+
+
 def _base_region_worker_params(
     *,
     edge_trim: int,
@@ -478,14 +487,17 @@ def _prepare_region_parallel_run(
     )
 
 
-def _region_completion_result(aggregation, start_time: float) -> Tuple[int, int]:
+def _region_completion_result(aggregation, start_time: float) -> _RegionCompletionResult:
     elapsed = time.time() - start_time
     print(_region_completion_summary(
         aggregation.total_reads,
         aggregation.reads_with_footprints,
         elapsed,
     ))
-    return aggregation.total_reads, aggregation.reads_with_footprints
+    return _RegionCompletionResult(
+        total_reads=aggregation.total_reads,
+        reads_with_footprints=aggregation.reads_with_footprints,
+    )
 
 
 def _merge_region_posterior_outputs(
@@ -628,7 +640,7 @@ def _finalize_region_bam_parallel_run(
             input_bam,
         )
 
-    return _region_completion_result(aggregation, start_time)
+    return _region_completion_result(aggregation, start_time).as_tuple()
 
 
 def _finalize_region_bed_parallel_run(
@@ -639,7 +651,7 @@ def _finalize_region_bed_parallel_run(
     print()
     non_empty_beds = _ordered_existing_temp_paths(aggregation.temp_beds)
     _concatenate_region_beds(output_bed, non_empty_beds)
-    return _region_completion_result(aggregation, start_time)
+    return _region_completion_result(aggregation, start_time).as_tuple()
 
 
 def _run_region_bam_worker_pool(

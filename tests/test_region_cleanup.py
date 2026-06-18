@@ -677,7 +677,12 @@ def test_region_completion_result_prints_summary(monkeypatch, capsys):
     )
     monkeypatch.setattr(region_pipeline.time, "time", lambda: 14.0)
 
-    assert region_pipeline._region_completion_result(aggregation, 10.0) == (10, 4)
+    assert region_pipeline._region_completion_result(
+        aggregation, 10.0,
+    ) == region_pipeline._RegionCompletionResult(
+        total_reads=10,
+        reads_with_footprints=4,
+    )
     assert (
         "Completed: 10 reads | 4 with footprints | 2.5 reads/s | 4.0s"
         in capsys.readouterr().out
@@ -799,7 +804,8 @@ def test_finalize_region_bam_parallel_run_finishes_outputs_and_posteriors(
         region_pipeline,
         "_region_completion_result",
         lambda got_aggregation, start_time: (
-            calls.append(("complete", got_aggregation, start_time)) or (10, 4)
+            calls.append(("complete", got_aggregation, start_time))
+            or region_pipeline._RegionCompletionResult(10, 4)
         ),
     )
 
@@ -862,7 +868,8 @@ def test_finalize_region_bed_parallel_run_concatenates_and_completes(
         region_pipeline,
         "_region_completion_result",
         lambda got_aggregation, start_time: (
-            calls.append(("complete", got_aggregation, start_time)) or (8, 3)
+            calls.append(("complete", got_aggregation, start_time))
+            or region_pipeline._RegionCompletionResult(8, 3)
         ),
     )
 
