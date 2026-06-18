@@ -22,6 +22,7 @@ try:
         FiberHMM,
         _baum_welch_estep_python,
         _baum_welch_estep_sequence,
+        _BestTrainingModel,
         _fit_training_iteration,
         _hmmlearn_uses_categorical,
         _hmmlearn_version_tuple,
@@ -49,6 +50,7 @@ except ImportError:
         FiberHMM,
         _baum_welch_estep_python,
         _baum_welch_estep_sequence,
+        _BestTrainingModel,
         _fit_training_iteration,
         _hmmlearn_uses_categorical,
         _hmmlearn_version_tuple,
@@ -344,13 +346,14 @@ class TestModelTraining:
     def test_updated_best_training_model_replaces_only_on_improvement(self):
         old_model = object()
         new_model = object()
+        best = _BestTrainingModel(model=old_model, logprob=-10.0)
 
-        assert _updated_best_training_model(
-            old_model, -10.0, new_model, -9.0,
-        ) == (new_model, -9.0)
-        assert _updated_best_training_model(
-            old_model, -10.0, new_model, -11.0,
-        ) == (old_model, -10.0)
+        updated = _updated_best_training_model(best, new_model, -9.0)
+        assert updated.model is new_model
+        assert updated.logprob == -9.0
+
+        unchanged = _updated_best_training_model(best, new_model, -11.0)
+        assert unchanged is best
 
     def test_fit_training_iteration_shapes_data_and_labels_fit(self):
         class FakeModel:

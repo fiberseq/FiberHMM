@@ -25,6 +25,12 @@ class _RandomTrainingParameters:
     transition_probs: np.ndarray
 
 
+@dataclass(frozen=True)
+class _BestTrainingModel:
+    model: Any
+    logprob: float
+
+
 # Use tqdm for progress bars if available
 try:
     from tqdm import tqdm
@@ -1111,14 +1117,13 @@ def _model_training_logprob(model, training: np.ndarray) -> float:
 
 
 def _updated_best_training_model(
-    best_model,
-    best_logprob: float,
+    best: _BestTrainingModel,
     model,
     logprob: float,
-):
-    if logprob > best_logprob:
-        return model, logprob
-    return best_model, best_logprob
+) -> _BestTrainingModel:
+    if logprob > best.logprob:
+        return _BestTrainingModel(model=model, logprob=logprob)
+    return best
 
 
 def _training_progress_postfix(log_prob_total: float, improvement: float) -> dict:
@@ -1159,8 +1164,7 @@ def train_model(emission_probs: np.ndarray,
     """
     from fiberhmm.core.model_io import _convert_hmmlearn_model
 
-    best_model = None
-    best_logprob = float('-inf')
+    best = _BestTrainingModel(model=None, logprob=float('-inf'))
     all_models = []
 
     pbar = tqdm(range(n_iterations), desc="Training iterations",
@@ -1182,19 +1186,17 @@ def train_model(emission_probs: np.ndarray,
 
         all_models.append(model)
 
-        best_model, best_logprob = _updated_best_training_model(
-            best_model, best_logprob, model, logprob,
-        )
+        best = _updated_best_training_model(best, model, logprob)
 
         # Update progress bar with current best
         if HAS_TQDM:
-            pbar.set_postfix({'best_logprob': f'{best_logprob:.2e}'})
+            pbar.set_postfix({'best_logprob': f'{best.logprob:.2e}'})
 
     # Normalize states for best model and all models
     if normalize:
-        _normalize_trained_models(best_model, all_models)
+        _normalize_trained_models(best.model, all_models)
 
-    return best_model, all_models
+    return best.model, all_models
 
 
 # =============================================================================
