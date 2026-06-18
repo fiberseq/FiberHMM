@@ -163,6 +163,32 @@ class _RegionBedPipelineRequest:
     primary_only: bool
 
 
+@dataclass(frozen=True)
+class _RegionBamPipelineRequest:
+    input_bam: str
+    output_bam: str
+    model_path: str
+    train_rids: Set[str]
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    min_mapq: int
+    prob_threshold: int
+    min_read_length: int
+    with_scores: bool
+    n_cores: int
+    region_size: int
+    skip_scaffolds: bool
+    chroms: Optional[Set[str]]
+    primary_only: bool
+    output_posteriors: Optional[str]
+    write_msps: bool
+    io_threads: int
+
+
 def _base_region_worker_params(
     *,
     edge_trim: int,
@@ -987,22 +1013,12 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
     Returns:
         (total_reads_processed, reads_with_footprints)
     """
-    start_time = time.time()
-    return_posteriors = output_posteriors is not None
-
-    run = _prepare_region_parallel_run(
-        input_bam,
-        output_bam,
-        region_size,
-        skip_scaffolds,
-        chroms,
-        n_cores,
-        temp_prefix='.fiberhmm_tmp_',
-        output_posteriors=output_posteriors if return_posteriors else None,
-    )
-
-    try:
-        params = _region_bam_worker_params(
+    return _process_bam_region_parallel_from_request(
+        _RegionBamPipelineRequest(
+            input_bam=input_bam,
+            output_bam=output_bam,
+            model_path=model_path,
+            train_rids=train_rids,
             edge_trim=edge_trim,
             circular=circular,
             mode=mode,
@@ -1013,21 +1029,66 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             prob_threshold=prob_threshold,
             min_read_length=min_read_length,
             with_scores=with_scores,
-            train_rids=train_rids,
+            n_cores=n_cores,
+            region_size=region_size,
+            skip_scaffolds=skip_scaffolds,
+            chroms=chroms,
             primary_only=primary_only,
-            return_posteriors=return_posteriors,
+            output_posteriors=output_posteriors,
             write_msps=write_msps,
             io_threads=io_threads,
         )
+    )
 
-        # Work items - include temp TSV path if posteriors requested
+
+def _process_bam_region_parallel_from_request(
+    request: _RegionBamPipelineRequest,
+) -> Tuple[int, int]:
+    start_time = time.time()
+    return_posteriors = request.output_posteriors is not None
+
+    run = _prepare_region_parallel_run(
+        request.input_bam,
+        request.output_bam,
+        request.region_size,
+        request.skip_scaffolds,
+        request.chroms,
+        request.n_cores,
+        temp_prefix='.fiberhmm_tmp_',
+        output_posteriors=(
+            request.output_posteriors if return_posteriors else None
+        ),
+    )
+
+    try:
+        params = _region_bam_worker_params(
+            edge_trim=request.edge_trim,
+            circular=request.circular,
+            mode=request.mode,
+            context_size=request.context_size,
+            msp_min_size=request.msp_min_size,
+            nuc_min_size=request.nuc_min_size,
+            min_mapq=request.min_mapq,
+            prob_threshold=request.prob_threshold,
+            min_read_length=request.min_read_length,
+            with_scores=request.with_scores,
+            train_rids=request.train_rids,
+            primary_only=request.primary_only,
+            return_posteriors=return_posteriors,
+            write_msps=request.write_msps,
+            io_threads=request.io_threads,
+        )
+
         work_items = _region_bam_work_items(
-            run.regions, input_bam, run.temp_dir, include_tsv=return_posteriors,
+            run.regions,
+            request.input_bam,
+            run.temp_dir,
+            include_tsv=return_posteriors,
         )
 
         aggregation = _run_region_bam_worker_pool(
-            n_cores=n_cores,
-            model_path=model_path,
+            n_cores=request.n_cores,
+            model_path=request.model_path,
             params=params,
             work_items=work_items,
             total_regions=len(run.regions),
@@ -1036,17 +1097,17 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         )
 
         return _finalize_region_bam_parallel_run(
-            input_bam,
-            output_bam,
+            request.input_bam,
+            request.output_bam,
             run.temp_dir,
             aggregation,
             start_time,
-            n_cores,
+            request.n_cores,
             return_posteriors,
-            output_posteriors,
-            mode,
-            context_size,
-            edge_trim,
+            request.output_posteriors,
+            request.mode,
+            request.context_size,
+            request.edge_trim,
         )
 
     finally:
