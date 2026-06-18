@@ -256,6 +256,20 @@ class _RegionBamReadLoopRequest:
 
 
 @dataclass(frozen=True)
+class _RegionBamHandleLoopRequest:
+    input_bam: str
+    temp_bam_path: str
+    chrom: str
+    start: int
+    end: int
+    model: object
+    runtime: _RegionBamWorkerRuntime
+    skip_reasons: dict
+    return_posteriors: bool
+    tsv_file: object
+
+
+@dataclass(frozen=True)
 class _RegionBamReadProcessRequest:
     read: object
     outbam: object
@@ -1147,6 +1161,41 @@ def _process_region_bam_reads_from_request(
     return counts
 
 
+def _process_region_bam_handle_loop_from_request(
+    request: _RegionBamHandleLoopRequest,
+) -> Optional[_RegionBamWorkerCounts]:
+    with pysam.AlignmentFile(
+        request.input_bam,
+        "rb",
+        threads=request.runtime.apply_config.io_threads,
+        check_sq=False,
+    ) as inbam:
+        with pysam.AlignmentFile(
+            request.temp_bam_path,
+            "wb",
+            header=append_coord_marker(inbam.header),
+            threads=request.runtime.apply_config.io_threads,
+        ) as outbam:
+            try:
+                read_iter = inbam.fetch(request.chrom, request.start, request.end)
+            except ValueError:
+                return None
+
+            return _process_region_bam_reads_from_request(
+                _RegionBamReadLoopRequest(
+                    read_iter=read_iter,
+                    outbam=outbam,
+                    model=request.model,
+                    runtime=request.runtime,
+                    start=request.start,
+                    end=request.end,
+                    skip_reasons=request.skip_reasons,
+                    return_posteriors=request.return_posteriors,
+                    tsv_file=request.tsv_file,
+                )
+            )
+
+
 def _process_region_bed_read(
     read,
     bed_out,
@@ -1438,35 +1487,25 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         return_posteriors = posterior_tsv.enabled
 
         try:
-            with pysam.AlignmentFile(
-                input_bam, "rb",
-                threads=runtime.apply_config.io_threads,
-                check_sq=False,
-            ) as inbam:
-                with pysam.AlignmentFile(temp_bam_path, "wb",
-                                         header=append_coord_marker(inbam.header),
-                                         threads=runtime.apply_config.io_threads) as outbam:
+            counts_or_none = _process_region_bam_handle_loop_from_request(
+                _RegionBamHandleLoopRequest(
+                    input_bam=input_bam,
+                    temp_bam_path=temp_bam_path,
+                    chrom=chrom,
+                    start=start,
+                    end=end,
+                    model=model,
+                    runtime=runtime,
+                    skip_reasons=skip_reasons,
+                    return_posteriors=return_posteriors,
+                    tsv_file=tsv_file,
+                )
+            )
+            if counts_or_none is None:
+                # Region not in BAM (e.g., unplaced contigs).
+                return RegionBamResult(temp_bam_path, 0, 0, 0)
 
-                    # Fetch reads from this region using the index.
-                    try:
-                        read_iter = inbam.fetch(chrom, start, end)
-                    except ValueError:
-                        # Region not in BAM (e.g., unplaced contigs).
-                        return RegionBamResult(temp_bam_path, 0, 0, 0)
-
-                    counts = _process_region_bam_reads_from_request(
-                        _RegionBamReadLoopRequest(
-                            read_iter=read_iter,
-                            outbam=outbam,
-                            model=model,
-                            runtime=runtime,
-                            start=start,
-                            end=end,
-                            skip_reasons=skip_reasons,
-                            return_posteriors=return_posteriors,
-                            tsv_file=tsv_file,
-                        )
-                    )
+            counts = counts_or_none
 
         finally:
             if tsv_file is not None:

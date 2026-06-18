@@ -32,6 +32,7 @@ from fiberhmm.inference.region_workers import (
     _pad_region_bed12_to_read_span,
     _process_fused_region_bam_read,
     _process_fused_region_bam_reads_from_request,
+    _process_region_bam_handle_loop_from_request,
     _process_region_bam_read,
     _process_region_bam_reads_from_request,
     _process_region_bed_read,
@@ -53,6 +54,7 @@ from fiberhmm.inference.region_workers import (
     _region_read_route,
     _region_result_ns_scores,
     _RegionBamApplyResultWriteRequest,
+    _RegionBamHandleLoopRequest,
     _RegionBamReadLoopRequest,
     _RegionBamResultRequest,
     _RegionBamWorkerCounts,
@@ -346,6 +348,91 @@ def test_process_region_to_bam_closes_tsv_once_when_fetch_region_missing(
 
     assert result == RegionBamResult("region.bam", 0, 0, 0)
     assert tsv_file.closed == 1
+
+
+def test_process_region_bam_handle_loop_opens_fetches_and_processes(monkeypatch):
+    opened = []
+    fetch_reads = ["read"]
+    model = object()
+    skip_reasons = {"low_mapq": 0}
+    tsv_file = object()
+    runtime = _RegionBamWorkerRuntime(
+        apply_config=_apply_config(io_threads=3),
+        output_config=_region_bam_output_config({}, "post.tsv"),
+        filter_config=ReadFilterConfig(min_mapq=1),
+    )
+    counts = _RegionBamWorkerCounts(total_reads=2, written=2)
+    calls = {}
+
+    class AlignmentFile:
+        def __init__(self, path, mode, **kwargs):
+            self.path = path
+            self.mode = mode
+            self.kwargs = kwargs
+            self.header = {"HD": {"SO": "coordinate"}}
+            opened.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def fetch(self, *args):
+            calls["fetch"] = args
+            return fetch_reads
+
+    def fake_process(request):
+        calls["process"] = request
+        return counts
+
+    monkeypatch.setattr(region_workers.pysam, "AlignmentFile", AlignmentFile)
+    monkeypatch.setattr(
+        region_workers,
+        "append_coord_marker",
+        lambda header: {"marked": header},
+    )
+    monkeypatch.setattr(
+        region_workers,
+        "_process_region_bam_reads_from_request",
+        fake_process,
+    )
+
+    result = _process_region_bam_handle_loop_from_request(
+        _RegionBamHandleLoopRequest(
+            input_bam="input.bam",
+            temp_bam_path="region.bam",
+            chrom="chr1",
+            start=100,
+            end=200,
+            model=model,
+            runtime=runtime,
+            skip_reasons=skip_reasons,
+            return_posteriors=True,
+            tsv_file=tsv_file,
+        )
+    )
+
+    assert result is counts
+    assert [(handle.path, handle.mode, handle.kwargs) for handle in opened] == [
+        ("input.bam", "rb", {"threads": 3, "check_sq": False}),
+        (
+            "region.bam",
+            "wb",
+            {"header": {"marked": {"HD": {"SO": "coordinate"}}}, "threads": 3},
+        ),
+    ]
+    assert calls["fetch"] == ("chr1", 100, 200)
+    process_request = calls["process"]
+    assert process_request.read_iter is fetch_reads
+    assert process_request.outbam is opened[1]
+    assert process_request.model is model
+    assert process_request.runtime is runtime
+    assert process_request.start == 100
+    assert process_request.end == 200
+    assert process_request.skip_reasons is skip_reasons
+    assert process_request.return_posteriors is True
+    assert process_request.tsv_file is tsv_file
 
 
 def test_process_region_to_bam_preserves_work_item_coercion_error(capsys):
