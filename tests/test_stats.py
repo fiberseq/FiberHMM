@@ -160,11 +160,11 @@ def test_add_read_to_footprint_stats_updates_accumulator():
 
 
 def test_footprint_size_bin_counts_use_stable_labels():
-    labels, counts = stats_module._footprint_size_bin_counts(
+    bins = stats_module._footprint_size_bin_counts(
         [0, 19, 20, 149, 500, 9999],
     )
 
-    assert labels == [
+    assert bins.labels == [
         "0-20",
         "20-40",
         "40-60",
@@ -176,7 +176,7 @@ def test_footprint_size_bin_counts_use_stable_labels():
         "300-500",
         "500+",
     ]
-    assert counts.tolist() == [2, 1, 0, 0, 0, 1, 0, 0, 0, 2]
+    assert bins.counts.tolist() == [2, 1, 0, 0, 0, 1, 0, 0, 0, 2]
 
 
 def test_positive_counts_filters_zero_counts_without_reordering():

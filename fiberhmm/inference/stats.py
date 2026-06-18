@@ -32,6 +32,12 @@ class _StatsReadSignalArrays:
     msp_scores: object
 
 
+@dataclass(frozen=True)
+class _FootprintSizeBins:
+    labels: list
+    counts: np.ndarray
+
+
 def _positive_gaps_between_intervals(starts: np.ndarray, lengths: np.ndarray) -> list:
     if len(starts) <= 1:
         return []
@@ -67,9 +73,9 @@ def _scaled_score_tag(read, tag: str):
         return None
 
 
-def _footprint_size_bin_counts(sizes) -> tuple:
+def _footprint_size_bin_counts(sizes) -> _FootprintSizeBins:
     counts, _ = np.histogram(np.array(sizes), bins=_FOOTPRINT_SIZE_BINS)
-    return _FOOTPRINT_SIZE_BIN_LABELS, counts
+    return _FootprintSizeBins(labels=_FOOTPRINT_SIZE_BIN_LABELS, counts=counts)
 
 
 def _positive_counts(values) -> list:
@@ -290,10 +296,10 @@ def _plot_footprint_size_bins(ax, footprint_sizes) -> None:
         _plot_no_data_message(ax, 'Insufficient data', 'Footprint Size Bins')
         return
 
-    labels, counts = _footprint_size_bin_counts(footprint_sizes)
-    ax.barh(range(len(labels)), counts, color='steelblue', alpha=0.8)
-    ax.set_yticks(range(len(labels)))
-    ax.set_yticklabels(labels)
+    bins = _footprint_size_bin_counts(footprint_sizes)
+    ax.barh(range(len(bins.labels)), bins.counts, color='steelblue', alpha=0.8)
+    ax.set_yticks(range(len(bins.labels)))
+    ax.set_yticklabels(bins.labels)
     ax.set_xlabel('Count')
     ax.set_ylabel('Size Range (bp)')
     ax.set_title('Footprint Size Bins')
