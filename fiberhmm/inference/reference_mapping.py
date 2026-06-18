@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from fiberhmm.core.bam_reader import cigar_to_query_ref
+
+_IntervalMapper = Callable[[object, object, object], Optional[Tuple[int, int]]]
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,15 @@ class _ScoredIntervalRecordRequest:
     block: Tuple[int, int]
     scores: object
     index: int
+
+
+@dataclass(frozen=True)
+class _ScoredIntervalsRequest:
+    starts: object
+    lengths: object
+    scores: object
+    query_to_ref: object
+    mapper: _IntervalMapper
 
 
 def build_query_to_ref(read):
@@ -185,26 +196,60 @@ def _scored_interval_record(
     )
 
 
-def _scored_intervals(starts, lengths, scores, query_to_ref, mapper) -> List[Tuple[int, int, int]]:
+def _scored_intervals_from_request(
+    request: _ScoredIntervalsRequest,
+) -> List[Tuple[int, int, int]]:
     records = []
-    for i, (qstart, length) in enumerate(zip(starts, lengths)):
-        block = mapper(qstart, length, query_to_ref)
+    for i, (qstart, length) in enumerate(zip(request.starts, request.lengths)):
+        block = request.mapper(qstart, length, request.query_to_ref)
         if block is None:
             continue
-        records.append(_scored_interval_record(block, scores, i))
+        records.append(
+            _scored_interval_record_from_request(
+                _ScoredIntervalRecordRequest(
+                    block=block,
+                    scores=request.scores,
+                    index=i,
+                )
+            )
+        )
     records.sort(key=lambda record: record.start)
     return [(record.start, record.end, record.score) for record in records]
 
 
+def _scored_intervals(starts, lengths, scores, query_to_ref, mapper) -> List[Tuple[int, int, int]]:
+    return _scored_intervals_from_request(
+        _ScoredIntervalsRequest(
+            starts=starts,
+            lengths=lengths,
+            scores=scores,
+            query_to_ref=query_to_ref,
+            mapper=mapper,
+        )
+    )
+
+
 def scored_interval_blocks(starts, lengths, scores, query_to_ref) -> List[Tuple[int, int, int]]:
     """Map intervals with optional scores using exact endpoint mapping."""
-    return _scored_intervals(
-        starts, lengths, scores, query_to_ref, query_interval_to_ref_block,
+    return _scored_intervals_from_request(
+        _ScoredIntervalsRequest(
+            starts=starts,
+            lengths=lengths,
+            scores=scores,
+            query_to_ref=query_to_ref,
+            mapper=query_interval_to_ref_block,
+        )
     )
 
 
 def scored_interval_spans(starts, lengths, scores, query_to_ref) -> List[Tuple[int, int, int]]:
     """Map intervals with optional scores, scanning inward past unaligned ends."""
-    return _scored_intervals(
-        starts, lengths, scores, query_to_ref, query_interval_to_ref_span,
+    return _scored_intervals_from_request(
+        _ScoredIntervalsRequest(
+            starts=starts,
+            lengths=lengths,
+            scores=scores,
+            query_to_ref=query_to_ref,
+            mapper=query_interval_to_ref_span,
+        )
     )

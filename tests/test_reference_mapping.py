@@ -10,8 +10,11 @@ from fiberhmm.inference.reference_mapping import (
     _ref_positions_to_half_open_span,
     _scored_interval_record,
     _scored_interval_record_from_request,
+    _scored_intervals,
+    _scored_intervals_from_request,
     _ScoredIntervalRecord,
     _ScoredIntervalRecordRequest,
+    _ScoredIntervalsRequest,
     query_interval_to_ref_block,
     query_interval_to_ref_block_from_request,
     query_interval_to_ref_span,
@@ -115,11 +118,28 @@ def test_interval_endpoint_scanners_skip_unaligned_positions():
 
 def test_scored_interval_helpers_keep_scores_aligned_after_sorting():
     q2r = np.array([50, 51, 52, 100, -1, 102], dtype=np.int64)
+    request = _ScoredIntervalsRequest(
+        starts=[3, 0],
+        lengths=[2, 2],
+        scores=[7, 9],
+        query_to_ref=q2r,
+        mapper=query_interval_to_ref_span,
+    )
 
     exact = scored_interval_blocks([3, 0], [2, 2], [7, 9], q2r)
+    requested_span = _scored_intervals_from_request(request)
+    adapted_span = _scored_intervals(
+        [3, 0],
+        [2, 2],
+        [7, 9],
+        q2r,
+        query_interval_to_ref_span,
+    )
     span = scored_interval_spans([3, 0], [2, 2], [7, 9], q2r)
 
     assert exact == [(50, 52, 9)]
+    assert requested_span == [(50, 52, 9), (100, 101, 7)]
+    assert adapted_span == [(50, 52, 9), (100, 101, 7)]
     assert span == [(50, 52, 9), (100, 101, 7)]
 
 
