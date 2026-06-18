@@ -107,15 +107,17 @@ def test_tsv_writer_reuses_region_posterior_row_format(tmp_path):
         compress=False,
     )
     assert writer.output_path == str(output_path)
-    writer.write_fiber(
-        read_id="read1",
-        chrom="chr1",
-        start=10,
-        end=20,
-        strand="+",
-        posteriors=np.array([0.0, 0.5, 1.0], dtype=np.float32),
-        fp_starts=np.array([12], dtype=np.int32),
-        fp_sizes=np.array([4], dtype=np.int32),
+    writer.write_fiber_record(
+        tsv_backend._PosteriorTsvRecord(
+            read_id="read1",
+            chrom="chr1",
+            start=10,
+            end=20,
+            strand="+",
+            posteriors=np.array([0.0, 0.5, 1.0], dtype=np.float32),
+            fp_starts=np.array([12], dtype=np.int32),
+            fp_sizes=np.array([4], dtype=np.int32),
+        )
     )
     assert writer.close() == 1
 
@@ -131,6 +133,46 @@ def test_tsv_writer_reuses_region_posterior_row_format(tmp_path):
         footprint_starts=np.array([12], dtype=np.int32),
         footprint_sizes=np.array([4], dtype=np.int32),
     )
+
+
+def test_tsv_writer_write_fiber_adapter_builds_record(monkeypatch, tmp_path):
+    writer = tsv_backend.PosteriorsTSVWriter(
+        tmp_path / "posteriors.tsv",
+        compress=False,
+    )
+    calls = []
+    posteriors = np.array([0.0, 1.0], dtype=np.float32)
+    fp_starts = np.array([12], dtype=np.int32)
+    fp_sizes = np.array([4], dtype=np.int32)
+
+    monkeypatch.setattr(
+        writer,
+        "write_fiber_record",
+        lambda record: calls.append(record),
+    )
+
+    writer.write_fiber(
+        read_id="read1",
+        chrom="chr1",
+        start=10,
+        end=20,
+        strand="+",
+        posteriors=posteriors,
+        fp_starts=fp_starts,
+        fp_sizes=fp_sizes,
+    )
+    writer.close()
+
+    assert len(calls) == 1
+    record = calls[0]
+    assert record.read_id == "read1"
+    assert record.chrom == "chr1"
+    assert record.start == 10
+    assert record.end == 20
+    assert record.strand == "+"
+    assert record.posteriors is posteriors
+    assert record.fp_starts is fp_starts
+    assert record.fp_sizes is fp_sizes
 
 
 def test_tsv_writer_close_is_idempotent_and_blocks_late_writes(tmp_path):

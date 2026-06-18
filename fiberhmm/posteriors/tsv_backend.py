@@ -359,6 +359,25 @@ class PosteriorsTSVWriter:
 
         self.n_written = 0
 
+    def write_fiber_record(self, record: _PosteriorTsvRecord):
+        """Write one fiber's posteriors from a named record."""
+        if self._closed:
+            raise RuntimeError("PosteriorsTSVWriter is closed")
+
+        self._file.write(
+            format_region_posterior_line(
+                read_name=record.read_id,
+                chrom=record.chrom,
+                ref_start=record.start,
+                ref_end=record.end,
+                strand=record.strand,
+                posteriors=record.posteriors,
+                footprint_starts=record.fp_starts,
+                footprint_sizes=record.fp_sizes,
+            )
+        )
+        self.n_written += 1
+
     def write_fiber(self, read_id: str, chrom: str, start: int, end: int,
                     strand: str, posteriors: np.ndarray,
                     fp_starts: np.ndarray, fp_sizes: np.ndarray):
@@ -375,22 +394,18 @@ class PosteriorsTSVWriter:
             fp_starts: Footprint start positions (query coords)
             fp_sizes: Footprint sizes
         """
-        if self._closed:
-            raise RuntimeError("PosteriorsTSVWriter is closed")
-
-        self._file.write(
-            format_region_posterior_line(
-                read_name=read_id,
+        self.write_fiber_record(
+            _PosteriorTsvRecord(
+                read_id=read_id,
                 chrom=chrom,
-                ref_start=start,
-                ref_end=end,
+                start=start,
+                end=end,
                 strand=strand,
                 posteriors=posteriors,
-                footprint_starts=fp_starts,
-                footprint_sizes=fp_sizes,
-            )
+                fp_starts=fp_starts,
+                fp_sizes=fp_sizes,
+            ),
         )
-        self.n_written += 1
 
     def flush(self):
         """Flush buffered writes."""
