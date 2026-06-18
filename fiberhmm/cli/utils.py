@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+from fiberhmm.cli.common import MODE_CHOICES
 from fiberhmm.core.model_io import load_model_with_metadata, save_model
 from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
@@ -1188,7 +1189,7 @@ def _add_utils_transfer_parser(subparsers) -> None:
                            help='Target BAM file (e.g., DAF-seq)')
     p_transfer.add_argument('-o', '--output', required=True,
                            help='Output directory')
-    p_transfer.add_argument('--mode', choices=['pacbio-fiber', 'nanopore-fiber', 'daf'],
+    p_transfer.add_argument('--mode', choices=MODE_CHOICES,
                            default='daf', help='Analysis mode for target data')
     p_transfer.add_argument('--reference-bam', '-rb',
                            help='Reference BAM with footprint tags (ns/nl)')

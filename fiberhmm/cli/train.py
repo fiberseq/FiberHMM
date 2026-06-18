@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from fiberhmm.cli.common import mode_description
+from fiberhmm.cli.common import MODE_CHOICES, mode_description
 from fiberhmm.core.bam_reader import (
     ContextEncoder,
     detect_daf_strand,
@@ -63,7 +63,7 @@ def parse_args():
 
     # Mode selection
     parser.add_argument(
-        '--mode', choices=['pacbio-fiber', 'nanopore-fiber', 'daf'],
+        '--mode', choices=MODE_CHOICES,
         default='pacbio-fiber',
         help='Analysis mode: pacbio-fiber (PacBio), nanopore-fiber (Nanopore), daf (DAF-seq)',
     )

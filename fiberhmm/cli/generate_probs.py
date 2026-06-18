@@ -32,6 +32,7 @@ import pysam
 from tqdm import tqdm
 
 # Package imports
+from fiberhmm.cli.common import MODE_CHOICES
 from fiberhmm.core.bam_reader import _has_mm_ml_inputs, parse_mm_tag_query_positions
 from fiberhmm.core.tag_access import get_preferred_tag
 from fiberhmm.probabilities.context_counter import ContextCounter
@@ -90,7 +91,7 @@ def parse_args():
                         help='Context size(s) to compute (bases on each side: 3=7mer, 6=13mer). '
                              'Single value or list. Default: 3 4 5 6')
     parser.add_argument(
-        '--mode', choices=['pacbio-fiber', 'nanopore-fiber', 'daf'],
+        '--mode', choices=MODE_CHOICES,
         default='pacbio-fiber',
         help='Analysis mode: pacbio-fiber (PacBio), nanopore-fiber (Nanopore), daf (DAF-seq)',
     )
