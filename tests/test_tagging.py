@@ -26,6 +26,8 @@ from fiberhmm.inference.tagging import (
     _nuc_overlaps_any_linear_interval,
     _NucTfOverlapFilterRequest,
     _result_intervals,
+    _result_intervals_from_request,
+    _ResultIntervalsRequest,
     _should_keep_nuc_interval,
     _tf_circular_intervals,
     _tf_linear_intervals,
@@ -402,7 +404,14 @@ def test_result_intervals_prefers_circular_key_before_arrays():
         "lengths": np.asarray([5], dtype=np.int32),
     }
 
-    assert _result_intervals(result, "circular", "starts", "lengths") == [(10, 5)]
+    assert _result_intervals_from_request(
+        _ResultIntervalsRequest(
+            result=result,
+            circular_key="circular",
+            start_key="starts",
+            length_key="lengths",
+        )
+    ) == [(10, 5)]
 
     result["circular"] = [(90, 20)]
 

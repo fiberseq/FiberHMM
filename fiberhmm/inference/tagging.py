@@ -86,6 +86,14 @@ class _FusedRecallTagsRequest:
     downstream_compat: bool
 
 
+@dataclass(frozen=True)
+class _ResultIntervalsRequest:
+    result: dict
+    circular_key: str
+    start_key: str
+    length_key: str
+
+
 def _flip_legacy_intervals_to_molecular(
     starts: Sequence[int],
     lengths: Sequence[int],
@@ -488,21 +496,48 @@ def split_intervals(intervals: Sequence[Interval]) -> tuple[np.ndarray, np.ndarr
     return starts, lengths
 
 
+def _result_intervals_from_request(
+    request: _ResultIntervalsRequest,
+) -> list[Interval]:
+    return request.result.get(request.circular_key) or intervals_from_arrays(
+        request.result[request.start_key],
+        request.result[request.length_key],
+    )
+
+
 def _result_intervals(
     result: dict,
     circular_key: str,
     start_key: str,
     length_key: str,
 ) -> list[Interval]:
-    return result.get(circular_key) or intervals_from_arrays(
-        result[start_key],
-        result[length_key],
+    return _result_intervals_from_request(
+        _ResultIntervalsRequest(
+            result=result,
+            circular_key=circular_key,
+            start_key=start_key,
+            length_key=length_key,
+        )
     )
 
 
 def _fused_recall_tag_intervals(result: dict) -> _FusedRecallTagIntervals:
-    kept_nucs = _result_intervals(result, "circular_ns", "ns", "nl")
-    msps = _result_intervals(result, "circular_as", "as", "al")
+    kept_nucs = _result_intervals_from_request(
+        _ResultIntervalsRequest(
+            result=result,
+            circular_key="circular_ns",
+            start_key="ns",
+            length_key="nl",
+        )
+    )
+    msps = _result_intervals_from_request(
+        _ResultIntervalsRequest(
+            result=result,
+            circular_key="circular_as",
+            start_key="as",
+            length_key="al",
+        )
+    )
     return _FusedRecallTagIntervals(kept_nucs=kept_nucs, msps=msps)
 
 
