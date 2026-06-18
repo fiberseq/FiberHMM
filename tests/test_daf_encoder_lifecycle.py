@@ -441,8 +441,14 @@ def test_process_daf_encode_read_writes_encoded_read_and_returns_stats(monkeypat
         lambda *args, **kwargs: encoder._EncodedDafRead("AYGT", "CT", 1),
     )
 
-    assert encoder._process_daf_encode_read(
-        handle, progress, read, 20, 1000,
+    assert encoder._process_daf_encode_read_from_request(
+        encoder._DafEncodeReadRequest(
+            outbam=handle,
+            pbar=progress,
+            read=read,
+            min_mapq=20,
+            min_read_length=1000,
+        )
     ) == encoder._DafEncodeReadStats(
         encoded=1,
         skipped=0,
@@ -472,7 +478,11 @@ def test_process_daf_encode_read_writes_skipped_read(monkeypatch):
     monkeypatch.setattr(encoder, "_encode_read_daf_record", fail_encode)
 
     assert encoder._process_daf_encode_read(
-        handle, progress, read, 20, 1000,
+        handle,
+        progress,
+        read,
+        20,
+        1000,
     ) == encoder._daf_skipped_read_stats()
     assert handle.written == [read]
     assert progress.n == 1
@@ -497,27 +507,15 @@ def test_stream_daf_encode_reads_accumulates_stats(monkeypatch):
         encoder._daf_skipped_read_stats(),
     ]
 
-    def fake_process_read(
-        outbam,
-        pbar,
-        read,
-        min_mapq,
-        min_read_length,
-        force_strand=None,
-        ref_fasta=None,
-    ):
-        calls.append((
-            outbam,
-            pbar,
-            read,
-            min_mapq,
-            min_read_length,
-            force_strand,
-            ref_fasta,
-        ))
+    def fake_process_read(request):
+        calls.append(request)
         return stats.pop(0)
 
-    monkeypatch.setattr(encoder, "_process_daf_encode_read", fake_process_read)
+    monkeypatch.setattr(
+        encoder,
+        "_process_daf_encode_read_from_request",
+        fake_process_read,
+    )
 
     last_progress = encoder._stream_daf_encode_reads(
         inbam,
@@ -542,8 +540,26 @@ def test_stream_daf_encode_reads_accumulates_stats(monkeypatch):
         total_deam=2,
         total_bases=100,
     )
-    assert [call[2] for call in calls] == reads
-    assert all(call[5:] == ("CT", "ref") for call in calls)
+    assert calls == [
+        encoder._DafEncodeReadRequest(
+            outbam=handle,
+            pbar=progress,
+            read=reads[0],
+            min_mapq=20,
+            min_read_length=1000,
+            force_strand="CT",
+            ref_fasta="ref",
+        ),
+        encoder._DafEncodeReadRequest(
+            outbam=handle,
+            pbar=progress,
+            read=reads[1],
+            min_mapq=20,
+            min_read_length=1000,
+            force_strand="CT",
+            ref_fasta="ref",
+        ),
+    ]
 
 
 def test_close_daf_encode_handles_closes_all_after_close_error():

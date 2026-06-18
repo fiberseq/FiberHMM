@@ -114,6 +114,17 @@ class _DafProgressReportRequest:
     log: object
 
 
+@dataclass(frozen=True)
+class _DafEncodeReadRequest:
+    outbam: object
+    pbar: object
+    read: object
+    min_mapq: int
+    min_read_length: int
+    force_strand: object = None
+    ref_fasta: object = None
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -685,6 +696,42 @@ def _daf_skipped_read_stats() -> _DafEncodeReadStats:
     )
 
 
+def _process_daf_encode_read_from_request(
+    request: _DafEncodeReadRequest,
+) -> _DafEncodeReadStats:
+    skip_reason = _daf_encode_skip_reason(
+        request.read,
+        request.min_mapq,
+        request.min_read_length,
+    )
+    if skip_reason:
+        _write_skipped_daf_read(request.outbam, request.pbar, request.read)
+        return _daf_skipped_read_stats()
+
+    encoded = _encode_read_daf_record(
+        request.read,
+        force_strand=request.force_strand,
+        ref_fasta=request.ref_fasta,
+    )
+    if encoded is None:
+        _write_skipped_daf_read(request.outbam, request.pbar, request.read)
+        return _daf_skipped_read_stats()
+
+    _apply_daf_encoding_to_read(
+        request.read,
+        encoded.sequence,
+        encoded.st_tag,
+    )
+
+    request.outbam.write(request.read)
+    request.pbar.update(1)
+    return _daf_encoded_read_stats(
+        request.read,
+        encoded.st_tag,
+        encoded.n_deaminations,
+    )
+
+
 def _process_daf_encode_read(
     outbam,
     pbar,
@@ -694,25 +741,17 @@ def _process_daf_encode_read(
     force_strand=None,
     ref_fasta=None,
 ) -> _DafEncodeReadStats:
-    skip_reason = _daf_encode_skip_reason(read, min_mapq, min_read_length)
-    if skip_reason:
-        _write_skipped_daf_read(outbam, pbar, read)
-        return _daf_skipped_read_stats()
-
-    encoded = _encode_read_daf_record(
-        read,
-        force_strand=force_strand,
-        ref_fasta=ref_fasta,
+    return _process_daf_encode_read_from_request(
+        _DafEncodeReadRequest(
+            outbam=outbam,
+            pbar=pbar,
+            read=read,
+            min_mapq=min_mapq,
+            min_read_length=min_read_length,
+            force_strand=force_strand,
+            ref_fasta=ref_fasta,
+        )
     )
-    if encoded is None:
-        _write_skipped_daf_read(outbam, pbar, read)
-        return _daf_skipped_read_stats()
-
-    _apply_daf_encoding_to_read(read, encoded.sequence, encoded.st_tag)
-
-    outbam.write(read)
-    pbar.update(1)
-    return _daf_encoded_read_stats(read, encoded.st_tag, encoded.n_deaminations)
 
 
 def _open_daf_reference(reference):
@@ -792,14 +831,16 @@ def _stream_daf_encode_reads(
     last_progress: float,
 ) -> float:
     for read in inbam.fetch(until_eof=True):
-        read_stats = _process_daf_encode_read(
-            outbam,
-            pbar,
-            read,
-            min_mapq,
-            min_read_length,
-            force_strand=force_strand,
-            ref_fasta=ref_fasta,
+        read_stats = _process_daf_encode_read_from_request(
+            _DafEncodeReadRequest(
+                outbam=outbam,
+                pbar=pbar,
+                read=read,
+                min_mapq=min_mapq,
+                min_read_length=min_read_length,
+                force_strand=force_strand,
+                ref_fasta=ref_fasta,
+            )
         )
         _accumulate_daf_read_stats(counts, read_stats)
         last_progress = _maybe_print_daf_encode_progress(
