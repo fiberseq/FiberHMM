@@ -9,6 +9,7 @@ import numpy as np
 from fiberhmm.posteriors import region_tsv
 from fiberhmm.posteriors.region_tsv import (
     format_region_posterior_line,
+    format_region_posterior_line_from_record,
     merge_region_posteriors_tsv,
     region_posteriors_needs_h5_conversion,
     region_posteriors_tsv_output_path,
@@ -25,6 +26,19 @@ def test_region_posterior_encoding_helpers_clip_and_join_values():
 
 
 def test_region_posterior_fields_preserve_tsv_column_order():
+    record = region_tsv._RegionPosteriorLineRecord(
+        read_name="read1",
+        chrom="chr2",
+        ref_start=10,
+        ref_end=20,
+        strand="+",
+        posteriors=np.array([0.0, 1.0], dtype=np.float32),
+        footprint_starts=np.array([2], dtype=np.int32),
+        footprint_sizes=np.array([3], dtype=np.int32),
+    )
+
+    fields = ["read1", "chr2", "10", "20", "+", "AP8=", "2", "3"]
+    assert region_tsv._region_posterior_fields_from_record(record) == fields
     assert region_tsv._region_posterior_fields(
         read_name="read1",
         chrom="chr2",
@@ -34,11 +48,11 @@ def test_region_posterior_fields_preserve_tsv_column_order():
         posteriors=np.array([0.0, 1.0], dtype=np.float32),
         footprint_starts=np.array([2], dtype=np.int32),
         footprint_sizes=np.array([3], dtype=np.int32),
-    ) == ["read1", "chr2", "10", "20", "+", "AP8=", "2", "3"]
+    ) == fields
 
 
 def test_format_region_posterior_line_matches_tsv_parser():
-    line = format_region_posterior_line(
+    record = region_tsv._RegionPosteriorLineRecord(
         read_name="read1",
         chrom="chr2",
         ref_start=10,
@@ -48,6 +62,7 @@ def test_format_region_posterior_line_matches_tsv_parser():
         footprint_starts=np.array([2, 8], dtype=np.int32),
         footprint_sizes=np.array([3, 4], dtype=np.int32),
     )
+    line = format_region_posterior_line_from_record(record)
 
     parsed = parse_posteriors_line(line)
 
@@ -59,6 +74,16 @@ def test_format_region_posterior_line_matches_tsv_parser():
     np.testing.assert_allclose(parsed["posteriors"], [0.0, 127 / 255, 1.0])
     np.testing.assert_array_equal(parsed["fp_starts"], [2, 8])
     np.testing.assert_array_equal(parsed["fp_sizes"], [3, 4])
+    assert format_region_posterior_line(
+        read_name="read1",
+        chrom="chr2",
+        ref_start=10,
+        ref_end=20,
+        strand="+",
+        posteriors=np.array([0.0, 0.5, 1.0], dtype=np.float32),
+        footprint_starts=np.array([2, 8], dtype=np.int32),
+        footprint_sizes=np.array([3, 4], dtype=np.int32),
+    ) == line
 
 
 def test_region_posteriors_tsv_output_path(tmp_path):

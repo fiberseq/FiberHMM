@@ -25,6 +25,18 @@ class _IndexedRegionTsvFile:
     path: str
 
 
+@dataclass(frozen=True)
+class _RegionPosteriorLineRecord:
+    read_name: str
+    chrom: str
+    ref_start: int
+    ref_end: int
+    strand: str
+    posteriors: np.ndarray
+    footprint_starts: Sequence[int]
+    footprint_sizes: Sequence[int]
+
+
 def _posterior_probabilities_b64(posteriors: np.ndarray) -> str:
     post_u8 = np.clip(posteriors * 255, 0, 255).astype(np.uint8)
     return base64.b64encode(post_u8.tobytes()).decode("ascii")
@@ -32,6 +44,21 @@ def _posterior_probabilities_b64(posteriors: np.ndarray) -> str:
 
 def _comma_join_ints(values: Sequence[int]) -> str:
     return ",".join(map(str, values)) if len(values) > 0 else ""
+
+
+def _region_posterior_fields_from_record(
+    record: _RegionPosteriorLineRecord,
+) -> list[str]:
+    return [
+        record.read_name,
+        record.chrom,
+        str(record.ref_start),
+        str(record.ref_end),
+        record.strand,
+        _posterior_probabilities_b64(record.posteriors),
+        _comma_join_ints(record.footprint_starts),
+        _comma_join_ints(record.footprint_sizes),
+    ]
 
 
 def _region_posterior_fields(
@@ -44,16 +71,26 @@ def _region_posterior_fields(
     footprint_starts: Sequence[int],
     footprint_sizes: Sequence[int],
 ) -> list[str]:
-    return [
-        read_name,
-        chrom,
-        str(ref_start),
-        str(ref_end),
-        strand,
-        _posterior_probabilities_b64(posteriors),
-        _comma_join_ints(footprint_starts),
-        _comma_join_ints(footprint_sizes),
-    ]
+    return _region_posterior_fields_from_record(
+        _RegionPosteriorLineRecord(
+            read_name=read_name,
+            chrom=chrom,
+            ref_start=ref_start,
+            ref_end=ref_end,
+            strand=strand,
+            posteriors=posteriors,
+            footprint_starts=footprint_starts,
+            footprint_sizes=footprint_sizes,
+        )
+    )
+
+
+def format_region_posterior_line_from_record(
+    record: _RegionPosteriorLineRecord,
+) -> str:
+    """Format one region-worker posterior record without a header."""
+    fields = _region_posterior_fields_from_record(record)
+    return "\t".join(fields) + "\n"
 
 
 def format_region_posterior_line(
@@ -67,17 +104,18 @@ def format_region_posterior_line(
     footprint_sizes: Sequence[int],
 ) -> str:
     """Format one region-worker posterior record without a header."""
-    fields = _region_posterior_fields(
-        read_name,
-        chrom,
-        ref_start,
-        ref_end,
-        strand,
-        posteriors,
-        footprint_starts,
-        footprint_sizes,
+    return format_region_posterior_line_from_record(
+        _RegionPosteriorLineRecord(
+            read_name=read_name,
+            chrom=chrom,
+            ref_start=ref_start,
+            ref_end=ref_end,
+            strand=strand,
+            posteriors=posteriors,
+            footprint_starts=footprint_starts,
+            footprint_sizes=footprint_sizes,
+        )
     )
-    return "\t".join(fields) + "\n"
 
 
 def write_region_posteriors_tsv(tsv_path: str, posteriors_data: Iterable[dict]) -> None:
@@ -85,15 +123,17 @@ def write_region_posteriors_tsv(tsv_path: str, posteriors_data: Iterable[dict]) 
     with open(tsv_path, "w") as handle:
         for fiber in posteriors_data:
             handle.write(
-                format_region_posterior_line(
-                    read_name=fiber["read_name"],
-                    chrom=fiber["chrom"],
-                    ref_start=fiber["ref_start"],
-                    ref_end=fiber["ref_end"],
-                    strand=fiber["strand"],
-                    posteriors=fiber["posteriors"],
-                    footprint_starts=fiber["footprint_starts"],
-                    footprint_sizes=fiber["footprint_sizes"],
+                format_region_posterior_line_from_record(
+                    _RegionPosteriorLineRecord(
+                        read_name=fiber["read_name"],
+                        chrom=fiber["chrom"],
+                        ref_start=fiber["ref_start"],
+                        ref_end=fiber["ref_end"],
+                        strand=fiber["strand"],
+                        posteriors=fiber["posteriors"],
+                        footprint_starts=fiber["footprint_starts"],
+                        footprint_sizes=fiber["footprint_sizes"],
+                    )
                 )
             )
 
