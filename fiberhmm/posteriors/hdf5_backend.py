@@ -165,6 +165,13 @@ class _FiberArrayDatasetSpec:
 
 
 @dataclass(frozen=True)
+class _FiberArrayDatasetWriteRequest:
+    group: object
+    index: int
+    fiber: Dict
+
+
+@dataclass(frozen=True)
 class _PosteriorWriterCloseResult:
     total_written: int
     file_size_mb: float
@@ -214,10 +221,22 @@ def _fiber_array_dataset_specs(fiber: Dict) -> List[_FiberArrayDatasetSpec]:
 
 
 def _write_fiber_array_datasets(group, index: int, fiber: Dict) -> None:
-    idx = str(index)
-    for spec in _fiber_array_dataset_specs(fiber):
+    _write_fiber_array_datasets_from_request(
+        _FiberArrayDatasetWriteRequest(
+            group=group,
+            index=index,
+            fiber=fiber,
+        )
+    )
+
+
+def _write_fiber_array_datasets_from_request(
+    request: _FiberArrayDatasetWriteRequest,
+) -> None:
+    idx = str(request.index)
+    for spec in _fiber_array_dataset_specs(request.fiber):
         _create_gzip_dataset(
-            group[spec.group_name],
+            request.group[spec.group_name],
             idx,
             spec.data,
             compression_opts=spec.compression_opts,

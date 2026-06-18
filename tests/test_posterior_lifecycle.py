@@ -218,9 +218,22 @@ def test_hdf5_fiber_array_dataset_helper_writes_expected_groups(tmp_path):
     with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
         grp = hdf5_backend.create_posterior_chrom_group(h5, "chr1")
 
+        hdf5_backend._write_fiber_array_datasets_from_request(
+            hdf5_backend._FiberArrayDatasetWriteRequest(
+                group=grp,
+                index=2,
+                fiber={
+                    "posteriors": np.array([0.1, 0.9], dtype=np.float32),
+                    "ref_positions": np.array([10, -1], dtype=np.int64),
+                    "footprint_starts": [3],
+                    "footprint_sizes": [20],
+                },
+            )
+        )
+
         hdf5_backend._write_fiber_array_datasets(
             grp,
-            2,
+            3,
             {
                 "posteriors": np.array([0.1, 0.9], dtype=np.float32),
                 "ref_positions": np.array([10, -1], dtype=np.int64),
@@ -229,10 +242,15 @@ def test_hdf5_fiber_array_dataset_helper_writes_expected_groups(tmp_path):
             },
         )
 
-        np.testing.assert_allclose(grp["posteriors"]["2"][:], [0.1, 0.9], atol=1e-3)
-        np.testing.assert_array_equal(grp["ref_positions"]["2"][:], [10, -1])
-        np.testing.assert_array_equal(grp["footprint_starts"]["2"][:], [3])
-        np.testing.assert_array_equal(grp["footprint_sizes"]["2"][:], [20])
+        for index in ("2", "3"):
+            np.testing.assert_allclose(
+                grp["posteriors"][index][:],
+                [0.1, 0.9],
+                atol=1e-3,
+            )
+            np.testing.assert_array_equal(grp["ref_positions"][index][:], [10, -1])
+            np.testing.assert_array_equal(grp["footprint_starts"][index][:], [3])
+            np.testing.assert_array_equal(grp["footprint_sizes"][index][:], [20])
 
 
 def test_hdf5_chrom_fiber_metadata_helper_writes_final_arrays(tmp_path):
