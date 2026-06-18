@@ -402,6 +402,10 @@ def test_hdf5_posterior_writer_closes_file_when_finalize_fails(monkeypatch, tmp_
     assert fake_h5.close_count == 1
     assert writer._closed
 
+    assert hdf5_backend._PosteriorWriterCloseResult(3, 1.25).as_tuple() == (
+        3,
+        1.25,
+    )
     assert writer.close() == (0, 0)
     assert fake_h5.close_count == 1
 

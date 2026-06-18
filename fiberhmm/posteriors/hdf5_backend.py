@@ -139,6 +139,15 @@ class _FiberArrayDatasetSpec:
     compression_opts: Optional[int]
 
 
+@dataclass(frozen=True)
+class _PosteriorWriterCloseResult:
+    total_written: int
+    file_size_mb: float
+
+    def as_tuple(self) -> tuple[int, float]:
+        return self.total_written, self.file_size_mb
+
+
 def _new_chrom_metadata() -> _ChromMetadata:
     return _ChromMetadata()
 
@@ -351,7 +360,10 @@ class PosteriorWriter:
     def close(self):
         """Finalize and close the H5 file."""
         if self._closed:
-            return self.total_written, 0
+            return _PosteriorWriterCloseResult(
+                total_written=self.total_written,
+                file_size_mb=0,
+            ).as_tuple()
 
         try:
             self.finalize()
@@ -363,7 +375,10 @@ class PosteriorWriter:
 
         # Return stats
         file_size = _file_size_mb(self.output_path)
-        return self.total_written, file_size
+        return _PosteriorWriterCloseResult(
+            total_written=self.total_written,
+            file_size_mb=file_size,
+        ).as_tuple()
 
     def __enter__(self):
         return self
