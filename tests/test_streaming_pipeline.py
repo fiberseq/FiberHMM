@@ -19,6 +19,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _finalize_fused_streaming_pipeline,
     _flush_streaming_chunk,
     _flush_streaming_chunk_and_report_progress,
+    _fused_drain_chunk_factory,
     _fused_worker_args,
     _new_apply_streaming_executor,
     _new_fused_streaming_executor,
@@ -899,6 +900,54 @@ def test_new_fused_streaming_executor_configures_pool(monkeypatch):
             147,
         ),
     }
+
+
+def test_fused_drain_chunk_factory_calls_fused_drain(monkeypatch):
+    calls = []
+
+    def fake_drain(
+        inflight,
+        outbam,
+        with_scores,
+        also_write_legacy,
+        downstream_compat,
+        counters,
+    ):
+        calls.append(
+            (
+                inflight,
+                outbam,
+                with_scores,
+                also_write_legacy,
+                downstream_compat,
+                counters,
+            )
+        )
+
+    monkeypatch.setattr(streaming_pipeline, "_drain_oldest_fused_chunk", fake_drain)
+
+    inflight = deque(["chunk"])
+    outbam = object()
+    counters = {}
+
+    drain_chunk = _fused_drain_chunk_factory(
+        outbam,
+        with_scores=True,
+        also_write_legacy=False,
+        downstream_compat=True,
+        counters=counters,
+    )(inflight)
+    drain_chunk()
+
+    assert len(calls) == 1
+    assert calls[0][0] is inflight
+    assert calls[0][1:] == (
+        outbam,
+        True,
+        False,
+        True,
+        counters,
+    )
 
 
 def _count_bam_reads(bam_path):

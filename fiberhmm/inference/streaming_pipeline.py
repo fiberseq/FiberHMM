@@ -552,6 +552,29 @@ def _new_fused_streaming_executor(
     )
 
 
+def _fused_drain_chunk_factory(
+    outbam,
+    with_scores: bool,
+    also_write_legacy: bool,
+    downstream_compat: bool,
+    counters: dict,
+):
+    def drain_chunk_factory(inflight):
+        def drain_chunk():
+            _drain_oldest_fused_chunk(
+                inflight,
+                outbam,
+                with_scores,
+                also_write_legacy,
+                downstream_compat,
+                counters,
+            )
+
+        return drain_chunk
+
+    return drain_chunk_factory
+
+
 def _print_streaming_skip_summary(skip_reasons: dict, total_reads: int,
                                   skipped: int, log) -> None:
     if skipped <= 0:
@@ -836,9 +859,12 @@ def _process_bam_streaming_pipeline_fused(
                     max_reads,
                     chunk_size,
                     max_inflight,
-                    lambda inflight: lambda: _drain_oldest_fused_chunk(
-                        inflight, outbam, with_scores,
-                        also_write_legacy, downstream_compat, counters,
+                    _fused_drain_chunk_factory(
+                        outbam,
+                        with_scores,
+                        also_write_legacy,
+                        downstream_compat,
+                        counters,
                     ),
                     skip_reasons,
                     _log,
