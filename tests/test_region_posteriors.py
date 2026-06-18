@@ -61,7 +61,7 @@ def test_format_region_posterior_line_matches_tsv_parser():
     np.testing.assert_array_equal(parsed["fp_sizes"], [3, 4])
 
 
-def test_region_posteriors_tsv_output_path():
+def test_region_posteriors_tsv_output_path(tmp_path):
     assert region_posteriors_tsv_output_path("out.h5") == "out.tsv.gz"
     assert region_posteriors_tsv_output_path("out.hdf5") == "out.tsv.gz"
     assert region_posteriors_tsv_output_path("out.H5") == "out.tsv.gz"
@@ -70,6 +70,9 @@ def test_region_posteriors_tsv_output_path():
     assert region_posteriors_tsv_output_path("out.tsv.gz") == "out.tsv.gz"
     assert region_posteriors_tsv_output_path("out.TSV.GZ") == "out.TSV.GZ"
     assert region_posteriors_tsv_output_path("out") == "out.tsv.gz"
+    assert region_posteriors_tsv_output_path(tmp_path / "out.h5") == str(
+        tmp_path / "out.tsv.gz",
+    )
     assert region_posteriors_needs_h5_conversion("out.h5")
     assert region_posteriors_needs_h5_conversion("out.hdf5")
     assert region_posteriors_needs_h5_conversion("out.HDF5")
@@ -84,7 +87,7 @@ def test_region_tsv_header_and_record_copy_helpers(tmp_path):
         mode="daf",
         context_size=5,
         edge_trim=12,
-        source_bam="/data/input.bam",
+        source_bam=tmp_path / "input.bam",
     )
 
     header_lines = output.getvalue().splitlines()

@@ -92,6 +92,7 @@ def write_region_posteriors_tsv(tsv_path: str, posteriors_data: Iterable[dict]) 
 
 def region_posteriors_tsv_output_path(output_path: str) -> str:
     """Return the gzipped TSV path produced for a requested posterior path."""
+    output_path = os.fspath(output_path)
     if region_posteriors_needs_h5_conversion(output_path):
         root, _ext = os.path.splitext(output_path)
         return root + ".tsv.gz"
@@ -117,7 +118,7 @@ def _posterior_tsv_metadata(
         "mode": mode,
         "context_size": context_size,
         "edge_trim": edge_trim,
-        "source_bam": os.path.basename(source_bam),
+        "source_bam": os.path.basename(os.fspath(source_bam)),
         "format_version": 1,
     }
 
