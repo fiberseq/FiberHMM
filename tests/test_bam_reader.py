@@ -558,8 +558,13 @@ class TestHexamerLookup:
     """Test hexamer lookup table construction."""
 
     def test_hmm_symbol_offsets_follow_context_code_count(self):
-        assert _hmm_symbol_offsets(1) == (16, 17)
-        assert _hmm_symbol_offsets(3) == (4096, 4097)
+        k1_offsets = _hmm_symbol_offsets(1)
+        k3_offsets = _hmm_symbol_offsets(3)
+
+        assert k1_offsets.non_target_code == 16
+        assert k1_offsets.unmethylated_offset == 17
+        assert k3_offsets.non_target_code == 4096
+        assert k3_offsets.unmethylated_offset == 4097
 
     def test_build_hexamer_lookup(self):
         """Test basic hexamer lookup table."""

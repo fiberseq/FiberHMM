@@ -319,6 +319,12 @@ class _NanoporeM6aTargets:
 
 
 @dataclass(frozen=True)
+class _HmmSymbolOffsets:
+    non_target_code: int
+    unmethylated_offset: int
+
+
+@dataclass(frozen=True)
 class _MmHitPositions:
     positions: np.ndarray
     next_ml_idx: int
@@ -984,34 +990,37 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
         4^(2k)+1 to 2*4^(2k): Unmodified target base with context
         2*4^(2k)+1: Non-target position (unmodified version)
     """
-    non_target_code, unmethylated_offset = _hmm_symbol_offsets(context_size)
+    offsets = _hmm_symbol_offsets(context_size)
 
     # Determine target base based on mode
     if mode == 'pacbio-fiber':
         return _encode_pacbio_m6a_observations(
             sequence, mod_positions, edge_trim, context_size,
-            non_target_code, unmethylated_offset,
+            offsets.non_target_code, offsets.unmethylated_offset,
         )
 
     elif mode == 'nanopore-fiber':
         return _encode_nanopore_m6a_observations(
             sequence, mod_positions, edge_trim, context_size,
-            is_reverse, non_target_code, unmethylated_offset,
+            is_reverse, offsets.non_target_code, offsets.unmethylated_offset,
         )
 
     elif mode == 'daf':
         return _encode_daf_observations(
             sequence, mod_positions, edge_trim, strand, context_size,
-            non_target_code, unmethylated_offset,
+            offsets.non_target_code, offsets.unmethylated_offset,
         )
 
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
 
-def _hmm_symbol_offsets(context_size: int) -> tuple:
+def _hmm_symbol_offsets(context_size: int) -> _HmmSymbolOffsets:
     n_codes = ContextEncoder.get_n_codes(context_size)
-    return n_codes, n_codes + 1
+    return _HmmSymbolOffsets(
+        non_target_code=n_codes,
+        unmethylated_offset=n_codes + 1,
+    )
 
 
 def _sequence_base_int_array(sequence: str, *, uppercase: bool = False,
