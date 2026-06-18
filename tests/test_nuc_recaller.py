@@ -9,6 +9,7 @@ from fiberhmm.inference.nuc_recaller import (
     _NucRecallParams,
     _bounded_interval,
     _circular_uncovered_cut,
+    _clip_ordered_nuc_calls_for_tiling,
     _keep_nuc_against_circular_intervals,
     _msp_gaps_between_nucs,
     _nuc_from_protected_calls,
@@ -495,6 +496,23 @@ def test_ordered_positive_nuc_calls_drops_empty_and_prefers_longer_same_start():
         (10, 40),
         (10, 20),
         (30, 10),
+    ]
+
+
+def test_clip_ordered_nuc_calls_for_tiling_clips_overlap_and_drops_short():
+    ordered = [
+        NucCall(10, 50, 1, 2, 3),
+        NucCall(40, 50, 4, 5, 6),
+        NucCall(95, 10, 7, 8, 9),
+    ]
+
+    kept = _clip_ordered_nuc_calls_for_tiling(
+        ordered, span_lo=0, nuc_floor=20,
+    )
+
+    assert kept == [
+        NucCall(10, 50, 1, 2, 3),
+        NucCall(60, 30, 4, 0, 6),
     ]
 
 

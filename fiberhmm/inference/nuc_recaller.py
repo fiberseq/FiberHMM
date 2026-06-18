@@ -471,6 +471,27 @@ def _tiling_floors(msp_min_size, nuc_min_size) -> Tuple[int, int]:
     return max(1, int(msp_min_size)), max(1, int(nuc_min_size))
 
 
+def _clip_ordered_nuc_calls_for_tiling(
+    ordered: Sequence[NucCall],
+    span_lo: int,
+    nuc_floor: int,
+) -> List[NucCall]:
+    kept: List[NucCall] = []
+    last_end = int(span_lo)
+    for n in ordered:
+        s = n.start
+        e = n.start + n.length
+        el = n.el
+        if s < last_end:          # overlaps the previous nucleosome
+            s = last_end
+            el = 0                # clipped left edge is no longer meaningful
+        if e - s < nuc_floor:
+            continue              # swallowed, or clipped below the nuc floor
+        kept.append(NucCall(s, e - s, n.nq, el, n.er))
+        last_end = e
+    return kept
+
+
 def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
                             nuc_min_size=85):
     """Produce non-overlapping nucleosomes + complementary MSPs that TILE
@@ -494,19 +515,7 @@ def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
     """
     floor, nfloor = _tiling_floors(msp_min_size, nuc_min_size)
     ordered = _ordered_positive_nuc_calls(nuc_calls)
-    kept = []
-    last_end = span_lo
-    for n in ordered:
-        s = n.start
-        e = n.start + n.length
-        el = n.el
-        if s < last_end:          # overlaps the previous nucleosome
-            s = last_end
-            el = 0                # clipped left edge is no longer meaningful
-        if e - s < nfloor:
-            continue              # swallowed, or clipped below the nuc floor
-        kept.append(NucCall(s, e - s, n.nq, el, n.er))
-        last_end = e
+    kept = _clip_ordered_nuc_calls_for_tiling(ordered, span_lo, nfloor)
 
     return kept, _msp_gaps_between_nucs(kept, span_lo, span_hi, floor)
 
