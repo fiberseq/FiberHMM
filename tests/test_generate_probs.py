@@ -37,6 +37,7 @@ from fiberhmm.cli.generate_probs import (
     _safe_percent,
     _save_temporary_probability_counters,
     _target_bases_for_mode,
+    _write_combined_probability_tables,
     _write_probability_tables_for_base,
     _write_probability_table,
 )
@@ -495,6 +496,53 @@ def test_combined_probability_frame_outer_merges_contexts_and_fills_missing():
         'accessible_prob': [0.8, 0.0, 0.9],
         'inaccessible_prob': [0.0, 0.1, 0.2],
     }
+
+
+def test_write_combined_probability_tables_writes_non_empty_outputs(tmp_path, capsys):
+    tables_dir = tmp_path / "tables"
+    tables_dir.mkdir()
+    acc_k3 = pd.DataFrame({
+        "context": ["AAA", "AAC"],
+        "ratio": [0.8, 0.6],
+        "encode": [0, 1],
+    })
+    inacc_k3 = pd.DataFrame({
+        "context": ["AAA"],
+        "ratio": [0.2],
+        "encode": [0],
+    })
+    empty = pd.DataFrame(columns=["context", "ratio", "encode"])
+    accessible = _Counter(tables={3: acc_k3, 4: empty})
+    inaccessible = _Counter(tables={3: inacc_k3, 4: empty})
+    accessible.total_positions = 10
+    inaccessible.total_positions = 5
+    no_data_accessible = _Counter(tables={3: acc_k3, 4: empty})
+    no_data_inaccessible = _Counter(tables={3: inacc_k3, 4: empty})
+
+    _write_combined_probability_tables(
+        str(tables_dir),
+        "run",
+        ["A", "C"],
+        [3, 4],
+        {"A": accessible, "C": no_data_accessible},
+        {"A": inaccessible, "C": no_data_inaccessible},
+    )
+
+    output_file = tables_dir / "run_A_k3_probs.tsv"
+    skipped_empty_context_file = tables_dir / "run_A_k4_probs.tsv"
+    skipped_base_file = tables_dir / "run_C_k3_probs.tsv"
+    assert output_file.exists()
+    assert not skipped_empty_context_file.exists()
+    assert not skipped_base_file.exists()
+    assert pd.read_csv(output_file, sep="\t").to_dict("list") == {
+        "encode": [0, 1],
+        "context": ["AAA", "AAC"],
+        "accessible_prob": [0.8, 0.6],
+        "inaccessible_prob": [0.2, 0.0],
+    }
+    output = capsys.readouterr().out
+    assert "Creating combined probability files for train_model.py:" in output
+    assert f"{output_file} (2 contexts)" in output
 
 
 def test_write_probability_table_uses_stable_probability_columns(tmp_path):

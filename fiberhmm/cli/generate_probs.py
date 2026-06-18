@@ -623,6 +623,44 @@ def _write_probability_tables_for_base(
         )
 
 
+def _write_combined_probability_tables(
+    tables_dir: str,
+    base_name: str,
+    target_bases: List[str],
+    context_sizes: List[int],
+    accessible_counters: Dict[str, ContextCounter],
+    inaccessible_counters: Dict[str, ContextCounter],
+) -> None:
+    print("\n" + "-" * 60)
+    print("Creating combined probability files for train_model.py:")
+
+    for ctx_size in context_sizes:
+        for base in target_bases:
+            accessible_counter = accessible_counters[base]
+            inaccessible_counter = inaccessible_counters[base]
+            if (
+                accessible_counter.total_positions == 0
+                and inaccessible_counter.total_positions == 0
+            ):
+                continue
+
+            _, acc_probs = accessible_counter.get_encoding_table(ctx_size)
+            _, inacc_probs = inaccessible_counter.get_encoding_table(ctx_size)
+
+            if len(acc_probs) == 0 and len(inacc_probs) == 0:
+                continue
+
+            combined = _combined_probability_frame(acc_probs, inacc_probs)
+            combined_file = _combined_probability_table_path(
+                tables_dir,
+                base_name,
+                base,
+                ctx_size,
+            )
+            combined.to_csv(combined_file, sep='\t', index=False)
+            print(f"  {combined_file} ({len(combined)} contexts)")
+
+
 def main():
     args = parse_args()
 
@@ -710,34 +748,14 @@ def main():
             inacc,
         )
 
-    # Also create combined probability files for direct use with train_model.py
-    print("\n" + "-" * 60)
-    print("Creating combined probability files for train_model.py:")
-
-    for ctx_size in args.context_sizes:
-        for base in target_bases:
-            # Skip if no data for this base
-            if accessible_counters[base].total_positions == 0 and \
-               inaccessible_counters[base].total_positions == 0:
-                continue
-
-            _, acc_probs = accessible_counters[base].get_encoding_table(ctx_size)
-            _, inacc_probs = inaccessible_counters[base].get_encoding_table(ctx_size)
-
-            # Skip if both are empty
-            if len(acc_probs) == 0 and len(inacc_probs) == 0:
-                continue
-
-            combined = _combined_probability_frame(acc_probs, inacc_probs)
-
-            combined_file = _combined_probability_table_path(
-                tables_dir,
-                base_name,
-                base,
-                ctx_size,
-            )
-            combined.to_csv(combined_file, sep='\t', index=False)
-            print(f"  {combined_file} ({len(combined)} contexts)")
+    _write_combined_probability_tables(
+        tables_dir,
+        base_name,
+        target_bases,
+        args.context_sizes,
+        accessible_counters,
+        inaccessible_counters,
+    )
 
     # Clean up temp files
     _remove_temporary_probability_counters(output_dir, base_name, target_bases)
