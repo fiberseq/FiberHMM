@@ -206,6 +206,18 @@ class _RawLegacyRecallTags:
 
 
 @dataclass
+class _RecallReadRequest:
+    read: object
+    llr_hit: np.ndarray
+    llr_miss: np.ndarray
+    mode: str
+    context_size: int
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+
+
+@dataclass
 class _PreferredMmMlTags:
     mm_tag: object
     ml_tag: object
@@ -747,7 +759,24 @@ def recall_read(
                               (>= unify_threshold OR no overlapping TF call)
         - msp_intervals: v2 MSPs unchanged
     """
-    raw_tags = _raw_legacy_recall_tags(read)
+    return recall_read_from_request(
+        _RecallReadRequest(
+            read=read,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            mode=mode,
+            context_size=context_size,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
+        )
+    )
+
+
+def recall_read_from_request(
+    request: _RecallReadRequest,
+) -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
+    raw_tags = _raw_legacy_recall_tags(request.read)
 
     if len(raw_tags.nuc_starts) == 0 and len(raw_tags.msp_starts) == 0:
         return [], [], []
@@ -757,15 +786,19 @@ def recall_read(
     ns_raw, nl_raw = flip_intervals_to_seq(
         raw_tags.nuc_starts,
         raw_tags.nuc_lengths,
-        read,
+        request.read,
     )
     as_raw, al_raw = flip_intervals_to_seq(
         raw_tags.msp_starts,
         raw_tags.msp_lengths,
-        read,
+        request.read,
     )
 
-    extracted = extract_modifications(read, mode, context_size)
+    extracted = extract_modifications(
+        request.read,
+        request.mode,
+        request.context_size,
+    )
     if extracted is None:
         # Pass through v2 calls unchanged
         nucs = _positive_length_intervals(ns_raw, nl_raw)
@@ -774,19 +807,35 @@ def recall_read(
 
     mod_pos, strand, seq = extracted
     obs = encode_from_query_sequence(
-        seq, mod_pos, edge_trim=10, mode=mode, strand=strand,
-        context_size=context_size,
-        is_reverse=bool(read.is_reverse),
+        seq,
+        mod_pos,
+        edge_trim=10,
+        mode=request.mode,
+        strand=strand,
+        context_size=request.context_size,
+        is_reverse=bool(request.read.is_reverse),
     )
     read_len = len(seq)
 
-    intervals = build_scan_intervals(ns_raw, nl_raw, as_raw, al_raw,
-                                      read_len, unify_threshold=unify_threshold)
+    intervals = build_scan_intervals(
+        ns_raw,
+        nl_raw,
+        as_raw,
+        al_raw,
+        read_len,
+        unify_threshold=request.unify_threshold,
+    )
 
     tf_calls: List[TFCall] = []
     for lo, hi in intervals:
         tf_calls.extend(call_tfs_in_interval(
-            obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps,
+            obs,
+            lo,
+            hi,
+            request.llr_hit,
+            request.llr_miss,
+            request.min_llr,
+            request.min_opps,
         ))
 
     # Unify: drop v2 short-nucs (nl < threshold) that overlap any TF call.
@@ -794,7 +843,12 @@ def recall_read(
     kept_nucs: List[Tuple[int, int]] = []
     tf_intervals = [(c.start, c.start + c.length) for c in tf_calls]
     for s, length in zip(ns_raw, nl_raw):
-        kept = _kept_legacy_nuc_interval(s, length, tf_intervals, unify_threshold)
+        kept = _kept_legacy_nuc_interval(
+            s,
+            length,
+            tf_intervals,
+            request.unify_threshold,
+        )
         if kept is not None:
             kept_nucs.append(kept)
 
