@@ -53,15 +53,20 @@ def parse_args():
     parser.add_argument('-p', '--probs', required=True, nargs=2,
                         metavar=('ACC', 'INACC'),
                         help='Accessible and inaccessible probability files (.tsv or .probs.pkl)')
-    parser.add_argument('--base-model', type=str, default=None,
-                        metavar='MODEL',
-                        help='Use transitions from existing model with new emissions (skip training)')
+    parser.add_argument(
+        '--base-model', type=str, default=None,
+        metavar='MODEL',
+        help='Use transitions from existing model with new emissions (skip training)',
+    )
     parser.add_argument('-o', '--outdir', required=True,
                         help='Output directory')
 
     # Mode selection
-    parser.add_argument('--mode', choices=['pacbio-fiber', 'nanopore-fiber', 'daf'], default='pacbio-fiber',
-                        help='Analysis mode: pacbio-fiber (PacBio), nanopore-fiber (Nanopore), daf (DAF-seq)')
+    parser.add_argument(
+        '--mode', choices=['pacbio-fiber', 'nanopore-fiber', 'daf'],
+        default='pacbio-fiber',
+        help='Analysis mode: pacbio-fiber (PacBio), nanopore-fiber (Nanopore), daf (DAF-seq)',
+    )
 
     # Context size
     parser.add_argument('-k', '--context-size', type=int, default=3,
@@ -83,8 +88,10 @@ def parse_args():
                         help='Min aligned length')
     parser.add_argument('-a', '--prob-adjust', type=float, default=1.0,
                         help='Accessible probability adjustment factor')
-    parser.add_argument('--use-hmmlearn', action='store_true',
-                        help='Use hmmlearn instead of native implementation (for legacy compatibility)')
+    parser.add_argument(
+        '--use-hmmlearn', action='store_true',
+        help='Use hmmlearn instead of native implementation (for legacy compatibility)',
+    )
     parser.add_argument('--stats', action='store_true',
                         help='Generate training statistics and example plots')
     parser.add_argument('--n-examples', type=int, default=5,
