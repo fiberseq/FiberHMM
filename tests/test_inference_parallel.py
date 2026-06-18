@@ -211,6 +211,9 @@ def test_shutdown_legacy_resources_closes_executor_and_posteriors():
     calls = []
 
     class Executor:
+        def __bool__(self):
+            return False
+
         def shutdown(self, wait):
             calls.append(("shutdown", wait))
 
@@ -233,6 +236,9 @@ def test_shutdown_legacy_resources_closes_posteriors_after_executor_error():
     calls = []
 
     class Executor:
+        def __bool__(self):
+            return False
+
         def shutdown(self, wait):
             calls.append(("shutdown", wait))
             raise RuntimeError("shutdown failed")

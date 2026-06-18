@@ -833,7 +833,7 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         ))
 
         finally:
-            if tsv_file:
+            if tsv_file is not None:
                 tsv_file.close()
 
         return _region_bam_result_from_counts(

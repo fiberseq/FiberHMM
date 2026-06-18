@@ -288,7 +288,7 @@ def _legacy_executor_for_config(
 def _shutdown_legacy_resources(executor, posterior_writer):
     posterior_stats = None
     try:
-        if executor:
+        if executor is not None:
             executor.shutdown(wait=True)
     finally:
         if posterior_writer is not None:

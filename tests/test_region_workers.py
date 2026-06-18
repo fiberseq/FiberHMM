@@ -219,6 +219,9 @@ def test_process_region_to_bam_closes_tsv_once_when_fetch_region_missing(
         def __init__(self):
             self.closed = 0
 
+        def __bool__(self):
+            return False
+
         def close(self):
             self.closed += 1
 
