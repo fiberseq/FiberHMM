@@ -89,6 +89,24 @@ class _RegionResultCollectionRequest:
     error_prefix: Optional[str]
 
 
+@dataclass(frozen=True)
+class _RegionWorkerPoolRequest:
+    n_cores: int
+    initializer: object
+    initargs: tuple
+    worker: object
+    work_items: object
+    aggregation: object
+    result_type: object
+    total_regions: int
+    start_time: float
+    init_message: str
+    ready_message: str
+    include_tsv: bool
+    progress_config: Optional[_RegionProgressConfig]
+    error_prefix: Optional[str]
+
+
 def _base_region_worker_params(
     *,
     edge_trim: int,
@@ -475,29 +493,52 @@ def _run_region_worker_pool(
     progress_config: Optional[_RegionProgressConfig] = None,
     error_prefix: Optional[str] = None,
 ) -> None:
-    print(init_message)
+    _run_region_worker_pool_from_request(
+        _RegionWorkerPoolRequest(
+            n_cores=n_cores,
+            initializer=initializer,
+            initargs=initargs,
+            worker=worker,
+            work_items=work_items,
+            aggregation=aggregation,
+            result_type=result_type,
+            total_regions=total_regions,
+            start_time=start_time,
+            init_message=init_message,
+            ready_message=ready_message,
+            include_tsv=include_tsv,
+            progress_config=progress_config,
+            error_prefix=error_prefix,
+        )
+    )
+
+
+def _run_region_worker_pool_from_request(
+    request: _RegionWorkerPoolRequest,
+) -> None:
+    print(request.init_message)
     sys.stdout.flush()
     pool_start = time.time()
 
     with ProcessPoolExecutor(
-        max_workers=n_cores,
+        max_workers=request.n_cores,
         mp_context=_MP_CONTEXT,
-        initializer=initializer,
-        initargs=initargs,
+        initializer=request.initializer,
+        initargs=request.initargs,
     ) as executor:
         _collect_region_results(
             executor,
-            worker,
-            work_items,
-            aggregation,
-            result_type,
-            total_regions,
-            start_time,
+            request.worker,
+            request.work_items,
+            request.aggregation,
+            request.result_type,
+            request.total_regions,
+            request.start_time,
             pool_start,
-            ready_message,
-            include_tsv=include_tsv,
-            progress_config=progress_config,
-            error_prefix=error_prefix,
+            request.ready_message,
+            include_tsv=request.include_tsv,
+            progress_config=request.progress_config,
+            error_prefix=request.error_prefix,
         )
 
 

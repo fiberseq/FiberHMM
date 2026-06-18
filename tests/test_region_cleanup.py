@@ -554,21 +554,23 @@ def test_run_region_worker_pool_wires_executor_and_collector(monkeypatch, capsys
         lambda *args, **kwargs: collect_calls.append((args, kwargs)),
     )
 
-    region_pipeline._run_region_worker_pool(
-        n_cores=2,
-        initializer=initializer,
-        initargs=("model.json", {"param": True}),
-        worker=worker,
-        work_items=work_items,
-        aggregation=aggregation,
-        result_type=region_pipeline.RegionBamResult,
-        total_regions=1,
-        start_time=10.0,
-        init_message="init workers",
-        ready_message="Processing...",
-        include_tsv=True,
-        progress_config=progress_config,
-        error_prefix="Error processing region",
+    region_pipeline._run_region_worker_pool_from_request(
+        region_pipeline._RegionWorkerPoolRequest(
+            n_cores=2,
+            initializer=initializer,
+            initargs=("model.json", {"param": True}),
+            worker=worker,
+            work_items=work_items,
+            aggregation=aggregation,
+            result_type=region_pipeline.RegionBamResult,
+            total_regions=1,
+            start_time=10.0,
+            init_message="init workers",
+            ready_message="Processing...",
+            include_tsv=True,
+            progress_config=progress_config,
+            error_prefix="Error processing region",
+        )
     )
 
     assert "init workers" in capsys.readouterr().out
@@ -596,6 +598,58 @@ def test_run_region_worker_pool_wires_executor_and_collector(monkeypatch, capsys
             "error_prefix": "Error processing region",
         },
     )]
+
+
+def test_run_region_worker_pool_builds_request(monkeypatch):
+    calls = []
+    aggregation = region_pipeline.RegionBamAggregation()
+    worker = object()
+    initializer = object()
+    progress_config = region_pipeline._RegionProgressConfig(
+        footprint_label="With FP",
+    )
+
+    monkeypatch.setattr(
+        region_pipeline,
+        "_run_region_worker_pool_from_request",
+        lambda request: calls.append(request),
+    )
+
+    region_pipeline._run_region_worker_pool(
+        n_cores=2,
+        initializer=initializer,
+        initargs=("model.json", {"param": True}),
+        worker=worker,
+        work_items=["item0"],
+        aggregation=aggregation,
+        result_type=region_pipeline.RegionBamResult,
+        total_regions=1,
+        start_time=10.0,
+        init_message="init workers",
+        ready_message="Processing...",
+        include_tsv=True,
+        progress_config=progress_config,
+        error_prefix="Error processing region",
+    )
+
+    assert calls == [
+        region_pipeline._RegionWorkerPoolRequest(
+            n_cores=2,
+            initializer=initializer,
+            initargs=("model.json", {"param": True}),
+            worker=worker,
+            work_items=["item0"],
+            aggregation=aggregation,
+            result_type=region_pipeline.RegionBamResult,
+            total_regions=1,
+            start_time=10.0,
+            init_message="init workers",
+            ready_message="Processing...",
+            include_tsv=True,
+            progress_config=progress_config,
+            error_prefix="Error processing region",
+        )
+    ]
 
 
 def test_make_output_temp_dir_places_directory_next_to_output(tmp_path):
