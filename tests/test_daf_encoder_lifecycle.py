@@ -170,6 +170,45 @@ def test_encoded_daf_sequence_marks_selected_strand_and_counts_events():
     assert ga_encoded.n_deaminations == 1
 
 
+def test_encode_read_daf_record_names_public_tuple_parts(monkeypatch):
+    read = _WritableDafRead()
+
+    monkeypatch.setattr(
+        encoder,
+        "get_daf_positions",
+        lambda *args, **kwargs: ([1], [2], "CT"),
+    )
+
+    encoded = encoder._encode_read_daf_record(read)
+
+    assert encoded == encoder._EncodedDafRead(
+        sequence="AYGT",
+        st_tag="CT",
+        n_deaminations=1,
+    )
+    assert encoded.as_tuple() == ("AYGT", "CT", 1)
+
+
+def test_encode_read_daf_preserves_tuple_contract(monkeypatch):
+    read = _WritableDafRead()
+
+    monkeypatch.setattr(
+        encoder,
+        "_encode_read_daf_record",
+        lambda *args, **kwargs: encoder._EncodedDafRead("AYGT", "CT", 1),
+    )
+
+    assert encoder.encode_read_daf(read) == ("AYGT", "CT", 1)
+
+    monkeypatch.setattr(
+        encoder,
+        "_encode_read_daf_record",
+        lambda *args, **kwargs: None,
+    )
+
+    assert encoder.encode_read_daf(read) is None
+
+
 def test_daf_encode_throughput_handles_zero_elapsed():
     assert encoder._daf_encode_throughput({"total": 100, "elapsed": 2.0}) == 50.0
     assert encoder._daf_encode_throughput({"total": 100, "elapsed": 0.0}) is None
@@ -364,8 +403,8 @@ def test_process_daf_encode_read_writes_encoded_read_and_returns_stats(monkeypat
 
     monkeypatch.setattr(
         encoder,
-        "encode_read_daf",
-        lambda *args, **kwargs: ("AYGT", "CT", 1),
+        "_encode_read_daf_record",
+        lambda *args, **kwargs: encoder._EncodedDafRead("AYGT", "CT", 1),
     )
 
     assert encoder._process_daf_encode_read(
@@ -396,7 +435,7 @@ def test_process_daf_encode_read_writes_skipped_read(monkeypatch):
     def fail_encode(*args, **kwargs):
         raise AssertionError("filtered reads should not be encoded")
 
-    monkeypatch.setattr(encoder, "encode_read_daf", fail_encode)
+    monkeypatch.setattr(encoder, "_encode_read_daf_record", fail_encode)
 
     assert encoder._process_daf_encode_read(
         handle, progress, read, 20, 1000,

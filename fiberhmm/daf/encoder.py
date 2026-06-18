@@ -53,6 +53,16 @@ class _EncodedDafSequence:
 
 
 @dataclass(frozen=True)
+class _EncodedDafRead:
+    sequence: str
+    st_tag: str
+    n_deaminations: int
+
+    def as_tuple(self):
+        return self.sequence, self.st_tag, self.n_deaminations
+
+
+@dataclass(frozen=True)
 class _DafEncodeHandles:
     ref_fasta: object
     inbam: object
@@ -404,6 +414,21 @@ def _encoded_daf_sequence(seq: str, ct_positions, ga_positions, strand: str):
     )
 
 
+def _encode_read_daf_record(read, force_strand=None, ref_fasta=None):
+    res = get_daf_positions(read, force_strand=force_strand, ref_fasta=ref_fasta)
+    if res is None:
+        return None
+    ct_positions, ga_positions, strand = res
+
+    seq = read.query_sequence
+    encoded = _encoded_daf_sequence(
+        seq, ct_positions, ga_positions, strand,
+    )
+
+    st_tag = strand  # "CT" or "GA"
+    return _EncodedDafRead(encoded.sequence, st_tag, encoded.n_deaminations)
+
+
 def encode_read_daf(read, force_strand=None, ref_fasta=None):
     """Identify deamination mismatches and encode as IUPAC R/Y.
 
@@ -418,18 +443,12 @@ def encode_read_daf(read, force_strand=None, ref_fasta=None):
         ``(new_sequence, st_tag, n_deaminations)`` on success.
         ``None`` if the read should be skipped.
     """
-    res = get_daf_positions(read, force_strand=force_strand, ref_fasta=ref_fasta)
-    if res is None:
-        return None
-    ct_positions, ga_positions, strand = res
-
-    seq = read.query_sequence
-    encoded = _encoded_daf_sequence(
-        seq, ct_positions, ga_positions, strand,
+    encoded = _encode_read_daf_record(
+        read,
+        force_strand=force_strand,
+        ref_fasta=ref_fasta,
     )
-
-    st_tag = strand  # "CT" or "GA"
-    return (encoded.sequence, st_tag, encoded.n_deaminations)
+    return None if encoded is None else encoded.as_tuple()
 
 
 def _aligned_pairs_from_fasta(read, ref_fasta):
@@ -618,17 +637,20 @@ def _process_daf_encode_read(
         _write_skipped_daf_read(outbam, pbar, read)
         return _daf_skipped_read_stats()
 
-    result = encode_read_daf(read, force_strand=force_strand, ref_fasta=ref_fasta)
-    if result is None:
+    encoded = _encode_read_daf_record(
+        read,
+        force_strand=force_strand,
+        ref_fasta=ref_fasta,
+    )
+    if encoded is None:
         _write_skipped_daf_read(outbam, pbar, read)
         return _daf_skipped_read_stats()
 
-    new_seq, st_tag, n_deam = result
-    _apply_daf_encoding_to_read(read, new_seq, st_tag)
+    _apply_daf_encoding_to_read(read, encoded.sequence, encoded.st_tag)
 
     outbam.write(read)
     pbar.update(1)
-    return _daf_encoded_read_stats(read, st_tag, n_deam)
+    return _daf_encoded_read_stats(read, encoded.st_tag, encoded.n_deaminations)
 
 
 def _open_daf_reference(reference):
