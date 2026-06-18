@@ -317,17 +317,8 @@ def _add_read_to_footprint_stats(
     )
 
 
-def _plot_footprint_overview_pdf_page(stats: "FootprintStats", plt, pdf) -> None:
-    if not stats.footprint_sizes:
-        return
-
-    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
-    fig.suptitle(
-        'FiberHMM Footprint Statistics', fontsize=14, fontweight='bold',
-    )
-
-    ax = axes[0, 0]
-    sizes = np.array(stats.footprint_sizes)
+def _plot_footprint_size_pdf_panel(ax, footprint_sizes) -> None:
+    sizes = np.array(footprint_sizes)
     _plot_median_histogram(
         ax,
         sizes,
@@ -340,9 +331,10 @@ def _plot_footprint_overview_pdf_page(stats: "FootprintStats", plt, pdf) -> None
         median_suffix=' bp',
     )
 
-    ax = axes[0, 1]
-    if stats.gap_sizes:
-        gaps = np.array(stats.gap_sizes)
+
+def _plot_gap_size_pdf_panel(ax, gap_sizes) -> None:
+    if gap_sizes:
+        gaps = np.array(gap_sizes)
         _plot_median_histogram(
             ax,
             gaps,
@@ -357,8 +349,9 @@ def _plot_footprint_overview_pdf_page(stats: "FootprintStats", plt, pdf) -> None
     else:
         _plot_no_data_message(ax, 'No gap data', 'Gap Size Distribution')
 
-    ax = axes[1, 0]
-    fp_per_read = _positive_counts(stats.footprints_per_read)
+
+def _plot_footprints_per_read_pdf_panel(ax, footprints_per_read) -> None:
+    fp_per_read = _positive_counts(footprints_per_read)
     if fp_per_read:
         _plot_median_histogram(
             ax,
@@ -370,9 +363,10 @@ def _plot_footprint_overview_pdf_page(stats: "FootprintStats", plt, pdf) -> None
             median_format='.1f',
         )
 
-    ax = axes[1, 1]
-    if stats.footprint_coverage:
-        coverage = np.array(stats.footprint_coverage) * 100
+
+def _plot_footprint_coverage_pdf_panel(ax, footprint_coverage) -> None:
+    if footprint_coverage:
+        coverage = np.array(footprint_coverage) * 100
         _plot_median_histogram(
             ax,
             coverage,
@@ -384,6 +378,25 @@ def _plot_footprint_overview_pdf_page(stats: "FootprintStats", plt, pdf) -> None
             median_format='.1f',
             median_suffix='%',
         )
+
+
+def _plot_footprint_overview_pdf_page(stats: "FootprintStats", plt, pdf) -> None:
+    if not stats.footprint_sizes:
+        return
+
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+    fig.suptitle(
+        'FiberHMM Footprint Statistics', fontsize=14, fontweight='bold',
+    )
+
+    _plot_footprint_size_pdf_panel(axes[0, 0], stats.footprint_sizes)
+    _plot_gap_size_pdf_panel(axes[0, 1], stats.gap_sizes)
+    _plot_footprints_per_read_pdf_panel(
+        axes[1, 0], stats.footprints_per_read,
+    )
+    _plot_footprint_coverage_pdf_panel(
+        axes[1, 1], stats.footprint_coverage,
+    )
 
     plt.tight_layout()
     pdf.savefig(fig)
