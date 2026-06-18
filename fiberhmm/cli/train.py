@@ -367,6 +367,46 @@ def _sample_training_read_at_position(
     return None
 
 
+def _sample_training_reads_for_positions(
+    bam,
+    random_positions: np.ndarray,
+    sampled: list,
+    n_samples: int,
+    chroms: list,
+    cum_lengths: np.ndarray,
+    seen_read_ids: set,
+    min_mapq: int,
+    min_read_length: int,
+    prob_threshold: int,
+    mode: str,
+) -> int:
+    attempts = 0
+    for genome_pos in random_positions:
+        if len(sampled) >= n_samples:
+            break
+
+        attempts += 1
+
+        chrom, pos = _chrom_pos_from_genome_offset(
+            chroms, cum_lengths, int(genome_pos),
+        )
+
+        fiber_read = _sample_training_read_at_position(
+            bam,
+            chrom,
+            pos,
+            seen_read_ids,
+            min_mapq,
+            min_read_length,
+            prob_threshold,
+            mode,
+        )
+        if fiber_read is not None:
+            sampled.append(fiber_read)
+
+    return attempts
+
+
 def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                          mode: str = 'pacbio-fiber', min_mapq: int = 20,
                          prob_threshold: int = 125, min_read_length: int = 1000) -> list:
@@ -397,28 +437,19 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
             batch_size = min(n_attempts, n_samples * 5)
             random_positions = np.random.randint(0, total_length, size=batch_size)
 
-            for genome_pos in random_positions:
-                if len(sampled) >= n_samples:
-                    break
-
-                attempts += 1
-
-                chrom, pos = _chrom_pos_from_genome_offset(
-                    chroms, cum_lengths, int(genome_pos),
-                )
-
-                fiber_read = _sample_training_read_at_position(
-                    bam,
-                    chrom,
-                    pos,
-                    seen_read_ids,
-                    min_mapq,
-                    min_read_length,
-                    prob_threshold,
-                    mode,
-                )
-                if fiber_read is not None:
-                    sampled.append(fiber_read)
+            attempts += _sample_training_reads_for_positions(
+                bam,
+                random_positions,
+                sampled,
+                n_samples,
+                chroms,
+                cum_lengths,
+                seen_read_ids,
+                min_mapq,
+                min_read_length,
+                prob_threshold,
+                mode,
+            )
 
     return sampled
 

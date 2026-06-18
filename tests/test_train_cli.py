@@ -1412,6 +1412,47 @@ def test_sample_training_read_at_position_handles_invalid_region():
     ) is None
 
 
+def test_sample_training_reads_for_positions_appends_until_target(monkeypatch):
+    sampled = []
+    seen = set()
+    calls = []
+
+    def fake_sample(
+        bam,
+        chrom,
+        pos,
+        seen_read_ids,
+        min_mapq,
+        min_read_length,
+        prob_threshold,
+        mode,
+    ):
+        calls.append((chrom, pos, seen_read_ids, min_mapq, min_read_length,
+                      prob_threshold, mode))
+        return f"{chrom}:{pos}"
+
+    monkeypatch.setattr(train, "_sample_training_read_at_position", fake_sample)
+
+    attempts = train._sample_training_reads_for_positions(
+        object(),
+        np.asarray([50, 125, 175]),
+        sampled,
+        2,
+        ["chr1", "chr2"],
+        np.asarray([100, 200]),
+        seen,
+        20,
+        1000,
+        125,
+        "pacbio-fiber",
+    )
+
+    assert attempts == 2
+    assert sampled == ["chr1:50", "chr2:25"]
+    assert [call[:2] for call in calls] == [("chr1", 50), ("chr2", 25)]
+    assert all(call[2] is seen for call in calls)
+
+
 def test_reads_per_training_file_has_one_read_minimum():
     assert train._reads_per_training_file(100, 4) == 25
     assert train._reads_per_training_file(2, 5) == 1
