@@ -219,6 +219,17 @@ class _FootprintedRegionReadWriteRequest:
 
 
 @dataclass(frozen=True)
+class _RegionBamApplyResultWriteRequest:
+    outbam: object
+    read: object
+    result: Optional[dict]
+    apply_config: _RegionApplyConfig
+    output_config: _RegionBamOutputConfig
+    skip_reasons: dict
+    tsv_file: object
+
+
+@dataclass(frozen=True)
 class _RegionBamReadProcessRequest:
     read: object
     outbam: object
@@ -926,6 +937,33 @@ def _skipped_region_bam_delta(outbam, read, skip_reasons: dict, reason: str):
     return _RegionBamReadDelta(written=counts.written, skipped=counts.skipped)
 
 
+def _region_bam_apply_result_write_delta_from_request(
+    request: _RegionBamApplyResultWriteRequest,
+) -> _RegionBamReadDelta:
+    if request.result is not None:
+        write_result = _write_footprinted_region_read(
+            request.outbam,
+            request.read,
+            request.result,
+            request.apply_config.with_scores,
+            request.output_config.write_msps,
+            request.tsv_file,
+        )
+        return _RegionBamReadDelta(
+            total_reads=1,
+            reads_with_footprints=1,
+            written=write_result.written,
+            posteriors_written=int(write_result.posterior_written),
+        )
+
+    written = _write_unfootprinted_region_read(
+        request.outbam,
+        request.read,
+        request.skip_reasons,
+    )
+    return _RegionBamReadDelta(total_reads=1, written=written)
+
+
 def _process_region_bam_read(
     read,
     outbam,
@@ -996,28 +1034,17 @@ def _process_region_bam_read_from_request(
         return_posteriors=request.return_posteriors,
     )
 
-    if result is not None:
-        write_result = _write_footprinted_region_read(
-            request.outbam,
-            request.read,
-            result,
-            request.apply_config.with_scores,
-            request.output_config.write_msps,
-            request.tsv_file,
+    return _region_bam_apply_result_write_delta_from_request(
+        _RegionBamApplyResultWriteRequest(
+            outbam=request.outbam,
+            read=request.read,
+            result=result,
+            apply_config=request.apply_config,
+            output_config=request.output_config,
+            skip_reasons=request.skip_reasons,
+            tsv_file=request.tsv_file,
         )
-        return _RegionBamReadDelta(
-            total_reads=1,
-            reads_with_footprints=1,
-            written=write_result.written,
-            posteriors_written=int(write_result.posterior_written),
-        )
-
-    written = _write_unfootprinted_region_read(
-        request.outbam,
-        request.read,
-        request.skip_reasons,
     )
-    return _RegionBamReadDelta(total_reads=1, written=written)
 
 
 def _process_region_bed_read(

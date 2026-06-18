@@ -31,6 +31,7 @@ from fiberhmm.inference.region_workers import (
     _process_region_bed_read,
     _record_skipped_region_read,
     _region_apply_config,
+    _region_bam_apply_result_write_delta_from_request,
     _region_bam_output_config,
     _region_bam_result_from_counts,
     _region_bam_result_from_request,
@@ -44,6 +45,7 @@ from fiberhmm.inference.region_workers import (
     _region_fused_recall_options,
     _region_read_route,
     _region_result_ns_scores,
+    _RegionBamApplyResultWriteRequest,
     _RegionBamResultRequest,
     _RegionBamWorkerCounts,
     _RegionBed12Blocks,
@@ -747,6 +749,84 @@ def test_write_footprinted_region_read_skips_absent_posteriors(monkeypatch):
     assert write_result.posterior_written is False
     assert posterior_calls == []
     assert outbam.written == [read]
+
+
+def test_region_bam_apply_result_write_delta_counts_footprinted(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    read = _route_read()
+    outbam = object()
+    result = {"ns": [10], "nl": [5]}
+    tsv_file = object()
+    calls = {}
+
+    def fake_write(out, got_read, got_result, with_scores, write_msps, got_tsv):
+        calls["write"] = (
+            out,
+            got_read,
+            got_result,
+            with_scores,
+            write_msps,
+            got_tsv,
+        )
+        return region_workers._FootprintedRegionWrite(2, True)
+
+    monkeypatch.setattr(region_workers, "_write_footprinted_region_read", fake_write)
+
+    delta = _region_bam_apply_result_write_delta_from_request(
+        _RegionBamApplyResultWriteRequest(
+            outbam=outbam,
+            read=read,
+            result=result,
+            apply_config=_apply_config(with_scores=True),
+            output_config=_region_bam_output_config({"write_msps": False}, None),
+            skip_reasons={},
+            tsv_file=tsv_file,
+        )
+    )
+
+    assert delta.total_reads == 1
+    assert delta.reads_with_footprints == 1
+    assert delta.written == 2
+    assert delta.posteriors_written == 1
+    assert calls["write"] == (outbam, read, result, True, False, tsv_file)
+
+
+def test_region_bam_apply_result_write_delta_counts_unfootprinted(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    read = _route_read()
+    outbam = object()
+    skip_reasons = {"no_footprints": 0}
+    calls = {}
+
+    def fake_write(out, got_read, got_skip_reasons):
+        calls["write"] = (out, got_read, got_skip_reasons)
+        return 1
+
+    monkeypatch.setattr(
+        region_workers,
+        "_write_unfootprinted_region_read",
+        fake_write,
+    )
+
+    delta = _region_bam_apply_result_write_delta_from_request(
+        _RegionBamApplyResultWriteRequest(
+            outbam=outbam,
+            read=read,
+            result=None,
+            apply_config=_apply_config(),
+            output_config=_region_bam_output_config({}, None),
+            skip_reasons=skip_reasons,
+            tsv_file=None,
+        )
+    )
+
+    assert delta.total_reads == 1
+    assert delta.reads_with_footprints == 0
+    assert delta.written == 1
+    assert delta.posteriors_written == 0
+    assert calls["write"] == (outbam, read, skip_reasons)
 
 
 def test_extract_region_fiber_read_maps_skip_reasons(monkeypatch):
