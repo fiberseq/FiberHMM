@@ -13,6 +13,7 @@ from fiberhmm.posteriors import hdf5_backend, tsv_backend
 def test_export_posteriors_detects_output_format():
     assert export_posteriors._detect_format("out.h5", "auto") == "hdf5"
     assert export_posteriors._detect_format("out.hdf5", "auto") == "hdf5"
+    assert export_posteriors._detect_format("out.HDF5", "auto") == "hdf5"
     assert export_posteriors._detect_format("out.tsv.gz", "auto") == "tsv"
     assert export_posteriors._detect_format("out.any", "hdf5") == "hdf5"
 

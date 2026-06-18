@@ -61,7 +61,8 @@ def _detect_format(output_path: str, format_arg: str) -> str:
     """Detect output format from extension or explicit --format."""
     if format_arg != 'auto':
         return format_arg
-    if output_path.endswith('.h5') or output_path.endswith('.hdf5'):
+    output_path_lower = output_path.lower()
+    if output_path_lower.endswith('.h5') or output_path_lower.endswith('.hdf5'):
         return 'hdf5'
     return 'tsv'
 
@@ -677,7 +678,7 @@ def export_posteriors_tsv(
         context_size_override, edge_trim, n_cores, "TSV", verbose,
     )
 
-    compress = output_path.endswith('.gz')
+    compress = output_path.lower().endswith('.gz')
     writer = PosteriorsTSVWriter(
         output_path, mode=mode, context_size=context_size,
         edge_trim=edge_trim, source_bam=input_bam, compress=compress
