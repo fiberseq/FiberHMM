@@ -220,6 +220,23 @@ def _empty_interval_result(include_predictions: bool = False) -> dict:
     return result
 
 
+def _add_footprint_track(result: dict, states: np.ndarray,
+                         confidence: Optional[np.ndarray],
+                         with_scores: bool) -> Tuple[np.ndarray, np.ndarray]:
+    fp_starts, fp_ends = _footprint_runs(states)
+
+    if len(fp_starts) > 0:
+        result['footprint_starts'] = fp_starts.astype(np.int32)
+        result['footprint_sizes'] = (fp_ends - fp_starts).astype(np.int32)
+
+        if with_scores and confidence is not None:
+            result['footprint_scores'] = _mean_interval_scores(
+                confidence, fp_starts, fp_ends,
+            )
+
+    return fp_starts, fp_ends
+
+
 def predict_footprints(model: FiberHMM, encoded_read: np.ndarray,
                        with_scores: bool = False) -> Tuple[np.ndarray, np.ndarray, int, Optional[np.ndarray]]:
     """
@@ -277,16 +294,9 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
     if len(states) == 0:
         return result
 
-    fp_starts, fp_ends = _footprint_runs(states)
-
-    if len(fp_starts) > 0:
-        result['footprint_starts'] = fp_starts.astype(np.int32)
-        result['footprint_sizes'] = (fp_ends - fp_starts).astype(np.int32)
-
-        if with_scores and confidence is not None:
-            result['footprint_scores'] = _mean_interval_scores(
-                confidence, fp_starts, fp_ends,
-            )
+    fp_starts, fp_ends = _add_footprint_track(
+        result, states, confidence, with_scores,
+    )
 
     # Find MSPs (accessible regions between nucleosome-sized footprints)
     # Only footprints >= nuc_min_size act as MSP boundaries
