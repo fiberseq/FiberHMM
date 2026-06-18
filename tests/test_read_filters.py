@@ -23,6 +23,7 @@ from fiberhmm.inference.skip_reasons import (
     CHIMERA_SKIP_REASON,
     NO_FOOTPRINTS_SKIP_REASON,
     _skip_reason_keys,
+    iter_nonzero_skip_reasons,
     new_skip_reasons,
     record_skip_reason,
 )
@@ -74,6 +75,17 @@ def test_record_skip_reason_increments_existing_counter():
 def test_record_skip_reason_rejects_unknown_reason():
     with pytest.raises(KeyError):
         record_skip_reason(new_skip_reasons(), "not_registered")
+
+
+def test_iter_nonzero_skip_reasons_sorts_descending_and_filters_zeroes():
+    reasons = new_skip_reasons()
+    reasons["low_mapq"] = 2
+    reasons["too_short"] = 4
+
+    assert list(iter_nonzero_skip_reasons(reasons)) == [
+        ("too_short", 4),
+        ("low_mapq", 2),
+    ]
 
 
 def test_streaming_filter_allows_processable_mapped_read():

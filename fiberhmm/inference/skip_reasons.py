@@ -27,3 +27,10 @@ def new_skip_reasons(*extra_reasons: str) -> dict:
 def record_skip_reason(skip_reasons: dict, reason: str) -> None:
     """Increment an existing skip-reason counter."""
     skip_reasons[reason] += 1
+
+
+def iter_nonzero_skip_reasons(skip_reasons: dict):
+    """Yield skip-reason counts sorted by descending count."""
+    for reason, count in sorted(skip_reasons.items(), key=lambda item: -item[1]):
+        if count > 0:
+            yield reason, count

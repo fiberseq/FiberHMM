@@ -33,6 +33,7 @@ from fiberhmm.inference.region_workers import (
     _process_region_to_bam_fused,
     _process_region_to_bed,
 )
+from fiberhmm.inference.skip_reasons import iter_nonzero_skip_reasons
 from fiberhmm.io.bam_index import ensure_bam_index
 from fiberhmm.posteriors.region_tsv import (
     merge_region_posteriors_tsv as _merge_region_posteriors_tsv,
@@ -194,12 +195,9 @@ def _print_skip_reasons_summary(
         f"{footprint_label}: {aggregation.reads_with_footprints:,}"
     )
     print("  Skip reasons:")
-    for reason, count in sorted(
-        aggregation.skip_reasons.items(), key=lambda x: -x[1]
-    ):
-        if count > 0:
-            pct = 100 * count / total_encountered
-            print(f"    {reason}: {count:,} ({pct:.1f}%)")
+    for reason, count in iter_nonzero_skip_reasons(aggregation.skip_reasons):
+        pct = 100 * count / total_encountered
+        print(f"    {reason}: {count:,} ({pct:.1f}%)")
 
 
 def _report_workers_ready_once(

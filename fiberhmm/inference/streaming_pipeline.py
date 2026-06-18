@@ -18,6 +18,7 @@ from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.skip_reasons import (
     NO_FOOTPRINTS_SKIP_REASON,
+    iter_nonzero_skip_reasons,
     new_skip_reasons,
     record_skip_reason,
 )
@@ -592,10 +593,9 @@ def _print_streaming_skip_summary(skip_reasons: dict, total_reads: int,
     if skipped <= 0:
         return
     print("  Skip reasons:", file=log)
-    for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
-        if count > 0:
-            pct = 100 * count / (total_reads + skipped)
-            print(f"    {reason}: {count:,} ({pct:.1f}%)", file=log)
+    for reason, count in iter_nonzero_skip_reasons(skip_reasons):
+        pct = 100 * count / (total_reads + skipped)
+        print(f"    {reason}: {count:,} ({pct:.1f}%)", file=log)
 
 
 def _streaming_progress_rates(
