@@ -207,6 +207,10 @@ def test_posterior_projection_and_coverage_helpers():
         ),
         np.array([0.2, 0.6, 0.0], dtype=np.float32),
     )
+    with pytest.raises(ValueError, match="Unknown posterior projection method"):
+        export_posteriors._project_posterior_to_reference(
+            posteriors, ref_positions, 10, 13, method="median",
+        )
     np.testing.assert_array_equal(
         export_posteriors._footprint_coverage_array(
             np.array([9, 12], dtype=np.int32),

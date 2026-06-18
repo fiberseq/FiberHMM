@@ -411,6 +411,18 @@ def _h5_indexed_array(group, index: int, default):
     return group[str(index)][:]
 
 
+_POSTERIOR_PROJECTION_METHODS = {'max', 'mean', 'first'}
+
+
+def _validate_posterior_projection_method(method: str) -> None:
+    if method not in _POSTERIOR_PROJECTION_METHODS:
+        valid = ", ".join(sorted(_POSTERIOR_PROJECTION_METHODS))
+        raise ValueError(
+            f"Unknown posterior projection method: {method!r}. "
+            f"Expected one of: {valid}."
+        )
+
+
 def _project_posterior_to_reference(
     posteriors: np.ndarray,
     ref_positions: np.ndarray,
@@ -418,6 +430,8 @@ def _project_posterior_to_reference(
     region_end: int,
     method: str = 'max',
 ) -> np.ndarray:
+    _validate_posterior_projection_method(method)
+
     region_len = region_end - region_start
     result = np.zeros(region_len, dtype=np.float32)
     counts = np.zeros(region_len, dtype=np.int32)
