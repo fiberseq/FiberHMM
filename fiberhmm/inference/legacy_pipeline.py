@@ -217,6 +217,30 @@ class _LegacyChunkBufferConfig:
     write_msps: bool
 
 
+@dataclass(frozen=True)
+class _LegacyReadsRequest:
+    reads: object
+    outbam: object
+    model: object
+    executor: object | None
+    filter_config: ReadFilterConfig
+    mode: str
+    prob_threshold: int
+    edge_trim: int
+    circular: bool
+    context_size: int
+    msp_min_size: int
+    skip_reasons: dict
+    posterior_writer: object
+    start_time: float
+    max_reads: Optional[int]
+    chunk_size: int
+    nuc_min_size: int
+    with_scores: bool
+    return_posteriors: bool
+    write_msps: bool
+
+
 def _new_legacy_chunk_buffers() -> _LegacyChunkBuffers:
     return _LegacyChunkBuffers(fiber_reads=[], read_objs=[])
 
@@ -876,24 +900,70 @@ def _process_legacy_reads(
     return_posteriors: bool = False,
     write_msps: bool = True,
 ) -> _LegacyReadProcessingResult:
+    return _process_legacy_reads_from_request(
+        _LegacyReadsRequest(
+            reads=reads,
+            outbam=outbam,
+            model=model,
+            executor=executor,
+            filter_config=filter_config,
+            mode=mode,
+            prob_threshold=prob_threshold,
+            edge_trim=edge_trim,
+            circular=circular,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            skip_reasons=skip_reasons,
+            posterior_writer=posterior_writer,
+            start_time=start_time,
+            max_reads=max_reads,
+            chunk_size=chunk_size,
+            nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+            return_posteriors=return_posteriors,
+            write_msps=write_msps,
+        )
+    )
+
+
+def _process_legacy_reads_from_request(
+    request: _LegacyReadsRequest,
+) -> _LegacyReadProcessingResult:
     total_reads = 0
     reads_with_footprints = 0
     skipped = 0
     worker_failures = 0
     chunk_buffers = _new_legacy_chunk_buffers()
     chunk_config = _legacy_chunk_buffer_config(
-        outbam, model, executor, edge_trim, circular, mode, context_size,
-        msp_min_size, skip_reasons, posterior_writer, nuc_min_size,
-        with_scores, return_posteriors, write_msps,
+        request.outbam,
+        request.model,
+        request.executor,
+        request.edge_trim,
+        request.circular,
+        request.mode,
+        request.context_size,
+        request.msp_min_size,
+        request.skip_reasons,
+        request.posterior_writer,
+        request.nuc_min_size,
+        request.with_scores,
+        request.return_posteriors,
+        request.write_msps,
     )
 
-    for read in reads:
+    for read in request.reads:
         fiber_result = _legacy_fiber_read_or_skip(
-            read, filter_config, mode, prob_threshold,
+            read,
+            request.filter_config,
+            request.mode,
+            request.prob_threshold,
         )
         if fiber_result.skip_reason:
             skipped += _write_skipped_legacy_read(
-                outbam, read, skip_reasons, fiber_result.skip_reason
+                request.outbam,
+                read,
+                request.skip_reasons,
+                fiber_result.skip_reason,
             )
             continue
 
@@ -901,17 +971,17 @@ def _process_legacy_reads(
         chunk_buffers.read_objs.append(read)
         total_reads += 1
 
-        if max_reads and total_reads >= max_reads:
+        if request.max_reads and total_reads >= request.max_reads:
             break
 
-        if len(chunk_buffers.fiber_reads) >= chunk_size:
+        if len(chunk_buffers.fiber_reads) >= request.chunk_size:
             chunk_result = _process_legacy_chunk_buffer_from_request(
                 _legacy_chunk_buffer_request(chunk_buffers, chunk_config),
             )
             reads_with_footprints += chunk_result.reads_with_footprints
             worker_failures += chunk_result.worker_failures
 
-            _print_legacy_progress(total_reads, skipped, start_time)
+            _print_legacy_progress(total_reads, skipped, request.start_time)
 
             chunk_buffers = _new_legacy_chunk_buffers()
 

@@ -723,13 +723,12 @@ def test_process_legacy_reads_buffers_skips_chunks_and_progress(monkeypatch):
         lambda *args: progress_calls.append(args),
     )
     skip_reasons = legacy_pipeline._new_legacy_skip_reasons()
-
-    result = legacy_pipeline._process_legacy_reads(
-        ["r1", "skip", "r2", "r3"],
-        outbam,
-        model,
-        executor,
-        filter_config,
+    request = legacy_pipeline._LegacyReadsRequest(
+        reads=["r1", "skip", "r2", "r3"],
+        outbam=outbam,
+        model=model,
+        executor=executor,
+        filter_config=filter_config,
         mode="daf",
         prob_threshold=128,
         edge_trim=11,
@@ -746,6 +745,8 @@ def test_process_legacy_reads_buffers_skips_chunks_and_progress(monkeypatch):
         return_posteriors=True,
         write_msps=False,
     )
+
+    result = legacy_pipeline._process_legacy_reads_from_request(request)
 
     assert result == legacy_pipeline._LegacyReadProcessingResult(
         total_reads=3,
@@ -797,6 +798,34 @@ def test_process_legacy_reads_buffers_skips_chunks_and_progress(monkeypatch):
             },
         ),
     ]
+
+    assert legacy_pipeline._process_legacy_reads(
+        [],
+        outbam,
+        model,
+        executor,
+        filter_config,
+        mode="daf",
+        prob_threshold=128,
+        edge_trim=11,
+        circular=True,
+        context_size=5,
+        msp_min_size=61,
+        skip_reasons=legacy_pipeline._new_legacy_skip_reasons(),
+        posterior_writer=posterior_writer,
+        start_time=10.0,
+        max_reads=None,
+        chunk_size=2,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=True,
+        write_msps=False,
+    ) == legacy_pipeline._LegacyReadProcessingResult(
+        total_reads=0,
+        reads_with_footprints=0,
+        skipped=0,
+        worker_failures=0,
+    )
 
 
 def test_parallel_reexports_streaming_worker_entry_points():
