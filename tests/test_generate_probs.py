@@ -33,6 +33,7 @@ from fiberhmm.cli.generate_probs import (
     _probability_read_tags_or_skip,
     _probability_table_path,
     _ProbabilityRunContext,
+    _ProbabilitySampleResult,
     _process_probability_control_groups,
     _process_probability_read,
     _process_probability_read_or_skip,
@@ -295,7 +296,7 @@ def test_process_probability_control_groups_delegates_both_sample_types(monkeypa
     def fake_process(*args):
         calls.append(args)
         label = args[8]
-        return ({label: "counters"}, 10, 20, {label: 1})
+        return _ProbabilitySampleResult({label: "counters"}, 10, 20, {label: 1})
 
     monkeypatch.setattr(
         generate_probs,
@@ -318,12 +319,11 @@ def test_process_probability_control_groups_delegates_both_sample_types(monkeypa
 
     accessible, inaccessible = _process_probability_control_groups(args, run)
 
-    assert accessible == ({"accessible": "counters"}, 10, 20, {"accessible": 1})
-    assert inaccessible == (
-        {"inaccessible": "counters"},
-        10,
-        20,
-        {"inaccessible": 1},
+    assert accessible == _ProbabilitySampleResult(
+        {"accessible": "counters"}, 10, 20, {"accessible": 1},
+    )
+    assert inaccessible == _ProbabilitySampleResult(
+        {"inaccessible": "counters"}, 10, 20, {"inaccessible": 1},
     )
     assert calls[0][0:9] == (
         "ACCESSIBLE",
@@ -398,8 +398,8 @@ def test_save_probability_run_outputs_routes_tables_cleanup_and_stats(monkeypatc
     _save_probability_run_outputs(
         args,
         run,
-        (accessible_counters, 11, 13, {"acc": 1}),
-        (inaccessible_counters, 17, 19, {"inacc": 1}),
+        _ProbabilitySampleResult(accessible_counters, 11, 13, {"acc": 1}),
+        _ProbabilitySampleResult(inaccessible_counters, 17, 19, {"inacc": 1}),
     )
 
     assert calls[0] == ("summary", (11, 13, 17, 19))
@@ -452,7 +452,7 @@ def test_process_probability_sample_group_prints_and_delegates(monkeypatch, caps
     )
     args = SimpleNamespace()
 
-    counters, reads, scanned, stats = _process_probability_sample_group(
+    result = _process_probability_sample_group(
         section_label="ACCESSIBLE",
         sample_description="naked DNA",
         estimate_description="P(methylation | accessible)",
@@ -466,9 +466,10 @@ def test_process_probability_sample_group_prints_and_delegates(monkeypatch, caps
         base_name="run",
     )
 
-    assert reads == 7
-    assert scanned == 11
-    assert stats == {"processed": 7}
+    assert result.reads == 7
+    assert result.scanned == 11
+    assert result.stats == {"processed": 7}
+    counters = result.counters
     assert counters["A"].center_base == "A"
     assert calls[0][0] == ["a.bam"]
     assert calls[0][1] is counters

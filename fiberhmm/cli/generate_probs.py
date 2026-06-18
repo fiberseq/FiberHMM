@@ -628,6 +628,14 @@ def _new_probability_counters(target_bases: list, max_context: int) -> dict:
     return {base: ContextCounter(max_context, base) for base in target_bases}
 
 
+@dataclass(frozen=True)
+class _ProbabilitySampleResult:
+    counters: Dict[str, ContextCounter]
+    reads: int
+    scanned: int
+    stats: dict
+
+
 def _process_probability_sample_group(
     section_label: str,
     sample_description: str,
@@ -640,7 +648,7 @@ def _process_probability_sample_group(
     sample_name: str,
     output_dir: str,
     base_name: str,
-) -> tuple:
+) -> _ProbabilitySampleResult:
     print("\n" + "=" * 60)
     print(f"Processing {section_label} samples ({sample_description})")
     print(f"  This estimates {estimate_description}")
@@ -650,7 +658,7 @@ def _process_probability_sample_group(
     reads, scanned, stats = process_sample_set(
         bam_files, counters, mode, args, sample_name, output_dir, base_name,
     )
-    return counters, reads, scanned, stats
+    return _ProbabilitySampleResult(counters, reads, scanned, stats)
 
 
 def _print_probability_results_summary(
@@ -893,47 +901,35 @@ def _setup_probability_run(args) -> _ProbabilityRunContext:
 
 
 def _process_probability_control_groups(args, run: _ProbabilityRunContext):
-    accessible_counters, accessible_reads, accessible_scanned, accessible_stats = (
-        _process_probability_sample_group(
-            "ACCESSIBLE",
-            "naked/dechromatinized DNA",
-            "P(methylation | accessible)",
-            args.accessible,
-            run.target_bases,
-            run.max_context,
-            args.mode,
-            args,
-            "accessible",
-            run.output_dir,
-            run.base_name,
-        )
+    accessible_result = _process_probability_sample_group(
+        "ACCESSIBLE",
+        "naked/dechromatinized DNA",
+        "P(methylation | accessible)",
+        args.accessible,
+        run.target_bases,
+        run.max_context,
+        args.mode,
+        args,
+        "accessible",
+        run.output_dir,
+        run.base_name,
     )
 
-    inaccessible_counters, inaccessible_reads, inaccessible_scanned, inaccessible_stats = (
-        _process_probability_sample_group(
-            "INACCESSIBLE",
-            "untreated/native chromatin",
-            "P(methylation | inaccessible) = background rate",
-            args.inaccessible,
-            run.target_bases,
-            run.max_context,
-            args.mode,
-            args,
-            "inaccessible",
-            run.output_dir,
-            run.base_name,
-        )
+    inaccessible_result = _process_probability_sample_group(
+        "INACCESSIBLE",
+        "untreated/native chromatin",
+        "P(methylation | inaccessible) = background rate",
+        args.inaccessible,
+        run.target_bases,
+        run.max_context,
+        args.mode,
+        args,
+        "inaccessible",
+        run.output_dir,
+        run.base_name,
     )
 
-    return (
-        (accessible_counters, accessible_reads, accessible_scanned, accessible_stats),
-        (
-            inaccessible_counters,
-            inaccessible_reads,
-            inaccessible_scanned,
-            inaccessible_stats,
-        ),
-    )
+    return accessible_result, inaccessible_result
 
 
 def _save_probability_run_outputs(
@@ -942,19 +938,11 @@ def _save_probability_run_outputs(
     accessible_result,
     inaccessible_result,
 ) -> None:
-    accessible_counters, accessible_reads, accessible_scanned, _ = accessible_result
-    (
-        inaccessible_counters,
-        inaccessible_reads,
-        inaccessible_scanned,
-        _,
-    ) = inaccessible_result
-
     _print_probability_results_summary(
-        accessible_reads,
-        accessible_scanned,
-        inaccessible_reads,
-        inaccessible_scanned,
+        accessible_result.reads,
+        accessible_result.scanned,
+        inaccessible_result.reads,
+        inaccessible_result.scanned,
     )
 
     for base in run.target_bases:
@@ -964,8 +952,8 @@ def _save_probability_run_outputs(
             run.base_name,
             base,
             args.context_sizes,
-            accessible_counters[base],
-            inaccessible_counters[base],
+            accessible_result.counters[base],
+            inaccessible_result.counters[base],
         )
 
     _write_combined_probability_tables(
@@ -973,8 +961,8 @@ def _save_probability_run_outputs(
         run.base_name,
         run.target_bases,
         args.context_sizes,
-        accessible_counters,
-        inaccessible_counters,
+        accessible_result.counters,
+        inaccessible_result.counters,
     )
 
     _remove_temporary_probability_counters(
@@ -986,8 +974,8 @@ def _save_probability_run_outputs(
     if args.stats:
         _generate_probability_stats_for_contexts(
             args.context_sizes,
-            accessible_counters,
-            inaccessible_counters,
+            accessible_result.counters,
+            inaccessible_result.counters,
             run.plots_dir,
             run.base_name,
         )
