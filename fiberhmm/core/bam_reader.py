@@ -210,7 +210,11 @@ def _modified_base_quality_passes(qual: int, prob_threshold: int) -> bool:
     return qual == -1 or qual >= prob_threshold
 
 
-def get_modified_positions_pysam(read, prob_threshold: int = 125, mode: str = 'pacbio-fiber') -> Set[int]:
+def get_modified_positions_pysam(
+    read,
+    prob_threshold: int = 125,
+    mode: str = 'pacbio-fiber',
+) -> Set[int]:
     """
     Get modification positions using pysam's built-in modified_bases property.
 
@@ -511,8 +515,12 @@ def _print_mm_parse_debug(
     )
 
 
-def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
-                               sequence: str, is_reverse: bool) -> Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]]:
+def parse_mm_ml_per_mod_type(
+    mm_tag: str,
+    ml_tag,
+    sequence: str,
+    is_reverse: bool,
+) -> Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]]:
     """Parse MM/ML into per-mod-type position + quality arrays (SEQ frame).
 
     Produces positions in the same frame as ``pysam.modified_bases``: stored
@@ -809,7 +817,10 @@ def _convert_daf_iupac_sequence(seq_upper: str) -> Tuple[Set[int], str]:
     return mod_positions, out_arr.tobytes().decode('ascii')
 
 
-def extract_daf_iupac_positions(sequence: str, st_tag: Optional[str] = None) -> Tuple[Set[int], str, str]:
+def extract_daf_iupac_positions(
+    sequence: str,
+    st_tag: Optional[str] = None,
+) -> Tuple[Set[int], str, str]:
     """
     Extract deamination positions from IUPAC R/Y encoded DAF-seq sequence.
 
