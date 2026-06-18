@@ -15,6 +15,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _drain_all_streaming_chunks,
     _drain_if_inflight_full,
     _finalize_apply_streaming_pipeline,
+    _finalize_fused_streaming_pipeline,
     _flush_streaming_chunk,
     _flush_streaming_chunk_and_report_progress,
     _fused_worker_args,
@@ -22,6 +23,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _new_fused_streaming_executor,
     _new_streaming_chunk_buffers,
     _open_streaming_posterior_writer,
+    _print_fused_chimera_summary,
     _print_streaming_completion_summary,
     _print_streaming_posterior_summary,
     _print_streaming_progress,
@@ -262,6 +264,64 @@ def test_finalize_apply_streaming_pipeline_skips_sort_for_stdout_or_unmapped(
         )
 
     assert [call[0] for call in calls] == ["posteriors", "posteriors"]
+
+
+def test_print_fused_chimera_summary_only_reports_nonzero_counts():
+    log = io.StringIO()
+
+    _print_fused_chimera_summary({}, log)
+    _print_fused_chimera_summary({"chimera": 0}, log)
+    assert log.getvalue() == ""
+
+    _print_fused_chimera_summary({"chimera": 1234}, log)
+    assert log.getvalue() == (
+        "  DAF strand-swap chimeras filtered: 1,234\n"
+    )
+
+
+def test_finalize_fused_streaming_pipeline_summarizes_and_reports_chimeras(
+    monkeypatch,
+):
+    calls = []
+    log = io.StringIO()
+
+    monkeypatch.setattr(streaming_pipeline.time, "time", lambda: 15.0)
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_print_streaming_completion_summary",
+        lambda *args: calls.append(("summary", args)) or 5,
+    )
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_print_fused_chimera_summary",
+        lambda counters, got_log: calls.append(("chimera", counters, got_log)),
+    )
+
+    assert _finalize_fused_streaming_pipeline(
+        total_reads=10,
+        skipped=2,
+        counters={"reads_with_footprints": 5, "chimera": 3},
+        start_time=5.0,
+        skip_reasons={"low_mapq": 2},
+        log=log,
+    ) == 5
+
+    assert calls == [
+        (
+            "summary",
+            (
+                "Fused",
+                10,
+                2,
+                {"reads_with_footprints": 5, "chimera": 3},
+                10.0,
+                "r/s",
+                {"low_mapq": 2},
+                log,
+            ),
+        ),
+        ("chimera", {"reads_with_footprints": 5, "chimera": 3}, log),
+    ]
 
 
 def test_streaming_filter_config_captures_read_filter_settings():

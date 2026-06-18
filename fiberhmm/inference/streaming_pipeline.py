@@ -695,6 +695,37 @@ def _finalize_apply_streaming_pipeline(
     return reads_with_footprints
 
 
+def _print_fused_chimera_summary(counters: dict, log) -> None:
+    if counters.get('chimera'):
+        print(
+            f"  DAF strand-swap chimeras filtered: {counters['chimera']:,}",
+            file=log,
+        )
+
+
+def _finalize_fused_streaming_pipeline(
+    *,
+    total_reads: int,
+    skipped: int,
+    counters: dict,
+    start_time: float,
+    skip_reasons: dict,
+    log,
+) -> int:
+    reads_with_fp = _print_streaming_completion_summary(
+        "Fused",
+        total_reads,
+        skipped,
+        counters,
+        time.time() - start_time,
+        "r/s",
+        skip_reasons,
+        log,
+    )
+    _print_fused_chimera_summary(counters, log)
+    return reads_with_fp
+
+
 def _process_bam_streaming_pipeline_fused(
     input_bam: str, output_bam: str,
     model_path: str, recall_model_path: str,
@@ -797,19 +828,14 @@ def _process_bam_streaming_pipeline_fused(
                     ref_fasta.close()
                     ref_fasta = None
 
-    reads_with_fp = _print_streaming_completion_summary(
-        "Fused",
-        total_reads,
-        skipped,
-        counters,
-        time.time() - start_time,
-        "r/s",
-        skip_reasons,
-        _log,
+    reads_with_fp = _finalize_fused_streaming_pipeline(
+        total_reads=total_reads,
+        skipped=skipped,
+        counters=counters,
+        start_time=start_time,
+        skip_reasons=skip_reasons,
+        log=_log,
     )
-    if counters.get('chimera'):
-        print(f"  DAF strand-swap chimeras filtered: {counters['chimera']:,}",
-              file=_log)
 
     return total_reads, reads_with_fp
 
