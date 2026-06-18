@@ -190,6 +190,15 @@ class _TrainingOutputSaveRequest:
 
 
 @dataclass(frozen=True)
+class _TrainingStatsGenerationRequest:
+    args: object
+    best_model: object
+    valid_reads: list
+    encoded_reads: list
+    emission_probs: np.ndarray
+
+
+@dataclass(frozen=True)
 class _TrainingModelJsonRecord:
     n_states: int
     startprob: list
@@ -1928,21 +1937,36 @@ def _run_training_or_base_model(
     )
 
 
-def _maybe_generate_training_stats(args, best_model, valid_reads, encoded_reads,
-                                   emission_probs: np.ndarray) -> None:
-    if args.stats and valid_reads and encoded_reads:
+def _maybe_generate_training_stats_from_request(
+    request: _TrainingStatsGenerationRequest,
+) -> None:
+    args = request.args
+    if args.stats and request.valid_reads and request.encoded_reads:
         print("\nGenerating training statistics...")
         generate_training_stats(
-            best_model,
-            valid_reads,
-            encoded_reads,
-            emission_probs,
+            request.best_model,
+            request.valid_reads,
+            request.encoded_reads,
+            request.emission_probs,
             args.outdir,
             n_examples=args.n_examples,
             mode=args.mode,
         )
     elif args.stats and args.base_model:
         print("\nNote: --stats skipped (no training data with --base-model)")
+
+
+def _maybe_generate_training_stats(args, best_model, valid_reads, encoded_reads,
+                                   emission_probs: np.ndarray) -> None:
+    _maybe_generate_training_stats_from_request(
+        _TrainingStatsGenerationRequest(
+            args=args,
+            best_model=best_model,
+            valid_reads=valid_reads,
+            encoded_reads=encoded_reads,
+            emission_probs=emission_probs,
+        )
+    )
 
 
 def main():
@@ -1970,12 +1994,14 @@ def main():
     )
 
     # Generate stats if requested (only if we have training data)
-    _maybe_generate_training_stats(
-        args,
-        training_result.best_model,
-        training_result.valid_reads,
-        training_result.encoded_reads,
-        emission_probs,
+    _maybe_generate_training_stats_from_request(
+        _TrainingStatsGenerationRequest(
+            args=args,
+            best_model=training_result.best_model,
+            valid_reads=training_result.valid_reads,
+            encoded_reads=training_result.encoded_reads,
+            emission_probs=emission_probs,
+        )
     )
 
     print("Done!")

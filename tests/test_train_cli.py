@@ -1473,12 +1473,14 @@ def test_maybe_generate_training_stats_handles_data_and_base_skip(monkeypatch, c
         mode="daf",
     )
 
-    train._maybe_generate_training_stats(
-        args,
-        model,
-        valid_reads=["read-a"],
-        encoded_reads=["encoded-a"],
-        emission_probs=emission_probs,
+    train._maybe_generate_training_stats_from_request(
+        train._TrainingStatsGenerationRequest(
+            args=args,
+            best_model=model,
+            valid_reads=["read-a"],
+            encoded_reads=["encoded-a"],
+            emission_probs=emission_probs,
+        )
     )
     assert calls == [(
         (model, ["read-a"], ["encoded-a"], emission_probs, "out"),
