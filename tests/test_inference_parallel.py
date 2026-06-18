@@ -587,6 +587,56 @@ def test_process_legacy_chunk_buffer_skips_empty_and_delegates(monkeypatch):
     assert calls
 
 
+def test_legacy_chunk_buffer_request_combines_buffers_and_config():
+    outbam = object()
+    model = object()
+    executor = object()
+    skip_reasons = {}
+    posterior_writer = object()
+    buffers = legacy_pipeline._LegacyChunkBuffers(
+        fiber_reads=["fiber"],
+        read_objs=["read"],
+    )
+    config = legacy_pipeline._legacy_chunk_buffer_config(
+        outbam,
+        model,
+        executor,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        skip_reasons=skip_reasons,
+        posterior_writer=posterior_writer,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=True,
+        write_msps=False,
+    )
+
+    assert legacy_pipeline._legacy_chunk_buffer_request(
+        buffers,
+        config,
+    ) == legacy_pipeline._LegacyChunkBufferRequest(
+        chunk_reads=["fiber"],
+        chunk_read_objs=["read"],
+        outbam=outbam,
+        model=model,
+        executor=executor,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        skip_reasons=skip_reasons,
+        posterior_writer=posterior_writer,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=True,
+        write_msps=False,
+    )
+
+
 def test_new_legacy_chunk_buffers_returns_independent_lists():
     buffers = legacy_pipeline._new_legacy_chunk_buffers()
     assert buffers == legacy_pipeline._LegacyChunkBuffers(fiber_reads=[], read_objs=[])

@@ -199,6 +199,24 @@ class _LegacyChunkBufferRequest:
     write_msps: bool
 
 
+@dataclass(frozen=True)
+class _LegacyChunkBufferConfig:
+    outbam: object
+    model: object
+    executor: object | None
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    skip_reasons: dict
+    posterior_writer: object
+    nuc_min_size: int
+    with_scores: bool
+    return_posteriors: bool
+    write_msps: bool
+
+
 def _new_legacy_chunk_buffers() -> _LegacyChunkBuffers:
     return _LegacyChunkBuffers(fiber_reads=[], read_objs=[])
 
@@ -770,7 +788,7 @@ def _process_legacy_chunk_buffer_from_request(
     )
 
 
-def _legacy_chunk_buffer_kwargs(
+def _legacy_chunk_buffer_config(
     outbam,
     model,
     executor,
@@ -785,23 +803,47 @@ def _legacy_chunk_buffer_kwargs(
     with_scores: bool,
     return_posteriors: bool,
     write_msps: bool,
-) -> dict:
-    return {
-        'outbam': outbam,
-        'model': model,
-        'executor': executor,
-        'edge_trim': edge_trim,
-        'circular': circular,
-        'mode': mode,
-        'context_size': context_size,
-        'msp_min_size': msp_min_size,
-        'skip_reasons': skip_reasons,
-        'posterior_writer': posterior_writer,
-        'nuc_min_size': nuc_min_size,
-        'with_scores': with_scores,
-        'return_posteriors': return_posteriors,
-        'write_msps': write_msps,
-    }
+) -> _LegacyChunkBufferConfig:
+    return _LegacyChunkBufferConfig(
+        outbam=outbam,
+        model=model,
+        executor=executor,
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        skip_reasons=skip_reasons,
+        posterior_writer=posterior_writer,
+        nuc_min_size=nuc_min_size,
+        with_scores=with_scores,
+        return_posteriors=return_posteriors,
+        write_msps=write_msps,
+    )
+
+
+def _legacy_chunk_buffer_request(
+    buffers: _LegacyChunkBuffers,
+    config: _LegacyChunkBufferConfig,
+) -> _LegacyChunkBufferRequest:
+    return _LegacyChunkBufferRequest(
+        chunk_reads=buffers.fiber_reads,
+        chunk_read_objs=buffers.read_objs,
+        outbam=config.outbam,
+        model=config.model,
+        executor=config.executor,
+        edge_trim=config.edge_trim,
+        circular=config.circular,
+        mode=config.mode,
+        context_size=config.context_size,
+        msp_min_size=config.msp_min_size,
+        skip_reasons=config.skip_reasons,
+        posterior_writer=config.posterior_writer,
+        nuc_min_size=config.nuc_min_size,
+        with_scores=config.with_scores,
+        return_posteriors=config.return_posteriors,
+        write_msps=config.write_msps,
+    )
 
 
 @dataclass(frozen=True)
@@ -839,7 +881,7 @@ def _process_legacy_reads(
     skipped = 0
     worker_failures = 0
     chunk_buffers = _new_legacy_chunk_buffers()
-    chunk_kwargs = _legacy_chunk_buffer_kwargs(
+    chunk_config = _legacy_chunk_buffer_config(
         outbam, model, executor, edge_trim, circular, mode, context_size,
         msp_min_size, skip_reasons, posterior_writer, nuc_min_size,
         with_scores, return_posteriors, write_msps,
@@ -863,10 +905,8 @@ def _process_legacy_reads(
             break
 
         if len(chunk_buffers.fiber_reads) >= chunk_size:
-            chunk_result = _process_legacy_chunk_buffer(
-                chunk_buffers.fiber_reads,
-                chunk_buffers.read_objs,
-                **chunk_kwargs,
+            chunk_result = _process_legacy_chunk_buffer_from_request(
+                _legacy_chunk_buffer_request(chunk_buffers, chunk_config),
             )
             reads_with_footprints += chunk_result.reads_with_footprints
             worker_failures += chunk_result.worker_failures
@@ -875,10 +915,8 @@ def _process_legacy_reads(
 
             chunk_buffers = _new_legacy_chunk_buffers()
 
-    chunk_result = _process_legacy_chunk_buffer(
-        chunk_buffers.fiber_reads,
-        chunk_buffers.read_objs,
-        **chunk_kwargs,
+    chunk_result = _process_legacy_chunk_buffer_from_request(
+        _legacy_chunk_buffer_request(chunk_buffers, chunk_config),
     )
     reads_with_footprints += chunk_result.reads_with_footprints
     worker_failures += chunk_result.worker_failures
