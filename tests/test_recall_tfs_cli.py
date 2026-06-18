@@ -203,7 +203,15 @@ def test_recall_tfs_write_recall_result_passes_through_null_result(monkeypatch):
     )
 
     out = FakeOut()
-    recall_tfs._write_recall_result(reads[0], "result", out, True, False)
+    recall_tfs._write_recall_result_from_request(
+        recall_tfs._RecallWriteResultRequest(
+            read=reads[0],
+            result="result",
+            bam_out=out,
+            also_write_legacy=True,
+            downstream_compat=False,
+        )
+    )
     recall_tfs._write_recall_result(reads[1], None, out, True, False)
     recall_tfs._apply_result(reads[0], "adapter-result", False, True)
 
@@ -257,10 +265,8 @@ def test_recall_tfs_drain_chunk_writes_results_and_returns_stats(monkeypatch):
     pending = deque([(reads, FakeFuture())])
     monkeypatch.setattr(
         recall_tfs,
-        "_write_recall_result",
-        lambda read, result, out, legacy, compat: calls.append(
-            (read.query_name, result, out, legacy, compat)
-        ),
+        "_write_recall_result_from_request",
+        lambda request: calls.append(request),
     )
 
     assert recall_tfs._drain_recall_chunk(
@@ -268,8 +274,20 @@ def test_recall_tfs_drain_chunk_writes_results_and_returns_stats(monkeypatch):
     ) == (2, stats)
     assert list(pending) == []
     assert calls == [
-        ("a", "result-a", "bam-out", True, False),
-        ("b", None, "bam-out", True, False),
+        recall_tfs._RecallWriteResultRequest(
+            read=reads[0],
+            result="result-a",
+            bam_out="bam-out",
+            also_write_legacy=True,
+            downstream_compat=False,
+        ),
+        recall_tfs._RecallWriteResultRequest(
+            read=reads[1],
+            result=None,
+            bam_out="bam-out",
+            also_write_legacy=True,
+            downstream_compat=False,
+        ),
     ]
 
 

@@ -112,6 +112,15 @@ class _RecallApplyResultRequest:
     downstream_compat: bool
 
 
+@dataclass(frozen=True)
+class _RecallWriteResultRequest:
+    read: object
+    result: object
+    bam_out: object
+    also_write_legacy: bool
+    downstream_compat: bool
+
+
 def _new_stats():
     return {key: 0 for key in _STATS_KEYS}
 
@@ -340,6 +349,21 @@ def _apply_result(read, result, also_write_legacy, downstream_compat):
     )
 
 
+def _write_recall_result_from_request(
+    request: _RecallWriteResultRequest,
+):
+    if request.result is not None:
+        _apply_result_from_request(
+            _RecallApplyResultRequest(
+                read=request.read,
+                result=request.result,
+                also_write_legacy=request.also_write_legacy,
+                downstream_compat=request.downstream_compat,
+            )
+        )
+    request.bam_out.write(request.read)
+
+
 def _write_recall_result(
     read,
     result,
@@ -347,16 +371,15 @@ def _write_recall_result(
     also_write_legacy,
     downstream_compat,
 ):
-    if result is not None:
-        _apply_result_from_request(
-            _RecallApplyResultRequest(
-                read=read,
-                result=result,
-                also_write_legacy=also_write_legacy,
-                downstream_compat=downstream_compat,
-            )
+    _write_recall_result_from_request(
+        _RecallWriteResultRequest(
+            read=read,
+            result=result,
+            bam_out=bam_out,
+            also_write_legacy=also_write_legacy,
+            downstream_compat=downstream_compat,
         )
-    bam_out.write(read)
+    )
 
 
 def _single_thread_loop(bam_in, bam_out, _header_text,
@@ -371,8 +394,14 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
         if max_reads and n_reads >= max_reads:
             break
         result, stats = _process_payload_safely(_make_payload(read, mode))
-        _write_recall_result(
-            read, result, bam_out, also_write_legacy, downstream_compat
+        _write_recall_result_from_request(
+            _RecallWriteResultRequest(
+                read=read,
+                result=result,
+                bam_out=bam_out,
+                also_write_legacy=also_write_legacy,
+                downstream_compat=downstream_compat,
+            )
         )
         n_reads += 1
         _add_stats(total, stats)
@@ -388,8 +417,14 @@ def _drain_recall_chunk(pending, bam_out, also_write_legacy, downstream_compat):
     reads_chunk, fut = pending.popleft()
     out_results, stats = fut.get()   # blocks until result is ready
     for read, result in zip(reads_chunk, out_results):
-        _write_recall_result(
-            read, result, bam_out, also_write_legacy, downstream_compat
+        _write_recall_result_from_request(
+            _RecallWriteResultRequest(
+                read=read,
+                result=result,
+                bam_out=bam_out,
+                also_write_legacy=also_write_legacy,
+                downstream_compat=downstream_compat,
+            )
         )
     return len(reads_chunk), stats
 
