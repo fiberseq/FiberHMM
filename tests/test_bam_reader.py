@@ -567,16 +567,18 @@ class TestMMTagParsing:
     """Test MM/ML tag parsing functions."""
 
     def test_mm_mod_spec_helpers_parse_base_mod_and_skips(self):
-        base_mod, skips = _mm_mod_spec_parts("A+a.,0,5,3")
+        spec = _mm_mod_spec_parts("A+a.,0,5,3")
 
-        assert base_mod == "A+a."
-        np.testing.assert_array_equal(skips, [0, 5, 3])
-        padded_base_mod, padded_skips = _mm_mod_spec_parts(" A+a. , 0, 5, ")
-        assert padded_base_mod == "A+a."
-        np.testing.assert_array_equal(padded_skips, [0, 5])
-        assert _mm_target_base(base_mod) == "A"
+        assert spec.base_mod == "A+a."
+        np.testing.assert_array_equal(spec.skip_counts, [0, 5, 3])
+        assert spec.n_mods == 3
+        padded_spec = _mm_mod_spec_parts(" A+a. , 0, 5, ")
+        assert padded_spec.base_mod == "A+a."
+        np.testing.assert_array_equal(padded_spec.skip_counts, [0, 5])
+        assert padded_spec.n_mods == 2
+        assert _mm_target_base(spec.base_mod) == "A"
         assert _mm_target_base("") is None
-        assert _mm_base_and_mod_code(base_mod) == ("A", "a")
+        assert _mm_base_and_mod_code(spec.base_mod) == ("A", "a")
         assert _mm_base_and_mod_code("A") is None
         assert _mm_mod_spec_parts("A+a.") is None
         assert _mm_mod_spec_parts(" ,0") is None
@@ -584,10 +586,10 @@ class TestMMTagParsing:
     def test_iter_mm_mod_specs_skips_empty_and_malformed_specs(self):
         specs = list(_iter_mm_mod_specs(" A+a,0,5 ; ;bad; C+m?,2 ;"))
 
-        assert [base_mod for base_mod, _, _ in specs] == ["A+a", "C+m?"]
-        assert [n_mods for _, _, n_mods in specs] == [2, 1]
-        np.testing.assert_array_equal(specs[0][1], [0, 5])
-        np.testing.assert_array_equal(specs[1][1], [2])
+        assert [spec.base_mod for spec in specs] == ["A+a", "C+m?"]
+        assert [spec.n_mods for spec in specs] == [2, 1]
+        np.testing.assert_array_equal(specs[0].skip_counts, [0, 5])
+        np.testing.assert_array_equal(specs[1].skip_counts, [2])
 
     def test_mm_base_indices_convert_skip_counts_to_base_offsets(self):
         np.testing.assert_array_equal(

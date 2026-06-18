@@ -145,7 +145,7 @@ def _record_mm_mode_specs(counts: dict, mm_tag: str) -> None:
         parts = _mm_mod_spec_parts(mod_spec)
         if parts is None:
             continue
-        key = _mode_detection_key_for_mm_base(parts[0].strip())
+        key = _mode_detection_key_for_mm_base(parts.base_mod.strip())
         counts[key] += 1
 
 

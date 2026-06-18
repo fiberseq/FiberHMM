@@ -294,6 +294,16 @@ class _MmHitPositions:
     next_ml_idx: int
 
 
+@dataclass(frozen=True)
+class _MmModSpec:
+    base_mod: str
+    skip_counts: np.ndarray
+
+    @property
+    def n_mods(self) -> int:
+        return len(self.skip_counts)
+
+
 def _ml_tag_to_uint8_array(ml_tag) -> np.ndarray:
     if isinstance(ml_tag, (bytes, bytearray, memoryview)):
         return np.frombuffer(ml_tag, dtype=np.uint8)
@@ -337,14 +347,14 @@ def _mm_skip_counts(raw_counts) -> np.ndarray:
         return np.asarray(skip_counts, dtype=np.int64)
 
 
-def _mm_mod_spec_parts(mod_spec: str):
+def _mm_mod_spec_parts(mod_spec: str) -> Optional[_MmModSpec]:
     parts = [part.strip() for part in mod_spec.split(',')]
     if len(parts) < 2 or not parts[0]:
         return None
-    return parts[0], _mm_skip_counts(parts[1:])
+    return _MmModSpec(parts[0], _mm_skip_counts(parts[1:]))
 
 
-def _iter_mm_mod_specs(mm_tag: str) -> Iterator[Tuple[str, np.ndarray, int]]:
+def _iter_mm_mod_specs(mm_tag: str) -> Iterator[_MmModSpec]:
     for mod_spec in mm_tag.split(';'):
         mod_spec = mod_spec.strip()
         if not mod_spec:
@@ -352,8 +362,7 @@ def _iter_mm_mod_specs(mm_tag: str) -> Iterator[Tuple[str, np.ndarray, int]]:
         parts = _mm_mod_spec_parts(mod_spec)
         if parts is None:
             continue
-        base_mod, skip_arr = parts
-        yield base_mod, skip_arr, len(skip_arr)
+        yield parts
 
 
 def _mm_target_base(base_mod: str) -> Optional[str]:
@@ -595,11 +604,11 @@ def parse_mm_ml_per_mod_type(
     base_positions_cache: Dict[str, np.ndarray] = {}
 
     ml_idx = 0
-    for base_mod, skip_arr, n_mods in _iter_mm_mod_specs(mm_tag):
+    for spec in _iter_mm_mod_specs(mm_tag):
         mod_positions = _mm_mod_type_positions_for_spec(
-            base_mod,
-            skip_arr,
-            n_mods,
+            spec.base_mod,
+            spec.skip_counts,
+            spec.n_mods,
             base_positions_cache,
             walk_context.search_bytes,
             ml_arr_all,
@@ -755,11 +764,11 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
     # Pre-compute base position arrays per target base (cached within one call)
     base_pos_cache: Dict[str, np.ndarray] = {}
 
-    for base_mod, skip_arr, n_mods in _iter_mm_mod_specs(mm_tag):
+    for spec in _iter_mm_mod_specs(mm_tag):
         hit_positions = _mm_hit_positions_for_spec(
-            base_mod,
-            skip_arr,
-            n_mods,
+            spec.base_mod,
+            spec.skip_counts,
+            spec.n_mods,
             base_pos_cache,
             walk_context.search_bytes,
             ml_arr_all,
