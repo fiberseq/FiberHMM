@@ -462,6 +462,24 @@ def _whole_molecule_nuc_candidate(calls, read_length: int):
     return next((n for n in calls if int(n.length) >= int(read_length)), None)
 
 
+def _restore_circular_tiling_frame(kept_rot, msp_rot, cut: int, read_length: int):
+    kept = sorted(
+        (
+            NucCall(
+                (k.start + cut) % read_length,
+                k.length,
+                k.nq,
+                k.el,
+                k.er,
+            )
+            for k in kept_rot
+        ),
+        key=lambda n: n.start,
+    )
+    msps = sorted(((s + cut) % read_length, length) for s, length in msp_rot)
+    return kept, msps
+
+
 def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
                                      nuc_min_size=85):
     """Circular-aware ``assemble_nuc_msp_tiling``.
@@ -505,11 +523,7 @@ def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
     kept_rot, msp_rot = assemble_nuc_msp_tiling(
         rotated, 0, rl, msp_min_size, nuc_min_size)
 
-    kept = sorted(
-        (NucCall((k.start + cut) % rl, k.length, k.nq, k.el, k.er) for k in kept_rot),
-        key=lambda n: n.start)
-    msps = sorted(((s + cut) % rl, length) for s, length in msp_rot)
-    return kept, msps
+    return _restore_circular_tiling_frame(kept_rot, msp_rot, cut, rl)
 
 
 def drop_short_nucs_overlapping_promoted(nuc_calls, promoted, unify_threshold):
