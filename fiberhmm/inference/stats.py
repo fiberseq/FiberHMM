@@ -217,6 +217,29 @@ def _plot_footprint_size_bins(ax, footprint_sizes) -> None:
     ax.set_title('Footprint Size Bins')
 
 
+def _plot_footprint_size_png_axis(ax, footprint_sizes) -> None:
+    sizes = np.array(footprint_sizes)
+    ax.hist(
+        sizes,
+        bins=100,
+        range=(0, min(500, np.percentile(sizes, 99))),
+        color='steelblue',
+        edgecolor='white',
+        alpha=0.8,
+    )
+    ax.axvline(
+        np.median(sizes),
+        color='red',
+        linestyle='--',
+        linewidth=2,
+        label=f'Median: {np.median(sizes):.0f} bp',
+    )
+    ax.set_xlabel('Footprint Size (bp)', fontsize=12)
+    ax.set_ylabel('Count', fontsize=12)
+    ax.set_title('Footprint Size Distribution', fontsize=14)
+    ax.legend(fontsize=11)
+
+
 def _stats_sampling_probability(total_reads: int, n_samples: int) -> float:
     if total_reads <= n_samples:
         return 1.0
@@ -580,15 +603,7 @@ class FootprintStats:
         # Also save individual PNGs for convenience
         if self.footprint_sizes:
             fig, ax = plt.subplots(figsize=(8, 5))
-            sizes = np.array(self.footprint_sizes)
-            ax.hist(sizes, bins=100, range=(0, min(500, np.percentile(sizes, 99))),
-                   color='steelblue', edgecolor='white', alpha=0.8)
-            ax.axvline(np.median(sizes), color='red', linestyle='--', linewidth=2,
-                      label=f'Median: {np.median(sizes):.0f} bp')
-            ax.set_xlabel('Footprint Size (bp)', fontsize=12)
-            ax.set_ylabel('Count', fontsize=12)
-            ax.set_title('Footprint Size Distribution', fontsize=14)
-            ax.legend(fontsize=11)
+            _plot_footprint_size_png_axis(ax, self.footprint_sizes)
             plt.tight_layout()
             plt.savefig(f"{output_prefix}_footprint_sizes.png", dpi=150)
             plt.close(fig)

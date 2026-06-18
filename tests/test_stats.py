@@ -467,6 +467,64 @@ def test_plot_footprint_size_bins_uses_threshold_and_labels():
     assert small_ax.title == "Footprint Size Bins"
 
 
+def test_plot_footprint_size_png_axis_uses_export_styling():
+    class FakeAxis:
+        def __init__(self):
+            self.hist_calls = []
+            self.vlines = []
+            self.xlabel = None
+            self.ylabel = None
+            self.title = None
+            self.legend_kwargs = None
+
+        def hist(self, values, **kwargs):
+            self.hist_calls.append((values, kwargs))
+
+        def axvline(self, value, **kwargs):
+            self.vlines.append((value, kwargs))
+
+        def set_xlabel(self, value, **kwargs):
+            self.xlabel = (value, kwargs)
+
+        def set_ylabel(self, value, **kwargs):
+            self.ylabel = (value, kwargs)
+
+        def set_title(self, value, **kwargs):
+            self.title = (value, kwargs)
+
+        def legend(self, **kwargs):
+            self.legend_kwargs = kwargs
+
+    ax = FakeAxis()
+
+    stats_module._plot_footprint_size_png_axis(ax, [10, 20, 30])
+
+    values, hist_kwargs = ax.hist_calls[0]
+    np.testing.assert_array_equal(values, [10, 20, 30])
+    assert hist_kwargs == {
+        "bins": 100,
+        "range": (0, min(500, np.percentile([10, 20, 30], 99))),
+        "color": "steelblue",
+        "edgecolor": "white",
+        "alpha": 0.8,
+    }
+    assert ax.vlines == [
+        (
+            20.0,
+            {
+                "color": "red",
+                "linestyle": "--",
+                "linewidth": 2,
+                "label": "Median: 20 bp",
+            },
+        )
+    ]
+    assert ax.xlabel == ("Footprint Size (bp)", {"fontsize": 12})
+    assert ax.ylabel == ("Count", {"fontsize": 12})
+    assert ax.title == ("Footprint Size Distribution", {"fontsize": 14})
+    assert ax.legend_kwargs == {"fontsize": 11}
+
+
 def test_stats_sampling_probability_handles_full_and_partial_samples():
     assert stats_module._stats_sampling_probability(10, 100) == 1.0
     assert stats_module._stats_sampling_probability(100, 10) == 0.1
