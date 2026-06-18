@@ -102,6 +102,25 @@ class _BaseProbabilityContext:
     probability_tables: _ProbabilityTablesForBase
 
 
+@dataclass(frozen=True)
+class _ProbabilityStatsPathRequest:
+    plots_dir: str
+    base_name: str
+    context_size: int
+
+    def stats_path(self, extension: str) -> str:
+        return os.path.join(
+            self.plots_dir,
+            f"{self.base_name}_k{self.context_size}_stats.{extension}",
+        )
+
+    def distribution_plot_path(self, base: str) -> str:
+        return os.path.join(
+            self.plots_dir,
+            f"{self.base_name}_{base}_k{self.context_size}_distribution.png",
+        )
+
+
 def _probability_tables_for_base(
     accessible_counters,
     inaccessible_counters,
@@ -509,10 +528,9 @@ def _probability_stats_output_path(
     context_size: int,
     extension: str,
 ) -> str:
-    return os.path.join(
-        plots_dir,
-        f"{base_name}_k{context_size}_stats.{extension}",
-    )
+    return _ProbabilityStatsPathRequest(
+        plots_dir, base_name, context_size,
+    ).stats_path(extension)
 
 
 def _probability_distribution_plot_path(
@@ -521,10 +539,9 @@ def _probability_distribution_plot_path(
     base: str,
     context_size: int,
 ) -> str:
-    return os.path.join(
-        plots_dir,
-        f"{base_name}_{base}_k{context_size}_distribution.png",
-    )
+    return _ProbabilityStatsPathRequest(
+        plots_dir, base_name, context_size,
+    ).distribution_plot_path(base)
 
 
 def _write_probability_distribution_pdf_page(

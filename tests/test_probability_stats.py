@@ -214,11 +214,17 @@ def test_write_probability_stats_summary(tmp_path):
 
 
 def test_probability_stats_output_path_uses_context_stem():
+    request = stats._ProbabilityStatsPathRequest("plots", "run", 4)
+
+    assert request.stats_path("pdf") == "plots/run_k4_stats.pdf"
+    assert request.distribution_plot_path("A") == (
+        "plots/run_A_k4_distribution.png"
+    )
     assert stats._probability_stats_output_path("plots", "run", 4, "pdf") == (
-        "plots/run_k4_stats.pdf"
+        request.stats_path("pdf")
     )
     assert stats._probability_distribution_plot_path("plots", "run", "A", 4) == (
-        "plots/run_A_k4_distribution.png"
+        request.distribution_plot_path("A")
     )
 
 
