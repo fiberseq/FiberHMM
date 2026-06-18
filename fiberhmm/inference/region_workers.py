@@ -233,6 +233,17 @@ class _RegionBamReadProcessRequest:
     tsv_file: object
 
 
+@dataclass(frozen=True)
+class _RegionBedReadProcessRequest:
+    read: object
+    bed_out: object
+    model: object
+    apply_config: _RegionApplyConfig
+    filter_config: ReadFilterConfig
+    start: int
+    end: int
+
+
 @dataclass
 class _RegionBamWorkerCounts:
     total_reads: int = 0
@@ -1001,24 +1012,48 @@ def _process_region_bed_read(
     start: int,
     end: int,
 ) -> _RegionBedReadDelta:
-    if streaming_skip_reason(read, filter_config):
+    return _process_region_bed_read_from_request(
+        _RegionBedReadProcessRequest(
+            read=read,
+            bed_out=bed_out,
+            model=model,
+            apply_config=apply_config,
+            filter_config=filter_config,
+            start=start,
+            end=end,
+        )
+    )
+
+
+def _process_region_bed_read_from_request(
+    request: _RegionBedReadProcessRequest,
+) -> _RegionBedReadDelta:
+    if streaming_skip_reason(request.read, request.filter_config):
         return _RegionBedReadDelta()
 
-    if not _read_starts_in_region(read, start, end):
+    if not _read_starts_in_region(request.read, request.start, request.end):
         return _RegionBedReadDelta()
 
     fiber_result = _extract_region_fiber_read(
-        read, apply_config.mode, apply_config.prob_threshold,
+        request.read,
+        request.apply_config.mode,
+        request.apply_config.prob_threshold,
     )
     if fiber_result.skip_reason:
         return _RegionBedReadDelta()
 
-    result = _run_region_apply_read(fiber_result.fiber_read, model, apply_config)
+    result = _run_region_apply_read(
+        fiber_result.fiber_read,
+        request.model,
+        request.apply_config,
+    )
 
     if result is not None and len(result['ns']) > 0:
-        bed_out.write(
+        request.bed_out.write(
             _region_bed12_row_from_read_result(
-                read, result, apply_config.with_scores,
+                request.read,
+                result,
+                request.apply_config.with_scores,
             ) + "\n"
         )
         return _RegionBedReadDelta(total_reads=1, reads_with_footprints=1)
