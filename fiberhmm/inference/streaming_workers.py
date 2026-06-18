@@ -120,6 +120,14 @@ class _FusedFiberReadProcessRequest:
     llr_miss: object
 
 
+@dataclass(frozen=True)
+class _FusedPayloadItemProcessRequest:
+    payload: object
+    config: _FusedPayloadWorkerConfig
+    llr_hit: object
+    llr_miss: object
+
+
 def _payload_worker_config(
     edge_trim: int,
     circular: bool,
@@ -478,23 +486,43 @@ def _process_fused_fiber_read(
     )
 
 
-def _process_fused_payload_item(
-    payload,
-    config: _FusedPayloadWorkerConfig,
-    llr_hit,
-    llr_miss,
+def _process_fused_payload_item_from_request(
+    request: _FusedPayloadItemProcessRequest,
 ):
     fiber_read = _fused_payload_fiber_read_result(
-        payload,
-        config.mode,
-        config.prob_threshold,
+        request.payload,
+        request.config.mode,
+        request.config.prob_threshold,
     )
     if fiber_read == CHIMERA_RESULT:
         return CHIMERA_RESULT
     if fiber_read is None:
         return None
 
-    return _process_fused_fiber_read(fiber_read, config, llr_hit, llr_miss)
+    return _process_fused_fiber_read_from_request(
+        _FusedFiberReadProcessRequest(
+            fiber_read=fiber_read,
+            config=request.config,
+            llr_hit=request.llr_hit,
+            llr_miss=request.llr_miss,
+        )
+    )
+
+
+def _process_fused_payload_item(
+    payload,
+    config: _FusedPayloadWorkerConfig,
+    llr_hit,
+    llr_miss,
+):
+    return _process_fused_payload_item_from_request(
+        _FusedPayloadItemProcessRequest(
+            payload=payload,
+            config=config,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+        )
+    )
 
 
 def _init_bam_worker(model_path, debug_timing=False):

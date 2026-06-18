@@ -2046,11 +2046,13 @@ def test_process_fused_payload_item_runs_parse_apply_and_recall(monkeypatch):
         streaming_workers, "_build_worker_fused_recall_result_from_request", fake_build,
     )
 
-    assert streaming_workers._process_fused_payload_item(
-        payload,
-        config,
-        hit,
-        miss,
+    assert streaming_workers._process_fused_payload_item_from_request(
+        streaming_workers._FusedPayloadItemProcessRequest(
+            payload=payload,
+            config=config,
+            llr_hit=hit,
+            llr_miss=miss,
+        )
     ) == {"recall": True}
     assert seen["extract"] == (payload, "pacbio-fiber", 128)
     assert seen["apply"] == streaming_workers._WorkerFusedApplyStageRequest(
@@ -2078,6 +2080,15 @@ def test_process_fused_payload_item_runs_parse_apply_and_recall(monkeypatch):
     )
     assert seen["build"].fiber_read is fiber_read
     assert seen["build"].apply_result is apply_result
+    seen.clear()
+
+    assert streaming_workers._process_fused_payload_item(
+        payload,
+        config,
+        hit,
+        miss,
+    ) == {"recall": True}
+    assert seen["extract"] == (payload, "pacbio-fiber", 128)
 
 
 def test_fused_payload_worker_counts_per_read_failures(monkeypatch):
