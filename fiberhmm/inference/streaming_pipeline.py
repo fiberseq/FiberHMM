@@ -540,6 +540,34 @@ class _FusedStreamingPipelineRequest:
     pg_record: Optional[dict]
 
 
+@dataclass(frozen=True)
+class _ApplyStreamingPipelineRequest:
+    input_bam: str
+    output_bam: str
+    model_path: str
+    train_rids: Set[str]
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    min_mapq: int
+    prob_threshold: int
+    min_read_length: int
+    with_scores: bool
+    n_cores: int
+    chunk_size: int
+    max_inflight: Optional[int]
+    io_threads: int
+    primary_only: bool
+    output_posteriors: Optional[str]
+    write_msps: bool
+    max_reads: Optional[int]
+    debug_timing: bool
+    process_unmapped: bool
+
+
 def _flush_streaming_chunk_and_report_progress(
     context: _StreamingFlushContext,
     chunk_items,
@@ -1544,8 +1572,42 @@ def _process_bam_streaming_pipeline(
     process_unmapped: bool = False,
 ) -> Tuple[int, int]:
     """Streaming producer-consumer pipeline for BAM processing."""
+    return _process_bam_streaming_pipeline_from_request(
+        _ApplyStreamingPipelineRequest(
+            input_bam=input_bam,
+            output_bam=output_bam,
+            model_path=model_path,
+            train_rids=train_rids,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            min_mapq=min_mapq,
+            prob_threshold=prob_threshold,
+            min_read_length=min_read_length,
+            with_scores=with_scores,
+            n_cores=n_cores,
+            chunk_size=chunk_size,
+            max_inflight=max_inflight,
+            io_threads=io_threads,
+            primary_only=primary_only,
+            output_posteriors=output_posteriors,
+            write_msps=write_msps,
+            max_reads=max_reads,
+            debug_timing=debug_timing,
+            process_unmapped=process_unmapped,
+        )
+    )
+
+
+def _process_bam_streaming_pipeline_from_request(
+    request: _ApplyStreamingPipelineRequest,
+) -> Tuple[int, int]:
+    max_inflight = request.max_inflight
     if max_inflight is None:
-        max_inflight = 2 * n_cores
+        max_inflight = 2 * request.n_cores
 
     pysam.set_verbosity(0)
 
@@ -1554,11 +1616,11 @@ def _process_bam_streaming_pipeline(
     total_reads = 0
     skip_reasons = _new_streaming_skip_reasons(include_no_footprints=True)
     filter_config = _streaming_filter_config(
-        min_mapq=min_mapq,
-        min_read_length=min_read_length,
-        primary_only=primary_only,
-        process_unmapped=process_unmapped,
-        train_rids=train_rids,
+        min_mapq=request.min_mapq,
+        min_read_length=request.min_read_length,
+        primary_only=request.primary_only,
+        process_unmapped=request.process_unmapped,
+        train_rids=request.train_rids,
     )
 
     counters = _new_streaming_counters()
@@ -1567,54 +1629,63 @@ def _process_bam_streaming_pipeline(
     posterior_stats = None
     return_posteriors = False
 
-    _log = _streaming_log_for_output(output_bam)
+    _log = _streaming_log_for_output(request.output_bam)
 
-    print(f"Processing BAM (streaming pipeline, {n_cores} workers, "
-          f"chunk_size={chunk_size}, max_inflight={max_inflight})...", file=_log)
+    print(f"Processing BAM (streaming pipeline, {request.n_cores} workers, "
+          f"chunk_size={request.chunk_size}, max_inflight={max_inflight})...",
+          file=_log)
     _log.flush()
 
     start_time = time.time()
 
-    _output_target = _streaming_output_target(output_bam)
+    _output_target = _streaming_output_target(request.output_bam)
 
-    with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
+    with pysam.AlignmentFile(
+        request.input_bam,
+        "rb",
+        threads=request.io_threads,
+        check_sq=False,
+    ) as inbam:
         with pysam.AlignmentFile(_output_target, "wb",
                                  header=append_coord_marker(inbam.header),
-                                 threads=io_threads) as outbam:
+                                 threads=request.io_threads) as outbam:
             skipped = 0
 
             try:
                 posterior_output = _open_streaming_posterior_writer(
-                    output_posteriors, mode, context_size, edge_trim, input_bam, _log,
+                    request.output_posteriors, request.mode,
+                    request.context_size, request.edge_trim,
+                    request.input_bam, _log,
                 )
                 posterior_writer = posterior_output.writer
                 return_posteriors = posterior_output.enabled
 
                 executor = _new_apply_streaming_executor(
-                    model_path, n_cores, debug_timing,
+                    request.model_path, request.n_cores, request.debug_timing,
                 )
 
                 worker_args = _apply_worker_args(
-                    edge_trim, circular, mode, context_size,
-                    msp_min_size, nuc_min_size, with_scores,
-                    return_posteriors, prob_threshold,
+                    request.edge_trim, request.circular, request.mode,
+                    request.context_size, request.msp_min_size,
+                    request.nuc_min_size, request.with_scores,
+                    return_posteriors, request.prob_threshold,
                 )
 
                 read_counts = _run_streaming_worker_loop(
                     inbam.fetch(until_eof=True),
                     filter_config,
-                    mode,
+                    request.mode,
                     ref_fasta,
                     executor,
                     _process_payload_chunk_worker,
                     worker_args,
-                    max_reads,
-                    chunk_size,
+                    request.max_reads,
+                    request.chunk_size,
                     max_inflight,
                     _apply_drain_chunk_factory(
                         outbam,
-                        with_scores,
-                        write_msps,
+                        request.with_scores,
+                        request.write_msps,
                         posterior_writer,
                         counters,
                     ),
@@ -1639,11 +1710,11 @@ def _process_bam_streaming_pipeline(
         counters=counters,
         start_time=start_time,
         skip_reasons=skip_reasons,
-        output_bam=output_bam,
-        process_unmapped=process_unmapped,
-        n_cores=n_cores,
+        output_bam=request.output_bam,
+        process_unmapped=request.process_unmapped,
+        n_cores=request.n_cores,
         posterior_stats=posterior_stats,
-        output_posteriors=output_posteriors,
+        output_posteriors=request.output_posteriors,
         log=_log,
     )
 
