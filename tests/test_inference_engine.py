@@ -305,14 +305,14 @@ class TestPredictFootprintsAndMsps:
         np.testing.assert_array_equal(center, [4, 5, 6, 7])
 
     def test_nuc_boundaries_from_footprint_runs_filters_small_runs(self):
-        starts, ends = engine._nuc_boundaries_from_footprint_runs(
+        boundaries = engine._nuc_boundaries_from_footprint_runs(
             np.array([0, 20, 100], dtype=np.int64),
             np.array([10, 120, 130], dtype=np.int64),
             nuc_min_size=85,
         )
 
-        np.testing.assert_array_equal(starts, [20])
-        np.testing.assert_array_equal(ends, [120])
+        np.testing.assert_array_equal(boundaries.starts, [20])
+        np.testing.assert_array_equal(boundaries.ends, [120])
 
     def test_returns_dict_with_correct_keys(self, simple_model):
         obs = np.array([0, 0, 0, 3, 3, 3, 3, 3, 0, 0, 0], dtype=np.int32)

@@ -1,5 +1,6 @@
 """FiberHMM core per-read HMM inference engine."""
 
+from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import numpy as np
@@ -81,6 +82,12 @@ def footprint_runs(states: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
 
 _footprint_runs = footprint_runs
+
+
+@dataclass(frozen=True)
+class _NucBoundaries:
+    starts: np.ndarray
+    ends: np.ndarray
 
 
 def _new_mode_detection_counts() -> dict:
@@ -194,13 +201,16 @@ def _nuc_boundaries_from_footprint_runs(
     fp_starts,
     fp_ends,
     nuc_min_size: int,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> _NucBoundaries:
     if len(fp_starts) == 0:
-        return np.array([], dtype=np.int64), np.array([], dtype=np.int64)
+        return _NucBoundaries(
+            np.array([], dtype=np.int64),
+            np.array([], dtype=np.int64),
+        )
 
     fp_sizes_arr = fp_ends - fp_starts
     nuc_mask = fp_sizes_arr >= nuc_min_size
-    return fp_starts[nuc_mask], fp_ends[nuc_mask]
+    return _NucBoundaries(fp_starts[nuc_mask], fp_ends[nuc_mask])
 
 
 def _empty_interval_result(include_predictions: bool = False) -> dict:
@@ -247,14 +257,17 @@ def _add_msp_track(
     with_scores: bool,
     nuc_min_size: int,
 ) -> None:
-    nuc_starts, nuc_ends = _nuc_boundaries_from_footprint_runs(
+    nuc_boundaries = _nuc_boundaries_from_footprint_runs(
         fp_starts,
         fp_ends,
         nuc_min_size,
     )
 
     msp_starts_arr, msp_sizes_arr = _msp_intervals_from_nuc_boundaries(
-        nuc_starts, nuc_ends, read_length, msp_min_size,
+        nuc_boundaries.starts,
+        nuc_boundaries.ends,
+        read_length,
+        msp_min_size,
     )
 
     if len(msp_starts_arr) > 0:
