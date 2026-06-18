@@ -109,6 +109,13 @@ class _PredictionOutputs:
     posteriors: Optional[np.ndarray]
 
 
+@dataclass(frozen=True)
+class _EncodingInputs:
+    sequence: str
+    mod_positions: object
+    circular_read_length: Optional[int]
+
+
 def _new_mode_detection_counts() -> dict:
     return {
         't_minus_a': 0,
@@ -933,13 +940,13 @@ def _encoding_inputs_for_read(
     query_sequence: str,
     m6a_positions,
     circular: bool,
-):
+) -> _EncodingInputs:
     if circular and len(query_sequence) > 0:
         encode_sequence, encode_mods = tile_sequence_and_mods(
             query_sequence, m6a_positions,
         )
-        return encode_sequence, encode_mods, len(query_sequence)
-    return query_sequence, m6a_positions, None
+        return _EncodingInputs(encode_sequence, encode_mods, len(query_sequence))
+    return _EncodingInputs(query_sequence, m6a_positions, None)
 
 
 def _processing_strand_for_read(
@@ -992,12 +999,12 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     # Circular mode keeps the 3x tiling private to inference and projects the
     # middle copy back to molecule coordinates before anything is written.
     is_reverse = fiber_read.get('is_reverse', False)
-    encode_sequence, encode_mods, circular_read_length = _encoding_inputs_for_read(
+    encoding_inputs = _encoding_inputs_for_read(
         query_sequence, m6a_positions, circular,
     )
 
     encoded = encode_from_query_sequence(
-        encode_sequence, encode_mods, edge_trim,
+        encoding_inputs.sequence, encoding_inputs.mod_positions, edge_trim,
         mode=mode, strand=strand, context_size=context_size,
         is_reverse=is_reverse,
     )
@@ -1006,10 +1013,15 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
         return None
 
     # Predict
-    fp_result = predict_footprints_and_msps(model, encoded, msp_min_size, with_scores,
-                                             return_posteriors=return_posteriors,
-                                             nuc_min_size=nuc_min_size,
-                                             circular_read_length=circular_read_length)
+    fp_result = predict_footprints_and_msps(
+        model,
+        encoded,
+        msp_min_size,
+        with_scores,
+        return_posteriors=return_posteriors,
+        nuc_min_size=nuc_min_size,
+        circular_read_length=encoding_inputs.circular_read_length,
+    )
 
     # If no footprints and we don't need posteriors or encoded, skip
     if _should_skip_empty_prediction(fp_result, return_posteriors, include_encoded):

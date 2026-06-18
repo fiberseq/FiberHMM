@@ -112,23 +112,23 @@ def test_circular_single_read_fields_maps_circular_prediction_fields():
 
 
 def test_encoding_inputs_for_read_tiles_only_circular_reads():
-    seq, mods, circular_length = engine._encoding_inputs_for_read(
+    inputs = engine._encoding_inputs_for_read(
         "ACGT",
         {1, 3},
         circular=False,
     )
-    assert seq == "ACGT"
-    assert mods == {1, 3}
-    assert circular_length is None
+    assert inputs.sequence == "ACGT"
+    assert inputs.mod_positions == {1, 3}
+    assert inputs.circular_read_length is None
 
-    seq, mods, circular_length = engine._encoding_inputs_for_read(
+    inputs = engine._encoding_inputs_for_read(
         "ACGT",
         {1, 3},
         circular=True,
     )
-    assert seq == "ACGTACGTACGT"
-    assert mods == {1, 3, 5, 7, 9, 11}
-    assert circular_length == 4
+    assert inputs.sequence == "ACGTACGTACGT"
+    assert inputs.mod_positions == {1, 3, 5, 7, 9, 11}
+    assert inputs.circular_read_length == 4
 
 
 def test_processing_strand_for_read_prefers_daf_tag_and_defaults(monkeypatch):
