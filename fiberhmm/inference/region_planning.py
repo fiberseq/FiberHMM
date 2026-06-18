@@ -79,7 +79,15 @@ def _is_main_chromosome(chrom: str) -> bool:
     return False
 
 
+def _normalize_region_size(region_size: int) -> int:
+    region_size = int(region_size)
+    if region_size <= 0:
+        raise ValueError("region_size must be positive")
+    return region_size
+
+
 def _chromosome_regions(chrom: str, chrom_len: int, region_size: int) -> list[tuple[str, int, int]]:
+    region_size = _normalize_region_size(region_size)
     return [
         (chrom, int(start), int(min(start + region_size, chrom_len)))
         for start in range(0, int(chrom_len), int(region_size))
@@ -117,7 +125,7 @@ def _get_genome_regions(
         List of (chrom, start, end) tuples
     """
     regions = []
-    region_size = int(region_size)
+    region_size = _normalize_region_size(region_size)
 
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         for chrom in bam.references:

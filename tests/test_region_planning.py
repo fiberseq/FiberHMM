@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pysam
+import pytest
 
 from fiberhmm.inference.region_planning import (
     _chromosome_regions,
@@ -36,6 +37,8 @@ def test_chromosome_regions_tiles_partial_last_region():
         ("chr1", 100, 200),
         ("chr1", 200, 250),
     ]
+    with pytest.raises(ValueError, match="region_size must be positive"):
+        _chromosome_regions("chr1", 250, 0)
 
 
 def test_normalized_chromosome_name_strips_chr_prefix_and_uppercases():
