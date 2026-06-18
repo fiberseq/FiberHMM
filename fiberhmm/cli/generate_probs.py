@@ -23,6 +23,7 @@ Features:
 import argparse
 import os
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Dict, List, MutableMapping, Tuple
 
 import numpy as np
@@ -739,15 +740,20 @@ def _print_probability_completion_message() -> None:
     print("  2. Use the *_probs.tsv files with train_model.py to build HMM")
 
 
-def main():
-    args = parse_args()
+@dataclass(frozen=True)
+class _ProbabilityRunContext:
+    max_context: int
+    output_dir: str
+    tables_dir: str
+    plots_dir: str
+    base_name: str
+    target_bases: List[str]
 
+
+def _setup_probability_run(args) -> _ProbabilityRunContext:
     np.random.seed(args.seed)
 
-    # max_context for internal storage is the max of requested sizes
     max_context = max(args.context_sizes)
-
-    # Set up output directories
     output_dir = args.output
     _, tables_dir_path, plots_dir_path = setup_output_dirs(output_dir)
     tables_dir = str(tables_dir_path)
@@ -763,19 +769,30 @@ def main():
     if args.mode == 'daf':
         print("  (G-strand reads will be reverse complemented to C-centered contexts)")
 
+    return _ProbabilityRunContext(
+        max_context=max_context,
+        output_dir=output_dir,
+        tables_dir=tables_dir,
+        plots_dir=plots_dir,
+        base_name=base_name,
+        target_bases=target_bases,
+    )
+
+
+def _process_probability_control_groups(args, run: _ProbabilityRunContext):
     accessible_counters, accessible_reads, accessible_scanned, accessible_stats = (
         _process_probability_sample_group(
             "ACCESSIBLE",
             "naked/dechromatinized DNA",
             "P(methylation | accessible)",
             args.accessible,
-            target_bases,
-            max_context,
+            run.target_bases,
+            run.max_context,
             args.mode,
             args,
             "accessible",
-            output_dir,
-            base_name,
+            run.output_dir,
+            run.base_name,
         )
     )
 
@@ -785,15 +802,40 @@ def main():
             "untreated/native chromatin",
             "P(methylation | inaccessible) = background rate",
             args.inaccessible,
-            target_bases,
-            max_context,
+            run.target_bases,
+            run.max_context,
             args.mode,
             args,
             "inaccessible",
-            output_dir,
-            base_name,
+            run.output_dir,
+            run.base_name,
         )
     )
+
+    return (
+        (accessible_counters, accessible_reads, accessible_scanned, accessible_stats),
+        (
+            inaccessible_counters,
+            inaccessible_reads,
+            inaccessible_scanned,
+            inaccessible_stats,
+        ),
+    )
+
+
+def _save_probability_run_outputs(
+    args,
+    run: _ProbabilityRunContext,
+    accessible_result,
+    inaccessible_result,
+) -> None:
+    accessible_counters, accessible_reads, accessible_scanned, _ = accessible_result
+    (
+        inaccessible_counters,
+        inaccessible_reads,
+        inaccessible_scanned,
+        _,
+    ) = inaccessible_result
 
     _print_probability_results_summary(
         accessible_reads,
@@ -802,11 +844,11 @@ def main():
         inaccessible_scanned,
     )
 
-    for base in target_bases:
+    for base in run.target_bases:
         _save_probability_outputs_for_base(
-            output_dir,
-            tables_dir,
-            base_name,
+            run.output_dir,
+            run.tables_dir,
+            run.base_name,
             base,
             args.context_sizes,
             accessible_counters[base],
@@ -814,28 +856,40 @@ def main():
         )
 
     _write_combined_probability_tables(
-        tables_dir,
-        base_name,
-        target_bases,
+        run.tables_dir,
+        run.base_name,
+        run.target_bases,
         args.context_sizes,
         accessible_counters,
         inaccessible_counters,
     )
 
-    # Clean up temp files
-    _remove_temporary_probability_counters(output_dir, base_name, target_bases)
+    _remove_temporary_probability_counters(
+        run.output_dir,
+        run.base_name,
+        run.target_bases,
+    )
 
-    # Generate stats if requested (for each context size)
     if args.stats:
         _generate_probability_stats_for_contexts(
             args.context_sizes,
             accessible_counters,
             inaccessible_counters,
-            plots_dir,
-            base_name,
+            run.plots_dir,
+            run.base_name,
         )
 
     _print_probability_completion_message()
+
+
+def main():
+    args = parse_args()
+    run = _setup_probability_run(args)
+    accessible_result, inaccessible_result = _process_probability_control_groups(
+        args,
+        run,
+    )
+    _save_probability_run_outputs(args, run, accessible_result, inaccessible_result)
 
 
 if __name__ == '__main__':

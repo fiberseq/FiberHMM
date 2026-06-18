@@ -23,12 +23,14 @@ from fiberhmm.cli.generate_probs import (
     _print_probability_completion_message,
     _print_probability_generation_header,
     _print_daf_diagnostics,
+    _ProbabilityRunContext,
     _print_probability_base_summary,
     _probability_read_tags_or_skip,
     _probability_counter_summary,
     _probability_counters_have_data,
     _print_probability_results_summary,
     _progress_postfix,
+    _process_probability_control_groups,
     _process_probability_sample_group,
     _process_probability_read,
     _read_limit_reached,
@@ -40,6 +42,8 @@ from fiberhmm.cli.generate_probs import (
     _safe_percent,
     _save_probability_outputs_for_base,
     _save_temporary_probability_counters,
+    _save_probability_run_outputs,
+    _setup_probability_run,
     _target_bases_for_mode,
     _write_combined_probability_tables,
     _write_probability_tables_for_base,
@@ -201,6 +205,193 @@ def test_print_probability_generation_header_lists_settings_and_inputs(capsys):
     assert "Accessible samples (naked/dechromatinized): 2 files" in output
     assert "  - acc1.bam" in output
     assert "Inaccessible samples (untreated/native): 1 files" in output
+
+
+def test_setup_probability_run_builds_context_and_reports_targets(monkeypatch, capsys):
+    import fiberhmm.cli.generate_probs as generate_probs
+
+    calls = []
+    monkeypatch.setattr(
+        generate_probs,
+        "setup_output_dirs",
+        lambda output: calls.append(("setup", output)) or (
+            Path(output),
+            Path(output) / "tables",
+            Path(output) / "plots",
+        ),
+    )
+    monkeypatch.setattr(
+        generate_probs,
+        "get_base_name",
+        lambda output: calls.append(("base", output)) or "run",
+    )
+    args = SimpleNamespace(
+        seed=7,
+        context_sizes=[2, 4],
+        output="out",
+        accessible=["acc.bam"],
+        inaccessible=["inacc.bam"],
+        mode="daf",
+        max_reads=100,
+        min_mapq=20,
+        prob_threshold=128,
+        min_read_length=1000,
+        edge_trim=10,
+    )
+
+    run = _setup_probability_run(args)
+
+    assert run == _ProbabilityRunContext(
+        max_context=4,
+        output_dir="out",
+        tables_dir="out/tables",
+        plots_dir="out/plots",
+        base_name="run",
+        target_bases=["C"],
+    )
+    assert calls == [("setup", "out"), ("base", "out")]
+    out = capsys.readouterr().out
+    assert "Target bases: C" in out
+    assert "reverse complemented to C-centered" in out
+
+
+def test_process_probability_control_groups_delegates_both_sample_types(monkeypatch):
+    import fiberhmm.cli.generate_probs as generate_probs
+
+    calls = []
+
+    def fake_process(*args):
+        calls.append(args)
+        label = args[8]
+        return ({label: "counters"}, 10, 20, {label: 1})
+
+    monkeypatch.setattr(
+        generate_probs,
+        "_process_probability_sample_group",
+        fake_process,
+    )
+    args = SimpleNamespace(
+        accessible=["acc1.bam"],
+        inaccessible=["inacc1.bam"],
+        mode="pacbio-fiber",
+    )
+    run = _ProbabilityRunContext(
+        max_context=5,
+        output_dir="out",
+        tables_dir="tables",
+        plots_dir="plots",
+        base_name="run",
+        target_bases=["A"],
+    )
+
+    accessible, inaccessible = _process_probability_control_groups(args, run)
+
+    assert accessible == ({"accessible": "counters"}, 10, 20, {"accessible": 1})
+    assert inaccessible == (
+        {"inaccessible": "counters"},
+        10,
+        20,
+        {"inaccessible": 1},
+    )
+    assert calls[0][0:9] == (
+        "ACCESSIBLE",
+        "naked/dechromatinized DNA",
+        "P(methylation | accessible)",
+        ["acc1.bam"],
+        ["A"],
+        5,
+        "pacbio-fiber",
+        args,
+        "accessible",
+    )
+    assert calls[1][0:9] == (
+        "INACCESSIBLE",
+        "untreated/native chromatin",
+        "P(methylation | inaccessible) = background rate",
+        ["inacc1.bam"],
+        ["A"],
+        5,
+        "pacbio-fiber",
+        args,
+        "inaccessible",
+    )
+
+
+def test_save_probability_run_outputs_routes_tables_cleanup_and_stats(monkeypatch):
+    import fiberhmm.cli.generate_probs as generate_probs
+
+    calls = []
+    monkeypatch.setattr(
+        generate_probs,
+        "_print_probability_results_summary",
+        lambda *args: calls.append(("summary", args)),
+    )
+    monkeypatch.setattr(
+        generate_probs,
+        "_save_probability_outputs_for_base",
+        lambda *args: calls.append(("save_base", args)),
+    )
+    monkeypatch.setattr(
+        generate_probs,
+        "_write_combined_probability_tables",
+        lambda *args: calls.append(("combined", args)),
+    )
+    monkeypatch.setattr(
+        generate_probs,
+        "_remove_temporary_probability_counters",
+        lambda *args: calls.append(("cleanup", args)),
+    )
+    monkeypatch.setattr(
+        generate_probs,
+        "_generate_probability_stats_for_contexts",
+        lambda *args: calls.append(("stats", args)),
+    )
+    monkeypatch.setattr(
+        generate_probs,
+        "_print_probability_completion_message",
+        lambda: calls.append(("done", ())),
+    )
+    accessible_counters = {"A": "accA", "C": "accC"}
+    inaccessible_counters = {"A": "inaccA", "C": "inaccC"}
+    run = _ProbabilityRunContext(
+        max_context=3,
+        output_dir="out",
+        tables_dir="tables",
+        plots_dir="plots",
+        base_name="run",
+        target_bases=["A", "C"],
+    )
+    args = SimpleNamespace(context_sizes=[2, 3], stats=True)
+
+    _save_probability_run_outputs(
+        args,
+        run,
+        (accessible_counters, 11, 13, {"acc": 1}),
+        (inaccessible_counters, 17, 19, {"inacc": 1}),
+    )
+
+    assert calls[0] == ("summary", (11, 13, 17, 19))
+    assert calls[1:3] == [
+        ("save_base", ("out", "tables", "run", "A", [2, 3], "accA", "inaccA")),
+        ("save_base", ("out", "tables", "run", "C", [2, 3], "accC", "inaccC")),
+    ]
+    assert calls[3] == (
+        "combined",
+        (
+            "tables",
+            "run",
+            ["A", "C"],
+            [2, 3],
+            accessible_counters,
+            inaccessible_counters,
+        ),
+    )
+    assert calls[4] == ("cleanup", ("out", "run", ["A", "C"]))
+    assert calls[5] == (
+        "stats",
+        ([2, 3], accessible_counters, inaccessible_counters, "plots", "run"),
+    )
+    assert calls[6] == ("done", ())
 
 
 def test_new_probability_counters_builds_context_counters():
