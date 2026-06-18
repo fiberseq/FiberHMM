@@ -15,6 +15,11 @@ def _h5_text(value):
     return value
 
 
+class _FakeH5File:
+    def __init__(self):
+        self.attrs = {}
+
+
 def test_posterior_fiber_data_uses_writer_contract_fields():
     class Read:
         query_name = "read-1"
@@ -112,6 +117,50 @@ def test_hdf5_file_metadata_attrs_normalizes_paths(tmp_path):
         "source_bam": "input.bam",
         "format_version": 2,
         "model_path": "model.joblib",
+    }
+
+
+def test_hdf5_file_metadata_request_writes_attrs(tmp_path):
+    h5 = _FakeH5File()
+
+    hdf5_backend.write_hdf5_file_metadata_from_request(
+        hdf5_backend._Hdf5FileMetadataRequest(
+            h5_file=h5,
+            mode="daf",
+            context_size=5,
+            edge_trim=12,
+            source_bam=tmp_path / "input.bam",
+            model_path=tmp_path / "model.joblib",
+        )
+    )
+
+    assert h5.attrs == {
+        "mode": "daf",
+        "context_size": 5,
+        "edge_trim": 12,
+        "source_bam": "input.bam",
+        "format_version": 2,
+        "model_path": "model.joblib",
+    }
+
+
+def test_hdf5_file_metadata_wrapper_writes_attrs(tmp_path):
+    h5 = _FakeH5File()
+
+    hdf5_backend.write_hdf5_file_metadata(
+        h5,
+        mode="pacbio-fiber",
+        context_size=3,
+        edge_trim=10,
+        source_bam=tmp_path / "reads.bam",
+    )
+
+    assert h5.attrs == {
+        "mode": "pacbio-fiber",
+        "context_size": 3,
+        "edge_trim": 10,
+        "source_bam": "reads.bam",
+        "format_version": 2,
     }
 
 

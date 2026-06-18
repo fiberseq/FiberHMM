@@ -44,6 +44,16 @@ def _create_gzip_dataset(
     group.create_dataset(name, data=data, **kwargs)
 
 
+@dataclass(frozen=True)
+class _Hdf5FileMetadataRequest:
+    h5_file: object
+    mode: str
+    context_size: int
+    edge_trim: int
+    source_bam: str
+    model_path: Optional[str] = None
+
+
 def write_fiber_metadata_datasets(
     group,
     fiber_ids,
@@ -94,14 +104,29 @@ def write_hdf5_file_metadata(
     source_bam: str,
     model_path: str = None,
 ) -> None:
+    write_hdf5_file_metadata_from_request(
+        _Hdf5FileMetadataRequest(
+            h5_file=h5_file,
+            mode=mode,
+            context_size=context_size,
+            edge_trim=edge_trim,
+            source_bam=source_bam,
+            model_path=model_path,
+        )
+    )
+
+
+def write_hdf5_file_metadata_from_request(
+    request: _Hdf5FileMetadataRequest,
+) -> None:
     for key, value in _hdf5_file_metadata_attrs(
-        mode=mode,
-        context_size=context_size,
-        edge_trim=edge_trim,
-        source_bam=source_bam,
-        model_path=model_path,
+        mode=request.mode,
+        context_size=request.context_size,
+        edge_trim=request.edge_trim,
+        source_bam=request.source_bam,
+        model_path=request.model_path,
     ).items():
-        h5_file.attrs[key] = value
+        request.h5_file.attrs[key] = value
 
 
 def _posterior_chrom_subgroups(include_ref_positions: bool = True) -> List[str]:
