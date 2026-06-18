@@ -43,6 +43,13 @@ class _FootprintBedTags:
     scores: Optional[List[int]]
 
 
+@dataclass(frozen=True)
+class _ScoreBlockValues:
+    block_starts: List[int]
+    block_sizes: List[int]
+    block_scores: List[int]
+
+
 _BED12_RECORD_COLUMNS = (
     'chrom',
     'chromStart',
@@ -997,7 +1004,7 @@ def _parse_int_csv(value: str) -> List[int]:
     return [int(item) for item in (x.strip() for x in value.split(',')) if item]
 
 
-def _parse_score_block_values(record: dict):
+def _parse_score_block_values(record: dict) -> _ScoreBlockValues:
     block_sizes = _parse_int_csv(record['blockSizes'])
     block_starts = _parse_int_csv(record['blockStarts'])
 
@@ -1006,7 +1013,11 @@ def _parse_score_block_values(record: dict):
     else:
         block_scores = [0] * len(block_sizes)
 
-    return block_starts, block_sizes, block_scores
+    return _ScoreBlockValues(
+        block_starts=block_starts,
+        block_sizes=block_sizes,
+        block_scores=block_scores,
+    )
 
 
 def _mean_block_score(block_scores: Sequence[int]):
@@ -1057,8 +1068,8 @@ def _insert_footprint_score_records(
 
 
 def _insert_score_record(cursor, record: dict) -> None:
-    block_starts, block_sizes, block_scores = _parse_score_block_values(record)
-    mean_score = _mean_block_score(block_scores)
+    block_values = _parse_score_block_values(record)
+    mean_score = _mean_block_score(block_values.block_scores)
 
     cursor.execute('''
         INSERT OR REPLACE INTO reads
@@ -1069,9 +1080,9 @@ def _insert_score_record(cursor, record: dict) -> None:
     _insert_footprint_score_records(
         cursor,
         record['name'],
-        block_starts,
-        block_sizes,
-        block_scores,
+        block_values.block_starts,
+        block_values.block_sizes,
+        block_values.block_scores,
     )
 
 

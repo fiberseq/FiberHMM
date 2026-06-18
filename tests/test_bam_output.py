@@ -974,8 +974,33 @@ def test_score_database_row_helpers_shape_read_and_footprint_values():
         "chromEnd": 150,
         "strand": "+",
         "blockCount": 2,
+        "blockSizes": "10,20",
+        "blockStarts": "0,30",
+        "blockScores": "100,200",
     }
 
+    assert bam_output._parse_score_block_values(record) == bam_output._ScoreBlockValues(
+        block_starts=[0, 30],
+        block_sizes=[10, 20],
+        block_scores=[100, 200],
+    )
+    assert bam_output._parse_score_block_values({
+        **record,
+        "blockScores": "",
+    }) == bam_output._ScoreBlockValues(
+        block_starts=[0, 30],
+        block_sizes=[10, 20],
+        block_scores=[],
+    )
+    record_without_scores = dict(record)
+    record_without_scores.pop("blockScores")
+    assert bam_output._parse_score_block_values(
+        record_without_scores,
+    ) == bam_output._ScoreBlockValues(
+        block_starts=[0, 30],
+        block_sizes=[10, 20],
+        block_scores=[0, 0],
+    )
     assert bam_output._score_read_row(record, 150.0) == (
         "read-a", "chr1", 100, 150, "+", 2, 150.0,
     )
