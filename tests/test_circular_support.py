@@ -183,12 +183,12 @@ def test_project_circular_result_track_returns_legacy_and_circular_views():
         read_length=100,
     )
 
-    assert track["circular_intervals"] == [(95, 20)]
-    assert track["legacy_starts"].tolist() == [0, 95]
-    assert track["legacy_sizes"].tolist() == [15, 5]
-    assert np.allclose(track["legacy_scores"], [0.9, 0.9])
-    assert track["tiled_starts"].tolist() == [195]
-    assert track["tiled_sizes"].tolist() == [20]
+    assert track.circular_intervals == [(95, 20)]
+    assert track.legacy_starts.tolist() == [0, 95]
+    assert track.legacy_sizes.tolist() == [15, 5]
+    assert np.allclose(track.legacy_scores, [0.9, 0.9])
+    assert track.tiled_starts.tolist() == [195]
+    assert track.tiled_sizes.tolist() == [20]
 
 
 def test_extract_footprints_from_states_circular_projects_middle_copy():

@@ -116,6 +116,17 @@ class _EncodingInputs:
     circular_read_length: Optional[int]
 
 
+@dataclass(frozen=True)
+class _CircularResultTrack:
+    tiled_starts: np.ndarray
+    tiled_sizes: np.ndarray
+    circular_intervals: list
+    circular_scores: Optional[np.ndarray]
+    legacy_starts: np.ndarray
+    legacy_sizes: np.ndarray
+    legacy_scores: Optional[np.ndarray]
+
+
 def _new_mode_detection_counts() -> dict:
     return {
         't_minus_a': 0,
@@ -392,7 +403,12 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
     return result
 
 
-def _project_circular_result_track(starts, sizes, scores, read_length: int) -> dict:
+def _project_circular_result_track(
+    starts,
+    sizes,
+    scores,
+    read_length: int,
+) -> _CircularResultTrack:
     tiled_starts = np.asarray(starts, dtype=np.int64)
     tiled_ends = tiled_starts + np.asarray(sizes, dtype=np.int64)
     circular_intervals = project_center_runs(tiled_starts, tiled_ends, read_length)
@@ -407,15 +423,15 @@ def _project_circular_result_track(starts, sizes, scores, read_length: int) -> d
         read_length,
         circular_scores,
     )
-    return {
-        'tiled_starts': tiled_starts,
-        'tiled_sizes': tiled_ends - tiled_starts,
-        'circular_intervals': circular_intervals,
-        'circular_scores': circular_scores,
-        'legacy_starts': legacy_starts,
-        'legacy_sizes': legacy_sizes,
-        'legacy_scores': legacy_scores,
-    }
+    return _CircularResultTrack(
+        tiled_starts=tiled_starts,
+        tiled_sizes=tiled_ends - tiled_starts,
+        circular_intervals=circular_intervals,
+        circular_scores=circular_scores,
+        legacy_starts=legacy_starts,
+        legacy_sizes=legacy_sizes,
+        legacy_scores=legacy_scores,
+    )
 
 
 def _center_copy_states(states: np.ndarray, read_length: int) -> np.ndarray:
@@ -457,24 +473,24 @@ def _extract_footprints_from_states_circular(
     )
 
     return {
-        'footprint_starts': nuc_track['legacy_starts'],
-        'footprint_sizes': nuc_track['legacy_sizes'],
-        'footprint_scores': nuc_track['legacy_scores'],
-        'msp_starts': msp_track['legacy_starts'],
-        'msp_sizes': msp_track['legacy_sizes'],
-        'msp_scores': msp_track['legacy_scores'],
+        'footprint_starts': nuc_track.legacy_starts,
+        'footprint_sizes': nuc_track.legacy_sizes,
+        'footprint_scores': nuc_track.legacy_scores,
+        'msp_starts': msp_track.legacy_starts,
+        'msp_sizes': msp_track.legacy_sizes,
+        'msp_scores': msp_track.legacy_scores,
         'states': _center_copy_states(states, read_length),
         'posteriors': None,
         'circular': True,
         'circular_read_length': read_length,
-        'circular_ns': nuc_track['circular_intervals'],
-        'circular_as': msp_track['circular_intervals'],
-        'circular_ns_scores': nuc_track['circular_scores'],
-        'circular_as_scores': msp_track['circular_scores'],
-        'tiled_ns': nuc_track['tiled_starts'].astype(np.int32),
-        'tiled_nl': nuc_track['tiled_sizes'].astype(np.int32),
-        'tiled_as': msp_track['tiled_starts'].astype(np.int32),
-        'tiled_al': msp_track['tiled_sizes'].astype(np.int32),
+        'circular_ns': nuc_track.circular_intervals,
+        'circular_as': msp_track.circular_intervals,
+        'circular_ns_scores': nuc_track.circular_scores,
+        'circular_as_scores': msp_track.circular_scores,
+        'tiled_ns': nuc_track.tiled_starts.astype(np.int32),
+        'tiled_nl': nuc_track.tiled_sizes.astype(np.int32),
+        'tiled_as': msp_track.tiled_starts.astype(np.int32),
+        'tiled_al': msp_track.tiled_sizes.astype(np.int32),
     }
 
 
