@@ -174,6 +174,26 @@ class _TrainingOutputPaths:
 
 
 @dataclass(frozen=True)
+class _TrainingConfig:
+    context_size: int
+    mode: str
+    edge_trim: int
+    prob_adjust: float
+    base_model: Optional[str] = None
+
+    def as_dict(self) -> dict:
+        config = {
+            'context_size': self.context_size,
+            'mode': self.mode,
+            'edge_trim': self.edge_trim,
+            'prob_adjust': self.prob_adjust,
+        }
+        if self.base_model:
+            config['base_model'] = self.base_model
+        return config
+
+
+@dataclass(frozen=True)
 class _TrainingOverviewAxes:
     m6a: object
     footprint: object
@@ -1655,16 +1675,18 @@ def _model_json_record(model):
     }
 
 
+def _training_config_record(args) -> _TrainingConfig:
+    return _TrainingConfig(
+        context_size=args.context_size,
+        mode=args.mode,
+        edge_trim=args.edge_trim,
+        prob_adjust=args.prob_adjust,
+        base_model=args.base_model,
+    )
+
+
 def _training_config(args):
-    config = {
-        'context_size': args.context_size,
-        'mode': args.mode,
-        'edge_trim': args.edge_trim,
-        'prob_adjust': args.prob_adjust,
-    }
-    if args.base_model:
-        config['base_model'] = args.base_model
-    return config
+    return _training_config_record(args).as_dict()
 
 
 def _training_output_path_record(outdir: str) -> _TrainingOutputPaths:
@@ -1717,7 +1739,7 @@ def _save_training_outputs(best_model, all_models, args, train_rids) -> None:
 
     # Save config (JSON - human readable)
     with open(paths.config, 'w') as f:
-        json.dump(_training_config(args), f, indent=2)
+        json.dump(_training_config_record(args).as_dict(), f, indent=2)
 
 
 def _build_model_from_base(

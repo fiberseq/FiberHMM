@@ -1224,6 +1224,12 @@ def test_training_config_includes_base_model_only_when_used():
         base_model=None,
     )
 
+    assert train._training_config_record(args) == train._TrainingConfig(
+        context_size=3,
+        mode="daf",
+        edge_trim=10,
+        prob_adjust=1.25,
+    )
     assert train._training_config(args) == {
         "context_size": 3,
         "mode": "daf",
@@ -1232,6 +1238,7 @@ def test_training_config_includes_base_model_only_when_used():
     }
 
     args.base_model = "base-model.json"
+    assert train._training_config_record(args).base_model == "base-model.json"
     assert train._training_config(args)["base_model"] == "base-model.json"
 
 
