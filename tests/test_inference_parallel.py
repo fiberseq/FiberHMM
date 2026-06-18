@@ -2150,8 +2150,12 @@ def test_add_posterior_fiber_if_available_guards_and_writes(monkeypatch):
         },
     )
 
-    assert streaming_drain._add_posterior_fiber_if_available(
-        Writer(), read, result,
+    assert streaming_drain._add_posterior_fiber_from_request(
+        streaming_drain._PosteriorFiberAddRequest(
+            posterior_writer=Writer(),
+            read_obj=read,
+            result=result,
+        )
     )
     assert seen == [(
         "chr1",

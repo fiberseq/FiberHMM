@@ -35,6 +35,13 @@ class _InflightChunk:
     skip_flags: object
 
 
+@dataclass(frozen=True)
+class _PosteriorFiberAddRequest:
+    posterior_writer: object
+    read_obj: object
+    result: dict
+
+
 def _increment_counter(counters, key: str, amount: int = 1) -> None:
     counters[key] = counters.get(key, 0) + amount
 
@@ -86,19 +93,33 @@ def _posterior_chrom(read_obj):
     return read_obj.reference_name
 
 
-def _add_posterior_fiber_if_available(posterior_writer, read_obj, result: dict) -> bool:
-    if posterior_writer is None or not _result_has_posteriors(result):
+def _add_posterior_fiber_from_request(
+    request: _PosteriorFiberAddRequest,
+) -> bool:
+    if request.posterior_writer is None or not _result_has_posteriors(request.result):
         return False
-    chrom = _posterior_chrom(read_obj)
+    chrom = _posterior_chrom(request.read_obj)
     if not chrom:
         return False
-    posterior_writer.add_fiber(
+    request.posterior_writer.add_fiber(
         chrom,
         posterior_fiber_data(
-            read_obj, result, _posterior_ref_positions(read_obj),
+            request.read_obj,
+            request.result,
+            _posterior_ref_positions(request.read_obj),
         ),
     )
     return True
+
+
+def _add_posterior_fiber_if_available(posterior_writer, read_obj, result: dict) -> bool:
+    return _add_posterior_fiber_from_request(
+        _PosteriorFiberAddRequest(
+            posterior_writer=posterior_writer,
+            read_obj=read_obj,
+            result=result,
+        )
+    )
 
 
 def _pop_inflight_chunk(inflight):
