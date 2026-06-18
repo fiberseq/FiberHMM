@@ -42,6 +42,12 @@ class NucCall:
 
 
 @dataclass(frozen=True)
+class _BoundedInterval:
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
 class _NucRecallParams:
     split_min_llr: float
     split_min_opps: int
@@ -109,7 +115,13 @@ def _call_interval(call) -> Tuple[int, int]:
     return int(call.start), int(call.start + call.length)
 
 
-def _bounded_interval(start_raw, length_raw, read_length: int, *, clamp_start: bool):
+def _bounded_interval(
+    start_raw,
+    length_raw,
+    read_length: int,
+    *,
+    clamp_start: bool,
+) -> _BoundedInterval | None:
     start = int(start_raw)
     length = int(length_raw)
     if length <= 0:
@@ -118,7 +130,7 @@ def _bounded_interval(start_raw, length_raw, read_length: int, *, clamp_start: b
     b = min(int(read_length), start + length)
     if b <= a:
         return None
-    return a, b
+    return _BoundedInterval(start=a, end=b)
 
 
 def _linear_intervals_overlap(a_start: int, a_end: int,
@@ -387,10 +399,9 @@ def _recall_bounded_nuc_spans(
         )
         if span is None:
             continue
-        s, e = span
 
         span_result = _recall_nuc_span(
-            obs, s, e, tables, params,
+            obs, span.start, span.end, tables, params,
         )
         nucs.extend(span_result.nucs)
         access.extend(span_result.access)
@@ -469,7 +480,7 @@ def rederive_msps(
             s_raw, length_raw, read_length, clamp_start=True,
         )
         if span is not None:
-            iv.append(span)
+            iv.append((span.start, span.end))
     merged = merge_intervals(iv)
     floor = max(1, int(msp_min_size))
     return [(a, b - a) for a, b in merged if (b - a) >= floor]

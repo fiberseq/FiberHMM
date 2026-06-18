@@ -7,6 +7,7 @@ from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
     _bounded_interval,
+    _BoundedInterval,
     _circular_uncovered_cut,
     _clip_ordered_nuc_calls_for_tiling,
     _keep_nuc_against_circular_intervals,
@@ -245,11 +246,20 @@ def test_residue_intervals_around_nuc_reports_flanks_only():
 
 
 def test_bounded_interval_handles_clamping_and_invalid_spans():
-    assert _bounded_interval(10, 20, 25, clamp_start=False) == (10, 25)
+    assert _bounded_interval(10, 20, 25, clamp_start=False) == _BoundedInterval(
+        start=10,
+        end=25,
+    )
     assert _bounded_interval(10, 0, 25, clamp_start=False) is None
     assert _bounded_interval(30, 5, 25, clamp_start=False) is None
-    assert _bounded_interval(-5, 10, 25, clamp_start=True) == (0, 5)
-    assert _bounded_interval(-5, 10, 25, clamp_start=False) == (-5, 5)
+    assert _bounded_interval(-5, 10, 25, clamp_start=True) == _BoundedInterval(
+        start=0,
+        end=5,
+    )
+    assert _bounded_interval(-5, 10, 25, clamp_start=False) == _BoundedInterval(
+        start=-5,
+        end=5,
+    )
 
 
 def test_subnucleosome_fragment_demoted_to_accessible():
