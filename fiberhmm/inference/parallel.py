@@ -6,49 +6,80 @@ import pysam
 
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model
 from fiberhmm.inference.legacy_pipeline import (
-    _process_and_write_chunk,  # noqa: F401
+    _process_and_write_chunk,
     _process_bam_legacy_pipeline,
 )
-from fiberhmm.inference.mp_context import _MP_CONTEXT, _select_mp_context  # noqa: F401
-from fiberhmm.inference.read_filters import (  # noqa: F401
+from fiberhmm.inference.mp_context import (
+    _MP_CONTEXT,
+    _select_mp_context,
+)
+from fiberhmm.inference.read_filters import (
     ReadFilterConfig,
     streaming_skip_reason,
 )
 from fiberhmm.inference.region_pipeline import (
     _process_bam_region_parallel,
-    _process_bam_region_parallel_fused,  # noqa: F401
-    _process_bed_region_parallel,  # noqa: F401
+    _process_bam_region_parallel_fused,
+    _process_bed_region_parallel,
 )
 from fiberhmm.inference.region_planning import (
-    _get_genome_regions,  # noqa: F401
+    _get_genome_regions,
 )
 from fiberhmm.inference.region_planning import (
     _is_main_chromosome as _region_is_main_chromosome,
 )
 from fiberhmm.inference.region_workers import (
-    _init_fused_region_worker,  # noqa: F401
-    _init_region_worker,  # noqa: F401
-    _process_region_to_bam,  # noqa: F401
-    _process_region_to_bam_fused,  # noqa: F401
-    _process_region_to_bed,  # noqa: F401
+    _init_fused_region_worker,
+    _init_region_worker,
+    _process_region_to_bam,
+    _process_region_to_bam_fused,
+    _process_region_to_bed,
 )
 from fiberhmm.inference.streaming_drain import (
-    _drain_oldest_chunk,  # noqa: F401
-    _drain_oldest_fused_chunk,  # noqa: F401
+    _drain_oldest_chunk,
+    _drain_oldest_fused_chunk,
 )
 from fiberhmm.inference.streaming_pipeline import (
     _process_bam_streaming_pipeline,
-    _process_bam_streaming_pipeline_fused,  # noqa: F401
+    _process_bam_streaming_pipeline_fused,
 )
 from fiberhmm.inference.streaming_workers import (
-    _init_bam_worker,  # noqa: F401
-    _init_fused_worker,  # noqa: F401
-    _process_chunk_worker,  # noqa: F401
-    _process_fused_payload_chunk_worker,  # noqa: F401
-    _process_payload_chunk_worker,  # noqa: F401
+    _init_bam_worker,
+    _init_fused_worker,
+    _process_chunk_worker,
+    _process_fused_payload_chunk_worker,
+    _process_payload_chunk_worker,
 )
 
 _is_main_chromosome = _region_is_main_chromosome
+
+__all__ = (
+    "ReadFilterConfig",
+    "_MP_CONTEXT",
+    "_drain_oldest_chunk",
+    "_drain_oldest_fused_chunk",
+    "_get_genome_regions",
+    "_init_bam_worker",
+    "_init_fused_region_worker",
+    "_init_fused_worker",
+    "_init_region_worker",
+    "_is_main_chromosome",
+    "_process_and_write_chunk",
+    "_process_bam_region_parallel",
+    "_process_bam_region_parallel_fused",
+    "_process_bam_streaming_pipeline",
+    "_process_bam_streaming_pipeline_fused",
+    "_process_bed_region_parallel",
+    "_process_chunk_worker",
+    "_process_fused_payload_chunk_worker",
+    "_process_payload_chunk_worker",
+    "_process_region_to_bam",
+    "_process_region_to_bam_fused",
+    "_process_region_to_bed",
+    "_select_mp_context",
+    "process_bam_for_footprints",
+    "streaming_skip_reason",
+)
 
 
 def _model_and_path_for_processing(model_or_path):
