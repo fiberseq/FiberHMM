@@ -1236,6 +1236,15 @@ def test_training_config_includes_base_model_only_when_used():
 
 
 def test_training_output_paths_use_canonical_filenames():
+    path_record = train._training_output_path_record("/tmp/out")
+
+    assert path_record == train._TrainingOutputPaths(
+        best_json="/tmp/out/best-model.json",
+        best_npz="/tmp/out/best-model.npz",
+        all_models="/tmp/out/all_models.json",
+        train_reads="/tmp/out/training-reads.tsv",
+        config="/tmp/out/model_config.json",
+    )
     assert train._training_output_paths("/tmp/out") == {
         "best_json": "/tmp/out/best-model.json",
         "best_npz": "/tmp/out/best-model.npz",
