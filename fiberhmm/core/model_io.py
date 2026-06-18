@@ -134,6 +134,8 @@ def _mapping_value(value):
 
 def _metadata_from_mapping(data) -> Tuple[int, str]:
     context_size = _mapping_value(data.get('context_size', DEFAULT_CONTEXT_SIZE))
+    if context_size is None:
+        context_size = DEFAULT_CONTEXT_SIZE
     mode = _mapping_value(data.get('mode', DEFAULT_MODE))
     if mode is not None:
         mode = str(mode)
