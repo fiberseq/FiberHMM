@@ -41,6 +41,19 @@ class NucCall:
     er: int          # right-edge sharpness byte
 
 
+@dataclass(frozen=True)
+class _NucRecallParams:
+    split_min_llr: float
+    split_min_opps: int
+    nuc_min_size: int
+    edge_min_llr: float
+    edge_min_opps: int
+    phase_nrl: int
+    phase_min_llr: float
+    phase_min_opps: int
+    phase_window: int
+
+
 def _fragments_after_cuts(a: int, b: int,
                           cut_spans: Iterable[Tuple[int, int]]) -> List[Interval]:
     frags: List[Interval] = []
@@ -246,6 +259,42 @@ def _phase_or_unsplit_subfragments(
     return [(a, b)], []
 
 
+def _recall_nuc_span(
+    obs,
+    s: int,
+    e: int,
+    nhit,
+    nmiss,
+    llr_hit,
+    llr_miss,
+    params: _NucRecallParams,
+) -> Tuple[List[NucCall], List[Interval]]:
+    nucs: List[NucCall] = []
+    access: List[Interval] = []
+
+    frags, cut_access = _split_on_accessible_cuts(
+        obs, s, e, nhit, nmiss, params.split_min_llr, params.split_min_opps,
+    )
+    access.extend(cut_access)
+
+    for a, b in frags:
+        subs, phase_cuts = _phase_or_unsplit_subfragments(
+            obs, a, b, nhit, nmiss, params.phase_nrl,
+            params.phase_min_llr, params.phase_min_opps, params.phase_window,
+        )
+        access.extend(phase_cuts)
+        for sa, sb in subs:
+            nuc, acc = _refine_fragment(
+                obs, sa, sb, llr_hit, llr_miss,
+                params.nuc_min_size, params.edge_min_llr, params.edge_min_opps,
+            )
+            if nuc is not None:
+                nucs.append(nuc)
+            access.extend(acc)
+
+    return nucs, access
+
+
 def recall_nucs_in_read(
     obs: np.ndarray,
     ns: Sequence[int],
@@ -283,6 +332,17 @@ def recall_nucs_in_read(
     """
     nhit = -llr_hit
     nmiss = -llr_miss
+    params = _NucRecallParams(
+        split_min_llr=split_min_llr,
+        split_min_opps=split_min_opps,
+        nuc_min_size=nuc_min_size,
+        edge_min_llr=edge_min_llr,
+        edge_min_opps=edge_min_opps,
+        phase_nrl=phase_nrl,
+        phase_min_llr=phase_min_llr,
+        phase_min_opps=phase_min_opps,
+        phase_window=phase_window,
+    )
     nucs: List[NucCall] = []
     access: List[Interval] = []
 
@@ -294,26 +354,11 @@ def recall_nucs_in_read(
             continue
         s, e = span
 
-        # --- SPLIT: accessible runs inside the footprint are cuts ---
-        frags, cut_access = _split_on_accessible_cuts(
-            obs, s, e, nhit, nmiss, split_min_llr, split_min_opps,
+        span_nucs, span_access = _recall_nuc_span(
+            obs, s, e, nhit, nmiss, llr_hit, llr_miss, params,
         )
-        access.extend(cut_access)
-
-        # --- Pass 2 (optional): phase-prior split of long fragments ---
-        for a, b in frags:
-            subs, phase_cuts = _phase_or_unsplit_subfragments(
-                obs, a, b, nhit, nmiss, phase_nrl,
-                phase_min_llr, phase_min_opps, phase_window)
-            access.extend(phase_cuts)
-            # --- EDGES + quality per (sub)fragment (protected Kadane, +llr) ---
-            for sa, sb in subs:
-                nuc, acc = _refine_fragment(
-                    obs, sa, sb, llr_hit, llr_miss,
-                    nuc_min_size, edge_min_llr, edge_min_opps)
-                if nuc is not None:
-                    nucs.append(nuc)
-                access.extend(acc)
+        nucs.extend(span_nucs)
+        access.extend(span_access)
 
     return nucs, access
 

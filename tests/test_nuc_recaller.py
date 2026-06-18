@@ -6,6 +6,7 @@ import numpy as np
 from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
+    _NucRecallParams,
     _bounded_interval,
     _circular_uncovered_cut,
     _keep_nuc_against_circular_intervals,
@@ -16,6 +17,7 @@ from fiberhmm.inference.nuc_recaller import (
     _phase_cut_window,
     _promoted_nuc_from_tf_call,
     _residue_intervals_around_nuc,
+    _recall_nuc_span,
     _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
     _total_call_llr,
@@ -92,6 +94,47 @@ def test_split_on_accessible_cuts_returns_fragments_and_cut_access():
     assert len(frags) == 2
     assert access
     assert any(60 <= s <= 66 for s, _ in access)
+
+
+def test_recall_nuc_span_matches_single_read_wrapper():
+    obs = _obs((MISS, 60), (HIT, 6), (MISS, 60))
+    llr_hit, llr_miss = _llr_tables()
+    params = _NucRecallParams(
+        split_min_llr=4.0,
+        split_min_opps=3,
+        nuc_min_size=40,
+        edge_min_llr=2.0,
+        edge_min_opps=2,
+        phase_nrl=0,
+        phase_min_llr=1.0,
+        phase_min_opps=1,
+        phase_window=35,
+    )
+
+    span_nucs, span_access = _recall_nuc_span(
+        obs,
+        0,
+        len(obs),
+        -llr_hit,
+        -llr_miss,
+        llr_hit,
+        llr_miss,
+        params,
+    )
+    read_nucs, read_access = recall_nucs_in_read(
+        obs,
+        ns=[0],
+        nl=[len(obs)],
+        read_length=len(obs),
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        split_min_llr=4.0,
+        split_min_opps=3,
+        nuc_min_size=40,
+    )
+
+    assert span_nucs == read_nucs
+    assert span_access == read_access
 
 
 def test_total_call_llr_sums_call_scores():
