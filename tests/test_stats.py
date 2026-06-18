@@ -362,6 +362,36 @@ def test_plot_median_histogram_formats_axis_and_optional_range():
     assert no_range_ax.vlines[0][1]["label"] == "Median: 0.20"
 
 
+def test_plot_no_data_message_centers_text_and_sets_title():
+    transform = object()
+
+    class FakeAxis:
+        def __init__(self):
+            self.transAxes = transform
+            self.text_calls = []
+            self.title = None
+
+        def text(self, x, y, message, **kwargs):
+            self.text_calls.append((x, y, message, kwargs))
+
+        def set_title(self, value):
+            self.title = value
+
+    ax = FakeAxis()
+
+    stats_module._plot_no_data_message(ax, "No gap data", "Gap Size Distribution")
+
+    assert ax.text_calls == [
+        (
+            0.5,
+            0.5,
+            "No gap data",
+            {"ha": "center", "va": "center", "transform": transform},
+        )
+    ]
+    assert ax.title == "Gap Size Distribution"
+
+
 def test_stats_sampling_probability_handles_full_and_partial_samples():
     assert stats_module._stats_sampling_probability(10, 100) == 1.0
     assert stats_module._stats_sampling_probability(100, 10) == 0.1

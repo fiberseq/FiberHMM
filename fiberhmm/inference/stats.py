@@ -198,6 +198,11 @@ def _plot_median_histogram(
     ax.legend()
 
 
+def _plot_no_data_message(ax, message: str, title: str) -> None:
+    ax.text(0.5, 0.5, message, ha='center', va='center', transform=ax.transAxes)
+    ax.set_title(title)
+
+
 def _stats_sampling_probability(total_reads: int, n_samples: int) -> float:
     if total_reads <= n_samples:
         return 1.0
@@ -454,8 +459,7 @@ class FootprintStats:
                         median_suffix=' bp',
                     )
                 else:
-                    ax.text(0.5, 0.5, 'No gap data', ha='center', va='center', transform=ax.transAxes)
-                    ax.set_title('Gap Size Distribution')
+                    _plot_no_data_message(ax, 'No gap data', 'Gap Size Distribution')
 
                 # Footprints per read
                 ax = axes[1, 0]
@@ -510,9 +514,11 @@ class FootprintStats:
                     median_format='.3f',
                 )
             else:
-                ax.text(0.5, 0.5, 'No score data\n(use --scores flag)',
-                       ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('Footprint Quality Distribution')
+                _plot_no_data_message(
+                    ax,
+                    'No score data\n(use --scores flag)',
+                    'Footprint Quality Distribution',
+                )
 
             # MSP size distribution
             ax = axes[0, 1]
@@ -530,8 +536,7 @@ class FootprintStats:
                     median_suffix=' bp',
                 )
             else:
-                ax.text(0.5, 0.5, 'No MSP data', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('MSP Size Distribution')
+                _plot_no_data_message(ax, 'No MSP data', 'MSP Size Distribution')
 
             # Read length distribution
             ax = axes[1, 0]
@@ -559,8 +564,7 @@ class FootprintStats:
                 ax.set_ylabel('Size Range (bp)')
                 ax.set_title('Footprint Size Bins')
             else:
-                ax.text(0.5, 0.5, 'Insufficient data', ha='center', va='center', transform=ax.transAxes)
-                ax.set_title('Footprint Size Bins')
+                _plot_no_data_message(ax, 'Insufficient data', 'Footprint Size Bins')
 
             plt.tight_layout()
             pdf.savefig(fig)
