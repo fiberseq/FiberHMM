@@ -333,6 +333,83 @@ def test_write_h5_record_metadata_fills_preallocated_arrays(tmp_path):
         assert _h5_text(grp["strands"][0]) == "-"
 
 
+def test_write_h5_posterior_record_request_updates_index_and_datasets(tmp_path):
+    line = format_region_posterior_line(
+        read_name="read1",
+        chrom="chr1",
+        ref_start=10,
+        ref_end=13,
+        strand="+",
+        posteriors=np.array([0.0, 0.5, 1.0], dtype=np.float32),
+        footprint_starts=np.array([10], dtype=np.int32),
+        footprint_sizes=np.array([3], dtype=np.int32),
+    )
+    fields = tsv_backend._split_posteriors_line(line)
+
+    with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
+        dt = h5py.special_dtype(vlen=str)
+        chrom_indices = tsv_backend._create_h5_chrom_groups_from_request(
+            tsv_backend._H5ChromGroupsCreateRequest(
+                h5_file=h5,
+                chrom_counts={"chr1": 1},
+                string_dtype=dt,
+            )
+        )
+
+        tsv_backend._write_h5_posterior_record_from_request(
+            tsv_backend._H5PosteriorRecordWriteRequest(
+                h5_file=h5,
+                chrom_indices=chrom_indices,
+                fields=fields,
+            )
+        )
+
+        assert chrom_indices == {"chr1": 1}
+        assert _h5_text(h5["chr1"]["fiber_ids"][0]) == "read1"
+        assert h5["chr1"]["fiber_starts"][0] == 10
+        assert h5["chr1"]["fiber_ends"][0] == 13
+        assert _h5_text(h5["chr1"]["strands"][0]) == "+"
+        np.testing.assert_allclose(
+            h5["chr1"]["posteriors"]["0"][:],
+            np.array([0.0, 127 / 255, 1.0], dtype=np.float16),
+            atol=1e-3,
+        )
+        np.testing.assert_array_equal(h5["chr1"]["footprint_starts"]["0"][:], [10])
+        np.testing.assert_array_equal(h5["chr1"]["footprint_sizes"]["0"][:], [3])
+
+
+def test_write_h5_posterior_record_adapter_builds_request(monkeypatch):
+    h5_file = object()
+    chrom_indices = {"chr1": 0}
+    fields = tsv_backend._PosteriorTsvFields(
+        read_id="read1",
+        chrom="chr1",
+        start=10,
+        end=13,
+        strand="+",
+        post_b64="abc",
+        fp_starts="",
+        fp_sizes="",
+    )
+    calls = []
+
+    monkeypatch.setattr(
+        tsv_backend,
+        "_write_h5_posterior_record_from_request",
+        lambda request: calls.append(request),
+    )
+
+    tsv_backend._write_h5_posterior_record(h5_file, chrom_indices, fields)
+
+    assert calls == [
+        tsv_backend._H5PosteriorRecordWriteRequest(
+            h5_file=h5_file,
+            chrom_indices=chrom_indices,
+            fields=fields,
+        )
+    ]
+
+
 def test_chrom_from_countable_tsv_line_filters_non_data_rows():
     assert tsv_backend._chrom_from_countable_tsv_line("#metadata:{}\n") is None
     assert tsv_backend._chrom_from_countable_tsv_line("read_without_chrom\n") is None

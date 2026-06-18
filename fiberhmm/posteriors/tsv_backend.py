@@ -120,6 +120,13 @@ class _PosteriorTsvRecord:
 
 
 @dataclass(frozen=True)
+class _H5PosteriorRecordWriteRequest:
+    h5_file: object
+    chrom_indices: dict
+    fields: _PosteriorTsvFields
+
+
+@dataclass(frozen=True)
 class _H5PosteriorRecordDatasetSpec:
     group_name: str
     data: np.ndarray
@@ -360,18 +367,30 @@ def _write_h5_record_metadata(
     group['strands'][index] = record.strand
 
 
-def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
-    record = _posterior_record_from_fields(fields, np.float16)
+def _write_h5_posterior_record_from_request(
+    request: _H5PosteriorRecordWriteRequest,
+) -> None:
+    record = _posterior_record_from_fields(request.fields, np.float16)
     chrom = record.chrom
 
     # Get index for this chromosome
-    idx = chrom_indices[chrom]
-    chrom_indices[chrom] += 1
+    idx = request.chrom_indices[chrom]
+    request.chrom_indices[chrom] += 1
 
-    grp = h5_file[chrom]
+    grp = request.h5_file[chrom]
 
     _write_h5_record_array_datasets(grp, idx, record)
     _write_h5_record_metadata(grp, idx, record)
+
+
+def _write_h5_posterior_record(h5_file, chrom_indices, fields) -> None:
+    _write_h5_posterior_record_from_request(
+        _H5PosteriorRecordWriteRequest(
+            h5_file=h5_file,
+            chrom_indices=chrom_indices,
+            fields=fields,
+        )
+    )
 
 
 def _posterior_tsv_output_path(output_path: str, compress: bool) -> str:
@@ -528,7 +547,13 @@ def tsv_to_h5_from_request(request: _TsvToH5Request) -> int:
         n_written = 0
 
         for fields in _iter_tsv_posterior_fields(request.tsv_path):
-            _write_h5_posterior_record(f, chrom_indices, fields)
+            _write_h5_posterior_record_from_request(
+                _H5PosteriorRecordWriteRequest(
+                    h5_file=f,
+                    chrom_indices=chrom_indices,
+                    fields=fields,
+                )
+            )
             n_written += 1
 
             if request.verbose and n_written % 100000 == 0:
