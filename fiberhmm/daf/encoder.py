@@ -91,6 +91,18 @@ class _DafEncodeCounts:
     total_bases: int = 0
 
 
+@dataclass(frozen=True)
+class _DafEncodeSummaryRequest:
+    total: int
+    encoded: int
+    ct: int
+    ga: int
+    skipped: int
+    total_deam: int
+    total_bases: int
+    elapsed: float
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -495,19 +507,40 @@ def _daf_encode_skip_reason(read, min_mapq: int, min_read_length: int):
     return None
 
 
+def _daf_encode_summary_from_request(
+    request: _DafEncodeSummaryRequest,
+) -> dict:
+    mean_deam_rate = (
+        request.total_deam / request.total_bases
+        if request.total_bases > 0
+        else 0.0
+    )
+    return {
+        "total": request.total,
+        "encoded": request.encoded,
+        "ct": request.ct,
+        "ga": request.ga,
+        "skipped": request.skipped,
+        "mean_deam_rate": mean_deam_rate,
+        "elapsed": request.elapsed,
+    }
+
+
 def _daf_encode_summary(total: int, encoded: int, ct_count: int, ga_count: int,
                         skipped: int, total_deam: int, total_bases: int,
                         elapsed: float) -> dict:
-    mean_deam_rate = total_deam / total_bases if total_bases > 0 else 0.0
-    return {
-        "total": total,
-        "encoded": encoded,
-        "ct": ct_count,
-        "ga": ga_count,
-        "skipped": skipped,
-        "mean_deam_rate": mean_deam_rate,
-        "elapsed": elapsed,
-    }
+    return _daf_encode_summary_from_request(
+        _DafEncodeSummaryRequest(
+            total=total,
+            encoded=encoded,
+            ct=ct_count,
+            ga=ga_count,
+            skipped=skipped,
+            total_deam=total_deam,
+            total_bases=total_bases,
+            elapsed=elapsed,
+        )
+    )
 
 
 def _new_daf_encode_counts() -> _DafEncodeCounts:
@@ -527,15 +560,17 @@ def _daf_encode_summary_from_counts(
     counts: _DafEncodeCounts,
     elapsed: float,
 ) -> dict:
-    return _daf_encode_summary(
-        counts.total,
-        counts.encoded,
-        counts.ct,
-        counts.ga,
-        counts.skipped,
-        counts.total_deam,
-        counts.total_bases,
-        elapsed,
+    return _daf_encode_summary_from_request(
+        _DafEncodeSummaryRequest(
+            total=counts.total,
+            encoded=counts.encoded,
+            ct=counts.ct,
+            ga=counts.ga,
+            skipped=counts.skipped,
+            total_deam=counts.total_deam,
+            total_bases=counts.total_bases,
+            elapsed=elapsed,
+        )
     )
 
 

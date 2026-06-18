@@ -247,16 +247,17 @@ def test_maybe_print_daf_encode_progress_reports_only_intervals(monkeypatch):
 
 
 def test_daf_encode_summary_and_report_format():
-    summary = encoder._daf_encode_summary(
+    request = encoder._DafEncodeSummaryRequest(
         total=100,
         encoded=80,
-        ct_count=30,
-        ga_count=50,
+        ct=30,
+        ga=50,
         skipped=20,
         total_deam=25,
         total_bases=1000,
         elapsed=2.0,
     )
+    summary = encoder._daf_encode_summary_from_request(request)
 
     assert summary == {
         "total": 100,
@@ -267,6 +268,16 @@ def test_daf_encode_summary_and_report_format():
         "mean_deam_rate": 0.025,
         "elapsed": 2.0,
     }
+    assert encoder._daf_encode_summary(
+        total=100,
+        encoded=80,
+        ct_count=30,
+        ga_count=50,
+        skipped=20,
+        total_deam=25,
+        total_bases=1000,
+        elapsed=2.0,
+    ) == summary
 
     log = io.StringIO()
     encoder._print_daf_encode_summary(summary, log)
