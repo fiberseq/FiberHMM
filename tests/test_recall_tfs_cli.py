@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import array
+import json
 from collections import deque
 from types import SimpleNamespace
 
@@ -346,6 +347,16 @@ def test_recall_tfs_load_model_config_falls_back_to_json_metadata(monkeypatch):
         "fallback-mode",
         3,
     )
+
+
+def test_recall_tfs_json_metadata_fallback_uses_case_insensitive_suffix(tmp_path):
+    model_path = tmp_path / "model.JSON"
+    model_path.write_text(
+        json.dumps({"mode": "daf", "context_size": 5}),
+        encoding="utf-8",
+    )
+
+    assert recall_tfs._resolve_model_metadata(str(model_path)) == ("daf", 5)
 
 
 def test_recall_tfs_run_processing_dispatches_single_and_parallel(monkeypatch):

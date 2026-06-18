@@ -463,7 +463,7 @@ def parse_args():
 def _resolve_model_metadata(model_path):
     mode = 'pacbio-fiber'
     k = 3
-    if model_path.endswith('.json'):
+    if model_path.lower().endswith('.json'):
         try:
             with open(model_path) as f:
                 d = json.load(f)
