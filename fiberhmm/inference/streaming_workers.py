@@ -83,6 +83,12 @@ class _WorkerFusedApplyStageRequest:
     with_scores: bool
 
 
+@dataclass(frozen=True)
+class _FusedConfiguredApplyStageRequest:
+    fiber_read: object
+    config: _FusedPayloadWorkerConfig
+
+
 def _payload_worker_config(
     edge_trim: int,
     circular: bool,
@@ -287,19 +293,33 @@ def _run_worker_fused_apply_stage(
     )
 
 
+def _run_fused_configured_apply_stage_from_request(
+    request: _FusedConfiguredApplyStageRequest,
+):
+    config = request.config
+    return _run_worker_fused_apply_stage_from_request(
+        _WorkerFusedApplyStageRequest(
+            fiber_read=request.fiber_read,
+            edge_trim=config.edge_trim,
+            circular=config.circular,
+            mode=config.mode,
+            context_size=config.context_size,
+            msp_min_size=config.msp_min_size,
+            nuc_min_size=config.nuc_min_size,
+            with_scores=config.with_scores,
+        )
+    )
+
+
 def _run_fused_configured_apply_stage(
     fiber_read,
     config: _FusedPayloadWorkerConfig,
 ):
-    return _run_worker_fused_apply_stage(
-        fiber_read,
-        config.edge_trim,
-        config.circular,
-        config.mode,
-        config.context_size,
-        config.msp_min_size,
-        config.nuc_min_size,
-        config.with_scores,
+    return _run_fused_configured_apply_stage_from_request(
+        _FusedConfiguredApplyStageRequest(
+            fiber_read=fiber_read,
+            config=config,
+        )
     )
 
 

@@ -1747,11 +1747,15 @@ def test_run_fused_configured_apply_stage_forwards_config(monkeypatch):
     fiber_read = {"query_sequence": "ACGT"}
     seen = {}
 
-    def fake_apply(*args):
-        seen["args"] = args
+    def fake_apply(request):
+        seen["request"] = request
         return {"apply": True}
 
-    monkeypatch.setattr(streaming_workers, "_run_worker_fused_apply_stage", fake_apply)
+    monkeypatch.setattr(
+        streaming_workers,
+        "_run_worker_fused_apply_stage_from_request",
+        fake_apply,
+    )
     config = streaming_workers._FusedPayloadWorkerConfig(
         edge_trim=1,
         circular=True,
@@ -1766,19 +1770,30 @@ def test_run_fused_configured_apply_stage_forwards_config(monkeypatch):
         unify_threshold=90,
     )
 
-    assert streaming_workers._run_fused_configured_apply_stage(
-        fiber_read, config,
+    assert streaming_workers._run_fused_configured_apply_stage_from_request(
+        streaming_workers._FusedConfiguredApplyStageRequest(
+            fiber_read=fiber_read,
+            config=config,
+        )
     ) == {"apply": True}
-    assert seen["args"] == (
-        fiber_read,
-        1,
-        True,
-        "pacbio-fiber",
-        7,
-        60,
-        85,
-        True,
+    assert seen["request"] == streaming_workers._WorkerFusedApplyStageRequest(
+        fiber_read=fiber_read,
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
     )
+    assert seen["request"].fiber_read is fiber_read
+    seen.clear()
+
+    assert streaming_workers._run_fused_configured_apply_stage(
+        fiber_read,
+        config,
+    ) == {"apply": True}
+    assert seen["request"].fiber_read is fiber_read
 
 
 def test_build_worker_fused_recall_result_forwards_options(monkeypatch):
@@ -1960,8 +1975,8 @@ def test_process_fused_payload_item_runs_parse_apply_and_recall(monkeypatch):
         seen["extract"] = args
         return fiber_read
 
-    def fake_apply(*args):
-        seen["apply"] = args
+    def fake_apply(request):
+        seen["apply"] = request
         return apply_result
 
     def fake_build(*args):
@@ -1972,7 +1987,7 @@ def test_process_fused_payload_item_runs_parse_apply_and_recall(monkeypatch):
         streaming_workers, "_fused_payload_fiber_read_result", fake_extract,
     )
     monkeypatch.setattr(
-        streaming_workers, "_run_worker_fused_apply_stage", fake_apply,
+        streaming_workers, "_run_worker_fused_apply_stage_from_request", fake_apply,
     )
     monkeypatch.setattr(
         streaming_workers, "apply_result_has_footprints", lambda result: True,
@@ -1988,16 +2003,17 @@ def test_process_fused_payload_item_runs_parse_apply_and_recall(monkeypatch):
         miss,
     ) == {"recall": True}
     assert seen["extract"] == (payload, "pacbio-fiber", 128)
-    assert seen["apply"] == (
-        fiber_read,
-        1,
-        True,
-        "pacbio-fiber",
-        7,
-        60,
-        85,
-        True,
+    assert seen["apply"] == streaming_workers._WorkerFusedApplyStageRequest(
+        fiber_read=fiber_read,
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
     )
+    assert seen["apply"].fiber_read is fiber_read
     assert seen["build"] == (
         fiber_read,
         apply_result,
