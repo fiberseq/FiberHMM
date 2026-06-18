@@ -105,6 +105,13 @@ class _MaAnnotationBlock:
     annotation: dict
 
 
+@dataclass(frozen=True)
+class _ExtractRegionResult:
+    temp_bed_paths: dict
+    n_reads: int
+    feature_counts: dict
+
+
 def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
     """Extract chromosome sizes from BAM header."""
     if not os.path.exists(bam_path):
@@ -522,7 +529,7 @@ def _extract_ma_interval_type(
     )
 
 
-def _extract_region_worker(args) -> Tuple[dict, int, dict]:
+def _extract_region_worker(args) -> _ExtractRegionResult:
     """Multi-type region worker.
 
     Iterates through reads in one region, computes the query->ref mapping
@@ -536,16 +543,19 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
       - ProcessPool startup cost is paid once instead of N times
 
     Args: (region, input_bam, {extract_type: temp_bed_path})
-    Returns: ({extract_type: temp_bed_path}, n_reads, {extract_type: n_features})
+    Returns named temp BED paths, read count, and per-type feature counts.
     """
     global _worker_params
 
+    params = _worker_params
+    temp_bed_paths = {}
+    extract_types = []
+    n_reads = 0
     try:
         (chrom, start, end), input_bam, temp_bed_paths = args
         start = int(start)
         end = int(end)
 
-        params = _worker_params
         extract_types = params['extract_types']
         min_tq = int(params.get('min_tq', 50))
         min_mapq = params['min_mapq']
@@ -567,7 +577,7 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)
                 except ValueError:
-                    return (temp_bed_paths, 0, n_features)
+                    return _ExtractRegionResult(temp_bed_paths, 0, n_features)
 
                 for read in read_iter:
                     if not _extract_region_read_selected(read, start, end, min_mapq):
@@ -588,7 +598,7 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                     for extract_type, count in read_features.items():
                         n_features[extract_type] += count
 
-        return (temp_bed_paths, n_reads, n_features)
+        return _ExtractRegionResult(temp_bed_paths, n_reads, n_features)
 
     except Exception as e:
         import sys
@@ -602,7 +612,11 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
             f"{traceback.format_exc()}\n"
         )
         sys.stderr.flush()
-        return (temp_bed_paths, 0, {t: 0 for t in (params or {}).get('extract_types', [])})
+        return _ExtractRegionResult(
+            temp_bed_paths,
+            0,
+            {t: 0 for t in (params or {}).get('extract_types', [])},
+        )
 
 
 def _legacy_interval_blocks_from_tags(
@@ -1300,7 +1314,7 @@ def _handle_extract_region_future(
     temp_beds_by_type: dict,
 ) -> int:
     try:
-        temp_bed_paths, n_reads, n_feats = future.result()
+        result = future.result()
     except Exception as e:
         print(f"Worker error: {e}")
         return 0
@@ -1308,12 +1322,12 @@ def _handle_extract_region_future(
     _record_extract_region_result(
         extract_types,
         region_index,
-        temp_bed_paths,
-        n_feats,
+        result.temp_bed_paths,
+        result.feature_counts,
         total_features,
         temp_beds_by_type,
     )
-    return n_reads
+    return result.n_reads
 
 
 def _extract_progress_message(

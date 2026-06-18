@@ -383,23 +383,23 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
         assert all(starts[i] + lengths[i] <= starts[i + 1]
                    for i in range(len(starts) - 1)), f"{start_tag} overlaps"
 
-    returned_paths, n_reads, n_features = _extract_recalled_labels(
+    extract_result = _extract_recalled_labels(
         recalled_bam,
         tmp_path,
     )
 
-    assert n_reads == 1
-    assert n_features["msp"] >= 1
-    assert n_features["tf"] >= 1
+    assert extract_result.n_reads == 1
+    assert extract_result.feature_counts["msp"] >= 1
+    assert extract_result.feature_counts["tf"] >= 1
 
     msp_bed = tmp_path / "workflow_msp.bed"
     tf_bed = tmp_path / "workflow_tf.bed"
-    assert returned_paths == {"msp": str(msp_bed), "tf": str(tf_bed)}
+    assert extract_result.temp_bed_paths == {"msp": str(msp_bed), "tf": str(tf_bed)}
     assert msp_bed.read_text().strip()
     tf_lines = [line for line in tf_bed.read_text().splitlines() if line]
     assert tf_lines
     tf_cols = tf_lines[0].split("\t")
     assert len(tf_cols) == 15
     assert tf_cols[3] == query_name
-    assert int(tf_cols[9]) == n_features["tf"]
+    assert int(tf_cols[9]) == extract_result.feature_counts["tf"]
     assert all(tf_cols[idx] for idx in (12, 13, 14))

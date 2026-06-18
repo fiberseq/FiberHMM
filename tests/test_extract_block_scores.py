@@ -151,13 +151,13 @@ def test_extract_region_worker_closes_temp_beds_when_partial_open_fails(
         "msp": str(tmp_path / "msp.bed"),
     }
 
-    returned_paths, n_reads, n_features = extract_tags._extract_region_worker(
+    result = extract_tags._extract_region_worker(
         (("chr1", 0, 100), "input.bam", temp_bed_paths)
     )
 
-    assert returned_paths == temp_bed_paths
-    assert n_reads == 0
-    assert n_features == {"nucleosome": 0, "msp": 0}
+    assert result.temp_bed_paths == temp_bed_paths
+    assert result.n_reads == 0
+    assert result.feature_counts == {"nucleosome": 0, "msp": 0}
     assert opened[0].closed
 
 
@@ -936,11 +936,16 @@ def test_handle_extract_region_future_records_success_and_worker_errors(
     temp_beds_by_type = extract_tags._new_extract_temp_beds_by_type(["tf", "msp"])
 
     n_reads = extract_tags._handle_extract_region_future(
-        Future((
-            {"tf": str(nonempty), "msp": str(tmp_path / "missing.bed")},
-            5,
-            {"tf": 2, "msp": 0},
-        )),
+        Future(
+            extract_tags._ExtractRegionResult(
+                temp_bed_paths={
+                    "tf": str(nonempty),
+                    "msp": str(tmp_path / "missing.bed"),
+                },
+                n_reads=5,
+                feature_counts={"tf": 2, "msp": 0},
+            )
+        ),
         region_index=1,
         extract_types=["tf", "msp"],
         total_features=total_features,
