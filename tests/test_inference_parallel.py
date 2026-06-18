@@ -840,7 +840,10 @@ def test_write_processed_legacy_reads_tags_results_and_counts(monkeypatch):
         outbam,
         with_scores=True,
         write_msps=False,
-    ) == (1, 1)
+    ) == legacy_pipeline._LegacyWriteCounts(
+        reads_with_footprints=1,
+        no_footprints=1,
+    )
     assert tagged == [("read1", {"ns": [1]}, True, False)]
     assert outbam.written == reads
 
@@ -980,7 +983,12 @@ def test_process_legacy_chunk_and_record_updates_counts_and_posteriors(monkeypat
 
     def fake_process_and_write_chunk(*args, **kwargs):
         process_calls.append((args, kwargs))
-        return 2, 3, 1, chunk_results
+        return legacy_pipeline._ProcessedLegacyChunk(
+            reads_with_footprints=2,
+            no_footprints=3,
+            worker_failures=1,
+            posterior_records=chunk_results,
+        )
 
     monkeypatch.setattr(
         legacy_pipeline, "_process_and_write_chunk", fake_process_and_write_chunk,

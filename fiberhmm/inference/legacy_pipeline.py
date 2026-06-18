@@ -63,6 +63,20 @@ class _LegacyChunkResult:
 
 
 @dataclass(frozen=True)
+class _LegacyWriteCounts:
+    reads_with_footprints: int
+    no_footprints: int
+
+
+@dataclass(frozen=True)
+class _ProcessedLegacyChunk:
+    reads_with_footprints: int
+    no_footprints: int
+    worker_failures: int
+    posterior_records: Optional[list]
+
+
+@dataclass(frozen=True)
 class _LegacyPosteriorStats:
     n_fibers: int
     file_size_mb: float
@@ -81,15 +95,12 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                               msp_min_size: int, nuc_min_size: int = 85,
                               with_scores: bool = False,
                               return_posteriors: bool = False,
-                              write_msps: bool = True) -> Tuple[int, int, int, Optional[list]]:
+                              write_msps: bool = True) -> _ProcessedLegacyChunk:
     """
     Process a chunk of reads and write to BAM.
 
-    Returns:
-        (reads_with_footprints, no_footprints, worker_failures,
-         results_with_posteriors or None)
-
-        If return_posteriors=True, returns results list for caller to write posteriors.
+    If return_posteriors=True, posterior_records carries the per-read
+    records needed by the caller to write posteriors.
     """
 
     chunk_result = _process_legacy_chunk_results(
@@ -107,7 +118,7 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
     )
 
     # Write annotated reads
-    reads_with_footprints, no_footprints = _write_processed_legacy_reads(
+    write_counts = _write_processed_legacy_reads(
         chunk_read_objs,
         chunk_result.results,
         outbam,
@@ -117,13 +128,20 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
 
     # Return results for posteriors if requested
     if return_posteriors:
-        return (
-            reads_with_footprints,
-            no_footprints,
-            chunk_result.worker_failures,
-            list(zip(chunk_read_objs, chunk_reads, chunk_result.results)),
+        return _ProcessedLegacyChunk(
+            reads_with_footprints=write_counts.reads_with_footprints,
+            no_footprints=write_counts.no_footprints,
+            worker_failures=chunk_result.worker_failures,
+            posterior_records=list(
+                zip(chunk_read_objs, chunk_reads, chunk_result.results),
+            ),
         )
-    return reads_with_footprints, no_footprints, chunk_result.worker_failures, None
+    return _ProcessedLegacyChunk(
+        reads_with_footprints=write_counts.reads_with_footprints,
+        no_footprints=write_counts.no_footprints,
+        worker_failures=chunk_result.worker_failures,
+        posterior_records=None,
+    )
 
 
 def _process_legacy_chunk_results(
@@ -198,7 +216,7 @@ def _write_processed_legacy_reads(
     outbam,
     with_scores: bool,
     write_msps: bool,
-) -> Tuple[int, int]:
+) -> _LegacyWriteCounts:
     reads_with_footprints = 0
     no_footprints = 0
     for read_obj, result in zip(chunk_read_objs, results):
@@ -210,7 +228,7 @@ def _write_processed_legacy_reads(
 
         outbam.write(read_obj)
 
-    return reads_with_footprints, no_footprints
+    return _LegacyWriteCounts(reads_with_footprints, no_footprints)
 
 
 def _legacy_posterior_ref_positions(read_obj):
@@ -255,7 +273,7 @@ def _process_legacy_chunk_and_record(
     return_posteriors: bool = False,
     write_msps: bool = True,
 ) -> _LegacyChunkRecordResult:
-    n_fp, n_nofp, n_failed, chunk_results = _process_and_write_chunk(
+    chunk = _process_and_write_chunk(
         chunk_reads,
         chunk_read_objs,
         outbam,
@@ -271,11 +289,11 @@ def _process_legacy_chunk_and_record(
         return_posteriors=return_posteriors,
         write_msps=write_msps,
     )
-    skip_reasons[NO_FOOTPRINTS_SKIP_REASON] += n_nofp
-    _write_chunk_posteriors(posterior_writer, chunk_results)
+    skip_reasons[NO_FOOTPRINTS_SKIP_REASON] += chunk.no_footprints
+    _write_chunk_posteriors(posterior_writer, chunk.posterior_records)
     return _LegacyChunkRecordResult(
-        reads_with_footprints=n_fp,
-        worker_failures=n_failed,
+        reads_with_footprints=chunk.reads_with_footprints,
+        worker_failures=chunk.worker_failures,
     )
 
 
