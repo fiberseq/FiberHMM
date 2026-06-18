@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-from types import SimpleNamespace
 
 import pysam
 import pytest
