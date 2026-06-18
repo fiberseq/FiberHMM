@@ -21,6 +21,7 @@ from fiberhmm.cli.apply import (
     _print_region_filter_settings,
     _msp_output_message,
     _resolve_apply_cores,
+    _resolve_apply_runtime,
     _resolve_chroms_set,
     _resolve_context_size,
     _resolve_mode,
@@ -482,6 +483,93 @@ def test_run_apply_processing_delegates_pipeline_and_reports_result(
     assert calls[0][1]["process_unmapped"] is True
     assert calls[1] == ("result", (10, 4, "out.bam", False))
     assert "Processing BAM (limited to 500 reads)" in capsys.readouterr().out
+
+
+def test_resolve_apply_runtime_wires_setup_outputs(monkeypatch):
+    from fiberhmm.cli import apply
+
+    args = SimpleNamespace(
+        input="input.bam",
+        msp_min_size=None,
+        train_reads="train.txt",
+        chroms=["chr1"],
+        mode=None,
+    )
+    calls = []
+
+    monkeypatch.setattr(apply, "_resolve_model_path", lambda got_args: "model.json")
+    monkeypatch.setattr(
+        apply,
+        "_load_apply_model_with_summary",
+        lambda path: ("model", 4, "model-mode"),
+    )
+    monkeypatch.setattr(
+        apply,
+        "_print_ddda_two_pass_notice",
+        lambda model_path, enzyme: calls.append(("ddda", model_path, enzyme)),
+    )
+    monkeypatch.setattr(
+        apply,
+        "_print_numba_status",
+        lambda has_numba: calls.append(("numba", has_numba)),
+    )
+    monkeypatch.setattr(apply, "_resolve_context_size", lambda got_args, k: 5)
+    monkeypatch.setattr(apply, "_resolve_mode", lambda got_args, mode: "daf")
+    monkeypatch.setattr(apply, "_load_training_read_ids", lambda path: {"read-a"})
+    monkeypatch.setattr(apply, "_dataset_name", lambda path: "sample")
+    monkeypatch.setattr(apply, "_scores_enabled", lambda got_args: True)
+    monkeypatch.setattr(
+        apply,
+        "_resolve_scores_db_path",
+        lambda got_args, dataset: "scores.db",
+    )
+    monkeypatch.setattr(
+        apply,
+        "_print_processing_settings",
+        lambda *call_args: calls.append(("settings", call_args)),
+    )
+    monkeypatch.setattr(apply, "_resolve_chroms_set", lambda chroms: {"chr1"})
+    monkeypatch.setattr(
+        apply,
+        "_print_region_filter_settings",
+        lambda got_args, chroms: calls.append(("regions", chroms)),
+    )
+    monkeypatch.setattr(
+        apply,
+        "_use_streaming_pipeline",
+        lambda input_bam, n_cores: True,
+    )
+    monkeypatch.setattr(
+        apply,
+        "_resolve_process_unmapped",
+        lambda got_args, use_streaming: False,
+    )
+    monkeypatch.setattr(
+        apply,
+        "_resolve_output_bam",
+        lambda got_args, dataset, stdout_mode: "out.bam",
+    )
+
+    runtime = _resolve_apply_runtime(args, n_cores=4, stdout_mode=False)
+
+    assert runtime == {
+        "model_path": "model.json",
+        "train_rids": {"read-a"},
+        "mode": "daf",
+        "context_size": 5,
+        "msp_min_size": 0,
+        "with_scores": True,
+        "dataset": "sample",
+        "db_path": "scores.db",
+        "chroms_set": {"chr1"},
+        "use_streaming": True,
+        "process_unmapped": False,
+        "output_bam": "out.bam",
+    }
+    assert args.mode == "daf"
+    assert calls[0] == ("ddda", "model.json", None)
+    assert calls[2][0] == "settings"
+    assert calls[3] == ("regions", {"chr1"})
 
 
 def test_finalize_apply_outputs_writes_stats_only_for_file_outputs(monkeypatch):
