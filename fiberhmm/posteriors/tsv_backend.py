@@ -77,6 +77,13 @@ class _TsvToH5Request:
 
 
 @dataclass(frozen=True)
+class _H5ChromGroupsCreateRequest:
+    h5_file: object
+    chrom_counts: dict
+    string_dtype: object
+
+
+@dataclass(frozen=True)
 class _PosteriorTsvFields:
     read_id: str
     chrom: str
@@ -262,13 +269,15 @@ def _scan_tsv_for_h5(tsv_path: str, verbose: bool):
     )
 
 
-def _create_h5_chrom_groups(h5_file, chrom_counts, string_dtype):
+def _create_h5_chrom_groups_from_request(
+    request: _H5ChromGroupsCreateRequest,
+):
     from fiberhmm.posteriors.hdf5_backend import create_posterior_chrom_group
 
     chrom_indices = {}
-    for chrom, count in chrom_counts.items():
+    for chrom, count in request.chrom_counts.items():
         grp = create_posterior_chrom_group(
-            h5_file,
+            request.h5_file,
             chrom,
             include_ref_positions=False,
         )
@@ -276,11 +285,21 @@ def _create_h5_chrom_groups(h5_file, chrom_counts, string_dtype):
         chrom_indices[chrom] = 0
 
         # Pre-allocate metadata arrays
-        grp.create_dataset('fiber_ids', shape=(count,), dtype=string_dtype)
+        grp.create_dataset('fiber_ids', shape=(count,), dtype=request.string_dtype)
         grp.create_dataset('fiber_starts', shape=(count,), dtype=np.int32)
         grp.create_dataset('fiber_ends', shape=(count,), dtype=np.int32)
-        grp.create_dataset('strands', shape=(count,), dtype=string_dtype)
+        grp.create_dataset('strands', shape=(count,), dtype=request.string_dtype)
     return chrom_indices
+
+
+def _create_h5_chrom_groups(h5_file, chrom_counts, string_dtype):
+    return _create_h5_chrom_groups_from_request(
+        _H5ChromGroupsCreateRequest(
+            h5_file=h5_file,
+            chrom_counts=chrom_counts,
+            string_dtype=string_dtype,
+        )
+    )
 
 
 def _write_h5_metadata_from_tsv_metadata(h5_file, metadata: dict) -> None:
@@ -498,8 +517,12 @@ def tsv_to_h5_from_request(request: _TsvToH5Request) -> int:
 
         dt = h5py.special_dtype(vlen=str)
 
-        chrom_indices = _create_h5_chrom_groups(
-            f, scan_result.chrom_counts, dt,
+        chrom_indices = _create_h5_chrom_groups_from_request(
+            _H5ChromGroupsCreateRequest(
+                h5_file=f,
+                chrom_counts=scan_result.chrom_counts,
+                string_dtype=dt,
+            )
         )
 
         n_written = 0

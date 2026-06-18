@@ -403,6 +403,51 @@ def test_write_h5_metadata_from_tsv_metadata_applies_defaults(tmp_path):
         assert h5.attrs["source_bam"] == ""
 
 
+def test_create_h5_chrom_groups_request_preallocates_arrays(tmp_path):
+    with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
+        dt = h5py.special_dtype(vlen=str)
+        indices = tsv_backend._create_h5_chrom_groups_from_request(
+            tsv_backend._H5ChromGroupsCreateRequest(
+                h5_file=h5,
+                chrom_counts={"chr1": 2, "chr2": 1},
+                string_dtype=dt,
+            )
+        )
+
+        assert indices == {"chr1": 0, "chr2": 0}
+        assert "ref_positions" not in h5["chr1"]
+        assert h5["chr1"].attrs["n_fibers"] == 2
+        assert h5["chr1"]["fiber_ids"].shape == (2,)
+        assert h5["chr1"]["fiber_starts"].shape == (2,)
+        assert h5["chr1"]["fiber_ends"].shape == (2,)
+        assert h5["chr1"]["strands"].shape == (2,)
+        assert h5["chr2"].attrs["n_fibers"] == 1
+
+
+def test_create_h5_chrom_groups_adapter_builds_request(monkeypatch):
+    sentinel = {"chr1": 0}
+    calls = []
+
+    monkeypatch.setattr(
+        tsv_backend,
+        "_create_h5_chrom_groups_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert tsv_backend._create_h5_chrom_groups(
+        "h5",
+        {"chr1": 1},
+        "string-dtype",
+    ) is sentinel
+    assert calls == [
+        tsv_backend._H5ChromGroupsCreateRequest(
+            h5_file="h5",
+            chrom_counts={"chr1": 1},
+            string_dtype="string-dtype",
+        )
+    ]
+
+
 def test_format_posterior_metadata_line_uses_metadata_prefix():
     assert format_posterior_metadata_line({"mode": "daf"}) == (
         '#metadata:{"mode": "daf"}\n'
