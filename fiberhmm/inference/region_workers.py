@@ -282,6 +282,17 @@ class _RegionBedReadProcessRequest:
 
 
 @dataclass(frozen=True)
+class _RegionBedReadLoopRequest:
+    read_iter: object
+    bed_out: object
+    model: object
+    apply_config: _RegionApplyConfig
+    filter_config: ReadFilterConfig
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
 class _FusedRegionBamReadProcessRequest:
     read: object
     outbam: object
@@ -1181,6 +1192,25 @@ def _process_region_bed_read_from_request(
     return _RegionBedReadDelta(total_reads=1)
 
 
+def _process_region_bed_reads_from_request(
+    request: _RegionBedReadLoopRequest,
+) -> _RegionBedWorkerCounts:
+    counts = _RegionBedWorkerCounts()
+    for read in request.read_iter:
+        counts.add(
+            _process_region_bed_read(
+                read,
+                request.bed_out,
+                request.model,
+                request.apply_config,
+                request.filter_config,
+                request.start,
+                request.end,
+            )
+        )
+    return counts
+
+
 def _process_fused_region_bam_read(
     read,
     outbam,
@@ -1462,16 +1492,17 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
                 except ValueError:
                     return RegionBedResult(temp_bed_path, 0, 0)
 
-                for read in read_iter:
-                    counts.add(_process_region_bed_read(
-                        read,
-                        bed_out,
-                        model,
-                        apply_config,
-                        filter_config,
-                        start,
-                        end,
-                    ))
+                counts = _process_region_bed_reads_from_request(
+                    _RegionBedReadLoopRequest(
+                        read_iter=read_iter,
+                        bed_out=bed_out,
+                        model=model,
+                        apply_config=apply_config,
+                        filter_config=filter_config,
+                        start=start,
+                        end=end,
+                    )
+                )
 
         return RegionBedResult(
             temp_bed_path, counts.total_reads, counts.reads_with_footprints,

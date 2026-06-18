@@ -32,6 +32,7 @@ from fiberhmm.inference.region_workers import (
     _process_region_bam_read,
     _process_region_bam_reads_from_request,
     _process_region_bed_read,
+    _process_region_bed_reads_from_request,
     _record_skipped_region_read,
     _region_apply_config,
     _region_bam_apply_result_write_delta_from_request,
@@ -56,6 +57,7 @@ from fiberhmm.inference.region_workers import (
     _RegionBed12Blocks,
     _RegionBed12BlocksRequest,
     _RegionBed12RowRequest,
+    _RegionBedReadLoopRequest,
     _RegionFiberReadResult,
     _RegionPosteriorRecordRequest,
     _RegionPosteriorTsv,
@@ -619,6 +621,67 @@ def test_process_region_bed_read_writes_footprint_row(monkeypatch):
     assert bed_out.lines == [
         "chr1\t100\t200\tread1\t0\t+\t100\t200\t0,0,0\t3\t1,10,1\t0,20,99\t0,500,0\n"
     ]
+
+
+def test_process_region_bed_reads_accumulates_deltas(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    reads = [SimpleNamespace(query_name="a"), SimpleNamespace(query_name="b")]
+    bed_out = object()
+    model = object()
+    apply_config = _apply_config()
+    filter_config = ReadFilterConfig(min_mapq=10, min_read_length=50)
+    calls = []
+
+    def fake_process(
+        read,
+        got_bed_out,
+        got_model,
+        got_apply_config,
+        got_filter_config,
+        start,
+        end,
+    ):
+        calls.append(
+            (
+                read,
+                got_bed_out,
+                got_model,
+                got_apply_config,
+                got_filter_config,
+                start,
+                end,
+            )
+        )
+        if read.query_name == "a":
+            return region_workers._RegionBedReadDelta(
+                total_reads=1,
+                reads_with_footprints=1,
+            )
+        return region_workers._RegionBedReadDelta(total_reads=1)
+
+    monkeypatch.setattr(region_workers, "_process_region_bed_read", fake_process)
+
+    counts = _process_region_bed_reads_from_request(
+        _RegionBedReadLoopRequest(
+            read_iter=reads,
+            bed_out=bed_out,
+            model=model,
+            apply_config=apply_config,
+            filter_config=filter_config,
+            start=100,
+            end=200,
+        )
+    )
+
+    assert counts.total_reads == 2
+    assert counts.reads_with_footprints == 1
+    assert len(calls) == 2
+    assert all(call[1] is bed_out for call in calls)
+    assert all(call[2] is model for call in calls)
+    assert all(call[3] is apply_config for call in calls)
+    assert all(call[4] is filter_config for call in calls)
+    assert all(call[5:] == (100, 200) for call in calls)
 
 
 def test_process_fused_region_bam_read_writes_recalled_tags(monkeypatch):
