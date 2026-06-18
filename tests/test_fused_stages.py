@@ -99,12 +99,12 @@ def test_nuc_call_arrays_preserve_start_length_order_and_dtype():
         SimpleNamespace(start=40, length=5),
     ]
 
-    starts, lengths = fused_stages._nuc_call_arrays(nucs)
+    arrays = fused_stages._nuc_call_arrays(nucs)
 
-    assert starts.dtype == np.int32
-    assert lengths.dtype == np.int32
-    np.testing.assert_array_equal(starts, [10, 40])
-    np.testing.assert_array_equal(lengths, [20, 5])
+    assert arrays.starts.dtype == np.int32
+    assert arrays.lengths.dtype == np.int32
+    np.testing.assert_array_equal(arrays.starts, [10, 40])
+    np.testing.assert_array_equal(arrays.lengths, [20, 5])
 
 
 def test_nuc_call_start_length_lists_preserve_plain_values():

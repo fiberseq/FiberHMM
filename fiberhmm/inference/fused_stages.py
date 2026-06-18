@@ -57,6 +57,12 @@ class _NucCallQualityLists:
     er_values: list
 
 
+@dataclass(frozen=True)
+class _NucCallArrays:
+    starts: np.ndarray
+    lengths: np.ndarray
+
+
 def _analyzed_span(apply_result, read_length, kept):
     """Extent (lo, hi) the read was annotated over -- the union of the original
     HMM footprints/MSPs and the final nucleosomes -- used to tile MSPs."""
@@ -127,9 +133,9 @@ def _nuc_call_quality_fields(nuc_calls):
 
 
 def _nuc_call_arrays(nuc_calls):
-    return (
-        np.asarray([k.start for k in nuc_calls], dtype=np.int32),
-        np.asarray([k.length for k in nuc_calls], dtype=np.int32),
+    return _NucCallArrays(
+        starts=np.asarray([k.start for k in nuc_calls], dtype=np.int32),
+        lengths=np.asarray([k.length for k in nuc_calls], dtype=np.int32),
     )
 
 
@@ -470,10 +476,10 @@ def _build_fused_recall_result_with_nucs(
     )
     msp_pairs = _interval_pair_lists(new_msps)
 
-    nuc_starts, nuc_lengths = _nuc_call_arrays(kept)
+    nuc_arrays = _nuc_call_arrays(kept)
     return {
-        "ns": nuc_starts,
-        "nl": nuc_lengths,
+        "ns": nuc_arrays.starts,
+        "nl": nuc_arrays.lengths,
         "as": np.asarray(msp_pairs.starts, dtype=np.int32),
         "al": np.asarray(msp_pairs.lengths, dtype=np.int32),
         "ns_scores": None,
