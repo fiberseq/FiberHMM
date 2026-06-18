@@ -68,6 +68,17 @@ class _TrainingSamplingIndex:
 
 
 @dataclass(frozen=True)
+class _StateRun:
+    start: int
+    end: int
+    state: int
+
+    @property
+    def length(self) -> int:
+        return self.end - self.start
+
+
+@dataclass(frozen=True)
 class _StateRunLengths:
     footprint_sizes: list
     msp_sizes: list
@@ -705,7 +716,7 @@ def train_hmm(emission_probs: np.ndarray, train_arrays: dict,
 
 
 def _state_runs(states):
-    """Yield ``(start, end, state)`` runs from a Viterbi state sequence."""
+    """Return contiguous state runs from a Viterbi state sequence."""
     if len(states) == 0:
         return []
 
@@ -714,29 +725,28 @@ def _state_runs(states):
     start = 0
     for i in range(1, len(states)):
         if states[i] != current_state:
-            runs.append((start, i, current_state))
+            runs.append(_StateRun(start, i, int(current_state)))
             current_state = states[i]
             start = i
-    runs.append((start, len(states), current_state))
+    runs.append(_StateRun(start, len(states), int(current_state)))
     return runs
 
 
 def _state_run_lengths(states) -> _StateRunLengths:
     footprint_sizes = []
     msp_sizes = []
-    for start, end, state in _state_runs(states):
-        length = end - start
-        if state == 0:
-            footprint_sizes.append(length)
+    for run in _state_runs(states):
+        if run.state == 0:
+            footprint_sizes.append(run.length)
         else:
-            msp_sizes.append(length)
+            msp_sizes.append(run.length)
     return _StateRunLengths(footprint_sizes, msp_sizes)
 
 
 def _state_block_specs(states) -> list:
     return [
-        (start, end - start, 'forestgreen' if state == 0 else 'white')
-        for start, end, state in _state_runs(states)
+        (run.start, run.length, 'forestgreen' if run.state == 0 else 'white')
+        for run in _state_runs(states)
     ]
 
 

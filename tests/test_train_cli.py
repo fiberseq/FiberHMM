@@ -57,9 +57,9 @@ def test_complete_emission_probability_table_fills_missing_encodings():
 
 def test_state_runs_groups_contiguous_states():
     assert train._state_runs([0, 0, 1, 1, 1, 0]) == [
-        (0, 2, 0),
-        (2, 5, 1),
-        (5, 6, 0),
+        train._StateRun(0, 2, 0),
+        train._StateRun(2, 5, 1),
+        train._StateRun(5, 6, 0),
     ]
     assert train._state_runs([]) == []
 
