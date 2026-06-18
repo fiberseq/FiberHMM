@@ -40,6 +40,7 @@ Examples:
 import argparse
 import json
 import multiprocessing as mp
+import os
 import sys
 from collections import deque
 
@@ -463,6 +464,7 @@ def parse_args():
 def _resolve_model_metadata(model_path):
     mode = 'pacbio-fiber'
     k = 3
+    model_path = os.fspath(model_path)
     if model_path.lower().endswith('.json'):
         try:
             with open(model_path) as f:
