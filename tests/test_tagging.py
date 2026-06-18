@@ -14,6 +14,7 @@ from fiberhmm.inference.tagging import (
     _filter_nucs_with_tf_overlap_from_request,
     _flip_legacy_intervals_to_molecular,
     _fused_recall_tag_intervals,
+    _FusedRecallTagsRequest,
     _legacy_apply_interval_groups,
     _legacy_interval_group,
     _legacy_interval_group_from_request,
@@ -35,6 +36,8 @@ from fiberhmm.inference.tagging import (
     set_legacy_apply_tags_from_request,
     unify_circular_nucs_with_tf_calls,
     unify_nucs_with_tf_calls,
+    write_fused_recall_tags,
+    write_fused_recall_tags_from_request,
 )
 from fiberhmm.inference.tf_recaller import TFCall
 
@@ -331,6 +334,66 @@ def test_fused_recall_tag_intervals_prefer_circular_intervals_when_present():
 
     assert intervals.kept_nucs == [(90, 20)]
     assert intervals.msps == [(80, 10)]
+
+
+def test_write_fused_recall_tags_request_passes_ma_tag_payload(monkeypatch):
+    read = RecordingRead()
+    tf_calls = [
+        TFCall(
+            start=50,
+            length=10,
+            llr=5.0,
+            n_opps=3,
+            left_ambiguity=0,
+            right_ambiguity=0,
+        )
+    ]
+    result = {
+        "tf_calls": tf_calls,
+        "ns": np.asarray([10], dtype=np.int32),
+        "nl": np.asarray([5], dtype=np.int32),
+        "as": np.asarray([20], dtype=np.int32),
+        "al": np.asarray([6], dtype=np.int32),
+        "nq_for_kept_nucs": [127],
+        "nuc_el_for_kept": [1],
+        "nuc_er_for_kept": [2],
+    }
+    calls = []
+
+    def fake_write_ma_tags(got_read, **kwargs):
+        calls.append((got_read, kwargs))
+
+    monkeypatch.setattr("fiberhmm.inference.tagging.write_ma_tags", fake_write_ma_tags)
+
+    write_fused_recall_tags_from_request(
+        _FusedRecallTagsRequest(
+            read=read,
+            read_length=100,
+            result=result,
+            also_write_legacy=True,
+            downstream_compat=False,
+        )
+    )
+    write_fused_recall_tags(
+        read,
+        read_length=100,
+        result=result,
+        also_write_legacy=True,
+        downstream_compat=False,
+    )
+
+    expected_kwargs = {
+        "read_length": 100,
+        "tf_calls": tf_calls,
+        "kept_nucs": [(10, 5)],
+        "msps": [(20, 6)],
+        "nq_for_kept_nucs": [127],
+        "also_write_legacy": True,
+        "downstream_compat": False,
+        "nuc_el_for_kept": [1],
+        "nuc_er_for_kept": [2],
+    }
+    assert calls == [(read, expected_kwargs), (read, expected_kwargs)]
 
 
 def test_result_intervals_prefers_circular_key_before_arrays():

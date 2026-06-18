@@ -77,6 +77,15 @@ class _FusedRecallTagIntervals:
     msps: list[Interval]
 
 
+@dataclass(frozen=True)
+class _FusedRecallTagsRequest:
+    read: object
+    read_length: int
+    result: dict
+    also_write_legacy: bool
+    downstream_compat: bool
+
+
 def _flip_legacy_intervals_to_molecular(
     starts: Sequence[int],
     lengths: Sequence[int],
@@ -497,6 +506,25 @@ def _fused_recall_tag_intervals(result: dict) -> _FusedRecallTagIntervals:
     return _FusedRecallTagIntervals(kept_nucs=kept_nucs, msps=msps)
 
 
+def write_fused_recall_tags_from_request(
+    request: _FusedRecallTagsRequest,
+) -> None:
+    """Apply a fused apply+TF-recall result to a pysam read."""
+    intervals = _fused_recall_tag_intervals(request.result)
+    write_ma_tags(
+        request.read,
+        read_length=request.read_length,
+        tf_calls=request.result["tf_calls"],
+        kept_nucs=intervals.kept_nucs,
+        msps=intervals.msps,
+        nq_for_kept_nucs=request.result.get("nq_for_kept_nucs"),
+        also_write_legacy=request.also_write_legacy,
+        downstream_compat=request.downstream_compat,
+        nuc_el_for_kept=request.result.get("nuc_el_for_kept"),
+        nuc_er_for_kept=request.result.get("nuc_er_for_kept"),
+    )
+
+
 def write_fused_recall_tags(
     read,
     read_length: int,
@@ -504,17 +532,12 @@ def write_fused_recall_tags(
     also_write_legacy: bool,
     downstream_compat: bool,
 ) -> None:
-    """Apply a fused apply+TF-recall result to a pysam read."""
-    intervals = _fused_recall_tag_intervals(result)
-    write_ma_tags(
-        read,
-        read_length=read_length,
-        tf_calls=result["tf_calls"],
-        kept_nucs=intervals.kept_nucs,
-        msps=intervals.msps,
-        nq_for_kept_nucs=result.get("nq_for_kept_nucs"),
-        also_write_legacy=also_write_legacy,
-        downstream_compat=downstream_compat,
-        nuc_el_for_kept=result.get("nuc_el_for_kept"),
-        nuc_er_for_kept=result.get("nuc_er_for_kept"),
+    write_fused_recall_tags_from_request(
+        _FusedRecallTagsRequest(
+            read=read,
+            read_length=read_length,
+            result=result,
+            also_write_legacy=also_write_legacy,
+            downstream_compat=downstream_compat,
+        )
     )
