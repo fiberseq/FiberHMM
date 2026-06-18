@@ -672,6 +672,39 @@ def _add_training_zoom_highlight(overview_axes: tuple, start: int, end: int,
         ax.axvspan(start, end, alpha=0.15, color=color)
 
 
+def _plot_training_probability_area(
+    ax,
+    footprint_prob,
+    *,
+    show_line: bool = False,
+    threshold_alpha: float | None = None,
+) -> None:
+    ax.fill_between(
+        range(len(footprint_prob)),
+        0,
+        footprint_prob,
+        color='forestgreen',
+        alpha=0.4,
+        step='mid',
+    )
+    if show_line:
+        ax.plot(
+            range(len(footprint_prob)),
+            footprint_prob,
+            color='forestgreen',
+            linewidth=0.5,
+            alpha=0.8,
+        )
+    threshold_kwargs = {
+        'color': 'gray',
+        'linestyle': '--',
+        'linewidth': 0.5,
+    }
+    if threshold_alpha is not None:
+        threshold_kwargs['alpha'] = threshold_alpha
+    ax.axhline(0.5, **threshold_kwargs)
+
+
 def _add_training_state_blocks(
     ax,
     region_states,
@@ -926,15 +959,7 @@ def _save_training_example_png(
     ax.set_xticklabels([])
 
     ax = axes[2]
-    ax.fill_between(
-        range(len(footprint_prob)),
-        0,
-        footprint_prob,
-        color='forestgreen',
-        alpha=0.4,
-        step='mid',
-    )
-    ax.axhline(0.5, color='gray', linestyle='--', linewidth=0.5)
+    _plot_training_probability_area(ax, footprint_prob)
     ax.set_xlim(0, seq_len)
     ax.set_ylim(0, 1)
     ax.set_ylabel('P(FP)')
@@ -1055,9 +1080,9 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
 
             # Overview: Probability
             ax_overview_prob = fig.add_subplot(gs[2, :])
-            ax_overview_prob.fill_between(range(len(footprint_prob)), 0, footprint_prob,
-                                         color='forestgreen', alpha=0.4, step='mid')
-            ax_overview_prob.axhline(0.5, color='gray', linestyle='--', linewidth=0.5, alpha=0.5)
+            _plot_training_probability_area(
+                ax_overview_prob, footprint_prob, threshold_alpha=0.5,
+            )
             ax_overview_prob.set_xlim(0, seq_len)
             ax_overview_prob.set_ylim(0, 1)
             ax_overview_prob.set_ylabel('P(FP)', fontsize=9)
@@ -1114,11 +1139,12 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
                 # Probability
                 ax_zoom_prob = fig.add_subplot(gs[5, w_idx])
                 window_prob = footprint_prob[w_start:w_end]
-                ax_zoom_prob.fill_between(range(len(window_prob)), 0, window_prob,
-                                         color='forestgreen', alpha=0.4, step='mid')
-                ax_zoom_prob.plot(range(len(window_prob)), window_prob,
-                                 color='forestgreen', linewidth=0.5, alpha=0.8)
-                ax_zoom_prob.axhline(0.5, color='gray', linestyle='--', linewidth=0.5, alpha=0.5)
+                _plot_training_probability_area(
+                    ax_zoom_prob,
+                    window_prob,
+                    show_line=True,
+                    threshold_alpha=0.5,
+                )
                 ax_zoom_prob.set_xlim(0, w_len)
                 ax_zoom_prob.set_ylim(0, 1)
                 ax_zoom_prob.set_ylabel('P(FP)', fontsize=8)

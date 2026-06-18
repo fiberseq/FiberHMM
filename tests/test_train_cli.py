@@ -245,6 +245,84 @@ def test_add_training_zoom_highlight_marks_all_overview_axes():
     ]
 
 
+def test_plot_training_probability_area_defaults_to_filled_threshold():
+    class FakeAxis:
+        def __init__(self):
+            self.fill_between_calls = []
+            self.plot_calls = []
+            self.hlines = []
+
+        def fill_between(self, *args, **kwargs):
+            self.fill_between_calls.append((args, kwargs))
+
+        def plot(self, *args, **kwargs):
+            self.plot_calls.append((args, kwargs))
+
+        def axhline(self, *args, **kwargs):
+            self.hlines.append((args, kwargs))
+
+    ax = FakeAxis()
+    prob = np.array([0.2, 0.8])
+
+    train._plot_training_probability_area(ax, prob)
+
+    assert ax.fill_between_calls[0][0][0] == range(2)
+    assert ax.fill_between_calls[0][0][1] == 0
+    np.testing.assert_array_equal(ax.fill_between_calls[0][0][2], prob)
+    assert ax.fill_between_calls[0][1] == {
+        "color": "forestgreen",
+        "alpha": 0.4,
+        "step": "mid",
+    }
+    assert ax.plot_calls == []
+    assert ax.hlines == [
+        ((0.5,), {"color": "gray", "linestyle": "--", "linewidth": 0.5})
+    ]
+
+
+def test_plot_training_probability_area_can_overlay_line_and_alpha_threshold():
+    class FakeAxis:
+        def __init__(self):
+            self.fill_between_calls = []
+            self.plot_calls = []
+            self.hlines = []
+
+        def fill_between(self, *args, **kwargs):
+            self.fill_between_calls.append((args, kwargs))
+
+        def plot(self, *args, **kwargs):
+            self.plot_calls.append((args, kwargs))
+
+        def axhline(self, *args, **kwargs):
+            self.hlines.append((args, kwargs))
+
+    ax = FakeAxis()
+    prob = np.array([0.1, 0.4, 0.9])
+
+    train._plot_training_probability_area(
+        ax, prob, show_line=True, threshold_alpha=0.5,
+    )
+
+    assert ax.plot_calls[0][0][0] == range(3)
+    np.testing.assert_array_equal(ax.plot_calls[0][0][1], prob)
+    assert ax.plot_calls[0][1] == {
+        "color": "forestgreen",
+        "linewidth": 0.5,
+        "alpha": 0.8,
+    }
+    assert ax.hlines == [
+        (
+            (0.5,),
+            {
+                "color": "gray",
+                "linestyle": "--",
+                "linewidth": 0.5,
+                "alpha": 0.5,
+            },
+        )
+    ]
+
+
 def test_add_training_state_blocks_uses_state_specs_and_sets_limits():
     rectangles = []
     collections = []
