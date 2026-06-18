@@ -75,11 +75,11 @@ def _hdf5_file_metadata_attrs(
         'mode': mode,
         'context_size': context_size,
         'edge_trim': edge_trim,
-        'source_bam': os.path.basename(source_bam),
+        'source_bam': os.path.basename(os.fspath(source_bam)),
         'format_version': 2,
     }
     if model_path is not None:
-        attrs['model_path'] = os.path.basename(model_path)
+        attrs['model_path'] = os.path.basename(os.fspath(model_path))
     return attrs
 
 
@@ -215,6 +215,7 @@ class PosteriorWriter:
             source_bam: Source BAM filename (for metadata)
             batch_size: Number of fibers to buffer before writing
         """
+        output_path = os.fspath(output_path)
         self.output_path = output_path
         self.batch_size = batch_size
 

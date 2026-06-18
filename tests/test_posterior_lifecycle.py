@@ -98,13 +98,13 @@ def test_hdf5_chrom_metadata_helper_appends_default_strand():
     }
 
 
-def test_hdf5_file_metadata_attrs_normalizes_paths():
+def test_hdf5_file_metadata_attrs_normalizes_paths(tmp_path):
     assert hdf5_backend._hdf5_file_metadata_attrs(
         mode="daf",
         context_size=5,
         edge_trim=12,
-        source_bam="/data/input.bam",
-        model_path="/models/model.joblib",
+        source_bam=tmp_path / "input.bam",
+        model_path=tmp_path / "model.joblib",
     ) == {
         "mode": "daf",
         "context_size": 5,
@@ -374,13 +374,15 @@ def test_hdf5_posterior_writer_closes_file_when_finalize_fails(monkeypatch, tmp_
     fake_h5 = FakeH5()
     monkeypatch.setattr(hdf5_backend.h5py, "File", lambda *args, **kwargs: fake_h5)
 
+    h5_path = tmp_path / "posteriors.h5"
     writer = hdf5_backend.PosteriorWriter(
-        str(tmp_path / "posteriors.h5"),
+        h5_path,
         mode="pacbio-fiber",
         context_size=3,
         edge_trim=10,
         source_bam="input.bam",
     )
+    assert writer.output_path == str(h5_path)
 
     def fail_finalize():
         raise RuntimeError("finalize failed")
