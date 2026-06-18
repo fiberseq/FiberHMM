@@ -142,6 +142,14 @@ class _SplitNamedIntervals:
     any_split: bool
 
 
+@dataclass
+class _RecallNucQualityInputs:
+    nq_values: List[int]
+    nuc_qqq: bool
+    nuc_el_values: List[int]
+    nuc_er_values: List[int]
+
+
 def _split_named_intervals(
     intervals: Sequence[Tuple[int, int]],
     prefix: str,
@@ -763,7 +771,8 @@ def _format_split_aq(nuc_q_split, tf_q_split, nuc_qqq: bool):
 def _recall_nuc_quality_inputs(kept_nucs: Sequence[Tuple[int, int]],
                                nq_for_kept_nucs: Optional[Sequence[int]],
                                nuc_el_for_kept: Optional[Sequence[int]],
-                               nuc_er_for_kept: Optional[Sequence[int]]):
+                               nuc_er_for_kept: Optional[Sequence[int]]
+                               ) -> _RecallNucQualityInputs:
     nq_values = list(nq_for_kept_nucs) if nq_for_kept_nucs is not None \
         else [0] * len(kept_nucs)
     if len(nq_values) != len(kept_nucs):
@@ -778,7 +787,12 @@ def _recall_nuc_quality_inputs(kept_nucs: Sequence[Tuple[int, int]],
         if not (len(nuc_el_values) == len(nuc_er_values) == len(kept_nucs)):
             raise ValueError("nuc edge arrays must match kept_nucs length")
 
-    return nq_values, nuc_qqq, nuc_el_values, nuc_er_values
+    return _RecallNucQualityInputs(
+        nq_values,
+        nuc_qqq,
+        nuc_el_values,
+        nuc_er_values,
+    )
 
 
 def _recall_tf_quality_inputs(tf_calls: Sequence[TFCall]):
@@ -844,7 +858,7 @@ def _build_recall_tag_payload(
     nuc_el_for_kept: Optional[Sequence[int]],
     nuc_er_for_kept: Optional[Sequence[int]],
 ) -> _RecallTagPayload:
-    nq_values, nuc_qqq, nuc_el_values, nuc_er_values = _recall_nuc_quality_inputs(
+    nuc_quality = _recall_nuc_quality_inputs(
         kept_nucs, nq_for_kept_nucs, nuc_el_for_kept, nuc_er_for_kept,
     )
     tf_intervals, tq_vals, el_vals, er_vals = _recall_tf_quality_inputs(tf_calls)
@@ -857,15 +871,19 @@ def _build_recall_tag_payload(
         kept_nucs,
         msps,
         tf_intervals,
-        nq_values,
+        nuc_quality.nq_values,
         tq_vals,
         el_vals,
         er_vals,
-        nuc_el_values if nuc_qqq else None,
-        nuc_er_values if nuc_qqq else None,
+        nuc_quality.nuc_el_values if nuc_quality.nuc_qqq else None,
+        nuc_quality.nuc_er_values if nuc_quality.nuc_qqq else None,
     )
 
-    return _recall_tag_payload_from_output_frame(output_frame, read_length, nuc_qqq)
+    return _recall_tag_payload_from_output_frame(
+        output_frame,
+        read_length,
+        nuc_quality.nuc_qqq,
+    )
 
 
 def _write_spec_recall_tags(

@@ -77,12 +77,21 @@ def test_split_legacy_interval_row_handles_optional_score():
 
 
 def test_quality_row_helpers_preserve_aq_layout():
-    assert tf_recaller._recall_nuc_quality_inputs(
+    default_nuc_quality = tf_recaller._recall_nuc_quality_inputs(
         [(0, 100), (200, 50)], None, None, None,
-    ) == ([0, 0], False, [], [])
-    assert tf_recaller._recall_nuc_quality_inputs(
+    )
+    explicit_nuc_quality = tf_recaller._recall_nuc_quality_inputs(
         [(0, 100)], [7], [8], [9],
-    ) == ([7], True, [8], [9])
+    )
+
+    assert default_nuc_quality.nq_values == [0, 0]
+    assert default_nuc_quality.nuc_qqq is False
+    assert default_nuc_quality.nuc_el_values == []
+    assert default_nuc_quality.nuc_er_values == []
+    assert explicit_nuc_quality.nq_values == [7]
+    assert explicit_nuc_quality.nuc_qqq is True
+    assert explicit_nuc_quality.nuc_el_values == [8]
+    assert explicit_nuc_quality.nuc_er_values == [9]
 
     with pytest.raises(ValueError, match="nq_values"):
         tf_recaller._recall_nuc_quality_inputs([(0, 100)], [1, 2], None, None)
