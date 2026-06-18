@@ -39,6 +39,12 @@ class _IntervalBounds:
 
 
 @dataclass(frozen=True)
+class _AnalyzedSpan:
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
 class _NucCallQualityLists:
     nq_values: list
     el_values: list
@@ -54,8 +60,10 @@ def _analyzed_span(apply_result, read_length, kept):
     for k in kept:
         starts.append(int(k.start))
         ends.append(int(k.start) + int(k.length))
-    return (min(starts) if starts else 0,
-            max(ends) if ends else int(read_length))
+    return _AnalyzedSpan(
+        start=min(starts) if starts else 0,
+        end=max(ends) if ends else int(read_length),
+    )
 
 
 def _apply_result_interval_bounds(apply_result):
@@ -438,9 +446,14 @@ def _build_fused_recall_result_with_nucs(
     # 5) re-tile: split/phase/promotion can leave overlapping nucs + stale MSPs.
     # Clip to non-overlapping nucleosomes and derive complementary MSPs so
     # ns/nl + as/al tile cleanly (required by fibertools / FIRE).
-    span_lo, span_hi = _analyzed_span(apply_result, read_length, kept)
+    analyzed_span = _analyzed_span(apply_result, read_length, kept)
     kept, new_msps = assemble_nuc_msp_tiling(
-        kept, span_lo, span_hi, msp_min_size, nuc_min_size)
+        kept,
+        analyzed_span.start,
+        analyzed_span.end,
+        msp_min_size,
+        nuc_min_size,
+    )
     msp_starts, msp_len = _interval_pair_lists(new_msps)
 
     nuc_starts, nuc_lengths = _nuc_call_arrays(kept)

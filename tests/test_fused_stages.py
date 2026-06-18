@@ -45,6 +45,28 @@ def test_apply_result_interval_bounds_collects_nucs_and_msps():
     assert all(type(value) is int for value in bounds.starts + bounds.ends)
 
 
+def test_analyzed_span_covers_apply_intervals_kept_nucs_and_read_fallback():
+    empty_span = fused_stages._analyzed_span(
+        {"ns": [], "nl": [], "as": [], "al": []},
+        read_length=200,
+        kept=[],
+    )
+    span = fused_stages._analyzed_span(
+        {
+            "ns": np.asarray([10], dtype=np.int32),
+            "nl": np.asarray([20], dtype=np.int64),
+            "as": np.asarray([70], dtype=np.int32),
+            "al": np.asarray([10], dtype=np.int64),
+        },
+        read_length=200,
+        kept=[SimpleNamespace(start=100, length=40)],
+    )
+
+    assert empty_span == fused_stages._AnalyzedSpan(start=0, end=200)
+    assert span.start == 10
+    assert span.end == 140
+
+
 def test_nuc_call_quality_lists_preserve_nq_el_er_order():
     nucs = [
         SimpleNamespace(nq=1, el=2, er=3),
