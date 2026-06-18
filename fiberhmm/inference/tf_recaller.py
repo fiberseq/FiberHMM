@@ -775,37 +775,11 @@ def _recall_tf_quality_inputs(tf_calls: Sequence[TFCall]):
     )
 
 
-def _build_recall_tag_payload(
-    read,
+def _recall_tag_payload_from_output_frame(
+    output_frame: _TagOutputFrame,
     read_length: int,
-    tf_calls: Sequence[TFCall],
-    kept_nucs: Sequence[Tuple[int, int]],
-    msps: Sequence[Tuple[int, int]],
-    nq_for_kept_nucs: Optional[Sequence[int]],
-    nuc_el_for_kept: Optional[Sequence[int]],
-    nuc_er_for_kept: Optional[Sequence[int]],
+    nuc_qqq: bool,
 ) -> _RecallTagPayload:
-    nq_values, nuc_qqq, nuc_el_values, nuc_er_values = _recall_nuc_quality_inputs(
-        kept_nucs, nq_for_kept_nucs, nuc_el_for_kept, nuc_er_for_kept,
-    )
-    tf_intervals, tq_vals, el_vals, er_vals = _recall_tf_quality_inputs(tf_calls)
-
-    # FiberHMM works in SEQ coords internally. Tags are written in molecular
-    # frame and sorted within each annotation type for fibertools/spec readers.
-    output_frame = _prepare_tag_output_frame(
-        read,
-        read_length,
-        kept_nucs,
-        msps,
-        tf_intervals,
-        nq_values,
-        tq_vals,
-        el_vals,
-        er_vals,
-        nuc_el_values if nuc_qqq else None,
-        nuc_er_values if nuc_qqq else None,
-    )
-
     nuc_q_rows = _nuc_quality_rows(
         output_frame.nq_values,
         nuc_qqq,
@@ -843,6 +817,40 @@ def _build_recall_tag_payload(
         tf_q_split=tf_q_split,
         needs_an=nuc_split or msp_split or tf_split,
     )
+
+
+def _build_recall_tag_payload(
+    read,
+    read_length: int,
+    tf_calls: Sequence[TFCall],
+    kept_nucs: Sequence[Tuple[int, int]],
+    msps: Sequence[Tuple[int, int]],
+    nq_for_kept_nucs: Optional[Sequence[int]],
+    nuc_el_for_kept: Optional[Sequence[int]],
+    nuc_er_for_kept: Optional[Sequence[int]],
+) -> _RecallTagPayload:
+    nq_values, nuc_qqq, nuc_el_values, nuc_er_values = _recall_nuc_quality_inputs(
+        kept_nucs, nq_for_kept_nucs, nuc_el_for_kept, nuc_er_for_kept,
+    )
+    tf_intervals, tq_vals, el_vals, er_vals = _recall_tf_quality_inputs(tf_calls)
+
+    # FiberHMM works in SEQ coords internally. Tags are written in molecular
+    # frame and sorted within each annotation type for fibertools/spec readers.
+    output_frame = _prepare_tag_output_frame(
+        read,
+        read_length,
+        kept_nucs,
+        msps,
+        tf_intervals,
+        nq_values,
+        tq_vals,
+        el_vals,
+        er_vals,
+        nuc_el_values if nuc_qqq else None,
+        nuc_er_values if nuc_qqq else None,
+    )
+
+    return _recall_tag_payload_from_output_frame(output_frame, read_length, nuc_qqq)
 
 
 def _write_spec_recall_tags(

@@ -120,6 +120,37 @@ def test_quality_row_helpers_preserve_aq_layout():
     assert list(nuc_qqq_aq) == [7, 8, 9, 10, 11, 12]
 
 
+def test_recall_tag_payload_from_output_frame_splits_wrapped_annotations():
+    output_frame = tf_recaller._TagOutputFrame(
+        nuc_intervals=[(90, 20)],
+        msp_intervals=[(95, 10)],
+        tf_intervals=[(80, 30)],
+        nq_values=[201],
+        tq_values=[50],
+        tf_el_values=[246],
+        tf_er_values=[238],
+        nuc_el_values=None,
+        nuc_er_values=None,
+    )
+
+    payload = tf_recaller._recall_tag_payload_from_output_frame(
+        output_frame, read_length=100, nuc_qqq=False,
+    )
+
+    assert payload.kept_nucs == [(90, 20)]
+    assert payload.msps == [(95, 10)]
+    assert payload.tf_intervals == [(80, 30)]
+    assert payload.ma_nucs == [(0, 10), (90, 10)]
+    assert payload.ma_msps == [(0, 5), (95, 5)]
+    assert payload.ma_tfs == [(0, 10), (80, 20)]
+    assert payload.nuc_names == ["fhw_nuc_0", "fhw_nuc_0"]
+    assert payload.msp_names == ["fhw_msp_0", "fhw_msp_0"]
+    assert payload.tf_names == ["fhw_tf_0", "fhw_tf_0"]
+    assert payload.nuc_q_split == [[201], [201]]
+    assert payload.tf_q_split == [[50, 246, 238], [50, 246, 238]]
+    assert payload.needs_an is True
+
+
 def test_positive_length_intervals_filters_and_normalizes():
     assert tf_recaller._positive_length_intervals(
         np.array([5, 10, 15]),
