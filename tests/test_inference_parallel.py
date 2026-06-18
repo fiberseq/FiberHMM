@@ -956,8 +956,8 @@ def test_process_direct_legacy_chunk_results_runs_single_read(monkeypatch):
     monkeypatch.setattr(legacy_pipeline, "_process_single_read", fake_process)
     model = object()
 
-    results = legacy_pipeline._process_direct_legacy_chunk_results(
-        ["fiber-a", "fiber-b"],
+    request = legacy_pipeline._LegacyDirectChunkRequest(
+        chunk_reads=["fiber-a", "fiber-b"],
         model=model,
         edge_trim=11,
         circular=True,
@@ -969,7 +969,43 @@ def test_process_direct_legacy_chunk_results_runs_single_read(monkeypatch):
         return_posteriors=True,
     )
 
+    results = legacy_pipeline._process_direct_legacy_chunk_results_from_request(
+        request,
+    )
+
     assert results == [{"ns": [1]}, {"ns": [2]}]
+    assert seen == [
+        (
+            ("fiber-a", model, 11, True, "daf", 5, 61),
+            {
+                "nuc_min_size": 87,
+                "with_scores": True,
+                "return_posteriors": True,
+            },
+        ),
+        (
+            ("fiber-b", model, 11, True, "daf", 5, 61),
+            {
+                "nuc_min_size": 87,
+                "with_scores": True,
+                "return_posteriors": True,
+            },
+        ),
+    ]
+
+    seen.clear()
+    assert legacy_pipeline._process_direct_legacy_chunk_results(
+        ["fiber-a", "fiber-b"],
+        model=model,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=True,
+    ) == [{"ns": [1]}, {"ns": [2]}]
     assert seen == [
         (
             ("fiber-a", model, 11, True, "daf", 5, 61),

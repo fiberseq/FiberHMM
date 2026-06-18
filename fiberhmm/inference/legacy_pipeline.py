@@ -103,6 +103,20 @@ class _LegacyChunkBuffers:
     read_objs: list
 
 
+@dataclass(frozen=True)
+class _LegacyDirectChunkRequest:
+    chunk_reads: list
+    model: object
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    with_scores: bool
+    return_posteriors: bool
+
+
 def _new_legacy_chunk_buffers() -> _LegacyChunkBuffers:
     return _LegacyChunkBuffers(fiber_reads=[], read_objs=[])
 
@@ -217,13 +231,38 @@ def _process_direct_legacy_chunk_results(
     with_scores: bool,
     return_posteriors: bool,
 ) -> list:
-    results = []
-    for fiber_read in chunk_reads:
-        result = _process_single_read(
-            fiber_read, model, edge_trim, circular,
-            mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+    return _process_direct_legacy_chunk_results_from_request(
+        _LegacyDirectChunkRequest(
+            chunk_reads=chunk_reads,
+            model=model,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
             with_scores=with_scores,
             return_posteriors=return_posteriors,
+        )
+    )
+
+
+def _process_direct_legacy_chunk_results_from_request(
+    request: _LegacyDirectChunkRequest,
+) -> list:
+    results = []
+    for fiber_read in request.chunk_reads:
+        result = _process_single_read(
+            fiber_read,
+            request.model,
+            request.edge_trim,
+            request.circular,
+            request.mode,
+            request.context_size,
+            request.msp_min_size,
+            nuc_min_size=request.nuc_min_size,
+            with_scores=request.with_scores,
+            return_posteriors=request.return_posteriors,
         )
         results.append(result)
     return results
