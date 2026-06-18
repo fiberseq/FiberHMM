@@ -613,6 +613,29 @@ class _FakePdf:
         self.saved.append(fig)
 
 
+class _FakePngPyplot:
+    def __init__(self):
+        self.subplots_calls = []
+        self.tight_layout_calls = 0
+        self.savefig_calls = []
+        self.closed = []
+        self.fig = _FakeFigure()
+        self.ax = "png-axis"
+
+    def subplots(self, *args, **kwargs):
+        self.subplots_calls.append((args, kwargs))
+        return self.fig, self.ax
+
+    def tight_layout(self):
+        self.tight_layout_calls += 1
+
+    def savefig(self, *args, **kwargs):
+        self.savefig_calls.append((args, kwargs))
+
+    def close(self, fig):
+        self.closed.append(fig)
+
+
 def test_plot_footprint_overview_pdf_page_builds_all_panels(monkeypatch):
     plot_calls = []
     no_data_calls = []
@@ -780,6 +803,32 @@ def test_plot_quality_msp_pdf_page_marks_missing_score_and_msp_data(monkeypatch)
     ]
     assert bins_calls == [("11", [])]
     assert pdf.saved == [plt.fig]
+
+
+def test_save_footprint_size_png_writes_only_when_sizes_exist(monkeypatch):
+    plot_calls = []
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_footprint_size_png_axis",
+        lambda ax, values: plot_calls.append((ax, values)),
+    )
+    stats = stats_module.FootprintStats()
+    plt = _FakePngPyplot()
+
+    assert not stats_module._save_footprint_size_png(stats, plt, "out/run")
+    assert plt.subplots_calls == []
+    assert plot_calls == []
+
+    stats.footprint_sizes = [10, 20, 30]
+    assert stats_module._save_footprint_size_png(stats, plt, "out/run")
+
+    assert plt.subplots_calls == [((), {"figsize": (8, 5)})]
+    assert plot_calls == [("png-axis", [10, 20, 30])]
+    assert plt.tight_layout_calls == 1
+    assert plt.savefig_calls == [
+        (("out/run_footprint_sizes.png",), {"dpi": 150})
+    ]
+    assert plt.closed == [plt.fig]
 
 
 def test_stats_sampling_probability_handles_full_and_partial_samples():

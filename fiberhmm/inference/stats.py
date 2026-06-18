@@ -455,6 +455,18 @@ def _plot_quality_msp_pdf_page(stats: "FootprintStats", plt, pdf) -> None:
     plt.close(fig)
 
 
+def _save_footprint_size_png(stats: "FootprintStats", plt, output_prefix: str) -> bool:
+    if not stats.footprint_sizes:
+        return False
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    _plot_footprint_size_png_axis(ax, stats.footprint_sizes)
+    plt.tight_layout()
+    plt.savefig(f"{output_prefix}_footprint_sizes.png", dpi=150)
+    plt.close(fig)
+    return True
+
+
 class FootprintStats:
     """Collects footprint statistics from sampled reads."""
 
@@ -614,13 +626,7 @@ class FootprintStats:
 
         print(f"QC plots saved to: {pdf_path}")
 
-        # Also save individual PNGs for convenience
-        if self.footprint_sizes:
-            fig, ax = plt.subplots(figsize=(8, 5))
-            _plot_footprint_size_png_axis(ax, self.footprint_sizes)
-            plt.tight_layout()
-            plt.savefig(f"{output_prefix}_footprint_sizes.png", dpi=150)
-            plt.close(fig)
+        _save_footprint_size_png(self, plt, output_prefix)
 
 
 def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
