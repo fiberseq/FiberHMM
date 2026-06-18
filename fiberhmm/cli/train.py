@@ -51,6 +51,15 @@ class _TrainingArrays:
     valid_reads: list
 
 
+@dataclass(frozen=True)
+class _TrainingRunResult:
+    best_model: object
+    all_models: list
+    train_rids: list
+    valid_reads: list
+    encoded_reads: list
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Train FiberHMM model from PacBio BAM files',
@@ -1589,14 +1598,23 @@ def _load_training_emission_probs(args) -> np.ndarray:
     return emission_probs
 
 
-def _run_training_or_base_model(args, emission_probs: np.ndarray):
+def _run_training_or_base_model(
+    args,
+    emission_probs: np.ndarray,
+) -> _TrainingRunResult:
     if args.base_model:
         best_model, all_models = _build_model_from_base(
             args.base_model,
             emission_probs,
             args.context_size,
         )
-        return best_model, all_models, [], [], []
+        return _TrainingRunResult(
+            best_model=best_model,
+            all_models=all_models,
+            train_rids=[],
+            valid_reads=[],
+            encoded_reads=[],
+        )
 
     print(f"\nSampling reads from {len(args.input)} BAM file(s)...")
     sampled = sample_reads(
@@ -1620,12 +1638,12 @@ def _run_training_or_base_model(args, emission_probs: np.ndarray):
         arrays.train_arrays,
         args.use_hmmlearn,
     )
-    return (
-        best_model,
-        all_models,
-        arrays.train_rids,
-        arrays.valid_reads,
-        arrays.encoded_reads,
+    return _TrainingRunResult(
+        best_model=best_model,
+        all_models=all_models,
+        train_rids=arrays.train_rids,
+        valid_reads=arrays.valid_reads,
+        encoded_reads=arrays.encoded_reads,
     )
 
 
@@ -1659,18 +1677,21 @@ def main():
 
     # Generate emission probabilities
     emission_probs = _load_training_emission_probs(args)
-    best_model, all_models, train_rids, valid_reads, encoded_reads = (
-        _run_training_or_base_model(args, emission_probs)
-    )
+    training_result = _run_training_or_base_model(args, emission_probs)
 
-    _save_training_outputs(best_model, all_models, args, train_rids)
+    _save_training_outputs(
+        training_result.best_model,
+        training_result.all_models,
+        args,
+        training_result.train_rids,
+    )
 
     # Generate stats if requested (only if we have training data)
     _maybe_generate_training_stats(
         args,
-        best_model,
-        valid_reads,
-        encoded_reads,
+        training_result.best_model,
+        training_result.valid_reads,
+        training_result.encoded_reads,
         emission_probs,
     )
 

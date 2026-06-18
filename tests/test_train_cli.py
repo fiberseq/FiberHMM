@@ -1240,12 +1240,12 @@ def test_run_training_or_base_model_uses_base_model_path(monkeypatch):
     args = SimpleNamespace(base_model="base.json", context_size=3)
     emission_probs = np.ones((2, 4))
 
-    assert train._run_training_or_base_model(args, emission_probs) == (
-        best_model,
-        [best_model],
-        [],
-        [],
-        [],
+    assert train._run_training_or_base_model(args, emission_probs) == train._TrainingRunResult(
+        best_model=best_model,
+        all_models=[best_model],
+        train_rids=[],
+        valid_reads=[],
+        encoded_reads=[],
     )
 
 
@@ -1293,12 +1293,12 @@ def test_run_training_or_base_model_samples_encodes_and_trains(monkeypatch, caps
     )
     emission_probs = np.ones((2, 4))
 
-    assert train._run_training_or_base_model(args, emission_probs) == (
-        best_model,
-        [best_model],
-        train_rids,
-        valid_reads,
-        encoded_reads,
+    assert train._run_training_or_base_model(args, emission_probs) == train._TrainingRunResult(
+        best_model=best_model,
+        all_models=[best_model],
+        train_rids=train_rids,
+        valid_reads=valid_reads,
+        encoded_reads=encoded_reads,
     )
     assert calls[0] == (
         "sample",
