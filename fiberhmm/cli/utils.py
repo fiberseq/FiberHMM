@@ -91,6 +91,7 @@ def _load_npz_model_raw(filepath):
 
 
 def _load_raw_model_by_suffix(input_path: Path):
+    input_path = Path(input_path)
     suffix = input_path.suffix.lower()
     if suffix == '.npz':
         return _load_npz_model_raw(input_path)

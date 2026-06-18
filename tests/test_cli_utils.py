@@ -65,7 +65,14 @@ def test_load_raw_model_by_suffix_uses_expected_loader(monkeypatch, tmp_path):
         "loader": "pickle",
     }
     assert _load_raw_model_by_suffix(tmp_path / "model.npz") == {"loader": "npz"}
-    assert calls == [("pickle", "model.pkl"), ("npz", "model.npz")]
+    assert _load_raw_model_by_suffix(str(tmp_path / "model.pickle")) == {
+        "loader": "pickle",
+    }
+    assert calls == [
+        ("pickle", "model.pkl"),
+        ("npz", "model.npz"),
+        ("pickle", "model.pickle"),
+    ]
 
 
 def test_load_raw_model_by_suffix_falls_back_to_npz(monkeypatch, tmp_path):
