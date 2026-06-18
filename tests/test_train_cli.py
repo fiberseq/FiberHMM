@@ -1265,11 +1265,11 @@ def test_run_training_or_base_model_samples_encodes_and_trains(monkeypatch, caps
     monkeypatch.setattr(
         train,
         "generate_training_arrays",
-        lambda *args: calls.append(("arrays", args)) or (
-            train_arrays,
-            train_rids,
-            encoded_reads,
-            valid_reads,
+        lambda *args: calls.append(("arrays", args)) or train._TrainingArrays(
+            train_arrays=train_arrays,
+            train_rids=train_rids,
+            encoded_reads=encoded_reads,
+            valid_reads=valid_reads,
         ),
     )
     monkeypatch.setattr(

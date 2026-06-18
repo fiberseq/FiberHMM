@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
@@ -40,6 +41,14 @@ from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 pd.options.mode.chained_assignment = None
 
 _TRAINING_ZOOM_COLORS = ('red', 'blue', 'orange')
+
+
+@dataclass(frozen=True)
+class _TrainingArrays:
+    train_arrays: dict
+    train_rids: list
+    encoded_reads: list
+    valid_reads: list
 
 
 def parse_args():
@@ -567,10 +576,10 @@ def _encode_training_read(
 
 def generate_training_arrays(reads: list, edge_trim: int,
                              n_iterations: int, mode: str = 'pacbio-fiber',
-                             context_size: int = 3) -> tuple:
+                             context_size: int = 3) -> _TrainingArrays:
     """
     Generate training arrays from sampled reads.
-    Returns (dict of training arrays, list of read IDs, list of encoded reads).
+    Returns encoded training arrays plus read IDs and the reads they came from.
     """
     print(f"Encoding {len(reads)} reads (context size k={context_size})...")
 
@@ -599,7 +608,12 @@ def generate_training_arrays(reads: list, edge_trim: int,
     # Create shuffled training arrays
     train_arrays = _shuffled_training_arrays(encoded_reads, n_iterations)
 
-    return train_arrays, train_rids, encoded_reads, valid_reads
+    return _TrainingArrays(
+        train_arrays=train_arrays,
+        train_rids=train_rids,
+        encoded_reads=encoded_reads,
+        valid_reads=valid_reads,
+    )
 
 
 def train_hmm(emission_probs: np.ndarray, train_arrays: dict,
@@ -1596,17 +1610,23 @@ def _run_training_or_base_model(args, emission_probs: np.ndarray):
     )
     print(f"Total sampled: {len(sampled)} reads")
 
-    train_arrays, train_rids, encoded_reads, valid_reads = generate_training_arrays(
+    arrays = generate_training_arrays(
         sampled, args.edge_trim, args.iterations, args.mode, args.context_size
     )
 
     print(f"\nTraining HMM ({args.iterations} iterations)...")
     best_model, all_models = train_hmm(
         emission_probs,
-        train_arrays,
+        arrays.train_arrays,
         args.use_hmmlearn,
     )
-    return best_model, all_models, train_rids, valid_reads, encoded_reads
+    return (
+        best_model,
+        all_models,
+        arrays.train_rids,
+        arrays.valid_reads,
+        arrays.encoded_reads,
+    )
 
 
 def _maybe_generate_training_stats(args, best_model, valid_reads, encoded_reads,
