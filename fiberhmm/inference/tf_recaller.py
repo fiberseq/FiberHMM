@@ -235,6 +235,13 @@ class _PreferredMmMlTags:
 
 
 @dataclass
+class _ModificationExtractRequest:
+    read: object
+    mode: str
+    context_size: int
+
+
+@dataclass
 class _LegacyIntervalRow:
     start: int
     length: int
@@ -719,12 +726,28 @@ def extract_modifications(read, mode: str, context_size: int = 3
     Uses the manual MM/ML parser instead of pysam.modified_bases (the
     latter segfaults on some long Hia5 reads; SIGSEGV is uncatchable).
     """
-    seq = read.query_sequence
-    if seq is None or len(seq) < 2 * context_size + 1:
+    return extract_modifications_from_request(
+        _ModificationExtractRequest(
+            read=read,
+            mode=mode,
+            context_size=context_size,
+        )
+    )
+
+
+def extract_modifications_from_request(
+    request: _ModificationExtractRequest,
+) -> Optional[Tuple[set, str, str]]:
+    seq = request.read.query_sequence
+    if seq is None or len(seq) < 2 * request.context_size + 1:
         return None
-    if mode == 'daf' and has_iupac_encoding(seq):
-        return _extract_daf_iupac_modifications(read, seq)
-    return _extract_mm_ml_or_daf_md_modifications(read, seq, mode)
+    if request.mode == 'daf' and has_iupac_encoding(seq):
+        return _extract_daf_iupac_modifications(request.read, seq)
+    return _extract_mm_ml_or_daf_md_modifications(
+        request.read,
+        seq,
+        request.mode,
+    )
 
 
 def _raw_legacy_recall_tags(read):
