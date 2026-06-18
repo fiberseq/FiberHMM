@@ -127,6 +127,11 @@ def _load_legacy_probability_table(filepath: str) -> pd.DataFrame:
     return _probability_table_with_ratio(probs, filepath)
 
 
+def _is_probability_counter_path(filepath: str) -> bool:
+    filepath_lower = filepath.lower()
+    return filepath_lower.endswith('.probs.pkl') or filepath_lower.endswith('.pkl')
+
+
 def load_probability_file(filepath: str, context_size: int = 3) -> pd.DataFrame:
     """
     Load probability file - supports both legacy TSV and new .probs.pkl format.
@@ -138,7 +143,7 @@ def load_probability_file(filepath: str, context_size: int = 3) -> pd.DataFrame:
     Returns:
         DataFrame with columns: encode, ratio (and optionally hit, nohit)
     """
-    if filepath.endswith('.probs.pkl') or filepath.endswith('.pkl'):
+    if _is_probability_counter_path(filepath):
         # New format - ContextCounter pickle
         from fiberhmm.probabilities.context_counter import ContextCounter
         counter = ContextCounter.load(filepath)

@@ -32,6 +32,13 @@ def test_load_legacy_probability_table_requires_ratio_or_counts(tmp_path):
         train.load_probability_file(str(probs_path))
 
 
+def test_probability_counter_path_detection_is_case_insensitive():
+    assert train._is_probability_counter_path("sample.probs.pkl")
+    assert train._is_probability_counter_path("sample.PROBS.PKL")
+    assert train._is_probability_counter_path("sample.PKL")
+    assert not train._is_probability_counter_path("sample.tsv")
+
+
 def test_complete_emission_probability_table_fills_missing_encodings():
     table = pd.DataFrame({
         "encode": [2],
