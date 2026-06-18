@@ -321,6 +321,21 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
     return _stats_tuple(n_reads, total)
 
 
+def _submit_recall_chunk(pool, pending, reads_chunk, payloads_chunk):
+    future = pool.apply_async(_process_payload_chunk, (payloads_chunk,))
+    pending.append((reads_chunk, future))
+
+
+def _drain_recall_chunk(pending, bam_out, also_write_legacy, downstream_compat):
+    reads_chunk, fut = pending.popleft()
+    out_results, stats = fut.get()   # blocks until result is ready
+    for read, result in zip(reads_chunk, out_results):
+        _write_recall_result(
+            read, result, bam_out, also_write_legacy, downstream_compat
+        )
+    return len(reads_chunk), stats
+
+
 def _parallel_loop(bam_in, bam_out, _header_text,
                    llr_hit, llr_miss, mode, k,
                    min_llr, min_opps, unify_threshold,
@@ -345,13 +360,10 @@ def _parallel_loop(bam_in, bam_out, _header_text,
 
     def _drain_one():
         nonlocal n_reads
-        reads_chunk, fut = pending.popleft()
-        out_results, stats = fut.get()   # blocks until result is ready
-        for read, result in zip(reads_chunk, out_results):
-            _write_recall_result(
-                read, result, bam_out, also_write_legacy, downstream_compat
-            )
-        n_reads += len(reads_chunk)
+        chunk_reads, stats = _drain_recall_chunk(
+            pending, bam_out, also_write_legacy, downstream_compat
+        )
+        n_reads += chunk_reads
         _add_stats(total, stats)
 
     with mp.Pool(
@@ -371,8 +383,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
             n += 1
 
             if len(buf_reads) >= chunk_size:
-                future = pool.apply_async(_process_payload_chunk, (buf_payloads,))
-                pending.append((buf_reads, future))
+                _submit_recall_chunk(pool, pending, buf_reads, buf_payloads)
                 buf_reads, buf_payloads = [], []
 
                 # Backpressure: drain the oldest result before submitting more
@@ -381,8 +392,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
 
         # Submit last partial chunk
         if buf_reads:
-            future = pool.apply_async(_process_payload_chunk, (buf_payloads,))
-            pending.append((buf_reads, future))
+            _submit_recall_chunk(pool, pending, buf_reads, buf_payloads)
 
         # Drain all remaining results
         while pending:

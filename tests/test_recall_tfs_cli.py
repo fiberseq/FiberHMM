@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import array
+from collections import deque
 from types import SimpleNamespace
 
 import pytest
@@ -197,6 +198,55 @@ def test_recall_tfs_write_recall_result_passes_through_null_result(monkeypatch):
 
     assert written == ["annotated", "failed"]
     assert applied == [("annotated", "result", True, False)]
+
+
+def test_recall_tfs_submit_chunk_enqueues_worker_future():
+    pending = deque()
+
+    class FakePool:
+        def apply_async(self, func, args):
+            assert func is recall_tfs._process_payload_chunk
+            assert args == (["payload"],)
+            return "future"
+
+    recall_tfs._submit_recall_chunk(
+        FakePool(),
+        pending,
+        [SimpleNamespace(query_name="read")],
+        ["payload"],
+    )
+
+    reads, future = pending.popleft()
+    assert [read.query_name for read in reads] == ["read"]
+    assert future == "future"
+
+
+def test_recall_tfs_drain_chunk_writes_results_and_returns_stats(monkeypatch):
+    reads = [SimpleNamespace(query_name="a"), SimpleNamespace(query_name="b")]
+    stats = {"v2": 1, "tf": 2, "demoted": 3, "failed": 0}
+    calls = []
+
+    class FakeFuture:
+        def get(self):
+            return ["result-a", None], stats
+
+    pending = deque([(reads, FakeFuture())])
+    monkeypatch.setattr(
+        recall_tfs,
+        "_write_recall_result",
+        lambda read, result, out, legacy, compat: calls.append(
+            (read.query_name, result, out, legacy, compat)
+        ),
+    )
+
+    assert recall_tfs._drain_recall_chunk(
+        pending, "bam-out", True, False,
+    ) == (2, stats)
+    assert list(pending) == []
+    assert calls == [
+        ("a", "result-a", "bam-out", True, False),
+        ("b", None, "bam-out", True, False),
+    ]
 
 
 def test_recall_tfs_read_sequence_length_handles_missing_sequence():
