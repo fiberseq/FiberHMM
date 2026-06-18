@@ -80,6 +80,12 @@ class _ExpectedModelDurations:
     msp: float
 
 
+@dataclass(frozen=True)
+class _NonzeroEmissionsByState:
+    footprint: np.ndarray
+    msp: np.ndarray
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Train FiberHMM model from PacBio BAM files',
@@ -745,10 +751,12 @@ def _viterbi_state_size_stats(
     )
 
 
-def _nonzero_emissions_by_state(emission_probs: np.ndarray) -> tuple:
-    return (
-        emission_probs[0, :][emission_probs[0, :] > 0],
-        emission_probs[1, :][emission_probs[1, :] > 0],
+def _nonzero_emissions_by_state(
+    emission_probs: np.ndarray,
+) -> _NonzeroEmissionsByState:
+    return _NonzeroEmissionsByState(
+        footprint=emission_probs[0, :][emission_probs[0, :] > 0],
+        msp=emission_probs[1, :][emission_probs[1, :] > 0],
     )
 
 
@@ -923,21 +931,21 @@ def _plot_training_size_distribution(
 
 
 def _plot_training_emission_distribution(ax, emission_probs: np.ndarray) -> None:
-    fp_nonzero, msp_nonzero = _nonzero_emissions_by_state(emission_probs)
+    nonzero_emissions = _nonzero_emissions_by_state(emission_probs)
 
     bins = np.linspace(0, 1, 51)
     ax.hist(
-        fp_nonzero,
+        nonzero_emissions.footprint,
         bins=bins,
         alpha=0.6,
-        label=f'Footprint (n={len(fp_nonzero):,})',
+        label=f'Footprint (n={len(nonzero_emissions.footprint):,})',
         color='firebrick',
     )
     ax.hist(
-        msp_nonzero,
+        nonzero_emissions.msp,
         bins=bins,
         alpha=0.6,
-        label=f'Accessible (n={len(msp_nonzero):,})',
+        label=f'Accessible (n={len(nonzero_emissions.msp):,})',
         color='forestgreen',
     )
     ax.set_xlabel('P(methylation | state, context)')
@@ -1016,16 +1024,16 @@ def _write_training_stats_summary(summary_path: str, model: FiberHMM,
 
         f.write("\nEmission Probabilities:\n")
         f.write("-" * 40 + "\n")
-        fp_nonzero, msp_nonzero = _nonzero_emissions_by_state(emission_probs)
+        nonzero_emissions = _nonzero_emissions_by_state(emission_probs)
         f.write(
-            f"  Footprint contexts: {len(fp_nonzero):,} "
-            f"(mean={np.mean(fp_nonzero):.4f}, "
-            f"median={np.median(fp_nonzero):.4f})\n"
+            f"  Footprint contexts: {len(nonzero_emissions.footprint):,} "
+            f"(mean={np.mean(nonzero_emissions.footprint):.4f}, "
+            f"median={np.median(nonzero_emissions.footprint):.4f})\n"
         )
         f.write(
-            f"  Accessible contexts: {len(msp_nonzero):,} "
-            f"(mean={np.mean(msp_nonzero):.4f}, "
-            f"median={np.median(msp_nonzero):.4f})\n"
+            f"  Accessible contexts: {len(nonzero_emissions.msp):,} "
+            f"(mean={np.mean(nonzero_emissions.msp):.4f}, "
+            f"median={np.median(nonzero_emissions.msp):.4f})\n"
         )
 
         f.write("\nTraining Data Statistics:\n")
