@@ -517,6 +517,23 @@ def _extract_mm_ml_modifications(read, seq: str, mode: str, mm_tag, ml_tag):
     return mod_pos, strand, seq
 
 
+def _preferred_mm_ml_tags(read):
+    mm_tag = get_preferred_tag(read, 'MM', 'Mm', '')
+    ml_tag = get_preferred_tag(read, 'ML', 'Ml', [])
+    if not mm_tag or not ml_tag:
+        return None
+    return mm_tag, ml_tag
+
+
+def _extract_mm_ml_or_daf_md_modifications(read, seq: str, mode: str):
+    tags = _preferred_mm_ml_tags(read)
+    if tags is None:
+        if mode == 'daf':
+            return _extract_daf_md_modifications(read, seq)
+        return None
+    return _extract_mm_ml_modifications(read, seq, mode, tags[0], tags[1])
+
+
 def extract_modifications(read, mode: str, context_size: int = 3
                           ) -> Optional[Tuple[set, str, str]]:
     """Pull (mod_positions, strand, sequence) for a read.
@@ -530,13 +547,7 @@ def extract_modifications(read, mode: str, context_size: int = 3
         return None
     if mode == 'daf' and has_iupac_encoding(seq):
         return _extract_daf_iupac_modifications(read, seq)
-    mm_tag = get_preferred_tag(read, 'MM', 'Mm', '')
-    ml_tag = get_preferred_tag(read, 'ML', 'Ml', [])
-    if not mm_tag or not ml_tag:
-        if mode == 'daf':
-            return _extract_daf_md_modifications(read, seq)
-        return None
-    return _extract_mm_ml_modifications(read, seq, mode, mm_tag, ml_tag)
+    return _extract_mm_ml_or_daf_md_modifications(read, seq, mode)
 
 
 def _raw_legacy_recall_tags(read):
