@@ -1949,29 +1949,47 @@ def test_process_fused_fiber_read_applies_and_recalls_or_passes_through(monkeypa
         unify_threshold=90,
     )
 
-    def fake_apply(*args):
-        seen["apply"] = args
+    def fake_apply(request):
+        seen["apply"] = request
         return apply_result
 
-    def fake_build(*args):
-        seen["build"] = args
+    def fake_build(request):
+        seen["build"] = request
         return {"recall": True}
 
     monkeypatch.setattr(
-        streaming_workers, "_run_fused_configured_apply_stage", fake_apply,
+        streaming_workers, "_run_fused_configured_apply_stage_from_request", fake_apply,
     )
     monkeypatch.setattr(
-        streaming_workers, "_build_fused_configured_recall_result", fake_build,
+        streaming_workers,
+        "_build_fused_configured_recall_result_from_request",
+        fake_build,
     )
     monkeypatch.setattr(
         streaming_workers, "apply_result_has_footprints", lambda result: True,
     )
 
-    assert streaming_workers._process_fused_fiber_read(
-        fiber_read, config, hit, miss,
+    assert streaming_workers._process_fused_fiber_read_from_request(
+        streaming_workers._FusedFiberReadProcessRequest(
+            fiber_read=fiber_read,
+            config=config,
+            llr_hit=hit,
+            llr_miss=miss,
+        )
     ) == {"recall": True}
-    assert seen["apply"] == (fiber_read, config)
-    assert seen["build"] == (fiber_read, apply_result, hit, miss, config)
+    assert seen["apply"] == streaming_workers._FusedConfiguredApplyStageRequest(
+        fiber_read=fiber_read,
+        config=config,
+    )
+    assert seen["build"] == streaming_workers._FusedConfiguredRecallResultRequest(
+        fiber_read=fiber_read,
+        apply_result=apply_result,
+        llr_hit=hit,
+        llr_miss=miss,
+        config=config,
+    )
+    assert seen["apply"].fiber_read is fiber_read
+    assert seen["build"].apply_result is apply_result
 
     monkeypatch.setattr(
         streaming_workers, "apply_result_has_footprints", lambda result: False,

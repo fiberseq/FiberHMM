@@ -112,6 +112,14 @@ class _FusedConfiguredRecallResultRequest:
     config: _FusedPayloadWorkerConfig
 
 
+@dataclass(frozen=True)
+class _FusedFiberReadProcessRequest:
+    fiber_read: object
+    config: _FusedPayloadWorkerConfig
+    llr_hit: object
+    llr_miss: object
+
+
 def _payload_worker_config(
     edge_trim: int,
     circular: bool,
@@ -428,25 +436,45 @@ def _build_fused_configured_recall_result(
     )
 
 
-def _process_fused_fiber_read(
-    fiber_read,
-    config: _FusedPayloadWorkerConfig,
-    llr_hit,
-    llr_miss,
+def _process_fused_fiber_read_from_request(
+    request: _FusedFiberReadProcessRequest,
 ):
-    apply_result = _run_fused_configured_apply_stage(fiber_read, config)
+    apply_result = _run_fused_configured_apply_stage_from_request(
+        _FusedConfiguredApplyStageRequest(
+            fiber_read=request.fiber_read,
+            config=request.config,
+        )
+    )
 
     # Match streaming semantics: if apply produced no footprints and no MSPs,
     # pass the read through unchanged and preserve any pre-existing tags.
     if not apply_result_has_footprints(apply_result):
         return None
 
-    return _build_fused_configured_recall_result(
-        fiber_read,
-        apply_result,
-        llr_hit,
-        llr_miss,
-        config,
+    return _build_fused_configured_recall_result_from_request(
+        _FusedConfiguredRecallResultRequest(
+            fiber_read=request.fiber_read,
+            apply_result=apply_result,
+            llr_hit=request.llr_hit,
+            llr_miss=request.llr_miss,
+            config=request.config,
+        )
+    )
+
+
+def _process_fused_fiber_read(
+    fiber_read,
+    config: _FusedPayloadWorkerConfig,
+    llr_hit,
+    llr_miss,
+):
+    return _process_fused_fiber_read_from_request(
+        _FusedFiberReadProcessRequest(
+            fiber_read=fiber_read,
+            config=config,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+        )
     )
 
 
