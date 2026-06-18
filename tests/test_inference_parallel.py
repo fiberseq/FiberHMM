@@ -178,6 +178,53 @@ def test_legacy_executor_helpers_configure_parallel_pool(monkeypatch):
     )
 
 
+def test_legacy_progress_and_completion_messages_format_counts():
+    assert legacy_pipeline._legacy_processing_rate(10, 2.0) == 5.0
+    assert legacy_pipeline._legacy_processing_rate(10, 0.0) == 0
+    assert legacy_pipeline._legacy_progress_message(
+        total_reads=1234,
+        skipped=56,
+        rate=7.89,
+    ) == "\r  Processed: 1,234 | Skipped: 56 | 7.9 reads/s"
+    assert legacy_pipeline._legacy_completion_message(
+        total_reads=1234,
+        skipped=56,
+        reads_with_footprints=789,
+        rate=7.89,
+    ) == (
+        "\r  Processed: 1,234 | Skipped: 56 | "
+        "With footprints: 789 | 7.9 reads/s"
+    )
+
+
+def test_print_legacy_completion_summary_reports_failures_and_skips(capsys):
+    legacy_pipeline._print_legacy_completion_summary(
+        total_reads=8,
+        skipped=2,
+        reads_with_footprints=5,
+        worker_failures=1,
+        skip_reasons={"low_mapq": 2, "no_modifications": 0},
+        elapsed=4.0,
+    )
+
+    assert capsys.readouterr().out == (
+        "\r  Processed: 8 | Skipped: 2 | With footprints: 5 | 2.0 reads/s\n"
+        "  Worker read failures: 1 (passed through unchanged)\n"
+        "  Skip reasons:\n"
+        "    low_mapq: 2 (20.0%)\n"
+    )
+
+
+def test_print_legacy_posterior_summary_handles_empty_and_values(capsys):
+    legacy_pipeline._print_legacy_posterior_summary(None, "out.h5")
+    assert capsys.readouterr().out == ""
+
+    legacy_pipeline._print_legacy_posterior_summary((1234, 5.678), "out.h5")
+    assert capsys.readouterr().out == (
+        "Posteriors: 1,234 fibers -> out.h5 (5.7 MB)\n"
+    )
+
+
 def test_parallel_reexports_streaming_worker_entry_points():
     assert parallel._init_bam_worker is streaming_workers._init_bam_worker
     assert parallel._init_fused_worker is streaming_workers._init_fused_worker

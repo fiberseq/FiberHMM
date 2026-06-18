@@ -223,6 +223,88 @@ def _legacy_executor_for_config(
     return None
 
 
+def _legacy_processing_rate(total_reads: int, elapsed: float) -> float:
+    return total_reads / elapsed if elapsed > 0 else 0
+
+
+def _legacy_progress_message(total_reads: int, skipped: int, rate: float) -> str:
+    return (
+        f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | "
+        f"{rate:.1f} reads/s"
+    )
+
+
+def _print_legacy_progress(total_reads: int, skipped: int, start_time: float) -> None:
+    elapsed = time.time() - start_time
+    print(
+        _legacy_progress_message(
+            total_reads,
+            skipped,
+            _legacy_processing_rate(total_reads, elapsed),
+        ),
+        end='',
+    )
+    sys.stdout.flush()
+
+
+def _legacy_completion_message(
+    total_reads: int,
+    skipped: int,
+    reads_with_footprints: int,
+    rate: float,
+) -> str:
+    return (
+        f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | "
+        f"With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s"
+    )
+
+
+def _print_legacy_skip_summary(
+    skip_reasons: dict,
+    total_reads: int,
+    skipped: int,
+) -> None:
+    if skipped <= 0:
+        return
+
+    print("  Skip reasons:")
+    for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+        if count > 0:
+            pct = 100 * count / (total_reads + skipped)
+            print(f"    {reason}: {count:,} ({pct:.1f}%)")
+
+
+def _print_legacy_completion_summary(
+    total_reads: int,
+    skipped: int,
+    reads_with_footprints: int,
+    worker_failures: int,
+    skip_reasons: dict,
+    elapsed: float,
+) -> None:
+    print(
+        _legacy_completion_message(
+            total_reads,
+            skipped,
+            reads_with_footprints,
+            _legacy_processing_rate(total_reads, elapsed),
+        )
+    )
+    if worker_failures:
+        print(f"  Worker read failures: {worker_failures:,} (passed through unchanged)")
+    _print_legacy_skip_summary(skip_reasons, total_reads, skipped)
+
+
+def _print_legacy_posterior_summary(
+    posterior_stats,
+    output_posteriors: Optional[str],
+) -> None:
+    if not posterior_stats:
+        return
+    n_fibers, file_size = posterior_stats
+    print(f"Posteriors: {n_fibers:,} fibers -> {output_posteriors} ({file_size:.1f} MB)")
+
+
 _LEGACY_SKIP_REASON_KEYS = BASE_SKIP_REASON_KEYS + (NO_FOOTPRINTS_SKIP_REASON,)
 
 
@@ -355,11 +437,7 @@ def _process_bam_legacy_pipeline(
                         reads_with_footprints += n_fp
                         worker_failures += n_failed
 
-                        # Progress update
-                        elapsed = time.time() - start_time
-                        rate = total_reads / elapsed if elapsed > 0 else 0
-                        print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | {rate:.1f} reads/s", end='')
-                        sys.stdout.flush()
+                        _print_legacy_progress(total_reads, skipped, start_time)
 
                         chunk_reads = []
                         chunk_read_objs = []
@@ -387,26 +465,18 @@ def _process_bam_legacy_pipeline(
                         posterior_stats = posterior_writer.close()
                         posterior_writer = None
 
-    elapsed = time.time() - start_time
-    rate = total_reads / elapsed if elapsed > 0 else 0
-    print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s")
-    if worker_failures:
-        print(f"  Worker read failures: {worker_failures:,} (passed through unchanged)")
-
-    # Print skip reasons summary
-    if skipped > 0:
-        print("  Skip reasons:")
-        for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
-            if count > 0:
-                pct = 100 * count / (total_reads + skipped)
-                print(f"    {reason}: {count:,} ({pct:.1f}%)")
+    _print_legacy_completion_summary(
+        total_reads,
+        skipped,
+        reads_with_footprints,
+        worker_failures,
+        skip_reasons,
+        time.time() - start_time,
+    )
 
     # Index the output BAM (sort first if needed)
     _sort_and_index_bam(output_bam, threads=n_cores)
 
-    # Report posteriors after the writer has been closed by the processing finally block.
-    if posterior_stats:
-        n_fibers, file_size = posterior_stats
-        print(f"Posteriors: {n_fibers:,} fibers -> {output_posteriors} ({file_size:.1f} MB)")
+    _print_legacy_posterior_summary(posterior_stats, output_posteriors)
 
     return total_reads, reads_with_footprints
