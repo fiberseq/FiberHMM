@@ -161,8 +161,13 @@ def test_mark_iupac_positions_replaces_selected_bases():
 
 
 def test_encoded_daf_sequence_marks_selected_strand_and_counts_events():
-    assert encoder._encoded_daf_sequence("ACGT", [1], [2], "CT") == ("AYGT", 1)
-    assert encoder._encoded_daf_sequence("ACGT", [1], [2], "GA") == ("ACRT", 1)
+    ct_encoded = encoder._encoded_daf_sequence("ACGT", [1], [2], "CT")
+    ga_encoded = encoder._encoded_daf_sequence("ACGT", [1], [2], "GA")
+
+    assert ct_encoded.sequence == "AYGT"
+    assert ct_encoded.n_deaminations == 1
+    assert ga_encoded.sequence == "ACRT"
+    assert ga_encoded.n_deaminations == 1
 
 
 def test_daf_encode_throughput_handles_zero_elapsed():

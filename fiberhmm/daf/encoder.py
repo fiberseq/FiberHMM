@@ -46,6 +46,12 @@ class _DafMismatchPositions:
     ga: list[int]
 
 
+@dataclass(frozen=True)
+class _EncodedDafSequence:
+    sequence: str
+    n_deaminations: int
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -359,8 +365,14 @@ def _mark_iupac_positions(sequence: str, positions, code: str) -> str:
 
 def _encoded_daf_sequence(seq: str, ct_positions, ga_positions, strand: str):
     if strand == "CT":
-        return _mark_iupac_positions(seq, ct_positions, "Y"), len(ct_positions)
-    return _mark_iupac_positions(seq, ga_positions, "R"), len(ga_positions)
+        return _EncodedDafSequence(
+            _mark_iupac_positions(seq, ct_positions, "Y"),
+            len(ct_positions),
+        )
+    return _EncodedDafSequence(
+        _mark_iupac_positions(seq, ga_positions, "R"),
+        len(ga_positions),
+    )
 
 
 def encode_read_daf(read, force_strand=None, ref_fasta=None):
@@ -383,12 +395,12 @@ def encode_read_daf(read, force_strand=None, ref_fasta=None):
     ct_positions, ga_positions, strand = res
 
     seq = read.query_sequence
-    new_seq, n_deam = _encoded_daf_sequence(
+    encoded = _encoded_daf_sequence(
         seq, ct_positions, ga_positions, strand,
     )
 
     st_tag = strand  # "CT" or "GA"
-    return (new_seq, st_tag, n_deam)
+    return (encoded.sequence, st_tag, encoded.n_deaminations)
 
 
 def _aligned_pairs_from_fasta(read, ref_fasta):
