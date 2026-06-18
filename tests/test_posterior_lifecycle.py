@@ -90,12 +90,12 @@ def test_hdf5_chrom_metadata_helper_appends_default_strand():
         },
     )
 
-    assert meta == {
-        "ids": ["read-1", "read-2"],
-        "starts": [10, 30],
-        "ends": [20, 40],
-        "strands": [".", "-"],
-    }
+    assert meta == hdf5_backend._ChromMetadata(
+        ids=["read-1", "read-2"],
+        starts=[10, 30],
+        ends=[20, 40],
+        strands=[".", "-"],
+    )
 
 
 def test_hdf5_file_metadata_attrs_normalizes_paths(tmp_path):
@@ -181,12 +181,12 @@ def test_hdf5_fiber_array_dataset_helper_writes_expected_groups(tmp_path):
 
 
 def test_hdf5_chrom_fiber_metadata_helper_writes_final_arrays(tmp_path):
-    meta = {
-        "ids": ["read1", "read2"],
-        "starts": [10, 20],
-        "ends": [15, 25],
-        "strands": ["+", "-"],
-    }
+    meta = hdf5_backend._ChromMetadata(
+        ids=["read1", "read2"],
+        starts=[10, 20],
+        ends=[15, 25],
+        strands=["+", "-"],
+    )
 
     with h5py.File(tmp_path / "posteriors.h5", "w") as h5:
         grp = hdf5_backend.create_posterior_chrom_group(h5, "chr1")

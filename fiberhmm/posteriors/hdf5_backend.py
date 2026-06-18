@@ -16,6 +16,7 @@ Usage:
 """
 
 import os
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import h5py
@@ -123,15 +124,23 @@ def create_posterior_chrom_group(
     return grp
 
 
-def _new_chrom_metadata() -> Dict[str, List]:
-    return {'ids': [], 'starts': [], 'ends': [], 'strands': []}
+@dataclass
+class _ChromMetadata:
+    ids: List[str] = field(default_factory=list)
+    starts: List[int] = field(default_factory=list)
+    ends: List[int] = field(default_factory=list)
+    strands: List[str] = field(default_factory=list)
 
 
-def _append_fiber_metadata(meta: Dict[str, List], fiber: Dict) -> None:
-    meta['ids'].append(fiber['read_name'])
-    meta['starts'].append(fiber['ref_start'])
-    meta['ends'].append(fiber['ref_end'])
-    meta['strands'].append(fiber.get('strand', '.'))
+def _new_chrom_metadata() -> _ChromMetadata:
+    return _ChromMetadata()
+
+
+def _append_fiber_metadata(meta: _ChromMetadata, fiber: Dict) -> None:
+    meta.ids.append(fiber['read_name'])
+    meta.starts.append(fiber['ref_start'])
+    meta.ends.append(fiber['ref_end'])
+    meta.strands.append(fiber.get('strand', '.'))
 
 
 def _file_size_mb(path: str) -> float:
@@ -174,13 +183,17 @@ def _write_fiber_array_datasets(group, index: int, fiber: Dict) -> None:
         )
 
 
-def _write_chrom_fiber_metadata(group, meta: Dict[str, List], n_fibers: int) -> None:
+def _write_chrom_fiber_metadata(
+    group,
+    meta: _ChromMetadata,
+    n_fibers: int,
+) -> None:
     write_fiber_metadata_datasets(
         group,
-        meta['ids'],
-        meta['starts'],
-        meta['ends'],
-        meta['strands'],
+        meta.ids,
+        meta.starts,
+        meta.ends,
+        meta.strands,
         n_fibers=n_fibers,
     )
 
@@ -235,7 +248,7 @@ class PosteriorWriter:
         self._chrom_groups: Dict[str, h5py.Group] = {}
         self._chrom_counts: Dict[str, int] = {}
         self._chrom_buffers: Dict[str, List[Dict]] = {}
-        self._chrom_metadata: Dict[str, Dict[str, List]] = {}
+        self._chrom_metadata: Dict[str, _ChromMetadata] = {}
 
         self.total_written = 0
         self._finalized = False
