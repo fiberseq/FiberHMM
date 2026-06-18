@@ -91,14 +91,15 @@ def _append_quality_rows(out: array.array, label: str, *columns: Sequence[int]) 
             out.append(_clamp_byte(value))
 
 
+def _has_values(values) -> bool:
+    return values is not None and len(values) > 0
+
+
 def _nuc_aq_has_edge_qualities(
     nuc_lq_values: Sequence[int],
     nuc_rq_values: Sequence[int],
 ) -> bool:
-    return (
-        (nuc_lq_values is not None and len(nuc_lq_values) > 0)
-        or (nuc_rq_values is not None and len(nuc_rq_values) > 0)
-    )
+    return _has_values(nuc_lq_values) or _has_values(nuc_rq_values)
 
 
 def _format_interval_list(intervals: Sequence[Tuple[int, int]]) -> str:
@@ -327,7 +328,7 @@ def format_aq_array(nq_values: Sequence[int],
         _append_quality_rows(out, "nuc", nq_values, nuc_lq_values, nuc_rq_values)
     else:
         _append_quality_rows(out, "nuc", nq_values)
-    if tf_q_values:
+    if _has_values(tf_q_values):
         _append_quality_rows(out, "TF", tf_q_values, tf_lq_values, tf_rq_values)
     return out
 

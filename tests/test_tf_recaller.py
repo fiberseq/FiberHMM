@@ -310,6 +310,17 @@ def test_aq_layout():
     assert parsed == [[200], [180], [45, 180, 220]]
 
 
+def test_format_aq_array_accepts_numpy_quality_arrays():
+    aq = format_aq_array(
+        nq_values=np.array([200]),
+        tf_q_values=np.array([180]),
+        tf_lq_values=np.array([45]),
+        tf_rq_values=np.array([220]),
+    )
+
+    assert list(aq) == [200, 180, 45, 220]
+
+
 class _CountingAq:
     def __init__(self, values):
         self.values = values
