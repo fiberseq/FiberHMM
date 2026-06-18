@@ -173,6 +173,13 @@ class _SingleReadProcessRequest:
     include_encoded: bool = False
 
 
+@dataclass(frozen=True)
+class _EncodedSingleRead:
+    encoded: np.ndarray
+    strand: str
+    circular_read_length: Optional[int]
+
+
 def _new_mode_detection_counts() -> dict:
     return {
         't_minus_a': 0,
@@ -1079,6 +1086,33 @@ def _should_skip_empty_prediction(
     return not has_intervals and not return_posteriors and not include_encoded
 
 
+def _encoded_single_read_from_request(
+    request: _SingleReadProcessRequest,
+) -> Optional[_EncodedSingleRead]:
+    fiber_read = request.fiber_read
+    query_sequence = fiber_read['query_sequence']
+    m6a_positions = fiber_read['m6a_query_positions']
+
+    strand = _processing_strand_for_read(
+        fiber_read, query_sequence, m6a_positions, request.mode,
+    )
+    encoding_inputs = _encoding_inputs_for_read(
+        query_sequence, m6a_positions, request.circular,
+    )
+    encoded = encode_from_query_sequence(
+        encoding_inputs.sequence, encoding_inputs.mod_positions, request.edge_trim,
+        mode=request.mode, strand=strand, context_size=request.context_size,
+        is_reverse=fiber_read.get('is_reverse', False),
+    )
+    if len(encoded) == 0:
+        return None
+    return _EncodedSingleRead(
+        encoded=encoded,
+        strand=strand,
+        circular_read_length=encoding_inputs.circular_read_length,
+    )
+
+
 def _process_single_read_from_request(
     request: _SingleReadProcessRequest,
 ) -> Optional[dict]:
@@ -1089,41 +1123,19 @@ def _process_single_read_from_request(
     apply+recall worker to avoid re-encoding the sequence for the TF scan.
     """
 
-    fiber_read = request.fiber_read
-    query_sequence = fiber_read['query_sequence']
-    m6a_positions = fiber_read['m6a_query_positions']
-
-    # Detect strand
-    strand = _processing_strand_for_read(
-        fiber_read, query_sequence, m6a_positions, request.mode,
-    )
-
-    # Encode — pass is_reverse so nanopore mode handles strand correctly.
-    # Circular mode keeps the 3x tiling private to inference and projects the
-    # middle copy back to molecule coordinates before anything is written.
-    is_reverse = fiber_read.get('is_reverse', False)
-    encoding_inputs = _encoding_inputs_for_read(
-        query_sequence, m6a_positions, request.circular,
-    )
-
-    encoded = encode_from_query_sequence(
-        encoding_inputs.sequence, encoding_inputs.mod_positions, request.edge_trim,
-        mode=request.mode, strand=strand, context_size=request.context_size,
-        is_reverse=is_reverse,
-    )
-
-    if len(encoded) == 0:
+    encoded_read = _encoded_single_read_from_request(request)
+    if encoded_read is None:
         return None
 
     # Predict
     fp_result = predict_footprints_and_msps(
         request.model,
-        encoded,
+        encoded_read.encoded,
         request.msp_min_size,
         request.with_scores,
         return_posteriors=request.return_posteriors,
         nuc_min_size=request.nuc_min_size,
-        circular_read_length=encoding_inputs.circular_read_length,
+        circular_read_length=encoded_read.circular_read_length,
     )
 
     # If no footprints and we don't need posteriors or encoded, skip
@@ -1136,8 +1148,8 @@ def _process_single_read_from_request(
 
     return _single_read_result_from_prediction(
         fp_result,
-        strand,
-        encoded,
+        encoded_read.strand,
+        encoded_read.encoded,
         request.return_posteriors,
         request.include_encoded,
     )
