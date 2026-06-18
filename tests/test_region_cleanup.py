@@ -328,6 +328,110 @@ def test_submit_region_futures_maps_futures_to_region_indices():
     ]
 
 
+def test_collect_region_results_aggregates_and_reports_progress(monkeypatch, tmp_path):
+    class Future:
+        def __init__(self, value):
+            self.value = value
+
+        def result(self):
+            return self.value
+
+    class Executor:
+        def __init__(self, values):
+            self.values = list(values)
+            self.submitted = []
+
+        def submit(self, worker, item):
+            self.submitted.append((worker, item))
+            return Future(self.values.pop(0))
+
+    tsv_path = tmp_path / "region_0.tsv"
+    tsv_path.write_text("read\tposterior\n")
+    executor = Executor([
+        region_pipeline.RegionBamResult(
+            "region_0.bam",
+            total_reads=10,
+            reads_with_footprints=4,
+            written=10,
+            temp_tsv_path=str(tsv_path),
+            skip_reasons={"low_mapq": 2},
+        ),
+        ("region_1.bam", 5, 1, 5, None, {}),
+    ])
+    ready_calls = []
+    progress_calls = []
+
+    monkeypatch.setattr(region_pipeline, "as_completed", lambda futures: list(futures))
+    monkeypatch.setattr(
+        region_pipeline,
+        "_report_workers_ready_once",
+        lambda first, pool_start, message: ready_calls.append(
+            (first, pool_start, message)
+        ) or "ready",
+    )
+    monkeypatch.setattr(
+        region_pipeline,
+        "_print_region_progress",
+        lambda *args, **kwargs: progress_calls.append((args, kwargs)),
+    )
+    aggregation = region_pipeline.RegionBamAggregation()
+    worker = object()
+
+    region_pipeline._collect_region_results(
+        executor,
+        worker,
+        ["item0", "item1"],
+        aggregation,
+        region_pipeline.RegionBamResult,
+        total_regions=2,
+        start_time=10.0,
+        pool_start=9.0,
+        ready_message="Processing regions...",
+        include_tsv=True,
+        progress_kwargs={"footprint_label": "With FP"},
+    )
+
+    assert executor.submitted == [(worker, "item0"), (worker, "item1")]
+    assert aggregation.total_reads == 15
+    assert aggregation.reads_with_footprints == 5
+    assert aggregation.total_skipped == 2
+    assert aggregation.skip_reasons == {"low_mapq": 2}
+    assert aggregation.temp_bams == [(0, "region_0.bam"), (1, "region_1.bam")]
+    assert aggregation.temp_tsvs == [(0, str(tsv_path))]
+    assert ready_calls == [
+        (None, 9.0, "Processing regions..."),
+        ("ready", 9.0, "Processing regions..."),
+    ]
+    assert progress_calls == [
+        ((aggregation, 2, 10.0), {"footprint_label": "With FP"}),
+        ((aggregation, 2, 10.0), {"footprint_label": "With FP"}),
+    ]
+
+
+def test_collect_region_results_reports_error_prefix(monkeypatch, capsys):
+    class Executor:
+        def submit(self, worker, item):
+            return _FailingFuture()
+
+    monkeypatch.setattr(region_pipeline, "as_completed", lambda futures: list(futures))
+
+    with pytest.raises(RuntimeError, match="worker failed"):
+        region_pipeline._collect_region_results(
+            Executor(),
+            object(),
+            ["item0"],
+            region_pipeline.RegionBamAggregation(),
+            region_pipeline.RegionBamResult,
+            total_regions=1,
+            start_time=10.0,
+            pool_start=9.0,
+            ready_message="Processing regions...",
+            error_prefix="Error processing region",
+        )
+
+    assert "Error processing region: worker failed" in capsys.readouterr().out
+
+
 def test_make_output_temp_dir_places_directory_next_to_output(tmp_path):
     output_path = tmp_path / "nested" / "out.bam"
     output_path.parent.mkdir()

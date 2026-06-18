@@ -309,6 +309,54 @@ def _submit_region_futures(executor, worker, work_items) -> dict:
     }
 
 
+def _collect_region_results(
+    executor,
+    worker,
+    work_items,
+    aggregation,
+    result_type,
+    total_regions: int,
+    start_time: float,
+    pool_start: float,
+    ready_message: str,
+    *,
+    include_tsv: bool = False,
+    progress_kwargs: Optional[dict] = None,
+    error_prefix: Optional[str] = None,
+) -> None:
+    futures = _submit_region_futures(executor, worker, work_items)
+    first_result_time = None
+    progress_kwargs = progress_kwargs or {}
+
+    for future in as_completed(futures):
+        try:
+            result = result_type.from_value(future.result())
+            if include_tsv:
+                aggregation.add_result(
+                    futures[future],
+                    result,
+                    include_tsv=_region_result_has_existing_tsv(result),
+                )
+            else:
+                aggregation.add_result(futures[future], result)
+
+            first_result_time = _report_workers_ready_once(
+                first_result_time,
+                pool_start,
+                ready_message,
+            )
+            _print_region_progress(
+                aggregation,
+                total_regions,
+                start_time,
+                **progress_kwargs,
+            )
+        except Exception as e:
+            if error_prefix:
+                print(f"\n{error_prefix}: {e}")
+            raise
+
+
 def _make_output_temp_dir(output_path: str, prefix: str) -> str:
     output_dir = os.path.dirname(os.path.abspath(output_path))
     return tempfile.mkdtemp(prefix=prefix, dir=output_dir)
@@ -444,7 +492,6 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
 
         # Process regions in parallel
         aggregation = RegionBamAggregation()
-        first_result_time = None
 
         # Use initializer to load model once per worker
         print(f"  Initializing {n_cores} worker processes (loading HMM model in each)...")
@@ -457,29 +504,19 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             initializer=_init_region_worker,
             initargs=(model_path, params)
         ) as executor:
-            futures = _submit_region_futures(
+            _collect_region_results(
                 executor,
                 _process_region_to_bam,
                 work_items,
+                aggregation,
+                RegionBamResult,
+                len(regions),
+                start_time,
+                pool_start,
+                "Processing regions...",
+                include_tsv=True,
+                error_prefix="Error processing region",
             )
-
-            for future in as_completed(futures):
-                try:
-                    result = RegionBamResult.from_value(future.result())
-                    include_tsv = _region_result_has_existing_tsv(result)
-                    aggregation.add_result(futures[future], result, include_tsv=include_tsv)
-
-                    # Track first result
-                    first_result_time = _report_workers_ready_once(
-                        first_result_time,
-                        pool_start,
-                        "Processing regions...",
-                    )
-                    _print_region_progress(aggregation, len(regions), start_time)
-
-                except Exception as e:
-                    print(f"\nError processing region: {e}")
-                    raise
 
         print()  # Newline after progress
 
@@ -574,7 +611,6 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
         work_items = _region_bed_work_items(regions, input_bam, temp_dir)
 
         aggregation = RegionBedAggregation()
-        first_result_time = None
 
         print(f"  Initializing {n_cores} worker processes (loading HMM model in each)...")
         sys.stdout.flush()
@@ -586,28 +622,18 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
             initializer=_init_region_worker,
             initargs=(model_path, params)
         ) as executor:
-            futures = _submit_region_futures(
+            _collect_region_results(
                 executor,
                 _process_region_to_bed,
                 work_items,
+                aggregation,
+                RegionBedResult,
+                len(regions),
+                start_time,
+                pool_start,
+                "Processing regions...",
+                error_prefix="Error processing region",
             )
-
-            for future in as_completed(futures):
-                try:
-                    result = RegionBedResult.from_value(future.result())
-                    aggregation.add_result(futures[future], result)
-
-                    # Track first result
-                    first_result_time = _report_workers_ready_once(
-                        first_result_time,
-                        pool_start,
-                        "Processing regions...",
-                    )
-                    _print_region_progress(aggregation, len(regions), start_time)
-
-                except Exception as e:
-                    print(f"\nError processing region: {e}")
-                    raise
 
         print()  # Newline after progress
 
@@ -714,7 +740,6 @@ def _process_bam_region_parallel_fused(
         print(f"  Initializing {n_cores} workers (loading apply model + LLR tables)...")
         sys.stdout.flush()
         pool_start = time.time()
-        first_result = None
 
         with ProcessPoolExecutor(
             max_workers=n_cores,
@@ -722,28 +747,22 @@ def _process_bam_region_parallel_fused(
             initializer=_init_fused_region_worker,
             initargs=(apply_model_path, recall_model_path, emission_uplift, params),
         ) as executor:
-            futures = _submit_region_futures(
+            _collect_region_results(
                 executor,
                 _process_region_to_bam_fused,
                 work_items,
+                aggregation,
+                RegionBamResult,
+                len(regions),
+                start_time,
+                pool_start,
+                "Processing...",
+                progress_kwargs={
+                    'footprint_label': "With FP",
+                    'rate_unit': "r/s",
+                    'rate_precision': 0,
+                },
             )
-
-            for future in as_completed(futures):
-                result = RegionBamResult.from_value(future.result())
-                aggregation.add_result(futures[future], result)
-                first_result = _report_workers_ready_once(
-                    first_result,
-                    pool_start,
-                    "Processing...",
-                )
-                _print_region_progress(
-                    aggregation,
-                    len(regions),
-                    start_time,
-                    footprint_label="With FP",
-                    rate_unit="r/s",
-                    rate_precision=0,
-                )
         print()
 
         _print_skip_reasons_summary(aggregation, footprint_label="With FP")
