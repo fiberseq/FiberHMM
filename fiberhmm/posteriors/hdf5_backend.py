@@ -236,11 +236,16 @@ class PosteriorWriter:
         self._chrom_metadata: Dict[str, Dict[str, List]] = {}
 
         self.total_written = 0
+        self._finalized = False
         self._closed = False
 
     def _raise_if_closed(self):
         if self._closed:
             raise RuntimeError("PosteriorWriter is closed")
+
+    def _raise_if_finalized(self):
+        if self._finalized:
+            raise RuntimeError("PosteriorWriter is finalized")
 
     def _ensure_chrom(self, chrom: str):
         """Create chromosome group if it doesn't exist."""
@@ -269,6 +274,7 @@ class PosteriorWriter:
                 - footprint_sizes: np.ndarray int32
         """
         self._raise_if_closed()
+        self._raise_if_finalized()
 
         self._ensure_chrom(chrom)
         self._chrom_buffers[chrom].append(fiber_data)
@@ -309,12 +315,16 @@ class PosteriorWriter:
     def finalize(self):
         """Flush all buffers and write metadata arrays."""
         self._raise_if_closed()
+        if self._finalized:
+            return
+
         self.flush()
 
         for chrom, grp in self._chrom_groups.items():
             meta = self._chrom_metadata[chrom]
             n_fibers = self._chrom_counts[chrom]
             _write_chrom_fiber_metadata(grp, meta, n_fibers)
+        self._finalized = True
 
     def close(self):
         """Finalize and close the H5 file."""

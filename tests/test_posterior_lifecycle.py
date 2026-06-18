@@ -413,3 +413,37 @@ def test_hdf5_posterior_writer_rejects_flush_or_finalize_after_close(tmp_path):
         writer.flush()
     with pytest.raises(RuntimeError, match="PosteriorWriter is closed"):
         writer.finalize()
+
+
+def test_hdf5_posterior_writer_close_after_manual_finalize(tmp_path):
+    h5_path = tmp_path / "posteriors.h5"
+    writer = hdf5_backend.PosteriorWriter(
+        str(h5_path),
+        mode="pacbio-fiber",
+        context_size=3,
+        edge_trim=10,
+        source_bam="input.bam",
+    )
+    fiber = {
+        "read_name": "read-1",
+        "ref_start": 10,
+        "ref_end": 12,
+        "strand": "+",
+        "posteriors": np.array([0.1, 0.9], dtype=np.float32),
+        "ref_positions": np.array([10, 11], dtype=np.int32),
+        "footprint_starts": np.array([0], dtype=np.int32),
+        "footprint_sizes": np.array([2], dtype=np.int32),
+    }
+
+    writer.add_fiber("chr1", fiber)
+    writer.finalize()
+    with pytest.raises(RuntimeError, match="PosteriorWriter is finalized"):
+        writer.add_fiber("chr1", fiber)
+
+    writer.close()
+
+    with h5py.File(h5_path, "r") as h5:
+        assert h5["chr1"].attrs["n_fibers"] == 1
+        assert [_h5_text(value) for value in h5["chr1"]["fiber_ids"][:]] == [
+            "read-1",
+        ]
