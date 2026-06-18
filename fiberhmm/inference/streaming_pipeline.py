@@ -389,6 +389,11 @@ def _process_bam_streaming_pipeline_fused(
             chunk_payloads, chunk_read_objs, chunk_skip_flags = (
                 _new_streaming_chunk_buffers()
             )
+            worker_args = _fused_worker_args(
+                edge_trim, circular, mode, context_size,
+                msp_min_size, nuc_min_size, with_scores,
+                prob_threshold, min_llr, min_opps, unify_threshold,
+            )
             last_progress_reads = 0
             last_progress_time = time.time()
 
@@ -425,12 +430,7 @@ def _process_bam_streaming_pipeline_fused(
                             chunk_payloads,
                             chunk_read_objs,
                             chunk_skip_flags,
-                            _fused_worker_args(
-                                edge_trim, circular, mode, context_size,
-                                msp_min_size, nuc_min_size, with_scores,
-                                prob_threshold, min_llr, min_opps,
-                                unify_threshold,
-                            ),
+                            worker_args,
                         )
                         chunk_payloads, chunk_read_objs, chunk_skip_flags = (
                             _new_streaming_chunk_buffers()
@@ -465,12 +465,7 @@ def _process_bam_streaming_pipeline_fused(
                         chunk_payloads,
                         chunk_read_objs,
                         chunk_skip_flags,
-                        _fused_worker_args(
-                            edge_trim, circular, mode, context_size,
-                            msp_min_size, nuc_min_size, with_scores,
-                            prob_threshold, min_llr, min_opps,
-                            unify_threshold,
-                        ),
+                        worker_args,
                     )
 
                 while inflight:
@@ -582,6 +577,11 @@ def _process_bam_streaming_pipeline(
             chunk_reads, chunk_read_objs, chunk_skip_flags = (
                 _new_streaming_chunk_buffers()
             )
+            worker_args = _apply_worker_args(
+                edge_trim, circular, mode, context_size,
+                msp_min_size, nuc_min_size, with_scores,
+                return_posteriors, prob_threshold,
+            )
             skipped = 0
             last_progress_reads = 0
             last_progress_time = time.time()
@@ -620,11 +620,7 @@ def _process_bam_streaming_pipeline(
                             chunk_reads,
                             chunk_read_objs,
                             chunk_skip_flags,
-                            _apply_worker_args(
-                                edge_trim, circular, mode, context_size,
-                                msp_min_size, nuc_min_size, with_scores,
-                                return_posteriors, prob_threshold,
-                            ),
+                            worker_args,
                         )
                         chunk_reads, chunk_read_objs, chunk_skip_flags = (
                             _new_streaming_chunk_buffers()
@@ -660,11 +656,7 @@ def _process_bam_streaming_pipeline(
                         chunk_reads,
                         chunk_read_objs,
                         chunk_skip_flags,
-                        _apply_worker_args(
-                            edge_trim, circular, mode, context_size,
-                            msp_min_size, nuc_min_size, with_scores,
-                            return_posteriors, prob_threshold,
-                        ),
+                        worker_args,
                     )
 
                 while inflight:
