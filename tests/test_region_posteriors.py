@@ -107,13 +107,24 @@ def test_region_posteriors_tsv_output_path(tmp_path):
 def test_region_tsv_header_and_record_copy_helpers(tmp_path):
     output = io.StringIO()
 
-    region_tsv._write_region_tsv_header(
-        output,
+    header_request = region_tsv._RegionTsvHeaderRequest(
+        outfile=output,
         mode="daf",
         context_size=5,
         edge_trim=12,
         source_bam=tmp_path / "input.bam",
     )
+    region_tsv._write_region_tsv_header_from_request(header_request)
+
+    adapter_output = io.StringIO()
+    region_tsv._write_region_tsv_header(
+        adapter_output,
+        mode="daf",
+        context_size=5,
+        edge_trim=12,
+        source_bam=tmp_path / "input.bam",
+    )
+    assert adapter_output.getvalue() == output.getvalue()
 
     header_lines = output.getvalue().splitlines()
     metadata = json.loads(header_lines[0].removeprefix("#metadata:"))

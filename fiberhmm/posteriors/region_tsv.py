@@ -37,6 +37,15 @@ class _RegionPosteriorLineRecord:
     footprint_sizes: Sequence[int]
 
 
+@dataclass(frozen=True)
+class _RegionTsvHeaderRequest:
+    outfile: object
+    mode: str
+    context_size: int
+    edge_trim: int
+    source_bam: str
+
+
 def _posterior_probabilities_b64(posteriors: np.ndarray) -> str:
     post_u8 = np.clip(posteriors * 255, 0, 255).astype(np.uint8)
     return base64.b64encode(post_u8.tobytes()).decode("ascii")
@@ -185,6 +194,19 @@ def _valid_region_tsv_files(
     ]
 
 
+def _write_region_tsv_header_from_request(
+    request: _RegionTsvHeaderRequest,
+) -> None:
+    metadata = _posterior_tsv_metadata(
+        request.mode,
+        request.context_size,
+        request.edge_trim,
+        request.source_bam,
+    )
+    request.outfile.write(format_posterior_metadata_line(metadata))
+    request.outfile.write(REGION_POSTERIORS_HEADER)
+
+
 def _write_region_tsv_header(
     outfile,
     mode: str,
@@ -192,14 +214,15 @@ def _write_region_tsv_header(
     edge_trim: int,
     source_bam: str,
 ) -> None:
-    metadata = _posterior_tsv_metadata(
-        mode,
-        context_size,
-        edge_trim,
-        source_bam,
+    _write_region_tsv_header_from_request(
+        _RegionTsvHeaderRequest(
+            outfile=outfile,
+            mode=mode,
+            context_size=context_size,
+            edge_trim=edge_trim,
+            source_bam=source_bam,
+        )
     )
-    outfile.write(format_posterior_metadata_line(metadata))
-    outfile.write(REGION_POSTERIORS_HEADER)
 
 
 def _is_region_tsv_record_line(line: str) -> bool:
@@ -236,8 +259,14 @@ def merge_region_posteriors_tsv(
 
     tsv_output = region_posteriors_tsv_output_path(output_path)
     with gzip.open(tsv_output, "wt", compresslevel=4) as outfile:
-        _write_region_tsv_header(
-            outfile, mode, context_size, edge_trim, source_bam,
+        _write_region_tsv_header_from_request(
+            _RegionTsvHeaderRequest(
+                outfile=outfile,
+                mode=mode,
+                context_size=context_size,
+                edge_trim=edge_trim,
+                source_bam=source_bam,
+            )
         )
 
         n_fibers = 0
