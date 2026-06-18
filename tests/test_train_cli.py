@@ -1470,6 +1470,30 @@ def test_top_up_training_reads_truncates_or_samples_with_replacement():
     assert set(topped) <= {"a", "b"}
 
 
+def test_sample_training_reads_from_file_delegates_and_reports(monkeypatch, capsys):
+    calls = []
+
+    monkeypatch.setattr(
+        train,
+        "sample_reads_indexed",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or ["read1", "read2"],
+    )
+
+    reads = train._sample_training_reads_from_file(
+        "/tmp/example.bam",
+        reads_per_file=3,
+        seed=7,
+        mode="daf",
+        sample_kwargs={"min_mapq": 10},
+    )
+
+    assert reads == ["read1", "read2"]
+    assert calls == [
+        (("/tmp/example.bam", 3, 7), {"mode": "daf", "min_mapq": 10}),
+    ]
+    assert "Sampled 2 from example.bam" in capsys.readouterr().out
+
+
 def test_build_model_from_base_copies_transitions_and_replaces_emissions(monkeypatch):
     base_model = SimpleNamespace(
         startprob_=np.array([0.7, 0.3]),

@@ -454,6 +454,21 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
     return sampled
 
 
+def _sample_training_reads_from_file(
+    bam_file: str,
+    reads_per_file: int,
+    seed: int,
+    mode: str,
+    sample_kwargs: dict,
+) -> list:
+    file_reads = sample_reads_indexed(
+        bam_file, reads_per_file, seed,
+        mode=mode, **sample_kwargs
+    )
+    print(f"  Sampled {len(file_reads)} from {os.path.basename(bam_file)}")
+    return file_reads
+
+
 def sample_reads(bam_files: list, read_count: int, seed: int,
                  mode: str = 'pacbio-fiber', **kwargs) -> list:
     """Sample reads from BAM files for training using index-based sampling."""
@@ -463,12 +478,10 @@ def sample_reads(bam_files: list, read_count: int, seed: int,
     reads_per_file = _reads_per_training_file(read_count, len(bam_files))
 
     for bam_file in tqdm(bam_files, desc="Sampling reads"):
-        file_reads = sample_reads_indexed(
-            bam_file, reads_per_file, seed,
-            mode=mode, **kwargs
+        file_reads = _sample_training_reads_from_file(
+            bam_file, reads_per_file, seed, mode, kwargs,
         )
         all_reads.extend(file_reads)
-        print(f"  Sampled {len(file_reads)} from {os.path.basename(bam_file)}")
 
     # Shuffle and truncate
     np.random.shuffle(all_reads)
