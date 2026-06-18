@@ -93,6 +93,12 @@ class _PhaseSplit:
 
 
 @dataclass(frozen=True)
+class _PhaseCutWindow:
+    start: int
+    end: int
+
+
+@dataclass(frozen=True)
 class _TilingFloors:
     msp: int
     nuc: int
@@ -248,12 +254,17 @@ def _split_on_accessible_cuts(obs, a, b, nhit, nmiss,
     return _AccessibleSplit(fragments=frags, access=access)
 
 
-def _phase_cut_window(a: int, b: int, pred: int, phase_window: int):
+def _phase_cut_window(
+    a: int,
+    b: int,
+    pred: int,
+    phase_window: int,
+) -> _PhaseCutWindow | None:
     lo = max(a, pred - phase_window)
     hi = min(b, pred + phase_window)
     if hi - lo < 2:
         return None
-    return lo, hi
+    return _PhaseCutWindow(start=lo, end=hi)
 
 
 def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
@@ -281,8 +292,7 @@ def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
         window = _phase_cut_window(a, b, pred, phase_window)
         if window is None:
             continue
-        lo, hi = window
-        found = call_tfs_in_interval(obs, lo, hi, nhit, nmiss,
+        found = call_tfs_in_interval(obs, window.start, window.end, nhit, nmiss,
                                      phase_min_llr, phase_min_opps)
         if found:
             best = max(found, key=lambda c: c.llr)

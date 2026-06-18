@@ -18,6 +18,7 @@ from fiberhmm.inference.nuc_recaller import (
     _ordered_positive_nuc_calls,
     _phase_cut_window,
     _phase_or_unsplit_subfragments,
+    _PhaseCutWindow,
     _promoted_nuc_from_tf_call,
     _recall_bounded_nuc_spans,
     _recall_nuc_params,
@@ -332,8 +333,12 @@ def test_phase_prior_never_splits_signal_desert():
 
 
 def test_phase_cut_window_clips_to_fragment_and_rejects_tiny_windows():
-    assert _phase_cut_window(10, 100, pred=50, phase_window=15) == (35, 65)
-    assert _phase_cut_window(10, 100, pred=12, phase_window=15) == (10, 27)
+    assert _phase_cut_window(
+        10, 100, pred=50, phase_window=15,
+    ) == _PhaseCutWindow(start=35, end=65)
+    assert _phase_cut_window(
+        10, 100, pred=12, phase_window=15,
+    ) == _PhaseCutWindow(start=10, end=27)
     assert _phase_cut_window(10, 11, pred=10, phase_window=15) is None
 
 
