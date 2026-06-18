@@ -619,6 +619,24 @@ def _training_zoom_window_starts(seq_len: int, window_size: int,
     return [max(0, min(start, seq_len - window_size)) for start in window_starts]
 
 
+def _training_zoom_window_bounds(seq_len: int, window_size: int,
+                                 n_windows: int, seed: int) -> list:
+    return [
+        (
+            start,
+            min(start + window_size, seq_len),
+            min(window_size, seq_len - start),
+        )
+        for start in _training_zoom_window_starts(
+            seq_len, window_size, n_windows, seed,
+        )
+    ]
+
+
+def _relative_positions_in_window(positions: list, start: int, end: int) -> list:
+    return [position - start for position in positions if start <= position < end]
+
+
 def _training_size_summary(total_label: str, size_label: str, sizes: list) -> str:
     if len(sizes) == 0:
         return ''
@@ -1053,19 +1071,18 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
             # Select 3 random windows
             window_size = 1000
             n_windows = 3
-            window_starts = _training_zoom_window_starts(
+            zoom_windows = _training_zoom_window_bounds(
                 seq_len, window_size, n_windows, seed=idx,
             )
 
             # Plot each zoom window
-            for w_idx, w_start in enumerate(window_starts):
-                w_end = min(w_start + window_size, seq_len)
-                w_len = w_end - w_start
-
+            for w_idx, (w_start, w_end, w_len) in enumerate(zoom_windows):
                 # Row indices in grid: 3, 4, 5 for zoom panels
                 # m6A
                 ax_zoom_m6a = fig.add_subplot(gs[3, w_idx])
-                m6a_in_window = [p - w_start for p in m6a_positions if w_start <= p < w_end]
+                m6a_in_window = _relative_positions_in_window(
+                    m6a_positions, w_start, w_end,
+                )
                 if len(m6a_in_window) > 0:
                     ax_zoom_m6a.eventplot([m6a_in_window], colors='purple', lineoffsets=0.5,
                                          linelengths=0.8, linewidths=1.0)

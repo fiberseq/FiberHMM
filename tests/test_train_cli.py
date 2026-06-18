@@ -157,6 +157,34 @@ def test_training_zoom_window_starts_are_deterministic_and_bounded():
     assert 4000 <= starts[2] <= 5000
 
 
+def test_training_zoom_window_bounds_add_end_and_length():
+    bounds = train._training_zoom_window_bounds(
+        seq_len=500,
+        window_size=1000,
+        n_windows=3,
+        seed=0,
+    )
+
+    assert bounds == [(0, 500, 500), (0, 500, 500), (0, 500, 500)]
+
+    starts = train._training_zoom_window_starts(
+        seq_len=6000,
+        window_size=1000,
+        n_windows=3,
+        seed=7,
+    )
+    assert train._training_zoom_window_bounds(
+        seq_len=6000,
+        window_size=1000,
+        n_windows=3,
+        seed=7,
+    ) == [(start, start + 1000, 1000) for start in starts]
+
+
+def test_relative_positions_in_window_filters_and_offsets():
+    assert train._relative_positions_in_window([4, 5, 9, 10], 5, 10) == [0, 4]
+
+
 def test_training_size_summary_formats_nonempty_and_empty_sizes():
     assert train._training_size_summary(
         "footprints", "Footprint sizes", [10, 30],
