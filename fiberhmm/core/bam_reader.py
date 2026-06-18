@@ -280,6 +280,14 @@ class _MmMlSlice:
     next_idx: int
 
 
+@dataclass(frozen=True)
+class _MmModTypePositions:
+    base_and_mod: Optional[Tuple[str, str]]
+    positions: np.ndarray
+    qualities: np.ndarray
+    next_ml_idx: int
+
+
 def _ml_tag_to_uint8_array(ml_tag) -> np.ndarray:
     if isinstance(ml_tag, (bytes, bytearray, memoryview)):
         return np.frombuffer(ml_tag, dtype=np.uint8)
@@ -501,10 +509,15 @@ def _mm_mod_type_positions_for_spec(
     ml_idx: int,
     q_len: int,
     is_reverse: bool,
-):
+) -> _MmModTypePositions:
     base_and_mod = _mm_base_and_mod_code(base_mod)
     if base_and_mod is None:
-        return None, np.array([], dtype=np.int64), np.array([], dtype=np.uint8), ml_idx + n_mods
+        return _MmModTypePositions(
+            None,
+            np.array([], dtype=np.int64),
+            np.array([], dtype=np.uint8),
+            ml_idx + n_mods,
+        )
 
     target_base, _mod_code = base_and_mod
     base_positions = _cached_base_positions(
@@ -514,7 +527,7 @@ def _mm_mod_type_positions_for_spec(
     valid_positions = _mm_valid_positions_and_qualities(
         skip_arr, base_positions, ml_slice.values, q_len, is_reverse,
     )
-    return (
+    return _MmModTypePositions(
         base_and_mod,
         valid_positions.positions,
         valid_positions.qualities,
@@ -577,7 +590,7 @@ def parse_mm_ml_per_mod_type(
 
     ml_idx = 0
     for base_mod, skip_arr, n_mods in _iter_mm_mod_specs(mm_tag):
-        base_and_mod, positions, qualities, ml_idx = _mm_mod_type_positions_for_spec(
+        mod_positions = _mm_mod_type_positions_for_spec(
             base_mod,
             skip_arr,
             n_mods,
@@ -588,11 +601,17 @@ def parse_mm_ml_per_mod_type(
             walk_context.q_len,
             is_reverse,
         )
-        if base_and_mod is None or len(positions) == 0:
+        ml_idx = mod_positions.next_ml_idx
+        if mod_positions.base_and_mod is None or len(mod_positions.positions) == 0:
             continue
 
         # Multiple mod specs for the same (base, mod_code) are concatenated.
-        _append_mm_mod_result(result, base_and_mod, positions, qualities)
+        _append_mm_mod_result(
+            result,
+            mod_positions.base_and_mod,
+            mod_positions.positions,
+            mod_positions.qualities,
+        )
 
     return result
 
