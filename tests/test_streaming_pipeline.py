@@ -820,6 +820,28 @@ def test_open_streaming_posterior_writer_warns_when_backend_missing(monkeypatch)
     )
 
 
+def test_streaming_close_helpers_handle_optional_resources():
+    class Resource:
+        def __init__(self, close_result=None):
+            self.close_result = close_result
+            self.closed = 0
+
+        def close(self):
+            self.closed += 1
+            return self.close_result
+
+    writer = Resource(close_result=(12, 3.5))
+    ref_fasta = Resource()
+
+    assert streaming_pipeline._close_streaming_posterior_writer(None) is None
+    assert streaming_pipeline._close_streaming_posterior_writer(writer) == (12, 3.5)
+    assert writer.closed == 1
+
+    assert streaming_pipeline._close_ref_fasta(None) is None
+    assert streaming_pipeline._close_ref_fasta(ref_fasta) is None
+    assert ref_fasta.closed == 1
+
+
 def test_new_apply_streaming_executor_configures_pool(monkeypatch):
     class FakeExecutor:
         def __init__(self, **kwargs):

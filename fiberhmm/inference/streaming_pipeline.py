@@ -483,6 +483,17 @@ def _open_streaming_posterior_writer(
     return writer, True
 
 
+def _close_streaming_posterior_writer(posterior_writer):
+    if not posterior_writer:
+        return None
+    return posterior_writer.close()
+
+
+def _close_ref_fasta(ref_fasta) -> None:
+    if ref_fasta is not None:
+        ref_fasta.close()
+
+
 def _new_apply_streaming_executor(
     model_path: str,
     n_cores: int,
@@ -877,9 +888,8 @@ def _process_bam_streaming_pipeline_fused(
                     start_time,
                 )
             finally:
-                if ref_fasta is not None:
-                    ref_fasta.close()
-                    ref_fasta = None
+                _close_ref_fasta(ref_fasta)
+                ref_fasta = None
 
     reads_with_fp = _finalize_fused_streaming_pipeline(
         total_reads=total_reads,
@@ -996,9 +1006,10 @@ def _process_bam_streaming_pipeline(
                 )
 
             finally:
-                if posterior_writer:
-                    posterior_stats = posterior_writer.close()
-                    posterior_writer = None
+                posterior_stats = _close_streaming_posterior_writer(
+                    posterior_writer,
+                )
+                posterior_writer = None
 
     reads_with_footprints = _finalize_apply_streaming_pipeline(
         total_reads=total_reads,
