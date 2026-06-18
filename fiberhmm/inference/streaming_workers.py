@@ -71,6 +71,18 @@ class _WorkerRecallTables:
     llr_miss: object
 
 
+@dataclass(frozen=True)
+class _WorkerFusedApplyStageRequest:
+    fiber_read: object
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    with_scores: bool
+
+
 def _payload_worker_config(
     edge_trim: int,
     circular: bool,
@@ -235,6 +247,22 @@ def _worker_recall_tables():
     )
 
 
+def _run_worker_fused_apply_stage_from_request(
+    request: _WorkerFusedApplyStageRequest,
+):
+    return run_hmm_apply_stage(
+        request.fiber_read,
+        _worker_model,
+        request.edge_trim,
+        request.circular,
+        request.mode,
+        request.context_size,
+        request.msp_min_size,
+        request.nuc_min_size,
+        request.with_scores,
+    )
+
+
 def _run_worker_fused_apply_stage(
     fiber_read,
     edge_trim: int,
@@ -245,16 +273,17 @@ def _run_worker_fused_apply_stage(
     nuc_min_size: int,
     with_scores: bool,
 ):
-    return run_hmm_apply_stage(
-        fiber_read,
-        _worker_model,
-        edge_trim,
-        circular,
-        mode,
-        context_size,
-        msp_min_size,
-        nuc_min_size,
-        with_scores,
+    return _run_worker_fused_apply_stage_from_request(
+        _WorkerFusedApplyStageRequest(
+            fiber_read=fiber_read,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+        )
     )
 
 

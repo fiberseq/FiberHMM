@@ -1676,15 +1676,17 @@ def test_run_worker_fused_apply_stage_forwards_arguments(monkeypatch):
     monkeypatch.setattr(streaming_workers, "_worker_model", model)
     monkeypatch.setattr(streaming_workers, "run_hmm_apply_stage", fake_apply)
 
-    assert streaming_workers._run_worker_fused_apply_stage(
-        fiber_read,
-        edge_trim=1,
-        circular=True,
-        mode="pacbio-fiber",
-        context_size=7,
-        msp_min_size=60,
-        nuc_min_size=85,
-        with_scores=True,
+    assert streaming_workers._run_worker_fused_apply_stage_from_request(
+        streaming_workers._WorkerFusedApplyStageRequest(
+            fiber_read=fiber_read,
+            edge_trim=1,
+            circular=True,
+            mode="pacbio-fiber",
+            context_size=7,
+            msp_min_size=60,
+            nuc_min_size=85,
+            with_scores=True,
+        )
     ) == {"apply": True}
     assert seen["args"] == (
         fiber_read,
@@ -1697,6 +1699,20 @@ def test_run_worker_fused_apply_stage_forwards_arguments(monkeypatch):
         85,
         True,
     )
+    seen.clear()
+
+    assert streaming_workers._run_worker_fused_apply_stage(
+        fiber_read,
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
+    ) == {"apply": True}
+    assert seen["args"][0] is fiber_read
+    assert seen["args"][1] is model
 
 
 def test_fused_payload_worker_config_preserves_chunk_arguments():
