@@ -189,6 +189,46 @@ class _RegionBamPipelineRequest:
     io_threads: int
 
 
+@dataclass(frozen=True)
+class _FusedRegionBamPipelineRequest:
+    input_bam: str
+    output_bam: str
+    apply_model_path: str
+    recall_model_path: Optional[str]
+    train_rids: Set[str]
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    min_mapq: int
+    prob_threshold: int
+    min_read_length: int
+    with_scores: bool
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+    emission_uplift: float
+    also_write_legacy: bool
+    downstream_compat: bool
+    n_cores: int
+    region_size: int
+    skip_scaffolds: bool
+    chroms: Optional[Set[str]]
+    io_threads: int
+    primary_only: bool
+    ref_fasta_path: Optional[str]
+    recall_nucs: bool
+    split_min_llr: float
+    split_min_opps: int
+    filter_chimeras: bool
+    chimera_min_seg: int
+    chimera_purity: float
+    phase_nrl: int
+    pg_record: Optional[dict]
+
+
 def _base_region_worker_params(
     *,
     edge_trim: int,
@@ -1252,22 +1292,13 @@ def _process_bam_region_parallel_fused(
 
     Output is coordinate-sorted with no sort pass needed.
     """
-    start_time = time.time()
-
-    run = _prepare_region_parallel_run(
-        input_bam,
-        output_bam,
-        region_size,
-        skip_scaffolds,
-        chroms,
-        n_cores,
-        temp_prefix='.fiberhmm_call_tmp_',
-        output_label=" (fused apply+recall)",
-        ensure_index=False,
-    )
-
-    try:
-        params = _fused_region_worker_params(
+    return _process_bam_region_parallel_fused_from_request(
+        _FusedRegionBamPipelineRequest(
+            input_bam=input_bam,
+            output_bam=output_bam,
+            apply_model_path=apply_model_path,
+            recall_model_path=recall_model_path,
+            train_rids=train_rids,
             edge_trim=edge_trim,
             circular=circular,
             mode=mode,
@@ -1278,14 +1309,19 @@ def _process_bam_region_parallel_fused(
             prob_threshold=prob_threshold,
             min_read_length=min_read_length,
             with_scores=with_scores,
-            train_rids=train_rids,
-            primary_only=primary_only,
-            io_threads=io_threads,
             min_llr=min_llr,
             min_opps=min_opps,
             unify_threshold=unify_threshold,
+            emission_uplift=emission_uplift,
             also_write_legacy=also_write_legacy,
             downstream_compat=downstream_compat,
+            n_cores=n_cores,
+            region_size=region_size,
+            skip_scaffolds=skip_scaffolds,
+            chroms=chroms,
+            io_threads=io_threads,
+            primary_only=primary_only,
+            ref_fasta_path=ref_fasta_path,
             recall_nucs=recall_nucs,
             split_min_llr=split_min_llr,
             split_min_opps=split_min_opps,
@@ -1294,16 +1330,69 @@ def _process_bam_region_parallel_fused(
             chimera_purity=chimera_purity,
             phase_nrl=phase_nrl,
             pg_record=pg_record,
-            ref_fasta_path=ref_fasta_path,
+        )
+    )
+
+
+def _process_bam_region_parallel_fused_from_request(
+    request: _FusedRegionBamPipelineRequest,
+) -> Tuple[int, int]:
+    start_time = time.time()
+
+    run = _prepare_region_parallel_run(
+        request.input_bam,
+        request.output_bam,
+        request.region_size,
+        request.skip_scaffolds,
+        request.chroms,
+        request.n_cores,
+        temp_prefix='.fiberhmm_call_tmp_',
+        output_label=" (fused apply+recall)",
+        ensure_index=False,
+    )
+
+    try:
+        params = _fused_region_worker_params(
+            edge_trim=request.edge_trim,
+            circular=request.circular,
+            mode=request.mode,
+            context_size=request.context_size,
+            msp_min_size=request.msp_min_size,
+            nuc_min_size=request.nuc_min_size,
+            min_mapq=request.min_mapq,
+            prob_threshold=request.prob_threshold,
+            min_read_length=request.min_read_length,
+            with_scores=request.with_scores,
+            train_rids=request.train_rids,
+            primary_only=request.primary_only,
+            io_threads=request.io_threads,
+            min_llr=request.min_llr,
+            min_opps=request.min_opps,
+            unify_threshold=request.unify_threshold,
+            also_write_legacy=request.also_write_legacy,
+            downstream_compat=request.downstream_compat,
+            recall_nucs=request.recall_nucs,
+            split_min_llr=request.split_min_llr,
+            split_min_opps=request.split_min_opps,
+            filter_chimeras=request.filter_chimeras,
+            chimera_min_seg=request.chimera_min_seg,
+            chimera_purity=request.chimera_purity,
+            phase_nrl=request.phase_nrl,
+            pg_record=request.pg_record,
+            ref_fasta_path=request.ref_fasta_path,
         )
 
-        work_items = _region_bam_work_items(run.regions, input_bam, run.temp_dir)
+        work_items = _region_bam_work_items(
+            run.regions,
+            request.input_bam,
+            run.temp_dir,
+        )
 
         aggregation = _run_fused_region_bam_worker_pool(
-            n_cores=n_cores,
-            apply_model_path=apply_model_path,
-            recall_model_path=recall_model_path,
-            emission_uplift=emission_uplift,
+            n_cores=request.n_cores,
+            apply_model_path=request.apply_model_path,
+            recall_model_path=request.recall_model_path,
+            emission_uplift=request.emission_uplift,
             params=params,
             work_items=work_items,
             total_regions=len(run.regions),
@@ -1312,8 +1401,8 @@ def _process_bam_region_parallel_fused(
         print()
 
         _finalize_fused_region_bam_output(
-            input_bam,
-            output_bam,
+            request.input_bam,
+            request.output_bam,
             run.temp_dir,
             aggregation,
             start_time,
