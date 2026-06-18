@@ -96,6 +96,15 @@ class _MaAnnotationQualityValues:
     qvals: Tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class _MaAnnotationBlock:
+    ref_start: int
+    ref_end: int
+    score: int
+    qvals: Tuple[int, ...]
+    annotation: dict
+
+
 def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
     """Extract chromosome sizes from BAM header."""
     if not os.path.exists(bam_path):
@@ -326,11 +335,11 @@ def _ma_block_score_columns(target_name: str, blocks) -> list:
     if target_name in ('tf', 'nuc'):
         # tf.QQQ / nuc.QQQ: three per-block quality columns.
         return [
-            ','.join(str(b[3][0]) for b in blocks),
-            ','.join(str(b[3][1]) for b in blocks),
-            ','.join(str(b[3][2]) for b in blocks),
+            ','.join(str(block.qvals[0]) for block in blocks),
+            ','.join(str(block.qvals[1]) for block in blocks),
+            ','.join(str(block.qvals[2]) for block in blocks),
         ]
-    return [','.join(str(b[3][0]) for b in blocks)]
+    return [','.join(str(block.qvals[0]) for block in blocks)]
 
 
 def _ma_annotation_block(target_name: str, ann, query_to_ref, min_tq: int):
@@ -344,7 +353,13 @@ def _ma_annotation_block(target_name: str, ann, query_to_ref, min_tq: int):
 
     ref_start, ref_end = block
     quality_values = _ma_annotation_quality_values(target_name, quals)
-    return ref_start, ref_end, quality_values.score, quality_values.qvals, ann
+    return _MaAnnotationBlock(
+        ref_start,
+        ref_end,
+        quality_values.score,
+        quality_values.qvals,
+        ann,
+    )
 
 
 def _ma_circular_extra_columns(qvals, ann, block_scores: bool) -> list:
@@ -378,7 +393,13 @@ def _extract_region_read_selected(read, start: int, end: int, min_mapq: int) -> 
 def _mean_block_score(blocks, with_scores: bool) -> int:
     if not with_scores:
         return 0
-    return int(sum(block[2] for block in blocks) / len(blocks))
+    return int(
+        sum(
+            block.score if isinstance(block, _MaAnnotationBlock) else block[2]
+            for block in blocks
+        )
+        / len(blocks)
+    )
 
 
 def _write_legacy_interval_row(read, bed_out, blocks, with_scores: bool,
@@ -421,14 +442,18 @@ def _write_ma_circular_rows(
     strand = '-' if read.is_reverse else '+'
     read_id = read.query_name
 
-    for ref_start, ref_end, score, qvals, ann in sorted(blocks, key=lambda x: x[0]):
-        extra = _ma_circular_extra_columns(qvals, ann, block_scores)
-        name = _ma_circular_row_name(read_id, target_name, ann)
+    for block in sorted(blocks, key=lambda block: block.ref_start):
+        extra = _ma_circular_extra_columns(
+            block.qvals,
+            block.annotation,
+            block_scores,
+        )
+        name = _ma_circular_row_name(read_id, target_name, block.annotation)
         row = _bed12_row(
-            ref_name, ref_start, ref_end, name,
-            score if with_scores else 0,
+            ref_name, block.ref_start, block.ref_end, name,
+            block.score if with_scores else 0,
             strand,
-            [(ref_start, ref_end)],
+            [(block.ref_start, block.ref_end)],
             extra,
         )
         bed_out.write(row + "\n")
@@ -443,9 +468,9 @@ def _write_ma_grouped_row(
     with_scores: bool,
     block_scores: bool,
 ) -> int:
-    blocks = sorted(blocks, key=lambda x: x[0])
-    chrom_start = blocks[0][0]
-    chrom_end = blocks[-1][1]
+    blocks = sorted(blocks, key=lambda block: block.ref_start)
+    chrom_start = blocks[0].ref_start
+    chrom_end = blocks[-1].ref_end
     mean_score = _mean_block_score(blocks, with_scores)
     extra = []
     if block_scores:
@@ -457,7 +482,7 @@ def _write_ma_grouped_row(
         read.query_name,
         mean_score,
         '-' if read.is_reverse else '+',
-        [(b[0], b[1]) for b in blocks],
+        [(block.ref_start, block.ref_end) for block in blocks],
         extra,
     )
     bed_out.write(row + "\n")

@@ -316,12 +316,12 @@ def test_ma_annotation_min_tq_filter_only_applies_to_tf():
 
 def test_ma_block_score_columns_match_annotation_shape():
     triplet_blocks = [
-        (100, 110, 5, (5, 6, 7), {}),
-        (120, 130, 8, (8, 9, 10), {}),
+        extract_tags._MaAnnotationBlock(100, 110, 5, (5, 6, 7), {}),
+        extract_tags._MaAnnotationBlock(120, 130, 8, (8, 9, 10), {}),
     ]
     scalar_blocks = [
-        (100, 110, 0, (0,), {}),
-        (120, 130, 0, (0,), {}),
+        extract_tags._MaAnnotationBlock(100, 110, 0, (0,), {}),
+        extract_tags._MaAnnotationBlock(120, 130, 0, (0,), {}),
     ]
 
     assert extract_tags._ma_block_score_columns('tf', triplet_blocks) == [
@@ -337,7 +337,13 @@ def test_ma_annotation_block_builds_ref_block_or_returns_none():
     ann = {'start': 10, 'length': 5, 'quals': [60, 7, 8]}
     block = extract_tags._ma_annotation_block('tf', ann, _identity_map(_FakeRead()), 50)
 
-    assert block == (1_000_010, 1_000_015, 60, (60, 7, 8), ann)
+    assert block == extract_tags._MaAnnotationBlock(
+        1_000_010,
+        1_000_015,
+        60,
+        (60, 7, 8),
+        ann,
+    )
     assert extract_tags._ma_annotation_block(
         'tf', ann, _identity_map(_FakeRead()), 61,
     ) is None
@@ -356,14 +362,22 @@ def test_ma_annotation_blocks_filters_empty_blocks():
         'tf', [keep, low_tq, unmapped], query_to_ref, min_tq=50,
     )
 
-    assert blocks == [(1_000_010, 1_000_015, 60, (60, 10, 5), keep)]
+    assert blocks == [
+        extract_tags._MaAnnotationBlock(
+            1_000_010,
+            1_000_015,
+            60,
+            (60, 10, 5),
+            keep,
+        )
+    ]
 
 
 def test_write_ma_grouped_row_sorts_blocks_and_writes_score_columns():
     read = _FakeRead(read_id='read-a', ref_start=1_000)
     blocks = [
-        (1_010, 1_015, 90, (90, 1, 2), {}),
-        (1_000, 1_003, 30, (30, 3, 4), {}),
+        extract_tags._MaAnnotationBlock(1_010, 1_015, 90, (90, 1, 2), {}),
+        extract_tags._MaAnnotationBlock(1_000, 1_003, 30, (30, 3, 4), {}),
     ]
     buf = io.StringIO()
 
