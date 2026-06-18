@@ -9,6 +9,28 @@ from fiberhmm.core import bam_reader
 pysam = pytest.importorskip("pysam")
 
 
+def test_load_legacy_probability_table_normalizes_encode_and_ratio(tmp_path):
+    probs_path = tmp_path / "accessible.tsv"
+    probs_path.write_text(
+        "Unnamed: 0\thit\tnohit\n"
+        "0\t2\t2\n"
+        "1\t0\t0\n"
+    )
+
+    probs = train.load_probability_file(str(probs_path))
+
+    assert probs["encode"].tolist() == [0, 1]
+    assert probs["ratio"].tolist() == [0.5, 0.0]
+
+
+def test_load_legacy_probability_table_requires_ratio_or_counts(tmp_path):
+    probs_path = tmp_path / "bad.tsv"
+    probs_path.write_text("encode\tother\n0\t1\n")
+
+    with pytest.raises(ValueError, match="Cannot find probability values"):
+        train.load_probability_file(str(probs_path))
+
+
 def test_state_runs_groups_contiguous_states():
     assert train._state_runs([0, 0, 1, 1, 1, 0]) == [
         (0, 2, 0),

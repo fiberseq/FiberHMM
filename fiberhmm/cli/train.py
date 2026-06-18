@@ -93,6 +93,40 @@ def parse_args():
     return parser.parse_args()
 
 
+def _probability_table_with_encode_column(probs: pd.DataFrame) -> pd.DataFrame:
+    if 'encode' in probs.columns:
+        return probs
+
+    if probs.columns[0] in ['Unnamed: 0', '']:
+        return probs.rename(columns={probs.columns[0]: 'encode'})
+
+    if probs.index.name == 'encode' or probs.index.dtype == np.int64:
+        probs = probs.reset_index()
+        return probs.rename(columns={probs.columns[0]: 'encode'})
+
+    return probs
+
+
+def _probability_table_with_ratio(probs: pd.DataFrame, filepath: str) -> pd.DataFrame:
+    if 'ratio' in probs.columns:
+        return probs
+
+    if 'hit' not in probs.columns or 'nohit' not in probs.columns:
+        raise ValueError(f"Cannot find probability values in {filepath}")
+
+    total = probs['hit'] + probs['nohit']
+    probs['ratio'] = probs['hit'] / total.replace(0, 1)
+    return probs
+
+
+def _load_legacy_probability_table(filepath: str) -> pd.DataFrame:
+    # Expected columns: encode (or index), hit, nohit, ratio
+    probs = pd.read_csv(filepath, sep='\t')
+    probs = _probability_table_with_encode_column(probs)
+    probs['encode'] = probs['encode'].astype(int)
+    return _probability_table_with_ratio(probs, filepath)
+
+
 def load_probability_file(filepath: str, context_size: int = 3) -> pd.DataFrame:
     """
     Load probability file - supports both legacy TSV and new .probs.pkl format.
@@ -111,29 +145,7 @@ def load_probability_file(filepath: str, context_size: int = 3) -> pd.DataFrame:
         _, probs = counter.get_encoding_table(context_size)
         return probs
     else:
-        # Legacy TSV format
-        # Expected columns: encode (or index), hit, nohit, ratio
-        probs = pd.read_csv(filepath, sep='\t')
-
-        # Handle different column naming conventions
-        if 'encode' not in probs.columns:
-            if probs.columns[0] in ['Unnamed: 0', '']:
-                probs = probs.rename(columns={probs.columns[0]: 'encode'})
-            elif probs.index.name == 'encode' or probs.index.dtype == np.int64:
-                probs = probs.reset_index()
-                probs = probs.rename(columns={probs.columns[0]: 'encode'})
-
-        probs['encode'] = probs['encode'].astype(int)
-
-        # Ensure ratio column exists
-        if 'ratio' not in probs.columns:
-            if 'hit' in probs.columns and 'nohit' in probs.columns:
-                total = probs['hit'] + probs['nohit']
-                probs['ratio'] = probs['hit'] / total.replace(0, 1)
-            else:
-                raise ValueError(f"Cannot find probability values in {filepath}")
-
-        return probs
+        return _load_legacy_probability_table(filepath)
 
 
 def make_emission_probs(acc_file: str, inacc_file: str,
