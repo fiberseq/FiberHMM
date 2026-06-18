@@ -588,6 +588,20 @@ class _ApplyStreamingReadLoopResult:
     posterior_stats: object
 
 
+@dataclass(frozen=True)
+class _FusedStreamingReadLoopRequest:
+    pipeline_request: _FusedStreamingPipelineRequest
+    inbam: object
+    outbam: object
+    filter_config: ReadFilterConfig
+    max_inflight: int
+    counters: dict
+    skip_reasons: dict
+    log: object
+    ref_fasta: object
+    start_time: float
+
+
 def _flush_streaming_chunk_and_report_progress(
     context: _StreamingFlushContext,
     chunk_items,
@@ -1101,6 +1115,52 @@ def _run_apply_streaming_reads_from_request(
     return _ApplyStreamingReadLoopResult(
         read_counts=read_counts,
         posterior_stats=posterior_stats,
+    )
+
+
+def _run_fused_streaming_reads_from_request(
+    request: _FusedStreamingReadLoopRequest,
+) -> _StreamingReadCounts:
+    pipeline_request = request.pipeline_request
+    executor = _new_fused_streaming_executor(
+        pipeline_request.model_path,
+        pipeline_request.recall_model_path,
+        pipeline_request.emission_uplift,
+        pipeline_request.recall_nucs,
+        pipeline_request.split_min_llr,
+        pipeline_request.split_min_opps,
+        pipeline_request.filter_chimeras,
+        pipeline_request.chimera_min_seg,
+        pipeline_request.chimera_purity,
+        pipeline_request.phase_nrl,
+        pipeline_request.n_cores,
+    )
+
+    worker_args = _fused_worker_args_from_pipeline_request(pipeline_request)
+
+    return _run_streaming_worker_loop(
+        request.inbam.fetch(until_eof=True),
+        request.filter_config,
+        pipeline_request.mode,
+        request.ref_fasta,
+        executor,
+        _process_fused_payload_chunk_worker,
+        worker_args,
+        pipeline_request.max_reads,
+        pipeline_request.chunk_size,
+        request.max_inflight,
+        _fused_drain_chunk_factory(
+            request.outbam,
+            pipeline_request.with_scores,
+            pipeline_request.also_write_legacy,
+            pipeline_request.downstream_compat,
+            request.counters,
+        ),
+        request.skip_reasons,
+        request.log,
+        "Fused",
+        "r/s",
+        request.start_time,
     )
 
 
@@ -1619,45 +1679,19 @@ def _process_bam_streaming_pipeline_fused_from_request(
                 if request.ref_fasta_path:
                     ref_fasta = pysam.FastaFile(request.ref_fasta_path)
 
-                executor = _new_fused_streaming_executor(
-                    request.model_path,
-                    request.recall_model_path,
-                    request.emission_uplift,
-                    request.recall_nucs,
-                    request.split_min_llr,
-                    request.split_min_opps,
-                    request.filter_chimeras,
-                    request.chimera_min_seg,
-                    request.chimera_purity,
-                    request.phase_nrl,
-                    request.n_cores,
-                )
-
-                worker_args = _fused_worker_args_from_pipeline_request(request)
-
-                read_counts = _run_streaming_worker_loop(
-                    inbam.fetch(until_eof=True),
-                    filter_config,
-                    request.mode,
-                    ref_fasta,
-                    executor,
-                    _process_fused_payload_chunk_worker,
-                    worker_args,
-                    request.max_reads,
-                    request.chunk_size,
-                    max_inflight,
-                    _fused_drain_chunk_factory(
-                        outbam,
-                        request.with_scores,
-                        request.also_write_legacy,
-                        request.downstream_compat,
-                        counters,
-                    ),
-                    skip_reasons,
-                    _log,
-                    "Fused",
-                    "r/s",
-                    start_time,
+                read_counts = _run_fused_streaming_reads_from_request(
+                    _FusedStreamingReadLoopRequest(
+                        pipeline_request=request,
+                        inbam=inbam,
+                        outbam=outbam,
+                        filter_config=filter_config,
+                        max_inflight=max_inflight,
+                        counters=counters,
+                        skip_reasons=skip_reasons,
+                        log=_log,
+                        ref_fasta=ref_fasta,
+                        start_time=start_time,
+                    )
                 )
                 total_reads = read_counts.processed
                 skipped = read_counts.skipped

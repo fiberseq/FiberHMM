@@ -377,6 +377,123 @@ def test_run_apply_streaming_reads_opens_runs_and_closes_posteriors(monkeypatch)
     ]
 
 
+def test_run_fused_streaming_reads_builds_executor_and_runs_loop(monkeypatch):
+    class InputBam:
+        def fetch(self, **kwargs):
+            assert kwargs == {"until_eof": True}
+            return ["read"]
+
+    ref_fasta = object()
+    filter_config = object()
+    counters = {"written": 0}
+    skip_reasons = {"low_mapq": 0}
+    log = io.StringIO()
+    pipeline_request = _fused_streaming_pipeline_request(
+        mode="daf",
+        model_path="model.json",
+        recall_model_path="recall.json",
+        emission_uplift=1.2,
+        recall_nucs=True,
+        split_min_llr=5.0,
+        split_min_opps=4,
+        filter_chimeras=False,
+        chimera_min_seg=6,
+        chimera_purity=0.7,
+        phase_nrl=150,
+        n_cores=5,
+        max_reads=21,
+        chunk_size=22,
+        with_scores=True,
+        also_write_legacy=False,
+        downstream_compat=True,
+    )
+    calls = []
+
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_new_fused_streaming_executor",
+        lambda *args: calls.append(("executor", args)) or "executor",
+    )
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_fused_worker_args_from_pipeline_request",
+        lambda *args: calls.append(("worker_args", args)) or ("worker-args",),
+    )
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_fused_drain_chunk_factory",
+        lambda *args: calls.append(("drain_factory", args)) or "drain",
+    )
+
+    def fake_run_streaming_worker_loop(*args):
+        calls.append(("loop", args))
+        return _StreamingReadCounts(processed=4, skipped=2)
+
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_run_streaming_worker_loop",
+        fake_run_streaming_worker_loop,
+    )
+
+    result = streaming_pipeline._run_fused_streaming_reads_from_request(
+        streaming_pipeline._FusedStreamingReadLoopRequest(
+            pipeline_request=pipeline_request,
+            inbam=InputBam(),
+            outbam="outbam",
+            filter_config=filter_config,
+            max_inflight=10,
+            counters=counters,
+            skip_reasons=skip_reasons,
+            log=log,
+            ref_fasta=ref_fasta,
+            start_time=6.0,
+        )
+    )
+
+    assert result == _StreamingReadCounts(processed=4, skipped=2)
+    assert calls == [
+        (
+            "executor",
+            (
+                "model.json",
+                "recall.json",
+                1.2,
+                True,
+                5.0,
+                4,
+                False,
+                6,
+                0.7,
+                150,
+                5,
+            ),
+        ),
+        ("worker_args", (pipeline_request,)),
+        ("drain_factory", ("outbam", True, False, True, counters)),
+        (
+            "loop",
+            (
+                ["read"],
+                filter_config,
+                "daf",
+                ref_fasta,
+                "executor",
+                streaming_pipeline._process_fused_payload_chunk_worker,
+                ("worker-args",),
+                21,
+                22,
+                10,
+                "drain",
+                skip_reasons,
+                log,
+                "Fused",
+                "r/s",
+                6.0,
+            ),
+        ),
+    ]
+
+
 def test_streaming_progress_rates_handle_elapsed_and_zero_dt():
     assert _streaming_progress_rates(
         total_reads=120,
