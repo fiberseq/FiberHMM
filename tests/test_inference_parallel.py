@@ -2118,12 +2118,14 @@ def test_pop_inflight_chunk_coerces_worker_result_and_removes_entry():
         skip_flags,
     )])
 
-    assert streaming_drain._pop_inflight_chunk(inflight) == (
-        [{"ok": True}],
-        2,
-        [read],
-        chunk_items,
-        skip_flags,
+    assert streaming_drain._pop_inflight_chunk(
+        inflight
+    ) == streaming_drain._InflightChunk(
+        results=[{"ok": True}],
+        worker_failures=2,
+        read_objs=[read],
+        items=chunk_items,
+        skip_flags=skip_flags,
     )
     assert not inflight
 

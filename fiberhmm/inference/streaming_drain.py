@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from fiberhmm.inference.posterior_records import posterior_fiber_data
@@ -14,6 +16,15 @@ try:
     HAS_POSTERIOR_WRITER = True
 except ImportError:
     HAS_POSTERIOR_WRITER = False
+
+
+@dataclass(frozen=True)
+class _InflightChunk:
+    results: object
+    worker_failures: int
+    read_objs: object
+    items: object
+    skip_flags: object
 
 
 def _increment_counter(counters, key: str, amount: int = 1) -> None:
@@ -85,7 +96,13 @@ def _add_posterior_fiber_if_available(posterior_writer, read_obj, result: dict) 
 def _pop_inflight_chunk(inflight):
     future, chunk_read_objs, chunk_items, chunk_skip_flags = inflight.popleft()
     results, worker_failures = coerce_worker_chunk_result(future.result())
-    return results, worker_failures, chunk_read_objs, chunk_items, chunk_skip_flags
+    return _InflightChunk(
+        results=results,
+        worker_failures=worker_failures,
+        read_objs=chunk_read_objs,
+        items=chunk_items,
+        skip_flags=chunk_skip_flags,
+    )
 
 
 def _drain_chunk_in_order(
@@ -111,19 +128,13 @@ def _drain_chunk_in_order(
 
 
 def _drain_oldest_with_recorder(inflight, outbam, counters, record_result) -> None:
-    (
-        results,
-        worker_failures,
-        chunk_read_objs,
-        chunk_items,
-        chunk_skip_flags,
-    ) = _pop_inflight_chunk(inflight)
-    _record_worker_failures(counters, worker_failures)
+    chunk = _pop_inflight_chunk(inflight)
+    _record_worker_failures(counters, chunk.worker_failures)
     _drain_chunk_in_order(
-        chunk_read_objs,
-        chunk_items,
-        chunk_skip_flags,
-        results,
+        chunk.read_objs,
+        chunk.items,
+        chunk.skip_flags,
+        chunk.results,
         outbam,
         counters,
         record_result,
