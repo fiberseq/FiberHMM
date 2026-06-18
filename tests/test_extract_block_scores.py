@@ -999,6 +999,23 @@ def test_finalize_extract_type_bed_concatenates_regions_in_order(
     assert "[tf] sorting BED" in out
 
 
+def test_write_concatenated_region_beds_preserves_output_on_failure(tmp_path):
+    out_path = tmp_path / "tf.bed"
+    temp_path = tmp_path / "tf.bed.tmp"
+    first = tmp_path / "region_1_tf.bed"
+    first.write_text("chr1\t10\t20\n")
+    out_path.write_text("old\n")
+
+    with pytest.raises(FileNotFoundError):
+        extract_tags._write_concatenated_region_beds(
+            str(out_path),
+            [(1, str(first)), (2, str(tmp_path / "missing.bed"))],
+        )
+
+    assert out_path.read_text() == "old\n"
+    assert not temp_path.exists()
+
+
 def test_finalize_extract_type_bed_skips_sort_for_empty_output(monkeypatch, tmp_path):
     out_path = tmp_path / "tf.bed"
 

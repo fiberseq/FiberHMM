@@ -1370,11 +1370,26 @@ def _sorted_extract_region_beds(region_beds):
     return sorted(region_beds, key=lambda x: x[0])
 
 
+def _remove_extract_temp_file(path: str) -> None:
+    if not os.path.exists(path):
+        return
+    try:
+        os.remove(path)
+    except (PermissionError, OSError) as e:
+        print(f"  Warning: Could not remove temporary extract file: {e}")
+
+
 def _write_concatenated_region_beds(out_path: str, region_beds) -> None:
-    with open(out_path, 'w') as outf:
-        for _, tb in region_beds:
-            with open(tb, 'r') as inf:
-                shutil.copyfileobj(inf, outf)
+    temp_path = out_path + '.tmp'
+    try:
+        with open(temp_path, 'w') as outf:
+            for _, tb in region_beds:
+                with open(tb, 'r') as inf:
+                    shutil.copyfileobj(inf, outf)
+        os.replace(temp_path, out_path)
+    except BaseException:
+        _remove_extract_temp_file(temp_path)
+        raise
 
 
 def _sort_bed_in_place(out_path: str) -> None:
@@ -1386,11 +1401,7 @@ def _sort_bed_in_place(out_path: str) -> None:
         )
         os.replace(sorted_bed, out_path)
     except BaseException:
-        if os.path.exists(sorted_bed):
-            try:
-                os.remove(sorted_bed)
-            except (PermissionError, OSError) as e:
-                print(f"  Warning: Could not remove temporary sorted BED: {e}")
+        _remove_extract_temp_file(sorted_bed)
         raise
 
 
