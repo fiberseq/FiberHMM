@@ -26,6 +26,7 @@ def _is_hdf5_output_path(output_path: str) -> bool:
 
 
 def _resolve_writer_format(output_path: str, format: str) -> str:
+    format = format.strip().lower()
     if format != 'auto':
         return format
     if _is_hdf5_output_path(output_path):

@@ -16,6 +16,7 @@ def test_export_posteriors_detects_output_format():
     assert export_posteriors._detect_format("out.HDF5", "auto") == "hdf5"
     assert export_posteriors._detect_format("out.tsv.gz", "auto") == "tsv"
     assert export_posteriors._detect_format("out.any", "hdf5") == "hdf5"
+    assert export_posteriors._detect_format("out.any", " TSV ") == "tsv"
 
 
 def test_export_posteriors_model_resolution_uses_custom_path():

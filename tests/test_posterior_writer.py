@@ -17,6 +17,7 @@ def test_resolve_writer_format_auto_detects_hdf5_extensions():
     assert writer._resolve_writer_format("posteriors.HDF5", "auto") == "hdf5"
     assert writer._resolve_writer_format("posteriors.tsv.gz", "auto") == "tsv"
     assert writer._resolve_writer_format("posteriors.any", "tsv") == "tsv"
+    assert writer._resolve_writer_format("posteriors.any", " HDF5 ") == "hdf5"
 
 
 def test_unknown_writer_format_message_names_valid_formats():
