@@ -299,3 +299,62 @@ def test_probability_ratio_histograms_share_bins_colors_and_optional_medians():
     assert no_median_ax.hist_calls[0][1]["label"] == "A"
     assert no_median_ax.hist_calls[1][1]["label"] == "B"
     assert no_median_ax.vlines == []
+
+
+def test_accessible_inaccessible_probability_scatter_filters_and_labels():
+    class FakeAxis:
+        def __init__(self):
+            self.scatter_calls = []
+            self.plot_calls = []
+            self.xlabel = None
+            self.ylabel = None
+            self.title = None
+            self.xlim = None
+            self.ylim = None
+            self.legend_called = False
+
+        def scatter(self, x_values, y_values, **kwargs):
+            self.scatter_calls.append((x_values, y_values, kwargs))
+
+        def plot(self, x_values, y_values, style, **kwargs):
+            self.plot_calls.append((x_values, y_values, style, kwargs))
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_ylabel(self, value):
+            self.ylabel = value
+
+        def set_title(self, value):
+            self.title = value
+
+        def set_xlim(self, start, end):
+            self.xlim = (start, end)
+
+        def set_ylim(self, start, end):
+            self.ylim = (start, end)
+
+        def legend(self):
+            self.legend_called = True
+
+    merged = pd.DataFrame({
+        "ratio_acc": [0.8, 0.4],
+        "ratio_inacc": [0.2, 0.3],
+        "total_acc": [20, 10],
+        "total_inacc": [30, 50],
+    })
+    ax = FakeAxis()
+
+    stats._plot_accessible_inaccessible_probability_scatter(ax, merged)
+
+    x_values, y_values, scatter_kwargs = ax.scatter_calls[0]
+    assert x_values.tolist() == [0.2]
+    assert y_values.tolist() == [0.8]
+    assert scatter_kwargs == {"alpha": 0.5, "s": 10, "c": "steelblue"}
+    assert ax.plot_calls == [([0, 1], [0, 1], "k--", {"alpha": 0.3, "label": "y=x"})]
+    assert ax.xlabel == "P(m | inaccessible)"
+    assert ax.ylabel == "P(m | accessible)"
+    assert ax.title == "Accessible vs Inaccessible (1 contexts)"
+    assert ax.xlim == (0, 1)
+    assert ax.ylim == (0, 1)
+    assert ax.legend_called

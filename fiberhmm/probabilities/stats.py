@@ -164,6 +164,26 @@ def _plot_probability_ratio_histograms(
         ax.axvline(inacc_median, color='red', linestyle='--', linewidth=2)
 
 
+def _plot_accessible_inaccessible_probability_scatter(ax, merged) -> None:
+    mask = _contexts_with_min_observations(merged, 10)
+    n_contexts = int(mask.sum())
+    if n_contexts > 0:
+        ax.scatter(
+            merged.loc[mask, 'ratio_inacc'],
+            merged.loc[mask, 'ratio_acc'],
+            alpha=0.5,
+            s=10,
+            c='steelblue',
+        )
+    ax.plot([0, 1], [0, 1], 'k--', alpha=0.3, label='y=x')
+    ax.set_xlabel('P(m | inaccessible)')
+    ax.set_ylabel('P(m | accessible)')
+    ax.set_title(f'Accessible vs Inaccessible ({n_contexts:,} contexts)')
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.legend()
+
+
 def _write_probability_ratio_summary(handle, label: str, ratios: np.ndarray) -> None:
     if len(ratios) == 0:
         return
@@ -330,18 +350,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
             # 2. Scatter plot: accessible vs inaccessible
             ax = axes[0, 1]
             merged = _merged_probability_table(acc_probs, inacc_probs)
-            # Filter to contexts with data in both
-            mask = _contexts_with_min_observations(merged, 10)
-            if mask.sum() > 0:
-                ax.scatter(merged.loc[mask, 'ratio_inacc'], merged.loc[mask, 'ratio_acc'],
-                          alpha=0.5, s=10, c='steelblue')
-            ax.plot([0, 1], [0, 1], 'k--', alpha=0.3, label='y=x')
-            ax.set_xlabel('P(m | inaccessible)')
-            ax.set_ylabel('P(m | accessible)')
-            ax.set_title(f'Accessible vs Inaccessible ({mask.sum():,} contexts)')
-            ax.set_xlim(0, 1)
-            ax.set_ylim(0, 1)
-            ax.legend()
+            _plot_accessible_inaccessible_probability_scatter(ax, merged)
 
             # 3. Log-odds (separation score) - use merged data
             ax = axes[1, 0]
