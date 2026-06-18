@@ -17,6 +17,7 @@ from fiberhmm.cli.call import (
     _call_context_size_or_default,
     _call_circular_label,
     _call_enzyme_label,
+    _call_fused_common_kwargs,
     _call_mode_or_default,
     _call_mode_label,
     _call_pg_description,
@@ -392,3 +393,55 @@ def test_call_banner_text_formats_resolved_settings():
     assert "mode=daf k=4 enzyme=custom" in banner
     assert "min_llr=1.5 min_opps=3 unify_threshold=120 uplift=0.25" in banner
     assert "cores=8 io-threads=2 circular=on" in banner
+
+
+def test_call_fused_common_kwargs_preserve_shared_pipeline_arguments():
+    pg_record = {"ID": "fiberhmm-call"}
+    args = SimpleNamespace(
+        input="in.bam",
+        output="out.bam",
+        edge_trim=10,
+        circular=True,
+        msp_min_size=0,
+        nuc_min_size=85,
+        min_mapq=20,
+        prob_threshold=128,
+        min_read_length=1000,
+        with_scores=True,
+        min_opps=3,
+        unify_threshold=90,
+        downstream_compat=False,
+        cores=4,
+        io_threads=2,
+        primary=True,
+        reference="ref.fa",
+        split_min_llr=4.0,
+        split_min_opps=3,
+        keep_chimeras=False,
+        chimera_min_seg=4,
+        chimera_purity=0.85,
+    )
+
+    kwargs = _call_fused_common_kwargs(
+        args,
+        recall_model_path="recall.json",
+        mode="daf",
+        context_size=3,
+        min_llr=5.0,
+        emission_uplift=1.0,
+        also_write_legacy=True,
+        recall_nucs=True,
+        phase_nrl=185,
+        pg_record=pg_record,
+    )
+
+    assert kwargs["input_bam"] == "in.bam"
+    assert kwargs["output_bam"] == "out.bam"
+    assert kwargs["recall_model_path"] == "recall.json"
+    assert kwargs["mode"] == "daf"
+    assert kwargs["context_size"] == 3
+    assert kwargs["min_llr"] == 5.0
+    assert kwargs["n_cores"] == 4
+    assert kwargs["filter_chimeras"] is True
+    assert kwargs["phase_nrl"] == 185
+    assert kwargs["pg_record"] is pg_record
