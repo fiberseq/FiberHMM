@@ -218,6 +218,21 @@ class _FootprintedRegionReadWriteRequest:
     tsv_file: object
 
 
+@dataclass(frozen=True)
+class _RegionBamReadProcessRequest:
+    read: object
+    outbam: object
+    model: object
+    apply_config: _RegionApplyConfig
+    output_config: _RegionBamOutputConfig
+    filter_config: ReadFilterConfig
+    start: int
+    end: int
+    skip_reasons: dict
+    return_posteriors: bool
+    tsv_file: object
+
+
 @dataclass
 class _RegionBamWorkerCounts:
     total_reads: int = 0
@@ -897,33 +912,70 @@ def _process_region_bam_read(
     return_posteriors: bool,
     tsv_file,
 ) -> _RegionBamReadDelta:
-    read_route = _region_read_route(read, start, end, filter_config)
+    return _process_region_bam_read_from_request(
+        _RegionBamReadProcessRequest(
+            read=read,
+            outbam=outbam,
+            model=model,
+            apply_config=apply_config,
+            output_config=output_config,
+            filter_config=filter_config,
+            start=start,
+            end=end,
+            skip_reasons=skip_reasons,
+            return_posteriors=return_posteriors,
+            tsv_file=tsv_file,
+        )
+    )
+
+
+def _process_region_bam_read_from_request(
+    request: _RegionBamReadProcessRequest,
+) -> _RegionBamReadDelta:
+    read_route = _region_read_route(
+        request.read,
+        request.start,
+        request.end,
+        request.filter_config,
+    )
     if read_route.route == _REGION_ROUTE_SKIP:
         return _skipped_region_bam_delta(
-            outbam, read, skip_reasons, read_route.skip_reason,
+            request.outbam,
+            request.read,
+            request.skip_reasons,
+            read_route.skip_reason,
         )
     if read_route.route == _REGION_ROUTE_OUTSIDE:
         return _RegionBamReadDelta()
 
     fiber_result = _extract_region_fiber_read(
-        read, apply_config.mode, apply_config.prob_threshold,
+        request.read,
+        request.apply_config.mode,
+        request.apply_config.prob_threshold,
     )
     if fiber_result.skip_reason:
         return _skipped_region_bam_delta(
-            outbam, read, skip_reasons, fiber_result.skip_reason,
+            request.outbam,
+            request.read,
+            request.skip_reasons,
+            fiber_result.skip_reason,
         )
 
     result = _run_region_apply_read(
         fiber_result.fiber_read,
-        model,
-        apply_config,
-        return_posteriors=return_posteriors,
+        request.model,
+        request.apply_config,
+        return_posteriors=request.return_posteriors,
     )
 
     if result is not None:
         write_result = _write_footprinted_region_read(
-            outbam, read, result, apply_config.with_scores,
-            output_config.write_msps, tsv_file,
+            request.outbam,
+            request.read,
+            result,
+            request.apply_config.with_scores,
+            request.output_config.write_msps,
+            request.tsv_file,
         )
         return _RegionBamReadDelta(
             total_reads=1,
@@ -932,7 +984,11 @@ def _process_region_bam_read(
             posteriors_written=int(write_result.posterior_written),
         )
 
-    written = _write_unfootprinted_region_read(outbam, read, skip_reasons)
+    written = _write_unfootprinted_region_read(
+        request.outbam,
+        request.read,
+        request.skip_reasons,
+    )
     return _RegionBamReadDelta(total_reads=1, written=written)
 
 
