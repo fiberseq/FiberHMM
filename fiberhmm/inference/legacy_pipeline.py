@@ -317,6 +317,80 @@ def _print_legacy_posterior_summary(
     print(f"Posteriors: {n_fibers:,} fibers -> {output_posteriors} ({file_size:.1f} MB)")
 
 
+def _process_legacy_chunk_buffer(
+    chunk_reads: list,
+    chunk_read_objs: list,
+    outbam,
+    model,
+    executor,
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    skip_reasons: dict,
+    posterior_writer,
+    nuc_min_size: int,
+    with_scores: bool,
+    return_posteriors: bool,
+    write_msps: bool,
+) -> Tuple[int, int]:
+    if not chunk_reads:
+        return 0, 0
+    return _process_legacy_chunk_and_record(
+        chunk_reads,
+        chunk_read_objs,
+        outbam,
+        model,
+        executor,
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        skip_reasons,
+        posterior_writer,
+        nuc_min_size=nuc_min_size,
+        with_scores=with_scores,
+        return_posteriors=return_posteriors,
+        write_msps=write_msps,
+    )
+
+
+def _legacy_chunk_buffer_kwargs(
+    outbam,
+    model,
+    executor,
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    skip_reasons: dict,
+    posterior_writer,
+    nuc_min_size: int,
+    with_scores: bool,
+    return_posteriors: bool,
+    write_msps: bool,
+) -> dict:
+    return {
+        'outbam': outbam,
+        'model': model,
+        'executor': executor,
+        'edge_trim': edge_trim,
+        'circular': circular,
+        'mode': mode,
+        'context_size': context_size,
+        'msp_min_size': msp_min_size,
+        'skip_reasons': skip_reasons,
+        'posterior_writer': posterior_writer,
+        'nuc_min_size': nuc_min_size,
+        'with_scores': with_scores,
+        'return_posteriors': return_posteriors,
+        'write_msps': write_msps,
+    }
+
+
 def _process_legacy_reads(
     reads,
     outbam,
@@ -345,6 +419,11 @@ def _process_legacy_reads(
     worker_failures = 0
     chunk_reads = []
     chunk_read_objs = []
+    chunk_kwargs = _legacy_chunk_buffer_kwargs(
+        outbam, model, executor, edge_trim, circular, mode, context_size,
+        msp_min_size, skip_reasons, posterior_writer, nuc_min_size,
+        with_scores, return_posteriors, write_msps,
+    )
 
     for read in reads:
         fiber_read, skip_reason = _legacy_fiber_read_or_skip(
@@ -364,14 +443,10 @@ def _process_legacy_reads(
             break
 
         if len(chunk_reads) >= chunk_size:
-            n_fp, n_failed = _process_legacy_chunk_and_record(
-                chunk_reads, chunk_read_objs, outbam,
-                model, executor, edge_trim, circular,
-                mode, context_size, msp_min_size, skip_reasons,
-                posterior_writer, nuc_min_size=nuc_min_size,
-                with_scores=with_scores,
-                return_posteriors=return_posteriors,
-                write_msps=write_msps,
+            n_fp, n_failed = _process_legacy_chunk_buffer(
+                chunk_reads,
+                chunk_read_objs,
+                **chunk_kwargs,
             )
             reads_with_footprints += n_fp
             worker_failures += n_failed
@@ -381,18 +456,13 @@ def _process_legacy_reads(
             chunk_reads = []
             chunk_read_objs = []
 
-    if chunk_reads:
-        n_fp, n_failed = _process_legacy_chunk_and_record(
-            chunk_reads, chunk_read_objs, outbam,
-            model, executor, edge_trim, circular,
-            mode, context_size, msp_min_size, skip_reasons,
-            posterior_writer, nuc_min_size=nuc_min_size,
-            with_scores=with_scores,
-            return_posteriors=return_posteriors,
-            write_msps=write_msps,
-        )
-        reads_with_footprints += n_fp
-        worker_failures += n_failed
+    n_fp, n_failed = _process_legacy_chunk_buffer(
+        chunk_reads,
+        chunk_read_objs,
+        **chunk_kwargs,
+    )
+    reads_with_footprints += n_fp
+    worker_failures += n_failed
 
     return total_reads, reads_with_footprints, skipped, worker_failures
 

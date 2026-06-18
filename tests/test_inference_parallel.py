@@ -281,6 +281,84 @@ def test_print_legacy_posterior_summary_handles_empty_and_values(capsys):
     )
 
 
+def test_process_legacy_chunk_buffer_skips_empty_and_delegates(monkeypatch):
+    calls = []
+    outbam = object()
+    model = object()
+    executor = object()
+    skip_reasons = {}
+    posterior_writer = object()
+
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_process_legacy_chunk_and_record",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or (3, 1),
+    )
+
+    assert legacy_pipeline._process_legacy_chunk_buffer(
+        [],
+        [],
+        outbam,
+        model,
+        executor,
+        1,
+        False,
+        "daf",
+        5,
+        30,
+        skip_reasons,
+        posterior_writer,
+        nuc_min_size=90,
+        with_scores=True,
+        return_posteriors=True,
+        write_msps=False,
+    ) == (0, 0)
+    assert calls == []
+
+    chunk_reads = ["fiber"]
+    chunk_read_objs = ["read"]
+    assert legacy_pipeline._process_legacy_chunk_buffer(
+        chunk_reads,
+        chunk_read_objs,
+        outbam,
+        model,
+        executor,
+        1,
+        False,
+        "daf",
+        5,
+        30,
+        skip_reasons,
+        posterior_writer,
+        nuc_min_size=90,
+        with_scores=True,
+        return_posteriors=True,
+        write_msps=False,
+    ) == (3, 1)
+
+    args, kwargs = calls[0]
+    assert args == (
+        chunk_reads,
+        chunk_read_objs,
+        outbam,
+        model,
+        executor,
+        1,
+        False,
+        "daf",
+        5,
+        30,
+        skip_reasons,
+        posterior_writer,
+    )
+    assert kwargs == {
+        "nuc_min_size": 90,
+        "with_scores": True,
+        "return_posteriors": True,
+        "write_msps": False,
+    }
+
+
 def test_process_legacy_reads_buffers_skips_chunks_and_progress(monkeypatch):
     outbam = _OutBam()
     filter_config = object()
