@@ -535,6 +535,40 @@ def _concatenate_region_beds(output_bed: str, non_empty_beds: list[str]) -> None
                 shutil.copyfileobj(fin, fout)
 
 
+def _finalize_region_bam_parallel_run(
+    input_bam: str,
+    output_bam: str,
+    temp_dir: str,
+    aggregation: RegionBamAggregation,
+    start_time: float,
+    n_cores: int,
+    return_posteriors: bool,
+    output_posteriors: Optional[str],
+    mode: str,
+    context_size: int,
+    edge_trim: int,
+) -> Tuple[int, int]:
+    print()
+    _print_skip_reasons_summary(aggregation)
+
+    non_empty_bams = _ordered_existing_temp_paths(aggregation.temp_bams)
+    _finalize_region_bam_output(
+        input_bam, output_bam, non_empty_bams, temp_dir, n_cores,
+    )
+
+    if return_posteriors and aggregation.temp_tsvs:
+        _merge_region_posterior_outputs(
+            aggregation.temp_tsvs,
+            output_posteriors,
+            mode,
+            context_size,
+            edge_trim,
+            input_bam,
+        )
+
+    return _region_completion_result(aggregation, start_time)
+
+
 def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    model_path: str, train_rids: Set[str],
                                    edge_trim: int, circular: bool,
@@ -630,30 +664,19 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             error_prefix="Error processing region",
         )
 
-        print()  # Newline after progress
-
-        # Print skip reasons summary
-        _print_skip_reasons_summary(aggregation)
-
-        # Sort temp BAMs by region order and filter to non-empty
-        non_empty_bams = _ordered_existing_temp_paths(aggregation.temp_bams)
-
-        _finalize_region_bam_output(
-            input_bam, output_bam, non_empty_bams, temp_dir, n_cores,
+        return _finalize_region_bam_parallel_run(
+            input_bam,
+            output_bam,
+            temp_dir,
+            aggregation,
+            start_time,
+            n_cores,
+            return_posteriors,
+            output_posteriors,
+            mode,
+            context_size,
+            edge_trim,
         )
-
-        # Merge temp TSV files if posteriors were requested
-        if return_posteriors and aggregation.temp_tsvs:
-            _merge_region_posterior_outputs(
-                aggregation.temp_tsvs,
-                output_posteriors,
-                mode,
-                context_size,
-                edge_trim,
-                input_bam,
-            )
-
-        return _region_completion_result(aggregation, start_time)
 
     finally:
         # Clean up temp directory

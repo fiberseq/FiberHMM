@@ -659,6 +659,80 @@ def test_merge_region_posterior_outputs_reports_tsv_and_conversion(
     assert f"tsv2h5 {tsv_path} {output_posteriors}" in out
 
 
+def test_finalize_region_bam_parallel_run_finishes_outputs_and_posteriors(
+    monkeypatch,
+    capsys,
+):
+    aggregation = region_pipeline.RegionBamAggregation(
+        total_reads=10,
+        reads_with_footprints=4,
+        temp_bams=[(1, "region_1.bam")],
+        temp_tsvs=[(1, "region_1.tsv.gz")],
+    )
+    calls = []
+
+    monkeypatch.setattr(
+        region_pipeline,
+        "_print_skip_reasons_summary",
+        lambda got_aggregation: calls.append(("skip", got_aggregation)),
+    )
+    monkeypatch.setattr(
+        region_pipeline,
+        "_ordered_existing_temp_paths",
+        lambda paths: calls.append(("ordered", paths)) or ["region_1.bam"],
+    )
+    monkeypatch.setattr(
+        region_pipeline,
+        "_finalize_region_bam_output",
+        lambda *args: calls.append(("finalize", args)),
+    )
+    monkeypatch.setattr(
+        region_pipeline,
+        "_merge_region_posterior_outputs",
+        lambda *args: calls.append(("merge", args)),
+    )
+    monkeypatch.setattr(
+        region_pipeline,
+        "_region_completion_result",
+        lambda got_aggregation, start_time: (
+            calls.append(("complete", got_aggregation, start_time)) or (10, 4)
+        ),
+    )
+
+    assert region_pipeline._finalize_region_bam_parallel_run(
+        input_bam="in.bam",
+        output_bam="out.bam",
+        temp_dir="tmp",
+        aggregation=aggregation,
+        start_time=5.0,
+        n_cores=3,
+        return_posteriors=True,
+        output_posteriors="post.h5",
+        mode="daf",
+        context_size=5,
+        edge_trim=11,
+    ) == (10, 4)
+
+    assert calls == [
+        ("skip", aggregation),
+        ("ordered", aggregation.temp_bams),
+        ("finalize", ("in.bam", "out.bam", ["region_1.bam"], "tmp", 3)),
+        (
+            "merge",
+            (
+                aggregation.temp_tsvs,
+                "post.h5",
+                "daf",
+                5,
+                11,
+                "in.bam",
+            ),
+        ),
+        ("complete", aggregation, 5.0),
+    ]
+    assert capsys.readouterr().out == "\n"
+
+
 def test_finalize_region_bam_output_concatenates_reports_and_indexes(
     monkeypatch,
     capsys,
