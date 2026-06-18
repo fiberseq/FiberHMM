@@ -835,6 +835,46 @@ def test_finalize_region_bed_parallel_run_concatenates_and_completes(
     assert capsys.readouterr().out == "\n"
 
 
+def test_run_region_bam_worker_pool_wires_legacy_contract(monkeypatch):
+    calls = []
+
+    def fake_run_region_worker_pool(**kwargs):
+        calls.append(kwargs)
+        kwargs["aggregation"].total_reads = 12
+        kwargs["aggregation"].reads_with_footprints = 5
+
+    monkeypatch.setattr(
+        region_pipeline,
+        "_run_region_worker_pool",
+        fake_run_region_worker_pool,
+    )
+
+    aggregation = region_pipeline._run_region_bam_worker_pool(
+        n_cores=3,
+        model_path="model.json",
+        params={"mode": "daf"},
+        work_items=["region"],
+        total_regions=1,
+        start_time=10.0,
+        include_tsv=True,
+    )
+
+    assert aggregation.total_reads == 12
+    assert aggregation.reads_with_footprints == 5
+    kwargs = calls[0]
+    assert kwargs["n_cores"] == 3
+    assert kwargs["initializer"] is region_pipeline._init_region_worker
+    assert kwargs["initargs"] == ("model.json", {"mode": "daf"})
+    assert kwargs["worker"] is region_pipeline._process_region_to_bam
+    assert kwargs["work_items"] == ["region"]
+    assert kwargs["result_type"] is region_pipeline.RegionBamResult
+    assert kwargs["total_regions"] == 1
+    assert kwargs["start_time"] == 10.0
+    assert kwargs["ready_message"] == "Processing regions..."
+    assert kwargs["include_tsv"] is True
+    assert kwargs["error_prefix"] == "Error processing region"
+
+
 def test_run_fused_region_bam_worker_pool_wires_fused_contract(monkeypatch):
     calls = []
 

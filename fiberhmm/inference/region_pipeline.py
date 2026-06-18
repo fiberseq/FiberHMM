@@ -616,6 +616,38 @@ def _finalize_region_bed_parallel_run(
     return _region_completion_result(aggregation, start_time)
 
 
+def _run_region_bam_worker_pool(
+    *,
+    n_cores: int,
+    model_path: str,
+    params: dict,
+    work_items,
+    total_regions: int,
+    start_time: float,
+    include_tsv: bool = True,
+) -> RegionBamAggregation:
+    aggregation = RegionBamAggregation()
+    _run_region_worker_pool(
+        n_cores=n_cores,
+        initializer=_init_region_worker,
+        initargs=(model_path, params),
+        worker=_process_region_to_bam,
+        work_items=work_items,
+        aggregation=aggregation,
+        result_type=RegionBamResult,
+        total_regions=total_regions,
+        start_time=start_time,
+        init_message=(
+            f"  Initializing {n_cores} worker processes "
+            "(loading HMM model in each)..."
+        ),
+        ready_message="Processing regions...",
+        include_tsv=include_tsv,
+        error_prefix="Error processing region",
+    )
+    return aggregation
+
+
 def _run_fused_region_bam_worker_pool(
     *,
     n_cores: int,
@@ -725,26 +757,14 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             regions, input_bam, temp_dir, include_tsv=return_posteriors,
         )
 
-        # Process regions in parallel
-        aggregation = RegionBamAggregation()
-
-        _run_region_worker_pool(
+        aggregation = _run_region_bam_worker_pool(
             n_cores=n_cores,
-            initializer=_init_region_worker,
-            initargs=(model_path, params),
-            worker=_process_region_to_bam,
+            model_path=model_path,
+            params=params,
             work_items=work_items,
-            aggregation=aggregation,
-            result_type=RegionBamResult,
             total_regions=len(regions),
             start_time=start_time,
-            init_message=(
-                f"  Initializing {n_cores} worker processes "
-                "(loading HMM model in each)..."
-            ),
-            ready_message="Processing regions...",
             include_tsv=True,
-            error_prefix="Error processing region",
         )
 
         return _finalize_region_bam_parallel_run(
