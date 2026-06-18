@@ -458,6 +458,203 @@ def test_extract_cli_setup_helpers_build_paths_and_filters(tmp_path):
     assert not extract_tags._circular_groups_for_bigbed(False, "tf")
 
 
+def test_prepare_extract_run_settings_resolves_defaults_and_bigbed_inputs(
+    monkeypatch,
+    tmp_path,
+):
+    input_bam = tmp_path / "sample_footprints.bam"
+    input_bam.write_text("")
+    outdir = tmp_path / "tracks"
+    monkeypatch.setattr(
+        extract_tags,
+        "get_chrom_sizes",
+        lambda input_path: {"chr1": 1000},
+    )
+    parser = extract_tags._build_extract_tags_parser()
+    args = parser.parse_args([
+        "-i",
+        str(input_bam),
+        "-o",
+        str(outdir),
+        "--tf",
+        "--chroms",
+        "chr1,chr2",
+    ])
+
+    settings = extract_tags._prepare_extract_run_settings(args)
+
+    assert settings.outdir == str(outdir)
+    assert outdir.is_dir()
+    assert settings.extract_types == ["tf"]
+    assert settings.make_bigbed is True
+    assert settings.chroms == {"chr1", "chr2"}
+    assert settings.dataset == "sample"
+    assert settings.sample_name == "sample"
+    assert settings.chrom_sizes == {"chr1": 1000}
+
+    bed_args = parser.parse_args(["-i", str(input_bam), "--bed-only"])
+    bed_settings = extract_tags._prepare_extract_run_settings(bed_args)
+    assert bed_settings.outdir == str(tmp_path)
+    assert bed_settings.make_bigbed is False
+    assert bed_settings.chrom_sizes == {}
+
+
+def test_prepare_extract_run_settings_requires_existing_input(tmp_path, capsys):
+    parser = extract_tags._build_extract_tags_parser()
+    args = parser.parse_args(["-i", str(tmp_path / "missing.bam")])
+
+    with pytest.raises(SystemExit):
+        extract_tags._prepare_extract_run_settings(args)
+
+    assert "Input file not found" in capsys.readouterr().out
+
+
+def test_prepare_extract_tag_diagnostics_routes_sniff_and_auto_skip(monkeypatch):
+    args = SimpleNamespace(input="in.bam", deam=False)
+    extract_types = ["m6a", "deam"]
+    diag = {"summary": "m6A", "reads_scanned": 20}
+    calls = []
+
+    monkeypatch.setattr(
+        extract_tags,
+        "diagnose_bam_tags",
+        lambda input_bam, n_reads: calls.append(("diagnose", input_bam, n_reads)) or diag,
+    )
+    monkeypatch.setattr(
+        extract_tags,
+        "_maybe_auto_skip_deam_for_fiber_seq",
+        lambda types, explicit_deam, tag_diag: calls.append(
+            ("auto_skip", list(types), explicit_deam, tag_diag)
+        ),
+    )
+    monkeypatch.setattr(
+        extract_tags,
+        "_print_tag_diagnostic",
+        lambda tag_diag, types: calls.append(("print", tag_diag, list(types))),
+    )
+
+    assert extract_tags._prepare_extract_tag_diagnostics(args, extract_types) is diag
+    assert calls == [
+        ("diagnose", "in.bam", 20),
+        ("auto_skip", ["m6a", "deam"], False, diag),
+        ("print", diag, ["m6a", "deam"]),
+    ]
+
+
+def test_run_extract_tags_parallel_passes_resolved_settings(monkeypatch):
+    settings = extract_tags._ExtractRunSettings(
+        outdir="tracks",
+        extract_types=["tf", "msp"],
+        make_bigbed=True,
+        chroms={"chr2L"},
+        dataset="sample",
+        sample_name="sample",
+        chrom_sizes={"chr2L": 100},
+    )
+    args = SimpleNamespace(
+        input="input.bam",
+        cores=4,
+        region_size=5000,
+        min_mapq=20,
+        prob_threshold=125,
+        no_scores=False,
+        min_tq=60,
+        block_scores=True,
+        circular_groups=True,
+        skip_scaffolds=True,
+    )
+    calls = []
+    monkeypatch.setattr(
+        extract_tags,
+        "extract_tags_parallel",
+        lambda **kwargs: calls.append(kwargs) or (12, {"tf": 3}),
+    )
+
+    output_beds, bb_paths, n_reads, n_features = (
+        extract_tags._run_extract_tags_parallel(args, settings)
+    )
+
+    assert n_reads == 12
+    assert n_features == {"tf": 3}
+    assert output_beds == {
+        "tf": os.path.join("tracks", "sample_tf.bed"),
+        "msp": os.path.join("tracks", "sample_msp.bed"),
+    }
+    assert bb_paths["tf"] == os.path.join("tracks", "sample_tf.bb")
+    assert calls == [{
+        "input_bam": "input.bam",
+        "output_beds": output_beds,
+        "extract_types": ["tf", "msp"],
+        "n_cores": 4,
+        "region_size": 5000,
+        "min_mapq": 20,
+        "prob_threshold": 125,
+        "with_scores": True,
+        "min_tq": 60,
+        "block_scores": True,
+        "circular_groups": True,
+        "skip_scaffolds": True,
+        "chroms": {"chr2L"},
+    }]
+
+
+def test_finalize_extract_outputs_skips_empty_and_converts_bigbed(monkeypatch):
+    settings = extract_tags._ExtractRunSettings(
+        outdir="tracks",
+        extract_types=["tf", "msp"],
+        make_bigbed=True,
+        chroms=None,
+        dataset="sample",
+        sample_name="sample-a",
+        chrom_sizes={"chr1": 100},
+    )
+    args = SimpleNamespace(
+        block_scores=True,
+        circular_groups=True,
+        keep_bed=False,
+    )
+    output_beds = {"tf": "sample_tf.bed", "msp": "sample_msp.bed"}
+    bb_paths = {"tf": "sample_tf.bb", "msp": "sample_msp.bb"}
+    calls = []
+    monkeypatch.setattr(
+        extract_tags,
+        "_skip_empty_extract_output",
+        lambda extract_type, bed_path: calls.append(("skip", extract_type, bed_path)),
+    )
+    monkeypatch.setattr(
+        extract_tags,
+        "_convert_extract_output_to_bigbed",
+        lambda *args, **kwargs: calls.append(("convert", args, kwargs)),
+    )
+
+    extract_tags._finalize_extract_outputs(
+        args,
+        settings,
+        output_beds,
+        bb_paths,
+        {"tf": 2, "msp": 0},
+    )
+
+    assert calls == [
+        (
+            "convert",
+            (
+                "tf",
+                "sample_tf.bed",
+                "sample_tf.bb",
+                {"chr1": 100},
+            ),
+            {
+                "block_scores": True,
+                "sample_name": "sample-a",
+                "circular_groups": True,
+                "keep_bed": False,
+            },
+        ),
+        ("skip", "msp", "sample_msp.bed"),
+    ]
+
+
 def test_extract_output_finalization_helpers_cleanup_and_convert(
     monkeypatch, tmp_path, capsys,
 ):

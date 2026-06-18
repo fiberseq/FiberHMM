@@ -48,6 +48,7 @@ import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import ExitStack
+from dataclasses import dataclass
 from typing import Dict, Optional, Set, Tuple
 
 import numpy as np
@@ -1859,68 +1860,75 @@ Examples:
     return parser
 
 
-def main():
-    parser = _build_extract_tags_parser()
-    args = parser.parse_args()
+@dataclass(frozen=True)
+class _ExtractRunSettings:
+    outdir: str
+    extract_types: list
+    make_bigbed: bool
+    chroms: Optional[Set[str]]
+    dataset: str
+    sample_name: str
+    chrom_sizes: Dict[str, int]
 
-    # Validate input
+
+def _prepare_extract_run_settings(args) -> _ExtractRunSettings:
     if not os.path.exists(args.input):
         print(f"Error: Input file not found: {args.input}")
         sys.exit(1)
 
-    # Default output directory to input file's directory
-    if args.outdir is None:
-        args.outdir = _default_extract_outdir(args.input)
-
-    # Determine what to extract (default: all)
+    outdir = args.outdir or _default_extract_outdir(args.input)
     extract_types = _selected_extract_types(args)
-
-    # Default to bigbed unless --bed-only specified
     make_bigbed = not args.bed_only
 
-    # Create output directory
-    os.makedirs(args.outdir, exist_ok=True)
+    os.makedirs(outdir, exist_ok=True)
 
-    # Parse chromosome filter
-    chroms = _parse_chroms_filter(args.chroms)
-
-    # Get dataset name (file prefix + default sample_name).
     dataset = _extract_dataset_name(args.input)
-    sample_name = args.sample_name or dataset
+    return _ExtractRunSettings(
+        outdir=outdir,
+        extract_types=extract_types,
+        make_bigbed=make_bigbed,
+        chroms=_parse_chroms_filter(args.chroms),
+        dataset=dataset,
+        sample_name=args.sample_name or dataset,
+        chrom_sizes=get_chrom_sizes(args.input) if make_bigbed else {},
+    )
 
-    # Get chrom sizes — only required for bigBed conversion
-    chrom_sizes = get_chrom_sizes(args.input) if make_bigbed else {}
 
+def _print_extract_run_summary(args, settings: _ExtractRunSettings) -> None:
     print(f"Input: {args.input}")
-    print(f"Output: {args.outdir}")
-    print(f"Extract types: {', '.join(extract_types)}")
+    print(f"Output: {settings.outdir}")
+    print(f"Extract types: {', '.join(settings.extract_types)}")
     print(f"Cores: {args.cores}")
     print()
 
-    # Quick tag sniff so the user knows which tracks will populate.
+
+def _prepare_extract_tag_diagnostics(args, extract_types: list):
     diag = diagnose_bam_tags(args.input, n_reads=20)
-
-    # Auto-skip --deam on fiber-seq BAMs (m6A/5mC tags, no deaminase signature).
-    # Hia5/m6A fiber-seq has no deaminations to extract, and on surjected or
-    # otherwise MD-weird BAMs the path-3 MD walker can segfault the worker
-    # (pysam AssertionError → heap corruption → lost m6a/m5c writes). If the
-    # user explicitly passed --deam we honor their intent; if --deam was
-    # swept in by --all / default we drop it here.
+    # Drop implicit --deam for fiber-seq BAMs; stale MD tags on consensus BAMs
+    # can make the MD fallback unsafe while m6a/m5c extraction is otherwise fine.
     _maybe_auto_skip_deam_for_fiber_seq(extract_types, args.deam, diag)
-
     _print_tag_diagnostic(diag, extract_types)
+    return diag
 
-    # Single region-parallel pass for ALL requested types.  Each worker
-    # opens the BAM once, iterates once, builds the query->ref mapping
-    # once per read, and writes to N per-type output BEDs.  N× faster
-    # than running the old one-type-at-a-time loop.
-    output_beds = _extract_output_paths(args.outdir, dataset, extract_types, 'bed')
-    bb_paths = _extract_output_paths(args.outdir, dataset, extract_types, 'bb')
-    print(f"=== Extracting {', '.join(extract_types)} (single pass) ===")
+
+def _run_extract_tags_parallel(args, settings: _ExtractRunSettings):
+    output_beds = _extract_output_paths(
+        settings.outdir,
+        settings.dataset,
+        settings.extract_types,
+        'bed',
+    )
+    bb_paths = _extract_output_paths(
+        settings.outdir,
+        settings.dataset,
+        settings.extract_types,
+        'bb',
+    )
+    print(f"=== Extracting {', '.join(settings.extract_types)} (single pass) ===")
     n_reads, n_features = extract_tags_parallel(
         input_bam=args.input,
         output_beds=output_beds,
-        extract_types=extract_types,
+        extract_types=settings.extract_types,
         n_cores=args.cores,
         region_size=args.region_size,
         min_mapq=args.min_mapq,
@@ -1930,11 +1938,15 @@ def main():
         block_scores=args.block_scores,
         circular_groups=args.circular_groups,
         skip_scaffolds=args.skip_scaffolds,
-        chroms=chroms,
+        chroms=settings.chroms,
     )
+    return output_beds, bb_paths, n_reads, n_features
 
+
+def _finalize_extract_outputs(args, settings: _ExtractRunSettings,
+                              output_beds, bb_paths, n_features) -> None:
     print()
-    for extract_type in extract_types:
+    for extract_type in settings.extract_types:
         feats = n_features.get(extract_type, 0)
         bed_path = output_beds[extract_type]
         bb_path = bb_paths[extract_type]
@@ -1945,17 +1957,38 @@ def main():
 
         print(f"  [{extract_type}] BED: {bed_path}")
 
-        if make_bigbed:
+        if settings.make_bigbed:
             _convert_extract_output_to_bigbed(
                 extract_type,
                 bed_path,
                 bb_path,
-                chrom_sizes,
+                settings.chrom_sizes,
                 block_scores=args.block_scores,
-                sample_name=sample_name,
+                sample_name=settings.sample_name,
                 circular_groups=args.circular_groups,
                 keep_bed=args.keep_bed,
             )
+
+
+def main():
+    parser = _build_extract_tags_parser()
+    args = parser.parse_args()
+
+    settings = _prepare_extract_run_settings(args)
+    _print_extract_run_summary(args, settings)
+
+    # Quick tag sniff so the user knows which tracks will populate.
+    _prepare_extract_tag_diagnostics(args, settings.extract_types)
+
+    # Single region-parallel pass for ALL requested types.  Each worker
+    # opens the BAM once, iterates once, builds the query->ref mapping
+    # once per read, and writes to N per-type output BEDs.  N× faster
+    # than running the old one-type-at-a-time loop.
+    output_beds, bb_paths, _, n_features = _run_extract_tags_parallel(
+        args,
+        settings,
+    )
+    _finalize_extract_outputs(args, settings, output_beds, bb_paths, n_features)
 
     print("\nDone!")
 
