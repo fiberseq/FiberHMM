@@ -155,6 +155,44 @@ def test_recall_tfs_stats_helpers_accumulate_summary():
     )
 
 
+def test_recall_tfs_worker_init_accepts_config_and_legacy_args(monkeypatch):
+    worker_state = {}
+    monkeypatch.setattr(recall_tfs, "_WORKER", worker_state)
+
+    recall_tfs._worker_init_from_config(
+        recall_tfs._RecallWorkerConfig(
+            llr_hit="hit",
+            llr_miss="miss",
+            mode="daf",
+            k=5,
+            min_llr=4.5,
+            min_opps=3,
+            unify_threshold=90,
+        )
+    )
+
+    assert worker_state == {
+        "llr_hit": "hit",
+        "llr_miss": "miss",
+        "mode": "daf",
+        "k": 5,
+        "min_llr": 4.5,
+        "min_opps": 3,
+        "unify_threshold": 90,
+    }
+
+    recall_tfs._worker_init("hit2", "miss2", "m6a", 3, 6.0, 4, 85)
+    assert worker_state == {
+        "llr_hit": "hit2",
+        "llr_miss": "miss2",
+        "mode": "m6a",
+        "k": 3,
+        "min_llr": 6.0,
+        "min_opps": 4,
+        "unify_threshold": 85,
+    }
+
+
 def test_recall_tfs_record_recall_stats_counts_demoted_short_nucs():
     stats = recall_tfs._new_stats()
 

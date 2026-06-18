@@ -105,6 +105,17 @@ class _RecallModelConfig:
 
 
 @dataclass(frozen=True)
+class _RecallWorkerConfig:
+    llr_hit: object
+    llr_miss: object
+    mode: str
+    k: int
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+
+
+@dataclass(frozen=True)
 class _RecallApplyResultRequest:
     read: object
     result: object
@@ -180,19 +191,33 @@ def _kept_nuc_nq_from_legacy(tags: dict, read, kept_nucs):
         return None
 
 
-def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold):
+def _worker_init_from_config(config: _RecallWorkerConfig) -> None:
     """Set per-process globals once per worker.
 
     Slim version: workers receive compact payloads and return compact results —
     no pysam header, no SAM serialization inside the worker.
     """
-    _WORKER['llr_hit'] = llr_hit
-    _WORKER['llr_miss'] = llr_miss
-    _WORKER['mode'] = mode
-    _WORKER['k'] = k
-    _WORKER['min_llr'] = min_llr
-    _WORKER['min_opps'] = min_opps
-    _WORKER['unify_threshold'] = unify_threshold
+    _WORKER['llr_hit'] = config.llr_hit
+    _WORKER['llr_miss'] = config.llr_miss
+    _WORKER['mode'] = config.mode
+    _WORKER['k'] = config.k
+    _WORKER['min_llr'] = config.min_llr
+    _WORKER['min_opps'] = config.min_opps
+    _WORKER['unify_threshold'] = config.unify_threshold
+
+
+def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold):
+    _worker_init_from_config(
+        _RecallWorkerConfig(
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            mode=mode,
+            k=k,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
