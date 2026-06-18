@@ -17,9 +17,11 @@ import pytest
 
 # Try package imports first, fall back to flat imports
 try:
+    from fiberhmm.core import hmm as hmm_module
     from fiberhmm.core.hmm import (
         FiberHMM,
         _baum_welch_estep_python,
+        _baum_welch_estep_sequence,
         _fit_training_iteration,
         _hmmlearn_uses_categorical,
         _hmmlearn_version_tuple,
@@ -42,9 +44,11 @@ try:
     from fiberhmm.core.model_io import load_model, load_model_with_metadata, save_model
 except ImportError:
     sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+    import hmm as hmm_module
     from hmm import (
         FiberHMM,
         _baum_welch_estep_python,
+        _baum_welch_estep_sequence,
         _fit_training_iteration,
         _hmmlearn_uses_categorical,
         _hmmlearn_version_tuple,
@@ -220,6 +224,26 @@ class TestModelTraining:
         np.testing.assert_allclose(start_counts.sum(), 1.0)
         np.testing.assert_allclose(trans_counts.sum(), len(obs) - 1)
         np.testing.assert_allclose(log_prob, model.score(obs))
+
+    def test_baum_welch_estep_sequence_uses_python_fallback(
+        self,
+        monkeypatch,
+        simple_emission_probs,
+        simple_observations,
+    ):
+        model = FiberHMM()
+        model.emissionprob_ = simple_emission_probs
+        model.startprob_ = np.array([0.5, 0.5])
+        model.transmat_ = np.array([[0.8, 0.2], [0.2, 0.8]])
+        model._compute_log_probs()
+        obs = simple_observations.flatten().astype(int)
+
+        monkeypatch.setattr(hmm_module, "HAS_NUMBA", False)
+        fallback = _baum_welch_estep_sequence(model, obs)
+        direct = _baum_welch_estep_python(model, obs)
+
+        for fallback_value, direct_value in zip(fallback, direct):
+            np.testing.assert_allclose(fallback_value, direct_value)
 
     def test_methylated_emission_means_use_first_half_only(self):
         means = _methylated_emission_means(np.array([

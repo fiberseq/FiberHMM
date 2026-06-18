@@ -718,19 +718,10 @@ class FiberHMM:
                     seq = obs[idx:idx + length]
                     idx += length
 
-                    if HAS_NUMBA:
-                        # Use numba E-step for this sequence
-                        sc, tc, lp = _baum_welch_estep_numba(
-                            seq, self._log_startprob, self._log_transmat, self._log_emissionprob
-                        )
-                        start_counts += sc
-                        trans_counts += tc
-                        log_prob_total += lp
-                    else:
-                        sc, tc, lp = _baum_welch_estep_python(self, seq)
-                        start_counts += sc
-                        trans_counts += tc
-                        log_prob_total += lp
+                    sc, tc, lp = _baum_welch_estep_sequence(self, seq)
+                    start_counts += sc
+                    trans_counts += tc
+                    log_prob_total += lp
 
             # M-step: update parameters
             self.startprob_ = _normalized_start_counts(start_counts)
@@ -915,6 +906,17 @@ def _baum_welch_estep_python(model, seq: np.ndarray):
         trans_counts += np.exp(log_xi)
 
     return start_counts, trans_counts, log_prob
+
+
+def _baum_welch_estep_sequence(model, seq: np.ndarray):
+    if HAS_NUMBA:
+        return _baum_welch_estep_numba(
+            seq,
+            model._log_startprob,
+            model._log_transmat,
+            model._log_emissionprob,
+        )
+    return _baum_welch_estep_python(model, seq)
 
 
 def _methylated_emission_means(emissionprob: np.ndarray) -> Tuple[float, float]:
