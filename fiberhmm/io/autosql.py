@@ -106,6 +106,7 @@ EXTRA_FIELD_COUNTS = {t: f.count('int[blockCount]')
 
 
 def _schema_description(description: str, sample_name: Optional[str] = None) -> str:
+    sample_name = '' if sample_name is None else str(sample_name).strip()
     if not sample_name:
         return description
     # Prepend a machine-parseable "Sample: <name>." marker. The autoSQL

@@ -1313,7 +1313,11 @@ def test_create_autosql_output_path_handles_tempfile_and_output_dir(tmp_path):
 
 def test_schema_description_prepends_sample_marker_when_present():
     assert _schema_description("Track description") == "Track description"
+    assert _schema_description("Track description", " ") == "Track description"
     assert _schema_description("Track description", "sample-a") == (
+        "Sample: sample-a. Track description"
+    )
+    assert _schema_description("Track description", " sample-a ") == (
         "Sample: sample-a. Track description"
     )
 
