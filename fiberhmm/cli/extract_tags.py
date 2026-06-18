@@ -78,7 +78,7 @@ from fiberhmm.io.ma_tags import (
     parse_aq_array,
     parse_ma_tag,
 )
-from fiberhmm.io.path_status import path_is_nonempty_file
+from fiberhmm.io.path_status import path_is_nonempty_file, path_is_regular_file
 
 _MM_SUBTYPE_RE = re.compile(r'([ACGTUN])([+-])([a-z0-9]+|\d+)', re.IGNORECASE)
 
@@ -87,7 +87,9 @@ def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
     """Extract chromosome sizes from BAM header."""
     if not os.path.exists(bam_path):
         raise FileNotFoundError(f"BAM file not found: {bam_path}")
-    if os.path.getsize(bam_path) == 0:
+    if not path_is_regular_file(bam_path):
+        raise ValueError(f"BAM path is not a file: {bam_path}")
+    if not path_is_nonempty_file(bam_path):
         raise ValueError(
             f"BAM file is empty: {bam_path}\n"
             f"  This usually means the upstream tool (e.g. fiberhmm-apply) "
@@ -2046,6 +2048,9 @@ class _ExtractRunSettings:
 def _prepare_extract_run_settings(args) -> _ExtractRunSettings:
     if not os.path.exists(args.input):
         print(f"Error: Input file not found: {args.input}")
+        sys.exit(1)
+    if not path_is_regular_file(args.input):
+        print(f"Error: Input path is not a file: {args.input}")
         sys.exit(1)
 
     outdir = args.outdir or _default_extract_outdir(args.input)

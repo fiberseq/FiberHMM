@@ -587,6 +587,34 @@ def test_prepare_extract_run_settings_requires_existing_input(tmp_path, capsys):
     assert "Input file not found" in capsys.readouterr().out
 
 
+def test_prepare_extract_run_settings_rejects_directory_input(tmp_path, capsys):
+    input_dir = tmp_path / "input.bam"
+    input_dir.mkdir()
+    parser = extract_tags._build_extract_tags_parser()
+    args = parser.parse_args(["-i", str(input_dir)])
+
+    with pytest.raises(SystemExit):
+        extract_tags._prepare_extract_run_settings(args)
+
+    assert "Input path is not a file" in capsys.readouterr().out
+
+
+def test_get_chrom_sizes_rejects_empty_and_non_file_inputs(tmp_path):
+    missing = tmp_path / "missing.bam"
+    empty = tmp_path / "empty.bam"
+    directory = tmp_path / "directory.bam"
+
+    empty.write_text("")
+    directory.mkdir()
+
+    with pytest.raises(FileNotFoundError, match="BAM file not found"):
+        extract_tags.get_chrom_sizes(str(missing))
+    with pytest.raises(ValueError, match="BAM file is empty"):
+        extract_tags.get_chrom_sizes(str(empty))
+    with pytest.raises(ValueError, match="BAM path is not a file"):
+        extract_tags.get_chrom_sizes(str(directory))
+
+
 def test_prepare_extract_tag_diagnostics_routes_sniff_and_auto_skip(monkeypatch):
     args = SimpleNamespace(input="in.bam", deam=False)
     extract_types = ["m6a", "deam"]
