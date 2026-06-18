@@ -268,6 +268,30 @@ def _plot_observations_per_context(ax, acc_total, inacc_total) -> None:
     ax.legend()
 
 
+def _plot_context_coverage(ax, acc_total, inacc_total) -> None:
+    acc_cumsum = _cumulative_observation_percentages(acc_total)
+    inacc_cumsum = _cumulative_observation_percentages(inacc_total)
+    if len(acc_cumsum) > 0:
+        ax.plot(
+            range(len(acc_cumsum)),
+            acc_cumsum,
+            label='Accessible',
+            color='forestgreen',
+        )
+    if len(inacc_cumsum) > 0:
+        ax.plot(
+            range(len(inacc_cumsum)),
+            inacc_cumsum,
+            label='Inaccessible',
+            color='firebrick',
+        )
+    ax.axhline(90, color='gray', linestyle='--', alpha=0.5)
+    ax.set_xlabel('Number of contexts (ranked)')
+    ax.set_ylabel('Cumulative % of observations')
+    ax.set_title('Context Coverage (Lorenz-like)')
+    ax.legend()
+
+
 def _write_probability_ratio_summary(handle, label: str, ratios: np.ndarray) -> None:
     if len(ratios) == 0:
         return
@@ -461,17 +485,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
 
             # Cumulative coverage
             ax = axes[0, 1]
-            acc_cumsum = _cumulative_observation_percentages(acc_total.values)
-            inacc_cumsum = _cumulative_observation_percentages(inacc_total.values)
-            if len(acc_cumsum) > 0:
-                ax.plot(range(len(acc_cumsum)), acc_cumsum, label='Accessible', color='forestgreen')
-            if len(inacc_cumsum) > 0:
-                ax.plot(range(len(inacc_cumsum)), inacc_cumsum, label='Inaccessible', color='firebrick')
-            ax.axhline(90, color='gray', linestyle='--', alpha=0.5)
-            ax.set_xlabel('Number of contexts (ranked)')
-            ax.set_ylabel('Cumulative % of observations')
-            ax.set_title('Context Coverage (Lorenz-like)')
-            ax.legend()
+            _plot_context_coverage(ax, acc_total.values, inacc_total.values)
 
             # Hit rate comparison - use merged data for alignment
             ax = axes[1, 0]

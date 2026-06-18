@@ -535,3 +535,50 @@ def test_observations_per_context_plot_uses_positive_log_totals():
     assert ax.ylabel == "Number of contexts"
     assert ax.title == "Observations per Context"
     assert ax.legend_called
+
+
+def test_context_coverage_plot_uses_cumulative_percentages_and_guide():
+    class FakeAxis:
+        def __init__(self):
+            self.plot_calls = []
+            self.hlines = []
+            self.xlabel = None
+            self.ylabel = None
+            self.title = None
+            self.legend_called = False
+
+        def plot(self, x_values, y_values, **kwargs):
+            self.plot_calls.append((x_values, y_values, kwargs))
+
+        def axhline(self, value, **kwargs):
+            self.hlines.append((value, kwargs))
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_ylabel(self, value):
+            self.ylabel = value
+
+        def set_title(self, value):
+            self.title = value
+
+        def legend(self):
+            self.legend_called = True
+
+    ax = FakeAxis()
+
+    stats._plot_context_coverage(ax, [1, 4, 0], [2, 2])
+
+    acc_x, acc_y, acc_kwargs = ax.plot_calls[0]
+    inacc_x, inacc_y, inacc_kwargs = ax.plot_calls[1]
+    assert list(acc_x) == [0, 1, 2]
+    assert list(inacc_x) == [0, 1]
+    np.testing.assert_allclose(acc_y, [80.0, 100.0, 100.0])
+    np.testing.assert_allclose(inacc_y, [50.0, 100.0])
+    assert acc_kwargs == {"label": "Accessible", "color": "forestgreen"}
+    assert inacc_kwargs == {"label": "Inaccessible", "color": "firebrick"}
+    assert ax.hlines == [(90, {"color": "gray", "linestyle": "--", "alpha": 0.5})]
+    assert ax.xlabel == "Number of contexts (ranked)"
+    assert ax.ylabel == "Cumulative % of observations"
+    assert ax.title == "Context Coverage (Lorenz-like)"
+    assert ax.legend_called
