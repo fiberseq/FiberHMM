@@ -461,13 +461,6 @@ def test_build_fused_recall_result_request_dispatches(monkeypatch):
     calls = []
     fiber_read = {"query_sequence": "AAAA"}
 
-    def fake_branch(label):
-        def inner(*args):
-            calls.append((label, args))
-            return {"branch": label}
-
-        return inner
-
     def fake_request_branch(label):
         def inner(request):
             calls.append((label, request))
@@ -487,13 +480,13 @@ def test_build_fused_recall_result_request_dispatches(monkeypatch):
     )
     monkeypatch.setattr(
         fused_stages,
-        "_build_fused_recall_result_with_nucs",
-        fake_branch("nucs"),
+        "_build_fused_recall_result_with_nucs_from_request",
+        fake_request_branch("nucs"),
     )
     monkeypatch.setattr(
         fused_stages,
-        "_build_fused_recall_result_with_nucs_circular",
-        fake_branch("nucs_circular"),
+        "_build_fused_recall_result_with_nucs_circular_from_request",
+        fake_request_branch("nucs_circular"),
     )
 
     def request_for(apply_result, recall_nucs):
@@ -530,6 +523,26 @@ def test_build_fused_recall_result_request_dispatches(monkeypatch):
         assert request.fiber_read is fiber_read
         assert request.apply_result is apply_result
 
+    def assert_nucs_request(call, label, apply_result):
+        assert call[0] == label
+        request = call[1]
+        assert request == fused_stages._FusedNucsResultRequest(
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit="hit",
+            llr_miss="miss",
+            min_llr=4.0,
+            min_opps=3,
+            unify_threshold=90,
+            split_min_llr=5.0,
+            split_min_opps=4,
+            nuc_min_size=75,
+            msp_min_size=2,
+            phase_nrl=147,
+        )
+        assert request.fiber_read is fiber_read
+        assert request.apply_result is apply_result
+
     linear_apply = {"circular": False}
     circular_apply = {"circular": True}
 
@@ -546,18 +559,12 @@ def test_build_fused_recall_result_request_dispatches(monkeypatch):
     assert fused_stages.build_fused_recall_result_from_request(
         request_for(linear_apply, recall_nucs=True),
     ) == {"branch": "nucs"}
-    assert calls[-1] == (
-        "nucs",
-        (fiber_read, linear_apply, "hit", "miss", 4.0, 3, 90, 5.0, 4, 75, 2, 147),
-    )
+    assert_nucs_request(calls[-1], "nucs", linear_apply)
 
     assert fused_stages.build_fused_recall_result_from_request(
         request_for(circular_apply, recall_nucs=True),
     ) == {"branch": "nucs_circular"}
-    assert calls[-1] == (
-        "nucs_circular",
-        (fiber_read, circular_apply, "hit", "miss", 4.0, 3, 90, 5.0, 4, 75, 2, 147),
-    )
+    assert_nucs_request(calls[-1], "nucs_circular", circular_apply)
 
 
 def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatch):

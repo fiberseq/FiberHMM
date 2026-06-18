@@ -137,6 +137,22 @@ class _FusedNoNucsResultRequest:
 
 
 @dataclass(frozen=True)
+class _FusedNucsResultRequest:
+    fiber_read: Mapping[str, Any]
+    apply_result: Mapping[str, Any]
+    llr_hit: Any
+    llr_miss: Any
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+    split_min_llr: float
+    split_min_opps: int
+    nuc_min_size: int
+    msp_min_size: int
+    phase_nrl: int
+
+
+@dataclass(frozen=True)
 class _OptionalApplyScoreFieldsRequest:
     apply_result: Mapping[str, Any]
     enabled: bool
@@ -493,20 +509,26 @@ def build_fused_recall_result_from_request(
     is_circular = _apply_result_is_circular(request.apply_result)
 
     if request.recall_nucs:
+        nucs_request = _FusedNucsResultRequest(
+            fiber_read=request.fiber_read,
+            apply_result=request.apply_result,
+            llr_hit=request.llr_hit,
+            llr_miss=request.llr_miss,
+            min_llr=request.min_llr,
+            min_opps=request.min_opps,
+            unify_threshold=request.unify_threshold,
+            split_min_llr=request.split_min_llr,
+            split_min_opps=request.split_min_opps,
+            nuc_min_size=request.nuc_min_size,
+            msp_min_size=request.msp_min_size,
+            phase_nrl=request.phase_nrl,
+        )
         if is_circular:
-            return _build_fused_recall_result_with_nucs_circular(
-                request.fiber_read, request.apply_result, request.llr_hit,
-                request.llr_miss, request.min_llr, request.min_opps,
-                request.unify_threshold, request.split_min_llr,
-                request.split_min_opps, request.nuc_min_size,
-                request.msp_min_size, request.phase_nrl,
+            return _build_fused_recall_result_with_nucs_circular_from_request(
+                nucs_request,
             )
-        return _build_fused_recall_result_with_nucs(
-            request.fiber_read, request.apply_result, request.llr_hit,
-            request.llr_miss, request.min_llr, request.min_opps,
-            request.unify_threshold, request.split_min_llr,
-            request.split_min_opps, request.nuc_min_size,
-            request.msp_min_size, request.phase_nrl,
+        return _build_fused_recall_result_with_nucs_from_request(
+            nucs_request,
         )
 
     no_nucs_request = _FusedNoNucsResultRequest(
@@ -689,36 +711,28 @@ def _build_fused_recall_result_without_nucs_circular(
     )
 
 
-def _build_fused_recall_result_with_nucs(
-    fiber_read: Mapping[str, Any],
-    apply_result: Mapping[str, Any],
-    llr_hit,
-    llr_miss,
-    min_llr: float,
-    min_opps: int,
-    unify_threshold: int,
-    split_min_llr: float,
-    split_min_opps: int,
-    nuc_min_size: int,
-    msp_min_size: int,
-    phase_nrl: int = 0,
+def _build_fused_recall_result_with_nucs_from_request(
+    request: _FusedNucsResultRequest,
 ) -> dict:
     """nuc recall -> MSP re-derive -> TF recall (non-circular only)."""
+    apply_result = request.apply_result
     obs = apply_result["encoded"]
-    read_length = len(fiber_read["query_sequence"])
+    read_length = len(request.fiber_read["query_sequence"])
     ns = apply_result["ns"]
     nl = apply_result["nl"]
     orig_msps = _apply_result_msp_pairs(apply_result)
 
     # 1) split + edge-refine footprints (+ optional Pass-2 phase prior)
     nuc_calls, access = recall_nucs_in_read(
-        obs, ns, nl, read_length, llr_hit, llr_miss,
-        split_min_llr=split_min_llr, split_min_opps=split_min_opps,
-        nuc_min_size=nuc_min_size, phase_nrl=phase_nrl,
+        obs, ns, nl, read_length, request.llr_hit, request.llr_miss,
+        split_min_llr=request.split_min_llr,
+        split_min_opps=request.split_min_opps,
+        nuc_min_size=request.nuc_min_size,
+        phase_nrl=request.phase_nrl,
     )
 
     # 2) re-derive MSPs from the new nucleosome boundaries
-    new_msps = rederive_msps(orig_msps, access, read_length, msp_min_size)
+    new_msps = rederive_msps(orig_msps, access, read_length, request.msp_min_size)
     msp_pairs = _interval_pair_lists(new_msps)
 
     # 3) TF recall over the cleaner accessible space + short refined nucs
@@ -730,7 +744,11 @@ def _build_fused_recall_result_with_nucs(
         msp_pairs.starts,
         msp_pairs.lengths,
         read_length,
-        llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
+        request.llr_hit,
+        request.llr_miss,
+        request.min_llr,
+        request.min_opps,
+        request.unify_threshold,
     )
 
     # 3b) promote nucleosome-sized TF leaks (>= unify_threshold) back to nuc+
@@ -739,15 +757,19 @@ def _build_fused_recall_result_with_nucs(
             tf_calls=tf_calls,
             nuc_calls=nuc_calls,
             obs=obs,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            unify_threshold=unify_threshold,
-            nuc_min_size=nuc_min_size,
+            llr_hit=request.llr_hit,
+            llr_miss=request.llr_miss,
+            unify_threshold=request.unify_threshold,
+            nuc_min_size=request.nuc_min_size,
         )
     )
 
     # 4) unify: drop short refined nucs overlapped by a TF call (carry nq/el/er)
-    kept = unify_nuc_calls_with_tf_calls(nuc_calls, tf_calls, unify_threshold)
+    kept = unify_nuc_calls_with_tf_calls(
+        nuc_calls,
+        tf_calls,
+        request.unify_threshold,
+    )
 
     # 5) re-tile: split/phase/promotion can leave overlapping nucs + stale MSPs.
     # Clip to non-overlapping nucleosomes and derive complementary MSPs so
@@ -763,8 +785,8 @@ def _build_fused_recall_result_with_nucs(
         kept,
         analyzed_span.start,
         analyzed_span.end,
-        msp_min_size,
-        nuc_min_size,
+        request.msp_min_size,
+        request.nuc_min_size,
     )
     msp_pairs = _interval_pair_lists(new_msps)
 
@@ -781,7 +803,7 @@ def _build_fused_recall_result_with_nucs(
     }
 
 
-def _build_fused_recall_result_with_nucs_circular(
+def _build_fused_recall_result_with_nucs(
     fiber_read: Mapping[str, Any],
     apply_result: Mapping[str, Any],
     llr_hit,
@@ -795,30 +817,69 @@ def _build_fused_recall_result_with_nucs_circular(
     msp_min_size: int,
     phase_nrl: int = 0,
 ) -> dict:
+    return _build_fused_recall_result_with_nucs_from_request(
+        _FusedNucsResultRequest(
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
+            split_min_llr=split_min_llr,
+            split_min_opps=split_min_opps,
+            nuc_min_size=nuc_min_size,
+            msp_min_size=msp_min_size,
+            phase_nrl=phase_nrl,
+        )
+    )
+
+
+def _build_fused_recall_result_with_nucs_circular_from_request(
+    request: _FusedNucsResultRequest,
+) -> dict:
     """nuc recall for circular reads: split/refine in tiled space, then project
     the refined nucs, MSPs and TF calls back to molecule coordinates."""
+    apply_result = request.apply_result
     obs = apply_result["encoded"]                     # 3x tiled observations
     tiled_len = len(obs)
-    read_length = _circular_read_length(fiber_read, apply_result)
+    read_length = _circular_read_length(request.fiber_read, apply_result)
     tiled = _tiled_interval_arrays(apply_result)
     tiled_msps = _interval_pairs(tiled.msp_starts, tiled.msp_lengths)
 
     # 1) split + edge-refine in tiled coordinates (+ optional Pass-2 phase prior)
     tiled_nucs, tiled_access = recall_nucs_in_read(
-        obs, tiled.nuc_starts, tiled.nuc_lengths, tiled_len, llr_hit, llr_miss,
-        split_min_llr=split_min_llr, split_min_opps=split_min_opps,
-        nuc_min_size=nuc_min_size, phase_nrl=phase_nrl,
+        obs,
+        tiled.nuc_starts,
+        tiled.nuc_lengths,
+        tiled_len,
+        request.llr_hit,
+        request.llr_miss,
+        split_min_llr=request.split_min_llr,
+        split_min_opps=request.split_min_opps,
+        nuc_min_size=request.nuc_min_size,
+        phase_nrl=request.phase_nrl,
     )
 
     # 2) re-derive MSPs (still tiled), then 3) TF recall on the refined structure
-    tiled_new_msps = rederive_msps(tiled_msps, tiled_access, tiled_len, msp_min_size)
+    tiled_new_msps = rederive_msps(
+        tiled_msps,
+        tiled_access,
+        tiled_len,
+        request.msp_min_size,
+    )
     tiled_msp_pairs = _interval_pair_lists(tiled_new_msps)
     tiled_nuc_starts, tiled_nuc_lengths = _nuc_call_start_length_lists(tiled_nucs)
     tiled_tf = run_tf_recall_stage(
         obs,
         tiled_nuc_starts, tiled_nuc_lengths,
         tiled_msp_pairs.starts, tiled_msp_pairs.lengths,
-        tiled_len, llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
+        tiled_len,
+        request.llr_hit,
+        request.llr_miss,
+        request.min_llr,
+        request.min_opps,
+        request.unify_threshold,
     )
     # 3b) promote nucleosome-sized TF leaks back to nuc+ (still tiled)
     tiled_tf, tiled_nucs = _promote_large_tf_nucs_from_request(
@@ -826,10 +887,10 @@ def _build_fused_recall_result_with_nucs_circular(
             tf_calls=tiled_tf,
             nuc_calls=tiled_nucs,
             obs=obs,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            unify_threshold=unify_threshold,
-            nuc_min_size=nuc_min_size,
+            llr_hit=request.llr_hit,
+            llr_miss=request.llr_miss,
+            unify_threshold=request.unify_threshold,
+            nuc_min_size=request.nuc_min_size,
         )
     )
 
@@ -845,9 +906,17 @@ def _build_fused_recall_result_with_nucs_circular(
     # 5) unify (circular-aware), re-tile (non-overlapping nucs + complementary
     # MSPs), then lay out for emission.
     kept = unify_circular_nuc_calls_with_tf_calls(
-        proj_nucs, tf_calls, unify_threshold, read_length)
+        proj_nucs,
+        tf_calls,
+        request.unify_threshold,
+        read_length,
+    )
     kept, proj_msps = assemble_circular_nuc_msp_tiling(
-        kept, read_length, msp_min_size, nuc_min_size)
+        kept,
+        read_length,
+        request.msp_min_size,
+        request.nuc_min_size,
+    )
     circular_ns = [(k.start, k.length) for k in kept]
     kept_starts, kept_lengths, _ = split_intervals_for_legacy(
         circular_ns, read_length, None)
@@ -868,3 +937,35 @@ def _build_fused_recall_result_with_nucs_circular(
         "circular_ns": circular_ns,
         "circular_as": proj_msps,
     }
+
+
+def _build_fused_recall_result_with_nucs_circular(
+    fiber_read: Mapping[str, Any],
+    apply_result: Mapping[str, Any],
+    llr_hit,
+    llr_miss,
+    min_llr: float,
+    min_opps: int,
+    unify_threshold: int,
+    split_min_llr: float,
+    split_min_opps: int,
+    nuc_min_size: int,
+    msp_min_size: int,
+    phase_nrl: int = 0,
+) -> dict:
+    return _build_fused_recall_result_with_nucs_circular_from_request(
+        _FusedNucsResultRequest(
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
+            split_min_llr=split_min_llr,
+            split_min_opps=split_min_opps,
+            nuc_min_size=nuc_min_size,
+            msp_min_size=msp_min_size,
+            phase_nrl=phase_nrl,
+        )
+    )
