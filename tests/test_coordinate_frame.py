@@ -55,8 +55,8 @@ def test_flip_interval_frame_is_involution():
 
 def test_flip_intervals_to_seq_forward_is_noop():
     fwd = _Read(is_reverse=False, query_length=1000)
-    s, l = flip_intervals_to_seq([100, 300], [50, 40], fwd)
-    assert s == [100, 300] and l == [50, 40]
+    starts, lengths = flip_intervals_to_seq([100, 300], [50, 40], fwd)
+    assert starts == [100, 300] and lengths == [50, 40]
 
 
 def test_flip_intervals_to_seq_reverse_roundtrip():
@@ -81,7 +81,7 @@ def test_assemble_prefers_longer_at_same_start_and_drops_subfloor():
     kept, msps = assemble_nuc_msp_tiling(
         nucs, span_lo=0, span_hi=200, msp_min_size=0, nuc_min_size=85)
     assert [(k.start, k.length) for k in kept] == [(0, 100)]
-    assert (100, 100) in [(s, l) for s, l in msps]
+    assert (100, 100) in [(start, length) for start, length in msps]
 
 
 def test_assemble_clips_partial_overlap_above_floor():
@@ -96,6 +96,9 @@ def test_assemble_clips_partial_overlap_above_floor():
     assert iv == [(0, 200), (200, 150)]
     assert kept[1].el == 0  # clipped left edge zeroed
     # tiling: nucs + msps cover [0,400) with no gaps/overlaps
-    spans = sorted([(s, s + l) for s, l in iv] + [(s, s + l) for s, l in msps])
+    spans = sorted(
+        [(start, start + length) for start, length in iv]
+        + [(start, start + length) for start, length in msps]
+    )
     assert spans[0][0] == 0 and spans[-1][1] == 400
     assert all(spans[i][1] == spans[i + 1][0] for i in range(len(spans) - 1))
