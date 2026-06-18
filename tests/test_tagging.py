@@ -25,6 +25,7 @@ from fiberhmm.inference.tagging import (
     unify_circular_nucs_with_tf_calls,
     unify_nucs_with_tf_calls,
 )
+from fiberhmm.inference.tag_utils import _clear_tag, clear_tags
 from fiberhmm.inference.tf_recaller import TFCall
 
 
@@ -47,6 +48,30 @@ def test_scores_to_u8_clips_and_returns_python_ints():
 
     assert values == [0, 0, 127, 255, 255]
     assert all(type(value) is int for value in values)
+
+
+def test_clear_tag_removes_present_tag_and_ignores_missing_tag():
+    read = RecordingRead()
+    read.tags = {"MA": "tag"}
+
+    _clear_tag(read, "AQ")
+    assert read.tags == {"MA": "tag"}
+
+    _clear_tag(read, "MA")
+    assert read.tags == {}
+
+
+def test_clear_tags_tolerates_set_tag_failures():
+    class FailingRead(RecordingRead):
+        def set_tag(self, tag, value, value_type=None):
+            raise RuntimeError("clear failed")
+
+    read = FailingRead()
+    read.tags = {"MA": "tag", "AQ": [1]}
+
+    clear_tags(read, ("MA", "AQ"))
+
+    assert read.tags == {"MA": "tag", "AQ": [1]}
 
 
 def test_flip_legacy_intervals_to_molecular_sorts_and_reorders_scores():
