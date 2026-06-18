@@ -474,6 +474,15 @@ def _finalize_probability_bam_run(
 
 
 @dataclass(frozen=True)
+class _ProbabilityBamResult:
+    reads: int
+    stats: dict
+
+    def as_tuple(self) -> Tuple[int, dict]:
+        return self.reads, self.stats
+
+
+@dataclass(frozen=True)
 class _ProbabilitySampleFileResult:
     reads: int
     stats: dict
@@ -500,7 +509,7 @@ def _process_probability_sample_file(
     base_name: str,
 ) -> _ProbabilitySampleFileResult:
     print(f"\n  Processing: {bam_file}")
-    reads, filter_stats = process_bam(
+    bam_result = _process_bam_result(
         bam_file,
         counters,
         mode,
@@ -508,19 +517,27 @@ def _process_probability_sample_file(
         max_per_file,
         verbose=getattr(args, 'verbose', False),
     )
-    print(f"    Processed {reads:,} reads (scanned {filter_stats['scanned']:,})")
+    print(
+        f"    Processed {bam_result.reads:,} reads "
+        f"(scanned {bam_result.stats['scanned']:,})"
+    )
 
     if args.save_interval > 0:
         _save_temporary_probability_counters(
             counters, output_dir, base_name, sample_name,
         )
 
-    return _ProbabilitySampleFileResult(reads, filter_stats)
+    return _ProbabilitySampleFileResult(bam_result.reads, bam_result.stats)
 
 
-def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
-                mode: str, args, max_reads: int = 0,
-                verbose: bool = False) -> Tuple[int, dict]:
+def _process_bam_result(
+    bam_path: str,
+    counters: Dict[str, ContextCounter],
+    mode: str,
+    args,
+    max_reads: int = 0,
+    verbose: bool = False,
+) -> _ProbabilityBamResult:
     """
     Process a BAM file and update counters.
 
@@ -533,7 +550,7 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
         verbose: Show detailed filter statistics
 
     Returns:
-        (reads_processed, filter_stats dict)
+        Named result containing processed read count and filter stats.
     """
     reads_processed = 0
     reads_scanned = 0
@@ -582,7 +599,34 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
         verbose=verbose,
     )
 
-    return reads_processed, filter_stats
+    return _ProbabilityBamResult(reads_processed, filter_stats)
+
+
+def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
+                mode: str, args, max_reads: int = 0,
+                verbose: bool = False) -> Tuple[int, dict]:
+    """
+    Process a BAM file and update counters.
+
+    Args:
+        bam_path: Path to BAM file
+        counters: Dict of center_base -> ContextCounter
+        mode: Analysis mode
+        args: Command line arguments
+        max_reads: Max reads to process (0 = all)
+        verbose: Show detailed filter statistics
+
+    Returns:
+        (reads_processed, filter_stats dict)
+    """
+    return _process_bam_result(
+        bam_path,
+        counters,
+        mode,
+        args,
+        max_reads,
+        verbose,
+    ).as_tuple()
 
 
 def _process_sample_set_result(

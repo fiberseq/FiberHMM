@@ -33,6 +33,7 @@ from fiberhmm.cli.generate_probs import (
     _probability_counters_have_data,
     _probability_read_tags_or_skip,
     _probability_table_path,
+    _ProbabilityBamResult,
     _ProbabilityControlGroupResults,
     _ProbabilityCounterSummary,
     _ProbabilityReadTags,
@@ -40,6 +41,7 @@ from fiberhmm.cli.generate_probs import (
     _ProbabilitySampleFileResult,
     _ProbabilitySampleResult,
     _ProbabilitySampleSetResult,
+    _process_bam_result,
     _process_probability_control_groups,
     _process_probability_read,
     _process_probability_read_or_skip,
@@ -930,6 +932,154 @@ def test_process_bam_closes_progress_when_read_processing_fails(monkeypatch):
     assert bam_instances[0].closed
 
 
+def test_process_bam_result_processes_until_processed_read_limit(monkeypatch):
+    import fiberhmm.cli.generate_probs as generate_probs
+
+    progress_instances = []
+    bam_instances = []
+    reads = [
+        _Read({"MM": "A+a,0;", "ML": [200]}),
+        _Read({"MM": "A+a,0;", "ML": [200]}),
+        _Read({"MM": "A+a,0;", "ML": [200]}),
+    ]
+
+    class FakeProgress:
+        def __init__(self, iterable, **kwargs):
+            self.iterable = iterable
+            self.kwargs = kwargs
+            self.closed = False
+            progress_instances.append(self)
+
+        def __iter__(self):
+            return iter(self.iterable)
+
+        def set_postfix(self, value):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    class FakeBam:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+            self.closed = False
+            bam_instances.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.closed = True
+            return False
+
+        def fetch(self):
+            return reads
+
+    process_calls = []
+    process_results = iter([False, True, True])
+    finalize_calls = []
+
+    def fake_process_read_or_skip(
+        read,
+        counters,
+        mode,
+        args,
+        filter_stats,
+        mm_tag_types,
+        strand_assignments,
+    ):
+        process_calls.append(
+            (
+                read,
+                counters,
+                mode,
+                args,
+                filter_stats,
+                mm_tag_types,
+                strand_assignments,
+            )
+        )
+        return next(process_results)
+
+    monkeypatch.setattr(generate_probs.pysam, "AlignmentFile", FakeBam)
+    monkeypatch.setattr(generate_probs, "tqdm", FakeProgress)
+    monkeypatch.setattr(
+        generate_probs,
+        "_process_probability_read_or_skip",
+        fake_process_read_or_skip,
+    )
+    monkeypatch.setattr(
+        generate_probs,
+        "_finalize_probability_bam_run",
+        lambda **kwargs: finalize_calls.append(kwargs),
+    )
+
+    args = SimpleNamespace(min_mapq=20, min_read_length=100)
+    counters = {"A": _Counter()}
+
+    result = _process_bam_result(
+        "reads.bam",
+        counters,
+        "pacbio-fiber",
+        args,
+        max_reads=2,
+        verbose=True,
+    )
+
+    expected_stats = _new_filter_stats()
+    expected_stats["scanned"] = 3
+    expected_stats["processed"] = 2
+    assert result == _ProbabilityBamResult(2, expected_stats)
+    assert result.as_tuple() == (2, expected_stats)
+    assert [call[0] for call in process_calls] == reads
+    assert all(call[1] is counters for call in process_calls)
+    assert progress_instances[0].kwargs["desc"] == "Processing reads.bam"
+    assert progress_instances[0].closed
+    assert bam_instances[0].args == ("reads.bam", "rb")
+    assert bam_instances[0].kwargs == {"check_sq": False}
+    assert bam_instances[0].closed
+    assert finalize_calls == [
+        {
+            "mode": "pacbio-fiber",
+            "args": args,
+            "filter_stats": expected_stats,
+            "mm_tag_types": process_calls[0][5],
+            "strand_assignments": process_calls[0][6],
+            "verbose": True,
+        }
+    ]
+
+
+def test_process_bam_preserves_tuple_return(monkeypatch):
+    import fiberhmm.cli.generate_probs as generate_probs
+
+    calls = []
+
+    def fake_process_bam_result(*args):
+        calls.append(args)
+        return _ProbabilityBamResult(7, {"processed": 7})
+
+    monkeypatch.setattr(
+        generate_probs,
+        "_process_bam_result",
+        fake_process_bam_result,
+    )
+
+    args = SimpleNamespace()
+    counters = {"A": object()}
+
+    assert generate_probs.process_bam(
+        "reads.bam",
+        counters,
+        "daf",
+        args,
+        max_reads=5,
+        verbose=True,
+    ) == (7, {"processed": 7})
+    assert calls == [("reads.bam", counters, "daf", args, 5, True)]
+
+
 def test_count_items_desc_sorts_by_count_descending():
     assert _count_items_desc({"low": 1, "high": 3, "mid": 2}) == [
         ("high", 3),
@@ -984,13 +1134,24 @@ def test_process_probability_sample_file_delegates_reports_and_saves(
     counters = {"A": object()}
     args = SimpleNamespace(save_interval=5, verbose=True)
 
-    def fake_process_bam(bam_file, got_counters, mode, got_args, max_reads, verbose):
+    def fake_process_bam_result(
+        bam_file,
+        got_counters,
+        mode,
+        got_args,
+        max_reads,
+        verbose,
+    ):
         process_calls.append(
             (bam_file, got_counters, mode, got_args, max_reads, verbose)
         )
-        return 7, {"scanned": 11, "processed": 7}
+        return _ProbabilityBamResult(7, {"scanned": 11, "processed": 7})
 
-    monkeypatch.setattr(generate_probs, "process_bam", fake_process_bam)
+    monkeypatch.setattr(
+        generate_probs,
+        "_process_bam_result",
+        fake_process_bam_result,
+    )
     monkeypatch.setattr(
         generate_probs,
         "_save_temporary_probability_counters",
