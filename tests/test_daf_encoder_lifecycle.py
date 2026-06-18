@@ -116,10 +116,10 @@ def test_daf_mismatch_positions_from_pairs_collects_deamination_directions():
         (4, 104, None),
     ]
 
-    assert encoder._daf_mismatch_positions_from_pairs(pairs, "TAGTA") == (
-        [0],
-        [1],
-    )
+    mismatch_positions = encoder._daf_mismatch_positions_from_pairs(pairs, "TAGTA")
+
+    assert mismatch_positions.ct == [0]
+    assert mismatch_positions.ga == [1]
 
 
 def test_needs_fasta_pair_fallback_detects_missing_ref_bases():

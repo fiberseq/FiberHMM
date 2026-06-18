@@ -40,6 +40,12 @@ class _DafChimeraSegmentCounts:
     ga_right: int
 
 
+@dataclass(frozen=True)
+class _DafMismatchPositions:
+    ct: list[int]
+    ga: list[int]
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -133,7 +139,7 @@ def _daf_mismatch_positions_from_pairs(pairs, seq: str):
             ct_positions.append(query_pos)
         elif ref_base == "G" and query_base == "A":
             ga_positions.append(query_pos)
-    return ct_positions, ga_positions
+    return _DafMismatchPositions(ct_positions, ga_positions)
 
 
 def _needs_fasta_pair_fallback(pairs) -> bool:
@@ -214,16 +220,16 @@ def get_daf_positions(read, force_strand=None, ref_fasta=None):
     if pairs is None:
         return None
 
-    ct_positions, ga_positions = _daf_mismatch_positions_from_pairs(pairs, seq)
+    mismatch_positions = _daf_mismatch_positions_from_pairs(pairs, seq)
 
-    n_ct = len(ct_positions)
-    n_ga = len(ga_positions)
+    n_ct = len(mismatch_positions.ct)
+    n_ga = len(mismatch_positions.ga)
 
     strand = _select_daf_strand(n_ct, n_ga, force_strand)
     if strand is None:
         return None
 
-    return (ct_positions, ga_positions, strand)
+    return (mismatch_positions.ct, mismatch_positions.ga, strand)
 
 
 def _daf_chimera_events(ct_positions, ga_positions):
