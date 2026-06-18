@@ -382,7 +382,7 @@ def test_process_region_bam_read_counts_footprinted_read(monkeypatch):
         calls["write"] = (
             out, got_read, got_result, with_scores, write_msps, got_tsv
         )
-        return 1, True
+        return region_workers._FootprintedRegionWrite(1, True)
 
     monkeypatch.setattr(region_workers, "_process_single_read", fake_process)
     monkeypatch.setattr(region_workers, "_write_footprinted_region_read", fake_write)
@@ -614,11 +614,12 @@ def test_write_footprinted_region_read_tags_writes_and_streams_posterior(monkeyp
         region_workers, "_write_region_posterior_record", fake_write_posterior
     )
 
-    written, posterior_written = _write_footprinted_region_read(
+    write_result = _write_footprinted_region_read(
         outbam, read, result, with_scores=True, write_msps=False, tsv_file=tsv_file
     )
 
-    assert (written, posterior_written) == (1, True)
+    assert write_result.written == 1
+    assert write_result.posterior_written is True
     assert calls["set_tags"] == (read, result, True, False)
     assert calls["posterior"] == (tsv_file, read, result)
     assert outbam.written == [read]
@@ -640,9 +641,12 @@ def test_write_footprinted_region_read_skips_absent_posteriors(monkeypatch):
         lambda *args: posterior_calls.append(args),
     )
 
-    assert _write_footprinted_region_read(
+    write_result = _write_footprinted_region_read(
         outbam, read, result, with_scores=False, write_msps=True, tsv_file=object()
-    ) == (1, False)
+    )
+
+    assert write_result.written == 1
+    assert write_result.posterior_written is False
     assert posterior_calls == []
     assert outbam.written == [read]
 

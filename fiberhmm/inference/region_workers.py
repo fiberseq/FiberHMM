@@ -117,6 +117,12 @@ class _SkippedRegionReadCounts:
     skipped: int
 
 
+@dataclass(frozen=True)
+class _FootprintedRegionWrite:
+    written: int
+    posterior_written: bool
+
+
 @dataclass
 class _RegionBamWorkerCounts:
     total_reads: int = 0
@@ -265,7 +271,7 @@ def _write_footprinted_region_read(
     with_scores: bool,
     write_msps: bool,
     tsv_file,
-) -> tuple[int, bool]:
+) -> _FootprintedRegionWrite:
     set_legacy_apply_tags(read, result, with_scores, write_msps)
     posterior_written = (
         tsv_file is not None
@@ -273,7 +279,7 @@ def _write_footprinted_region_read(
         and _write_region_posterior_record(tsv_file, read, result)
     )
     outbam.write(read)
-    return 1, bool(posterior_written)
+    return _FootprintedRegionWrite(1, bool(posterior_written))
 
 
 def _fiber_read_skip_reason(fiber_read) -> Optional[str]:
@@ -616,15 +622,15 @@ def _process_region_bam_read(
     )
 
     if result is not None:
-        written, posterior_written = _write_footprinted_region_read(
+        write_result = _write_footprinted_region_read(
             outbam, read, result, apply_config.with_scores,
             output_config.write_msps, tsv_file,
         )
         return _RegionBamReadDelta(
             total_reads=1,
             reads_with_footprints=1,
-            written=written,
-            posteriors_written=int(posterior_written),
+            written=write_result.written,
+            posteriors_written=int(write_result.posterior_written),
         )
 
     written = _write_unfootprinted_region_read(outbam, read, skip_reasons)
