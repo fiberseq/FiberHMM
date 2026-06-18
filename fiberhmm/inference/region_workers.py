@@ -97,6 +97,12 @@ class _RegionBed12Blocks:
 
 
 @dataclass(frozen=True)
+class _RegionFiberReadResult:
+    fiber_read: object | None
+    skip_reason: Optional[str]
+
+
+@dataclass(frozen=True)
 class _RegionBamWorkerRuntime:
     apply_config: _RegionApplyConfig
     output_config: _RegionBamOutputConfig
@@ -309,28 +315,45 @@ def _fiber_read_skip_reason(fiber_read) -> Optional[str]:
     return None
 
 
-def _region_fiber_read_result(fiber_read):
+def _region_fiber_read_result(fiber_read) -> _RegionFiberReadResult:
     skip_reason = _fiber_read_skip_reason(fiber_read)
     if skip_reason:
-        return None, skip_reason
-    return fiber_read, None
+        return _RegionFiberReadResult(fiber_read=None, skip_reason=skip_reason)
+    return _RegionFiberReadResult(fiber_read=fiber_read, skip_reason=None)
 
 
-def _extract_region_fiber_read(read, mode: str, prob_threshold: int):
+def _extract_region_fiber_read(
+    read,
+    mode: str,
+    prob_threshold: int,
+) -> _RegionFiberReadResult:
     try:
         fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
     except Exception:
-        return None, 'extraction_failed'
+        return _RegionFiberReadResult(
+            fiber_read=None,
+            skip_reason='extraction_failed',
+        )
     return _region_fiber_read_result(fiber_read)
 
 
-def _extract_region_payload_fiber_read(payload, mode: str, prob_threshold: int):
+def _extract_region_payload_fiber_read(
+    payload,
+    mode: str,
+    prob_threshold: int,
+) -> _RegionFiberReadResult:
     if payload is None:
-        return None, 'no_modifications'
+        return _RegionFiberReadResult(
+            fiber_read=None,
+            skip_reason='no_modifications',
+        )
     try:
         fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
     except Exception:
-        return None, 'extraction_failed'
+        return _RegionFiberReadResult(
+            fiber_read=None,
+            skip_reason='extraction_failed',
+        )
     return _region_fiber_read_result(fiber_read)
 
 
@@ -642,14 +665,16 @@ def _process_region_bam_read(
     if read_route.route == _REGION_ROUTE_OUTSIDE:
         return _RegionBamReadDelta()
 
-    fiber_read, skip_reason = _extract_region_fiber_read(
+    fiber_result = _extract_region_fiber_read(
         read, apply_config.mode, apply_config.prob_threshold,
     )
-    if skip_reason:
-        return _skipped_region_bam_delta(outbam, read, skip_reasons, skip_reason)
+    if fiber_result.skip_reason:
+        return _skipped_region_bam_delta(
+            outbam, read, skip_reasons, fiber_result.skip_reason,
+        )
 
     result = _run_region_apply_read(
-        fiber_read,
+        fiber_result.fiber_read,
         model,
         apply_config,
         return_posteriors=return_posteriors,
@@ -686,13 +711,13 @@ def _process_region_bed_read(
     if not _read_starts_in_region(read, start, end):
         return _RegionBedReadDelta()
 
-    fiber_read, skip_reason = _extract_region_fiber_read(
+    fiber_result = _extract_region_fiber_read(
         read, apply_config.mode, apply_config.prob_threshold,
     )
-    if skip_reason:
+    if fiber_result.skip_reason:
         return _RegionBedReadDelta()
 
-    result = _run_region_apply_read(fiber_read, model, apply_config)
+    result = _run_region_apply_read(fiber_result.fiber_read, model, apply_config)
 
     if result is not None and len(result['ns']) > 0:
         bed_out.write(
@@ -731,14 +756,18 @@ def _process_fused_region_bam_read(
     payload = make_apply_payload(
         read, mode=apply_config.mode, ref_fasta=ref_fasta,
     )
-    fiber_read, skip_reason = _extract_region_payload_fiber_read(
+    fiber_result = _extract_region_payload_fiber_read(
         payload, apply_config.mode, apply_config.prob_threshold,
     )
-    if skip_reason:
-        return _skipped_region_bam_delta(outbam, read, skip_reasons, skip_reason)
+    if fiber_result.skip_reason:
+        return _skipped_region_bam_delta(
+            outbam, read, skip_reasons, fiber_result.skip_reason,
+        )
 
     try:
-        apply_result = _run_fused_region_apply_read(fiber_read, model, apply_config)
+        apply_result = _run_fused_region_apply_read(
+            fiber_result.fiber_read, model, apply_config,
+        )
     except Exception:
         return _skipped_region_bam_delta(
             outbam, read, skip_reasons, 'extraction_failed',
@@ -749,7 +778,7 @@ def _process_fused_region_bam_read(
         return _RegionBamReadDelta(total_reads=1, written=written)
 
     fused_result = _build_fused_region_recall_result(
-        fiber_read,
+        fiber_result.fiber_read,
         apply_result,
         llr_hit,
         llr_miss,
@@ -759,7 +788,7 @@ def _process_fused_region_bam_read(
     )
     write_fused_recall_tags(
         read,
-        read_length=len(fiber_read['query_sequence']),
+        read_length=len(fiber_result.fiber_read['query_sequence']),
         result=fused_result,
         also_write_legacy=recall_config.also_write_legacy,
         downstream_compat=recall_config.downstream_compat,
