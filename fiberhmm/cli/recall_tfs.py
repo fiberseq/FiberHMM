@@ -105,6 +105,23 @@ class _RecallModelConfig:
 
 
 @dataclass(frozen=True)
+class _RecallRuntime:
+    model_path: object
+    n_cores: int
+    min_llr: float
+    uplift: float
+    model_config: _RecallModelConfig
+    llr_hit: object
+    llr_miss: object
+
+
+@dataclass(frozen=True)
+class _RecallRuntimeRequest:
+    args: object
+    model_path: object
+
+
+@dataclass(frozen=True)
 class _RecallWorkerConfig:
     llr_hit: object
     llr_miss: object
@@ -782,6 +799,31 @@ def _build_recall_llr_tables(model, uplift):
     return _shared_build_recall_llr_tables(model, uplift)
 
 
+def _resolve_recall_runtime_from_request(
+    request: _RecallRuntimeRequest,
+) -> _RecallRuntime:
+    args = request.args
+    n_cores = _resolve_cores(args.cores)
+    min_llr, uplift = _resolve_recall_defaults(args)
+    model_config = _load_recall_model_config(request.model_path, args)
+    llr_hit, llr_miss = _build_recall_llr_tables(model_config.model, uplift)
+    return _RecallRuntime(
+        model_path=request.model_path,
+        n_cores=n_cores,
+        min_llr=min_llr,
+        uplift=uplift,
+        model_config=model_config,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+    )
+
+
+def _resolve_recall_runtime(args, model_path) -> _RecallRuntime:
+    return _resolve_recall_runtime_from_request(
+        _RecallRuntimeRequest(args=args, model_path=model_path),
+    )
+
+
 def _also_write_legacy(args):
     return should_write_legacy_tags(args)
 
@@ -880,16 +922,13 @@ def main():
 
     _print_beta_banner(args.downstream_compat)
 
-    n_cores = _resolve_cores(args.cores)
-    min_llr, uplift = _resolve_recall_defaults(args)
-    model_config = _load_recall_model_config(model_path, args)
-    llr_hit, llr_miss = _build_recall_llr_tables(model_config.model, uplift)
+    runtime = _resolve_recall_runtime(args, model_path)
 
     print(
         f"[recall_tfs] enzyme={args.enzyme or 'custom'} "
-        f"mode={model_config.mode} k={model_config.context_size} "
-        f"min_llr={min_llr:.2f} uplift={uplift:.2f} "
-        f"unify_threshold={args.unify_threshold} cores={n_cores} "
+        f"mode={runtime.model_config.mode} k={runtime.model_config.context_size} "
+        f"min_llr={runtime.min_llr:.2f} uplift={runtime.uplift:.2f} "
+        f"unify_threshold={args.unify_threshold} cores={runtime.n_cores} "
         f"numba={'on' if HAS_NUMBA else 'off'}",
         file=sys.stderr,
     )
@@ -908,15 +947,15 @@ def main():
 
         summary = _run_recall_processing(
             args,
-            n_cores,
+            runtime.n_cores,
             bam_in,
             bam_out,
             header_text,
-            llr_hit,
-            llr_miss,
-            model_config.mode,
-            model_config.context_size,
-            min_llr,
+            runtime.llr_hit,
+            runtime.llr_miss,
+            runtime.model_config.mode,
+            runtime.model_config.context_size,
+            runtime.min_llr,
             also_write_legacy,
         )
     finally:

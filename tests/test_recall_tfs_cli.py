@@ -456,6 +456,75 @@ def test_recall_tfs_load_model_config_falls_back_to_json_metadata(monkeypatch):
     )
 
 
+def test_recall_tfs_runtime_resolution_wires_setup(monkeypatch):
+    args = SimpleNamespace(cores=4)
+    model_config = recall_tfs._RecallModelConfig(
+        model="model",
+        mode="daf",
+        context_size=5,
+    )
+    calls = []
+
+    monkeypatch.setattr(
+        recall_tfs,
+        "_resolve_cores",
+        lambda cores: calls.append(("cores", cores)) or 8,
+    )
+    monkeypatch.setattr(
+        recall_tfs,
+        "_resolve_recall_defaults",
+        lambda got_args: calls.append(("defaults", got_args)) or (6.0, 1.2),
+    )
+    monkeypatch.setattr(
+        recall_tfs,
+        "_load_recall_model_config",
+        lambda path, got_args: calls.append(("model", path, got_args)) or model_config,
+    )
+    monkeypatch.setattr(
+        recall_tfs,
+        "_build_recall_llr_tables",
+        lambda model, uplift: calls.append(("tables", model, uplift))
+        or ("hit", "miss"),
+    )
+
+    runtime = recall_tfs._resolve_recall_runtime_from_request(
+        recall_tfs._RecallRuntimeRequest(args=args, model_path="model.json"),
+    )
+
+    assert runtime == recall_tfs._RecallRuntime(
+        model_path="model.json",
+        n_cores=8,
+        min_llr=6.0,
+        uplift=1.2,
+        model_config=model_config,
+        llr_hit="hit",
+        llr_miss="miss",
+    )
+    assert calls == [
+        ("cores", 4),
+        ("defaults", args),
+        ("model", "model.json", args),
+        ("tables", "model", 1.2),
+    ]
+
+
+def test_recall_tfs_runtime_adapter_builds_request(monkeypatch):
+    args = SimpleNamespace()
+    sentinel = object()
+    calls = []
+
+    monkeypatch.setattr(
+        recall_tfs,
+        "_resolve_recall_runtime_from_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert recall_tfs._resolve_recall_runtime(args, "model.json") is sentinel
+    assert calls == [
+        recall_tfs._RecallRuntimeRequest(args=args, model_path="model.json"),
+    ]
+
+
 def test_recall_tfs_json_metadata_fallback_uses_case_insensitive_suffix(tmp_path):
     model_path = tmp_path / "model.JSON"
     model_path.write_text(
