@@ -366,6 +366,63 @@ def _fused_region_worker_params(
     return params
 
 
+def _region_bam_worker_params_from_request(
+    request: _RegionBamPipelineRequest,
+    return_posteriors: bool,
+) -> dict:
+    return _region_bam_worker_params(
+        edge_trim=request.edge_trim,
+        circular=request.circular,
+        mode=request.mode,
+        context_size=request.context_size,
+        msp_min_size=request.msp_min_size,
+        nuc_min_size=request.nuc_min_size,
+        min_mapq=request.min_mapq,
+        prob_threshold=request.prob_threshold,
+        min_read_length=request.min_read_length,
+        with_scores=request.with_scores,
+        train_rids=request.train_rids,
+        primary_only=request.primary_only,
+        return_posteriors=return_posteriors,
+        write_msps=request.write_msps,
+        io_threads=request.io_threads,
+    )
+
+
+def _fused_region_worker_params_from_request(
+    request: _FusedRegionBamPipelineRequest,
+) -> dict:
+    return _fused_region_worker_params(
+        edge_trim=request.edge_trim,
+        circular=request.circular,
+        mode=request.mode,
+        context_size=request.context_size,
+        msp_min_size=request.msp_min_size,
+        nuc_min_size=request.nuc_min_size,
+        min_mapq=request.min_mapq,
+        prob_threshold=request.prob_threshold,
+        min_read_length=request.min_read_length,
+        with_scores=request.with_scores,
+        train_rids=request.train_rids,
+        primary_only=request.primary_only,
+        io_threads=request.io_threads,
+        min_llr=request.min_llr,
+        min_opps=request.min_opps,
+        unify_threshold=request.unify_threshold,
+        also_write_legacy=request.also_write_legacy,
+        downstream_compat=request.downstream_compat,
+        recall_nucs=request.recall_nucs,
+        split_min_llr=request.split_min_llr,
+        split_min_opps=request.split_min_opps,
+        filter_chimeras=request.filter_chimeras,
+        chimera_min_seg=request.chimera_min_seg,
+        chimera_purity=request.chimera_purity,
+        phase_nrl=request.phase_nrl,
+        pg_record=request.pg_record,
+        ref_fasta_path=request.ref_fasta_path,
+    )
+
+
 def _print_skip_reasons_summary(
     aggregation: RegionBamAggregation,
     footprint_label: str = "With footprints",
@@ -1101,22 +1158,9 @@ def _process_bam_region_parallel_from_request(
     )
 
     try:
-        params = _region_bam_worker_params(
-            edge_trim=request.edge_trim,
-            circular=request.circular,
-            mode=request.mode,
-            context_size=request.context_size,
-            msp_min_size=request.msp_min_size,
-            nuc_min_size=request.nuc_min_size,
-            min_mapq=request.min_mapq,
-            prob_threshold=request.prob_threshold,
-            min_read_length=request.min_read_length,
-            with_scores=request.with_scores,
-            train_rids=request.train_rids,
-            primary_only=request.primary_only,
+        params = _region_bam_worker_params_from_request(
+            request,
             return_posteriors=return_posteriors,
-            write_msps=request.write_msps,
-            io_threads=request.io_threads,
         )
 
         work_items = _region_bam_work_items(
@@ -1352,35 +1396,7 @@ def _process_bam_region_parallel_fused_from_request(
     )
 
     try:
-        params = _fused_region_worker_params(
-            edge_trim=request.edge_trim,
-            circular=request.circular,
-            mode=request.mode,
-            context_size=request.context_size,
-            msp_min_size=request.msp_min_size,
-            nuc_min_size=request.nuc_min_size,
-            min_mapq=request.min_mapq,
-            prob_threshold=request.prob_threshold,
-            min_read_length=request.min_read_length,
-            with_scores=request.with_scores,
-            train_rids=request.train_rids,
-            primary_only=request.primary_only,
-            io_threads=request.io_threads,
-            min_llr=request.min_llr,
-            min_opps=request.min_opps,
-            unify_threshold=request.unify_threshold,
-            also_write_legacy=request.also_write_legacy,
-            downstream_compat=request.downstream_compat,
-            recall_nucs=request.recall_nucs,
-            split_min_llr=request.split_min_llr,
-            split_min_opps=request.split_min_opps,
-            filter_chimeras=request.filter_chimeras,
-            chimera_min_seg=request.chimera_min_seg,
-            chimera_purity=request.chimera_purity,
-            phase_nrl=request.phase_nrl,
-            pg_record=request.pg_record,
-            ref_fasta_path=request.ref_fasta_path,
-        )
+        params = _fused_region_worker_params_from_request(request)
 
         work_items = _region_bam_work_items(
             run.regions,
