@@ -583,6 +583,72 @@ def _regression_stats_summary_path(plots_dir, base_name, context_size):
     )
 
 
+def _regression_diagnostic_plot_path(plots_dir, base_name, base, context_size):
+    return os.path.join(
+        plots_dir,
+        f"{base_name}_{base}_k{context_size}_regression.png",
+    )
+
+
+def _save_regression_diagnostic_plot(
+    plt,
+    plots_dir,
+    base_name,
+    base,
+    context_size,
+    data,
+):
+    x = data['x']
+    y = data['y']
+    w = data['w']
+    diag = data['diagnostics']
+    png_path = _regression_diagnostic_plot_path(
+        plots_dir, base_name, base, context_size,
+    )
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    try:
+        ax.scatter(x, y, alpha=0.5, s=np.clip(w, 1, 50), c='steelblue')
+        if 'intercept' in diag and 'slope' in diag:
+            x_line = np.array([0, 1])
+            y_line = diag['intercept'] + diag['slope'] * x_line
+            ax.plot(
+                x_line,
+                y_line,
+                'r-',
+                linewidth=2,
+                label=(
+                    f'y = {diag["intercept"]:.3f} + {diag["slope"]:.3f}x '
+                    f'(R2={diag["r_squared"]:.3f})'
+                ),
+            )
+            ax.scatter(
+                [0, 1],
+                [diag['intercept'], diag['intercept'] + diag['slope']],
+                color='red',
+                s=100,
+                zorder=5,
+                marker='o',
+            )
+
+        ax.set_xlabel('P(accessible|context) from fiber-seq', fontsize=12)
+        ax.set_ylabel('P(methylation|context) from target', fontsize=12)
+        ax.set_title(
+            f'{base}-centered Emission Probability Transfer (k={context_size})',
+            fontsize=14,
+        )
+        ax.set_xlim(-0.05, 1.05)
+        ax.set_ylim(-0.05, 1.05)
+        ax.legend(fontsize=10)
+        ax.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(png_path, dpi=150)
+    finally:
+        plt.close(fig)
+    return png_path
+
+
 def _write_regression_stats_summary(
     regression_data,
     summary_file,
@@ -638,36 +704,14 @@ def _generate_regression_stats(regression_data, plots_dir, base_name, context_si
         if 'x' not in data or len(data['x']) == 0:
             continue
 
-        x = data['x']
-        y = data['y']
-        w = data['w']
-        diag = data['diagnostics']
-
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.scatter(x, y, alpha=0.5, s=np.clip(w, 1, 50), c='steelblue')
-        if 'intercept' in diag and 'slope' in diag:
-            x_line = np.array([0, 1])
-            y_line = diag['intercept'] + diag['slope'] * x_line
-            ax.plot(x_line, y_line, 'r-', linewidth=2,
-                   label=f'y = {diag["intercept"]:.3f} + {diag["slope"]:.3f}x '
-                         f'(R2={diag["r_squared"]:.3f})')
-            ax.scatter([0, 1], [diag['intercept'], diag['intercept'] + diag['slope']],
-                      color='red', s=100, zorder=5, marker='o')
-
-        ax.set_xlabel('P(accessible|context) from fiber-seq', fontsize=12)
-        ax.set_ylabel('P(methylation|context) from target', fontsize=12)
-        ax.set_title(f'{base}-centered Emission Probability Transfer (k={context_size})',
-                    fontsize=14)
-        ax.set_xlim(-0.05, 1.05)
-        ax.set_ylim(-0.05, 1.05)
-        ax.legend(fontsize=10)
-        ax.grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        png_path = os.path.join(plots_dir,
-                               f"{base_name}_{base}_k{context_size}_regression.png")
-        plt.savefig(png_path, dpi=150)
-        plt.close(fig)
+        png_path = _save_regression_diagnostic_plot(
+            plt,
+            plots_dir,
+            base_name,
+            base,
+            context_size,
+            data,
+        )
         print(f"    Plot: {png_path}")
 
 

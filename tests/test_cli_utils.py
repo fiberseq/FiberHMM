@@ -22,8 +22,10 @@ from fiberhmm.cli.utils import (
     _passes_transfer_base_filters,
     _passes_transfer_target_filters,
     _raw_model_parameter_arrays,
+    _regression_diagnostic_plot_path,
     _regression_stats_summary_path,
     _save_accessibility_priors,
+    _save_regression_diagnostic_plot,
     _scale_emission_probabilities,
     _target_bases_for_transfer_mode,
     _target_mod_positions_from_bam_read,
@@ -723,6 +725,10 @@ def test_write_regression_stats_summary_formats_diagnostics(tmp_path):
     summary_file = _regression_stats_summary_path(tmp_path, "run", 3)
     summary_path = tmp_path / "run_k3_regression_stats.txt"
 
+    assert _regression_diagnostic_plot_path(
+        tmp_path, "run", "C", 3,
+    ) == str(tmp_path / "run_C_k3_regression.png")
+
     _write_regression_stats_summary(
         {
             "C": {
@@ -754,3 +760,115 @@ def test_write_regression_stats_summary_formats_diagnostics(tmp_path):
     assert "P(m|inaccessible): 0.2000" in text
     assert "Enrichment ratio:  3.5x" in text
     assert "Warning: Values were swapped" in text
+
+
+class _FakeRegressionAxis:
+    def __init__(self):
+        self.scatter_calls = []
+        self.plot_calls = []
+        self.xlabel = None
+        self.ylabel = None
+        self.title = None
+        self.xlim = None
+        self.ylim = None
+        self.legend_kwargs = None
+        self.grid_calls = []
+
+    def scatter(self, *args, **kwargs):
+        self.scatter_calls.append((args, kwargs))
+
+    def plot(self, *args, **kwargs):
+        self.plot_calls.append((args, kwargs))
+
+    def set_xlabel(self, label, **kwargs):
+        self.xlabel = (label, kwargs)
+
+    def set_ylabel(self, label, **kwargs):
+        self.ylabel = (label, kwargs)
+
+    def set_title(self, label, **kwargs):
+        self.title = (label, kwargs)
+
+    def set_xlim(self, *args):
+        self.xlim = args
+
+    def set_ylim(self, *args):
+        self.ylim = args
+
+    def legend(self, **kwargs):
+        self.legend_kwargs = kwargs
+
+    def grid(self, *args, **kwargs):
+        self.grid_calls.append((args, kwargs))
+
+
+class _FakeRegressionPlt:
+    def __init__(self):
+        self.fig = object()
+        self.ax = _FakeRegressionAxis()
+        self.subplots_calls = []
+        self.tight_layout_calls = 0
+        self.savefig_calls = []
+        self.closed = []
+
+    def subplots(self, *args, **kwargs):
+        self.subplots_calls.append((args, kwargs))
+        return self.fig, self.ax
+
+    def tight_layout(self):
+        self.tight_layout_calls += 1
+
+    def savefig(self, *args, **kwargs):
+        self.savefig_calls.append((args, kwargs))
+
+    def close(self, fig):
+        self.closed.append(fig)
+
+
+class _FailingRegressionPlt(_FakeRegressionPlt):
+    def savefig(self, *args, **kwargs):
+        raise RuntimeError("plot save failed")
+
+
+def _regression_plot_data():
+    return {
+        "x": np.array([0.0, 0.5, 1.0]),
+        "y": np.array([0.1, 0.4, 0.8]),
+        "w": np.array([0.2, 25.0, 99.0]),
+        "diagnostics": {
+            "intercept": 0.1,
+            "slope": 0.7,
+            "r_squared": 0.95,
+        },
+    }
+
+
+def test_save_regression_diagnostic_plot_writes_expected_png():
+    plt = _FakeRegressionPlt()
+
+    png_path = _save_regression_diagnostic_plot(
+        plt, "plots", "run", "C", 3, _regression_plot_data(),
+    )
+
+    assert png_path == "plots/run_C_k3_regression.png"
+    assert plt.subplots_calls == [((), {"figsize": (8, 6)})]
+    assert plt.tight_layout_calls == 1
+    assert plt.savefig_calls == [((png_path,), {"dpi": 150})]
+    assert plt.closed == [plt.fig]
+    np.testing.assert_allclose(plt.ax.scatter_calls[0][1]["s"], [1.0, 25.0, 50.0])
+    assert plt.ax.scatter_calls[0][1]["c"] == "steelblue"
+    assert len(plt.ax.scatter_calls) == 2
+    assert len(plt.ax.plot_calls) == 1
+    assert plt.ax.legend_kwargs == {"fontsize": 10}
+    assert plt.ax.grid_calls == [((True,), {"alpha": 0.3})]
+
+
+def test_save_regression_diagnostic_plot_closes_on_save_failure():
+    plt = _FailingRegressionPlt()
+
+    with pytest.raises(RuntimeError, match="plot save failed"):
+        _save_regression_diagnostic_plot(
+            plt, "plots", "run", "C", 3, _regression_plot_data(),
+        )
+
+    assert plt.closed == [plt.fig]
