@@ -1302,6 +1302,34 @@ def test_run_worker_fused_apply_stage_forwards_arguments(monkeypatch):
     )
 
 
+def test_fused_payload_worker_config_preserves_chunk_arguments():
+    assert streaming_workers._fused_payload_worker_config(
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
+        prob_threshold=128,
+        min_llr=4.5,
+        min_opps=5,
+        unify_threshold=90,
+    ) == streaming_workers._FusedPayloadWorkerConfig(
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
+        prob_threshold=128,
+        min_llr=4.5,
+        min_opps=5,
+        unify_threshold=90,
+    )
+
+
 def test_build_worker_fused_recall_result_forwards_options(monkeypatch):
     fiber_read = {"query_sequence": "ACGT"}
     apply_result = {"ns": [1]}

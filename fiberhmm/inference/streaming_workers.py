@@ -89,6 +89,34 @@ def _payload_worker_config(
     )
 
 
+def _fused_payload_worker_config(
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    with_scores: bool,
+    prob_threshold: int,
+    min_llr: float,
+    min_opps: int,
+    unify_threshold: int,
+) -> _FusedPayloadWorkerConfig:
+    return _FusedPayloadWorkerConfig(
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        with_scores=with_scores,
+        prob_threshold=prob_threshold,
+        min_llr=min_llr,
+        min_opps=min_opps,
+        unify_threshold=unify_threshold,
+    )
+
+
 def _process_worker_items(items, process_item):
     results = []
     read_failures = 0
@@ -420,18 +448,18 @@ def _process_fused_payload_chunk_worker(
     # Model/params set once per worker; TF LLR tables attached to the
     # worker globals via _init_fused_worker.
     llr_hit, llr_miss = _worker_recall_tables()
-    config = _FusedPayloadWorkerConfig(
-        edge_trim=edge_trim,
-        circular=circular,
-        mode=mode,
-        context_size=context_size,
-        msp_min_size=msp_min_size,
-        nuc_min_size=nuc_min_size,
-        with_scores=with_scores,
-        prob_threshold=prob_threshold,
-        min_llr=min_llr,
-        min_opps=min_opps,
-        unify_threshold=unify_threshold,
+    config = _fused_payload_worker_config(
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        nuc_min_size,
+        with_scores,
+        prob_threshold,
+        min_llr,
+        min_opps,
+        unify_threshold,
     )
 
     def process_item(payload):
