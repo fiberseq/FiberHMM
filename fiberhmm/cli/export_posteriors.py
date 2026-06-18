@@ -59,10 +59,10 @@ from fiberhmm.inference.parallel import _get_genome_regions
 
 def _detect_format(output_path: str, format_arg: str) -> str:
     """Detect output format from extension or explicit --format."""
-    format_arg = format_arg.strip().lower()
+    format_arg = 'auto' if format_arg is None else str(format_arg).strip().lower()
     if format_arg != 'auto':
         return format_arg
-    output_path_lower = output_path.lower()
+    output_path_lower = os.fspath(output_path).lower()
     if output_path_lower.endswith('.h5') or output_path_lower.endswith('.hdf5'):
         return 'hdf5'
     return 'tsv'
