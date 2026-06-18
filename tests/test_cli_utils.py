@@ -22,6 +22,7 @@ from fiberhmm.cli.utils import (
     _passes_transfer_base_filters,
     _passes_transfer_target_filters,
     _raw_model_parameter_arrays,
+    _regression_stats_summary_path,
     _save_accessibility_priors,
     _scale_emission_probabilities,
     _target_bases_for_transfer_mode,
@@ -31,6 +32,7 @@ from fiberhmm.cli.utils import (
     _transfer_probability_frame,
     _transfer_progress_postfix,
     _transfer_read_limit_reached,
+    _write_regression_stats_summary,
     _write_transfer_probability_tables,
 )
 
@@ -715,3 +717,40 @@ def test_maybe_generate_transfer_stats_respects_stats_flag(monkeypatch, capsys):
 
     assert calls == [({"C": {"diagnostics": {}}}, "plots", "run", 1)]
     assert "Generating statistics and plots" in capsys.readouterr().out
+
+
+def test_write_regression_stats_summary_formats_diagnostics(tmp_path):
+    summary_file = _regression_stats_summary_path(tmp_path, "run", 3)
+    summary_path = tmp_path / "run_k3_regression_stats.txt"
+
+    _write_regression_stats_summary(
+        {
+            "C": {
+                "diagnostics": {
+                    "n_contexts": 12,
+                    "total_target_obs": 1234,
+                    "total_ref_obs": 5678,
+                    "r_squared": 0.91234,
+                    "intercept": 0.2,
+                    "slope": 0.5,
+                    "swapped": True,
+                },
+                "p_acc": 0.7,
+                "p_inacc": 0.2,
+            }
+        },
+        summary_file,
+        context_size=3,
+    )
+
+    assert summary_file == str(summary_path)
+    text = summary_path.read_text()
+    assert "FiberHMM Transfer Learning Regression Statistics (k=3)" in text
+    assert "C-centered Contexts" in text
+    assert "Target observations:           1,234" in text
+    assert "Reference observations:        5,678" in text
+    assert "R-squared: 0.9123" in text
+    assert "P(m|accessible):   0.7000" in text
+    assert "P(m|inaccessible): 0.2000" in text
+    assert "Enrichment ratio:  3.5x" in text
+    assert "Warning: Values were swapped" in text

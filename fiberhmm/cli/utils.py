@@ -576,9 +576,18 @@ def _process_target_bam(bam_path, mode, max_context, args):
     return counters
 
 
-def _generate_regression_stats(regression_data, plots_dir, base_name, context_size):
-    """Generate statistics and plots for the regression-based emission estimation."""
-    summary_file = os.path.join(plots_dir, f"{base_name}_k{context_size}_regression_stats.txt")
+def _regression_stats_summary_path(plots_dir, base_name, context_size):
+    return os.path.join(
+        plots_dir,
+        f"{base_name}_k{context_size}_regression_stats.txt",
+    )
+
+
+def _write_regression_stats_summary(
+    regression_data,
+    summary_file,
+    context_size,
+) -> None:
     with open(summary_file, 'w') as f:
         f.write(f"FiberHMM Transfer Learning Regression Statistics (k={context_size})\n")
         f.write("=" * 60 + "\n\n")
@@ -606,6 +615,15 @@ def _generate_regression_stats(regression_data, plots_dir, base_name, context_si
                     f.write("    Warning: Values were swapped (acc < inacc before swap)\n")
             f.write("\n")
 
+
+def _generate_regression_stats(regression_data, plots_dir, base_name, context_size):
+    """Generate statistics and plots for the regression-based emission estimation."""
+    summary_file = _regression_stats_summary_path(
+        plots_dir,
+        base_name,
+        context_size,
+    )
+    _write_regression_stats_summary(regression_data, summary_file, context_size)
     print(f"    Summary: {summary_file}")
 
     try:
