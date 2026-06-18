@@ -416,6 +416,16 @@ def _finalize_region_bam_output(
     _sort_and_index_bam(output_bam, threads=n_cores)
 
 
+def _concatenate_region_beds(output_bed: str, non_empty_beds: list[str]) -> None:
+    print(f"Concatenating {len(non_empty_beds)} region BED files...")
+    sys.stdout.flush()
+
+    with open(output_bed, 'wb') as fout:
+        for bed_path in non_empty_beds:
+            with open(bed_path, 'rb') as fin:
+                shutil.copyfileobj(fin, fout)
+
+
 def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    model_path: str, train_rids: Set[str],
                                    edge_trim: int, circular: bool,
@@ -640,13 +650,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
         # Sort temp BEDs by region order and concatenate
         non_empty_beds = _ordered_existing_temp_paths(aggregation.temp_beds)
 
-        print(f"Concatenating {len(non_empty_beds)} region BED files...")
-        sys.stdout.flush()
-
-        with open(output_bed, 'wb') as fout:
-            for bed_path in non_empty_beds:
-                with open(bed_path, 'rb') as fin:
-                    shutil.copyfileobj(fin, fout)
+        _concatenate_region_beds(output_bed, non_empty_beds)
 
         elapsed = time.time() - start_time
         print(_region_completion_summary(

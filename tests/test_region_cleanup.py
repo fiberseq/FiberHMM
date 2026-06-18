@@ -533,6 +533,21 @@ def test_finalize_region_bam_output_concatenates_reports_and_indexes(
     assert "Step: Index/Sort..." in out
 
 
+def test_concatenate_region_beds_writes_inputs_in_order(tmp_path, capsys):
+    bed_a = tmp_path / "a.bed"
+    bed_b = tmp_path / "b.bed"
+    output = tmp_path / "out.bed"
+    bed_a.write_bytes(b"chr1\t0\t10\n")
+    bed_b.write_bytes(b"chr1\t10\t20\n")
+
+    region_pipeline._concatenate_region_beds(
+        str(output), [str(bed_a), str(bed_b)],
+    )
+
+    assert output.read_bytes() == b"chr1\t0\t10\nchr1\t10\t20\n"
+    assert "Concatenating 2 region BED files..." in capsys.readouterr().out
+
+
 def test_region_parallel_bam_cleans_temp_dir_on_worker_failure(monkeypatch, tmp_path):
     temp_dirs = _install_failing_region_pool(monkeypatch, tmp_path)
     input_bam = _indexed_input_bam(tmp_path)
