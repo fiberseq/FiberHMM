@@ -525,6 +525,37 @@ def test_write_ma_circular_rows_request_writes_extra_columns():
     assert adapter_buf.getvalue() == buf.getvalue()
 
 
+def test_write_position_blocks_row_request_writes_single_base_blocks():
+    read = _FakeRead(read_id='read-a', is_reverse=True)
+    positions = [(100, 200), (105, 180)]
+    buf = io.StringIO()
+
+    extract_tags._write_position_blocks_row_from_request(
+        extract_tags._PositionBlocksRowWriteRequest(
+            read=read,
+            bed_out=buf,
+            positions_list=positions,
+            score=190,
+            extra_columns=['200,180'],
+        )
+    )
+
+    cols = buf.getvalue().rstrip('\n').split('\t')
+    assert cols[:6] == ['chr1', '100', '106', 'read-a', '190', '-']
+    assert cols[9:12] == ['2', '1,1', '0,5']
+    assert cols[12:] == ['200,180']
+
+    adapter_buf = io.StringIO()
+    extract_tags._write_position_blocks_row(
+        read,
+        adapter_buf,
+        positions,
+        score=190,
+        extra_columns=['200,180'],
+    )
+    assert adapter_buf.getvalue() == buf.getvalue()
+
+
 def test_circular_annotation_group_helpers_detect_wrapped_named_pieces():
     left = {'name': 'call-a', 'start': 0, 'length': 15}
     right = {'name': 'call-a', 'start': 85, 'length': 15}

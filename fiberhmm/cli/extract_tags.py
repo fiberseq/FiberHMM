@@ -153,6 +153,15 @@ class _MaCircularRowsWriteRequest:
 
 
 @dataclass(frozen=True)
+class _PositionBlocksRowWriteRequest:
+    read: object
+    bed_out: object
+    positions_list: object
+    score: int
+    extra_columns: object = ()
+
+
+@dataclass(frozen=True)
 class _WrappedGroupSpan:
     start: int
     length: int
@@ -985,21 +994,36 @@ def _mod_positions_to_ref_values(positions, aligned_pairs, prob_threshold: int):
 
 def _write_position_blocks_row(read, bed_out, positions_list, score: int,
                                extra_columns=()):
+    _write_position_blocks_row_from_request(
+        _PositionBlocksRowWriteRequest(
+            read=read,
+            bed_out=bed_out,
+            positions_list=positions_list,
+            score=score,
+            extra_columns=extra_columns,
+        ),
+    )
+
+
+def _write_position_blocks_row_from_request(
+    request: _PositionBlocksRowWriteRequest,
+) -> None:
+    positions_list = request.positions_list
     chrom_start = positions_list[0][0]
     chrom_end = positions_list[-1][0] + 1
     blocks = [(pos, pos + 1) for pos, _ in positions_list]
-    strand = '-' if read.is_reverse else '+'
+    strand = '-' if request.read.is_reverse else '+'
     row = _bed12_row(
-        read.reference_name,
+        request.read.reference_name,
         chrom_start,
         chrom_end,
-        read.query_name,
-        int(score),
+        request.read.query_name,
+        int(request.score),
         strand,
         blocks,
-        extra_columns,
+        request.extra_columns,
     )
-    bed_out.write(row + "\n")
+    request.bed_out.write(row + "\n")
 
 
 def _position_block_extra_column(positions_list, enabled: bool):
