@@ -11,7 +11,9 @@ from fiberhmm.cli.utils import (
     _accessibility_priors_for_base,
     _accessibility_priors_dataframe,
     _aggregate_accessibility_counts,
+    _build_utils_parser,
     _converted_model_json_payload,
+    _dispatch_utils_command,
     _estimate_emission_probs,
     _estimate_transfer_context_size,
     _load_raw_model_by_suffix,
@@ -107,6 +109,88 @@ def test_converted_model_json_payload_coerces_arrays_and_metadata():
         "context_size": 3,
         "mode": "daf",
     }
+
+
+def test_build_utils_parser_parses_subcommands():
+    parser = _build_utils_parser()
+
+    convert = parser.parse_args(["convert", "in.pkl", "out.json"])
+    assert (convert.command, convert.input, convert.output) == (
+        "convert",
+        "in.pkl",
+        "out.json",
+    )
+
+    inspect = parser.parse_args(["inspect", "model.json", "--full"])
+    assert (inspect.command, inspect.model, inspect.full) == (
+        "inspect",
+        "model.json",
+        True,
+    )
+
+    transfer = parser.parse_args([
+        "transfer",
+        "--target",
+        "daf.bam",
+        "-o",
+        "out",
+        "--mode",
+        "daf",
+        "-k",
+        "2",
+        "3",
+        "--stats",
+    ])
+    assert transfer.command == "transfer"
+    assert transfer.target == "daf.bam"
+    assert transfer.output == "out"
+    assert transfer.context_sizes == [2, 3]
+    assert transfer.stats is True
+
+    adjust = parser.parse_args([
+        "adjust",
+        "model.json",
+        "--state",
+        "both",
+        "--scale",
+        "0.5",
+        "-o",
+        "adjusted.json",
+    ])
+    assert adjust.command == "adjust"
+    assert adjust.state == "both"
+    assert adjust.scale == 0.5
+    assert adjust.output == "adjusted.json"
+
+
+def test_dispatch_utils_command_routes_to_selected_subcommand(monkeypatch):
+    import fiberhmm.cli.utils as cli_utils
+
+    calls = []
+    monkeypatch.setattr(cli_utils, "cmd_convert", lambda args: calls.append("convert"))
+    monkeypatch.setattr(cli_utils, "cmd_inspect", lambda args: calls.append("inspect"))
+    monkeypatch.setattr(cli_utils, "cmd_transfer", lambda args: calls.append("transfer"))
+    monkeypatch.setattr(cli_utils, "cmd_adjust", lambda args: calls.append("adjust"))
+
+    for command in ["convert", "inspect", "transfer", "adjust"]:
+        _dispatch_utils_command(SimpleNamespace(command=command), parser=None)
+
+    assert calls == ["convert", "inspect", "transfer", "adjust"]
+
+
+def test_dispatch_utils_command_prints_help_without_subcommand():
+    class Parser:
+        printed = False
+
+        def print_help(self):
+            self.printed = True
+
+    parser = Parser()
+
+    with pytest.raises(SystemExit):
+        _dispatch_utils_command(SimpleNamespace(command=None), parser)
+
+    assert parser.printed
 
 
 def test_accessibility_counter_records_accessible_and_protected_contexts():

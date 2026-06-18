@@ -1042,12 +1042,8 @@ def cmd_adjust(args):
 # main: argument parsing with subcommands
 # =============================================================================
 
-def main():
-    parser = argparse.ArgumentParser(
-        prog='fiberhmm-utils',
-        description='FiberHMM utilities: model conversion, inspection, and probability transfer',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+def _utils_parser_epilog() -> str:
+    return """
 Subcommands:
   convert   Convert pickle/NPZ models to JSON format
   inspect   Print model metadata, parameters, and emission statistics
@@ -1061,10 +1057,9 @@ Examples:
   fiberhmm-utils transfer --target daf.bam --reference-bam fiber.bam -o probs/
   fiberhmm-utils adjust model.json --state accessible --scale 1.1 -o adjusted.json
         """
-    )
-    subparsers = parser.add_subparsers(dest='command')
 
-    # --- convert ---
+
+def _add_utils_convert_parser(subparsers) -> None:
     p_convert = subparsers.add_parser(
         'convert',
         help='Convert pickle/NPZ model to JSON',
@@ -1073,7 +1068,8 @@ Examples:
     p_convert.add_argument('input', help='Input model file (.pickle, .pkl, or .npz)')
     p_convert.add_argument('output', help='Output JSON file')
 
-    # --- inspect ---
+
+def _add_utils_inspect_parser(subparsers) -> None:
     p_inspect = subparsers.add_parser(
         'inspect',
         help='Inspect a model file',
@@ -1083,7 +1079,8 @@ Examples:
     p_inspect.add_argument('--full', action='store_true',
                           help='Print full emission probability table')
 
-    # --- transfer ---
+
+def _add_utils_transfer_parser(subparsers) -> None:
     p_transfer = subparsers.add_parser(
         'transfer',
         help='Transfer emission probs between modalities',
@@ -1118,7 +1115,8 @@ Examples:
     p_transfer.add_argument('--stats', action='store_true',
                            help='Generate diagnostic plots')
 
-    # --- adjust ---
+
+def _add_utils_adjust_parser(subparsers) -> None:
     p_adjust = subparsers.add_parser(
         'adjust',
         help='Adjust emission probabilities in a model',
@@ -1134,20 +1132,41 @@ Examples:
     p_adjust.add_argument('-o', '--output', required=True,
                          help='Output model file (.json)')
 
-    args = parser.parse_args()
 
+def _build_utils_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog='fiberhmm-utils',
+        description='FiberHMM utilities: model conversion, inspection, and probability transfer',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=_utils_parser_epilog(),
+    )
+    subparsers = parser.add_subparsers(dest='command')
+
+    _add_utils_convert_parser(subparsers)
+    _add_utils_inspect_parser(subparsers)
+    _add_utils_transfer_parser(subparsers)
+    _add_utils_adjust_parser(subparsers)
+    return parser
+
+
+def _dispatch_utils_command(args, parser) -> None:
     if args.command is None:
         parser.print_help()
         sys.exit(1)
 
-    if args.command == 'convert':
-        cmd_convert(args)
-    elif args.command == 'inspect':
-        cmd_inspect(args)
-    elif args.command == 'transfer':
-        cmd_transfer(args)
-    elif args.command == 'adjust':
-        cmd_adjust(args)
+    dispatch = {
+        'convert': cmd_convert,
+        'inspect': cmd_inspect,
+        'transfer': cmd_transfer,
+        'adjust': cmd_adjust,
+    }
+    dispatch[args.command](args)
+
+
+def main(argv=None):
+    parser = _build_utils_parser()
+    args = parser.parse_args(argv)
+    _dispatch_utils_command(args, parser)
 
 
 if __name__ == '__main__':
