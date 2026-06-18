@@ -19,8 +19,6 @@ import fiberhmm.inference.streaming_pipeline as streaming_pipeline
 import fiberhmm.inference.streaming_workers as streaming_workers
 from fiberhmm.inference.engine import CHIMERA_SKIP
 from fiberhmm.inference.parallel import (
-    _drain_oldest_chunk,
-    _drain_oldest_fused_chunk,
     _is_main_chromosome,
     _model_and_path_for_processing,
 )
@@ -2457,7 +2455,16 @@ def test_streaming_drain_counts_worker_failures_and_passes_read_through():
         )
     ])
 
-    _drain_oldest_chunk(inflight, outbam, False, True, None, counters)
+    streaming_drain._drain_oldest_chunk_from_request(
+        streaming_drain._DrainOldestApplyChunkRequest(
+            inflight=inflight,
+            outbam=outbam,
+            with_scores=False,
+            write_msps=True,
+            posterior_writer=None,
+            counters=counters,
+        )
+    )
 
     assert counters == {
         "reads_with_footprints": 0,
@@ -2481,7 +2488,16 @@ def test_fused_drain_counts_worker_failures_and_passes_read_through():
         )
     ])
 
-    _drain_oldest_fused_chunk(inflight, outbam, False, True, True, counters)
+    streaming_drain._drain_oldest_fused_chunk_from_request(
+        streaming_drain._DrainOldestFusedChunkRequest(
+            inflight=inflight,
+            outbam=outbam,
+            with_scores=False,
+            also_write_legacy=True,
+            downstream_compat=True,
+            counters=counters,
+        )
+    )
 
     assert counters == {
         "reads_with_footprints": 0,

@@ -80,6 +80,26 @@ class _FusedResultRecordRequest:
     counters: object
 
 
+@dataclass(frozen=True)
+class _DrainOldestApplyChunkRequest:
+    inflight: object
+    outbam: object
+    with_scores: bool
+    write_msps: bool
+    posterior_writer: object
+    counters: object
+
+
+@dataclass(frozen=True)
+class _DrainOldestFusedChunkRequest:
+    inflight: object
+    outbam: object
+    with_scores: bool
+    also_write_legacy: bool
+    downstream_compat: bool
+    counters: object
+
+
 def _increment_counter(counters, key: str, amount: int = 1) -> None:
     counters[key] = counters.get(key, 0) + amount
 
@@ -318,13 +338,8 @@ def _record_fused_result(
     )
 
 
-def _drain_oldest_chunk(
-    inflight,
-    outbam,
-    with_scores,
-    write_msps,
-    posterior_writer,
-    counters,
+def _drain_oldest_chunk_from_request(
+    request: _DrainOldestApplyChunkRequest,
 ):
     """
     Block on the oldest in-flight apply chunk, apply tags, and write to BAM.
@@ -334,12 +349,70 @@ def _drain_oldest_chunk(
     coordinate sort order when the input is coordinate sorted.
     """
     def record_result(read_obj, result):
-        _record_apply_result(
-            read_obj, result, with_scores, write_msps, posterior_writer,
-            counters,
+        _record_apply_result_from_request(
+            _ApplyResultRecordRequest(
+                read_obj=read_obj,
+                result=result,
+                with_scores=request.with_scores,
+                write_msps=request.write_msps,
+                posterior_writer=request.posterior_writer,
+                counters=request.counters,
+            )
         )
 
-    _drain_oldest_with_recorder(inflight, outbam, counters, record_result)
+    _drain_oldest_with_recorder_from_request(
+        _DrainOldestWithRecorderRequest(
+            inflight=request.inflight,
+            outbam=request.outbam,
+            counters=request.counters,
+            record_result=record_result,
+        )
+    )
+
+
+def _drain_oldest_chunk(
+    inflight,
+    outbam,
+    with_scores,
+    write_msps,
+    posterior_writer,
+    counters,
+):
+    _drain_oldest_chunk_from_request(
+        _DrainOldestApplyChunkRequest(
+            inflight=inflight,
+            outbam=outbam,
+            with_scores=with_scores,
+            write_msps=write_msps,
+            posterior_writer=posterior_writer,
+            counters=counters,
+        )
+    )
+
+
+def _drain_oldest_fused_chunk_from_request(
+    request: _DrainOldestFusedChunkRequest,
+):
+    """Drain one fused apply+recall chunk and write reads in input order."""
+    def record_result(read_obj, result):
+        _record_fused_result_from_request(
+            _FusedResultRecordRequest(
+                read_obj=read_obj,
+                result=result,
+                also_write_legacy=request.also_write_legacy,
+                downstream_compat=request.downstream_compat,
+                counters=request.counters,
+            )
+        )
+
+    _drain_oldest_with_recorder_from_request(
+        _DrainOldestWithRecorderRequest(
+            inflight=request.inflight,
+            outbam=request.outbam,
+            counters=request.counters,
+            record_result=record_result,
+        )
+    )
 
 
 def _drain_oldest_fused_chunk(
@@ -350,10 +423,13 @@ def _drain_oldest_fused_chunk(
     downstream_compat,
     counters,
 ):
-    """Drain one fused apply+recall chunk and write reads in input order."""
-    def record_result(read_obj, result):
-        _record_fused_result(
-            read_obj, result, also_write_legacy, downstream_compat, counters,
+    _drain_oldest_fused_chunk_from_request(
+        _DrainOldestFusedChunkRequest(
+            inflight=inflight,
+            outbam=outbam,
+            with_scores=with_scores,
+            also_write_legacy=also_write_legacy,
+            downstream_compat=downstream_compat,
+            counters=counters,
         )
-
-    _drain_oldest_with_recorder(inflight, outbam, counters, record_result)
+    )
