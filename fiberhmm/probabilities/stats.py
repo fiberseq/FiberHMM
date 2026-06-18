@@ -549,16 +549,18 @@ def _save_probability_distribution_png(
     inacc_probs,
 ) -> str:
     fig, ax = plt.subplots(figsize=(8, 5))
-    _plot_probability_distribution_png_axis(
-        ax, acc, inacc, acc_probs, inacc_probs, base, context_size,
-    )
-
-    plt.tight_layout()
     png_path = _probability_distribution_plot_path(
         plots_dir, base_name, base, context_size,
     )
-    plt.savefig(png_path, dpi=150)
-    plt.close(fig)
+    try:
+        _plot_probability_distribution_png_axis(
+            ax, acc, inacc, acc_probs, inacc_probs, base, context_size,
+        )
+
+        plt.tight_layout()
+        plt.savefig(png_path, dpi=150)
+    finally:
+        plt.close(fig)
     print(f"  Plot: {png_path}")
     return png_path
 

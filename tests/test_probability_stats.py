@@ -4,6 +4,7 @@ import io
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from fiberhmm.probabilities import stats
 
@@ -382,6 +383,40 @@ def test_save_probability_distribution_png_writes_expected_path(monkeypatch, cap
         plt.axes[0, 0], acc, inacc, table, table, "A", 4,
     )]
     assert f"Plot: {png_path}" in capsys.readouterr().out
+
+
+def test_save_probability_distribution_png_closes_figure_when_save_fails(
+    monkeypatch,
+):
+    table = pd.DataFrame({"context": ["AAA"], "ratio": [0.8]})
+    acc = _FakeCounter(10, 8, {}, table)
+    inacc = _FakeCounter(10, 2, {}, table)
+
+    class FailingSavePlt(_FakeProbabilityPlt):
+        def savefig(self, *args, **kwargs):
+            raise RuntimeError("save failed")
+
+    monkeypatch.setattr(
+        stats,
+        "_plot_probability_distribution_png_axis",
+        lambda *args: None,
+    )
+
+    plt = FailingSavePlt()
+    with pytest.raises(RuntimeError, match="save failed"):
+        stats._save_probability_distribution_png(
+            plt,
+            "plots",
+            "run",
+            "A",
+            4,
+            acc,
+            inacc,
+            table,
+            table,
+        )
+
+    assert plt.closed == [plt.fig]
 
 
 def test_probability_stats_pdf_writer_iterates_bases(monkeypatch):
