@@ -320,6 +320,33 @@ def _streaming_completion_message(
     )
 
 
+def _print_streaming_completion_summary(
+    label: str,
+    total_reads: int,
+    skipped: int,
+    counters: dict,
+    elapsed: float,
+    rate_unit: str,
+    skip_reasons: dict,
+    log,
+) -> int:
+    reads_with_footprints = counters['reads_with_footprints']
+    print(
+        _streaming_completion_message(
+            label,
+            total_reads,
+            skipped,
+            reads_with_footprints,
+            _streaming_rate(total_reads, elapsed),
+            rate_unit,
+        ),
+        file=log,
+    )
+    _print_worker_failure_summary(counters, log)
+    _print_streaming_skip_summary(skip_reasons, total_reads, skipped, log)
+    return reads_with_footprints
+
+
 def _process_bam_streaming_pipeline_fused(
     input_bam: str, output_bam: str,
     model_path: str, recall_model_path: str,
@@ -481,19 +508,16 @@ def _process_bam_streaming_pipeline_fused(
                         ref_fasta.close()
                         ref_fasta = None
 
-    elapsed = time.time() - start_time
-    rate = _streaming_rate(total_reads, elapsed)
-    reads_with_fp = counters['reads_with_footprints']
-    print(_streaming_completion_message(
+    reads_with_fp = _print_streaming_completion_summary(
         "Fused",
         total_reads,
         skipped,
-        reads_with_fp,
-        rate,
+        counters,
+        time.time() - start_time,
         "r/s",
-    ), file=_log)
-    _print_worker_failure_summary(counters, _log)
-    _print_streaming_skip_summary(skip_reasons, total_reads, skipped, _log)
+        skip_reasons,
+        _log,
+    )
     if counters.get('chimera'):
         print(f"  DAF strand-swap chimeras filtered: {counters['chimera']:,}",
               file=_log)
@@ -673,19 +697,16 @@ def _process_bam_streaming_pipeline(
                         posterior_stats = posterior_writer.close()
                         posterior_writer = None
 
-    elapsed = time.time() - start_time
-    rate = _streaming_rate(total_reads, elapsed)
-    reads_with_footprints = counters['reads_with_footprints']
-    print(_streaming_completion_message(
+    reads_with_footprints = _print_streaming_completion_summary(
         "Processed",
         total_reads,
         skipped,
-        reads_with_footprints,
-        rate,
+        counters,
+        time.time() - start_time,
         "reads/s",
-    ), file=_log)
-    _print_worker_failure_summary(counters, _log)
-    _print_streaming_skip_summary(skip_reasons, total_reads, skipped, _log)
+        skip_reasons,
+        _log,
+    )
 
     if output_bam != '-' and not process_unmapped:
         _sort_and_index_bam(output_bam, threads=n_cores)

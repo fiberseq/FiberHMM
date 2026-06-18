@@ -13,6 +13,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _fused_worker_args,
     _new_streaming_chunk_buffers,
     _open_streaming_posterior_writer,
+    _print_streaming_completion_summary,
     _print_streaming_progress,
     _streaming_completion_message,
     _streaming_filter_config,
@@ -115,6 +116,33 @@ def test_streaming_completion_message_formats_final_counts():
         rate=9.87,
         rate_unit="r/s",
     ) == "\r  Fused: 1,234 | Skipped: 56 | With footprints: 78 | 9.9 r/s"
+
+
+def test_print_streaming_completion_summary_reports_failures_and_skips():
+    log = io.StringIO()
+    counters = {
+        "reads_with_footprints": 7,
+        "worker_failures": 2,
+    }
+
+    reads_with_footprints = _print_streaming_completion_summary(
+        label="Processed",
+        total_reads=10,
+        skipped=3,
+        counters=counters,
+        elapsed=2.0,
+        rate_unit="reads/s",
+        skip_reasons={"low_mapq": 3},
+        log=log,
+    )
+
+    assert reads_with_footprints == 7
+    assert log.getvalue() == (
+        "\r  Processed: 10 | Skipped: 3 | With footprints: 7 | 5.0 reads/s\n"
+        "  Worker read failures: 2 (passed through unchanged)\n"
+        "  Skip reasons:\n"
+        "    low_mapq: 3 (23.1%)\n"
+    )
 
 
 def test_streaming_filter_config_captures_read_filter_settings():
