@@ -99,7 +99,7 @@ def test_positive_gaps_between_intervals_sorts_and_skips_overlaps():
 def test_stats_tag_helpers_flip_intervals_and_scale_scores():
     read = _FakeRead({"ns": [10], "nl": [5], "nq": [255, 0]})
 
-    starts, lengths = stats_module._flipped_interval_tag_arrays(
+    intervals = stats_module._flipped_interval_tag_arrays(
         read, "ns", "nl", (None, None),
     )
     missing = stats_module._flipped_interval_tag_arrays(
@@ -107,9 +107,10 @@ def test_stats_tag_helpers_flip_intervals_and_scale_scores():
     )
     scores = stats_module._scaled_score_tag(read, "nq")
 
-    np.testing.assert_array_equal(starts, [10])
-    np.testing.assert_array_equal(lengths, [5])
-    assert missing == ("missing", "missing")
+    np.testing.assert_array_equal(intervals.starts, [10])
+    np.testing.assert_array_equal(intervals.lengths, [5])
+    assert missing.starts == "missing"
+    assert missing.lengths == "missing"
     np.testing.assert_allclose(scores, [1.0, 0.0])
     assert stats_module._scaled_score_tag(read, "aq") is None
 
@@ -127,13 +128,14 @@ def test_stats_read_signal_arrays_loads_intervals_and_optional_scores():
     without_scores = stats_module._stats_read_signal_arrays(read, with_scores=False)
     with_scores = stats_module._stats_read_signal_arrays(read, with_scores=True)
 
-    np.testing.assert_array_equal(without_scores[0], [10])
-    np.testing.assert_array_equal(without_scores[1], [5])
-    np.testing.assert_array_equal(without_scores[2], [20])
-    np.testing.assert_array_equal(without_scores[3], [7])
-    assert without_scores[4:] == (None, None)
-    np.testing.assert_allclose(with_scores[4], [1.0])
-    np.testing.assert_allclose(with_scores[5], [128 / 255])
+    np.testing.assert_array_equal(without_scores.nuc_starts, [10])
+    np.testing.assert_array_equal(without_scores.nuc_lengths, [5])
+    np.testing.assert_array_equal(without_scores.msp_starts, [20])
+    np.testing.assert_array_equal(without_scores.msp_lengths, [7])
+    assert without_scores.nuc_scores is None
+    assert without_scores.msp_scores is None
+    np.testing.assert_allclose(with_scores.nuc_scores, [1.0])
+    np.testing.assert_allclose(with_scores.msp_scores, [128 / 255])
 
 
 def test_add_read_to_footprint_stats_updates_accumulator():

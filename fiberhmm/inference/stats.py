@@ -1,6 +1,8 @@
 """FiberHMM footprint statistics and QC plotting."""
 
 
+from dataclasses import dataclass
+
 import numpy as np
 import pysam
 
@@ -12,6 +14,22 @@ _FOOTPRINT_SIZE_BIN_LABELS = [
     '0-20', '20-40', '40-60', '60-80', '80-100',
     '100-150', '150-200', '200-300', '300-500', '500+',
 ]
+
+
+@dataclass(frozen=True)
+class _IntervalTagArrays:
+    starts: object
+    lengths: object
+
+
+@dataclass(frozen=True)
+class _StatsReadSignalArrays:
+    nuc_starts: np.ndarray
+    nuc_lengths: np.ndarray
+    msp_starts: object
+    msp_lengths: object
+    nuc_scores: object
+    msp_scores: object
 
 
 def _positive_gaps_between_intervals(starts: np.ndarray, lengths: np.ndarray) -> list:
@@ -37,9 +55,9 @@ def _flipped_interval_tag_arrays(read, start_tag: str, length_tag: str, default)
         starts, lengths = flip_intervals_to_seq(
             read.get_tag(start_tag), read.get_tag(length_tag), read,
         )
-        return np.array(starts), np.array(lengths)
+        return _IntervalTagArrays(np.array(starts), np.array(lengths))
     except KeyError:
-        return default
+        return _IntervalTagArrays(default[0], default[1])
 
 
 def _scaled_score_tag(read, tag: str):
@@ -319,11 +337,11 @@ def _count_primary_mapped_reads(bam_path: str) -> int:
     return total_reads
 
 
-def _stats_read_signal_arrays(read, with_scores: bool) -> tuple:
-    ns, nl = _flipped_interval_tag_arrays(
+def _stats_read_signal_arrays(read, with_scores: bool) -> _StatsReadSignalArrays:
+    nuc_tags = _flipped_interval_tag_arrays(
         read, 'ns', 'nl', (np.array([]), np.array([])),
     )
-    as_starts, al_lengths = _flipped_interval_tag_arrays(
+    msp_tags = _flipped_interval_tag_arrays(
         read, 'as', 'al', (None, None),
     )
 
@@ -333,7 +351,14 @@ def _stats_read_signal_arrays(read, with_scores: bool) -> tuple:
         ns_scores = _scaled_score_tag(read, 'nq')
         as_scores = _scaled_score_tag(read, 'aq')
 
-    return ns, nl, as_starts, al_lengths, ns_scores, as_scores
+    return _StatsReadSignalArrays(
+        nuc_starts=nuc_tags.starts,
+        nuc_lengths=nuc_tags.lengths,
+        msp_starts=msp_tags.starts,
+        msp_lengths=msp_tags.lengths,
+        nuc_scores=ns_scores,
+        msp_scores=as_scores,
+    )
 
 
 def _add_read_to_footprint_stats(
@@ -341,19 +366,17 @@ def _add_read_to_footprint_stats(
     read,
     with_scores: bool,
 ) -> None:
-    (
-        ns, nl, as_starts, al_lengths, ns_scores, as_scores,
-    ) = _stats_read_signal_arrays(read, with_scores)
+    signals = _stats_read_signal_arrays(read, with_scores)
 
     read_length = read.query_length or 0
     stats.add_read(
         read_length,
-        ns,
-        nl,
-        as_starts,
-        al_lengths,
-        ns_scores,
-        as_scores,
+        signals.nuc_starts,
+        signals.nuc_lengths,
+        signals.msp_starts,
+        signals.msp_lengths,
+        signals.nuc_scores,
+        signals.msp_scores,
     )
 
 
