@@ -33,6 +33,7 @@ from fiberhmm.cli.generate_probs import (
     _probability_counters_have_data,
     _probability_read_tags_or_skip,
     _probability_table_path,
+    _ProbabilityControlGroupResults,
     _ProbabilityRunContext,
     _ProbabilitySampleFileResult,
     _ProbabilitySampleResult,
@@ -327,12 +328,12 @@ def test_process_probability_control_groups_delegates_both_sample_types(monkeypa
         target_bases=["A"],
     )
 
-    accessible, inaccessible = _process_probability_control_groups(args, run)
+    results = _process_probability_control_groups(args, run)
 
-    assert accessible == _ProbabilitySampleResult(
+    assert results.accessible == _ProbabilitySampleResult(
         {"accessible": "counters"}, 10, 20, {"accessible": 1},
     )
-    assert inaccessible == _ProbabilitySampleResult(
+    assert results.inaccessible == _ProbabilitySampleResult(
         {"inaccessible": "counters"}, 10, 20, {"inaccessible": 1},
     )
     assert calls[0][0:9] == (
@@ -408,8 +409,12 @@ def test_save_probability_run_outputs_routes_tables_cleanup_and_stats(monkeypatc
     _save_probability_run_outputs(
         args,
         run,
-        _ProbabilitySampleResult(accessible_counters, 11, 13, {"acc": 1}),
-        _ProbabilitySampleResult(inaccessible_counters, 17, 19, {"inacc": 1}),
+        _ProbabilityControlGroupResults(
+            _ProbabilitySampleResult(accessible_counters, 11, 13, {"acc": 1}),
+            _ProbabilitySampleResult(
+                inaccessible_counters, 17, 19, {"inacc": 1},
+            ),
+        ),
     )
 
     assert calls[0] == ("summary", (11, 13, 17, 19))

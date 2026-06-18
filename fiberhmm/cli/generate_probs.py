@@ -649,6 +649,12 @@ class _ProbabilitySampleResult:
     stats: dict
 
 
+@dataclass(frozen=True)
+class _ProbabilityControlGroupResults:
+    accessible: _ProbabilitySampleResult
+    inaccessible: _ProbabilitySampleResult
+
+
 def _process_probability_sample_group(
     section_label: str,
     sample_description: str,
@@ -913,7 +919,10 @@ def _setup_probability_run(args) -> _ProbabilityRunContext:
     )
 
 
-def _process_probability_control_groups(args, run: _ProbabilityRunContext):
+def _process_probability_control_groups(
+    args,
+    run: _ProbabilityRunContext,
+) -> _ProbabilityControlGroupResults:
     accessible_result = _process_probability_sample_group(
         "ACCESSIBLE",
         "naked/dechromatinized DNA",
@@ -942,15 +951,17 @@ def _process_probability_control_groups(args, run: _ProbabilityRunContext):
         run.base_name,
     )
 
-    return accessible_result, inaccessible_result
+    return _ProbabilityControlGroupResults(accessible_result, inaccessible_result)
 
 
 def _save_probability_run_outputs(
     args,
     run: _ProbabilityRunContext,
-    accessible_result,
-    inaccessible_result,
+    control_results: _ProbabilityControlGroupResults,
 ) -> None:
+    accessible_result = control_results.accessible
+    inaccessible_result = control_results.inaccessible
+
     _print_probability_results_summary(
         accessible_result.reads,
         accessible_result.scanned,
@@ -999,11 +1010,8 @@ def _save_probability_run_outputs(
 def main():
     args = parse_args()
     run = _setup_probability_run(args)
-    accessible_result, inaccessible_result = _process_probability_control_groups(
-        args,
-        run,
-    )
-    _save_probability_run_outputs(args, run, accessible_result, inaccessible_result)
+    control_results = _process_probability_control_groups(args, run)
+    _save_probability_run_outputs(args, run, control_results)
 
 
 if __name__ == '__main__':
