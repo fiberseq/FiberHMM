@@ -640,6 +640,84 @@ def test_write_processed_legacy_reads_tags_results_and_counts(monkeypatch):
     assert outbam.written == reads
 
 
+def test_process_legacy_chunk_results_uses_executor_when_available():
+    class Executor:
+        def __init__(self):
+            self.submitted = []
+
+        def submit(self, fn, *args):
+            self.submitted.append((fn, args))
+            return _done_future(WorkerChunkResult([{"ns": [1]}], read_failures=2))
+
+    executor = Executor()
+    results, worker_failures = legacy_pipeline._process_legacy_chunk_results(
+        ["fiber"],
+        model=object(),
+        executor=executor,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=False,
+    )
+
+    assert worker_failures == 2
+    assert results == [{"ns": [1]}]
+    assert executor.submitted == [(
+        legacy_pipeline._process_chunk_worker,
+        (["fiber"], 11, True, "daf", 5, 61, 87, True, False),
+    )]
+
+
+def test_process_legacy_chunk_results_runs_direct_without_executor(monkeypatch):
+    seen = []
+
+    def fake_process(*args, **kwargs):
+        seen.append((args, kwargs))
+        return {"ns": [len(seen)]}
+
+    monkeypatch.setattr(legacy_pipeline, "_process_single_read", fake_process)
+    model = object()
+
+    results, worker_failures = legacy_pipeline._process_legacy_chunk_results(
+        ["fiber-a", "fiber-b"],
+        model=model,
+        executor=None,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=True,
+    )
+
+    assert results == [{"ns": [1]}, {"ns": [2]}]
+    assert worker_failures == 0
+    assert seen == [
+        (
+            ("fiber-a", model, 11, True, "daf", 5, 61),
+            {
+                "nuc_min_size": 87,
+                "with_scores": True,
+                "return_posteriors": True,
+            },
+        ),
+        (
+            ("fiber-b", model, 11, True, "daf", 5, 61),
+            {
+                "nuc_min_size": 87,
+                "with_scores": True,
+                "return_posteriors": True,
+            },
+        ),
+    ]
+
+
 def test_process_legacy_chunk_and_record_updates_counts_and_posteriors(monkeypatch):
     chunk_reads = ["fiber"]
     chunk_read_objs = ["read"]

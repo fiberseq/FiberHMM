@@ -58,6 +58,53 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
         If return_posteriors=True, returns results list for caller to write posteriors.
     """
 
+    results, worker_failures = _process_legacy_chunk_results(
+        chunk_reads,
+        model,
+        executor,
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        nuc_min_size,
+        with_scores,
+        return_posteriors,
+    )
+
+    # Write annotated reads
+    reads_with_footprints, no_footprints = _write_processed_legacy_reads(
+        chunk_read_objs,
+        results,
+        outbam,
+        with_scores,
+        write_msps,
+    )
+
+    # Return results for posteriors if requested
+    if return_posteriors:
+        return (
+            reads_with_footprints,
+            no_footprints,
+            worker_failures,
+            list(zip(chunk_read_objs, chunk_reads, results)),
+        )
+    return reads_with_footprints, no_footprints, worker_failures, None
+
+
+def _process_legacy_chunk_results(
+    chunk_reads: list,
+    model,
+    executor,
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    with_scores: bool,
+    return_posteriors: bool,
+) -> Tuple[list, int]:
     if executor is not None:
         # Parallel: submit chunk to worker
         future = executor.submit(
@@ -79,24 +126,7 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
             )
             results.append(result)
 
-    # Write annotated reads
-    reads_with_footprints, no_footprints = _write_processed_legacy_reads(
-        chunk_read_objs,
-        results,
-        outbam,
-        with_scores,
-        write_msps,
-    )
-
-    # Return results for posteriors if requested
-    if return_posteriors:
-        return (
-            reads_with_footprints,
-            no_footprints,
-            worker_failures,
-            list(zip(chunk_read_objs, chunk_reads, results)),
-        )
-    return reads_with_footprints, no_footprints, worker_failures, None
+    return results, worker_failures
 
 
 def _write_processed_legacy_reads(
