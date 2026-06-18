@@ -44,6 +44,12 @@ except ImportError:
 _LEGACY_DEFAULT_CHUNK_SIZE = 2000
 
 
+@dataclass(frozen=True)
+class _LegacyChunkResult:
+    results: list
+    worker_failures: int
+
+
 def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                               outbam, model, executor,
                               edge_trim: int, circular: bool,
@@ -62,7 +68,7 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
         If return_posteriors=True, returns results list for caller to write posteriors.
     """
 
-    results, worker_failures = _process_legacy_chunk_results(
+    chunk_result = _process_legacy_chunk_results(
         chunk_reads,
         model,
         executor,
@@ -79,7 +85,7 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
     # Write annotated reads
     reads_with_footprints, no_footprints = _write_processed_legacy_reads(
         chunk_read_objs,
-        results,
+        chunk_result.results,
         outbam,
         with_scores,
         write_msps,
@@ -90,10 +96,10 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
         return (
             reads_with_footprints,
             no_footprints,
-            worker_failures,
-            list(zip(chunk_read_objs, chunk_reads, results)),
+            chunk_result.worker_failures,
+            list(zip(chunk_read_objs, chunk_reads, chunk_result.results)),
         )
-    return reads_with_footprints, no_footprints, worker_failures, None
+    return reads_with_footprints, no_footprints, chunk_result.worker_failures, None
 
 
 def _process_legacy_chunk_results(
@@ -108,7 +114,7 @@ def _process_legacy_chunk_results(
     nuc_min_size: int,
     with_scores: bool,
     return_posteriors: bool,
-) -> Tuple[list, int]:
+) -> _LegacyChunkResult:
     if executor is not None:
         # Parallel: submit chunk to worker
         future = executor.submit(
@@ -135,7 +141,7 @@ def _process_legacy_chunk_results(
         )
         worker_failures = 0
 
-    return results, worker_failures
+    return _LegacyChunkResult(results, worker_failures)
 
 
 def _process_direct_legacy_chunk_results(

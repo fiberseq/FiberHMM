@@ -831,7 +831,7 @@ def test_process_legacy_chunk_results_uses_executor_when_available():
             return _done_future(WorkerChunkResult([{"ns": [1]}], read_failures=2))
 
     executor = Executor()
-    results, worker_failures = legacy_pipeline._process_legacy_chunk_results(
+    chunk_result = legacy_pipeline._process_legacy_chunk_results(
         ["fiber"],
         model=object(),
         executor=executor,
@@ -845,8 +845,10 @@ def test_process_legacy_chunk_results_uses_executor_when_available():
         return_posteriors=False,
     )
 
-    assert worker_failures == 2
-    assert results == [{"ns": [1]}]
+    assert chunk_result == legacy_pipeline._LegacyChunkResult(
+        results=[{"ns": [1]}],
+        worker_failures=2,
+    )
     assert executor.submitted == [(
         legacy_pipeline._process_chunk_worker,
         (["fiber"], 11, True, "daf", 5, 61, 87, True, False),
@@ -865,7 +867,7 @@ def test_process_legacy_chunk_results_runs_direct_without_executor(monkeypatch):
     )
     model = object()
 
-    results, worker_failures = legacy_pipeline._process_legacy_chunk_results(
+    chunk_result = legacy_pipeline._process_legacy_chunk_results(
         ["fiber-a", "fiber-b"],
         model=model,
         executor=None,
@@ -879,8 +881,10 @@ def test_process_legacy_chunk_results_runs_direct_without_executor(monkeypatch):
         return_posteriors=True,
     )
 
-    assert results == [{"ns": [1]}, {"ns": [2]}]
-    assert worker_failures == 0
+    assert chunk_result == legacy_pipeline._LegacyChunkResult(
+        results=[{"ns": [1]}, {"ns": [2]}],
+        worker_failures=0,
+    )
     assert calls == [(
         ["fiber-a", "fiber-b"],
         model,
