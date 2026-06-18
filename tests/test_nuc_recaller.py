@@ -29,6 +29,9 @@ from fiberhmm.inference.nuc_recaller import (
     _recall_nuc_params,
     _recall_nuc_span,
     _recall_nuc_tables,
+    _refine_fragment,
+    _refine_fragment_from_request,
+    _RefineFragmentRequest,
     _residue_intervals_around_nuc,
     _restore_circular_tiling_frame,
     _rotate_circular_nuc_calls,
@@ -263,6 +266,38 @@ def test_residue_intervals_around_nuc_reports_flanks_only():
 
     assert _residue_intervals_around_nuc(0, 40, nuc) == [(0, 10), (30, 10)]
     assert _residue_intervals_around_nuc(10, 30, nuc) == []
+
+
+def test_refine_fragment_request_matches_adapter():
+    obs = _obs((MISS, 85))
+    llr_hit, llr_miss = _llr_tables()
+    request = _RefineFragmentRequest(
+        obs=obs,
+        start=0,
+        end=len(obs),
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        nuc_min_size=40,
+        edge_min_llr=2.0,
+        edge_min_opps=2,
+    )
+
+    requested = _refine_fragment_from_request(request)
+    adapted = _refine_fragment(
+        obs,
+        0,
+        len(obs),
+        llr_hit,
+        llr_miss,
+        40,
+        2.0,
+        2,
+    )
+
+    assert requested == adapted
+    assert isinstance(requested.nuc, NucCall)
+    assert requested.nuc.length == 85
+    assert requested.access == []
 
 
 def test_bounded_interval_handles_clamping_and_invalid_spans():

@@ -81,6 +81,18 @@ class _RefinedFragment:
 
 
 @dataclass(frozen=True)
+class _RefineFragmentRequest:
+    obs: object
+    start: int
+    end: int
+    llr_hit: np.ndarray
+    llr_miss: np.ndarray
+    nuc_min_size: int
+    edge_min_llr: float
+    edge_min_opps: int
+
+
+@dataclass(frozen=True)
 class _AccessibleSplit:
     fragments: List[Interval]
     access: List[Interval]
@@ -240,9 +252,9 @@ def _residue_intervals_around_nuc(a: int, b: int, nuc: NucCall) -> List[Interval
     return residues
 
 
-def _refine_fragment(obs, a, b, llr_hit, llr_miss,
-                     nuc_min_size, edge_min_llr,
-                     edge_min_opps) -> _RefinedFragment:
+def _refine_fragment_from_request(
+    request: _RefineFragmentRequest,
+) -> _RefinedFragment:
     """Edge-refine one protected fragment into a NucCall (or demote it).
 
     Returns a refined fragment with ``nuc`` and ``access`` fields. A fragment shorter than
@@ -251,25 +263,55 @@ def _refine_fragment(obs, a, b, llr_hit, llr_miss,
     quality-0 NucCall) and the residue goes to ``access``.
     """
     access: List[Interval] = []
-    if b - a < nuc_min_size:
-        access.append((a, b - a))
+    if request.end - request.start < request.nuc_min_size:
+        access.append((request.start, request.end - request.start))
         return _RefinedFragment(nuc=None, access=access)
-    prot = call_tfs_in_interval(obs, a, b, llr_hit, llr_miss,
-                                edge_min_llr, edge_min_opps)
+    prot = call_tfs_in_interval(
+        request.obs,
+        request.start,
+        request.end,
+        request.llr_hit,
+        request.llr_miss,
+        request.edge_min_llr,
+        request.edge_min_opps,
+    )
     if not prot:
         # signal-desert fragment: keep raw extent, unknown quality/edges
         return _RefinedFragment(
-            nuc=NucCall(a, b - a, nq=0, el=0, er=0),
+            nuc=NucCall(
+                request.start,
+                request.end - request.start,
+                nq=0,
+                el=0,
+                er=0,
+            ),
             access=access,
         )
-    nuc = _nuc_from_protected_calls(prot, nuc_min_size)
+    nuc = _nuc_from_protected_calls(prot, request.nuc_min_size)
     if nuc is None:
         # Edge refinement trimmed the protected core below the floor (a sparse
         # protected island) -> not a nucleosome, demote the whole fragment.
-        access.append((a, b - a))
+        access.append((request.start, request.end - request.start))
         return _RefinedFragment(nuc=None, access=access)
-    access.extend(_residue_intervals_around_nuc(a, b, nuc))
+    access.extend(_residue_intervals_around_nuc(request.start, request.end, nuc))
     return _RefinedFragment(nuc=nuc, access=access)
+
+
+def _refine_fragment(obs, a, b, llr_hit, llr_miss,
+                     nuc_min_size, edge_min_llr,
+                     edge_min_opps) -> _RefinedFragment:
+    return _refine_fragment_from_request(
+        _RefineFragmentRequest(
+            obs=obs,
+            start=a,
+            end=b,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            nuc_min_size=nuc_min_size,
+            edge_min_llr=edge_min_llr,
+            edge_min_opps=edge_min_opps,
+        )
+    )
 
 
 def _split_on_accessible_cuts_from_request(
@@ -448,9 +490,17 @@ def _recall_nuc_span(
         )
         access.extend(phase.cuts)
         for sa, sb in phase.fragments:
-            refined = _refine_fragment(
-                obs, sa, sb, tables.llr_hit, tables.llr_miss,
-                params.nuc_min_size, params.edge_min_llr, params.edge_min_opps,
+            refined = _refine_fragment_from_request(
+                _RefineFragmentRequest(
+                    obs=obs,
+                    start=sa,
+                    end=sb,
+                    llr_hit=tables.llr_hit,
+                    llr_miss=tables.llr_miss,
+                    nuc_min_size=params.nuc_min_size,
+                    edge_min_llr=params.edge_min_llr,
+                    edge_min_opps=params.edge_min_opps,
+                )
             )
             if refined.nuc is not None:
                 nucs.append(refined.nuc)
@@ -829,15 +879,17 @@ def _promoted_nuc_from_tf_call(
     edge_min_llr,
     edge_min_opps,
 ):
-    refined = _refine_fragment(
-        obs,
-        call.start,
-        call.start + call.length,
-        llr_hit,
-        llr_miss,
-        nuc_min_size,
-        edge_min_llr,
-        edge_min_opps,
+    refined = _refine_fragment_from_request(
+        _RefineFragmentRequest(
+            obs=obs,
+            start=call.start,
+            end=call.start + call.length,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            nuc_min_size=nuc_min_size,
+            edge_min_llr=edge_min_llr,
+            edge_min_opps=edge_min_opps,
+        )
     )
     return refined.nuc
 
