@@ -564,8 +564,14 @@ def test_process_legacy_reads_buffers_skips_chunks_and_progress(monkeypatch):
         assert mode == "daf"
         assert prob_threshold == 128
         if read == "skip":
-            return None, "low_mapq"
-        return f"fiber-{read}", None
+            return legacy_pipeline._LegacyFiberReadResult(
+                fiber_read=None,
+                skip_reason="low_mapq",
+            )
+        return legacy_pipeline._LegacyFiberReadResult(
+            fiber_read=f"fiber-{read}",
+            skip_reason=None,
+        )
 
     def fake_process_chunk(
         chunk_reads,
@@ -782,18 +788,18 @@ def test_legacy_fiber_read_or_skip_filters_and_extracts(monkeypatch):
 
     monkeypatch.setattr(legacy_pipeline, "_extract_fiber_read_from_pysam", fake_extract)
 
-    fiber_read, reason = legacy_pipeline._legacy_fiber_read_or_skip(
+    fiber_result = legacy_pipeline._legacy_fiber_read_or_skip(
         _streaming_read(), config, "daf", 128,
     )
-    assert fiber_read == {"read_id": "read1"}
-    assert reason is None
+    assert fiber_result.fiber_read == {"read_id": "read1"}
+    assert fiber_result.skip_reason is None
     assert extracted == [("read1", "daf", 128)]
 
-    fiber_read, reason = legacy_pipeline._legacy_fiber_read_or_skip(
+    fiber_result = legacy_pipeline._legacy_fiber_read_or_skip(
         _streaming_read(mapping_quality=0), config, "daf", 128,
     )
-    assert fiber_read is None
-    assert reason == "low_mapq"
+    assert fiber_result.fiber_read is None
+    assert fiber_result.skip_reason == "low_mapq"
     assert extracted == [("read1", "daf", 128)]
 
     monkeypatch.setattr(
@@ -801,21 +807,21 @@ def test_legacy_fiber_read_or_skip_filters_and_extracts(monkeypatch):
         "_extract_fiber_read_from_pysam",
         lambda read, mode, prob_threshold: None,
     )
-    fiber_read, reason = legacy_pipeline._legacy_fiber_read_or_skip(
+    fiber_result = legacy_pipeline._legacy_fiber_read_or_skip(
         _streaming_read(), config, "daf", 128,
     )
-    assert fiber_read is None
-    assert reason == "no_modifications"
+    assert fiber_result.fiber_read is None
+    assert fiber_result.skip_reason == "no_modifications"
 
     def fail_extract(read, mode, prob_threshold):
         raise ValueError("bad read")
 
     monkeypatch.setattr(legacy_pipeline, "_extract_fiber_read_from_pysam", fail_extract)
-    fiber_read, reason = legacy_pipeline._legacy_fiber_read_or_skip(
+    fiber_result = legacy_pipeline._legacy_fiber_read_or_skip(
         _streaming_read(), config, "daf", 128,
     )
-    assert fiber_read is None
-    assert reason == "extraction_failed"
+    assert fiber_result.fiber_read is None
+    assert fiber_result.skip_reason == "extraction_failed"
 
 
 def test_write_processed_legacy_reads_tags_results_and_counts(monkeypatch):

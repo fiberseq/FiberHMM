@@ -51,6 +51,12 @@ class _LegacyPosteriorWriter:
 
 
 @dataclass(frozen=True)
+class _LegacyFiberReadResult:
+    fiber_read: object | None
+    skip_reason: Optional[str]
+
+
+@dataclass(frozen=True)
 class _LegacyChunkResult:
     results: list
     worker_failures: int
@@ -531,16 +537,16 @@ def _process_legacy_reads(
     )
 
     for read in reads:
-        fiber_read, skip_reason = _legacy_fiber_read_or_skip(
+        fiber_result = _legacy_fiber_read_or_skip(
             read, filter_config, mode, prob_threshold,
         )
-        if skip_reason:
+        if fiber_result.skip_reason:
             skipped += _write_skipped_legacy_read(
-                outbam, read, skip_reasons, skip_reason
+                outbam, read, skip_reasons, fiber_result.skip_reason
             )
             continue
 
-        chunk_reads.append(fiber_read)
+        chunk_reads.append(fiber_result.fiber_read)
         chunk_read_objs.append(read)
         total_reads += 1
 
@@ -613,19 +619,26 @@ def _write_skipped_legacy_read(outbam, read, skip_reasons: dict, reason: str) ->
 
 
 def _legacy_fiber_read_or_skip(read, filter_config: ReadFilterConfig,
-                               mode: str, prob_threshold: int):
+                               mode: str,
+                               prob_threshold: int) -> _LegacyFiberReadResult:
     skip_reason = streaming_skip_reason(read, filter_config)
     if skip_reason:
-        return None, skip_reason
+        return _LegacyFiberReadResult(fiber_read=None, skip_reason=skip_reason)
 
     try:
         fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
     except Exception:
-        return None, 'extraction_failed'
+        return _LegacyFiberReadResult(
+            fiber_read=None,
+            skip_reason='extraction_failed',
+        )
 
     if fiber_read is None:
-        return None, 'no_modifications'
-    return fiber_read, None
+        return _LegacyFiberReadResult(
+            fiber_read=None,
+            skip_reason='no_modifications',
+        )
+    return _LegacyFiberReadResult(fiber_read=fiber_read, skip_reason=None)
 
 
 def _run_legacy_bam_processing(
