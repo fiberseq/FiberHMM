@@ -396,3 +396,20 @@ def test_hdf5_posterior_writer_closes_file_when_finalize_fails(monkeypatch, tmp_
 
     assert writer.close() == (0, 0)
     assert fake_h5.close_count == 1
+
+
+def test_hdf5_posterior_writer_rejects_flush_or_finalize_after_close(tmp_path):
+    writer = hdf5_backend.PosteriorWriter(
+        str(tmp_path / "posteriors.h5"),
+        mode="pacbio-fiber",
+        context_size=3,
+        edge_trim=10,
+        source_bam="input.bam",
+    )
+
+    writer.close()
+
+    with pytest.raises(RuntimeError, match="PosteriorWriter is closed"):
+        writer.flush()
+    with pytest.raises(RuntimeError, match="PosteriorWriter is closed"):
+        writer.finalize()

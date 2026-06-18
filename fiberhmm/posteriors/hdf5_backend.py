@@ -238,6 +238,10 @@ class PosteriorWriter:
         self.total_written = 0
         self._closed = False
 
+    def _raise_if_closed(self):
+        if self._closed:
+            raise RuntimeError("PosteriorWriter is closed")
+
     def _ensure_chrom(self, chrom: str):
         """Create chromosome group if it doesn't exist."""
         if chrom not in self._chrom_groups:
@@ -264,8 +268,7 @@ class PosteriorWriter:
                 - footprint_starts: np.ndarray int32
                 - footprint_sizes: np.ndarray int32
         """
-        if self._closed:
-            raise RuntimeError("PosteriorWriter is closed")
+        self._raise_if_closed()
 
         self._ensure_chrom(chrom)
         self._chrom_buffers[chrom].append(fiber_data)
@@ -299,11 +302,13 @@ class PosteriorWriter:
 
     def flush(self):
         """Flush all chromosome buffers."""
+        self._raise_if_closed()
         for chrom in list(self._chrom_buffers.keys()):
             self._flush_chrom(chrom)
 
     def finalize(self):
         """Flush all buffers and write metadata arrays."""
+        self._raise_if_closed()
         self.flush()
 
         for chrom, grp in self._chrom_groups.items():
