@@ -24,7 +24,7 @@ import argparse
 import os
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List, MutableMapping, Tuple
+from typing import Dict, List, MutableMapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -180,17 +180,24 @@ def _generate_probs_skip_reason(read, min_mapq: int, min_read_length: int):
     return None
 
 
-def _read_mm_ml_tags_or_skip(read):
+@dataclass(frozen=True)
+class _MmMlTagResult:
+    mm_tag: Optional[str]
+    ml_values: Optional[List[int]]
+    skip_reason: Optional[str]
+
+
+def _read_mm_ml_tags_or_skip(read) -> _MmMlTagResult:
     mm_tag = get_preferred_tag(read, 'MM', 'Mm')
     if not mm_tag:
-        return None, None, 'no_mm_tag'
+        return _MmMlTagResult(None, None, 'no_mm_tag')
 
     ml_raw = get_preferred_tag(read, 'ML', 'Ml')
     if not _has_mm_ml_inputs(mm_tag, ml_raw):
-        return mm_tag, None, 'no_ml_tag'
+        return _MmMlTagResult(mm_tag, None, 'no_ml_tag')
     ml_values = list(ml_raw)
 
-    return mm_tag, ml_values, None
+    return _MmMlTagResult(mm_tag, ml_values, None)
 
 
 def _target_bases_for_mode(mode: str) -> List[str]:
@@ -340,11 +347,11 @@ def _probability_read_tags_or_skip(
     if _record_filter_skip(filter_stats, skip_reason):
         return None
 
-    mm_tag, ml_tag, tag_skip_reason = _read_mm_ml_tags_or_skip(read)
-    if _record_filter_skip(filter_stats, tag_skip_reason):
+    tag_result = _read_mm_ml_tags_or_skip(read)
+    if _record_filter_skip(filter_stats, tag_result.skip_reason):
         return None
 
-    return mm_tag, ml_tag
+    return tag_result.mm_tag, tag_result.ml_values
 
 
 def _process_probability_read(

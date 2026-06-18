@@ -20,6 +20,7 @@ from fiberhmm.cli.generate_probs import (
     _generate_probs_skip_reason,
     _max_reads_per_file,
     _maybe_update_probability_progress,
+    _MmMlTagResult,
     _new_filter_stats,
     _new_probability_counters,
     _print_daf_diagnostics,
@@ -156,27 +157,35 @@ def test_read_reference_span_handles_missing_coordinates():
 
 def test_read_mm_ml_tags_or_skip_prefers_supported_tag_names():
     read = _Read({"MM": "A+a,0;", "ML": [200]})
-    assert _read_mm_ml_tags_or_skip(read) == ("A+a,0;", [200], None)
+    assert _read_mm_ml_tags_or_skip(read) == _MmMlTagResult(
+        "A+a,0;", [200], None,
+    )
 
     read = _Read({"Mm": "C+m,0;", "Ml": (150,)})
-    assert _read_mm_ml_tags_or_skip(read) == ("C+m,0;", [150], None)
+    assert _read_mm_ml_tags_or_skip(read) == _MmMlTagResult(
+        "C+m,0;", [150], None,
+    )
 
-    assert _read_mm_ml_tags_or_skip(_Read({"ML": [200]})) == (
+    assert _read_mm_ml_tags_or_skip(_Read({"ML": [200]})) == _MmMlTagResult(
         None,
         None,
         "no_mm_tag",
     )
-    assert _read_mm_ml_tags_or_skip(_Read({"MM": "A+a,0;"})) == (
+    assert _read_mm_ml_tags_or_skip(_Read({"MM": "A+a,0;"})) == _MmMlTagResult(
         "A+a,0;",
         None,
         "no_ml_tag",
     )
-    assert _read_mm_ml_tags_or_skip(_Read({"MM": "A+a,0;", "ML": []})) == (
+    assert _read_mm_ml_tags_or_skip(
+        _Read({"MM": "A+a,0;", "ML": []})
+    ) == _MmMlTagResult(
         "A+a,0;",
         None,
         "no_ml_tag",
     )
-    assert _read_mm_ml_tags_or_skip(_Read({"MM": "", "ML": [200]})) == (
+    assert _read_mm_ml_tags_or_skip(
+        _Read({"MM": "", "ML": [200]})
+    ) == _MmMlTagResult(
         None,
         None,
         "no_mm_tag",
@@ -184,17 +193,17 @@ def test_read_mm_ml_tags_or_skip_prefers_supported_tag_names():
 
 
 def test_read_mm_ml_tags_or_skip_accepts_numpy_ml_values():
-    mm_tag, ml_values, skip_reason = _read_mm_ml_tags_or_skip(
+    tag_result = _read_mm_ml_tags_or_skip(
         _Read({"MM": "A+a,0;", "ML": np.asarray([200], dtype=np.uint8)}),
     )
 
-    assert mm_tag == "A+a,0;"
-    assert [int(value) for value in ml_values] == [200]
-    assert skip_reason is None
+    assert tag_result.mm_tag == "A+a,0;"
+    assert [int(value) for value in tag_result.ml_values] == [200]
+    assert tag_result.skip_reason is None
 
     assert _read_mm_ml_tags_or_skip(
         _Read({"MM": "A+a,0;", "ML": np.asarray([], dtype=np.uint8)}),
-    ) == ("A+a,0;", None, "no_ml_tag")
+    ) == _MmMlTagResult("A+a,0;", None, "no_ml_tag")
 
 
 def test_target_bases_for_mode():
