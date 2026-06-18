@@ -182,6 +182,47 @@ def _process_legacy_chunk_and_record(
     return n_fp, n_failed
 
 
+def _open_legacy_posterior_writer(
+    output_posteriors: Optional[str],
+    mode: str,
+    context_size: int,
+    edge_trim: int,
+    input_bam: str,
+) -> tuple[object | None, bool]:
+    if not output_posteriors:
+        return None, False
+
+    if not HAS_POSTERIOR_WRITER:
+        print("WARNING: posterior_writer.py not found, skipping posteriors export")
+        return None, False
+
+    writer = PosteriorWriter(
+        output_posteriors, mode, context_size,
+        edge_trim, input_bam, batch_size=1000
+    )
+    print(f"Posteriors will be written to: {output_posteriors}")
+    return writer, True
+
+
+def _new_legacy_executor(model_path: str, n_cores: int, debug_timing: bool):
+    return ProcessPoolExecutor(
+        max_workers=n_cores,
+        mp_context=_MP_CONTEXT,
+        initializer=_init_bam_worker,
+        initargs=(model_path, debug_timing)
+    )
+
+
+def _legacy_executor_for_config(
+    model_path: Optional[str],
+    n_cores: int,
+    debug_timing: bool,
+):
+    if n_cores > 1 and model_path:
+        return _new_legacy_executor(model_path, n_cores, debug_timing)
+    return None
+
+
 _LEGACY_SKIP_REASON_KEYS = BASE_SKIP_REASON_KEYS + (NO_FOOTPRINTS_SKIP_REASON,)
 
 
@@ -269,30 +310,16 @@ def _process_bam_legacy_pipeline(
                                  header=append_coord_marker(inbam.header),
                                  threads=io_threads) as outbam:
 
-            if output_posteriors:
-                if HAS_POSTERIOR_WRITER:
-                    posterior_writer = PosteriorWriter(
-                        output_posteriors, mode, context_size,
-                        edge_trim, input_bam, batch_size=1000
-                    )
-                    return_posteriors = True
-                    print(f"Posteriors will be written to: {output_posteriors}")
-                else:
-                    print("WARNING: posterior_writer.py not found, skipping posteriors export")
+            posterior_writer, return_posteriors = _open_legacy_posterior_writer(
+                output_posteriors, mode, context_size, edge_trim, input_bam,
+            )
 
             chunk_reads = []  # Buffer for current chunk
             chunk_read_objs = []  # Corresponding pysam read objects
 
-            if n_cores > 1 and model_path:
-                # Parallel processing with ProcessPoolExecutor
-                executor = ProcessPoolExecutor(
-                    max_workers=n_cores,
-                    mp_context=_MP_CONTEXT,
-                    initializer=_init_bam_worker,
-                    initargs=(model_path, debug_timing)
-                )
-            else:
-                executor = None
+            executor = _legacy_executor_for_config(
+                model_path, n_cores, debug_timing,
+            )
 
             try:
                 for read in inbam:

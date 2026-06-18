@@ -109,6 +109,75 @@ def test_legacy_posterior_ref_positions_uses_backend_when_available(monkeypatch)
     assert legacy_pipeline._legacy_posterior_ref_positions(read) is positions
 
 
+def test_open_legacy_posterior_writer_enables_posteriors(monkeypatch, capsys):
+    created = []
+
+    class FakePosteriorWriter:
+        def __init__(self, *args, **kwargs):
+            created.append((args, kwargs))
+
+    monkeypatch.setattr(legacy_pipeline, "HAS_POSTERIOR_WRITER", True)
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "PosteriorWriter",
+        FakePosteriorWriter,
+        raising=False,
+    )
+
+    writer, return_posteriors = legacy_pipeline._open_legacy_posterior_writer(
+        "out.h5", "daf", 5, 11, "input.bam",
+    )
+
+    assert isinstance(writer, FakePosteriorWriter)
+    assert return_posteriors is True
+    assert created == [
+        (("out.h5", "daf", 5, 11, "input.bam"), {"batch_size": 1000})
+    ]
+    assert capsys.readouterr().out == "Posteriors will be written to: out.h5\n"
+
+
+def test_open_legacy_posterior_writer_handles_disabled_and_missing_backend(
+    monkeypatch, capsys,
+):
+    assert legacy_pipeline._open_legacy_posterior_writer(
+        None, "daf", 5, 11, "input.bam",
+    ) == (None, False)
+    assert capsys.readouterr().out == ""
+
+    monkeypatch.setattr(legacy_pipeline, "HAS_POSTERIOR_WRITER", False)
+    assert legacy_pipeline._open_legacy_posterior_writer(
+        "out.h5", "daf", 5, 11, "input.bam",
+    ) == (None, False)
+    assert capsys.readouterr().out == (
+        "WARNING: posterior_writer.py not found, skipping posteriors export\n"
+    )
+
+
+def test_legacy_executor_helpers_configure_parallel_pool(monkeypatch):
+    class FakeExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(legacy_pipeline, "ProcessPoolExecutor", FakeExecutor)
+
+    executor = legacy_pipeline._new_legacy_executor(
+        model_path="model.pkl", n_cores=3, debug_timing=True,
+    )
+
+    assert executor.kwargs == {
+        "max_workers": 3,
+        "mp_context": legacy_pipeline._MP_CONTEXT,
+        "initializer": legacy_pipeline._init_bam_worker,
+        "initargs": ("model.pkl", True),
+    }
+    assert legacy_pipeline._legacy_executor_for_config(None, 3, True) is None
+    assert legacy_pipeline._legacy_executor_for_config("model.pkl", 1, True) is None
+    assert isinstance(
+        legacy_pipeline._legacy_executor_for_config("model.pkl", 2, False),
+        FakeExecutor,
+    )
+
+
 def test_parallel_reexports_streaming_worker_entry_points():
     assert parallel._init_bam_worker is streaming_workers._init_bam_worker
     assert parallel._init_fused_worker is streaming_workers._init_fused_worker
