@@ -29,6 +29,7 @@ from fiberhmm.inference.region_workers import (
     _region_apply_config,
     _region_bam_output_config,
     _region_bam_result_from_counts,
+    _region_bam_result_from_request,
     _region_bam_worker_runtime,
     _region_bed12_blocks,
     _region_bed12_row_from_read_result,
@@ -38,6 +39,7 @@ from fiberhmm.inference.region_workers import (
     _region_fused_recall_options,
     _region_read_route,
     _region_result_ns_scores,
+    _RegionBamResultRequest,
     _RegionBamWorkerCounts,
     _RegionBed12Blocks,
     _RegionBed12RowRequest,
@@ -303,12 +305,14 @@ def test_region_bam_result_from_counts_includes_tsv_only_when_written():
         written=9,
         posteriors_written=2,
     )
-    result = _region_bam_result_from_counts(
-        "region.bam",
-        counts,
-        {"low_mapq": 1},
-        "region.tsv",
-        return_posteriors=True,
+    result = _region_bam_result_from_request(
+        _RegionBamResultRequest(
+            temp_bam_path="region.bam",
+            counts=counts,
+            skip_reasons={"low_mapq": 1},
+            temp_tsv_path="region.tsv",
+            return_posteriors=True,
+        )
     )
 
     assert result == RegionBamResult(
@@ -319,6 +323,13 @@ def test_region_bam_result_from_counts_includes_tsv_only_when_written():
         "region.tsv",
         {"low_mapq": 1},
     )
+    assert _region_bam_result_from_counts(
+        "region.bam",
+        counts,
+        {"low_mapq": 1},
+        "region.tsv",
+        return_posteriors=True,
+    ) == result
 
     no_tsv = _region_bam_result_from_counts(
         "region.bam",

@@ -184,6 +184,15 @@ class _RegionBamWorkerCounts:
 
 
 @dataclass(frozen=True)
+class _RegionBamResultRequest:
+    temp_bam_path: str
+    counts: _RegionBamWorkerCounts
+    skip_reasons: dict
+    temp_tsv_path: Optional[str]
+    return_posteriors: bool
+
+
+@dataclass(frozen=True)
 class _RegionBedReadDelta:
     total_reads: int = 0
     reads_with_footprints: int = 0
@@ -245,6 +254,26 @@ def _open_region_posterior_tsv(
         return _RegionPosteriorTsv(file=None, enabled=False)
 
 
+def _region_bam_result_from_request(
+    request: _RegionBamResultRequest,
+) -> RegionBamResult:
+    tsv_path = None
+    if (
+        request.return_posteriors
+        and request.counts.posteriors_written > 0
+        and request.temp_tsv_path
+    ):
+        tsv_path = request.temp_tsv_path
+    return RegionBamResult(
+        request.temp_bam_path,
+        request.counts.total_reads,
+        request.counts.reads_with_footprints,
+        request.counts.written,
+        tsv_path,
+        request.skip_reasons,
+    )
+
+
 def _region_bam_result_from_counts(
     temp_bam_path: str,
     counts: _RegionBamWorkerCounts,
@@ -252,16 +281,14 @@ def _region_bam_result_from_counts(
     temp_tsv_path: Optional[str],
     return_posteriors: bool,
 ) -> RegionBamResult:
-    tsv_path = None
-    if return_posteriors and counts.posteriors_written > 0 and temp_tsv_path:
-        tsv_path = temp_tsv_path
-    return RegionBamResult(
-        temp_bam_path,
-        counts.total_reads,
-        counts.reads_with_footprints,
-        counts.written,
-        tsv_path,
-        skip_reasons,
+    return _region_bam_result_from_request(
+        _RegionBamResultRequest(
+            temp_bam_path=temp_bam_path,
+            counts=counts,
+            skip_reasons=skip_reasons,
+            temp_tsv_path=temp_tsv_path,
+            return_posteriors=return_posteriors,
+        )
     )
 
 
@@ -977,12 +1004,14 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
             if tsv_file is not None:
                 tsv_file.close()
 
-        return _region_bam_result_from_counts(
-            temp_bam_path,
-            counts,
-            skip_reasons,
-            temp_tsv_path,
-            return_posteriors,
+        return _region_bam_result_from_request(
+            _RegionBamResultRequest(
+                temp_bam_path=temp_bam_path,
+                counts=counts,
+                skip_reasons=skip_reasons,
+                temp_tsv_path=temp_tsv_path,
+                return_posteriors=return_posteriors,
+            )
         )
 
     except Exception as e:
