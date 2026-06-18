@@ -270,6 +270,20 @@ def test_positive_length_intervals_filters_and_normalizes():
     ) == [(15, 7)]
 
 
+def test_passthrough_legacy_recall_intervals_filters_nucs_and_msps():
+    raw_tags = tf_recaller._RawLegacyRecallTags(
+        nuc_starts=["10", "20"],
+        nuc_lengths=["5", "0"],
+        msp_starts=["30", "40"],
+        msp_lengths=["-1", "7"],
+    )
+
+    assert tf_recaller._passthrough_legacy_recall_intervals(raw_tags) == (
+        [(10, 5)],
+        [(40, 7)],
+    )
+
+
 def test_kept_legacy_nuc_interval_applies_tf_overlap_policy():
     tf_intervals = [(20, 30)]
 

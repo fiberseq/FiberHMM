@@ -824,6 +824,20 @@ def _positive_length_intervals(starts, lengths) -> List[Tuple[int, int]]:
     ]
 
 
+def _passthrough_legacy_recall_intervals(
+    seq_tags: _RawLegacyRecallTags,
+) -> Tuple[List[Tuple[int, int]], List[Tuple[int, int]]]:
+    nucs = _positive_length_intervals(
+        seq_tags.nuc_starts,
+        seq_tags.nuc_lengths,
+    )
+    msps = _positive_length_intervals(
+        seq_tags.msp_starts,
+        seq_tags.msp_lengths,
+    )
+    return nucs, msps
+
+
 def _kept_legacy_nuc_interval(
     start,
     length,
@@ -912,14 +926,7 @@ def recall_read_from_request(
     )
     if extracted is None:
         # Pass through v2 calls unchanged
-        nucs = _positive_length_intervals(
-            seq_tags.nuc_starts,
-            seq_tags.nuc_lengths,
-        )
-        msps = _positive_length_intervals(
-            seq_tags.msp_starts,
-            seq_tags.msp_lengths,
-        )
+        nucs, msps = _passthrough_legacy_recall_intervals(seq_tags)
         return [], nucs, msps
 
     mod_pos, strand, seq = extracted
