@@ -246,6 +246,7 @@ def test_format_and_parse_ma_tag():
     assert parsed['nuc'] == nucs
     assert parsed['msp'] == msps
     assert parsed['tf'] == tfs
+    assert parse_ma_tag('4521; nuc.Q:44-147 ; tf.QQQ:51-20; ')['tf'] == tfs
 
 
 def test_format_ma_annotation_part_handles_empty_and_quality_specs():

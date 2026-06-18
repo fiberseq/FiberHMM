@@ -159,6 +159,7 @@ def _parse_ma_chunk(chunk: str) -> Tuple[str, str, str, List[Tuple[int, int]]]:
     if ':' not in chunk:
         raise ValueError(f'MA chunk missing colon: {chunk!r}')
     head, data = chunk.split(':', 1)
+    head = head.strip()
     name, strand, qual_spec = _parse_ma_head(head)
     intervals = _parse_ma_interval_list(data)
     return name, strand, qual_spec, intervals
@@ -349,6 +350,7 @@ def parse_ma_tag(ma_string: str) -> dict:
     out = {'read_length': read_length, 'nuc': [], 'msp': [], 'tf': [],
            'raw_types': []}
     for chunk in pieces[1:]:
+        chunk = chunk.strip()
         if not chunk:
             continue
         name, strand, qual_spec, intervals = _parse_ma_chunk(chunk)
