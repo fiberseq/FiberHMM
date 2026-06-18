@@ -423,6 +423,40 @@ def _fused_region_worker_params_from_request(
     )
 
 
+def _prepare_region_bam_parallel_run_from_request(
+    request: _RegionBamPipelineRequest,
+    return_posteriors: bool,
+) -> _RegionParallelRun:
+    return _prepare_region_parallel_run(
+        request.input_bam,
+        request.output_bam,
+        request.region_size,
+        request.skip_scaffolds,
+        request.chroms,
+        request.n_cores,
+        temp_prefix='.fiberhmm_tmp_',
+        output_posteriors=(
+            request.output_posteriors if return_posteriors else None
+        ),
+    )
+
+
+def _prepare_fused_region_bam_parallel_run_from_request(
+    request: _FusedRegionBamPipelineRequest,
+) -> _RegionParallelRun:
+    return _prepare_region_parallel_run(
+        request.input_bam,
+        request.output_bam,
+        request.region_size,
+        request.skip_scaffolds,
+        request.chroms,
+        request.n_cores,
+        temp_prefix='.fiberhmm_call_tmp_',
+        output_label=" (fused apply+recall)",
+        ensure_index=False,
+    )
+
+
 def _print_skip_reasons_summary(
     aggregation: RegionBamAggregation,
     footprint_label: str = "With footprints",
@@ -1144,17 +1178,9 @@ def _process_bam_region_parallel_from_request(
     start_time = time.time()
     return_posteriors = request.output_posteriors is not None
 
-    run = _prepare_region_parallel_run(
-        request.input_bam,
-        request.output_bam,
-        request.region_size,
-        request.skip_scaffolds,
-        request.chroms,
-        request.n_cores,
-        temp_prefix='.fiberhmm_tmp_',
-        output_posteriors=(
-            request.output_posteriors if return_posteriors else None
-        ),
+    run = _prepare_region_bam_parallel_run_from_request(
+        request,
+        return_posteriors=return_posteriors,
     )
 
     try:
@@ -1383,17 +1409,7 @@ def _process_bam_region_parallel_fused_from_request(
 ) -> Tuple[int, int]:
     start_time = time.time()
 
-    run = _prepare_region_parallel_run(
-        request.input_bam,
-        request.output_bam,
-        request.region_size,
-        request.skip_scaffolds,
-        request.chroms,
-        request.n_cores,
-        temp_prefix='.fiberhmm_call_tmp_',
-        output_label=" (fused apply+recall)",
-        ensure_index=False,
-    )
+    run = _prepare_fused_region_bam_parallel_run_from_request(request)
 
     try:
         params = _fused_region_worker_params_from_request(request)

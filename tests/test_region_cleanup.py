@@ -357,6 +357,110 @@ def test_region_worker_params_from_pipeline_requests_match_builders():
     )
 
 
+def test_region_parallel_run_adapters_pass_request_settings(monkeypatch):
+    train_rids = {"read1"}
+    bam_request = region_pipeline._RegionBamPipelineRequest(
+        input_bam="input.bam",
+        output_bam="output.bam",
+        model_path="model.json",
+        train_rids=train_rids,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=87,
+        min_mapq=20,
+        prob_threshold=128,
+        min_read_length=100,
+        with_scores=True,
+        n_cores=2,
+        region_size=1000,
+        skip_scaffolds=True,
+        chroms={"chr1"},
+        primary_only=True,
+        output_posteriors="post.h5",
+        write_msps=False,
+        io_threads=3,
+    )
+    fused_request = region_pipeline._FusedRegionBamPipelineRequest(
+        input_bam="call-in.bam",
+        output_bam="call-out.bam",
+        apply_model_path="apply.json",
+        recall_model_path="recall.json",
+        train_rids=train_rids,
+        edge_trim=12,
+        circular=False,
+        mode="pacbio-fiber",
+        context_size=6,
+        msp_min_size=62,
+        nuc_min_size=88,
+        min_mapq=21,
+        prob_threshold=129,
+        min_read_length=101,
+        with_scores=False,
+        min_llr=4.5,
+        min_opps=3,
+        unify_threshold=25,
+        emission_uplift=1.2,
+        also_write_legacy=True,
+        downstream_compat=False,
+        n_cores=3,
+        region_size=2000,
+        skip_scaffolds=False,
+        chroms=None,
+        io_threads=4,
+        primary_only=False,
+        ref_fasta_path="ref.fa",
+        recall_nucs=True,
+        split_min_llr=5.5,
+        split_min_opps=4,
+        filter_chimeras=True,
+        chimera_min_seg=6,
+        chimera_purity=0.9,
+        phase_nrl=147,
+        pg_record={"ID": "fiberhmm"},
+    )
+    calls = []
+    prepared = [
+        region_pipeline._RegionParallelRun(regions=["r1"], temp_dir="tmp1"),
+        region_pipeline._RegionParallelRun(regions=["r2"], temp_dir="tmp2"),
+    ]
+
+    def fake_prepare(*args, **kwargs):
+        calls.append((args, kwargs))
+        return prepared[len(calls) - 1]
+
+    monkeypatch.setattr(
+        region_pipeline,
+        "_prepare_region_parallel_run",
+        fake_prepare,
+    )
+
+    assert region_pipeline._prepare_region_bam_parallel_run_from_request(
+        bam_request,
+        return_posteriors=True,
+    ) is prepared[0]
+    assert region_pipeline._prepare_fused_region_bam_parallel_run_from_request(
+        fused_request,
+    ) is prepared[1]
+
+    assert calls == [
+        (
+            ("input.bam", "output.bam", 1000, True, {"chr1"}, 2),
+            {"temp_prefix": ".fiberhmm_tmp_", "output_posteriors": "post.h5"},
+        ),
+        (
+            ("call-in.bam", "call-out.bam", 2000, False, None, 3),
+            {
+                "temp_prefix": ".fiberhmm_call_tmp_",
+                "output_label": " (fused apply+recall)",
+                "ensure_index": False,
+            },
+        ),
+    ]
+
+
 def test_region_work_item_builders_use_stable_temp_names(tmp_path):
     regions = [("chr1", 0, 100), ("chr2", 5, 25)]
     temp_dir = str(tmp_path)
