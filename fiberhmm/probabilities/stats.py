@@ -184,6 +184,33 @@ def _plot_accessible_inaccessible_probability_scatter(ax, merged) -> None:
     ax.legend()
 
 
+def _plot_log_odds_distribution(ax, merged) -> None:
+    log_odds_filtered = _filtered_log_odds(merged)
+    if len(log_odds_filtered) == 0:
+        return
+
+    bins = np.linspace(-5, 10, 51)
+    median_log_odds = np.median(log_odds_filtered)
+    ax.hist(
+        log_odds_filtered,
+        bins=bins,
+        color='purple',
+        alpha=0.7,
+        edgecolor='white',
+    )
+    ax.axvline(0, color='black', linestyle='-', linewidth=1)
+    ax.axvline(
+        median_log_odds,
+        color='red',
+        linestyle='--',
+        label=f'Median: {median_log_odds:.2f}',
+    )
+    ax.set_xlabel('Log2(P_accessible / P_inaccessible)')
+    ax.set_ylabel('Number of contexts')
+    ax.set_title('Separation Score (Log-Odds)')
+    ax.legend()
+
+
 def _write_probability_ratio_summary(handle, label: str, ratios: np.ndarray) -> None:
     if len(ratios) == 0:
         return
@@ -354,18 +381,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
 
             # 3. Log-odds (separation score) - use merged data
             ax = axes[1, 0]
-            # Calculate log-odds for each context (use merged for alignment)
-            log_odds_filtered = _filtered_log_odds(merged)
-            if len(log_odds_filtered) > 0:
-                bins = np.linspace(-5, 10, 51)
-                ax.hist(log_odds_filtered, bins=bins, color='purple', alpha=0.7, edgecolor='white')
-                ax.axvline(0, color='black', linestyle='-', linewidth=1)
-                ax.axvline(np.median(log_odds_filtered), color='red', linestyle='--',
-                          label=f'Median: {np.median(log_odds_filtered):.2f}')
-                ax.set_xlabel('Log2(P_accessible / P_inaccessible)')
-                ax.set_ylabel('Number of contexts')
-                ax.set_title('Separation Score (Log-Odds)')
-                ax.legend()
+            _plot_log_odds_distribution(ax, merged)
 
             # 4. Top differentiating contexts (use merged)
             ax = axes[1, 1]

@@ -358,3 +358,60 @@ def test_accessible_inaccessible_probability_scatter_filters_and_labels():
     assert ax.xlim == (0, 1)
     assert ax.ylim == (0, 1)
     assert ax.legend_called
+
+
+def test_log_odds_distribution_plots_filtered_values_and_empty_noop():
+    class FakeAxis:
+        def __init__(self):
+            self.hist_calls = []
+            self.vlines = []
+            self.xlabel = None
+            self.ylabel = None
+            self.title = None
+            self.legend_called = False
+
+        def hist(self, values, **kwargs):
+            self.hist_calls.append((values, kwargs))
+
+        def axvline(self, value, **kwargs):
+            self.vlines.append((value, kwargs))
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_ylabel(self, value):
+            self.ylabel = value
+
+        def set_title(self, value):
+            self.title = value
+
+        def legend(self):
+            self.legend_called = True
+
+    merged = pd.DataFrame({
+        "ratio_acc": [0.8, 0.1],
+        "ratio_inacc": [0.2, 0.4],
+    })
+    ax = FakeAxis()
+
+    stats._plot_log_odds_distribution(ax, merged)
+
+    values, hist_kwargs = ax.hist_calls[0]
+    np.testing.assert_allclose(values, [2.0, -2.0])
+    np.testing.assert_allclose(hist_kwargs["bins"], np.linspace(-5, 10, 51))
+    assert hist_kwargs["color"] == "purple"
+    assert hist_kwargs["alpha"] == 0.7
+    assert hist_kwargs["edgecolor"] == "white"
+    assert ax.vlines == [
+        (0, {"color": "black", "linestyle": "-", "linewidth": 1}),
+        (0.0, {"color": "red", "linestyle": "--", "label": "Median: 0.00"}),
+    ]
+    assert ax.xlabel == "Log2(P_accessible / P_inaccessible)"
+    assert ax.ylabel == "Number of contexts"
+    assert ax.title == "Separation Score (Log-Odds)"
+    assert ax.legend_called
+
+    empty_ax = FakeAxis()
+    stats._plot_log_odds_distribution(empty_ax, pd.DataFrame())
+    assert empty_ax.hist_calls == []
+    assert empty_ax.vlines == []
