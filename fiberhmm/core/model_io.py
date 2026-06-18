@@ -53,6 +53,31 @@ class _JsonSavePath:
     filepath: str
     old_path: str
 
+
+@dataclass(frozen=True)
+class _ModelJsonRecord:
+    model_type: str
+    version: str
+    n_states: int
+    startprob: list
+    transmat: list
+    emissionprob: list
+    context_size: int
+    mode: str
+
+    def as_dict(self) -> dict:
+        return {
+            'model_type': self.model_type,
+            'version': self.version,
+            'n_states': self.n_states,
+            'startprob': self.startprob,
+            'transmat': self.transmat,
+            'emissionprob': self.emissionprob,
+            'context_size': self.context_size,
+            'mode': self.mode,
+        }
+
+
 # =============================================================================
 # Loading functions (all formats supported for backward compatibility)
 # =============================================================================
@@ -318,22 +343,30 @@ def save_model(model: FiberHMM, filepath: str,
     _save_json(model, save_path.filepath, context_size, mode)
 
 
+def _model_json_record_value(
+    model: FiberHMM,
+    context_size: int,
+    mode: str,
+) -> _ModelJsonRecord:
+    return _ModelJsonRecord(
+        model_type='FiberHMM',
+        version='2.0',
+        n_states=model.n_states,
+        startprob=model.startprob_.tolist(),
+        transmat=model.transmat_.tolist(),
+        emissionprob=model.emissionprob_.tolist(),
+        context_size=context_size,
+        mode=mode,
+    )
+
+
 def _model_json_record(model: FiberHMM, context_size: int, mode: str) -> dict:
-    return {
-        'model_type': 'FiberHMM',
-        'version': '2.0',
-        'n_states': model.n_states,
-        'startprob': model.startprob_.tolist(),
-        'transmat': model.transmat_.tolist(),
-        'emissionprob': model.emissionprob_.tolist(),
-        'context_size': context_size,
-        'mode': mode
-    }
+    return _model_json_record_value(model, context_size, mode).as_dict()
 
 
 def _save_json(model: FiberHMM, filepath: str, context_size: int, mode: str):
     """Save model in JSON format (human-readable, portable)."""
-    data = _model_json_record(model, context_size, mode)
+    data = _model_json_record_value(model, context_size, mode).as_dict()
     with open(filepath, 'w') as f:
         json.dump(data, f, indent=2)
 

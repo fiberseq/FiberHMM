@@ -19,6 +19,8 @@ from fiberhmm.core.model_io import (
     _model_attr_array,
     _model_file_format,
     _model_json_record,
+    _model_json_record_value,
+    _ModelJsonRecord,
     _normalize_model_if_requested,
     _pickle_payload_has_metadata,
     _prepare_loaded_model,
@@ -261,6 +263,25 @@ class TestLoadSaveRoundTrip:
         np.testing.assert_allclose(model.startprob_, sample_model.startprob_)
         np.testing.assert_allclose(model.transmat_, sample_model.transmat_)
         np.testing.assert_allclose(model.emissionprob_, sample_model.emissionprob_)
+
+    def test_model_json_record_value_uses_plain_lists(self, sample_model):
+        record = _model_json_record_value(
+            sample_model,
+            context_size=5,
+            mode="daf",
+        )
+
+        assert record == _ModelJsonRecord(
+            model_type="FiberHMM",
+            version="2.0",
+            n_states=2,
+            startprob=sample_model.startprob_.tolist(),
+            transmat=sample_model.transmat_.tolist(),
+            emissionprob=sample_model.emissionprob_.tolist(),
+            context_size=5,
+            mode="daf",
+        )
+        assert _model_json_record(sample_model, 5, "daf") == record.as_dict()
 
 
 class TestModeAliases:
