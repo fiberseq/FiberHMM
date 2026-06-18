@@ -964,6 +964,30 @@ def _streaming_filter_config(
     )
 
 
+def _streaming_filter_config_from_request(request) -> ReadFilterConfig:
+    return _streaming_filter_config(
+        min_mapq=request.min_mapq,
+        min_read_length=request.min_read_length,
+        primary_only=request.primary_only,
+        process_unmapped=request.process_unmapped,
+        train_rids=request.train_rids,
+    )
+
+
+def _apply_streaming_max_inflight(
+    request: _ApplyStreamingPipelineRequest,
+) -> int:
+    if request.max_inflight is not None:
+        return request.max_inflight
+    return 2 * request.n_cores
+
+
+def _fused_streaming_max_inflight(
+    request: _FusedStreamingPipelineRequest,
+) -> int:
+    return request.n_cores + 2
+
+
 def _print_worker_failure_summary(counters: dict, log) -> None:
     if counters['worker_failures']:
         print(
@@ -1453,20 +1477,14 @@ def _process_bam_streaming_pipeline_fused_from_request(
 ) -> Tuple[int, int]:
     ref_fasta = None
     pysam.set_verbosity(0)
-    max_inflight = request.n_cores + 2
+    max_inflight = _fused_streaming_max_inflight(request)
     start_time = time.time()
     counters = _new_streaming_counters()
 
     total_reads = 0
     skipped = 0
     skip_reasons = _new_streaming_skip_reasons()
-    filter_config = _streaming_filter_config(
-        min_mapq=request.min_mapq,
-        min_read_length=request.min_read_length,
-        primary_only=request.primary_only,
-        process_unmapped=request.process_unmapped,
-        train_rids=request.train_rids,
-    )
+    filter_config = _streaming_filter_config_from_request(request)
 
     _log = _streaming_log_for_output(request.output_bam)
 
@@ -1605,9 +1623,7 @@ def _process_bam_streaming_pipeline(
 def _process_bam_streaming_pipeline_from_request(
     request: _ApplyStreamingPipelineRequest,
 ) -> Tuple[int, int]:
-    max_inflight = request.max_inflight
-    if max_inflight is None:
-        max_inflight = 2 * request.n_cores
+    max_inflight = _apply_streaming_max_inflight(request)
 
     pysam.set_verbosity(0)
 
@@ -1615,13 +1631,7 @@ def _process_bam_streaming_pipeline_from_request(
 
     total_reads = 0
     skip_reasons = _new_streaming_skip_reasons(include_no_footprints=True)
-    filter_config = _streaming_filter_config(
-        min_mapq=request.min_mapq,
-        min_read_length=request.min_read_length,
-        primary_only=request.primary_only,
-        process_unmapped=request.process_unmapped,
-        train_rids=request.train_rids,
-    )
+    filter_config = _streaming_filter_config_from_request(request)
 
     counters = _new_streaming_counters()
 

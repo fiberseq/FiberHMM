@@ -5,6 +5,7 @@ Correctness tests for the streaming producer-consumer pipeline.
 import io
 import sys
 from collections import deque
+from dataclasses import replace
 
 import pysam
 import pytest
@@ -445,6 +446,97 @@ def test_streaming_filter_config_captures_read_filter_settings():
     assert config.primary_only is True
     assert config.process_unmapped is False
     assert config.train_rids == {"read1"}
+
+
+def test_apply_streaming_request_config_helpers_use_request_values():
+    request = streaming_pipeline._ApplyStreamingPipelineRequest(
+        input_bam="in.bam",
+        output_bam="out.bam",
+        model_path="model.json",
+        train_rids={"read1"},
+        edge_trim=0,
+        circular=False,
+        mode="daf",
+        context_size=5,
+        msp_min_size=10,
+        nuc_min_size=20,
+        min_mapq=30,
+        prob_threshold=40,
+        min_read_length=50,
+        with_scores=True,
+        n_cores=3,
+        chunk_size=100,
+        max_inflight=None,
+        io_threads=2,
+        primary_only=True,
+        output_posteriors=None,
+        write_msps=False,
+        max_reads=99,
+        debug_timing=True,
+        process_unmapped=False,
+    )
+
+    assert streaming_pipeline._apply_streaming_max_inflight(request) == 6
+
+    explicit = replace(request, max_inflight=7)
+    assert streaming_pipeline._apply_streaming_max_inflight(explicit) == 7
+
+    config = streaming_pipeline._streaming_filter_config_from_request(request)
+    assert config.min_mapq == 30
+    assert config.min_read_length == 50
+    assert config.primary_only is True
+    assert config.process_unmapped is False
+    assert config.train_rids == {"read1"}
+
+
+def test_fused_streaming_request_config_helpers_use_request_values():
+    request = streaming_pipeline._FusedStreamingPipelineRequest(
+        input_bam="in.bam",
+        output_bam="out.bam",
+        model_path="model.json",
+        recall_model_path=None,
+        train_rids={"read2"},
+        edge_trim=0,
+        circular=False,
+        mode="pacbio-fiber",
+        context_size=5,
+        msp_min_size=10,
+        nuc_min_size=20,
+        min_mapq=31,
+        prob_threshold=40,
+        min_read_length=51,
+        with_scores=True,
+        min_llr=1.5,
+        min_opps=2,
+        unify_threshold=3,
+        emission_uplift=1.0,
+        also_write_legacy=True,
+        downstream_compat=False,
+        max_reads=99,
+        n_cores=4,
+        chunk_size=100,
+        io_threads=2,
+        process_unmapped=True,
+        primary_only=False,
+        ref_fasta_path="ref.fa",
+        recall_nucs=True,
+        split_min_llr=4.0,
+        split_min_opps=3,
+        filter_chimeras=True,
+        chimera_min_seg=5,
+        chimera_purity=0.8,
+        phase_nrl=147,
+        pg_record={"ID": "fiberhmm"},
+    )
+
+    assert streaming_pipeline._fused_streaming_max_inflight(request) == 6
+
+    config = streaming_pipeline._streaming_filter_config_from_request(request)
+    assert config.min_mapq == 31
+    assert config.min_read_length == 51
+    assert config.primary_only is False
+    assert config.process_unmapped is True
+    assert config.train_rids == {"read2"}
 
 
 def test_buffer_skipped_read_keeps_chunk_lists_and_reasons_aligned():
