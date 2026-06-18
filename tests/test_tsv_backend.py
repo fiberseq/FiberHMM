@@ -420,6 +420,30 @@ def test_concatenate_tsvs_closes_input_and_output_when_read_fails(monkeypatch, t
     assert output_handle.closed
 
 
+def test_concatenate_tsvs_skips_missing_and_directory_inputs(tmp_path):
+    good = tmp_path / "good.tsv"
+    empty = tmp_path / "empty.tsv"
+    directory = tmp_path / "directory.tsv"
+    missing = tmp_path / "missing.tsv"
+    output_path = tmp_path / "output.tsv"
+
+    good.write_text("#header\nread1\tchr1\n", encoding="utf-8")
+    empty.write_text("", encoding="utf-8")
+    directory.mkdir()
+
+    n_fibers = tsv_backend.concatenate_tsvs(
+        [str(missing), str(directory), str(empty), str(good)],
+        str(output_path),
+        delete_inputs=True,
+    )
+
+    assert n_fibers == 1
+    assert output_path.read_text(encoding="utf-8") == "#header\nread1\tchr1\n"
+    assert not good.exists()
+    assert not empty.exists()
+    assert directory.exists()
+
+
 def test_concatenate_tsvs_deletes_inputs_only_after_success(monkeypatch, tmp_path):
     first_path = tmp_path / "first.tsv"
     second_path = tmp_path / "second.tsv"

@@ -26,6 +26,7 @@ from typing import Optional, TextIO
 
 import numpy as np
 
+from fiberhmm.io.path_status import path_is_regular_file
 from fiberhmm.posteriors.region_tsv import (
     REGION_POSTERIORS_HEADER,
     _posterior_tsv_metadata,
@@ -387,11 +388,12 @@ def _copy_tsv_records(inpath: str, outfile, header_written: bool) -> tuple[int, 
                 # Only write header from first file
                 if not header_written:
                     outfile.write(line)
+                    header_written = True
             else:
                 outfile.write(line)
                 n_fibers += 1
 
-    return n_fibers, True
+    return n_fibers, header_written
 
 
 def _remove_concatenated_tsv_inputs(input_files: list[str]) -> None:
@@ -418,7 +420,7 @@ def concatenate_tsvs(input_files: list, output_path: str,
 
     with _open_text_file(output_path, 'wt') as outfile:
         for inpath in input_files:
-            if not os.path.exists(inpath):
+            if not path_is_regular_file(inpath):
                 continue
 
             n_copied, header_written = _copy_tsv_records(
