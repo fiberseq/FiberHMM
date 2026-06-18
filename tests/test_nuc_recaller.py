@@ -16,6 +16,8 @@ from fiberhmm.inference.nuc_recaller import (
     _phase_or_unsplit_subfragments,
     _phase_cut_window,
     _promoted_nuc_from_tf_call,
+    _recall_bounded_nuc_spans,
+    _recall_nuc_params,
     _residue_intervals_around_nuc,
     _recall_nuc_span,
     _rotate_circular_nuc_calls,
@@ -135,6 +137,74 @@ def test_recall_nuc_span_matches_single_read_wrapper():
 
     assert span_nucs == read_nucs
     assert span_access == read_access
+
+
+def test_recall_nuc_params_captures_thresholds():
+    params = _recall_nuc_params(
+        split_min_llr=4.5,
+        split_min_opps=5,
+        nuc_min_size=90,
+        edge_min_llr=2.5,
+        edge_min_opps=4,
+        phase_nrl=185,
+        phase_min_llr=1.5,
+        phase_min_opps=2,
+        phase_window=40,
+    )
+
+    assert params == _NucRecallParams(
+        split_min_llr=4.5,
+        split_min_opps=5,
+        nuc_min_size=90,
+        edge_min_llr=2.5,
+        edge_min_opps=4,
+        phase_nrl=185,
+        phase_min_llr=1.5,
+        phase_min_opps=2,
+        phase_window=40,
+    )
+
+
+def test_recall_bounded_nuc_spans_skips_invalid_spans(monkeypatch):
+    obs = np.zeros(10, dtype=np.int32)
+    llr_hit, llr_miss = _llr_tables()
+    params = _recall_nuc_params(
+        split_min_llr=4.0,
+        split_min_opps=3,
+        nuc_min_size=40,
+        edge_min_llr=2.0,
+        edge_min_opps=2,
+        phase_nrl=0,
+        phase_min_llr=1.0,
+        phase_min_opps=1,
+        phase_window=35,
+    )
+    calls = []
+
+    def fake_span(obs_arg, s, e, nhit, nmiss, hit, miss, params_arg):
+        calls.append((obs_arg, s, e, nhit, nmiss, hit, miss, params_arg))
+        return [NucCall(s, e - s, 1, 2, 3)], [(s, 1)]
+
+    monkeypatch.setattr(
+        "fiberhmm.inference.nuc_recaller._recall_nuc_span",
+        fake_span,
+    )
+
+    nucs, access = _recall_bounded_nuc_spans(
+        obs,
+        ns=[0, 5, 9, 12],
+        nl=[3, 0, 5, 2],
+        read_length=10,
+        nhit=-llr_hit,
+        nmiss=-llr_miss,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        params=params,
+    )
+
+    assert [(call[1], call[2]) for call in calls] == [(0, 3), (9, 10)]
+    assert nucs == [NucCall(0, 3, 1, 2, 3), NucCall(9, 1, 1, 2, 3)]
+    assert access == [(0, 1), (9, 1)]
 
 
 def test_total_call_llr_sums_call_scores():
