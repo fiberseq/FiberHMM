@@ -244,6 +244,23 @@ class _RegionBedReadProcessRequest:
     end: int
 
 
+@dataclass(frozen=True)
+class _FusedRegionBamReadProcessRequest:
+    read: object
+    outbam: object
+    model: object
+    llr_hit: object
+    llr_miss: object
+    apply_config: _RegionApplyConfig
+    recall_config: _FusedRegionRecallConfig
+    recall_options: dict
+    ref_fasta: object
+    filter_config: ReadFilterConfig
+    start: int
+    end: int
+    skip_reasons: dict
+
+
 @dataclass
 class _RegionBamWorkerCounts:
     total_reads: int = 0
@@ -1076,55 +1093,101 @@ def _process_fused_region_bam_read(
     end: int,
     skip_reasons: dict,
 ) -> _RegionBamReadDelta:
-    read_route = _region_read_route(read, start, end, filter_config)
+    return _process_fused_region_bam_read_from_request(
+        _FusedRegionBamReadProcessRequest(
+            read=read,
+            outbam=outbam,
+            model=model,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            apply_config=apply_config,
+            recall_config=recall_config,
+            recall_options=recall_options,
+            ref_fasta=ref_fasta,
+            filter_config=filter_config,
+            start=start,
+            end=end,
+            skip_reasons=skip_reasons,
+        )
+    )
+
+
+def _process_fused_region_bam_read_from_request(
+    request: _FusedRegionBamReadProcessRequest,
+) -> _RegionBamReadDelta:
+    read_route = _region_read_route(
+        request.read,
+        request.start,
+        request.end,
+        request.filter_config,
+    )
     if read_route.route == _REGION_ROUTE_SKIP:
         return _skipped_region_bam_delta(
-            outbam, read, skip_reasons, read_route.skip_reason,
+            request.outbam,
+            request.read,
+            request.skip_reasons,
+            read_route.skip_reason,
         )
     if read_route.route == _REGION_ROUTE_OUTSIDE:
         return _RegionBamReadDelta()
 
     payload = make_apply_payload(
-        read, mode=apply_config.mode, ref_fasta=ref_fasta,
+        request.read,
+        mode=request.apply_config.mode,
+        ref_fasta=request.ref_fasta,
     )
     fiber_result = _extract_region_payload_fiber_read(
-        payload, apply_config.mode, apply_config.prob_threshold,
+        payload,
+        request.apply_config.mode,
+        request.apply_config.prob_threshold,
     )
     if fiber_result.skip_reason:
         return _skipped_region_bam_delta(
-            outbam, read, skip_reasons, fiber_result.skip_reason,
+            request.outbam,
+            request.read,
+            request.skip_reasons,
+            fiber_result.skip_reason,
         )
 
     try:
         apply_result = _run_fused_region_apply_read(
-            fiber_result.fiber_read, model, apply_config,
+            fiber_result.fiber_read,
+            request.model,
+            request.apply_config,
         )
     except Exception:
         return _skipped_region_bam_delta(
-            outbam, read, skip_reasons, 'extraction_failed',
+            request.outbam,
+            request.read,
+            request.skip_reasons,
+            'extraction_failed',
         )
 
     if not apply_result_has_footprints(apply_result):
-        written = _write_unfootprinted_region_read(outbam, read, skip_reasons)
+        written = _write_unfootprinted_region_read(
+            request.outbam,
+            request.read,
+            request.skip_reasons,
+        )
         return _RegionBamReadDelta(total_reads=1, written=written)
 
     fused_result = _build_fused_region_recall_result(
         fiber_result.fiber_read,
         apply_result,
-        llr_hit,
-        llr_miss,
-        apply_config,
-        recall_config,
-        recall_options,
+        request.llr_hit,
+        request.llr_miss,
+        request.apply_config,
+        request.recall_config,
+        request.recall_options,
     )
     write_fused_recall_tags(
-        read,
+        request.read,
         read_length=len(fiber_result.fiber_read['query_sequence']),
         result=fused_result,
-        also_write_legacy=recall_config.also_write_legacy,
-        downstream_compat=recall_config.downstream_compat,
+        also_write_legacy=request.recall_config.also_write_legacy,
+        downstream_compat=request.recall_config.downstream_compat,
     )
-    outbam.write(read)
+    request.outbam.write(request.read)
     return _RegionBamReadDelta(
         total_reads=1,
         reads_with_footprints=1,
