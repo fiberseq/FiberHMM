@@ -1190,6 +1190,13 @@ def _new_extract_temp_beds_by_type(extract_types) -> dict:
     return {t: [] for t in extract_types}
 
 
+@dataclass(frozen=True)
+class _ExtractParallelResult:
+    total_reads: int
+    total_features: dict
+    temp_beds_by_type: dict
+
+
 def _record_extract_region_result(
     extract_types,
     region_index: int,
@@ -1219,6 +1226,96 @@ def _extract_progress_message(
         f"\r  Regions: {completed}/{total_regions} | "
         f"Reads: {total_reads:,} | {feat_str} | {rate:.0f} reads/s"
     )
+
+
+def _extract_parallel_worker_params(
+    extract_types,
+    *,
+    min_mapq: int,
+    prob_threshold: int,
+    with_scores: bool,
+    min_tq: int,
+    block_scores: bool,
+    circular_groups: bool,
+) -> dict:
+    return {
+        'extract_types': extract_types,
+        'min_mapq': min_mapq,
+        'prob_threshold': prob_threshold,
+        'with_scores': with_scores,
+        'min_tq': min_tq,
+        'block_scores': block_scores,
+        'circular_groups': circular_groups,
+    }
+
+
+def _run_extract_region_pool(
+    work_items,
+    extract_types,
+    params: dict,
+    n_cores: int,
+    total_regions: int,
+    start_time: float,
+) -> _ExtractParallelResult:
+    total_reads = 0
+    total_features = _new_extract_feature_counts(extract_types)
+    temp_beds_by_type = _new_extract_temp_beds_by_type(extract_types)
+    completed = 0
+
+    with ProcessPoolExecutor(
+        max_workers=n_cores,
+        initializer=_init_extract_worker,
+        initargs=(params,)
+    ) as executor:
+        futures = _submit_extract_region_futures(executor, work_items)
+
+        for future in as_completed(futures):
+            completed += 1
+            try:
+                temp_bed_paths, n_reads, n_feats = future.result()
+                total_reads += n_reads
+                _record_extract_region_result(
+                    extract_types,
+                    futures[future],
+                    temp_bed_paths,
+                    n_feats,
+                    total_features,
+                    temp_beds_by_type,
+                )
+            except Exception as e:
+                print(f"Worker error: {e}")
+
+            elapsed = time.time() - start_time
+            print(
+                _extract_progress_message(
+                    completed,
+                    total_regions,
+                    total_reads,
+                    total_features,
+                    extract_types,
+                    elapsed,
+                ),
+                end='',
+            )
+    print()
+    return _ExtractParallelResult(
+        total_reads=total_reads,
+        total_features=total_features,
+        temp_beds_by_type=temp_beds_by_type,
+    )
+
+
+def _finalize_extract_parallel_beds(
+    extract_types,
+    temp_beds_by_type: dict,
+    output_beds: dict,
+) -> None:
+    for t in extract_types:
+        _finalize_extract_type_bed(t, temp_beds_by_type[t], output_beds[t])
+
+
+def _extract_parallel_feature_summary(extract_types, total_features: dict) -> str:
+    return ', '.join(f"{t}: {total_features[t]:,}" for t in extract_types)
 
 
 def _sorted_extract_region_beds(region_beds):
@@ -1393,80 +1490,45 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
     temp_dir = tempfile.mkdtemp(prefix='extract_tags_')
 
     try:
-        params = {
-            'extract_types': extract_types,
-            'min_mapq': min_mapq,
-            'prob_threshold': prob_threshold,
-            'with_scores': with_scores,
-            'min_tq': min_tq,
-            'block_scores': block_scores,
-            'circular_groups': circular_groups,
-        }
-
-        # Work items: per region, a dict of {type: temp_bed_path}
+        params = _extract_parallel_worker_params(
+            extract_types,
+            min_mapq=min_mapq,
+            prob_threshold=prob_threshold,
+            with_scores=with_scores,
+            min_tq=min_tq,
+            block_scores=block_scores,
+            circular_groups=circular_groups,
+        )
         work_items = _extract_region_work_items(
             regions,
             input_bam,
             temp_dir,
             extract_types,
         )
-
-        total_reads = 0
-        total_features = _new_extract_feature_counts(extract_types)
-        # {extract_type: [(region_idx, temp_bed_path)]}
-        temp_beds_by_type = _new_extract_temp_beds_by_type(extract_types)
-        completed = 0
-
-        with ProcessPoolExecutor(
-            max_workers=n_cores,
-            initializer=_init_extract_worker,
-            initargs=(params,)
-        ) as executor:
-            futures = _submit_extract_region_futures(executor, work_items)
-
-            for future in as_completed(futures):
-                completed += 1
-                try:
-                    temp_bed_paths, n_reads, n_feats = future.result()
-                    total_reads += n_reads
-                    _record_extract_region_result(
-                        extract_types,
-                        futures[future],
-                        temp_bed_paths,
-                        n_feats,
-                        total_features,
-                        temp_beds_by_type,
-                    )
-                except Exception as e:
-                    print(f"Worker error: {e}")
-
-                elapsed = time.time() - start_time
-                print(
-                    _extract_progress_message(
-                        completed,
-                        len(regions),
-                        total_reads,
-                        total_features,
-                        extract_types,
-                        elapsed,
-                    ),
-                    end='',
-                )
-        print()
-
-        # Concatenate + sort per type
-        for t in extract_types:
-            _finalize_extract_type_bed(
-                t,
-                temp_beds_by_type[t],
-                output_beds[t],
-            )
+        result = _run_extract_region_pool(
+            work_items,
+            extract_types,
+            params,
+            n_cores,
+            len(regions),
+            start_time,
+        )
+        _finalize_extract_parallel_beds(
+            extract_types,
+            result.temp_beds_by_type,
+            output_beds,
+        )
 
         elapsed = time.time() - start_time
-        feat_summary = ', '.join(f"{t}: {total_features[t]:,}" for t in extract_types)
-        print(f"Completed in {elapsed:.1f}s: {total_reads:,} reads -> {feat_summary}")
+        feat_summary = _extract_parallel_feature_summary(
+            extract_types, result.total_features,
+        )
+        print(
+            f"Completed in {elapsed:.1f}s: "
+            f"{result.total_reads:,} reads -> {feat_summary}"
+        )
 
-        return total_reads, total_features
+        return result.total_reads, result.total_features
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

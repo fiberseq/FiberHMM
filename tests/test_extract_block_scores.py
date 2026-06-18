@@ -835,6 +835,58 @@ def test_extract_progress_message_formats_counts_and_zero_elapsed():
     )
 
 
+def test_extract_parallel_worker_params_preserve_options():
+    params = extract_tags._extract_parallel_worker_params(
+        ["tf", "msp"],
+        min_mapq=20,
+        prob_threshold=180,
+        with_scores=False,
+        min_tq=80,
+        block_scores=True,
+        circular_groups=True,
+    )
+
+    assert params == {
+        "extract_types": ["tf", "msp"],
+        "min_mapq": 20,
+        "prob_threshold": 180,
+        "with_scores": False,
+        "min_tq": 80,
+        "block_scores": True,
+        "circular_groups": True,
+    }
+
+
+def test_finalize_extract_parallel_beds_routes_each_type(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        extract_tags,
+        "_finalize_extract_type_bed",
+        lambda extract_type, beds, out_path: calls.append(
+            (extract_type, beds, out_path)
+        ),
+    )
+
+    extract_tags._finalize_extract_parallel_beds(
+        ["tf", "msp"],
+        {"tf": [(2, "tf-region.bed")], "msp": []},
+        {"tf": "tf.bed", "msp": "msp.bed"},
+    )
+
+    assert calls == [
+        ("tf", [(2, "tf-region.bed")], "tf.bed"),
+        ("msp", [], "msp.bed"),
+    ]
+
+
+def test_extract_parallel_feature_summary_formats_requested_types():
+    assert extract_tags._extract_parallel_feature_summary(
+        ["tf", "msp"],
+        {"tf": 1200, "msp": 3},
+    ) == "tf: 1,200, msp: 3"
+
+
 def test_finalize_extract_type_bed_concatenates_regions_in_order(
     monkeypatch, tmp_path, capsys,
 ):
