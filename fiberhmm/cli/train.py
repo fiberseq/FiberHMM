@@ -862,6 +862,73 @@ def _save_training_model_parameter_page(
     plt.close(fig)
 
 
+def _save_training_example_png(
+    plt,
+    plots_dir: str,
+    model: FiberHMM,
+    read,
+    states,
+    encoded,
+    rectangle_cls,
+    patch_collection_cls,
+) -> str:
+    seq_len, m6a_positions, footprint_prob = _training_example_plot_data(
+        model, read, encoded,
+    )
+
+    fig, axes = plt.subplots(
+        3,
+        1,
+        figsize=(14, 6),
+        gridspec_kw={'height_ratios': [1, 1.5, 1]},
+    )
+
+    ax = axes[0]
+    if len(m6a_positions) > 0:
+        ax.eventplot(
+            [m6a_positions],
+            colors='purple',
+            lineoffsets=0.5,
+            linelengths=0.8,
+            linewidths=0.3,
+        )
+    ax.set_xlim(0, seq_len)
+    ax.set_ylim(0, 1)
+    ax.set_ylabel('m6A')
+    ax.set_yticks([])
+    ax.set_xticklabels([])
+    ax.set_title(f'Example: {read.read_id[:40]}... ({seq_len:,}bp)', fontsize=10)
+
+    ax = axes[1]
+    _add_training_state_blocks(
+        ax, states, seq_len, rectangle_cls, patch_collection_cls,
+    )
+    ax.set_ylabel('State')
+    ax.set_yticks([])
+    ax.set_xticklabels([])
+
+    ax = axes[2]
+    ax.fill_between(
+        range(len(footprint_prob)),
+        0,
+        footprint_prob,
+        color='forestgreen',
+        alpha=0.4,
+        step='mid',
+    )
+    ax.axhline(0.5, color='gray', linestyle='--', linewidth=0.5)
+    ax.set_xlim(0, seq_len)
+    ax.set_ylim(0, 1)
+    ax.set_ylabel('P(FP)')
+    ax.set_xlabel('Position (bp)')
+
+    plt.tight_layout()
+    png_path = os.path.join(plots_dir, 'example_read.png')
+    plt.savefig(png_path, dpi=150)
+    plt.close(fig)
+    return png_path
+
+
 def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads: list,
                             emission_probs: np.ndarray, output_dir: str,
                             n_examples: int = 5, mode: str = 'pacbio-fiber'):
@@ -1049,50 +1116,16 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
 
     # Also save a standalone PNG of the first example (simplified version)
     if len(sampled_reads) > 0 and len(all_states) > 0:
-        read = sampled_reads[0]
-        states = all_states[0]
-        encoded = encoded_reads[0]
-
-        seq_len, m6a_positions, footprint_prob = _training_example_plot_data(
-            model, read, encoded,
+        png_path = _save_training_example_png(
+            plt,
+            plots_dir,
+            model,
+            sampled_reads[0],
+            all_states[0],
+            encoded_reads[0],
+            Rectangle,
+            PatchCollection,
         )
-
-        fig, axes = plt.subplots(3, 1, figsize=(14, 6),
-                                gridspec_kw={'height_ratios': [1, 1.5, 1]})
-
-        # m6A
-        ax = axes[0]
-        if len(m6a_positions) > 0:
-            ax.eventplot([m6a_positions], colors='purple', lineoffsets=0.5,
-                        linelengths=0.8, linewidths=0.3)
-        ax.set_xlim(0, seq_len)
-        ax.set_ylim(0, 1)
-        ax.set_ylabel('m6A')
-        ax.set_yticks([])
-        ax.set_xticklabels([])
-        ax.set_title(f'Example: {read.read_id[:40]}... ({seq_len:,}bp)', fontsize=10)
-
-        # Footprints
-        ax = axes[1]
-        _add_training_state_blocks(ax, states, seq_len, Rectangle, PatchCollection)
-        ax.set_ylabel('State')
-        ax.set_yticks([])
-        ax.set_xticklabels([])
-
-        # Probability
-        ax = axes[2]
-        ax.fill_between(range(len(footprint_prob)), 0, footprint_prob,
-                       color='forestgreen', alpha=0.4, step='mid')
-        ax.axhline(0.5, color='gray', linestyle='--', linewidth=0.5)
-        ax.set_xlim(0, seq_len)
-        ax.set_ylim(0, 1)
-        ax.set_ylabel('P(FP)')
-        ax.set_xlabel('Position (bp)')
-
-        plt.tight_layout()
-        png_path = os.path.join(plots_dir, 'example_read.png')
-        plt.savefig(png_path, dpi=150)
-        plt.close(fig)
         print(f"  Saved: {png_path}")
 
     # Write text summary

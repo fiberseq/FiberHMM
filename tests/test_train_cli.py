@@ -612,6 +612,138 @@ def test_save_training_model_parameter_page_orchestrates_plots(monkeypatch):
     assert plt.closed == [plt.fig]
 
 
+def test_save_training_example_png_orchestrates_panels(monkeypatch, tmp_path):
+    class FakeAxis:
+        def __init__(self):
+            self.eventplots = []
+            self.fill_between_calls = []
+            self.hlines = []
+            self.xlim = None
+            self.ylim = None
+            self.ylabel = None
+            self.xlabel = None
+            self.yticks = None
+            self.xticklabels = None
+            self.title = None
+
+        def eventplot(self, *args, **kwargs):
+            self.eventplots.append((args, kwargs))
+
+        def fill_between(self, *args, **kwargs):
+            self.fill_between_calls.append((args, kwargs))
+
+        def axhline(self, *args, **kwargs):
+            self.hlines.append((args, kwargs))
+
+        def set_xlim(self, start, end):
+            self.xlim = (start, end)
+
+        def set_ylim(self, start, end):
+            self.ylim = (start, end)
+
+        def set_ylabel(self, value):
+            self.ylabel = value
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_yticks(self, values):
+            self.yticks = values
+
+        def set_xticklabels(self, values):
+            self.xticklabels = values
+
+        def set_title(self, *args, **kwargs):
+            self.title = (args, kwargs)
+
+    class FakePlt:
+        def __init__(self):
+            self.fig = object()
+            self.axes = [FakeAxis(), FakeAxis(), FakeAxis()]
+            self.subplots_call = None
+            self.tight_layout_called = False
+            self.saved = []
+            self.closed = []
+
+        def subplots(self, *args, **kwargs):
+            self.subplots_call = (args, kwargs)
+            return self.fig, self.axes
+
+        def tight_layout(self):
+            self.tight_layout_called = True
+
+        def savefig(self, *args, **kwargs):
+            self.saved.append((args, kwargs))
+
+        def close(self, fig):
+            self.closed.append(fig)
+
+    model = object()
+    read = SimpleNamespace(read_id="read123")
+    states = np.array([0, 1, 0])
+    encoded = np.array([1, 2, 3])
+    state_block_calls = []
+
+    monkeypatch.setattr(
+        train,
+        "_training_example_plot_data",
+        lambda model_arg, read_arg, encoded_arg: (
+            4,
+            [1, 3],
+            np.array([0.1, 0.6, 0.2, 0.8]),
+        ),
+    )
+    monkeypatch.setattr(
+        train,
+        "_add_training_state_blocks",
+        lambda *args: state_block_calls.append(args),
+    )
+
+    plt = FakePlt()
+    png_path = train._save_training_example_png(
+        plt,
+        str(tmp_path),
+        model,
+        read,
+        states,
+        encoded,
+        "Rectangle",
+        "PatchCollection",
+    )
+
+    assert png_path == str(tmp_path / "example_read.png")
+    assert plt.subplots_call == (
+        (3, 1),
+        {"figsize": (14, 6), "gridspec_kw": {"height_ratios": [1, 1.5, 1]}},
+    )
+    assert plt.axes[0].eventplots == [
+        (
+            ([[1, 3]],),
+            {
+                "colors": "purple",
+                "lineoffsets": 0.5,
+                "linelengths": 0.8,
+                "linewidths": 0.3,
+            },
+        )
+    ]
+    assert plt.axes[0].title == (("Example: read123... (4bp)",), {"fontsize": 10})
+    assert state_block_calls[0][0] is plt.axes[1]
+    np.testing.assert_array_equal(state_block_calls[0][1], states)
+    assert state_block_calls[0][2:] == (4, "Rectangle", "PatchCollection")
+    assert plt.axes[2].fill_between_calls[0][0][0] == range(4)
+    np.testing.assert_array_equal(
+        plt.axes[2].fill_between_calls[0][0][2],
+        [0.1, 0.6, 0.2, 0.8],
+    )
+    assert plt.axes[2].hlines == [
+        ((0.5,), {"color": "gray", "linestyle": "--", "linewidth": 0.5})
+    ]
+    assert plt.tight_layout_called
+    assert plt.saved == [((png_path,), {"dpi": 150})]
+    assert plt.closed == [plt.fig]
+
+
 def test_training_config_includes_base_model_only_when_used():
     args = SimpleNamespace(
         context_size=3,
