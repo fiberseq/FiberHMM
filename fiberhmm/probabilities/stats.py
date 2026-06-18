@@ -475,6 +475,94 @@ def _probability_distribution_plot_path(
     )
 
 
+def _write_probability_distribution_pdf_page(
+    plt,
+    pdf,
+    base: str,
+    context_size: int,
+    acc_probs,
+    inacc_probs,
+):
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+    fig.suptitle(
+        f'{base}-centered Context Statistics (k={context_size})',
+        fontsize=14,
+        fontweight='bold',
+    )
+
+    ax = axes[0, 0]
+    acc_ratios = acc_probs['ratio'].values
+    inacc_ratios = inacc_probs['ratio'].values
+    _plot_probability_ratio_histograms(ax, acc_ratios, inacc_ratios)
+    ax.set_xlabel('P(methylation | context)')
+    ax.set_ylabel('Number of contexts')
+    ax.set_title('Emission Probability Distributions')
+    ax.legend()
+
+    merged = _merged_probability_table(acc_probs, inacc_probs)
+    _plot_accessible_inaccessible_probability_scatter(axes[0, 1], merged)
+    _plot_log_odds_distribution(axes[1, 0], merged)
+    _plot_top_differentiating_contexts(axes[1, 1], merged)
+
+    plt.tight_layout()
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
+def _write_probability_counts_pdf_page(
+    plt,
+    pdf,
+    base: str,
+    acc_probs,
+    inacc_probs,
+):
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
+    fig.suptitle(
+        f'{base}-centered Context Counts',
+        fontsize=14,
+        fontweight='bold',
+    )
+
+    acc_total = _context_observation_totals(acc_probs)
+    inacc_total = _context_observation_totals(inacc_probs)
+    merged = _merged_probability_table(acc_probs, inacc_probs)
+
+    _plot_observations_per_context(axes[0, 0], acc_total, inacc_total)
+    _plot_context_coverage(axes[0, 1], acc_total.values, inacc_total.values)
+    _plot_probability_vs_coverage(axes[1, 0], merged)
+    _plot_context_frequency_comparison(axes[1, 1], merged)
+
+    plt.tight_layout()
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
+def _save_probability_distribution_png(
+    plt,
+    plots_dir: str,
+    base_name: str,
+    base: str,
+    context_size: int,
+    acc,
+    inacc,
+    acc_probs,
+    inacc_probs,
+) -> str:
+    fig, ax = plt.subplots(figsize=(8, 5))
+    _plot_probability_distribution_png_axis(
+        ax, acc, inacc, acc_probs, inacc_probs, base, context_size,
+    )
+
+    plt.tight_layout()
+    png_path = _probability_distribution_plot_path(
+        plots_dir, base_name, base, context_size,
+    )
+    plt.savefig(png_path, dpi=150)
+    plt.close(fig)
+    print(f"  Plot: {png_path}")
+    return png_path
+
+
 def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
                                 inaccessible_counters: Dict[str, 'ContextCounter'],
                                 plots_dir: str, base_name: str, context_size: int = 3,
@@ -525,65 +613,12 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
                 accessible_counters, inaccessible_counters, base, context_size,
             )
 
-            # Page: Distribution comparison
-            fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
-            fig.suptitle(f'{base}-centered Context Statistics (k={context_size})',
-                        fontsize=14, fontweight='bold')
-
-            # 1. Histogram of methylation probabilities
-            ax = axes[0, 0]
-            acc_ratios = acc_probs['ratio'].values
-            inacc_ratios = inacc_probs['ratio'].values
-
-            _plot_probability_ratio_histograms(ax, acc_ratios, inacc_ratios)
-            ax.set_xlabel('P(methylation | context)')
-            ax.set_ylabel('Number of contexts')
-            ax.set_title('Emission Probability Distributions')
-            ax.legend()
-
-            # 2. Scatter plot: accessible vs inaccessible
-            ax = axes[0, 1]
-            merged = _merged_probability_table(acc_probs, inacc_probs)
-            _plot_accessible_inaccessible_probability_scatter(ax, merged)
-
-            # 3. Log-odds (separation score) - use merged data
-            ax = axes[1, 0]
-            _plot_log_odds_distribution(ax, merged)
-
-            # 4. Top differentiating contexts (use merged)
-            ax = axes[1, 1]
-            _plot_top_differentiating_contexts(ax, merged)
-
-            plt.tight_layout()
-            pdf.savefig(fig)
-            plt.close(fig)
-
-            # Page 2: Count distributions
-            fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
-            fig.suptitle(f'{base}-centered Context Counts', fontsize=14, fontweight='bold')
-
-            # Total observations per context
-            ax = axes[0, 0]
-            acc_total = _context_observation_totals(acc_probs)
-            inacc_total = _context_observation_totals(inacc_probs)
-
-            _plot_observations_per_context(ax, acc_total, inacc_total)
-
-            # Cumulative coverage
-            ax = axes[0, 1]
-            _plot_context_coverage(ax, acc_total.values, inacc_total.values)
-
-            # Hit rate comparison - use merged data for alignment
-            ax = axes[1, 0]
-            _plot_probability_vs_coverage(ax, merged)
-
-            # Context frequency comparison - use merged data
-            ax = axes[1, 1]
-            _plot_context_frequency_comparison(ax, merged)
-
-            plt.tight_layout()
-            pdf.savefig(fig)
-            plt.close(fig)
+            _write_probability_distribution_pdf_page(
+                plt, pdf, base, context_size, acc_probs, inacc_probs,
+            )
+            _write_probability_counts_pdf_page(
+                plt, pdf, base, acc_probs, inacc_probs,
+            )
 
     print(f"  Plots: {pdf_path}")
 
@@ -596,16 +631,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
             accessible_counters, inaccessible_counters, base, context_size,
         )
 
-        fig, ax = plt.subplots(figsize=(8, 5))
-
-        _plot_probability_distribution_png_axis(
-            ax, acc, inacc, acc_probs, inacc_probs, base, context_size,
+        _save_probability_distribution_png(
+            plt, plots_dir, base_name, base, context_size,
+            acc, inacc, acc_probs, inacc_probs,
         )
-
-        plt.tight_layout()
-        png_path = _probability_distribution_plot_path(
-            plots_dir, base_name, base, context_size,
-        )
-        plt.savefig(png_path, dpi=150)
-        plt.close(fig)
-        print(f"  Plot: {png_path}")

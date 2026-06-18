@@ -188,6 +188,202 @@ def test_probability_stats_output_path_uses_context_stem():
     )
 
 
+class _FakeProbabilityAxis:
+    def __init__(self, name):
+        self.name = name
+        self.xlabel = None
+        self.ylabel = None
+        self.title = None
+        self.legend_called = False
+
+    def set_xlabel(self, value):
+        self.xlabel = value
+
+    def set_ylabel(self, value):
+        self.ylabel = value
+
+    def set_title(self, value):
+        self.title = value
+
+    def legend(self):
+        self.legend_called = True
+
+
+class _FakeProbabilityFig:
+    def __init__(self):
+        self.suptitles = []
+
+    def suptitle(self, *args, **kwargs):
+        self.suptitles.append((args, kwargs))
+
+
+class _FakeProbabilityPdf:
+    def __init__(self):
+        self.saved = []
+
+    def savefig(self, fig):
+        self.saved.append(fig)
+
+
+class _FakeProbabilityPlt:
+    def __init__(self):
+        self.fig = _FakeProbabilityFig()
+        self.axes = np.array([
+            [_FakeProbabilityAxis("00"), _FakeProbabilityAxis("01")],
+            [_FakeProbabilityAxis("10"), _FakeProbabilityAxis("11")],
+        ], dtype=object)
+        self.subplots_calls = []
+        self.tight_layout_calls = 0
+        self.saved = []
+        self.closed = []
+
+    def subplots(self, *args, **kwargs):
+        self.subplots_calls.append((args, kwargs))
+        if args == (2, 2):
+            return self.fig, self.axes
+        return self.fig, self.axes[0, 0]
+
+    def tight_layout(self):
+        self.tight_layout_calls += 1
+
+    def savefig(self, *args, **kwargs):
+        self.saved.append((args, kwargs))
+
+    def close(self, fig):
+        self.closed.append(fig)
+
+
+def test_probability_pdf_page_helpers_orchestrate_plot_sections(monkeypatch):
+    acc = pd.DataFrame({
+        "context": ["AAA", "AAC"],
+        "ratio": [0.8, 0.2],
+        "hit": [8, 1],
+        "nohit": [2, 4],
+    })
+    inacc = pd.DataFrame({
+        "context": ["AAA", "AAC"],
+        "ratio": [0.3, 0.1],
+        "hit": [3, 1],
+        "nohit": [7, 9],
+    })
+    calls = []
+
+    monkeypatch.setattr(
+        stats,
+        "_plot_probability_ratio_histograms",
+        lambda ax, acc_values, inacc_values: calls.append((
+            "hist", ax.name, acc_values.tolist(), inacc_values.tolist(),
+        )),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_plot_accessible_inaccessible_probability_scatter",
+        lambda ax, merged: calls.append(("scatter", ax.name, len(merged))),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_plot_log_odds_distribution",
+        lambda ax, merged: calls.append(("log_odds", ax.name, len(merged))),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_plot_top_differentiating_contexts",
+        lambda ax, merged: calls.append(("top", ax.name, len(merged))),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_plot_observations_per_context",
+        lambda ax, acc_total, inacc_total: calls.append((
+            "observations", ax.name, acc_total.tolist(), inacc_total.tolist(),
+        )),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_plot_context_coverage",
+        lambda ax, acc_total, inacc_total: calls.append((
+            "coverage", ax.name, acc_total.tolist(), inacc_total.tolist(),
+        )),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_plot_probability_vs_coverage",
+        lambda ax, merged: calls.append(("prob_coverage", ax.name, len(merged))),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_plot_context_frequency_comparison",
+        lambda ax, merged: calls.append(("frequency", ax.name, len(merged))),
+    )
+
+    plt = _FakeProbabilityPlt()
+    pdf = _FakeProbabilityPdf()
+
+    stats._write_probability_distribution_pdf_page(
+        plt, pdf, "A", 3, acc, inacc,
+    )
+    stats._write_probability_counts_pdf_page(plt, pdf, "A", acc, inacc)
+
+    assert plt.subplots_calls == [
+        ((2, 2), {"figsize": (11, 8.5)}),
+        ((2, 2), {"figsize": (11, 8.5)}),
+    ]
+    assert plt.fig.suptitles[0] == (
+        ("A-centered Context Statistics (k=3)",),
+        {"fontsize": 14, "fontweight": "bold"},
+    )
+    assert plt.fig.suptitles[1] == (
+        ("A-centered Context Counts",),
+        {"fontsize": 14, "fontweight": "bold"},
+    )
+    assert pdf.saved == [plt.fig, plt.fig]
+    assert plt.closed == [plt.fig, plt.fig]
+    assert calls == [
+        ("hist", "00", [0.8, 0.2], [0.3, 0.1]),
+        ("scatter", "01", 2),
+        ("log_odds", "10", 2),
+        ("top", "11", 2),
+        ("observations", "00", [10, 5], [10, 10]),
+        ("coverage", "01", [10, 5], [10, 10]),
+        ("prob_coverage", "10", 2),
+        ("frequency", "11", 2),
+    ]
+
+
+def test_save_probability_distribution_png_writes_expected_path(monkeypatch, capsys):
+    table = pd.DataFrame({"context": ["AAA"], "ratio": [0.8]})
+    acc = _FakeCounter(10, 8, {}, table)
+    inacc = _FakeCounter(10, 2, {}, table)
+    plot_calls = []
+
+    monkeypatch.setattr(
+        stats,
+        "_plot_probability_distribution_png_axis",
+        lambda *args: plot_calls.append(args),
+    )
+
+    plt = _FakeProbabilityPlt()
+    png_path = stats._save_probability_distribution_png(
+        plt,
+        "plots",
+        "run",
+        "A",
+        4,
+        acc,
+        inacc,
+        table,
+        table,
+    )
+
+    assert png_path == "plots/run_A_k4_distribution.png"
+    assert plt.subplots_calls == [((), {"figsize": (8, 5)})]
+    assert plt.saved == [((png_path,), {"dpi": 150})]
+    assert plt.closed == [plt.fig]
+    assert plot_calls == [(
+        plt.axes[0, 0], acc, inacc, table, table, "A", 4,
+    )]
+    assert f"Plot: {png_path}" in capsys.readouterr().out
+
+
 def test_merged_probability_table_aligns_contexts_and_totals():
     acc = pd.DataFrame({
         "context": ["AAA", "AAC"],
