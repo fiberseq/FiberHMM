@@ -609,10 +609,16 @@ def _kept_legacy_nuc_interval(
     return start, length
 
 
-def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
-                mode: str, context_size: int,
-                min_llr: float, min_opps: int,
-                unify_threshold: int) -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
+def recall_read(
+    read,
+    llr_hit: np.ndarray,
+    llr_miss: np.ndarray,
+    mode: str,
+    context_size: int,
+    min_llr: float,
+    min_opps: int,
+    unify_threshold: int,
+) -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
     """Process one read.
 
     Returns:

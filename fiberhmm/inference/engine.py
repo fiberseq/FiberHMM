@@ -270,8 +270,11 @@ def _add_msp_track(
             )
 
 
-def predict_footprints(model: FiberHMM, encoded_read: np.ndarray,
-                       with_scores: bool = False) -> Tuple[np.ndarray, np.ndarray, int, Optional[np.ndarray]]:
+def predict_footprints(
+    model: FiberHMM,
+    encoded_read: np.ndarray,
+    with_scores: bool = False,
+) -> Tuple[np.ndarray, np.ndarray, int, Optional[np.ndarray]]:
     """
     Run HMM Viterbi prediction to call footprints.
 
@@ -693,7 +696,11 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[di
     return payload
 
 
-def extract_fiber_read_from_payload(payload: dict, mode: str, prob_threshold: int) -> Optional[dict]:
+def extract_fiber_read_from_payload(
+    payload: dict,
+    mode: str,
+    prob_threshold: int,
+) -> Optional[dict]:
     """Worker-side: turn a slim payload into a fiber_read dict.
 
     Equivalent to _extract_fiber_read_from_pysam(real_read, mode, prob_threshold)

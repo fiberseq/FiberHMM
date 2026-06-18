@@ -8,8 +8,6 @@ from typing import Optional
 import pysam
 
 from fiberhmm.core.model_io import load_model_for_inference
-from fiberhmm.io.bam_header import append_coord_marker, maybe_append_pg
-from fiberhmm.io.bed import bed12_row
 from fiberhmm.inference.engine import (
     CHIMERA_SKIP,
     _extract_fiber_read_from_pysam,
@@ -23,8 +21,8 @@ from fiberhmm.inference.fused_stages import (
     build_fused_recall_result,
     run_hmm_apply_stage,
 )
-from fiberhmm.inference.recall_tables import load_recall_llr_tables
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
+from fiberhmm.inference.recall_tables import load_recall_llr_tables
 from fiberhmm.inference.region_types import (
     RegionBamResult,
     RegionBamWorkItem,
@@ -45,6 +43,8 @@ from fiberhmm.inference.worker_warmup import (
     warm_up_model_predict,
     warm_up_tf_recaller,
 )
+from fiberhmm.io.bam_header import append_coord_marker, maybe_append_pg
+from fiberhmm.io.bed import bed12_row
 from fiberhmm.posteriors.region_tsv import format_region_posterior_line
 
 _worker_model = None

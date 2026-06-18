@@ -6,8 +6,8 @@ import array
 import numpy as np
 import pytest
 
-from fiberhmm.core.hmm import FiberHMM
 import fiberhmm.inference.engine as engine
+from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.inference.engine import (
     _extract_fiber_read_from_pysam,
     _extract_footprints_from_states,

@@ -18,8 +18,8 @@ from fiberhmm.core.model_io import load_model_for_inference
 from fiberhmm.inference.engine import CHIMERA_SKIP, _extract_fiber_read_from_pysam
 from fiberhmm.inference.fused_stages import run_hmm_apply_stage
 from fiberhmm.inference.nuc_recaller import recall_nucs_in_read
-from fiberhmm.inference.recall_tables import load_recall_llr_tables
 from fiberhmm.inference.read_filters import is_primary_mapped_alignment
+from fiberhmm.inference.recall_tables import load_recall_llr_tables
 
 # Window (bp) for the primary nucleosome-repeat peak: excludes sub-nucleosomal
 # gaps and 2x+ merge spacings so the estimate tracks the single-repeat mode.

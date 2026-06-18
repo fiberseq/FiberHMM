@@ -7,7 +7,6 @@ from typing import Optional, Set
 
 import pysam
 
-
 _SKIP_CHROM_PATTERNS = (
     '_RANDOM', '_ALT', '_FIX', '_HAP',
     'CHRUN_', 'UN_', 'SCAFFOLD', 'CONTIG',
