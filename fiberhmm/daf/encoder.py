@@ -52,6 +52,14 @@ class _EncodedDafSequence:
     n_deaminations: int
 
 
+@dataclass(frozen=True)
+class _DafEncodeHandles:
+    ref_fasta: object
+    inbam: object
+    outbam: object
+    pbar: object
+
+
 def _md_tag_ref_length(md_string: str) -> int:
     """Return the reference length encoded by an MD tag.
 
@@ -718,7 +726,7 @@ def _open_daf_encode_handles(input_bam, output_bam, reference, io_threads: int, 
         _check_md_tag(inbam, ref_fasta, log)
         outbam = _open_daf_output_bam(output_bam, inbam, io_threads)
         pbar = _new_daf_encode_progress(output_bam, log)
-        return ref_fasta, inbam, outbam, pbar
+        return _DafEncodeHandles(ref_fasta, inbam, outbam, pbar)
     except BaseException:
         _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta)
         raise
@@ -778,31 +786,34 @@ def process_bam_daf_encode(
     start_time = time.time()
     last_progress = start_time
 
-    ref_fasta = None
-    inbam = None
-    outbam = None
-    pbar = None
+    handles = None
 
     try:
-        ref_fasta, inbam, outbam, pbar = _open_daf_encode_handles(
+        handles = _open_daf_encode_handles(
             input_bam, output_bam, reference, io_threads, _log,
         )
 
         last_progress = _stream_daf_encode_reads(
-            inbam,
-            outbam,
-            pbar,
+            handles.inbam,
+            handles.outbam,
+            handles.pbar,
             counts,
             min_mapq,
             min_read_length,
             force_strand,
-            ref_fasta,
+            handles.ref_fasta,
             _log,
             last_progress,
         )
 
     finally:
-        _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta)
+        if handles is not None:
+            _close_daf_encode_handles(
+                handles.pbar,
+                handles.outbam,
+                handles.inbam,
+                handles.ref_fasta,
+            )
 
     return _finalize_daf_encode_run(counts, start_time, output_bam, io_threads, _log)
 

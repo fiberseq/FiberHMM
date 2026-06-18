@@ -568,6 +568,42 @@ def test_open_daf_encode_handles_closes_partial_setup_on_failure(monkeypatch):
     assert handles["fasta"].closed
 
 
+def test_open_daf_encode_handles_returns_named_handles(monkeypatch):
+    handles = {
+        "fasta": _FakeHandle(),
+        "bam": _FakeHandle(),
+        "out": _FakeHandle(),
+        "progress": _FakeProgress(),
+    }
+
+    monkeypatch.setattr(encoder, "_open_daf_reference", lambda path: handles["fasta"])
+    monkeypatch.setattr(
+        encoder,
+        "_open_daf_input_bam",
+        lambda path, threads: handles["bam"],
+    )
+    monkeypatch.setattr(encoder, "_check_md_tag", lambda *args: None)
+    monkeypatch.setattr(
+        encoder,
+        "_open_daf_output_bam",
+        lambda output, inbam, threads: handles["out"],
+    )
+    monkeypatch.setattr(
+        encoder,
+        "_new_daf_encode_progress",
+        lambda output, log: handles["progress"],
+    )
+
+    opened = encoder._open_daf_encode_handles(
+        "input.bam", "output.bam", "reference.fa", 4, io.StringIO(),
+    )
+
+    assert opened.ref_fasta is handles["fasta"]
+    assert opened.inbam is handles["bam"]
+    assert opened.outbam is handles["out"]
+    assert opened.pbar is handles["progress"]
+
+
 def test_open_daf_encode_handles_closes_partial_setup_on_system_exit(monkeypatch):
     handles = {
         "fasta": _FakeHandle(),
