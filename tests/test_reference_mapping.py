@@ -30,8 +30,13 @@ def test_query_to_ref_lookup_accepts_arrays_and_dicts():
 
 
 def test_ref_positions_to_half_open_span_orders_positions():
-    assert _ref_positions_to_half_open_span(100, 103) == (100, 104)
-    assert _ref_positions_to_half_open_span(103, 100) == (100, 104)
+    forward_span = _ref_positions_to_half_open_span(100, 103)
+    reverse_span = _ref_positions_to_half_open_span(103, 100)
+
+    assert forward_span.start == 100
+    assert forward_span.end == 104
+    assert reverse_span.start == 100
+    assert reverse_span.end == 104
 
 
 def test_query_interval_bounds_normalizes_numeric_inputs():

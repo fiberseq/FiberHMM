@@ -15,6 +15,15 @@ class _QueryIntervalBounds:
 
 
 @dataclass(frozen=True)
+class _RefSpan:
+    start: int
+    end: int
+
+    def as_tuple(self) -> Tuple[int, int]:
+        return self.start, self.end
+
+
+@dataclass(frozen=True)
 class _ScoredIntervalRecord:
     start: int
     end: int
@@ -41,9 +50,9 @@ def query_to_ref_lookup(query_to_ref, qpos: int) -> Optional[int]:
     return None
 
 
-def _ref_positions_to_half_open_span(ref_start: int, ref_end: int) -> Tuple[int, int]:
+def _ref_positions_to_half_open_span(ref_start: int, ref_end: int) -> _RefSpan:
     ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
-    return ref_start, ref_end
+    return _RefSpan(start=ref_start, end=ref_end)
 
 
 def _query_interval_bounds(qstart, length) -> _QueryIntervalBounds:
@@ -61,7 +70,7 @@ def query_interval_to_ref_block(qstart, length, query_to_ref) -> Optional[Tuple[
     ref_end = query_to_ref_lookup(query_to_ref, bounds.end - 1)
     if ref_start is None or ref_end is None:
         return None
-    return _ref_positions_to_half_open_span(ref_start, ref_end)
+    return _ref_positions_to_half_open_span(ref_start, ref_end).as_tuple()
 
 
 def _ref_in_query_interval(qstart, length, query_to_ref, *, reverse: bool) -> Optional[int]:
@@ -96,10 +105,10 @@ def query_interval_to_ref_span(qstart, length, query_to_ref) -> Optional[Tuple[i
 
     if ref_start is None or ref_end is None:
         return None
-    ref_start, ref_end = _ref_positions_to_half_open_span(ref_start, ref_end)
-    if ref_end <= ref_start:
+    span = _ref_positions_to_half_open_span(ref_start, ref_end)
+    if span.end <= span.start:
         return None
-    return ref_start, ref_end
+    return span.as_tuple()
 
 
 def _interval_score(scores, index: int) -> int:
