@@ -65,10 +65,10 @@ def test_state_runs_groups_contiguous_states():
 
 
 def test_state_run_lengths_splits_footprint_and_msp_lengths():
-    footprint_sizes, msp_sizes = train._state_run_lengths([0, 0, 1, 1, 1, 0])
+    run_lengths = train._state_run_lengths([0, 0, 1, 1, 1, 0])
 
-    assert footprint_sizes == [2, 1]
-    assert msp_sizes == [3]
+    assert run_lengths.footprint_sizes == [2, 1]
+    assert run_lengths.msp_sizes == [3]
 
 
 def test_state_block_specs_include_plot_widths_and_colors():

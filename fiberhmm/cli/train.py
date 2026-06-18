@@ -68,6 +68,12 @@ class _TrainingSamplingIndex:
 
 
 @dataclass(frozen=True)
+class _StateRunLengths:
+    footprint_sizes: list
+    msp_sizes: list
+
+
+@dataclass(frozen=True)
 class _ViterbiStateSizeStats:
     footprint_sizes: list
     msp_sizes: list
@@ -715,7 +721,7 @@ def _state_runs(states):
     return runs
 
 
-def _state_run_lengths(states):
+def _state_run_lengths(states) -> _StateRunLengths:
     footprint_sizes = []
     msp_sizes = []
     for start, end, state in _state_runs(states):
@@ -724,7 +730,7 @@ def _state_run_lengths(states):
             footprint_sizes.append(length)
         else:
             msp_sizes.append(length)
-    return footprint_sizes, msp_sizes
+    return _StateRunLengths(footprint_sizes, msp_sizes)
 
 
 def _state_block_specs(states) -> list:
@@ -760,9 +766,9 @@ def _viterbi_state_size_stats(
             continue
         states = model.predict(encoded)
         all_states.append(states)
-        fp_sizes, msp_sizes = _state_run_lengths(states)
-        all_footprint_sizes.extend(fp_sizes)
-        all_msp_sizes.extend(msp_sizes)
+        run_lengths = _state_run_lengths(states)
+        all_footprint_sizes.extend(run_lengths.footprint_sizes)
+        all_msp_sizes.extend(run_lengths.msp_sizes)
 
     return _ViterbiStateSizeStats(
         all_footprint_sizes,
