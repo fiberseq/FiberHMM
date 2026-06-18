@@ -87,6 +87,17 @@ class _AccessibleSplit:
 
 
 @dataclass(frozen=True)
+class _AccessibleSplitRequest:
+    obs: object
+    start: int
+    end: int
+    nhit: np.ndarray
+    nmiss: np.ndarray
+    min_llr: float
+    min_opps: int
+
+
+@dataclass(frozen=True)
 class _PhaseSplit:
     fragments: List[Interval]
     cuts: List[Interval]
@@ -248,16 +259,41 @@ def _refine_fragment(obs, a, b, llr_hit, llr_miss,
     return _RefinedFragment(nuc=nuc, access=access)
 
 
-def _split_on_accessible_cuts(obs, a, b, nhit, nmiss,
-                              split_min_llr, split_min_opps) -> _AccessibleSplit:
-    cuts = call_tfs_in_interval(obs, a, b, nhit, nmiss,
-                                split_min_llr, split_min_opps)
+def _split_on_accessible_cuts_from_request(
+    request: _AccessibleSplitRequest,
+) -> _AccessibleSplit:
+    cuts = call_tfs_in_interval(
+        request.obs,
+        request.start,
+        request.end,
+        request.nhit,
+        request.nmiss,
+        request.min_llr,
+        request.min_opps,
+    )
     cuts = sorted(cuts, key=lambda c: c.start)
     access = [(c.start, c.length) for c in cuts]
     frags = _fragments_after_cuts(
-        a, b, ((c.start, c.start + c.length) for c in cuts)
+        request.start,
+        request.end,
+        ((c.start, c.start + c.length) for c in cuts),
     )
     return _AccessibleSplit(fragments=frags, access=access)
+
+
+def _split_on_accessible_cuts(obs, a, b, nhit, nmiss,
+                              split_min_llr, split_min_opps) -> _AccessibleSplit:
+    return _split_on_accessible_cuts_from_request(
+        _AccessibleSplitRequest(
+            obs=obs,
+            start=a,
+            end=b,
+            nhit=nhit,
+            nmiss=nmiss,
+            min_llr=split_min_llr,
+            min_opps=split_min_opps,
+        )
+    )
 
 
 def _phase_cut_window(
@@ -340,9 +376,16 @@ def _recall_nuc_span(
     nucs: List[NucCall] = []
     access: List[Interval] = []
 
-    split = _split_on_accessible_cuts(
-        obs, s, e, tables.nhit, tables.nmiss,
-        params.split_min_llr, params.split_min_opps,
+    split = _split_on_accessible_cuts_from_request(
+        _AccessibleSplitRequest(
+            obs=obs,
+            start=s,
+            end=e,
+            nhit=tables.nhit,
+            nmiss=tables.nmiss,
+            min_llr=params.split_min_llr,
+            min_opps=params.split_min_opps,
+        )
     )
     access.extend(split.access)
 

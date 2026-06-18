@@ -6,6 +6,7 @@ import numpy as np
 from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
+    _AccessibleSplitRequest,
     _bounded_interval,
     _BoundedInterval,
     _circular_uncovered_cut,
@@ -29,6 +30,7 @@ from fiberhmm.inference.nuc_recaller import (
     _restore_circular_tiling_frame,
     _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
+    _split_on_accessible_cuts_from_request,
     _total_call_llr,
     _whole_molecule_nuc_candidate,
     assemble_circular_nuc_msp_tiling,
@@ -95,7 +97,18 @@ def test_no_split_when_no_accessible_evidence():
 def test_split_on_accessible_cuts_returns_fragments_and_cut_access():
     obs = _obs((MISS, 60), (HIT, 6), (MISS, 60))
     llr_hit, llr_miss = _llr_tables()
-    split = _split_on_accessible_cuts(
+    request = _AccessibleSplitRequest(
+        obs=obs,
+        start=0,
+        end=len(obs),
+        nhit=-llr_hit,
+        nmiss=-llr_miss,
+        min_llr=4.0,
+        min_opps=3,
+    )
+
+    split = _split_on_accessible_cuts_from_request(request)
+    adapted = _split_on_accessible_cuts(
         obs, 0, len(obs), -llr_hit, -llr_miss,
         split_min_llr=4.0, split_min_opps=3,
     )
@@ -103,6 +116,7 @@ def test_split_on_accessible_cuts_returns_fragments_and_cut_access():
     assert len(split.fragments) == 2
     assert split.access
     assert any(60 <= s <= 66 for s, _ in split.access)
+    assert adapted == split
 
 
 def test_recall_nuc_span_matches_single_read_wrapper():
