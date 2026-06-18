@@ -147,6 +147,21 @@ class _SingleReadResultRequest:
     include_encoded: bool
 
 
+@dataclass(frozen=True)
+class _SingleReadProcessRequest:
+    fiber_read: dict
+    model: object
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    with_scores: bool
+    return_posteriors: bool = False
+    nuc_min_size: int = 85
+    include_encoded: bool = False
+
+
 def _new_mode_detection_counts() -> dict:
     return {
         't_minus_a': 0,
@@ -1033,11 +1048,9 @@ def _should_skip_empty_prediction(
     return not has_intervals and not return_posteriors and not include_encoded
 
 
-def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,
-                          mode: str, context_size: int, msp_min_size: int,
-                          with_scores: bool, return_posteriors: bool = False,
-                          nuc_min_size: int = 85,
-                          include_encoded: bool = False) -> Optional[dict]:
+def _process_single_read_from_request(
+    request: _SingleReadProcessRequest,
+) -> Optional[dict]:
     """Process a single read through HMM. Returns footprint data or None.
 
     When include_encoded=True the encoded observation array and strand are
@@ -1045,12 +1058,13 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     apply+recall worker to avoid re-encoding the sequence for the TF scan.
     """
 
+    fiber_read = request.fiber_read
     query_sequence = fiber_read['query_sequence']
     m6a_positions = fiber_read['m6a_query_positions']
 
     # Detect strand
     strand = _processing_strand_for_read(
-        fiber_read, query_sequence, m6a_positions, mode,
+        fiber_read, query_sequence, m6a_positions, request.mode,
     )
 
     # Encode — pass is_reverse so nanopore mode handles strand correctly.
@@ -1058,12 +1072,12 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     # middle copy back to molecule coordinates before anything is written.
     is_reverse = fiber_read.get('is_reverse', False)
     encoding_inputs = _encoding_inputs_for_read(
-        query_sequence, m6a_positions, circular,
+        query_sequence, m6a_positions, request.circular,
     )
 
     encoded = encode_from_query_sequence(
-        encoding_inputs.sequence, encoding_inputs.mod_positions, edge_trim,
-        mode=mode, strand=strand, context_size=context_size,
+        encoding_inputs.sequence, encoding_inputs.mod_positions, request.edge_trim,
+        mode=request.mode, strand=strand, context_size=request.context_size,
         is_reverse=is_reverse,
     )
 
@@ -1072,19 +1086,49 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
 
     # Predict
     fp_result = predict_footprints_and_msps(
-        model,
+        request.model,
         encoded,
-        msp_min_size,
-        with_scores,
-        return_posteriors=return_posteriors,
-        nuc_min_size=nuc_min_size,
+        request.msp_min_size,
+        request.with_scores,
+        return_posteriors=request.return_posteriors,
+        nuc_min_size=request.nuc_min_size,
         circular_read_length=encoding_inputs.circular_read_length,
     )
 
     # If no footprints and we don't need posteriors or encoded, skip
-    if _should_skip_empty_prediction(fp_result, return_posteriors, include_encoded):
+    if _should_skip_empty_prediction(
+        fp_result,
+        request.return_posteriors,
+        request.include_encoded,
+    ):
         return None
 
     return _single_read_result_from_prediction(
-        fp_result, strand, encoded, return_posteriors, include_encoded,
+        fp_result,
+        strand,
+        encoded,
+        request.return_posteriors,
+        request.include_encoded,
+    )
+
+
+def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,
+                          mode: str, context_size: int, msp_min_size: int,
+                          with_scores: bool, return_posteriors: bool = False,
+                          nuc_min_size: int = 85,
+                          include_encoded: bool = False) -> Optional[dict]:
+    return _process_single_read_from_request(
+        _SingleReadProcessRequest(
+            fiber_read=fiber_read,
+            model=model,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            with_scores=with_scores,
+            return_posteriors=return_posteriors,
+            nuc_min_size=nuc_min_size,
+            include_encoded=include_encoded,
+        ),
     )

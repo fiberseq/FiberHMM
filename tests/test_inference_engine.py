@@ -188,6 +188,123 @@ def test_should_skip_empty_prediction_respects_optional_outputs():
     )
 
 
+def test_process_single_read_request_runs_prediction_path(monkeypatch):
+    calls = []
+    model = object()
+    fiber_read = {
+        "query_sequence": "ACGT",
+        "m6a_query_positions": {1},
+        "is_reverse": True,
+    }
+    encoded = np.array([2, 3], dtype=np.int8)
+    fp_result = {
+        "footprint_starts": np.array([0], dtype=np.int32),
+        "msp_starts": np.array([], dtype=np.int32),
+    }
+
+    def fake_processing_strand(*args):
+        calls.append(("strand", args))
+        return "-"
+
+    def fake_encoding_inputs(*args):
+        calls.append(("encoding", args))
+        return engine._EncodingInputs("TT", {0}, 4)
+
+    def fake_encode(*args, **kwargs):
+        calls.append(("encode", args, kwargs))
+        return encoded
+
+    def fake_predict(*args, **kwargs):
+        calls.append(("predict", args, kwargs))
+        return fp_result
+
+    def fake_should_skip(*args):
+        calls.append(("skip", args))
+        return False
+
+    def fake_single_read_result(*args):
+        calls.append(("result", args))
+        return {"ok": True}
+
+    monkeypatch.setattr(engine, "_processing_strand_for_read", fake_processing_strand)
+    monkeypatch.setattr(engine, "_encoding_inputs_for_read", fake_encoding_inputs)
+    monkeypatch.setattr(engine, "encode_from_query_sequence", fake_encode)
+    monkeypatch.setattr(engine, "predict_footprints_and_msps", fake_predict)
+    monkeypatch.setattr(engine, "_should_skip_empty_prediction", fake_should_skip)
+    monkeypatch.setattr(
+        engine,
+        "_single_read_result_from_prediction",
+        fake_single_read_result,
+    )
+
+    request = engine._SingleReadProcessRequest(
+        fiber_read=fiber_read,
+        model=model,
+        edge_trim=7,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=11,
+        with_scores=True,
+        return_posteriors=True,
+        nuc_min_size=85,
+        include_encoded=True,
+    )
+
+    assert engine._process_single_read_from_request(request) == {"ok": True}
+    assert calls[0] == (
+        "strand",
+        (fiber_read, "ACGT", {1}, "daf"),
+    )
+    assert calls[1] == ("encoding", ("ACGT", {1}, True))
+    assert calls[2] == (
+        "encode",
+        ("TT", {0}, 7),
+        {
+            "mode": "daf",
+            "strand": "-",
+            "context_size": 5,
+            "is_reverse": True,
+        },
+    )
+    label, predict_args, predict_kwargs = calls[3]
+    assert label == "predict"
+    assert predict_args[0] is model
+    assert predict_args[1] is encoded
+    assert predict_args[2:] == (11, True)
+    assert predict_kwargs == {
+        "return_posteriors": True,
+        "nuc_min_size": 85,
+        "circular_read_length": 4,
+    }
+    label, skip_args = calls[4]
+    assert label == "skip"
+    assert skip_args[0] is fp_result
+    assert skip_args[1:] == (True, True)
+    label, result_args = calls[5]
+    assert label == "result"
+    assert result_args[0] is fp_result
+    assert result_args[1] == "-"
+    assert result_args[2] is encoded
+    assert result_args[3:] == (True, True)
+    calls.clear()
+
+    assert engine._process_single_read(
+        fiber_read,
+        model,
+        edge_trim=7,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=11,
+        with_scores=True,
+        return_posteriors=True,
+        nuc_min_size=85,
+        include_encoded=True,
+    ) == {"ok": True}
+    assert len(calls) == 6
+
+
 class TestPredictFootprints:
     def test_empty_input(self, simple_model):
         result = engine._predict_footprint_result(simple_model, np.array([]))
