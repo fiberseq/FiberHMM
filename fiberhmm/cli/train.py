@@ -182,6 +182,14 @@ class _TrainingOutputPaths:
 
 
 @dataclass(frozen=True)
+class _TrainingOutputSaveRequest:
+    best_model: object
+    all_models: list
+    args: object
+    train_rids: list
+
+
+@dataclass(frozen=True)
 class _TrainingModelJsonRecord:
     n_states: int
     startprob: list
@@ -1752,43 +1760,59 @@ def _training_output_paths(outdir: str) -> dict:
     return _training_output_path_record(outdir).as_dict()
 
 
-def _save_training_outputs(best_model, all_models, args, train_rids) -> None:
-    print(f"\nSaving to {args.outdir}")
-    paths = _training_output_path_record(args.outdir)
+def _save_training_outputs_from_request(
+    request: _TrainingOutputSaveRequest,
+) -> None:
+    print(f"\nSaving to {request.args.outdir}")
+    paths = _training_output_path_record(request.args.outdir)
 
     # Save best model in JSON format (recommended - portable, human-readable)
     save_model(
-        best_model,
+        request.best_model,
         paths.best_json,
-        context_size=args.context_size,
-        mode=args.mode
+        context_size=request.args.context_size,
+        mode=request.args.mode
     )
     print("  Saved: best-model.json (recommended)")
 
     # Also save in NPZ for backwards compatibility
     save_model(
-        best_model,
+        request.best_model,
         paths.best_npz,
-        context_size=args.context_size,
-        mode=args.mode
+        context_size=request.args.context_size,
+        mode=request.args.mode
     )
     print("  Saved: best-model.npz (numpy format)")
 
     # Save all models as JSON list
-    all_models_data = [_model_json_record_value(m).as_dict() for m in all_models]
+    all_models_data = [
+        _model_json_record_value(m).as_dict()
+        for m in request.all_models
+    ]
     with open(paths.all_models, 'w') as f:
         json.dump(all_models_data, f)
 
     # Save training reads (only if we did training)
-    if train_rids:
-        pd.DataFrame({'rid': train_rids}).to_csv(
+    if request.train_rids:
+        pd.DataFrame({'rid': request.train_rids}).to_csv(
             paths.train_reads,
             sep='\t', index=False
         )
 
     # Save config (JSON - human readable)
     with open(paths.config, 'w') as f:
-        json.dump(_training_config_record(args).as_dict(), f, indent=2)
+        json.dump(_training_config_record(request.args).as_dict(), f, indent=2)
+
+
+def _save_training_outputs(best_model, all_models, args, train_rids) -> None:
+    _save_training_outputs_from_request(
+        _TrainingOutputSaveRequest(
+            best_model=best_model,
+            all_models=all_models,
+            args=args,
+            train_rids=train_rids,
+        )
+    )
 
 
 def _build_model_from_base(
@@ -1936,11 +1960,13 @@ def main():
     emission_probs = _load_training_emission_probs(args)
     training_result = _run_training_or_base_model(args, emission_probs)
 
-    _save_training_outputs(
-        training_result.best_model,
-        training_result.all_models,
-        args,
-        training_result.train_rids,
+    _save_training_outputs_from_request(
+        _TrainingOutputSaveRequest(
+            best_model=training_result.best_model,
+            all_models=training_result.all_models,
+            args=args,
+            train_rids=training_result.train_rids,
+        )
     )
 
     # Generate stats if requested (only if we have training data)

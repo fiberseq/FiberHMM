@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1267,6 +1268,53 @@ def test_training_output_paths_use_canonical_filenames():
         "all_models": "/tmp/out/all_models.json",
         "train_reads": "/tmp/out/training-reads.tsv",
         "config": "/tmp/out/model_config.json",
+    }
+
+
+def test_save_training_outputs_from_request_writes_metadata(monkeypatch, tmp_path):
+    save_calls = []
+
+    def fake_save_model(model, path, *, context_size, mode):
+        save_calls.append((model, Path(path).name, context_size, mode))
+
+    monkeypatch.setattr(train, "save_model", fake_save_model)
+    model = SimpleNamespace(
+        n_states=2,
+        startprob_=np.array([0.6, 0.4]),
+        transmat_=np.array([[0.8, 0.2], [0.1, 0.9]]),
+        emissionprob_=np.array([[0.2, 0.8], [0.7, 0.3]]),
+    )
+    args = SimpleNamespace(
+        outdir=str(tmp_path),
+        context_size=3,
+        mode="pacbio-fiber",
+        edge_trim=10,
+        prob_adjust=1.0,
+        base_model=None,
+    )
+
+    train._save_training_outputs_from_request(
+        train._TrainingOutputSaveRequest(
+            best_model=model,
+            all_models=[model],
+            args=args,
+            train_rids=["read-a", "read-b"],
+        )
+    )
+
+    assert save_calls == [
+        (model, "best-model.json", 3, "pacbio-fiber"),
+        (model, "best-model.npz", 3, "pacbio-fiber"),
+    ]
+    all_models = json.loads((tmp_path / "all_models.json").read_text())
+    assert all_models[0]["n_states"] == 2
+    assert all_models[0]["startprob"] == [0.6, 0.4]
+    assert (tmp_path / "training-reads.tsv").read_text() == "rid\nread-a\nread-b\n"
+    assert json.loads((tmp_path / "model_config.json").read_text()) == {
+        "context_size": 3,
+        "mode": "pacbio-fiber",
+        "edge_trim": 10,
+        "prob_adjust": 1.0,
     }
 
 
