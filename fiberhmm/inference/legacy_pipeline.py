@@ -143,6 +143,45 @@ def _write_chunk_posteriors(posterior_writer, chunk_results):
                 )
 
 
+def _process_legacy_chunk_and_record(
+    chunk_reads: list,
+    chunk_read_objs: list,
+    outbam,
+    model,
+    executor,
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    skip_reasons: dict,
+    posterior_writer,
+    nuc_min_size: int = 85,
+    with_scores: bool = False,
+    return_posteriors: bool = False,
+    write_msps: bool = True,
+) -> Tuple[int, int]:
+    n_fp, n_nofp, n_failed, chunk_results = _process_and_write_chunk(
+        chunk_reads,
+        chunk_read_objs,
+        outbam,
+        model,
+        executor,
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        nuc_min_size=nuc_min_size,
+        with_scores=with_scores,
+        return_posteriors=return_posteriors,
+        write_msps=write_msps,
+    )
+    skip_reasons[NO_FOOTPRINTS_SKIP_REASON] += n_nofp
+    _write_chunk_posteriors(posterior_writer, chunk_results)
+    return n_fp, n_failed
+
+
 _LEGACY_SKIP_REASON_KEYS = BASE_SKIP_REASON_KEYS + (NO_FOOTPRINTS_SKIP_REASON,)
 
 
@@ -277,19 +316,17 @@ def _process_bam_legacy_pipeline(
 
                     # Process chunk when full
                     if len(chunk_reads) >= chunk_size:
-                        n_fp, n_nofp, n_failed, chunk_results = _process_and_write_chunk(
+                        n_fp, n_failed = _process_legacy_chunk_and_record(
                             chunk_reads, chunk_read_objs, outbam,
                             model, executor, edge_trim, circular,
-                            mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+                            mode, context_size, msp_min_size, skip_reasons,
+                            posterior_writer, nuc_min_size=nuc_min_size,
                             with_scores=with_scores,
                             return_posteriors=return_posteriors,
                             write_msps=write_msps
                         )
                         reads_with_footprints += n_fp
-                        skip_reasons['no_footprints'] += n_nofp
                         worker_failures += n_failed
-
-                        _write_chunk_posteriors(posterior_writer, chunk_results)
 
                         # Progress update
                         elapsed = time.time() - start_time
@@ -302,19 +339,17 @@ def _process_bam_legacy_pipeline(
 
                 # Process final partial chunk
                 if chunk_reads:
-                    n_fp, n_nofp, n_failed, chunk_results = _process_and_write_chunk(
+                    n_fp, n_failed = _process_legacy_chunk_and_record(
                         chunk_reads, chunk_read_objs, outbam,
                         model, executor, edge_trim, circular,
-                        mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
+                        mode, context_size, msp_min_size, skip_reasons,
+                        posterior_writer, nuc_min_size=nuc_min_size,
                         with_scores=with_scores,
                         return_posteriors=return_posteriors,
                         write_msps=write_msps,
                     )
                     reads_with_footprints += n_fp
-                    skip_reasons['no_footprints'] += n_nofp
                     worker_failures += n_failed
-
-                    _write_chunk_posteriors(posterior_writer, chunk_results)
 
             finally:
                 try:

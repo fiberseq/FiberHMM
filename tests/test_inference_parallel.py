@@ -254,6 +254,77 @@ def test_write_processed_legacy_reads_tags_results_and_counts(monkeypatch):
     assert outbam.written == reads
 
 
+def test_process_legacy_chunk_and_record_updates_counts_and_posteriors(monkeypatch):
+    chunk_reads = ["fiber"]
+    chunk_read_objs = ["read"]
+    outbam = object()
+    model = object()
+    executor = object()
+    posterior_writer = object()
+    chunk_results = ["chunk-result"]
+    process_calls = []
+    posterior_calls = []
+
+    def fake_process_and_write_chunk(*args, **kwargs):
+        process_calls.append((args, kwargs))
+        return 2, 3, 1, chunk_results
+
+    monkeypatch.setattr(
+        legacy_pipeline, "_process_and_write_chunk", fake_process_and_write_chunk,
+    )
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_write_chunk_posteriors",
+        lambda writer, results: posterior_calls.append((writer, results)),
+    )
+    skip_reasons = legacy_pipeline._new_legacy_skip_reasons()
+
+    reads_with_fp, worker_failures = legacy_pipeline._process_legacy_chunk_and_record(
+        chunk_reads,
+        chunk_read_objs,
+        outbam,
+        model,
+        executor,
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        skip_reasons=skip_reasons,
+        posterior_writer=posterior_writer,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=True,
+        write_msps=False,
+    )
+
+    assert (reads_with_fp, worker_failures) == (2, 1)
+    assert skip_reasons["no_footprints"] == 3
+    assert posterior_calls == [(posterior_writer, chunk_results)]
+    assert process_calls == [
+        (
+            (
+                chunk_reads,
+                chunk_read_objs,
+                outbam,
+                model,
+                executor,
+                11,
+                True,
+                "daf",
+                5,
+                61,
+            ),
+            {
+                "nuc_min_size": 87,
+                "with_scores": True,
+                "return_posteriors": True,
+                "write_msps": False,
+            },
+        )
+    ]
+
+
 def test_streaming_payload_or_skip_filters_and_builds_payload(monkeypatch):
     config = ReadFilterConfig(min_mapq=20, min_read_length=50)
     built = []
