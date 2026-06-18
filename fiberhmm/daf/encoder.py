@@ -656,6 +656,23 @@ def _maybe_finalize_daf_output(output_bam, io_threads: int, log) -> None:
     _sort_and_index_bam(output_bam, verbose=True, threads=io_threads)
 
 
+def _open_daf_encode_handles(input_bam, output_bam, reference, io_threads: int, log):
+    ref_fasta = None
+    inbam = None
+    outbam = None
+    pbar = None
+    try:
+        ref_fasta = _open_daf_reference(reference)
+        inbam = _open_daf_input_bam(input_bam, io_threads)
+        _check_md_tag(inbam, ref_fasta, log)
+        outbam = _open_daf_output_bam(output_bam, inbam, io_threads)
+        pbar = _new_daf_encode_progress(output_bam, log)
+        return ref_fasta, inbam, outbam, pbar
+    except Exception:
+        _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta)
+        raise
+
+
 def _finalize_daf_encode_run(
     counts: dict,
     start_time: float,
@@ -716,15 +733,9 @@ def process_bam_daf_encode(
     pbar = None
 
     try:
-        ref_fasta = _open_daf_reference(reference)
-
-        inbam = _open_daf_input_bam(input_bam, io_threads)
-
-        # Check MD tag on the first mapped read
-        _check_md_tag(inbam, ref_fasta, _log)
-
-        outbam = _open_daf_output_bam(output_bam, inbam, io_threads)
-        pbar = _new_daf_encode_progress(output_bam, _log)
+        ref_fasta, inbam, outbam, pbar = _open_daf_encode_handles(
+            input_bam, output_bam, reference, io_threads, _log,
+        )
 
         last_progress = _stream_daf_encode_reads(
             inbam,

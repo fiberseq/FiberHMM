@@ -511,6 +511,34 @@ def test_daf_encode_closes_input_and_reference_when_md_check_fails(monkeypatch):
     assert handles["fasta"].closed
 
 
+def test_open_daf_encode_handles_closes_partial_setup_on_failure(monkeypatch):
+    handles = {
+        "fasta": _FakeHandle(),
+        "bam": _FakeHandle(),
+    }
+
+    monkeypatch.setattr(encoder, "_open_daf_reference", lambda path: handles["fasta"])
+    monkeypatch.setattr(
+        encoder,
+        "_open_daf_input_bam",
+        lambda path, threads: handles["bam"],
+    )
+    monkeypatch.setattr(encoder, "_check_md_tag", lambda *args: None)
+
+    def fail_output(*args):
+        raise RuntimeError("output failed")
+
+    monkeypatch.setattr(encoder, "_open_daf_output_bam", fail_output)
+
+    with pytest.raises(RuntimeError, match="output failed"):
+        encoder._open_daf_encode_handles(
+            "input.bam", "output.bam", "reference.fa", 4, io.StringIO(),
+        )
+
+    assert handles["bam"].closed
+    assert handles["fasta"].closed
+
+
 def test_maybe_finalize_daf_output_sorts_only_existing_files(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(
