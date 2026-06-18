@@ -72,6 +72,112 @@ def _base_region_worker_params(
     }
 
 
+def _region_bam_worker_params(
+    *,
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    min_mapq: int,
+    prob_threshold: int,
+    min_read_length: int,
+    with_scores: bool,
+    train_rids,
+    primary_only: bool,
+    return_posteriors: bool,
+    write_msps: bool,
+    io_threads: int,
+) -> dict:
+    params = _base_region_worker_params(
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        min_mapq=min_mapq,
+        prob_threshold=prob_threshold,
+        min_read_length=min_read_length,
+        with_scores=with_scores,
+        train_rids=train_rids,
+        primary_only=primary_only,
+    )
+    params.update({
+        'return_posteriors': return_posteriors,
+        'write_msps': write_msps,
+        'io_threads': io_threads,
+    })
+    return params
+
+
+def _fused_region_worker_params(
+    *,
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    nuc_min_size: int,
+    min_mapq: int,
+    prob_threshold: int,
+    min_read_length: int,
+    with_scores: bool,
+    train_rids,
+    primary_only: bool,
+    io_threads: int,
+    min_llr: float,
+    min_opps: int,
+    unify_threshold: int,
+    also_write_legacy: bool,
+    downstream_compat: bool,
+    recall_nucs: bool,
+    split_min_llr: float,
+    split_min_opps: int,
+    filter_chimeras: bool,
+    chimera_min_seg: int,
+    chimera_purity: float,
+    phase_nrl: int,
+    pg_record: dict,
+    ref_fasta_path: Optional[str],
+) -> dict:
+    params = _base_region_worker_params(
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        min_mapq=min_mapq,
+        prob_threshold=prob_threshold,
+        min_read_length=min_read_length,
+        with_scores=with_scores,
+        train_rids=train_rids,
+        primary_only=primary_only,
+    )
+    params.update({
+        'io_threads': io_threads,
+        'min_llr': min_llr,
+        'min_opps': min_opps,
+        'unify_threshold': unify_threshold,
+        'also_write_legacy': also_write_legacy,
+        'downstream_compat': downstream_compat,
+        'recall_nucs': recall_nucs,
+        'split_min_llr': split_min_llr,
+        'split_min_opps': split_min_opps,
+        'filter_chimeras': filter_chimeras,
+        'chimera_min_seg': chimera_min_seg,
+        'chimera_purity': chimera_purity,
+        'phase_nrl': phase_nrl,
+        'pg_record': pg_record,
+        # Path string, NOT an open handle: pysam.FastaFile is not fork-safe,
+        # so each worker opens it lazily in _init_fused_region_worker.
+        'ref_fasta_path': ref_fasta_path,
+    })
+    return params
+
+
 def _print_skip_reasons_summary(
     aggregation: RegionBamAggregation,
     footprint_label: str = "With footprints",
@@ -313,8 +419,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
     temp_dir = _make_output_temp_dir(output_bam, '.fiberhmm_tmp_')
 
     try:
-        # Prepare parameters (will be passed to initializer)
-        params = _base_region_worker_params(
+        params = _region_bam_worker_params(
             edge_trim=edge_trim,
             circular=circular,
             mode=mode,
@@ -327,12 +432,10 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             with_scores=with_scores,
             train_rids=train_rids,
             primary_only=primary_only,
+            return_posteriors=return_posteriors,
+            write_msps=write_msps,
+            io_threads=io_threads,
         )
-        params.update({
-            'return_posteriors': return_posteriors,
-            'write_msps': write_msps,
-            'io_threads': io_threads,
-        })
 
         # Work items - include temp TSV path if posteriors requested
         work_items = _region_bam_work_items(
@@ -573,7 +676,7 @@ def _process_bam_region_parallel_fused(
 
     temp_dir = _make_output_temp_dir(output_bam, '.fiberhmm_call_tmp_')
 
-    params = _base_region_worker_params(
+    params = _fused_region_worker_params(
         edge_trim=edge_trim,
         circular=circular,
         mode=mode,
@@ -586,25 +689,22 @@ def _process_bam_region_parallel_fused(
         with_scores=with_scores,
         train_rids=train_rids,
         primary_only=primary_only,
+        io_threads=io_threads,
+        min_llr=min_llr,
+        min_opps=min_opps,
+        unify_threshold=unify_threshold,
+        also_write_legacy=also_write_legacy,
+        downstream_compat=downstream_compat,
+        recall_nucs=recall_nucs,
+        split_min_llr=split_min_llr,
+        split_min_opps=split_min_opps,
+        filter_chimeras=filter_chimeras,
+        chimera_min_seg=chimera_min_seg,
+        chimera_purity=chimera_purity,
+        phase_nrl=phase_nrl,
+        pg_record=pg_record,
+        ref_fasta_path=ref_fasta_path,
     )
-    params.update({
-        'io_threads': io_threads,
-        'min_llr': min_llr, 'min_opps': min_opps,
-        'unify_threshold': unify_threshold,
-        'also_write_legacy': also_write_legacy,
-        'downstream_compat': downstream_compat,
-        'recall_nucs': recall_nucs,
-        'split_min_llr': split_min_llr,
-        'split_min_opps': split_min_opps,
-        'filter_chimeras': filter_chimeras,
-        'chimera_min_seg': chimera_min_seg,
-        'chimera_purity': chimera_purity,
-        'phase_nrl': phase_nrl,
-        'pg_record': pg_record,
-        # Path string, NOT an open handle: pysam.FastaFile is not fork-safe,
-        # so each worker opens it lazily in _init_fused_region_worker.
-        'ref_fasta_path': ref_fasta_path,
-    })
 
     work_items = _region_bam_work_items(regions, input_bam, temp_dir)
 

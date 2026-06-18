@@ -137,6 +137,95 @@ def test_region_completion_summary_formats_counts_and_rate():
     ) == "Completed: 1,234 reads | 56 with footprints | 617.0 reads/s | 2.0s"
 
 
+def test_region_worker_param_builders_extend_base_contract():
+    train_rids = {"read1"}
+
+    bam_params = region_pipeline._region_bam_worker_params(
+        edge_trim=11,
+        circular=True,
+        mode="daf",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=87,
+        min_mapq=20,
+        prob_threshold=128,
+        min_read_length=100,
+        with_scores=True,
+        train_rids=train_rids,
+        primary_only=True,
+        return_posteriors=True,
+        write_msps=False,
+        io_threads=3,
+    )
+
+    assert bam_params == {
+        "edge_trim": 11,
+        "circular": True,
+        "mode": "daf",
+        "context_size": 5,
+        "msp_min_size": 61,
+        "nuc_min_size": 87,
+        "min_mapq": 20,
+        "prob_threshold": 128,
+        "min_read_length": 100,
+        "with_scores": True,
+        "train_rids": train_rids,
+        "primary_only": True,
+        "return_posteriors": True,
+        "write_msps": False,
+        "io_threads": 3,
+    }
+
+    fused_params = region_pipeline._fused_region_worker_params(
+        edge_trim=11,
+        circular=False,
+        mode="pacbio-fiber",
+        context_size=6,
+        msp_min_size=62,
+        nuc_min_size=88,
+        min_mapq=21,
+        prob_threshold=129,
+        min_read_length=101,
+        with_scores=False,
+        train_rids=train_rids,
+        primary_only=False,
+        io_threads=4,
+        min_llr=4.5,
+        min_opps=3,
+        unify_threshold=25,
+        also_write_legacy=True,
+        downstream_compat=False,
+        recall_nucs=True,
+        split_min_llr=5.5,
+        split_min_opps=4,
+        filter_chimeras=True,
+        chimera_min_seg=6,
+        chimera_purity=0.9,
+        phase_nrl=147,
+        pg_record={"ID": "fiberhmm"},
+        ref_fasta_path="ref.fa",
+    )
+
+    assert fused_params["mode"] == "pacbio-fiber"
+    assert fused_params["context_size"] == 6
+    assert fused_params["train_rids"] is train_rids
+    assert fused_params["io_threads"] == 4
+    assert fused_params["min_llr"] == 4.5
+    assert fused_params["min_opps"] == 3
+    assert fused_params["unify_threshold"] == 25
+    assert fused_params["also_write_legacy"] is True
+    assert fused_params["downstream_compat"] is False
+    assert fused_params["recall_nucs"] is True
+    assert fused_params["split_min_llr"] == 5.5
+    assert fused_params["split_min_opps"] == 4
+    assert fused_params["filter_chimeras"] is True
+    assert fused_params["chimera_min_seg"] == 6
+    assert fused_params["chimera_purity"] == 0.9
+    assert fused_params["phase_nrl"] == 147
+    assert fused_params["pg_record"] == {"ID": "fiberhmm"}
+    assert fused_params["ref_fasta_path"] == "ref.fa"
+
+
 def test_region_work_item_builders_use_stable_temp_names(tmp_path):
     regions = [("chr1", 0, 100), ("chr2", 5, 25)]
     temp_dir = str(tmp_path)
