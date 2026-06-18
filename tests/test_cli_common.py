@@ -80,7 +80,11 @@ class TestAddFilterArgs:
     def test_override_from_cli(self):
         parser = argparse.ArgumentParser()
         add_filter_args(parser)
-        args = parser.parse_args(['--min-mapq', '30', '--prob-threshold', '200', '--min-read-length', '2000'])
+        args = parser.parse_args([
+            '--min-mapq', '30',
+            '--prob-threshold', '200',
+            '--min-read-length', '2000',
+        ])
         assert args.min_mapq == 30
         assert args.prob_threshold == 200
         assert args.min_read_length == 2000

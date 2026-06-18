@@ -7,7 +7,6 @@ Default values can be overridden per-script where needed.
 import argparse
 import multiprocessing
 
-
 MODE_DESCRIPTIONS = {
     'pacbio-fiber': 'PacBio fiber-seq (A-centered)',
     'nanopore-fiber': 'Nanopore fiber-seq (A-centered)',

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 
-
 _MODEL_REQUIRED_MESSAGE = (
     "error: one of --model or --enzyme must be provided.\n"
     "  Use --enzyme hia5/dddb/ddda to pick a bundled model, or\n"
