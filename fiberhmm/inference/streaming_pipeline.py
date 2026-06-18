@@ -202,6 +202,32 @@ def _streaming_output_target(output_bam: str):
     return output_bam
 
 
+def _open_streaming_posterior_writer(
+    output_posteriors: Optional[str],
+    mode: str,
+    context_size: int,
+    edge_trim: int,
+    input_bam: str,
+    log,
+) -> tuple[object | None, bool]:
+    if not output_posteriors:
+        return None, False
+
+    if not HAS_POSTERIOR_WRITER:
+        print(
+            "WARNING: posterior_writer.py not found, skipping posteriors export",
+            file=log,
+        )
+        return None, False
+
+    writer = PosteriorWriter(
+        output_posteriors, mode, context_size,
+        edge_trim, input_bam, batch_size=1000,
+    )
+    print(f"Posteriors will be written to: {output_posteriors}", file=log)
+    return writer, True
+
+
 def _print_streaming_skip_summary(skip_reasons: dict, total_reads: int,
                                   skipped: int, log) -> None:
     if skipped <= 0:
@@ -541,19 +567,9 @@ def _process_bam_streaming_pipeline(
                                  header=append_coord_marker(inbam.header),
                                  threads=io_threads) as outbam:
 
-            if output_posteriors:
-                if HAS_POSTERIOR_WRITER:
-                    posterior_writer = PosteriorWriter(
-                        output_posteriors, mode, context_size,
-                        edge_trim, input_bam, batch_size=1000
-                    )
-                    return_posteriors = True
-                    print(f"Posteriors will be written to: {output_posteriors}", file=_log)
-                else:
-                    print(
-                        "WARNING: posterior_writer.py not found, skipping posteriors export",
-                        file=_log,
-                    )
+            posterior_writer, return_posteriors = _open_streaming_posterior_writer(
+                output_posteriors, mode, context_size, edge_trim, input_bam, _log,
+            )
 
             executor = ProcessPoolExecutor(
                 max_workers=n_cores,

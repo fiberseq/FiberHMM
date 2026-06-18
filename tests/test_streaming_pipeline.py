@@ -12,6 +12,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _buffer_processable_read,
     _fused_worker_args,
     _new_streaming_chunk_buffers,
+    _open_streaming_posterior_writer,
     _print_streaming_progress,
     _streaming_completion_message,
     _streaming_filter_config,
@@ -176,6 +177,49 @@ def test_streaming_output_target_resolves_stdout_and_file(monkeypatch):
     assert _streaming_output_target("out.bam") == "out.bam"
     assert _streaming_output_target("-") is sentinel
     assert calls == [(1, "wb", False)]
+
+
+def test_open_streaming_posterior_writer_enables_worker_posteriors(monkeypatch):
+    created = []
+
+    class FakePosteriorWriter:
+        def __init__(self, *args, **kwargs):
+            created.append((args, kwargs))
+
+    monkeypatch.setattr(streaming_pipeline, "HAS_POSTERIOR_WRITER", True)
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "PosteriorWriter",
+        FakePosteriorWriter,
+        raising=False,
+    )
+    log = io.StringIO()
+
+    writer, return_posteriors = _open_streaming_posterior_writer(
+        "out.h5", "deam", 4, 10, "in.bam", log,
+    )
+
+    assert isinstance(writer, FakePosteriorWriter)
+    assert return_posteriors is True
+    assert created == [
+        (("out.h5", "deam", 4, 10, "in.bam"), {"batch_size": 1000})
+    ]
+    assert log.getvalue() == "Posteriors will be written to: out.h5\n"
+
+
+def test_open_streaming_posterior_writer_warns_when_backend_missing(monkeypatch):
+    monkeypatch.setattr(streaming_pipeline, "HAS_POSTERIOR_WRITER", False)
+    log = io.StringIO()
+
+    writer, return_posteriors = _open_streaming_posterior_writer(
+        "out.h5", "deam", 4, 10, "in.bam", log,
+    )
+
+    assert writer is None
+    assert return_posteriors is False
+    assert log.getvalue() == (
+        "WARNING: posterior_writer.py not found, skipping posteriors export\n"
+    )
 
 
 def _count_bam_reads(bam_path):
