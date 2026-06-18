@@ -143,9 +143,15 @@ def test_posterior_result_record_preserves_metadata_and_arrays():
     starts = np.array([10], dtype=np.int32)
     sizes = np.array([2], dtype=np.int32)
 
-    record = export_posteriors._posterior_result_record(
-        read, "+", posteriors, ref_positions, starts, sizes,
+    request = export_posteriors._PosteriorResultRecordRequest(
+        read=read,
+        strand="+",
+        p_footprint=posteriors,
+        ref_positions=ref_positions,
+        footprint_starts=starts,
+        footprint_sizes=sizes,
     )
+    record = export_posteriors._posterior_result_record_from_request(request)
 
     assert record["read_name"] == "read-a"
     assert record["ref_start"] == 10
@@ -155,6 +161,12 @@ def test_posterior_result_record_preserves_metadata_and_arrays():
     assert record["ref_positions"] is ref_positions
     assert record["footprint_starts"] is starts
     assert record["footprint_sizes"] is sizes
+    adapter_record = export_posteriors._posterior_result_record(
+        read, "+", posteriors, ref_positions, starts, sizes,
+    )
+    assert adapter_record["read_name"] == record["read_name"]
+    assert adapter_record["strand"] == record["strand"]
+    assert adapter_record["posteriors"] is posteriors
 
 
 def test_posterior_sequence_or_none_applies_min_length_filter():

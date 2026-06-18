@@ -122,6 +122,16 @@ class _FootprintReferenceIntervals:
 
 
 @dataclass(frozen=True)
+class _PosteriorResultRecordRequest:
+    read: object
+    strand: str
+    p_footprint: np.ndarray
+    ref_positions: np.ndarray
+    footprint_starts: np.ndarray
+    footprint_sizes: np.ndarray
+
+
+@dataclass(frozen=True)
 class _ProcessedRegionPosteriors:
     chrom: str
     start: int
@@ -225,15 +235,30 @@ def _posterior_result_record(
     footprint_starts: np.ndarray,
     footprint_sizes: np.ndarray,
 ) -> Dict:
+    return _posterior_result_record_from_request(
+        _PosteriorResultRecordRequest(
+            read=read,
+            strand=strand,
+            p_footprint=p_footprint,
+            ref_positions=ref_positions,
+            footprint_starts=footprint_starts,
+            footprint_sizes=footprint_sizes,
+        ),
+    )
+
+
+def _posterior_result_record_from_request(
+    request: _PosteriorResultRecordRequest,
+) -> Dict:
     return {
-        'read_name': read.query_name,
-        'ref_start': read.reference_start,
-        'ref_end': read.reference_end,
-        'strand': strand,
-        'posteriors': p_footprint,
-        'ref_positions': ref_positions,
-        'footprint_starts': footprint_starts,
-        'footprint_sizes': footprint_sizes,
+        'read_name': request.read.query_name,
+        'ref_start': request.read.reference_start,
+        'ref_end': request.read.reference_end,
+        'strand': request.strand,
+        'posteriors': request.p_footprint,
+        'ref_positions': request.ref_positions,
+        'footprint_starts': request.footprint_starts,
+        'footprint_sizes': request.footprint_sizes,
     }
 
 
