@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, TextIO
 
 import pysam
 
@@ -75,6 +75,12 @@ class _RegionApplyConfig:
 class _RegionBamOutputConfig:
     return_posteriors: bool
     write_msps: bool
+
+
+@dataclass(frozen=True)
+class _RegionPosteriorTsv:
+    file: Optional[TextIO]
+    enabled: bool
 
 
 @dataclass(frozen=True)
@@ -192,13 +198,13 @@ def _region_bam_output_config(
 def _open_region_posterior_tsv(
     output_config: _RegionBamOutputConfig,
     temp_tsv_path: Optional[str],
-):
+) -> _RegionPosteriorTsv:
     if not output_config.return_posteriors or not temp_tsv_path:
-        return None, False
+        return _RegionPosteriorTsv(file=None, enabled=False)
     try:
-        return open(temp_tsv_path, 'w'), True
+        return _RegionPosteriorTsv(file=open(temp_tsv_path, 'w'), enabled=True)
     except OSError:
-        return None, False
+        return _RegionPosteriorTsv(file=None, enabled=False)
 
 
 def _region_bam_result_from_counts(
@@ -809,10 +815,12 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         pysam.set_verbosity(0)
 
         # Open posteriors TSV file for streaming writes (if requested).
-        tsv_file, return_posteriors = _open_region_posterior_tsv(
+        posterior_tsv = _open_region_posterior_tsv(
             runtime.output_config,
             temp_tsv_path,
         )
+        tsv_file = posterior_tsv.file
+        return_posteriors = posterior_tsv.enabled
 
         try:
             with pysam.AlignmentFile(

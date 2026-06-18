@@ -38,6 +38,7 @@ from fiberhmm.inference.region_workers import (
     _region_read_route,
     _region_result_ns_scores,
     _RegionBamWorkerCounts,
+    _RegionPosteriorTsv,
     _run_fused_region_apply_read,
     _run_region_apply_read,
     _write_footprinted_region_read,
@@ -167,33 +168,38 @@ def test_new_region_skip_reasons_includes_region_extras():
 
 def test_open_region_posterior_tsv_opens_only_when_enabled(tmp_path):
     disabled_config = _region_bam_output_config({"return_posteriors": False}, None)
-    assert _open_region_posterior_tsv(disabled_config, None) == (None, False)
+    assert _open_region_posterior_tsv(disabled_config, None) == _RegionPosteriorTsv(
+        file=None,
+        enabled=False,
+    )
 
     tsv_path = tmp_path / "region.tsv"
     enabled_config = _region_bam_output_config(
         {"return_posteriors": True},
         str(tsv_path),
     )
-    tsv_file, return_posteriors = _open_region_posterior_tsv(
+    posterior_tsv = _open_region_posterior_tsv(
         enabled_config,
         str(tsv_path),
     )
+    tsv_file = posterior_tsv.file
 
     try:
-        assert return_posteriors is True
+        assert posterior_tsv.enabled is True
         assert tsv_file is not None
         tsv_file.write("ok\n")
     finally:
-        tsv_file.close()
+        if tsv_file is not None:
+            tsv_file.close()
 
     assert tsv_path.read_text() == "ok\n"
 
-    bad_file, bad_enabled = _open_region_posterior_tsv(
+    bad_tsv = _open_region_posterior_tsv(
         enabled_config,
         str(tmp_path / "missing" / "region.tsv"),
     )
-    assert bad_file is None
-    assert bad_enabled is False
+    assert bad_tsv.file is None
+    assert bad_tsv.enabled is False
 
 
 def test_open_region_posterior_tsv_propagates_unexpected_errors(monkeypatch, tmp_path):
@@ -263,7 +269,7 @@ def test_process_region_to_bam_closes_tsv_once_when_fetch_region_missing(
     monkeypatch.setattr(
         region_workers,
         "_open_region_posterior_tsv",
-        lambda *args: (tsv_file, True),
+        lambda *args: _RegionPosteriorTsv(file=tsv_file, enabled=True),
     )
     monkeypatch.setattr(region_workers, "_worker_model", object())
     monkeypatch.setattr(region_workers, "_worker_region_params", params)
