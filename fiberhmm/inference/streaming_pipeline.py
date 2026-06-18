@@ -86,6 +86,28 @@ class _StreamingReadDelta:
     skipped: int
 
 
+@dataclass(frozen=True)
+class _StreamingWorkerCommonArgs:
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    with_scores: bool
+
+    def as_tuple(self) -> tuple:
+        return (
+            self.edge_trim,
+            self.circular,
+            self.mode,
+            self.context_size,
+            self.msp_min_size,
+            self.nuc_min_size,
+            self.with_scores,
+        )
+
+
 def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, reason) -> int:
     chunk_read_objs.append(read)
     chunk_skip_flags.append(True)
@@ -420,6 +442,12 @@ def _run_streaming_worker_loop(
         executor.shutdown(wait=True)
 
 
+def _worker_common_args_from_request(
+    request: _StreamingWorkerCommonArgs,
+) -> tuple:
+    return request.as_tuple()
+
+
 def _worker_common_args(
     edge_trim: int,
     circular: bool,
@@ -429,14 +457,16 @@ def _worker_common_args(
     nuc_min_size: int,
     with_scores: bool,
 ) -> tuple:
-    return (
-        edge_trim,
-        circular,
-        mode,
-        context_size,
-        msp_min_size,
-        nuc_min_size,
-        with_scores,
+    return _worker_common_args_from_request(
+        _StreamingWorkerCommonArgs(
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+        )
     )
 
 

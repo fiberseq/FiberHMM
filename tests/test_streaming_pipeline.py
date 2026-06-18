@@ -51,7 +51,9 @@ from fiberhmm.inference.streaming_pipeline import (
     _StreamingProgressRates,
     _StreamingReadCounts,
     _StreamingReadDelta,
+    _StreamingWorkerCommonArgs,
     _worker_common_args,
+    _worker_common_args_from_request,
 )
 
 
@@ -70,6 +72,18 @@ class _FakeAlignmentFile:
 
 
 def test_apply_worker_args_match_payload_worker_contract():
+    common_args = _StreamingWorkerCommonArgs(
+        edge_trim=11,
+        circular=True,
+        mode="deam",
+        context_size=5,
+        msp_min_size=61,
+        nuc_min_size=86,
+        with_scores=True,
+    )
+    assert _worker_common_args_from_request(common_args) == (
+        11, True, "deam", 5, 61, 86, True,
+    )
     assert _worker_common_args(
         11, True, "deam", 5, 61, 86, True,
     ) == (
