@@ -258,8 +258,13 @@ def test_shutdown_legacy_resources_closes_posteriors_after_executor_error():
 
 def test_write_chunk_posteriors_accepts_falsey_writer(monkeypatch):
     read = SimpleNamespace(reference_name="chr1")
-    result = {"posteriors": [0.1, 0.9]}
     seen = []
+
+    class Result(dict):
+        def __bool__(self):
+            return False
+
+    result = Result(posteriors=[0.1, 0.9])
 
     class Writer:
         def __bool__(self):

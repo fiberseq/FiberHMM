@@ -192,7 +192,7 @@ def _write_chunk_posteriors(posterior_writer, chunk_results):
         return
 
     for read_obj, fiber_read_data, result in chunk_results:
-        if result and result.get('posteriors') is not None:
+        if result is not None and result.get('posteriors') is not None:
             chrom = read_obj.reference_name
             if chrom:
                 posterior_writer.add_fiber(
