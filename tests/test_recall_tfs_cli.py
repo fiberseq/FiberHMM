@@ -525,6 +525,51 @@ def test_recall_tfs_runtime_adapter_builds_request(monkeypatch):
     ]
 
 
+def test_recall_tfs_status_settings_and_message():
+    args = SimpleNamespace(enzyme=None, unify_threshold=90)
+    runtime = recall_tfs._RecallRuntime(
+        model_path="model.json",
+        n_cores=8,
+        min_llr=6.0,
+        uplift=1.25,
+        model_config=recall_tfs._RecallModelConfig(
+            model="model",
+            mode="daf",
+            context_size=5,
+        ),
+        llr_hit="hit",
+        llr_miss="miss",
+    )
+
+    settings = recall_tfs._recall_status_settings(args, runtime)
+
+    assert settings == recall_tfs._RecallStatusSettings(
+        enzyme=None,
+        mode="daf",
+        context_size=5,
+        min_llr=6.0,
+        uplift=1.25,
+        unify_threshold=90,
+        n_cores=8,
+        has_numba=recall_tfs.HAS_NUMBA,
+    )
+    assert recall_tfs._recall_status_message(
+        recall_tfs._RecallStatusSettings(
+            enzyme=None,
+            mode="daf",
+            context_size=5,
+            min_llr=6.0,
+            uplift=1.25,
+            unify_threshold=90,
+            n_cores=8,
+            has_numba=False,
+        )
+    ) == (
+        "[recall_tfs] enzyme=custom mode=daf k=5 min_llr=6.00 uplift=1.25 "
+        "unify_threshold=90 cores=8 numba=off"
+    )
+
+
 def test_recall_tfs_json_metadata_fallback_uses_case_insensitive_suffix(tmp_path):
     model_path = tmp_path / "model.JSON"
     model_path.write_text(

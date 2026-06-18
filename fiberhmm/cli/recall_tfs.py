@@ -122,6 +122,18 @@ class _RecallRuntimeRequest:
 
 
 @dataclass(frozen=True)
+class _RecallStatusSettings:
+    enzyme: object
+    mode: str
+    context_size: int
+    min_llr: float
+    uplift: float
+    unify_threshold: int
+    n_cores: int
+    has_numba: bool
+
+
+@dataclass(frozen=True)
 class _RecallWorkerConfig:
     llr_hit: object
     llr_miss: object
@@ -824,6 +836,32 @@ def _resolve_recall_runtime(args, model_path) -> _RecallRuntime:
     )
 
 
+def _recall_status_settings(
+    args,
+    runtime: _RecallRuntime,
+) -> _RecallStatusSettings:
+    return _RecallStatusSettings(
+        enzyme=args.enzyme,
+        mode=runtime.model_config.mode,
+        context_size=runtime.model_config.context_size,
+        min_llr=runtime.min_llr,
+        uplift=runtime.uplift,
+        unify_threshold=args.unify_threshold,
+        n_cores=runtime.n_cores,
+        has_numba=HAS_NUMBA,
+    )
+
+
+def _recall_status_message(settings: _RecallStatusSettings) -> str:
+    return (
+        f"[recall_tfs] enzyme={settings.enzyme or 'custom'} "
+        f"mode={settings.mode} k={settings.context_size} "
+        f"min_llr={settings.min_llr:.2f} uplift={settings.uplift:.2f} "
+        f"unify_threshold={settings.unify_threshold} cores={settings.n_cores} "
+        f"numba={'on' if settings.has_numba else 'off'}"
+    )
+
+
 def _also_write_legacy(args):
     return should_write_legacy_tags(args)
 
@@ -924,14 +962,8 @@ def main():
 
     runtime = _resolve_recall_runtime(args, model_path)
 
-    print(
-        f"[recall_tfs] enzyme={args.enzyme or 'custom'} "
-        f"mode={runtime.model_config.mode} k={runtime.model_config.context_size} "
-        f"min_llr={runtime.min_llr:.2f} uplift={runtime.uplift:.2f} "
-        f"unify_threshold={args.unify_threshold} cores={runtime.n_cores} "
-        f"numba={'on' if HAS_NUMBA else 'off'}",
-        file=sys.stderr,
-    )
+    print(_recall_status_message(_recall_status_settings(args, runtime)),
+          file=sys.stderr)
 
     # Open BAMs with io-threads. pysam accepts "-" as stdin/stdout natively.
     bam_in = pysam.AlignmentFile(args.in_bam, 'rb',
