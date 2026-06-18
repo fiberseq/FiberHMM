@@ -34,6 +34,7 @@ from fiberhmm.cli.generate_probs import (
     _probability_read_tags_or_skip,
     _probability_table_path,
     _ProbabilityRunContext,
+    _ProbabilitySampleFileResult,
     _ProbabilitySampleResult,
     _process_probability_control_groups,
     _process_probability_read,
@@ -985,7 +986,7 @@ def test_process_probability_sample_file_delegates_reports_and_saves(
         lambda *args: save_calls.append(args),
     )
 
-    reads, stats = _process_probability_sample_file(
+    result = _process_probability_sample_file(
         "sample.bam",
         counters,
         "daf",
@@ -996,8 +997,9 @@ def test_process_probability_sample_file_delegates_reports_and_saves(
         "run",
     )
 
-    assert reads == 7
-    assert stats == {"scanned": 11, "processed": 7}
+    assert result == _ProbabilitySampleFileResult(
+        7, {"scanned": 11, "processed": 7},
+    )
     assert process_calls == [
         ("sample.bam", counters, "daf", args, 100, True),
     ]

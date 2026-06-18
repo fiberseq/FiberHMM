@@ -460,6 +460,12 @@ def _finalize_probability_bam_run(
         _print_daf_diagnostics(mm_tag_types, strand_assignments)
 
 
+@dataclass(frozen=True)
+class _ProbabilitySampleFileResult:
+    reads: int
+    stats: dict
+
+
 def _process_probability_sample_file(
     bam_file: str,
     counters: Dict[str, ContextCounter],
@@ -469,7 +475,7 @@ def _process_probability_sample_file(
     sample_name: str,
     output_dir: str,
     base_name: str,
-) -> Tuple[int, dict]:
+) -> _ProbabilitySampleFileResult:
     print(f"\n  Processing: {bam_file}")
     reads, filter_stats = process_bam(
         bam_file,
@@ -486,7 +492,7 @@ def _process_probability_sample_file(
             counters, output_dir, base_name, sample_name,
         )
 
-    return reads, filter_stats
+    return _ProbabilitySampleFileResult(reads, filter_stats)
 
 
 def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
@@ -576,7 +582,7 @@ def process_sample_set(
     max_per_file = _max_reads_per_file(args.max_reads, len(bam_files))
 
     for bam_file in bam_files:
-        reads, filter_stats = _process_probability_sample_file(
+        file_result = _process_probability_sample_file(
             bam_file,
             counters,
             mode,
@@ -586,10 +592,10 @@ def process_sample_set(
             output_dir,
             base_name,
         )
-        total_reads += reads
-        total_scanned += filter_stats['scanned']
+        total_reads += file_result.reads
+        total_scanned += file_result.stats['scanned']
 
-        _accumulate_filter_stats(combined_stats, filter_stats)
+        _accumulate_filter_stats(combined_stats, file_result.stats)
 
         if _read_limit_reached(args.max_reads, total_reads):
             break
