@@ -74,10 +74,14 @@ def test_mp_context_helpers_normalize_override_and_default_policy():
 
 
 def test_model_and_path_for_processing_splits_path_and_loaded_model():
-    assert _model_and_path_for_processing("model.json") == (None, "model.json")
+    source = _model_and_path_for_processing("model.json")
+    assert source.model is None
+    assert source.path == "model.json"
 
     model = object()
-    assert _model_and_path_for_processing(model) == (model, None)
+    source = _model_and_path_for_processing(model)
+    assert source.model is model
+    assert source.path is None
 
 
 def test_parallel_reexports_legacy_pipeline_entry_points():

@@ -1,5 +1,6 @@
 """FiberHMM BAM processing compatibility orchestration."""
 
+from dataclasses import dataclass
 from typing import Optional, Set, Tuple
 
 import pysam
@@ -53,6 +54,13 @@ from fiberhmm.inference.streaming_workers import (
 
 _is_main_chromosome = _region_is_main_chromosome
 
+
+@dataclass(frozen=True)
+class _ProcessingModelSource:
+    model: object
+    path: Optional[str]
+
+
 __all__ = (
     "ReadFilterConfig",
     "_MP_CONTEXT",
@@ -84,8 +92,8 @@ __all__ = (
 
 def _model_and_path_for_processing(model_or_path):
     if isinstance(model_or_path, str):
-        return None, model_or_path
-    return model_or_path, None
+        return _ProcessingModelSource(model=None, path=model_or_path)
+    return _ProcessingModelSource(model=model_or_path, path=None)
 
 
 def _legacy_model_for_processing(model, model_path: Optional[str], n_cores: int):
@@ -354,7 +362,9 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
     pysam.set_verbosity(0)
 
     # Get model path for workers
-    model, model_path = _model_and_path_for_processing(model_or_path)
+    model_source = _model_and_path_for_processing(model_or_path)
+    model = model_source.model
+    model_path = model_source.path
     pipeline_kwargs = _footprint_pipeline_kwargs(
         input_bam=input_bam,
         output_bam=output_bam,
