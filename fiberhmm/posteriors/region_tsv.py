@@ -149,6 +149,19 @@ def format_region_posterior_line(
     )
 
 
+def _region_posterior_record_from_fiber(fiber: dict) -> _RegionPosteriorLineRecord:
+    return _RegionPosteriorLineRecord(
+        read_name=fiber["read_name"],
+        chrom=fiber["chrom"],
+        ref_start=fiber["ref_start"],
+        ref_end=fiber["ref_end"],
+        strand=fiber["strand"],
+        posteriors=fiber["posteriors"],
+        footprint_starts=fiber["footprint_starts"],
+        footprint_sizes=fiber["footprint_sizes"],
+    )
+
+
 def write_region_posteriors_tsv_from_request(
     request: _RegionTsvWriteRequest,
 ) -> None:
@@ -157,16 +170,7 @@ def write_region_posteriors_tsv_from_request(
         for fiber in request.posteriors_data:
             handle.write(
                 format_region_posterior_line_from_record(
-                    _RegionPosteriorLineRecord(
-                        read_name=fiber["read_name"],
-                        chrom=fiber["chrom"],
-                        ref_start=fiber["ref_start"],
-                        ref_end=fiber["ref_end"],
-                        strand=fiber["strand"],
-                        posteriors=fiber["posteriors"],
-                        footprint_starts=fiber["footprint_starts"],
-                        footprint_sizes=fiber["footprint_sizes"],
-                    )
+                    _region_posterior_record_from_fiber(fiber)
                 )
             )
 

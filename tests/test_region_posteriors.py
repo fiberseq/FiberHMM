@@ -86,6 +86,30 @@ def test_format_region_posterior_line_matches_tsv_parser():
     ) == line
 
 
+def test_region_posterior_record_from_fiber_names_worker_payload():
+    fiber = {
+        "read_name": "read1",
+        "chrom": "chr2",
+        "ref_start": 10,
+        "ref_end": 20,
+        "strand": "+",
+        "posteriors": np.array([0.0, 1.0], dtype=np.float32),
+        "footprint_starts": np.array([2], dtype=np.int32),
+        "footprint_sizes": np.array([3], dtype=np.int32),
+    }
+
+    record = region_tsv._region_posterior_record_from_fiber(fiber)
+
+    assert record.read_name == "read1"
+    assert record.chrom == "chr2"
+    assert record.ref_start == 10
+    assert record.ref_end == 20
+    assert record.strand == "+"
+    assert record.posteriors is fiber["posteriors"]
+    assert record.footprint_starts is fiber["footprint_starts"]
+    assert record.footprint_sizes is fiber["footprint_sizes"]
+
+
 def test_write_region_posteriors_tsv_request_writes_records(monkeypatch, tmp_path):
     tsv_path = tmp_path / "region.tsv"
     posteriors_data = [{
