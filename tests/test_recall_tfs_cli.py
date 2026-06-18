@@ -359,7 +359,7 @@ def test_recall_tfs_load_model_config_falls_back_to_json_metadata(monkeypatch):
 def test_recall_tfs_json_metadata_fallback_uses_case_insensitive_suffix(tmp_path):
     model_path = tmp_path / "model.JSON"
     model_path.write_text(
-        json.dumps({"mode": "daf", "context_size": 5}),
+        json.dumps({"mode": " daf ", "context_size": 5}),
         encoding="utf-8",
     )
 
@@ -370,6 +370,13 @@ def test_recall_tfs_json_metadata_fallback_keeps_defaults_for_nulls(tmp_path):
     model_path = tmp_path / "model.json"
     model_path.write_text(
         json.dumps({"mode": None, "context_size": None}),
+        encoding="utf-8",
+    )
+
+    assert recall_tfs._resolve_model_metadata(str(model_path)) == ("pacbio-fiber", 3)
+
+    model_path.write_text(
+        json.dumps({"mode": " ", "context_size": None}),
         encoding="utf-8",
     )
 
