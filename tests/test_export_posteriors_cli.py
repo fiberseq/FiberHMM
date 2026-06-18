@@ -41,6 +41,37 @@ def test_export_posteriors_chroms_set():
     assert export_posteriors._chroms_set(["chr2", "chr1", "chr2"]) == {"chr1", "chr2"}
 
 
+def test_prepare_export_run_normalizes_overrides(monkeypatch):
+    monkeypatch.setattr(
+        export_posteriors,
+        "load_model_with_metadata",
+        lambda path, normalize: ("model", 4, " nanopore-fiber "),
+    )
+    monkeypatch.setattr(
+        export_posteriors,
+        "_get_genome_regions",
+        lambda input_bam, region_size, chroms=None: [("chr1", 0, region_size)],
+    )
+
+    mode, context_size, regions, params = export_posteriors._prepare_export_run(
+        "input.bam",
+        "model.json",
+        chroms={"chr1"},
+        region_size=25,
+        mode_override=" daf ",
+        context_size_override="0",
+        edge_trim=10,
+        n_cores=2,
+        output_format="TSV",
+        verbose=False,
+    )
+
+    assert mode == "daf"
+    assert context_size == 0
+    assert regions == [("chr1", 0, 25)]
+    assert params == {"mode": "daf", "context_size": 0, "edge_trim": 10}
+
+
 def test_export_posteriors_regions_by_chrom_preserves_order():
     regions = [
         ("chr2", 0, 10),

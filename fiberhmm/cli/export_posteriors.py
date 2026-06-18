@@ -101,8 +101,14 @@ def _prepare_export_run(
     core_note: str = "",
 ) -> Tuple[str, int, List[Tuple[str, int, int]], dict]:
     _, model_context_size, model_mode = load_model_with_metadata(model_path, normalize=True)
-    mode = mode_override if mode_override else model_mode
-    context_size = context_size_override if context_size_override else model_context_size
+    mode_override = str(mode_override).strip() if mode_override is not None else None
+    model_mode = str(model_mode).strip() if model_mode is not None else None
+    mode = mode_override or model_mode or 'pacbio-fiber'
+    context_size = (
+        int(context_size_override)
+        if context_size_override is not None
+        else int(model_context_size if model_context_size is not None else 3)
+    )
 
     if verbose:
         print(f"Loaded model: mode={model_mode}, context_size={model_context_size}")
