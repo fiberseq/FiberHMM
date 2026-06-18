@@ -580,6 +580,42 @@ def _finalize_region_bed_parallel_run(
     return _region_completion_result(aggregation, start_time)
 
 
+def _run_fused_region_bam_worker_pool(
+    *,
+    n_cores: int,
+    apply_model_path: str,
+    recall_model_path: Optional[str],
+    emission_uplift: float,
+    params: dict,
+    work_items,
+    total_regions: int,
+    start_time: float,
+) -> RegionBamAggregation:
+    aggregation = RegionBamAggregation()
+    _run_region_worker_pool(
+        n_cores=n_cores,
+        initializer=_init_fused_region_worker,
+        initargs=(apply_model_path, recall_model_path, emission_uplift, params),
+        worker=_process_region_to_bam_fused,
+        work_items=work_items,
+        aggregation=aggregation,
+        result_type=RegionBamResult,
+        total_regions=total_regions,
+        start_time=start_time,
+        init_message=(
+            f"  Initializing {n_cores} workers "
+            "(loading apply model + LLR tables)..."
+        ),
+        ready_message="Processing...",
+        progress_kwargs={
+            'footprint_label': "With FP",
+            'rate_unit': "r/s",
+            'rate_precision': 0,
+        },
+    )
+    return aggregation
+
+
 def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    model_path: str, train_rids: Set[str],
                                    edge_trim: int, circular: bool,
@@ -858,28 +894,15 @@ def _process_bam_region_parallel_fused(
     work_items = _region_bam_work_items(regions, input_bam, temp_dir)
 
     try:
-        aggregation = RegionBamAggregation()
-
-        _run_region_worker_pool(
+        aggregation = _run_fused_region_bam_worker_pool(
             n_cores=n_cores,
-            initializer=_init_fused_region_worker,
-            initargs=(apply_model_path, recall_model_path, emission_uplift, params),
-            worker=_process_region_to_bam_fused,
+            apply_model_path=apply_model_path,
+            recall_model_path=recall_model_path,
+            emission_uplift=emission_uplift,
+            params=params,
             work_items=work_items,
-            aggregation=aggregation,
-            result_type=RegionBamResult,
             total_regions=len(regions),
             start_time=start_time,
-            init_message=(
-                f"  Initializing {n_cores} workers "
-                "(loading apply model + LLR tables)..."
-            ),
-            ready_message="Processing...",
-            progress_kwargs={
-                'footprint_label': "With FP",
-                'rate_unit': "r/s",
-                'rate_precision': 0,
-            },
         )
         print()
 

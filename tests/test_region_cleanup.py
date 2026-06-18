@@ -776,6 +776,55 @@ def test_finalize_region_bed_parallel_run_concatenates_and_completes(
     assert capsys.readouterr().out == "\n"
 
 
+def test_run_fused_region_bam_worker_pool_wires_fused_contract(monkeypatch):
+    calls = []
+
+    def fake_run_region_worker_pool(**kwargs):
+        calls.append(kwargs)
+        kwargs["aggregation"].total_reads = 12
+        kwargs["aggregation"].reads_with_footprints = 5
+
+    monkeypatch.setattr(
+        region_pipeline,
+        "_run_region_worker_pool",
+        fake_run_region_worker_pool,
+    )
+
+    aggregation = region_pipeline._run_fused_region_bam_worker_pool(
+        n_cores=3,
+        apply_model_path="apply.json",
+        recall_model_path="recall.json",
+        emission_uplift=1.5,
+        params={"mode": "daf"},
+        work_items=["region"],
+        total_regions=1,
+        start_time=10.0,
+    )
+
+    assert aggregation.total_reads == 12
+    assert aggregation.reads_with_footprints == 5
+    kwargs = calls[0]
+    assert kwargs["n_cores"] == 3
+    assert kwargs["initializer"] is region_pipeline._init_fused_region_worker
+    assert kwargs["initargs"] == (
+        "apply.json",
+        "recall.json",
+        1.5,
+        {"mode": "daf"},
+    )
+    assert kwargs["worker"] is region_pipeline._process_region_to_bam_fused
+    assert kwargs["work_items"] == ["region"]
+    assert kwargs["result_type"] is region_pipeline.RegionBamResult
+    assert kwargs["total_regions"] == 1
+    assert kwargs["start_time"] == 10.0
+    assert kwargs["ready_message"] == "Processing..."
+    assert kwargs["progress_kwargs"] == {
+        "footprint_label": "With FP",
+        "rate_unit": "r/s",
+        "rate_precision": 0,
+    }
+
+
 def test_finalize_region_bam_output_concatenates_reports_and_indexes(
     monkeypatch,
     capsys,
