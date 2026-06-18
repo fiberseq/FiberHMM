@@ -22,3 +22,8 @@ def _skip_reason_keys(extra_reasons) -> tuple:
 
 def new_skip_reasons(*extra_reasons: str) -> dict:
     return {reason: 0 for reason in _skip_reason_keys(extra_reasons)}
+
+
+def record_skip_reason(skip_reasons: dict, reason: str) -> None:
+    """Increment an existing skip-reason counter."""
+    skip_reasons[reason] += 1

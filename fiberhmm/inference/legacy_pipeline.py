@@ -22,6 +22,7 @@ from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_rea
 from fiberhmm.inference.skip_reasons import (
     NO_FOOTPRINTS_SKIP_REASON,
     new_skip_reasons,
+    record_skip_reason,
 )
 from fiberhmm.inference.streaming_workers import (
     _init_bam_worker,
@@ -557,7 +558,7 @@ def _legacy_filter_config(
 
 def _write_skipped_legacy_read(outbam, read, skip_reasons: dict, reason: str) -> int:
     outbam.write(read)
-    skip_reasons[reason] += 1
+    record_skip_reason(skip_reasons, reason)
     return 1
 
 

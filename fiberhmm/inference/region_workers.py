@@ -33,6 +33,7 @@ from fiberhmm.inference.skip_reasons import (
     CHIMERA_SKIP_REASON,
     NO_FOOTPRINTS_SKIP_REASON,
     new_skip_reasons,
+    record_skip_reason,
 )
 from fiberhmm.inference.tagging import (
     set_legacy_apply_tags,
@@ -225,7 +226,7 @@ def _new_region_skip_reasons() -> dict:
 def _write_skipped_region_read(outbam, read, skip_reasons: dict, reason: str) -> int:
     """Pass through a skipped BAM read and count its reason."""
     outbam.write(read)
-    skip_reasons[reason] += 1
+    record_skip_reason(skip_reasons, reason)
     return 1
 
 
@@ -245,7 +246,7 @@ def _record_skipped_region_read(
 
 def _write_unfootprinted_region_read(outbam, read, skip_reasons: dict) -> int:
     outbam.write(read)
-    skip_reasons[NO_FOOTPRINTS_SKIP_REASON] += 1
+    record_skip_reason(skip_reasons, NO_FOOTPRINTS_SKIP_REASON)
     return 1
 
 

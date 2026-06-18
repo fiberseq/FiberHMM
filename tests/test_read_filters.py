@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from fiberhmm.inference.read_filters import (
     ReadFilterConfig,
     _alignment_skip_reason,
@@ -22,6 +24,7 @@ from fiberhmm.inference.skip_reasons import (
     NO_FOOTPRINTS_SKIP_REASON,
     _skip_reason_keys,
     new_skip_reasons,
+    record_skip_reason,
 )
 
 
@@ -57,6 +60,20 @@ def test_skip_reason_keys_append_extras_after_base_reasons():
         NO_FOOTPRINTS_SKIP_REASON,
         CHIMERA_SKIP_REASON,
     )
+
+
+def test_record_skip_reason_increments_existing_counter():
+    reasons = new_skip_reasons()
+
+    record_skip_reason(reasons, "low_mapq")
+    record_skip_reason(reasons, "low_mapq")
+
+    assert reasons["low_mapq"] == 2
+
+
+def test_record_skip_reason_rejects_unknown_reason():
+    with pytest.raises(KeyError):
+        record_skip_reason(new_skip_reasons(), "not_registered")
 
 
 def test_streaming_filter_allows_processable_mapped_read():

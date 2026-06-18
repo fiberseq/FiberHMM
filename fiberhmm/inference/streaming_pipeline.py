@@ -19,6 +19,7 @@ from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_rea
 from fiberhmm.inference.skip_reasons import (
     NO_FOOTPRINTS_SKIP_REASON,
     new_skip_reasons,
+    record_skip_reason,
 )
 from fiberhmm.inference.streaming_drain import (
     _drain_oldest_chunk,
@@ -42,7 +43,7 @@ except ImportError:
 def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, reason) -> int:
     chunk_read_objs.append(read)
     chunk_skip_flags.append(True)
-    skip_reasons[reason] += 1
+    record_skip_reason(skip_reasons, reason)
     return 1
 
 
