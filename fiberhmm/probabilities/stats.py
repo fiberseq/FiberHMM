@@ -484,29 +484,31 @@ def _write_probability_distribution_pdf_page(
     inacc_probs,
 ):
     fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
-    fig.suptitle(
-        f'{base}-centered Context Statistics (k={context_size})',
-        fontsize=14,
-        fontweight='bold',
-    )
+    try:
+        fig.suptitle(
+            f'{base}-centered Context Statistics (k={context_size})',
+            fontsize=14,
+            fontweight='bold',
+        )
 
-    ax = axes[0, 0]
-    acc_ratios = acc_probs['ratio'].values
-    inacc_ratios = inacc_probs['ratio'].values
-    _plot_probability_ratio_histograms(ax, acc_ratios, inacc_ratios)
-    ax.set_xlabel('P(methylation | context)')
-    ax.set_ylabel('Number of contexts')
-    ax.set_title('Emission Probability Distributions')
-    ax.legend()
+        ax = axes[0, 0]
+        acc_ratios = acc_probs['ratio'].values
+        inacc_ratios = inacc_probs['ratio'].values
+        _plot_probability_ratio_histograms(ax, acc_ratios, inacc_ratios)
+        ax.set_xlabel('P(methylation | context)')
+        ax.set_ylabel('Number of contexts')
+        ax.set_title('Emission Probability Distributions')
+        ax.legend()
 
-    merged = _merged_probability_table(acc_probs, inacc_probs)
-    _plot_accessible_inaccessible_probability_scatter(axes[0, 1], merged)
-    _plot_log_odds_distribution(axes[1, 0], merged)
-    _plot_top_differentiating_contexts(axes[1, 1], merged)
+        merged = _merged_probability_table(acc_probs, inacc_probs)
+        _plot_accessible_inaccessible_probability_scatter(axes[0, 1], merged)
+        _plot_log_odds_distribution(axes[1, 0], merged)
+        _plot_top_differentiating_contexts(axes[1, 1], merged)
 
-    plt.tight_layout()
-    pdf.savefig(fig)
-    plt.close(fig)
+        plt.tight_layout()
+        pdf.savefig(fig)
+    finally:
+        plt.close(fig)
 
 
 def _write_probability_counts_pdf_page(
@@ -517,24 +519,26 @@ def _write_probability_counts_pdf_page(
     inacc_probs,
 ):
     fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
-    fig.suptitle(
-        f'{base}-centered Context Counts',
-        fontsize=14,
-        fontweight='bold',
-    )
+    try:
+        fig.suptitle(
+            f'{base}-centered Context Counts',
+            fontsize=14,
+            fontweight='bold',
+        )
 
-    acc_total = _context_observation_totals(acc_probs)
-    inacc_total = _context_observation_totals(inacc_probs)
-    merged = _merged_probability_table(acc_probs, inacc_probs)
+        acc_total = _context_observation_totals(acc_probs)
+        inacc_total = _context_observation_totals(inacc_probs)
+        merged = _merged_probability_table(acc_probs, inacc_probs)
 
-    _plot_observations_per_context(axes[0, 0], acc_total, inacc_total)
-    _plot_context_coverage(axes[0, 1], acc_total.values, inacc_total.values)
-    _plot_probability_vs_coverage(axes[1, 0], merged)
-    _plot_context_frequency_comparison(axes[1, 1], merged)
+        _plot_observations_per_context(axes[0, 0], acc_total, inacc_total)
+        _plot_context_coverage(axes[0, 1], acc_total.values, inacc_total.values)
+        _plot_probability_vs_coverage(axes[1, 0], merged)
+        _plot_context_frequency_comparison(axes[1, 1], merged)
 
-    plt.tight_layout()
-    pdf.savefig(fig)
-    plt.close(fig)
+        plt.tight_layout()
+        pdf.savefig(fig)
+    finally:
+        plt.close(fig)
 
 
 def _save_probability_distribution_png(

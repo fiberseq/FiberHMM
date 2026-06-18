@@ -226,6 +226,11 @@ class _FakeProbabilityPdf:
         self.saved.append(fig)
 
 
+class _FailingProbabilityPdf:
+    def savefig(self, fig):
+        raise RuntimeError("pdf save failed")
+
+
 class _FakeProbabilityPlt:
     def __init__(self):
         self.fig = _FakeProbabilityFig()
@@ -348,6 +353,98 @@ def test_probability_pdf_page_helpers_orchestrate_plot_sections(monkeypatch):
         ("prob_coverage", "10", 2),
         ("frequency", "11", 2),
     ]
+
+
+def test_probability_distribution_pdf_page_closes_on_save_failure(monkeypatch):
+    acc = pd.DataFrame({
+        "context": ["AAA"],
+        "ratio": [0.8],
+        "hit": [8],
+        "nohit": [2],
+    })
+    inacc = pd.DataFrame({
+        "context": ["AAA"],
+        "ratio": [0.3],
+        "hit": [3],
+        "nohit": [7],
+    })
+    calls = []
+
+    monkeypatch.setattr(
+        stats,
+        "_plot_probability_ratio_histograms",
+        lambda ax, acc_values, inacc_values: calls.append("hist"),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_plot_accessible_inaccessible_probability_scatter",
+        lambda ax, merged: calls.append("scatter"),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_plot_log_odds_distribution",
+        lambda ax, merged: calls.append("log_odds"),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_plot_top_differentiating_contexts",
+        lambda ax, merged: calls.append("top"),
+    )
+
+    plt = _FakeProbabilityPlt()
+    with pytest.raises(RuntimeError, match="pdf save failed"):
+        stats._write_probability_distribution_pdf_page(
+            plt, _FailingProbabilityPdf(), "A", 3, acc, inacc,
+        )
+
+    assert calls == ["hist", "scatter", "log_odds", "top"]
+    assert plt.closed == [plt.fig]
+
+
+def test_probability_counts_pdf_page_closes_on_save_failure(monkeypatch):
+    acc = pd.DataFrame({
+        "context": ["AAA"],
+        "ratio": [0.8],
+        "hit": [8],
+        "nohit": [2],
+    })
+    inacc = pd.DataFrame({
+        "context": ["AAA"],
+        "ratio": [0.3],
+        "hit": [3],
+        "nohit": [7],
+    })
+    calls = []
+
+    monkeypatch.setattr(
+        stats,
+        "_plot_observations_per_context",
+        lambda ax, acc_total, inacc_total: calls.append("observations"),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_plot_context_coverage",
+        lambda ax, acc_total, inacc_total: calls.append("coverage"),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_plot_probability_vs_coverage",
+        lambda ax, merged: calls.append("prob_coverage"),
+    )
+    monkeypatch.setattr(
+        stats,
+        "_plot_context_frequency_comparison",
+        lambda ax, merged: calls.append("frequency"),
+    )
+
+    plt = _FakeProbabilityPlt()
+    with pytest.raises(RuntimeError, match="pdf save failed"):
+        stats._write_probability_counts_pdf_page(
+            plt, _FailingProbabilityPdf(), "A", acc, inacc,
+        )
+
+    assert calls == ["observations", "coverage", "prob_coverage", "frequency"]
+    assert plt.closed == [plt.fig]
 
 
 def test_save_probability_distribution_png_writes_expected_path(monkeypatch, capsys):
