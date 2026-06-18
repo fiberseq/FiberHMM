@@ -288,6 +288,12 @@ class _MmModTypePositions:
     next_ml_idx: int
 
 
+@dataclass(frozen=True)
+class _MmHitPositions:
+    positions: np.ndarray
+    next_ml_idx: int
+
+
 def _ml_tag_to_uint8_array(ml_tag) -> np.ndarray:
     if isinstance(ml_tag, (bytes, bytearray, memoryview)):
         return np.frombuffer(ml_tag, dtype=np.uint8)
@@ -451,13 +457,13 @@ def _mm_hit_positions_for_spec(
     is_reverse: bool,
     prob_threshold: int,
     mode: str,
-) -> Tuple[np.ndarray, int]:
+) -> _MmHitPositions:
     target_base = _mm_target_base(base_mod)
     if target_base is None:
-        return np.array([], dtype=np.int64), ml_idx + n_mods
+        return _MmHitPositions(np.array([], dtype=np.int64), ml_idx + n_mods)
 
     if not _target_base_allowed_for_mode(target_base, mode):
-        return np.array([], dtype=np.int64), ml_idx + n_mods
+        return _MmHitPositions(np.array([], dtype=np.int64), ml_idx + n_mods)
 
     base_positions = _cached_base_positions(
         base_pos_cache, target_base, search_bytes,
@@ -465,7 +471,7 @@ def _mm_hit_positions_for_spec(
     ml_slice = _mm_ml_slice_for_spec(
         ml_arr_all, ml_idx, n_mods,
     )
-    return (
+    return _MmHitPositions(
         _mm_positions_from_spec(
             skip_arr,
             base_positions,
@@ -750,7 +756,7 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
     base_pos_cache: Dict[str, np.ndarray] = {}
 
     for base_mod, skip_arr, n_mods in _iter_mm_mod_specs(mm_tag):
-        hit_positions, ml_idx = _mm_hit_positions_for_spec(
+        hit_positions = _mm_hit_positions_for_spec(
             base_mod,
             skip_arr,
             n_mods,
@@ -763,8 +769,9 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
             prob_threshold,
             mode,
         )
-        if len(hit_positions) > 0:
-            mod_positions.update(hit_positions.tolist())
+        ml_idx = hit_positions.next_ml_idx
+        if len(hit_positions.positions) > 0:
+            mod_positions.update(hit_positions.positions.tolist())
 
     return mod_positions
 
