@@ -29,6 +29,13 @@ class _Bed12Blocks:
     scores: List[int]
 
 
+@dataclass(frozen=True)
+class _Bed12Components:
+    chrom_start: int
+    chrom_end: int
+    blocks: _Bed12Blocks
+
+
 _BED12_RECORD_COLUMNS = (
     'chrom',
     'chromStart',
@@ -864,7 +871,15 @@ def _bed12_components_from_ref_blocks(blocks, with_scores: bool):
     chrom_end = max(ref_ends)
     block_sizes = [end - start for start, end in zip(ref_starts, ref_ends)]
     block_starts = [start - chrom_start for start in ref_starts]
-    return chrom_start, chrom_end, block_starts, block_sizes, valid_scores
+    return _Bed12Components(
+        chrom_start=chrom_start,
+        chrom_end=chrom_end,
+        blocks=_Bed12Blocks(
+            starts=block_starts,
+            sizes=block_sizes,
+            scores=valid_scores,
+        ),
+    )
 
 
 def _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores: bool) -> Optional[str]:
@@ -877,20 +892,18 @@ def _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores: bool) -> Opti
     if components is None:
         return None
 
-    chrom_start, chrom_end, block_starts, block_sizes, valid_scores = components
-
-    read_length = chrom_end - chrom_start
+    read_length = components.chrom_end - components.chrom_start
     normalized_blocks = _normalize_bed12_blocks(
-        block_starts,
-        block_sizes,
-        valid_scores,
+        components.blocks.starts,
+        components.blocks.sizes,
+        components.blocks.scores,
         read_length,
     )
 
     return _format_footprint_bed12_row(
         chrom,
-        chrom_start,
-        chrom_end,
+        components.chrom_start,
+        components.chrom_end,
         read.query_name,
         strand,
         normalized_blocks.starts,
