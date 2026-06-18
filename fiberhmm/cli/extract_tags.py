@@ -1291,6 +1291,12 @@ class _ExtractParallelResult:
     temp_beds_by_type: dict
 
 
+@dataclass(frozen=True)
+class _NormalizedExtractArgs:
+    output_beds: dict
+    extract_types: list
+
+
 def _record_extract_region_result(
     extract_types,
     region_index: int,
@@ -1509,7 +1515,10 @@ def _normalize_parallel_extract_args(output_beds, extract_types):
     output_beds = {
         _canonical_extract_type(k): v for k, v in output_beds.items()
     }
-    return output_beds, extract_types
+    return _NormalizedExtractArgs(
+        output_beds=output_beds,
+        extract_types=extract_types,
+    )
 
 
 def _bed12_type_flag(n_extra: int) -> str:
@@ -1626,9 +1635,11 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
     """
     start_time = time.time()
 
-    output_beds, extract_types = _normalize_parallel_extract_args(
+    normalized = _normalize_parallel_extract_args(
         output_beds, extract_types,
     )
+    output_beds = normalized.output_beds
+    extract_types = normalized.extract_types
 
     ensure_bam_index(input_bam, "Indexing input BAM...")
 

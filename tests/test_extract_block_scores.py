@@ -1146,21 +1146,21 @@ def test_sort_bed_in_place_removes_temp_file_when_sort_fails(monkeypatch, tmp_pa
 
 
 def test_normalize_parallel_extract_args_handles_aliases_and_backcompat_paths():
-    output_beds, extract_types = extract_tags._normalize_parallel_extract_args(
+    normalized = extract_tags._normalize_parallel_extract_args(
         "footprints.bed",
         "footprint",
     )
 
-    assert output_beds == {"nucleosome": "footprints.bed"}
-    assert extract_types == ["nucleosome"]
+    assert normalized.output_beds == {"nucleosome": "footprints.bed"}
+    assert normalized.extract_types == ["nucleosome"]
 
-    output_beds, extract_types = extract_tags._normalize_parallel_extract_args(
+    normalized = extract_tags._normalize_parallel_extract_args(
         {"footprint": "nuc.bed", "tf": "tf.bed"},
         ["footprint", "tf"],
     )
 
-    assert output_beds == {"nucleosome": "nuc.bed", "tf": "tf.bed"}
-    assert extract_types == ["nucleosome", "tf"]
+    assert normalized.output_beds == {"nucleosome": "nuc.bed", "tf": "tf.bed"}
+    assert normalized.extract_types == ["nucleosome", "tf"]
 
     with pytest.raises(ValueError, match="exactly one extract_type"):
         extract_tags._normalize_parallel_extract_args(
