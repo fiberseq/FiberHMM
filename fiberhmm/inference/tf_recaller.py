@@ -134,12 +134,20 @@ class _RecallTagPayload:
     needs_an: bool
 
 
+@dataclass
+class _SplitNamedIntervals:
+    intervals: List[Tuple[int, int]]
+    names: List[str]
+    qual_rows: Optional[List[Sequence[int]]]
+    any_split: bool
+
+
 def _split_named_intervals(
     intervals: Sequence[Tuple[int, int]],
     prefix: str,
     read_length: int,
     qual_rows: Optional[Sequence[Sequence[int]]] = None,
-) -> Tuple[List[Tuple[int, int]], List[str], Optional[List[Sequence[int]]], bool]:
+) -> _SplitNamedIntervals:
     split_intervals: List[Tuple[int, int]] = []
     split_names: List[str] = []
     split_quals: Optional[List[Sequence[int]]] = [] if qual_rows is not None else None
@@ -154,7 +162,7 @@ def _split_named_intervals(
             split_names.append(name)
             if split_quals is not None:
                 split_quals.append(qual_rows[idx])
-    return split_intervals, split_names, split_quals, any_split
+    return _SplitNamedIntervals(split_intervals, split_names, split_quals, any_split)
 
 
 def _prepare_tag_output_frame(
@@ -798,13 +806,13 @@ def _recall_tag_payload_from_output_frame(
         output_frame.tf_el_values,
         output_frame.tf_er_values,
     )
-    ma_nucs, nuc_names, nuc_q_split, nuc_split = _split_named_intervals(
+    split_nucs = _split_named_intervals(
         output_frame.nuc_intervals, "nuc", read_length, nuc_q_rows,
     )
-    ma_msps, msp_names, _msp_q_split, msp_split = _split_named_intervals(
+    split_msps = _split_named_intervals(
         output_frame.msp_intervals, "msp", read_length, None,
     )
-    ma_tfs, tf_names, tf_q_split, tf_split = _split_named_intervals(
+    split_tfs = _split_named_intervals(
         output_frame.tf_intervals, "tf", read_length, tf_q_rows,
     )
 
@@ -814,15 +822,15 @@ def _recall_tag_payload_from_output_frame(
         tf_intervals=output_frame.tf_intervals,
         nq_values=output_frame.nq_values,
         nuc_qqq=nuc_qqq,
-        ma_nucs=ma_nucs,
-        ma_msps=ma_msps,
-        ma_tfs=ma_tfs,
-        nuc_names=nuc_names,
-        msp_names=msp_names,
-        tf_names=tf_names,
-        nuc_q_split=nuc_q_split,
-        tf_q_split=tf_q_split,
-        needs_an=nuc_split or msp_split or tf_split,
+        ma_nucs=split_nucs.intervals,
+        ma_msps=split_msps.intervals,
+        ma_tfs=split_tfs.intervals,
+        nuc_names=split_nucs.names,
+        msp_names=split_msps.names,
+        tf_names=split_tfs.names,
+        nuc_q_split=split_nucs.qual_rows,
+        tf_q_split=split_tfs.qual_rows,
+        needs_an=split_nucs.any_split or split_msps.any_split or split_tfs.any_split,
     )
 
 
