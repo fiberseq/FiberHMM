@@ -52,6 +52,7 @@ from fiberhmm.cli.recall_config import (
     resolve_recall_defaults as _shared_resolve_recall_defaults,
     should_write_legacy_tags,
 )
+from fiberhmm.core.bam_reader import _has_mm_ml_inputs
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.core.tag_access import compact_ml_value
 from fiberhmm.io.bam_header import append_coord_marker
@@ -163,7 +164,9 @@ def _payload_tags(read) -> dict:
 
 
 def _has_mm_ml_tags(tags: dict) -> bool:
-    return ('MM' in tags or 'Mm' in tags) and ('ML' in tags or 'Ml' in tags)
+    mm_tag = tags.get('MM', tags.get('Mm', ''))
+    ml_tag = tags.get('ML', tags.get('Ml', None))
+    return _has_mm_ml_inputs(mm_tag, ml_tag)
 
 
 def _needs_daf_md_result(seq, tags: dict, mode) -> bool:

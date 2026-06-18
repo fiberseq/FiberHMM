@@ -64,6 +64,11 @@ def test_recall_tfs_daf_md_fallback_predicate():
     ) is False
     assert recall_tfs._needs_daf_md_result(
         "ACGT",
+        {"MM": "C+m,0;", "ML": b""},
+        "daf",
+    ) is True
+    assert recall_tfs._needs_daf_md_result(
+        "ACGT",
         {},
         "pacbio-fiber",
     ) is False
