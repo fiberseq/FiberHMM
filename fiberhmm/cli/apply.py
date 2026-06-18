@@ -466,20 +466,78 @@ def _apply_processing_kwargs(
     }
 
 
-def main():
-    args = parse_args()
+def _run_apply_processing(
+    args,
+    output_bam: str,
+    model_path: str,
+    train_rids,
+    mode: str,
+    context_size: int,
+    msp_min_size: int,
+    with_scores: bool,
+    n_cores: int,
+    chroms_set,
+    use_streaming: bool,
+    process_unmapped: bool,
+    stdout_mode: bool,
+):
+    print(_processing_status_message(args.max_reads))
+    total_reads, reads_with_footprints = process_bam_for_footprints(
+        **_apply_processing_kwargs(
+            args,
+            output_bam,
+            model_path,
+            train_rids,
+            mode,
+            context_size,
+            msp_min_size,
+            with_scores,
+            n_cores,
+            chroms_set,
+            use_streaming,
+            process_unmapped,
+        )
+    )
+    _print_processing_result(
+        total_reads, reads_with_footprints, output_bam, stdout_mode,
+    )
+    return total_reads, reads_with_footprints
 
-    # Handle stdout output mode — redirect all prints to stderr
-    # so they don't corrupt the BAM stream
+
+def _finalize_apply_outputs(
+    args,
+    output_bam: str,
+    dataset: str,
+    with_scores: bool,
+    db_path,
+    stdout_mode: bool,
+) -> None:
+    if args.stats and not stdout_mode:
+        _write_apply_stats(output_bam, args, dataset, with_scores)
+
+    _print_scores_db_summary(db_path)
+    _print_apply_done(stdout_mode, output_bam)
+
+
+def _prepare_apply_io(args):
     stdout_mode = (args.outdir == '-')
     if stdout_mode:
         sys.stdout = sys.stderr
 
     n_cores = _resolve_apply_cores(args.cores)
 
-    # Create output directory (unless writing to stdout)
     if not stdout_mode:
         os.makedirs(args.outdir, exist_ok=True)
+
+    return stdout_mode, n_cores
+
+
+def main():
+    args = parse_args()
+
+    # Handle stdout output mode — redirect all prints to stderr
+    # so they don't corrupt the BAM stream
+    stdout_mode, n_cores = _prepare_apply_io(args)
 
     model_path = _resolve_model_path(args)
 
@@ -534,36 +592,29 @@ def main():
 
     # === MAIN PROCESSING ===
     output_bam = _resolve_output_bam(args, dataset, stdout_mode)
-    print(_processing_status_message(args.max_reads))
-
-    total_reads, reads_with_footprints = process_bam_for_footprints(
-        **_apply_processing_kwargs(
-            args,
-            output_bam,
-            model_path,
-            train_rids,
-            mode,
-            context_size,
-            msp_min_size,
-            with_scores,
-            n_cores,
-            chroms_set,
-            use_streaming,
-            process_unmapped,
-        )
+    _run_apply_processing(
+        args,
+        output_bam,
+        model_path,
+        train_rids,
+        mode,
+        context_size,
+        msp_min_size,
+        with_scores,
+        n_cores,
+        chroms_set,
+        use_streaming,
+        process_unmapped,
+        stdout_mode,
     )
-    _print_processing_result(
-        total_reads, reads_with_footprints, output_bam, stdout_mode,
+    _finalize_apply_outputs(
+        args,
+        output_bam,
+        dataset,
+        with_scores,
+        db_path,
+        stdout_mode,
     )
-
-    # Generate stats if requested (not available for stdout mode)
-    if args.stats and not stdout_mode:
-        _write_apply_stats(output_bam, args, dataset, with_scores)
-
-    # Print scores database info
-    _print_scores_db_summary(db_path)
-
-    _print_apply_done(stdout_mode, output_bam)
 
 
 if __name__ == '__main__':

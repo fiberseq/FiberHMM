@@ -12,6 +12,7 @@ from fiberhmm.cli.apply import (
     _ddda_notice_needed,
     _load_apply_model_with_summary,
     _load_training_read_ids,
+    _finalize_apply_outputs,
     _print_apply_done,
     _print_numba_status,
     _print_processing_settings,
@@ -29,7 +30,9 @@ from fiberhmm.cli.apply import (
     _resolve_scores_db_path,
     _scores_enabled,
     _print_scores_db_summary,
+    _prepare_apply_io,
     _processing_status_message,
+    _run_apply_processing,
     _strand_detection_message,
     _use_streaming_pipeline,
     _stats_output_prefix,
@@ -103,6 +106,21 @@ def test_apply_resolve_cores_auto_and_clamps(capsys):
 
     assert _resolve_apply_cores(0) >= 1
     assert "Auto-detected" in capsys.readouterr().out
+
+
+def test_prepare_apply_io_resolves_cores_and_creates_output_dir(monkeypatch, tmp_path):
+    from fiberhmm.cli import apply
+
+    monkeypatch.setattr(apply, "_resolve_apply_cores", lambda cores: 7)
+    outdir = tmp_path / "apply-out"
+
+    stdout_mode, n_cores = _prepare_apply_io(
+        SimpleNamespace(outdir=str(outdir), cores=0)
+    )
+
+    assert stdout_mode is False
+    assert n_cores == 7
+    assert outdir.is_dir()
 
 
 def test_apply_dataset_name():
@@ -404,3 +422,98 @@ def test_apply_processing_kwargs_preserve_pipeline_arguments():
         "chunk_size": 2000,
         "process_unmapped": True,
     }
+
+
+def test_run_apply_processing_delegates_pipeline_and_reports_result(
+    monkeypatch,
+    capsys,
+):
+    from fiberhmm.cli import apply
+
+    args = SimpleNamespace(
+        input="input.bam",
+        edge_trim=10,
+        circular=True,
+        nuc_min_size=85,
+        min_mapq=20,
+        prob_threshold=128,
+        min_read_length=1000,
+        max_reads=500,
+        debug_timing=True,
+        region_size=1_000_000,
+        skip_scaffolds=True,
+        primary=True,
+        output_posteriors="post.h5",
+        no_msps=False,
+        io_threads=3,
+        chunk_size=2000,
+    )
+    calls = []
+    monkeypatch.setattr(
+        apply,
+        "process_bam_for_footprints",
+        lambda **kwargs: calls.append(("process", kwargs)) or (10, 4),
+    )
+    monkeypatch.setattr(
+        apply,
+        "_print_processing_result",
+        lambda *args: calls.append(("result", args)),
+    )
+
+    assert _run_apply_processing(
+        args,
+        output_bam="out.bam",
+        model_path="model.json",
+        train_rids={"read-a"},
+        mode="daf",
+        context_size=3,
+        msp_min_size=0,
+        with_scores=True,
+        n_cores=4,
+        chroms_set={"chr1"},
+        use_streaming=True,
+        process_unmapped=True,
+        stdout_mode=False,
+    ) == (10, 4)
+
+    assert calls[0][0] == "process"
+    assert calls[0][1]["input_bam"] == "input.bam"
+    assert calls[0][1]["output_bam"] == "out.bam"
+    assert calls[0][1]["process_unmapped"] is True
+    assert calls[1] == ("result", (10, 4, "out.bam", False))
+    assert "Processing BAM (limited to 500 reads)" in capsys.readouterr().out
+
+
+def test_finalize_apply_outputs_writes_stats_only_for_file_outputs(monkeypatch):
+    from fiberhmm.cli import apply
+
+    calls = []
+    monkeypatch.setattr(
+        apply,
+        "_write_apply_stats",
+        lambda *args: calls.append(("stats", args)),
+    )
+    monkeypatch.setattr(
+        apply,
+        "_print_scores_db_summary",
+        lambda db_path: calls.append(("scores", db_path)),
+    )
+    monkeypatch.setattr(
+        apply,
+        "_print_apply_done",
+        lambda stdout_mode, output_bam: calls.append(
+            ("done", stdout_mode, output_bam)
+        ),
+    )
+    args = SimpleNamespace(stats=True)
+
+    _finalize_apply_outputs(args, "out.bam", "sample", True, "scores.db", False)
+    _finalize_apply_outputs(args, "-", "sample", True, "scores.db", True)
+
+    assert calls == [
+        ("stats", ("out.bam", args, "sample", True)),
+        ("scores", "scores.db"),
+        ("done", False, "out.bam"),
+        ("scores", "scores.db"),
+        ("done", True, "-"),
+    ]
