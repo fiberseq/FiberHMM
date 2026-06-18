@@ -850,6 +850,49 @@ def test_save_training_example_png_orchestrates_panels(monkeypatch, tmp_path):
     assert plt.closed == [plt.fig]
 
 
+def test_save_training_example_pdf_page_writes_pdf(tmp_path):
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+    from matplotlib.collections import PatchCollection
+    from matplotlib.patches import Patch, Rectangle
+
+    class FakeModel:
+        def predict_proba(self, encoded):
+            footprint = np.linspace(0.1, 0.9, len(encoded))
+            return np.column_stack([footprint, 1 - footprint])
+
+    read = SimpleNamespace(
+        read_id="read-1",
+        query_sequence="A" * 50,
+        m6a_query_positions={1, 10, 49},
+        chrom="chr2L",
+        ref_start=100,
+        ref_end=150,
+    )
+    states = np.array([0, 0, 1, 1, 0] * 10)
+    encoded = np.arange(50)
+    pdf_path = tmp_path / "example.pdf"
+
+    with PdfPages(str(pdf_path)) as pdf:
+        train._save_training_example_pdf_page(
+            plt,
+            pdf,
+            FakeModel(),
+            read,
+            states,
+            encoded,
+            0,
+            Rectangle,
+            PatchCollection,
+            Patch,
+        )
+
+    plt.close("all")
+    assert pdf_path.stat().st_size > 0
+
+
 def test_training_config_includes_base_model_only_when_used():
     args = SimpleNamespace(
         context_size=3,

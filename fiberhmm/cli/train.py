@@ -972,6 +972,150 @@ def _save_training_example_png(
     return png_path
 
 
+def _save_training_example_pdf_page(
+    plt,
+    pdf,
+    model: FiberHMM,
+    read,
+    states,
+    encoded,
+    idx: int,
+    rectangle_cls,
+    patch_collection_cls,
+    patch_cls,
+) -> None:
+    seq_len, m6a_positions, footprint_prob = _training_example_plot_data(
+        model, read, encoded,
+    )
+
+    fig = plt.figure(figsize=(14, 16))
+    gs = fig.add_gridspec(
+        6,
+        3,
+        height_ratios=[0.8, 1.2, 0.8, 0.8, 1.2, 0.8],
+        hspace=0.35,
+        wspace=0.25,
+        left=0.06,
+        right=0.98,
+        top=0.93,
+        bottom=0.04,
+    )
+
+    fig.suptitle(
+        _training_example_title(idx, read, seq_len, m6a_positions),
+        fontsize=11,
+        y=0.98,
+    )
+
+    ax_overview_m6a = fig.add_subplot(gs[0, :])
+    if len(m6a_positions) > 0:
+        ax_overview_m6a.eventplot(
+            [m6a_positions],
+            colors='purple',
+            lineoffsets=0.5,
+            linelengths=0.8,
+            linewidths=0.3,
+        )
+    ax_overview_m6a.set_xlim(0, seq_len)
+    ax_overview_m6a.set_ylim(0, 1)
+    ax_overview_m6a.set_ylabel('m6A', fontsize=9)
+    ax_overview_m6a.set_yticks([])
+    ax_overview_m6a.set_title('Overview: m6A Positions', fontsize=10, loc='left')
+    ax_overview_m6a.set_xticklabels([])
+
+    ax_overview_fp = fig.add_subplot(gs[1, :])
+    _add_training_state_blocks(
+        ax_overview_fp, states, seq_len, rectangle_cls, patch_collection_cls,
+    )
+    ax_overview_fp.set_ylabel('State', fontsize=9)
+    ax_overview_fp.set_yticks([])
+    ax_overview_fp.set_title(
+        'Overview: Footprints (green) vs Accessible (white)',
+        fontsize=10,
+        loc='left',
+    )
+    ax_overview_fp.set_xticklabels([])
+    legend_elements = [
+        patch_cls(facecolor='forestgreen', edgecolor='gray', label='Footprint'),
+        patch_cls(facecolor='white', edgecolor='gray', label='Accessible'),
+    ]
+    ax_overview_fp.legend(handles=legend_elements, loc='upper right', fontsize=8)
+
+    ax_overview_prob = fig.add_subplot(gs[2, :])
+    _plot_training_probability_area(
+        ax_overview_prob, footprint_prob, threshold_alpha=0.5,
+    )
+    ax_overview_prob.set_xlim(0, seq_len)
+    ax_overview_prob.set_ylim(0, 1)
+    ax_overview_prob.set_ylabel('P(FP)', fontsize=9)
+    ax_overview_prob.set_yticks([0, 0.5, 1])
+    ax_overview_prob.tick_params(axis='y', labelsize=7)
+    ax_overview_prob.set_xlabel('Position (bp)', fontsize=9)
+    ax_overview_prob.set_title(
+        'Overview: Footprint Probability', fontsize=10, loc='left',
+    )
+
+    zoom_windows = _training_zoom_window_bounds(
+        seq_len, window_size=1000, n_windows=3, seed=idx,
+    )
+
+    for w_idx, (w_start, w_end, w_len) in enumerate(zoom_windows):
+        ax_zoom_m6a = fig.add_subplot(gs[3, w_idx])
+        m6a_in_window = _relative_positions_in_window(
+            m6a_positions, w_start, w_end,
+        )
+        if len(m6a_in_window) > 0:
+            ax_zoom_m6a.eventplot(
+                [m6a_in_window],
+                colors='purple',
+                lineoffsets=0.5,
+                linelengths=0.8,
+                linewidths=1.0,
+            )
+        ax_zoom_m6a.set_xlim(0, w_len)
+        ax_zoom_m6a.set_ylim(0, 1)
+        ax_zoom_m6a.set_ylabel('m6A', fontsize=8)
+        ax_zoom_m6a.set_yticks([])
+        ax_zoom_m6a.set_xticklabels([])
+        ax_zoom_m6a.set_title(
+            f'Zoom {w_idx + 1}: {w_start:,}-{w_end:,}bp', fontsize=9,
+        )
+
+        _add_training_zoom_highlight(
+            (ax_overview_m6a, ax_overview_fp, ax_overview_prob),
+            w_start,
+            w_end,
+            _TRAINING_ZOOM_COLORS[w_idx],
+        )
+
+        ax_zoom_fp = fig.add_subplot(gs[4, w_idx])
+        window_states = states[w_start:w_end]
+        _add_training_state_blocks(
+            ax_zoom_fp, window_states, w_len, rectangle_cls, patch_collection_cls,
+        )
+        ax_zoom_fp.set_ylabel('State', fontsize=8)
+        ax_zoom_fp.set_yticks([])
+        ax_zoom_fp.set_xticklabels([])
+
+        ax_zoom_prob = fig.add_subplot(gs[5, w_idx])
+        window_prob = footprint_prob[w_start:w_end]
+        _plot_training_probability_area(
+            ax_zoom_prob,
+            window_prob,
+            show_line=True,
+            threshold_alpha=0.5,
+        )
+        ax_zoom_prob.set_xlim(0, w_len)
+        ax_zoom_prob.set_ylim(0, 1)
+        ax_zoom_prob.set_ylabel('P(FP)', fontsize=8)
+        ax_zoom_prob.set_yticks([0, 0.5, 1])
+        ax_zoom_prob.tick_params(axis='y', labelsize=7)
+        ax_zoom_prob.set_xlabel('Position (bp)', fontsize=8)
+
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
 def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads: list,
                             emission_probs: np.ndarray, output_dir: str,
                             n_examples: int = 5, mode: str = 'pacbio-fiber'):
@@ -993,7 +1137,7 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         import matplotlib.pyplot as plt
         from matplotlib.backends.backend_pdf import PdfPages
         from matplotlib.collections import PatchCollection
-        from matplotlib.patches import Rectangle
+        from matplotlib.patches import Patch, Rectangle
     except ImportError:
         print("  Warning: matplotlib not installed. Skipping stats plots.")
         return
@@ -1025,135 +1169,18 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         n_to_plot = min(n_examples, len(sampled_reads), len(all_states))
 
         for idx in range(n_to_plot):
-            read = sampled_reads[idx]
-            states = all_states[idx]
-            encoded = encoded_reads[idx]
-
-            seq_len, m6a_positions, footprint_prob = _training_example_plot_data(
-                model, read, encoded,
+            _save_training_example_pdf_page(
+                plt,
+                pdf,
+                model,
+                sampled_reads[idx],
+                all_states[idx],
+                encoded_reads[idx],
+                idx,
+                Rectangle,
+                PatchCollection,
+                Patch,
             )
-
-            # Create figure: 4 rows (overview) + 3 rows per zoom (3 zooms = 9 rows) = 13 rows
-            # But let's use GridSpec for better control
-            fig = plt.figure(figsize=(14, 16))
-
-            # Use gridspec for layout
-            gs = fig.add_gridspec(6, 3, height_ratios=[0.8, 1.2, 0.8, 0.8, 1.2, 0.8],
-                                 hspace=0.35, wspace=0.25,
-                                 left=0.06, right=0.98, top=0.93, bottom=0.04)
-
-            # Title
-            fig.suptitle(
-                _training_example_title(idx, read, seq_len, m6a_positions),
-                fontsize=11,
-                y=0.98,
-            )
-
-            # === OVERVIEW PANELS (top row, span all 3 columns) ===
-
-            # Overview: m6A positions (purple)
-            ax_overview_m6a = fig.add_subplot(gs[0, :])
-            if len(m6a_positions) > 0:
-                ax_overview_m6a.eventplot([m6a_positions], colors='purple', lineoffsets=0.5,
-                                         linelengths=0.8, linewidths=0.3)
-            ax_overview_m6a.set_xlim(0, seq_len)
-            ax_overview_m6a.set_ylim(0, 1)
-            ax_overview_m6a.set_ylabel('m6A', fontsize=9)
-            ax_overview_m6a.set_yticks([])
-            ax_overview_m6a.set_title('Overview: m6A Positions', fontsize=10, loc='left')
-            ax_overview_m6a.set_xticklabels([])
-
-            # Overview: Footprints
-            ax_overview_fp = fig.add_subplot(gs[1, :])
-            _add_training_state_blocks(
-                ax_overview_fp, states, seq_len, Rectangle, PatchCollection,
-            )
-            ax_overview_fp.set_ylabel('State', fontsize=9)
-            ax_overview_fp.set_yticks([])
-            ax_overview_fp.set_title('Overview: Footprints (green) vs Accessible (white)', fontsize=10, loc='left')
-            ax_overview_fp.set_xticklabels([])
-            # Add legend
-            from matplotlib.patches import Patch
-            legend_elements = [Patch(facecolor='forestgreen', edgecolor='gray', label='Footprint'),
-                             Patch(facecolor='white', edgecolor='gray', label='Accessible')]
-            ax_overview_fp.legend(handles=legend_elements, loc='upper right', fontsize=8)
-
-            # Overview: Probability
-            ax_overview_prob = fig.add_subplot(gs[2, :])
-            _plot_training_probability_area(
-                ax_overview_prob, footprint_prob, threshold_alpha=0.5,
-            )
-            ax_overview_prob.set_xlim(0, seq_len)
-            ax_overview_prob.set_ylim(0, 1)
-            ax_overview_prob.set_ylabel('P(FP)', fontsize=9)
-            ax_overview_prob.set_yticks([0, 0.5, 1])
-            ax_overview_prob.tick_params(axis='y', labelsize=7)
-            ax_overview_prob.set_xlabel('Position (bp)', fontsize=9)
-            ax_overview_prob.set_title('Overview: Footprint Probability', fontsize=10, loc='left')
-
-            # === ZOOM PANELS (3 random 1kb windows) ===
-
-            # Select 3 random windows
-            window_size = 1000
-            n_windows = 3
-            zoom_windows = _training_zoom_window_bounds(
-                seq_len, window_size, n_windows, seed=idx,
-            )
-
-            # Plot each zoom window
-            for w_idx, (w_start, w_end, w_len) in enumerate(zoom_windows):
-                # Row indices in grid: 3, 4, 5 for zoom panels
-                # m6A
-                ax_zoom_m6a = fig.add_subplot(gs[3, w_idx])
-                m6a_in_window = _relative_positions_in_window(
-                    m6a_positions, w_start, w_end,
-                )
-                if len(m6a_in_window) > 0:
-                    ax_zoom_m6a.eventplot([m6a_in_window], colors='purple', lineoffsets=0.5,
-                                         linelengths=0.8, linewidths=1.0)
-                ax_zoom_m6a.set_xlim(0, w_len)
-                ax_zoom_m6a.set_ylim(0, 1)
-                ax_zoom_m6a.set_ylabel('m6A', fontsize=8)
-                ax_zoom_m6a.set_yticks([])
-                ax_zoom_m6a.set_xticklabels([])
-                ax_zoom_m6a.set_title(f'Zoom {w_idx+1}: {w_start:,}-{w_end:,}bp', fontsize=9)
-
-                # Mark this window on overview
-                _add_training_zoom_highlight(
-                    (ax_overview_m6a, ax_overview_fp, ax_overview_prob),
-                    w_start,
-                    w_end,
-                    _TRAINING_ZOOM_COLORS[w_idx],
-                )
-
-                # Footprints
-                ax_zoom_fp = fig.add_subplot(gs[4, w_idx])
-                window_states = states[w_start:w_end]
-                _add_training_state_blocks(
-                    ax_zoom_fp, window_states, w_len, Rectangle, PatchCollection,
-                )
-                ax_zoom_fp.set_ylabel('State', fontsize=8)
-                ax_zoom_fp.set_yticks([])
-                ax_zoom_fp.set_xticklabels([])
-
-                # Probability
-                ax_zoom_prob = fig.add_subplot(gs[5, w_idx])
-                window_prob = footprint_prob[w_start:w_end]
-                _plot_training_probability_area(
-                    ax_zoom_prob,
-                    window_prob,
-                    show_line=True,
-                    threshold_alpha=0.5,
-                )
-                ax_zoom_prob.set_xlim(0, w_len)
-                ax_zoom_prob.set_ylim(0, 1)
-                ax_zoom_prob.set_ylabel('P(FP)', fontsize=8)
-                ax_zoom_prob.set_yticks([0, 0.5, 1])
-                ax_zoom_prob.tick_params(axis='y', labelsize=7)
-                ax_zoom_prob.set_xlabel('Position (bp)', fontsize=8)
-
-            pdf.savefig(fig)
-            plt.close(fig)
 
     print(f"  Saved: {pdf_path}")
 
