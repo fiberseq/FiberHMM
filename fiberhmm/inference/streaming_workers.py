@@ -173,14 +173,7 @@ def _run_worker_single_read(
     )
 
 
-def _process_payload_item(payload, config: _PayloadWorkerConfig):
-    fiber_read = _payload_fiber_read_result(
-        payload,
-        config.mode,
-        config.prob_threshold,
-    )
-    if fiber_read is None:
-        return None
+def _run_payload_configured_read(fiber_read, config: _PayloadWorkerConfig):
     return _run_worker_single_read(
         fiber_read,
         config.edge_trim,
@@ -192,6 +185,17 @@ def _process_payload_item(payload, config: _PayloadWorkerConfig):
         config.with_scores,
         config.return_posteriors,
     )
+
+
+def _process_payload_item(payload, config: _PayloadWorkerConfig):
+    fiber_read = _payload_fiber_read_result(
+        payload,
+        config.mode,
+        config.prob_threshold,
+    )
+    if fiber_read is None:
+        return None
+    return _run_payload_configured_read(fiber_read, config)
 
 
 def _fused_recall_state(llr_hit, llr_miss, recall_nucs: bool,

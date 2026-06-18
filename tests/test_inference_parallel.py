@@ -1155,6 +1155,43 @@ def test_payload_worker_config_preserves_chunk_arguments():
     )
 
 
+def test_run_payload_configured_read_forwards_config(monkeypatch):
+    fiber_read = {"query_sequence": "ACGT"}
+    seen = {}
+
+    def fake_run(*args):
+        seen["args"] = args
+        return {"apply": True}
+
+    monkeypatch.setattr(streaming_workers, "_run_worker_single_read", fake_run)
+    config = streaming_workers._PayloadWorkerConfig(
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
+        return_posteriors=False,
+        prob_threshold=128,
+    )
+
+    assert streaming_workers._run_payload_configured_read(
+        fiber_read, config,
+    ) == {"apply": True}
+    assert seen["args"] == (
+        fiber_read,
+        1,
+        True,
+        "pacbio-fiber",
+        7,
+        60,
+        85,
+        True,
+        False,
+    )
+
+
 def test_process_payload_item_runs_parse_and_apply(monkeypatch):
     payload = {"read_id": "read1"}
     fiber_read = {"query_sequence": "ACGT"}
