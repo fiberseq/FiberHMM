@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Iterable, Optional, Sequence, Tuple
 
 import numpy as np
@@ -9,6 +10,13 @@ import numpy as np
 from fiberhmm.io.ma_tags import split_circular_interval
 
 Interval = Tuple[int, int]
+
+
+@dataclass(frozen=True)
+class _LegacyIntervalPiece:
+    start: int
+    length: int
+    score: Optional[float]
 
 
 def _tiled_mod_positions(pos, read_length: int) -> tuple[int, ...]:
@@ -175,13 +183,13 @@ def _legacy_interval_pieces(
     intervals: Sequence[Interval],
     read_length: int,
     score_values: Optional[Sequence[float]],
-) -> list[tuple[int, int, Optional[float]]]:
-    pieces: list[tuple[int, int, Optional[float]]] = []
+) -> list[_LegacyIntervalPiece]:
+    pieces: list[_LegacyIntervalPiece] = []
     for idx, (start, length) in enumerate(intervals):
         score = _legacy_interval_score(score_values, idx)
         for piece_start, piece_len in split_circular_interval(start, length, read_length):
-            pieces.append((piece_start, piece_len, score))
-    pieces.sort(key=lambda item: item[0])
+            pieces.append(_LegacyIntervalPiece(piece_start, piece_len, score))
+    pieces.sort(key=lambda piece: piece.start)
     return pieces
 
 
@@ -193,12 +201,15 @@ def split_intervals_for_legacy(
     """Split circular intervals into legacy-compatible linear start/length arrays."""
     score_values = list(scores) if scores is not None else None
     pieces = _legacy_interval_pieces(intervals, read_length, score_values)
-    starts = np.asarray([p[0] for p in pieces], dtype=np.int32)
-    lengths = np.asarray([p[1] for p in pieces], dtype=np.int32)
+    starts = np.asarray([piece.start for piece in pieces], dtype=np.int32)
+    lengths = np.asarray([piece.length for piece in pieces], dtype=np.int32)
     if score_values is None:
         return starts, lengths, None
-    return starts, lengths, np.asarray([0.0 if p[2] is None else p[2] for p in pieces],
-                                      dtype=np.float32)
+    score_array = np.asarray(
+        [0.0 if piece.score is None else piece.score for piece in pieces],
+        dtype=np.float32,
+    )
+    return starts, lengths, score_array
 
 
 def interval_segments(interval: Interval, read_length: int) -> list[Interval]:

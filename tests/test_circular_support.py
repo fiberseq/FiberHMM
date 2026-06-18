@@ -6,6 +6,7 @@ from fiberhmm.inference.circular import (
     _center_copy_bounds,
     _legacy_interval_pieces,
     _legacy_interval_score,
+    _LegacyIntervalPiece,
     _linear_segments_overlap,
     _projected_nuc_call,
     _projected_tf_call,
@@ -142,9 +143,9 @@ def test_legacy_interval_pieces_split_wraps_and_sort_by_start():
         100,
         [0.8, 0.2],
     ) == [
-        (0, 10, 0.8),
-        (30, 5, 0.2),
-        (90, 10, 0.8),
+        _LegacyIntervalPiece(0, 10, 0.8),
+        _LegacyIntervalPiece(30, 5, 0.2),
+        _LegacyIntervalPiece(90, 10, 0.8),
     ]
 
 
