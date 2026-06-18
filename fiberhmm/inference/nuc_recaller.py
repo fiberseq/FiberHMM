@@ -54,6 +54,12 @@ class _NucRecallParams:
     phase_window: int
 
 
+@dataclass(frozen=True)
+class _RefinedFragment:
+    nuc: NucCall | None
+    access: List[Interval]
+
+
 def _fragments_after_cuts(a: int, b: int,
                           cut_spans: Iterable[Tuple[int, int]]) -> List[Interval]:
     frags: List[Interval] = []
@@ -155,10 +161,11 @@ def _residue_intervals_around_nuc(a: int, b: int, nuc: NucCall) -> List[Interval
 
 
 def _refine_fragment(obs, a, b, llr_hit, llr_miss,
-                     nuc_min_size, edge_min_llr, edge_min_opps):
+                     nuc_min_size, edge_min_llr,
+                     edge_min_opps) -> _RefinedFragment:
     """Edge-refine one protected fragment into a NucCall (or demote it).
 
-    Returns ``(nuc_or_None, access_intervals)``. A fragment shorter than
+    Returns a refined fragment with ``nuc`` and ``access`` fields. A fragment shorter than
     ``nuc_min_size``, with no protected evidence, or whose conservative core
     trims below the floor, is demoted: ``nuc`` is None (signal-desert keeps a
     quality-0 NucCall) and the residue goes to ``access``.
@@ -166,20 +173,23 @@ def _refine_fragment(obs, a, b, llr_hit, llr_miss,
     access: List[Interval] = []
     if b - a < nuc_min_size:
         access.append((a, b - a))
-        return None, access
+        return _RefinedFragment(nuc=None, access=access)
     prot = call_tfs_in_interval(obs, a, b, llr_hit, llr_miss,
                                 edge_min_llr, edge_min_opps)
     if not prot:
         # signal-desert fragment: keep raw extent, unknown quality/edges
-        return NucCall(a, b - a, nq=0, el=0, er=0), access
+        return _RefinedFragment(
+            nuc=NucCall(a, b - a, nq=0, el=0, er=0),
+            access=access,
+        )
     nuc = _nuc_from_protected_calls(prot, nuc_min_size)
     if nuc is None:
         # Edge refinement trimmed the protected core below the floor (a sparse
         # protected island) -> not a nucleosome, demote the whole fragment.
         access.append((a, b - a))
-        return None, access
+        return _RefinedFragment(nuc=None, access=access)
     access.extend(_residue_intervals_around_nuc(a, b, nuc))
-    return nuc, access
+    return _RefinedFragment(nuc=nuc, access=access)
 
 
 def _split_on_accessible_cuts(obs, a, b, nhit, nmiss,
@@ -284,13 +294,13 @@ def _recall_nuc_span(
         )
         access.extend(phase_cuts)
         for sa, sb in subs:
-            nuc, acc = _refine_fragment(
+            refined = _refine_fragment(
                 obs, sa, sb, llr_hit, llr_miss,
                 params.nuc_min_size, params.edge_min_llr, params.edge_min_opps,
             )
-            if nuc is not None:
-                nucs.append(nuc)
-            access.extend(acc)
+            if refined.nuc is not None:
+                nucs.append(refined.nuc)
+            access.extend(refined.access)
 
     return nucs, access
 
@@ -651,7 +661,7 @@ def _promoted_nuc_from_tf_call(
     edge_min_llr,
     edge_min_opps,
 ):
-    nuc, _ = _refine_fragment(
+    refined = _refine_fragment(
         obs,
         call.start,
         call.start + call.length,
@@ -661,7 +671,7 @@ def _promoted_nuc_from_tf_call(
         edge_min_llr,
         edge_min_opps,
     )
-    return nuc
+    return refined.nuc
 
 
 def promote_large_tf_calls(tf_calls, obs, llr_hit, llr_miss, threshold,
