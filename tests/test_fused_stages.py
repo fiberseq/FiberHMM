@@ -199,6 +199,54 @@ def test_optional_apply_score_fields_respects_enabled_flag():
     assert disabled == {"ns_scores": None, "as_scores": None}
 
 
+def test_promote_large_tf_nucs_request_appends_promoted_after_kept(monkeypatch):
+    calls = {}
+
+    def fake_promote(tf_calls, obs, llr_hit, llr_miss, threshold, floor):
+        calls["promote"] = (tf_calls, obs, llr_hit, llr_miss, threshold, floor)
+        return ["small_tf"], ["promoted_nuc"]
+
+    def fake_drop(nuc_calls, promoted, threshold):
+        calls["drop"] = (nuc_calls, promoted, threshold)
+        return ["kept_nuc"]
+
+    monkeypatch.setattr(fused_stages, "promote_large_tf_calls", fake_promote)
+    monkeypatch.setattr(
+        fused_stages,
+        "drop_short_nucs_overlapping_promoted",
+        fake_drop,
+    )
+
+    result = fused_stages._promote_large_tf_nucs_from_request(
+        fused_stages._PromoteLargeTfNucsRequest(
+            tf_calls=["tf"],
+            nuc_calls=["nuc"],
+            obs="obs",
+            llr_hit="hit",
+            llr_miss="miss",
+            unify_threshold=90,
+            nuc_min_size=85,
+        )
+    )
+
+    assert result == (["small_tf"], ["kept_nuc", "promoted_nuc"])
+    assert calls["promote"] == (["tf"], "obs", "hit", "miss", 90, 85)
+    assert calls["drop"] == (["nuc"], ["promoted_nuc"], 90)
+
+    calls.clear()
+    assert fused_stages._promote_large_tf_nucs(
+        ["tf"],
+        ["nuc"],
+        "obs",
+        "hit",
+        "miss",
+        unify_threshold=90,
+        nuc_min_size=85,
+    ) == (["small_tf"], ["kept_nuc", "promoted_nuc"])
+    assert calls["promote"] == (["tf"], "obs", "hit", "miss", 90, 85)
+    assert calls["drop"] == (["nuc"], ["promoted_nuc"], 90)
+
+
 def test_interval_pairs_casts_parallel_arrays_to_int_pairs():
     pairs = fused_stages._interval_pairs(
         np.asarray([1, 2], dtype=np.int32),

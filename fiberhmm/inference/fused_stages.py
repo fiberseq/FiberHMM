@@ -124,6 +124,17 @@ class _FusedRecallResultRequest:
     phase_nrl: int = 0
 
 
+@dataclass(frozen=True)
+class _PromoteLargeTfNucsRequest:
+    tf_calls: Any
+    nuc_calls: Any
+    obs: Any
+    llr_hit: Any
+    llr_miss: Any
+    unify_threshold: int
+    nuc_min_size: int
+
+
 def _analyzed_span_from_request(
     request: _AnalyzedSpanRequest,
 ) -> _AnalyzedSpan:
@@ -230,6 +241,25 @@ def _optional_apply_score_fields(apply_result: Mapping[str, Any], enabled: bool)
     }
 
 
+def _promote_large_tf_nucs_from_request(
+    request: _PromoteLargeTfNucsRequest,
+):
+    tf_calls, promoted = promote_large_tf_calls(
+        request.tf_calls,
+        request.obs,
+        request.llr_hit,
+        request.llr_miss,
+        request.unify_threshold,
+        request.nuc_min_size,
+    )
+    nuc_calls = drop_short_nucs_overlapping_promoted(
+        request.nuc_calls,
+        promoted,
+        request.unify_threshold,
+    ) + promoted
+    return tf_calls, nuc_calls
+
+
 def _promote_large_tf_nucs(
     tf_calls,
     nuc_calls,
@@ -239,11 +269,17 @@ def _promote_large_tf_nucs(
     unify_threshold: int,
     nuc_min_size: int,
 ):
-    tf_calls, promoted = promote_large_tf_calls(
-        tf_calls, obs, llr_hit, llr_miss, unify_threshold, nuc_min_size)
-    nuc_calls = drop_short_nucs_overlapping_promoted(
-        nuc_calls, promoted, unify_threshold) + promoted
-    return tf_calls, nuc_calls
+    return _promote_large_tf_nucs_from_request(
+        _PromoteLargeTfNucsRequest(
+            tf_calls=tf_calls,
+            nuc_calls=nuc_calls,
+            obs=obs,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            unify_threshold=unify_threshold,
+            nuc_min_size=nuc_min_size,
+        )
+    )
 
 
 def _circular_read_length(fiber_read: Mapping[str, Any],
@@ -602,9 +638,17 @@ def _build_fused_recall_result_with_nucs(
     )
 
     # 3b) promote nucleosome-sized TF leaks (>= unify_threshold) back to nuc+
-    tf_calls, nuc_calls = _promote_large_tf_nucs(
-        tf_calls, nuc_calls, obs, llr_hit, llr_miss,
-        unify_threshold, nuc_min_size)
+    tf_calls, nuc_calls = _promote_large_tf_nucs_from_request(
+        _PromoteLargeTfNucsRequest(
+            tf_calls=tf_calls,
+            nuc_calls=nuc_calls,
+            obs=obs,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            unify_threshold=unify_threshold,
+            nuc_min_size=nuc_min_size,
+        )
+    )
 
     # 4) unify: drop short refined nucs overlapped by a TF call (carry nq/el/er)
     kept = unify_nuc_calls_with_tf_calls(nuc_calls, tf_calls, unify_threshold)
@@ -681,9 +725,17 @@ def _build_fused_recall_result_with_nucs_circular(
         tiled_len, llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
     )
     # 3b) promote nucleosome-sized TF leaks back to nuc+ (still tiled)
-    tiled_tf, tiled_nucs = _promote_large_tf_nucs(
-        tiled_tf, tiled_nucs, obs, llr_hit, llr_miss,
-        unify_threshold, nuc_min_size)
+    tiled_tf, tiled_nucs = _promote_large_tf_nucs_from_request(
+        _PromoteLargeTfNucsRequest(
+            tf_calls=tiled_tf,
+            nuc_calls=tiled_nucs,
+            obs=obs,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            unify_threshold=unify_threshold,
+            nuc_min_size=nuc_min_size,
+        )
+    )
 
     # 4) project everything from tiled -> molecule
     tf_calls = project_center_tf_calls(tiled_tf, read_length)
