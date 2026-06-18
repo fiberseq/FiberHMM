@@ -45,6 +45,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _StreamingChunkBuffers,
     _StreamingFlushProgress,
     _StreamingPayloadResult,
+    _StreamingPosteriorStats,
     _StreamingPosteriorWriter,
     _StreamingProgressCheckpoint,
     _StreamingProgressRates,
@@ -192,7 +193,11 @@ def test_print_streaming_posterior_summary_handles_empty_and_values():
     _print_streaming_posterior_summary(None, "out.h5", log)
     assert log.getvalue() == ""
 
-    _print_streaming_posterior_summary((1234, 5.678), "out.h5", log)
+    _print_streaming_posterior_summary(
+        _StreamingPosteriorStats(1234, 5.678),
+        "out.h5",
+        log,
+    )
     assert log.getvalue() == (
         "Posteriors: 1,234 fibers -> out.h5 (5.7 MB)\n"
     )
@@ -862,7 +867,10 @@ def test_streaming_close_helpers_handle_optional_resources():
     ref_fasta = Resource()
 
     assert streaming_pipeline._close_streaming_posterior_writer(None) is None
-    assert streaming_pipeline._close_streaming_posterior_writer(writer) == (12, 3.5)
+    assert streaming_pipeline._close_streaming_posterior_writer(
+        writer,
+    ) == _StreamingPosteriorStats(12, 3.5)
+    assert _StreamingPosteriorStats(12, 3.5).as_tuple() == (12, 3.5)
     assert writer.closed == 1
 
     assert streaming_pipeline._close_ref_fasta(None) is None

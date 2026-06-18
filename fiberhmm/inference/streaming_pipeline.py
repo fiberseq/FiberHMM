@@ -237,6 +237,15 @@ class _StreamingPosteriorWriter:
     enabled: bool
 
 
+@dataclass(frozen=True)
+class _StreamingPosteriorStats:
+    n_fibers: int
+    file_size_mb: float
+
+    def as_tuple(self) -> tuple[int, float]:
+        return self.n_fibers, self.file_size_mb
+
+
 def _flush_streaming_chunk_and_report_progress(
     context: _StreamingFlushContext,
     chunk_items,
@@ -558,7 +567,14 @@ def _open_streaming_posterior_writer(
 def _close_streaming_posterior_writer(posterior_writer):
     if posterior_writer is None:
         return None
-    return posterior_writer.close()
+    closed_stats = posterior_writer.close()
+    if closed_stats is None:
+        return None
+    n_fibers, file_size_mb = closed_stats
+    return _StreamingPosteriorStats(
+        n_fibers=n_fibers,
+        file_size_mb=file_size_mb,
+    )
 
 
 def _close_ref_fasta(ref_fasta) -> None:
@@ -783,10 +799,9 @@ def _print_streaming_posterior_summary(
 ) -> None:
     if not posterior_stats:
         return
-    n_fibers, file_size = posterior_stats
     print(
-        f"Posteriors: {n_fibers:,} fibers -> "
-        f"{output_posteriors} ({file_size:.1f} MB)",
+        f"Posteriors: {posterior_stats.n_fibers:,} fibers -> "
+        f"{output_posteriors} ({posterior_stats.file_size_mb:.1f} MB)",
         file=log,
     )
 
