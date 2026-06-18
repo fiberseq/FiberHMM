@@ -186,6 +186,19 @@ def test_footprint_coverage_fraction_handles_zero_read_length():
     assert stats_module._footprint_coverage_fraction(25, 0) == 0
 
 
+def test_initial_footprint_summary_handles_empty_and_nonempty_reads():
+    assert stats_module._initial_footprint_summary(0, 0) == {
+        "total_reads_sampled": 0,
+        "reads_with_footprints": 0,
+        "pct_reads_with_footprints": 0,
+    }
+    assert stats_module._initial_footprint_summary(4, 3) == {
+        "total_reads_sampled": 4,
+        "reads_with_footprints": 3,
+        "pct_reads_with_footprints": 75.0,
+    }
+
+
 def test_add_numeric_summary_writes_requested_keys_and_skips_empty_values():
     summary = {}
 

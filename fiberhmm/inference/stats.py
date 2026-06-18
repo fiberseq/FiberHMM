@@ -62,6 +62,22 @@ def _footprint_coverage_fraction(total_fp_bases, read_length: int) -> float:
     return total_fp_bases / read_length if read_length > 0 else 0
 
 
+def _initial_footprint_summary(
+    total_reads_sampled: int,
+    reads_with_footprints: int,
+) -> dict:
+    pct_reads_with_footprints = (
+        100 * reads_with_footprints / total_reads_sampled
+        if total_reads_sampled > 0
+        else 0
+    )
+    return {
+        'total_reads_sampled': total_reads_sampled,
+        'reads_with_footprints': reads_with_footprints,
+        'pct_reads_with_footprints': pct_reads_with_footprints,
+    }
+
+
 def _add_numeric_summary(
     summary: dict,
     prefix: str,
@@ -545,11 +561,10 @@ class FootprintStats:
 
     def get_summary(self) -> dict:
         """Generate summary statistics."""
-        summary = {
-            'total_reads_sampled': self.total_reads_sampled,
-            'reads_with_footprints': self.reads_with_footprints,
-            'pct_reads_with_footprints': 100 * self.reads_with_footprints / self.total_reads_sampled if self.total_reads_sampled > 0 else 0,
-        }
+        summary = _initial_footprint_summary(
+            self.total_reads_sampled,
+            self.reads_with_footprints,
+        )
 
         _add_numeric_summary(
             summary,
