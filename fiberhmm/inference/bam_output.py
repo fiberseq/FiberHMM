@@ -947,7 +947,7 @@ def _parse_score_block_values(record: dict):
 
 
 def _mean_block_score(block_scores: Sequence[int]):
-    return np.mean(block_scores) if block_scores else 0
+    return np.mean(block_scores) if len(block_scores) > 0 else 0
 
 
 def _score_read_row(record: dict, mean_score):

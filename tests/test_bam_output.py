@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from fiberhmm.inference import bam_output
@@ -853,6 +854,7 @@ def test_parse_int_csv_skips_empty_fields():
 
 def test_mean_block_score_uses_zero_for_empty_scores():
     assert bam_output._mean_block_score([100, 200]) == 150
+    assert bam_output._mean_block_score(np.asarray([100, 200])) == 150
     assert bam_output._mean_block_score([]) == 0
 
 
