@@ -500,6 +500,46 @@ class _FusedStreamingFinalizeRequest:
     log: object
 
 
+@dataclass(frozen=True)
+class _FusedStreamingPipelineRequest:
+    input_bam: str
+    output_bam: str
+    model_path: str
+    recall_model_path: Optional[str]
+    train_rids: Set[str]
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    min_mapq: int
+    prob_threshold: int
+    min_read_length: int
+    with_scores: bool
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+    emission_uplift: float
+    also_write_legacy: bool
+    downstream_compat: bool
+    max_reads: Optional[int]
+    n_cores: int
+    chunk_size: int
+    io_threads: int
+    process_unmapped: bool
+    primary_only: bool
+    ref_fasta_path: Optional[str]
+    recall_nucs: bool
+    split_min_llr: float
+    split_min_opps: int
+    filter_chimeras: bool
+    chimera_min_seg: int
+    chimera_purity: float
+    phase_nrl: int
+    pg_record: Optional[dict]
+
+
 def _flush_streaming_chunk_and_report_progress(
     context: _StreamingFlushContext,
     chunk_items,
@@ -1338,9 +1378,54 @@ def _process_bam_streaming_pipeline_fused(
     pg_record: dict = None,
 ):
     """Fused apply+recall streaming pipeline."""
+    return _process_bam_streaming_pipeline_fused_from_request(
+        _FusedStreamingPipelineRequest(
+            input_bam=input_bam,
+            output_bam=output_bam,
+            model_path=model_path,
+            recall_model_path=recall_model_path,
+            train_rids=train_rids,
+            edge_trim=edge_trim,
+            circular=circular,
+            mode=mode,
+            context_size=context_size,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+            min_mapq=min_mapq,
+            prob_threshold=prob_threshold,
+            min_read_length=min_read_length,
+            with_scores=with_scores,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
+            emission_uplift=emission_uplift,
+            also_write_legacy=also_write_legacy,
+            downstream_compat=downstream_compat,
+            max_reads=max_reads,
+            n_cores=n_cores,
+            chunk_size=chunk_size,
+            io_threads=io_threads,
+            process_unmapped=process_unmapped,
+            primary_only=primary_only,
+            ref_fasta_path=ref_fasta_path,
+            recall_nucs=recall_nucs,
+            split_min_llr=split_min_llr,
+            split_min_opps=split_min_opps,
+            filter_chimeras=filter_chimeras,
+            chimera_min_seg=chimera_min_seg,
+            chimera_purity=chimera_purity,
+            phase_nrl=phase_nrl,
+            pg_record=pg_record,
+        )
+    )
+
+
+def _process_bam_streaming_pipeline_fused_from_request(
+    request: _FusedStreamingPipelineRequest,
+) -> Tuple[int, int]:
     ref_fasta = None
     pysam.set_verbosity(0)
-    max_inflight = n_cores + 2
+    max_inflight = request.n_cores + 2
     start_time = time.time()
     counters = _new_streaming_counters()
 
@@ -1348,61 +1433,68 @@ def _process_bam_streaming_pipeline_fused(
     skipped = 0
     skip_reasons = _new_streaming_skip_reasons()
     filter_config = _streaming_filter_config(
-        min_mapq=min_mapq,
-        min_read_length=min_read_length,
-        primary_only=primary_only,
-        process_unmapped=process_unmapped,
-        train_rids=train_rids,
+        min_mapq=request.min_mapq,
+        min_read_length=request.min_read_length,
+        primary_only=request.primary_only,
+        process_unmapped=request.process_unmapped,
+        train_rids=request.train_rids,
     )
 
-    _log = _streaming_log_for_output(output_bam)
+    _log = _streaming_log_for_output(request.output_bam)
 
-    _output_target = _streaming_output_target(output_bam)
+    _output_target = _streaming_output_target(request.output_bam)
 
-    with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
+    with pysam.AlignmentFile(
+        request.input_bam,
+        "rb",
+        threads=request.io_threads,
+        check_sq=False,
+    ) as inbam:
         with pysam.AlignmentFile(_output_target, "wb",
-                                 header=maybe_append_pg(inbam.header, pg_record),
-                                 threads=io_threads) as outbam:
+                                 header=maybe_append_pg(inbam.header, request.pg_record),
+                                 threads=request.io_threads) as outbam:
             try:
-                if ref_fasta_path:
-                    ref_fasta = pysam.FastaFile(ref_fasta_path)
+                if request.ref_fasta_path:
+                    ref_fasta = pysam.FastaFile(request.ref_fasta_path)
 
                 executor = _new_fused_streaming_executor(
-                    model_path,
-                    recall_model_path,
-                    emission_uplift,
-                    recall_nucs,
-                    split_min_llr,
-                    split_min_opps,
-                    filter_chimeras,
-                    chimera_min_seg,
-                    chimera_purity,
-                    phase_nrl,
-                    n_cores,
+                    request.model_path,
+                    request.recall_model_path,
+                    request.emission_uplift,
+                    request.recall_nucs,
+                    request.split_min_llr,
+                    request.split_min_opps,
+                    request.filter_chimeras,
+                    request.chimera_min_seg,
+                    request.chimera_purity,
+                    request.phase_nrl,
+                    request.n_cores,
                 )
 
                 worker_args = _fused_worker_args(
-                    edge_trim, circular, mode, context_size,
-                    msp_min_size, nuc_min_size, with_scores,
-                    prob_threshold, min_llr, min_opps, unify_threshold,
+                    request.edge_trim, request.circular, request.mode,
+                    request.context_size, request.msp_min_size,
+                    request.nuc_min_size, request.with_scores,
+                    request.prob_threshold, request.min_llr,
+                    request.min_opps, request.unify_threshold,
                 )
 
                 read_counts = _run_streaming_worker_loop(
                     inbam.fetch(until_eof=True),
                     filter_config,
-                    mode,
+                    request.mode,
                     ref_fasta,
                     executor,
                     _process_fused_payload_chunk_worker,
                     worker_args,
-                    max_reads,
-                    chunk_size,
+                    request.max_reads,
+                    request.chunk_size,
                     max_inflight,
                     _fused_drain_chunk_factory(
                         outbam,
-                        with_scores,
-                        also_write_legacy,
-                        downstream_compat,
+                        request.with_scores,
+                        request.also_write_legacy,
+                        request.downstream_compat,
                         counters,
                     ),
                     skip_reasons,
