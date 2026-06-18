@@ -17,6 +17,8 @@ from fiberhmm.inference.streaming_pipeline import (
     _apply_worker_args_from_request,
     _buffer_processable_read,
     _buffer_processable_read_from_request,
+    _buffer_skipped_read,
+    _buffer_skipped_read_from_request,
     _buffer_streaming_read,
     _drain_all_streaming_chunks,
     _drain_if_inflight_full,
@@ -38,6 +40,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _ProcessableReadBufferRequest,
     _run_streaming_worker_loop,
     _should_sort_streaming_output,
+    _SkippedReadBufferRequest,
     _stream_reads_to_workers,
     _streaming_completion_message,
     _streaming_filter_config,
@@ -426,6 +429,41 @@ def test_streaming_filter_config_captures_read_filter_settings():
     assert config.primary_only is True
     assert config.process_unmapped is False
     assert config.train_rids == {"read1"}
+
+
+def test_buffer_skipped_read_keeps_chunk_lists_and_reasons_aligned():
+    reads = []
+    skip_flags = []
+    skip_reasons = {"low_mapq": 0}
+    read = object()
+    request = _SkippedReadBufferRequest(
+        chunk_read_objs=reads,
+        chunk_skip_flags=skip_flags,
+        skip_reasons=skip_reasons,
+        read=read,
+        reason="low_mapq",
+    )
+
+    added = _buffer_skipped_read_from_request(request)
+
+    assert added == 1
+    assert reads == [read]
+    assert skip_flags == [True]
+    assert skip_reasons == {"low_mapq": 1}
+
+    wrapper_reads = []
+    wrapper_skip_flags = []
+    wrapper_skip_reasons = {"low_mapq": 0}
+    assert _buffer_skipped_read(
+        wrapper_reads,
+        wrapper_skip_flags,
+        wrapper_skip_reasons,
+        read,
+        "low_mapq",
+    ) == 1
+    assert wrapper_reads == [read]
+    assert wrapper_skip_flags == [True]
+    assert wrapper_skip_reasons == {"low_mapq": 1}
 
 
 def test_buffer_processable_read_keeps_chunk_lists_aligned():

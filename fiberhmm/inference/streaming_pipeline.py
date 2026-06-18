@@ -77,6 +77,15 @@ class _ProcessableReadBufferRequest:
 
 
 @dataclass(frozen=True)
+class _SkippedReadBufferRequest:
+    chunk_read_objs: list
+    chunk_skip_flags: list
+    skip_reasons: dict
+    read: object
+    reason: str
+
+
+@dataclass(frozen=True)
 class _StreamingFlushProgress:
     buffers: _StreamingChunkBuffers
     last_progress_reads: int
@@ -151,11 +160,25 @@ class _StreamingFusedWorkerArgs:
         )
 
 
-def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, reason) -> int:
-    chunk_read_objs.append(read)
-    chunk_skip_flags.append(True)
-    record_skip_reason(skip_reasons, reason)
+def _buffer_skipped_read_from_request(
+    request: _SkippedReadBufferRequest,
+) -> int:
+    request.chunk_read_objs.append(request.read)
+    request.chunk_skip_flags.append(True)
+    record_skip_reason(request.skip_reasons, request.reason)
     return 1
+
+
+def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, reason) -> int:
+    return _buffer_skipped_read_from_request(
+        _SkippedReadBufferRequest(
+            chunk_read_objs=chunk_read_objs,
+            chunk_skip_flags=chunk_skip_flags,
+            skip_reasons=skip_reasons,
+            read=read,
+            reason=reason,
+        )
+    )
 
 
 def _buffer_processable_read_from_request(
