@@ -52,6 +52,7 @@ from fiberhmm.cli.generate_probs import (
     _write_combined_probability_tables,
     _write_probability_tables_for_base,
     _write_probability_table,
+    _write_sample_probability_table,
 )
 
 
@@ -1052,6 +1053,37 @@ def test_write_probability_table_uses_stable_probability_columns(tmp_path):
         "encode\tcontext\thit\tnohit\tratio\n"
         "7\tAAA\t1\t3\t0.25\n"
     )
+
+
+def test_write_sample_probability_table_builds_path_and_returns_frame(monkeypatch):
+    probs = pd.DataFrame({
+        "encode": [0],
+        "context": ["AAA"],
+        "hit": [1],
+        "nohit": [2],
+        "ratio": [1 / 3],
+    })
+    counter = _Counter(tables={3: probs})
+    writes = []
+
+    monkeypatch.setattr(
+        "fiberhmm.cli.generate_probs._write_probability_table",
+        lambda frame, output_path: writes.append((frame, output_path)),
+    )
+
+    returned = _write_sample_probability_table(
+        counter,
+        "tables",
+        "run",
+        "accessible",
+        "A",
+        3,
+    )
+
+    assert len(writes) == 1
+    assert writes[0][0] is returned
+    assert writes[0][1] == "tables/run_accessible_A_k3.tsv"
+    pd.testing.assert_frame_equal(returned, probs)
 
 
 def test_write_probability_tables_for_base_writes_each_context(monkeypatch, capsys):

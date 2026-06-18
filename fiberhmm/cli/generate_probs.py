@@ -226,6 +226,26 @@ def _write_probability_table(probs: pd.DataFrame, output_path: str) -> None:
     )
 
 
+def _write_sample_probability_table(
+    counter: ContextCounter,
+    tables_dir: str,
+    base_name: str,
+    sample_name: str,
+    base: str,
+    context_size: int,
+) -> pd.DataFrame:
+    _, probs = counter.get_encoding_table(context_size)
+    output_path = _probability_table_path(
+        tables_dir,
+        base_name,
+        sample_name,
+        base,
+        context_size,
+    )
+    _write_probability_table(probs, output_path)
+    return probs
+
+
 def _probability_counter_summary(counter: ContextCounter) -> dict:
     return {
         'positions': counter.total_positions,
@@ -662,25 +682,22 @@ def _write_probability_tables_for_base(
     )
     print(f"\n  Generating TSV files for {tsv_context_label}...")
     for ctx_size in context_sizes:
-        _, acc_probs = accessible_counter.get_encoding_table(ctx_size)
-        acc_tsv = _probability_table_path(
+        acc_probs = _write_sample_probability_table(
+            accessible_counter,
             tables_dir,
             base_name,
             "accessible",
             base,
             ctx_size,
         )
-        _write_probability_table(acc_probs, acc_tsv)
-
-        _, inacc_probs = inaccessible_counter.get_encoding_table(ctx_size)
-        inacc_tsv = _probability_table_path(
+        inacc_probs = _write_sample_probability_table(
+            inaccessible_counter,
             tables_dir,
             base_name,
             "inaccessible",
             base,
             ctx_size,
         )
-        _write_probability_table(inacc_probs, inacc_tsv)
 
         n_acc = len(acc_probs)
         n_inacc = len(inacc_probs)
