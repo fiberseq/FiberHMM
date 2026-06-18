@@ -780,7 +780,12 @@ def test_completed_region_future_helpers_callback_and_update_progress(capsys):
         def update(self, amount):
             self.n += amount
 
-    complete = Future(True, ("chr1", 0, 10, [{"read_name": "a"}]))
+    complete = Future(
+        True,
+        export_posteriors._ProcessedRegionPosteriors(
+            "chr1", 0, 10, [{"read_name": "a"}],
+        ),
+    )
     waiting = Future(False)
     pending = {complete: ("chr1", 0, 10), waiting: ("chr2", 0, 10)}
     pbar = Progress()

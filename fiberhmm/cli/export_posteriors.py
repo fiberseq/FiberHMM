@@ -115,6 +115,14 @@ class _H5BatchMetadata:
     strands: list
 
 
+@dataclass(frozen=True)
+class _ProcessedRegionPosteriors:
+    chrom: str
+    start: int
+    end: int
+    results: List[Dict]
+
+
 def _prepare_export_run(
     input_bam: str,
     model_path: str,
@@ -304,7 +312,7 @@ def _init_worker(model_path: str, params: dict):
     warm_up_model_posteriors(_worker_model)
 
 
-def _process_region_worker(args) -> Tuple[str, int, int, List[Dict]]:
+def _process_region_worker(args) -> _ProcessedRegionPosteriors:
     """Worker to process a region and extract posteriors."""
     global _worker_model, _worker_params
 
@@ -323,7 +331,7 @@ def _process_region_worker(args) -> Tuple[str, int, int, List[Dict]]:
             if result is not None:
                 results.append(result)
 
-    return (chrom, start, end, results)
+    return _ProcessedRegionPosteriors(chrom, start, end, results)
 
 
 def _submit_next_region(executor, region_iter, input_bam: str, pending: dict) -> bool:
@@ -364,9 +372,9 @@ def _handle_completed_region_future(
     region_info = pending.pop(future)
 
     try:
-        chrom, start, end, results = future.result()
-        result_callback(chrom, results)
-        del results
+        result = future.result()
+        result_callback(result.chrom, result.results)
+        del result
     except Exception as e:
         print(f"Error processing {region_info}: {e}")
 
@@ -657,9 +665,9 @@ def _process_regions_serial(
     try:
         for chrom, start, end in pbar:
             args = (chrom, start, end, input_bam)
-            _, _, _, results = _process_region_worker(args)
-            result_callback(chrom, results)
-            del results
+            result = _process_region_worker(args)
+            result_callback(result.chrom, result.results)
+            del result
     finally:
         pbar.close()
 
