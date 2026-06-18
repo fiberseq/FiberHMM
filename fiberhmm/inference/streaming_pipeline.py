@@ -496,6 +496,29 @@ def _new_apply_streaming_executor(
     )
 
 
+def _apply_drain_chunk_factory(
+    outbam,
+    with_scores: bool,
+    write_msps: bool,
+    posterior_writer,
+    counters: dict,
+):
+    def drain_chunk_factory(inflight):
+        def drain_chunk():
+            _drain_oldest_chunk(
+                inflight,
+                outbam,
+                with_scores,
+                write_msps,
+                posterior_writer,
+                counters,
+            )
+
+        return drain_chunk
+
+    return drain_chunk_factory
+
+
 def _new_fused_streaming_executor(
     model_path: str,
     recall_model_path: str,
@@ -928,9 +951,12 @@ def _process_bam_streaming_pipeline(
                     max_reads,
                     chunk_size,
                     max_inflight,
-                    lambda inflight: lambda: _drain_oldest_chunk(
-                        inflight, outbam, with_scores, write_msps,
-                        posterior_writer, counters,
+                    _apply_drain_chunk_factory(
+                        outbam,
+                        with_scores,
+                        write_msps,
+                        posterior_writer,
+                        counters,
                     ),
                     skip_reasons,
                     _log,

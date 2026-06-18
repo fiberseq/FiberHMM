@@ -9,6 +9,7 @@ import sys
 
 from fiberhmm.inference import streaming_pipeline
 from fiberhmm.inference.streaming_pipeline import (
+    _apply_drain_chunk_factory,
     _apply_worker_args,
     _buffer_processable_read,
     _buffer_streaming_read,
@@ -815,6 +816,48 @@ def test_new_apply_streaming_executor_configures_pool(monkeypatch):
         "initializer": streaming_pipeline._init_bam_worker,
         "initargs": ("model.pkl", True),
     }
+
+
+def test_apply_drain_chunk_factory_calls_apply_drain(monkeypatch):
+    calls = []
+
+    def fake_drain(
+        inflight,
+        outbam,
+        with_scores,
+        write_msps,
+        posterior_writer,
+        counters,
+    ):
+        calls.append(
+            (inflight, outbam, with_scores, write_msps, posterior_writer, counters)
+        )
+
+    monkeypatch.setattr(streaming_pipeline, "_drain_oldest_chunk", fake_drain)
+
+    inflight = deque(["chunk"])
+    outbam = object()
+    posterior_writer = object()
+    counters = {}
+
+    drain_chunk = _apply_drain_chunk_factory(
+        outbam,
+        with_scores=True,
+        write_msps=False,
+        posterior_writer=posterior_writer,
+        counters=counters,
+    )(inflight)
+    drain_chunk()
+
+    assert len(calls) == 1
+    assert calls[0][0] is inflight
+    assert calls[0][1:] == (
+        outbam,
+        True,
+        False,
+        posterior_writer,
+        counters,
+    )
 
 
 def test_new_fused_streaming_executor_configures_pool(monkeypatch):
