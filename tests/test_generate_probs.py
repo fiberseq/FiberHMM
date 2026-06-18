@@ -1,5 +1,6 @@
 from collections import defaultdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 
@@ -17,6 +18,7 @@ from fiberhmm.cli.generate_probs import (
     _new_filter_stats,
     _probability_counter_path,
     _probability_table_path,
+    _print_probability_generation_header,
     _print_daf_diagnostics,
     _probability_read_tags_or_skip,
     _probability_counter_summary,
@@ -152,6 +154,36 @@ def test_context_size_label_formats_single_and_range_variants():
     assert _context_size_label([3], include_mer_span=False) == "k=3"
     assert _context_size_label([6, 3, 4]) == "k=3 to k=6 (7-mer to 13-mer)"
     assert _context_size_label([6, 3, 4], include_mer_span=False) == "k=3 to k=6"
+
+
+def test_print_probability_generation_header_lists_settings_and_inputs(capsys):
+    args = SimpleNamespace(
+        mode="daf",
+        context_sizes=[3, 4],
+        max_reads=0,
+        min_mapq=20,
+        min_read_length=1000,
+        edge_trim=10,
+        prob_threshold=128,
+        accessible=["acc1.bam", "acc2.bam"],
+        inaccessible=["inacc.bam"],
+    )
+
+    _print_probability_generation_header(
+        args, "out", "out/tables", "out/plots",
+    )
+
+    output = capsys.readouterr().out
+    assert "FiberHMM Emission Probability Generator" in output
+    assert "Output directory: out" in output
+    assert "Tables: out/tables/" in output
+    assert "Mode: daf" in output
+    assert "Context sizes: k=3 to k=4 (7-mer to 9-mer)" in output
+    assert "Max reads per sample: all" in output
+    assert "ML prob threshold:  128/255 (50.2%)" in output
+    assert "Accessible samples (naked/dechromatinized): 2 files" in output
+    assert "  - acc1.bam" in output
+    assert "Inaccessible samples (untreated/native): 1 files" in output
 
 
 def test_record_mm_tag_types_counts_non_empty_specs():

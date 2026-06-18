@@ -473,21 +473,8 @@ def process_sample_set(bam_files: List[str], counters: Dict[str, ContextCounter]
     return total_reads, total_scanned, dict(combined_stats)
 
 
-def main():
-    args = parse_args()
-
-    np.random.seed(args.seed)
-
-    # max_context for internal storage is the max of requested sizes
-    max_context = max(args.context_sizes)
-
-    # Set up output directories
-    output_dir = args.output
-    _, tables_dir_path, plots_dir_path = setup_output_dirs(output_dir)
-    tables_dir = str(tables_dir_path)
-    plots_dir = str(plots_dir_path)
-    base_name = get_base_name(output_dir)
-
+def _print_probability_generation_header(args, output_dir: str, tables_dir: str,
+                                         plots_dir: str) -> None:
     print("=" * 60)
     print("FiberHMM Emission Probability Generator")
     print("=" * 60)
@@ -506,7 +493,10 @@ def main():
     print(f"  Min MAPQ:           {args.min_mapq}")
     print(f"  Min read length:    {args.min_read_length} bp")
     print(f"  Edge trim:          {args.edge_trim} bp")
-    print(f"  ML prob threshold:  {args.prob_threshold}/255 ({100*args.prob_threshold/255:.1f}%)")
+    print(
+        f"  ML prob threshold:  {args.prob_threshold}/255 "
+        f"({100 * args.prob_threshold / 255:.1f}%)"
+    )
 
     print(f"\nAccessible samples (naked/dechromatinized): {len(args.accessible)} files")
     for f in args.accessible:
@@ -515,6 +505,24 @@ def main():
     print(f"\nInaccessible samples (untreated/native): {len(args.inaccessible)} files")
     for f in args.inaccessible:
         print(f"  - {f}")
+
+
+def main():
+    args = parse_args()
+
+    np.random.seed(args.seed)
+
+    # max_context for internal storage is the max of requested sizes
+    max_context = max(args.context_sizes)
+
+    # Set up output directories
+    output_dir = args.output
+    _, tables_dir_path, plots_dir_path = setup_output_dirs(output_dir)
+    tables_dir = str(tables_dir_path)
+    plots_dir = str(plots_dir_path)
+    base_name = get_base_name(output_dir)
+
+    _print_probability_generation_header(args, output_dir, tables_dir, plots_dir)
 
     # Determine which bases to track based on mode
     target_bases = _target_bases_for_mode(args.mode)
