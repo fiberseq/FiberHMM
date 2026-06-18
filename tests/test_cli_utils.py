@@ -33,6 +33,7 @@ from fiberhmm.cli.utils import (
     _transfer_probability_frame,
     _transfer_progress_postfix,
     _transfer_read_limit_reached,
+    _TransferAccessibilityInputs,
     _trim_accessibility_context,
     _write_regression_stats_summary,
     _write_transfer_probability_tables,
@@ -659,10 +660,11 @@ def test_load_transfer_accessibility_inputs_reads_priors_tsv(tmp_path, capsys):
         reference_bam=None,
     )
 
-    counters, priors = _load_transfer_accessibility_inputs(args, 3, ["C"])
+    inputs = _load_transfer_accessibility_inputs(args, 3, ["C"])
 
-    assert counters is None
-    assert priors.to_dict("list") == {
+    assert isinstance(inputs, _TransferAccessibilityInputs)
+    assert inputs.counters is None
+    assert inputs.priors.to_dict("list") == {
         "context": ["ACA"],
         "p_accessible": [0.75],
     }
@@ -697,11 +699,11 @@ def test_load_transfer_accessibility_inputs_computes_reference_summary(
         reference_bam="reference.bam",
     )
 
-    counters, priors = _load_transfer_accessibility_inputs(args, 5, ["C", "G"])
+    inputs = _load_transfer_accessibility_inputs(args, 5, ["C", "G"])
 
-    assert sorted(counters) == ["C"]
-    assert isinstance(counters["C"], Counter)
-    assert priors is None
+    assert sorted(inputs.counters) == ["C"]
+    assert isinstance(inputs.counters["C"], Counter)
+    assert inputs.priors is None
     assert calls == [("reference.bam", 5, args)]
     out = capsys.readouterr().out
     assert "Computing accessibility priors from: reference.bam" in out

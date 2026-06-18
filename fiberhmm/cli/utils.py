@@ -19,6 +19,7 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -63,6 +64,12 @@ class _EmissionScalingResult:
     adjusted: np.ndarray
     before: _EmissionStats
     after: _EmissionStats
+
+
+@dataclass(frozen=True)
+class _TransferAccessibilityInputs:
+    counters: Optional[dict]
+    priors: Optional[pd.DataFrame]
 
 
 # =============================================================================
@@ -937,7 +944,7 @@ def _load_transfer_accessibility_inputs(args, max_context: int,
         print(f"\nLoading accessibility priors from: {args.accessibility_priors}")
         accessibility_priors_df = pd.read_csv(args.accessibility_priors, sep='\t')
         print(f"  Loaded {len(accessibility_priors_df)} contexts")
-        return None, accessibility_priors_df
+        return _TransferAccessibilityInputs(counters=None, priors=accessibility_priors_df)
 
     if args.reference_bam:
         print(f"\nComputing accessibility priors from: {args.reference_bam}")
@@ -947,7 +954,7 @@ def _load_transfer_accessibility_inputs(args, max_context: int,
             args,
         )
         _print_transfer_accessibility_summary(target_bases, accessibility_counters)
-        return accessibility_counters, None
+        return _TransferAccessibilityInputs(counters=accessibility_counters, priors=None)
 
     print("\nError: Must provide one of:")
     print("  --reference-bam (fiber-seq BAM with footprint tags ns/nl)")
@@ -1105,8 +1112,8 @@ def cmd_transfer(args):
 
     target_bases = _target_bases_for_transfer_mode(args.mode)
     _print_transfer_header(args, output_dir, target_bases)
-    accessibility_counters, accessibility_priors_df = (
-        _load_transfer_accessibility_inputs(args, max_context, target_bases)
+    accessibility_inputs = _load_transfer_accessibility_inputs(
+        args, max_context, target_bases,
     )
 
     # Step 2: Get target modification rates
@@ -1120,8 +1127,8 @@ def cmd_transfer(args):
         base_name,
         target_bases,
         target_counters,
-        accessibility_priors_df,
-        accessibility_counters,
+        accessibility_inputs.priors,
+        accessibility_inputs.counters,
     )
 
     # Save accessibility priors if computed
@@ -1129,7 +1136,7 @@ def cmd_transfer(args):
         tables_dir,
         base_name,
         max_context,
-        accessibility_counters,
+        accessibility_inputs.counters,
     )
 
     # Generate stats if requested
