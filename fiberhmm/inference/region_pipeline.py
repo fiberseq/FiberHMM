@@ -405,6 +405,44 @@ def _make_output_temp_dir(output_path: str, prefix: str) -> str:
     return tempfile.mkdtemp(prefix=prefix, dir=output_dir)
 
 
+def _prepare_region_parallel_run(
+    input_bam: str,
+    output_path: str,
+    region_size: int,
+    skip_scaffolds: bool,
+    chroms: Optional[Set[str]],
+    n_cores: int,
+    *,
+    temp_prefix: str,
+    output_label: str = "",
+    ensure_index: bool = True,
+    output_posteriors: Optional[str] = None,
+):
+    if ensure_index:
+        ensure_bam_index(
+            input_bam,
+            "Indexing input BAM for region-parallel processing...",
+        )
+
+    regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
+    print(f"Processing {len(regions)} regions with {n_cores} cores{output_label}...")
+    if output_posteriors is not None:
+        print(f"Posteriors will be written to: {output_posteriors}")
+    sys.stdout.flush()
+
+    return regions, _make_output_temp_dir(output_path, temp_prefix)
+
+
+def _region_completion_result(aggregation, start_time: float) -> Tuple[int, int]:
+    elapsed = time.time() - start_time
+    print(_region_completion_summary(
+        aggregation.total_reads,
+        aggregation.reads_with_footprints,
+        elapsed,
+    ))
+    return aggregation.total_reads, aggregation.reads_with_footprints
+
+
 def _merge_region_posterior_outputs(
     temp_tsvs,
     output_posteriors: str,
@@ -459,6 +497,34 @@ def _finalize_region_bam_output(
     _sort_and_index_bam(output_bam, threads=n_cores)
 
 
+def _finalize_fused_region_bam_output(
+    input_bam: str,
+    output_bam: str,
+    temp_dir: str,
+    aggregation: RegionBamAggregation,
+    start_time: float,
+) -> None:
+    _print_skip_reasons_summary(aggregation, footprint_label="With FP")
+
+    # Concat region BAMs in region-index order - preserves coord sort.
+    non_empty = _ordered_existing_temp_paths(aggregation.temp_bams)
+    _concatenate_region_bams(input_bam, output_bam, non_empty, temp_dir)
+
+    # Index directly (input sorted -> each region sorted -> concat sorted).
+    try:
+        pysam.index(output_bam)
+    except pysam.SamtoolsError:
+        pass
+
+    elapsed = time.time() - start_time
+    rate = _read_rate(aggregation.total_reads, elapsed)
+    print(
+        f"  Total: {aggregation.total_reads:,} reads, "
+        f"{aggregation.reads_with_footprints:,} with footprints, "
+        f"{rate:.1f} r/s"
+    )
+
+
 def _concatenate_region_beds(output_bed: str, non_empty_beds: list[str]) -> None:
     print(f"Concatenating {len(non_empty_beds)} region BED files...")
     sys.stdout.flush()
@@ -507,17 +573,16 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
     start_time = time.time()
     return_posteriors = output_posteriors is not None
 
-    ensure_bam_index(input_bam, "Indexing input BAM for region-parallel processing...")
-
-    # Get regions
-    regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
-    print(f"Processing {len(regions)} regions with {n_cores} cores...")
-    if return_posteriors:
-        print(f"Posteriors will be written to: {output_posteriors}")
-    sys.stdout.flush()
-
-    # Create temp directory in output folder for easier cleanup
-    temp_dir = _make_output_temp_dir(output_bam, '.fiberhmm_tmp_')
+    regions, temp_dir = _prepare_region_parallel_run(
+        input_bam,
+        output_bam,
+        region_size,
+        skip_scaffolds,
+        chroms,
+        n_cores,
+        temp_prefix='.fiberhmm_tmp_',
+        output_posteriors=output_posteriors if return_posteriors else None,
+    )
 
     try:
         params = _region_bam_worker_params(
@@ -588,14 +653,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                 input_bam,
             )
 
-        elapsed = time.time() - start_time
-        print(_region_completion_summary(
-            aggregation.total_reads,
-            aggregation.reads_with_footprints,
-            elapsed,
-        ))
-
-        return aggregation.total_reads, aggregation.reads_with_footprints
+        return _region_completion_result(aggregation, start_time)
 
     finally:
         # Clean up temp directory
@@ -628,15 +686,16 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
     """
     start_time = time.time()
 
-    ensure_bam_index(input_bam, "Indexing input BAM for region-parallel processing...")
-
-    # Get regions
-    regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
-    print(f"Processing {len(regions)} regions with {n_cores} cores (BED output)...")
-    sys.stdout.flush()
-
-    # Create temp directory for BED files (small compared to BAMs)
-    temp_dir = _make_output_temp_dir(output_bed, '.fiberhmm_bed_tmp_')
+    regions, temp_dir = _prepare_region_parallel_run(
+        input_bam,
+        output_bed,
+        region_size,
+        skip_scaffolds,
+        chroms,
+        n_cores,
+        temp_prefix='.fiberhmm_bed_tmp_',
+        output_label=" (BED output)",
+    )
 
     try:
         params = _base_region_worker_params(
@@ -684,14 +743,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
 
         _concatenate_region_beds(output_bed, non_empty_beds)
 
-        elapsed = time.time() - start_time
-        print(_region_completion_summary(
-            aggregation.total_reads,
-            aggregation.reads_with_footprints,
-            elapsed,
-        ))
-
-        return aggregation.total_reads, aggregation.reads_with_footprints
+        return _region_completion_result(aggregation, start_time)
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -732,11 +784,17 @@ def _process_bam_region_parallel_fused(
     """
     start_time = time.time()
 
-    regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
-    print(f"Processing {len(regions)} regions with {n_cores} cores (fused apply+recall)...")
-    sys.stdout.flush()
-
-    temp_dir = _make_output_temp_dir(output_bam, '.fiberhmm_call_tmp_')
+    regions, temp_dir = _prepare_region_parallel_run(
+        input_bam,
+        output_bam,
+        region_size,
+        skip_scaffolds,
+        chroms,
+        n_cores,
+        temp_prefix='.fiberhmm_call_tmp_',
+        output_label=" (fused apply+recall)",
+        ensure_index=False,
+    )
 
     params = _fused_region_worker_params(
         edge_trim=edge_trim,
@@ -796,24 +854,12 @@ def _process_bam_region_parallel_fused(
         )
         print()
 
-        _print_skip_reasons_summary(aggregation, footprint_label="With FP")
-
-        # Concat region BAMs in region-index order - preserves coord sort.
-        non_empty = _ordered_existing_temp_paths(aggregation.temp_bams)
-        _concatenate_region_bams(input_bam, output_bam, non_empty, temp_dir)
-
-        # Index directly (input sorted -> each region sorted -> concat sorted).
-        try:
-            pysam.index(output_bam)
-        except pysam.SamtoolsError:
-            pass
-
-        elapsed = time.time() - start_time
-        rate = _read_rate(aggregation.total_reads, elapsed)
-        print(
-            f"  Total: {aggregation.total_reads:,} reads, "
-            f"{aggregation.reads_with_footprints:,} with footprints, "
-            f"{rate:.1f} r/s"
+        _finalize_fused_region_bam_output(
+            input_bam,
+            output_bam,
+            temp_dir,
+            aggregation,
+            start_time,
         )
 
     finally:

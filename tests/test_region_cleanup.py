@@ -519,6 +519,99 @@ def test_make_output_temp_dir_places_directory_next_to_output(tmp_path):
     assert os.path.basename(temp_dir).startswith(".fiberhmm_test_")
 
 
+def test_prepare_region_parallel_run_indexes_reports_and_makes_temp(
+    monkeypatch,
+    tmp_path,
+    capsys,
+):
+    calls = []
+    regions = [("chr1", 0, 100), ("chr2", 0, 50)]
+
+    monkeypatch.setattr(
+        region_pipeline,
+        "ensure_bam_index",
+        lambda *args: calls.append(("index", args)),
+    )
+    monkeypatch.setattr(
+        region_pipeline,
+        "_get_genome_regions",
+        lambda *args: calls.append(("regions", args)) or regions,
+    )
+    monkeypatch.setattr(
+        region_pipeline,
+        "_make_output_temp_dir",
+        lambda *args: calls.append(("temp", args)) or str(tmp_path / "tmp"),
+    )
+
+    got_regions, temp_dir = region_pipeline._prepare_region_parallel_run(
+        "input.bam",
+        "out.bam",
+        region_size=1000,
+        skip_scaffolds=True,
+        chroms={"chr1"},
+        n_cores=3,
+        temp_prefix=".fiberhmm_tmp_",
+        output_posteriors="post.h5",
+    )
+
+    assert got_regions is regions
+    assert temp_dir == str(tmp_path / "tmp")
+    assert calls == [
+        (
+            "index",
+            ("input.bam", "Indexing input BAM for region-parallel processing..."),
+        ),
+        ("regions", ("input.bam", 1000, True, {"chr1"})),
+        ("temp", ("out.bam", ".fiberhmm_tmp_")),
+    ]
+    out = capsys.readouterr().out
+    assert "Processing 2 regions with 3 cores..." in out
+    assert "Posteriors will be written to: post.h5" in out
+
+
+def test_prepare_region_parallel_run_can_skip_index(monkeypatch):
+    monkeypatch.setattr(
+        region_pipeline,
+        "ensure_bam_index",
+        lambda *args: (_ for _ in ()).throw(AssertionError("indexed")),
+    )
+    monkeypatch.setattr(
+        region_pipeline,
+        "_get_genome_regions",
+        lambda *args: [("chr1", 0, 100)],
+    )
+    monkeypatch.setattr(region_pipeline, "_make_output_temp_dir", lambda *args: "tmp")
+
+    regions, temp_dir = region_pipeline._prepare_region_parallel_run(
+        "input.bam",
+        "out.bam",
+        region_size=1000,
+        skip_scaffolds=False,
+        chroms=None,
+        n_cores=1,
+        temp_prefix=".fiberhmm_call_tmp_",
+        output_label=" (fused apply+recall)",
+        ensure_index=False,
+    )
+
+    assert regions == [("chr1", 0, 100)]
+    assert temp_dir == "tmp"
+
+
+def test_region_completion_result_prints_summary(monkeypatch, capsys):
+    aggregation = region_pipeline.RegionBamAggregation(
+        total_reads=10,
+        reads_with_footprints=4,
+    )
+    monkeypatch.setattr(region_pipeline.time, "time", lambda: 14.0)
+
+    assert region_pipeline._region_completion_result(aggregation, 10.0) == (10, 4)
+    assert (
+        "Completed: 10 reads | 4 with footprints | 2.5 reads/s | 4.0s"
+        in capsys.readouterr().out
+    )
+
+
 def test_merge_region_posterior_outputs_reports_tsv_and_conversion(
     monkeypatch,
     tmp_path,
@@ -604,6 +697,55 @@ def test_finalize_region_bam_output_concatenates_reports_and_indexes(
     out = capsys.readouterr().out
     assert "Output BAM: 2.00GB" in out
     assert "Step: Index/Sort..." in out
+
+
+def test_finalize_fused_region_bam_output_concats_indexes_and_reports(
+    monkeypatch,
+    capsys,
+):
+    calls = []
+    aggregation = region_pipeline.RegionBamAggregation(
+        total_reads=10,
+        reads_with_footprints=4,
+        temp_bams=[(1, "late.bam"), (0, "early.bam")],
+    )
+    aggregation.total_skipped = 2
+    aggregation.skip_reasons = {"low_mapq": 2}
+
+    monkeypatch.setattr(
+        region_pipeline,
+        "_ordered_existing_temp_paths",
+        lambda paths: calls.append(("ordered", paths)) or ["early.bam", "late.bam"],
+    )
+    monkeypatch.setattr(
+        region_pipeline,
+        "_concatenate_region_bams",
+        lambda *args: calls.append(("concat", args)),
+    )
+    monkeypatch.setattr(
+        region_pipeline.pysam,
+        "index",
+        lambda output_bam: calls.append(("index", output_bam)),
+    )
+    monkeypatch.setattr(region_pipeline.time, "time", lambda: 14.0)
+
+    region_pipeline._finalize_fused_region_bam_output(
+        "input.bam",
+        "out.bam",
+        "tmp",
+        aggregation,
+        start_time=10.0,
+    )
+
+    assert calls == [
+        ("ordered", [(1, "late.bam"), (0, "early.bam")]),
+        ("concat", ("input.bam", "out.bam", ["early.bam", "late.bam"], "tmp")),
+        ("index", "out.bam"),
+    ]
+    out = capsys.readouterr().out
+    assert "Skipped: 2" in out
+    assert "low_mapq: 2 (16.7%)" in out
+    assert "Total: 10 reads, 4 with footprints, 2.5 r/s" in out
 
 
 def test_concatenate_region_beds_writes_inputs_in_order(tmp_path, capsys):
