@@ -722,3 +722,57 @@ def test_context_frequency_comparison_plot_scales_counts_and_identity_line():
     empty_ax = FakeAxis()
     stats._plot_context_frequency_comparison(empty_ax, pd.DataFrame())
     assert empty_ax.scatter_calls == []
+
+
+def test_probability_distribution_png_axis_uses_counter_labels_without_medians():
+    class FakeAxis:
+        def __init__(self):
+            self.hist_calls = []
+            self.vlines = []
+            self.xlabel = None
+            self.ylabel = None
+            self.title = None
+            self.legend_kwargs = None
+
+        def hist(self, values, **kwargs):
+            self.hist_calls.append((values, kwargs))
+
+        def axvline(self, value, **kwargs):
+            self.vlines.append((value, kwargs))
+
+        def set_xlabel(self, value, **kwargs):
+            self.xlabel = (value, kwargs)
+
+        def set_ylabel(self, value, **kwargs):
+            self.ylabel = (value, kwargs)
+
+        def set_title(self, value, **kwargs):
+            self.title = (value, kwargs)
+
+        def legend(self, **kwargs):
+            self.legend_kwargs = kwargs
+
+    acc_probs = pd.DataFrame({"ratio": [0.2, 0.8]})
+    inacc_probs = pd.DataFrame({"ratio": [0.1, 0.3]})
+    ax = FakeAxis()
+
+    stats._plot_probability_distribution_png_axis(
+        ax,
+        _FakeCounter(1000, 250, {}, acc_probs),
+        _FakeCounter(2000, 300, {}, inacc_probs),
+        acc_probs,
+        inacc_probs,
+        base="A",
+        context_size=3,
+    )
+
+    assert ax.hist_calls[0][1]["label"] == "Accessible (n=1,000)"
+    assert ax.hist_calls[1][1]["label"] == "Inaccessible (n=2,000)"
+    assert ax.vlines == []
+    assert ax.xlabel == ("P(methylation | context)", {"fontsize": 12})
+    assert ax.ylabel == ("Number of contexts", {"fontsize": 12})
+    assert ax.title == (
+        "A-centered Emission Probability Distributions (k=3)",
+        {"fontsize": 14},
+    )
+    assert ax.legend_kwargs == {"fontsize": 11}

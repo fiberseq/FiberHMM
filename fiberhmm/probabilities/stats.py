@@ -350,6 +350,34 @@ def _plot_context_frequency_comparison(ax, merged) -> None:
     ax.set_yscale('log')
 
 
+def _plot_probability_distribution_png_axis(
+    ax,
+    acc: 'ContextCounter',
+    inacc: 'ContextCounter',
+    acc_probs,
+    inacc_probs,
+    base: str,
+    context_size: int,
+) -> None:
+    _plot_probability_ratio_histograms(
+        ax,
+        acc_probs['ratio'].values,
+        inacc_probs['ratio'].values,
+        accessible_label=f'Accessible (n={acc.total_positions:,})',
+        inaccessible_label=f'Inaccessible (n={inacc.total_positions:,})',
+        show_positive_medians=False,
+    )
+
+    ax.set_xlabel('P(methylation | context)', fontsize=12)
+    ax.set_ylabel('Number of contexts', fontsize=12)
+    ax.set_title(
+        f'{base}-centered Emission Probability Distributions '
+        f'(k={context_size})',
+        fontsize=14,
+    )
+    ax.legend(fontsize=11)
+
+
 def _write_probability_ratio_summary(handle, label: str, ratios: np.ndarray) -> None:
     if len(ratios) == 0:
         return
@@ -570,19 +598,9 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
 
         fig, ax = plt.subplots(figsize=(8, 5))
 
-        _plot_probability_ratio_histograms(
-            ax,
-            acc_probs['ratio'].values,
-            inacc_probs['ratio'].values,
-            accessible_label=f'Accessible (n={acc.total_positions:,})',
-            inaccessible_label=f'Inaccessible (n={inacc.total_positions:,})',
-            show_positive_medians=False,
+        _plot_probability_distribution_png_axis(
+            ax, acc, inacc, acc_probs, inacc_probs, base, context_size,
         )
-
-        ax.set_xlabel('P(methylation | context)', fontsize=12)
-        ax.set_ylabel('Number of contexts', fontsize=12)
-        ax.set_title(f'{base}-centered Emission Probability Distributions (k={context_size})', fontsize=14)
-        ax.legend(fontsize=11)
 
         plt.tight_layout()
         png_path = _probability_distribution_plot_path(
