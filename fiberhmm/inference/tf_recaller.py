@@ -55,6 +55,7 @@ except ImportError:
         return decorator
 
 from fiberhmm.core.bam_reader import (
+    _has_mm_ml_inputs,
     daf_strand_from_tag,
     detect_daf_strand,
     encode_from_query_sequence,
@@ -537,8 +538,8 @@ def _extract_mm_ml_modifications(read, seq: str, mode: str, mm_tag, ml_tag):
 
 def _preferred_mm_ml_tags(read):
     mm_tag = get_preferred_tag(read, 'MM', 'Mm', '')
-    ml_tag = get_preferred_tag(read, 'ML', 'Ml', [])
-    if not mm_tag or not ml_tag:
+    ml_tag = get_preferred_tag(read, 'ML', 'Ml', None)
+    if not _has_mm_ml_inputs(mm_tag, ml_tag):
         return None
     return mm_tag, ml_tag
 

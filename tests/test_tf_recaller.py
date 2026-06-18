@@ -732,6 +732,27 @@ def test_extract_modifications_keeps_raw_ml_container(monkeypatch):
     assert captured['ml_tag'] is raw_ml
 
 
+def test_extract_modifications_accepts_numpy_ml_container(monkeypatch):
+    read = _FakeRead()
+    read.query_sequence = 'A' * 20
+    read.is_reverse = False
+    raw_ml = np.asarray([255, 200], dtype=np.uint8)
+    read.set_tag('MM', 'A+a,0,0;')
+    read.set_tag('ML', raw_ml)
+    captured = {}
+
+    def fake_parse(mm_tag, ml_tag, sequence, is_reverse, prob_threshold, mode):
+        captured['ml_tag'] = ml_tag
+        return {0, 1}
+
+    monkeypatch.setattr(tf_recaller, 'parse_mm_tag_query_positions', fake_parse)
+
+    assert tf_recaller.extract_modifications(read, 'pacbio-fiber', 3) == (
+        {0, 1}, '.', read.query_sequence,
+    )
+    assert captured['ml_tag'] is raw_ml
+
+
 def test_extract_modifications_handles_daf_iupac_branch():
     read = _FakeRead()
     read.query_sequence = 'ACYR'
