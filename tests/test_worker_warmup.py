@@ -35,6 +35,35 @@ def test_tf_warmup_obs_uses_expected_dummy_window():
     assert obs.sum() == 0
 
 
+def test_warm_up_model_predict_runs_dummy_prediction(monkeypatch):
+    monkeypatch.setattr("fiberhmm.core.hmm.HAS_NUMBA", True)
+
+    model = RecordingModel()
+    worker_warmup.warm_up_model_predict(model)
+
+    assert model.predict_lengths == [4]
+    assert model.predict_proba_lengths == []
+
+
+def test_warm_up_model_predict_skips_without_numba(monkeypatch):
+    monkeypatch.setattr("fiberhmm.core.hmm.HAS_NUMBA", False)
+
+    model = RecordingModel()
+    worker_warmup.warm_up_model_predict(model)
+
+    assert model.predict_lengths == []
+
+
+def test_warm_up_model_predict_ignores_warmup_failures(monkeypatch):
+    monkeypatch.setattr("fiberhmm.core.hmm.HAS_NUMBA", True)
+
+    class FailingModel:
+        def predict(self, obs):
+            raise RuntimeError("predict failed")
+
+    worker_warmup.warm_up_model_predict(FailingModel())
+
+
 def test_warm_up_model_posteriors_runs_predict_and_proba(monkeypatch):
     monkeypatch.setattr("fiberhmm.core.hmm.HAS_NUMBA", True)
 

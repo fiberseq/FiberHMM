@@ -16,7 +16,10 @@ def warm_up_model_predict(model) -> None:
 
     if HAS_NUMBA:
         dummy_obs = np.array([0, 1, 2, 3], dtype=np.int32)
-        _ = model.predict(dummy_obs)
+        try:
+            _ = model.predict(dummy_obs)
+        except Exception:
+            pass
 
 
 def _posterior_warmup_obs(length: int) -> np.ndarray:
