@@ -32,6 +32,7 @@ from fiberhmm.cli.call import (
     _CallPgDescriptionRequest,
     _CallPgRecordRequest,
     _CallPhaseNrlRequest,
+    _CallRuntimeRequest,
     _check_daf_inputs,
     _check_region_parallel_file_io,
     _chimera_filter_state,
@@ -49,6 +50,7 @@ from fiberhmm.cli.call import (
     _resolve_call_chroms,
     _resolve_call_mode_context,
     _resolve_call_runtime,
+    _resolve_call_runtime_for_request,
     _resolve_phase_nrl,
     _resolve_phase_nrl_for_request,
     _resolve_recall_model,
@@ -616,10 +618,8 @@ def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
     )
     monkeypatch.setattr(
         call,
-        "_build_pg_record",
-        lambda mode, recall_nucs, phase_nrl, keep_chimeras, argv: calls.append(
-            ("pg", mode, recall_nucs, phase_nrl, keep_chimeras, argv)
-        ) or pg_record,
+        "_build_pg_record_from_request",
+        lambda request: calls.append(("pg", request)) or pg_record,
     )
     monkeypatch.setattr(call, "should_write_legacy_tags", lambda got_args: False)
     monkeypatch.setattr(
@@ -630,7 +630,9 @@ def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
         ) or {"shared": True},
     )
 
-    runtime = _resolve_call_runtime(args, ["fiberhmm-call", "-i", "in.bam"])
+    runtime = _resolve_call_runtime_for_request(
+        _CallRuntimeRequest(args=args, argv=["fiberhmm-call", "-i", "in.bam"]),
+    )
 
     assert runtime == call._CallRuntime(
         apply_model_path="apply.json",
@@ -658,7 +660,16 @@ def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
                 recall_nucs=True,
             ),
         ),
-        ("pg", "daf", True, 185, False, ["fiberhmm-call", "-i", "in.bam"]),
+        (
+            "pg",
+            _CallPgRecordRequest(
+                mode="daf",
+                recall_nucs=True,
+                phase_nrl=185,
+                keep_chimeras=False,
+                argv=["fiberhmm-call", "-i", "in.bam"],
+            ),
+        ),
     ]
     assert calls[3] == (
         "common",
@@ -675,6 +686,24 @@ def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
             pg_record=pg_record,
         ),
     )
+
+
+def test_resolve_call_runtime_adapter_builds_request(monkeypatch):
+    from fiberhmm.cli import call
+
+    args = SimpleNamespace()
+    argv = ["fiberhmm-call"]
+    sentinel = object()
+    calls = []
+
+    monkeypatch.setattr(
+        call,
+        "_resolve_call_runtime_for_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert _resolve_call_runtime(args, argv) is sentinel
+    assert calls == [_CallRuntimeRequest(args=args, argv=argv)]
 
 
 def test_run_call_pipeline_dispatches_streaming(monkeypatch):

@@ -54,6 +54,12 @@ class _CallRuntime:
 
 
 @dataclass(frozen=True)
+class _CallRuntimeRequest:
+    args: object
+    argv: list[str]
+
+
+@dataclass(frozen=True)
 class _CallModeContext:
     mode: str
     k: int
@@ -758,7 +764,10 @@ def _index_streaming_call_output(args, stdout_mode: bool) -> None:
         pass
 
 
-def _resolve_call_runtime(args, argv) -> _CallRuntime:
+def _resolve_call_runtime_for_request(
+    request: _CallRuntimeRequest,
+) -> _CallRuntime:
+    args = request.args
     apply_model_path = _resolve_apply_model(args)
     recall_model_path = _resolve_recall_model(args)
 
@@ -787,8 +796,14 @@ def _resolve_call_runtime(args, argv) -> _CallRuntime:
             recall_nucs=recall_nucs,
         ),
     )
-    pg_record = _build_pg_record(
-        mode_context.mode, recall_nucs, phase_nrl, args.keep_chimeras, argv,
+    pg_record = _build_pg_record_from_request(
+        _CallPgRecordRequest(
+            mode=mode_context.mode,
+            recall_nucs=recall_nucs,
+            phase_nrl=phase_nrl,
+            keep_chimeras=args.keep_chimeras,
+            argv=request.argv,
+        ),
     )
     also_write_legacy = should_write_legacy_tags(args)
     common_kwargs = _call_fused_common_kwargs_from_settings(
@@ -818,6 +833,12 @@ def _resolve_call_runtime(args, argv) -> _CallRuntime:
         pg_record=pg_record,
         also_write_legacy=also_write_legacy,
         common_kwargs=common_kwargs,
+    )
+
+
+def _resolve_call_runtime(args, argv) -> _CallRuntime:
+    return _resolve_call_runtime_for_request(
+        _CallRuntimeRequest(args=args, argv=argv),
     )
 
 
