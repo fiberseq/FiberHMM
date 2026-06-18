@@ -34,6 +34,7 @@ from fiberhmm.cli.generate_probs import (
     _probability_read_tags_or_skip,
     _probability_table_path,
     _ProbabilityControlGroupResults,
+    _ProbabilityReadTags,
     _ProbabilityRunContext,
     _ProbabilitySampleFileResult,
     _ProbabilitySampleResult,
@@ -648,8 +649,7 @@ def test_probability_read_tags_or_skip_returns_tags_and_records_filter_failures(
     read = _Read({"MM": "A+a,0;", "ML": [200]})
 
     assert _probability_read_tags_or_skip(read, stats, 20, 100) == (
-        "A+a,0;",
-        [200],
+        _ProbabilityReadTags("A+a,0;", [200])
     )
     assert stats == {}
 
@@ -802,7 +802,9 @@ def test_process_probability_read_or_skip_routes_processed_reads(monkeypatch):
     monkeypatch.setattr(
         generate_probs,
         "_probability_read_tags_or_skip",
-        lambda read, stats, min_mapq, min_read_length: ("A+a,0;", [200]),
+        lambda read, stats, min_mapq, min_read_length: (
+            _ProbabilityReadTags("A+a,0;", [200])
+        ),
     )
     monkeypatch.setattr(
         generate_probs,

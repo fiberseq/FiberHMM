@@ -187,6 +187,12 @@ class _MmMlTagResult:
     skip_reason: Optional[str]
 
 
+@dataclass(frozen=True)
+class _ProbabilityReadTags:
+    mm_tag: str
+    ml_values: List[int]
+
+
 def _read_mm_ml_tags_or_skip(read) -> _MmMlTagResult:
     mm_tag = get_preferred_tag(read, 'MM', 'Mm')
     if not mm_tag:
@@ -342,7 +348,7 @@ def _probability_read_tags_or_skip(
     filter_stats: Dict[str, int],
     min_mapq: int,
     min_read_length: int,
-):
+) -> Optional[_ProbabilityReadTags]:
     skip_reason = _generate_probs_skip_reason(read, min_mapq, min_read_length)
     if _record_filter_skip(filter_stats, skip_reason):
         return None
@@ -351,7 +357,7 @@ def _probability_read_tags_or_skip(
     if _record_filter_skip(filter_stats, tag_result.skip_reason):
         return None
 
-    return tag_result.mm_tag, tag_result.ml_values
+    return _ProbabilityReadTags(tag_result.mm_tag, tag_result.ml_values)
 
 
 def _process_probability_read(
@@ -402,10 +408,9 @@ def _process_probability_read_or_skip(
     if tags is None:
         return False
 
-    mm_tag, ml_tag = tags
     _process_probability_read(
         read, counters, mode, args.prob_threshold, args.edge_trim,
-        mm_tag, ml_tag, mm_tag_types, strand_assignments,
+        tags.mm_tag, tags.ml_values, mm_tag_types, strand_assignments,
     )
     return True
 
