@@ -930,7 +930,7 @@ def extract_bed_from_tagged_bam(input_bam: str, output_bed: str,
 
 
 def _parse_int_csv(value: str) -> List[int]:
-    return [int(x) for x in value.split(',') if x]
+    return [int(item) for item in (x.strip() for x in value.split(',')) if item]
 
 
 def _parse_score_block_values(record: dict):

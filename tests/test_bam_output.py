@@ -845,7 +845,9 @@ def test_scores_database_closes_connection_when_record_parsing_fails(
 
 def test_parse_int_csv_skips_empty_fields():
     assert bam_output._parse_int_csv("10,20,") == [10, 20]
+    assert bam_output._parse_int_csv("10, , 20,") == [10, 20]
     assert bam_output._parse_int_csv("") == []
+    assert bam_output._parse_int_csv("  ") == []
 
 
 def test_mean_block_score_uses_zero_for_empty_scores():

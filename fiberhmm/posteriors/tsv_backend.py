@@ -74,7 +74,10 @@ def _decode_posteriors_b64(post_b64: str, dtype) -> np.ndarray:
 
 
 def _parse_int_array(values: str) -> np.ndarray:
-    return np.array([int(x) for x in values.split(',') if x], dtype=np.int32)
+    return np.array(
+        [int(item) for item in (x.strip() for x in values.split(',')) if item],
+        dtype=np.int32,
+    )
 
 
 def _chrom_from_countable_tsv_line(line: str) -> Optional[str]:
