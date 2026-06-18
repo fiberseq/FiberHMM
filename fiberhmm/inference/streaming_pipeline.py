@@ -95,6 +95,17 @@ class _StreamingChunkSubmitRequest:
 
 
 @dataclass(frozen=True)
+class _StreamingChunkFlushRequest:
+    inflight: object
+    executor: object
+    worker_fn: object
+    buffers: _StreamingChunkBuffers
+    worker_args: tuple
+    max_inflight: int
+    drain_chunk: Callable[[], None]
+
+
+@dataclass(frozen=True)
 class _StreamingFlushProgress:
     buffers: _StreamingChunkBuffers
     last_progress_reads: int
@@ -332,9 +343,8 @@ def _flush_streaming_chunk(
     max_inflight: int,
     drain_chunk: Callable[[], None],
 ) -> _StreamingChunkBuffers:
-    _drain_if_inflight_full(inflight, max_inflight, drain_chunk)
-    _submit_streaming_chunk_from_request(
-        _StreamingChunkSubmitRequest(
+    return _flush_streaming_chunk_from_request(
+        _StreamingChunkFlushRequest(
             inflight=inflight,
             executor=executor,
             worker_fn=worker_fn,
@@ -344,6 +354,27 @@ def _flush_streaming_chunk(
                 skip_flags=chunk_skip_flags,
             ),
             worker_args=worker_args,
+            max_inflight=max_inflight,
+            drain_chunk=drain_chunk,
+        )
+    )
+
+
+def _flush_streaming_chunk_from_request(
+    request: _StreamingChunkFlushRequest,
+) -> _StreamingChunkBuffers:
+    _drain_if_inflight_full(
+        request.inflight,
+        request.max_inflight,
+        request.drain_chunk,
+    )
+    _submit_streaming_chunk_from_request(
+        _StreamingChunkSubmitRequest(
+            inflight=request.inflight,
+            executor=request.executor,
+            worker_fn=request.worker_fn,
+            buffers=request.buffers,
+            worker_args=request.worker_args,
         )
     )
     return _new_streaming_chunk_buffers()

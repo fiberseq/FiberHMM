@@ -52,6 +52,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _streaming_rate,
     _StreamingApplyWorkerArgs,
     _StreamingChunkBuffers,
+    _StreamingChunkFlushRequest,
     _StreamingChunkSubmitRequest,
     _StreamingFlushProgress,
     _StreamingFusedWorkerArgs,
@@ -683,17 +684,21 @@ def test_flush_streaming_chunk_drains_submits_and_returns_new_buffers():
     chunk_reads = ["read"]
     chunk_skip_flags = [False]
 
-    new_buffers = _flush_streaming_chunk(
-        inflight,
-        executor,
-        worker_fn,
-        chunk_items,
-        chunk_reads,
-        chunk_skip_flags,
-        ("arg",),
+    request = _StreamingChunkFlushRequest(
+        inflight=inflight,
+        executor=executor,
+        worker_fn=worker_fn,
+        buffers=_StreamingChunkBuffers(
+            items=chunk_items,
+            read_objs=chunk_reads,
+            skip_flags=chunk_skip_flags,
+        ),
+        worker_args=("arg",),
         max_inflight=1,
         drain_chunk=lambda: drained.append(inflight.popleft()),
     )
+
+    new_buffers = streaming_pipeline._flush_streaming_chunk_from_request(request)
 
     assert drained == ["old"]
     assert executor.submitted == [(worker_fn, (chunk_items, "arg"))]
@@ -709,6 +714,21 @@ def test_flush_streaming_chunk_drains_submits_and_returns_new_buffers():
     assert new_buffers.items is not chunk_items
     assert new_buffers.read_objs is not chunk_reads
     assert new_buffers.skip_flags is not chunk_skip_flags
+
+    drained.clear()
+    inflight = deque(["old"])
+    assert _flush_streaming_chunk(
+        inflight,
+        executor,
+        worker_fn,
+        chunk_items,
+        chunk_reads,
+        chunk_skip_flags,
+        ("arg",),
+        max_inflight=1,
+        drain_chunk=lambda: drained.append(inflight.popleft()),
+    ) == _StreamingChunkBuffers(items=[], read_objs=[], skip_flags=[])
+    assert drained == ["old"]
 
 
 def test_drain_all_streaming_chunks_repeats_until_empty():
