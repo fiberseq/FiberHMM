@@ -90,6 +90,47 @@ class _FusedRegionRecallConfig:
     downstream_compat: bool
 
 
+@dataclass(frozen=True)
+class _RegionBamReadDelta:
+    total_reads: int = 0
+    reads_with_footprints: int = 0
+    written: int = 0
+    skipped: int = 0
+    posteriors_written: int = 0
+
+
+@dataclass
+class _RegionBamWorkerCounts:
+    total_reads: int = 0
+    reads_with_footprints: int = 0
+    written: int = 0
+    skipped: int = 0
+    posteriors_written: int = 0
+
+    def add(self, delta: _RegionBamReadDelta) -> None:
+        self.total_reads += delta.total_reads
+        self.reads_with_footprints += delta.reads_with_footprints
+        self.written += delta.written
+        self.skipped += delta.skipped
+        self.posteriors_written += delta.posteriors_written
+
+
+@dataclass(frozen=True)
+class _RegionBedReadDelta:
+    total_reads: int = 0
+    reads_with_footprints: int = 0
+
+
+@dataclass
+class _RegionBedWorkerCounts:
+    total_reads: int = 0
+    reads_with_footprints: int = 0
+
+    def add(self, delta: _RegionBedReadDelta) -> None:
+        self.total_reads += delta.total_reads
+        self.reads_with_footprints += delta.reads_with_footprints
+
+
 def _region_apply_config(
     params: dict,
     *,
@@ -394,6 +435,181 @@ def _region_bed12_row_from_read_result(read, result: dict, with_scores: bool) ->
     )
 
 
+def _skipped_region_bam_delta(outbam, read, skip_reasons: dict, reason: str):
+    written, skipped = _record_skipped_region_read(
+        outbam, read, skip_reasons, reason, written=0, skipped=0,
+    )
+    return _RegionBamReadDelta(written=written, skipped=skipped)
+
+
+def _process_region_bam_read(
+    read,
+    outbam,
+    model,
+    apply_config: _RegionApplyConfig,
+    output_config: _RegionBamOutputConfig,
+    filter_config: ReadFilterConfig,
+    start: int,
+    end: int,
+    skip_reasons: dict,
+    *,
+    return_posteriors: bool,
+    tsv_file,
+) -> _RegionBamReadDelta:
+    route, skip_reason = _region_read_route(read, start, end, filter_config)
+    if route == _REGION_ROUTE_SKIP:
+        return _skipped_region_bam_delta(outbam, read, skip_reasons, skip_reason)
+    if route == _REGION_ROUTE_OUTSIDE:
+        return _RegionBamReadDelta()
+
+    fiber_read, skip_reason = _extract_region_fiber_read(
+        read, apply_config.mode, apply_config.prob_threshold,
+    )
+    if skip_reason:
+        return _skipped_region_bam_delta(outbam, read, skip_reasons, skip_reason)
+
+    result = _process_single_read(
+        fiber_read, model, apply_config.edge_trim,
+        apply_config.circular, apply_config.mode,
+        apply_config.context_size, apply_config.msp_min_size,
+        nuc_min_size=apply_config.nuc_min_size,
+        with_scores=apply_config.with_scores,
+        return_posteriors=return_posteriors,
+    )
+
+    if result is not None:
+        written, posterior_written = _write_footprinted_region_read(
+            outbam, read, result, apply_config.with_scores,
+            output_config.write_msps, tsv_file,
+        )
+        return _RegionBamReadDelta(
+            total_reads=1,
+            reads_with_footprints=1,
+            written=written,
+            posteriors_written=int(posterior_written),
+        )
+
+    written = _write_unfootprinted_region_read(outbam, read, skip_reasons)
+    return _RegionBamReadDelta(total_reads=1, written=written)
+
+
+def _process_region_bed_read(
+    read,
+    bed_out,
+    model,
+    apply_config: _RegionApplyConfig,
+    filter_config: ReadFilterConfig,
+    start: int,
+    end: int,
+) -> _RegionBedReadDelta:
+    if streaming_skip_reason(read, filter_config):
+        return _RegionBedReadDelta()
+
+    if not _read_starts_in_region(read, start, end):
+        return _RegionBedReadDelta()
+
+    fiber_read, skip_reason = _extract_region_fiber_read(
+        read, apply_config.mode, apply_config.prob_threshold,
+    )
+    if skip_reason:
+        return _RegionBedReadDelta()
+
+    result = _process_single_read(
+        fiber_read, model, apply_config.edge_trim,
+        apply_config.circular, apply_config.mode,
+        apply_config.context_size, apply_config.msp_min_size,
+        nuc_min_size=apply_config.nuc_min_size,
+        with_scores=apply_config.with_scores,
+    )
+
+    if result is not None and len(result['ns']) > 0:
+        bed_out.write(
+            _region_bed12_row_from_read_result(
+                read, result, apply_config.with_scores,
+            ) + "\n"
+        )
+        return _RegionBedReadDelta(total_reads=1, reads_with_footprints=1)
+
+    return _RegionBedReadDelta(total_reads=1)
+
+
+def _process_fused_region_bam_read(
+    read,
+    outbam,
+    model,
+    llr_hit,
+    llr_miss,
+    apply_config: _RegionApplyConfig,
+    recall_config: _FusedRegionRecallConfig,
+    recall_options: dict,
+    ref_fasta,
+    filter_config: ReadFilterConfig,
+    start: int,
+    end: int,
+    skip_reasons: dict,
+) -> _RegionBamReadDelta:
+    route, skip_reason = _region_read_route(read, start, end, filter_config)
+    if route == _REGION_ROUTE_SKIP:
+        return _skipped_region_bam_delta(outbam, read, skip_reasons, skip_reason)
+    if route == _REGION_ROUTE_OUTSIDE:
+        return _RegionBamReadDelta()
+
+    payload = make_apply_payload(
+        read, mode=apply_config.mode, ref_fasta=ref_fasta,
+    )
+    fiber_read, skip_reason = _extract_region_payload_fiber_read(
+        payload, apply_config.mode, apply_config.prob_threshold,
+    )
+    if skip_reason:
+        return _skipped_region_bam_delta(outbam, read, skip_reasons, skip_reason)
+
+    try:
+        apply_result = run_hmm_apply_stage(
+            fiber_read,
+            model,
+            apply_config.edge_trim,
+            apply_config.circular,
+            apply_config.mode,
+            apply_config.context_size,
+            apply_config.msp_min_size,
+            apply_config.nuc_min_size,
+            apply_config.with_scores,
+        )
+    except Exception:
+        return _skipped_region_bam_delta(
+            outbam, read, skip_reasons, 'extraction_failed',
+        )
+
+    if not apply_result_has_footprints(apply_result):
+        written = _write_unfootprinted_region_read(outbam, read, skip_reasons)
+        return _RegionBamReadDelta(total_reads=1, written=written)
+
+    fused_result = build_fused_recall_result(
+        fiber_read,
+        apply_result,
+        llr_hit,
+        llr_miss,
+        recall_config.min_llr,
+        recall_config.min_opps,
+        recall_config.unify_threshold,
+        apply_config.with_scores,
+        **recall_options,
+    )
+    write_fused_recall_tags(
+        read,
+        read_length=len(fiber_read['query_sequence']),
+        result=fused_result,
+        also_write_legacy=recall_config.also_write_legacy,
+        downstream_compat=recall_config.downstream_compat,
+    )
+    outbam.write(read)
+    return _RegionBamReadDelta(
+        total_reads=1,
+        reads_with_footprints=1,
+        written=1,
+    )
+
+
 def _init_region_worker(model_path: str, params: dict):
     """Initialize worker for region-parallel processing."""
     global _worker_model, _worker_region_params
@@ -461,12 +677,7 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         output_config = _region_bam_output_config(params, temp_tsv_path)
         return_posteriors = output_config.return_posteriors
 
-        total_reads = 0
-        reads_with_footprints = 0
-        written = 0
-        skipped = 0
-        posteriors_written = 0
-
+        counts = _RegionBamWorkerCounts()
         skip_reasons = _new_region_skip_reasons()
         filter_config = _region_read_filter_config(params, require_train_rids=True)
 
@@ -498,70 +709,34 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         return RegionBamResult(temp_bam_path, 0, 0, 0)
 
                     for read in read_iter:
-                        route, skip_reason = _region_read_route(
-                            read, start, end, filter_config,
-                        )
-                        if route == _REGION_ROUTE_SKIP:
-                            written, skipped = _record_skipped_region_read(
-                                outbam, read, skip_reasons, skip_reason,
-                                written, skipped,
-                            )
-                            continue
-                        if route == _REGION_ROUTE_OUTSIDE:
-                            continue
-
-                        fiber_read, skip_reason = _extract_region_fiber_read(
-                            read, apply_config.mode, apply_config.prob_threshold,
-                        )
-                        if skip_reason:
-                            written, skipped = _record_skipped_region_read(
-                                outbam, read, skip_reasons, skip_reason,
-                                written, skipped,
-                            )
-                            continue
-
-                        total_reads += 1
-
-                        result = _process_single_read(
-                            fiber_read, model, apply_config.edge_trim,
-                            apply_config.circular, apply_config.mode,
-                            apply_config.context_size, apply_config.msp_min_size,
-                            nuc_min_size=apply_config.nuc_min_size,
-                            with_scores=apply_config.with_scores,
+                        counts.add(_process_region_bam_read(
+                            read,
+                            outbam,
+                            model,
+                            apply_config,
+                            output_config,
+                            filter_config,
+                            start,
+                            end,
+                            skip_reasons,
                             return_posteriors=return_posteriors,
-                        )
-
-                        if result is not None:
-                            reads_with_footprints += 1
-                            written_delta, posterior_written = (
-                                _write_footprinted_region_read(
-                                    outbam, read, result, apply_config.with_scores,
-                                    output_config.write_msps, tsv_file,
-                                )
-                            )
-                            written += written_delta
-                            if posterior_written:
-                                posteriors_written += 1
-                        else:
-                            written += _write_unfootprinted_region_read(
-                                outbam, read, skip_reasons,
-                            )
-                            continue
+                            tsv_file=tsv_file,
+                        ))
 
         finally:
             if tsv_file:
                 tsv_file.close()
 
         # Return TSV path if we wrote any posteriors.
-        if return_posteriors and posteriors_written > 0 and temp_tsv_path:
+        if return_posteriors and counts.posteriors_written > 0 and temp_tsv_path:
             return RegionBamResult(
-                temp_bam_path, total_reads, reads_with_footprints,
-                written, temp_tsv_path, skip_reasons,
+                temp_bam_path, counts.total_reads, counts.reads_with_footprints,
+                counts.written, temp_tsv_path, skip_reasons,
             )
 
         return RegionBamResult(
-            temp_bam_path, total_reads, reads_with_footprints,
-            written, None, skip_reasons,
+            temp_bam_path, counts.total_reads, counts.reads_with_footprints,
+            counts.written, None, skip_reasons,
         )
 
     except Exception as e:
@@ -599,8 +774,7 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
         apply_config = _region_apply_config(params)
         filter_config = _region_bed_read_filter_config(params)
 
-        total_reads = 0
-        reads_with_footprints = 0
+        counts = _RegionBedWorkerCounts()
 
         pysam.set_verbosity(0)
 
@@ -614,37 +788,19 @@ def _process_region_to_bed(args: RegionBedWorkItem) -> RegionBedResult:
                     return RegionBedResult(temp_bed_path, 0, 0)
 
                 for read in read_iter:
-                    if streaming_skip_reason(read, filter_config):
-                        continue
+                    counts.add(_process_region_bed_read(
+                        read,
+                        bed_out,
+                        model,
+                        apply_config,
+                        filter_config,
+                        start,
+                        end,
+                    ))
 
-                    if not _read_starts_in_region(read, start, end):
-                        continue
-
-                    fiber_read, skip_reason = _extract_region_fiber_read(
-                        read, apply_config.mode, apply_config.prob_threshold,
-                    )
-                    if skip_reason:
-                        continue
-
-                    total_reads += 1
-
-                    result = _process_single_read(
-                        fiber_read, model, apply_config.edge_trim,
-                        apply_config.circular, apply_config.mode,
-                        apply_config.context_size, apply_config.msp_min_size,
-                        nuc_min_size=apply_config.nuc_min_size,
-                        with_scores=apply_config.with_scores,
-                    )
-
-                    if result is not None and len(result['ns']) > 0:
-                        reads_with_footprints += 1
-                        bed_out.write(
-                            _region_bed12_row_from_read_result(
-                                read, result, apply_config.with_scores,
-                            ) + "\n"
-                        )
-
-        return RegionBedResult(temp_bed_path, total_reads, reads_with_footprints)
+        return RegionBedResult(
+            temp_bed_path, counts.total_reads, counts.reads_with_footprints,
+        )
 
     except Exception as e:
         import traceback
@@ -733,12 +889,14 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
 
         pysam.set_verbosity(0)
 
-        total_reads = 0
-        reads_with_fp = 0
-        written = 0
-        skipped = 0
+        counts = _RegionBamWorkerCounts()
         skip_reasons = _new_region_skip_reasons()
         filter_config = _region_read_filter_config(params, require_train_rids=False)
+        recall_options = _region_fused_recall_options(
+            params,
+            apply_config.nuc_min_size,
+            apply_config.msp_min_size,
+        )
 
         with pysam.AlignmentFile(
             input_bam, "rb", threads=apply_config.io_threads, check_sq=False
@@ -753,86 +911,25 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                     return RegionBamResult(temp_bam_path, 0, 0, 0)
 
                 for read in read_iter:
-                    route, skip_reason = _region_read_route(
-                        read, start, end, filter_config,
-                    )
-                    if route == _REGION_ROUTE_SKIP:
-                        written, skipped = _record_skipped_region_read(
-                            outbam, read, skip_reasons, skip_reason,
-                            written, skipped,
-                        )
-                        continue
-                    if route == _REGION_ROUTE_OUTSIDE:
-                        continue
-
-                    payload = make_apply_payload(
-                        read, mode=apply_config.mode, ref_fasta=ref_fasta,
-                    )
-                    fiber_read, skip_reason = _extract_region_payload_fiber_read(
-                        payload, apply_config.mode, apply_config.prob_threshold,
-                    )
-                    if skip_reason:
-                        written, skipped = _record_skipped_region_read(
-                            outbam, read, skip_reasons, skip_reason,
-                            written, skipped,
-                        )
-                        continue
-                    try:
-                        apply_result = run_hmm_apply_stage(
-                            fiber_read,
-                            model,
-                            apply_config.edge_trim,
-                            apply_config.circular,
-                            apply_config.mode,
-                            apply_config.context_size,
-                            apply_config.msp_min_size,
-                            apply_config.nuc_min_size,
-                            apply_config.with_scores,
-                        )
-                    except Exception:
-                        written, skipped = _record_skipped_region_read(
-                            outbam, read, skip_reasons, 'extraction_failed',
-                            written, skipped,
-                        )
-                        continue
-
-                    total_reads += 1
-
-                    if not apply_result_has_footprints(apply_result):
-                        written += _write_unfootprinted_region_read(
-                            outbam, read, skip_reasons,
-                        )
-                        continue
-
-                    fused_result = build_fused_recall_result(
-                        fiber_read,
-                        apply_result,
+                    counts.add(_process_fused_region_bam_read(
+                        read,
+                        outbam,
+                        model,
                         llr_hit,
                         llr_miss,
-                        recall_config.min_llr,
-                        recall_config.min_opps,
-                        recall_config.unify_threshold,
-                        apply_config.with_scores,
-                        **_region_fused_recall_options(
-                            params,
-                            apply_config.nuc_min_size,
-                            apply_config.msp_min_size,
-                        ),
-                    )
-                    write_fused_recall_tags(
-                        read,
-                        read_length=len(fiber_read['query_sequence']),
-                        result=fused_result,
-                        also_write_legacy=recall_config.also_write_legacy,
-                        downstream_compat=recall_config.downstream_compat,
-                    )
-                    outbam.write(read)
-                    written += 1
-                    reads_with_fp += 1
+                        apply_config,
+                        recall_config,
+                        recall_options,
+                        ref_fasta,
+                        filter_config,
+                        start,
+                        end,
+                        skip_reasons,
+                    ))
 
         return RegionBamResult(
-            temp_bam_path, total_reads, reads_with_fp,
-            written, None, skip_reasons,
+            temp_bam_path, counts.total_reads, counts.reads_with_footprints,
+            counts.written, None, skip_reasons,
         )
 
     except Exception:

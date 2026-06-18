@@ -11,6 +11,9 @@ from fiberhmm.inference.region_workers import (
     _extract_region_fiber_read,
     _extract_region_payload_fiber_read,
     _fused_region_recall_config,
+    _process_fused_region_bam_read,
+    _process_region_bam_read,
+    _process_region_bed_read,
     _region_bed12_row_from_read_result,
     _format_region_bed12_row,
     _pad_region_bed12_to_read_span,
@@ -44,6 +47,22 @@ def _route_read(**overrides):
     }
     attrs.update(overrides)
     return SimpleNamespace(**attrs)
+
+
+def _apply_config(**overrides):
+    params = {
+        "edge_trim": 2,
+        "circular": False,
+        "mode": "pacbio-fiber",
+        "context_size": 6,
+        "msp_min_size": 21,
+        "nuc_min_size": 90,
+        "prob_threshold": 128,
+        "with_scores": True,
+        "io_threads": 1,
+    }
+    params.update(overrides)
+    return _region_apply_config(params)
 
 
 def test_region_apply_config_casts_worker_params_and_fused_score_default():
@@ -105,6 +124,220 @@ def test_fused_region_recall_config_casts_worker_params():
     assert config.unify_threshold == 7
     assert config.also_write_legacy is False
     assert config.downstream_compat is True
+
+
+def test_process_region_bam_read_counts_footprinted_read(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    read = _route_read(reference_name="chr1", reference_end=180, is_reverse=False)
+    outbam = SimpleNamespace(written=[])
+    outbam.write = outbam.written.append
+    model = object()
+    fiber_read = {"query_sequence": "ACGT"}
+    result = {"ns": [10], "nl": [5], "posteriors": [0.1]}
+    tsv_file = object()
+    calls = {}
+
+    monkeypatch.setattr(
+        region_workers,
+        "_extract_region_fiber_read",
+        lambda got_read, mode, threshold: (fiber_read, None),
+    )
+
+    def fake_process(
+        got_fiber_read,
+        got_model,
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        *,
+        nuc_min_size,
+        with_scores,
+        return_posteriors,
+    ):
+        calls["process"] = (
+            got_fiber_read,
+            got_model,
+            edge_trim,
+            circular,
+            mode,
+            context_size,
+            msp_min_size,
+            nuc_min_size,
+            with_scores,
+            return_posteriors,
+        )
+        return result
+
+    def fake_write(out, got_read, got_result, with_scores, write_msps, got_tsv):
+        calls["write"] = (
+            out, got_read, got_result, with_scores, write_msps, got_tsv
+        )
+        return 1, True
+
+    monkeypatch.setattr(region_workers, "_process_single_read", fake_process)
+    monkeypatch.setattr(region_workers, "_write_footprinted_region_read", fake_write)
+
+    delta = _process_region_bam_read(
+        read,
+        outbam,
+        model,
+        _apply_config(),
+        _region_bam_output_config({"write_msps": False}, None),
+        ReadFilterConfig(min_mapq=10, min_read_length=50),
+        start=100,
+        end=200,
+        skip_reasons={},
+        return_posteriors=True,
+        tsv_file=tsv_file,
+    )
+
+    assert delta.total_reads == 1
+    assert delta.reads_with_footprints == 1
+    assert delta.written == 1
+    assert delta.posteriors_written == 1
+    assert calls["process"] == (
+        fiber_read, model, 2, False, "pacbio-fiber", 6, 21, 90, True, True
+    )
+    assert calls["write"] == (outbam, read, result, True, False, tsv_file)
+
+
+def test_process_region_bed_read_writes_footprint_row(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    read = _route_read(
+        reference_name="chr1",
+        reference_start=100,
+        reference_end=200,
+        query_name="read1",
+        is_reverse=False,
+    )
+    bed_out = SimpleNamespace(lines=[])
+    bed_out.write = bed_out.lines.append
+    fiber_read = {"query_sequence": "ACGT"}
+    result = {"ns": [120], "nl": [10], "ns_scores": [0.5]}
+
+    monkeypatch.setattr(
+        region_workers,
+        "_extract_region_fiber_read",
+        lambda got_read, mode, threshold: (fiber_read, None),
+    )
+    monkeypatch.setattr(region_workers, "_process_single_read", lambda *_, **__: result)
+
+    delta = _process_region_bed_read(
+        read,
+        bed_out,
+        model=object(),
+        apply_config=_apply_config(),
+        filter_config=ReadFilterConfig(min_mapq=10, min_read_length=50),
+        start=100,
+        end=200,
+    )
+
+    assert delta.total_reads == 1
+    assert delta.reads_with_footprints == 1
+    assert bed_out.lines == [
+        "chr1\t100\t200\tread1\t0\t+\t100\t200\t0,0,0\t3\t1,10,1\t0,20,99\t0,500,0\n"
+    ]
+
+
+def test_process_fused_region_bam_read_writes_recalled_tags(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    read = _route_read(reference_name="chr1", reference_end=180, is_reverse=False)
+    outbam = SimpleNamespace(written=[])
+    outbam.write = outbam.written.append
+    model = object()
+    payload = {"read": "payload"}
+    fiber_read = {"query_sequence": "ACGT"}
+    apply_result = {"ns": [10], "nl": [5]}
+    fused_result = {"ma": "tag"}
+    calls = {}
+
+    monkeypatch.setattr(region_workers, "make_apply_payload", lambda *_, **__: payload)
+    monkeypatch.setattr(
+        region_workers,
+        "_extract_region_payload_fiber_read",
+        lambda got_payload, mode, threshold: (fiber_read, None),
+    )
+    def fake_apply(*args):
+        calls["apply_args"] = args
+        return apply_result
+
+    monkeypatch.setattr(region_workers, "run_hmm_apply_stage", fake_apply)
+    monkeypatch.setattr(region_workers, "apply_result_has_footprints", lambda _: True)
+
+    def fake_build(*args, **kwargs):
+        calls["build"] = (args, kwargs)
+        return fused_result
+
+    def fake_write_tags(got_read, **kwargs):
+        calls["tags"] = (got_read, kwargs)
+
+    monkeypatch.setattr(region_workers, "build_fused_recall_result", fake_build)
+    monkeypatch.setattr(region_workers, "write_fused_recall_tags", fake_write_tags)
+
+    apply_config = _region_apply_config({
+        "edge_trim": 2,
+        "circular": False,
+        "mode": "pacbio-fiber",
+        "context_size": 6,
+        "msp_min_size": 21,
+        "nuc_min_size": 90,
+        "prob_threshold": 128,
+        "io_threads": 1,
+    }, with_scores_default=False)
+    recall_config = _fused_region_recall_config({
+        "min_llr": 2.5,
+        "min_opps": 4,
+        "unify_threshold": 7,
+        "also_write_legacy": False,
+        "downstream_compat": True,
+    })
+    recall_options = {
+        "recall_nucs": True,
+        "split_min_llr": 5.0,
+        "split_min_opps": 3,
+        "nuc_min_size": 90,
+        "msp_min_size": 21,
+        "phase_nrl": 185,
+    }
+
+    delta = _process_fused_region_bam_read(
+        read,
+        outbam,
+        model,
+        llr_hit=[1],
+        llr_miss=[2],
+        apply_config=apply_config,
+        recall_config=recall_config,
+        recall_options=recall_options,
+        ref_fasta=None,
+        filter_config=ReadFilterConfig(min_mapq=10, min_read_length=50),
+        start=100,
+        end=200,
+        skip_reasons={},
+    )
+
+    assert delta.total_reads == 1
+    assert delta.reads_with_footprints == 1
+    assert delta.written == 1
+    assert outbam.written == [read]
+    assert calls["build"][0] == (
+        fiber_read, apply_result, [1], [2], 2.5, 4, 7, False
+    )
+    assert calls["build"][1] == recall_options
+    assert calls["tags"] == (
+        read,
+        {
+            "read_length": 4,
+            "result": fused_result,
+            "also_write_legacy": False,
+            "downstream_compat": True,
+        },
+    )
 
 
 def test_region_read_route_preserves_skip_and_ownership_order():
