@@ -13,7 +13,9 @@ from conftest import make_synthetic_bam, make_synthetic_iupac_bam
 
 from fiberhmm.cli.call import (
     _build_pg_record,
+    _call_banner_settings,
     _call_banner_text,
+    _call_banner_text_from_settings,
     _call_circular_label,
     _call_context_size_or_default,
     _call_enzyme_label,
@@ -22,6 +24,7 @@ from fiberhmm.cli.call import (
     _call_mode_or_default,
     _call_pg_description,
     _call_recall_model_label,
+    _CallBannerSettings,
     _check_daf_inputs,
     _check_region_parallel_file_io,
     _chimera_filter_state,
@@ -370,7 +373,7 @@ def test_call_banner_label_helpers():
 
 
 def test_call_banner_text_formats_resolved_settings():
-    banner = _call_banner_text(
+    settings = _CallBannerSettings(
         apply_model_path="apply.json",
         recall_model_path=None,
         mode="daf",
@@ -385,6 +388,7 @@ def test_call_banner_text_formats_resolved_settings():
         circular=True,
         region_parallel=True,
     )
+    banner = _call_banner_text_from_settings(settings)
 
     assert "fiberhmm-call [BETA]" in banner
     assert "fused apply + recall-tfs (region-parallel)" in banner
@@ -393,6 +397,57 @@ def test_call_banner_text_formats_resolved_settings():
     assert "mode=daf k=4 enzyme=custom" in banner
     assert "min_llr=1.5 min_opps=3 unify_threshold=120 uplift=0.25" in banner
     assert "cores=8 io-threads=2 circular=on" in banner
+    assert _call_banner_text(
+        apply_model_path="apply.json",
+        recall_model_path=None,
+        mode="daf",
+        k=4,
+        enzyme=None,
+        min_llr=1.5,
+        min_opps=3,
+        unify_threshold=120,
+        uplift=0.25,
+        cores=8,
+        io_threads=2,
+        circular=True,
+        region_parallel=True,
+    ) == banner
+
+
+def test_call_banner_settings_from_runtime_and_args():
+    args = SimpleNamespace(
+        enzyme="dddb",
+        min_opps=3,
+        unify_threshold=90,
+        cores=4,
+        io_threads=2,
+        circular=False,
+        region_parallel=True,
+    )
+    runtime = SimpleNamespace(
+        apply_model_path="apply.json",
+        recall_model_path="recall.json",
+        mode="daf",
+        k=3,
+        min_llr=5.0,
+        uplift=1.0,
+    )
+
+    assert _call_banner_settings(args, runtime) == _CallBannerSettings(
+        apply_model_path="apply.json",
+        recall_model_path="recall.json",
+        mode="daf",
+        k=3,
+        enzyme="dddb",
+        min_llr=5.0,
+        min_opps=3,
+        unify_threshold=90,
+        uplift=1.0,
+        cores=4,
+        io_threads=2,
+        circular=False,
+        region_parallel=True,
+    )
 
 
 def test_call_fused_common_kwargs_preserve_shared_pipeline_arguments():

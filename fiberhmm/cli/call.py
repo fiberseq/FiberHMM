@@ -57,6 +57,23 @@ class _CallModeContext:
     k: int
 
 
+@dataclass(frozen=True)
+class _CallBannerSettings:
+    apply_model_path: str
+    recall_model_path: str | None
+    mode: str
+    k: int
+    enzyme: str | None
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
+    uplift: float
+    cores: int
+    io_threads: int
+    circular: bool
+    region_parallel: bool
+
+
 @dataclass
 class _DafSniffResult:
     has_ry: bool = False
@@ -383,23 +400,62 @@ def _call_circular_label(circular: bool) -> str:
     return ' circular=on' if circular else ''
 
 
-def _call_banner_text(apply_model_path, recall_model_path, mode, k, enzyme,
-                      min_llr, min_opps, unify_threshold, uplift,
-                      cores, io_threads, circular, region_parallel):
-    mode_label = _call_mode_label(region_parallel)
-    recall_model_label = _call_recall_model_label(recall_model_path)
-    enzyme_label = _call_enzyme_label(enzyme)
-    circular_label = _call_circular_label(circular)
+def _call_banner_text_from_settings(settings: _CallBannerSettings) -> str:
+    mode_label = _call_mode_label(settings.region_parallel)
+    recall_model_label = _call_recall_model_label(settings.recall_model_path)
+    enzyme_label = _call_enzyme_label(settings.enzyme)
+    circular_label = _call_circular_label(settings.circular)
     return (
         "\n=========================================================================\n"
         f"  fiberhmm-call [BETA] — fused apply + recall-tfs ({mode_label})\n"
-        f"  apply model:  {apply_model_path}\n"
+        f"  apply model:  {settings.apply_model_path}\n"
         f"  recall model: {recall_model_label}\n"
-        f"  mode={mode} k={k} enzyme={enzyme_label}\n"
-        f"  min_llr={min_llr} min_opps={min_opps} "
-        f"unify_threshold={unify_threshold} uplift={uplift}\n"
-        f"  cores={cores} io-threads={io_threads}{circular_label}\n"
+        f"  mode={settings.mode} k={settings.k} enzyme={enzyme_label}\n"
+        f"  min_llr={settings.min_llr} min_opps={settings.min_opps} "
+        f"unify_threshold={settings.unify_threshold} uplift={settings.uplift}\n"
+        f"  cores={settings.cores} io-threads={settings.io_threads}"
+        f"{circular_label}\n"
         "=========================================================================\n"
+    )
+
+
+def _call_banner_text(apply_model_path, recall_model_path, mode, k, enzyme,
+                      min_llr, min_opps, unify_threshold, uplift,
+                      cores, io_threads, circular, region_parallel):
+    return _call_banner_text_from_settings(
+        _CallBannerSettings(
+            apply_model_path=apply_model_path,
+            recall_model_path=recall_model_path,
+            mode=mode,
+            k=k,
+            enzyme=enzyme,
+            min_llr=min_llr,
+            min_opps=min_opps,
+            unify_threshold=unify_threshold,
+            uplift=uplift,
+            cores=cores,
+            io_threads=io_threads,
+            circular=circular,
+            region_parallel=region_parallel,
+        )
+    )
+
+
+def _call_banner_settings(args, runtime: _CallRuntime) -> _CallBannerSettings:
+    return _CallBannerSettings(
+        apply_model_path=runtime.apply_model_path,
+        recall_model_path=runtime.recall_model_path,
+        mode=runtime.mode,
+        k=runtime.k,
+        enzyme=args.enzyme,
+        min_llr=runtime.min_llr,
+        min_opps=args.min_opps,
+        unify_threshold=args.unify_threshold,
+        uplift=runtime.uplift,
+        cores=args.cores,
+        io_threads=args.io_threads,
+        circular=args.circular,
+        region_parallel=args.region_parallel,
     )
 
 
@@ -658,21 +714,7 @@ def main():
     runtime = _resolve_call_runtime(args, sys.argv)
 
     print(
-        _call_banner_text(
-            apply_model_path=runtime.apply_model_path,
-            recall_model_path=runtime.recall_model_path,
-            mode=runtime.mode,
-            k=runtime.k,
-            enzyme=args.enzyme,
-            min_llr=runtime.min_llr,
-            min_opps=args.min_opps,
-            unify_threshold=args.unify_threshold,
-            uplift=runtime.uplift,
-            cores=args.cores,
-            io_threads=args.io_threads,
-            circular=args.circular,
-            region_parallel=args.region_parallel,
-        ),
+        _call_banner_text_from_settings(_call_banner_settings(args, runtime)),
         file=sys.stderr,
     )
 
