@@ -177,14 +177,24 @@ def test_merge_region_posteriors_tsv_orders_regions_and_preserves_input_list(tmp
         region_tsv._IndexedRegionTsvFile(1, str(second)),
     ]
 
-    n_fibers = merge_region_posteriors_tsv(
-        temp_files,
-        str(output),
+    n_fibers = region_tsv.merge_region_posteriors_tsv_from_request(
+        region_tsv._RegionTsvMergeRequest(
+            temp_tsv_files=temp_files,
+            output_path=str(output),
+            mode="pacbio-fiber",
+            context_size=3,
+            edge_trim=10,
+            source_bam="/data/source.bam",
+        )
+    )
+    assert merge_region_posteriors_tsv(
+        [],
+        str(tmp_path / "empty.h5"),
         mode="pacbio-fiber",
         context_size=3,
         edge_trim=10,
         source_bam="/data/source.bam",
-    )
+    ) == 0
 
     assert n_fibers == 2
     assert temp_files == original_order

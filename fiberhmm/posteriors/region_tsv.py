@@ -46,6 +46,16 @@ class _RegionTsvHeaderRequest:
     source_bam: str
 
 
+@dataclass(frozen=True)
+class _RegionTsvMergeRequest:
+    temp_tsv_files: Iterable[tuple[int, str]]
+    output_path: str
+    mode: str
+    context_size: int
+    edge_trim: int
+    source_bam: str
+
+
 def _posterior_probabilities_b64(posteriors: np.ndarray) -> str:
     post_u8 = np.clip(posteriors * 255, 0, 255).astype(np.uint8)
     return base64.b64encode(post_u8.tobytes()).decode("ascii")
@@ -240,32 +250,27 @@ def _copy_region_tsv_records(outfile, tsv_path: str) -> int:
     return n_fibers
 
 
-def merge_region_posteriors_tsv(
-    temp_tsv_files: Iterable[tuple[int, str]],
-    output_path: str,
-    mode: str,
-    context_size: int,
-    edge_trim: int,
-    source_bam: str,
+def merge_region_posteriors_tsv_from_request(
+    request: _RegionTsvMergeRequest,
 ) -> int:
     """
     Merge region-worker TSV records into one gzipped TSV with metadata.
 
     H5 conversion is left as a separate step to avoid memory/parallel issues.
     """
-    valid_files = _valid_region_tsv_files(temp_tsv_files)
+    valid_files = _valid_region_tsv_files(request.temp_tsv_files)
     if not valid_files:
         return 0
 
-    tsv_output = region_posteriors_tsv_output_path(output_path)
+    tsv_output = region_posteriors_tsv_output_path(request.output_path)
     with gzip.open(tsv_output, "wt", compresslevel=4) as outfile:
         _write_region_tsv_header_from_request(
             _RegionTsvHeaderRequest(
                 outfile=outfile,
-                mode=mode,
-                context_size=context_size,
-                edge_trim=edge_trim,
-                source_bam=source_bam,
+                mode=request.mode,
+                context_size=request.context_size,
+                edge_trim=request.edge_trim,
+                source_bam=request.source_bam,
             )
         )
 
@@ -274,3 +279,23 @@ def merge_region_posteriors_tsv(
             n_fibers += _copy_region_tsv_records(outfile, tsv_file.path)
 
     return n_fibers
+
+
+def merge_region_posteriors_tsv(
+    temp_tsv_files: Iterable[tuple[int, str]],
+    output_path: str,
+    mode: str,
+    context_size: int,
+    edge_trim: int,
+    source_bam: str,
+) -> int:
+    return merge_region_posteriors_tsv_from_request(
+        _RegionTsvMergeRequest(
+            temp_tsv_files=temp_tsv_files,
+            output_path=output_path,
+            mode=mode,
+            context_size=context_size,
+            edge_trim=edge_trim,
+            source_bam=source_bam,
+        )
+    )
