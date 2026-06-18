@@ -6,6 +6,7 @@ import array as pyarray
 
 import numpy as np
 
+from fiberhmm.inference.tag_utils import _clear_tag, clear_tags
 from fiberhmm.inference.tagging import (
     STALE_SPEC_TAGS,
     _clear_stale_spec_tags,
@@ -25,7 +26,6 @@ from fiberhmm.inference.tagging import (
     unify_circular_nucs_with_tf_calls,
     unify_nucs_with_tf_calls,
 )
-from fiberhmm.inference.tag_utils import _clear_tag, clear_tags
 from fiberhmm.inference.tf_recaller import TFCall
 
 

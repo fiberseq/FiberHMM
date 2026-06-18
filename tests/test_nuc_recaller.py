@@ -6,21 +6,21 @@ import numpy as np
 from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
-    _NucRecallParams,
     _bounded_interval,
     _circular_uncovered_cut,
     _clip_ordered_nuc_calls_for_tiling,
     _keep_nuc_against_circular_intervals,
     _msp_gaps_between_nucs,
     _nuc_from_protected_calls,
+    _NucRecallParams,
     _ordered_positive_nuc_calls,
-    _phase_or_unsplit_subfragments,
     _phase_cut_window,
+    _phase_or_unsplit_subfragments,
     _promoted_nuc_from_tf_call,
     _recall_bounded_nuc_spans,
     _recall_nuc_params,
-    _residue_intervals_around_nuc,
     _recall_nuc_span,
+    _residue_intervals_around_nuc,
     _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
     _total_call_llr,
@@ -34,7 +34,7 @@ from fiberhmm.inference.nuc_recaller import (
     unify_circular_nuc_calls_with_tf_calls,
     unify_nuc_calls_with_tf_calls,
 )
-from fiberhmm.inference.tf_recaller import TFCall, N_CTX, UNMETH_OFFSET
+from fiberhmm.inference.tf_recaller import N_CTX, UNMETH_OFFSET, TFCall
 from fiberhmm.io.ma_tags import format_aq_array, parse_aq_array
 
 HIT = 0                 # ctx 0, modified (accessible evidence)
@@ -375,7 +375,12 @@ def test_project_center_nuc_calls_keeps_quality_and_picks_center():
     proj = project_center_nuc_calls(calls, n)
     by_start = {p.start: p for p in proj}
     assert set(by_start) == {10, 0}
-    assert (by_start[10].length, by_start[10].nq, by_start[10].el, by_start[10].er) == (30, 200, 255, 128)
+    assert (
+        by_start[10].length,
+        by_start[10].nq,
+        by_start[10].el,
+        by_start[10].er,
+    ) == (30, 200, 255, 128)
     assert by_start[0].length == 100  # whole-molecule projection
 
 

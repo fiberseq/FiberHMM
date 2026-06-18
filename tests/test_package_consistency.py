@@ -73,6 +73,7 @@ class TestPackageImports:
         assert callable(_get_genome_regions)
 
     def test_probabilities_imports(self):
+        from fiberhmm.probabilities import utils as probability_utils
         from fiberhmm.probabilities.context_counter import (
             ContextCounter,
             detect_strand_and_base,
@@ -81,7 +82,6 @@ class TestPackageImports:
             setup_output_dirs,
         )
         from fiberhmm.probabilities.stats import generate_probability_stats
-        from fiberhmm.probabilities import utils as probability_utils
         assert ContextCounter is not None
         assert callable(generate_probability_stats)
         assert reverse_complement is probability_utils.reverse_complement

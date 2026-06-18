@@ -10,12 +10,12 @@ import numpy as np
 import pytest
 
 from fiberhmm.core.bam_reader import (
+    _convert_daf_iupac_sequence,
     _daf_iupac_strand,
+    _infer_daf_iupac_strand,
     encode_from_query_sequence,
     extract_daf_iupac_positions,
     has_iupac_encoding,
-    _convert_daf_iupac_sequence,
-    _infer_daf_iupac_strand,
 )
 
 # =========================================================================

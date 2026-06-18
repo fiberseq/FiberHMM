@@ -20,8 +20,8 @@ from fiberhmm.inference.skip_reasons import (
     BASE_SKIP_REASON_KEYS,
     CHIMERA_SKIP_REASON,
     NO_FOOTPRINTS_SKIP_REASON,
-    new_skip_reasons,
     _skip_reason_keys,
+    new_skip_reasons,
 )
 
 
