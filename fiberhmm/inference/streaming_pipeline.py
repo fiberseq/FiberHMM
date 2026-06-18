@@ -47,6 +47,12 @@ class _StreamingPayloadResult:
     skip_reason: Optional[str]
 
 
+@dataclass(frozen=True)
+class _StreamingProgressRates:
+    instant: float
+    average: float
+
+
 def _buffer_skipped_read(chunk_read_objs, chunk_skip_flags, skip_reasons, read, reason) -> int:
     chunk_read_objs.append(read)
     chunk_skip_flags.append(True)
@@ -627,12 +633,12 @@ def _streaming_progress_rates(
     start_time: float,
     last_progress_time: float,
     now: float,
-) -> tuple[float, float]:
+) -> _StreamingProgressRates:
     elapsed = now - start_time
     avg_rate = total_reads / elapsed if elapsed > 0 else 0
     dt = now - last_progress_time
     inst_rate = (total_reads - last_progress_reads) / dt if dt > 0 else 0
-    return inst_rate, avg_rate
+    return _StreamingProgressRates(instant=inst_rate, average=avg_rate)
 
 
 def _streaming_progress_message(
@@ -663,7 +669,7 @@ def _print_streaming_progress(
     now: float,
     rate_unit: str,
 ) -> tuple[int, float]:
-    inst_rate, avg_rate = _streaming_progress_rates(
+    rates = _streaming_progress_rates(
         total_reads, last_progress_reads, start_time, last_progress_time, now,
     )
     print(
@@ -672,8 +678,8 @@ def _print_streaming_progress(
             total_reads,
             skipped,
             inflight_count,
-            inst_rate,
-            avg_rate,
+            rates.instant,
+            rates.average,
             rate_unit,
         ),
         end='',

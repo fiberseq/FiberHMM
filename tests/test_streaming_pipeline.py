@@ -44,6 +44,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _streaming_rate,
     _StreamingPayloadResult,
     _StreamingPosteriorWriter,
+    _StreamingProgressRates,
     _worker_common_args,
 )
 
@@ -91,7 +92,7 @@ def test_streaming_progress_rates_handle_elapsed_and_zero_dt():
         start_time=10.0,
         last_progress_time=20.0,
         now=30.0,
-    ) == (10.0, 6.0)
+    ) == _StreamingProgressRates(instant=10.0, average=6.0)
 
     assert _streaming_progress_rates(
         total_reads=120,
@@ -99,7 +100,7 @@ def test_streaming_progress_rates_handle_elapsed_and_zero_dt():
         start_time=30.0,
         last_progress_time=30.0,
         now=30.0,
-    ) == (0, 0)
+    ) == _StreamingProgressRates(instant=0, average=0)
 
 
 def test_streaming_progress_message_formats_counts_and_rates():
