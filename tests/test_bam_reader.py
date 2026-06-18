@@ -28,6 +28,7 @@ try:
         _context_codes_for_target_positions,
         _context_flanks,
         _daf_deamination_base_counts,
+        _daf_strand_params,
         _daf_target_masks,
         _has_mm_ml_inputs,
         _hmm_symbol_offsets,
@@ -64,6 +65,7 @@ except ImportError:
         _context_codes_for_target_positions,
         _context_flanks,
         _daf_deamination_base_counts,
+        _daf_strand_params,
         _daf_target_masks,
         _has_mm_ml_inputs,
         _hmm_symbol_offsets,
@@ -752,6 +754,19 @@ class TestDAFStrandDetection:
 
         assert counts.t == 1
         assert counts.a == 1
+
+    def test_daf_strand_params_names_encoding_values(self):
+        plus_params = _daf_strand_params("TTTT", {0, 1}, "+")
+        minus_params = _daf_strand_params("AAAA", {0, 1}, "-")
+        detected_params = _daf_strand_params("TTTT", {0, 1}, ".")
+
+        assert plus_params.deaminated_base_int == 2
+        assert plus_params.original_base_int == 1
+        assert not plus_params.use_reverse_complement
+        assert minus_params.deaminated_base_int == 0
+        assert minus_params.original_base_int == 3
+        assert minus_params.use_reverse_complement
+        assert detected_params == plus_params
 
 
 class TestSequenceEncoding:

@@ -304,6 +304,13 @@ class _DafDeaminationBaseCounts:
 
 
 @dataclass(frozen=True)
+class _DafStrandParams:
+    deaminated_base_int: int
+    original_base_int: int
+    use_reverse_complement: bool
+
+
+@dataclass(frozen=True)
 class _MmHitPositions:
     positions: np.ndarray
     next_ml_idx: int
@@ -1090,13 +1097,24 @@ def _encode_nanopore_m6a_observations(sequence: str, mod_positions: Set[int],
                                  unmethylated_offset)
 
 
-def _daf_strand_params(sequence: str, mod_positions: Set[int],
-                       strand: str) -> Tuple[int, int, bool]:
+def _daf_strand_params(
+    sequence: str,
+    mod_positions: Set[int],
+    strand: str,
+) -> _DafStrandParams:
     if strand == '.':
         strand = detect_daf_strand(sequence, mod_positions)
     if strand == '+':
-        return 2, 1, False  # T->C on + strand; use C-centered codes directly.
-    return 0, 3, True      # A->G on -/unknown strand; RC to C-centered codes.
+        return _DafStrandParams(
+            deaminated_base_int=2,
+            original_base_int=1,
+            use_reverse_complement=False,
+        )
+    return _DafStrandParams(
+        deaminated_base_int=0,
+        original_base_int=3,
+        use_reverse_complement=True,
+    )
 
 
 def _encode_daf_observations(sequence: str, mod_positions: Set[int],
@@ -1107,7 +1125,7 @@ def _encode_daf_observations(sequence: str, mod_positions: Set[int],
     # one C-centered emission table, so - strand G contexts are reverse
     # complemented into equivalent C-centered codes.
     seq_len = len(sequence)
-    deam_int, orig_int, use_rc = _daf_strand_params(sequence, mod_positions, strand)
+    strand_params = _daf_strand_params(sequence, mod_positions, strand)
     seq_int = _sequence_base_int_array(sequence, uppercase=True, copy=True)
     mod_mask = _mod_positions_mask(mod_positions, seq_len)
 
@@ -1115,12 +1133,18 @@ def _encode_daf_observations(sequence: str, mod_positions: Set[int],
         return _daf_context_codes_numba(
             seq_int, mod_mask, context_size, edge_trim,
             non_target_code, unmethylated_offset,
-            deam_int, orig_int, use_rc,
+            strand_params.deaminated_base_int,
+            strand_params.original_base_int,
+            strand_params.use_reverse_complement,
         )
 
     return _encode_daf_vectorized_observations(
         seq_int, mod_mask, context_size, edge_trim,
-        non_target_code, unmethylated_offset, deam_int, orig_int, use_rc,
+        non_target_code,
+        unmethylated_offset,
+        strand_params.deaminated_base_int,
+        strand_params.original_base_int,
+        strand_params.use_reverse_complement,
     )
 
 
