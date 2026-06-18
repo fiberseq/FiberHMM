@@ -311,6 +311,28 @@ def _build_fused_configured_recall_result(
     )
 
 
+def _process_fused_fiber_read(
+    fiber_read,
+    config: _FusedPayloadWorkerConfig,
+    llr_hit,
+    llr_miss,
+):
+    apply_result = _run_fused_configured_apply_stage(fiber_read, config)
+
+    # Match streaming semantics: if apply produced no footprints and no MSPs,
+    # pass the read through unchanged and preserve any pre-existing tags.
+    if not apply_result_has_footprints(apply_result):
+        return None
+
+    return _build_fused_configured_recall_result(
+        fiber_read,
+        apply_result,
+        llr_hit,
+        llr_miss,
+        config,
+    )
+
+
 def _process_fused_payload_item(
     payload,
     config: _FusedPayloadWorkerConfig,
@@ -327,20 +349,7 @@ def _process_fused_payload_item(
     if fiber_read is None:
         return None
 
-    apply_result = _run_fused_configured_apply_stage(fiber_read, config)
-
-    # Match streaming semantics: if apply produced no footprints and no MSPs,
-    # pass the read through unchanged and preserve any pre-existing tags.
-    if not apply_result_has_footprints(apply_result):
-        return None
-
-    return _build_fused_configured_recall_result(
-        fiber_read,
-        apply_result,
-        llr_hit,
-        llr_miss,
-        config,
-    )
+    return _process_fused_fiber_read(fiber_read, config, llr_hit, llr_miss)
 
 
 def _init_bam_worker(model_path, debug_timing=False):
