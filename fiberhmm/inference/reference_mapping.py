@@ -15,6 +15,8 @@ def build_query_to_ref(read):
 def query_to_ref_lookup(query_to_ref, qpos: int) -> Optional[int]:
     """Bounds-checked lookup returning ``None`` for unmapped query positions."""
     qpos = int(qpos)
+    if qpos < 0:
+        return None
     if hasattr(query_to_ref, 'get'):
         ref_pos = query_to_ref.get(qpos)
         return int(ref_pos) if ref_pos is not None else None

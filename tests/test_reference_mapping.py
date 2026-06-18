@@ -22,8 +22,10 @@ def test_query_to_ref_lookup_accepts_arrays_and_dicts():
     assert query_to_ref_lookup(q2r, 0) == 100
     assert query_to_ref_lookup(q2r, 1) is None
     assert query_to_ref_lookup(q2r, 10) is None
+    assert query_to_ref_lookup(q2r, -1) is None
     assert query_to_ref_lookup({0: 200, 2: 202}, 2) == 202
     assert query_to_ref_lookup({0: 200, 2: 202}, 1) is None
+    assert query_to_ref_lookup({-1: 999, 0: 200}, -1) is None
 
 
 def test_ref_positions_to_half_open_span_orders_positions():
