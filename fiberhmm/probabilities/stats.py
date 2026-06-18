@@ -323,6 +323,33 @@ def _plot_probability_vs_coverage(ax, merged) -> None:
     ax.legend()
 
 
+def _plot_context_frequency_comparison(ax, merged) -> None:
+    if len(merged) == 0:
+        return
+
+    mask = _contexts_with_min_observations(merged, 0)
+    if np.sum(mask) == 0:
+        return
+
+    ax.scatter(
+        merged.loc[mask, 'total_inacc'],
+        merged.loc[mask, 'total_acc'],
+        alpha=0.5,
+        s=10,
+        c='steelblue',
+    )
+    max_val = max(
+        merged.loc[mask, 'total_acc'].max(),
+        merged.loc[mask, 'total_inacc'].max(),
+    )
+    ax.plot([0, max_val], [0, max_val], 'k--', alpha=0.3)
+    ax.set_xlabel('Inaccessible observations')
+    ax.set_ylabel('Accessible observations')
+    ax.set_title('Context Frequency Comparison')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+
+
 def _write_probability_ratio_summary(handle, label: str, ratios: np.ndarray) -> None:
     if len(ratios) == 0:
         return
@@ -524,18 +551,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
 
             # Context frequency comparison - use merged data
             ax = axes[1, 1]
-            if len(merged) > 0:
-                mask = _contexts_with_min_observations(merged, 0)
-                if np.sum(mask) > 0:
-                    ax.scatter(merged.loc[mask, 'total_inacc'], merged.loc[mask, 'total_acc'],
-                              alpha=0.5, s=10, c='steelblue')
-                    max_val = max(merged.loc[mask, 'total_acc'].max(), merged.loc[mask, 'total_inacc'].max())
-                    ax.plot([0, max_val], [0, max_val], 'k--', alpha=0.3)
-                    ax.set_xlabel('Inaccessible observations')
-                    ax.set_ylabel('Accessible observations')
-                    ax.set_title('Context Frequency Comparison')
-                    ax.set_xscale('log')
-                    ax.set_yscale('log')
+            _plot_context_frequency_comparison(ax, merged)
 
             plt.tight_layout()
             pdf.savefig(fig)

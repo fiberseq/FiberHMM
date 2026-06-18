@@ -659,3 +659,66 @@ def test_probability_vs_coverage_plot_filters_high_coverage_contexts():
     empty_ax = FakeAxis()
     stats._plot_probability_vs_coverage(empty_ax, pd.DataFrame())
     assert empty_ax.scatter_calls == []
+
+
+def test_context_frequency_comparison_plot_scales_counts_and_identity_line():
+    class FakeAxis:
+        def __init__(self):
+            self.scatter_calls = []
+            self.plot_calls = []
+            self.xlabel = None
+            self.ylabel = None
+            self.title = None
+            self.xscale = None
+            self.yscale = None
+
+        def scatter(self, x_values, y_values, **kwargs):
+            self.scatter_calls.append((x_values, y_values, kwargs))
+
+        def plot(self, x_values, y_values, style, **kwargs):
+            self.plot_calls.append((x_values, y_values, style, kwargs))
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_ylabel(self, value):
+            self.ylabel = value
+
+        def set_title(self, value):
+            self.title = value
+
+        def set_xscale(self, value):
+            self.xscale = value
+
+        def set_yscale(self, value):
+            self.yscale = value
+
+    merged = pd.DataFrame({
+        "total_acc": [10, 0, 30],
+        "total_inacc": [20, 5, 40],
+    })
+    ax = FakeAxis()
+
+    stats._plot_context_frequency_comparison(ax, merged)
+
+    x_values, y_values, scatter_kwargs = ax.scatter_calls[0]
+    assert x_values.tolist() == [20, 40]
+    assert y_values.tolist() == [10, 30]
+    assert scatter_kwargs == {"alpha": 0.5, "s": 10, "c": "steelblue"}
+    assert ax.plot_calls == [([0, 40], [0, 40], "k--", {"alpha": 0.3})]
+    assert ax.xlabel == "Inaccessible observations"
+    assert ax.ylabel == "Accessible observations"
+    assert ax.title == "Context Frequency Comparison"
+    assert ax.xscale == "log"
+    assert ax.yscale == "log"
+
+    no_match_ax = FakeAxis()
+    stats._plot_context_frequency_comparison(
+        no_match_ax,
+        pd.DataFrame({"total_acc": [0], "total_inacc": [1]}),
+    )
+    assert no_match_ax.scatter_calls == []
+
+    empty_ax = FakeAxis()
+    stats._plot_context_frequency_comparison(empty_ax, pd.DataFrame())
+    assert empty_ax.scatter_calls == []
