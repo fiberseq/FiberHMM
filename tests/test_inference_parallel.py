@@ -1283,6 +1283,84 @@ def test_build_worker_fused_recall_result_forwards_options(monkeypatch):
     }
 
 
+def test_process_fused_payload_item_runs_parse_apply_and_recall(monkeypatch):
+    payload = {"read_id": "read1"}
+    fiber_read = {"query_sequence": "ACGT"}
+    apply_result = {"ns": [1]}
+    hit = object()
+    miss = object()
+    seen = {}
+
+    config = streaming_workers._FusedPayloadWorkerConfig(
+        edge_trim=1,
+        circular=True,
+        mode="pacbio-fiber",
+        context_size=7,
+        msp_min_size=60,
+        nuc_min_size=85,
+        with_scores=True,
+        prob_threshold=128,
+        min_llr=4.0,
+        min_opps=3,
+        unify_threshold=90,
+    )
+
+    def fake_extract(*args):
+        seen["extract"] = args
+        return fiber_read
+
+    def fake_apply(*args):
+        seen["apply"] = args
+        return apply_result
+
+    def fake_build(*args):
+        seen["build"] = args
+        return {"recall": True}
+
+    monkeypatch.setattr(
+        streaming_workers, "_fused_payload_fiber_read_result", fake_extract,
+    )
+    monkeypatch.setattr(
+        streaming_workers, "_run_worker_fused_apply_stage", fake_apply,
+    )
+    monkeypatch.setattr(
+        streaming_workers, "apply_result_has_footprints", lambda result: True,
+    )
+    monkeypatch.setattr(
+        streaming_workers, "_build_worker_fused_recall_result", fake_build,
+    )
+
+    assert streaming_workers._process_fused_payload_item(
+        payload,
+        config,
+        hit,
+        miss,
+    ) == {"recall": True}
+    assert seen["extract"] == (payload, "pacbio-fiber", 128)
+    assert seen["apply"] == (
+        fiber_read,
+        1,
+        True,
+        "pacbio-fiber",
+        7,
+        60,
+        85,
+        True,
+    )
+    assert seen["build"] == (
+        fiber_read,
+        apply_result,
+        hit,
+        miss,
+        4.0,
+        3,
+        90,
+        True,
+        85,
+        60,
+    )
+
+
 def test_fused_payload_worker_counts_per_read_failures(monkeypatch):
     def fake_extract(payload, mode, prob_threshold):
         if payload == "extract-bad":

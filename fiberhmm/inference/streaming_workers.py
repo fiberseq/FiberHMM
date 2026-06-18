@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from fiberhmm.core.model_io import load_model_for_inference
 from fiberhmm.inference.engine import (
     CHIMERA_SKIP,
@@ -33,6 +35,21 @@ _worker_debug_timing = False
 # Per-worker recall state: LLR tables for the TF Kadane scan. Lives alongside
 # _worker_model and is populated by _init_fused_worker.
 _worker_recall_state = {}
+
+
+@dataclass(frozen=True)
+class _FusedPayloadWorkerConfig:
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    with_scores: bool
+    prob_threshold: int
+    min_llr: float
+    min_opps: int
+    unify_threshold: int
 
 
 def _process_worker_items(items, process_item):
@@ -164,6 +181,52 @@ def _build_worker_fused_recall_result(
         unify_threshold,
         with_scores,
         **_worker_recall_options(nuc_min_size, msp_min_size),
+    )
+
+
+def _process_fused_payload_item(
+    payload,
+    config: _FusedPayloadWorkerConfig,
+    llr_hit,
+    llr_miss,
+):
+    fiber_read = _fused_payload_fiber_read_result(
+        payload,
+        config.mode,
+        config.prob_threshold,
+    )
+    if fiber_read == CHIMERA_RESULT:
+        return CHIMERA_RESULT
+    if fiber_read is None:
+        return None
+
+    apply_result = _run_worker_fused_apply_stage(
+        fiber_read,
+        config.edge_trim,
+        config.circular,
+        config.mode,
+        config.context_size,
+        config.msp_min_size,
+        config.nuc_min_size,
+        config.with_scores,
+    )
+
+    # Match streaming semantics: if apply produced no footprints and no MSPs,
+    # pass the read through unchanged and preserve any pre-existing tags.
+    if not apply_result_has_footprints(apply_result):
+        return None
+
+    return _build_worker_fused_recall_result(
+        fiber_read,
+        apply_result,
+        llr_hit,
+        llr_miss,
+        config.min_llr,
+        config.min_opps,
+        config.unify_threshold,
+        config.with_scores,
+        config.nuc_min_size,
+        config.msp_min_size,
     )
 
 
@@ -299,47 +362,22 @@ def _process_fused_payload_chunk_worker(
     # Model/params set once per worker; TF LLR tables attached to the
     # worker globals via _init_fused_worker.
     llr_hit, llr_miss = _worker_recall_tables()
+    config = _FusedPayloadWorkerConfig(
+        edge_trim=edge_trim,
+        circular=circular,
+        mode=mode,
+        context_size=context_size,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
+        with_scores=with_scores,
+        prob_threshold=prob_threshold,
+        min_llr=min_llr,
+        min_opps=min_opps,
+        unify_threshold=unify_threshold,
+    )
 
     def process_item(payload):
-        fiber_read = _fused_payload_fiber_read_result(payload, mode, prob_threshold)
-        if fiber_read == CHIMERA_RESULT:
-            # DAF strand-swap chimera filtered out -- distinct marker so the
-            # drain can tally it (vs folding into "no footprints"). The
-            # marker is a picklable string (CHIMERA_SKIP is an identity
-            # sentinel that does not survive the worker IPC boundary).
-            return CHIMERA_RESULT
-        if fiber_read is None:
-            return None
-
-        apply_result = _run_worker_fused_apply_stage(
-            fiber_read,
-            edge_trim,
-            circular,
-            mode,
-            context_size,
-            msp_min_size,
-            nuc_min_size,
-            with_scores,
-        )
-
-        # Match streaming semantics: if apply produced no footprints and
-        # no MSPs, treat as "nothing to annotate" so the drain pass-throughs
-        # the read unchanged (preserving any pre-existing tags on input).
-        if not apply_result_has_footprints(apply_result):
-            return None
-
-        return _build_worker_fused_recall_result(
-            fiber_read,
-            apply_result,
-            llr_hit,
-            llr_miss,
-            min_llr,
-            min_opps,
-            unify_threshold,
-            with_scores,
-            nuc_min_size,
-            msp_min_size,
-        )
+        return _process_fused_payload_item(payload, config, llr_hit, llr_miss)
 
     return _process_worker_items(chunk_payloads, process_item)
 
