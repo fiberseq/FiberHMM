@@ -12,6 +12,7 @@ from fiberhmm.cli.generate_probs import (
     _combined_probability_table_path,
     _context_size_label,
     _count_items_desc,
+    _finalize_probability_bam_run,
     _generate_probability_stats_for_contexts,
     _generate_probs_skip_reason,
     _max_reads_per_file,
@@ -796,6 +797,28 @@ def test_print_daf_diagnostics_formats_counts(capsys):
     assert "C+m: 1,000" in out
     assert "Strand assignments" in out
     assert "-:G: 4,000" in out
+
+
+def test_finalize_probability_bam_run_routes_reports(capsys):
+    filter_stats = _new_filter_stats()
+    filter_stats["scanned"] = 10
+    filter_stats["processed"] = 4
+    args = SimpleNamespace(min_mapq=20, min_read_length=100)
+
+    _finalize_probability_bam_run(
+        mode="daf",
+        args=args,
+        filter_stats=filter_stats,
+        mm_tag_types={"C+m": 2},
+        strand_assignments={"CT": 1},
+        verbose=True,
+    )
+
+    out = capsys.readouterr().out
+    assert "Filter Statistics:" in out
+    assert "Passed all filters:" in out
+    assert "MM tag modification types found" in out
+    assert "C+m: 2" in out
 
 
 def test_read_limit_reached_treats_zero_as_unlimited():

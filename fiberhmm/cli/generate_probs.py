@@ -394,6 +394,22 @@ def _read_limit_reached(max_reads: int, reads_processed: int) -> bool:
     return max_reads > 0 and reads_processed >= max_reads
 
 
+def _finalize_probability_bam_run(
+    *,
+    mode: str,
+    args,
+    filter_stats: Dict[str, int],
+    mm_tag_types,
+    strand_assignments,
+    verbose: bool,
+) -> None:
+    if verbose:
+        _print_filter_stats(filter_stats, args.min_mapq, args.min_read_length)
+
+    if mode == 'daf':
+        _print_daf_diagnostics(mm_tag_types, strand_assignments)
+
+
 def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 mode: str, args, max_reads: int = 0, verbose: bool = False) -> Tuple[int, dict]:
     """
@@ -445,13 +461,14 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
             if _read_limit_reached(max_reads, reads_processed):
                 break
 
-    # Print filter stats in verbose mode
-    if verbose:
-        _print_filter_stats(filter_stats, args.min_mapq, args.min_read_length)
-
-    # Print MM tag diagnostics for daf mode (to show C vs G strand detection)
-    if mode == 'daf':
-        _print_daf_diagnostics(mm_tag_types, strand_assignments)
+    _finalize_probability_bam_run(
+        mode=mode,
+        args=args,
+        filter_stats=filter_stats,
+        mm_tag_types=mm_tag_types,
+        strand_assignments=strand_assignments,
+        verbose=verbose,
+    )
 
     return reads_processed, filter_stats
 
