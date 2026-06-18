@@ -20,11 +20,17 @@ class _ProbabilityOutputDirs:
     tables: Path
     plots: Path
 
+    def as_tuple(self) -> Tuple[Path, Path, Path]:
+        return self.output, self.tables, self.plots
+
 
 @dataclass(frozen=True)
 class _DafStrandBase:
     strand: str
     target_base: str
+
+    def as_tuple(self) -> Tuple[str, str]:
+        return self.strand, self.target_base
 
 
 @dataclass(frozen=True)
@@ -82,16 +88,16 @@ def detect_strand_and_base(sequence: str, mod_positions: Set[int], mode: str) ->
         - - strand: G→A deamination, MM tag marks A positions → target_base 'G'
     """
     if _is_fiber_probability_mode(mode):
-        return '.', 'A'
+        return _DafStrandBase('.', 'A').as_tuple()
 
     seq_upper = sequence.upper()
 
     if mode == 'daf':
         counts = _daf_position_counts(seq_upper, mod_positions)
         strand_base = _daf_strand_base_from_counts(counts)
-        return strand_base.strand, strand_base.target_base
+        return strand_base.as_tuple()
 
-    return '.', 'A'
+    return _DafStrandBase('.', 'A').as_tuple()
 
 
 def _standard_output_dirs(output_path: str) -> _ProbabilityOutputDirs:
@@ -119,7 +125,7 @@ def setup_output_dirs(output_path: str) -> Tuple[Path, Path, Path]:
     dirs.tables.mkdir(exist_ok=True)
     dirs.plots.mkdir(exist_ok=True)
 
-    return dirs.output, dirs.tables, dirs.plots
+    return dirs.as_tuple()
 
 
 def get_base_name(output_path: str, default: str = "probs") -> str:

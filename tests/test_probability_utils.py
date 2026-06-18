@@ -53,6 +53,8 @@ def test_detect_strand_and_base_for_daf_modes():
     assert minus_result.target_base == "G"
     assert ambiguous_result.strand == "."
     assert ambiguous_result.target_base == "C"
+    assert plus_result.as_tuple() == ("+", "C")
+    assert minus_result.as_tuple() == ("-", "G")
     assert detect_strand_and_base("TTA", {0, 1}, "daf") == ("+", "C")
     assert detect_strand_and_base("TAA", {1, 2}, "daf") == ("-", "G")
     assert detect_strand_and_base("TAA", {0, 1}, "daf") == (".", "C")
@@ -75,6 +77,7 @@ def test_standard_output_dirs_returns_layout_without_creating(tmp_path):
     assert dirs.output == tmp_path / "run"
     assert dirs.tables == dirs.output / "tables"
     assert dirs.plots == dirs.output / "plots"
+    assert dirs.as_tuple() == (dirs.output, dirs.tables, dirs.plots)
     assert not dirs.output.exists()
 
 
