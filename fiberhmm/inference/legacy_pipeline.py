@@ -305,6 +305,86 @@ def _print_legacy_posterior_summary(
     print(f"Posteriors: {n_fibers:,} fibers -> {output_posteriors} ({file_size:.1f} MB)")
 
 
+def _process_legacy_reads(
+    reads,
+    outbam,
+    model,
+    executor,
+    filter_config: ReadFilterConfig,
+    mode: str,
+    prob_threshold: int,
+    edge_trim: int,
+    circular: bool,
+    context_size: int,
+    msp_min_size: int,
+    skip_reasons: dict,
+    posterior_writer,
+    start_time: float,
+    max_reads: Optional[int],
+    chunk_size: int,
+    nuc_min_size: int = 85,
+    with_scores: bool = False,
+    return_posteriors: bool = False,
+    write_msps: bool = True,
+) -> Tuple[int, int, int, int]:
+    total_reads = 0
+    reads_with_footprints = 0
+    skipped = 0
+    worker_failures = 0
+    chunk_reads = []
+    chunk_read_objs = []
+
+    for read in reads:
+        fiber_read, skip_reason = _legacy_fiber_read_or_skip(
+            read, filter_config, mode, prob_threshold,
+        )
+        if skip_reason:
+            skipped += _write_skipped_legacy_read(
+                outbam, read, skip_reasons, skip_reason
+            )
+            continue
+
+        chunk_reads.append(fiber_read)
+        chunk_read_objs.append(read)
+        total_reads += 1
+
+        if max_reads and total_reads >= max_reads:
+            break
+
+        if len(chunk_reads) >= chunk_size:
+            n_fp, n_failed = _process_legacy_chunk_and_record(
+                chunk_reads, chunk_read_objs, outbam,
+                model, executor, edge_trim, circular,
+                mode, context_size, msp_min_size, skip_reasons,
+                posterior_writer, nuc_min_size=nuc_min_size,
+                with_scores=with_scores,
+                return_posteriors=return_posteriors,
+                write_msps=write_msps,
+            )
+            reads_with_footprints += n_fp
+            worker_failures += n_failed
+
+            _print_legacy_progress(total_reads, skipped, start_time)
+
+            chunk_reads = []
+            chunk_read_objs = []
+
+    if chunk_reads:
+        n_fp, n_failed = _process_legacy_chunk_and_record(
+            chunk_reads, chunk_read_objs, outbam,
+            model, executor, edge_trim, circular,
+            mode, context_size, msp_min_size, skip_reasons,
+            posterior_writer, nuc_min_size=nuc_min_size,
+            with_scores=with_scores,
+            return_posteriors=return_posteriors,
+            write_msps=write_msps,
+        )
+        reads_with_footprints += n_fp
+        worker_failures += n_failed
+
+    return total_reads, reads_with_footprints, skipped, worker_failures
+
+
 _LEGACY_SKIP_REASON_KEYS = BASE_SKIP_REASON_KEYS + (NO_FOOTPRINTS_SKIP_REASON,)
 
 
@@ -359,11 +439,6 @@ def _process_bam_legacy_pipeline(
     io_threads: int = 4,
 ) -> Tuple[int, int]:
     """Process a BAM through the legacy chunked apply path."""
-    total_reads = 0
-    reads_with_footprints = 0
-    skipped = 0
-    worker_failures = 0
-
     # Track skip reasons
     skip_reasons = _new_legacy_skip_reasons()
     filter_config = ReadFilterConfig(
@@ -396,65 +471,35 @@ def _process_bam_legacy_pipeline(
                 output_posteriors, mode, context_size, edge_trim, input_bam,
             )
 
-            chunk_reads = []  # Buffer for current chunk
-            chunk_read_objs = []  # Corresponding pysam read objects
-
             executor = _legacy_executor_for_config(
                 model_path, n_cores, debug_timing,
             )
 
             try:
-                for read in inbam:
-                    fiber_read, skip_reason = _legacy_fiber_read_or_skip(
-                        read, filter_config, mode, prob_threshold,
-                    )
-                    if skip_reason:
-                        skipped += _write_skipped_legacy_read(
-                            outbam, read, skip_reasons, skip_reason
-                        )
-                        continue
-
-                    chunk_reads.append(fiber_read)
-                    chunk_read_objs.append(read)
-                    total_reads += 1
-
-                    # Check max reads limit
-                    if max_reads and total_reads >= max_reads:
-                        # Process final chunk and exit
-                        break
-
-                    # Process chunk when full
-                    if len(chunk_reads) >= chunk_size:
-                        n_fp, n_failed = _process_legacy_chunk_and_record(
-                            chunk_reads, chunk_read_objs, outbam,
-                            model, executor, edge_trim, circular,
-                            mode, context_size, msp_min_size, skip_reasons,
-                            posterior_writer, nuc_min_size=nuc_min_size,
-                            with_scores=with_scores,
-                            return_posteriors=return_posteriors,
-                            write_msps=write_msps
-                        )
-                        reads_with_footprints += n_fp
-                        worker_failures += n_failed
-
-                        _print_legacy_progress(total_reads, skipped, start_time)
-
-                        chunk_reads = []
-                        chunk_read_objs = []
-
-                # Process final partial chunk
-                if chunk_reads:
-                    n_fp, n_failed = _process_legacy_chunk_and_record(
-                        chunk_reads, chunk_read_objs, outbam,
-                        model, executor, edge_trim, circular,
-                        mode, context_size, msp_min_size, skip_reasons,
-                        posterior_writer, nuc_min_size=nuc_min_size,
+                total_reads, reads_with_footprints, skipped, worker_failures = (
+                    _process_legacy_reads(
+                        inbam,
+                        outbam,
+                        model,
+                        executor,
+                        filter_config,
+                        mode,
+                        prob_threshold,
+                        edge_trim,
+                        circular,
+                        context_size,
+                        msp_min_size,
+                        skip_reasons,
+                        posterior_writer,
+                        start_time,
+                        max_reads,
+                        chunk_size,
+                        nuc_min_size=nuc_min_size,
                         with_scores=with_scores,
                         return_posteriors=return_posteriors,
                         write_msps=write_msps,
                     )
-                    reads_with_footprints += n_fp
-                    worker_failures += n_failed
+                )
 
             finally:
                 try:

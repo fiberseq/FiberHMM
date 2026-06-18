@@ -225,6 +225,142 @@ def test_print_legacy_posterior_summary_handles_empty_and_values(capsys):
     )
 
 
+def test_process_legacy_reads_buffers_skips_chunks_and_progress(monkeypatch):
+    outbam = _OutBam()
+    filter_config = object()
+    model = object()
+    executor = object()
+    posterior_writer = object()
+    chunk_calls = []
+    progress_calls = []
+
+    def fake_fiber_read_or_skip(read, got_filter_config, mode, prob_threshold):
+        assert got_filter_config is filter_config
+        assert mode == "daf"
+        assert prob_threshold == 128
+        if read == "skip":
+            return None, "low_mapq"
+        return f"fiber-{read}", None
+
+    def fake_process_chunk(
+        chunk_reads,
+        chunk_read_objs,
+        got_outbam,
+        got_model,
+        got_executor,
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        skip_reasons,
+        got_posterior_writer,
+        **kwargs,
+    ):
+        chunk_calls.append(
+            (
+                list(chunk_reads),
+                list(chunk_read_objs),
+                got_outbam,
+                got_model,
+                got_executor,
+                edge_trim,
+                circular,
+                mode,
+                context_size,
+                msp_min_size,
+                got_posterior_writer,
+                kwargs,
+            )
+        )
+        skip_reasons["no_footprints"] += 1
+        return len(chunk_reads), 1
+
+    monkeypatch.setattr(
+        legacy_pipeline, "_legacy_fiber_read_or_skip", fake_fiber_read_or_skip,
+    )
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_process_legacy_chunk_and_record",
+        fake_process_chunk,
+    )
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_print_legacy_progress",
+        lambda *args: progress_calls.append(args),
+    )
+    skip_reasons = legacy_pipeline._new_legacy_skip_reasons()
+
+    result = legacy_pipeline._process_legacy_reads(
+        ["r1", "skip", "r2", "r3"],
+        outbam,
+        model,
+        executor,
+        filter_config,
+        mode="daf",
+        prob_threshold=128,
+        edge_trim=11,
+        circular=True,
+        context_size=5,
+        msp_min_size=61,
+        skip_reasons=skip_reasons,
+        posterior_writer=posterior_writer,
+        start_time=10.0,
+        max_reads=None,
+        chunk_size=2,
+        nuc_min_size=87,
+        with_scores=True,
+        return_posteriors=True,
+        write_msps=False,
+    )
+
+    assert result == (3, 3, 1, 2)
+    assert outbam.written == ["skip"]
+    assert skip_reasons["low_mapq"] == 1
+    assert skip_reasons["no_footprints"] == 2
+    assert progress_calls == [(2, 1, 10.0)]
+    assert chunk_calls == [
+        (
+            ["fiber-r1", "fiber-r2"],
+            ["r1", "r2"],
+            outbam,
+            model,
+            executor,
+            11,
+            True,
+            "daf",
+            5,
+            61,
+            posterior_writer,
+            {
+                "nuc_min_size": 87,
+                "with_scores": True,
+                "return_posteriors": True,
+                "write_msps": False,
+            },
+        ),
+        (
+            ["fiber-r3"],
+            ["r3"],
+            outbam,
+            model,
+            executor,
+            11,
+            True,
+            "daf",
+            5,
+            61,
+            posterior_writer,
+            {
+                "nuc_min_size": 87,
+                "with_scores": True,
+                "return_posteriors": True,
+                "write_msps": False,
+            },
+        ),
+    ]
+
+
 def test_parallel_reexports_streaming_worker_entry_points():
     assert parallel._init_bam_worker is streaming_workers._init_bam_worker
     assert parallel._init_fused_worker is streaming_workers._init_fused_worker
