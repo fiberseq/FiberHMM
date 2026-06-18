@@ -196,6 +196,14 @@ class _NucMspTilingRequest:
 
 
 @dataclass(frozen=True)
+class _CircularNucMspTilingRequest:
+    nuc_calls: Sequence[NucCall]
+    read_length: int
+    msp_min_size: int
+    nuc_min_size: int = 85
+
+
+@dataclass(frozen=True)
 class _CircularTilingFrame:
     nucs: List[NucCall]
     msps: List[Interval]
@@ -975,8 +983,9 @@ def _restore_circular_tiling_frame(
     return _CircularTilingFrame(nucs=kept, msps=msps)
 
 
-def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
-                                     nuc_min_size=85):
+def _assemble_circular_nuc_msp_tiling_from_request(
+    request: _CircularNucMspTilingRequest,
+):
     """Circular-aware ``assemble_nuc_msp_tiling``.
 
     On a circular molecule a nucleosome can wrap the origin
@@ -995,9 +1004,9 @@ def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
         calls are split at the origin before the linear clip -- otherwise the
         tiler would emit overlapping/wrapped pieces.
     """
-    rl = int(read_length)
-    floors = _tiling_floors(msp_min_size, nuc_min_size)
-    calls = [n for n in nuc_calls if n.length > 0]
+    rl = int(request.read_length)
+    floors = _tiling_floors(request.msp_min_size, request.nuc_min_size)
+    calls = [n for n in request.nuc_calls if n.length > 0]
     if rl <= 0:
         return list(calls), []
     if not calls:
@@ -1014,11 +1023,30 @@ def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
     # fallback origin landing inside a wrapped call is handled correctly.
     cut = _circular_uncovered_cut(calls, rl)
     rotated = _rotate_circular_nuc_calls(calls, cut, rl)
-    kept_rot, msp_rot = assemble_nuc_msp_tiling(
-        rotated, 0, rl, msp_min_size, nuc_min_size)
+    kept_rot, msp_rot = _assemble_nuc_msp_tiling_from_request(
+        _NucMspTilingRequest(
+            nuc_calls=rotated,
+            span_lo=0,
+            span_hi=rl,
+            msp_min_size=request.msp_min_size,
+            nuc_min_size=request.nuc_min_size,
+        )
+    )
 
     restored = _restore_circular_tiling_frame(kept_rot, msp_rot, cut, rl)
     return restored.nucs, restored.msps
+
+
+def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
+                                     nuc_min_size=85):
+    return _assemble_circular_nuc_msp_tiling_from_request(
+        _CircularNucMspTilingRequest(
+            nuc_calls=nuc_calls,
+            read_length=read_length,
+            msp_min_size=msp_min_size,
+            nuc_min_size=nuc_min_size,
+        )
+    )
 
 
 def drop_short_nucs_overlapping_promoted(nuc_calls, promoted, unify_threshold):

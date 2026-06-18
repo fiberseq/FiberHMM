@@ -7,11 +7,13 @@ from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
     _AccessibleSplitRequest,
+    _assemble_circular_nuc_msp_tiling_from_request,
     _assemble_nuc_msp_tiling_from_request,
     _bounded_interval,
     _BoundedInterval,
     _BoundedNucSpansRecallRequest,
     _circular_uncovered_cut,
+    _CircularNucMspTilingRequest,
     _CircularTilingFrame,
     _clip_ordered_nuc_calls_for_tiling,
     _keep_nuc_against_circular_intervals,
@@ -714,8 +716,20 @@ def test_circular_tiling_no_overlap_for_wrapped_nuc():
     # and MSPs tiling the circle exactly (no overlap, no gap).
     rl = 200
     nucs = [NucCall(180, 100, 200, 255, 255)]   # wraps: [180,200) + [0,80)
-    kept, msps = assemble_circular_nuc_msp_tiling(
-        nucs, rl, msp_min_size=1, nuc_min_size=85)
+    request = _CircularNucMspTilingRequest(
+        nuc_calls=nucs,
+        read_length=rl,
+        msp_min_size=1,
+        nuc_min_size=85,
+    )
+
+    kept, msps = _assemble_circular_nuc_msp_tiling_from_request(request)
+    assert assemble_circular_nuc_msp_tiling(
+        nucs,
+        rl,
+        msp_min_size=1,
+        nuc_min_size=85,
+    ) == (kept, msps)
     assert [(k.start, k.length) for k in kept] == [(180, 100)]
     assert msps == [(80, 100)]
     cov = [0] * rl
