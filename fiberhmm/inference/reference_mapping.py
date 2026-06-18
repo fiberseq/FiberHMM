@@ -73,6 +73,8 @@ def _last_ref_in_query_interval(qstart, length, query_to_ref) -> Optional[int]:
 def query_interval_to_ref_span(qstart, length, query_to_ref) -> Optional[Tuple[int, int]]:
     """Map a query interval to its reference span, scanning past unaligned ends."""
     qstart, qend = _query_interval_bounds(qstart, length)
+    if qend <= qstart:
+        return None
     length = qend - qstart
     ref_start = _first_ref_in_query_interval(qstart, length, query_to_ref)
     ref_end = _last_ref_in_query_interval(qstart, length, query_to_ref)

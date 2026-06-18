@@ -59,6 +59,8 @@ def test_span_mapping_scans_inward_past_unaligned_edges():
     assert query_interval_to_ref_span(1, 3, q2r) == (102, 104)
     assert query_interval_to_ref_span(2, 3, q2r) == (102, 104)
     assert query_interval_to_ref_span(1, 1, q2r) is None
+    assert query_interval_to_ref_span(1, 0, q2r) is None
+    assert query_interval_to_ref_span(2, -1, q2r) is None
 
 
 def test_interval_endpoint_scanners_skip_unaligned_positions():
