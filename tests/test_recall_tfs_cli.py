@@ -319,12 +319,19 @@ def test_recall_tfs_load_model_config_uses_metadata_and_overrides(monkeypatch):
         5,
     )
 
-    args = SimpleNamespace(mode="arg-mode", context_size=7)
+    args = SimpleNamespace(mode=" arg-mode ", context_size="7")
 
     assert recall_tfs._load_recall_model_config("/tmp/model.json", args) == (
         "model",
         "arg-mode",
         7,
+    )
+
+    args = SimpleNamespace(mode=" ", context_size=0)
+    assert recall_tfs._load_recall_model_config("/tmp/model.json", args) == (
+        "model",
+        "model-mode",
+        0,
     )
 
 

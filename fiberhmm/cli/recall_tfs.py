@@ -528,12 +528,18 @@ def _resolve_recall_defaults(args):
 
 def _load_recall_model_config(model_path, args):
     model, model_k, model_mode = load_model_with_metadata(model_path)
-    if not model_mode or not model_k:
+    if not model_mode or model_k is None:
         fb_mode, fb_k = _resolve_model_metadata(model_path)
         model_mode = model_mode or fb_mode
-        model_k = model_k or fb_k
-    mode = args.mode or model_mode
-    k = args.context_size or int(model_k)
+        model_k = fb_k if model_k is None else model_k
+    arg_mode = str(args.mode).strip() if args.mode is not None else None
+    model_mode = str(model_mode).strip() if model_mode is not None else None
+    mode = arg_mode or model_mode or 'pacbio-fiber'
+    k = (
+        int(args.context_size)
+        if args.context_size is not None
+        else int(model_k if model_k is not None else 3)
+    )
     return model, mode, k
 
 
