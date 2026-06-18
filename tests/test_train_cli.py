@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 import numpy as np
+import pandas as pd
 
 from fiberhmm.cli import train
 from fiberhmm.core import bam_reader
@@ -29,6 +30,20 @@ def test_load_legacy_probability_table_requires_ratio_or_counts(tmp_path):
 
     with pytest.raises(ValueError, match="Cannot find probability values"):
         train.load_probability_file(str(probs_path))
+
+
+def test_complete_emission_probability_table_fills_missing_encodings():
+    table = pd.DataFrame({
+        "encode": [2],
+        "prob_acc": [0.75],
+        "prob_inacc": [0.25],
+    })
+
+    completed = train._complete_emission_probability_table(table, n_codes=3)
+
+    assert completed["encode"].tolist() == [0, 1, 2, 3]
+    assert completed["prob_acc"].tolist() == [0.0, 0.0, 0.75, 0.0]
+    assert completed["prob_inacc"].tolist() == [0.0, 0.0, 0.25, 0.0]
 
 
 def test_state_runs_groups_contiguous_states():

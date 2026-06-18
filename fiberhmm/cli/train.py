@@ -148,6 +148,23 @@ def load_probability_file(filepath: str, context_size: int = 3) -> pd.DataFrame:
         return _load_legacy_probability_table(filepath)
 
 
+def _complete_emission_probability_table(
+    hexamer_probs: pd.DataFrame,
+    n_codes: int,
+) -> pd.DataFrame:
+    all_encodes = np.arange(n_codes + 1)  # Include non-target code.
+    missing = np.setdiff1d(all_encodes, hexamer_probs['encode'].values)
+    if len(missing) > 0:
+        missing_df = pd.DataFrame({
+            'encode': missing,
+            'prob_acc': [0.0] * len(missing),
+            'prob_inacc': [0.0] * len(missing)
+        })
+        hexamer_probs = pd.concat([hexamer_probs, missing_df])
+
+    return hexamer_probs.sort_values('encode').reset_index(drop=True).fillna(0)
+
+
 def make_emission_probs(acc_file: str, inacc_file: str,
                         context_size: int = 3, prob_adjust: float = 1.0):
     """
@@ -184,19 +201,7 @@ def make_emission_probs(acc_file: str, inacc_file: str,
     # Calculate expected number of codes
     n_codes = ContextEncoder.get_n_codes(context_size)  # 4^(2k)
 
-    # Fill missing encodings
-    all_encodes = np.arange(n_codes + 1)  # 0 to 4^(2k) including non-target
-    missing = np.setdiff1d(all_encodes, hexamer_probs['encode'].values)
-    if len(missing) > 0:
-        missing_df = pd.DataFrame({
-            'encode': missing,
-            'prob_acc': [0.0] * len(missing),
-            'prob_inacc': [0.0] * len(missing)
-        })
-        hexamer_probs = pd.concat([hexamer_probs, missing_df])
-
-    hexamer_probs = hexamer_probs.sort_values('encode').reset_index(drop=True)
-    hexamer_probs = hexamer_probs.fillna(0)
+    hexamer_probs = _complete_emission_probability_table(hexamer_probs, n_codes)
 
     # Build emission matrix
     # Row order here is arbitrary - normalize_states() fixes it on load
