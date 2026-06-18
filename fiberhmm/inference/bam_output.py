@@ -664,10 +664,7 @@ def _format_footprint_bed12_row(
     with_scores: bool,
 ) -> str:
     score = len(block_starts)
-    blocks = [
-        (chrom_start + start, chrom_start + start + size)
-        for start, size in zip(block_starts, block_sizes)
-    ]
+    blocks = _bed_blocks_from_relative(chrom_start, block_starts, block_sizes)
     extra = ()
     if with_scores and valid_scores:
         extra = (_format_bed_score_column(valid_scores),)
@@ -682,6 +679,13 @@ def _format_footprint_bed12_row(
         extra,
         item_rgb="0,0,0",
     )
+
+
+def _bed_blocks_from_relative(chrom_start: int, block_starts, block_sizes):
+    return [
+        (chrom_start + start, chrom_start + start + size)
+        for start, size in zip(block_starts, block_sizes)
+    ]
 
 
 def _format_bed_score_column(scores: Sequence[int]) -> str:
