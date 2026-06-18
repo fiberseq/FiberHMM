@@ -390,6 +390,71 @@ def _plot_footprint_overview_pdf_page(stats: "FootprintStats", plt, pdf) -> None
     plt.close(fig)
 
 
+def _plot_quality_msp_pdf_page(stats: "FootprintStats", plt, pdf) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+    fig.suptitle(
+        'FiberHMM Quality and MSP Statistics', fontsize=14, fontweight='bold',
+    )
+
+    ax = axes[0, 0]
+    if stats.footprint_scores:
+        scores = np.array(stats.footprint_scores)
+        _plot_median_histogram(
+            ax,
+            scores,
+            bins=50,
+            hist_range=(0, 1),
+            color='gold',
+            xlabel='Footprint Confidence Score',
+            title='Footprint Quality Distribution',
+            median_format='.3f',
+        )
+    else:
+        _plot_no_data_message(
+            ax,
+            'No score data\n(use --scores flag)',
+            'Footprint Quality Distribution',
+        )
+
+    ax = axes[0, 1]
+    if stats.msp_sizes:
+        msp_sizes = np.array(stats.msp_sizes)
+        _plot_median_histogram(
+            ax,
+            msp_sizes,
+            bins=50,
+            hist_range=(0, min(2000, np.percentile(msp_sizes, 99))),
+            color='teal',
+            xlabel='MSP Size (bp)',
+            title='MSP Size Distribution',
+            median_format='.0f',
+            median_suffix=' bp',
+        )
+    else:
+        _plot_no_data_message(ax, 'No MSP data', 'MSP Size Distribution')
+
+    ax = axes[1, 0]
+    if stats.read_lengths:
+        lengths = np.array(stats.read_lengths)
+        _plot_median_histogram(
+            ax,
+            lengths,
+            bins=50,
+            color='slategray',
+            xlabel='Read Length (bp)',
+            title='Read Length Distribution',
+            median_format='.0f',
+            median_suffix=' bp',
+        )
+
+    ax = axes[1, 1]
+    _plot_footprint_size_bins(ax, stats.footprint_sizes)
+
+    plt.tight_layout()
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
 class FootprintStats:
     """Collects footprint statistics from sampled reads."""
 
@@ -545,71 +610,7 @@ class FootprintStats:
         with PdfPages(pdf_path) as pdf:
             _plot_footprint_overview_pdf_page(self, plt, pdf)
 
-            # Page 2: Quality scores and MSPs
-            fig, axes = plt.subplots(2, 2, figsize=(10, 8))
-            fig.suptitle('FiberHMM Quality and MSP Statistics', fontsize=14, fontweight='bold')
-
-            # Footprint score distribution
-            ax = axes[0, 0]
-            if self.footprint_scores:
-                scores = np.array(self.footprint_scores)
-                _plot_median_histogram(
-                    ax,
-                    scores,
-                    bins=50,
-                    hist_range=(0, 1),
-                    color='gold',
-                    xlabel='Footprint Confidence Score',
-                    title='Footprint Quality Distribution',
-                    median_format='.3f',
-                )
-            else:
-                _plot_no_data_message(
-                    ax,
-                    'No score data\n(use --scores flag)',
-                    'Footprint Quality Distribution',
-                )
-
-            # MSP size distribution
-            ax = axes[0, 1]
-            if self.msp_sizes:
-                msp_sizes = np.array(self.msp_sizes)
-                _plot_median_histogram(
-                    ax,
-                    msp_sizes,
-                    bins=50,
-                    hist_range=(0, min(2000, np.percentile(msp_sizes, 99))),
-                    color='teal',
-                    xlabel='MSP Size (bp)',
-                    title='MSP Size Distribution',
-                    median_format='.0f',
-                    median_suffix=' bp',
-                )
-            else:
-                _plot_no_data_message(ax, 'No MSP data', 'MSP Size Distribution')
-
-            # Read length distribution
-            ax = axes[1, 0]
-            if self.read_lengths:
-                lengths = np.array(self.read_lengths)
-                _plot_median_histogram(
-                    ax,
-                    lengths,
-                    bins=50,
-                    color='slategray',
-                    xlabel='Read Length (bp)',
-                    title='Read Length Distribution',
-                    median_format='.0f',
-                    median_suffix=' bp',
-                )
-
-            # Footprint size vs count (2D histogram)
-            ax = axes[1, 1]
-            _plot_footprint_size_bins(ax, self.footprint_sizes)
-
-            plt.tight_layout()
-            pdf.savefig(fig)
-            plt.close(fig)
+            _plot_quality_msp_pdf_page(self, plt, pdf)
 
         print(f"QC plots saved to: {pdf_path}")
 

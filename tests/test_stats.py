@@ -693,6 +693,95 @@ def test_plot_footprint_overview_pdf_page_skips_empty_and_marks_missing_gap(monk
     assert pdf.saved == [plt.fig]
 
 
+def test_plot_quality_msp_pdf_page_builds_metric_panels(monkeypatch):
+    plot_calls = []
+    no_data_calls = []
+    bins_calls = []
+
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_median_histogram",
+        lambda ax, values, **kwargs: plot_calls.append((ax, values, kwargs)),
+    )
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_no_data_message",
+        lambda *args: no_data_calls.append(args),
+    )
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_footprint_size_bins",
+        lambda ax, values: bins_calls.append((ax, values)),
+    )
+    stats = stats_module.FootprintStats()
+    stats.footprint_scores = [0.1, 0.5]
+    stats.msp_sizes = [100, 200]
+    stats.read_lengths = [1000, 2000]
+    stats.footprint_sizes = [10, 20]
+    plt = _FakePyplot()
+    pdf = _FakePdf()
+
+    stats_module._plot_quality_msp_pdf_page(stats, plt, pdf)
+
+    assert plt.subplots_calls == [((2, 2), {"figsize": (10, 8)})]
+    assert plt.fig.suptitles == [
+        (
+            ("FiberHMM Quality and MSP Statistics",),
+            {"fontsize": 14, "fontweight": "bold"},
+        )
+    ]
+    assert [call[0] for call in plot_calls] == ["00", "01", "10"]
+    assert [call[2]["title"] for call in plot_calls] == [
+        "Footprint Quality Distribution",
+        "MSP Size Distribution",
+        "Read Length Distribution",
+    ]
+    assert no_data_calls == []
+    assert bins_calls == [("11", stats.footprint_sizes)]
+    assert plt.tight_layout_calls == 1
+    assert pdf.saved == [plt.fig]
+    assert plt.closed == [plt.fig]
+
+
+def test_plot_quality_msp_pdf_page_marks_missing_score_and_msp_data(monkeypatch):
+    plot_calls = []
+    no_data_calls = []
+    bins_calls = []
+
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_median_histogram",
+        lambda ax, values, **kwargs: plot_calls.append((ax, values, kwargs)),
+    )
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_no_data_message",
+        lambda *args: no_data_calls.append(args),
+    )
+    monkeypatch.setattr(
+        stats_module,
+        "_plot_footprint_size_bins",
+        lambda ax, values: bins_calls.append((ax, values)),
+    )
+    stats = stats_module.FootprintStats()
+    plt = _FakePyplot()
+    pdf = _FakePdf()
+
+    stats_module._plot_quality_msp_pdf_page(stats, plt, pdf)
+
+    assert plot_calls == []
+    assert no_data_calls == [
+        (
+            "00",
+            "No score data\n(use --scores flag)",
+            "Footprint Quality Distribution",
+        ),
+        ("01", "No MSP data", "MSP Size Distribution"),
+    ]
+    assert bins_calls == [("11", [])]
+    assert pdf.saved == [plt.fig]
+
+
 def test_stats_sampling_probability_handles_full_and_partial_samples():
     assert stats_module._stats_sampling_probability(10, 100) == 1.0
     assert stats_module._stats_sampling_probability(100, 10) == 0.1
