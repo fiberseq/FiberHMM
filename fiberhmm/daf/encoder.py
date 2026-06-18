@@ -133,6 +133,32 @@ def _needs_fasta_pair_fallback(pairs) -> bool:
     )
 
 
+def _aligned_pairs_with_reference_bases(read, ref_fasta=None):
+    # Pre-validate MD vs CIGAR to avoid pysam's AssertionError path on
+    # malformed BAMs — that path can corrupt malloc state in some pysam
+    # versions, crashing the worker later with "malloc(): invalid size".
+    pairs = None
+    if md_matches_cigar(read):
+        try:
+            pairs = read.get_aligned_pairs(with_seq=True)
+        except Exception:
+            if ref_fasta is None:
+                return None
+            pairs = None
+    elif ref_fasta is None:
+        return None
+
+    if not _needs_fasta_pair_fallback(pairs):
+        return pairs
+
+    if ref_fasta is None:
+        return None
+    try:
+        return _aligned_pairs_from_fasta(read, ref_fasta)
+    except Exception:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Per-read encoding
 # ---------------------------------------------------------------------------
@@ -175,32 +201,9 @@ def get_daf_positions(read, force_strand=None, ref_fasta=None):
     if seq is None:
         return None
 
-    # Get aligned pairs with reference bases.
-    # Pre-validate MD vs CIGAR to avoid pysam's AssertionError path on
-    # malformed BAMs — that path can corrupt malloc state in some pysam
-    # versions, crashing the worker later with "malloc(): invalid size".
-    pairs = None
-    if md_matches_cigar(read):
-        try:
-            pairs = read.get_aligned_pairs(with_seq=True)
-        except Exception:
-            # MD tag missing and no way to get ref bases without it.
-            if ref_fasta is None:
-                return None
-            pairs = None
-    elif ref_fasta is None:
-        # MD disagrees with CIGAR and no reference available — can't
-        # safely get ref bases. Skip this read.
+    pairs = _aligned_pairs_with_reference_bases(read, ref_fasta)
+    if pairs is None:
         return None
-
-    # Fallback: build pairs from reference FASTA when MD tag is absent
-    if _needs_fasta_pair_fallback(pairs):
-        if ref_fasta is None:
-            return None
-        try:
-            pairs = _aligned_pairs_from_fasta(read, ref_fasta)
-        except Exception:
-            return None
 
     ct_positions, ga_positions = _daf_mismatch_positions_from_pairs(pairs, seq)
 
