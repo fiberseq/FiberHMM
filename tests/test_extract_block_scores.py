@@ -513,6 +513,9 @@ def test_extract_cli_setup_helpers_build_paths_and_filters(tmp_path):
 
     assert extract_tags._default_extract_outdir(str(input_bam)) == str(tmp_path)
     assert extract_tags._extract_dataset_name(str(input_bam)) == "sample"
+    assert extract_tags._extract_dataset_name(
+        str(tmp_path / "run.bam_footprints.BAM")
+    ) == "run.bam"
     assert extract_tags._parse_chroms_filter(None) is None
     assert extract_tags._parse_chroms_filter("chr2L,chr3R") == {"chr2L", "chr3R"}
     assert extract_tags._extract_output_paths(

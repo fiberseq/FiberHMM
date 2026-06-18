@@ -127,6 +127,7 @@ def test_prepare_apply_io_resolves_cores_and_creates_output_dir(monkeypatch, tmp
 def test_apply_dataset_name():
     assert _dataset_name("-") == "stdin"
     assert _dataset_name("/tmp/sample.bam") == "sample"
+    assert _dataset_name("/tmp/run.bam/sample.BAM") == "sample"
     assert _dataset_name("/tmp/sample.cram") == "sample.cram"
 
 

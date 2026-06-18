@@ -1092,7 +1092,12 @@ def _default_extract_outdir(input_path: str) -> str:
 
 
 def _extract_dataset_name(input_path: str) -> str:
-    return os.path.basename(input_path).replace('.bam', '').replace('_footprints', '')
+    basename = os.path.basename(input_path)
+    if basename.lower().endswith('.bam'):
+        basename = os.path.splitext(basename)[0]
+    if basename.endswith('_footprints'):
+        basename = basename[:-len('_footprints')]
+    return basename
 
 
 def _parse_chroms_filter(chroms_arg: Optional[str]) -> Optional[Set[str]]:

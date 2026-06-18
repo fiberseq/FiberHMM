@@ -189,7 +189,8 @@ def _resolve_apply_cores(requested_cores: int) -> int:
 def _dataset_name(input_bam: str) -> str:
     if input_bam == '-':
         return 'stdin'
-    return os.path.basename(input_bam).replace('.bam', '')
+    basename = os.path.basename(input_bam)
+    return os.path.splitext(basename)[0] if basename.lower().endswith('.bam') else basename
 
 
 def _resolve_output_bam(args, dataset: str, stdout_mode: bool) -> str:
