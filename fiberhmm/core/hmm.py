@@ -986,10 +986,19 @@ def _new_native_model(emission_probs: np.ndarray) -> FiberHMM:
     return model
 
 
+def _version_component_int(component: str) -> int:
+    digits = []
+    for char in component.strip():
+        if not char.isdigit():
+            break
+        digits.append(char)
+    return int(''.join(digits)) if digits else 0
+
+
 def _hmmlearn_version_tuple(version: str) -> Tuple[int, int]:
     parts = version.split('.') if version else []
-    major_version = int(parts[0]) if parts else 0
-    minor_version = int(parts[1]) if len(parts) > 1 else 0
+    major_version = _version_component_int(parts[0]) if parts else 0
+    minor_version = _version_component_int(parts[1]) if len(parts) > 1 else 0
     return major_version, minor_version
 
 

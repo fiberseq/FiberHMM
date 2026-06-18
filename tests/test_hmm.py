@@ -256,7 +256,9 @@ class TestModelTraining:
     def test_hmmlearn_version_selection(self):
         assert _hmmlearn_version_tuple("0.2.8") == (0, 2)
         assert _hmmlearn_version_tuple("0.3.0") == (0, 3)
+        assert _hmmlearn_version_tuple("0.3rc1") == (0, 3)
         assert _hmmlearn_version_tuple("1.0.0") == (1, 0)
+        assert _hmmlearn_version_tuple("dev") == (0, 0)
         assert not _hmmlearn_uses_categorical((0, 2))
         assert _hmmlearn_uses_categorical((0, 3))
         assert _hmmlearn_uses_categorical((1, 0))
