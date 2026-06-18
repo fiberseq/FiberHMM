@@ -56,6 +56,12 @@ class _RegionTsvMergeRequest:
     source_bam: str
 
 
+@dataclass(frozen=True)
+class _RegionTsvCopyRequest:
+    outfile: object
+    tsv_path: str
+
+
 def _posterior_probabilities_b64(posteriors: np.ndarray) -> str:
     post_u8 = np.clip(posteriors * 255, 0, 255).astype(np.uint8)
     return base64.b64encode(post_u8.tobytes()).decode("ascii")
@@ -239,15 +245,23 @@ def _is_region_tsv_record_line(line: str) -> bool:
     return bool(line.strip()) and not line.startswith("#")
 
 
-def _copy_region_tsv_records(outfile, tsv_path: str) -> int:
+def _copy_region_tsv_records_from_request(
+    request: _RegionTsvCopyRequest,
+) -> int:
     n_fibers = 0
-    with open(tsv_path, "r") as infile:
+    with open(request.tsv_path, "r") as infile:
         for line in infile:
             if not _is_region_tsv_record_line(line):
                 continue
-            outfile.write(line)
+            request.outfile.write(line)
             n_fibers += 1
     return n_fibers
+
+
+def _copy_region_tsv_records(outfile, tsv_path: str) -> int:
+    return _copy_region_tsv_records_from_request(
+        _RegionTsvCopyRequest(outfile=outfile, tsv_path=tsv_path),
+    )
 
 
 def merge_region_posteriors_tsv_from_request(
@@ -276,7 +290,12 @@ def merge_region_posteriors_tsv_from_request(
 
         n_fibers = 0
         for tsv_file in valid_files:
-            n_fibers += _copy_region_tsv_records(outfile, tsv_file.path)
+            n_fibers += _copy_region_tsv_records_from_request(
+                _RegionTsvCopyRequest(
+                    outfile=outfile,
+                    tsv_path=tsv_file.path,
+                ),
+            )
 
     return n_fibers
 

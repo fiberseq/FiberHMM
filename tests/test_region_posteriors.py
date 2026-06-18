@@ -146,9 +146,18 @@ def test_region_tsv_header_and_record_copy_helpers(tmp_path):
         encoding="utf-8",
     )
 
-    assert region_tsv._copy_region_tsv_records(output, str(records)) == 1
+    assert region_tsv._copy_region_tsv_records_from_request(
+        region_tsv._RegionTsvCopyRequest(
+            outfile=output,
+            tsv_path=str(records),
+        )
+    ) == 1
     assert output.getvalue().endswith("read1\tchr1\t1\t2\t+\tAA==\t\t\n")
     assert "#metadata:{}" not in output.getvalue()
+
+    adapter_output = io.StringIO()
+    assert region_tsv._copy_region_tsv_records(adapter_output, str(records)) == 1
+    assert adapter_output.getvalue() == "read1\tchr1\t1\t2\t+\tAA==\t\t\n"
 
 
 def test_merge_region_posteriors_tsv_orders_regions_and_preserves_input_list(tmp_path):
