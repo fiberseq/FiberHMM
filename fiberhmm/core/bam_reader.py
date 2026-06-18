@@ -402,6 +402,45 @@ def _mm_positions_from_spec(skip_arr: np.ndarray,
     return positions[qualities >= prob_threshold]
 
 
+def _mm_hit_positions_for_spec(
+    base_mod: str,
+    skip_arr: np.ndarray,
+    n_mods: int,
+    base_pos_cache: Dict[str, np.ndarray],
+    search_bytes: np.ndarray,
+    ml_arr_all: np.ndarray,
+    ml_idx: int,
+    q_len: int,
+    is_reverse: bool,
+    prob_threshold: int,
+    mode: str,
+) -> Tuple[np.ndarray, int]:
+    target_base = _mm_target_base(base_mod)
+    if target_base is None:
+        return np.array([], dtype=np.int64), ml_idx + n_mods
+
+    if not _target_base_allowed_for_mode(target_base, mode):
+        return np.array([], dtype=np.int64), ml_idx + n_mods
+
+    base_positions = _cached_base_positions(
+        base_pos_cache, target_base, search_bytes,
+    )
+    ml_slice_arr, next_ml_idx = _mm_ml_slice_for_spec(
+        ml_arr_all, ml_idx, n_mods,
+    )
+    return (
+        _mm_positions_from_spec(
+            skip_arr,
+            base_positions,
+            ml_slice_arr,
+            q_len,
+            is_reverse,
+            prob_threshold,
+        ),
+        next_ml_idx,
+    )
+
+
 def _mm_ml_slice_for_spec(
     ml_arr_all: np.ndarray,
     ml_idx: int,
@@ -629,30 +668,18 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
     base_pos_cache: Dict[str, np.ndarray] = {}
 
     for base_mod, skip_arr, n_mods in _iter_mm_mod_specs(mm_tag):
-        target_base = _mm_target_base(base_mod)
-        if target_base is None:
-            ml_idx += n_mods
-            continue
-
-        if not _target_base_allowed_for_mode(target_base, mode):
-            ml_idx += n_mods
-            continue
-
-        base_positions = _cached_base_positions(
-            base_pos_cache, target_base, search_bytes,
-        )
-
-        ml_slice_arr, ml_idx = _mm_ml_slice_for_spec(
-            ml_arr_all, ml_idx, n_mods,
-        )
-
-        hit_positions = _mm_positions_from_spec(
+        hit_positions, ml_idx = _mm_hit_positions_for_spec(
+            base_mod,
             skip_arr,
-            base_positions,
-            ml_slice_arr,
+            n_mods,
+            base_pos_cache,
+            search_bytes,
+            ml_arr_all,
+            ml_idx,
             q_len,
             is_reverse,
             prob_threshold,
+            mode,
         )
         if len(hit_positions) > 0:
             mod_positions.update(hit_positions.tolist())
