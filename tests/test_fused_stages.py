@@ -191,7 +191,12 @@ def test_optional_apply_score_fields_respects_enabled_flag():
         "as_scores": np.asarray([0.5], dtype=np.float32),
     }
 
-    enabled = fused_stages._optional_apply_score_fields(apply_result, enabled=True)
+    enabled = fused_stages._optional_apply_score_fields_from_request(
+        fused_stages._OptionalApplyScoreFieldsRequest(
+            apply_result=apply_result,
+            enabled=True,
+        )
+    )
     disabled = fused_stages._optional_apply_score_fields(apply_result, enabled=False)
 
     assert enabled["ns_scores"] is apply_result["ns_scores"]

@@ -125,6 +125,12 @@ class _FusedRecallResultRequest:
 
 
 @dataclass(frozen=True)
+class _OptionalApplyScoreFieldsRequest:
+    apply_result: Mapping[str, Any]
+    enabled: bool
+
+
+@dataclass(frozen=True)
 class _PromoteLargeTfNucsRequest:
     tf_calls: Any
     nuc_calls: Any
@@ -234,11 +240,30 @@ def _optional_apply_scores(apply_result: Mapping[str, Any], key: str, enabled: b
     return apply_result.get(key) if enabled else None
 
 
-def _optional_apply_score_fields(apply_result: Mapping[str, Any], enabled: bool):
+def _optional_apply_score_fields_from_request(
+    request: _OptionalApplyScoreFieldsRequest,
+):
     return {
-        "ns_scores": _optional_apply_scores(apply_result, "ns_scores", enabled),
-        "as_scores": _optional_apply_scores(apply_result, "as_scores", enabled),
+        "ns_scores": _optional_apply_scores(
+            request.apply_result,
+            "ns_scores",
+            request.enabled,
+        ),
+        "as_scores": _optional_apply_scores(
+            request.apply_result,
+            "as_scores",
+            request.enabled,
+        ),
     }
+
+
+def _optional_apply_score_fields(apply_result: Mapping[str, Any], enabled: bool):
+    return _optional_apply_score_fields_from_request(
+        _OptionalApplyScoreFieldsRequest(
+            apply_result=apply_result,
+            enabled=enabled,
+        )
+    )
 
 
 def _promote_large_tf_nucs_from_request(
@@ -513,7 +538,12 @@ def _build_fused_recall_result_without_nucs_linear(
         unify_threshold,
     )
 
-    score_fields = _optional_apply_score_fields(apply_result, with_scores)
+    score_fields = _optional_apply_score_fields_from_request(
+        _OptionalApplyScoreFieldsRequest(
+            apply_result=apply_result,
+            enabled=with_scores,
+        )
+    )
     kept_nucs, nq_for_kept = unify_nucs_with_tf_calls(
         ns,
         nl,
