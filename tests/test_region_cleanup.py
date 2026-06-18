@@ -733,6 +733,49 @@ def test_finalize_region_bam_parallel_run_finishes_outputs_and_posteriors(
     assert capsys.readouterr().out == "\n"
 
 
+def test_finalize_region_bed_parallel_run_concatenates_and_completes(
+    monkeypatch,
+    capsys,
+):
+    aggregation = region_pipeline.RegionBedAggregation(
+        total_reads=8,
+        reads_with_footprints=3,
+        temp_beds=[(0, "region_0.bed")],
+    )
+    calls = []
+
+    monkeypatch.setattr(
+        region_pipeline,
+        "_ordered_existing_temp_paths",
+        lambda paths: calls.append(("ordered", paths)) or ["region_0.bed"],
+    )
+    monkeypatch.setattr(
+        region_pipeline,
+        "_concatenate_region_beds",
+        lambda output_bed, beds: calls.append(("concat", output_bed, beds)),
+    )
+    monkeypatch.setattr(
+        region_pipeline,
+        "_region_completion_result",
+        lambda got_aggregation, start_time: (
+            calls.append(("complete", got_aggregation, start_time)) or (8, 3)
+        ),
+    )
+
+    assert region_pipeline._finalize_region_bed_parallel_run(
+        "out.bed",
+        aggregation,
+        7.0,
+    ) == (8, 3)
+
+    assert calls == [
+        ("ordered", aggregation.temp_beds),
+        ("concat", "out.bed", ["region_0.bed"]),
+        ("complete", aggregation, 7.0),
+    ]
+    assert capsys.readouterr().out == "\n"
+
+
 def test_finalize_region_bam_output_concatenates_reports_and_indexes(
     monkeypatch,
     capsys,

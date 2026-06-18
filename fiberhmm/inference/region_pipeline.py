@@ -569,6 +569,17 @@ def _finalize_region_bam_parallel_run(
     return _region_completion_result(aggregation, start_time)
 
 
+def _finalize_region_bed_parallel_run(
+    output_bed: str,
+    aggregation: RegionBedAggregation,
+    start_time: float,
+) -> Tuple[int, int]:
+    print()
+    non_empty_beds = _ordered_existing_temp_paths(aggregation.temp_beds)
+    _concatenate_region_beds(output_bed, non_empty_beds)
+    return _region_completion_result(aggregation, start_time)
+
+
 def _process_bam_region_parallel(input_bam: str, output_bam: str,
                                    model_path: str, train_rids: Set[str],
                                    edge_trim: int, circular: bool,
@@ -759,14 +770,9 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
             error_prefix="Error processing region",
         )
 
-        print()  # Newline after progress
-
-        # Sort temp BEDs by region order and concatenate
-        non_empty_beds = _ordered_existing_temp_paths(aggregation.temp_beds)
-
-        _concatenate_region_beds(output_bed, non_empty_beds)
-
-        return _region_completion_result(aggregation, start_time)
+        return _finalize_region_bed_parallel_run(
+            output_bed, aggregation, start_time,
+        )
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
