@@ -34,7 +34,13 @@ def resolve_chroms_set(chroms):
     """Normalize an optional CLI chromosome list into a de-duplicated set."""
     if not chroms:
         return None
-    chroms_set = {chrom.strip() for chrom in chroms if chrom.strip()}
+    chroms_set = set()
+    for chrom in chroms:
+        if chrom is None:
+            continue
+        chrom_name = str(chrom).strip()
+        if chrom_name:
+            chroms_set.add(chrom_name)
     return chroms_set or None
 
 
