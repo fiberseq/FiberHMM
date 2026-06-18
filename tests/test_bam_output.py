@@ -876,6 +876,13 @@ def test_sort_bed12_blocks_request_keeps_scores_aligned():
 
 
 def test_normalize_bed12_blocks_sorts_merges_scores_and_pads():
+    request = bam_output._Bed12NormalizeRequest(
+        block_starts=[20, 0, 5],
+        block_sizes=[5, 10, 20],
+        valid_scores=[100, 50, 80],
+        read_length=30,
+    )
+    requested_blocks = bam_output._normalize_bed12_blocks_from_request(request)
     blocks = bam_output._normalize_bed12_blocks(
         block_starts=[20, 0, 5],
         block_sizes=[5, 10, 20],
@@ -883,6 +890,7 @@ def test_normalize_bed12_blocks_sorts_merges_scores_and_pads():
         read_length=30,
     )
 
+    assert requested_blocks == blocks
     assert blocks.starts == [0, 29]
     assert blocks.sizes == [25, 1]
     assert blocks.scores == [82, 0]

@@ -37,6 +37,14 @@ class _Bed12BlockSortRequest:
 
 
 @dataclass(frozen=True)
+class _Bed12NormalizeRequest:
+    block_starts: object
+    block_sizes: object
+    valid_scores: object
+    read_length: int
+
+
+@dataclass(frozen=True)
 class _Bed12Components:
     chrom_start: int
     chrom_end: int
@@ -1131,17 +1139,34 @@ def _pad_bed12_blocks(blocks: _Bed12Blocks, read_length: int) -> _Bed12Blocks:
     )
 
 
+def _normalize_bed12_blocks_from_request(
+    request: _Bed12NormalizeRequest,
+) -> _Bed12Blocks:
+    sorted_blocks = _sort_bed12_blocks_from_request(
+        _Bed12BlockSortRequest(
+            block_starts=request.block_starts,
+            block_sizes=request.block_sizes,
+            valid_scores=request.valid_scores,
+        )
+    )
+    merged_blocks = _merge_bed12_blocks(sorted_blocks)
+    return _pad_bed12_blocks(merged_blocks, request.read_length)
+
+
 def _normalize_bed12_blocks(
     block_starts,
     block_sizes,
     valid_scores,
     read_length: int,
 ) -> _Bed12Blocks:
-    sorted_blocks = _sort_bed12_blocks(
-        block_starts, block_sizes, valid_scores,
+    return _normalize_bed12_blocks_from_request(
+        _Bed12NormalizeRequest(
+            block_starts=block_starts,
+            block_sizes=block_sizes,
+            valid_scores=valid_scores,
+            read_length=read_length,
+        )
     )
-    merged_blocks = _merge_bed12_blocks(sorted_blocks)
-    return _pad_bed12_blocks(merged_blocks, read_length)
 
 
 def _bed12_components_from_ref_blocks(blocks, with_scores: bool):
@@ -1177,11 +1202,13 @@ def _footprint_bed12_line_from_read(read, ns, nl, nq, with_scores: bool) -> Opti
         return None
 
     read_length = components.chrom_end - components.chrom_start
-    normalized_blocks = _normalize_bed12_blocks(
-        components.blocks.starts,
-        components.blocks.sizes,
-        components.blocks.scores,
-        read_length,
+    normalized_blocks = _normalize_bed12_blocks_from_request(
+        _Bed12NormalizeRequest(
+            block_starts=components.blocks.starts,
+            block_sizes=components.blocks.sizes,
+            valid_scores=components.blocks.scores,
+            read_length=read_length,
+        )
     )
 
     return _format_footprint_bed12_row_from_request(
