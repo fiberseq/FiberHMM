@@ -13,6 +13,7 @@ from fiberhmm.inference.region_workers import (
     _REGION_ROUTE_PROCESS,
     _REGION_ROUTE_SKIP,
     _build_fused_region_recall_result,
+    _build_fused_region_recall_result_from_request,
     _extract_region_fiber_read,
     _extract_region_payload_fiber_read,
     _format_region_bed12_row,
@@ -20,6 +21,7 @@ from fiberhmm.inference.region_workers import (
     _fused_region_recall_config,
     _fused_region_worker_runtime,
     _FusedRegionApplyReadRequest,
+    _FusedRegionRecallResultRequest,
     _new_region_skip_reasons,
     _open_region_posterior_tsv,
     _pad_region_bed12_to_read_span,
@@ -1021,14 +1023,16 @@ def test_build_fused_region_recall_result_uses_worker_configs(monkeypatch):
     })
     recall_options = {"recall_nucs": True, "phase_nrl": 190}
 
-    result = _build_fused_region_recall_result(
-        fiber_read,
-        apply_result,
-        "hit",
-        "miss",
-        apply_config,
-        recall_config,
-        recall_options,
+    result = _build_fused_region_recall_result_from_request(
+        _FusedRegionRecallResultRequest(
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit="hit",
+            llr_miss="miss",
+            apply_config=apply_config,
+            recall_config=recall_config,
+            recall_options=recall_options,
+        )
     )
 
     assert result == {"ma": "tag"}
@@ -1043,6 +1047,21 @@ def test_build_fused_region_recall_result_uses_worker_configs(monkeypatch):
         False,
         recall_options,
     )
+    calls.clear()
+
+    adapted = _build_fused_region_recall_result(
+        fiber_read,
+        apply_result,
+        "hit",
+        "miss",
+        apply_config,
+        recall_config,
+        recall_options,
+    )
+
+    assert adapted == {"ma": "tag"}
+    assert calls["args"][0] is fiber_read
+    assert calls["args"][1] is apply_result
 
 
 def test_region_bed12_row_pads_blocks_and_scores():

@@ -177,6 +177,17 @@ class _FusedRegionApplyReadRequest:
 
 
 @dataclass(frozen=True)
+class _FusedRegionRecallResultRequest:
+    fiber_read: object
+    apply_result: object
+    llr_hit: object
+    llr_miss: object
+    apply_config: _RegionApplyConfig
+    recall_config: _FusedRegionRecallConfig
+    recall_options: dict
+
+
+@dataclass(frozen=True)
 class _RegionBamReadDelta:
     total_reads: int = 0
     reads_with_footprints: int = 0
@@ -490,6 +501,22 @@ def _run_fused_region_apply_read(
     )
 
 
+def _build_fused_region_recall_result_from_request(
+    request: _FusedRegionRecallResultRequest,
+):
+    return build_fused_recall_result(
+        request.fiber_read,
+        request.apply_result,
+        request.llr_hit,
+        request.llr_miss,
+        request.recall_config.min_llr,
+        request.recall_config.min_opps,
+        request.recall_config.unify_threshold,
+        request.apply_config.with_scores,
+        **request.recall_options,
+    )
+
+
 def _build_fused_region_recall_result(
     fiber_read,
     apply_result,
@@ -499,16 +526,16 @@ def _build_fused_region_recall_result(
     recall_config: _FusedRegionRecallConfig,
     recall_options: dict,
 ):
-    return build_fused_recall_result(
-        fiber_read,
-        apply_result,
-        llr_hit,
-        llr_miss,
-        recall_config.min_llr,
-        recall_config.min_opps,
-        recall_config.unify_threshold,
-        apply_config.with_scores,
-        **recall_options,
+    return _build_fused_region_recall_result_from_request(
+        _FusedRegionRecallResultRequest(
+            fiber_read=fiber_read,
+            apply_result=apply_result,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            apply_config=apply_config,
+            recall_config=recall_config,
+            recall_options=recall_options,
+        )
     )
 
 
