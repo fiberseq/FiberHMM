@@ -3,6 +3,7 @@
 
 import pickle
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 
 import numpy as np
@@ -16,6 +17,12 @@ reverse_complement = _probability_utils.reverse_complement
 setup_output_dirs = _probability_utils.setup_output_dirs
 
 _PROBABILITY_TABLE_COLUMNS = ['context', 'hit', 'nohit', 'ratio', 'encode']
+
+
+@dataclass(frozen=True)
+class _EncodedProbabilityTable:
+    context_to_code: Dict[str, int]
+    probabilities: pd.DataFrame
 
 
 def _reconstruct_deaminated_sequence(
@@ -119,12 +126,15 @@ def _empty_probability_table() -> pd.DataFrame:
 def _encode_probability_table(
     probs: pd.DataFrame,
     contexts,
-) -> Tuple[Dict[str, int], pd.DataFrame]:
+) -> _EncodedProbabilityTable:
     context_to_code = _context_to_code(contexts)
     probs = probs.copy()
     probs['encode'] = probs['context'].map(context_to_code)
     probs = probs.sort_values('encode').reset_index(drop=True)
-    return context_to_code, probs
+    return _EncodedProbabilityTable(
+        context_to_code=context_to_code,
+        probabilities=probs,
+    )
 
 
 def _probability_table_with_missing_contexts(
@@ -364,17 +374,21 @@ class ContextCounter:
         if fill_missing and context_size <= 5:  # Only allow fill_missing for small k
             # Build deterministic encoding (alphabetical order of ALL possible)
             all_contexts = self._generate_all_contexts(context_size)
-            context_to_code, probs = _encode_probability_table(
+            encoded = _encode_probability_table(
                 probs, all_contexts,
             )
+            context_to_code = encoded.context_to_code
+            probs = encoded.probabilities
             probs = _probability_table_with_missing_contexts(
                 probs, all_contexts, context_to_code,
             )
         else:
             # Fast path: only observed contexts, encode alphabetically
-            context_to_code, probs = _encode_probability_table(
+            encoded = _encode_probability_table(
                 probs, probs['context'].unique(),
             )
+            context_to_code = encoded.context_to_code
+            probs = encoded.probabilities
 
         return context_to_code, probs
 

@@ -126,21 +126,21 @@ def test_probability_encoding_helpers_handle_empty_observed_and_missing_rows():
             "CAC": [1, 3],
         }
     )
-    context_to_code, encoded = _encode_probability_table(
+    encoded = _encode_probability_table(
         probs,
         ["AAA", "CAC", "TAT"],
     )
 
-    assert context_to_code == {"AAA": 0, "CAC": 1, "TAT": 2}
-    assert encoded[["context", "encode"]].to_dict("records") == [
+    assert encoded.context_to_code == {"AAA": 0, "CAC": 1, "TAT": 2}
+    assert encoded.probabilities[["context", "encode"]].to_dict("records") == [
         {"context": "CAC", "encode": 1},
         {"context": "TAT", "encode": 2},
     ]
 
     filled = _probability_table_with_missing_contexts(
-        encoded,
+        encoded.probabilities,
         ["AAA", "CAC", "TAT"],
-        context_to_code,
+        encoded.context_to_code,
     )
 
     assert filled.to_dict("records") == [
