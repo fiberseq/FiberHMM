@@ -252,11 +252,11 @@ def test_print_mm_parse_debug_reports_sequence_and_ml_context(capsys):
 def test_mm_ml_slice_for_spec_returns_view_and_next_index():
     ml = np.asarray([10, 20, 30, 40], dtype=np.uint8)
 
-    ml_slice, next_idx = _mm_ml_slice_for_spec(ml, 1, 2)
+    ml_slice = _mm_ml_slice_for_spec(ml, 1, 2)
 
-    np.testing.assert_array_equal(ml_slice, np.asarray([20, 30], dtype=np.uint8))
-    assert np.shares_memory(ml_slice, ml)
-    assert next_idx == 3
+    np.testing.assert_array_equal(ml_slice.values, np.asarray([20, 30], dtype=np.uint8))
+    assert np.shares_memory(ml_slice.values, ml)
+    assert ml_slice.next_idx == 3
 
 
 def test_parse_mm_ml_per_mod_type_groups_positions_and_qualities():

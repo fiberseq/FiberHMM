@@ -274,6 +274,12 @@ class _MmPositionQualities:
     qualities: np.ndarray
 
 
+@dataclass(frozen=True)
+class _MmMlSlice:
+    values: np.ndarray
+    next_idx: int
+
+
 def _ml_tag_to_uint8_array(ml_tag) -> np.ndarray:
     if isinstance(ml_tag, (bytes, bytearray, memoryview)):
         return np.frombuffer(ml_tag, dtype=np.uint8)
@@ -448,19 +454,19 @@ def _mm_hit_positions_for_spec(
     base_positions = _cached_base_positions(
         base_pos_cache, target_base, search_bytes,
     )
-    ml_slice_arr, next_ml_idx = _mm_ml_slice_for_spec(
+    ml_slice = _mm_ml_slice_for_spec(
         ml_arr_all, ml_idx, n_mods,
     )
     return (
         _mm_positions_from_spec(
             skip_arr,
             base_positions,
-            ml_slice_arr,
+            ml_slice.values,
             q_len,
             is_reverse,
             prob_threshold,
         ),
-        next_ml_idx,
+        ml_slice.next_idx,
     )
 
 
@@ -468,9 +474,9 @@ def _mm_ml_slice_for_spec(
     ml_arr_all: np.ndarray,
     ml_idx: int,
     n_mods: int,
-) -> Tuple[np.ndarray, int]:
+) -> _MmMlSlice:
     ml_end = ml_idx + n_mods
-    return ml_arr_all[ml_idx:ml_end], ml_end
+    return _MmMlSlice(ml_arr_all[ml_idx:ml_end], ml_end)
 
 
 def _append_mm_mod_result(result: dict, key, positions: np.ndarray,
@@ -504,15 +510,15 @@ def _mm_mod_type_positions_for_spec(
     base_positions = _cached_base_positions(
         base_positions_cache, target_base, seq_bytes,
     )
-    ml_slice, next_ml_idx = _mm_ml_slice_for_spec(ml_arr_all, ml_idx, n_mods)
+    ml_slice = _mm_ml_slice_for_spec(ml_arr_all, ml_idx, n_mods)
     valid_positions = _mm_valid_positions_and_qualities(
-        skip_arr, base_positions, ml_slice, q_len, is_reverse,
+        skip_arr, base_positions, ml_slice.values, q_len, is_reverse,
     )
     return (
         base_and_mod,
         valid_positions.positions,
         valid_positions.qualities,
-        next_ml_idx,
+        ml_slice.next_idx,
     )
 
 
