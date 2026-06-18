@@ -157,6 +157,15 @@ def test_interval_pairs_casts_parallel_arrays_to_int_pairs():
     assert all(type(value) is int for pair in pairs for value in pair)
 
 
+def test_interval_pair_lists_names_parallel_start_length_values():
+    pairs = fused_stages._interval_pair_lists([(1, 10), (2, 20)])
+
+    assert pairs == fused_stages._IntervalPairLists(
+        starts=[1, 2],
+        lengths=[10, 20],
+    )
+
+
 def test_interval_ends_casts_and_adds_starts_lengths():
     ends = fused_stages._interval_ends([
         (np.int32(1), np.int64(10)),

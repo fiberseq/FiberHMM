@@ -45,6 +45,12 @@ class _AnalyzedSpan:
 
 
 @dataclass(frozen=True)
+class _IntervalPairLists:
+    starts: list
+    lengths: list
+
+
+@dataclass(frozen=True)
 class _NucCallQualityLists:
     nq_values: list
     el_values: list
@@ -76,7 +82,10 @@ def _apply_result_interval_bounds(apply_result):
 
 
 def _interval_pair_lists(intervals):
-    return [s for s, _ in intervals], [length for _, length in intervals]
+    return _IntervalPairLists(
+        starts=[s for s, _ in intervals],
+        lengths=[length for _, length in intervals],
+    )
 
 
 def _interval_pairs(starts, lengths):
@@ -426,12 +435,17 @@ def _build_fused_recall_result_with_nucs(
 
     # 2) re-derive MSPs from the new nucleosome boundaries
     new_msps = rederive_msps(orig_msps, access, read_length, msp_min_size)
-    msp_starts, msp_len = _interval_pair_lists(new_msps)
+    msp_pairs = _interval_pair_lists(new_msps)
 
     # 3) TF recall over the cleaner accessible space + short refined nucs
     refined_ns, refined_nl = _nuc_call_start_length_lists(nuc_calls)
     tf_calls = run_tf_recall_stage(
-        obs, refined_ns, refined_nl, msp_starts, msp_len, read_length,
+        obs,
+        refined_ns,
+        refined_nl,
+        msp_pairs.starts,
+        msp_pairs.lengths,
+        read_length,
         llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
     )
 
@@ -454,14 +468,14 @@ def _build_fused_recall_result_with_nucs(
         msp_min_size,
         nuc_min_size,
     )
-    msp_starts, msp_len = _interval_pair_lists(new_msps)
+    msp_pairs = _interval_pair_lists(new_msps)
 
     nuc_starts, nuc_lengths = _nuc_call_arrays(kept)
     return {
         "ns": nuc_starts,
         "nl": nuc_lengths,
-        "as": np.asarray(msp_starts, dtype=np.int32),
-        "al": np.asarray(msp_len, dtype=np.int32),
+        "as": np.asarray(msp_pairs.starts, dtype=np.int32),
+        "al": np.asarray(msp_pairs.lengths, dtype=np.int32),
         "ns_scores": None,
         "as_scores": None,
         **_nuc_call_quality_fields(kept),
@@ -500,12 +514,12 @@ def _build_fused_recall_result_with_nucs_circular(
 
     # 2) re-derive MSPs (still tiled), then 3) TF recall on the refined structure
     tiled_new_msps = rederive_msps(tiled_msps, tiled_access, tiled_len, msp_min_size)
-    tiled_msp_starts, tiled_msp_lengths = _interval_pair_lists(tiled_new_msps)
+    tiled_msp_pairs = _interval_pair_lists(tiled_new_msps)
     tiled_nuc_starts, tiled_nuc_lengths = _nuc_call_start_length_lists(tiled_nucs)
     tiled_tf = run_tf_recall_stage(
         obs,
         tiled_nuc_starts, tiled_nuc_lengths,
-        tiled_msp_starts, tiled_msp_lengths,
+        tiled_msp_pairs.starts, tiled_msp_pairs.lengths,
         tiled_len, llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
     )
     # 3b) promote nucleosome-sized TF leaks back to nuc+ (still tiled)
@@ -517,7 +531,7 @@ def _build_fused_recall_result_with_nucs_circular(
     tf_calls = project_center_tf_calls(tiled_tf, read_length)
     proj_nucs = project_center_nuc_calls(tiled_nucs, read_length)
     proj_msps = project_center_runs(
-        tiled_msp_starts,
+        tiled_msp_pairs.starts,
         _interval_ends(tiled_new_msps),
         read_length,
     )
