@@ -204,6 +204,31 @@ def test_optional_apply_score_fields_respects_enabled_flag():
     assert disabled == {"ns_scores": None, "as_scores": None}
 
 
+def test_circular_apply_score_fields_respects_enabled_flag():
+    apply_result = {
+        "circular_ns_scores": np.asarray([0.25], dtype=np.float32),
+        "circular_as_scores": np.asarray([0.5], dtype=np.float32),
+    }
+
+    enabled = fused_stages._circular_apply_score_fields_from_request(
+        fused_stages._CircularApplyScoreFieldsRequest(
+            apply_result=apply_result,
+            enabled=True,
+        )
+    )
+    disabled = fused_stages._circular_apply_score_fields(
+        apply_result,
+        enabled=False,
+    )
+
+    assert enabled.nuc_scores is apply_result["circular_ns_scores"]
+    assert enabled.msp_scores is apply_result["circular_as_scores"]
+    assert disabled == fused_stages._CircularApplyScoreFields(
+        nuc_scores=None,
+        msp_scores=None,
+    )
+
+
 def test_promote_large_tf_nucs_request_appends_promoted_after_kept(monkeypatch):
     calls = {}
 

@@ -159,6 +159,18 @@ class _OptionalApplyScoreFieldsRequest:
 
 
 @dataclass(frozen=True)
+class _CircularApplyScoreFields:
+    nuc_scores: Any
+    msp_scores: Any
+
+
+@dataclass(frozen=True)
+class _CircularApplyScoreFieldsRequest:
+    apply_result: Mapping[str, Any]
+    enabled: bool
+
+
+@dataclass(frozen=True)
 class _PromoteLargeTfNucsRequest:
     tf_calls: Any
     nuc_calls: Any
@@ -288,6 +300,32 @@ def _optional_apply_score_fields_from_request(
 def _optional_apply_score_fields(apply_result: Mapping[str, Any], enabled: bool):
     return _optional_apply_score_fields_from_request(
         _OptionalApplyScoreFieldsRequest(
+            apply_result=apply_result,
+            enabled=enabled,
+        )
+    )
+
+
+def _circular_apply_score_fields_from_request(
+    request: _CircularApplyScoreFieldsRequest,
+):
+    return _CircularApplyScoreFields(
+        nuc_scores=_optional_apply_scores(
+            request.apply_result,
+            "circular_ns_scores",
+            request.enabled,
+        ),
+        msp_scores=_optional_apply_scores(
+            request.apply_result,
+            "circular_as_scores",
+            request.enabled,
+        ),
+    )
+
+
+def _circular_apply_score_fields(apply_result: Mapping[str, Any], enabled: bool):
+    return _circular_apply_score_fields_from_request(
+        _CircularApplyScoreFieldsRequest(
             apply_result=apply_result,
             enabled=enabled,
         )
@@ -642,34 +680,28 @@ def _build_fused_recall_result_without_nucs_circular_from_request(
         request.unify_threshold,
     )
     tf_calls = project_center_tf_calls(tf_calls, read_length)
+    score_fields = _circular_apply_score_fields_from_request(
+        _CircularApplyScoreFieldsRequest(
+            apply_result=apply_result,
+            enabled=request.with_scores,
+        )
+    )
     kept_nucs, nq_for_kept = unify_circular_nucs_with_tf_calls(
         apply_result.get("circular_ns", []),
         tf_calls,
         request.unify_threshold,
         read_length,
-        _optional_apply_scores(
-            apply_result,
-            "circular_ns_scores",
-            request.with_scores,
-        ),
+        score_fields.nuc_scores,
     )
     kept_starts, kept_lengths, kept_scores = split_intervals_for_legacy(
         kept_nucs,
         read_length,
-        _optional_apply_scores(
-            apply_result,
-            "circular_ns_scores",
-            request.with_scores,
-        ),
+        score_fields.nuc_scores,
     )
     msp_starts, msp_lengths_split, msp_scores = split_intervals_for_legacy(
         apply_result.get("circular_as", []),
         read_length,
-        _optional_apply_scores(
-            apply_result,
-            "circular_as_scores",
-            request.with_scores,
-        ),
+        score_fields.msp_scores,
     )
     return {
         "ns": kept_starts,
