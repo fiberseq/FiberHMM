@@ -43,6 +43,7 @@ try:
         detect_daf_strand,
         encode_from_query_sequence,
         get_reference_positions_array,
+        parse_mm_ml_per_mod_type,
         parse_mm_tag_query_positions,
     )
 except ImportError:
@@ -74,6 +75,7 @@ except ImportError:
         detect_daf_strand,
         encode_from_query_sequence,
         get_reference_positions_array,
+        parse_mm_ml_per_mod_type,
         parse_mm_tag_query_positions,
     )
 
@@ -193,6 +195,23 @@ def test_mm_ml_slice_for_spec_returns_view_and_next_index():
     np.testing.assert_array_equal(ml_slice, np.asarray([20, 30], dtype=np.uint8))
     assert np.shares_memory(ml_slice, ml)
     assert next_idx == 3
+
+
+def test_parse_mm_ml_per_mod_type_groups_positions_and_qualities():
+    parsed = parse_mm_ml_per_mod_type(
+        "A+a,0,1;C+m,2;",
+        np.asarray([200, 150, 99], dtype=np.uint8),
+        "AAACCC",
+        is_reverse=False,
+    )
+
+    a_pos, a_qual = parsed[("A", "a")]
+    c_pos, c_qual = parsed[("C", "m")]
+
+    np.testing.assert_array_equal(a_pos, [0, 2])
+    np.testing.assert_array_equal(a_qual, [200, 150])
+    np.testing.assert_array_equal(c_pos, [5])
+    np.testing.assert_array_equal(c_qual, [99])
 
 
 def test_read_mod_query_positions_accepts_numpy_ml_tag(monkeypatch):

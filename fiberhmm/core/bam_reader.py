@@ -462,6 +462,32 @@ def _append_mm_mod_result(result: dict, key, positions: np.ndarray,
         result[key] = (positions, qualities)
 
 
+def _mm_mod_type_positions_for_spec(
+    base_mod: str,
+    skip_arr: np.ndarray,
+    n_mods: int,
+    base_positions_cache: Dict[str, np.ndarray],
+    seq_bytes: np.ndarray,
+    ml_arr_all: np.ndarray,
+    ml_idx: int,
+    q_len: int,
+    is_reverse: bool,
+):
+    base_and_mod = _mm_base_and_mod_code(base_mod)
+    if base_and_mod is None:
+        return None, np.array([], dtype=np.int64), np.array([], dtype=np.uint8), ml_idx + n_mods
+
+    target_base, _mod_code = base_and_mod
+    base_positions = _cached_base_positions(
+        base_positions_cache, target_base, seq_bytes,
+    )
+    ml_slice, next_ml_idx = _mm_ml_slice_for_spec(ml_arr_all, ml_idx, n_mods)
+    positions, qualities = _mm_valid_positions_and_qualities(
+        skip_arr, base_positions, ml_slice, q_len, is_reverse,
+    )
+    return base_and_mod, positions, qualities, next_ml_idx
+
+
 def _print_mm_parse_debug(
     sequence: str,
     seq_upper: str,
@@ -513,29 +539,22 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
 
     ml_idx = 0
     for base_mod, skip_arr, n_mods in _iter_mm_mod_specs(mm_tag):
-        # Parse "X+y" or "X+y." or "X-y?" into (target_base, mod_code)
-        base_and_mod = _mm_base_and_mod_code(base_mod)
-        if base_and_mod is None:
-            ml_idx += n_mods
-            continue
-        target_base, mod_code = base_and_mod
-
-        # Target positions in the sequence (cached per base)
-        base_positions = _cached_base_positions(
-            base_positions_cache, target_base, seq_bytes,
+        base_and_mod, positions, qualities, ml_idx = _mm_mod_type_positions_for_spec(
+            base_mod,
+            skip_arr,
+            n_mods,
+            base_positions_cache,
+            seq_bytes,
+            ml_arr_all,
+            ml_idx,
+            q_len,
+            is_reverse,
         )
-
-        ml_slice, ml_idx = _mm_ml_slice_for_spec(ml_arr_all, ml_idx, n_mods)
-
-        positions, qualities = _mm_valid_positions_and_qualities(
-            skip_arr, base_positions, ml_slice, q_len, is_reverse,
-        )
-        if len(positions) == 0:
+        if base_and_mod is None or len(positions) == 0:
             continue
 
-        key = (target_base, mod_code)
         # Multiple mod specs for the same (base, mod_code) are concatenated.
-        _append_mm_mod_result(result, key, positions, qualities)
+        _append_mm_mod_result(result, base_and_mod, positions, qualities)
 
     return result
 
