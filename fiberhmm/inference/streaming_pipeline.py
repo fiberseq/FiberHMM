@@ -400,6 +400,16 @@ class _StreamingFlushContext:
 
 
 @dataclass(frozen=True)
+class _StreamingFlushAndProgressRequest:
+    context: _StreamingFlushContext
+    buffers: _StreamingChunkBuffers
+    total_reads: int
+    skipped: int
+    last_progress_reads: int
+    last_progress_time: float
+
+
+@dataclass(frozen=True)
 class _StreamingPosteriorWriter:
     writer: object | None
     enabled: bool
@@ -434,13 +444,33 @@ def _flush_streaming_chunk_and_report_progress(
     last_progress_reads: int,
     last_progress_time: float,
 ) -> _StreamingFlushProgress:
+    return _flush_streaming_chunk_and_report_progress_from_request(
+        _StreamingFlushAndProgressRequest(
+            context=context,
+            buffers=_StreamingChunkBuffers(
+                items=chunk_items,
+                read_objs=chunk_read_objs,
+                skip_flags=chunk_skip_flags,
+            ),
+            total_reads=total_reads,
+            skipped=skipped,
+            last_progress_reads=last_progress_reads,
+            last_progress_time=last_progress_time,
+        )
+    )
+
+
+def _flush_streaming_chunk_and_report_progress_from_request(
+    request: _StreamingFlushAndProgressRequest,
+) -> _StreamingFlushProgress:
+    context = request.context
     buffers = _flush_streaming_chunk(
         context.inflight,
         context.executor,
         context.worker_fn,
-        chunk_items,
-        chunk_read_objs,
-        chunk_skip_flags,
+        request.buffers.items,
+        request.buffers.read_objs,
+        request.buffers.skip_flags,
         context.worker_args,
         context.max_inflight,
         context.drain_chunk,
@@ -449,12 +479,12 @@ def _flush_streaming_chunk_and_report_progress(
     checkpoint = _print_streaming_progress(
         context.log,
         context.progress_label,
-        total_reads,
-        skipped,
+        request.total_reads,
+        request.skipped,
         len(context.inflight),
-        last_progress_reads,
+        request.last_progress_reads,
         context.start_time,
-        last_progress_time,
+        request.last_progress_time,
         now,
         context.rate_unit,
     )

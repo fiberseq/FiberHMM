@@ -25,7 +25,6 @@ from fiberhmm.inference.streaming_pipeline import (
     _finalize_apply_streaming_pipeline,
     _finalize_fused_streaming_pipeline,
     _flush_streaming_chunk,
-    _flush_streaming_chunk_and_report_progress,
     _fused_drain_chunk_factory,
     _fused_worker_args,
     _fused_worker_args_from_request,
@@ -54,6 +53,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _StreamingChunkBuffers,
     _StreamingChunkFlushRequest,
     _StreamingChunkSubmitRequest,
+    _StreamingFlushAndProgressRequest,
     _StreamingFlushProgress,
     _StreamingFusedWorkerArgs,
     _StreamingPayloadResult,
@@ -779,15 +779,21 @@ def test_flush_streaming_chunk_and_report_progress(monkeypatch):
         rate_unit="reads/s",
     )
 
-    assert _flush_streaming_chunk_and_report_progress(
-        context,
-        ["payload"],
-        ["read"],
-        [False],
-        20,
-        3,
-        10,
-        2.0,
+    request = _StreamingFlushAndProgressRequest(
+        context=context,
+        buffers=_StreamingChunkBuffers(
+            items=["payload"],
+            read_objs=["read"],
+            skip_flags=[False],
+        ),
+        total_reads=20,
+        skipped=3,
+        last_progress_reads=10,
+        last_progress_time=2.0,
+    )
+
+    assert streaming_pipeline._flush_streaming_chunk_and_report_progress_from_request(
+        request,
     ) == _StreamingFlushProgress(
         buffers=_StreamingChunkBuffers(items=[], read_objs=[], skip_flags=[]),
         last_progress_reads=20,
