@@ -75,6 +75,15 @@ class _NucRecallResult:
 
 
 @dataclass(frozen=True)
+class _NucSpanRecallRequest:
+    obs: object
+    start: int
+    end: int
+    tables: _NucRecallTables
+    params: _NucRecallParams
+
+
+@dataclass(frozen=True)
 class _RefinedFragment:
     nuc: NucCall | None
     access: List[Interval]
@@ -460,46 +469,49 @@ def _phase_or_unsplit_subfragments(
     return _PhaseSplit(fragments=[(a, b)], cuts=[])
 
 
-def _recall_nuc_span(
-    obs,
-    s: int,
-    e: int,
-    tables: _NucRecallTables,
-    params: _NucRecallParams,
+def _recall_nuc_span_from_request(
+    request: _NucSpanRecallRequest,
 ) -> _NucRecallResult:
     nucs: List[NucCall] = []
     access: List[Interval] = []
 
     split = _split_on_accessible_cuts_from_request(
         _AccessibleSplitRequest(
-            obs=obs,
-            start=s,
-            end=e,
-            nhit=tables.nhit,
-            nmiss=tables.nmiss,
-            min_llr=params.split_min_llr,
-            min_opps=params.split_min_opps,
+            obs=request.obs,
+            start=request.start,
+            end=request.end,
+            nhit=request.tables.nhit,
+            nmiss=request.tables.nmiss,
+            min_llr=request.params.split_min_llr,
+            min_opps=request.params.split_min_opps,
         )
     )
     access.extend(split.access)
 
     for a, b in split.fragments:
         phase = _phase_or_unsplit_subfragments(
-            obs, a, b, tables.nhit, tables.nmiss, params.phase_nrl,
-            params.phase_min_llr, params.phase_min_opps, params.phase_window,
+            request.obs,
+            a,
+            b,
+            request.tables.nhit,
+            request.tables.nmiss,
+            request.params.phase_nrl,
+            request.params.phase_min_llr,
+            request.params.phase_min_opps,
+            request.params.phase_window,
         )
         access.extend(phase.cuts)
         for sa, sb in phase.fragments:
             refined = _refine_fragment_from_request(
                 _RefineFragmentRequest(
-                    obs=obs,
+                    obs=request.obs,
                     start=sa,
                     end=sb,
-                    llr_hit=tables.llr_hit,
-                    llr_miss=tables.llr_miss,
-                    nuc_min_size=params.nuc_min_size,
-                    edge_min_llr=params.edge_min_llr,
-                    edge_min_opps=params.edge_min_opps,
+                    llr_hit=request.tables.llr_hit,
+                    llr_miss=request.tables.llr_miss,
+                    nuc_min_size=request.params.nuc_min_size,
+                    edge_min_llr=request.params.edge_min_llr,
+                    edge_min_opps=request.params.edge_min_opps,
                 )
             )
             if refined.nuc is not None:
@@ -507,6 +519,24 @@ def _recall_nuc_span(
             access.extend(refined.access)
 
     return _NucRecallResult(nucs=nucs, access=access)
+
+
+def _recall_nuc_span(
+    obs,
+    s: int,
+    e: int,
+    tables: _NucRecallTables,
+    params: _NucRecallParams,
+) -> _NucRecallResult:
+    return _recall_nuc_span_from_request(
+        _NucSpanRecallRequest(
+            obs=obs,
+            start=s,
+            end=e,
+            tables=tables,
+            params=params,
+        )
+    )
 
 
 def _recall_nuc_params(

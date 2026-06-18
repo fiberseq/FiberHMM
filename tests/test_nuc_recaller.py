@@ -17,6 +17,7 @@ from fiberhmm.inference.nuc_recaller import (
     _nuc_from_protected_calls,
     _NucRecallParams,
     _NucRecallResult,
+    _NucSpanRecallRequest,
     _ordered_positive_nuc_calls,
     _phase_cut_window,
     _phase_or_unsplit_subfragments,
@@ -28,6 +29,7 @@ from fiberhmm.inference.nuc_recaller import (
     _recall_bounded_nuc_spans,
     _recall_nuc_params,
     _recall_nuc_span,
+    _recall_nuc_span_from_request,
     _recall_nuc_tables,
     _refine_fragment,
     _refine_fragment_from_request,
@@ -141,13 +143,16 @@ def test_recall_nuc_span_matches_single_read_wrapper():
         phase_window=35,
     )
 
-    span_result = _recall_nuc_span(
-        obs,
-        0,
-        len(obs),
-        tables,
-        params,
+    span_result = _recall_nuc_span_from_request(
+        _NucSpanRecallRequest(
+            obs=obs,
+            start=0,
+            end=len(obs),
+            tables=tables,
+            params=params,
+        )
     )
+    adapted_span_result = _recall_nuc_span(obs, 0, len(obs), tables, params)
     read_nucs, read_access = recall_nucs_in_read(
         obs,
         ns=[0],
@@ -162,6 +167,7 @@ def test_recall_nuc_span_matches_single_read_wrapper():
 
     assert span_result.nucs == read_nucs
     assert span_result.access == read_access
+    assert adapted_span_result == span_result
 
 
 def test_recall_nuc_params_captures_thresholds():
