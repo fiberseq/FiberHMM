@@ -9,6 +9,7 @@ writes a new BAM ready for ``fiberhmm-apply --mode daf``.
 import os
 import sys
 import time
+from dataclasses import dataclass
 
 import pysam
 from tqdm import tqdm
@@ -29,6 +30,14 @@ _DAF_ENCODE_STAT_FIELDS = (
     "total_deam",
     "total_bases",
 )
+
+
+@dataclass(frozen=True)
+class _DafChimeraSegmentCounts:
+    right_total: int
+    ga_left: int
+    ct_right: int
+    ga_right: int
 
 
 def _md_tag_ref_length(md_string: str) -> int:
@@ -247,23 +256,43 @@ def _daf_chimera_segment_counts(ct_left, left_n, nct, nga):
     ga_left = left_n - ct_left
     ct_right = nct - ct_left
     ga_right = nga - ga_left
-    return right_n, ga_left, ct_right, ga_right
+    return _DafChimeraSegmentCounts(
+        right_total=right_n,
+        ga_left=ga_left,
+        ct_right=ct_right,
+        ga_right=ga_right,
+    )
 
 
 def _daf_chimera_breakpoint_matches(ct_left, left_n, nct, nga,
                                     min_seg_events: int,
                                     purity: float) -> bool:
-    right_n, ga_left, ct_right, ga_right = _daf_chimera_segment_counts(
+    segment_counts = _daf_chimera_segment_counts(
         ct_left, left_n, nct, nga,
     )
 
     ct_then_ga = (
         _is_pure_daf_segment(ct_left, left_n, min_seg_events, purity)
-        and _is_pure_daf_segment(ga_right, right_n, min_seg_events, purity)
+        and _is_pure_daf_segment(
+            segment_counts.ga_right,
+            segment_counts.right_total,
+            min_seg_events,
+            purity,
+        )
     )
     ga_then_ct = (
-        _is_pure_daf_segment(ga_left, left_n, min_seg_events, purity)
-        and _is_pure_daf_segment(ct_right, right_n, min_seg_events, purity)
+        _is_pure_daf_segment(
+            segment_counts.ga_left,
+            left_n,
+            min_seg_events,
+            purity,
+        )
+        and _is_pure_daf_segment(
+            segment_counts.ct_right,
+            segment_counts.right_total,
+            min_seg_events,
+            purity,
+        )
     )
     return ct_then_ga or ga_then_ct
 

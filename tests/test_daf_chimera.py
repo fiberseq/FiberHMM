@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fiberhmm.daf.encoder import (
     _daf_chimera_segment_counts,
+    _DafChimeraSegmentCounts,
     _has_min_daf_chimera_events,
     _has_min_daf_chimera_strand_counts,
     is_daf_chimera,
@@ -21,7 +22,12 @@ def test_chimera_event_count_gate_requires_two_segments():
 
 def test_chimera_segment_counts_split_left_and_right_strands():
     # total CT=7, GA=5; left has 4 CT among 6 total events.
-    assert _daf_chimera_segment_counts(4, 6, 7, 5) == (6, 2, 3, 3)
+    assert _daf_chimera_segment_counts(4, 6, 7, 5) == _DafChimeraSegmentCounts(
+        right_total=6,
+        ga_left=2,
+        ct_right=3,
+        ga_right=3,
+    )
 
 
 def test_clean_ct_read_not_chimera():
