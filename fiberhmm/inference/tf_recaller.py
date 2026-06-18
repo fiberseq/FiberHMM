@@ -253,6 +253,13 @@ class _EncodedRecallObservation:
 
 
 @dataclass
+class _RecallScanIntervalsRequest:
+    seq_tags: _RawLegacyRecallTags
+    read_length: int
+    unify_threshold: int
+
+
+@dataclass
 class _PreferredMmMlTags:
     mm_tag: object
     ml_tag: object
@@ -868,6 +875,19 @@ def _encoded_recall_observation_from_request(
     return _EncodedRecallObservation(obs=obs, read_length=len(seq))
 
 
+def _recall_scan_intervals_from_request(
+    request: _RecallScanIntervalsRequest,
+):
+    return build_scan_intervals(
+        request.seq_tags.nuc_starts,
+        request.seq_tags.nuc_lengths,
+        request.seq_tags.msp_starts,
+        request.seq_tags.msp_lengths,
+        request.read_length,
+        unify_threshold=request.unify_threshold,
+    )
+
+
 def _kept_legacy_nuc_interval(
     start,
     length,
@@ -968,13 +988,12 @@ def recall_read_from_request(
         )
     )
 
-    intervals = build_scan_intervals(
-        seq_tags.nuc_starts,
-        seq_tags.nuc_lengths,
-        seq_tags.msp_starts,
-        seq_tags.msp_lengths,
-        encoded.read_length,
-        unify_threshold=request.unify_threshold,
+    intervals = _recall_scan_intervals_from_request(
+        _RecallScanIntervalsRequest(
+            seq_tags=seq_tags,
+            read_length=encoded.read_length,
+            unify_threshold=request.unify_threshold,
+        )
     )
 
     tf_calls = _call_tfs_in_intervals_from_request(

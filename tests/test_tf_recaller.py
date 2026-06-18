@@ -323,6 +323,37 @@ def test_encoded_recall_observation_from_request_forwards_encoding_options(
     ]
 
 
+def test_recall_scan_intervals_from_request_uses_seq_frame_tags(monkeypatch):
+    seq_tags = tf_recaller._RawLegacyRecallTags(
+        nuc_starts=[10],
+        nuc_lengths=[20],
+        msp_starts=[40],
+        msp_lengths=[5],
+    )
+    intervals = [(10, 20)]
+    calls = []
+
+    def fake_build(*args, **kwargs):
+        calls.append((args, kwargs))
+        return intervals
+
+    monkeypatch.setattr(tf_recaller, "build_scan_intervals", fake_build)
+
+    assert tf_recaller._recall_scan_intervals_from_request(
+        tf_recaller._RecallScanIntervalsRequest(
+            seq_tags=seq_tags,
+            read_length=200,
+            unify_threshold=90,
+        )
+    ) is intervals
+    assert calls == [
+        (
+            ([10], [20], [40], [5], 200),
+            {"unify_threshold": 90},
+        )
+    ]
+
+
 def test_kept_legacy_nuc_interval_applies_tf_overlap_policy():
     tf_intervals = [(20, 30)]
 
