@@ -432,6 +432,79 @@ def test_collect_region_results_reports_error_prefix(monkeypatch, capsys):
     assert "Error processing region: worker failed" in capsys.readouterr().out
 
 
+def test_run_region_worker_pool_wires_executor_and_collector(monkeypatch, capsys):
+    class Executor:
+        instances = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            Executor.instances.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    collect_calls = []
+    aggregation = region_pipeline.RegionBamAggregation()
+    worker = object()
+    initializer = object()
+    work_items = ["item0"]
+    progress_kwargs = {"footprint_label": "With FP"}
+
+    monkeypatch.setattr(region_pipeline, "ProcessPoolExecutor", Executor)
+    monkeypatch.setattr(region_pipeline.time, "time", lambda: 12.5)
+    monkeypatch.setattr(
+        region_pipeline,
+        "_collect_region_results",
+        lambda *args, **kwargs: collect_calls.append((args, kwargs)),
+    )
+
+    region_pipeline._run_region_worker_pool(
+        n_cores=2,
+        initializer=initializer,
+        initargs=("model.json", {"param": True}),
+        worker=worker,
+        work_items=work_items,
+        aggregation=aggregation,
+        result_type=region_pipeline.RegionBamResult,
+        total_regions=1,
+        start_time=10.0,
+        init_message="init workers",
+        ready_message="Processing...",
+        include_tsv=True,
+        progress_kwargs=progress_kwargs,
+        error_prefix="Error processing region",
+    )
+
+    assert "init workers" in capsys.readouterr().out
+    assert Executor.instances[0].kwargs == {
+        "max_workers": 2,
+        "mp_context": region_pipeline._MP_CONTEXT,
+        "initializer": initializer,
+        "initargs": ("model.json", {"param": True}),
+    }
+    assert collect_calls == [(
+        (
+            Executor.instances[0],
+            worker,
+            work_items,
+            aggregation,
+            region_pipeline.RegionBamResult,
+            1,
+            10.0,
+            12.5,
+            "Processing...",
+        ),
+        {
+            "include_tsv": True,
+            "progress_kwargs": progress_kwargs,
+            "error_prefix": "Error processing region",
+        },
+    )]
+
+
 def test_make_output_temp_dir_places_directory_next_to_output(tmp_path):
     output_path = tmp_path / "nested" / "out.bam"
     output_path.parent.mkdir()
