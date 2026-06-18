@@ -97,6 +97,13 @@ class _RecallProcessingSummary:
     n_failed: int
 
 
+@dataclass(frozen=True)
+class _RecallModelConfig:
+    model: object
+    mode: str
+    context_size: int
+
+
 def _new_stats():
     return {key: 0 for key in _STATS_KEYS}
 
@@ -566,7 +573,7 @@ def _load_recall_model_config(model_path, args):
         if args.context_size is not None
         else int(model_k if model_k is not None else 3)
     )
-    return model, mode, k
+    return _RecallModelConfig(model, mode, k)
 
 
 def _build_recall_llr_tables(model, uplift):
@@ -636,11 +643,12 @@ def main():
 
     n_cores = _resolve_cores(args.cores)
     min_llr, uplift = _resolve_recall_defaults(args)
-    model, mode, k = _load_recall_model_config(model_path, args)
-    llr_hit, llr_miss = _build_recall_llr_tables(model, uplift)
+    model_config = _load_recall_model_config(model_path, args)
+    llr_hit, llr_miss = _build_recall_llr_tables(model_config.model, uplift)
 
     print(
-        f"[recall_tfs] enzyme={args.enzyme or 'custom'} mode={mode} k={k} "
+        f"[recall_tfs] enzyme={args.enzyme or 'custom'} "
+        f"mode={model_config.mode} k={model_config.context_size} "
         f"min_llr={min_llr:.2f} uplift={uplift:.2f} "
         f"unify_threshold={args.unify_threshold} cores={n_cores} "
         f"numba={'on' if HAS_NUMBA else 'off'}",
@@ -667,8 +675,8 @@ def main():
             header_text,
             llr_hit,
             llr_miss,
-            mode,
-            k,
+            model_config.mode,
+            model_config.context_size,
             min_llr,
             also_write_legacy,
         )

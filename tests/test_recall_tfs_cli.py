@@ -324,25 +324,31 @@ def test_recall_tfs_load_model_config_uses_metadata_and_overrides(monkeypatch):
 
     args = SimpleNamespace(mode=None, context_size=None)
 
-    assert recall_tfs._load_recall_model_config("/tmp/model.json", args) == (
-        "model",
-        "model-mode",
-        5,
+    assert recall_tfs._load_recall_model_config(
+        "/tmp/model.json", args,
+    ) == recall_tfs._RecallModelConfig(
+        model="model",
+        mode="model-mode",
+        context_size=5,
     )
 
     args = SimpleNamespace(mode=" arg-mode ", context_size="7")
 
-    assert recall_tfs._load_recall_model_config("/tmp/model.json", args) == (
-        "model",
-        "arg-mode",
-        7,
+    assert recall_tfs._load_recall_model_config(
+        "/tmp/model.json", args,
+    ) == recall_tfs._RecallModelConfig(
+        model="model",
+        mode="arg-mode",
+        context_size=7,
     )
 
     args = SimpleNamespace(mode=" ", context_size=0)
-    assert recall_tfs._load_recall_model_config("/tmp/model.json", args) == (
-        "model",
-        "model-mode",
-        0,
+    assert recall_tfs._load_recall_model_config(
+        "/tmp/model.json", args,
+    ) == recall_tfs._RecallModelConfig(
+        model="model",
+        mode="model-mode",
+        context_size=0,
     )
 
 
@@ -360,10 +366,12 @@ def test_recall_tfs_load_model_config_falls_back_to_json_metadata(monkeypatch):
 
     args = SimpleNamespace(mode=None, context_size=None)
 
-    assert recall_tfs._load_recall_model_config("/tmp/model.json", args) == (
-        "model",
-        "fallback-mode",
-        3,
+    assert recall_tfs._load_recall_model_config(
+        "/tmp/model.json", args,
+    ) == recall_tfs._RecallModelConfig(
+        model="model",
+        mode="fallback-mode",
+        context_size=3,
     )
 
 
