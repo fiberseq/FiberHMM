@@ -30,6 +30,7 @@ from fiberhmm.inference.region_workers import (
     _pad_region_bed12_to_read_span,
     _process_fused_region_bam_read,
     _process_region_bam_read,
+    _process_region_bam_reads_from_request,
     _process_region_bed_read,
     _record_skipped_region_read,
     _region_apply_config,
@@ -48,8 +49,10 @@ from fiberhmm.inference.region_workers import (
     _region_read_route,
     _region_result_ns_scores,
     _RegionBamApplyResultWriteRequest,
+    _RegionBamReadLoopRequest,
     _RegionBamResultRequest,
     _RegionBamWorkerCounts,
+    _RegionBamWorkerRuntime,
     _RegionBed12Blocks,
     _RegionBed12BlocksRequest,
     _RegionBed12RowRequest,
@@ -485,6 +488,95 @@ def test_process_region_bam_read_counts_footprinted_read(monkeypatch):
         fiber_read, model, 2, False, "pacbio-fiber", 6, 21, 90, True, True
     )
     assert calls["write"] == (outbam, read, result, True, False, tsv_file)
+
+
+def test_process_region_bam_reads_accumulates_deltas(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    reads = [SimpleNamespace(query_name="a"), SimpleNamespace(query_name="b")]
+    outbam = object()
+    model = object()
+    apply_config = _apply_config()
+    output_config = _region_bam_output_config({"write_msps": False}, None)
+    filter_config = ReadFilterConfig(min_mapq=10, min_read_length=50)
+    runtime = _RegionBamWorkerRuntime(
+        apply_config=apply_config,
+        output_config=output_config,
+        filter_config=filter_config,
+    )
+    skip_reasons = {}
+    tsv_file = object()
+    calls = []
+
+    def fake_process(
+        read,
+        got_outbam,
+        got_model,
+        got_apply_config,
+        got_output_config,
+        got_filter_config,
+        start,
+        end,
+        got_skip_reasons,
+        *,
+        return_posteriors,
+        tsv_file,
+    ):
+        calls.append(
+            (
+                read,
+                got_outbam,
+                got_model,
+                got_apply_config,
+                got_output_config,
+                got_filter_config,
+                start,
+                end,
+                got_skip_reasons,
+                return_posteriors,
+                tsv_file,
+            )
+        )
+        if read.query_name == "a":
+            return region_workers._RegionBamReadDelta(
+                total_reads=1,
+                reads_with_footprints=1,
+                written=1,
+                posteriors_written=1,
+            )
+        return region_workers._RegionBamReadDelta(written=1, skipped=1)
+
+    monkeypatch.setattr(region_workers, "_process_region_bam_read", fake_process)
+
+    counts = _process_region_bam_reads_from_request(
+        _RegionBamReadLoopRequest(
+            read_iter=reads,
+            outbam=outbam,
+            model=model,
+            runtime=runtime,
+            start=100,
+            end=200,
+            skip_reasons=skip_reasons,
+            return_posteriors=True,
+            tsv_file=tsv_file,
+        )
+    )
+
+    assert counts.total_reads == 1
+    assert counts.reads_with_footprints == 1
+    assert counts.written == 2
+    assert counts.skipped == 1
+    assert counts.posteriors_written == 1
+    assert len(calls) == 2
+    assert all(call[1] is outbam for call in calls)
+    assert all(call[2] is model for call in calls)
+    assert all(call[3] is apply_config for call in calls)
+    assert all(call[4] is output_config for call in calls)
+    assert all(call[5] is filter_config for call in calls)
+    assert all(call[6:8] == (100, 200) for call in calls)
+    assert all(call[8] is skip_reasons for call in calls)
+    assert all(call[9] is True for call in calls)
+    assert all(call[10] is tsv_file for call in calls)
 
 
 def test_process_region_bed_read_writes_footprint_row(monkeypatch):

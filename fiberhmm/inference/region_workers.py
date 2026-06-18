@@ -243,6 +243,19 @@ class _RegionBamApplyResultWriteRequest:
 
 
 @dataclass(frozen=True)
+class _RegionBamReadLoopRequest:
+    read_iter: object
+    outbam: object
+    model: object
+    runtime: _RegionBamWorkerRuntime
+    start: int
+    end: int
+    skip_reasons: dict
+    return_posteriors: bool
+    tsv_file: object
+
+
+@dataclass(frozen=True)
 class _RegionBamReadProcessRequest:
     read: object
     outbam: object
@@ -1087,6 +1100,29 @@ def _process_region_bam_read_from_request(
     )
 
 
+def _process_region_bam_reads_from_request(
+    request: _RegionBamReadLoopRequest,
+) -> _RegionBamWorkerCounts:
+    counts = _RegionBamWorkerCounts()
+    for read in request.read_iter:
+        counts.add(
+            _process_region_bam_read(
+                read,
+                request.outbam,
+                request.model,
+                request.runtime.apply_config,
+                request.runtime.output_config,
+                request.runtime.filter_config,
+                request.start,
+                request.end,
+                request.skip_reasons,
+                return_posteriors=request.return_posteriors,
+                tsv_file=request.tsv_file,
+            )
+        )
+    return counts
+
+
 def _process_region_bed_read(
     read,
     bed_out,
@@ -1350,20 +1386,19 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                         # Region not in BAM (e.g., unplaced contigs).
                         return RegionBamResult(temp_bam_path, 0, 0, 0)
 
-                    for read in read_iter:
-                        counts.add(_process_region_bam_read(
-                            read,
-                            outbam,
-                            model,
-                            runtime.apply_config,
-                            runtime.output_config,
-                            runtime.filter_config,
-                            start,
-                            end,
-                            skip_reasons,
+                    counts = _process_region_bam_reads_from_request(
+                        _RegionBamReadLoopRequest(
+                            read_iter=read_iter,
+                            outbam=outbam,
+                            model=model,
+                            runtime=runtime,
+                            start=start,
+                            end=end,
+                            skip_reasons=skip_reasons,
                             return_posteriors=return_posteriors,
                             tsv_file=tsv_file,
-                        ))
+                        )
+                    )
 
         finally:
             if tsv_file is not None:
