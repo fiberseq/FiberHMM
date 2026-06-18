@@ -292,15 +292,16 @@ def test_ma_annotation_record_normalizes_reverse_read_annotation():
 
 def test_ma_annotation_quality_values_pad_triplets_and_ignore_msp_quals():
     assert extract_tags._quality_triplet([10, 20]) == (10, 20, 0)
-    assert extract_tags._ma_annotation_quality_values('tf', [10, 20]) == (
-        10, (10, 20, 0),
-    )
-    assert extract_tags._ma_annotation_quality_values('nuc', []) == (
-        0, (0, 0, 0),
-    )
-    assert extract_tags._ma_annotation_quality_values('msp', [99]) == (
-        0, (0,),
-    )
+    tf_quality = extract_tags._ma_annotation_quality_values('tf', [10, 20])
+    nuc_quality = extract_tags._ma_annotation_quality_values('nuc', [])
+    msp_quality = extract_tags._ma_annotation_quality_values('msp', [99])
+
+    assert tf_quality.score == 10
+    assert tf_quality.qvals == (10, 20, 0)
+    assert nuc_quality.score == 0
+    assert nuc_quality.qvals == (0, 0, 0)
+    assert msp_quality.score == 0
+    assert msp_quality.qvals == (0,)
 
 
 def test_ma_annotation_min_tq_filter_only_applies_to_tf():

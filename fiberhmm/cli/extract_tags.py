@@ -90,6 +90,12 @@ class _MaAnnotationTagInputs:
     an_names: list[str]
 
 
+@dataclass(frozen=True)
+class _MaAnnotationQualityValues:
+    score: int
+    qvals: Tuple[int, ...]
+
+
 def get_chrom_sizes(bam_path: str) -> Dict[str, int]:
     """Extract chromosome sizes from BAM header."""
     if not os.path.exists(bam_path):
@@ -302,8 +308,8 @@ def _quality_triplet(quals) -> Tuple[int, int, int]:
 def _ma_annotation_quality_values(target_name: str, quals):
     if target_name in ('tf', 'nuc'):
         qvals = _quality_triplet(quals)
-        return qvals[0], qvals
-    return 0, (0,)
+        return _MaAnnotationQualityValues(qvals[0], qvals)
+    return _MaAnnotationQualityValues(0, (0,))
 
 
 def _ma_annotation_tq(quals) -> int:
@@ -337,8 +343,8 @@ def _ma_annotation_block(target_name: str, ann, query_to_ref, min_tq: int):
         return None
 
     ref_start, ref_end = block
-    score, qvals = _ma_annotation_quality_values(target_name, quals)
-    return ref_start, ref_end, score, qvals, ann
+    quality_values = _ma_annotation_quality_values(target_name, quals)
+    return ref_start, ref_end, quality_values.score, quality_values.qvals, ann
 
 
 def _ma_circular_extra_columns(qvals, ann, block_scores: bool) -> list:
