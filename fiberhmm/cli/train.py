@@ -129,6 +129,16 @@ class _TrainingExamplePdfLayout:
 
 
 @dataclass(frozen=True)
+class _TrainingOverviewAxes:
+    m6a: object
+    footprint: object
+    probability: object
+
+    def as_tuple(self) -> tuple:
+        return (self.m6a, self.footprint, self.probability)
+
+
+@dataclass(frozen=True)
 class _TrainingZoomWindow:
     start: int
     end: int
@@ -879,9 +889,13 @@ def _training_example_title(idx: int, read, seq_len: int,
     )
 
 
-def _add_training_zoom_highlight(overview_axes: tuple, start: int, end: int,
-                                 color: str) -> None:
-    for ax in overview_axes:
+def _add_training_zoom_highlight(
+    overview_axes: _TrainingOverviewAxes,
+    start: int,
+    end: int,
+    color: str,
+) -> None:
+    for ax in overview_axes.as_tuple():
         ax.axvspan(start, end, alpha=0.15, color=color)
 
 
@@ -1278,7 +1292,11 @@ def _add_training_example_overview_pdf_panels(
         'Overview: Footprint Probability', fontsize=10, loc='left',
     )
 
-    return ax_overview_m6a, ax_overview_fp, ax_overview_prob
+    return _TrainingOverviewAxes(
+        m6a=ax_overview_m6a,
+        footprint=ax_overview_fp,
+        probability=ax_overview_prob,
+    )
 
 
 def _add_training_example_zoom_pdf_panel(

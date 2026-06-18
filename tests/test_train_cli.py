@@ -287,11 +287,11 @@ def test_add_training_zoom_highlight_marks_all_overview_axes():
         def axvspan(self, *args, **kwargs):
             self.spans.append((args, kwargs))
 
-    axes = (FakeAxis(), FakeAxis(), FakeAxis())
+    axes = train._TrainingOverviewAxes(FakeAxis(), FakeAxis(), FakeAxis())
 
     train._add_training_zoom_highlight(axes, 10, 20, "red")
 
-    assert [axis.spans for axis in axes] == [
+    assert [axis.spans for axis in axes.as_tuple()] == [
         [((10, 20), {"alpha": 0.15, "color": "red"})],
         [((10, 20), {"alpha": 0.15, "color": "red"})],
         [((10, 20), {"alpha": 0.15, "color": "red"})],
