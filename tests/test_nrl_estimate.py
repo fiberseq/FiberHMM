@@ -32,13 +32,13 @@ def test_phase_nrl_result_uses_anchor_when_peak_has_too_few_pairs():
         clamp_lo=150,
         clamp_hi=215,
         min_pairs=2,
-    ) == {
-        "nrl": 185,
-        "ci": None,
-        "n_pairs": 1,
-        "n_reads": 12,
-        "source": "anchor",
-    }
+    ) == nrl_estimate._PhaseNrlEstimateResult(
+        nrl=185,
+        ci=None,
+        n_pairs=1,
+        n_reads=12,
+        source="anchor",
+    )
 
 
 def test_phase_nrl_result_estimates_and_clamps_from_peak_spacings():
@@ -51,11 +51,11 @@ def test_phase_nrl_result_estimates_and_clamps_from_peak_spacings():
         min_pairs=3,
     )
 
-    assert result["nrl"] == 185
-    assert result["n_pairs"] == 6
-    assert result["n_reads"] == 4
-    assert result["source"] == "estimated"
-    assert result["ci"][0] < result["ci"][1]
+    assert result.nrl == 185
+    assert result.n_pairs == 6
+    assert result.n_reads == 4
+    assert result.source == "estimated"
+    assert result.ci[0] < result.ci[1]
 
 
 def test_phase_nrl_spacings_for_read_skips_non_primary_alignment():

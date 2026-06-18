@@ -33,6 +33,15 @@ class _PhaseNrlSpacingSample:
     reads_used: int
 
 
+@dataclass(frozen=True)
+class _PhaseNrlEstimateResult:
+    nrl: int
+    ci: Optional[tuple[float, float]]
+    n_pairs: int
+    n_reads: int
+    source: str
+
+
 def _phase_nrl_peak_spacings(spacings) -> np.ndarray:
     sp = np.asarray(spacings, dtype=np.float64)
     return sp[(sp >= _PEAK_LO) & (sp <= _PEAK_HI)]
@@ -66,15 +75,35 @@ def _phase_nrl_result(
     clamp_lo: int,
     clamp_hi: int,
     min_pairs: int,
-) -> dict:
+) -> _PhaseNrlEstimateResult:
     peak = _phase_nrl_peak_spacings(spacings)
     if peak.size < min_pairs:
-        return {'nrl': int(anchor), 'ci': None, 'n_pairs': int(peak.size),
-                'n_reads': n_reads, 'source': 'anchor'}
+        return _PhaseNrlEstimateResult(
+            nrl=int(anchor),
+            ci=None,
+            n_pairs=int(peak.size),
+            n_reads=n_reads,
+            source='anchor',
+        )
 
     nrl, ci = _phase_nrl_estimate_from_peak(peak, clamp_lo, clamp_hi)
-    return {'nrl': nrl, 'ci': ci, 'n_pairs': int(peak.size),
-            'n_reads': n_reads, 'source': 'estimated'}
+    return _PhaseNrlEstimateResult(
+        nrl=nrl,
+        ci=ci,
+        n_pairs=int(peak.size),
+        n_reads=n_reads,
+        source='estimated',
+    )
+
+
+def _phase_nrl_result_dict(result: _PhaseNrlEstimateResult) -> dict:
+    return {
+        'nrl': result.nrl,
+        'ci': result.ci,
+        'n_pairs': result.n_pairs,
+        'n_reads': result.n_reads,
+        'source': result.source,
+    }
 
 
 def _phase_nrl_spacings_for_read(
@@ -208,11 +237,13 @@ def estimate_phase_nrl(
 
     # Robust central estimate: histogram mode (10bp bins) cross-checked against
     # the in-peak median, then clamped to the anchored band.
-    return _phase_nrl_result(
-        sample.spacings,
-        sample.reads_used,
-        anchor=anchor,
-        clamp_lo=clamp_lo,
-        clamp_hi=clamp_hi,
-        min_pairs=min_pairs,
+    return _phase_nrl_result_dict(
+        _phase_nrl_result(
+            sample.spacings,
+            sample.reads_used,
+            anchor=anchor,
+            clamp_lo=clamp_lo,
+            clamp_hi=clamp_hi,
+            min_pairs=min_pairs,
+        )
     )
