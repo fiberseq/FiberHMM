@@ -210,6 +210,24 @@ class ContextCounter:
             self.counts[context][1] += weight
         self.total_positions += weight
 
+    def _record_contexts_in_region(
+        self,
+        seq_upper: str,
+        mod_positions: Set[int],
+        region_start: int,
+        region_end: int,
+        edge_trim: int,
+        weight_at=None,
+    ) -> None:
+        for i, context in self._iter_contexts(
+            seq_upper,
+            region_start,
+            region_end,
+            edge_trim,
+        ):
+            weight = 1 if weight_at is None else weight_at(i)
+            self._record_context(context, i in mod_positions, weight)
+
     def add_position(self, sequence: str, position: int, is_modified: bool):
         """
         Add a single position observation.
@@ -233,8 +251,9 @@ class ContextCounter:
             edge_trim: Bases to skip at edges
         """
         seq_upper = sequence.upper()
-        for i, context in self._iter_contexts(seq_upper, 0, len(sequence), edge_trim):
-            self._record_context(context, i in mod_positions)
+        self._record_contexts_in_region(
+            seq_upper, mod_positions, 0, len(sequence), edge_trim,
+        )
 
     def process_read_daf(self, sequence: str, mod_positions: Set[int],
                          strand: str, edge_trim: int = 10):
@@ -299,14 +318,9 @@ class ContextCounter:
             edge_trim: Skip positions within this many bases of read edges
         """
         seq_upper = sequence.upper()
-
-        for i, context in self._iter_contexts(
-            seq_upper,
-            region_start,
-            region_end,
-            edge_trim,
-        ):
-            self._record_context(context, i in mod_positions)
+        self._record_contexts_in_region(
+            seq_upper, mod_positions, region_start, region_end, edge_trim,
+        )
 
     def get_probabilities(self, context_size: int = 3) -> pd.DataFrame:
         """
@@ -455,16 +469,14 @@ class ContextCounter:
             edge_trim: Skip positions within this many bases of read edges
         """
         seq_upper = sequence.upper()
-
-        for i, context in self._iter_contexts(
+        self._record_contexts_in_region(
             seq_upper,
+            mod_positions,
             region_start,
             region_end,
             edge_trim,
-        ):
-            # Get weight for this position
-            weight = _position_weight(weights, i)
-            self._record_context(context, i in mod_positions, weight)
+            weight_at=lambda i: _position_weight(weights, i),
+        )
 
     def reset(self):
         """Reset all counts to zero."""
