@@ -525,6 +525,38 @@ def _call_fused_common_kwargs(
     }
 
 
+def _run_call_pipeline(args, apply_model_path: str, common_kwargs: dict):
+    if args.region_parallel:
+        _check_region_parallel_file_io(args)
+        chroms_set = _resolve_call_chroms(args.chroms)
+        return _process_bam_region_parallel_fused(
+            apply_model_path=apply_model_path,
+            region_size=args.region_size,
+            skip_scaffolds=args.skip_scaffolds,
+            chroms=chroms_set,
+            **common_kwargs,
+        )
+
+    return _process_bam_streaming_pipeline_fused(
+        model_path=apply_model_path,
+        max_reads=args.max_reads,
+        chunk_size=args.chunk_size,
+        process_unmapped=args.process_unmapped,
+        **common_kwargs,
+    )
+
+
+def _index_streaming_call_output(args, stdout_mode: bool) -> None:
+    if stdout_mode or args.region_parallel:
+        return
+
+    import pysam
+    try:
+        pysam.index(args.output)
+    except pysam.SamtoolsError:
+        pass
+
+
 def main():
     args = parse_args()
     stdout_mode = (args.output == '-')
@@ -591,32 +623,8 @@ def main():
         pg_record,
     )
 
-    if args.region_parallel:
-        _check_region_parallel_file_io(args)
-        chroms_set = _resolve_call_chroms(args.chroms)
-        n_reads, n_fp = _process_bam_region_parallel_fused(
-            apply_model_path=apply_model_path,
-            region_size=args.region_size,
-            skip_scaffolds=args.skip_scaffolds,
-            chroms=chroms_set,
-            **common_kwargs,
-        )
-    else:
-        n_reads, n_fp = _process_bam_streaming_pipeline_fused(
-            model_path=apply_model_path,
-            max_reads=args.max_reads,
-            chunk_size=args.chunk_size,
-            process_unmapped=args.process_unmapped,
-            **common_kwargs,
-        )
-
-    if not stdout_mode and not args.region_parallel:
-        # region-parallel already indexes.  Streaming mode needs an index pass.
-        import pysam
-        try:
-            pysam.index(args.output)
-        except pysam.SamtoolsError:
-            pass
+    n_reads, n_fp = _run_call_pipeline(args, apply_model_path, common_kwargs)
+    _index_streaming_call_output(args, stdout_mode)
 
 
 if __name__ == '__main__':

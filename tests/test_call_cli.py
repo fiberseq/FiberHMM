@@ -28,6 +28,7 @@ from fiberhmm.cli.call import (
     _daf_sources_available,
     _invalid_phase_nrl_message,
     _is_phase_nrl_off,
+    _index_streaming_call_output,
     _missing_daf_source_message,
     _new_daf_sniff_result,
     _normalize_phase_nrl_option,
@@ -38,6 +39,7 @@ from fiberhmm.cli.call import (
     _resolve_call_mode_context,
     _resolve_recall_nucs,
     _resolve_recall_model,
+    _run_call_pipeline,
     _should_check_daf_inputs,
     _should_warn_stale_daf_md,
     _sniff_daf_input_sources,
@@ -445,3 +447,87 @@ def test_call_fused_common_kwargs_preserve_shared_pipeline_arguments():
     assert kwargs["filter_chimeras"] is True
     assert kwargs["phase_nrl"] == 185
     assert kwargs["pg_record"] is pg_record
+
+
+def test_run_call_pipeline_dispatches_streaming(monkeypatch):
+    from fiberhmm.cli import call
+
+    calls = []
+    monkeypatch.setattr(
+        call,
+        "_process_bam_streaming_pipeline_fused",
+        lambda **kwargs: calls.append(kwargs) or (10, 4),
+    )
+    args = SimpleNamespace(
+        region_parallel=False,
+        max_reads=100,
+        chunk_size=500,
+        process_unmapped=True,
+    )
+    common_kwargs = {"input_bam": "in.bam", "output_bam": "out.bam"}
+
+    assert _run_call_pipeline(args, "apply.json", common_kwargs) == (10, 4)
+    assert calls == [{
+        "model_path": "apply.json",
+        "max_reads": 100,
+        "chunk_size": 500,
+        "process_unmapped": True,
+        "input_bam": "in.bam",
+        "output_bam": "out.bam",
+    }]
+
+
+def test_run_call_pipeline_dispatches_region(monkeypatch):
+    from fiberhmm.cli import call
+
+    calls = []
+    checks = []
+    monkeypatch.setattr(
+        call,
+        "_check_region_parallel_file_io",
+        lambda args: checks.append(args),
+    )
+    monkeypatch.setattr(call, "_resolve_call_chroms", lambda chroms: {"chr2L"})
+    monkeypatch.setattr(
+        call,
+        "_process_bam_region_parallel_fused",
+        lambda **kwargs: calls.append(kwargs) or (12, 5),
+    )
+    args = SimpleNamespace(
+        region_parallel=True,
+        chroms=["chr2L"],
+        region_size=123,
+        skip_scaffolds=True,
+    )
+    common_kwargs = {"input_bam": "in.bam", "output_bam": "out.bam"}
+
+    assert _run_call_pipeline(args, "apply.json", common_kwargs) == (12, 5)
+    assert checks == [args]
+    assert calls == [{
+        "apply_model_path": "apply.json",
+        "region_size": 123,
+        "skip_scaffolds": True,
+        "chroms": {"chr2L"},
+        "input_bam": "in.bam",
+        "output_bam": "out.bam",
+    }]
+
+
+def test_index_streaming_call_output_only_indexes_streaming_files(monkeypatch):
+    calls = []
+    monkeypatch.setattr(pysam, "index", lambda path: calls.append(path))
+
+    _index_streaming_call_output(
+        SimpleNamespace(output="stream.bam", region_parallel=False),
+        stdout_mode=False,
+    )
+    _index_streaming_call_output(
+        SimpleNamespace(output="region.bam", region_parallel=True),
+        stdout_mode=False,
+    )
+    _index_streaming_call_output(
+        SimpleNamespace(output="-", region_parallel=False),
+        stdout_mode=True,
+    )
+
+    assert calls == ["stream.bam"]
