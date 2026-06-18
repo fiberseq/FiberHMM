@@ -8,6 +8,7 @@ import pytest
 from fiberhmm.cli.apply import (
     _apply_processing_kwargs,
     _ApplyIO,
+    _ApplyProcessingResult,
     _ApplyRuntime,
     _context_size_message,
     _dataset_name,
@@ -486,6 +487,7 @@ def test_run_apply_processing_delegates_pipeline_and_reports_result(
         process_unmapped=True,
         stdout_mode=False,
     ) == (10, 4)
+    assert _ApplyProcessingResult(10, 4).as_tuple() == (10, 4)
 
     assert calls[0][0] == "process"
     assert calls[0][1]["input_bam"] == "input.bam"

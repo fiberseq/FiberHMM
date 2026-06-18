@@ -272,6 +272,15 @@ class _ScoresDbCounts:
     footprints: int
 
 
+@dataclass(frozen=True)
+class _ApplyProcessingResult:
+    total_reads: int
+    reads_with_footprints: int
+
+    def as_tuple(self) -> tuple[int, int]:
+        return self.total_reads, self.reads_with_footprints
+
+
 def _load_apply_model_with_summary(model_path: str):
     print(f"Loading model from {model_path}")
     model, model_context_size, model_mode = load_model_with_metadata(model_path)
@@ -544,10 +553,14 @@ def _run_apply_processing(
             process_unmapped,
         )
     )
+    result = _ApplyProcessingResult(total_reads, reads_with_footprints)
     _print_processing_result(
-        total_reads, reads_with_footprints, output_bam, stdout_mode,
+        result.total_reads,
+        result.reads_with_footprints,
+        output_bam,
+        stdout_mode,
     )
-    return total_reads, reads_with_footprints
+    return result.as_tuple()
 
 
 def _finalize_apply_outputs(
