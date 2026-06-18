@@ -460,7 +460,9 @@ def test_collect_region_results_aggregates_and_reports_progress(monkeypatch, tmp
         pool_start=9.0,
         ready_message="Processing regions...",
         include_tsv=True,
-        progress_kwargs={"footprint_label": "With FP"},
+        progress_config=region_pipeline._RegionProgressConfig(
+            footprint_label="With FP",
+        ),
     )
 
     assert executor.submitted == [(worker, "item0"), (worker, "item1")]
@@ -475,8 +477,22 @@ def test_collect_region_results_aggregates_and_reports_progress(monkeypatch, tmp
         ("ready", 9.0, "Processing regions..."),
     ]
     assert progress_calls == [
-        ((aggregation, 2, 10.0), {"footprint_label": "With FP"}),
-        ((aggregation, 2, 10.0), {"footprint_label": "With FP"}),
+        (
+            (aggregation, 2, 10.0),
+            {
+                "footprint_label": "With FP",
+                "rate_unit": "reads/s",
+                "rate_precision": 1,
+            },
+        ),
+        (
+            (aggregation, 2, 10.0),
+            {
+                "footprint_label": "With FP",
+                "rate_unit": "reads/s",
+                "rate_precision": 1,
+            },
+        ),
     ]
 
 
@@ -523,7 +539,9 @@ def test_run_region_worker_pool_wires_executor_and_collector(monkeypatch, capsys
     worker = object()
     initializer = object()
     work_items = ["item0"]
-    progress_kwargs = {"footprint_label": "With FP"}
+    progress_config = region_pipeline._RegionProgressConfig(
+        footprint_label="With FP",
+    )
 
     monkeypatch.setattr(region_pipeline, "ProcessPoolExecutor", Executor)
     monkeypatch.setattr(region_pipeline.time, "time", lambda: 12.5)
@@ -546,7 +564,7 @@ def test_run_region_worker_pool_wires_executor_and_collector(monkeypatch, capsys
         init_message="init workers",
         ready_message="Processing...",
         include_tsv=True,
-        progress_kwargs=progress_kwargs,
+        progress_config=progress_config,
         error_prefix="Error processing region",
     )
 
@@ -571,7 +589,7 @@ def test_run_region_worker_pool_wires_executor_and_collector(monkeypatch, capsys
         ),
         {
             "include_tsv": True,
-            "progress_kwargs": progress_kwargs,
+            "progress_config": progress_config,
             "error_prefix": "Error processing region",
         },
     )]
@@ -1007,11 +1025,11 @@ def test_run_fused_region_bam_worker_pool_wires_fused_contract(monkeypatch):
     assert kwargs["total_regions"] == 1
     assert kwargs["start_time"] == 10.0
     assert kwargs["ready_message"] == "Processing..."
-    assert kwargs["progress_kwargs"] == {
-        "footprint_label": "With FP",
-        "rate_unit": "r/s",
-        "rate_precision": 0,
-    }
+    assert kwargs["progress_config"] == region_pipeline._RegionProgressConfig(
+        footprint_label="With FP",
+        rate_unit="r/s",
+        rate_precision=0,
+    )
 
 
 def test_finalize_region_bam_output_concatenates_reports_and_indexes(

@@ -66,6 +66,13 @@ class _RegionCompletionResult:
         return self.total_reads, self.reads_with_footprints
 
 
+@dataclass(frozen=True)
+class _RegionProgressConfig:
+    footprint_label: str = "With footprints"
+    rate_unit: str = "reads/s"
+    rate_precision: int = 1
+
+
 def _base_region_worker_params(
     *,
     edge_trim: int,
@@ -374,12 +381,12 @@ def _collect_region_results(
     ready_message: str,
     *,
     include_tsv: bool = False,
-    progress_kwargs: Optional[dict] = None,
+    progress_config: Optional[_RegionProgressConfig] = None,
     error_prefix: Optional[str] = None,
 ) -> None:
     futures = _submit_region_futures(executor, worker, work_items)
     first_result_time = None
-    progress_kwargs = progress_kwargs or {}
+    progress_config = progress_config or _RegionProgressConfig()
 
     for future in as_completed(futures):
         try:
@@ -400,7 +407,9 @@ def _collect_region_results(
                 aggregation,
                 total_regions,
                 start_time,
-                **progress_kwargs,
+                footprint_label=progress_config.footprint_label,
+                rate_unit=progress_config.rate_unit,
+                rate_precision=progress_config.rate_precision,
             )
         except Exception as e:
             if error_prefix:
@@ -422,7 +431,7 @@ def _run_region_worker_pool(
     init_message: str,
     ready_message: str,
     include_tsv: bool = False,
-    progress_kwargs: Optional[dict] = None,
+    progress_config: Optional[_RegionProgressConfig] = None,
     error_prefix: Optional[str] = None,
 ) -> None:
     print(init_message)
@@ -446,7 +455,7 @@ def _run_region_worker_pool(
             pool_start,
             ready_message,
             include_tsv=include_tsv,
-            progress_kwargs=progress_kwargs,
+            progress_config=progress_config,
             error_prefix=error_prefix,
         )
 
@@ -743,11 +752,11 @@ def _run_fused_region_bam_worker_pool(
             "(loading apply model + LLR tables)..."
         ),
         ready_message="Processing...",
-        progress_kwargs={
-            'footprint_label': "With FP",
-            'rate_unit': "r/s",
-            'rate_precision': 0,
-        },
+        progress_config=_RegionProgressConfig(
+            footprint_label="With FP",
+            rate_unit="r/s",
+            rate_precision=0,
+        ),
     )
     return aggregation
 
