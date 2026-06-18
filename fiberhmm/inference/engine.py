@@ -96,6 +96,12 @@ class _MspIntervals:
     sizes: np.ndarray
 
 
+@dataclass(frozen=True)
+class _FootprintRunBoundaries:
+    starts: np.ndarray
+    ends: np.ndarray
+
+
 def _new_mode_detection_counts() -> dict:
     return {
         't_minus_a': 0,
@@ -241,7 +247,7 @@ def _empty_interval_result(include_predictions: bool = False) -> dict:
 
 def _add_footprint_track(result: dict, states: np.ndarray,
                          confidence: Optional[np.ndarray],
-                         with_scores: bool) -> Tuple[np.ndarray, np.ndarray]:
+                         with_scores: bool) -> _FootprintRunBoundaries:
     fp_starts, fp_ends = _footprint_runs(states)
 
     if len(fp_starts) > 0:
@@ -253,7 +259,7 @@ def _add_footprint_track(result: dict, states: np.ndarray,
                 confidence, fp_starts, fp_ends,
             )
 
-    return fp_starts, fp_ends
+    return _FootprintRunBoundaries(fp_starts, fp_ends)
 
 
 def _add_msp_track(
@@ -352,7 +358,7 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
     if len(states) == 0:
         return result
 
-    fp_starts, fp_ends = _add_footprint_track(
+    footprint_runs = _add_footprint_track(
         result, states, confidence, with_scores,
     )
 
@@ -361,8 +367,8 @@ def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.
     _add_msp_track(
         result,
         len(states),
-        fp_starts,
-        fp_ends,
+        footprint_runs.starts,
+        footprint_runs.ends,
         confidence,
         msp_min_size,
         with_scores,
