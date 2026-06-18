@@ -19,6 +19,12 @@ class _LegacyIntervalPiece:
     score: Optional[float]
 
 
+@dataclass(frozen=True)
+class _CenterCopyBounds:
+    start: int
+    end: int
+
+
 def _tiled_mod_positions(pos, read_length: int) -> tuple[int, ...]:
     p = int(pos)
     if 0 <= p < read_length:
@@ -35,9 +41,9 @@ def tile_sequence_and_mods(sequence: str, mod_positions: Iterable[int]) -> tuple
     return sequence * 3, tiled_mods
 
 
-def _center_copy_bounds(read_length: int) -> tuple[int, int]:
+def _center_copy_bounds(read_length: int) -> _CenterCopyBounds:
     n = int(read_length)
-    return n, 2 * n
+    return _CenterCopyBounds(start=n, end=2 * n)
 
 
 def _project_center_interval(s_raw, e_raw, read_length: int) -> Optional[Interval]:
@@ -47,11 +53,11 @@ def _project_center_interval(s_raw, e_raw, read_length: int) -> Optional[Interva
     if n <= 0 or e <= s:
         return None
 
-    center_start, center_end = _center_copy_bounds(n)
-    if center_start <= s < center_end:
-        qstart = s - center_start
+    center = _center_copy_bounds(n)
+    if center.start <= s < center.end:
+        qstart = s - center.start
         length = min(e - s, n)
-    elif s < center_start and e > center_end:
+    elif s < center.start and e > center.end:
         qstart = 0
         length = n
     else:

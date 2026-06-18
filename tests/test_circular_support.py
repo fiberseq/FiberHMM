@@ -65,7 +65,10 @@ def test_tile_sequence_and_mods_replicates_positions_across_three_copies():
 
 
 def test_center_copy_bounds_selects_middle_tile():
-    assert _center_copy_bounds(100) == (100, 200)
+    bounds = _center_copy_bounds(100)
+
+    assert bounds.start == 100
+    assert bounds.end == 200
 
 
 def test_project_center_runs_projects_wrapped_middle_copy():
