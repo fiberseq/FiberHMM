@@ -84,6 +84,16 @@ class _NucSpanRecallRequest:
 
 
 @dataclass(frozen=True)
+class _BoundedNucSpansRecallRequest:
+    obs: object
+    ns: Sequence[int]
+    nl: Sequence[int]
+    read_length: int
+    tables: _NucRecallTables
+    params: _NucRecallParams
+
+
+@dataclass(frozen=True)
 class _RefinedFragment:
     nuc: NucCall | None
     access: List[Interval]
@@ -573,6 +583,37 @@ def _recall_nuc_tables(llr_hit: np.ndarray, llr_miss: np.ndarray) -> _NucRecallT
     )
 
 
+def _recall_bounded_nuc_spans_from_request(
+    request: _BoundedNucSpansRecallRequest,
+) -> _NucRecallResult:
+    nucs: List[NucCall] = []
+    access: List[Interval] = []
+
+    for s_raw, length_raw in zip(request.ns, request.nl):
+        span = _bounded_interval(
+            s_raw,
+            length_raw,
+            request.read_length,
+            clamp_start=False,
+        )
+        if span is None:
+            continue
+
+        span_result = _recall_nuc_span_from_request(
+            _NucSpanRecallRequest(
+                obs=request.obs,
+                start=span.start,
+                end=span.end,
+                tables=request.tables,
+                params=request.params,
+            )
+        )
+        nucs.extend(span_result.nucs)
+        access.extend(span_result.access)
+
+    return _NucRecallResult(nucs=nucs, access=access)
+
+
 def _recall_bounded_nuc_spans(
     obs,
     ns: Sequence[int],
@@ -581,23 +622,16 @@ def _recall_bounded_nuc_spans(
     tables: _NucRecallTables,
     params: _NucRecallParams,
 ) -> _NucRecallResult:
-    nucs: List[NucCall] = []
-    access: List[Interval] = []
-
-    for s_raw, length_raw in zip(ns, nl):
-        span = _bounded_interval(
-            s_raw, length_raw, read_length, clamp_start=False,
+    return _recall_bounded_nuc_spans_from_request(
+        _BoundedNucSpansRecallRequest(
+            obs=obs,
+            ns=ns,
+            nl=nl,
+            read_length=read_length,
+            tables=tables,
+            params=params,
         )
-        if span is None:
-            continue
-
-        span_result = _recall_nuc_span(
-            obs, span.start, span.end, tables, params,
-        )
-        nucs.extend(span_result.nucs)
-        access.extend(span_result.access)
-
-    return _NucRecallResult(nucs=nucs, access=access)
+    )
 
 
 def recall_nucs_in_read(
@@ -647,8 +681,15 @@ def recall_nucs_in_read(
         phase_min_opps=phase_min_opps,
         phase_window=phase_window,
     )
-    result = _recall_bounded_nuc_spans(
-        obs, ns, nl, read_length, tables, params,
+    result = _recall_bounded_nuc_spans_from_request(
+        _BoundedNucSpansRecallRequest(
+            obs=obs,
+            ns=ns,
+            nl=nl,
+            read_length=read_length,
+            tables=tables,
+            params=params,
+        )
     )
     return result.nucs, result.access
 

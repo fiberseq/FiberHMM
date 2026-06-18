@@ -9,6 +9,7 @@ from fiberhmm.inference.nuc_recaller import (
     _AccessibleSplitRequest,
     _bounded_interval,
     _BoundedInterval,
+    _BoundedNucSpansRecallRequest,
     _circular_uncovered_cut,
     _CircularTilingFrame,
     _clip_ordered_nuc_calls_for_tiling,
@@ -27,6 +28,7 @@ from fiberhmm.inference.nuc_recaller import (
     _PhaseSplitRequest,
     _promoted_nuc_from_tf_call,
     _recall_bounded_nuc_spans,
+    _recall_bounded_nuc_spans_from_request,
     _recall_nuc_params,
     _recall_nuc_span,
     _recall_nuc_span_from_request,
@@ -212,30 +214,50 @@ def test_recall_bounded_nuc_spans_skips_invalid_spans(monkeypatch):
     )
     calls = []
 
-    def fake_span(obs_arg, s, e, tables_arg, params_arg):
-        calls.append((obs_arg, s, e, tables_arg, params_arg))
+    def fake_span(request):
+        calls.append((
+            request.obs,
+            request.start,
+            request.end,
+            request.tables,
+            request.params,
+        ))
         return _NucRecallResult(
-            nucs=[NucCall(s, e - s, 1, 2, 3)],
-            access=[(s, 1)],
+            nucs=[
+                NucCall(request.start, request.end - request.start, 1, 2, 3),
+            ],
+            access=[(request.start, 1)],
         )
 
     monkeypatch.setattr(
-        "fiberhmm.inference.nuc_recaller._recall_nuc_span",
+        "fiberhmm.inference.nuc_recaller._recall_nuc_span_from_request",
         fake_span,
     )
 
-    result = _recall_bounded_nuc_spans(
+    tables = _recall_nuc_tables(llr_hit, llr_miss)
+    result = _recall_bounded_nuc_spans_from_request(
+        _BoundedNucSpansRecallRequest(
+            obs=obs,
+            ns=[0, 5, 9, 12],
+            nl=[3, 0, 5, 2],
+            read_length=10,
+            tables=tables,
+            params=params,
+        )
+    )
+    adapted_result = _recall_bounded_nuc_spans(
         obs,
-        ns=[0, 5, 9, 12],
-        nl=[3, 0, 5, 2],
+        ns=[9],
+        nl=[1],
         read_length=10,
-        tables=_recall_nuc_tables(llr_hit, llr_miss),
+        tables=tables,
         params=params,
     )
 
-    assert [(call[1], call[2]) for call in calls] == [(0, 3), (9, 10)]
+    assert [(call[1], call[2]) for call in calls] == [(0, 3), (9, 10), (9, 10)]
     assert result.nucs == [NucCall(0, 3, 1, 2, 3), NucCall(9, 1, 1, 2, 3)]
     assert result.access == [(0, 1), (9, 1)]
+    assert adapted_result.nucs == [NucCall(9, 1, 1, 2, 3)]
 
 
 def test_total_call_llr_sums_call_scores():
