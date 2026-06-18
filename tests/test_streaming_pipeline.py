@@ -10,6 +10,7 @@ from fiberhmm.inference import streaming_pipeline
 from fiberhmm.inference.streaming_pipeline import (
     _apply_worker_args,
     _buffer_processable_read,
+    _buffer_streaming_read,
     _fused_worker_args,
     _new_apply_streaming_executor,
     _new_fused_streaming_executor,
@@ -176,6 +177,75 @@ def test_buffer_processable_read_keeps_chunk_lists_aligned():
     assert payloads == [payload]
     assert reads == [read]
     assert skip_flags == [False]
+
+
+def test_buffer_streaming_read_adds_processable_payload(monkeypatch):
+    read = object()
+    filter_config = object()
+    ref_fasta = object()
+    payload = {"read": "read1"}
+    calls = []
+
+    def fake_payload_or_skip(read_arg, filter_arg, mode_arg, ref_arg):
+        calls.append((read_arg, filter_arg, mode_arg, ref_arg))
+        return payload, None
+
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_streaming_payload_or_skip",
+        fake_payload_or_skip,
+    )
+
+    chunk_items = []
+    chunk_reads = []
+    skip_flags = []
+    processed, skipped = _buffer_streaming_read(
+        read,
+        filter_config,
+        "deam",
+        ref_fasta,
+        chunk_items,
+        chunk_reads,
+        skip_flags,
+        {},
+    )
+
+    assert (processed, skipped) == (1, 0)
+    assert calls == [(read, filter_config, "deam", ref_fasta)]
+    assert chunk_items == [payload]
+    assert chunk_reads == [read]
+    assert skip_flags == [False]
+
+
+def test_buffer_streaming_read_tracks_skipped_read(monkeypatch):
+    read = object()
+
+    monkeypatch.setattr(
+        streaming_pipeline,
+        "_streaming_payload_or_skip",
+        lambda read, filter_config, mode, ref_fasta: (None, "low_mapq"),
+    )
+
+    chunk_items = []
+    chunk_reads = []
+    skip_flags = []
+    skip_reasons = {"low_mapq": 0}
+    processed, skipped = _buffer_streaming_read(
+        read,
+        object(),
+        "deam",
+        None,
+        chunk_items,
+        chunk_reads,
+        skip_flags,
+        skip_reasons,
+    )
+
+    assert (processed, skipped) == (0, 1)
+    assert chunk_items == []
+    assert chunk_reads == [read]
+    assert skip_flags == [True]
+    assert skip_reasons == {"low_mapq": 1}
 
 
 def test_new_streaming_chunk_buffers_returns_independent_lists():

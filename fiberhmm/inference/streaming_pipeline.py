@@ -65,6 +65,29 @@ def _streaming_payload_or_skip(read, filter_config: ReadFilterConfig,
     return payload, None
 
 
+def _buffer_streaming_read(
+    read,
+    filter_config: ReadFilterConfig,
+    mode: str,
+    ref_fasta,
+    chunk_items,
+    chunk_read_objs,
+    chunk_skip_flags,
+    skip_reasons,
+) -> tuple[int, int]:
+    payload, skip_reason = _streaming_payload_or_skip(
+        read, filter_config, mode, ref_fasta,
+    )
+    if skip_reason:
+        return 0, _buffer_skipped_read(
+            chunk_read_objs, chunk_skip_flags, skip_reasons, read, skip_reason,
+        )
+
+    return _buffer_processable_read(
+        chunk_items, chunk_read_objs, chunk_skip_flags, payload, read,
+    ), 0
+
+
 def _completed_empty_future() -> Future:
     future = Future()
     future.set_result([])
@@ -476,20 +499,21 @@ def _process_bam_streaming_pipeline_fused(
 
             try:
                 for read in inbam.fetch(until_eof=True):
-                    payload, skip_reason = _streaming_payload_or_skip(
-                        read, filter_config, mode, ref_fasta,
+                    processed_delta, skipped_delta = _buffer_streaming_read(
+                        read,
+                        filter_config,
+                        mode,
+                        ref_fasta,
+                        chunk_payloads,
+                        chunk_read_objs,
+                        chunk_skip_flags,
+                        skip_reasons,
                     )
-                    if skip_reason:
-                        skipped += _buffer_skipped_read(
-                            chunk_read_objs, chunk_skip_flags, skip_reasons,
-                            read, skip_reason,
-                        )
+                    skipped += skipped_delta
+                    if skipped_delta:
                         continue
 
-                    total_reads += _buffer_processable_read(
-                        chunk_payloads, chunk_read_objs, chunk_skip_flags,
-                        payload, read,
-                    )
+                    total_reads += processed_delta
 
                     if max_reads and total_reads >= max_reads:
                         break
@@ -659,20 +683,21 @@ def _process_bam_streaming_pipeline(
 
             try:
                 for read in inbam.fetch(until_eof=True):
-                    payload, skip_reason = _streaming_payload_or_skip(
-                        read, filter_config, mode, ref_fasta,
+                    processed_delta, skipped_delta = _buffer_streaming_read(
+                        read,
+                        filter_config,
+                        mode,
+                        ref_fasta,
+                        chunk_reads,
+                        chunk_read_objs,
+                        chunk_skip_flags,
+                        skip_reasons,
                     )
-                    if skip_reason:
-                        skipped += _buffer_skipped_read(
-                            chunk_read_objs, chunk_skip_flags, skip_reasons,
-                            read, skip_reason,
-                        )
+                    skipped += skipped_delta
+                    if skipped_delta:
                         continue
 
-                    total_reads += _buffer_processable_read(
-                        chunk_reads, chunk_read_objs, chunk_skip_flags,
-                        payload, read,
-                    )
+                    total_reads += processed_delta
 
                     if max_reads and total_reads >= max_reads:
                         break
