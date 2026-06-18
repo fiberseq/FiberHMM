@@ -11,6 +11,8 @@ from fiberhmm.inference.streaming_pipeline import (
     _apply_worker_args,
     _buffer_processable_read,
     _fused_worker_args,
+    _new_apply_streaming_executor,
+    _new_fused_streaming_executor,
     _new_streaming_chunk_buffers,
     _open_streaming_posterior_writer,
     _print_streaming_completion_summary,
@@ -248,6 +250,68 @@ def test_open_streaming_posterior_writer_warns_when_backend_missing(monkeypatch)
     assert log.getvalue() == (
         "WARNING: posterior_writer.py not found, skipping posteriors export\n"
     )
+
+
+def test_new_apply_streaming_executor_configures_pool(monkeypatch):
+    class FakeExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(streaming_pipeline, "ProcessPoolExecutor", FakeExecutor)
+
+    executor = _new_apply_streaming_executor(
+        model_path="model.pkl",
+        n_cores=3,
+        debug_timing=True,
+    )
+
+    assert executor.kwargs == {
+        "max_workers": 3,
+        "mp_context": streaming_pipeline._MP_CONTEXT,
+        "initializer": streaming_pipeline._init_bam_worker,
+        "initargs": ("model.pkl", True),
+    }
+
+
+def test_new_fused_streaming_executor_configures_pool(monkeypatch):
+    class FakeExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(streaming_pipeline, "ProcessPoolExecutor", FakeExecutor)
+
+    executor = _new_fused_streaming_executor(
+        model_path="apply.pkl",
+        recall_model_path="recall.pkl",
+        emission_uplift=1.5,
+        recall_nucs=True,
+        split_min_llr=4.0,
+        split_min_opps=3,
+        filter_chimeras=False,
+        chimera_min_seg=5,
+        chimera_purity=0.8,
+        phase_nrl=147,
+        n_cores=4,
+    )
+
+    assert executor.kwargs == {
+        "max_workers": 4,
+        "mp_context": streaming_pipeline._MP_CONTEXT,
+        "initializer": streaming_pipeline._init_fused_worker,
+        "initargs": (
+            "apply.pkl",
+            "recall.pkl",
+            1.5,
+            False,
+            True,
+            4.0,
+            3,
+            False,
+            5,
+            0.8,
+            147,
+        ),
+    }
 
 
 def _count_bam_reads(bam_path):

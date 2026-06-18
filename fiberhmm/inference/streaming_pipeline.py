@@ -228,6 +228,52 @@ def _open_streaming_posterior_writer(
     return writer, True
 
 
+def _new_apply_streaming_executor(
+    model_path: str,
+    n_cores: int,
+    debug_timing: bool,
+):
+    return ProcessPoolExecutor(
+        max_workers=n_cores,
+        mp_context=_MP_CONTEXT,
+        initializer=_init_bam_worker,
+        initargs=(model_path, debug_timing),
+    )
+
+
+def _new_fused_streaming_executor(
+    model_path: str,
+    recall_model_path: str,
+    emission_uplift: float,
+    recall_nucs: bool,
+    split_min_llr: float,
+    split_min_opps: int,
+    filter_chimeras: bool,
+    chimera_min_seg: int,
+    chimera_purity: float,
+    phase_nrl: int,
+    n_cores: int,
+):
+    return ProcessPoolExecutor(
+        max_workers=n_cores,
+        mp_context=_MP_CONTEXT,
+        initializer=_init_fused_worker,
+        initargs=(
+            model_path,
+            recall_model_path,
+            emission_uplift,
+            False,
+            recall_nucs,
+            split_min_llr,
+            split_min_opps,
+            filter_chimeras,
+            chimera_min_seg,
+            chimera_purity,
+            phase_nrl,
+        ),
+    )
+
+
 def _print_streaming_skip_summary(skip_reasons: dict, total_reads: int,
                                   skipped: int, log) -> None:
     if skipped <= 0:
@@ -402,14 +448,18 @@ def _process_bam_streaming_pipeline_fused(
             if ref_fasta_path:
                 ref_fasta = pysam.FastaFile(ref_fasta_path)
 
-            executor = ProcessPoolExecutor(
-                max_workers=n_cores,
-                mp_context=_MP_CONTEXT,
-                initializer=_init_fused_worker,
-                initargs=(model_path, recall_model_path, emission_uplift, False,
-                          recall_nucs, split_min_llr, split_min_opps,
-                          filter_chimeras, chimera_min_seg, chimera_purity,
-                          phase_nrl),
+            executor = _new_fused_streaming_executor(
+                model_path,
+                recall_model_path,
+                emission_uplift,
+                recall_nucs,
+                split_min_llr,
+                split_min_opps,
+                filter_chimeras,
+                chimera_min_seg,
+                chimera_purity,
+                phase_nrl,
+                n_cores,
             )
 
             inflight = deque()
@@ -590,11 +640,8 @@ def _process_bam_streaming_pipeline(
                 output_posteriors, mode, context_size, edge_trim, input_bam, _log,
             )
 
-            executor = ProcessPoolExecutor(
-                max_workers=n_cores,
-                mp_context=_MP_CONTEXT,
-                initializer=_init_bam_worker,
-                initargs=(model_path, debug_timing)
+            executor = _new_apply_streaming_executor(
+                model_path, n_cores, debug_timing,
             )
 
             inflight = deque()
