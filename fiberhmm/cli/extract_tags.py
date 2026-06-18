@@ -56,13 +56,19 @@ import pysam
 
 from fiberhmm.core.tag_access import compact_ml_value, get_preferred_tag
 from fiberhmm.inference.parallel import _get_genome_regions
+from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.inference.reference_mapping import (
     build_query_to_ref as _build_query_to_ref,
+)
+from fiberhmm.inference.reference_mapping import (
     query_interval_to_ref_block as _query_interval_to_ref_block,
+)
+from fiberhmm.inference.reference_mapping import (
     query_to_ref_lookup as _query_to_ref_lookup,
+)
+from fiberhmm.inference.reference_mapping import (
     scored_interval_blocks as _legacy_interval_blocks,
 )
-from fiberhmm.inference.read_filters import is_primary_mapped_alignment
 from fiberhmm.io.bam_index import ensure_bam_index
 from fiberhmm.io.bed import bed12_row
 from fiberhmm.io.ma_tags import (
@@ -72,7 +78,6 @@ from fiberhmm.io.ma_tags import (
     parse_aq_array,
     parse_ma_tag,
 )
-
 
 _MM_SUBTYPE_RE = re.compile(r'([ACGTUN])([+-])([a-z0-9]+|\d+)', re.IGNORECASE)
 
@@ -1913,7 +1918,10 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
 
 def _add_extract_input_arguments(parser) -> None:
     parser.add_argument('-i', '--input', required=True, help='Input tagged BAM file')
-    parser.add_argument('-o', '--outdir', default=None, help='Output directory (default: same as input)')
+    parser.add_argument(
+        '-o', '--outdir', default=None,
+        help='Output directory (default: same as input)',
+    )
     parser.add_argument('-c', '--cores', type=int, default=1, help='Number of CPU cores')
 
 
@@ -1943,18 +1951,27 @@ def _add_extract_type_arguments(parser) -> None:
                              '(3) MD-tag ref mismatches as a fallback for raw DAF BAMs. '
                              'First non-empty source wins per read. blockMod: '
                              '0 = R/GA-dea, 1 = Y/CT-dea, matching FiberBrowser flavor codes.')
-    parser.add_argument('--all', action='store_true', help='Extract all tag types (default if none specified)')
+    parser.add_argument(
+        '--all', action='store_true',
+        help='Extract all tag types (default if none specified)',
+    )
 
 
 def _add_extract_output_arguments(parser) -> None:
     parser.add_argument('--bed-only', action='store_true', help='Output BED only (no bigBed)')
-    parser.add_argument('--keep-bed', action='store_true', help='Keep BED files when creating bigBed')
+    parser.add_argument(
+        '--keep-bed', action='store_true',
+        help='Keep BED files when creating bigBed',
+    )
     # Legacy flag for compatibility
     parser.add_argument('--bigbed', action='store_true', help=argparse.SUPPRESS)
 
 
 def _add_extract_filter_arguments(parser) -> None:
-    parser.add_argument('-q', '--min-mapq', type=int, default=0, help='Min mapping quality (default: 0, no filtering)')
+    parser.add_argument(
+        '-q', '--min-mapq', type=int, default=0,
+        help='Min mapping quality (default: 0, no filtering)',
+    )
     parser.add_argument('-p', '--prob-threshold', type=int, default=125,
                         help='Min probability for m6a/m5c (0-255)')
     parser.add_argument('--no-scores', action='store_true', help='Omit scores from output')
@@ -1979,7 +1996,10 @@ def _add_extract_filter_arguments(parser) -> None:
 
 
 def _add_extract_region_arguments(parser) -> None:
-    parser.add_argument('--region-size', type=int, default=10_000_000, help='Region size for parallel')
+    parser.add_argument(
+        '--region-size', type=int, default=10_000_000,
+        help='Region size for parallel',
+    )
     parser.add_argument('--skip-scaffolds', action='store_true', help='Skip scaffold chromosomes')
     parser.add_argument('--chroms', type=str, help='Comma-separated chromosomes to process')
 
