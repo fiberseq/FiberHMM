@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from fiberhmm.cli.generate_probs import (
     FILTER_STAT_KEYS,
@@ -777,6 +778,67 @@ def test_maybe_update_probability_progress_updates_every_5000_reads():
     assert pbar.postfixes == [
         {"processed": "2,500", "scanned": "5,000", "rate": "50.0%"},
     ]
+
+
+def test_process_bam_closes_progress_when_read_processing_fails(monkeypatch):
+    import fiberhmm.cli.generate_probs as generate_probs
+
+    progress_instances = []
+    bam_instances = []
+
+    class FakeProgress:
+        def __init__(self, iterable, **kwargs):
+            self.iterable = iterable
+            self.closed = False
+            progress_instances.append(self)
+
+        def __iter__(self):
+            return iter(self.iterable)
+
+        def set_postfix(self, value):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    class FakeBam:
+        def __init__(self, *args, **kwargs):
+            self.closed = False
+            bam_instances.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.closed = True
+            return False
+
+        def fetch(self):
+            return [_Read({"MM": "A+a,0;", "ML": [200]})]
+
+    def fail_read_processing(*args, **kwargs):
+        raise RuntimeError("processing failed")
+
+    monkeypatch.setattr(generate_probs.pysam, "AlignmentFile", FakeBam)
+    monkeypatch.setattr(generate_probs, "tqdm", FakeProgress)
+    monkeypatch.setattr(
+        generate_probs,
+        "_process_probability_read_or_skip",
+        fail_read_processing,
+    )
+
+    args = SimpleNamespace(min_mapq=20, min_read_length=100)
+    with pytest.raises(RuntimeError, match="processing failed"):
+        generate_probs.process_bam(
+            "reads.bam",
+            {"A": _Counter()},
+            "pacbio-fiber",
+            args,
+        )
+
+    assert progress_instances
+    assert progress_instances[0].closed
+    assert bam_instances[0].closed
 
 
 def test_count_items_desc_sorts_by_count_descending():

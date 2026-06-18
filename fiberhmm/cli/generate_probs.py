@@ -467,28 +467,31 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
 
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         pbar = tqdm(bam.fetch(), desc=f"Processing {os.path.basename(bam_path)}")
-        for read in pbar:
-            reads_scanned += 1
-            filter_stats['scanned'] += 1
+        try:
+            for read in pbar:
+                reads_scanned += 1
+                filter_stats['scanned'] += 1
 
-            # Update progress bar periodically
-            _maybe_update_probability_progress(
-                pbar, reads_processed, reads_scanned,
-            )
+                # Update progress bar periodically
+                _maybe_update_probability_progress(
+                    pbar, reads_processed, reads_scanned,
+                )
 
-            processed = _process_probability_read_or_skip(
-                read, counters, mode, args, filter_stats,
-                mm_tag_types, strand_assignments,
-            )
-            if not processed:
-                continue
+                processed = _process_probability_read_or_skip(
+                    read, counters, mode, args, filter_stats,
+                    mm_tag_types, strand_assignments,
+                )
+                if not processed:
+                    continue
 
-            reads_processed += 1
-            filter_stats['processed'] += 1
+                reads_processed += 1
+                filter_stats['processed'] += 1
 
-            # Check max reads (limit by PROCESSED count for consistent sample size)
-            if _read_limit_reached(max_reads, reads_processed):
-                break
+                # Check max reads (limit by PROCESSED count for consistent sample size)
+                if _read_limit_reached(max_reads, reads_processed):
+                    break
+        finally:
+            pbar.close()
 
     _finalize_probability_bam_run(
         mode=mode,
