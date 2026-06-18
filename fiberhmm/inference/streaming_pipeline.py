@@ -162,6 +162,12 @@ class _StreamingFlushContext:
     rate_unit: str
 
 
+@dataclass(frozen=True)
+class _StreamingPosteriorWriter:
+    writer: object | None
+    enabled: bool
+
+
 def _flush_streaming_chunk_and_report_progress(
     context: _StreamingFlushContext,
     chunk_items,
@@ -466,23 +472,23 @@ def _open_streaming_posterior_writer(
     edge_trim: int,
     input_bam: str,
     log,
-) -> tuple[object | None, bool]:
+) -> _StreamingPosteriorWriter:
     if not output_posteriors:
-        return None, False
+        return _StreamingPosteriorWriter(writer=None, enabled=False)
 
     if not HAS_POSTERIOR_WRITER:
         print(
             "WARNING: posterior_writer.py not found, skipping posteriors export",
             file=log,
         )
-        return None, False
+        return _StreamingPosteriorWriter(writer=None, enabled=False)
 
     writer = PosteriorWriter(
         output_posteriors, mode, context_size,
         edge_trim, input_bam, batch_size=1000,
     )
     print(f"Posteriors will be written to: {output_posteriors}", file=log)
-    return writer, True
+    return _StreamingPosteriorWriter(writer=writer, enabled=True)
 
 
 def _close_streaming_posterior_writer(posterior_writer):
@@ -967,9 +973,11 @@ def _process_bam_streaming_pipeline(
             skipped = 0
 
             try:
-                posterior_writer, return_posteriors = _open_streaming_posterior_writer(
+                posterior_output = _open_streaming_posterior_writer(
                     output_posteriors, mode, context_size, edge_trim, input_bam, _log,
                 )
+                posterior_writer = posterior_output.writer
+                return_posteriors = posterior_output.enabled
 
                 executor = _new_apply_streaming_executor(
                     model_path, n_cores, debug_timing,

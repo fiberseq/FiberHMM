@@ -42,6 +42,7 @@ from fiberhmm.inference.streaming_pipeline import (
     _streaming_progress_message,
     _streaming_progress_rates,
     _streaming_rate,
+    _StreamingPosteriorWriter,
     _worker_common_args,
 )
 
@@ -794,12 +795,12 @@ def test_open_streaming_posterior_writer_enables_worker_posteriors(monkeypatch):
     )
     log = io.StringIO()
 
-    writer, return_posteriors = _open_streaming_posterior_writer(
+    posterior_output = _open_streaming_posterior_writer(
         "out.h5", "deam", 4, 10, "in.bam", log,
     )
 
-    assert isinstance(writer, FakePosteriorWriter)
-    assert return_posteriors is True
+    assert isinstance(posterior_output.writer, FakePosteriorWriter)
+    assert posterior_output.enabled is True
     assert created == [
         (("out.h5", "deam", 4, 10, "in.bam"), {"batch_size": 1000})
     ]
@@ -810,12 +811,14 @@ def test_open_streaming_posterior_writer_warns_when_backend_missing(monkeypatch)
     monkeypatch.setattr(streaming_pipeline, "HAS_POSTERIOR_WRITER", False)
     log = io.StringIO()
 
-    writer, return_posteriors = _open_streaming_posterior_writer(
+    posterior_output = _open_streaming_posterior_writer(
         "out.h5", "deam", 4, 10, "in.bam", log,
     )
 
-    assert writer is None
-    assert return_posteriors is False
+    assert posterior_output == _StreamingPosteriorWriter(
+        writer=None,
+        enabled=False,
+    )
     assert log.getvalue() == (
         "WARNING: posterior_writer.py not found, skipping posteriors export\n"
     )
@@ -885,7 +888,7 @@ def test_apply_streaming_closes_posterior_writer_on_executor_setup_failure(
     monkeypatch.setattr(
         streaming_pipeline,
         "_open_streaming_posterior_writer",
-        lambda *args: (writer, True),
+        lambda *args: _StreamingPosteriorWriter(writer=writer, enabled=True),
     )
     monkeypatch.setattr(
         streaming_pipeline,
