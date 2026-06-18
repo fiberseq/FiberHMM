@@ -163,8 +163,11 @@ def _coerce_loaded_model(obj) -> FiberHMM:
     return _convert_hmmlearn_model(obj)
 
 
-def _normalize_mode(mode: str) -> str:
-    return MODE_ALIASES.get(mode, mode)
+def _normalize_mode(mode) -> str:
+    if mode is None:
+        return DEFAULT_MODE
+    mode_name = str(mode)
+    return MODE_ALIASES.get(mode_name, mode_name)
 
 
 def _load_npz(filepath: str) -> FiberHMM:

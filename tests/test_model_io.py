@@ -312,6 +312,24 @@ class TestModeAliases:
         _, _, mode = load_model_with_metadata(filepath, normalize=False)
         assert mode == 'nanopore-fiber'
 
+    def test_null_mode_metadata_uses_default_mode(self, sample_model, tmp_path):
+        filepath = str(tmp_path / "model.json")
+        data = {
+            'model_type': 'FiberHMM',
+            'version': '2.0',
+            'n_states': 2,
+            'startprob': sample_model.startprob_.tolist(),
+            'transmat': sample_model.transmat_.tolist(),
+            'emissionprob': sample_model.emissionprob_.tolist(),
+            'context_size': 3,
+            'mode': None,
+        }
+        with open(filepath, 'w') as f:
+            json.dump(data, f)
+
+        _, _, mode = load_model_with_metadata(filepath, normalize=False)
+        assert mode == 'pacbio-fiber'
+
 
 class TestSaveRedirect:
     def test_json_save_path_helper_redirects_legacy_extensions(self):
