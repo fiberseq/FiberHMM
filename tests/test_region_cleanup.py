@@ -291,8 +291,10 @@ def test_region_work_item_builders_use_stable_temp_names(tmp_path):
 def test_region_result_has_existing_tsv_requires_path_and_file(tmp_path):
     missing = tmp_path / "missing.tsv"
     empty = tmp_path / "empty.tsv"
+    directory = tmp_path / "region_dir.tsv"
     existing = tmp_path / "region.tsv"
     empty.write_text("")
+    directory.mkdir()
     existing.write_text("read\tposterior\n")
 
     assert not region_pipeline._region_result_has_existing_tsv(
@@ -304,6 +306,9 @@ def test_region_result_has_existing_tsv_requires_path_and_file(tmp_path):
     assert not region_pipeline._region_result_has_existing_tsv(
         region_pipeline.RegionBamResult("region.bam", 1, 1, 1, str(empty))
     )
+    assert not region_pipeline._region_result_has_existing_tsv(
+        region_pipeline.RegionBamResult("region.bam", 1, 1, 1, str(directory))
+    )
     assert region_pipeline._region_result_has_existing_tsv(
         region_pipeline.RegionBamResult("region.bam", 1, 1, 1, str(existing))
     )
@@ -313,16 +318,19 @@ def test_ordered_existing_temp_paths_sorts_and_filters_empty(tmp_path):
     nonempty_late = tmp_path / "region_2.bam"
     nonempty_early = tmp_path / "region_0.bam"
     empty = tmp_path / "region_1.bam"
+    directory = tmp_path / "region_dir.bam"
     missing = tmp_path / "missing.bam"
     nonempty_late.write_bytes(b"late")
     nonempty_early.write_bytes(b"early")
     empty.write_bytes(b"")
+    directory.mkdir()
 
     assert region_pipeline._ordered_existing_temp_paths([
         (2, str(nonempty_late)),
         (1, str(empty)),
         (3, str(missing)),
         (0, str(nonempty_early)),
+        (4, str(directory)),
     ]) == [str(nonempty_early), str(nonempty_late)]
 
 

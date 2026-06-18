@@ -35,6 +35,7 @@ from fiberhmm.inference.region_workers import (
 )
 from fiberhmm.inference.skip_reasons import iter_nonzero_skip_reasons
 from fiberhmm.io.bam_index import ensure_bam_index
+from fiberhmm.io.path_status import path_is_nonempty_file
 from fiberhmm.posteriors.region_tsv import (
     merge_region_posteriors_tsv as _merge_region_posteriors_tsv,
 )
@@ -307,16 +308,12 @@ def _ordered_existing_temp_paths(indexed_paths) -> list:
     return [
         path
         for _, path in sorted(indexed_paths, key=lambda x: x[0])
-        if os.path.exists(path) and os.path.getsize(path) > 0
+        if path_is_nonempty_file(path)
     ]
 
 
 def _region_result_has_existing_tsv(result: RegionBamResult) -> bool:
-    return bool(
-        result.temp_tsv_path
-        and os.path.exists(result.temp_tsv_path)
-        and os.path.getsize(result.temp_tsv_path) > 0
-    )
+    return bool(result.temp_tsv_path and path_is_nonempty_file(result.temp_tsv_path))
 
 
 def _submit_region_futures(executor, worker, work_items) -> dict:

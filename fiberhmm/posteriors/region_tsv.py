@@ -10,6 +10,7 @@ from typing import Iterable, Sequence
 
 import numpy as np
 
+from fiberhmm.io.path_status import path_is_nonempty_file
 from fiberhmm.posteriors.writer import _resolve_writer_format
 
 REGION_POSTERIORS_HEADER = (
@@ -127,15 +128,11 @@ def format_posterior_metadata_line(metadata: dict) -> str:
     return f"#metadata:{json.dumps(metadata)}\n"
 
 
-def _region_tsv_file_has_records(path: str) -> bool:
-    return os.path.isfile(path) and os.path.getsize(path) > 0
-
-
 def _valid_region_tsv_files(temp_tsv_files: Iterable[tuple[int, str]]) -> list[tuple[int, str]]:
     return [
         (idx, path)
         for idx, path in sorted(temp_tsv_files, key=lambda item: item[0])
-        if _region_tsv_file_has_records(path)
+        if path_is_nonempty_file(path)
     ]
 
 
