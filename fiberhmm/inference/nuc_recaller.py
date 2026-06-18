@@ -104,6 +104,19 @@ class _PhaseSplit:
 
 
 @dataclass(frozen=True)
+class _PhaseSplitRequest:
+    obs: object
+    start: int
+    end: int
+    nhit: np.ndarray
+    nmiss: np.ndarray
+    nrl: int
+    min_llr: float
+    min_opps: int
+    window: int
+
+
+@dataclass(frozen=True)
 class _PhaseCutWindow:
     start: int
     end: int
@@ -309,9 +322,9 @@ def _phase_cut_window(
     return _PhaseCutWindow(start=lo, end=hi)
 
 
-def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
-                        phase_min_llr, phase_min_opps,
-                        phase_window) -> _PhaseSplit:
+def _phase_subfragments_from_request(
+    request: _PhaseSplitRequest,
+) -> _PhaseSplit:
     """Evidence-gated periodicity split of a long protected fragment.
 
     A fragment of length L >= 1.5*nrl is assumed to hold ``n = round(L/nrl)``
@@ -321,30 +334,60 @@ def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
     Returns phase-split fragments plus cut intervals; with no qualifying cut
     the fragment is returned whole (never split into a signal-desert).
     """
-    L = b - a
-    if L < int(1.5 * nrl):
-        return _PhaseSplit(fragments=[(a, b)], cuts=[])
-    n = int(round(L / float(nrl)))
+    L = request.end - request.start
+    if L < int(1.5 * request.nrl):
+        return _PhaseSplit(fragments=[(request.start, request.end)], cuts=[])
+    n = int(round(L / float(request.nrl)))
     if n < 2:
-        return _PhaseSplit(fragments=[(a, b)], cuts=[])
+        return _PhaseSplit(fragments=[(request.start, request.end)], cuts=[])
     spacing = L / float(n)
     cut_pairs: List[Interval] = []
     for i in range(1, n):
-        pred = a + int(round(i * spacing))
-        window = _phase_cut_window(a, b, pred, phase_window)
+        pred = request.start + int(round(i * spacing))
+        window = _phase_cut_window(
+            request.start,
+            request.end,
+            pred,
+            request.window,
+        )
         if window is None:
             continue
-        found = call_tfs_in_interval(obs, window.start, window.end, nhit, nmiss,
-                                     phase_min_llr, phase_min_opps)
+        found = call_tfs_in_interval(
+            request.obs,
+            window.start,
+            window.end,
+            request.nhit,
+            request.nmiss,
+            request.min_llr,
+            request.min_opps,
+        )
         if found:
             best = max(found, key=lambda c: c.llr)
             cut_pairs.append((best.start, best.start + best.length))
     if not cut_pairs:
-        return _PhaseSplit(fragments=[(a, b)], cuts=[])
+        return _PhaseSplit(fragments=[(request.start, request.end)], cuts=[])
     cut_pairs.sort()
-    subs = _fragments_after_cuts(a, b, cut_pairs)
+    subs = _fragments_after_cuts(request.start, request.end, cut_pairs)
     cut_intervals = [(cs, ce - cs) for cs, ce in cut_pairs]
     return _PhaseSplit(fragments=subs, cuts=cut_intervals)
+
+
+def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
+                        phase_min_llr, phase_min_opps,
+                        phase_window) -> _PhaseSplit:
+    return _phase_subfragments_from_request(
+        _PhaseSplitRequest(
+            obs=obs,
+            start=a,
+            end=b,
+            nhit=nhit,
+            nmiss=nmiss,
+            nrl=nrl,
+            min_llr=phase_min_llr,
+            min_opps=phase_min_opps,
+            window=phase_window,
+        )
+    )
 
 
 def _phase_or_unsplit_subfragments(
@@ -359,9 +402,18 @@ def _phase_or_unsplit_subfragments(
     phase_window: int,
 ) -> _PhaseSplit:
     if phase_nrl > 0:
-        return _phase_subfragments(
-            obs, a, b, nhit, nmiss, phase_nrl,
-            phase_min_llr, phase_min_opps, phase_window,
+        return _phase_subfragments_from_request(
+            _PhaseSplitRequest(
+                obs=obs,
+                start=a,
+                end=b,
+                nhit=nhit,
+                nmiss=nmiss,
+                nrl=phase_nrl,
+                min_llr=phase_min_llr,
+                min_opps=phase_min_opps,
+                window=phase_window,
+            )
         )
     return _PhaseSplit(fragments=[(a, b)], cuts=[])
 

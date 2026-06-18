@@ -20,7 +20,10 @@ from fiberhmm.inference.nuc_recaller import (
     _ordered_positive_nuc_calls,
     _phase_cut_window,
     _phase_or_unsplit_subfragments,
+    _phase_subfragments,
+    _phase_subfragments_from_request,
     _PhaseCutWindow,
+    _PhaseSplitRequest,
     _promoted_nuc_from_tf_call,
     _recall_bounded_nuc_spans,
     _recall_nuc_params,
@@ -333,6 +336,39 @@ def test_phase_prior_splits_long_footprint_at_single_event():
     assert len(nucs_off) == 1
     nucs_on, _ = recall_nucs_in_read(obs, phase_nrl=185, **kw)
     assert len(nucs_on) == 2
+
+
+def test_phase_subfragments_request_matches_adapter():
+    obs = _obs((MISS, 190), (HIT, 1), (MISS, 189))
+    llr_hit, llr_miss = _llr_tables()
+    request = _PhaseSplitRequest(
+        obs=obs,
+        start=0,
+        end=len(obs),
+        nhit=-llr_hit,
+        nmiss=-llr_miss,
+        nrl=185,
+        min_llr=1.0,
+        min_opps=1,
+        window=35,
+    )
+
+    requested = _phase_subfragments_from_request(request)
+    adapted = _phase_subfragments(
+        obs,
+        0,
+        len(obs),
+        -llr_hit,
+        -llr_miss,
+        185,
+        1.0,
+        1,
+        35,
+    )
+
+    assert requested == adapted
+    assert len(requested.fragments) == 2
+    assert requested.cuts
 
 
 def test_phase_prior_never_splits_signal_desert():
