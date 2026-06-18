@@ -13,6 +13,7 @@ from conftest import make_synthetic_bam, make_synthetic_iupac_bam
 
 from fiberhmm.cli.call import (
     _build_pg_record,
+    _build_pg_record_from_request,
     _call_banner_settings,
     _call_banner_text,
     _call_banner_text_from_settings,
@@ -24,9 +25,12 @@ from fiberhmm.cli.call import (
     _call_mode_label,
     _call_mode_or_default,
     _call_pg_description,
+    _call_pg_description_from_request,
     _call_recall_model_label,
     _CallBannerSettings,
     _CallFusedCommonSettings,
+    _CallPgDescriptionRequest,
+    _CallPgRecordRequest,
     _CallPhaseNrlRequest,
     _check_daf_inputs,
     _check_region_parallel_file_io,
@@ -372,13 +376,14 @@ def test_chimera_filter_state_is_daf_specific():
 
 
 def test_call_pg_record_documents_molecular_coordinates():
-    record = _build_pg_record(
+    request = _CallPgRecordRequest(
         mode="daf",
         recall_nucs=True,
         phase_nrl=185,
         keep_chimeras=False,
         argv=["fiberhmm-call", "-i", "in.bam"],
     )
+    record = _build_pg_record_from_request(request)
 
     assert record["PN"] == "fiberhmm-call"
     assert record["CL"] == "fiberhmm-call -i in.bam"
@@ -387,21 +392,35 @@ def test_call_pg_record_documents_molecular_coordinates():
     assert "recall_nucs=True" in record["DS"]
     assert "phase_nrl=185" in record["DS"]
     assert "chimera_filter=on" in record["DS"]
+    assert _build_pg_record(
+        mode="daf",
+        recall_nucs=True,
+        phase_nrl=185,
+        keep_chimeras=False,
+        argv=["fiberhmm-call", "-i", "in.bam"],
+    ) == record
 
 
 def test_call_pg_description_documents_settings():
-    description = _call_pg_description(
+    request = _CallPgDescriptionRequest(
         mode="daf",
         recall_nucs=False,
         phase_nrl=0,
         keep_chimeras=True,
     )
+    description = _call_pg_description_from_request(request)
 
     assert "coord=molecular" in description
     assert "mode=daf" in description
     assert "recall_nucs=False" in description
     assert "phase_nrl=0" in description
     assert "chimera_filter=off" in description
+    assert _call_pg_description(
+        mode="daf",
+        recall_nucs=False,
+        phase_nrl=0,
+        keep_chimeras=True,
+    ) == description
 
 
 def test_call_banner_label_helpers():

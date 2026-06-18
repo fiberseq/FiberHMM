@@ -98,6 +98,23 @@ class _CallPhaseNrlRequest:
     recall_nucs: bool
 
 
+@dataclass(frozen=True)
+class _CallPgDescriptionRequest:
+    mode: str
+    recall_nucs: bool
+    phase_nrl: int
+    keep_chimeras: bool
+
+
+@dataclass(frozen=True)
+class _CallPgRecordRequest:
+    mode: str
+    recall_nucs: bool
+    phase_nrl: int
+    keep_chimeras: bool
+    argv: list[str] | None = None
+
+
 @dataclass
 class _DafSniffResult:
     has_ry: bool = False
@@ -398,21 +415,38 @@ def _chimera_filter_state(mode: str, keep_chimeras: bool) -> str:
     return 'off' if keep_chimeras else 'on'
 
 
-def _call_pg_description(mode, recall_nucs, phase_nrl, keep_chimeras) -> str:
-    chimera_state = _chimera_filter_state(mode, keep_chimeras)
+def _call_pg_description_from_request(
+    request: _CallPgDescriptionRequest,
+) -> str:
+    chimera_state = _chimera_filter_state(
+        request.mode,
+        request.keep_chimeras,
+    )
     return (
         f"FiberHMM fused apply+recall; coord=molecular "
         f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
-        f"mode={mode} recall_nucs={recall_nucs} phase_nrl={phase_nrl} "
+        f"mode={request.mode} recall_nucs={request.recall_nucs} "
+        f"phase_nrl={request.phase_nrl} "
         f"chimera_filter={chimera_state}"
     )
 
 
-def _build_pg_record(mode, recall_nucs, phase_nrl, keep_chimeras, argv=None):
+def _call_pg_description(mode, recall_nucs, phase_nrl, keep_chimeras) -> str:
+    return _call_pg_description_from_request(
+        _CallPgDescriptionRequest(
+            mode=mode,
+            recall_nucs=recall_nucs,
+            phase_nrl=phase_nrl,
+            keep_chimeras=keep_chimeras,
+        ),
+    )
+
+
+def _build_pg_record_from_request(request: _CallPgRecordRequest):
     """Build the @PG provenance record for fused call output BAMs."""
     import fiberhmm as _fh
 
-    argv = sys.argv if argv is None else argv
+    argv = sys.argv if request.argv is None else request.argv
     return {
         'PN': 'fiberhmm-call',
         'VN': getattr(_fh, '__version__', 'unknown'),
@@ -420,8 +454,27 @@ def _build_pg_record(mode, recall_nucs, phase_nrl, keep_chimeras, argv=None):
         # The `coord=molecular` token is a stable, version-independent contract
         # for downstream consumers (e.g. FiberBrowser) to detect that ns/nl/as/al
         # and MA are in molecular (original-fiber) frame -- keep the exact token.
-        'DS': _call_pg_description(mode, recall_nucs, phase_nrl, keep_chimeras),
+        'DS': _call_pg_description_from_request(
+            _CallPgDescriptionRequest(
+                mode=request.mode,
+                recall_nucs=request.recall_nucs,
+                phase_nrl=request.phase_nrl,
+                keep_chimeras=request.keep_chimeras,
+            ),
+        ),
     }
+
+
+def _build_pg_record(mode, recall_nucs, phase_nrl, keep_chimeras, argv=None):
+    return _build_pg_record_from_request(
+        _CallPgRecordRequest(
+            mode=mode,
+            recall_nucs=recall_nucs,
+            phase_nrl=phase_nrl,
+            keep_chimeras=keep_chimeras,
+            argv=argv,
+        ),
+    )
 
 
 def _call_mode_label(region_parallel: bool) -> str:
