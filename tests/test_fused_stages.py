@@ -107,6 +107,20 @@ def test_optional_apply_scores_respects_enabled_flag():
     ) is None
 
 
+def test_optional_apply_score_fields_respects_enabled_flag():
+    apply_result = {
+        "ns_scores": np.asarray([0.25], dtype=np.float32),
+        "as_scores": np.asarray([0.5], dtype=np.float32),
+    }
+
+    enabled = fused_stages._optional_apply_score_fields(apply_result, enabled=True)
+    disabled = fused_stages._optional_apply_score_fields(apply_result, enabled=False)
+
+    assert enabled["ns_scores"] is apply_result["ns_scores"]
+    assert enabled["as_scores"] is apply_result["as_scores"]
+    assert disabled == {"ns_scores": None, "as_scores": None}
+
+
 def test_interval_pairs_casts_parallel_arrays_to_int_pairs():
     pairs = fused_stages._interval_pairs(
         np.asarray([1, 2], dtype=np.int32),

@@ -111,6 +111,13 @@ def _optional_apply_scores(apply_result: Mapping[str, Any], key: str, enabled: b
     return apply_result.get(key) if enabled else None
 
 
+def _optional_apply_score_fields(apply_result: Mapping[str, Any], enabled: bool):
+    return {
+        "ns_scores": _optional_apply_scores(apply_result, "ns_scores", enabled),
+        "as_scores": _optional_apply_scores(apply_result, "as_scores", enabled),
+    }
+
+
 def _promote_large_tf_nucs(
     tf_calls,
     nuc_calls,
@@ -285,12 +292,13 @@ def _build_fused_recall_result_without_nucs_linear(
         unify_threshold,
     )
 
+    score_fields = _optional_apply_score_fields(apply_result, with_scores)
     kept_nucs, nq_for_kept = unify_nucs_with_tf_calls(
         ns,
         nl,
         tf_calls,
         unify_threshold,
-        _optional_apply_scores(apply_result, "ns_scores", with_scores),
+        score_fields["ns_scores"],
     )
     kept_starts, kept_lengths = split_intervals(kept_nucs)
 
@@ -299,8 +307,7 @@ def _build_fused_recall_result_without_nucs_linear(
         "nl": kept_lengths,
         "as": msps,
         "al": msp_lengths,
-        "ns_scores": _optional_apply_scores(apply_result, "ns_scores", with_scores),
-        "as_scores": _optional_apply_scores(apply_result, "as_scores", with_scores),
+        **score_fields,
         "nq_for_kept_nucs": nq_for_kept,
         "tf_calls": tf_calls,
     }
