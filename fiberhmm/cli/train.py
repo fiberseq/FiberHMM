@@ -142,6 +142,20 @@ class _TrainingExamplePdfLayout:
 
 
 @dataclass(frozen=True)
+class _TrainingStatsPaths:
+    plots_dir: str
+    pdf: str
+    summary: str
+
+    def as_dict(self) -> dict:
+        return {
+            'plots_dir': self.plots_dir,
+            'pdf': self.pdf,
+            'summary': self.summary,
+        }
+
+
+@dataclass(frozen=True)
 class _TrainingOverviewAxes:
     m6a: object
     footprint: object
@@ -1082,13 +1096,17 @@ def _plot_training_transition_matrix(ax, trans: np.ndarray) -> None:
     )
 
 
-def _training_stats_paths(output_dir: str) -> dict:
+def _training_stats_path_record(output_dir: str) -> _TrainingStatsPaths:
     plots_dir = os.path.join(output_dir, 'plots')
-    return {
-        'plots_dir': plots_dir,
-        'pdf': os.path.join(plots_dir, 'training_stats.pdf'),
-        'summary': os.path.join(plots_dir, 'training_stats.txt'),
-    }
+    return _TrainingStatsPaths(
+        plots_dir=plots_dir,
+        pdf=os.path.join(plots_dir, 'training_stats.pdf'),
+        summary=os.path.join(plots_dir, 'training_stats.txt'),
+    )
+
+
+def _training_stats_paths(output_dir: str) -> dict:
+    return _training_stats_path_record(output_dir).as_dict()
 
 
 def _write_training_stats_summary(summary_path: str, model: FiberHMM,
@@ -1561,17 +1579,14 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
         print("  Warning: matplotlib not installed. Skipping stats plots.")
         return
 
-    paths = _training_stats_paths(output_dir)
-    plots_dir = paths['plots_dir']
-    os.makedirs(plots_dir, exist_ok=True)
-
-    pdf_path = paths['pdf']
+    paths = _training_stats_path_record(output_dir)
+    os.makedirs(paths.plots_dir, exist_ok=True)
 
     # Run Viterbi on all encoded reads to get footprint statistics
     print("  Running Viterbi on training reads...")
     viterbi_stats = _viterbi_state_size_stats(model, encoded_reads)
 
-    with PdfPages(pdf_path) as pdf:
+    with PdfPages(paths.pdf) as pdf:
         _save_training_stats_pdf_pages(
             plt,
             pdf,
@@ -1588,12 +1603,12 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
             Patch,
         )
 
-    print(f"  Saved: {pdf_path}")
+    print(f"  Saved: {paths.pdf}")
 
     # Also save a standalone PNG of the first example (simplified version)
     _save_training_stats_example_png(
         plt,
-        plots_dir,
+        paths.plots_dir,
         model,
         sampled_reads,
         encoded_reads,
@@ -1604,7 +1619,7 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
 
     # Write text summary
     _write_training_stats_summary_report(
-        paths['summary'],
+        paths.summary,
         model,
         emission_probs,
         sampled_reads,

@@ -676,6 +676,13 @@ def test_plot_training_transition_matrix_formats_heatmap_and_annotations():
 
 
 def test_training_stats_paths_are_under_plots_dir():
+    path_record = train._training_stats_path_record("/tmp/out")
+
+    assert path_record == train._TrainingStatsPaths(
+        plots_dir="/tmp/out/plots",
+        pdf="/tmp/out/plots/training_stats.pdf",
+        summary="/tmp/out/plots/training_stats.txt",
+    )
     assert train._training_stats_paths("/tmp/out") == {
         "plots_dir": "/tmp/out/plots",
         "pdf": "/tmp/out/plots/training_stats.pdf",
