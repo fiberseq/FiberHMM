@@ -1092,6 +1092,23 @@ def _assign_context_codes_for_target_base(
         encoded[valid_positions] = codes.astype(np.int32)
 
 
+def _daf_target_masks(
+    seq_int: np.ndarray,
+    mod_mask: np.ndarray,
+    deam_int: int,
+    orig_int: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    is_deam_base = seq_int == deam_int  # T or A positions
+    is_orig_base = seq_int == orig_int  # C or G positions
+
+    is_deaminated = is_deam_base & mod_mask
+    is_non_deaminated = is_orig_base & ~mod_mask
+
+    recon_int = seq_int.copy()
+    recon_int[is_deaminated] = orig_int  # T->C or A->G
+    return is_deaminated, is_non_deaminated, recon_int
+
+
 def _encode_daf_vectorized_observations(seq_int: np.ndarray, mod_mask: np.ndarray,
                                         context_size: int, edge_trim: int,
                                         non_target_code: int,
@@ -1100,18 +1117,9 @@ def _encode_daf_vectorized_observations(seq_int: np.ndarray, mod_mask: np.ndarra
                                         use_rc: bool) -> np.ndarray:
     seq_len = len(seq_int)
 
-    # Identify target positions in original sequence
-    is_deam_base = seq_int == deam_int  # T or A positions
-    is_orig_base = seq_int == orig_int  # C or G positions
-
-    # Deaminated: T/A with MM tag (was C/G, now accessible)
-    is_deaminated = is_deam_base & mod_mask
-    # Non-deaminated: C/G without MM tag (still C/G, footprint)
-    is_non_deaminated = is_orig_base & ~mod_mask
-
-    # Reconstruct sequence: replace deaminated positions with original base
-    recon_int = seq_int.copy()
-    recon_int[is_deaminated] = orig_int  # T->C or A->G
+    is_deaminated, is_non_deaminated, recon_int = _daf_target_masks(
+        seq_int, mod_mask, deam_int, orig_int,
+    )
 
     result = _empty_observation_array(seq_len, non_target_code,
                                       unmethylated_offset)
