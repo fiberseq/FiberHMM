@@ -12,6 +12,7 @@ from fiberhmm.cli.generate_probs import (
     _combined_probability_table_path,
     _context_size_label,
     _count_items_desc,
+    _generate_probability_stats_for_contexts,
     _generate_probs_skip_reason,
     _max_reads_per_file,
     _maybe_update_probability_progress,
@@ -610,6 +611,33 @@ def test_write_combined_probability_tables_writes_non_empty_outputs(tmp_path, ca
     output = capsys.readouterr().out
     assert "Creating combined probability files for train_model.py:" in output
     assert f"{output_file} (2 contexts)" in output
+
+
+def test_generate_probability_stats_for_contexts_delegates_each_context(monkeypatch, capsys):
+    accessible = {"A": _Counter()}
+    inaccessible = {"A": _Counter()}
+    calls = []
+
+    def fake_generate_probability_stats(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(
+        "fiberhmm.cli.generate_probs.generate_probability_stats",
+        fake_generate_probability_stats,
+    )
+
+    _generate_probability_stats_for_contexts(
+        [3, 5], accessible, inaccessible, "plots", "run",
+    )
+
+    assert calls == [
+        ((accessible, inaccessible, "plots", "run"), {"context_size": 3}),
+        ((accessible, inaccessible, "plots", "run"), {"context_size": 5}),
+    ]
+    output = capsys.readouterr().out
+    assert "Generating statistics and plots:" in output
+    assert "k=3 (7-mer):" in output
+    assert "k=5 (11-mer):" in output
 
 
 def test_write_probability_table_uses_stable_probability_columns(tmp_path):

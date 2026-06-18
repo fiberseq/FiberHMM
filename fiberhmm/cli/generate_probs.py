@@ -709,6 +709,26 @@ def _save_probability_outputs_for_base(
     return True
 
 
+def _generate_probability_stats_for_contexts(
+    context_sizes: List[int],
+    accessible_counters: Dict[str, ContextCounter],
+    inaccessible_counters: Dict[str, ContextCounter],
+    plots_dir: str,
+    base_name: str,
+) -> None:
+    print("\n" + "-" * 60)
+    print("Generating statistics and plots:")
+    for ctx_size in context_sizes:
+        print(f"\n  k={ctx_size} ({2*ctx_size+1}-mer):")
+        generate_probability_stats(
+            accessible_counters,
+            inaccessible_counters,
+            plots_dir,
+            base_name,
+            context_size=ctx_size,
+        )
+
+
 def main():
     args = parse_args()
 
@@ -797,12 +817,13 @@ def main():
 
     # Generate stats if requested (for each context size)
     if args.stats:
-        print("\n" + "-" * 60)
-        print("Generating statistics and plots:")
-        for ctx_size in args.context_sizes:
-            print(f"\n  k={ctx_size} ({2*ctx_size+1}-mer):")
-            generate_probability_stats(accessible_counters, inaccessible_counters,
-                                       plots_dir, base_name, context_size=ctx_size)
+        _generate_probability_stats_for_contexts(
+            args.context_sizes,
+            accessible_counters,
+            inaccessible_counters,
+            plots_dir,
+            base_name,
+        )
 
     print("\n" + "=" * 60)
     print("Done!")
