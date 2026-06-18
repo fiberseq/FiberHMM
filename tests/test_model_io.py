@@ -43,7 +43,9 @@ def sample_model():
 class TestLoadSaveRoundTrip:
     def test_model_file_format_classifies_supported_suffixes(self):
         assert _model_file_format("model.npz") == "npz"
+        assert _model_file_format("model.NPZ") == "npz"
         assert _model_file_format("model.json") == "json"
+        assert _model_file_format("model.JSON") == "json"
         assert _model_file_format("model.pkl") == "pickle"
         assert _model_file_format("model.legacy") == "pickle"
 
@@ -336,6 +338,10 @@ class TestSaveRedirect:
         assert _json_save_path("/tmp/model.json") == (
             "/tmp/model.json",
             "/tmp/model.json",
+        )
+        assert _json_save_path("/tmp/model.JSON") == (
+            "/tmp/model.JSON",
+            "/tmp/model.JSON",
         )
         assert _json_save_path("/tmp/model.npz") == (
             "/tmp/model.json",
