@@ -60,6 +60,12 @@ class _RefinedFragment:
     access: List[Interval]
 
 
+@dataclass(frozen=True)
+class _AccessibleSplit:
+    fragments: List[Interval]
+    access: List[Interval]
+
+
 def _fragments_after_cuts(a: int, b: int,
                           cut_spans: Iterable[Tuple[int, int]]) -> List[Interval]:
     frags: List[Interval] = []
@@ -193,7 +199,7 @@ def _refine_fragment(obs, a, b, llr_hit, llr_miss,
 
 
 def _split_on_accessible_cuts(obs, a, b, nhit, nmiss,
-                              split_min_llr, split_min_opps):
+                              split_min_llr, split_min_opps) -> _AccessibleSplit:
     cuts = call_tfs_in_interval(obs, a, b, nhit, nmiss,
                                 split_min_llr, split_min_opps)
     cuts = sorted(cuts, key=lambda c: c.start)
@@ -201,7 +207,7 @@ def _split_on_accessible_cuts(obs, a, b, nhit, nmiss,
     frags = _fragments_after_cuts(
         a, b, ((c.start, c.start + c.length) for c in cuts)
     )
-    return frags, access
+    return _AccessibleSplit(fragments=frags, access=access)
 
 
 def _phase_cut_window(a: int, b: int, pred: int, phase_window: int):
@@ -282,12 +288,12 @@ def _recall_nuc_span(
     nucs: List[NucCall] = []
     access: List[Interval] = []
 
-    frags, cut_access = _split_on_accessible_cuts(
+    split = _split_on_accessible_cuts(
         obs, s, e, nhit, nmiss, params.split_min_llr, params.split_min_opps,
     )
-    access.extend(cut_access)
+    access.extend(split.access)
 
-    for a, b in frags:
+    for a, b in split.fragments:
         subs, phase_cuts = _phase_or_unsplit_subfragments(
             obs, a, b, nhit, nmiss, params.phase_nrl,
             params.phase_min_llr, params.phase_min_opps, params.phase_window,

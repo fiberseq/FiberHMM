@@ -89,14 +89,14 @@ def test_no_split_when_no_accessible_evidence():
 def test_split_on_accessible_cuts_returns_fragments_and_cut_access():
     obs = _obs((MISS, 60), (HIT, 6), (MISS, 60))
     llr_hit, llr_miss = _llr_tables()
-    frags, access = _split_on_accessible_cuts(
+    split = _split_on_accessible_cuts(
         obs, 0, len(obs), -llr_hit, -llr_miss,
         split_min_llr=4.0, split_min_opps=3,
     )
 
-    assert len(frags) == 2
-    assert access
-    assert any(60 <= s <= 66 for s, _ in access)
+    assert len(split.fragments) == 2
+    assert split.access
+    assert any(60 <= s <= 66 for s, _ in split.access)
 
 
 def test_recall_nuc_span_matches_single_read_wrapper():
