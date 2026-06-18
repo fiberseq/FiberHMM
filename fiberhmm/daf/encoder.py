@@ -71,6 +71,14 @@ class _EncodedDafSequence:
 
 
 @dataclass(frozen=True)
+class _EncodedDafSequenceRequest:
+    sequence: str
+    ct_positions: object
+    ga_positions: object
+    strand: str
+
+
+@dataclass(frozen=True)
 class _EncodedDafRead:
     sequence: str
     st_tag: str
@@ -494,15 +502,28 @@ def _mark_iupac_positions(sequence: str, positions, code: str) -> str:
     return "".join(seq_list)
 
 
-def _encoded_daf_sequence(seq: str, ct_positions, ga_positions, strand: str):
-    if strand == "CT":
+def _encoded_daf_sequence_from_request(
+    request: _EncodedDafSequenceRequest,
+) -> _EncodedDafSequence:
+    if request.strand == "CT":
         return _EncodedDafSequence(
-            _mark_iupac_positions(seq, ct_positions, "Y"),
-            len(ct_positions),
+            _mark_iupac_positions(request.sequence, request.ct_positions, "Y"),
+            len(request.ct_positions),
         )
     return _EncodedDafSequence(
-        _mark_iupac_positions(seq, ga_positions, "R"),
-        len(ga_positions),
+        _mark_iupac_positions(request.sequence, request.ga_positions, "R"),
+        len(request.ga_positions),
+    )
+
+
+def _encoded_daf_sequence(seq: str, ct_positions, ga_positions, strand: str):
+    return _encoded_daf_sequence_from_request(
+        _EncodedDafSequenceRequest(
+            sequence=seq,
+            ct_positions=ct_positions,
+            ga_positions=ga_positions,
+            strand=strand,
+        )
     )
 
 
@@ -513,8 +534,13 @@ def _encode_read_daf_record(read, force_strand=None, ref_fasta=None):
     ct_positions, ga_positions, strand = res
 
     seq = read.query_sequence
-    encoded = _encoded_daf_sequence(
-        seq, ct_positions, ga_positions, strand,
+    encoded = _encoded_daf_sequence_from_request(
+        _EncodedDafSequenceRequest(
+            sequence=seq,
+            ct_positions=ct_positions,
+            ga_positions=ga_positions,
+            strand=strand,
+        )
     )
 
     st_tag = strand  # "CT" or "GA"

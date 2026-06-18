@@ -161,13 +161,28 @@ def test_mark_iupac_positions_replaces_selected_bases():
 
 
 def test_encoded_daf_sequence_marks_selected_strand_and_counts_events():
-    ct_encoded = encoder._encoded_daf_sequence("ACGT", [1], [2], "CT")
-    ga_encoded = encoder._encoded_daf_sequence("ACGT", [1], [2], "GA")
+    ct_request = encoder._EncodedDafSequenceRequest(
+        sequence="ACGT",
+        ct_positions=[1],
+        ga_positions=[2],
+        strand="CT",
+    )
+    ga_request = encoder._EncodedDafSequenceRequest(
+        sequence="ACGT",
+        ct_positions=[1],
+        ga_positions=[2],
+        strand="GA",
+    )
+
+    ct_encoded = encoder._encoded_daf_sequence_from_request(ct_request)
+    ga_encoded = encoder._encoded_daf_sequence_from_request(ga_request)
 
     assert ct_encoded.sequence == "AYGT"
     assert ct_encoded.n_deaminations == 1
+    assert encoder._encoded_daf_sequence("ACGT", [1], [2], "CT") == ct_encoded
     assert ga_encoded.sequence == "ACRT"
     assert ga_encoded.n_deaminations == 1
+    assert encoder._encoded_daf_sequence("ACGT", [1], [2], "GA") == ga_encoded
 
 
 def test_encode_read_daf_record_names_public_tuple_parts(monkeypatch):
