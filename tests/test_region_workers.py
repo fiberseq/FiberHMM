@@ -9,6 +9,7 @@ from fiberhmm.inference.region_workers import (
     _REGION_ROUTE_OUTSIDE,
     _REGION_ROUTE_PROCESS,
     _REGION_ROUTE_SKIP,
+    _build_fused_region_recall_result,
     _extract_region_fiber_read,
     _extract_region_payload_fiber_read,
     _fused_region_recall_config,
@@ -750,6 +751,77 @@ def test_run_fused_region_apply_read_uses_apply_config(monkeypatch):
         22,
         91,
         False,
+    )
+
+
+def test_build_fused_region_recall_result_uses_worker_configs(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    calls = {}
+
+    def fake_build_fused_recall_result(
+        fiber_read,
+        apply_result,
+        llr_hit,
+        llr_miss,
+        min_llr,
+        min_opps,
+        unify_threshold,
+        with_scores,
+        **recall_options,
+    ):
+        calls["args"] = (
+            fiber_read,
+            apply_result,
+            llr_hit,
+            llr_miss,
+            min_llr,
+            min_opps,
+            unify_threshold,
+            with_scores,
+            recall_options,
+        )
+        return {"ma": "tag"}
+
+    monkeypatch.setattr(
+        region_workers,
+        "build_fused_recall_result",
+        fake_build_fused_recall_result,
+    )
+
+    fiber_read = {"query_sequence": "ACGT"}
+    apply_result = {"ns": [1]}
+    apply_config = _apply_config(with_scores=False)
+    recall_config = _fused_region_recall_config({
+        "min_llr": "2.5",
+        "min_opps": "4",
+        "unify_threshold": "7",
+        "also_write_legacy": False,
+        "downstream_compat": True,
+    })
+    recall_options = {"recall_nucs": True, "phase_nrl": 190}
+
+    result = _build_fused_region_recall_result(
+        fiber_read,
+        apply_result,
+        "hit",
+        "miss",
+        apply_config,
+        recall_config,
+        recall_options,
+    )
+
+    assert result == {"ma": "tag"}
+    assert calls["args"] == (
+        fiber_read,
+        apply_result,
+        "hit",
+        "miss",
+        2.5,
+        4,
+        7,
+        False,
+        recall_options,
     )
 
 

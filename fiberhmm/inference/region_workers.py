@@ -343,6 +343,28 @@ def _run_fused_region_apply_read(
     )
 
 
+def _build_fused_region_recall_result(
+    fiber_read,
+    apply_result,
+    llr_hit,
+    llr_miss,
+    apply_config: _RegionApplyConfig,
+    recall_config: _FusedRegionRecallConfig,
+    recall_options: dict,
+):
+    return build_fused_recall_result(
+        fiber_read,
+        apply_result,
+        llr_hit,
+        llr_miss,
+        recall_config.min_llr,
+        recall_config.min_opps,
+        recall_config.unify_threshold,
+        apply_config.with_scores,
+        **recall_options,
+    )
+
+
 def _read_starts_in_region(read, start: int, end: int) -> bool:
     return int(start) <= int(read.reference_start) < int(end)
 
@@ -679,16 +701,14 @@ def _process_fused_region_bam_read(
         written = _write_unfootprinted_region_read(outbam, read, skip_reasons)
         return _RegionBamReadDelta(total_reads=1, written=written)
 
-    fused_result = build_fused_recall_result(
+    fused_result = _build_fused_region_recall_result(
         fiber_read,
         apply_result,
         llr_hit,
         llr_miss,
-        recall_config.min_llr,
-        recall_config.min_opps,
-        recall_config.unify_threshold,
-        apply_config.with_scores,
-        **recall_options,
+        apply_config,
+        recall_config,
+        recall_options,
     )
     write_fused_recall_tags(
         read,
