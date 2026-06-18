@@ -103,6 +103,17 @@ class _FootprintRunBoundaries:
 
 
 @dataclass(frozen=True)
+class _FootprintPredictionResult:
+    starts: np.ndarray
+    sizes: np.ndarray
+    count: int
+    scores: Optional[np.ndarray]
+
+    def as_tuple(self) -> Tuple[np.ndarray, np.ndarray, int, Optional[np.ndarray]]:
+        return self.starts, self.sizes, self.count, self.scores
+
+
+@dataclass(frozen=True)
 class _PredictionOutputs:
     states: np.ndarray
     confidence: Optional[np.ndarray]
@@ -340,8 +351,21 @@ def predict_footprints(
         (starts, sizes, count, scores) - footprint positions in read coordinates
         scores is None if with_scores=False, otherwise array of mean posteriors per footprint
     """
+    return _predict_footprint_result(model, encoded_read, with_scores).as_tuple()
+
+
+def _empty_footprint_prediction_result() -> _FootprintPredictionResult:
+    return _FootprintPredictionResult(np.array([]), np.array([]), 0, None)
+
+
+def _predict_footprint_result(
+    model: FiberHMM,
+    encoded_read: np.ndarray,
+    with_scores: bool = False,
+) -> _FootprintPredictionResult:
+    """Run HMM Viterbi prediction and return named footprint arrays."""
     if len(encoded_read) == 0:
-        return np.array([]), np.array([]), 0, None
+        return _empty_footprint_prediction_result()
 
     # Predict states (0 = footprint, 1 = accessible)
     if with_scores:
@@ -353,7 +377,7 @@ def predict_footprints(
     starts, ends = _footprint_runs(states)
 
     if len(starts) == 0:
-        return np.array([]), np.array([]), 0, None
+        return _empty_footprint_prediction_result()
 
     sizes = ends - starts
 
@@ -362,7 +386,7 @@ def predict_footprints(
     if with_scores and confidence is not None:
         scores = _mean_interval_scores(confidence, starts, ends)
 
-    return starts, sizes, len(starts), scores
+    return _FootprintPredictionResult(starts, sizes, len(starts), scores)
 
 
 def _extract_footprints_from_states(states: np.ndarray, confidence: Optional[np.ndarray],

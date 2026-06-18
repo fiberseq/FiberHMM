@@ -180,11 +180,16 @@ def test_should_skip_empty_prediction_respects_optional_outputs():
 
 class TestPredictFootprints:
     def test_empty_input(self, simple_model):
+        result = engine._predict_footprint_result(simple_model, np.array([]))
+        assert result.count == 0
+        assert result.scores is None
+
         starts, sizes, count, scores = predict_footprints(simple_model, np.array([]))
         assert count == 0
         assert len(starts) == 0
         assert len(sizes) == 0
         assert scores is None
+        assert result.as_tuple()[2:] == (0, None)
 
     def test_returns_valid_footprints(self, simple_model):
         # High symbols → footprint (state 0), low symbols → accessible (state 1)
