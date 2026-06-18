@@ -96,6 +96,13 @@ class _CallFusedCommonSettings:
 
 
 @dataclass(frozen=True)
+class _CallPipelineRequest:
+    args: object
+    apply_model_path: str
+    common_kwargs: dict
+
+
+@dataclass(frozen=True)
 class _CallPhaseNrlRequest:
     apply_model_path: str
     recall_model_path: str | None
@@ -732,24 +739,35 @@ def _call_fused_common_kwargs(
     )
 
 
-def _run_call_pipeline(args, apply_model_path: str, common_kwargs: dict):
+def _run_call_pipeline_for_request(request: _CallPipelineRequest):
+    args = request.args
     if args.region_parallel:
         _check_region_parallel_file_io(args)
         chroms_set = _resolve_call_chroms(args.chroms)
         return _process_bam_region_parallel_fused(
-            apply_model_path=apply_model_path,
+            apply_model_path=request.apply_model_path,
             region_size=args.region_size,
             skip_scaffolds=args.skip_scaffolds,
             chroms=chroms_set,
-            **common_kwargs,
+            **request.common_kwargs,
         )
 
     return _process_bam_streaming_pipeline_fused(
-        model_path=apply_model_path,
+        model_path=request.apply_model_path,
         max_reads=args.max_reads,
         chunk_size=args.chunk_size,
         process_unmapped=args.process_unmapped,
-        **common_kwargs,
+        **request.common_kwargs,
+    )
+
+
+def _run_call_pipeline(args, apply_model_path: str, common_kwargs: dict):
+    return _run_call_pipeline_for_request(
+        _CallPipelineRequest(
+            args=args,
+            apply_model_path=apply_model_path,
+            common_kwargs=common_kwargs,
+        ),
     )
 
 

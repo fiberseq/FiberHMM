@@ -32,6 +32,7 @@ from fiberhmm.cli.call import (
     _CallPgDescriptionRequest,
     _CallPgRecordRequest,
     _CallPhaseNrlRequest,
+    _CallPipelineRequest,
     _CallRuntimeRequest,
     _check_daf_inputs,
     _check_region_parallel_file_io,
@@ -56,6 +57,7 @@ from fiberhmm.cli.call import (
     _resolve_recall_model,
     _resolve_recall_nucs,
     _run_call_pipeline,
+    _run_call_pipeline_for_request,
     _should_check_daf_inputs,
     _should_warn_stale_daf_md,
     _sniff_daf_input_sources,
@@ -722,8 +724,13 @@ def test_run_call_pipeline_dispatches_streaming(monkeypatch):
         process_unmapped=True,
     )
     common_kwargs = {"input_bam": "in.bam", "output_bam": "out.bam"}
+    request = _CallPipelineRequest(
+        args=args,
+        apply_model_path="apply.json",
+        common_kwargs=common_kwargs,
+    )
 
-    assert _run_call_pipeline(args, "apply.json", common_kwargs) == (10, 4)
+    assert _run_call_pipeline_for_request(request) == (10, 4)
     assert calls == [{
         "model_path": "apply.json",
         "max_reads": 100,
@@ -757,8 +764,13 @@ def test_run_call_pipeline_dispatches_region(monkeypatch):
         skip_scaffolds=True,
     )
     common_kwargs = {"input_bam": "in.bam", "output_bam": "out.bam"}
+    request = _CallPipelineRequest(
+        args=args,
+        apply_model_path="apply.json",
+        common_kwargs=common_kwargs,
+    )
 
-    assert _run_call_pipeline(args, "apply.json", common_kwargs) == (12, 5)
+    assert _run_call_pipeline_for_request(request) == (12, 5)
     assert checks == [args]
     assert calls == [{
         "apply_model_path": "apply.json",
@@ -768,6 +780,30 @@ def test_run_call_pipeline_dispatches_region(monkeypatch):
         "input_bam": "in.bam",
         "output_bam": "out.bam",
     }]
+
+
+def test_run_call_pipeline_adapter_builds_request(monkeypatch):
+    from fiberhmm.cli import call
+
+    args = SimpleNamespace()
+    common_kwargs = {"input_bam": "in.bam"}
+    sentinel = object()
+    calls = []
+
+    monkeypatch.setattr(
+        call,
+        "_run_call_pipeline_for_request",
+        lambda request: calls.append(request) or sentinel,
+    )
+
+    assert _run_call_pipeline(args, "apply.json", common_kwargs) is sentinel
+    assert calls == [
+        _CallPipelineRequest(
+            args=args,
+            apply_model_path="apply.json",
+            common_kwargs=common_kwargs,
+        ),
+    ]
 
 
 def test_index_streaming_call_output_only_indexes_streaming_files(monkeypatch):
