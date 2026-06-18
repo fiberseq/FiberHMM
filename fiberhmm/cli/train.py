@@ -696,6 +696,30 @@ def _plot_training_size_distribution(
     ax.set_xlim(0, 500)
 
 
+def _plot_training_emission_distribution(ax, emission_probs: np.ndarray) -> None:
+    fp_nonzero, msp_nonzero = _nonzero_emissions_by_state(emission_probs)
+
+    bins = np.linspace(0, 1, 51)
+    ax.hist(
+        fp_nonzero,
+        bins=bins,
+        alpha=0.6,
+        label=f'Footprint (n={len(fp_nonzero):,})',
+        color='firebrick',
+    )
+    ax.hist(
+        msp_nonzero,
+        bins=bins,
+        alpha=0.6,
+        label=f'Accessible (n={len(msp_nonzero):,})',
+        color='forestgreen',
+    )
+    ax.set_xlabel('P(methylation | state, context)')
+    ax.set_ylabel('Number of contexts')
+    ax.set_title('Emission Probability Distribution')
+    ax.legend()
+
+
 def _plot_training_transition_matrix(ax, trans: np.ndarray) -> None:
     ax.imshow(trans, cmap='Blues', vmin=0, vmax=1)
     ax.set_xticks([0, 1])
@@ -836,18 +860,7 @@ def generate_training_stats(model: FiberHMM, sampled_reads: list, encoded_reads:
 
         # 2. Emission probability distribution
         ax = axes[0, 1]
-        # Filter to observed contexts (non-zero)
-        fp_nonzero, msp_nonzero = _nonzero_emissions_by_state(emission_probs)
-
-        bins = np.linspace(0, 1, 51)
-        ax.hist(fp_nonzero, bins=bins, alpha=0.6, label=f'Footprint (n={len(fp_nonzero):,})',
-               color='firebrick')
-        ax.hist(msp_nonzero, bins=bins, alpha=0.6, label=f'Accessible (n={len(msp_nonzero):,})',
-               color='forestgreen')
-        ax.set_xlabel('P(methylation | state, context)')
-        ax.set_ylabel('Number of contexts')
-        ax.set_title('Emission Probability Distribution')
-        ax.legend()
+        _plot_training_emission_distribution(ax, emission_probs)
 
         # 3. Footprint size distribution
         ax = axes[1, 0]

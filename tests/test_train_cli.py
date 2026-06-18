@@ -321,6 +321,55 @@ def test_plot_training_size_distribution_uses_shared_histogram_layout():
     assert empty_ax.vlines == []
 
 
+def test_plot_training_emission_distribution_uses_nonzero_contexts():
+    class FakeAxis:
+        def __init__(self):
+            self.hist_calls = []
+            self.xlabel = None
+            self.ylabel = None
+            self.title = None
+            self.legend_called = False
+
+        def hist(self, values, **kwargs):
+            self.hist_calls.append((values, kwargs))
+
+        def set_xlabel(self, value):
+            self.xlabel = value
+
+        def set_ylabel(self, value):
+            self.ylabel = value
+
+        def set_title(self, value):
+            self.title = value
+
+        def legend(self):
+            self.legend_called = True
+
+    ax = FakeAxis()
+
+    train._plot_training_emission_distribution(
+        ax,
+        np.array([[0.0, 0.2, 0.5], [0.1, 0.0, 0.3]]),
+    )
+
+    fp_values, fp_kwargs = ax.hist_calls[0]
+    msp_values, msp_kwargs = ax.hist_calls[1]
+    np.testing.assert_array_equal(fp_values, [0.2, 0.5])
+    np.testing.assert_array_equal(msp_values, [0.1, 0.3])
+    np.testing.assert_array_equal(fp_kwargs["bins"], np.linspace(0, 1, 51))
+    np.testing.assert_array_equal(msp_kwargs["bins"], np.linspace(0, 1, 51))
+    assert fp_kwargs["alpha"] == 0.6
+    assert fp_kwargs["label"] == "Footprint (n=2)"
+    assert fp_kwargs["color"] == "firebrick"
+    assert msp_kwargs["alpha"] == 0.6
+    assert msp_kwargs["label"] == "Accessible (n=2)"
+    assert msp_kwargs["color"] == "forestgreen"
+    assert ax.xlabel == "P(methylation | state, context)"
+    assert ax.ylabel == "Number of contexts"
+    assert ax.title == "Emission Probability Distribution"
+    assert ax.legend_called
+
+
 def test_plot_training_transition_matrix_formats_heatmap_and_annotations():
     transform = object()
 
