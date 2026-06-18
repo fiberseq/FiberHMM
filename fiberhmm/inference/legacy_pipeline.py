@@ -45,6 +45,12 @@ _LEGACY_DEFAULT_CHUNK_SIZE = 2000
 
 
 @dataclass(frozen=True)
+class _LegacyPosteriorWriter:
+    writer: object | None
+    enabled: bool
+
+
+@dataclass(frozen=True)
 class _LegacyChunkResult:
     results: list
     worker_failures: int
@@ -273,20 +279,20 @@ def _open_legacy_posterior_writer(
     context_size: int,
     edge_trim: int,
     input_bam: str,
-) -> tuple[object | None, bool]:
+) -> _LegacyPosteriorWriter:
     if not output_posteriors:
-        return None, False
+        return _LegacyPosteriorWriter(writer=None, enabled=False)
 
     if not HAS_POSTERIOR_WRITER:
         print("WARNING: posterior_writer.py not found, skipping posteriors export")
-        return None, False
+        return _LegacyPosteriorWriter(writer=None, enabled=False)
 
     writer = PosteriorWriter(
         output_posteriors, mode, context_size,
         edge_trim, input_bam, batch_size=1000
     )
     print(f"Posteriors will be written to: {output_posteriors}")
-    return writer, True
+    return _LegacyPosteriorWriter(writer=writer, enabled=True)
 
 
 def _new_legacy_executor(model_path: str, n_cores: int, debug_timing: bool):
@@ -655,9 +661,11 @@ def _run_legacy_bam_processing(
                                  header=append_coord_marker(inbam.header),
                                  threads=io_threads) as outbam:
             try:
-                posterior_writer, return_posteriors = _open_legacy_posterior_writer(
+                posterior_output = _open_legacy_posterior_writer(
                     output_posteriors, mode, context_size, edge_trim, input_bam,
                 )
+                posterior_writer = posterior_output.writer
+                return_posteriors = posterior_output.enabled
                 executor = _legacy_executor_for_config(
                     model_path, n_cores, debug_timing,
                 )

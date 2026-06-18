@@ -140,12 +140,12 @@ def test_open_legacy_posterior_writer_enables_posteriors(monkeypatch, capsys):
         raising=False,
     )
 
-    writer, return_posteriors = legacy_pipeline._open_legacy_posterior_writer(
+    posterior_output = legacy_pipeline._open_legacy_posterior_writer(
         "out.h5", "daf", 5, 11, "input.bam",
     )
 
-    assert isinstance(writer, FakePosteriorWriter)
-    assert return_posteriors is True
+    assert isinstance(posterior_output.writer, FakePosteriorWriter)
+    assert posterior_output.enabled is True
     assert created == [
         (("out.h5", "daf", 5, 11, "input.bam"), {"batch_size": 1000})
     ]
@@ -157,13 +157,13 @@ def test_open_legacy_posterior_writer_handles_disabled_and_missing_backend(
 ):
     assert legacy_pipeline._open_legacy_posterior_writer(
         None, "daf", 5, 11, "input.bam",
-    ) == (None, False)
+    ) == legacy_pipeline._LegacyPosteriorWriter(writer=None, enabled=False)
     assert capsys.readouterr().out == ""
 
     monkeypatch.setattr(legacy_pipeline, "HAS_POSTERIOR_WRITER", False)
     assert legacy_pipeline._open_legacy_posterior_writer(
         "out.h5", "daf", 5, 11, "input.bam",
-    ) == (None, False)
+    ) == legacy_pipeline._LegacyPosteriorWriter(writer=None, enabled=False)
     assert capsys.readouterr().out == (
         "WARNING: posterior_writer.py not found, skipping posteriors export\n"
     )
@@ -336,7 +336,10 @@ def test_run_legacy_bam_processing_closes_posterior_on_executor_setup_failure(
     monkeypatch.setattr(
         legacy_pipeline,
         "_open_legacy_posterior_writer",
-        lambda *args: (writer, True),
+        lambda *args: legacy_pipeline._LegacyPosteriorWriter(
+            writer=writer,
+            enabled=True,
+        ),
     )
     monkeypatch.setattr(
         legacy_pipeline,
