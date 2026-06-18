@@ -267,6 +267,7 @@ def test_ma_annotation_parts_omits_empty_types_and_preserves_order():
 
 def test_parse_ma_interval_list_skips_empty_tokens_and_reports_bad_intervals():
     assert _parse_ma_interval_list("1-10,,21-5,") == [(0, 10), (20, 5)]
+    assert _parse_ma_interval_list("1-10, , 21-5,") == [(0, 10), (20, 5)]
 
     with pytest.raises(ValueError, match="missing dash"):
         _parse_ma_interval_list("1-10,bad")

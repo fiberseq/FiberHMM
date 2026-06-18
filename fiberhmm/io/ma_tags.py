@@ -148,6 +148,7 @@ def _parse_ma_interval(token: str) -> Tuple[int, int]:
 def _parse_ma_interval_list(data: str) -> List[Tuple[int, int]]:
     intervals: List[Tuple[int, int]] = []
     for tok in data.split(','):
+        tok = tok.strip()
         if not tok:
             continue
         intervals.append(_parse_ma_interval(tok))
