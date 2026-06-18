@@ -19,6 +19,7 @@ from fiberhmm.inference.region_workers import (
     _format_region_bed12_row_from_request,
     _fused_region_recall_config,
     _fused_region_worker_runtime,
+    _FusedRegionApplyReadRequest,
     _new_region_skip_reasons,
     _open_region_posterior_tsv,
     _pad_region_bed12_to_read_span,
@@ -52,6 +53,7 @@ from fiberhmm.inference.region_workers import (
     _RegionReadRoute,
     _RegionReadRouteRequest,
     _run_fused_region_apply_read,
+    _run_fused_region_apply_read_from_request,
     _run_region_apply_read,
     _write_footprinted_region_read,
     _write_region_posterior_record,
@@ -943,7 +945,13 @@ def test_run_fused_region_apply_read_uses_apply_config(monkeypatch):
         with_scores=False,
     )
 
-    result = _run_fused_region_apply_read(fiber_read, model, config)
+    result = _run_fused_region_apply_read_from_request(
+        _FusedRegionApplyReadRequest(
+            fiber_read=fiber_read,
+            model=model,
+            apply_config=config,
+        )
+    )
 
     assert result == {"ns": [1]}
     assert calls["args"] == (
@@ -957,6 +965,13 @@ def test_run_fused_region_apply_read_uses_apply_config(monkeypatch):
         91,
         False,
     )
+    calls.clear()
+
+    adapted = _run_fused_region_apply_read(fiber_read, model, config)
+
+    assert adapted == {"ns": [1]}
+    assert calls["args"][0] is fiber_read
+    assert calls["args"][1] is model
 
 
 def test_build_fused_region_recall_result_uses_worker_configs(monkeypatch):

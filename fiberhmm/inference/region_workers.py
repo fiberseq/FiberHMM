@@ -170,6 +170,13 @@ class _FusedRegionWorkerRuntime:
 
 
 @dataclass(frozen=True)
+class _FusedRegionApplyReadRequest:
+    fiber_read: object
+    model: object
+    apply_config: _RegionApplyConfig
+
+
+@dataclass(frozen=True)
 class _RegionBamReadDelta:
     total_reads: int = 0
     reads_with_footprints: int = 0
@@ -453,21 +460,33 @@ def _run_region_apply_read(
     )
 
 
+def _run_fused_region_apply_read_from_request(
+    request: _FusedRegionApplyReadRequest,
+):
+    return run_hmm_apply_stage(
+        request.fiber_read,
+        request.model,
+        request.apply_config.edge_trim,
+        request.apply_config.circular,
+        request.apply_config.mode,
+        request.apply_config.context_size,
+        request.apply_config.msp_min_size,
+        request.apply_config.nuc_min_size,
+        request.apply_config.with_scores,
+    )
+
+
 def _run_fused_region_apply_read(
     fiber_read,
     model,
     apply_config: _RegionApplyConfig,
 ):
-    return run_hmm_apply_stage(
-        fiber_read,
-        model,
-        apply_config.edge_trim,
-        apply_config.circular,
-        apply_config.mode,
-        apply_config.context_size,
-        apply_config.msp_min_size,
-        apply_config.nuc_min_size,
-        apply_config.with_scores,
+    return _run_fused_region_apply_read_from_request(
+        _FusedRegionApplyReadRequest(
+            fiber_read=fiber_read,
+            model=model,
+            apply_config=apply_config,
+        )
     )
 
 
