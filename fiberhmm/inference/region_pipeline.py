@@ -140,6 +140,29 @@ class _FusedRegionBamWorkerPoolRequest:
     start_time: float
 
 
+@dataclass(frozen=True)
+class _RegionBedPipelineRequest:
+    input_bam: str
+    output_bed: str
+    model_path: str
+    train_rids: Set[str]
+    edge_trim: int
+    circular: bool
+    mode: str
+    context_size: int
+    msp_min_size: int
+    nuc_min_size: int
+    min_mapq: int
+    prob_threshold: int
+    min_read_length: int
+    with_scores: bool
+    n_cores: int
+    region_size: int
+    skip_scaffolds: bool
+    chroms: Optional[Set[str]]
+    primary_only: bool
+
+
 def _base_region_worker_params(
     *,
     edge_trim: int,
@@ -1055,21 +1078,12 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
     Returns:
         (total_reads_processed, reads_with_footprints)
     """
-    start_time = time.time()
-
-    run = _prepare_region_parallel_run(
-        input_bam,
-        output_bed,
-        region_size,
-        skip_scaffolds,
-        chroms,
-        n_cores,
-        temp_prefix='.fiberhmm_bed_tmp_',
-        output_label=" (BED output)",
-    )
-
-    try:
-        params = _base_region_worker_params(
+    return _process_bed_region_parallel_from_request(
+        _RegionBedPipelineRequest(
+            input_bam=input_bam,
+            output_bed=output_bed,
+            model_path=model_path,
+            train_rids=train_rids,
             edge_trim=edge_trim,
             circular=circular,
             mode=mode,
@@ -1080,16 +1094,56 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
             prob_threshold=prob_threshold,
             min_read_length=min_read_length,
             with_scores=with_scores,
-            train_rids=train_rids,
+            n_cores=n_cores,
+            region_size=region_size,
+            skip_scaffolds=skip_scaffolds,
+            chroms=chroms,
             primary_only=primary_only,
         )
+    )
 
-        # Work items - write temp BED files
-        work_items = _region_bed_work_items(run.regions, input_bam, run.temp_dir)
+
+def _process_bed_region_parallel_from_request(
+    request: _RegionBedPipelineRequest,
+) -> Tuple[int, int]:
+    start_time = time.time()
+
+    run = _prepare_region_parallel_run(
+        request.input_bam,
+        request.output_bed,
+        request.region_size,
+        request.skip_scaffolds,
+        request.chroms,
+        request.n_cores,
+        temp_prefix='.fiberhmm_bed_tmp_',
+        output_label=" (BED output)",
+    )
+
+    try:
+        params = _base_region_worker_params(
+            edge_trim=request.edge_trim,
+            circular=request.circular,
+            mode=request.mode,
+            context_size=request.context_size,
+            msp_min_size=request.msp_min_size,
+            nuc_min_size=request.nuc_min_size,
+            min_mapq=request.min_mapq,
+            prob_threshold=request.prob_threshold,
+            min_read_length=request.min_read_length,
+            with_scores=request.with_scores,
+            train_rids=request.train_rids,
+            primary_only=request.primary_only,
+        )
+
+        work_items = _region_bed_work_items(
+            run.regions,
+            request.input_bam,
+            run.temp_dir,
+        )
 
         aggregation = _run_region_bed_worker_pool(
-            n_cores=n_cores,
-            model_path=model_path,
+            n_cores=request.n_cores,
+            model_path=request.model_path,
             params=params,
             work_items=work_items,
             total_regions=len(run.regions),
@@ -1097,7 +1151,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
         )
 
         return _finalize_region_bed_parallel_run(
-            output_bed, aggregation, start_time,
+            request.output_bed, aggregation, start_time,
         )
 
     finally:
