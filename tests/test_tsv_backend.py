@@ -6,12 +6,12 @@ import h5py
 import numpy as np
 import pytest
 
+from fiberhmm.posteriors import tsv_backend
 from fiberhmm.posteriors.region_tsv import (
     REGION_POSTERIORS_HEADER,
     format_posterior_metadata_line,
     format_region_posterior_line,
 )
-from fiberhmm.posteriors import tsv_backend
 
 
 def _h5_text(value):

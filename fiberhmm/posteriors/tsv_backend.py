@@ -28,9 +28,9 @@ import numpy as np
 
 from fiberhmm.posteriors.region_tsv import (
     REGION_POSTERIORS_HEADER,
+    _posterior_tsv_metadata,
     format_posterior_metadata_line,
     format_region_posterior_line,
-    _posterior_tsv_metadata,
 )
 
 
