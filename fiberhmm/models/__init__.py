@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import warnings
+from dataclasses import dataclass
 
 _MODELS_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -40,6 +41,15 @@ SUPPORTED_ENZYMES = sorted({e for e, _ in _BUNDLED})
 # Enzymes where --seq matters
 _SEQ_REQUIRED = {'hia5'}
 _SEQ_DEFAULT  = 'pacbio'   # default when --seq omitted for hia5
+
+
+@dataclass(frozen=True)
+class _BundledModelKey:
+    enzyme: str
+    seq: str | None
+
+    def as_tuple(self) -> tuple[str, str | None]:
+        return self.enzyme, self.seq
 
 
 def _normalize_model_token(value: str) -> str:
@@ -83,9 +93,9 @@ def _missing_bundled_model_message(path: str) -> str:
     )
 
 
-def _bundled_model_key(enzyme: str, seq: str | None) -> tuple[str, str | None]:
+def _bundled_model_key(enzyme: str, seq: str | None) -> _BundledModelKey:
     enz = _normalize_model_token(enzyme)
-    return enz, _seq_key_for_enzyme(enz, seq)
+    return _BundledModelKey(enzyme=enz, seq=_seq_key_for_enzyme(enz, seq))
 
 
 def _bundled_model_path(filename: str) -> str:
@@ -116,7 +126,7 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
     t = _normalize_model_token(tool)
 
     key = _bundled_model_key(enzyme, seq)
-    entry = _BUNDLED.get(key)
+    entry = _BUNDLED.get(key.as_tuple())
     if entry is None:
         raise KeyError(_unknown_bundled_model_message(enzyme, seq, tool))
 

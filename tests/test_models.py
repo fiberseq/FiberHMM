@@ -7,13 +7,16 @@ import fiberhmm.models as models
 
 def test_bundled_model_key_normalizes_enzyme_and_seq():
     with pytest.warns(UserWarning, match="defaulting to 'pacbio'"):
-        assert models._bundled_model_key("HIA5", None) == ("hia5", "pacbio")
+        default_key = models._bundled_model_key("HIA5", None)
 
-    assert models._bundled_model_key(" HIA5 ", " NanoPore ") == (
-        "hia5",
-        "nanopore",
-    )
-    assert models._bundled_model_key("DddB", "nanopore") == ("dddb", None)
+    nanopore_key = models._bundled_model_key(" HIA5 ", " NanoPore ")
+    dddb_key = models._bundled_model_key("DddB", "nanopore")
+
+    assert default_key.enzyme == "hia5"
+    assert default_key.seq == "pacbio"
+    assert nanopore_key.as_tuple() == ("hia5", "nanopore")
+    assert dddb_key.enzyme == "dddb"
+    assert dddb_key.seq is None
 
 
 def test_bundled_model_path_uses_models_dir(monkeypatch, tmp_path):
