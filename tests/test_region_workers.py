@@ -47,6 +47,7 @@ from fiberhmm.inference.region_workers import (
     _RegionPosteriorRecordRequest,
     _RegionPosteriorTsv,
     _RegionReadRoute,
+    _RegionReadRouteRequest,
     _run_fused_region_apply_read,
     _run_region_apply_read,
     _write_footprinted_region_read,
@@ -583,7 +584,14 @@ def test_process_fused_region_bam_read_writes_recalled_tags(monkeypatch):
 def test_region_read_route_preserves_skip_and_ownership_order():
     config = ReadFilterConfig(min_mapq=10, min_read_length=50)
 
-    assert _region_read_route(_route_read(), 100, 200, config) == _RegionReadRoute(
+    assert region_workers._region_read_route_from_request(
+        _RegionReadRouteRequest(
+            read=_route_read(),
+            start=100,
+            end=200,
+            filter_config=config,
+        )
+    ) == _RegionReadRoute(
         route=_REGION_ROUTE_PROCESS,
         skip_reason=None,
     )

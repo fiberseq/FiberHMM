@@ -97,6 +97,14 @@ class _RegionReadRoute:
 
 
 @dataclass(frozen=True)
+class _RegionReadRouteRequest:
+    read: object
+    start: int
+    end: int
+    filter_config: ReadFilterConfig
+
+
+@dataclass(frozen=True)
 class _RegionBed12Blocks:
     block_starts: list
     block_sizes: list
@@ -474,21 +482,34 @@ def _read_starts_in_region(read, start: int, end: int) -> bool:
     return int(start) <= int(read.reference_start) < int(end)
 
 
-def _region_read_route(read, start: int, end: int, filter_config: ReadFilterConfig):
+def _region_read_route_from_request(
+    request: _RegionReadRouteRequest,
+) -> _RegionReadRoute:
     """Classify a fetched read before region-worker processing.
 
     Pre-ownership skip reasons are passed through before checking
     reference_start. Other reads are processed only by the region containing
     their start to avoid duplicate output from overlapping fetches.
     """
-    skip_reason = streaming_skip_reason(read, filter_config)
+    skip_reason = streaming_skip_reason(request.read, request.filter_config)
     if skip_reason in _PRE_OWNERSHIP_SKIP_REASONS:
         return _RegionReadRoute(route=_REGION_ROUTE_SKIP, skip_reason=skip_reason)
-    if not _read_starts_in_region(read, start, end):
+    if not _read_starts_in_region(request.read, request.start, request.end):
         return _RegionReadRoute(route=_REGION_ROUTE_OUTSIDE, skip_reason=None)
     if skip_reason:
         return _RegionReadRoute(route=_REGION_ROUTE_SKIP, skip_reason=skip_reason)
     return _RegionReadRoute(route=_REGION_ROUTE_PROCESS, skip_reason=None)
+
+
+def _region_read_route(read, start: int, end: int, filter_config: ReadFilterConfig):
+    return _region_read_route_from_request(
+        _RegionReadRouteRequest(
+            read=read,
+            start=start,
+            end=end,
+            filter_config=filter_config,
+        )
+    )
 
 
 def _region_bed12_blocks(
