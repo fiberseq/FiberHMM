@@ -773,6 +773,183 @@ def _save_accessibility_priors(
     return written
 
 
+def _print_transfer_header(args, output_dir: str, target_bases: list[str]) -> None:
+    print("=" * 60)
+    print("FiberHMM Transfer Learning - Emission Probability Estimator")
+    print("=" * 60)
+    print(f"\nOutput directory: {output_dir}")
+    print(f"Target data: {args.target}")
+    print(f"Target mode: {args.mode}")
+    print(f"Context sizes: {args.context_sizes}")
+    print(f"Target bases: {', '.join(target_bases)}")
+
+
+def _print_transfer_accessibility_summary(target_bases: list[str],
+                                          accessibility_counters) -> None:
+    for base in target_bases:
+        if base not in accessibility_counters:
+            continue
+        counter = accessibility_counters[base]
+        acc_rate = counter.total_accessible / max(1, counter.total_positions)
+        print(
+            f"  {base}: {counter.total_positions:,} positions, "
+            f"{acc_rate:.1%} accessible"
+        )
+
+
+def _load_transfer_accessibility_inputs(args, max_context: int,
+                                        target_bases: list[str]):
+    if args.accessibility_priors:
+        print(f"\nLoading accessibility priors from: {args.accessibility_priors}")
+        accessibility_priors_df = pd.read_csv(args.accessibility_priors, sep='\t')
+        print(f"  Loaded {len(accessibility_priors_df)} contexts")
+        return None, accessibility_priors_df
+
+    if args.reference_bam:
+        print(f"\nComputing accessibility priors from: {args.reference_bam}")
+        accessibility_counters = _process_reference_bam(
+            args.reference_bam,
+            max_context,
+            args,
+        )
+        _print_transfer_accessibility_summary(target_bases, accessibility_counters)
+        return accessibility_counters, None
+
+    print("\nError: Must provide one of:")
+    print("  --reference-bam (fiber-seq BAM with footprint tags ns/nl)")
+    print("  --accessibility-priors (pre-computed TSV)")
+    sys.exit(1)
+
+
+def _transfer_regression_record(diag, p_acc: float, p_inacc: float) -> dict:
+    return {
+        'x': diag.get('x', np.array([])),
+        'y': diag.get('y', np.array([])),
+        'w': diag.get('w', np.array([])),
+        'diagnostics': diag,
+        'p_acc': p_acc,
+        'p_inacc': p_inacc,
+    }
+
+
+def _print_transfer_emission_summary(base: str, diag: dict, p_acc: float,
+                                     p_inacc: float) -> None:
+    print(f"\n  {base}-centered:")
+    print(f"    Contexts with sufficient data: {diag['n_contexts']}")
+    if 'r_squared' in diag:
+        print(f"    Regression R-squared: {diag['r_squared']:.3f}")
+    print(f"    Estimated P(m|accessible):   {p_acc:.4f}")
+    print(f"    Estimated P(m|inaccessible): {p_inacc:.4f}")
+    print(f"    Enrichment ratio: {p_acc/max(0.001, p_inacc):.1f}x")
+
+
+def _estimate_transfer_context_size(
+    context_size: int,
+    args,
+    tables_dir: str,
+    base_name: str,
+    target_bases: list[str],
+    target_counters,
+    accessibility_priors_df,
+    accessibility_counters,
+) -> dict:
+    print(f"\nContext size k={context_size} ({2*context_size+1}-mer):")
+    regression_data = {}
+
+    for base in target_bases:
+        target_rates = target_counters[base].get_probabilities(context_size)
+        priors = _accessibility_priors_for_base(
+            base,
+            context_size,
+            accessibility_priors_df,
+            accessibility_counters,
+        )
+        if priors is None:
+            print(f"  Warning: No accessibility priors for {base}")
+            continue
+
+        p_acc, p_inacc, diag = _estimate_emission_probs(
+            target_rates,
+            priors,
+            args.min_observations,
+        )
+
+        regression_data[base] = _transfer_regression_record(diag, p_acc, p_inacc)
+        _print_transfer_emission_summary(base, diag, p_acc, p_inacc)
+
+        combined_file = _write_transfer_probability_tables(
+            tables_dir,
+            base_name,
+            base,
+            context_size,
+            target_rates,
+            p_acc,
+            p_inacc,
+        )
+        print(f"    Output: {combined_file}")
+
+    return regression_data
+
+
+def _estimate_transfer_emissions(
+    args,
+    tables_dir: str,
+    base_name: str,
+    target_bases: list[str],
+    target_counters,
+    accessibility_priors_df,
+    accessibility_counters,
+) -> dict:
+    print("\nEstimating emission probabilities...")
+    return {
+        context_size: _estimate_transfer_context_size(
+            context_size,
+            args,
+            tables_dir,
+            base_name,
+            target_bases,
+            target_counters,
+            accessibility_priors_df,
+            accessibility_counters,
+        )
+        for context_size in args.context_sizes
+    }
+
+
+def _maybe_save_transfer_accessibility_priors(
+    tables_dir: str,
+    base_name: str,
+    max_context: int,
+    accessibility_counters,
+) -> None:
+    if accessibility_counters is None:
+        return
+
+    print("\nSaving accessibility priors for reuse:")
+    _save_accessibility_priors(tables_dir, base_name, max_context, accessibility_counters)
+
+
+def _maybe_generate_transfer_stats(
+    args,
+    all_regression_data: dict,
+    plots_dir: str,
+    base_name: str,
+) -> None:
+    if not args.stats:
+        return
+
+    print("\nGenerating statistics and plots:")
+    for context_size in args.context_sizes:
+        if context_size in all_regression_data and all_regression_data[context_size]:
+            print(f"\n  k={context_size} ({2*context_size+1}-mer):")
+            _generate_regression_stats(
+                all_regression_data[context_size],
+                plots_dir,
+                base_name,
+                context_size,
+            )
+
+
 def cmd_transfer(args):
     """Transfer emission probs between modalities."""
     max_context = max(args.context_sizes)
@@ -783,115 +960,37 @@ def cmd_transfer(args):
     plots_dir = str(plots_dir_path)
     base_name = get_base_name(output_dir, default="transfer")
 
-    print("=" * 60)
-    print("FiberHMM Transfer Learning - Emission Probability Estimator")
-    print("=" * 60)
-    print(f"\nOutput directory: {output_dir}")
-    print(f"Target data: {args.target}")
-    print(f"Target mode: {args.mode}")
-    print(f"Context sizes: {args.context_sizes}")
-
     target_bases = _target_bases_for_transfer_mode(args.mode)
-
-    print(f"Target bases: {', '.join(target_bases)}")
-
-    # Step 1: Get accessibility priors
-    accessibility_counters = None
-    accessibility_priors_df = None
-
-    if args.accessibility_priors:
-        print(f"\nLoading accessibility priors from: {args.accessibility_priors}")
-        accessibility_priors_df = pd.read_csv(args.accessibility_priors, sep='\t')
-        print(f"  Loaded {len(accessibility_priors_df)} contexts")
-    elif args.reference_bam:
-        print(f"\nComputing accessibility priors from: {args.reference_bam}")
-        accessibility_counters = _process_reference_bam(
-            args.reference_bam, max_context, args
-        )
-        for base in target_bases:
-            if base in accessibility_counters:
-                counter = accessibility_counters[base]
-                acc_rate = counter.total_accessible / max(1, counter.total_positions)
-                print(f"  {base}: {counter.total_positions:,} positions, "
-                      f"{acc_rate:.1%} accessible")
-    else:
-        print("\nError: Must provide one of:")
-        print("  --reference-bam (fiber-seq BAM with footprint tags ns/nl)")
-        print("  --accessibility-priors (pre-computed TSV)")
-        sys.exit(1)
+    _print_transfer_header(args, output_dir, target_bases)
+    accessibility_counters, accessibility_priors_df = (
+        _load_transfer_accessibility_inputs(args, max_context, target_bases)
+    )
 
     # Step 2: Get target modification rates
     print("\nProcessing target BAM to get modification rates...")
     target_counters = _process_target_bam(args.target, args.mode, max_context, args)
 
     # Step 3: Estimate emission probs for each context size
-    print("\nEstimating emission probabilities...")
-
-    all_regression_data = {}
-
-    for k in args.context_sizes:
-        print(f"\nContext size k={k} ({2*k+1}-mer):")
-        regression_data_k = {}
-
-        for base in target_bases:
-            target_rates = target_counters[base].get_probabilities(k)
-            priors = _accessibility_priors_for_base(
-                base, k, accessibility_priors_df, accessibility_counters,
-            )
-            if priors is None:
-                print(f"  Warning: No accessibility priors for {base}")
-                continue
-
-            p_acc, p_inacc, diag = _estimate_emission_probs(
-                target_rates, priors, args.min_observations
-            )
-
-            regression_data_k[base] = {
-                'x': diag.get('x', np.array([])),
-                'y': diag.get('y', np.array([])),
-                'w': diag.get('w', np.array([])),
-                'diagnostics': diag,
-                'p_acc': p_acc,
-                'p_inacc': p_inacc
-            }
-
-            print(f"\n  {base}-centered:")
-            print(f"    Contexts with sufficient data: {diag['n_contexts']}")
-            if 'r_squared' in diag:
-                print(f"    Regression R-squared: {diag['r_squared']:.3f}")
-            print(f"    Estimated P(m|accessible):   {p_acc:.4f}")
-            print(f"    Estimated P(m|inaccessible): {p_inacc:.4f}")
-            print(f"    Enrichment ratio: {p_acc/max(0.001, p_inacc):.1f}x")
-
-            combined_file = _write_transfer_probability_tables(
-                tables_dir,
-                base_name,
-                base,
-                k,
-                target_rates,
-                p_acc,
-                p_inacc,
-            )
-            print(f"    Output: {combined_file}")
-
-        all_regression_data[k] = regression_data_k
+    all_regression_data = _estimate_transfer_emissions(
+        args,
+        tables_dir,
+        base_name,
+        target_bases,
+        target_counters,
+        accessibility_priors_df,
+        accessibility_counters,
+    )
 
     # Save accessibility priors if computed
-    if accessibility_counters is not None:
-        print("\nSaving accessibility priors for reuse:")
-        _save_accessibility_priors(
-            tables_dir, base_name, max_context, accessibility_counters,
-        )
+    _maybe_save_transfer_accessibility_priors(
+        tables_dir,
+        base_name,
+        max_context,
+        accessibility_counters,
+    )
 
     # Generate stats if requested
-    if args.stats:
-        print("\nGenerating statistics and plots:")
-        for k in args.context_sizes:
-            if k in all_regression_data and all_regression_data[k]:
-                print(f"\n  k={k} ({2*k+1}-mer):")
-                _generate_regression_stats(
-                    all_regression_data[k], plots_dir, base_name, k
-                )
+    _maybe_generate_transfer_stats(args, all_regression_data, plots_dir, base_name)
 
     print("\nDone!")
     print("Note: This estimates GLOBAL emission probs (same for all contexts).")

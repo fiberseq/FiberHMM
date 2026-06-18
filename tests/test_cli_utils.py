@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -11,7 +13,10 @@ from fiberhmm.cli.utils import (
     _aggregate_accessibility_counts,
     _converted_model_json_payload,
     _estimate_emission_probs,
+    _estimate_transfer_context_size,
     _load_raw_model_by_suffix,
+    _load_transfer_accessibility_inputs,
+    _maybe_generate_transfer_stats,
     _passes_transfer_base_filters,
     _passes_transfer_target_filters,
     _raw_model_parameter_arrays,
@@ -456,3 +461,173 @@ def test_save_accessibility_priors_writes_known_bases(tmp_path, capsys):
         "p_accessible": [0.5],
     }
     assert expected in capsys.readouterr().out
+
+
+def test_load_transfer_accessibility_inputs_reads_priors_tsv(tmp_path, capsys):
+    priors_path = tmp_path / "priors.tsv"
+    pd.DataFrame({
+        "context": ["ACA"],
+        "p_accessible": [0.75],
+    }).to_csv(priors_path, sep="\t", index=False)
+    args = SimpleNamespace(
+        accessibility_priors=str(priors_path),
+        reference_bam=None,
+    )
+
+    counters, priors = _load_transfer_accessibility_inputs(args, 3, ["C"])
+
+    assert counters is None
+    assert priors.to_dict("list") == {
+        "context": ["ACA"],
+        "p_accessible": [0.75],
+    }
+    out = capsys.readouterr().out
+    assert str(priors_path) in out
+    assert "Loaded 1 contexts" in out
+
+
+def test_load_transfer_accessibility_inputs_computes_reference_summary(
+    monkeypatch,
+    capsys,
+):
+    import fiberhmm.cli.utils as cli_utils
+
+    class Counter:
+        total_accessible = 25
+        total_positions = 100
+
+    calls = []
+
+    def fake_process_reference_bam(bam_path, max_context, args):
+        calls.append((bam_path, max_context, args))
+        return {"C": Counter()}
+
+    monkeypatch.setattr(
+        cli_utils,
+        "_process_reference_bam",
+        fake_process_reference_bam,
+    )
+    args = SimpleNamespace(
+        accessibility_priors=None,
+        reference_bam="reference.bam",
+    )
+
+    counters, priors = _load_transfer_accessibility_inputs(args, 5, ["C", "G"])
+
+    assert sorted(counters) == ["C"]
+    assert isinstance(counters["C"], Counter)
+    assert priors is None
+    assert calls == [("reference.bam", 5, args)]
+    out = capsys.readouterr().out
+    assert "Computing accessibility priors from: reference.bam" in out
+    assert "C: 100 positions, 25.0% accessible" in out
+
+
+def test_load_transfer_accessibility_inputs_requires_source(capsys):
+    args = SimpleNamespace(
+        accessibility_priors=None,
+        reference_bam=None,
+    )
+
+    with pytest.raises(SystemExit):
+        _load_transfer_accessibility_inputs(args, 3, ["C"])
+
+    assert "Must provide one of" in capsys.readouterr().out
+
+
+def test_estimate_transfer_context_size_writes_available_bases(monkeypatch, capsys):
+    import fiberhmm.cli.utils as cli_utils
+
+    class TargetCounter:
+        def __init__(self, base):
+            self.base = base
+
+        def get_probabilities(self, context_size):
+            return pd.DataFrame({
+                "context": [f"A{self.base}A"],
+                "ratio": [0.2],
+                "total": [200],
+            })
+
+    class PriorsCounter:
+        def get_accessibility_priors(self, context_size):
+            return pd.DataFrame({
+                "context": ["ACA"],
+                "p_accessible": [0.6],
+                "total_bp": [200],
+            })
+
+    writes = []
+    monkeypatch.setattr(
+        cli_utils,
+        "_estimate_emission_probs",
+        lambda rates, priors, min_observations: (
+            0.7,
+            0.2,
+            {
+                "n_contexts": len(priors),
+                "r_squared": 0.9,
+                "x": np.array([0.6]),
+                "y": np.array([0.2]),
+                "w": np.array([10.0]),
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        cli_utils,
+        "_write_transfer_probability_tables",
+        lambda *args: writes.append(args) or "tables/run_C_k1.tsv",
+    )
+    args = SimpleNamespace(min_observations=100)
+
+    regression_data = _estimate_transfer_context_size(
+        1,
+        args,
+        "tables",
+        "run",
+        ["C", "G"],
+        {"C": TargetCounter("C"), "G": TargetCounter("G")},
+        None,
+        {"C": PriorsCounter()},
+    )
+
+    assert list(regression_data) == ["C"]
+    assert regression_data["C"]["p_acc"] == 0.7
+    assert regression_data["C"]["p_inacc"] == 0.2
+    assert len(writes) == 1
+    assert writes[0][0:4] == ("tables", "run", "C", 1)
+    out = capsys.readouterr().out
+    assert "Regression R-squared: 0.900" in out
+    assert "Warning: No accessibility priors for G" in out
+
+
+def test_maybe_generate_transfer_stats_respects_stats_flag(monkeypatch, capsys):
+    import fiberhmm.cli.utils as cli_utils
+
+    calls = []
+    monkeypatch.setattr(
+        cli_utils,
+        "_generate_regression_stats",
+        lambda data, plots_dir, base_name, k: calls.append(
+            (data, plots_dir, base_name, k)
+        ),
+    )
+    regression_data = {1: {"C": {"diagnostics": {}}}, 2: {}}
+
+    _maybe_generate_transfer_stats(
+        SimpleNamespace(stats=False, context_sizes=[1, 2]),
+        regression_data,
+        "plots",
+        "run",
+    )
+    assert calls == []
+
+    _maybe_generate_transfer_stats(
+        SimpleNamespace(stats=True, context_sizes=[1, 2]),
+        regression_data,
+        "plots",
+        "run",
+    )
+
+    assert calls == [({"C": {"diagnostics": {}}}, "plots", "run", 1)]
+    assert "Generating statistics and plots" in capsys.readouterr().out
