@@ -1,5 +1,7 @@
 """Tests for shared BED formatting helpers."""
 
+import numpy as np
+
 from fiberhmm.io.bed import _bed12_block_fields, _bed12_core_columns, bed12_row
 
 
@@ -51,6 +53,17 @@ def test_bed12_row_formats_standard_and_extra_columns():
         "chr1\t100\t150\tread1\t42\t+\t100\t150\t0\t2\t"
         "10,10\t0,40\t1,2\t3,4"
     )
+
+    assert bed12_row(
+        ref_name="chr1",
+        chrom_start=100,
+        chrom_end=110,
+        read_id="read1",
+        score=42,
+        strand="+",
+        blocks=[(100, 110)],
+        extra_columns=np.asarray(["5,6", "7,8"]),
+    ).endswith("\t5,6\t7,8")
 
 
 def test_bed12_row_allows_item_rgb_override():

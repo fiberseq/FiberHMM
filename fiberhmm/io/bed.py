@@ -36,6 +36,6 @@ def bed12_row(ref_name, chrom_start, chrom_end, read_id, score, strand,
         ref_name, chrom_start, chrom_end, read_id, score, strand,
         blocks, item_rgb,
     )
-    if extra_columns:
+    if extra_columns is not None and len(extra_columns) > 0:
         columns.extend(extra_columns)
     return "\t".join(str(column) for column in columns)
