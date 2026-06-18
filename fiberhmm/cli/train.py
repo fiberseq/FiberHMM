@@ -325,6 +325,39 @@ def _reads_per_training_file(read_count: int, n_files: int) -> int:
     return max(1, read_count // n_files)
 
 
+def _sample_training_read_at_position(
+    bam,
+    chrom: str,
+    pos: int,
+    seen_read_ids: set,
+    min_mapq: int,
+    min_read_length: int,
+    prob_threshold: int,
+    mode: str,
+):
+    try:
+        reads = bam.fetch(chrom, max(0, pos - 100), pos + 100)
+    except ValueError:
+        return None
+
+    for read in reads:
+        fiber_read = _training_sample_candidate(
+            read,
+            seen_read_ids,
+            min_mapq,
+            min_read_length,
+            prob_threshold,
+            mode,
+        )
+        if fiber_read is None:
+            continue
+
+        seen_read_ids.add(read.query_name)
+        return fiber_read
+
+    return None
+
+
 def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                          mode: str = 'pacbio-fiber', min_mapq: int = 20,
                          prob_threshold: int = 125, min_read_length: int = 1000) -> list:
@@ -371,27 +404,18 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                     chroms, cum_lengths, int(genome_pos),
                 )
 
-                # Fetch reads overlapping this position
-                try:
-                    for read in bam.fetch(chrom, max(0, pos - 100), pos + 100):
-                        fiber_read = _training_sample_candidate(
-                            read,
-                            seen_read_ids,
-                            min_mapq,
-                            min_read_length,
-                            prob_threshold,
-                            mode,
-                        )
-                        if fiber_read is None:
-                            continue
-
-                        sampled.append(fiber_read)
-                        seen_read_ids.add(read.query_name)
-                        break  # Got one read from this position
-
-                except ValueError:
-                    # Invalid region
-                    continue
+                fiber_read = _sample_training_read_at_position(
+                    bam,
+                    chrom,
+                    pos,
+                    seen_read_ids,
+                    min_mapq,
+                    min_read_length,
+                    prob_threshold,
+                    mode,
+                )
+                if fiber_read is not None:
+                    sampled.append(fiber_read)
 
     return sampled
 

@@ -1362,6 +1362,44 @@ def test_training_sample_candidate_filters_duplicates_and_requires_mods(monkeypa
     ) is None
 
 
+def test_sample_training_read_at_position_returns_first_valid_candidate(monkeypatch):
+    reads = [SimpleNamespace(query_name="skip"), SimpleNamespace(query_name="keep")]
+    fiber = object()
+
+    class FakeBam:
+        def fetch(self, chrom, start, end):
+            assert (chrom, start, end) == ("chr1", 0, 150)
+            return iter(reads)
+
+    def fake_candidate(read, seen, min_mapq, min_read_length, prob_threshold, mode):
+        assert seen == set()
+        assert (min_mapq, min_read_length, prob_threshold, mode) == (
+            20,
+            1000,
+            125,
+            "pacbio-fiber",
+        )
+        return fiber if read.query_name == "keep" else None
+
+    monkeypatch.setattr(train, "_training_sample_candidate", fake_candidate)
+    seen = set()
+
+    assert train._sample_training_read_at_position(
+        FakeBam(), "chr1", 50, seen, 20, 1000, 125, "pacbio-fiber",
+    ) is fiber
+    assert seen == {"keep"}
+
+
+def test_sample_training_read_at_position_handles_invalid_region():
+    class FakeBam:
+        def fetch(self, chrom, start, end):
+            raise ValueError("bad region")
+
+    assert train._sample_training_read_at_position(
+        FakeBam(), "chrMissing", 10, set(), 20, 1000, 125, "pacbio-fiber",
+    ) is None
+
+
 def test_reads_per_training_file_has_one_read_minimum():
     assert train._reads_per_training_file(100, 4) == 25
     assert train._reads_per_training_file(2, 5) == 1
