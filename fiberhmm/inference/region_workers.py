@@ -309,6 +309,19 @@ class _FusedRegionBamReadProcessRequest:
     skip_reasons: dict
 
 
+@dataclass(frozen=True)
+class _FusedRegionBamReadLoopRequest:
+    read_iter: object
+    outbam: object
+    model: object
+    llr_hit: object
+    llr_miss: object
+    runtime: _FusedRegionWorkerRuntime
+    start: int
+    end: int
+    skip_reasons: dict
+
+
 @dataclass
 class _RegionBamWorkerCounts:
     total_reads: int = 0
@@ -1319,6 +1332,31 @@ def _process_fused_region_bam_read_from_request(
     )
 
 
+def _process_fused_region_bam_reads_from_request(
+    request: _FusedRegionBamReadLoopRequest,
+) -> _RegionBamWorkerCounts:
+    counts = _RegionBamWorkerCounts()
+    for read in request.read_iter:
+        counts.add(
+            _process_fused_region_bam_read(
+                read,
+                request.outbam,
+                request.model,
+                request.llr_hit,
+                request.llr_miss,
+                request.runtime.apply_config,
+                request.runtime.recall_config,
+                request.runtime.recall_options,
+                request.runtime.ref_fasta,
+                request.runtime.filter_config,
+                request.start,
+                request.end,
+                request.skip_reasons,
+            )
+        )
+    return counts
+
+
 def _init_region_worker(model_path: str, params: dict):
     """Initialize worker for region-parallel processing."""
     global _worker_model, _worker_region_params
@@ -1608,22 +1646,19 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                 except ValueError:
                     return RegionBamResult(temp_bam_path, 0, 0, 0)
 
-                for read in read_iter:
-                    counts.add(_process_fused_region_bam_read(
-                        read,
-                        outbam,
-                        model,
-                        llr_hit,
-                        llr_miss,
-                        runtime.apply_config,
-                        runtime.recall_config,
-                        runtime.recall_options,
-                        runtime.ref_fasta,
-                        runtime.filter_config,
-                        start,
-                        end,
-                        skip_reasons,
-                    ))
+                counts = _process_fused_region_bam_reads_from_request(
+                    _FusedRegionBamReadLoopRequest(
+                        read_iter=read_iter,
+                        outbam=outbam,
+                        model=model,
+                        llr_hit=llr_hit,
+                        llr_miss=llr_miss,
+                        runtime=runtime,
+                        start=start,
+                        end=end,
+                        skip_reasons=skip_reasons,
+                    )
+                )
 
         return RegionBamResult(
             temp_bam_path, counts.total_reads, counts.reads_with_footprints,

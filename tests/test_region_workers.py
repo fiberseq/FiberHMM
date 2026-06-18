@@ -23,12 +23,15 @@ from fiberhmm.inference.region_workers import (
     _fused_region_recall_write_delta_from_request,
     _fused_region_worker_runtime,
     _FusedRegionApplyReadRequest,
+    _FusedRegionBamReadLoopRequest,
     _FusedRegionRecallResultRequest,
     _FusedRegionRecallWriteRequest,
+    _FusedRegionWorkerRuntime,
     _new_region_skip_reasons,
     _open_region_posterior_tsv,
     _pad_region_bed12_to_read_span,
     _process_fused_region_bam_read,
+    _process_fused_region_bam_reads_from_request,
     _process_region_bam_read,
     _process_region_bam_reads_from_request,
     _process_region_bed_read,
@@ -854,6 +857,113 @@ def test_fused_region_recall_write_delta_builds_tags_and_writes(monkeypatch):
             "downstream_compat": True,
         },
     )
+
+
+def test_process_fused_region_bam_reads_accumulates_deltas(monkeypatch):
+    import fiberhmm.inference.region_workers as region_workers
+
+    reads = [SimpleNamespace(query_name="a"), SimpleNamespace(query_name="b")]
+    outbam = object()
+    model = object()
+    llr_hit = object()
+    llr_miss = object()
+    apply_config = _apply_config(with_scores=False)
+    recall_config = _fused_region_recall_config({
+        "min_llr": 2.5,
+        "min_opps": 4,
+        "unify_threshold": 7,
+        "also_write_legacy": False,
+        "downstream_compat": True,
+    })
+    recall_options = {"recall_nucs": True}
+    ref_fasta = object()
+    filter_config = ReadFilterConfig(min_mapq=10, min_read_length=50)
+    runtime = _FusedRegionWorkerRuntime(
+        apply_config=apply_config,
+        recall_config=recall_config,
+        recall_options=recall_options,
+        filter_config=filter_config,
+        ref_fasta=ref_fasta,
+    )
+    skip_reasons = {}
+    calls = []
+
+    def fake_process(
+        read,
+        got_outbam,
+        got_model,
+        got_llr_hit,
+        got_llr_miss,
+        got_apply_config,
+        got_recall_config,
+        got_recall_options,
+        got_ref_fasta,
+        got_filter_config,
+        start,
+        end,
+        got_skip_reasons,
+    ):
+        calls.append(
+            (
+                read,
+                got_outbam,
+                got_model,
+                got_llr_hit,
+                got_llr_miss,
+                got_apply_config,
+                got_recall_config,
+                got_recall_options,
+                got_ref_fasta,
+                got_filter_config,
+                start,
+                end,
+                got_skip_reasons,
+            )
+        )
+        if read.query_name == "a":
+            return region_workers._RegionBamReadDelta(
+                total_reads=1,
+                reads_with_footprints=1,
+                written=1,
+            )
+        return region_workers._RegionBamReadDelta(written=1, skipped=1)
+
+    monkeypatch.setattr(
+        region_workers,
+        "_process_fused_region_bam_read",
+        fake_process,
+    )
+
+    counts = _process_fused_region_bam_reads_from_request(
+        _FusedRegionBamReadLoopRequest(
+            read_iter=reads,
+            outbam=outbam,
+            model=model,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            runtime=runtime,
+            start=100,
+            end=200,
+            skip_reasons=skip_reasons,
+        )
+    )
+
+    assert counts.total_reads == 1
+    assert counts.reads_with_footprints == 1
+    assert counts.written == 2
+    assert counts.skipped == 1
+    assert len(calls) == 2
+    assert all(call[1] is outbam for call in calls)
+    assert all(call[2] is model for call in calls)
+    assert all(call[3] is llr_hit for call in calls)
+    assert all(call[4] is llr_miss for call in calls)
+    assert all(call[5] is apply_config for call in calls)
+    assert all(call[6] is recall_config for call in calls)
+    assert all(call[7] is recall_options for call in calls)
+    assert all(call[8] is ref_fasta for call in calls)
+    assert all(call[9] is filter_config for call in calls)
+    assert all(call[10:12] == (100, 200) for call in calls)
+    assert all(call[12] is skip_reasons for call in calls)
 
 
 def test_region_read_route_preserves_skip_and_ownership_order():
