@@ -475,7 +475,8 @@ def test_process_legacy_chunk_buffer_skips_empty_and_delegates(monkeypatch):
     monkeypatch.setattr(
         legacy_pipeline,
         "_process_legacy_chunk_and_record",
-        lambda *args, **kwargs: calls.append((args, kwargs)) or (3, 1),
+        lambda *args, **kwargs: calls.append((args, kwargs))
+        or legacy_pipeline._LegacyChunkRecordResult(3, 1),
     )
 
     assert legacy_pipeline._process_legacy_chunk_buffer(
@@ -495,7 +496,7 @@ def test_process_legacy_chunk_buffer_skips_empty_and_delegates(monkeypatch):
         with_scores=True,
         return_posteriors=True,
         write_msps=False,
-    ) == (0, 0)
+    ) == legacy_pipeline._LegacyChunkRecordResult(0, 0)
     assert calls == []
 
     chunk_reads = ["fiber"]
@@ -517,7 +518,7 @@ def test_process_legacy_chunk_buffer_skips_empty_and_delegates(monkeypatch):
         with_scores=True,
         return_posteriors=True,
         write_msps=False,
-    ) == (3, 1)
+    ) == legacy_pipeline._LegacyChunkRecordResult(3, 1)
 
     args, kwargs = calls[0]
     assert args == (
@@ -591,7 +592,10 @@ def test_process_legacy_reads_buffers_skips_chunks_and_progress(monkeypatch):
             )
         )
         skip_reasons["no_footprints"] += 1
-        return len(chunk_reads), 1
+        return legacy_pipeline._LegacyChunkRecordResult(
+            reads_with_footprints=len(chunk_reads),
+            worker_failures=1,
+        )
 
     monkeypatch.setattr(
         legacy_pipeline, "_legacy_fiber_read_or_skip", fake_fiber_read_or_skip,
@@ -975,7 +979,7 @@ def test_process_legacy_chunk_and_record_updates_counts_and_posteriors(monkeypat
     )
     skip_reasons = legacy_pipeline._new_legacy_skip_reasons()
 
-    reads_with_fp, worker_failures = legacy_pipeline._process_legacy_chunk_and_record(
+    chunk_result = legacy_pipeline._process_legacy_chunk_and_record(
         chunk_reads,
         chunk_read_objs,
         outbam,
@@ -994,7 +998,7 @@ def test_process_legacy_chunk_and_record_updates_counts_and_posteriors(monkeypat
         write_msps=False,
     )
 
-    assert (reads_with_fp, worker_failures) == (2, 1)
+    assert chunk_result == legacy_pipeline._LegacyChunkRecordResult(2, 1)
     assert skip_reasons["no_footprints"] == 3
     assert posterior_calls == [(posterior_writer, chunk_results)]
     assert process_calls == [

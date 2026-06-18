@@ -56,6 +56,12 @@ class _LegacyPosteriorStats:
     file_size_mb: float
 
 
+@dataclass(frozen=True)
+class _LegacyChunkRecordResult:
+    reads_with_footprints: int
+    worker_failures: int
+
+
 def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                               outbam, model, executor,
                               edge_trim: int, circular: bool,
@@ -236,7 +242,7 @@ def _process_legacy_chunk_and_record(
     with_scores: bool = False,
     return_posteriors: bool = False,
     write_msps: bool = True,
-) -> Tuple[int, int]:
+) -> _LegacyChunkRecordResult:
     n_fp, n_nofp, n_failed, chunk_results = _process_and_write_chunk(
         chunk_reads,
         chunk_read_objs,
@@ -255,7 +261,10 @@ def _process_legacy_chunk_and_record(
     )
     skip_reasons[NO_FOOTPRINTS_SKIP_REASON] += n_nofp
     _write_chunk_posteriors(posterior_writer, chunk_results)
-    return n_fp, n_failed
+    return _LegacyChunkRecordResult(
+        reads_with_footprints=n_fp,
+        worker_failures=n_failed,
+    )
 
 
 def _open_legacy_posterior_writer(
@@ -416,9 +425,9 @@ def _process_legacy_chunk_buffer(
     with_scores: bool,
     return_posteriors: bool,
     write_msps: bool,
-) -> Tuple[int, int]:
+) -> _LegacyChunkRecordResult:
     if not chunk_reads:
-        return 0, 0
+        return _LegacyChunkRecordResult(0, 0)
     return _process_legacy_chunk_and_record(
         chunk_reads,
         chunk_read_objs,
@@ -533,26 +542,26 @@ def _process_legacy_reads(
             break
 
         if len(chunk_reads) >= chunk_size:
-            n_fp, n_failed = _process_legacy_chunk_buffer(
+            chunk_result = _process_legacy_chunk_buffer(
                 chunk_reads,
                 chunk_read_objs,
                 **chunk_kwargs,
             )
-            reads_with_footprints += n_fp
-            worker_failures += n_failed
+            reads_with_footprints += chunk_result.reads_with_footprints
+            worker_failures += chunk_result.worker_failures
 
             _print_legacy_progress(total_reads, skipped, start_time)
 
             chunk_reads = []
             chunk_read_objs = []
 
-    n_fp, n_failed = _process_legacy_chunk_buffer(
+    chunk_result = _process_legacy_chunk_buffer(
         chunk_reads,
         chunk_read_objs,
         **chunk_kwargs,
     )
-    reads_with_footprints += n_fp
-    worker_failures += n_failed
+    reads_with_footprints += chunk_result.reads_with_footprints
+    worker_failures += chunk_result.worker_failures
 
     return _LegacyReadProcessingResult(
         total_reads=total_reads,
