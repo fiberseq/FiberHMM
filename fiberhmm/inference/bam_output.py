@@ -76,6 +76,15 @@ class _SamtoolsMergeCommandRequest:
     list_file: str
 
 
+@dataclass(frozen=True)
+class _BamSortRequest:
+    output_bam: str
+    sorted_bam: str
+    threads: int
+    verbose: bool
+    bam_size_gb: float
+
+
 _BED12_RECORD_COLUMNS = (
     'chrom',
     'chromStart',
@@ -245,6 +254,29 @@ def _try_pysam_index(output_bam: str, verbose: bool, idx_start: float) -> bool:
     return True
 
 
+def _sort_bam_with_fallback_from_request(
+    request: _BamSortRequest,
+) -> None:
+    sort_start = time.time()
+    try:
+        _run_samtools_sort(
+            request.output_bam,
+            request.sorted_bam,
+            request.threads,
+        )
+        if request.verbose:
+            sort_time = time.time() - sort_start
+            speed = _throughput_gbs(request.bam_size_gb, sort_time)
+            print(f"  Sorted in {sort_time:.1f}s ({speed:.2f} GB/s)")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        if request.verbose:
+            print("  Using pysam sort (slower)...")
+        pysam.sort("-o", request.sorted_bam, request.output_bam)
+        if request.verbose:
+            sort_time = time.time() - sort_start
+            print(f"  Sorted (pysam) in {sort_time:.1f}s")
+
+
 def _sort_bam_with_fallback(
     output_bam: str,
     sorted_bam: str,
@@ -252,20 +284,15 @@ def _sort_bam_with_fallback(
     verbose: bool,
     bam_size_gb: float,
 ) -> None:
-    sort_start = time.time()
-    try:
-        _run_samtools_sort(output_bam, sorted_bam, threads)
-        if verbose:
-            sort_time = time.time() - sort_start
-            speed = _throughput_gbs(bam_size_gb, sort_time)
-            print(f"  Sorted in {sort_time:.1f}s ({speed:.2f} GB/s)")
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        if verbose:
-            print("  Using pysam sort (slower)...")
-        pysam.sort("-o", sorted_bam, output_bam)
-        if verbose:
-            sort_time = time.time() - sort_start
-            print(f"  Sorted (pysam) in {sort_time:.1f}s")
+    _sort_bam_with_fallback_from_request(
+        _BamSortRequest(
+            output_bam=output_bam,
+            sorted_bam=sorted_bam,
+            threads=threads,
+            verbose=verbose,
+            bam_size_gb=bam_size_gb,
+        )
+    )
 
 
 def _sort_bam_to_temp_and_replace(
@@ -276,7 +303,15 @@ def _sort_bam_to_temp_and_replace(
     bam_size_gb: float,
 ) -> None:
     try:
-        _sort_bam_with_fallback(output_bam, sorted_bam, threads, verbose, bam_size_gb)
+        _sort_bam_with_fallback_from_request(
+            _BamSortRequest(
+                output_bam=output_bam,
+                sorted_bam=sorted_bam,
+                threads=threads,
+                verbose=verbose,
+                bam_size_gb=bam_size_gb,
+            )
+        )
         os.replace(sorted_bam, output_bam)
     finally:
         _remove_file_if_exists(sorted_bam)

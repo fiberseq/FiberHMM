@@ -138,12 +138,14 @@ def test_sort_bam_with_fallback_uses_pysam_after_samtools_failure(monkeypatch, c
     monkeypatch.setattr(bam_output.pysam, "sort", lambda *args: pysam_sorts.append(args))
     monkeypatch.setattr(bam_output.time, "time", lambda: 12.0)
 
-    bam_output._sort_bam_with_fallback(
-        "out.bam",
-        "out.sorted.bam",
-        threads=4,
-        verbose=True,
-        bam_size_gb=2.0,
+    bam_output._sort_bam_with_fallback_from_request(
+        bam_output._BamSortRequest(
+            output_bam="out.bam",
+            sorted_bam="out.sorted.bam",
+            threads=4,
+            verbose=True,
+            bam_size_gb=2.0,
+        )
     )
 
     assert pysam_sorts == [("-o", "out.sorted.bam", "out.bam")]
@@ -152,19 +154,47 @@ def test_sort_bam_with_fallback_uses_pysam_after_samtools_failure(monkeypatch, c
     assert "Sorted (pysam) in 0.0s" in out
 
 
+def test_sort_bam_with_fallback_adapter_builds_request(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        bam_output,
+        "_sort_bam_with_fallback_from_request",
+        calls.append,
+    )
+
+    bam_output._sort_bam_with_fallback(
+        "out.bam",
+        "out.sorted.bam",
+        threads=4,
+        verbose=True,
+        bam_size_gb=2.0,
+    )
+
+    assert calls == [
+        bam_output._BamSortRequest(
+            output_bam="out.bam",
+            sorted_bam="out.sorted.bam",
+            threads=4,
+            verbose=True,
+            bam_size_gb=2.0,
+        )
+    ]
+
+
 def test_sort_bam_to_temp_and_replace_cleans_temp_after_replace(monkeypatch, tmp_path):
     output_bam = str(tmp_path / "out.bam")
     sorted_bam = tmp_path / "out.sorted.bam"
     calls = []
 
-    def fake_sort(output, sorted_output, threads, verbose, bam_size_gb):
-        calls.append(("sort", output, sorted_output, threads, verbose, bam_size_gb))
+    def fake_sort(request):
+        calls.append(("sort", request))
         sorted_bam.write_bytes(b"sorted")
 
     def fake_replace(source, destination):
         calls.append(("replace", source, destination))
 
-    monkeypatch.setattr(bam_output, "_sort_bam_with_fallback", fake_sort)
+    monkeypatch.setattr(bam_output, "_sort_bam_with_fallback_from_request", fake_sort)
     monkeypatch.setattr(bam_output.os, "replace", fake_replace)
 
     bam_output._sort_bam_to_temp_and_replace(
@@ -176,7 +206,16 @@ def test_sort_bam_to_temp_and_replace_cleans_temp_after_replace(monkeypatch, tmp
     )
 
     assert calls == [
-        ("sort", output_bam, str(sorted_bam), 3, False, 1.5),
+        (
+            "sort",
+            bam_output._BamSortRequest(
+                output_bam=output_bam,
+                sorted_bam=str(sorted_bam),
+                threads=3,
+                verbose=False,
+                bam_size_gb=1.5,
+            ),
+        ),
         ("replace", str(sorted_bam), output_bam),
     ]
     assert not sorted_bam.exists()
@@ -190,7 +229,7 @@ def test_sort_bam_to_temp_and_replace_cleans_temp_after_sort_failure(monkeypatch
         sorted_bam.write_bytes(b"partial")
         raise RuntimeError("sort failed")
 
-    monkeypatch.setattr(bam_output, "_sort_bam_with_fallback", fail_sort)
+    monkeypatch.setattr(bam_output, "_sort_bam_with_fallback_from_request", fail_sort)
     monkeypatch.setattr(
         bam_output.os,
         "replace",
