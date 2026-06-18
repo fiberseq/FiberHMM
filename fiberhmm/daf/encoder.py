@@ -41,6 +41,14 @@ class _DafChimeraSegmentCounts:
 
 
 @dataclass(frozen=True)
+class _DafChimeraSegmentCountsRequest:
+    ct_left: int
+    left_total: int
+    nct: int
+    nga: int
+
+
+@dataclass(frozen=True)
 class _DafMismatchPositions:
     ct: list[int]
     ga: list[int]
@@ -336,16 +344,29 @@ def _is_pure_daf_segment(dominant_count, segment_size,
     )
 
 
-def _daf_chimera_segment_counts(ct_left, left_n, nct, nga):
-    right_n = nct + nga - left_n
-    ga_left = left_n - ct_left
-    ct_right = nct - ct_left
-    ga_right = nga - ga_left
+def _daf_chimera_segment_counts_from_request(
+    request: _DafChimeraSegmentCountsRequest,
+) -> _DafChimeraSegmentCounts:
+    right_n = request.nct + request.nga - request.left_total
+    ga_left = request.left_total - request.ct_left
+    ct_right = request.nct - request.ct_left
+    ga_right = request.nga - ga_left
     return _DafChimeraSegmentCounts(
         right_total=right_n,
         ga_left=ga_left,
         ct_right=ct_right,
         ga_right=ga_right,
+    )
+
+
+def _daf_chimera_segment_counts(ct_left, left_n, nct, nga):
+    return _daf_chimera_segment_counts_from_request(
+        _DafChimeraSegmentCountsRequest(
+            ct_left=ct_left,
+            left_total=left_n,
+            nct=nct,
+            nga=nga,
+        )
     )
 
 
