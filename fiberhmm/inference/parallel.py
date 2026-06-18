@@ -427,15 +427,32 @@ def _dispatch_legacy_footprint_pipeline(
     n_cores: int,
     max_reads: Optional[int],
     debug_timing: bool,
-    pipeline_kwargs: dict,
+    pipeline_options: _FootprintPipelineOptions,
 ) -> Tuple[int, int]:
     model = _legacy_model_for_processing(model, model_path, n_cores)
     return _process_bam_legacy_pipeline(
+        input_bam=pipeline_options.input_bam,
+        output_bam=pipeline_options.output_bam,
         model=model,
         model_path=model_path,
+        train_rids=pipeline_options.train_rids,
+        edge_trim=pipeline_options.edge_trim,
+        circular=pipeline_options.circular,
+        mode=pipeline_options.mode,
+        context_size=pipeline_options.context_size,
+        msp_min_size=pipeline_options.msp_min_size,
+        nuc_min_size=pipeline_options.nuc_min_size,
+        min_mapq=pipeline_options.min_mapq,
+        prob_threshold=pipeline_options.prob_threshold,
+        min_read_length=pipeline_options.min_read_length,
+        with_scores=pipeline_options.with_scores,
+        n_cores=pipeline_options.n_cores,
         max_reads=max_reads,
         debug_timing=debug_timing,
-        **pipeline_kwargs,
+        primary_only=pipeline_options.primary_only,
+        output_posteriors=pipeline_options.output_posteriors,
+        write_msps=pipeline_options.write_msps,
+        io_threads=pipeline_options.io_threads,
     )
 
 
@@ -529,5 +546,5 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
         n_cores=n_cores,
         max_reads=max_reads,
         debug_timing=debug_timing,
-        pipeline_kwargs=pipeline_options.as_kwargs(),
+        pipeline_options=pipeline_options,
     )
