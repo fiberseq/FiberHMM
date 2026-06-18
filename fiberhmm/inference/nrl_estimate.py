@@ -70,6 +70,41 @@ def _phase_nrl_result(
             'n_reads': n_reads, 'source': 'estimated'}
 
 
+def _phase_nrl_spacings_for_read(
+    read,
+    model,
+    llr_hit,
+    llr_miss,
+    *,
+    mode: str,
+    context_size: int,
+    split_min_llr: float,
+    split_min_opps: int,
+    nuc_min_size: int,
+    msp_min_size: int,
+    prob_threshold: int,
+    edge_trim: int,
+):
+    if not is_primary_mapped_alignment(read):
+        return None
+    fr = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
+    if fr is None or fr is CHIMERA_SKIP:
+        return None
+    apply_result = run_hmm_apply_stage(
+        fr, model, edge_trim, False, mode, context_size,
+        msp_min_size, nuc_min_size, False,
+    )
+    if apply_result is None or len(apply_result['ns']) == 0:
+        return None
+    nucs, _ = recall_nucs_in_read(
+        apply_result['encoded'], apply_result['ns'], apply_result['nl'],
+        len(apply_result['encoded']), llr_hit, llr_miss,
+        split_min_llr=split_min_llr, split_min_opps=split_min_opps,
+        nuc_min_size=nuc_min_size,
+    )
+    return _nuc_center_spacings(nucs)
+
+
 def estimate_phase_nrl(
     input_bam: str,
     apply_model_path: str,
@@ -106,22 +141,23 @@ def estimate_phase_nrl(
     bam = pysam.AlignmentFile(input_bam, 'rb', check_sq=False)
     try:
         for read in bam.fetch(until_eof=True):
-            if not is_primary_mapped_alignment(read):
+            read_spacings = _phase_nrl_spacings_for_read(
+                read,
+                model,
+                llr_hit,
+                llr_miss,
+                mode=mode,
+                context_size=context_size,
+                split_min_llr=split_min_llr,
+                split_min_opps=split_min_opps,
+                nuc_min_size=nuc_min_size,
+                msp_min_size=msp_min_size,
+                prob_threshold=prob_threshold,
+                edge_trim=edge_trim,
+            )
+            if read_spacings is None:
                 continue
-            fr = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
-            if fr is None or fr is CHIMERA_SKIP:
-                continue
-            apply_result = run_hmm_apply_stage(
-                fr, model, edge_trim, False, mode, context_size,
-                msp_min_size, nuc_min_size, False)
-            if apply_result is None or len(apply_result['ns']) == 0:
-                continue
-            nucs, _ = recall_nucs_in_read(
-                apply_result['encoded'], apply_result['ns'], apply_result['nl'],
-                len(apply_result['encoded']), llr_hit, llr_miss,
-                split_min_llr=split_min_llr, split_min_opps=split_min_opps,
-                nuc_min_size=nuc_min_size)
-            spacings.extend(_nuc_center_spacings(nucs))
+            spacings.extend(read_spacings)
             n_reads += 1
             if n_reads >= sample_target:
                 break
