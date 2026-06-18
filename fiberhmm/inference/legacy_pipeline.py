@@ -188,7 +188,7 @@ def _legacy_posterior_ref_positions(read_obj):
 
 
 def _write_chunk_posteriors(posterior_writer, chunk_results):
-    if not posterior_writer or not chunk_results:
+    if posterior_writer is None or not chunk_results:
         return
 
     for read_obj, fiber_read_data, result in chunk_results:
@@ -291,7 +291,7 @@ def _shutdown_legacy_resources(executor, posterior_writer):
         if executor:
             executor.shutdown(wait=True)
     finally:
-        if posterior_writer:
+        if posterior_writer is not None:
             posterior_stats = posterior_writer.close()
     return posterior_stats
 

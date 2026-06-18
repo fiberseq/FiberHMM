@@ -486,7 +486,7 @@ def _open_streaming_posterior_writer(
 
 
 def _close_streaming_posterior_writer(posterior_writer):
-    if not posterior_writer:
+    if posterior_writer is None:
         return None
     return posterior_writer.close()
 

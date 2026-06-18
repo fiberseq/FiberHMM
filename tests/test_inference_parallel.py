@@ -215,6 +215,9 @@ def test_shutdown_legacy_resources_closes_executor_and_posteriors():
             calls.append(("shutdown", wait))
 
     class Writer:
+        def __bool__(self):
+            return False
+
         def close(self):
             calls.append(("close",))
             return ("posteriors", 1.5)
@@ -235,6 +238,9 @@ def test_shutdown_legacy_resources_closes_posteriors_after_executor_error():
             raise RuntimeError("shutdown failed")
 
     class Writer:
+        def __bool__(self):
+            return False
+
         def close(self):
             calls.append(("close",))
 
@@ -242,6 +248,48 @@ def test_shutdown_legacy_resources_closes_posteriors_after_executor_error():
         legacy_pipeline._shutdown_legacy_resources(Executor(), Writer())
 
     assert calls == [("shutdown", True), ("close",)]
+
+
+def test_write_chunk_posteriors_accepts_falsey_writer(monkeypatch):
+    read = SimpleNamespace(reference_name="chr1")
+    result = {"posteriors": [0.1, 0.9]}
+    seen = []
+
+    class Writer:
+        def __bool__(self):
+            return False
+
+        def add_fiber(self, chrom, data):
+            seen.append((chrom, data))
+
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "_legacy_posterior_ref_positions",
+        lambda got_read: ["ref-pos"],
+    )
+    monkeypatch.setattr(
+        legacy_pipeline,
+        "posterior_fiber_data",
+        lambda got_read, got_result, ref_positions: {
+            "read": got_read,
+            "result": got_result,
+            "ref_positions": ref_positions,
+        },
+    )
+
+    legacy_pipeline._write_chunk_posteriors(
+        Writer(),
+        [(read, {}, result)],
+    )
+
+    assert seen == [(
+        "chr1",
+        {
+            "read": read,
+            "result": result,
+            "ref_positions": ["ref-pos"],
+        },
+    )]
 
 
 def test_run_legacy_bam_processing_closes_posterior_on_executor_setup_failure(
@@ -2007,6 +2055,9 @@ def test_add_posterior_fiber_if_available_guards_and_writes(monkeypatch):
     seen = []
 
     class Writer:
+        def __bool__(self):
+            return False
+
         def add_fiber(self, chrom, data):
             seen.append((chrom, data))
 

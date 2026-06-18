@@ -68,7 +68,7 @@ def _posterior_chrom(read_obj):
 
 
 def _add_posterior_fiber_if_available(posterior_writer, read_obj, result: dict) -> bool:
-    if not posterior_writer or not _result_has_posteriors(result):
+    if posterior_writer is None or not _result_has_posteriors(result):
         return False
     chrom = _posterior_chrom(read_obj)
     if not chrom:

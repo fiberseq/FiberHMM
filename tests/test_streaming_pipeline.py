@@ -827,6 +827,9 @@ def test_streaming_close_helpers_handle_optional_resources():
             self.close_result = close_result
             self.closed = 0
 
+        def __bool__(self):
+            return False
+
         def close(self):
             self.closed += 1
             return self.close_result
