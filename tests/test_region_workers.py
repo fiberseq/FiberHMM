@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 import fiberhmm.inference.region_workers as region_workers
+import pytest
 from fiberhmm.inference.engine import CHIMERA_SKIP
 from fiberhmm.inference.read_filters import ReadFilterConfig
 from fiberhmm.inference.region_types import RegionBamResult, RegionBamWorkItem
@@ -244,6 +245,13 @@ def test_process_region_to_bam_closes_tsv_once_when_fetch_region_missing(
 
     assert result == RegionBamResult("region.bam", 0, 0, 0)
     assert tsv_file.closed == 1
+
+
+def test_process_region_to_bam_preserves_work_item_coercion_error(capsys):
+    with pytest.raises(TypeError, match="has no len"):
+        region_workers._process_region_to_bam(object())
+
+    assert "Worker error in region ?:?-?" in capsys.readouterr().out
 
 
 def test_region_bam_result_from_counts_includes_tsv_only_when_written():

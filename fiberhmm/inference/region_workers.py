@@ -773,6 +773,7 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
 
     global _worker_model, _worker_region_params
 
+    chrom = start = end = '?'
     try:
         work_item = RegionBamWorkItem.from_value(args)
         chrom, start, end = work_item.region
