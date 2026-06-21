@@ -121,17 +121,6 @@ class _PredictionOutputs:
 
 
 @dataclass(frozen=True)
-class _FootprintsAndMspsRequest:
-    model: FiberHMM
-    encoded_read: np.ndarray
-    msp_min_size: int = 147
-    with_scores: bool = False
-    return_posteriors: bool = False
-    nuc_min_size: int = 85
-    circular_read_length: Optional[int] = None
-
-
-@dataclass(frozen=True)
 class _EncodingInputs:
     sequence: str
     mod_positions: object
@@ -147,30 +136,6 @@ class _CircularResultTrack:
     legacy_starts: np.ndarray
     legacy_sizes: np.ndarray
     legacy_scores: Optional[np.ndarray]
-
-
-@dataclass(frozen=True)
-class _SingleReadResultRequest:
-    fp_result: dict
-    strand: str
-    encoded: np.ndarray
-    return_posteriors: bool
-    include_encoded: bool
-
-
-@dataclass(frozen=True)
-class _SingleReadProcessRequest:
-    fiber_read: dict
-    model: object
-    edge_trim: int
-    circular: bool
-    mode: str
-    context_size: int
-    msp_min_size: int
-    with_scores: bool
-    return_posteriors: bool = False
-    nuc_min_size: int = 85
-    include_encoded: bool = False
 
 
 @dataclass(frozen=True)
@@ -656,50 +621,33 @@ def predict_footprints_and_msps(model: FiberHMM, encoded_read: np.ndarray,
             'states': raw HMM state array
             'posteriors': P(footprint) per position (if return_posteriors)
     """
-    return predict_footprints_and_msps_from_request(
-        _FootprintsAndMspsRequest(
-            model=model,
-            encoded_read=encoded_read,
-            msp_min_size=msp_min_size,
-            with_scores=with_scores,
-            return_posteriors=return_posteriors,
-            nuc_min_size=nuc_min_size,
-            circular_read_length=circular_read_length,
-        ),
-    )
-
-
-def predict_footprints_and_msps_from_request(
-    request: _FootprintsAndMspsRequest,
-) -> dict:
-    """Run named HMM footprint/MSP prediction options."""
     result = _empty_interval_result(include_predictions=True)
 
-    if len(request.encoded_read) == 0:
+    if len(encoded_read) == 0:
         return result
 
     # Predict states (0 = footprint, 1 = accessible)
     # Use predict_with_posteriors if we need posteriors or scores (shares computation)
     prediction = _predict_state_outputs(
-        request.model,
-        request.encoded_read,
-        request.with_scores,
-        request.return_posteriors,
+        model,
+        encoded_read,
+        with_scores,
+        return_posteriors,
     )
 
-    if request.return_posteriors:
+    if return_posteriors:
         # P(footprint) = posteriors_full[:, 0]
         result['posteriors'] = _footprint_posterior_track(prediction.posteriors)
 
-    if request.circular_read_length is not None:
+    if circular_read_length is not None:
         result.update(
             _circular_prediction_result(
                 prediction,
-                request.circular_read_length,
-                request.msp_min_size,
-                request.with_scores,
-                request.return_posteriors,
-                nuc_min_size=request.nuc_min_size,
+                circular_read_length,
+                msp_min_size,
+                with_scores,
+                return_posteriors,
+                nuc_min_size=nuc_min_size,
             )
         )
         return result
@@ -707,9 +655,9 @@ def predict_footprints_and_msps_from_request(
     result.update(
         _linear_prediction_result(
             prediction,
-            request.msp_min_size,
-            request.with_scores,
-            nuc_min_size=request.nuc_min_size,
+            msp_min_size,
+            with_scores,
+            nuc_min_size=nuc_min_size,
         )
     )
 
@@ -987,38 +935,26 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
     return _extract_mm_ml_fiber_read(read, query_sequence, mode, prob_threshold)
 
 
-def _single_read_result_from_request(request: _SingleReadResultRequest) -> dict:
-    result = _base_single_read_fields(request.fp_result)
-    if request.fp_result.get('circular'):
-        result.update(_circular_single_read_fields(request.fp_result))
-
-    if (
-        request.return_posteriors
-        and request.fp_result.get('posteriors') is not None
-    ):
-        result['posteriors'] = request.fp_result['posteriors']
-        result['strand'] = request.strand
-
-    if request.include_encoded:
-        result['encoded'] = request.encoded
-        result['strand'] = request.strand
-
-    return result
-
-
 def _single_read_result_from_prediction(fp_result: dict, strand: str,
                                         encoded: np.ndarray,
                                         return_posteriors: bool,
                                         include_encoded: bool) -> dict:
-    return _single_read_result_from_request(
-        _SingleReadResultRequest(
-            fp_result=fp_result,
-            strand=strand,
-            encoded=encoded,
-            return_posteriors=return_posteriors,
-            include_encoded=include_encoded,
-        ),
-    )
+    result = _base_single_read_fields(fp_result)
+    if fp_result.get('circular'):
+        result.update(_circular_single_read_fields(fp_result))
+
+    if (
+        return_posteriors
+        and fp_result.get('posteriors') is not None
+    ):
+        result['posteriors'] = fp_result['posteriors']
+        result['strand'] = strand
+
+    if include_encoded:
+        result['encoded'] = encoded
+        result['strand'] = strand
+
+    return result
 
 
 def _base_single_read_fields(fp_result: dict) -> dict:
@@ -1086,22 +1022,25 @@ def _should_skip_empty_prediction(
     return not has_intervals and not return_posteriors and not include_encoded
 
 
-def _encoded_single_read_from_request(
-    request: _SingleReadProcessRequest,
+def _encoded_single_read(
+    fiber_read: dict,
+    edge_trim: int,
+    circular: bool,
+    mode: str,
+    context_size: int,
 ) -> Optional[_EncodedSingleRead]:
-    fiber_read = request.fiber_read
     query_sequence = fiber_read['query_sequence']
     m6a_positions = fiber_read['m6a_query_positions']
 
     strand = _processing_strand_for_read(
-        fiber_read, query_sequence, m6a_positions, request.mode,
+        fiber_read, query_sequence, m6a_positions, mode,
     )
     encoding_inputs = _encoding_inputs_for_read(
-        query_sequence, m6a_positions, request.circular,
+        query_sequence, m6a_positions, circular,
     )
     encoded = encode_from_query_sequence(
-        encoding_inputs.sequence, encoding_inputs.mod_positions, request.edge_trim,
-        mode=request.mode, strand=strand, context_size=request.context_size,
+        encoding_inputs.sequence, encoding_inputs.mod_positions, edge_trim,
+        mode=mode, strand=strand, context_size=context_size,
         is_reverse=fiber_read.get('is_reverse', False),
     )
     if len(encoded) == 0:
@@ -1113,9 +1052,11 @@ def _encoded_single_read_from_request(
     )
 
 
-def _process_single_read_from_request(
-    request: _SingleReadProcessRequest,
-) -> Optional[dict]:
+def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,
+                          mode: str, context_size: int, msp_min_size: int,
+                          with_scores: bool, return_posteriors: bool = False,
+                          nuc_min_size: int = 85,
+                          include_encoded: bool = False) -> Optional[dict]:
     """Process a single read through HMM. Returns footprint data or None.
 
     When include_encoded=True the encoded observation array and strand are
@@ -1123,26 +1064,28 @@ def _process_single_read_from_request(
     apply+recall worker to avoid re-encoding the sequence for the TF scan.
     """
 
-    encoded_read = _encoded_single_read_from_request(request)
+    encoded_read = _encoded_single_read(
+        fiber_read, edge_trim, circular, mode, context_size,
+    )
     if encoded_read is None:
         return None
 
     # Predict
     fp_result = predict_footprints_and_msps(
-        request.model,
+        model,
         encoded_read.encoded,
-        request.msp_min_size,
-        request.with_scores,
-        return_posteriors=request.return_posteriors,
-        nuc_min_size=request.nuc_min_size,
+        msp_min_size,
+        with_scores,
+        return_posteriors=return_posteriors,
+        nuc_min_size=nuc_min_size,
         circular_read_length=encoded_read.circular_read_length,
     )
 
     # If no footprints and we don't need posteriors or encoded, skip
     if _should_skip_empty_prediction(
         fp_result,
-        request.return_posteriors,
-        request.include_encoded,
+        return_posteriors,
+        include_encoded,
     ):
         return None
 
@@ -1150,28 +1093,6 @@ def _process_single_read_from_request(
         fp_result,
         encoded_read.strand,
         encoded_read.encoded,
-        request.return_posteriors,
-        request.include_encoded,
-    )
-
-
-def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,
-                          mode: str, context_size: int, msp_min_size: int,
-                          with_scores: bool, return_posteriors: bool = False,
-                          nuc_min_size: int = 85,
-                          include_encoded: bool = False) -> Optional[dict]:
-    return _process_single_read_from_request(
-        _SingleReadProcessRequest(
-            fiber_read=fiber_read,
-            model=model,
-            edge_trim=edge_trim,
-            circular=circular,
-            mode=mode,
-            context_size=context_size,
-            msp_min_size=msp_min_size,
-            with_scores=with_scores,
-            return_posteriors=return_posteriors,
-            nuc_min_size=nuc_min_size,
-            include_encoded=include_encoded,
-        ),
+        return_posteriors,
+        include_encoded,
     )

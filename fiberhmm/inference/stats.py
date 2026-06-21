@@ -33,16 +33,6 @@ class _StatsReadSignalArrays:
 
 
 @dataclass(frozen=True)
-class _StatsSamplingPassRequest:
-    bam_path: str
-    stats: object
-    n_samples: int
-    sample_prob: float
-    with_scores: bool
-    random_float: object
-
-
-@dataclass(frozen=True)
 class _FootprintSizeBins:
     labels: list
     counts: np.ndarray
@@ -448,30 +438,35 @@ def _add_read_to_footprint_stats(
     )
 
 
-def _collect_sampled_footprint_stats_from_request(
-    request: _StatsSamplingPassRequest,
+def _collect_sampled_footprint_stats(
+    bam_path: str,
+    stats: "FootprintStats",
+    n_samples: int,
+    sample_prob: float,
+    with_scores: bool,
+    random_float,
 ) -> "FootprintStats":
     sampled = 0
 
-    with pysam.AlignmentFile(request.bam_path, "rb", check_sq=False) as bam:
+    with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
         for read in bam:
             if not is_primary_mapped_alignment(read):
                 continue
 
-            if request.random_float() > request.sample_prob:
+            if random_float() > sample_prob:
                 continue
 
-            if sampled >= request.n_samples:
+            if sampled >= n_samples:
                 break
 
             _add_read_to_footprint_stats(
-                request.stats,
+                stats,
                 read,
-                request.with_scores,
+                with_scores,
             )
             sampled += 1
 
-    return request.stats
+    return stats
 
 
 def _plot_footprint_size_pdf_panel(ax, footprint_sizes) -> None:
@@ -778,13 +773,11 @@ def collect_stats_from_bam(bam_path: str, n_samples: int = 10000,
         f"{total_reads:,} total ({sample_prob * 100:.1f}%)"
     )
 
-    return _collect_sampled_footprint_stats_from_request(
-        _StatsSamplingPassRequest(
-            bam_path=bam_path,
-            stats=stats,
-            n_samples=n_samples,
-            sample_prob=sample_prob,
-            with_scores=with_scores,
-            random_float=random.random,
-        )
+    return _collect_sampled_footprint_stats(
+        bam_path,
+        stats,
+        n_samples,
+        sample_prob,
+        with_scores,
+        random.random,
     )

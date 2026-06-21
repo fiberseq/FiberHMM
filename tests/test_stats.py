@@ -159,7 +159,7 @@ def test_add_read_to_footprint_stats_updates_accumulator():
     np.testing.assert_allclose(stats.msp_scores, [128 / 255])
 
 
-def test_collect_sampled_footprint_stats_from_request_filters_and_limits(monkeypatch):
+def test_collect_sampled_footprint_stats_filters_and_limits(monkeypatch):
     handle = _FakeBam([
         _fake_read(is_unmapped=True),
         _FakeRead({"ns": [1], "nl": [4]}),
@@ -175,15 +175,13 @@ def test_collect_sampled_footprint_stats_from_request_filters_and_limits(monkeyp
     )
     stats = stats_module.FootprintStats()
 
-    result = stats_module._collect_sampled_footprint_stats_from_request(
-        stats_module._StatsSamplingPassRequest(
-            bam_path="input.bam",
-            stats=stats,
-            n_samples=1,
-            sample_prob=0.5,
-            with_scores=False,
-            random_float=lambda: next(random_values),
-        )
+    result = stats_module._collect_sampled_footprint_stats(
+        bam_path="input.bam",
+        stats=stats,
+        n_samples=1,
+        sample_prob=0.5,
+        with_scores=False,
+        random_float=lambda: next(random_values),
     )
 
     assert result is stats

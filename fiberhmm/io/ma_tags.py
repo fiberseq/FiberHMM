@@ -79,33 +79,6 @@ class _AqAnnotationValues:
     next_idx: int
 
 
-@dataclass(frozen=True)
-class _MaTagRequest:
-    read_length: int
-    nuc_intervals: Sequence[Tuple[int, int]]
-    msp_intervals: Sequence[Tuple[int, int]]
-    tf_intervals: Sequence[Tuple[int, int]] = ()
-    nuc_qual_spec: str = 'Q'
-    tf_qual_spec: str = 'QQQ'
-
-
-@dataclass(frozen=True)
-class _AqArrayRequest:
-    nq_values: Sequence[int]
-    tf_q_values: Sequence[int] = ()
-    tf_lq_values: Sequence[int] = ()
-    tf_rq_values: Sequence[int] = ()
-    nuc_lq_values: Sequence[int] = ()
-    nuc_rq_values: Sequence[int] = ()
-
-
-@dataclass(frozen=True)
-class _AqParseRequest:
-    aq: object
-    qual_spec_per_type: Sequence[str]
-    n_annotations_per_type: Sequence[int]
-
-
 def llr_to_tq(llr: float) -> int:
     """Encode an LLR (nats) into the tq quality byte."""
     return max(0, min(255, int(round(llr * TQ_SCALE))))
@@ -331,31 +304,17 @@ def format_ma_tag(read_length: int,
 
     Coordinates are converted from 0-based (internal) to 1-based (spec).
     """
-    return format_ma_tag_from_request(
-        _MaTagRequest(
-            read_length=read_length,
-            nuc_intervals=nuc_intervals,
-            msp_intervals=msp_intervals,
-            tf_intervals=tf_intervals,
-            nuc_qual_spec=nuc_qual_spec,
-            tf_qual_spec=tf_qual_spec,
-        ),
-    )
-
-
-def format_ma_tag_from_request(request: _MaTagRequest) -> str:
-    """Build the MA:Z string from named formatting inputs."""
     # Strand field is '.' (unknown): nuc/msp/tf are strand-agnostic molecular
     # features, matching fibertools. (Versions <= 2.13.1 wrote '+'; the parser
     # still accepts it.)
-    parts = [str(int(request.read_length))]
+    parts = [str(int(read_length))]
     parts.extend(
         _ma_annotation_parts(
-            request.nuc_intervals,
-            request.msp_intervals,
-            request.tf_intervals,
-            request.nuc_qual_spec,
-            request.tf_qual_spec,
+            nuc_intervals,
+            msp_intervals,
+            tf_intervals,
+            nuc_qual_spec,
+            tf_qual_spec,
         )
     )
     return ';'.join(parts)
@@ -398,38 +357,24 @@ def format_aq_array(nq_values: Sequence[int],
     nuc+QQQ schema), each nucleosome instead emits three bytes (nq, el, er),
     mirroring the TF layout. The three nuc arrays must then be equal length.
     """
-    return format_aq_array_from_request(
-        _AqArrayRequest(
-            nq_values=nq_values,
-            tf_q_values=tf_q_values,
-            tf_lq_values=tf_lq_values,
-            tf_rq_values=tf_rq_values,
-            nuc_lq_values=nuc_lq_values,
-            nuc_rq_values=nuc_rq_values,
-        ),
-    )
-
-
-def format_aq_array_from_request(request: _AqArrayRequest) -> array.array:
-    """Build the AQ:B:C array from named quality arrays."""
     out = array.array('B')
-    if _nuc_aq_has_edge_qualities(request.nuc_lq_values, request.nuc_rq_values):
+    if _nuc_aq_has_edge_qualities(nuc_lq_values, nuc_rq_values):
         _append_quality_rows(
             out,
             "nuc",
-            request.nq_values,
-            request.nuc_lq_values,
-            request.nuc_rq_values,
+            nq_values,
+            nuc_lq_values,
+            nuc_rq_values,
         )
     else:
-        _append_quality_rows(out, "nuc", request.nq_values)
-    if _has_values(request.tf_q_values):
+        _append_quality_rows(out, "nuc", nq_values)
+    if _has_values(tf_q_values):
         _append_quality_rows(
             out,
             "TF",
-            request.tf_q_values,
-            request.tf_lq_values,
-            request.tf_rq_values,
+            tf_q_values,
+            tf_lq_values,
+            tf_rq_values,
         )
     return out
 
@@ -499,24 +444,13 @@ def parse_aq_array(aq, qual_spec_per_type: Sequence[str],
     Walks the AQ bytes consuming ``len(qual_spec)`` bytes per annotation,
     in the same order as the MA string.
     """
-    return parse_aq_array_from_request(
-        _AqParseRequest(
-            aq=aq,
-            qual_spec_per_type=qual_spec_per_type,
-            n_annotations_per_type=n_annotations_per_type,
-        ),
-    )
-
-
-def parse_aq_array_from_request(request: _AqParseRequest) -> List[List[int]]:
-    """Parse AQ bytes from named schema/count inputs."""
     result: List[List[int]] = []
     idx = 0
-    aq_values = _aq_values_sequence(request.aq)
+    aq_values = _aq_values_sequence(aq)
     aq_len = len(aq_values)
     for spec, n in zip(
-        request.qual_spec_per_type,
-        request.n_annotations_per_type,
+        qual_spec_per_type,
+        n_annotations_per_type,
     ):
         n_q = len(spec)
         for _ in range(n):

@@ -31,14 +31,10 @@ from fiberhmm.io.autosql import (
     _autosql_file_name,
     _autosql_file_suffix,
     _autosql_variant_suffix,
-    _AutoSqlOutputRequest,
-    _AutoSqlSchemaRequest,
     _canonical_autosql_type,
     _create_autosql_output_path,
-    _create_autosql_output_path_from_request,
     _escape_autosql_description,
     _make_schema,
-    _make_schema_from_request,
     _schema_description,
     _schema_fields,
     get_schema,
@@ -1526,20 +1522,13 @@ def test_autosql_file_name_and_suffix_helpers():
 
 def test_create_autosql_output_path_handles_tempfile_and_output_dir(tmp_path):
     out_dir = tmp_path / 'schemas'
-    request = _AutoSqlOutputRequest(
-        extract_type='tf',
-        variant='.bs',
-        suffix='.bs.as',
-        out_dir=str(out_dir),
-    )
 
-    fixed_path = _create_autosql_output_path_from_request(request)
+    fixed_path = _create_autosql_output_path(
+        'tf', '.bs', '.bs.as', str(out_dir),
+    )
 
     assert fixed_path == str(out_dir / 'fiberhmm_tf.bs.as')
     assert out_dir.is_dir()
-    assert _create_autosql_output_path(
-        'tf', '.bs', '.bs.as', str(out_dir),
-    ) == fixed_path
 
     temp_path = _create_autosql_output_path('tf', '.bs', '.bs.as', None)
     try:
@@ -1585,19 +1574,8 @@ def test_schema_fields_add_block_score_and_circular_columns():
     assert 'circId' in circular_fields
 
 
-def test_make_autosql_schema_from_request_matches_adapter():
-    request = _AutoSqlSchemaRequest(
-        table_name='fiberhmm_tf',
-        description='TF "calls"',
-        extract_type='tf',
-        block_scores=True,
-        sample_name='sample-a',
-        circular_groups=True,
-    )
-
-    schema = _make_schema_from_request(request)
-
-    assert schema == _make_schema(
+def test_make_autosql_schema():
+    schema = _make_schema(
         'fiberhmm_tf',
         'TF "calls"',
         extract_type='tf',
@@ -1605,6 +1583,7 @@ def test_make_autosql_schema_from_request_matches_adapter():
         sample_name='sample-a',
         circular_groups=True,
     )
+
     assert 'table fiberhmm_tf' in schema
     assert 'Sample: sample-a. TF \\"calls\\"' in schema
     assert 'blockTq' in schema

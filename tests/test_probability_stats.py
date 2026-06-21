@@ -214,17 +214,11 @@ def test_write_probability_stats_summary(tmp_path):
 
 
 def test_probability_stats_output_path_uses_context_stem():
-    request = stats._ProbabilityStatsPathRequest("plots", "run", 4)
-
-    assert request.stats_path("pdf") == "plots/run_k4_stats.pdf"
-    assert request.distribution_plot_path("A") == (
-        "plots/run_A_k4_distribution.png"
-    )
     assert stats._probability_stats_output_path("plots", "run", 4, "pdf") == (
-        request.stats_path("pdf")
+        "plots/run_k4_stats.pdf"
     )
     assert stats._probability_distribution_plot_path("plots", "run", "A", 4) == (
-        request.distribution_plot_path("A")
+        "plots/run_A_k4_distribution.png"
     )
 
 
@@ -363,24 +357,11 @@ def test_probability_pdf_page_helpers_orchestrate_plot_sections(monkeypatch):
     plt = _FakeProbabilityPlt()
     pdf = _FakeProbabilityPdf()
 
-    stats._write_probability_distribution_pdf_page_from_request(
-        stats._ProbabilityDistributionPdfPageRequest(
-            plt=plt,
-            pdf=pdf,
-            base="A",
-            context_size=3,
-            accessible_probs=acc,
-            inaccessible_probs=inacc,
-        )
+    stats._write_probability_distribution_pdf_page(
+        plt, pdf, "A", 3, acc, inacc,
     )
-    stats._write_probability_counts_pdf_page_from_request(
-        stats._ProbabilityCountsPdfPageRequest(
-            plt=plt,
-            pdf=pdf,
-            base="A",
-            accessible_probs=acc,
-            inaccessible_probs=inacc,
-        )
+    stats._write_probability_counts_pdf_page(
+        plt, pdf, "A", acc, inacc,
     )
 
     assert plt.subplots_calls == [
@@ -514,27 +495,7 @@ def test_save_probability_distribution_png_writes_expected_path(monkeypatch, cap
     )
 
     plt = _FakeProbabilityPlt()
-    request = stats._ProbabilityDistributionPngRequest(
-        plots_dir="plots",
-        base_name="run",
-        base="A",
-        context_size=4,
-        accessible_counter=acc,
-        inaccessible_counter=inacc,
-        accessible_probs=table,
-        inaccessible_probs=table,
-    )
-    png_path = stats._save_probability_distribution_png_from_request(plt, request)
-
-    assert png_path == "plots/run_A_k4_distribution.png"
-    assert plt.subplots_calls == [((), {"figsize": (8, 5)})]
-    assert plt.saved == [((png_path,), {"dpi": 150})]
-    assert plt.closed == [plt.fig]
-    assert plot_calls == [(
-        plt.axes[0, 0], acc, inacc, table, table, "A", 4,
-    )]
-    assert f"Plot: {png_path}" in capsys.readouterr().out
-    assert stats._save_probability_distribution_png(
+    png_path = stats._save_probability_distribution_png(
         plt,
         "plots",
         "run",
@@ -544,7 +505,16 @@ def test_save_probability_distribution_png_writes_expected_path(monkeypatch, cap
         inacc,
         table,
         table,
-    ) == png_path
+    )
+
+    assert png_path == "plots/run_A_k4_distribution.png"
+    assert plt.subplots_calls == [((), {"figsize": (8, 5)})]
+    assert plt.saved == [((png_path,), {"dpi": 150})]
+    assert plt.closed == [plt.fig]
+    assert plot_calls == [(
+        plt.axes[0, 0], acc, inacc, table, table, "A", 4,
+    )]
+    assert f"Plot: {png_path}" in capsys.readouterr().out
 
 
 def test_save_probability_distribution_png_closes_figure_when_save_fails(
@@ -667,13 +637,17 @@ def test_probability_distribution_pngs_collect_paths(monkeypatch):
     }
     calls = []
 
-    def fake_save(plt, request):
-        calls.append((plt, request))
-        return f"{request.plots_dir}/{request.base_name}_{request.base}.png"
+    def fake_save(plt, plots_dir, base_name, base, context_size,
+                  acc, inacc, acc_probs, inacc_probs):
+        calls.append((
+            plt, plots_dir, base_name, base, context_size,
+            acc, inacc, acc_probs, inacc_probs,
+        ))
+        return f"{plots_dir}/{base_name}_{base}.png"
 
     monkeypatch.setattr(
         stats,
-        "_save_probability_distribution_png_from_request",
+        "_save_probability_distribution_png",
         fake_save,
     )
 
@@ -688,30 +662,12 @@ def test_probability_distribution_pngs_collect_paths(monkeypatch):
     ) == ["plots/run_A.png", "plots/run_C.png"]
     assert calls == [
         (
-            plt,
-            stats._ProbabilityDistributionPngRequest(
-                plots_dir="plots",
-                base_name="run",
-                base="A",
-                context_size=5,
-                accessible_counter=accessible["A"],
-                inaccessible_counter=inaccessible["A"],
-                accessible_probs=table,
-                inaccessible_probs=table,
-            ),
+            plt, "plots", "run", "A", 5,
+            accessible["A"], inaccessible["A"], table, table,
         ),
         (
-            plt,
-            stats._ProbabilityDistributionPngRequest(
-                plots_dir="plots",
-                base_name="run",
-                base="C",
-                context_size=5,
-                accessible_counter=accessible["C"],
-                inaccessible_counter=inaccessible["C"],
-                accessible_probs=table,
-                inaccessible_probs=table,
-            ),
+            plt, "plots", "run", "C", 5,
+            accessible["C"], inaccessible["C"], table, table,
         ),
     ]
     assert accessible["A"].context_sizes == [5]
@@ -742,16 +698,14 @@ def test_write_probability_plot_outputs_writes_pdf_and_pngs(monkeypatch, capsys)
 
     plt = object()
     pdf_pages = object()
-    assert stats._write_probability_plot_outputs_from_request(
-        stats._ProbabilityPlotOutputsRequest(
-            plt=plt,
-            pdf_pages_factory=pdf_pages,
-            plots_dir="plots",
-            base_name="run",
-            accessible_counters=accessible,
-            inaccessible_counters=inaccessible,
-            context_size=4,
-        )
+    assert stats._write_probability_plot_outputs(
+        plt,
+        pdf_pages,
+        "plots",
+        "run",
+        accessible,
+        inaccessible,
+        4,
     ) == "plots/run_k4_stats.pdf"
 
     assert calls == [

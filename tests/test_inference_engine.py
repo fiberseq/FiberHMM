@@ -53,13 +53,10 @@ def test_single_read_result_from_prediction_includes_optional_fields():
     }
     encoded = np.array([1, 2, 3])
 
-    request = engine._SingleReadResultRequest(
-        fp_result=fp_result,
-        strand="+",
-        encoded=encoded,
+    result = engine._single_read_result_from_prediction(
+        fp_result, strand="+", encoded=encoded,
         return_posteriors=True, include_encoded=True,
     )
-    result = engine._single_read_result_from_request(request)
 
     np.testing.assert_array_equal(result["ns"], [1])
     np.testing.assert_array_equal(result["nl"], [10])
@@ -68,13 +65,6 @@ def test_single_read_result_from_prediction_includes_optional_fields():
     assert result["strand"] == "+"
     np.testing.assert_array_equal(result["posteriors"], [0.1, 0.9])
     np.testing.assert_array_equal(result["encoded"], [1, 2, 3])
-
-    adapter_result = engine._single_read_result_from_prediction(
-        fp_result, strand="+", encoded=encoded,
-        return_posteriors=True, include_encoded=True,
-    )
-    np.testing.assert_array_equal(adapter_result["encoded"], result["encoded"])
-    assert adapter_result["strand"] == result["strand"]
 
 
 def test_base_single_read_fields_maps_linear_prediction_fields():
@@ -237,9 +227,9 @@ def test_process_single_read_request_runs_prediction_path(monkeypatch):
         fake_single_read_result,
     )
 
-    request = engine._SingleReadProcessRequest(
-        fiber_read=fiber_read,
-        model=model,
+    assert engine._process_single_read(
+        fiber_read,
+        model,
         edge_trim=7,
         circular=True,
         mode="daf",
@@ -249,9 +239,7 @@ def test_process_single_read_request_runs_prediction_path(monkeypatch):
         return_posteriors=True,
         nuc_min_size=85,
         include_encoded=True,
-    )
-
-    assert engine._process_single_read_from_request(request) == {"ok": True}
+    ) == {"ok": True}
     assert calls[0] == (
         "strand",
         (fiber_read, "ACGT", {1}, "daf"),
@@ -359,19 +347,10 @@ class TestPredictFootprintsAndMsps:
         assert len(result['footprint_starts']) == 0
         assert len(result['msp_starts']) == 0
 
-    def test_request_path_matches_public_adapter(self, simple_model):
+    def test_prediction_populates_all_tracks(self, simple_model):
         obs = np.array([0, 0, 0, 3, 3, 3, 3, 3, 0, 0, 0], dtype=np.int32)
 
-        request = engine._FootprintsAndMspsRequest(
-            model=simple_model,
-            encoded_read=obs,
-            msp_min_size=10,
-            with_scores=True,
-            return_posteriors=True,
-            nuc_min_size=1,
-        )
-        from_request = engine.predict_footprints_and_msps_from_request(request)
-        from_adapter = predict_footprints_and_msps(
+        result = predict_footprints_and_msps(
             simple_model,
             obs,
             msp_min_size=10,
@@ -380,12 +359,6 @@ class TestPredictFootprintsAndMsps:
             nuc_min_size=1,
         )
 
-        def assert_optional_array_equal(left, right):
-            if left is None or right is None:
-                assert left is right
-                return
-            np.testing.assert_allclose(left, right)
-
         for key in (
             "footprint_starts",
             "footprint_sizes",
@@ -393,13 +366,10 @@ class TestPredictFootprintsAndMsps:
             "msp_sizes",
             "states",
         ):
-            np.testing.assert_array_equal(from_request[key], from_adapter[key])
-        for key in (
-            "footprint_scores",
-            "msp_scores",
-            "posteriors",
-        ):
-            assert_optional_array_equal(from_request[key], from_adapter[key])
+            assert isinstance(result[key], np.ndarray)
+        assert len(result["states"]) == len(obs)
+        assert result["posteriors"] is not None
+        assert len(result["posteriors"]) == len(obs)
 
     def test_predict_state_outputs_uses_plain_predict_when_possible(self):
         class FakeModel:

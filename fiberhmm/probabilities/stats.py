@@ -102,67 +102,6 @@ class _BaseProbabilityContext:
     probability_tables: _ProbabilityTablesForBase
 
 
-@dataclass(frozen=True)
-class _ProbabilityStatsPathRequest:
-    plots_dir: str
-    base_name: str
-    context_size: int
-
-    def stats_path(self, extension: str) -> str:
-        return os.path.join(
-            self.plots_dir,
-            f"{self.base_name}_k{self.context_size}_stats.{extension}",
-        )
-
-    def distribution_plot_path(self, base: str) -> str:
-        return os.path.join(
-            self.plots_dir,
-            f"{self.base_name}_{base}_k{self.context_size}_distribution.png",
-        )
-
-
-@dataclass(frozen=True)
-class _ProbabilityDistributionPngRequest:
-    plots_dir: str
-    base_name: str
-    base: str
-    context_size: int
-    accessible_counter: 'ContextCounter'
-    inaccessible_counter: 'ContextCounter'
-    accessible_probs: 'pd.DataFrame'
-    inaccessible_probs: 'pd.DataFrame'
-
-
-@dataclass(frozen=True)
-class _ProbabilityDistributionPdfPageRequest:
-    plt: object
-    pdf: object
-    base: str
-    context_size: int
-    accessible_probs: 'pd.DataFrame'
-    inaccessible_probs: 'pd.DataFrame'
-
-
-@dataclass(frozen=True)
-class _ProbabilityCountsPdfPageRequest:
-    plt: object
-    pdf: object
-    base: str
-    accessible_probs: 'pd.DataFrame'
-    inaccessible_probs: 'pd.DataFrame'
-
-
-@dataclass(frozen=True)
-class _ProbabilityPlotOutputsRequest:
-    plt: object
-    pdf_pages_factory: object
-    plots_dir: str
-    base_name: str
-    accessible_counters: Dict[str, 'ContextCounter']
-    inaccessible_counters: Dict[str, 'ContextCounter']
-    context_size: int
-
-
 def _probability_tables_for_base(
     accessible_counters,
     inaccessible_counters,
@@ -570,9 +509,10 @@ def _probability_stats_output_path(
     context_size: int,
     extension: str,
 ) -> str:
-    return _ProbabilityStatsPathRequest(
-        plots_dir, base_name, context_size,
-    ).stats_path(extension)
+    return os.path.join(
+        plots_dir,
+        f"{base_name}_k{context_size}_stats.{extension}",
+    )
 
 
 def _probability_distribution_plot_path(
@@ -581,9 +521,10 @@ def _probability_distribution_plot_path(
     base: str,
     context_size: int,
 ) -> str:
-    return _ProbabilityStatsPathRequest(
-        plots_dir, base_name, context_size,
-    ).distribution_plot_path(base)
+    return os.path.join(
+        plots_dir,
+        f"{base_name}_{base}_k{context_size}_distribution.png",
+    )
 
 
 def _write_probability_distribution_pdf_page(
@@ -594,32 +535,17 @@ def _write_probability_distribution_pdf_page(
     acc_probs,
     inacc_probs,
 ):
-    return _write_probability_distribution_pdf_page_from_request(
-        _ProbabilityDistributionPdfPageRequest(
-            plt=plt,
-            pdf=pdf,
-            base=base,
-            context_size=context_size,
-            accessible_probs=acc_probs,
-            inaccessible_probs=inacc_probs,
-        ),
-    )
-
-
-def _write_probability_distribution_pdf_page_from_request(
-    request: _ProbabilityDistributionPdfPageRequest,
-):
-    fig, axes = request.plt.subplots(2, 2, figsize=(11, 8.5))
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
     try:
         fig.suptitle(
-            f'{request.base}-centered Context Statistics (k={request.context_size})',
+            f'{base}-centered Context Statistics (k={context_size})',
             fontsize=14,
             fontweight='bold',
         )
 
         ax = axes[0, 0]
-        acc_ratios = request.accessible_probs['ratio'].values
-        inacc_ratios = request.inaccessible_probs['ratio'].values
+        acc_ratios = acc_probs['ratio'].values
+        inacc_ratios = inacc_probs['ratio'].values
         _plot_probability_ratio_histograms(ax, acc_ratios, inacc_ratios)
         ax.set_xlabel('P(methylation | context)')
         ax.set_ylabel('Number of contexts')
@@ -627,17 +553,17 @@ def _write_probability_distribution_pdf_page_from_request(
         ax.legend()
 
         merged = _merged_probability_table(
-            request.accessible_probs,
-            request.inaccessible_probs,
+            acc_probs,
+            inacc_probs,
         )
         _plot_accessible_inaccessible_probability_scatter(axes[0, 1], merged)
         _plot_log_odds_distribution(axes[1, 0], merged)
         _plot_top_differentiating_contexts(axes[1, 1], merged)
 
-        request.plt.tight_layout()
-        request.pdf.savefig(fig)
+        plt.tight_layout()
+        pdf.savefig(fig)
     finally:
-        request.plt.close(fig)
+        plt.close(fig)
 
 
 def _write_probability_counts_pdf_page(
@@ -647,33 +573,19 @@ def _write_probability_counts_pdf_page(
     acc_probs,
     inacc_probs,
 ):
-    return _write_probability_counts_pdf_page_from_request(
-        _ProbabilityCountsPdfPageRequest(
-            plt=plt,
-            pdf=pdf,
-            base=base,
-            accessible_probs=acc_probs,
-            inaccessible_probs=inacc_probs,
-        ),
-    )
-
-
-def _write_probability_counts_pdf_page_from_request(
-    request: _ProbabilityCountsPdfPageRequest,
-):
-    fig, axes = request.plt.subplots(2, 2, figsize=(11, 8.5))
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
     try:
         fig.suptitle(
-            f'{request.base}-centered Context Counts',
+            f'{base}-centered Context Counts',
             fontsize=14,
             fontweight='bold',
         )
 
-        acc_total = _context_observation_totals(request.accessible_probs)
-        inacc_total = _context_observation_totals(request.inaccessible_probs)
+        acc_total = _context_observation_totals(acc_probs)
+        inacc_total = _context_observation_totals(inacc_probs)
         merged = _merged_probability_table(
-            request.accessible_probs,
-            request.inaccessible_probs,
+            acc_probs,
+            inacc_probs,
         )
 
         _plot_observations_per_context(axes[0, 0], acc_total, inacc_total)
@@ -681,40 +593,10 @@ def _write_probability_counts_pdf_page_from_request(
         _plot_probability_vs_coverage(axes[1, 0], merged)
         _plot_context_frequency_comparison(axes[1, 1], merged)
 
-        request.plt.tight_layout()
-        request.pdf.savefig(fig)
-    finally:
-        request.plt.close(fig)
-
-
-def _save_probability_distribution_png_from_request(
-    plt,
-    request: _ProbabilityDistributionPngRequest,
-) -> str:
-    fig, ax = plt.subplots(figsize=(8, 5))
-    png_path = _probability_distribution_plot_path(
-        request.plots_dir,
-        request.base_name,
-        request.base,
-        request.context_size,
-    )
-    try:
-        _plot_probability_distribution_png_axis(
-            ax,
-            request.accessible_counter,
-            request.inaccessible_counter,
-            request.accessible_probs,
-            request.inaccessible_probs,
-            request.base,
-            request.context_size,
-        )
-
         plt.tight_layout()
-        plt.savefig(png_path, dpi=150)
+        pdf.savefig(fig)
     finally:
         plt.close(fig)
-    print(f"  Plot: {png_path}")
-    return png_path
 
 
 def _save_probability_distribution_png(
@@ -728,19 +610,30 @@ def _save_probability_distribution_png(
     acc_probs,
     inacc_probs,
 ) -> str:
-    return _save_probability_distribution_png_from_request(
-        plt,
-        _ProbabilityDistributionPngRequest(
-            plots_dir=plots_dir,
-            base_name=base_name,
-            base=base,
-            context_size=context_size,
-            accessible_counter=acc,
-            inaccessible_counter=inacc,
-            accessible_probs=acc_probs,
-            inaccessible_probs=inacc_probs,
-        ),
+    fig, ax = plt.subplots(figsize=(8, 5))
+    png_path = _probability_distribution_plot_path(
+        plots_dir,
+        base_name,
+        base,
+        context_size,
     )
+    try:
+        _plot_probability_distribution_png_axis(
+            ax,
+            acc,
+            inacc,
+            acc_probs,
+            inacc_probs,
+            base,
+            context_size,
+        )
+
+        plt.tight_layout()
+        plt.savefig(png_path, dpi=150)
+    finally:
+        plt.close(fig)
+    print(f"  Plot: {png_path}")
+    return png_path
 
 
 def _write_probability_stats_pdf(
@@ -785,18 +678,16 @@ def _save_probability_distribution_pngs(
         probability_tables = base_context.probability_tables
 
         png_paths.append(
-            _save_probability_distribution_png_from_request(
+            _save_probability_distribution_png(
                 plt,
-                _ProbabilityDistributionPngRequest(
-                    plots_dir=plots_dir,
-                    base_name=base_name,
-                    base=base_context.base,
-                    context_size=context_size,
-                    accessible_counter=base_context.accessible_counter,
-                    inaccessible_counter=base_context.inaccessible_counter,
-                    accessible_probs=probability_tables.accessible,
-                    inaccessible_probs=probability_tables.inaccessible,
-                ),
+                plots_dir,
+                base_name,
+                base_context.base,
+                context_size,
+                base_context.accessible_counter,
+                base_context.inaccessible_counter,
+                probability_tables.accessible,
+                probability_tables.inaccessible,
             )
         )
     return png_paths
@@ -811,45 +702,29 @@ def _write_probability_plot_outputs(
     inaccessible_counters: Dict[str, 'ContextCounter'],
     context_size: int,
 ) -> str:
-    return _write_probability_plot_outputs_from_request(
-        _ProbabilityPlotOutputsRequest(
-            plt=plt,
-            pdf_pages_factory=PdfPages,
-            plots_dir=plots_dir,
-            base_name=base_name,
-            accessible_counters=accessible_counters,
-            inaccessible_counters=inaccessible_counters,
-            context_size=context_size,
-        ),
-    )
-
-
-def _write_probability_plot_outputs_from_request(
-    request: _ProbabilityPlotOutputsRequest,
-) -> str:
     pdf_path = _probability_stats_output_path(
-        request.plots_dir,
-        request.base_name,
-        request.context_size,
+        plots_dir,
+        base_name,
+        context_size,
         "pdf",
     )
     _write_probability_stats_pdf(
-        request.plt,
-        request.pdf_pages_factory,
+        plt,
+        PdfPages,
         pdf_path,
-        request.accessible_counters,
-        request.inaccessible_counters,
-        request.context_size,
+        accessible_counters,
+        inaccessible_counters,
+        context_size,
     )
     print(f"  Plots: {pdf_path}")
 
     _save_probability_distribution_pngs(
-        request.plt,
-        request.plots_dir,
-        request.base_name,
-        request.accessible_counters,
-        request.inaccessible_counters,
-        request.context_size,
+        plt,
+        plots_dir,
+        base_name,
+        accessible_counters,
+        inaccessible_counters,
+        context_size,
     )
     return pdf_path
 
