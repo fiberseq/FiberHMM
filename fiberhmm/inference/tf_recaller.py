@@ -104,27 +104,6 @@ class TFCall:
 
 
 @dataclass
-class _TfIntervalScanRequest:
-    obs: np.ndarray
-    lo: int
-    hi: int
-    llr_hit: np.ndarray
-    llr_miss: np.ndarray
-    min_llr: float
-    min_opps: int
-
-
-@dataclass
-class _TfIntervalBatchScanRequest:
-    obs: np.ndarray
-    intervals: Sequence[Tuple[int, int]]
-    llr_hit: np.ndarray
-    llr_miss: np.ndarray
-    min_llr: float
-    min_opps: int
-
-
-@dataclass
 class _TagOutputFrame:
     nuc_intervals: List[Tuple[int, int]]
     msp_intervals: List[Tuple[int, int]]
@@ -135,21 +114,6 @@ class _TagOutputFrame:
     tf_er_values: List[int]
     nuc_el_values: Optional[List[int]]
     nuc_er_values: Optional[List[int]]
-
-
-@dataclass
-class _TagOutputFrameRequest:
-    read: object
-    read_length: int
-    kept_nucs: Sequence[Tuple[int, int]]
-    msps: Sequence[Tuple[int, int]]
-    tf_intervals: Sequence[Tuple[int, int]]
-    nq_values: Sequence[int]
-    tq_values: Sequence[int]
-    tf_el_values: Sequence[int]
-    tf_er_values: Sequence[int]
-    nuc_el_values: Optional[Sequence[int]] = None
-    nuc_er_values: Optional[Sequence[int]] = None
 
 
 @dataclass
@@ -168,18 +132,6 @@ class _RecallTagPayload:
     nuc_q_split: Optional[List[Sequence[int]]]
     tf_q_split: Optional[List[Sequence[int]]]
     needs_an: bool
-
-
-@dataclass
-class _RecallTagPayloadRequest:
-    read: object
-    read_length: int
-    tf_calls: Sequence[TFCall]
-    kept_nucs: Sequence[Tuple[int, int]]
-    msps: Sequence[Tuple[int, int]]
-    nq_for_kept_nucs: Optional[Sequence[int]]
-    nuc_el_for_kept: Optional[Sequence[int]]
-    nuc_er_for_kept: Optional[Sequence[int]]
 
 
 @dataclass
@@ -207,43 +159,11 @@ class _RecallTfQualityInputs:
 
 
 @dataclass
-class _LegacyRecallTagWriteRequest:
-    read: object
-    read_length: int
-    kept_nucs: Sequence[Tuple[int, int]]
-    msps: Sequence[Tuple[int, int]]
-    tf_intervals: Sequence[Tuple[int, int]]
-    nq_for_kept_nucs: Optional[Sequence[int]]
-    nq_values: Sequence[int]
-    downstream_compat: bool
-
-
-@dataclass
 class _RawLegacyRecallTags:
     nuc_starts: Sequence[int]
     nuc_lengths: Sequence[int]
     msp_starts: Sequence[int]
     msp_lengths: Sequence[int]
-
-
-@dataclass
-class _RecallReadRequest:
-    read: object
-    llr_hit: np.ndarray
-    llr_miss: np.ndarray
-    mode: str
-    context_size: int
-    min_llr: float
-    min_opps: int
-    unify_threshold: int
-
-
-@dataclass
-class _RecallObservationEncodingRequest:
-    read: object
-    extracted: tuple
-    mode: str
-    context_size: int
 
 
 @dataclass
@@ -253,23 +173,9 @@ class _EncodedRecallObservation:
 
 
 @dataclass
-class _RecallScanIntervalsRequest:
-    seq_tags: _RawLegacyRecallTags
-    read_length: int
-    unify_threshold: int
-
-
-@dataclass
 class _PreferredMmMlTags:
     mm_tag: object
     ml_tag: object
-
-
-@dataclass
-class _ModificationExtractRequest:
-    read: object
-    mode: str
-    context_size: int
 
 
 @dataclass
@@ -315,78 +221,49 @@ def _prepare_tag_output_frame(
     nuc_el_values: Optional[Sequence[int]] = None,
     nuc_er_values: Optional[Sequence[int]] = None,
 ) -> _TagOutputFrame:
-    return _prepare_tag_output_frame_from_request(
-        _TagOutputFrameRequest(
-            read=read,
-            read_length=read_length,
-            kept_nucs=kept_nucs,
-            msps=msps,
-            tf_intervals=tf_intervals,
-            nq_values=nq_values,
-            tq_values=tq_values,
-            tf_el_values=tf_el_values,
-            tf_er_values=tf_er_values,
-            nuc_el_values=nuc_el_values,
-            nuc_er_values=nuc_er_values,
-        ),
-    )
-
-
-def _prepare_tag_output_frame_from_request(
-    request: _TagOutputFrameRequest,
-) -> _TagOutputFrame:
     """Convert internal SEQ-frame calls to sorted molecular-frame tag rows."""
-    nuc_qqq = (
-        request.nuc_el_values is not None
-        and request.nuc_er_values is not None
-    )
-    if not request.read_length:
+    nuc_qqq = nuc_el_values is not None and nuc_er_values is not None
+    if not read_length:
         return _TagOutputFrame(
-            nuc_intervals=list(request.kept_nucs),
-            msp_intervals=list(request.msps),
-            tf_intervals=list(request.tf_intervals),
-            nq_values=list(request.nq_values),
-            tq_values=list(request.tq_values),
-            tf_el_values=list(request.tf_el_values),
-            tf_er_values=list(request.tf_er_values),
-            nuc_el_values=list(request.nuc_el_values)
-            if request.nuc_el_values is not None else None,
-            nuc_er_values=list(request.nuc_er_values)
-            if request.nuc_er_values is not None else None,
+            nuc_intervals=list(kept_nucs),
+            msp_intervals=list(msps),
+            tf_intervals=list(tf_intervals),
+            nq_values=list(nq_values),
+            tq_values=list(tq_values),
+            tf_el_values=list(tf_el_values),
+            tf_er_values=list(tf_er_values),
+            nuc_el_values=list(nuc_el_values) if nuc_el_values is not None else None,
+            nuc_er_values=list(nuc_er_values) if nuc_er_values is not None else None,
         )
 
-    rev = bool(getattr(request.read, 'is_reverse', False))
+    rev = bool(getattr(read, 'is_reverse', False))
 
     def _mol(start, length):
         if rev:
-            return flip_interval_frame(start, length, request.read_length)
+            return flip_interval_frame(start, length, read_length)
         return int(start), int(length)
 
     nuc_recs = sorted(
         (
             _mol(start, length),
-            request.nq_values[i],
-            (request.nuc_er_values[i] if rev else request.nuc_el_values[i])
-            if nuc_qqq else None,
-            (request.nuc_el_values[i] if rev else request.nuc_er_values[i])
-            if nuc_qqq else None,
+            nq_values[i],
+            (nuc_er_values[i] if rev else nuc_el_values[i]) if nuc_qqq else None,
+            (nuc_el_values[i] if rev else nuc_er_values[i]) if nuc_qqq else None,
         )
-        for i, (start, length) in enumerate(request.kept_nucs)
+        for i, (start, length) in enumerate(kept_nucs)
     )
     tf_recs = sorted(
         (
             _mol(start, length),
-            request.tq_values[i],
-            request.tf_er_values[i] if rev else request.tf_el_values[i],
-            request.tf_el_values[i] if rev else request.tf_er_values[i],
+            tq_values[i],
+            tf_er_values[i] if rev else tf_el_values[i],
+            tf_el_values[i] if rev else tf_er_values[i],
         )
-        for i, (start, length) in enumerate(request.tf_intervals)
+        for i, (start, length) in enumerate(tf_intervals)
     )
     return _TagOutputFrame(
         nuc_intervals=[r[0] for r in nuc_recs],
-        msp_intervals=sorted(
-            _mol(start, length) for start, length in request.msps
-        ),
+        msp_intervals=sorted(_mol(start, length) for start, length in msps),
         tf_intervals=[r[0] for r in tf_recs],
         nq_values=[r[1] for r in nuc_recs],
         tq_values=[r[1] for r in tf_recs],
@@ -661,31 +538,15 @@ def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
     Thin Python wrapper around ``_call_tfs_numba``; builds TFCall objects
     from the numpy result arrays.
     """
-    return call_tfs_in_interval_from_request(
-        _TfIntervalScanRequest(
-            obs=obs,
-            lo=lo,
-            hi=hi,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            min_llr=min_llr,
-            min_opps=min_opps,
-        )
-    )
-
-
-def call_tfs_in_interval_from_request(
-    request: _TfIntervalScanRequest,
-) -> List[TFCall]:
-    if request.hi <= request.lo:
+    if hi <= lo:
         return []
     # Ensure dtypes numba can bind to cleanly
-    obs_arr = np.ascontiguousarray(request.obs, dtype=np.int32)
-    hit_arr = np.ascontiguousarray(request.llr_hit, dtype=np.float64)
-    miss_arr = np.ascontiguousarray(request.llr_miss, dtype=np.float64)
+    obs_arr = np.ascontiguousarray(obs, dtype=np.int32)
+    hit_arr = np.ascontiguousarray(llr_hit, dtype=np.float64)
+    miss_arr = np.ascontiguousarray(llr_miss, dtype=np.float64)
     starts, ends, llrs, opps_arr, l_amb, r_amb = _call_tfs_numba(
-        obs_arr, int(request.lo), int(request.hi), hit_arr, miss_arr,
-        float(request.min_llr), int(request.min_opps),
+        obs_arr, int(lo), int(hi), hit_arr, miss_arr,
+        float(min_llr), int(min_opps),
     )
     calls: List[TFCall] = []
     for i in range(len(starts)):
@@ -697,21 +558,13 @@ def call_tfs_in_interval_from_request(
     return calls
 
 
-def _call_tfs_in_intervals_from_request(
-    request: _TfIntervalBatchScanRequest,
-) -> List[TFCall]:
+def _call_tfs_in_intervals(obs, intervals, llr_hit, llr_miss,
+                           min_llr, min_opps) -> List[TFCall]:
     calls: List[TFCall] = []
-    for lo, hi in request.intervals:
+    for lo, hi in intervals:
         calls.extend(
-            call_tfs_in_interval(
-                request.obs,
-                lo,
-                hi,
-                request.llr_hit,
-                request.llr_miss,
-                request.min_llr,
-                request.min_opps,
-            )
+            call_tfs_in_interval(obs, lo, hi, llr_hit, llr_miss,
+                                 min_llr, min_opps)
         )
     return calls
 
@@ -776,28 +629,12 @@ def extract_modifications(read, mode: str, context_size: int = 3
     Uses the manual MM/ML parser instead of pysam.modified_bases (the
     latter segfaults on some long Hia5 reads; SIGSEGV is uncatchable).
     """
-    return extract_modifications_from_request(
-        _ModificationExtractRequest(
-            read=read,
-            mode=mode,
-            context_size=context_size,
-        )
-    )
-
-
-def extract_modifications_from_request(
-    request: _ModificationExtractRequest,
-) -> Optional[Tuple[set, str, str]]:
-    seq = request.read.query_sequence
-    if seq is None or len(seq) < 2 * request.context_size + 1:
+    seq = read.query_sequence
+    if seq is None or len(seq) < 2 * context_size + 1:
         return None
-    if request.mode == 'daf' and has_iupac_encoding(seq):
-        return _extract_daf_iupac_modifications(request.read, seq)
-    return _extract_mm_ml_or_daf_md_modifications(
-        request.read,
-        seq,
-        request.mode,
-    )
+    if mode == 'daf' and has_iupac_encoding(seq):
+        return _extract_daf_iupac_modifications(read, seq)
+    return _extract_mm_ml_or_daf_md_modifications(read, seq, mode)
 
 
 def _raw_legacy_recall_tags(read):
@@ -859,32 +696,30 @@ def _passthrough_legacy_recall_intervals(
     return nucs, msps
 
 
-def _encoded_recall_observation_from_request(
-    request: _RecallObservationEncodingRequest,
+def _encode_recall_observation(
+    read, extracted, mode: str, context_size: int,
 ) -> _EncodedRecallObservation:
-    mod_pos, strand, seq = request.extracted
+    mod_pos, strand, seq = extracted
     obs = encode_from_query_sequence(
         seq,
         mod_pos,
         edge_trim=10,
-        mode=request.mode,
+        mode=mode,
         strand=strand,
-        context_size=request.context_size,
-        is_reverse=bool(request.read.is_reverse),
+        context_size=context_size,
+        is_reverse=bool(read.is_reverse),
     )
     return _EncodedRecallObservation(obs=obs, read_length=len(seq))
 
 
-def _recall_scan_intervals_from_request(
-    request: _RecallScanIntervalsRequest,
-):
+def _recall_scan_intervals(seq_tags, read_length: int, unify_threshold: int):
     return build_scan_intervals(
-        request.seq_tags.nuc_starts,
-        request.seq_tags.nuc_lengths,
-        request.seq_tags.msp_starts,
-        request.seq_tags.msp_lengths,
-        request.read_length,
-        unify_threshold=request.unify_threshold,
+        seq_tags.nuc_starts,
+        seq_tags.nuc_lengths,
+        seq_tags.msp_starts,
+        seq_tags.msp_lengths,
+        read_length,
+        unify_threshold=unify_threshold,
     )
 
 
@@ -945,78 +780,29 @@ def recall_read(
                               (>= unify_threshold OR no overlapping TF call)
         - msp_intervals: v2 MSPs unchanged
     """
-    return recall_read_from_request(
-        _RecallReadRequest(
-            read=read,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            mode=mode,
-            context_size=context_size,
-            min_llr=min_llr,
-            min_opps=min_opps,
-            unify_threshold=unify_threshold,
-        )
-    )
-
-
-def recall_read_from_request(
-    request: _RecallReadRequest,
-) -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
-    raw_tags = _raw_legacy_recall_tags(request.read)
+    raw_tags = _raw_legacy_recall_tags(read)
 
     if len(raw_tags.nuc_starts) == 0 and len(raw_tags.msp_starts) == 0:
         return [], [], []
 
-    seq_tags = _seq_frame_legacy_recall_tags(request.read, raw_tags)
+    seq_tags = _seq_frame_legacy_recall_tags(read, raw_tags)
 
-    extracted = extract_modifications(
-        request.read,
-        request.mode,
-        request.context_size,
-    )
+    extracted = extract_modifications(read, mode, context_size)
     if extracted is None:
         # Pass through v2 calls unchanged
         nucs, msps = _passthrough_legacy_recall_intervals(seq_tags)
         return [], nucs, msps
 
-    encoded = _encoded_recall_observation_from_request(
-        _RecallObservationEncodingRequest(
-            read=request.read,
-            extracted=extracted,
-            mode=request.mode,
-            context_size=request.context_size,
-        )
-    )
-
-    intervals = _recall_scan_intervals_from_request(
-        _RecallScanIntervalsRequest(
-            seq_tags=seq_tags,
-            read_length=encoded.read_length,
-            unify_threshold=request.unify_threshold,
-        )
-    )
-
-    tf_calls = _call_tfs_in_intervals_from_request(
-        _TfIntervalBatchScanRequest(
-            encoded.obs,
-            intervals,
-            request.llr_hit,
-            request.llr_miss,
-            request.min_llr,
-            request.min_opps,
-        )
+    encoded = _encode_recall_observation(read, extracted, mode, context_size)
+    intervals = _recall_scan_intervals(seq_tags, encoded.read_length, unify_threshold)
+    tf_calls = _call_tfs_in_intervals(
+        encoded.obs, intervals, llr_hit, llr_miss, min_llr, min_opps,
     )
 
     # Unify: drop v2 short-nucs (nl < threshold) that overlap any TF call.
-    msps = _positive_length_intervals(
-        seq_tags.msp_starts,
-        seq_tags.msp_lengths,
-    )
+    msps = _positive_length_intervals(seq_tags.msp_starts, seq_tags.msp_lengths)
     kept_nucs = _kept_legacy_nuc_intervals(
-        seq_tags.nuc_starts,
-        seq_tags.nuc_lengths,
-        tf_calls,
-        request.unify_threshold,
+        seq_tags.nuc_starts, seq_tags.nuc_lengths, tf_calls, unify_threshold,
     )
 
     return tf_calls, kept_nucs, msps
@@ -1193,38 +979,18 @@ def _build_recall_tag_payload(
     nuc_el_for_kept: Optional[Sequence[int]],
     nuc_er_for_kept: Optional[Sequence[int]],
 ) -> _RecallTagPayload:
-    return _build_recall_tag_payload_from_request(
-        _RecallTagPayloadRequest(
-            read=read,
-            read_length=read_length,
-            tf_calls=tf_calls,
-            kept_nucs=kept_nucs,
-            msps=msps,
-            nq_for_kept_nucs=nq_for_kept_nucs,
-            nuc_el_for_kept=nuc_el_for_kept,
-            nuc_er_for_kept=nuc_er_for_kept,
-        ),
-    )
-
-
-def _build_recall_tag_payload_from_request(
-    request: _RecallTagPayloadRequest,
-) -> _RecallTagPayload:
     nuc_quality = _recall_nuc_quality_inputs(
-        request.kept_nucs,
-        request.nq_for_kept_nucs,
-        request.nuc_el_for_kept,
-        request.nuc_er_for_kept,
+        kept_nucs, nq_for_kept_nucs, nuc_el_for_kept, nuc_er_for_kept,
     )
-    tf_quality = _recall_tf_quality_inputs(request.tf_calls)
+    tf_quality = _recall_tf_quality_inputs(tf_calls)
 
     # FiberHMM works in SEQ coords internally. Tags are written in molecular
     # frame and sorted within each annotation type for fibertools/spec readers.
     output_frame = _prepare_tag_output_frame(
-        request.read,
-        request.read_length,
-        request.kept_nucs,
-        request.msps,
+        read,
+        read_length,
+        kept_nucs,
+        msps,
         tf_quality.intervals,
         nuc_quality.nq_values,
         tf_quality.tq_values,
@@ -1235,9 +1001,7 @@ def _build_recall_tag_payload_from_request(
     )
 
     return _recall_tag_payload_from_output_frame(
-        output_frame,
-        request.read_length,
-        nuc_quality.nuc_qqq,
+        output_frame, read_length, nuc_quality.nuc_qqq,
     )
 
 
@@ -1289,67 +1053,48 @@ def _write_legacy_recall_tags(read, read_length: int,
                               nq_for_kept_nucs: Optional[Sequence[int]],
                               nq_values: Sequence[int],
                               downstream_compat: bool) -> None:
-    _write_legacy_recall_tags_from_request(
-        _LegacyRecallTagWriteRequest(
-            read=read,
-            read_length=read_length,
-            kept_nucs=kept_nucs,
-            msps=msps,
-            tf_intervals=tf_intervals,
-            nq_for_kept_nucs=nq_for_kept_nucs,
-            nq_values=nq_values,
-            downstream_compat=downstream_compat,
-        ),
-    )
-
-
-def _write_legacy_recall_tags_from_request(
-    request: _LegacyRecallTagWriteRequest,
-) -> None:
     import array as pyarray
 
     # Build the ns/nl track. In default mode it's nucleosomes only.
     # In downstream_compat mode, TF calls are merged in, sorted by start.
-    if request.downstream_compat and request.tf_intervals:
-        combined = list(request.kept_nucs) + list(request.tf_intervals)
+    if downstream_compat and tf_intervals:
+        combined = list(kept_nucs) + list(tf_intervals)
     else:
-        combined = list(request.kept_nucs)
-    legacy_nuc_rows = _split_legacy_interval_rows(combined, request.read_length)
+        combined = list(kept_nucs)
+    legacy_nuc_rows = _split_legacy_interval_rows(combined, read_length)
     ns, nl = _legacy_starts_lengths(legacy_nuc_rows)
 
-    legacy_msp_rows = _split_legacy_interval_rows(request.msps, request.read_length)
+    legacy_msp_rows = _split_legacy_interval_rows(msps, read_length)
     a_s, a_l = _legacy_starts_lengths(legacy_msp_rows)
 
     if ns:
-        request.read.set_tag('ns', pyarray.array('I', ns))
-        request.read.set_tag('nl', pyarray.array('I', nl))
+        read.set_tag('ns', pyarray.array('I', ns))
+        read.set_tag('nl', pyarray.array('I', nl))
     else:
-        clear_tags(request.read, ('ns', 'nl', 'nq'))
+        clear_tags(read, ('ns', 'nl', 'nq'))
     if a_s:
-        request.read.set_tag('as', pyarray.array('I', a_s))
-        request.read.set_tag('al', pyarray.array('I', a_l))
+        read.set_tag('as', pyarray.array('I', a_s))
+        read.set_tag('al', pyarray.array('I', a_l))
     else:
-        clear_tags(request.read, ('as', 'al', 'aq'))
+        clear_tags(read, ('as', 'al', 'aq'))
     # nq must have len == len(ns) per fibertools invariant. If we wrote
     # new ns/nl without fresh scores, drop any stale nq from the input BAM
     # to avoid len(nq) != len(ns) failing ft validate (see fibertools-rs
     # bamannotations.rs set_qual assert).
-    if ns and request.nq_for_kept_nucs is not None:
+    if ns and nq_for_kept_nucs is not None:
         legacy_nq_rows = _split_legacy_interval_rows(
-            request.kept_nucs,
-            request.read_length,
-            request.nq_values,
+            kept_nucs, read_length, nq_values,
         )
         legacy_nq = [row.score for row in legacy_nq_rows]
         if len(legacy_nq) != len(ns):
             legacy_nq = [0] * len(ns)
-        request.read.set_tag('nq', pyarray.array('B', legacy_nq))
+        read.set_tag('nq', pyarray.array('B', legacy_nq))
     elif ns:
-        clear_tags(request.read, ('nq',))
+        clear_tags(read, ('nq',))
     # Same for aq: stale per-msp qualities from input would mismatch
     # the refreshed as/al length.
     if a_s:
-        clear_tags(request.read, ('aq',))
+        clear_tags(read, ('aq',))
 
 
 def write_ma_tags(read, read_length: int,

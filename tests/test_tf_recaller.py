@@ -171,25 +171,23 @@ def test_recall_tag_payload_from_output_frame_splits_wrapped_annotations():
     assert payload.needs_an is True
 
 
-def test_prepare_tag_output_frame_request_flips_reverse_read():
+def test_prepare_tag_output_frame_flips_reverse_read():
     class ReverseRead:
         is_reverse = True
 
-    request = tf_recaller._TagOutputFrameRequest(
-        read=ReverseRead(),
-        read_length=100,
-        kept_nucs=[(10, 20)],
-        msps=[(35, 15)],
-        tf_intervals=[(60, 10)],
-        nq_values=[200],
-        tq_values=[50],
-        tf_el_values=[246],
-        tf_er_values=[238],
-        nuc_el_values=[240],
-        nuc_er_values=[120],
+    frame = tf_recaller._prepare_tag_output_frame(
+        ReverseRead(),
+        100,
+        [(10, 20)],   # kept_nucs
+        [(35, 15)],   # msps
+        [(60, 10)],   # tf_intervals
+        [200],        # nq_values
+        [50],         # tq_values
+        [246],        # tf_el_values
+        [238],        # tf_er_values
+        [240],        # nuc_el_values
+        [120],        # nuc_er_values
     )
-
-    frame = tf_recaller._prepare_tag_output_frame_from_request(request)
 
     assert frame == tf_recaller._TagOutputFrame(
         nuc_intervals=[(70, 20)],
@@ -202,22 +200,9 @@ def test_prepare_tag_output_frame_request_flips_reverse_read():
         nuc_el_values=[120],
         nuc_er_values=[240],
     )
-    assert tf_recaller._prepare_tag_output_frame(
-        request.read,
-        request.read_length,
-        request.kept_nucs,
-        request.msps,
-        request.tf_intervals,
-        request.nq_values,
-        request.tq_values,
-        request.tf_el_values,
-        request.tf_er_values,
-        request.nuc_el_values,
-        request.nuc_er_values,
-    ) == frame
 
 
-def test_build_recall_tag_payload_request_matches_adapter():
+def test_build_recall_tag_payload_builds_expected_fields():
     class ForwardRead:
         is_reverse = False
 
@@ -232,29 +217,17 @@ def test_build_recall_tag_payload_request_matches_adapter():
             right_ambiguity=3,
         ),
     ]
-    request = tf_recaller._RecallTagPayloadRequest(
-        read=read,
-        read_length=100,
-        tf_calls=tf_calls,
-        kept_nucs=[(10, 20)],
-        msps=[(40, 10)],
-        nq_for_kept_nucs=[201],
-        nuc_el_for_kept=[240],
-        nuc_er_for_kept=[120],
-    )
-
-    payload = tf_recaller._build_recall_tag_payload_from_request(request)
-
-    assert payload == tf_recaller._build_recall_tag_payload(
+    payload = tf_recaller._build_recall_tag_payload(
         read,
         100,
         tf_calls,
-        [(10, 20)],
-        [(40, 10)],
-        [201],
-        [240],
-        [120],
+        [(10, 20)],   # kept_nucs
+        [(40, 10)],   # msps
+        [201],        # nq_for_kept_nucs
+        [240],        # nuc_el_for_kept
+        [120],        # nuc_er_for_kept
     )
+
     assert payload.kept_nucs == [(10, 20)]
     assert payload.msps == [(40, 10)]
     assert payload.tf_intervals == [(60, 10)]
@@ -284,7 +257,7 @@ def test_passthrough_legacy_recall_intervals_filters_nucs_and_msps():
     )
 
 
-def test_encoded_recall_observation_from_request_forwards_encoding_options(
+def test_encode_recall_observation_forwards_encoding_options(
     monkeypatch,
 ):
     read = _FakeRead()
@@ -298,13 +271,8 @@ def test_encoded_recall_observation_from_request_forwards_encoding_options(
 
     monkeypatch.setattr(tf_recaller, "encode_from_query_sequence", fake_encode)
 
-    encoded = tf_recaller._encoded_recall_observation_from_request(
-        tf_recaller._RecallObservationEncodingRequest(
-            read=read,
-            extracted=([2, 5], "-", "ACGTAC"),
-            mode="daf",
-            context_size=6,
-        )
+    encoded = tf_recaller._encode_recall_observation(
+        read, ([2, 5], "-", "ACGTAC"), "daf", 6,
     )
 
     assert encoded.obs is obs
@@ -323,7 +291,7 @@ def test_encoded_recall_observation_from_request_forwards_encoding_options(
     ]
 
 
-def test_recall_scan_intervals_from_request_uses_seq_frame_tags(monkeypatch):
+def test_recall_scan_intervals_uses_seq_frame_tags(monkeypatch):
     seq_tags = tf_recaller._RawLegacyRecallTags(
         nuc_starts=[10],
         nuc_lengths=[20],
@@ -339,13 +307,7 @@ def test_recall_scan_intervals_from_request_uses_seq_frame_tags(monkeypatch):
 
     monkeypatch.setattr(tf_recaller, "build_scan_intervals", fake_build)
 
-    assert tf_recaller._recall_scan_intervals_from_request(
-        tf_recaller._RecallScanIntervalsRequest(
-            seq_tags=seq_tags,
-            read_length=200,
-            unify_threshold=90,
-        )
-    ) is intervals
+    assert tf_recaller._recall_scan_intervals(seq_tags, 200, 90) is intervals
     assert calls == [
         (
             ([10], [20], [40], [5], 200),
@@ -705,15 +667,8 @@ def test_call_tfs_in_intervals_scans_each_interval(monkeypatch):
 
     monkeypatch.setattr(tf_recaller, "call_tfs_in_interval", fake_call)
 
-    result = tf_recaller._call_tfs_in_intervals_from_request(
-        tf_recaller._TfIntervalBatchScanRequest(
-            obs=obs,
-            intervals=[(1, 3), (5, 8)],
-            llr_hit=hit,
-            llr_miss=miss,
-            min_llr=4.0,
-            min_opps=2,
-        )
+    result = tf_recaller._call_tfs_in_intervals(
+        obs, [(1, 3), (5, 8)], hit, miss, 4.0, 2,
     )
 
     assert [call.start for call in result] == [1, 5]
@@ -899,41 +854,26 @@ def test_seq_frame_legacy_recall_tags_flips_nucs_and_msps(monkeypatch):
     )
 
 
-def test_write_legacy_recall_tags_request_writes_compat_tracks():
+def test_write_legacy_recall_tags_writes_compat_tracks():
     read = _FakeRead()
-    request = tf_recaller._LegacyRecallTagWriteRequest(
-        read=read,
-        read_length=500,
-        kept_nucs=[(50, 120)],
-        msps=[(180, 20)],
-        tf_intervals=[(10, 30)],
-        nq_for_kept_nucs=None,
-        nq_values=[],
-        downstream_compat=True,
+    tf_recaller._write_legacy_recall_tags(
+        read,
+        500,           # read_length
+        [(50, 120)],   # kept_nucs
+        [(180, 20)],   # msps
+        [(10, 30)],    # tf_intervals
+        None,          # nq_for_kept_nucs
+        [],            # nq_values
+        True,          # downstream_compat
     )
 
-    tf_recaller._write_legacy_recall_tags_from_request(request)
-
+    # downstream_compat merges TF calls into ns/nl, sorted by start
     assert list(read.get_tag('ns')) == [10, 50]
     assert list(read.get_tag('nl')) == [30, 120]
     assert list(read.get_tag('as')) == [180]
     assert list(read.get_tag('al')) == [20]
     assert not read.has_tag('nq')
     assert not read.has_tag('aq')
-
-    adapter_read = _FakeRead()
-    tf_recaller._write_legacy_recall_tags(
-        adapter_read,
-        500,
-        [(50, 120)],
-        [(180, 20)],
-        [(10, 30)],
-        None,
-        [],
-        True,
-    )
-    assert list(adapter_read.get_tag('ns')) == list(read.get_tag('ns'))
-    assert list(adapter_read.get_tag('nl')) == list(read.get_tag('nl'))
 
 
 def test_spec_mode_emits_ma_aq_and_clean_legacy():
