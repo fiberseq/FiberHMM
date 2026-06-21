@@ -41,24 +41,6 @@ class _DafChimeraSegmentCounts:
 
 
 @dataclass(frozen=True)
-class _DafChimeraSegmentCountsRequest:
-    ct_left: int
-    left_total: int
-    nct: int
-    nga: int
-
-
-@dataclass(frozen=True)
-class _DafChimeraBreakpointRequest:
-    ct_left: int
-    left_total: int
-    nct: int
-    nga: int
-    min_seg_events: int
-    purity: float
-
-
-@dataclass(frozen=True)
 class _DafMismatchPositions:
     ct: list[int]
     ga: list[int]
@@ -68,14 +50,6 @@ class _DafMismatchPositions:
 class _EncodedDafSequence:
     sequence: str
     n_deaminations: int
-
-
-@dataclass(frozen=True)
-class _EncodedDafSequenceRequest:
-    sequence: str
-    ct_positions: object
-    ga_positions: object
-    strand: str
 
 
 @dataclass(frozen=True)
@@ -115,98 +89,6 @@ class _DafEncodeCounts:
     ga: int = 0
     total_deam: int = 0
     total_bases: int = 0
-
-
-@dataclass(frozen=True)
-class _DafEncodeSummaryRequest:
-    total: int
-    encoded: int
-    ct: int
-    ga: int
-    skipped: int
-    total_deam: int
-    total_bases: int
-    elapsed: float
-
-
-@dataclass(frozen=True)
-class _DafProgressReportRequest:
-    total: int
-    reads_processed: int
-    elapsed: float
-    ct: int
-    ga: int
-    skipped: int
-    log: object
-
-
-@dataclass(frozen=True)
-class _DafEncodeReadRequest:
-    outbam: object
-    pbar: object
-    read: object
-    min_mapq: int
-    min_read_length: int
-    force_strand: object = None
-    ref_fasta: object = None
-
-
-@dataclass(frozen=True)
-class _DafStreamReadsRequest:
-    inbam: object
-    outbam: object
-    pbar: object
-    counts: _DafEncodeCounts
-    min_mapq: int
-    min_read_length: int
-    force_strand: object
-    ref_fasta: object
-    log: object
-    last_progress: float
-
-
-@dataclass(frozen=True)
-class _DafEncodeHandleCloseRequest:
-    pbar: object
-    outbam: object
-    inbam: object
-    ref_fasta: object
-
-
-@dataclass(frozen=True)
-class _DafEncodeHandleOpenRequest:
-    input_bam: object
-    output_bam: object
-    reference: object
-    io_threads: int
-    log: object
-
-
-@dataclass(frozen=True)
-class _DafEncodeRunRequest:
-    input_bam: object
-    output_bam: object
-    reference: object = None
-    min_mapq: int = 20
-    min_read_length: int = 1000
-    io_threads: int = 4
-    force_strand: object = None
-
-
-@dataclass(frozen=True)
-class _DafEncodeFinalizationRequest:
-    counts: _DafEncodeCounts
-    start_time: float
-    output_bam: object
-    io_threads: int
-    log: object
-
-
-@dataclass(frozen=True)
-class _DafOutputFinalizationRequest:
-    output_bam: object
-    io_threads: int
-    log: object
 
 
 def _md_tag_ref_length(md_string: str) -> int:
@@ -420,13 +302,11 @@ def _is_pure_daf_segment(dominant_count, segment_size,
     )
 
 
-def _daf_chimera_segment_counts_from_request(
-    request: _DafChimeraSegmentCountsRequest,
-) -> _DafChimeraSegmentCounts:
-    right_n = request.nct + request.nga - request.left_total
-    ga_left = request.left_total - request.ct_left
-    ct_right = request.nct - request.ct_left
-    ga_right = request.nga - ga_left
+def _daf_chimera_segment_counts(ct_left, left_n, nct, nga):
+    right_n = nct + nga - left_n
+    ga_left = left_n - ct_left
+    ct_right = nct - ct_left
+    ga_right = nga - ga_left
     return _DafChimeraSegmentCounts(
         right_total=right_n,
         ga_left=ga_left,
@@ -435,73 +315,40 @@ def _daf_chimera_segment_counts_from_request(
     )
 
 
-def _daf_chimera_segment_counts(ct_left, left_n, nct, nga):
-    return _daf_chimera_segment_counts_from_request(
-        _DafChimeraSegmentCountsRequest(
-            ct_left=ct_left,
-            left_total=left_n,
-            nct=nct,
-            nga=nga,
-        )
-    )
-
-
-def _daf_chimera_breakpoint_matches_from_request(
-    request: _DafChimeraBreakpointRequest,
-) -> bool:
-    segment_counts = _daf_chimera_segment_counts_from_request(
-        _DafChimeraSegmentCountsRequest(
-            ct_left=request.ct_left,
-            left_total=request.left_total,
-            nct=request.nct,
-            nga=request.nga,
-        )
-    )
+def _daf_chimera_breakpoint_matches(ct_left, left_n, nct, nga,
+                                    min_seg_events: int,
+                                    purity: float) -> bool:
+    segment_counts = _daf_chimera_segment_counts(ct_left, left_n, nct, nga)
 
     ct_then_ga = (
         _is_pure_daf_segment(
-            request.ct_left,
-            request.left_total,
-            request.min_seg_events,
-            request.purity,
+            ct_left,
+            left_n,
+            min_seg_events,
+            purity,
         )
         and _is_pure_daf_segment(
             segment_counts.ga_right,
             segment_counts.right_total,
-            request.min_seg_events,
-            request.purity,
+            min_seg_events,
+            purity,
         )
     )
     ga_then_ct = (
         _is_pure_daf_segment(
             segment_counts.ga_left,
-            request.left_total,
-            request.min_seg_events,
-            request.purity,
+            left_n,
+            min_seg_events,
+            purity,
         )
         and _is_pure_daf_segment(
             segment_counts.ct_right,
             segment_counts.right_total,
-            request.min_seg_events,
-            request.purity,
+            min_seg_events,
+            purity,
         )
     )
     return ct_then_ga or ga_then_ct
-
-
-def _daf_chimera_breakpoint_matches(ct_left, left_n, nct, nga,
-                                    min_seg_events: int,
-                                    purity: float) -> bool:
-    return _daf_chimera_breakpoint_matches_from_request(
-        _DafChimeraBreakpointRequest(
-            ct_left=ct_left,
-            left_total=left_n,
-            nct=nct,
-            nga=nga,
-            min_seg_events=min_seg_events,
-            purity=purity,
-        )
-    )
 
 
 def is_daf_chimera(ct_positions, ga_positions,
@@ -539,15 +386,13 @@ def is_daf_chimera(ct_positions, ga_positions,
         right_n = n - k
         if left_n < min_seg_events or right_n < min_seg_events:
             continue
-        if _daf_chimera_breakpoint_matches_from_request(
-            _DafChimeraBreakpointRequest(
-                ct_left=ct_left,
-                left_total=left_n,
-                nct=nct,
-                nga=nga,
-                min_seg_events=min_seg_events,
-                purity=purity,
-            )
+        if _daf_chimera_breakpoint_matches(
+            ct_left,
+            left_n,
+            nct,
+            nga,
+            min_seg_events,
+            purity,
         ):
             return True
     return False
@@ -560,28 +405,15 @@ def _mark_iupac_positions(sequence: str, positions, code: str) -> str:
     return "".join(seq_list)
 
 
-def _encoded_daf_sequence_from_request(
-    request: _EncodedDafSequenceRequest,
-) -> _EncodedDafSequence:
-    if request.strand == "CT":
+def _encoded_daf_sequence(seq: str, ct_positions, ga_positions, strand: str):
+    if strand == "CT":
         return _EncodedDafSequence(
-            _mark_iupac_positions(request.sequence, request.ct_positions, "Y"),
-            len(request.ct_positions),
+            _mark_iupac_positions(seq, ct_positions, "Y"),
+            len(ct_positions),
         )
     return _EncodedDafSequence(
-        _mark_iupac_positions(request.sequence, request.ga_positions, "R"),
-        len(request.ga_positions),
-    )
-
-
-def _encoded_daf_sequence(seq: str, ct_positions, ga_positions, strand: str):
-    return _encoded_daf_sequence_from_request(
-        _EncodedDafSequenceRequest(
-            sequence=seq,
-            ct_positions=ct_positions,
-            ga_positions=ga_positions,
-            strand=strand,
-        )
+        _mark_iupac_positions(seq, ga_positions, "R"),
+        len(ga_positions),
     )
 
 
@@ -592,14 +424,7 @@ def _encode_read_daf_record(read, force_strand=None, ref_fasta=None):
     ct_positions, ga_positions, strand = res
 
     seq = read.query_sequence
-    encoded = _encoded_daf_sequence_from_request(
-        _EncodedDafSequenceRequest(
-            sequence=seq,
-            ct_positions=ct_positions,
-            ga_positions=ga_positions,
-            strand=strand,
-        )
-    )
+    encoded = _encoded_daf_sequence(seq, ct_positions, ga_positions, strand)
 
     st_tag = strand  # "CT" or "GA"
     return _EncodedDafRead(encoded.sequence, st_tag, encoded.n_deaminations)
@@ -671,40 +496,23 @@ def _daf_encode_skip_reason(read, min_mapq: int, min_read_length: int):
     return None
 
 
-def _daf_encode_summary_from_request(
-    request: _DafEncodeSummaryRequest,
-) -> dict:
-    mean_deam_rate = (
-        request.total_deam / request.total_bases
-        if request.total_bases > 0
-        else 0.0
-    )
-    return {
-        "total": request.total,
-        "encoded": request.encoded,
-        "ct": request.ct,
-        "ga": request.ga,
-        "skipped": request.skipped,
-        "mean_deam_rate": mean_deam_rate,
-        "elapsed": request.elapsed,
-    }
-
-
 def _daf_encode_summary(total: int, encoded: int, ct_count: int, ga_count: int,
                         skipped: int, total_deam: int, total_bases: int,
                         elapsed: float) -> dict:
-    return _daf_encode_summary_from_request(
-        _DafEncodeSummaryRequest(
-            total=total,
-            encoded=encoded,
-            ct=ct_count,
-            ga=ga_count,
-            skipped=skipped,
-            total_deam=total_deam,
-            total_bases=total_bases,
-            elapsed=elapsed,
-        )
+    mean_deam_rate = (
+        total_deam / total_bases
+        if total_bases > 0
+        else 0.0
     )
+    return {
+        "total": total,
+        "encoded": encoded,
+        "ct": ct_count,
+        "ga": ga_count,
+        "skipped": skipped,
+        "mean_deam_rate": mean_deam_rate,
+        "elapsed": elapsed,
+    }
 
 
 def _new_daf_encode_counts() -> _DafEncodeCounts:
@@ -724,17 +532,15 @@ def _daf_encode_summary_from_counts(
     counts: _DafEncodeCounts,
     elapsed: float,
 ) -> dict:
-    return _daf_encode_summary_from_request(
-        _DafEncodeSummaryRequest(
-            total=counts.total,
-            encoded=counts.encoded,
-            ct=counts.ct,
-            ga=counts.ga,
-            skipped=counts.skipped,
-            total_deam=counts.total_deam,
-            total_bases=counts.total_bases,
-            elapsed=elapsed,
-        )
+    return _daf_encode_summary(
+        total=counts.total,
+        encoded=counts.encoded,
+        ct_count=counts.ct,
+        ga_count=counts.ga,
+        skipped=counts.skipped,
+        total_deam=counts.total_deam,
+        total_bases=counts.total_bases,
+        elapsed=elapsed,
     )
 
 
@@ -751,20 +557,6 @@ def _daf_progress_rate(reads_processed: int, elapsed: float):
     return reads_processed / elapsed
 
 
-def _print_daf_progress_from_request(
-    request: _DafProgressReportRequest,
-) -> None:
-    rate = _daf_progress_rate(request.reads_processed, request.elapsed)
-    if rate is None:
-        return
-    print(
-        f"  [{request.total:,} reads] {rate:,.0f} reads/sec "
-        f"(CT={request.ct:,} GA={request.ga:,} skip={request.skipped:,})",
-        file=request.log,
-    )
-    request.log.flush()
-
-
 def _print_daf_progress(
     total: int,
     reads_processed: int,
@@ -774,17 +566,15 @@ def _print_daf_progress(
     skipped: int,
     log,
 ) -> None:
-    _print_daf_progress_from_request(
-        _DafProgressReportRequest(
-            total=total,
-            reads_processed=reads_processed,
-            elapsed=elapsed,
-            ct=ct_count,
-            ga=ga_count,
-            skipped=skipped,
-            log=log,
-        )
+    rate = _daf_progress_rate(reads_processed, elapsed)
+    if rate is None:
+        return
+    print(
+        f"  [{total:,} reads] {rate:,.0f} reads/sec "
+        f"(CT={ct_count:,} GA={ga_count:,} skip={skipped:,})",
+        file=log,
     )
+    log.flush()
 
 
 def _print_daf_encode_summary(summary: dict, log) -> None:
@@ -838,42 +628,6 @@ def _daf_skipped_read_stats() -> _DafEncodeReadStats:
     )
 
 
-def _process_daf_encode_read_from_request(
-    request: _DafEncodeReadRequest,
-) -> _DafEncodeReadStats:
-    skip_reason = _daf_encode_skip_reason(
-        request.read,
-        request.min_mapq,
-        request.min_read_length,
-    )
-    if skip_reason:
-        _write_skipped_daf_read(request.outbam, request.pbar, request.read)
-        return _daf_skipped_read_stats()
-
-    encoded = _encode_read_daf_record(
-        request.read,
-        force_strand=request.force_strand,
-        ref_fasta=request.ref_fasta,
-    )
-    if encoded is None:
-        _write_skipped_daf_read(request.outbam, request.pbar, request.read)
-        return _daf_skipped_read_stats()
-
-    _apply_daf_encoding_to_read(
-        request.read,
-        encoded.sequence,
-        encoded.st_tag,
-    )
-
-    request.outbam.write(request.read)
-    request.pbar.update(1)
-    return _daf_encoded_read_stats(
-        request.read,
-        encoded.st_tag,
-        encoded.n_deaminations,
-    )
-
-
 def _process_daf_encode_read(
     outbam,
     pbar,
@@ -883,16 +637,36 @@ def _process_daf_encode_read(
     force_strand=None,
     ref_fasta=None,
 ) -> _DafEncodeReadStats:
-    return _process_daf_encode_read_from_request(
-        _DafEncodeReadRequest(
-            outbam=outbam,
-            pbar=pbar,
-            read=read,
-            min_mapq=min_mapq,
-            min_read_length=min_read_length,
-            force_strand=force_strand,
-            ref_fasta=ref_fasta,
-        )
+    skip_reason = _daf_encode_skip_reason(
+        read,
+        min_mapq,
+        min_read_length,
+    )
+    if skip_reason:
+        _write_skipped_daf_read(outbam, pbar, read)
+        return _daf_skipped_read_stats()
+
+    encoded = _encode_read_daf_record(
+        read,
+        force_strand=force_strand,
+        ref_fasta=ref_fasta,
+    )
+    if encoded is None:
+        _write_skipped_daf_read(outbam, pbar, read)
+        return _daf_skipped_read_stats()
+
+    _apply_daf_encoding_to_read(
+        read,
+        encoded.sequence,
+        encoded.st_tag,
+    )
+
+    outbam.write(read)
+    pbar.update(1)
+    return _daf_encoded_read_stats(
+        read,
+        encoded.st_tag,
+        encoded.n_deaminations,
     )
 
 
@@ -946,44 +720,16 @@ def _maybe_print_daf_encode_progress(
 
     now = time.time()
     elapsed = now - last_progress
-    _print_daf_progress_from_request(
-        _DafProgressReportRequest(
-            total=counts.total,
-            reads_processed=10000,
-            elapsed=elapsed,
-            ct=counts.ct,
-            ga=counts.ga,
-            skipped=counts.skipped,
-            log=log,
-        )
+    _print_daf_progress(
+        counts.total,
+        10000,
+        elapsed,
+        counts.ct,
+        counts.ga,
+        counts.skipped,
+        log,
     )
     return now
-
-
-def _stream_daf_encode_reads_from_request(
-    request: _DafStreamReadsRequest,
-) -> float:
-    last_progress = request.last_progress
-    for read in request.inbam.fetch(until_eof=True):
-        read_stats = _process_daf_encode_read_from_request(
-            _DafEncodeReadRequest(
-                outbam=request.outbam,
-                pbar=request.pbar,
-                read=read,
-                min_mapq=request.min_mapq,
-                min_read_length=request.min_read_length,
-                force_strand=request.force_strand,
-                ref_fasta=request.ref_fasta,
-            )
-        )
-        _accumulate_daf_read_stats(request.counts, read_stats)
-        last_progress = _maybe_print_daf_encode_progress(
-            request.counts,
-            last_progress,
-            request.log,
-        )
-
-    return last_progress
 
 
 def _stream_daf_encode_reads(
@@ -998,27 +744,29 @@ def _stream_daf_encode_reads(
     log,
     last_progress: float,
 ) -> float:
-    return _stream_daf_encode_reads_from_request(
-        _DafStreamReadsRequest(
-            inbam=inbam,
-            outbam=outbam,
-            pbar=pbar,
-            counts=counts,
-            min_mapq=min_mapq,
-            min_read_length=min_read_length,
+    for read in inbam.fetch(until_eof=True):
+        read_stats = _process_daf_encode_read(
+            outbam,
+            pbar,
+            read,
+            min_mapq,
+            min_read_length,
             force_strand=force_strand,
             ref_fasta=ref_fasta,
-            log=log,
-            last_progress=last_progress,
-        ),
-    )
+        )
+        _accumulate_daf_read_stats(counts, read_stats)
+        last_progress = _maybe_print_daf_encode_progress(
+            counts,
+            last_progress,
+            log,
+        )
+
+    return last_progress
 
 
-def _close_daf_encode_handles_from_request(
-    request: _DafEncodeHandleCloseRequest,
-) -> None:
+def _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta) -> None:
     close_error = None
-    for handle in (request.pbar, request.outbam, request.inbam, request.ref_fasta):
+    for handle in (pbar, outbam, inbam, ref_fasta):
         if handle is None:
             continue
         try:
@@ -1031,96 +779,34 @@ def _close_daf_encode_handles_from_request(
         raise close_error
 
 
-def _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta) -> None:
-    _close_daf_encode_handles_from_request(
-        _DafEncodeHandleCloseRequest(
-            pbar=pbar,
-            outbam=outbam,
-            inbam=inbam,
-            ref_fasta=ref_fasta,
-        ),
-    )
-
-
-def _maybe_finalize_daf_output_from_request(
-    request: _DafOutputFinalizationRequest,
-) -> None:
-    if request.output_bam == "-" or not os.path.isfile(request.output_bam):
+def _maybe_finalize_daf_output(output_bam, io_threads: int, log) -> None:
+    if output_bam == "-" or not os.path.isfile(output_bam):
         return
 
-    print("\nFinalizing output BAM...", file=request.log)
-    _sort_and_index_bam(request.output_bam, verbose=True,
-                        threads=request.io_threads)
+    print("\nFinalizing output BAM...", file=log)
+    _sort_and_index_bam(output_bam, verbose=True,
+                        threads=io_threads)
 
 
-def _maybe_finalize_daf_output(output_bam, io_threads: int, log) -> None:
-    _maybe_finalize_daf_output_from_request(
-        _DafOutputFinalizationRequest(
-            output_bam=output_bam,
-            io_threads=io_threads,
-            log=log,
-        ),
-    )
-
-
-def _open_daf_encode_handles_from_request(
-    request: _DafEncodeHandleOpenRequest,
-):
+def _open_daf_encode_handles(input_bam, output_bam, reference, io_threads: int, log):
     ref_fasta = None
     inbam = None
     outbam = None
     pbar = None
     try:
-        ref_fasta = _open_daf_reference(request.reference)
-        inbam = _open_daf_input_bam(request.input_bam, request.io_threads)
-        _check_md_tag(inbam, ref_fasta, request.log)
+        ref_fasta = _open_daf_reference(reference)
+        inbam = _open_daf_input_bam(input_bam, io_threads)
+        _check_md_tag(inbam, ref_fasta, log)
         outbam = _open_daf_output_bam(
-            request.output_bam,
+            output_bam,
             inbam,
-            request.io_threads,
+            io_threads,
         )
-        pbar = _new_daf_encode_progress(request.output_bam, request.log)
+        pbar = _new_daf_encode_progress(output_bam, log)
         return _DafEncodeHandles(ref_fasta, inbam, outbam, pbar)
     except BaseException:
-        _close_daf_encode_handles_from_request(
-            _DafEncodeHandleCloseRequest(
-                pbar=pbar,
-                outbam=outbam,
-                inbam=inbam,
-                ref_fasta=ref_fasta,
-            ),
-        )
+        _close_daf_encode_handles(pbar, outbam, inbam, ref_fasta)
         raise
-
-
-def _open_daf_encode_handles(input_bam, output_bam, reference, io_threads: int, log):
-    return _open_daf_encode_handles_from_request(
-        _DafEncodeHandleOpenRequest(
-            input_bam=input_bam,
-            output_bam=output_bam,
-            reference=reference,
-            io_threads=io_threads,
-            log=log,
-        ),
-    )
-
-
-def _finalize_daf_encode_run_from_request(
-    request: _DafEncodeFinalizationRequest,
-) -> dict:
-    summary = _daf_encode_summary_from_counts(
-        request.counts,
-        time.time() - request.start_time,
-    )
-    _print_daf_encode_summary(summary, request.log)
-    _maybe_finalize_daf_output_from_request(
-        _DafOutputFinalizationRequest(
-            output_bam=request.output_bam,
-            io_threads=request.io_threads,
-            log=request.log,
-        ),
-    )
-    return summary
 
 
 def _finalize_daf_encode_run(
@@ -1130,69 +816,13 @@ def _finalize_daf_encode_run(
     io_threads: int,
     log,
 ) -> dict:
-    return _finalize_daf_encode_run_from_request(
-        _DafEncodeFinalizationRequest(
-            counts=counts,
-            start_time=start_time,
-            output_bam=output_bam,
-            io_threads=io_threads,
-            log=log,
-        ),
-    )
-
-
-def process_bam_daf_encode_from_request(
-    request: _DafEncodeRunRequest,
-):
-    """Implementation for a DAF encode run described by a request object."""
-    # Keep all progress/log output off stdout so "-" remains a clean BAM stream.
-    _log = sys.stderr
-
-    counts = _new_daf_encode_counts()
-
-    start_time = time.time()
-    last_progress = start_time
-
-    handles = None
-
-    try:
-        handles = _open_daf_encode_handles(
-            request.input_bam,
-            request.output_bam,
-            request.reference,
-            request.io_threads,
-            _log,
-        )
-
-        last_progress = _stream_daf_encode_reads(
-            handles.inbam,
-            handles.outbam,
-            handles.pbar,
-            counts,
-            request.min_mapq,
-            request.min_read_length,
-            request.force_strand,
-            handles.ref_fasta,
-            _log,
-            last_progress,
-        )
-
-    finally:
-        if handles is not None:
-            _close_daf_encode_handles(
-                handles.pbar,
-                handles.outbam,
-                handles.inbam,
-                handles.ref_fasta,
-            )
-
-    return _finalize_daf_encode_run(
+    summary = _daf_encode_summary_from_counts(
         counts,
-        start_time,
-        request.output_bam,
-        request.io_threads,
-        _log,
+        time.time() - start_time,
     )
+    _print_daf_encode_summary(summary, log)
+    _maybe_finalize_daf_output(output_bam, io_threads, log)
+    return summary
 
 
 def process_bam_daf_encode(
@@ -1228,16 +858,53 @@ def process_bam_daf_encode(
     dict
         Summary statistics: total, encoded, ct, ga, skipped, mean_deam_rate.
     """
-    return process_bam_daf_encode_from_request(
-        _DafEncodeRunRequest(
-            input_bam=input_bam,
-            output_bam=output_bam,
-            reference=reference,
-            min_mapq=min_mapq,
-            min_read_length=min_read_length,
-            io_threads=io_threads,
-            force_strand=force_strand,
-        ),
+    # Keep all progress/log output off stdout so "-" remains a clean BAM stream.
+    _log = sys.stderr
+
+    counts = _new_daf_encode_counts()
+
+    start_time = time.time()
+    last_progress = start_time
+
+    handles = None
+
+    try:
+        handles = _open_daf_encode_handles(
+            input_bam,
+            output_bam,
+            reference,
+            io_threads,
+            _log,
+        )
+
+        last_progress = _stream_daf_encode_reads(
+            handles.inbam,
+            handles.outbam,
+            handles.pbar,
+            counts,
+            min_mapq,
+            min_read_length,
+            force_strand,
+            handles.ref_fasta,
+            _log,
+            last_progress,
+        )
+
+    finally:
+        if handles is not None:
+            _close_daf_encode_handles(
+                handles.pbar,
+                handles.outbam,
+                handles.inbam,
+                handles.ref_fasta,
+            )
+
+    return _finalize_daf_encode_run(
+        counts,
+        start_time,
+        output_bam,
+        io_threads,
+        _log,
     )
 
 

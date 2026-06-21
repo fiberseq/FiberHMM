@@ -11,35 +11,23 @@ from fiberhmm.inference.tagging import (
     STALE_SPEC_TAGS,
     _clear_stale_spec_tags,
     _filter_nucs_with_tf_overlap,
-    _filter_nucs_with_tf_overlap_from_request,
     _flip_legacy_intervals_to_molecular,
     _fused_recall_tag_intervals,
-    _FusedRecallTagsRequest,
     _legacy_apply_interval_groups,
     _legacy_interval_group,
-    _legacy_interval_group_from_request,
-    _LegacyApplyTagsRequest,
-    _LegacyIntervalGroupRequest,
     _linear_intervals_overlap,
-    _MolecularLegacyRequest,
     _nuc_overlaps_any_circular_interval,
     _nuc_overlaps_any_linear_interval,
-    _NucTfOverlapFilterRequest,
     _result_intervals,
-    _result_intervals_from_request,
-    _ResultIntervalsRequest,
     _should_keep_nuc_interval,
     _tf_circular_intervals,
     _tf_linear_intervals,
     _to_molecular_legacy,
-    _to_molecular_legacy_from_request,
     scores_to_u8,
     set_legacy_apply_tags,
-    set_legacy_apply_tags_from_request,
     unify_circular_nucs_with_tf_calls,
     unify_nucs_with_tf_calls,
     write_fused_recall_tags,
-    write_fused_recall_tags_from_request,
 )
 from fiberhmm.inference.tf_recaller import TFCall
 
@@ -102,21 +90,12 @@ def test_flip_legacy_intervals_to_molecular_sorts_and_reorders_scores():
     assert group.scores == [0.75, 0.25]
 
 
-def test_to_molecular_legacy_request_matches_adapter():
+def test_to_molecular_legacy_flips_and_reorders_for_reverse_read():
     class ReverseRead:
         is_reverse = True
         query_length = 100
 
     read = ReverseRead()
-    request = _MolecularLegacyRequest(
-        starts=np.asarray([10, 80], dtype=np.int32),
-        lengths=np.asarray([5, 10], dtype=np.int32),
-        scores=np.asarray([0.25, 0.75], dtype=np.float64),
-        read=read,
-        with_scores=True,
-    )
-
-    requested = _to_molecular_legacy_from_request(request)
     adapted = _to_molecular_legacy(
         np.asarray([10, 80], dtype=np.int32),
         np.asarray([5, 10], dtype=np.int32),
@@ -125,10 +104,9 @@ def test_to_molecular_legacy_request_matches_adapter():
         True,
     )
 
-    assert requested == adapted
-    assert requested.starts == [10, 85]
-    assert requested.lengths == [10, 5]
-    assert requested.scores == [0.75, 0.25]
+    assert adapted.starts == [10, 85]
+    assert adapted.lengths == [10, 5]
+    assert adapted.scores == [0.75, 0.25]
 
 
 def test_set_legacy_apply_tags_writes_unsigned_bam_arrays():
@@ -142,14 +120,7 @@ def test_set_legacy_apply_tags_writes_unsigned_bam_arrays():
         "as_scores": np.asarray([0.5]),
     }
 
-    set_legacy_apply_tags_from_request(
-        _LegacyApplyTagsRequest(
-            read=read,
-            result=result,
-            with_scores=True,
-            write_msps=True,
-        )
-    )
+    set_legacy_apply_tags(read, result, with_scores=True, write_msps=True)
 
     for tag in ("ns", "nl", "as", "al"):
         assert isinstance(read.tags[tag], pyarray.array)
@@ -280,16 +251,6 @@ def test_legacy_interval_group_resolves_keyed_arrays_and_scores():
         "lengths": np.asarray([30], dtype=np.int32),
         "scores": np.asarray([0.25]),
     }
-    request = _LegacyIntervalGroupRequest(
-        result=result,
-        start_key="starts",
-        length_key="lengths",
-        score_key="scores",
-        read=read,
-        with_scores=True,
-    )
-
-    requested_group = _legacy_interval_group_from_request(request)
     group = _legacy_interval_group(
         result,
         "starts",
@@ -307,7 +268,6 @@ def test_legacy_interval_group_resolves_keyed_arrays_and_scores():
         with_scores=False,
     )
 
-    assert requested_group == group
     assert group.starts == [10]
     assert group.lengths == [30]
     assert group.scores == [0.25]
@@ -338,7 +298,7 @@ def test_fused_recall_tag_intervals_prefer_circular_intervals_when_present():
     assert intervals.msps == [(80, 10)]
 
 
-def test_write_fused_recall_tags_request_passes_ma_tag_payload(monkeypatch):
+def test_write_fused_recall_tags_passes_ma_tag_payload(monkeypatch):
     read = RecordingRead()
     tf_calls = [
         TFCall(
@@ -367,15 +327,6 @@ def test_write_fused_recall_tags_request_passes_ma_tag_payload(monkeypatch):
 
     monkeypatch.setattr("fiberhmm.inference.tagging.write_ma_tags", fake_write_ma_tags)
 
-    write_fused_recall_tags_from_request(
-        _FusedRecallTagsRequest(
-            read=read,
-            read_length=100,
-            result=result,
-            also_write_legacy=True,
-            downstream_compat=False,
-        )
-    )
     write_fused_recall_tags(
         read,
         read_length=100,
@@ -395,7 +346,7 @@ def test_write_fused_recall_tags_request_passes_ma_tag_payload(monkeypatch):
         "nuc_el_for_kept": [1],
         "nuc_er_for_kept": [2],
     }
-    assert calls == [(read, expected_kwargs), (read, expected_kwargs)]
+    assert calls == [(read, expected_kwargs)]
 
 
 def test_result_intervals_prefers_circular_key_before_arrays():
@@ -404,14 +355,7 @@ def test_result_intervals_prefers_circular_key_before_arrays():
         "lengths": np.asarray([5], dtype=np.int32),
     }
 
-    assert _result_intervals_from_request(
-        _ResultIntervalsRequest(
-            result=result,
-            circular_key="circular",
-            start_key="starts",
-            length_key="lengths",
-        )
-    ) == [(10, 5)]
+    assert _result_intervals(result, "circular", "starts", "lengths") == [(10, 5)]
 
     result["circular"] = [(90, 20)]
 
@@ -458,18 +402,10 @@ def test_should_keep_nuc_interval_applies_length_and_overlap_policy():
     assert _should_keep_nuc_interval((40, 10), 90, overlaps_tf)
 
 
-def test_filter_nucs_with_tf_overlap_request_matches_adapter():
+def test_filter_nucs_with_tf_overlap_drops_short_overlaps_and_carries_scores():
     def overlaps_tf(interval):
         return interval == (15, 20)
 
-    request = _NucTfOverlapFilterRequest(
-        nucs=[(0, 10), (15, 20), (100, 120)],
-        unify_threshold=90,
-        ns_scores=np.asarray([0.25, 0.5]),
-        overlaps_tf=overlaps_tf,
-    )
-
-    requested = _filter_nucs_with_tf_overlap_from_request(request)
     adapted = _filter_nucs_with_tf_overlap(
         [(0, 10), (15, 20), (100, 120)],
         90,
@@ -477,9 +413,8 @@ def test_filter_nucs_with_tf_overlap_request_matches_adapter():
         overlaps_tf,
     )
 
-    assert requested == adapted
-    assert requested.intervals == [(0, 10), (100, 120)]
-    assert requested.scores == [63, 0]
+    assert adapted.intervals == [(0, 10), (100, 120)]
+    assert adapted.scores == [63, 0]
 
 
 def test_unify_nucs_with_tf_calls_drops_short_overlaps_and_carries_scores():

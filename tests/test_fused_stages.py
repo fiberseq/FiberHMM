@@ -30,7 +30,7 @@ def test_apply_result_has_footprints_detects_nucs_or_msps():
     assert fused_stages.apply_result_has_footprints(msp_only) is True
 
 
-def test_run_hmm_apply_stage_request_delegates_single_read(monkeypatch):
+def test_run_hmm_apply_stage_delegates_single_read(monkeypatch):
     calls = []
     fiber_read = {"query_sequence": "AAAA"}
 
@@ -39,32 +39,6 @@ def test_run_hmm_apply_stage_request_delegates_single_read(monkeypatch):
         "_process_single_read",
         lambda *args, **kwargs: calls.append((args, kwargs)) or {"ns": [1]},
     )
-
-    request = fused_stages._HmmApplyStageRequest(
-        fiber_read=fiber_read,
-        model="model",
-        edge_trim=10,
-        circular=True,
-        mode="daf",
-        context_size=5,
-        msp_min_size=0,
-        nuc_min_size=85,
-        with_scores=True,
-    )
-
-    assert fused_stages.run_hmm_apply_stage_from_request(request) == {"ns": [1]}
-    assert calls == [
-        (
-            (fiber_read, "model", 10, True, "daf", 5, 0),
-            {
-                "nuc_min_size": 85,
-                "with_scores": True,
-                "return_posteriors": False,
-                "include_encoded": True,
-            },
-        ),
-    ]
-    calls.clear()
 
     assert fused_stages.run_hmm_apply_stage(
         fiber_read,
@@ -77,7 +51,17 @@ def test_run_hmm_apply_stage_request_delegates_single_read(monkeypatch):
         nuc_min_size=85,
         with_scores=True,
     ) == {"ns": [1]}
-    assert len(calls) == 1
+    assert calls == [
+        (
+            (fiber_read, "model", 10, True, "daf", 5, 0),
+            {
+                "nuc_min_size": 85,
+                "with_scores": True,
+                "return_posteriors": False,
+                "include_encoded": True,
+            },
+        ),
+    ]
 
 
 def test_apply_result_interval_bounds_collects_nucs_and_msps():
@@ -96,12 +80,10 @@ def test_apply_result_interval_bounds_collects_nucs_and_msps():
 
 
 def test_analyzed_span_covers_apply_intervals_kept_nucs_and_read_fallback():
-    empty_span = fused_stages._analyzed_span_from_request(
-        fused_stages._AnalyzedSpanRequest(
-            apply_result={"ns": [], "nl": [], "as": [], "al": []},
-            read_length=200,
-            kept=[],
-        )
+    empty_span = fused_stages._analyzed_span(
+        {"ns": [], "nl": [], "as": [], "al": []},
+        read_length=200,
+        kept=[],
     )
     span = fused_stages._analyzed_span(
         {
@@ -191,12 +173,7 @@ def test_optional_apply_score_fields_respects_enabled_flag():
         "as_scores": np.asarray([0.5], dtype=np.float32),
     }
 
-    enabled = fused_stages._optional_apply_score_fields_from_request(
-        fused_stages._OptionalApplyScoreFieldsRequest(
-            apply_result=apply_result,
-            enabled=True,
-        )
-    )
+    enabled = fused_stages._optional_apply_score_fields(apply_result, enabled=True)
     disabled = fused_stages._optional_apply_score_fields(apply_result, enabled=False)
 
     assert enabled["ns_scores"] is apply_result["ns_scores"]
@@ -210,12 +187,7 @@ def test_circular_apply_score_fields_respects_enabled_flag():
         "circular_as_scores": np.asarray([0.5], dtype=np.float32),
     }
 
-    enabled = fused_stages._circular_apply_score_fields_from_request(
-        fused_stages._CircularApplyScoreFieldsRequest(
-            apply_result=apply_result,
-            enabled=True,
-        )
-    )
+    enabled = fused_stages._circular_apply_score_fields(apply_result, enabled=True)
     disabled = fused_stages._circular_apply_score_fields(
         apply_result,
         enabled=False,
@@ -229,7 +201,7 @@ def test_circular_apply_score_fields_respects_enabled_flag():
     )
 
 
-def test_promote_large_tf_nucs_request_appends_promoted_after_kept(monkeypatch):
+def test_promote_large_tf_nucs_appends_promoted_after_kept(monkeypatch):
     calls = {}
 
     def fake_promote(tf_calls, obs, llr_hit, llr_miss, threshold, floor):
@@ -247,23 +219,6 @@ def test_promote_large_tf_nucs_request_appends_promoted_after_kept(monkeypatch):
         fake_drop,
     )
 
-    result = fused_stages._promote_large_tf_nucs_from_request(
-        fused_stages._PromoteLargeTfNucsRequest(
-            tf_calls=["tf"],
-            nuc_calls=["nuc"],
-            obs="obs",
-            llr_hit="hit",
-            llr_miss="miss",
-            unify_threshold=90,
-            nuc_min_size=85,
-        )
-    )
-
-    assert result == (["small_tf"], ["kept_nuc", "promoted_nuc"])
-    assert calls["promote"] == (["tf"], "obs", "hit", "miss", 90, 85)
-    assert calls["drop"] == (["nuc"], ["promoted_nuc"], 90)
-
-    calls.clear()
     assert fused_stages._promote_large_tf_nucs(
         ["tf"],
         ["nuc"],
@@ -295,8 +250,8 @@ def test_run_nuc_recall_and_tf_stage_names_recall_flow(monkeypatch):
         calls["tf"] = args
         return ["tf"]
 
-    def fake_promote(request):
-        calls["promote"] = request
+    def fake_promote(*args):
+        calls["promote"] = args
         return ["kept_tf"], ["kept_nuc"]
 
     monkeypatch.setattr(fused_stages, "recall_nucs_in_read", fake_recall)
@@ -304,29 +259,27 @@ def test_run_nuc_recall_and_tf_stage_names_recall_flow(monkeypatch):
     monkeypatch.setattr(fused_stages, "run_tf_recall_stage", fake_tf_stage)
     monkeypatch.setattr(
         fused_stages,
-        "_promote_large_tf_nucs_from_request",
+        "_promote_large_tf_nucs",
         fake_promote,
     )
 
-    request = fused_stages._NucRecallAndTfStageRequest(
-        obs=obs,
-        nuc_starts=[1],
-        nuc_lengths=[2],
-        input_msps=input_msps,
-        analysis_length=100,
-        llr_hit="hit",
-        llr_miss="miss",
-        min_llr=4.0,
-        min_opps=3,
-        unify_threshold=90,
-        split_min_llr=5.0,
-        split_min_opps=4,
-        nuc_min_size=85,
-        msp_min_size=10,
-        phase_nrl=147,
+    result = fused_stages._run_nuc_recall_and_tf_stage(
+        obs,
+        [1],
+        [2],
+        input_msps,
+        100,
+        "hit",
+        "miss",
+        4.0,
+        3,
+        90,
+        5.0,
+        4,
+        85,
+        10,
+        147,
     )
-
-    result = fused_stages._run_nuc_recall_and_tf_stage_from_request(request)
 
     assert calls["recall"][0] == (obs, [1], [2], 100, "hit", "miss")
     assert calls["recall"][1] == {
@@ -349,14 +302,14 @@ def test_run_nuc_recall_and_tf_stage_names_recall_flow(monkeypatch):
         3,
         90,
     )
-    promote_request = calls["promote"]
-    assert promote_request.tf_calls == ["tf"]
-    assert promote_request.nuc_calls == [nuc]
-    assert promote_request.obs is obs
-    assert promote_request.llr_hit == "hit"
-    assert promote_request.llr_miss == "miss"
-    assert promote_request.unify_threshold == 90
-    assert promote_request.nuc_min_size == 85
+    promote_args = calls["promote"]
+    assert promote_args[0] == ["tf"]
+    assert promote_args[1] == [nuc]
+    assert promote_args[2] is obs
+    assert promote_args[3] == "hit"
+    assert promote_args[4] == "miss"
+    assert promote_args[5] == 90
+    assert promote_args[6] == 85
     assert result == fused_stages._NucRecallAndTfStageResult(
         nuc_calls=["kept_nuc"],
         msps=[(5, 10), (30, 20)],
@@ -450,7 +403,7 @@ def test_apply_result_is_circular_uses_truthy_metadata_flag():
     assert fused_stages._apply_result_is_circular({}) is False
 
 
-def test_run_tf_recall_stage_request_scans_intervals(monkeypatch):
+def test_run_tf_recall_stage_scans_intervals(monkeypatch):
     calls = []
     obs = np.asarray([0, 1, 2], dtype=np.int64)
     ns = np.asarray([10], dtype=np.int32)
@@ -477,21 +430,19 @@ def test_run_tf_recall_stage_request_scans_intervals(monkeypatch):
         fake_call_tfs_in_interval,
     )
 
-    request = fused_stages._TfRecallStageRequest(
-        obs=obs,
-        ns=ns,
-        nl=nl,
-        msps=msps,
-        msp_lengths=msp_lengths,
-        read_length=100,
-        llr_hit="hit",
-        llr_miss="miss",
-        min_llr=4.0,
-        min_opps=3,
-        unify_threshold=90,
-    )
-
-    assert fused_stages.run_tf_recall_stage_from_request(request) == [10, 30]
+    assert fused_stages.run_tf_recall_stage(
+        obs,
+        ns,
+        nl,
+        msps,
+        msp_lengths,
+        100,
+        "hit",
+        "miss",
+        4.0,
+        3,
+        90,
+    ) == [10, 30]
     label, interval_args, interval_kwargs = calls[0]
     assert label == "intervals"
     assert interval_args[0] is ns
@@ -506,109 +457,44 @@ def test_run_tf_recall_stage_request_scans_intervals(monkeypatch):
     assert calls[2][0] == "scan"
     assert calls[2][1][0] is obs
     assert calls[2][1][1:] == (30, 40, "hit", "miss", 4.0, 3)
-    calls.clear()
-
-    assert fused_stages.run_tf_recall_stage(
-        obs,
-        ns,
-        nl,
-        msps,
-        msp_lengths,
-        100,
-        "hit",
-        "miss",
-        4.0,
-        3,
-        90,
-    ) == [10, 30]
-    assert len(calls) == 3
 
 
-def test_build_fused_recall_result_builds_request(monkeypatch):
-    seen = {}
-    fiber_read = {"query_sequence": "AAAA"}
-    apply_result = {"circular": True}
-
-    def fake_build_from_request(request):
-        seen["request"] = request
-        return {"ok": True}
-
-    monkeypatch.setattr(
-        fused_stages,
-        "build_fused_recall_result_from_request",
-        fake_build_from_request,
-    )
-
-    assert fused_stages.build_fused_recall_result(
-        fiber_read,
-        apply_result,
-        llr_hit="hit",
-        llr_miss="miss",
-        min_llr=4.0,
-        min_opps=3,
-        unify_threshold=90,
-        with_scores=True,
-        recall_nucs=True,
-        split_min_llr=5.0,
-        split_min_opps=4,
-        nuc_min_size=75,
-        msp_min_size=2,
-        phase_nrl=147,
-    ) == {"ok": True}
-
-    request = seen["request"]
-    assert request.fiber_read is fiber_read
-    assert request.apply_result is apply_result
-    assert request.llr_hit == "hit"
-    assert request.llr_miss == "miss"
-    assert request.min_llr == 4.0
-    assert request.min_opps == 3
-    assert request.unify_threshold == 90
-    assert request.with_scores is True
-    assert request.recall_nucs is True
-    assert request.split_min_llr == 5.0
-    assert request.split_min_opps == 4
-    assert request.nuc_min_size == 75
-    assert request.msp_min_size == 2
-    assert request.phase_nrl == 147
-
-
-def test_build_fused_recall_result_request_dispatches(monkeypatch):
+def test_build_fused_recall_result_dispatches(monkeypatch):
     calls = []
     fiber_read = {"query_sequence": "AAAA"}
 
-    def fake_request_branch(label):
-        def inner(request):
-            calls.append((label, request))
+    def fake_branch(label):
+        def inner(*args):
+            calls.append((label, args))
             return {"branch": label}
 
         return inner
 
     monkeypatch.setattr(
         fused_stages,
-        "_build_fused_recall_result_without_nucs_linear_from_request",
-        fake_request_branch("linear"),
+        "_build_fused_recall_result_without_nucs_linear",
+        fake_branch("linear"),
     )
     monkeypatch.setattr(
         fused_stages,
-        "_build_fused_recall_result_without_nucs_circular_from_request",
-        fake_request_branch("circular"),
+        "_build_fused_recall_result_without_nucs_circular",
+        fake_branch("circular"),
     )
     monkeypatch.setattr(
         fused_stages,
-        "_build_fused_recall_result_with_nucs_from_request",
-        fake_request_branch("nucs"),
+        "_build_fused_recall_result_with_nucs",
+        fake_branch("nucs"),
     )
     monkeypatch.setattr(
         fused_stages,
-        "_build_fused_recall_result_with_nucs_circular_from_request",
-        fake_request_branch("nucs_circular"),
+        "_build_fused_recall_result_with_nucs_circular",
+        fake_branch("nucs_circular"),
     )
 
-    def request_for(apply_result, recall_nucs):
-        return fused_stages._FusedRecallResultRequest(
-            fiber_read=fiber_read,
-            apply_result=apply_result,
+    def call_for(apply_result, recall_nucs):
+        return fused_stages.build_fused_recall_result(
+            fiber_read,
+            apply_result,
             llr_hit="hit",
             llr_miss="miss",
             min_llr=4.0,
@@ -623,64 +509,34 @@ def test_build_fused_recall_result_request_dispatches(monkeypatch):
             phase_nrl=147,
         )
 
-    def assert_no_nucs_request(call, label, apply_result):
+    def assert_no_nucs_args(call, label, apply_result):
         assert call[0] == label
-        request = call[1]
-        assert request == fused_stages._FusedNoNucsResultRequest(
-            fiber_read=fiber_read,
-            apply_result=apply_result,
-            llr_hit="hit",
-            llr_miss="miss",
-            min_llr=4.0,
-            min_opps=3,
-            unify_threshold=90,
-            with_scores=True,
-        )
-        assert request.fiber_read is fiber_read
-        assert request.apply_result is apply_result
+        args = call[1]
+        assert args[0] is fiber_read
+        assert args[1] is apply_result
+        assert args[2:] == ("hit", "miss", 4.0, 3, 90, True)
 
-    def assert_nucs_request(call, label, apply_result):
+    def assert_nucs_args(call, label, apply_result):
         assert call[0] == label
-        request = call[1]
-        assert request == fused_stages._FusedNucsResultRequest(
-            fiber_read=fiber_read,
-            apply_result=apply_result,
-            llr_hit="hit",
-            llr_miss="miss",
-            min_llr=4.0,
-            min_opps=3,
-            unify_threshold=90,
-            split_min_llr=5.0,
-            split_min_opps=4,
-            nuc_min_size=75,
-            msp_min_size=2,
-            phase_nrl=147,
-        )
-        assert request.fiber_read is fiber_read
-        assert request.apply_result is apply_result
+        args = call[1]
+        assert args[0] is fiber_read
+        assert args[1] is apply_result
+        assert args[2:] == ("hit", "miss", 4.0, 3, 90, 5.0, 4, 75, 2, 147)
 
     linear_apply = {"circular": False}
     circular_apply = {"circular": True}
 
-    assert fused_stages.build_fused_recall_result_from_request(
-        request_for(linear_apply, recall_nucs=False),
-    ) == {"branch": "linear"}
-    assert_no_nucs_request(calls[-1], "linear", linear_apply)
+    assert call_for(linear_apply, recall_nucs=False) == {"branch": "linear"}
+    assert_no_nucs_args(calls[-1], "linear", linear_apply)
 
-    assert fused_stages.build_fused_recall_result_from_request(
-        request_for(circular_apply, recall_nucs=False),
-    ) == {"branch": "circular"}
-    assert_no_nucs_request(calls[-1], "circular", circular_apply)
+    assert call_for(circular_apply, recall_nucs=False) == {"branch": "circular"}
+    assert_no_nucs_args(calls[-1], "circular", circular_apply)
 
-    assert fused_stages.build_fused_recall_result_from_request(
-        request_for(linear_apply, recall_nucs=True),
-    ) == {"branch": "nucs"}
-    assert_nucs_request(calls[-1], "nucs", linear_apply)
+    assert call_for(linear_apply, recall_nucs=True) == {"branch": "nucs"}
+    assert_nucs_args(calls[-1], "nucs", linear_apply)
 
-    assert fused_stages.build_fused_recall_result_from_request(
-        request_for(circular_apply, recall_nucs=True),
-    ) == {"branch": "nucs_circular"}
-    assert_nucs_request(calls[-1], "nucs_circular", circular_apply)
+    assert call_for(circular_apply, recall_nucs=True) == {"branch": "nucs_circular"}
+    assert_nucs_args(calls[-1], "nucs_circular", circular_apply)
 
 
 def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatch):

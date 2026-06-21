@@ -75,59 +75,9 @@ class _NucRecallResult:
 
 
 @dataclass(frozen=True)
-class _NucSpanRecallRequest:
-    obs: object
-    start: int
-    end: int
-    tables: _NucRecallTables
-    params: _NucRecallParams
-
-
-@dataclass(frozen=True)
-class _BoundedNucSpansRecallRequest:
-    obs: object
-    ns: Sequence[int]
-    nl: Sequence[int]
-    read_length: int
-    tables: _NucRecallTables
-    params: _NucRecallParams
-
-
-@dataclass(frozen=True)
-class _NucsInReadRecallRequest:
-    obs: np.ndarray
-    ns: Sequence[int]
-    nl: Sequence[int]
-    read_length: int
-    llr_hit: np.ndarray
-    llr_miss: np.ndarray
-    split_min_llr: float
-    split_min_opps: int
-    nuc_min_size: int
-    edge_min_llr: float = 2.0
-    edge_min_opps: int = 2
-    phase_nrl: int = 0
-    phase_min_llr: float = 1.0
-    phase_min_opps: int = 1
-    phase_window: int = 35
-
-
-@dataclass(frozen=True)
 class _RefinedFragment:
     nuc: NucCall | None
     access: List[Interval]
-
-
-@dataclass(frozen=True)
-class _RefineFragmentRequest:
-    obs: object
-    start: int
-    end: int
-    llr_hit: np.ndarray
-    llr_miss: np.ndarray
-    nuc_min_size: int
-    edge_min_llr: float
-    edge_min_opps: int
 
 
 @dataclass(frozen=True)
@@ -137,33 +87,9 @@ class _AccessibleSplit:
 
 
 @dataclass(frozen=True)
-class _AccessibleSplitRequest:
-    obs: object
-    start: int
-    end: int
-    nhit: np.ndarray
-    nmiss: np.ndarray
-    min_llr: float
-    min_opps: int
-
-
-@dataclass(frozen=True)
 class _PhaseSplit:
     fragments: List[Interval]
     cuts: List[Interval]
-
-
-@dataclass(frozen=True)
-class _PhaseSplitRequest:
-    obs: object
-    start: int
-    end: int
-    nhit: np.ndarray
-    nmiss: np.ndarray
-    nrl: int
-    min_llr: float
-    min_opps: int
-    window: int
 
 
 @dataclass(frozen=True)
@@ -173,34 +99,9 @@ class _PhaseCutWindow:
 
 
 @dataclass(frozen=True)
-class _ReDerivedMspsRequest:
-    original_msps: Sequence[Interval]
-    accessible_from_splits: Sequence[Interval]
-    read_length: int
-    msp_min_size: int
-
-
-@dataclass(frozen=True)
 class _TilingFloors:
     msp: int
     nuc: int
-
-
-@dataclass(frozen=True)
-class _NucMspTilingRequest:
-    nuc_calls: Sequence[NucCall]
-    span_lo: int
-    span_hi: int
-    msp_min_size: int
-    nuc_min_size: int = 85
-
-
-@dataclass(frozen=True)
-class _CircularNucMspTilingRequest:
-    nuc_calls: Sequence[NucCall]
-    read_length: int
-    msp_min_size: int
-    nuc_min_size: int = 85
 
 
 @dataclass(frozen=True)
@@ -315,9 +216,9 @@ def _residue_intervals_around_nuc(a: int, b: int, nuc: NucCall) -> List[Interval
     return residues
 
 
-def _refine_fragment_from_request(
-    request: _RefineFragmentRequest,
-) -> _RefinedFragment:
+def _refine_fragment(obs, a, b, llr_hit, llr_miss,
+                     nuc_min_size, edge_min_llr,
+                     edge_min_opps) -> _RefinedFragment:
     """Edge-refine one protected fragment into a NucCall (or demote it).
 
     Returns a refined fragment with ``nuc`` and ``access`` fields. A fragment shorter than
@@ -326,92 +227,59 @@ def _refine_fragment_from_request(
     quality-0 NucCall) and the residue goes to ``access``.
     """
     access: List[Interval] = []
-    if request.end - request.start < request.nuc_min_size:
-        access.append((request.start, request.end - request.start))
+    if b - a < nuc_min_size:
+        access.append((a, b - a))
         return _RefinedFragment(nuc=None, access=access)
     prot = call_tfs_in_interval(
-        request.obs,
-        request.start,
-        request.end,
-        request.llr_hit,
-        request.llr_miss,
-        request.edge_min_llr,
-        request.edge_min_opps,
+        obs,
+        a,
+        b,
+        llr_hit,
+        llr_miss,
+        edge_min_llr,
+        edge_min_opps,
     )
     if not prot:
         # signal-desert fragment: keep raw extent, unknown quality/edges
         return _RefinedFragment(
             nuc=NucCall(
-                request.start,
-                request.end - request.start,
+                a,
+                b - a,
                 nq=0,
                 el=0,
                 er=0,
             ),
             access=access,
         )
-    nuc = _nuc_from_protected_calls(prot, request.nuc_min_size)
+    nuc = _nuc_from_protected_calls(prot, nuc_min_size)
     if nuc is None:
         # Edge refinement trimmed the protected core below the floor (a sparse
         # protected island) -> not a nucleosome, demote the whole fragment.
-        access.append((request.start, request.end - request.start))
+        access.append((a, b - a))
         return _RefinedFragment(nuc=None, access=access)
-    access.extend(_residue_intervals_around_nuc(request.start, request.end, nuc))
+    access.extend(_residue_intervals_around_nuc(a, b, nuc))
     return _RefinedFragment(nuc=nuc, access=access)
-
-
-def _refine_fragment(obs, a, b, llr_hit, llr_miss,
-                     nuc_min_size, edge_min_llr,
-                     edge_min_opps) -> _RefinedFragment:
-    return _refine_fragment_from_request(
-        _RefineFragmentRequest(
-            obs=obs,
-            start=a,
-            end=b,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            nuc_min_size=nuc_min_size,
-            edge_min_llr=edge_min_llr,
-            edge_min_opps=edge_min_opps,
-        )
-    )
-
-
-def _split_on_accessible_cuts_from_request(
-    request: _AccessibleSplitRequest,
-) -> _AccessibleSplit:
-    cuts = call_tfs_in_interval(
-        request.obs,
-        request.start,
-        request.end,
-        request.nhit,
-        request.nmiss,
-        request.min_llr,
-        request.min_opps,
-    )
-    cuts = sorted(cuts, key=lambda c: c.start)
-    access = [(c.start, c.length) for c in cuts]
-    frags = _fragments_after_cuts(
-        request.start,
-        request.end,
-        ((c.start, c.start + c.length) for c in cuts),
-    )
-    return _AccessibleSplit(fragments=frags, access=access)
 
 
 def _split_on_accessible_cuts(obs, a, b, nhit, nmiss,
                               split_min_llr, split_min_opps) -> _AccessibleSplit:
-    return _split_on_accessible_cuts_from_request(
-        _AccessibleSplitRequest(
-            obs=obs,
-            start=a,
-            end=b,
-            nhit=nhit,
-            nmiss=nmiss,
-            min_llr=split_min_llr,
-            min_opps=split_min_opps,
-        )
+    cuts = call_tfs_in_interval(
+        obs,
+        a,
+        b,
+        nhit,
+        nmiss,
+        split_min_llr,
+        split_min_opps,
     )
+    cuts = sorted(cuts, key=lambda c: c.start)
+    access = [(c.start, c.length) for c in cuts]
+    frags = _fragments_after_cuts(
+        a,
+        b,
+        ((c.start, c.start + c.length) for c in cuts),
+    )
+    return _AccessibleSplit(fragments=frags, access=access)
 
 
 def _phase_cut_window(
@@ -427,9 +295,9 @@ def _phase_cut_window(
     return _PhaseCutWindow(start=lo, end=hi)
 
 
-def _phase_subfragments_from_request(
-    request: _PhaseSplitRequest,
-) -> _PhaseSplit:
+def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
+                        phase_min_llr, phase_min_opps,
+                        phase_window) -> _PhaseSplit:
     """Evidence-gated periodicity split of a long protected fragment.
 
     A fragment of length L >= 1.5*nrl is assumed to hold ``n = round(L/nrl)``
@@ -439,60 +307,42 @@ def _phase_subfragments_from_request(
     Returns phase-split fragments plus cut intervals; with no qualifying cut
     the fragment is returned whole (never split into a signal-desert).
     """
-    L = request.end - request.start
-    if L < int(1.5 * request.nrl):
-        return _PhaseSplit(fragments=[(request.start, request.end)], cuts=[])
-    n = int(round(L / float(request.nrl)))
+    L = b - a
+    if L < int(1.5 * nrl):
+        return _PhaseSplit(fragments=[(a, b)], cuts=[])
+    n = int(round(L / float(nrl)))
     if n < 2:
-        return _PhaseSplit(fragments=[(request.start, request.end)], cuts=[])
+        return _PhaseSplit(fragments=[(a, b)], cuts=[])
     spacing = L / float(n)
     cut_pairs: List[Interval] = []
     for i in range(1, n):
-        pred = request.start + int(round(i * spacing))
+        pred = a + int(round(i * spacing))
         window = _phase_cut_window(
-            request.start,
-            request.end,
+            a,
+            b,
             pred,
-            request.window,
+            phase_window,
         )
         if window is None:
             continue
         found = call_tfs_in_interval(
-            request.obs,
+            obs,
             window.start,
             window.end,
-            request.nhit,
-            request.nmiss,
-            request.min_llr,
-            request.min_opps,
+            nhit,
+            nmiss,
+            phase_min_llr,
+            phase_min_opps,
         )
         if found:
             best = max(found, key=lambda c: c.llr)
             cut_pairs.append((best.start, best.start + best.length))
     if not cut_pairs:
-        return _PhaseSplit(fragments=[(request.start, request.end)], cuts=[])
+        return _PhaseSplit(fragments=[(a, b)], cuts=[])
     cut_pairs.sort()
-    subs = _fragments_after_cuts(request.start, request.end, cut_pairs)
+    subs = _fragments_after_cuts(a, b, cut_pairs)
     cut_intervals = [(cs, ce - cs) for cs, ce in cut_pairs]
     return _PhaseSplit(fragments=subs, cuts=cut_intervals)
-
-
-def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
-                        phase_min_llr, phase_min_opps,
-                        phase_window) -> _PhaseSplit:
-    return _phase_subfragments_from_request(
-        _PhaseSplitRequest(
-            obs=obs,
-            start=a,
-            end=b,
-            nhit=nhit,
-            nmiss=nmiss,
-            nrl=nrl,
-            min_llr=phase_min_llr,
-            min_opps=phase_min_opps,
-            window=phase_window,
-        )
-    )
 
 
 def _phase_or_unsplit_subfragments(
@@ -507,72 +357,18 @@ def _phase_or_unsplit_subfragments(
     phase_window: int,
 ) -> _PhaseSplit:
     if phase_nrl > 0:
-        return _phase_subfragments_from_request(
-            _PhaseSplitRequest(
-                obs=obs,
-                start=a,
-                end=b,
-                nhit=nhit,
-                nmiss=nmiss,
-                nrl=phase_nrl,
-                min_llr=phase_min_llr,
-                min_opps=phase_min_opps,
-                window=phase_window,
-            )
-        )
-    return _PhaseSplit(fragments=[(a, b)], cuts=[])
-
-
-def _recall_nuc_span_from_request(
-    request: _NucSpanRecallRequest,
-) -> _NucRecallResult:
-    nucs: List[NucCall] = []
-    access: List[Interval] = []
-
-    split = _split_on_accessible_cuts_from_request(
-        _AccessibleSplitRequest(
-            obs=request.obs,
-            start=request.start,
-            end=request.end,
-            nhit=request.tables.nhit,
-            nmiss=request.tables.nmiss,
-            min_llr=request.params.split_min_llr,
-            min_opps=request.params.split_min_opps,
-        )
-    )
-    access.extend(split.access)
-
-    for a, b in split.fragments:
-        phase = _phase_or_unsplit_subfragments(
-            request.obs,
+        return _phase_subfragments(
+            obs,
             a,
             b,
-            request.tables.nhit,
-            request.tables.nmiss,
-            request.params.phase_nrl,
-            request.params.phase_min_llr,
-            request.params.phase_min_opps,
-            request.params.phase_window,
+            nhit,
+            nmiss,
+            phase_nrl,
+            phase_min_llr,
+            phase_min_opps,
+            phase_window,
         )
-        access.extend(phase.cuts)
-        for sa, sb in phase.fragments:
-            refined = _refine_fragment_from_request(
-                _RefineFragmentRequest(
-                    obs=request.obs,
-                    start=sa,
-                    end=sb,
-                    llr_hit=request.tables.llr_hit,
-                    llr_miss=request.tables.llr_miss,
-                    nuc_min_size=request.params.nuc_min_size,
-                    edge_min_llr=request.params.edge_min_llr,
-                    edge_min_opps=request.params.edge_min_opps,
-                )
-            )
-            if refined.nuc is not None:
-                nucs.append(refined.nuc)
-            access.extend(refined.access)
-
-    return _NucRecallResult(nucs=nucs, access=access)
+    return _PhaseSplit(fragments=[(a, b)], cuts=[])
 
 
 def _recall_nuc_span(
@@ -582,15 +378,49 @@ def _recall_nuc_span(
     tables: _NucRecallTables,
     params: _NucRecallParams,
 ) -> _NucRecallResult:
-    return _recall_nuc_span_from_request(
-        _NucSpanRecallRequest(
-            obs=obs,
-            start=s,
-            end=e,
-            tables=tables,
-            params=params,
-        )
+    nucs: List[NucCall] = []
+    access: List[Interval] = []
+
+    split = _split_on_accessible_cuts(
+        obs,
+        s,
+        e,
+        tables.nhit,
+        tables.nmiss,
+        params.split_min_llr,
+        params.split_min_opps,
     )
+    access.extend(split.access)
+
+    for a, b in split.fragments:
+        phase = _phase_or_unsplit_subfragments(
+            obs,
+            a,
+            b,
+            tables.nhit,
+            tables.nmiss,
+            params.phase_nrl,
+            params.phase_min_llr,
+            params.phase_min_opps,
+            params.phase_window,
+        )
+        access.extend(phase.cuts)
+        for sa, sb in phase.fragments:
+            refined = _refine_fragment(
+                obs,
+                sa,
+                sb,
+                tables.llr_hit,
+                tables.llr_miss,
+                params.nuc_min_size,
+                params.edge_min_llr,
+                params.edge_min_opps,
+            )
+            if refined.nuc is not None:
+                nucs.append(refined.nuc)
+            access.extend(refined.access)
+
+    return _NucRecallResult(nucs=nucs, access=access)
 
 
 def _recall_nuc_params(
@@ -627,37 +457,6 @@ def _recall_nuc_tables(llr_hit: np.ndarray, llr_miss: np.ndarray) -> _NucRecallT
     )
 
 
-def _recall_bounded_nuc_spans_from_request(
-    request: _BoundedNucSpansRecallRequest,
-) -> _NucRecallResult:
-    nucs: List[NucCall] = []
-    access: List[Interval] = []
-
-    for s_raw, length_raw in zip(request.ns, request.nl):
-        span = _bounded_interval(
-            s_raw,
-            length_raw,
-            request.read_length,
-            clamp_start=False,
-        )
-        if span is None:
-            continue
-
-        span_result = _recall_nuc_span_from_request(
-            _NucSpanRecallRequest(
-                obs=request.obs,
-                start=span.start,
-                end=span.end,
-                tables=request.tables,
-                params=request.params,
-            )
-        )
-        nucs.extend(span_result.nucs)
-        access.extend(span_result.access)
-
-    return _NucRecallResult(nucs=nucs, access=access)
-
-
 def _recall_bounded_nuc_spans(
     obs,
     ns: Sequence[int],
@@ -666,61 +465,30 @@ def _recall_bounded_nuc_spans(
     tables: _NucRecallTables,
     params: _NucRecallParams,
 ) -> _NucRecallResult:
-    return _recall_bounded_nuc_spans_from_request(
-        _BoundedNucSpansRecallRequest(
-            obs=obs,
-            ns=ns,
-            nl=nl,
-            read_length=read_length,
-            tables=tables,
-            params=params,
+    nucs: List[NucCall] = []
+    access: List[Interval] = []
+
+    for s_raw, length_raw in zip(ns, nl):
+        span = _bounded_interval(
+            s_raw,
+            length_raw,
+            read_length,
+            clamp_start=False,
         )
-    )
+        if span is None:
+            continue
 
-
-def recall_nucs_in_read_from_request(
-    request: _NucsInReadRecallRequest,
-) -> Tuple[List[NucCall], List[Interval]]:
-    """Split + edge-refine the footprints (``ns``/``nl``) of one read.
-
-    Returns ``(nuc_calls, accessible_intervals)``:
-      - ``nuc_calls``: refined nucleosomes (>= ``nuc_min_size``) with nq/el/er.
-      - ``accessible_intervals``: (start, length) patches freed up by splitting
-        (the cuts) or trimming (overshoot residue + sub-min-size fragments).
-        These feed the MSP re-derivation.
-
-    Pass 1 (``split_min_llr``/``split_min_opps``) is the evidence-driven split:
-    accessible runs inside a footprint are cuts. Pass 2 (enabled when
-    ``phase_nrl > 0``) is the evidence-gated periodicity prior: a footprint
-    longer than ~1.5x the nucleosome repeat length is examined for cuts at
-    phase-predicted linker positions using a LOWERED threshold
-    (``phase_min_llr`` < ``split_min_llr``). The prior only lowers the bar near
-    a predicted linker -- a cut still requires real local evidence there, so a
-    signal-desert is never split.
-    """
-    tables = _recall_nuc_tables(request.llr_hit, request.llr_miss)
-    params = _recall_nuc_params(
-        split_min_llr=request.split_min_llr,
-        split_min_opps=request.split_min_opps,
-        nuc_min_size=request.nuc_min_size,
-        edge_min_llr=request.edge_min_llr,
-        edge_min_opps=request.edge_min_opps,
-        phase_nrl=request.phase_nrl,
-        phase_min_llr=request.phase_min_llr,
-        phase_min_opps=request.phase_min_opps,
-        phase_window=request.phase_window,
-    )
-    result = _recall_bounded_nuc_spans_from_request(
-        _BoundedNucSpansRecallRequest(
-            obs=request.obs,
-            ns=request.ns,
-            nl=request.nl,
-            read_length=request.read_length,
-            tables=tables,
-            params=params,
+        span_result = _recall_nuc_span(
+            obs,
+            span.start,
+            span.end,
+            tables,
+            params,
         )
-    )
-    return result.nucs, result.access
+        nucs.extend(span_result.nucs)
+        access.extend(span_result.access)
+
+    return _NucRecallResult(nucs=nucs, access=access)
 
 
 def recall_nucs_in_read(
@@ -741,49 +509,44 @@ def recall_nucs_in_read(
     phase_min_opps: int = 1,
     phase_window: int = 35,
 ) -> Tuple[List[NucCall], List[Interval]]:
-    return recall_nucs_in_read_from_request(
-        _NucsInReadRecallRequest(
-            obs=obs,
-            ns=ns,
-            nl=nl,
-            read_length=read_length,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            split_min_llr=split_min_llr,
-            split_min_opps=split_min_opps,
-            nuc_min_size=nuc_min_size,
-            edge_min_llr=edge_min_llr,
-            edge_min_opps=edge_min_opps,
-            phase_nrl=phase_nrl,
-            phase_min_llr=phase_min_llr,
-            phase_min_opps=phase_min_opps,
-            phase_window=phase_window,
-        )
-    )
+    """Split + edge-refine the footprints (``ns``/``nl``) of one read.
 
+    Returns ``(nuc_calls, accessible_intervals)``:
+      - ``nuc_calls``: refined nucleosomes (>= ``nuc_min_size``) with nq/el/er.
+      - ``accessible_intervals``: (start, length) patches freed up by splitting
+        (the cuts) or trimming (overshoot residue + sub-min-size fragments).
+        These feed the MSP re-derivation.
 
-def _rederive_msps_from_request(request: _ReDerivedMspsRequest) -> List[Interval]:
-    """Re-derive MSPs from the new nucleosome boundaries.
-
-    MSPs after nuc-recall = the original HMM MSPs unioned with the accessible
-    patches freed by splitting/trimming, merged, and filtered to
-    ``>= msp_min_size``. Returns (start, length) intervals.
+    Pass 1 (``split_min_llr``/``split_min_opps``) is the evidence-driven split:
+    accessible runs inside a footprint are cuts. Pass 2 (enabled when
+    ``phase_nrl > 0``) is the evidence-gated periodicity prior: a footprint
+    longer than ~1.5x the nucleosome repeat length is examined for cuts at
+    phase-predicted linker positions using a LOWERED threshold
+    (``phase_min_llr`` < ``split_min_llr``). The prior only lowers the bar near
+    a predicted linker -- a cut still requires real local evidence there, so a
+    signal-desert is never split.
     """
-    iv: List[Interval] = []
-    for s_raw, length_raw in (
-        list(request.original_msps) + list(request.accessible_from_splits)
-    ):
-        span = _bounded_interval(
-            s_raw,
-            length_raw,
-            request.read_length,
-            clamp_start=True,
-        )
-        if span is not None:
-            iv.append((span.start, span.end))
-    merged = merge_intervals(iv)
-    floor = max(1, int(request.msp_min_size))
-    return [(a, b - a) for a, b in merged if (b - a) >= floor]
+    tables = _recall_nuc_tables(llr_hit, llr_miss)
+    params = _recall_nuc_params(
+        split_min_llr=split_min_llr,
+        split_min_opps=split_min_opps,
+        nuc_min_size=nuc_min_size,
+        edge_min_llr=edge_min_llr,
+        edge_min_opps=edge_min_opps,
+        phase_nrl=phase_nrl,
+        phase_min_llr=phase_min_llr,
+        phase_min_opps=phase_min_opps,
+        phase_window=phase_window,
+    )
+    result = _recall_bounded_nuc_spans(
+        obs,
+        ns,
+        nl,
+        read_length,
+        tables,
+        params,
+    )
+    return result.nucs, result.access
 
 
 def rederive_msps(
@@ -792,14 +555,27 @@ def rederive_msps(
     read_length: int,
     msp_min_size: int,
 ) -> List[Interval]:
-    return _rederive_msps_from_request(
-        _ReDerivedMspsRequest(
-            original_msps=original_msps,
-            accessible_from_splits=accessible_from_splits,
-            read_length=read_length,
-            msp_min_size=msp_min_size,
+    """Re-derive MSPs from the new nucleosome boundaries.
+
+    MSPs after nuc-recall = the original HMM MSPs unioned with the accessible
+    patches freed by splitting/trimming, merged, and filtered to
+    ``>= msp_min_size``. Returns (start, length) intervals.
+    """
+    iv: List[Interval] = []
+    for s_raw, length_raw in (
+        list(original_msps) + list(accessible_from_splits)
+    ):
+        span = _bounded_interval(
+            s_raw,
+            length_raw,
+            read_length,
+            clamp_start=True,
         )
-    )
+        if span is not None:
+            iv.append((span.start, span.end))
+    merged = merge_intervals(iv)
+    floor = max(1, int(msp_min_size))
+    return [(a, b - a) for a, b in merged if (b - a) >= floor]
 
 
 def unify_nuc_calls_with_tf_calls(
@@ -869,9 +645,8 @@ def _clip_ordered_nuc_calls_for_tiling(
     return kept
 
 
-def _assemble_nuc_msp_tiling_from_request(
-    request: _NucMspTilingRequest,
-):
+def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
+                            nuc_min_size=85):
     """Produce non-overlapping nucleosomes + complementary MSPs that TILE
     ``[span_lo, span_hi)``.
 
@@ -891,32 +666,19 @@ def _assemble_nuc_msp_tiling_from_request(
         reverts to MSP), so no sub-nucleosome nuc+ calls leak out.
     Returns ``(kept_nucs, msp_intervals)``.
     """
-    floors = _tiling_floors(request.msp_min_size, request.nuc_min_size)
-    ordered = _ordered_positive_nuc_calls(request.nuc_calls)
+    floors = _tiling_floors(msp_min_size, nuc_min_size)
+    ordered = _ordered_positive_nuc_calls(nuc_calls)
     kept = _clip_ordered_nuc_calls_for_tiling(
         ordered,
-        request.span_lo,
+        span_lo,
         floors.nuc,
     )
 
     return kept, _msp_gaps_between_nucs(
         kept,
-        request.span_lo,
-        request.span_hi,
+        span_lo,
+        span_hi,
         floors.msp,
-    )
-
-
-def assemble_nuc_msp_tiling(nuc_calls, span_lo, span_hi, msp_min_size,
-                            nuc_min_size=85):
-    return _assemble_nuc_msp_tiling_from_request(
-        _NucMspTilingRequest(
-            nuc_calls=nuc_calls,
-            span_lo=span_lo,
-            span_hi=span_hi,
-            msp_min_size=msp_min_size,
-            nuc_min_size=nuc_min_size,
-        )
     )
 
 
@@ -983,9 +745,8 @@ def _restore_circular_tiling_frame(
     return _CircularTilingFrame(nucs=kept, msps=msps)
 
 
-def _assemble_circular_nuc_msp_tiling_from_request(
-    request: _CircularNucMspTilingRequest,
-):
+def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
+                                     nuc_min_size=85):
     """Circular-aware ``assemble_nuc_msp_tiling``.
 
     On a circular molecule a nucleosome can wrap the origin
@@ -1004,9 +765,9 @@ def _assemble_circular_nuc_msp_tiling_from_request(
         calls are split at the origin before the linear clip -- otherwise the
         tiler would emit overlapping/wrapped pieces.
     """
-    rl = int(request.read_length)
-    floors = _tiling_floors(request.msp_min_size, request.nuc_min_size)
-    calls = [n for n in request.nuc_calls if n.length > 0]
+    rl = int(read_length)
+    floors = _tiling_floors(msp_min_size, nuc_min_size)
+    calls = [n for n in nuc_calls if n.length > 0]
     if rl <= 0:
         return list(calls), []
     if not calls:
@@ -1023,30 +784,16 @@ def _assemble_circular_nuc_msp_tiling_from_request(
     # fallback origin landing inside a wrapped call is handled correctly.
     cut = _circular_uncovered_cut(calls, rl)
     rotated = _rotate_circular_nuc_calls(calls, cut, rl)
-    kept_rot, msp_rot = _assemble_nuc_msp_tiling_from_request(
-        _NucMspTilingRequest(
-            nuc_calls=rotated,
-            span_lo=0,
-            span_hi=rl,
-            msp_min_size=request.msp_min_size,
-            nuc_min_size=request.nuc_min_size,
-        )
+    kept_rot, msp_rot = assemble_nuc_msp_tiling(
+        rotated,
+        span_lo=0,
+        span_hi=rl,
+        msp_min_size=msp_min_size,
+        nuc_min_size=nuc_min_size,
     )
 
     restored = _restore_circular_tiling_frame(kept_rot, msp_rot, cut, rl)
     return restored.nucs, restored.msps
-
-
-def assemble_circular_nuc_msp_tiling(nuc_calls, read_length, msp_min_size,
-                                     nuc_min_size=85):
-    return _assemble_circular_nuc_msp_tiling_from_request(
-        _CircularNucMspTilingRequest(
-            nuc_calls=nuc_calls,
-            read_length=read_length,
-            msp_min_size=msp_min_size,
-            nuc_min_size=nuc_min_size,
-        )
-    )
 
 
 def drop_short_nucs_overlapping_promoted(nuc_calls, promoted, unify_threshold):
@@ -1077,17 +824,15 @@ def _promoted_nuc_from_tf_call(
     edge_min_llr,
     edge_min_opps,
 ):
-    refined = _refine_fragment_from_request(
-        _RefineFragmentRequest(
-            obs=obs,
-            start=call.start,
-            end=call.start + call.length,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            nuc_min_size=nuc_min_size,
-            edge_min_llr=edge_min_llr,
-            edge_min_opps=edge_min_opps,
-        )
+    refined = _refine_fragment(
+        obs,
+        call.start,
+        call.start + call.length,
+        llr_hit,
+        llr_miss,
+        nuc_min_size,
+        edge_min_llr,
+        edge_min_opps,
     )
     return refined.nuc
 

@@ -3,12 +3,8 @@ from __future__ import annotations
 
 from fiberhmm.daf.encoder import (
     _daf_chimera_breakpoint_matches,
-    _daf_chimera_breakpoint_matches_from_request,
     _daf_chimera_segment_counts,
-    _daf_chimera_segment_counts_from_request,
-    _DafChimeraBreakpointRequest,
     _DafChimeraSegmentCounts,
-    _DafChimeraSegmentCountsRequest,
     _has_min_daf_chimera_events,
     _has_min_daf_chimera_strand_counts,
     is_daf_chimera,
@@ -27,12 +23,6 @@ def test_chimera_event_count_gate_requires_two_segments():
 
 def test_chimera_segment_counts_split_left_and_right_strands():
     # total CT=7, GA=5; left has 4 CT among 6 total events.
-    request = _DafChimeraSegmentCountsRequest(
-        ct_left=4,
-        left_total=6,
-        nct=7,
-        nga=5,
-    )
     expected = _DafChimeraSegmentCounts(
         right_total=6,
         ga_left=2,
@@ -40,31 +30,12 @@ def test_chimera_segment_counts_split_left_and_right_strands():
         ga_right=3,
     )
 
-    assert _daf_chimera_segment_counts_from_request(request) == expected
     assert _daf_chimera_segment_counts(4, 6, 7, 5) == expected
 
 
 def test_chimera_breakpoint_request_matches_adapter_and_orientation():
-    ct_then_ga = _DafChimeraBreakpointRequest(
-        ct_left=5,
-        left_total=5,
-        nct=5,
-        nga=5,
-        min_seg_events=5,
-        purity=0.8,
-    )
-    ga_then_ct = _DafChimeraBreakpointRequest(
-        ct_left=0,
-        left_total=5,
-        nct=5,
-        nga=5,
-        min_seg_events=5,
-        purity=0.8,
-    )
-
-    assert _daf_chimera_breakpoint_matches_from_request(ct_then_ga)
     assert _daf_chimera_breakpoint_matches(5, 5, 5, 5, 5, 0.8)
-    assert _daf_chimera_breakpoint_matches_from_request(ga_then_ct)
+    assert _daf_chimera_breakpoint_matches(0, 5, 5, 5, 5, 0.8)
 
 
 def test_clean_ct_read_not_chimera():

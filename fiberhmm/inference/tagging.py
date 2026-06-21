@@ -25,36 +25,9 @@ class _LegacyIntervalGroup:
 
 
 @dataclass(frozen=True)
-class _MolecularLegacyRequest:
-    starts: object
-    lengths: object
-    scores: object
-    read: object
-    with_scores: bool
-
-
-@dataclass(frozen=True)
-class _LegacyIntervalGroupRequest:
-    result: dict
-    start_key: str
-    length_key: str
-    score_key: str
-    read: object
-    with_scores: bool
-
-
-@dataclass(frozen=True)
 class _LegacyApplyIntervalGroups:
     nucs: _LegacyIntervalGroup
     msps: _LegacyIntervalGroup
-
-
-@dataclass(frozen=True)
-class _LegacyApplyTagsRequest:
-    read: object
-    result: dict
-    with_scores: bool
-    write_msps: bool = True
 
 
 @dataclass(frozen=True)
@@ -64,34 +37,9 @@ class _FilteredNucIntervals:
 
 
 @dataclass(frozen=True)
-class _NucTfOverlapFilterRequest:
-    nucs: Iterable[Interval]
-    unify_threshold: int
-    ns_scores: Optional[Sequence[float]]
-    overlaps_tf: Callable[[Interval], bool]
-
-
-@dataclass(frozen=True)
 class _FusedRecallTagIntervals:
     kept_nucs: list[Interval]
     msps: list[Interval]
-
-
-@dataclass(frozen=True)
-class _FusedRecallTagsRequest:
-    read: object
-    read_length: int
-    result: dict
-    also_write_legacy: bool
-    downstream_compat: bool
-
-
-@dataclass(frozen=True)
-class _ResultIntervalsRequest:
-    result: dict
-    circular_key: str
-    start_key: str
-    length_key: str
 
 
 def _flip_legacy_intervals_to_molecular(
@@ -111,37 +59,23 @@ def _flip_legacy_intervals_to_molecular(
     return _LegacyIntervalGroup(new_s, new_l, new_sc)
 
 
-def _to_molecular_legacy_from_request(
-    request: _MolecularLegacyRequest,
-) -> _LegacyIntervalGroup:
+def _to_molecular_legacy(starts, lengths, scores, read, with_scores) -> _LegacyIntervalGroup:
     """Convert parallel (start, length[, score]) legacy arrays to molecular
     frame for a reverse-mapped read (no-op for forward reads). Returns lists;
     scores are reordered to stay aligned with the re-sorted intervals."""
-    s_list = _array_to_ints(request.starts)
-    l_list = _array_to_ints(request.lengths)
+    s_list = _array_to_ints(starts)
+    l_list = _array_to_ints(lengths)
     sc = (
-        list(request.scores)
-        if (request.with_scores and request.scores is not None)
+        list(scores)
+        if (with_scores and scores is not None)
         else None
     )
-    if not s_list or not getattr(request.read, 'is_reverse', False):
+    if not s_list or not getattr(read, 'is_reverse', False):
         return _LegacyIntervalGroup(s_list, l_list, sc)
-    read_length = _read_length_of(request.read)
+    read_length = _read_length_of(read)
     if not read_length:
         return _LegacyIntervalGroup(s_list, l_list, sc)
     return _flip_legacy_intervals_to_molecular(s_list, l_list, sc, read_length)
-
-
-def _to_molecular_legacy(starts, lengths, scores, read, with_scores) -> _LegacyIntervalGroup:
-    return _to_molecular_legacy_from_request(
-        _MolecularLegacyRequest(
-            starts=starts,
-            lengths=lengths,
-            scores=scores,
-            read=read,
-            with_scores=with_scores,
-        )
-    )
 
 
 def _array_to_ints(values) -> list[int]:
@@ -231,39 +165,26 @@ def _should_keep_nuc_interval(
     return interval[1] >= unify_threshold or not overlaps_tf(interval)
 
 
-def _filter_nucs_with_tf_overlap_from_request(
-    request: _NucTfOverlapFilterRequest,
-) -> _FilteredNucIntervals:
-    score_values = scores_to_u8(request.ns_scores)
-    kept: list[Interval] = []
-    kept_scores: Optional[list[int]] = [] if score_values is not None else None
-
-    for idx, (s_raw, length_raw) in enumerate(request.nucs):
-        interval = (int(s_raw), int(length_raw))
-        if _should_keep_nuc_interval(
-            interval,
-            request.unify_threshold,
-            request.overlaps_tf,
-        ):
-            _append_kept_interval(kept, kept_scores, interval, score_values, idx)
-
-    return _FilteredNucIntervals(kept, kept_scores)
-
-
 def _filter_nucs_with_tf_overlap(
     nucs: Iterable[Interval],
     unify_threshold: int,
     ns_scores: Optional[Sequence[float]],
     overlaps_tf: Callable[[Interval], bool],
 ) -> _FilteredNucIntervals:
-    return _filter_nucs_with_tf_overlap_from_request(
-        _NucTfOverlapFilterRequest(
-            nucs=nucs,
-            unify_threshold=unify_threshold,
-            ns_scores=ns_scores,
-            overlaps_tf=overlaps_tf,
-        )
-    )
+    score_values = scores_to_u8(ns_scores)
+    kept: list[Interval] = []
+    kept_scores: Optional[list[int]] = [] if score_values is not None else None
+
+    for idx, (s_raw, length_raw) in enumerate(nucs):
+        interval = (int(s_raw), int(length_raw))
+        if _should_keep_nuc_interval(
+            interval,
+            unify_threshold,
+            overlaps_tf,
+        ):
+            _append_kept_interval(kept, kept_scores, interval, score_values, idx)
+
+    return _FilteredNucIntervals(kept, kept_scores)
 
 
 def _tf_linear_intervals(tf_calls: Sequence[TFCall]) -> list[Interval]:
@@ -308,41 +229,13 @@ def _legacy_apply_interval_groups(
     read,
     with_scores: bool,
 ) -> _LegacyApplyIntervalGroups:
-    nucs = _legacy_interval_group_from_request(
-        _LegacyIntervalGroupRequest(
-            result=result,
-            start_key="ns",
-            length_key="nl",
-            score_key="ns_scores",
-            read=read,
-            with_scores=with_scores,
-        )
+    nucs = _legacy_interval_group(
+        result, "ns", "nl", "ns_scores", read, with_scores,
     )
-    msps = _legacy_interval_group_from_request(
-        _LegacyIntervalGroupRequest(
-            result=result,
-            start_key="as",
-            length_key="al",
-            score_key="as_scores",
-            read=read,
-            with_scores=with_scores,
-        )
+    msps = _legacy_interval_group(
+        result, "as", "al", "as_scores", read, with_scores,
     )
     return _LegacyApplyIntervalGroups(nucs=nucs, msps=msps)
-
-
-def _legacy_interval_group_from_request(
-    request: _LegacyIntervalGroupRequest,
-) -> _LegacyIntervalGroup:
-    return _to_molecular_legacy_from_request(
-        _MolecularLegacyRequest(
-            starts=request.result[request.start_key],
-            lengths=request.result[request.length_key],
-            scores=request.result.get(request.score_key),
-            read=request.read,
-            with_scores=request.with_scores,
-        )
-    )
 
 
 def _legacy_interval_group(
@@ -353,15 +246,12 @@ def _legacy_interval_group(
     read,
     with_scores: bool,
 ) -> _LegacyIntervalGroup:
-    return _legacy_interval_group_from_request(
-        _LegacyIntervalGroupRequest(
-            result=result,
-            start_key=start_key,
-            length_key=length_key,
-            score_key=score_key,
-            read=read,
-            with_scores=with_scores,
-        )
+    return _to_molecular_legacy(
+        result[start_key],
+        result[length_key],
+        result.get(score_key),
+        read,
+        with_scores,
     )
 
 
@@ -369,8 +259,11 @@ def _clear_stale_spec_tags(read) -> None:
     clear_tags(read, STALE_SPEC_TAGS)
 
 
-def set_legacy_apply_tags_from_request(
-    request: _LegacyApplyTagsRequest,
+def set_legacy_apply_tags(
+    read,
+    result: dict,
+    with_scores: bool,
+    write_msps: bool = True,
 ) -> None:
     """Write legacy apply tags (`ns/nl/as/al`, optional `nq/aq`) in place.
 
@@ -381,54 +274,38 @@ def set_legacy_apply_tags_from_request(
     # Apply recomputes the read structure, so any pre-existing MA/AN/AQ from a
     # prior fiberhmm-call/recall pass now refers to stale ns/nl coordinates.
     # Strip them so the BAM never carries an inconsistent annotation view.
-    _clear_stale_spec_tags(request.read)
+    _clear_stale_spec_tags(read)
 
     # FiberHMM works in SEQ (query_sequence) coordinates; ns/nl/as/al must be
     # written in molecular (original-fiber) frame for fibertools. Flip + re-sort
     # for reverse-mapped reads (forward reads are unchanged).
     groups = _legacy_apply_interval_groups(
-        request.result,
-        request.read,
-        request.with_scores,
+        result,
+        read,
+        with_scores,
     )
 
     _write_legacy_interval_tags(
-        request.read,
+        read,
         "ns",
         "nl",
         "nq",
         groups.nucs.starts,
         groups.nucs.lengths,
         groups.nucs.scores,
-        request.with_scores,
+        with_scores,
     )
-    if request.write_msps:
+    if write_msps:
         _write_legacy_interval_tags(
-            request.read,
+            read,
             "as",
             "al",
             "aq",
             groups.msps.starts,
             groups.msps.lengths,
             groups.msps.scores,
-            request.with_scores,
+            with_scores,
         )
-
-
-def set_legacy_apply_tags(
-    read,
-    result: dict,
-    with_scores: bool,
-    write_msps: bool = True,
-) -> None:
-    set_legacy_apply_tags_from_request(
-        _LegacyApplyTagsRequest(
-            read=read,
-            result=result,
-            with_scores=with_scores,
-            write_msps=write_msps,
-        )
-    )
 
 
 def unify_nucs_with_tf_calls(
@@ -450,13 +327,11 @@ def unify_nucs_with_tf_calls(
     def overlaps_tf(interval: Interval) -> bool:
         return _nuc_overlaps_any_linear_interval(interval, tf_intervals)
 
-    filtered = _filter_nucs_with_tf_overlap_from_request(
-        _NucTfOverlapFilterRequest(
-            nucs=zip(ns, nl),
-            unify_threshold=unify_threshold,
-            ns_scores=ns_scores,
-            overlaps_tf=overlaps_tf,
-        )
+    filtered = _filter_nucs_with_tf_overlap(
+        zip(ns, nl),
+        unify_threshold,
+        ns_scores,
+        overlaps_tf,
     )
     return filtered.intervals, filtered.scores
 
@@ -476,13 +351,11 @@ def unify_circular_nucs_with_tf_calls(
             interval, tf_intervals, read_length,
         )
 
-    filtered = _filter_nucs_with_tf_overlap_from_request(
-        _NucTfOverlapFilterRequest(
-            nucs=nucs,
-            unify_threshold=unify_threshold,
-            ns_scores=ns_scores,
-            overlaps_tf=overlaps_tf,
-        )
+    filtered = _filter_nucs_with_tf_overlap(
+        nucs,
+        unify_threshold,
+        ns_scores,
+        overlaps_tf,
     )
     return filtered.intervals, filtered.scores
 
@@ -496,68 +369,22 @@ def split_intervals(intervals: Sequence[Interval]) -> tuple[np.ndarray, np.ndarr
     return starts, lengths
 
 
-def _result_intervals_from_request(
-    request: _ResultIntervalsRequest,
-) -> list[Interval]:
-    return request.result.get(request.circular_key) or intervals_from_arrays(
-        request.result[request.start_key],
-        request.result[request.length_key],
-    )
-
-
 def _result_intervals(
     result: dict,
     circular_key: str,
     start_key: str,
     length_key: str,
 ) -> list[Interval]:
-    return _result_intervals_from_request(
-        _ResultIntervalsRequest(
-            result=result,
-            circular_key=circular_key,
-            start_key=start_key,
-            length_key=length_key,
-        )
+    return result.get(circular_key) or intervals_from_arrays(
+        result[start_key],
+        result[length_key],
     )
 
 
 def _fused_recall_tag_intervals(result: dict) -> _FusedRecallTagIntervals:
-    kept_nucs = _result_intervals_from_request(
-        _ResultIntervalsRequest(
-            result=result,
-            circular_key="circular_ns",
-            start_key="ns",
-            length_key="nl",
-        )
-    )
-    msps = _result_intervals_from_request(
-        _ResultIntervalsRequest(
-            result=result,
-            circular_key="circular_as",
-            start_key="as",
-            length_key="al",
-        )
-    )
+    kept_nucs = _result_intervals(result, "circular_ns", "ns", "nl")
+    msps = _result_intervals(result, "circular_as", "as", "al")
     return _FusedRecallTagIntervals(kept_nucs=kept_nucs, msps=msps)
-
-
-def write_fused_recall_tags_from_request(
-    request: _FusedRecallTagsRequest,
-) -> None:
-    """Apply a fused apply+TF-recall result to a pysam read."""
-    intervals = _fused_recall_tag_intervals(request.result)
-    write_ma_tags(
-        request.read,
-        read_length=request.read_length,
-        tf_calls=request.result["tf_calls"],
-        kept_nucs=intervals.kept_nucs,
-        msps=intervals.msps,
-        nq_for_kept_nucs=request.result.get("nq_for_kept_nucs"),
-        also_write_legacy=request.also_write_legacy,
-        downstream_compat=request.downstream_compat,
-        nuc_el_for_kept=request.result.get("nuc_el_for_kept"),
-        nuc_er_for_kept=request.result.get("nuc_er_for_kept"),
-    )
 
 
 def write_fused_recall_tags(
@@ -567,12 +394,17 @@ def write_fused_recall_tags(
     also_write_legacy: bool,
     downstream_compat: bool,
 ) -> None:
-    write_fused_recall_tags_from_request(
-        _FusedRecallTagsRequest(
-            read=read,
-            read_length=read_length,
-            result=result,
-            also_write_legacy=also_write_legacy,
-            downstream_compat=downstream_compat,
-        )
+    """Apply a fused apply+TF-recall result to a pysam read."""
+    intervals = _fused_recall_tag_intervals(result)
+    write_ma_tags(
+        read,
+        read_length=read_length,
+        tf_calls=result["tf_calls"],
+        kept_nucs=intervals.kept_nucs,
+        msps=intervals.msps,
+        nq_for_kept_nucs=result.get("nq_for_kept_nucs"),
+        also_write_legacy=also_write_legacy,
+        downstream_compat=downstream_compat,
+        nuc_el_for_kept=result.get("nuc_el_for_kept"),
+        nuc_er_for_kept=result.get("nuc_er_for_kept"),
     )

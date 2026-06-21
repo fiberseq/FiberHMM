@@ -6,48 +6,31 @@ import numpy as np
 from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
-    _AccessibleSplitRequest,
-    _assemble_circular_nuc_msp_tiling_from_request,
-    _assemble_nuc_msp_tiling_from_request,
     _bounded_interval,
     _BoundedInterval,
-    _BoundedNucSpansRecallRequest,
     _circular_uncovered_cut,
-    _CircularNucMspTilingRequest,
     _CircularTilingFrame,
     _clip_ordered_nuc_calls_for_tiling,
     _keep_nuc_against_circular_intervals,
     _msp_gaps_between_nucs,
     _nuc_from_protected_calls,
-    _NucMspTilingRequest,
     _NucRecallParams,
     _NucRecallResult,
-    _NucsInReadRecallRequest,
-    _NucSpanRecallRequest,
     _ordered_positive_nuc_calls,
     _phase_cut_window,
     _phase_or_unsplit_subfragments,
     _phase_subfragments,
-    _phase_subfragments_from_request,
     _PhaseCutWindow,
-    _PhaseSplitRequest,
     _promoted_nuc_from_tf_call,
     _recall_bounded_nuc_spans,
-    _recall_bounded_nuc_spans_from_request,
     _recall_nuc_params,
     _recall_nuc_span,
-    _recall_nuc_span_from_request,
     _recall_nuc_tables,
-    _rederive_msps_from_request,
-    _ReDerivedMspsRequest,
     _refine_fragment,
-    _refine_fragment_from_request,
-    _RefineFragmentRequest,
     _residue_intervals_around_nuc,
     _restore_circular_tiling_frame,
     _rotate_circular_nuc_calls,
     _split_on_accessible_cuts,
-    _split_on_accessible_cuts_from_request,
     _total_call_llr,
     _whole_molecule_nuc_candidate,
     assemble_circular_nuc_msp_tiling,
@@ -55,7 +38,6 @@ from fiberhmm.inference.nuc_recaller import (
     drop_short_nucs_overlapping_promoted,
     promote_large_tf_calls,
     recall_nucs_in_read,
-    recall_nucs_in_read_from_request,
     rederive_msps,
     unify_circular_nuc_calls_with_tf_calls,
     unify_nuc_calls_with_tf_calls,
@@ -85,18 +67,16 @@ def test_split_separates_two_nucs_at_a_hit_cluster():
     # 60 misses | 6 hits | 60 misses -> the hit cluster is a cut between 2 nucs
     obs = _obs((MISS, 60), (HIT, 6), (MISS, 60))
     llr_hit, llr_miss = _llr_tables()
-    nucs, access = recall_nucs_in_read_from_request(
-        _NucsInReadRecallRequest(
-            obs=obs,
-            ns=[0],
-            nl=[len(obs)],
-            read_length=len(obs),
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            split_min_llr=4.0,
-            split_min_opps=3,
-            nuc_min_size=40,
-        )
+    nucs, access = recall_nucs_in_read(
+        obs,
+        ns=[0],
+        nl=[len(obs)],
+        read_length=len(obs),
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        split_min_llr=4.0,
+        split_min_opps=3,
+        nuc_min_size=40,
     )
     assert len(nucs) == 2, [(n.start, n.length) for n in nucs]
     # a cut (accessible run) was recorded over the hit cluster
@@ -123,18 +103,8 @@ def test_no_split_when_no_accessible_evidence():
 def test_split_on_accessible_cuts_returns_fragments_and_cut_access():
     obs = _obs((MISS, 60), (HIT, 6), (MISS, 60))
     llr_hit, llr_miss = _llr_tables()
-    request = _AccessibleSplitRequest(
-        obs=obs,
-        start=0,
-        end=len(obs),
-        nhit=-llr_hit,
-        nmiss=-llr_miss,
-        min_llr=4.0,
-        min_opps=3,
-    )
 
-    split = _split_on_accessible_cuts_from_request(request)
-    adapted = _split_on_accessible_cuts(
+    split = _split_on_accessible_cuts(
         obs, 0, len(obs), -llr_hit, -llr_miss,
         split_min_llr=4.0, split_min_opps=3,
     )
@@ -142,7 +112,6 @@ def test_split_on_accessible_cuts_returns_fragments_and_cut_access():
     assert len(split.fragments) == 2
     assert split.access
     assert any(60 <= s <= 66 for s, _ in split.access)
-    assert adapted == split
 
 
 def test_recall_nuc_span_matches_single_read_wrapper():
@@ -161,16 +130,7 @@ def test_recall_nuc_span_matches_single_read_wrapper():
         phase_window=35,
     )
 
-    span_result = _recall_nuc_span_from_request(
-        _NucSpanRecallRequest(
-            obs=obs,
-            start=0,
-            end=len(obs),
-            tables=tables,
-            params=params,
-        )
-    )
-    adapted_span_result = _recall_nuc_span(obs, 0, len(obs), tables, params)
+    span_result = _recall_nuc_span(obs, 0, len(obs), tables, params)
     read_nucs, read_access = recall_nucs_in_read(
         obs,
         ns=[0],
@@ -185,7 +145,6 @@ def test_recall_nuc_span_matches_single_read_wrapper():
 
     assert span_result.nucs == read_nucs
     assert span_result.access == read_access
-    assert adapted_span_result == span_result
 
 
 def test_recall_nuc_params_captures_thresholds():
@@ -230,36 +189,28 @@ def test_recall_bounded_nuc_spans_skips_invalid_spans(monkeypatch):
     )
     calls = []
 
-    def fake_span(request):
-        calls.append((
-            request.obs,
-            request.start,
-            request.end,
-            request.tables,
-            request.params,
-        ))
+    def fake_span(obs, start, end, tables, params):
+        calls.append((obs, start, end, tables, params))
         return _NucRecallResult(
             nucs=[
-                NucCall(request.start, request.end - request.start, 1, 2, 3),
+                NucCall(start, end - start, 1, 2, 3),
             ],
-            access=[(request.start, 1)],
+            access=[(start, 1)],
         )
 
     monkeypatch.setattr(
-        "fiberhmm.inference.nuc_recaller._recall_nuc_span_from_request",
+        "fiberhmm.inference.nuc_recaller._recall_nuc_span",
         fake_span,
     )
 
     tables = _recall_nuc_tables(llr_hit, llr_miss)
-    result = _recall_bounded_nuc_spans_from_request(
-        _BoundedNucSpansRecallRequest(
-            obs=obs,
-            ns=[0, 5, 9, 12],
-            nl=[3, 0, 5, 2],
-            read_length=10,
-            tables=tables,
-            params=params,
-        )
+    result = _recall_bounded_nuc_spans(
+        obs,
+        ns=[0, 5, 9, 12],
+        nl=[3, 0, 5, 2],
+        read_length=10,
+        tables=tables,
+        params=params,
     )
     adapted_result = _recall_bounded_nuc_spans(
         obs,
@@ -315,19 +266,8 @@ def test_residue_intervals_around_nuc_reports_flanks_only():
 def test_refine_fragment_request_matches_adapter():
     obs = _obs((MISS, 85))
     llr_hit, llr_miss = _llr_tables()
-    request = _RefineFragmentRequest(
-        obs=obs,
-        start=0,
-        end=len(obs),
-        llr_hit=llr_hit,
-        llr_miss=llr_miss,
-        nuc_min_size=40,
-        edge_min_llr=2.0,
-        edge_min_opps=2,
-    )
 
-    requested = _refine_fragment_from_request(request)
-    adapted = _refine_fragment(
+    refined = _refine_fragment(
         obs,
         0,
         len(obs),
@@ -338,10 +278,9 @@ def test_refine_fragment_request_matches_adapter():
         2,
     )
 
-    assert requested == adapted
-    assert isinstance(requested.nuc, NucCall)
-    assert requested.nuc.length == 85
-    assert requested.access == []
+    assert isinstance(refined.nuc, NucCall)
+    assert refined.nuc.length == 85
+    assert refined.access == []
 
 
 def test_bounded_interval_handles_clamping_and_invalid_spans():
@@ -420,20 +359,8 @@ def test_phase_prior_splits_long_footprint_at_single_event():
 def test_phase_subfragments_request_matches_adapter():
     obs = _obs((MISS, 190), (HIT, 1), (MISS, 189))
     llr_hit, llr_miss = _llr_tables()
-    request = _PhaseSplitRequest(
-        obs=obs,
-        start=0,
-        end=len(obs),
-        nhit=-llr_hit,
-        nmiss=-llr_miss,
-        nrl=185,
-        min_llr=1.0,
-        min_opps=1,
-        window=35,
-    )
 
-    requested = _phase_subfragments_from_request(request)
-    adapted = _phase_subfragments(
+    phase = _phase_subfragments(
         obs,
         0,
         len(obs),
@@ -445,9 +372,8 @@ def test_phase_subfragments_request_matches_adapter():
         35,
     )
 
-    assert requested == adapted
-    assert len(requested.fragments) == 2
-    assert requested.cuts
+    assert len(phase.fragments) == 2
+    assert phase.cuts
 
 
 def test_phase_prior_never_splits_signal_desert():
@@ -491,22 +417,13 @@ def test_phase_or_unsplit_subfragments_returns_original_when_disabled():
 
 
 def test_rederive_msps_merges_and_filters():
-    request = _ReDerivedMspsRequest(
+    msps = rederive_msps(
         original_msps=[(0, 10)],
         accessible_from_splits=[(10, 5), (200, 3)],
-        read_length=300,
-        msp_min_size=4,
-    )
-
-    msps = _rederive_msps_from_request(request)
-    adapted = rederive_msps(
-        original_msps=request.original_msps,
-        accessible_from_splits=request.accessible_from_splits,
         read_length=300, msp_min_size=4,
     )
 
     # (0,10)+(10,5) merge into one 15bp MSP; the 3bp patch is filtered out
-    assert adapted == msps
     assert (0, 15) in msps
     assert all(length >= 4 for _, length in msps)
 
@@ -683,16 +600,7 @@ def test_assemble_nuc_msp_tiling_request_matches_adapter():
         NucCall(40, 50, 4, 5, 6),
         NucCall(95, 10, 7, 8, 9),
     ]
-    request = _NucMspTilingRequest(
-        nuc_calls=nucs,
-        span_lo=0,
-        span_hi=120,
-        msp_min_size=5,
-        nuc_min_size=20,
-    )
-
-    requested = _assemble_nuc_msp_tiling_from_request(request)
-    adapted = assemble_nuc_msp_tiling(
+    kept, msps = assemble_nuc_msp_tiling(
         nucs,
         span_lo=0,
         span_hi=120,
@@ -700,8 +608,6 @@ def test_assemble_nuc_msp_tiling_request_matches_adapter():
         nuc_min_size=20,
     )
 
-    assert requested == adapted
-    kept, msps = requested
     assert kept == [
         NucCall(10, 50, 1, 2, 3),
         NucCall(60, 30, 4, 0, 6),
@@ -716,20 +622,13 @@ def test_circular_tiling_no_overlap_for_wrapped_nuc():
     # and MSPs tiling the circle exactly (no overlap, no gap).
     rl = 200
     nucs = [NucCall(180, 100, 200, 255, 255)]   # wraps: [180,200) + [0,80)
-    request = _CircularNucMspTilingRequest(
-        nuc_calls=nucs,
-        read_length=rl,
-        msp_min_size=1,
-        nuc_min_size=85,
-    )
 
-    kept, msps = _assemble_circular_nuc_msp_tiling_from_request(request)
-    assert assemble_circular_nuc_msp_tiling(
+    kept, msps = assemble_circular_nuc_msp_tiling(
         nucs,
         rl,
         msp_min_size=1,
         nuc_min_size=85,
-    ) == (kept, msps)
+    )
     assert [(k.start, k.length) for k in kept] == [(180, 100)]
     assert msps == [(80, 100)]
     cov = [0] * rl

@@ -45,13 +45,6 @@ class _AnalyzedSpan:
 
 
 @dataclass(frozen=True)
-class _AnalyzedSpanRequest:
-    apply_result: Mapping[str, Any]
-    read_length: int
-    kept: Sequence[Any]
-
-
-@dataclass(frozen=True)
 class _IntervalPairLists:
     starts: list
     lengths: list
@@ -79,125 +72,9 @@ class _TiledIntervalArrays:
 
 
 @dataclass(frozen=True)
-class _HmmApplyStageRequest:
-    fiber_read: Mapping[str, Any]
-    model: Any
-    edge_trim: int
-    circular: bool
-    mode: str
-    context_size: int
-    msp_min_size: int
-    nuc_min_size: int
-    with_scores: bool
-
-
-@dataclass(frozen=True)
-class _TfRecallStageRequest:
-    obs: Any
-    ns: Sequence[int]
-    nl: Sequence[int]
-    msps: Sequence[int]
-    msp_lengths: Sequence[int]
-    read_length: int
-    llr_hit: Any
-    llr_miss: Any
-    min_llr: float
-    min_opps: int
-    unify_threshold: int
-
-
-@dataclass(frozen=True)
-class _FusedRecallResultRequest:
-    fiber_read: Mapping[str, Any]
-    apply_result: Mapping[str, Any]
-    llr_hit: Any
-    llr_miss: Any
-    min_llr: float
-    min_opps: int
-    unify_threshold: int
-    with_scores: bool
-    recall_nucs: bool = False
-    split_min_llr: float = 4.0
-    split_min_opps: int = 3
-    nuc_min_size: int = 85
-    msp_min_size: int = 0
-    phase_nrl: int = 0
-
-
-@dataclass(frozen=True)
-class _FusedNoNucsResultRequest:
-    fiber_read: Mapping[str, Any]
-    apply_result: Mapping[str, Any]
-    llr_hit: Any
-    llr_miss: Any
-    min_llr: float
-    min_opps: int
-    unify_threshold: int
-    with_scores: bool
-
-
-@dataclass(frozen=True)
-class _FusedNucsResultRequest:
-    fiber_read: Mapping[str, Any]
-    apply_result: Mapping[str, Any]
-    llr_hit: Any
-    llr_miss: Any
-    min_llr: float
-    min_opps: int
-    unify_threshold: int
-    split_min_llr: float
-    split_min_opps: int
-    nuc_min_size: int
-    msp_min_size: int
-    phase_nrl: int
-
-
-@dataclass(frozen=True)
-class _OptionalApplyScoreFieldsRequest:
-    apply_result: Mapping[str, Any]
-    enabled: bool
-
-
-@dataclass(frozen=True)
 class _CircularApplyScoreFields:
     nuc_scores: Any
     msp_scores: Any
-
-
-@dataclass(frozen=True)
-class _CircularApplyScoreFieldsRequest:
-    apply_result: Mapping[str, Any]
-    enabled: bool
-
-
-@dataclass(frozen=True)
-class _PromoteLargeTfNucsRequest:
-    tf_calls: Any
-    nuc_calls: Any
-    obs: Any
-    llr_hit: Any
-    llr_miss: Any
-    unify_threshold: int
-    nuc_min_size: int
-
-
-@dataclass(frozen=True)
-class _NucRecallAndTfStageRequest:
-    obs: Any
-    nuc_starts: Sequence[int]
-    nuc_lengths: Sequence[int]
-    input_msps: Sequence[tuple[int, int]]
-    analysis_length: int
-    llr_hit: Any
-    llr_miss: Any
-    min_llr: float
-    min_opps: int
-    unify_threshold: int
-    split_min_llr: float
-    split_min_opps: int
-    nuc_min_size: int
-    msp_min_size: int
-    phase_nrl: int
 
 
 @dataclass(frozen=True)
@@ -208,30 +85,18 @@ class _NucRecallAndTfStageResult:
     tf_calls: list
 
 
-def _analyzed_span_from_request(
-    request: _AnalyzedSpanRequest,
-) -> _AnalyzedSpan:
+def _analyzed_span(apply_result, read_length, kept) -> _AnalyzedSpan:
     """Extent (lo, hi) the read was annotated over -- the union of the original
     HMM footprints/MSPs and the final nucleosomes -- used to tile MSPs."""
-    bounds = _apply_result_interval_bounds(request.apply_result)
+    bounds = _apply_result_interval_bounds(apply_result)
     starts = list(bounds.starts)
     ends = list(bounds.ends)
-    for k in request.kept:
+    for k in kept:
         starts.append(int(k.start))
         ends.append(int(k.start) + int(k.length))
     return _AnalyzedSpan(
         start=min(starts) if starts else 0,
-        end=max(ends) if ends else int(request.read_length),
-    )
-
-
-def _analyzed_span(apply_result, read_length, kept):
-    return _analyzed_span_from_request(
-        _AnalyzedSpanRequest(
-            apply_result=apply_result,
-            read_length=read_length,
-            kept=kept,
-        )
+        end=max(ends) if ends else int(read_length),
     )
 
 
@@ -307,75 +172,22 @@ def _optional_apply_scores(apply_result: Mapping[str, Any], key: str, enabled: b
     return apply_result.get(key) if enabled else None
 
 
-def _optional_apply_score_fields_from_request(
-    request: _OptionalApplyScoreFieldsRequest,
-):
+def _optional_apply_score_fields(apply_result: Mapping[str, Any], enabled: bool):
     return {
-        "ns_scores": _optional_apply_scores(
-            request.apply_result,
-            "ns_scores",
-            request.enabled,
-        ),
-        "as_scores": _optional_apply_scores(
-            request.apply_result,
-            "as_scores",
-            request.enabled,
-        ),
+        "ns_scores": _optional_apply_scores(apply_result, "ns_scores", enabled),
+        "as_scores": _optional_apply_scores(apply_result, "as_scores", enabled),
     }
 
 
-def _optional_apply_score_fields(apply_result: Mapping[str, Any], enabled: bool):
-    return _optional_apply_score_fields_from_request(
-        _OptionalApplyScoreFieldsRequest(
-            apply_result=apply_result,
-            enabled=enabled,
-        )
-    )
-
-
-def _circular_apply_score_fields_from_request(
-    request: _CircularApplyScoreFieldsRequest,
-):
+def _circular_apply_score_fields(apply_result: Mapping[str, Any], enabled: bool):
     return _CircularApplyScoreFields(
         nuc_scores=_optional_apply_scores(
-            request.apply_result,
-            "circular_ns_scores",
-            request.enabled,
+            apply_result, "circular_ns_scores", enabled,
         ),
         msp_scores=_optional_apply_scores(
-            request.apply_result,
-            "circular_as_scores",
-            request.enabled,
+            apply_result, "circular_as_scores", enabled,
         ),
     )
-
-
-def _circular_apply_score_fields(apply_result: Mapping[str, Any], enabled: bool):
-    return _circular_apply_score_fields_from_request(
-        _CircularApplyScoreFieldsRequest(
-            apply_result=apply_result,
-            enabled=enabled,
-        )
-    )
-
-
-def _promote_large_tf_nucs_from_request(
-    request: _PromoteLargeTfNucsRequest,
-):
-    tf_calls, promoted = promote_large_tf_calls(
-        request.tf_calls,
-        request.obs,
-        request.llr_hit,
-        request.llr_miss,
-        request.unify_threshold,
-        request.nuc_min_size,
-    )
-    nuc_calls = drop_short_nucs_overlapping_promoted(
-        request.nuc_calls,
-        promoted,
-        request.unify_threshold,
-    ) + promoted
-    return tf_calls, nuc_calls
 
 
 def _promote_large_tf_nucs(
@@ -387,65 +199,80 @@ def _promote_large_tf_nucs(
     unify_threshold: int,
     nuc_min_size: int,
 ):
-    return _promote_large_tf_nucs_from_request(
-        _PromoteLargeTfNucsRequest(
-            tf_calls=tf_calls,
-            nuc_calls=nuc_calls,
-            obs=obs,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            unify_threshold=unify_threshold,
-            nuc_min_size=nuc_min_size,
-        )
+    tf_calls, promoted = promote_large_tf_calls(
+        tf_calls,
+        obs,
+        llr_hit,
+        llr_miss,
+        unify_threshold,
+        nuc_min_size,
     )
+    nuc_calls = drop_short_nucs_overlapping_promoted(
+        nuc_calls,
+        promoted,
+        unify_threshold,
+    ) + promoted
+    return tf_calls, nuc_calls
 
 
-def _run_nuc_recall_and_tf_stage_from_request(
-    request: _NucRecallAndTfStageRequest,
+def _run_nuc_recall_and_tf_stage(
+    obs,
+    nuc_starts,
+    nuc_lengths,
+    input_msps,
+    analysis_length,
+    llr_hit,
+    llr_miss,
+    min_llr,
+    min_opps,
+    unify_threshold,
+    split_min_llr,
+    split_min_opps,
+    nuc_min_size,
+    msp_min_size,
+    phase_nrl,
 ) -> _NucRecallAndTfStageResult:
     nuc_calls, access = recall_nucs_in_read(
-        request.obs,
-        request.nuc_starts,
-        request.nuc_lengths,
-        request.analysis_length,
-        request.llr_hit,
-        request.llr_miss,
-        split_min_llr=request.split_min_llr,
-        split_min_opps=request.split_min_opps,
-        nuc_min_size=request.nuc_min_size,
-        phase_nrl=request.phase_nrl,
+        obs,
+        nuc_starts,
+        nuc_lengths,
+        analysis_length,
+        llr_hit,
+        llr_miss,
+        split_min_llr=split_min_llr,
+        split_min_opps=split_min_opps,
+        nuc_min_size=nuc_min_size,
+        phase_nrl=phase_nrl,
     )
     new_msps = rederive_msps(
-        request.input_msps,
+        input_msps,
         access,
-        request.analysis_length,
-        request.msp_min_size,
+        analysis_length,
+        msp_min_size,
     )
     msp_pairs = _interval_pair_lists(new_msps)
     nuc_starts, nuc_lengths = _nuc_call_start_length_lists(nuc_calls)
     tf_calls = run_tf_recall_stage(
-        request.obs,
+        obs,
         nuc_starts,
         nuc_lengths,
         msp_pairs.starts,
         msp_pairs.lengths,
-        request.analysis_length,
-        request.llr_hit,
-        request.llr_miss,
-        request.min_llr,
-        request.min_opps,
-        request.unify_threshold,
+        analysis_length,
+        llr_hit,
+        llr_miss,
+        min_llr,
+        min_opps,
+        unify_threshold,
     )
-    tf_calls, nuc_calls = _promote_large_tf_nucs_from_request(
-        _PromoteLargeTfNucsRequest(
-            tf_calls=tf_calls,
-            nuc_calls=nuc_calls,
-            obs=request.obs,
-            llr_hit=request.llr_hit,
-            llr_miss=request.llr_miss,
-            unify_threshold=request.unify_threshold,
-            nuc_min_size=request.nuc_min_size,
-        )
+    tf_calls, nuc_calls = _promote_large_tf_nucs(
+        tf_calls,
+        nuc_calls,
+        obs,
+        llr_hit,
+        llr_miss,
+        unify_threshold,
+        nuc_min_size,
     )
     return _NucRecallAndTfStageResult(
         nuc_calls=nuc_calls,
@@ -474,25 +301,6 @@ def apply_result_has_footprints(apply_result: Optional[Mapping[str, Any]]) -> bo
     return len(apply_result["ns"]) > 0 or len(apply_result["as"]) > 0
 
 
-def run_hmm_apply_stage_from_request(
-    request: _HmmApplyStageRequest,
-) -> Optional[dict]:
-    """Run the HMM apply stage and keep encoded observations for recall."""
-    return _process_single_read(
-        request.fiber_read,
-        request.model,
-        request.edge_trim,
-        request.circular,
-        request.mode,
-        request.context_size,
-        request.msp_min_size,
-        nuc_min_size=request.nuc_min_size,
-        with_scores=request.with_scores,
-        return_posteriors=False,
-        include_encoded=True,
-    )
-
-
 def run_hmm_apply_stage(
     fiber_read: Mapping[str, Any],
     model,
@@ -504,47 +312,20 @@ def run_hmm_apply_stage(
     nuc_min_size: int,
     with_scores: bool,
 ) -> Optional[dict]:
-    return run_hmm_apply_stage_from_request(
-        _HmmApplyStageRequest(
-            fiber_read=fiber_read,
-            model=model,
-            edge_trim=edge_trim,
-            circular=circular,
-            mode=mode,
-            context_size=context_size,
-            msp_min_size=msp_min_size,
-            nuc_min_size=nuc_min_size,
-            with_scores=with_scores,
-        ),
+    """Run the HMM apply stage and keep encoded observations for recall."""
+    return _process_single_read(
+        fiber_read,
+        model,
+        edge_trim,
+        circular,
+        mode,
+        context_size,
+        msp_min_size,
+        nuc_min_size=nuc_min_size,
+        with_scores=with_scores,
+        return_posteriors=False,
+        include_encoded=True,
     )
-
-
-def run_tf_recall_stage_from_request(
-    request: _TfRecallStageRequest,
-) -> list:
-    """Build recall scan intervals and run the TF LLR scan over each one."""
-    intervals = build_scan_intervals(
-        request.ns,
-        request.nl,
-        request.msps,
-        request.msp_lengths,
-        request.read_length,
-        unify_threshold=request.unify_threshold,
-    )
-    tf_calls = []
-    for lo, hi in intervals:
-        tf_calls.extend(
-            call_tfs_in_interval(
-                request.obs,
-                lo,
-                hi,
-                request.llr_hit,
-                request.llr_miss,
-                request.min_llr,
-                request.min_opps,
-            )
-        )
-    return tf_calls
 
 
 def run_tf_recall_stage(
@@ -560,21 +341,29 @@ def run_tf_recall_stage(
     min_opps: int,
     unify_threshold: int,
 ) -> list:
-    return run_tf_recall_stage_from_request(
-        _TfRecallStageRequest(
-            obs=obs,
-            ns=ns,
-            nl=nl,
-            msps=msps,
-            msp_lengths=msp_lengths,
-            read_length=read_length,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            min_llr=min_llr,
-            min_opps=min_opps,
-            unify_threshold=unify_threshold,
-        ),
+    """Build recall scan intervals and run the TF LLR scan over each one."""
+    intervals = build_scan_intervals(
+        ns,
+        nl,
+        msps,
+        msp_lengths,
+        read_length,
+        unify_threshold=unify_threshold,
     )
+    tf_calls = []
+    for lo, hi in intervals:
+        tf_calls.extend(
+            call_tfs_in_interval(
+                obs,
+                lo,
+                hi,
+                llr_hit,
+                llr_miss,
+                min_llr,
+                min_opps,
+            )
+        )
+    return tf_calls
 
 
 def build_fused_recall_result(
@@ -603,77 +392,72 @@ def build_fused_recall_result(
     refined nucs/MSPs/TFs back to the molecule. ``recall_nucs=False`` (the
     default) is byte-for-byte the original behavior.
     """
-    return build_fused_recall_result_from_request(
-        _FusedRecallResultRequest(
-            fiber_read=fiber_read,
-            apply_result=apply_result,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            min_llr=min_llr,
-            min_opps=min_opps,
-            unify_threshold=unify_threshold,
-            with_scores=with_scores,
-            recall_nucs=recall_nucs,
-            split_min_llr=split_min_llr,
-            split_min_opps=split_min_opps,
-            nuc_min_size=nuc_min_size,
-            msp_min_size=msp_min_size,
-            phase_nrl=phase_nrl,
-        ),
-    )
+    is_circular = _apply_result_is_circular(apply_result)
 
-
-def build_fused_recall_result_from_request(
-    request: _FusedRecallResultRequest,
-) -> dict:
-    is_circular = _apply_result_is_circular(request.apply_result)
-
-    if request.recall_nucs:
-        nucs_request = _FusedNucsResultRequest(
-            fiber_read=request.fiber_read,
-            apply_result=request.apply_result,
-            llr_hit=request.llr_hit,
-            llr_miss=request.llr_miss,
-            min_llr=request.min_llr,
-            min_opps=request.min_opps,
-            unify_threshold=request.unify_threshold,
-            split_min_llr=request.split_min_llr,
-            split_min_opps=request.split_min_opps,
-            nuc_min_size=request.nuc_min_size,
-            msp_min_size=request.msp_min_size,
-            phase_nrl=request.phase_nrl,
-        )
+    if recall_nucs:
         if is_circular:
-            return _build_fused_recall_result_with_nucs_circular_from_request(
-                nucs_request,
+            return _build_fused_recall_result_with_nucs_circular(
+                fiber_read,
+                apply_result,
+                llr_hit,
+                llr_miss,
+                min_llr,
+                min_opps,
+                unify_threshold,
+                split_min_llr,
+                split_min_opps,
+                nuc_min_size,
+                msp_min_size,
+                phase_nrl,
             )
-        return _build_fused_recall_result_with_nucs_from_request(
-            nucs_request,
+        return _build_fused_recall_result_with_nucs(
+            fiber_read,
+            apply_result,
+            llr_hit,
+            llr_miss,
+            min_llr,
+            min_opps,
+            unify_threshold,
+            split_min_llr,
+            split_min_opps,
+            nuc_min_size,
+            msp_min_size,
+            phase_nrl,
         )
 
-    no_nucs_request = _FusedNoNucsResultRequest(
-        fiber_read=request.fiber_read,
-        apply_result=request.apply_result,
-        llr_hit=request.llr_hit,
-        llr_miss=request.llr_miss,
-        min_llr=request.min_llr,
-        min_opps=request.min_opps,
-        unify_threshold=request.unify_threshold,
-        with_scores=request.with_scores,
-    )
     if is_circular:
-        return _build_fused_recall_result_without_nucs_circular_from_request(
-            no_nucs_request,
+        return _build_fused_recall_result_without_nucs_circular(
+            fiber_read,
+            apply_result,
+            llr_hit,
+            llr_miss,
+            min_llr,
+            min_opps,
+            unify_threshold,
+            with_scores,
         )
-    return _build_fused_recall_result_without_nucs_linear_from_request(
-        no_nucs_request,
+    return _build_fused_recall_result_without_nucs_linear(
+        fiber_read,
+        apply_result,
+        llr_hit,
+        llr_miss,
+        min_llr,
+        min_opps,
+        unify_threshold,
+        with_scores,
     )
 
 
-def _build_fused_recall_result_without_nucs_linear_from_request(
-    request: _FusedNoNucsResultRequest,
+def _build_fused_recall_result_without_nucs_linear(
+    fiber_read: Mapping[str, Any],
+    apply_result: Mapping[str, Any],
+    llr_hit,
+    llr_miss,
+    min_llr: float,
+    min_opps: int,
+    unify_threshold: int,
+    with_scores: bool,
 ) -> dict:
-    apply_result = request.apply_result
     ns = apply_result["ns"]
     nl = apply_result["nl"]
     msps = apply_result["as"]
@@ -684,25 +468,20 @@ def _build_fused_recall_result_without_nucs_linear_from_request(
         nl,
         msps,
         msp_lengths,
-        len(request.fiber_read["query_sequence"]),
-        request.llr_hit,
-        request.llr_miss,
-        request.min_llr,
-        request.min_opps,
-        request.unify_threshold,
+        len(fiber_read["query_sequence"]),
+        llr_hit,
+        llr_miss,
+        min_llr,
+        min_opps,
+        unify_threshold,
     )
 
-    score_fields = _optional_apply_score_fields_from_request(
-        _OptionalApplyScoreFieldsRequest(
-            apply_result=apply_result,
-            enabled=request.with_scores,
-        )
-    )
+    score_fields = _optional_apply_score_fields(apply_result, with_scores)
     kept_nucs, nq_for_kept = unify_nucs_with_tf_calls(
         ns,
         nl,
         tf_calls,
-        request.unify_threshold,
+        unify_threshold,
         score_fields["ns_scores"],
     )
     kept_starts, kept_lengths = split_intervals(kept_nucs)
@@ -718,7 +497,7 @@ def _build_fused_recall_result_without_nucs_linear_from_request(
     }
 
 
-def _build_fused_recall_result_without_nucs_linear(
+def _build_fused_recall_result_without_nucs_circular(
     fiber_read: Mapping[str, Any],
     apply_result: Mapping[str, Any],
     llr_hit,
@@ -728,25 +507,7 @@ def _build_fused_recall_result_without_nucs_linear(
     unify_threshold: int,
     with_scores: bool,
 ) -> dict:
-    return _build_fused_recall_result_without_nucs_linear_from_request(
-        _FusedNoNucsResultRequest(
-            fiber_read=fiber_read,
-            apply_result=apply_result,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            min_llr=min_llr,
-            min_opps=min_opps,
-            unify_threshold=unify_threshold,
-            with_scores=with_scores,
-        )
-    )
-
-
-def _build_fused_recall_result_without_nucs_circular_from_request(
-    request: _FusedNoNucsResultRequest,
-) -> dict:
-    apply_result = request.apply_result
-    read_length = _circular_read_length(request.fiber_read, apply_result)
+    read_length = _circular_read_length(fiber_read, apply_result)
     tiled = _tiled_interval_arrays(apply_result)
     tf_calls = run_tf_recall_stage(
         apply_result["encoded"],
@@ -755,23 +516,18 @@ def _build_fused_recall_result_without_nucs_circular_from_request(
         tiled.msp_starts,
         tiled.msp_lengths,
         len(apply_result["encoded"]),
-        request.llr_hit,
-        request.llr_miss,
-        request.min_llr,
-        request.min_opps,
-        request.unify_threshold,
+        llr_hit,
+        llr_miss,
+        min_llr,
+        min_opps,
+        unify_threshold,
     )
     tf_calls = project_center_tf_calls(tf_calls, read_length)
-    score_fields = _circular_apply_score_fields_from_request(
-        _CircularApplyScoreFieldsRequest(
-            apply_result=apply_result,
-            enabled=request.with_scores,
-        )
-    )
+    score_fields = _circular_apply_score_fields(apply_result, with_scores)
     kept_nucs, nq_for_kept = unify_circular_nucs_with_tf_calls(
         apply_result.get("circular_ns", []),
         tf_calls,
-        request.unify_threshold,
+        unify_threshold,
         read_length,
         score_fields.nuc_scores,
     )
@@ -801,7 +557,7 @@ def _build_fused_recall_result_without_nucs_circular_from_request(
     }
 
 
-def _build_fused_recall_result_without_nucs_circular(
+def _build_fused_recall_result_with_nucs(
     fiber_read: Mapping[str, Any],
     apply_result: Mapping[str, Any],
     llr_hit,
@@ -809,76 +565,54 @@ def _build_fused_recall_result_without_nucs_circular(
     min_llr: float,
     min_opps: int,
     unify_threshold: int,
-    with_scores: bool,
-) -> dict:
-    return _build_fused_recall_result_without_nucs_circular_from_request(
-        _FusedNoNucsResultRequest(
-            fiber_read=fiber_read,
-            apply_result=apply_result,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            min_llr=min_llr,
-            min_opps=min_opps,
-            unify_threshold=unify_threshold,
-            with_scores=with_scores,
-        )
-    )
-
-
-def _build_fused_recall_result_with_nucs_from_request(
-    request: _FusedNucsResultRequest,
+    split_min_llr: float,
+    split_min_opps: int,
+    nuc_min_size: int,
+    msp_min_size: int,
+    phase_nrl: int = 0,
 ) -> dict:
     """nuc recall -> MSP re-derive -> TF recall (non-circular only)."""
-    apply_result = request.apply_result
     obs = apply_result["encoded"]
-    read_length = len(request.fiber_read["query_sequence"])
+    read_length = len(fiber_read["query_sequence"])
     ns = apply_result["ns"]
     nl = apply_result["nl"]
     orig_msps = _apply_result_msp_pairs(apply_result)
 
-    recalled = _run_nuc_recall_and_tf_stage_from_request(
-        _NucRecallAndTfStageRequest(
-            obs=obs,
-            nuc_starts=ns,
-            nuc_lengths=nl,
-            input_msps=orig_msps,
-            analysis_length=read_length,
-            llr_hit=request.llr_hit,
-            llr_miss=request.llr_miss,
-            min_llr=request.min_llr,
-            min_opps=request.min_opps,
-            unify_threshold=request.unify_threshold,
-            split_min_llr=request.split_min_llr,
-            split_min_opps=request.split_min_opps,
-            nuc_min_size=request.nuc_min_size,
-            msp_min_size=request.msp_min_size,
-            phase_nrl=request.phase_nrl,
-        )
+    recalled = _run_nuc_recall_and_tf_stage(
+        obs,
+        ns,
+        nl,
+        orig_msps,
+        read_length,
+        llr_hit,
+        llr_miss,
+        min_llr,
+        min_opps,
+        unify_threshold,
+        split_min_llr,
+        split_min_opps,
+        nuc_min_size,
+        msp_min_size,
+        phase_nrl,
     )
 
     # 4) unify: drop short refined nucs overlapped by a TF call (carry nq/el/er)
     kept = unify_nuc_calls_with_tf_calls(
         recalled.nuc_calls,
         recalled.tf_calls,
-        request.unify_threshold,
+        unify_threshold,
     )
 
     # 5) re-tile: split/phase/promotion can leave overlapping nucs + stale MSPs.
     # Clip to non-overlapping nucleosomes and derive complementary MSPs so
     # ns/nl + as/al tile cleanly (required by fibertools / FIRE).
-    analyzed_span = _analyzed_span_from_request(
-        _AnalyzedSpanRequest(
-            apply_result=apply_result,
-            read_length=read_length,
-            kept=kept,
-        )
-    )
+    analyzed_span = _analyzed_span(apply_result, read_length, kept)
     kept, new_msps = assemble_nuc_msp_tiling(
         kept,
         analyzed_span.start,
         analyzed_span.end,
-        request.msp_min_size,
-        request.nuc_min_size,
+        msp_min_size,
+        nuc_min_size,
     )
     msp_pairs = _interval_pair_lists(new_msps)
 
@@ -895,7 +629,7 @@ def _build_fused_recall_result_with_nucs_from_request(
     }
 
 
-def _build_fused_recall_result_with_nucs(
+def _build_fused_recall_result_with_nucs_circular(
     fiber_read: Mapping[str, Any],
     apply_result: Mapping[str, Any],
     llr_hit,
@@ -909,54 +643,30 @@ def _build_fused_recall_result_with_nucs(
     msp_min_size: int,
     phase_nrl: int = 0,
 ) -> dict:
-    return _build_fused_recall_result_with_nucs_from_request(
-        _FusedNucsResultRequest(
-            fiber_read=fiber_read,
-            apply_result=apply_result,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            min_llr=min_llr,
-            min_opps=min_opps,
-            unify_threshold=unify_threshold,
-            split_min_llr=split_min_llr,
-            split_min_opps=split_min_opps,
-            nuc_min_size=nuc_min_size,
-            msp_min_size=msp_min_size,
-            phase_nrl=phase_nrl,
-        )
-    )
-
-
-def _build_fused_recall_result_with_nucs_circular_from_request(
-    request: _FusedNucsResultRequest,
-) -> dict:
     """nuc recall for circular reads: split/refine in tiled space, then project
     the refined nucs, MSPs and TF calls back to molecule coordinates."""
-    apply_result = request.apply_result
     obs = apply_result["encoded"]                     # 3x tiled observations
     tiled_len = len(obs)
-    read_length = _circular_read_length(request.fiber_read, apply_result)
+    read_length = _circular_read_length(fiber_read, apply_result)
     tiled = _tiled_interval_arrays(apply_result)
     tiled_msps = _interval_pairs(tiled.msp_starts, tiled.msp_lengths)
 
-    recalled = _run_nuc_recall_and_tf_stage_from_request(
-        _NucRecallAndTfStageRequest(
-            obs=obs,
-            nuc_starts=tiled.nuc_starts,
-            nuc_lengths=tiled.nuc_lengths,
-            input_msps=tiled_msps,
-            analysis_length=tiled_len,
-            llr_hit=request.llr_hit,
-            llr_miss=request.llr_miss,
-            min_llr=request.min_llr,
-            min_opps=request.min_opps,
-            unify_threshold=request.unify_threshold,
-            split_min_llr=request.split_min_llr,
-            split_min_opps=request.split_min_opps,
-            nuc_min_size=request.nuc_min_size,
-            msp_min_size=request.msp_min_size,
-            phase_nrl=request.phase_nrl,
-        )
+    recalled = _run_nuc_recall_and_tf_stage(
+        obs,
+        tiled.nuc_starts,
+        tiled.nuc_lengths,
+        tiled_msps,
+        tiled_len,
+        llr_hit,
+        llr_miss,
+        min_llr,
+        min_opps,
+        unify_threshold,
+        split_min_llr,
+        split_min_opps,
+        nuc_min_size,
+        msp_min_size,
+        phase_nrl,
     )
 
     # 4) project everything from tiled -> molecule
@@ -973,14 +683,14 @@ def _build_fused_recall_result_with_nucs_circular_from_request(
     kept = unify_circular_nuc_calls_with_tf_calls(
         proj_nucs,
         tf_calls,
-        request.unify_threshold,
+        unify_threshold,
         read_length,
     )
     kept, proj_msps = assemble_circular_nuc_msp_tiling(
         kept,
         read_length,
-        request.msp_min_size,
-        request.nuc_min_size,
+        msp_min_size,
+        nuc_min_size,
     )
     circular_ns = [(k.start, k.length) for k in kept]
     kept_starts, kept_lengths, _ = split_intervals_for_legacy(
@@ -1002,35 +712,3 @@ def _build_fused_recall_result_with_nucs_circular_from_request(
         "circular_ns": circular_ns,
         "circular_as": proj_msps,
     }
-
-
-def _build_fused_recall_result_with_nucs_circular(
-    fiber_read: Mapping[str, Any],
-    apply_result: Mapping[str, Any],
-    llr_hit,
-    llr_miss,
-    min_llr: float,
-    min_opps: int,
-    unify_threshold: int,
-    split_min_llr: float,
-    split_min_opps: int,
-    nuc_min_size: int,
-    msp_min_size: int,
-    phase_nrl: int = 0,
-) -> dict:
-    return _build_fused_recall_result_with_nucs_circular_from_request(
-        _FusedNucsResultRequest(
-            fiber_read=fiber_read,
-            apply_result=apply_result,
-            llr_hit=llr_hit,
-            llr_miss=llr_miss,
-            min_llr=min_llr,
-            min_opps=min_opps,
-            unify_threshold=unify_threshold,
-            split_min_llr=split_min_llr,
-            split_min_opps=split_min_opps,
-            nuc_min_size=nuc_min_size,
-            msp_min_size=msp_min_size,
-            phase_nrl=phase_nrl,
-        )
-    )

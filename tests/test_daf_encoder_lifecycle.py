@@ -161,28 +161,13 @@ def test_mark_iupac_positions_replaces_selected_bases():
 
 
 def test_encoded_daf_sequence_marks_selected_strand_and_counts_events():
-    ct_request = encoder._EncodedDafSequenceRequest(
-        sequence="ACGT",
-        ct_positions=[1],
-        ga_positions=[2],
-        strand="CT",
-    )
-    ga_request = encoder._EncodedDafSequenceRequest(
-        sequence="ACGT",
-        ct_positions=[1],
-        ga_positions=[2],
-        strand="GA",
-    )
-
-    ct_encoded = encoder._encoded_daf_sequence_from_request(ct_request)
-    ga_encoded = encoder._encoded_daf_sequence_from_request(ga_request)
+    ct_encoded = encoder._encoded_daf_sequence("ACGT", [1], [2], "CT")
+    ga_encoded = encoder._encoded_daf_sequence("ACGT", [1], [2], "GA")
 
     assert ct_encoded.sequence == "AYGT"
     assert ct_encoded.n_deaminations == 1
-    assert encoder._encoded_daf_sequence("ACGT", [1], [2], "CT") == ct_encoded
     assert ga_encoded.sequence == "ACRT"
     assert ga_encoded.n_deaminations == 1
-    assert encoder._encoded_daf_sequence("ACGT", [1], [2], "GA") == ga_encoded
 
 
 def test_encode_read_daf_record_names_public_tuple_parts(monkeypatch):
@@ -237,35 +222,12 @@ def test_daf_progress_rate_handles_zero_elapsed():
 def test_print_daf_progress_formats_rate_counts_and_skips_zero_elapsed():
     log = io.StringIO()
 
-    encoder._print_daf_progress_from_request(
-        encoder._DafProgressReportRequest(
-            total=10_000,
-            reads_processed=10_000,
-            elapsed=2.0,
-            ct=12,
-            ga=34,
-            skipped=56,
-            log=log,
-        )
-    )
+    encoder._print_daf_progress(10_000, 10_000, 2.0, 12, 34, 56, log)
     assert log.getvalue() == (
         "  [10,000 reads] 5,000 reads/sec (CT=12 GA=34 skip=56)\n"
     )
 
     log = io.StringIO()
-    encoder._print_daf_progress_from_request(
-        encoder._DafProgressReportRequest(
-            total=10_000,
-            reads_processed=10_000,
-            elapsed=0.0,
-            ct=12,
-            ga=34,
-            skipped=56,
-            log=log,
-        )
-    )
-    assert log.getvalue() == ""
-
     encoder._print_daf_progress(10_000, 10_000, 0.0, 12, 34, 56, log)
     assert log.getvalue() == ""
 
@@ -285,17 +247,16 @@ def test_maybe_print_daf_encode_progress_reports_only_intervals(monkeypatch):
 
 
 def test_daf_encode_summary_and_report_format():
-    request = encoder._DafEncodeSummaryRequest(
+    summary = encoder._daf_encode_summary(
         total=100,
         encoded=80,
-        ct=30,
-        ga=50,
+        ct_count=30,
+        ga_count=50,
         skipped=20,
         total_deam=25,
         total_bases=1000,
         elapsed=2.0,
     )
-    summary = encoder._daf_encode_summary_from_request(request)
 
     assert summary == {
         "total": 100,
@@ -306,16 +267,6 @@ def test_daf_encode_summary_and_report_format():
         "mean_deam_rate": 0.025,
         "elapsed": 2.0,
     }
-    assert encoder._daf_encode_summary(
-        total=100,
-        encoded=80,
-        ct_count=30,
-        ga_count=50,
-        skipped=20,
-        total_deam=25,
-        total_bases=1000,
-        elapsed=2.0,
-    ) == summary
 
     log = io.StringIO()
     encoder._print_daf_encode_summary(summary, log)
@@ -379,60 +330,24 @@ def test_finalize_daf_encode_run_writes_summary_and_finalizes_output(monkeypatch
     monkeypatch.setattr(encoder.time, "time", lambda: 15.0)
     monkeypatch.setattr(
         encoder,
-        "_maybe_finalize_daf_output_from_request",
-        lambda request: calls.append(request),
-    )
-
-    summary = encoder._finalize_daf_encode_run_from_request(
-        encoder._DafEncodeFinalizationRequest(
-            counts=counts,
-            start_time=10.0,
-            output_bam="out.bam",
-            io_threads=3,
-            log=log,
-        )
-    )
-
-    assert summary["elapsed"] == 5.0
-    assert summary["mean_deam_rate"] == 0.03
-    assert "fiberhmm-daf-encode summary" in log.getvalue()
-    assert calls == [
-        encoder._DafOutputFinalizationRequest(
-            output_bam="out.bam",
-            io_threads=3,
-            log=log,
+        "_maybe_finalize_daf_output",
+        lambda output_bam, io_threads, log: calls.append(
+            (output_bam, io_threads, log)
         ),
-    ]
-
-
-def test_finalize_daf_encode_run_adapter_builds_request(monkeypatch):
-    counts = encoder._new_daf_encode_counts()
-    log = io.StringIO()
-    sentinel = {"total": 0}
-    calls = []
-
-    monkeypatch.setattr(
-        encoder,
-        "_finalize_daf_encode_run_from_request",
-        lambda request: calls.append(request) or sentinel,
     )
 
-    assert encoder._finalize_daf_encode_run(
+    summary = encoder._finalize_daf_encode_run(
         counts,
         start_time=10.0,
         output_bam="out.bam",
         io_threads=3,
         log=log,
-    ) is sentinel
-    assert calls == [
-        encoder._DafEncodeFinalizationRequest(
-            counts=counts,
-            start_time=10.0,
-            output_bam="out.bam",
-            io_threads=3,
-            log=log,
-        ),
-    ]
+    )
+
+    assert summary["elapsed"] == 5.0
+    assert summary["mean_deam_rate"] == 0.03
+    assert "fiberhmm-daf-encode summary" in log.getvalue()
+    assert calls == [("out.bam", 3, log)]
 
 
 def test_apply_daf_encoding_to_read_preserves_qualities_and_sets_st_tag():
@@ -492,14 +407,12 @@ def test_process_daf_encode_read_writes_encoded_read_and_returns_stats(monkeypat
         lambda *args, **kwargs: encoder._EncodedDafRead("AYGT", "CT", 1),
     )
 
-    assert encoder._process_daf_encode_read_from_request(
-        encoder._DafEncodeReadRequest(
-            outbam=handle,
-            pbar=progress,
-            read=read,
-            min_mapq=20,
-            min_read_length=1000,
-        )
+    assert encoder._process_daf_encode_read(
+        handle,
+        progress,
+        read,
+        20,
+        1000,
     ) == encoder._DafEncodeReadStats(
         encoded=1,
         skipped=0,
@@ -558,29 +471,27 @@ def test_stream_daf_encode_reads_accumulates_stats(monkeypatch):
         encoder._daf_skipped_read_stats(),
     ]
 
-    def fake_process_read(request):
-        calls.append(request)
+    def fake_process_read(*args, **kwargs):
+        calls.append((args, kwargs))
         return stats.pop(0)
 
     monkeypatch.setattr(
         encoder,
-        "_process_daf_encode_read_from_request",
+        "_process_daf_encode_read",
         fake_process_read,
     )
 
-    last_progress = encoder._stream_daf_encode_reads_from_request(
-        encoder._DafStreamReadsRequest(
-            inbam=inbam,
-            outbam=handle,
-            pbar=progress,
-            counts=counts,
-            min_mapq=20,
-            min_read_length=1000,
-            force_strand="CT",
-            ref_fasta="ref",
-            log=io.StringIO(),
-            last_progress=5.0,
-        )
+    last_progress = encoder._stream_daf_encode_reads(
+        inbam,
+        handle,
+        progress,
+        counts,
+        20,
+        1000,
+        "CT",
+        "ref",
+        io.StringIO(),
+        5.0,
     )
 
     assert last_progress == 5.0
@@ -594,63 +505,13 @@ def test_stream_daf_encode_reads_accumulates_stats(monkeypatch):
         total_bases=100,
     )
     assert calls == [
-        encoder._DafEncodeReadRequest(
-            outbam=handle,
-            pbar=progress,
-            read=reads[0],
-            min_mapq=20,
-            min_read_length=1000,
-            force_strand="CT",
-            ref_fasta="ref",
+        (
+            (handle, progress, reads[0], 20, 1000),
+            {"force_strand": "CT", "ref_fasta": "ref"},
         ),
-        encoder._DafEncodeReadRequest(
-            outbam=handle,
-            pbar=progress,
-            read=reads[1],
-            min_mapq=20,
-            min_read_length=1000,
-            force_strand="CT",
-            ref_fasta="ref",
-        ),
-    ]
-
-
-def test_stream_daf_encode_reads_adapter_builds_request(monkeypatch):
-    sentinel = object()
-    calls = []
-    counts = encoder._new_daf_encode_counts()
-    log = io.StringIO()
-
-    monkeypatch.setattr(
-        encoder,
-        "_stream_daf_encode_reads_from_request",
-        lambda request: calls.append(request) or sentinel,
-    )
-
-    assert encoder._stream_daf_encode_reads(
-        "inbam",
-        "outbam",
-        "pbar",
-        counts,
-        20,
-        1000,
-        "CT",
-        "ref",
-        log,
-        5.0,
-    ) is sentinel
-    assert calls == [
-        encoder._DafStreamReadsRequest(
-            inbam="inbam",
-            outbam="outbam",
-            pbar="pbar",
-            counts=counts,
-            min_mapq=20,
-            min_read_length=1000,
-            force_strand="CT",
-            ref_fasta="ref",
-            log=log,
-            last_progress=5.0,
+        (
+            (handle, progress, reads[1], 20, 1000),
+            {"force_strand": "CT", "ref_fasta": "ref"},
         ),
     ]
 
@@ -674,42 +535,14 @@ def test_close_daf_encode_handles_closes_all_after_close_error():
     ]
 
     with pytest.raises(RuntimeError, match="progress close failed"):
-        encoder._close_daf_encode_handles_from_request(
-            encoder._DafEncodeHandleCloseRequest(
-                pbar=handles[0],
-                outbam=handles[1],
-                inbam=handles[2],
-                ref_fasta=handles[3],
-            )
+        encoder._close_daf_encode_handles(
+            handles[0],
+            handles[1],
+            handles[2],
+            handles[3],
         )
 
     assert all(handle.closed for handle in handles)
-
-
-def test_close_daf_encode_handles_adapter_builds_request(monkeypatch):
-    sentinel = object()
-    calls = []
-
-    monkeypatch.setattr(
-        encoder,
-        "_close_daf_encode_handles_from_request",
-        lambda request: calls.append(request) or sentinel,
-    )
-
-    assert encoder._close_daf_encode_handles(
-        "pbar",
-        "outbam",
-        "inbam",
-        "ref",
-    ) is None
-    assert calls == [
-        encoder._DafEncodeHandleCloseRequest(
-            pbar="pbar",
-            outbam="outbam",
-            inbam="inbam",
-            ref_fasta="ref",
-        ),
-    ]
 
 
 def test_write_skipped_daf_read_writes_updates_and_returns_increment():
@@ -751,38 +584,6 @@ def test_daf_encode_closes_input_and_reference_when_md_check_fails(monkeypatch):
 
     assert handles["bam"].closed
     assert handles["fasta"].closed
-
-
-def test_process_bam_daf_encode_adapter_builds_request(monkeypatch):
-    sentinel = {"total": 0}
-    calls = []
-
-    monkeypatch.setattr(
-        encoder,
-        "process_bam_daf_encode_from_request",
-        lambda request: calls.append(request) or sentinel,
-    )
-
-    assert encoder.process_bam_daf_encode(
-        "input.bam",
-        "output.bam",
-        reference="reference.fa",
-        min_mapq=10,
-        min_read_length=500,
-        io_threads=2,
-        force_strand="CT",
-    ) is sentinel
-    assert calls == [
-        encoder._DafEncodeRunRequest(
-            input_bam="input.bam",
-            output_bam="output.bam",
-            reference="reference.fa",
-            min_mapq=10,
-            min_read_length=500,
-            io_threads=2,
-            force_strand="CT",
-        ),
-    ]
 
 
 def test_open_daf_encode_handles_closes_partial_setup_on_failure(monkeypatch):
@@ -839,49 +640,18 @@ def test_open_daf_encode_handles_returns_named_handles(monkeypatch):
         lambda output, log: handles["progress"],
     )
 
-    opened = encoder._open_daf_encode_handles_from_request(
-        encoder._DafEncodeHandleOpenRequest(
-            input_bam="input.bam",
-            output_bam="output.bam",
-            reference="reference.fa",
-            io_threads=4,
-            log=io.StringIO(),
-        )
+    opened = encoder._open_daf_encode_handles(
+        "input.bam",
+        "output.bam",
+        "reference.fa",
+        4,
+        io.StringIO(),
     )
 
     assert opened.ref_fasta is handles["fasta"]
     assert opened.inbam is handles["bam"]
     assert opened.outbam is handles["out"]
     assert opened.pbar is handles["progress"]
-
-
-def test_open_daf_encode_handles_adapter_builds_request(monkeypatch):
-    sentinel = object()
-    calls = []
-    log = io.StringIO()
-
-    monkeypatch.setattr(
-        encoder,
-        "_open_daf_encode_handles_from_request",
-        lambda request: calls.append(request) or sentinel,
-    )
-
-    assert encoder._open_daf_encode_handles(
-        "input.bam",
-        "output.bam",
-        "reference.fa",
-        4,
-        log,
-    ) is sentinel
-    assert calls == [
-        encoder._DafEncodeHandleOpenRequest(
-            input_bam="input.bam",
-            output_bam="output.bam",
-            reference="reference.fa",
-            io_threads=4,
-            log=log,
-        ),
-    ]
 
 
 def test_open_daf_encode_handles_closes_partial_setup_on_system_exit(monkeypatch):
@@ -923,40 +693,13 @@ def test_maybe_finalize_daf_output_sorts_only_existing_files(monkeypatch, tmp_pa
     log = io.StringIO()
     output_bam = tmp_path / "encoded.bam"
 
-    encoder._maybe_finalize_daf_output_from_request(
-        encoder._DafOutputFinalizationRequest("-", 4, log)
-    )
-    encoder._maybe_finalize_daf_output_from_request(
-        encoder._DafOutputFinalizationRequest(str(output_bam), 4, log)
-    )
+    encoder._maybe_finalize_daf_output("-", 4, log)
+    encoder._maybe_finalize_daf_output(str(output_bam), 4, log)
     output_bam.write_bytes(b"bam")
-    encoder._maybe_finalize_daf_output_from_request(
-        encoder._DafOutputFinalizationRequest(str(output_bam), 4, log)
-    )
+    encoder._maybe_finalize_daf_output(str(output_bam), 4, log)
 
     assert calls == [(str(output_bam), True, 4)]
     assert "Finalizing output BAM" in log.getvalue()
-
-
-def test_maybe_finalize_daf_output_adapter_builds_request(monkeypatch):
-    calls = []
-    log = io.StringIO()
-
-    monkeypatch.setattr(
-        encoder,
-        "_maybe_finalize_daf_output_from_request",
-        lambda request: calls.append(request),
-    )
-
-    encoder._maybe_finalize_daf_output("out.bam", 4, log)
-
-    assert calls == [
-        encoder._DafOutputFinalizationRequest(
-            output_bam="out.bam",
-            io_threads=4,
-            log=log,
-        ),
-    ]
 
 
 def test_aligned_pairs_from_fasta_fetches_reference_span_once():
