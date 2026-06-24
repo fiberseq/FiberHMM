@@ -231,6 +231,7 @@ def _run_nuc_recall_and_tf_stage(
     nuc_min_size,
     msp_min_size,
     phase_nrl,
+    nuc_profile=None,
 ) -> _NucRecallAndTfStageResult:
     nuc_calls, access = recall_nucs_in_read(
         obs,
@@ -243,6 +244,7 @@ def _run_nuc_recall_and_tf_stage(
         split_min_opps=split_min_opps,
         nuc_min_size=nuc_min_size,
         phase_nrl=phase_nrl,
+        nuc_profile=nuc_profile,
     )
     new_msps = rederive_msps(
         input_msps,
@@ -381,6 +383,7 @@ def build_fused_recall_result(
     nuc_min_size: int = 85,
     msp_min_size: int = 0,
     phase_nrl: int = 0,
+    nuc_profile=None,
 ) -> dict:
     """Run TF recall and nucleosome/TF unification after an HMM apply result.
 
@@ -409,6 +412,7 @@ def build_fused_recall_result(
                 nuc_min_size,
                 msp_min_size,
                 phase_nrl,
+                nuc_profile,
             )
         return _build_fused_recall_result_with_nucs(
             fiber_read,
@@ -423,6 +427,7 @@ def build_fused_recall_result(
             nuc_min_size,
             msp_min_size,
             phase_nrl,
+            nuc_profile,
         )
 
     if is_circular:
@@ -570,6 +575,7 @@ def _build_fused_recall_result_with_nucs(
     nuc_min_size: int,
     msp_min_size: int,
     phase_nrl: int = 0,
+    nuc_profile=None,
 ) -> dict:
     """nuc recall -> MSP re-derive -> TF recall (non-circular only)."""
     obs = apply_result["encoded"]
@@ -594,6 +600,7 @@ def _build_fused_recall_result_with_nucs(
         nuc_min_size,
         msp_min_size,
         phase_nrl,
+        nuc_profile,
     )
 
     # 4) unify: drop short refined nucs overlapped by a TF call (carry nq/el/er)
@@ -642,6 +649,7 @@ def _build_fused_recall_result_with_nucs_circular(
     nuc_min_size: int,
     msp_min_size: int,
     phase_nrl: int = 0,
+    nuc_profile=None,
 ) -> dict:
     """nuc recall for circular reads: split/refine in tiled space, then project
     the refined nucs, MSPs and TF calls back to molecule coordinates."""
@@ -667,6 +675,7 @@ def _build_fused_recall_result_with_nucs_circular(
         nuc_min_size,
         msp_min_size,
         phase_nrl,
+        nuc_profile,
     )
 
     # 4) project everything from tiled -> molecule

@@ -308,7 +308,7 @@ def _process_payload_item(payload, config: _PayloadWorkerConfig):
 
 def _fused_recall_state(llr_hit, llr_miss, recall_nucs: bool,
                         split_min_llr: float, split_min_opps: int,
-                        phase_nrl: int) -> dict:
+                        phase_nrl: int, nuc_profile=None) -> dict:
     return {
         'llr_hit': llr_hit,
         'llr_miss': llr_miss,
@@ -316,6 +316,7 @@ def _fused_recall_state(llr_hit, llr_miss, recall_nucs: bool,
         'split_min_llr': split_min_llr,
         'split_min_opps': split_min_opps,
         'phase_nrl': phase_nrl,
+        'nuc_profile': nuc_profile,
     }
 
 
@@ -327,6 +328,7 @@ def _worker_recall_options(nuc_min_size: int, msp_min_size: int) -> dict:
         'nuc_min_size': nuc_min_size,
         'msp_min_size': msp_min_size,
         'phase_nrl': _worker_recall_state.get('phase_nrl', 0),
+        'nuc_profile': _worker_recall_state.get('nuc_profile'),
     }
 
 
@@ -602,6 +604,7 @@ def _init_fused_worker(
     chimera_min_seg=5,
     chimera_purity=0.8,
     phase_nrl=0,
+    nuc_profile_path=None,
 ):
     """Initialize worker process for the fused apply+recall pipeline.
 
@@ -621,8 +624,13 @@ def _init_fused_worker(
         apply_model_path,
         emission_uplift,
     )
+    nuc_profile = None
+    if nuc_profile_path:
+        from fiberhmm.inference.nuc_recaller import load_nuc_profile
+        nuc_profile = load_nuc_profile(nuc_profile_path)
     _worker_recall_state = _fused_recall_state(
         llr_hit, llr_miss, recall_nucs, split_min_llr, split_min_opps, phase_nrl,
+        nuc_profile,
     )
     configure_daf_chimera_filter(filter_chimeras, chimera_min_seg, chimera_purity)
 

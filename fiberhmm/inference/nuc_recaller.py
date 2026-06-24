@@ -25,7 +25,12 @@ from typing import Iterable, List, Sequence, Tuple
 import numpy as np
 
 from fiberhmm.inference.circular import circular_intervals_overlap
-from fiberhmm.inference.tf_recaller import call_tfs_in_interval, merge_intervals
+from fiberhmm.inference.tf_recaller import (
+    N_CTX,
+    UNMETH_OFFSET,
+    call_tfs_in_interval,
+    merge_intervals,
+)
 from fiberhmm.io.ma_tags import ambiguity_to_edge, llr_to_tq
 
 Interval = Tuple[int, int]
@@ -491,6 +496,176 @@ def _recall_bounded_nuc_spans(
     return _NucRecallResult(nucs=nucs, access=access)
 
 
+# ===================================================================== #
+#  DddA radial split (nuc_profile mode)                                  #
+#                                                                        #
+#  DddA deaminates *inside* nucleosomes, so the accessible-cut split     #
+#  above shatters them. Instead, match-filter a single-nucleosome RADIAL #
+#  template (deam rate vs distance-from-dyad) to place dyads, then put   #
+#  edges at the protected->linker density transition. See                #
+#  ddda_profile/ for the derivation. The rotational (~10.3 bp) signal is #
+#  real but too small (+-1%) to aid boundaries, so it is not used.       #
+# ===================================================================== #
+
+@dataclass(frozen=True)
+class NucProfile:
+    """Empirical within-nucleosome deamination radial template (DddA mode)."""
+    radial: np.ndarray       # deam rate vs |offset from dyad|, index 0..half
+    linker: float            # flat linker deam rate
+    half: int                # nucleosome footprint half-extent (bp)
+    min_sep: int             # min dyad-dyad separation (bp)
+    edge_frac: float         # threshold (x linker) for the edge crossing
+
+
+def load_nuc_profile(path: str) -> NucProfile:
+    import json
+    d = json.load(open(path))
+    return NucProfile(
+        radial=np.asarray(d['dyad_rate'], dtype=np.float64),
+        linker=float(d['linker']),
+        half=int(d.get('half', 73)),
+        min_sep=int(d.get('min_sep', 150)),
+        edge_frac=float(d.get('edge_frac', 0.82)),
+    )
+
+
+def _obs_opp_deam(obs: np.ndarray):
+    """Opportunity (target) and deaminated (accessible 'hit') masks from obs."""
+    obs = np.asarray(obs)
+    hit = (obs >= 0) & (obs < N_CTX)
+    miss = (obs >= UNMETH_OFFSET) & (obs < UNMETH_OFFSET + N_CTX)
+    return (hit | miss), hit
+
+
+def _smoothed_deam_rate(opp, deam, win=21):
+    """Per-bp deam rate over a centered window of opportunities (~2 turns, so the
+    rotational ripple averages out)."""
+    k = np.ones(win)
+    num = np.convolve(deam.astype(float), k, 'same')
+    den = np.convolve(opp.astype(float), k, 'same')
+    return np.where(den > 0, num / np.maximum(den, 1), np.nan)
+
+
+def _profile_weights(profile: NucProfile):
+    """Signed per-offset log-weights (index = offset + half) for the dyad LLR."""
+    half = profile.half
+    off = np.arange(-half, half + 1)
+    r = np.array([profile.radial[min(abs(d), len(profile.radial) - 1)] for d in off])
+    t = np.clip(np.nan_to_num(r, nan=0.05), 0.01, 0.6)
+    w1 = np.log(t / profile.linker)
+    w0 = np.log((1 - t) / (1 - profile.linker))
+    return w1, w0
+
+
+def _dyad_llr_track(opp, deam, lo, hi, w1, w0, half):
+    """LLR(c) that a nucleosome is centered at c (radial template vs linker)."""
+    cs = np.arange(lo, hi)
+    out = np.zeros(len(cs))
+    for i, c in enumerate(cs):
+        a, b = max(0, c - half), min(len(opp), c + half + 1)
+        x = np.arange(a, b)
+        m = opp[x]
+        if not m.any():
+            continue
+        idx = (x[m] - c) + half
+        d = deam[x[m]].astype(bool)
+        out[i] = np.sum(np.where(d, w1[idx], w0[idx]))
+    return cs, out
+
+
+def _place_dyads(cs, llr, min_sep):
+    """Greedy peak picking: highest positive LLR first, min separation."""
+    chosen: List[int] = []
+    for idx in np.argsort(llr)[::-1]:
+        if llr[idx] <= 0:
+            break
+        c = int(cs[idx])
+        if all(abs(c - cc) >= min_sep for cc in chosen):
+            chosen.append(c)
+    return sorted(chosen)
+
+
+def _find_density_edge(sr, c, direction, bound, profile: NucProfile):
+    """Scan out from dyad c to the protected->linker crossing; return
+    (edge_pos, ambiguity_bp). Ambiguity = transition-band width (0.30L..0.60L);
+    for DddA this is the edge byte source (not 'last-miss/first-hit')."""
+    L = profile.linker
+    mid, lo_t, hi_t = profile.edge_frac * L, 0.30 * L, 0.60 * L
+    x = edge = c
+    while 0 <= x + direction < len(sr) and direction * (bound - x) > 0:
+        x += direction
+        if np.isfinite(sr[x]) and sr[x] >= mid:
+            edge = x
+            break
+    else:
+        edge = x
+    lo = hi = edge
+    while lo - direction >= 0 and direction * (lo - c) > 0 and \
+            np.isfinite(sr[lo]) and sr[lo] > lo_t:
+        lo -= direction
+    while 0 <= hi + direction < len(sr) and np.isfinite(sr[hi]) and sr[hi] < hi_t:
+        hi += direction
+    return edge, abs(hi - lo)
+
+
+def _radial_split_footprint(opp, deam, sr, s, e, profile, nuc_min_size, w1, w0):
+    """Place dyads in protected footprint [s,e) and return (NucCalls, access)."""
+    half = profile.half
+    cs, llr = _dyad_llr_track(opp, deam, max(s + 20, 0), e - 20, w1, w0, half)
+    if len(cs) == 0:
+        return [], [(s, e - s)]
+    dyads = _place_dyads(cs, llr, profile.min_sep)
+    if not dyads:
+        return [], [(s, e - s)]
+    nucs: List[NucCall] = []
+    covered: List[Interval] = []
+    for i, c in enumerate(dyads):
+        lb = (dyads[i - 1] + c) // 2 if i > 0 else c - (half + 37)
+        rb = (dyads[i + 1] + c) // 2 if i + 1 < len(dyads) else c + (half + 37)
+        eL, ambL = _find_density_edge(sr, c, -1, max(0, lb), profile)
+        eR, ambR = _find_density_edge(sr, c, +1, min(len(sr) - 1, rb), profile)
+        if eR - eL < nuc_min_size:
+            continue                       # sub-floor -> stays accessible
+        peak = float(llr[int(np.argmin(np.abs(cs - c)))])
+        nucs.append(NucCall(eL, eR - eL, llr_to_tq(max(0.0, peak)),
+                            ambiguity_to_edge(ambL), ambiguity_to_edge(ambR)))
+        covered.append((eL, eR))
+    # accessible = footprint minus the emitted nucleosomes
+    access: List[Interval] = []
+    cur = s
+    for a, b in sorted(covered):
+        if a > cur:
+            access.append((cur, a - cur))
+        cur = max(cur, b)
+    if e > cur:
+        access.append((cur, e - cur))
+    return nucs, access
+
+
+def radial_split_in_read(obs, ns, nl, read_length, profile, nuc_min_size):
+    """DddA nucleosome recall: match-filter each HMM footprint into nucleosomes
+    + accessible residue. Same return contract as ``recall_nucs_in_read``."""
+    opp, deam = _obs_opp_deam(obs)
+    sr = _smoothed_deam_rate(opp, deam)
+    w1, w0 = _profile_weights(profile)
+    nucs: List[NucCall] = []
+    access: List[Interval] = []
+    for s_raw, length_raw in zip(ns, nl):
+        s = int(s_raw)
+        length = int(length_raw)
+        if length <= 0:
+            continue
+        e = min(s + length, read_length)
+        if e - s < nuc_min_size:
+            access.append((s, e - s))      # too short to be a nucleosome
+            continue
+        fn, fa = _radial_split_footprint(
+            opp, deam, sr, s, e, profile, nuc_min_size, w1, w0)
+        nucs.extend(fn)
+        access.extend(fa)
+    return nucs, access
+
+
 def recall_nucs_in_read(
     obs: np.ndarray,
     ns: Sequence[int],
@@ -508,6 +683,7 @@ def recall_nucs_in_read(
     phase_min_llr: float = 1.0,
     phase_min_opps: int = 1,
     phase_window: int = 35,
+    nuc_profile: NucProfile | None = None,
 ) -> Tuple[List[NucCall], List[Interval]]:
     """Split + edge-refine the footprints (``ns``/``nl``) of one read.
 
@@ -525,7 +701,13 @@ def recall_nucs_in_read(
     (``phase_min_llr`` < ``split_min_llr``). The prior only lowers the bar near
     a predicted linker -- a cut still requires real local evidence there, so a
     signal-desert is never split.
+
+    When ``nuc_profile`` is supplied (DddA mode), the accessible-cut split is
+    replaced by a radial template match-filter -- see ``radial_split_in_read``.
     """
+    if nuc_profile is not None:
+        return radial_split_in_read(obs, ns, nl, read_length,
+                                    nuc_profile, nuc_min_size)
     tables = _recall_nuc_tables(llr_hit, llr_miss)
     params = _recall_nuc_params(
         split_min_llr=split_min_llr,

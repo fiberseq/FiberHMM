@@ -2243,6 +2243,7 @@ def test_fused_recall_state_preserves_tables_and_thresholds():
         "split_min_llr": 4.5,
         "split_min_opps": 5,
         "phase_nrl": 185,
+        "nuc_profile": None,
     }
 
 
@@ -2258,6 +2259,7 @@ def test_worker_recall_options_uses_state_with_defaults(monkeypatch):
         "nuc_min_size": 85,
         "msp_min_size": 20,
         "phase_nrl": 0,
+        "nuc_profile": None,
     }
 
     monkeypatch.setattr(streaming_workers, "_worker_recall_state", {
@@ -2276,6 +2278,7 @@ def test_worker_recall_options_uses_state_with_defaults(monkeypatch):
         "nuc_min_size": 90,
         "msp_min_size": 25,
         "phase_nrl": 185,
+        "nuc_profile": None,
     }
 
 
@@ -2476,6 +2479,7 @@ def test_build_worker_fused_recall_result_forwards_options(monkeypatch):
         "nuc_min_size": 85,
         "msp_min_size": 20,
         "phase_nrl": 185,
+        "nuc_profile": None,
     }
     seen.clear()
 

@@ -537,6 +537,7 @@ class _FusedStreamingPipelineRequest:
     chimera_min_seg: int
     chimera_purity: float
     phase_nrl: int
+    nuc_profile_path: Optional[str]
     pg_record: Optional[dict]
 
 
@@ -1133,6 +1134,7 @@ def _run_fused_streaming_reads_from_request(
         pipeline_request.chimera_min_seg,
         pipeline_request.chimera_purity,
         pipeline_request.phase_nrl,
+        pipeline_request.nuc_profile_path,
         pipeline_request.n_cores,
     )
 
@@ -1296,6 +1298,7 @@ def _new_fused_streaming_executor(
     chimera_min_seg: int,
     chimera_purity: float,
     phase_nrl: int,
+    nuc_profile_path,
     n_cores: int,
 ):
     return ProcessPoolExecutor(
@@ -1314,6 +1317,7 @@ def _new_fused_streaming_executor(
             chimera_min_seg,
             chimera_purity,
             phase_nrl,
+            nuc_profile_path,
         ),
     )
 
@@ -1603,6 +1607,7 @@ def _process_bam_streaming_pipeline_fused(
     chimera_min_seg: int = 5,
     chimera_purity: float = 0.8,
     phase_nrl: int = 0,
+    nuc_profile_path: str = None,
     pg_record: dict = None,
 ):
     """Fused apply+recall streaming pipeline."""
@@ -1643,6 +1648,7 @@ def _process_bam_streaming_pipeline_fused(
             chimera_min_seg=chimera_min_seg,
             chimera_purity=chimera_purity,
             phase_nrl=phase_nrl,
+            nuc_profile_path=nuc_profile_path,
             pg_record=pg_record,
         )
     )

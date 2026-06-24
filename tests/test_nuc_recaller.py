@@ -715,3 +715,49 @@ def test_nuc_qqq_aq_roundtrip():
     assert parsed[1] == [150, 200, 64]    # nuc 1
     assert parsed[2] == []                # msp (no bytes)
     assert parsed[3] == [100, 255, 0]     # tf
+
+
+def test_load_bundled_ddda_nuc_profile():
+    from fiberhmm.inference.nuc_recaller import NucProfile, load_nuc_profile
+    from fiberhmm.models import _bundled_model_path
+    prof = load_nuc_profile(_bundled_model_path('ddda_nuc_profile.json'))
+    assert isinstance(prof, NucProfile)
+    assert 0.5 < prof.linker < 0.95          # DddA linker deam rate
+    assert prof.radial[0] < prof.linker       # dyad core is protected
+    assert prof.half >= 60
+
+
+def test_radial_split_splits_dinucleosome_block():
+    """DddA mode: an over-merged block (two low-deam nucs + a high-deam linker)
+    is split into two nucleosomes; the linker becomes accessible."""
+    from fiberhmm.inference.nuc_recaller import NucProfile, recall_nucs_in_read
+    from fiberhmm.inference.tf_recaller import UNMETH_OFFSET
+    rng = np.random.default_rng(0)
+    HIT, MISS = 0, UNMETH_OFFSET
+    L = 360
+    obs = np.full(L, MISS, dtype=np.int64)
+
+    def fill(a, b, rate):
+        for x in range(a, b):
+            obs[x] = HIT if rng.random() < rate else MISS
+
+    fill(0, 150, 0.07)      # nucleosome 1 (protected interior)
+    fill(150, 195, 0.74)    # linker (accessible)
+    fill(195, 345, 0.07)    # nucleosome 2
+    fill(345, 360, 0.74)
+
+    radial = np.concatenate([np.full(30, 0.03), np.linspace(0.03, 0.12, 44)])
+    prof = NucProfile(radial=radial, linker=0.74, half=73,
+                      min_sep=150, edge_frac=0.82)
+
+    nucs, access = recall_nucs_in_read(
+        obs, [0], [L], L, None, None,
+        split_min_llr=4.0, split_min_opps=3, nuc_min_size=85, nuc_profile=prof)
+
+    assert len(nucs) == 2
+    centers = sorted(n.start + n.length / 2 for n in nucs)
+    assert 50 < centers[0] < 120 and 220 < centers[1] < 300
+    # the linker region was freed up as accessible (-> MSP downstream)
+    assert any(s <= 170 <= s + length for s, length in access)
+    # edge-sharpness bytes are populated
+    assert all(0 <= n.el <= 255 and 0 <= n.er <= 255 for n in nucs)

@@ -287,6 +287,7 @@ def test_run_nuc_recall_and_tf_stage_names_recall_flow(monkeypatch):
         "split_min_opps": 4,
         "nuc_min_size": 85,
         "phase_nrl": 147,
+        "nuc_profile": None,
     }
     assert calls["rederive"] == (input_msps, "access", 100, 10)
     assert calls["tf"] == (
@@ -521,7 +522,7 @@ def test_build_fused_recall_result_dispatches(monkeypatch):
         args = call[1]
         assert args[0] is fiber_read
         assert args[1] is apply_result
-        assert args[2:] == ("hit", "miss", 4.0, 3, 90, 5.0, 4, 75, 2, 147)
+        assert args[2:] == ("hit", "miss", 4.0, 3, 90, 5.0, 4, 75, 2, 147, None)
 
     linear_apply = {"circular": False}
     circular_apply = {"circular": True}

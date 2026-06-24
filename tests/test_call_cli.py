@@ -365,12 +365,12 @@ def test_call_recall_nucs_defaults_and_ddda_warnings(capsys):
     assert capsys.readouterr().err == ""
 
     args = SimpleNamespace(enzyme="ddda", recall_nucs=None)
-    assert _resolve_recall_nucs(args) is False
-    assert "OFF by default for DddA" in capsys.readouterr().err
+    assert _resolve_recall_nucs(args) is True
+    assert "radial-template split" in capsys.readouterr().err
 
     args = SimpleNamespace(enzyme="ddda", recall_nucs=True)
     assert _resolve_recall_nucs(args) is True
-    assert "--recall-nucs on DddA" in capsys.readouterr().err
+    assert capsys.readouterr().err == ""
 
 
 def test_chimera_filter_state_is_daf_specific():
@@ -552,6 +552,7 @@ def test_call_fused_common_kwargs_preserve_shared_pipeline_arguments():
         also_write_legacy=True,
         recall_nucs=True,
         phase_nrl=185,
+        nuc_profile_path=None,
         pg_record=pg_record,
     )
     kwargs = _call_fused_common_kwargs_from_settings(args, settings)
@@ -587,6 +588,7 @@ def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
         input="in.bam",
         reference="ref.fa",
         keep_chimeras=False,
+        enzyme="hia5",
     )
     pg_record = {"ID": "fiberhmm-call"}
     calls = []
@@ -685,6 +687,7 @@ def test_resolve_call_runtime_wires_setup_and_common_kwargs(monkeypatch):
             also_write_legacy=False,
             recall_nucs=True,
             phase_nrl=185,
+            nuc_profile_path=None,
             pg_record=pg_record,
         ),
     )

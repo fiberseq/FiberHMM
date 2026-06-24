@@ -157,6 +157,7 @@ def _fused_streaming_pipeline_request(**overrides):
         "chimera_min_seg": 5,
         "chimera_purity": 0.8,
         "phase_nrl": 147,
+        "nuc_profile_path": None,
         "pg_record": {"ID": "fiberhmm"},
     }
     values.update(overrides)
@@ -465,6 +466,7 @@ def test_run_fused_streaming_reads_builds_executor_and_runs_loop(monkeypatch):
                 6,
                 0.7,
                 150,
+                None,
                 5,
             ),
         ),
@@ -1670,6 +1672,7 @@ def test_new_fused_streaming_executor_configures_pool(monkeypatch):
         chimera_min_seg=5,
         chimera_purity=0.8,
         phase_nrl=147,
+        nuc_profile_path="prof.json",
         n_cores=4,
     )
 
@@ -1689,6 +1692,7 @@ def test_new_fused_streaming_executor_configures_pool(monkeypatch):
             5,
             0.8,
             147,
+            "prof.json",
         ),
     }
 

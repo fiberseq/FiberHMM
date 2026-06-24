@@ -92,6 +92,7 @@ class _CallFusedCommonSettings:
     also_write_legacy: bool
     recall_nucs: bool
     phase_nrl: int
+    nuc_profile_path: str | None
     pg_record: dict
 
 
@@ -410,16 +411,22 @@ def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
 def _resolve_recall_nucs(args) -> bool:
     """Resolve the nucleosome recaller default and DddA-specific warnings."""
     if args.recall_nucs is None:
-        recall_nucs = (args.enzyme != 'ddda')
+        recall_nucs = True
         if args.enzyme == 'ddda':
-            print("  NOTE: nucleosome recaller is OFF by default for DddA "
-                  "(use --recall-nucs to force it on).", file=sys.stderr)
+            print("  NOTE: DddA nucleosome recall uses the radial-template split "
+                  "(models/ddda_nuc_profile.json).", file=sys.stderr)
     else:
         recall_nucs = bool(args.recall_nucs)
-        if recall_nucs and args.enzyme == 'ddda':
-            print("  WARNING: --recall-nucs on DddA uses the uplifted TF model for "
-                  "splitting (aggressive) — verify results.", file=sys.stderr)
     return recall_nucs
+
+
+def _resolve_nuc_profile_path(args, recall_nucs: bool):
+    """DddA uses a radial deamination-profile match-filter for the split; other
+    enzymes use the accessible-cut Kadane split (no profile)."""
+    if recall_nucs and args.enzyme == 'ddda':
+        from fiberhmm.models import _bundled_model_path
+        return _bundled_model_path('ddda_nuc_profile.json')
+    return None
 
 
 def _chimera_filter_state(mode: str, keep_chimeras: bool) -> str:
@@ -707,6 +714,7 @@ def _call_fused_common_kwargs_from_settings(
         'chimera_min_seg': args.chimera_min_seg,
         'chimera_purity': args.chimera_purity,
         'phase_nrl': settings.phase_nrl,
+        'nuc_profile_path': settings.nuc_profile_path,
         'pg_record': settings.pg_record,
     }
 
@@ -722,6 +730,7 @@ def _call_fused_common_kwargs(
     recall_nucs: bool,
     phase_nrl: int,
     pg_record,
+    nuc_profile_path=None,
 ) -> dict:
     return _call_fused_common_kwargs_from_settings(
         args,
@@ -734,6 +743,7 @@ def _call_fused_common_kwargs(
             also_write_legacy=also_write_legacy,
             recall_nucs=recall_nucs,
             phase_nrl=phase_nrl,
+            nuc_profile_path=nuc_profile_path,
             pg_record=pg_record,
         ),
     )
@@ -835,6 +845,7 @@ def _resolve_call_runtime_for_request(
             also_write_legacy=also_write_legacy,
             recall_nucs=recall_nucs,
             phase_nrl=phase_nrl,
+            nuc_profile_path=_resolve_nuc_profile_path(args, recall_nucs),
             pg_record=pg_record,
         ),
     )
