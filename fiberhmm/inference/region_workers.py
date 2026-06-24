@@ -944,7 +944,21 @@ def _region_fused_recall_options(
         'nuc_min_size': nuc_min_size,
         'msp_min_size': msp_min_size,
         'phase_nrl': int(params.get('phase_nrl', 0)),
+        'nuc_profile': _region_nuc_profile(params.get('nuc_profile_path')),
     }
+
+
+_REGION_NUC_PROFILE_CACHE: dict = {}
+
+
+def _region_nuc_profile(path):
+    """Load (and cache per worker) the DddA radial profile, or None."""
+    if not path:
+        return None
+    if path not in _REGION_NUC_PROFILE_CACHE:
+        from fiberhmm.inference.nuc_recaller import load_nuc_profile
+        _REGION_NUC_PROFILE_CACHE[path] = load_nuc_profile(path)
+    return _REGION_NUC_PROFILE_CACHE[path]
 
 
 def _fused_region_worker_runtime(params: dict) -> _FusedRegionWorkerRuntime:

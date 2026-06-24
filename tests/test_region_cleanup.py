@@ -215,6 +215,7 @@ def test_region_worker_param_builders_extend_base_contract():
         chimera_min_seg=6,
         chimera_purity=0.9,
         phase_nrl=147,
+        nuc_profile_path=None,
         pg_record={"ID": "fiberhmm"},
         ref_fasta_path="ref.fa",
     )
@@ -301,6 +302,7 @@ def test_region_worker_params_from_pipeline_requests_match_builders():
         chimera_min_seg=6,
         chimera_purity=0.9,
         phase_nrl=147,
+        nuc_profile_path=None,
         pg_record={"ID": "fiberhmm"},
     )
 
@@ -352,6 +354,7 @@ def test_region_worker_params_from_pipeline_requests_match_builders():
         chimera_min_seg=6,
         chimera_purity=0.9,
         phase_nrl=147,
+        nuc_profile_path=None,
         pg_record={"ID": "fiberhmm"},
         ref_fasta_path="ref.fa",
     )
@@ -419,6 +422,7 @@ def test_region_parallel_run_adapters_pass_request_settings(monkeypatch):
         chimera_min_seg=6,
         chimera_purity=0.9,
         phase_nrl=147,
+        nuc_profile_path=None,
         pg_record={"ID": "fiberhmm"},
     )
     calls = []

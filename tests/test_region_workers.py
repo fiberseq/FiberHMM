@@ -1759,6 +1759,7 @@ def test_region_fused_recall_options_uses_defaults_and_casts_values():
         "nuc_min_size": 85,
         "msp_min_size": 20,
         "phase_nrl": 0,
+        "nuc_profile": None,
     }
     assert _region_fused_recall_options(
         {
@@ -1776,6 +1777,7 @@ def test_region_fused_recall_options_uses_defaults_and_casts_values():
         "nuc_min_size": 90,
         "msp_min_size": 25,
         "phase_nrl": 185,
+        "nuc_profile": None,
     }
 
 
@@ -1818,6 +1820,7 @@ def test_fused_region_worker_runtime_builds_worker_configs():
         "nuc_min_size": 90,
         "msp_min_size": 21,
         "phase_nrl": 185,
+        "nuc_profile": None,
     }
     assert runtime.filter_config == ReadFilterConfig(
         min_mapq=11,

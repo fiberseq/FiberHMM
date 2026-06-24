@@ -226,6 +226,7 @@ class _FusedRegionBamPipelineRequest:
     chimera_min_seg: int
     chimera_purity: float
     phase_nrl: int
+    nuc_profile_path: Optional[str]
     pg_record: Optional[dict]
 
 
@@ -327,6 +328,7 @@ def _fused_region_worker_params(
     chimera_min_seg: int,
     chimera_purity: float,
     phase_nrl: int,
+    nuc_profile_path: Optional[str],
     pg_record: dict,
     ref_fasta_path: Optional[str],
 ) -> dict:
@@ -358,6 +360,7 @@ def _fused_region_worker_params(
         'chimera_min_seg': chimera_min_seg,
         'chimera_purity': chimera_purity,
         'phase_nrl': phase_nrl,
+        'nuc_profile_path': nuc_profile_path,
         'pg_record': pg_record,
         # Path string, NOT an open handle: pysam.FastaFile is not fork-safe,
         # so each worker opens it lazily in _init_fused_region_worker.
@@ -418,6 +421,7 @@ def _fused_region_worker_params_from_request(
         chimera_min_seg=request.chimera_min_seg,
         chimera_purity=request.chimera_purity,
         phase_nrl=request.phase_nrl,
+        nuc_profile_path=request.nuc_profile_path,
         pg_record=request.pg_record,
         ref_fasta_path=request.ref_fasta_path,
     )
@@ -1352,6 +1356,7 @@ def _process_bam_region_parallel_fused(
     chimera_min_seg: int = 5,
     chimera_purity: float = 0.8,
     phase_nrl: int = 0,
+    nuc_profile_path: str = None,
     pg_record: dict = None,
 ):
     """Region-parallel fused apply+recall.
@@ -1399,6 +1404,7 @@ def _process_bam_region_parallel_fused(
             chimera_min_seg=chimera_min_seg,
             chimera_purity=chimera_purity,
             phase_nrl=phase_nrl,
+            nuc_profile_path=nuc_profile_path,
             pg_record=pg_record,
         )
     )
