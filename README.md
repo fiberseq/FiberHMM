@@ -113,10 +113,26 @@ fiberhmm-extract -i recalled.bam --nucleosome --msp --tf --bigbed
 | Unaligned / unsorted BAM, or reading from stdin | `fiberhmm-call` (streaming mode, no `--region-parallel`) |
 | Only want nucleosome/MSP calls, no TF recall | `fiberhmm-apply` |
 | Already have apply-tagged BAM, want to add TF calls | `fiberhmm-recall-tfs` |
+| Already have apply-tagged BAM, want full recall (nucleosome refine + TF) without re-running the HMM | `fiberhmm-recall-nucs` |
 | DddB/DddA raw aligned BAM (no R/Y encoding) | `fiberhmm-call --mode daf` — auto-detects MD tags, no encode step needed (v2.10.0+) |
 | DddB/DddA, want R/Y in stored sequence too | `fiberhmm-daf-encode \| fiberhmm-call` (classic two-pass) |
 
 > **Note:** `fiberhmm-run` was removed in v2.8.0 — it ran apply + recall + fire as separate subprocess stages connected by pipes (slow, per-read BAM serialization at every hop). `fiberhmm-call` fuses those Python stages in-process and is 2–9× faster. If you had scripts using `fiberhmm-run`, replace with `fiberhmm-call [| ft fire]`.
+
+### Second-pass recall on an apply-tagged BAM (no HMM re-run)
+
+If you already have a BAM tagged by `fiberhmm-apply` (or `fiberhmm-call --no-recall-nucs`) and want to add calls without paying for the HMM again, use the second-pass recallers. Both reconstruct the per-base observation array from each read's own `MM`/`ML`+sequence and reuse the existing `ns`/`nl`/`as`/`al` tags — the HMM is **not** re-run.
+
+```bash
+# TF recall only (over the original apply MSPs + short nucs)
+fiberhmm-recall-tfs  -i apply_footprints.bam -o recalled.bam --enzyme hia5 --seq pacbio -c 8
+
+# Full recall: nucleosome refine -> MSP re-derive -> TF recall -> promotion
+fiberhmm-recall-nucs -i apply_footprints.bam -o recalled.bam --enzyme hia5 --seq pacbio -c 8
+# equivalent: fiberhmm-recall-tfs --recall-nucs ...
+```
+
+`fiberhmm-recall-nucs` is byte-identical to `fiberhmm-call --recall-nucs` for a matched `--phase-nrl`. `--phase-nrl auto` (the default) estimates the nucleosome repeat length from the existing nuc tags rather than re-running apply; it falls back to the 185 bp anchor for stdin input. DddA (`--enzyme ddda`) uses the bundled radial deamination profile for the split. **Linear reads only** — circular reads (`fiberhmm-call -r`) must use `fiberhmm-call --recall-nucs`.
 
 ### DddA note — two-model workflow is still required
 
