@@ -337,7 +337,7 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
     monkeypatch.setattr(
         recall_tfs,
         "parse_args",
-        lambda: SimpleNamespace(
+        lambda default_recall_nucs=False: SimpleNamespace(
             in_bam=applied_bam,
             out_bam=recalled_bam,
             model=recall_model_path,

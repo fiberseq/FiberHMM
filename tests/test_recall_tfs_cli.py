@@ -171,6 +171,17 @@ def test_recall_tfs_worker_init_accepts_config_and_legacy_args(monkeypatch):
         )
     )
 
+    # Nuc-recall globals default off so the TF-only path is unchanged.
+    nuc_defaults = {
+        "recall_nucs": False,
+        "split_min_llr": 4.0,
+        "split_min_opps": 3,
+        "nuc_min_size": 85,
+        "msp_min_size": 0,
+        "phase_nrl": 0,
+        "nuc_profile": None,
+    }
+
     assert worker_state == {
         "llr_hit": "hit",
         "llr_miss": "miss",
@@ -179,6 +190,7 @@ def test_recall_tfs_worker_init_accepts_config_and_legacy_args(monkeypatch):
         "min_llr": 4.5,
         "min_opps": 3,
         "unify_threshold": 90,
+        **nuc_defaults,
     }
 
     recall_tfs._worker_init("hit2", "miss2", "m6a", 3, 6.0, 4, 85)
@@ -190,6 +202,7 @@ def test_recall_tfs_worker_init_accepts_config_and_legacy_args(monkeypatch):
         "min_llr": 6.0,
         "min_opps": 4,
         "unify_threshold": 85,
+        **nuc_defaults,
     }
 
 
@@ -926,7 +939,8 @@ def test_recall_tfs_closes_bams_when_processing_fails(monkeypatch):
         chunk_size=1024,
     )
 
-    monkeypatch.setattr(recall_tfs, "parse_args", lambda: args)
+    monkeypatch.setattr(recall_tfs, "parse_args",
+                        lambda default_recall_nucs=False: args)
     monkeypatch.setattr(recall_tfs.pysam, "AlignmentFile", FakeBam)
     monkeypatch.setattr(
         recall_tfs,
@@ -950,3 +964,72 @@ def test_recall_tfs_closes_bams_when_processing_fails(monkeypatch):
     assert len(opened) == 2
     assert [bam.mode for bam in opened] == ["rb", "wb"]
     assert all(bam.closed for bam in opened)
+
+
+# --------------------------------------------------------------------------- #
+#  --recall-nucs (nucleosome recall on an already apply-tagged BAM)            #
+# --------------------------------------------------------------------------- #
+
+
+def test_parse_phase_nrl_option_off_auto_fixed():
+    assert recall_tfs._parse_phase_nrl_option("off") == ("off", 0)
+    assert recall_tfs._parse_phase_nrl_option("0") == ("off", 0)
+    assert recall_tfs._parse_phase_nrl_option("") == ("off", 0)
+    assert recall_tfs._parse_phase_nrl_option("auto") == ("auto", 0)
+    assert recall_tfs._parse_phase_nrl_option("AUTO") == ("auto", 0)
+    assert recall_tfs._parse_phase_nrl_option("185") == ("fixed", 185)
+    # unparseable -> auto (safe default)
+    assert recall_tfs._parse_phase_nrl_option("banana") == ("auto", 0)
+
+
+def test_resolve_phase_nrl_off_when_recall_nucs_disabled():
+    args = SimpleNamespace(recall_nucs=False, phase_nrl="auto", in_bam="x.bam")
+    assert recall_tfs._resolve_recall_nucs_phase_nrl(args) == 0
+
+
+def test_resolve_phase_nrl_fixed_value():
+    args = SimpleNamespace(recall_nucs=True, phase_nrl="200",
+                           in_bam="x.bam", nuc_min_size=85)
+    assert recall_tfs._resolve_recall_nucs_phase_nrl(args) == 200
+
+
+def test_resolve_phase_nrl_auto_stdin_uses_anchor():
+    args = SimpleNamespace(recall_nucs=True, phase_nrl="auto",
+                           in_bam="-", nuc_min_size=85)
+    assert recall_tfs._resolve_recall_nucs_phase_nrl(args) == 185
+
+
+def test_resolve_phase_nrl_auto_estimates_from_tags(monkeypatch):
+    args = SimpleNamespace(recall_nucs=True, phase_nrl="auto",
+                           in_bam="sample.bam", nuc_min_size=85)
+    seen = {}
+
+    def fake_estimate(path, nuc_min_size, **kw):
+        seen["path"] = path
+        seen["nuc_min_size"] = nuc_min_size
+        return {"nrl": 187, "source": "estimated", "n_pairs": 999, "n_reads": 50}
+
+    monkeypatch.setattr(recall_tfs, "_estimate_phase_nrl_from_tags", fake_estimate)
+    assert recall_tfs._resolve_recall_nucs_phase_nrl(args) == 187
+    assert seen == {"path": "sample.bam", "nuc_min_size": 85}
+
+
+def test_resolve_nuc_profile_none_for_non_ddda():
+    args = SimpleNamespace(recall_nucs=True, nuc_profile=None, enzyme="hia5")
+    assert recall_tfs._resolve_nuc_profile(args) is None
+
+
+def test_resolve_nuc_profile_off_when_recall_nucs_disabled():
+    args = SimpleNamespace(recall_nucs=False, nuc_profile="x.json", enzyme="ddda")
+    assert recall_tfs._resolve_nuc_profile(args) is None
+
+
+def test_main_recall_nucs_sets_default_on(monkeypatch):
+    captured = {}
+
+    def fake_main(default_recall_nucs=False):
+        captured["default"] = default_recall_nucs
+
+    monkeypatch.setattr(recall_tfs, "main", fake_main)
+    recall_tfs.main_recall_nucs()
+    assert captured["default"] is True

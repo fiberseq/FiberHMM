@@ -23,7 +23,22 @@ a recaller TF call are demoted out of the ``nuc+`` annotation -- the
 recaller version (with proper LLR + edge-ambiguity scoring) replaces
 them in the ``tf+`` annotation.
 
+``--recall-nucs`` (also the ``fiberhmm-recall-nucs`` entry point) adds the
+per-read nucleosome recaller BEFORE TF recall: it splits over-merged HMM
+footprints on accessible evidence (or the DddA radial template) and refines
+each nucleosome's conservative edges + quality (nuc+QQQ), re-derives MSPs,
+then runs TF recall over the cleaner accessible space. It reuses the
+apply-tagged ``ns``/``nl``/``as``/``al`` -- the HMM is NOT re-run -- so it is
+byte-identical to ``fiberhmm-call --recall-nucs`` for a given ``--phase-nrl``
+(linear reads only; ``--phase-nrl auto`` is estimated from the existing nuc
+tags rather than re-running apply).
+
 Examples:
+  # Add nucleosome recall to an already apply-tagged BAM (no HMM re-run)
+  fiberhmm-recall-nucs -i apply_footprints.bam -o recalled.bam \\
+                        --enzyme hia5 --seq pacbio -c 8
+  # equivalent: fiberhmm-recall-tfs --recall-nucs ...
+
   # DddA amplicon BAM (two-pass workflow) -- bundled models, no -m needed
   fiberhmm-apply -i input.bam --enzyme ddda -o tmp/
   fiberhmm-recall-tfs -i tmp/input_footprints.bam -o recalled.bam \\
@@ -62,9 +77,16 @@ from fiberhmm.inference.payload_read import PayloadRead
 from fiberhmm.inference.recall_tables import (
     build_recall_llr_tables as _shared_build_recall_llr_tables,
 )
+from fiberhmm.inference.fused_stages import build_fused_recall_result
+from fiberhmm.inference.tagging import write_fused_recall_tags
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
     HAS_NUMBA,
+    _encode_recall_observation,
+    _passthrough_legacy_recall_intervals,
+    _raw_legacy_recall_tags,
+    _seq_frame_legacy_recall_tags,
+    extract_modifications,
     recall_read,
     write_ma_tags,
 )
@@ -86,6 +108,10 @@ class _RecallResult:
     kept_nucs: object
     msps: object
     nq_for_kept: object
+    # When set (--recall-nucs path) this is the full fused recall result dict;
+    # the writer routes it through write_fused_recall_tags so nuc QQQ edge bytes
+    # (el/er) survive. None for the TF-only path.
+    fused: object = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +168,14 @@ class _RecallWorkerConfig:
     min_llr: float
     min_opps: int
     unify_threshold: int
+    # --recall-nucs path (default off keeps the TF-only behavior unchanged).
+    recall_nucs: bool = False
+    split_min_llr: float = 4.0
+    split_min_opps: int = 3
+    nuc_min_size: int = 85
+    msp_min_size: int = 0
+    phase_nrl: int = 0
+    nuc_profile: object = None
 
 
 @dataclass(frozen=True)
@@ -268,6 +302,13 @@ def _worker_init_from_config(config: _RecallWorkerConfig) -> None:
     _WORKER['min_llr'] = config.min_llr
     _WORKER['min_opps'] = config.min_opps
     _WORKER['unify_threshold'] = config.unify_threshold
+    _WORKER['recall_nucs'] = config.recall_nucs
+    _WORKER['split_min_llr'] = config.split_min_llr
+    _WORKER['split_min_opps'] = config.split_min_opps
+    _WORKER['nuc_min_size'] = config.nuc_min_size
+    _WORKER['msp_min_size'] = config.msp_min_size
+    _WORKER['phase_nrl'] = config.phase_nrl
+    _WORKER['nuc_profile'] = config.nuc_profile
 
 
 def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold):
@@ -383,6 +424,8 @@ def _process_payload_record(payload) -> tuple:
         payload['tags'],
         daf_md_result=payload.get('_daf_md_result'),
     )
+    if _WORKER.get('recall_nucs'):
+        return _process_nuc_payload_record(read, payload)
     tags = payload['tags']
     stats = _new_stats()
     unify_threshold = _WORKER['unify_threshold']
@@ -404,6 +447,71 @@ def _process_payload_record(payload) -> tuple:
     return _RecallResult(tf_calls, kept_nucs, msps, nq_for_kept), stats
 
 
+def _process_nuc_payload_record(read, payload) -> tuple:
+    """Worker (--recall-nucs): full nucleosome recall from an apply-tagged read.
+
+    Reconstructs the per-base observation array from the read's own MM/ML+seq
+    (exactly as the TF recaller does -- no HMM re-run) and reuses the existing
+    fused stage: nuc recall -> MSP re-derive -> TF recall -> promotion. Returns a
+    fused result dict so the writer emits nuc QQQ edge bytes (el/er) too.
+
+    Linear reads only: a tags-reconstructed apply_result has no per-read circular
+    tiling, so reads are treated as linear (the common case).
+    """
+    tags = payload['tags']
+    stats = _new_stats()
+    unify_threshold = _WORKER['unify_threshold']
+    v2_short_count = _record_v2_input_stats(stats, tags, unify_threshold)
+
+    raw_tags = _raw_legacy_recall_tags(read)
+    if len(raw_tags.nuc_starts) == 0 and len(raw_tags.msp_starts) == 0:
+        return _RecallResult([], [], [], None), stats
+
+    seq_tags = _seq_frame_legacy_recall_tags(read, raw_tags)
+    extracted = extract_modifications(read, _WORKER['mode'], _WORKER['k'])
+    if extracted is None:
+        # No modification data: pass the v2 calls through unchanged.
+        nucs, msps = _passthrough_legacy_recall_intervals(seq_tags)
+        return _RecallResult([], nucs, msps, None), stats
+
+    encoded = _encode_recall_observation(
+        read, extracted, _WORKER['mode'], _WORKER['k'],
+    )
+    apply_result = {
+        'encoded': encoded.obs,
+        'ns': seq_tags.nuc_starts,
+        'nl': seq_tags.nuc_lengths,
+        'as': seq_tags.msp_starts,
+        'al': seq_tags.msp_lengths,
+        'ns_scores': None,
+        'as_scores': None,
+    }
+    fiber_read = {'query_sequence': payload['seq']}
+    result = build_fused_recall_result(
+        fiber_read,
+        apply_result,
+        _WORKER['llr_hit'],
+        _WORKER['llr_miss'],
+        _WORKER['min_llr'],
+        _WORKER['min_opps'],
+        unify_threshold,
+        False,  # with_scores
+        recall_nucs=True,
+        split_min_llr=_WORKER['split_min_llr'],
+        split_min_opps=_WORKER['split_min_opps'],
+        nuc_min_size=_WORKER['nuc_min_size'],
+        msp_min_size=_WORKER['msp_min_size'],
+        phase_nrl=_WORKER['phase_nrl'],
+        nuc_profile=_WORKER['nuc_profile'],
+    )
+
+    stats['tf'] = len(result['tf_calls'])
+    survived_short = sum(1 for length in result['nl'] if 0 < int(length) < unify_threshold)
+    stats['demoted'] = max(0, v2_short_count - survived_short)
+
+    return _RecallResult([], [], [], None, fused=result), stats
+
+
 def _process_payload_chunk(payloads):
     """Worker: process a list of compact payloads."""
     out = []
@@ -423,6 +531,17 @@ def _apply_result_from_request(
     request: _RecallApplyResultRequest,
 ):
     """Apply compact worker result to a pysam read in place (main process)."""
+    if request.result.fused is not None:
+        # --recall-nucs path: route the fused result dict through the shared
+        # writer so nuc QQQ edge bytes (el/er) are emitted alongside tf/msp.
+        write_fused_recall_tags(
+            request.read,
+            read_length=_read_sequence_length(request.read),
+            result=request.result.fused,
+            also_write_legacy=request.also_write_legacy,
+            downstream_compat=request.downstream_compat,
+        )
+        return
     write_ma_tags(
         request.read,
         read_length=_read_sequence_length(request.read),
@@ -662,7 +781,7 @@ def _parallel_loop(bam_in, bam_out, header_text,
     )
 
 
-def parse_args():
+def parse_args(default_recall_nucs: bool = False):
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -718,6 +837,37 @@ def parse_args():
                    help='Override context size. Default: read from model.')
     p.add_argument('--max-reads', type=int, default=0,
                    help='0 = no limit (default)')
+
+    nuc = p.add_argument_group(
+        'nucleosome recall (--recall-nucs)',
+        'Run the per-read nucleosome recaller (split over-merged HMM footprints '
+        'on accessible evidence + refine conservative edges) BEFORE TF recall, '
+        'reusing the existing apply-tagged ns/nl/as/al -- no HMM re-run. Linear '
+        'reads only.',
+    )
+    nuc.add_argument('--recall-nucs', action=argparse.BooleanOptionalAction,
+                     default=default_recall_nucs,
+                     help='Enable nucleosome recall before TF recall. '
+                          '(Default on for fiberhmm-recall-nucs.)')
+    nuc.add_argument('--split-min-llr', type=float, default=4.0,
+                     help='Min accessible-cut LLR to split a footprint (default 4.0)')
+    nuc.add_argument('--split-min-opps', type=int, default=3,
+                     help='Min informative positions for a split cut (default 3)')
+    nuc.add_argument('--nuc-min-size', type=int, default=85,
+                     help='Min refined nucleosome size; smaller footprints are '
+                          'demoted to accessible/MSP (default 85)')
+    nuc.add_argument('--msp-min-size', type=int, default=0,
+                     help='Min re-derived MSP size to keep (default 0)')
+    nuc.add_argument('--phase-nrl', default='auto',
+                     help='Pass-2 periodicity prior: off / auto / fixed bp. '
+                          '"auto" (default) estimates the nucleosome repeat '
+                          'length from the input BAM\'s existing nuc tags (no '
+                          'HMM re-run); matches fiberhmm-call. Lowers the split '
+                          'bar near phase-predicted linkers in long footprints.')
+    nuc.add_argument('--nuc-profile', default=None,
+                     help='DddA radial deamination profile JSON for the radial '
+                          'split (default: bundled ddda_nuc_profile.json when '
+                          '--enzyme ddda).')
     return p.parse_args()
 
 
@@ -926,10 +1076,114 @@ def _run_recall_processing(
                 min_llr=min_llr,
                 min_opps=args.min_opps,
                 unify_threshold=args.unify_threshold,
+                recall_nucs=bool(getattr(args, 'recall_nucs', False)),
+                split_min_llr=getattr(args, 'split_min_llr', 4.0),
+                split_min_opps=getattr(args, 'split_min_opps', 3),
+                nuc_min_size=getattr(args, 'nuc_min_size', 85),
+                msp_min_size=getattr(args, 'msp_min_size', 0),
+                phase_nrl=_resolve_recall_nucs_phase_nrl(args),
+                nuc_profile=_resolve_nuc_profile(args),
             ),
             also_write_legacy=also_write_legacy,
         ),
     )
+
+
+def _parse_phase_nrl_option(raw):
+    """Parse --phase-nrl (off / auto / fixed bp). Returns (kind, fixed_int)."""
+    text = str(raw).strip().lower()
+    if text in ('off', 'none', '', '0'):
+        return ('off', 0)
+    if text == 'auto':
+        return ('auto', 0)
+    try:
+        return ('fixed', max(0, int(text)))
+    except ValueError:
+        return ('auto', 0)
+
+
+def _estimate_phase_nrl_from_tags(path, nuc_min_size, sample_target=20000):
+    """Estimate the nucleosome repeat length from existing ns/nl tags.
+
+    Measures center-to-center spacing of nucleosome-sized (>= nuc_min_size)
+    footprints already in the BAM -- no HMM re-run. Reuses the same in-peak
+    histogram/median estimator and anchor fallback as fiberhmm-call's
+    estimate_phase_nrl."""
+    from fiberhmm.inference.nrl_estimate import (
+        _phase_nrl_result,
+        _phase_nrl_result_dict,
+    )
+    spacings = []
+    reads_used = 0
+    bam = pysam.AlignmentFile(path, 'rb', check_sq=False)
+    try:
+        for read in bam:
+            if not read.has_tag('ns') or not read.has_tag('nl'):
+                continue
+            ns = list(read.get_tag('ns'))
+            nl = list(read.get_tag('nl'))
+            centers = sorted(
+                s + length / 2.0
+                for s, length in zip(ns, nl)
+                if int(length) >= nuc_min_size
+            )
+            reads_used += 1
+            for i in range(len(centers) - 1):
+                spacings.append(centers[i + 1] - centers[i])
+            if len(spacings) >= sample_target:
+                break
+    finally:
+        bam.close()
+    return _phase_nrl_result_dict(
+        _phase_nrl_result(
+            spacings, reads_used,
+            anchor=185, clamp_lo=150, clamp_hi=215, min_pairs=300,
+        )
+    )
+
+
+def _resolve_recall_nucs_phase_nrl(args) -> int:
+    """Resolve --phase-nrl to an int (0 = off). Only meaningful with --recall-nucs."""
+    if not getattr(args, 'recall_nucs', False):
+        return 0
+    # The DddA radial split (nuc_profile) replaces the accessible-cut split and
+    # ignores the phase prior -- skip the auto-estimate pre-pass entirely.
+    if getattr(args, 'nuc_profile', None) or getattr(args, 'enzyme', None) == 'ddda':
+        return 0
+    kind, fixed = _parse_phase_nrl_option(getattr(args, 'phase_nrl', 'auto'))
+    if kind == 'off':
+        return 0
+    if kind == 'fixed':
+        return fixed
+    if args.in_bam == '-':
+        print("  NOTE: --phase-nrl auto needs a file input to sample; "
+              "using anchor 185 bp.", file=sys.stderr)
+        return 185
+    res = _estimate_phase_nrl_from_tags(
+        args.in_bam, getattr(args, 'nuc_min_size', 85),
+    )
+    print(f"  [recall_nucs] phase-nrl auto -> {res['nrl']} bp "
+          f"({res['source']}, {res['n_pairs']} pairs / {res['n_reads']} reads)",
+          file=sys.stderr)
+    return int(res['nrl'])
+
+
+def _resolve_nuc_profile(args):
+    """Load the DddA radial nuc profile when --recall-nucs is on.
+
+    Priority: explicit --nuc-profile path, then the bundled
+    ddda_nuc_profile.json for --enzyme ddda. None disables the radial split
+    (the accessible-cut split is used instead -- correct for Hia5/DddB)."""
+    if not getattr(args, 'recall_nucs', False):
+        return None
+    from fiberhmm.inference.nuc_recaller import load_nuc_profile
+    path = getattr(args, 'nuc_profile', None)
+    if path is None and getattr(args, 'enzyme', None) == 'ddda':
+        from fiberhmm.models import _bundled_model_path
+        path = _bundled_model_path('ddda_nuc_profile.json')
+    if not path:
+        return None
+    return load_nuc_profile(os.fspath(path))
 
 
 def _print_recall_summary(summary: _RecallProcessingSummary) -> None:
@@ -948,8 +1202,8 @@ def _print_recall_summary(summary: _RecallProcessingSummary) -> None:
         )
 
 
-def main():
-    args = parse_args()
+def main(default_recall_nucs: bool = False):
+    args = parse_args(default_recall_nucs=default_recall_nucs)
 
     stdout_mode = (args.out_bam == '-')
     if stdout_mode:
@@ -959,6 +1213,10 @@ def main():
     model_path = _resolve_model_path(args)
 
     _print_beta_banner(args.downstream_compat)
+    if getattr(args, 'recall_nucs', False):
+        print("  +RECALL-NUCS: nucleosome recaller runs before TF recall "
+              "(reuses apply-tagged ns/nl/as/al -- no HMM re-run; linear reads).",
+              file=sys.stderr)
 
     runtime = _resolve_recall_runtime(args, model_path)
 
@@ -996,6 +1254,11 @@ def main():
             bam_out.close()
 
     _print_recall_summary(summary)
+
+
+def main_recall_nucs():
+    """Entry point for ``fiberhmm-recall-nucs`` -- same tool, nuc recall on."""
+    main(default_recall_nucs=True)
 
 
 if __name__ == '__main__':
