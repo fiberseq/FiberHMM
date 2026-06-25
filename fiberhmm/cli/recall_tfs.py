@@ -23,7 +23,21 @@ a recaller TF call are demoted out of the ``nuc+`` annotation -- the
 recaller version (with proper LLR + edge-ambiguity scoring) replaces
 them in the ``tf+`` annotation.
 
+``--recall-nucs`` (also the ``fiberhmm-recall-nucs`` entry point) adds the
+per-read nucleosome recaller BEFORE TF recall: it splits over-merged HMM
+footprints on accessible evidence and refines each nucleosome's conservative
+edges + quality (nuc+QQQ), re-derives MSPs, then runs TF recall over the
+cleaner accessible space. It reuses the apply-tagged ``ns``/``nl``/``as``/``al``
+-- the HMM is NOT re-run -- so it is byte-identical to
+``fiberhmm-call --recall-nucs`` for a given ``--phase-nrl`` (linear reads only;
+``--phase-nrl auto`` is estimated from the existing nuc tags).
+
 Examples:
+  # Add nucleosome recall to an apply-tagged BAM (no HMM re-run)
+  fiberhmm-recall-nucs -i apply_footprints.bam -o recalled.bam \\
+                        --enzyme hia5 --seq pacbio -c 8
+  # equivalent: fiberhmm-recall-tfs --recall-nucs ...
+
   # DddA amplicon BAM (two-pass workflow) -- bundled models, no -m needed
   fiberhmm-apply -i input.bam --enzyme ddda -o tmp/
   fiberhmm-recall-tfs -i tmp/input_footprints.bam -o recalled.bam \\
@@ -41,17 +55,22 @@ import argparse
 import json
 import multiprocessing as mp
 import sys
-from collections import deque
+from collections import deque, namedtuple
 
 import pysam
 
+from fiberhmm.core.bam_reader import encode_from_query_sequence
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.io.bam_header import append_coord_marker
+from fiberhmm.io.ma_tags import flip_intervals_to_seq
+from fiberhmm.inference.fused_stages import build_fused_recall_result
+from fiberhmm.inference.tagging import write_fused_recall_tags
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
     HAS_NUMBA,
     apply_emission_uplift,
     build_llr_tables,
+    extract_modifications,
     recall_read,
     write_ma_tags,
 )
@@ -63,8 +82,17 @@ from fiberhmm.inference.tf_recaller import (
 _WORKER = {}
 _STATS_KEYS = ('v2', 'tf', 'demoted', 'failed')
 
+# Nucleosome-recall config (None = TF-only, the default behavior). A picklable
+# namedtuple so it survives the spawn-start multiprocessing pool initializer.
+_NucCfg = namedtuple(
+    '_NucCfg',
+    ('recall_nucs', 'split_min_llr', 'split_min_opps',
+     'nuc_min_size', 'msp_min_size', 'phase_nrl'),
+)
 
-def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold):
+
+def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
+                 nuc_cfg=None):
     """Set per-process globals once per worker.
 
     Slim version: workers receive compact payloads and return compact results —
@@ -77,6 +105,7 @@ def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold)
     _WORKER['min_llr'] = min_llr
     _WORKER['min_opps'] = min_opps
     _WORKER['unify_threshold'] = unify_threshold
+    _WORKER['nuc_cfg'] = nuc_cfg
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +192,9 @@ def _process_payload_record(payload) -> tuple:
         payload['tags'],
         payload.get('_daf_md_result'),
     )
+    nuc_cfg = _WORKER.get('nuc_cfg')
+    if nuc_cfg is not None and nuc_cfg.recall_nucs:
+        return _process_nuc_payload_record(read, payload, nuc_cfg)
     tags = payload['tags']
     stats = {key: 0 for key in _STATS_KEYS}
     unify_threshold = _WORKER['unify_threshold']
@@ -209,6 +241,89 @@ def _process_payload_record(payload) -> tuple:
     return (tf_calls, kept_nucs, msps, nq_for_kept), stats
 
 
+def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
+    """Worker (--recall-nucs): full nucleosome recall from an apply-tagged read.
+
+    Reconstructs the per-base observation array from the read's own MM/ML+seq
+    (exactly as the TF recaller does -- no HMM re-run) and reuses the fused
+    stage: nuc recall -> MSP re-derive -> TF recall -> promotion. Returns a
+    5-tuple (the 5th element is the fused result dict) so the writer routes it
+    through write_fused_recall_tags and nuc QQQ edge bytes (el/er) survive.
+
+    Linear reads only: a tags-reconstructed apply_result has no per-read
+    circular tiling, so reads are treated as linear (the common case).
+    """
+    tags = payload['tags']
+    stats = {key: 0 for key in _STATS_KEYS}
+    unify_threshold = _WORKER['unify_threshold']
+
+    has_ns = 'ns' in tags and 'nl' in tags
+    if has_ns:
+        stats['v2'] = 1
+        v2_short_count = sum(
+            1 for length in tags['nl'] if 0 < int(length) < unify_threshold
+        )
+    else:
+        v2_short_count = 0
+
+    try:
+        ns_raw = read.get_tag('ns')
+        nl_raw = read.get_tag('nl')
+    except KeyError:
+        ns_raw, nl_raw = (), ()
+    try:
+        as_raw = read.get_tag('as')
+        al_raw = read.get_tag('al')
+    except KeyError:
+        as_raw, al_raw = (), ()
+
+    if len(ns_raw) == 0 and len(as_raw) == 0:
+        return (None, None, None, None, None), stats
+
+    # Tags are stored molecular frame; recall works in SEQ (query) frame.
+    ns_seq, nl_seq = flip_intervals_to_seq(ns_raw, nl_raw, read)
+    as_seq, al_seq = flip_intervals_to_seq(as_raw, al_raw, read)
+
+    extracted = extract_modifications(read, _WORKER['mode'], _WORKER['k'])
+    if extracted is None:
+        # No modification data: pass v2 calls through unchanged (TF-only shape).
+        nucs = [(int(s), int(L)) for s, L in zip(ns_seq, nl_seq) if int(L) > 0]
+        msps = [(int(s), int(L)) for s, L in zip(as_seq, al_seq) if int(L) > 0]
+        return (([], nucs, msps, None)), stats
+
+    mod_pos, strand, seq = extracted
+    obs = encode_from_query_sequence(
+        seq, mod_pos, edge_trim=10, mode=_WORKER['mode'], strand=strand,
+        context_size=_WORKER['k'], is_reverse=bool(read.is_reverse),
+    )
+    apply_result = {
+        'encoded': obs,
+        'ns': ns_seq, 'nl': nl_seq,
+        'as': as_seq, 'al': al_seq,
+        'ns_scores': None, 'as_scores': None,
+    }
+    fiber_read = {'query_sequence': payload['seq']}
+    result = build_fused_recall_result(
+        fiber_read, apply_result,
+        _WORKER['llr_hit'], _WORKER['llr_miss'],
+        _WORKER['min_llr'], _WORKER['min_opps'], unify_threshold,
+        False,  # with_scores
+        recall_nucs=True,
+        split_min_llr=nuc_cfg.split_min_llr,
+        split_min_opps=nuc_cfg.split_min_opps,
+        nuc_min_size=nuc_cfg.nuc_min_size,
+        msp_min_size=nuc_cfg.msp_min_size,
+        phase_nrl=nuc_cfg.phase_nrl,
+    )
+
+    stats['tf'] = len(result['tf_calls'])
+    survived_short = sum(
+        1 for length in result['nl'] if 0 < int(length) < unify_threshold
+    )
+    stats['demoted'] = max(0, v2_short_count - survived_short)
+    return (None, None, None, None, result), stats
+
+
 def _process_payload_chunk(payloads):
     """Worker: process a list of compact payloads."""
     out = []
@@ -228,10 +343,25 @@ def _process_payload_chunk(payloads):
 
 def _apply_result(read, result, also_write_legacy, downstream_compat):
     """Apply compact worker result to a pysam read in place (main process)."""
+    read_length = len(read.query_sequence) if read.query_sequence else 0
+    if len(result) == 5:
+        # --recall-nucs path: result[4] is the fused result dict (or None when
+        # the read had no usable tags). Route through write_fused_recall_tags so
+        # nuc QQQ edge bytes (el/er) are emitted alongside tf/msp.
+        fused = result[4]
+        if fused is not None:
+            write_fused_recall_tags(
+                read,
+                read_length=read_length,
+                result=fused,
+                also_write_legacy=also_write_legacy,
+                downstream_compat=downstream_compat,
+            )
+        return
     tf_calls, kept_nucs, msps, nq_for_kept = result
     write_ma_tags(
         read,
-        read_length=len(read.query_sequence) if read.query_sequence else 0,
+        read_length=read_length,
         tf_calls=tf_calls,
         kept_nucs=kept_nucs,
         msps=msps,
@@ -244,9 +374,11 @@ def _apply_result(read, result, also_write_legacy, downstream_compat):
 def _single_thread_loop(bam_in, bam_out, _header_text,
                         llr_hit, llr_miss, mode, k,
                         min_llr, min_opps, unify_threshold,
-                        also_write_legacy, downstream_compat, max_reads):
+                        also_write_legacy, downstream_compat, max_reads,
+                        nuc_cfg=None):
     """Single-threaded path.  No IPC — process reads directly."""
-    _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold)
+    _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
+                 nuc_cfg)
     n_reads = n_v2 = n_tf = n_demoted = n_failed = 0
     for read in bam_in:
         if max_reads and n_reads >= max_reads:
@@ -272,7 +404,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
                    llr_hit, llr_miss, mode, k,
                    min_llr, min_opps, unify_threshold,
                    also_write_legacy, downstream_compat,
-                   max_reads, n_cores, chunk_size):
+                   max_reads, n_cores, chunk_size, nuc_cfg=None):
     """Multi-core path with slim IPC and bounded in-flight queue.
 
     Uses apply_async + a bounded deque instead of imap to cap how many chunks
@@ -307,7 +439,8 @@ def _parallel_loop(bam_in, bam_out, _header_text,
     with mp.Pool(
         processes=n_cores,
         initializer=_worker_init,
-        initargs=(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold),
+        initargs=(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
+                  nuc_cfg),
     ) as pool:
         buf_reads: list = []
         buf_payloads: list = []
@@ -341,7 +474,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
     return n_reads, n_v2, n_tf, n_demoted, n_failed
 
 
-def parse_args():
+def parse_args(default_recall_nucs: bool = False):
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -397,6 +530,33 @@ def parse_args():
                    help='Override context size. Default: read from model.')
     p.add_argument('--max-reads', type=int, default=0,
                    help='0 = no limit (default)')
+
+    nuc = p.add_argument_group(
+        'nucleosome recall (--recall-nucs)',
+        'Run the per-read nucleosome recaller (split over-merged HMM footprints '
+        'on accessible evidence + refine conservative edges) BEFORE TF recall, '
+        'reusing the existing apply-tagged ns/nl/as/al -- no HMM re-run. Linear '
+        'reads only.',
+    )
+    nuc.add_argument('--recall-nucs', action=argparse.BooleanOptionalAction,
+                     default=default_recall_nucs,
+                     help='Enable nucleosome recall before TF recall. '
+                          '(Default on for fiberhmm-recall-nucs.)')
+    nuc.add_argument('--split-min-llr', type=float, default=4.0,
+                     help='Min accessible-cut LLR to split a footprint (default 4.0)')
+    nuc.add_argument('--split-min-opps', type=int, default=3,
+                     help='Min informative positions for a split cut (default 3)')
+    nuc.add_argument('--nuc-min-size', type=int, default=85,
+                     help='Min refined nucleosome size; smaller footprints are '
+                          'demoted to accessible/MSP (default 85)')
+    nuc.add_argument('--msp-min-size', type=int, default=0,
+                     help='Min re-derived MSP size to keep (default 0)')
+    nuc.add_argument('--phase-nrl', default='auto',
+                     help='Pass-2 periodicity prior: off / auto / fixed bp. '
+                          '"auto" (default) estimates the nucleosome repeat '
+                          'length from the input BAM\'s existing nuc tags (no '
+                          'HMM re-run). Lowers the split bar near phase-predicted '
+                          'linkers in long footprints.')
     return p.parse_args()
 
 
@@ -414,8 +574,94 @@ def _resolve_model_metadata(model_path):
     return mode, k
 
 
-def main():
-    args = parse_args()
+def _parse_phase_nrl_option(raw):
+    """Parse --phase-nrl (off / auto / fixed bp). Returns (kind, fixed_int)."""
+    text = str(raw).strip().lower()
+    if text in ('off', 'none', '', '0'):
+        return ('off', 0)
+    if text == 'auto':
+        return ('auto', 0)
+    try:
+        return ('fixed', max(0, int(text)))
+    except ValueError:
+        return ('auto', 0)
+
+
+def _estimate_phase_nrl_from_tags(path, nuc_min_size, sample_target=20000):
+    """Estimate the nucleosome repeat length from existing ns/nl tags.
+
+    Measures center-to-center spacing of nucleosome-sized (>= nuc_min_size)
+    footprints already in the BAM -- no HMM re-run. Robust central estimate:
+    histogram mode (10 bp bins) averaged with the in-peak median, clamped to
+    [150, 215], anchored at 185 bp when the sample is too sparse. Mirrors
+    fiberhmm-call's estimate_phase_nrl peak logic."""
+    peak_lo, peak_hi = 120, 260
+    anchor, clamp_lo, clamp_hi, min_pairs = 185, 150, 215, 300
+    spacings = []
+    reads_used = 0
+    bam = pysam.AlignmentFile(path, 'rb', check_sq=False)
+    try:
+        for read in bam:
+            if not read.has_tag('ns') or not read.has_tag('nl'):
+                continue
+            ns = list(read.get_tag('ns'))
+            nl = list(read.get_tag('nl'))
+            centers = sorted(
+                s + length / 2.0
+                for s, length in zip(ns, nl)
+                if int(length) >= nuc_min_size
+            )
+            reads_used += 1
+            for i in range(len(centers) - 1):
+                spacings.append(centers[i + 1] - centers[i])
+            if len(spacings) >= sample_target:
+                break
+    finally:
+        bam.close()
+
+    peak = [s for s in spacings if peak_lo <= s <= peak_hi]
+    if len(peak) < min_pairs:
+        return {'nrl': anchor, 'source': 'anchor',
+                'n_pairs': len(peak), 'n_reads': reads_used}
+
+    bins = {}
+    for s in peak:
+        b = int((s - peak_lo) // 10)
+        bins[b] = bins.get(b, 0) + 1
+    mode = peak_lo + max(bins, key=bins.get) * 10 + 5
+    srt = sorted(peak)
+    n = len(srt)
+    median = srt[n // 2] if n % 2 else 0.5 * (srt[n // 2 - 1] + srt[n // 2])
+    est = 0.5 * (mode + median)
+    nrl = int(round(min(max(est, clamp_lo), clamp_hi)))
+    return {'nrl': nrl, 'source': 'estimated',
+            'n_pairs': len(peak), 'n_reads': reads_used}
+
+
+def _resolve_recall_nucs_phase_nrl(args) -> int:
+    """Resolve --phase-nrl to an int (0 = off). Only meaningful with --recall-nucs."""
+    if not getattr(args, 'recall_nucs', False):
+        return 0
+    kind, fixed = _parse_phase_nrl_option(getattr(args, 'phase_nrl', 'auto'))
+    if kind == 'off':
+        return 0
+    if kind == 'fixed':
+        return fixed
+    if args.in_bam == '-':
+        print("  NOTE: --phase-nrl auto needs a file input to sample; "
+              "using anchor 185 bp.", file=sys.stderr)
+        return 185
+    res = _estimate_phase_nrl_from_tags(
+        args.in_bam, getattr(args, 'nuc_min_size', 85),
+    )
+    print(f"  [recall_nucs] phase-nrl auto -> {res['nrl']} bp "
+          f"({res['source']}, {res['n_pairs']} pairs / {res['n_reads']} reads)",
+          file=sys.stderr)
+    return int(res['nrl'])
+
+
+def main(default_recall_nucs: bool = False):
+    args = parse_args(default_recall_nucs=default_recall_nucs)
 
     stdout_mode = (args.out_bam == '-')
     if stdout_mode:
@@ -504,6 +750,21 @@ def main():
         file=sys.stderr,
     )
 
+    # Resolve nucleosome-recall config (None = TF-only, the default).
+    nuc_cfg = None
+    if getattr(args, 'recall_nucs', False):
+        print("  +RECALL-NUCS: nucleosome recaller runs before TF recall "
+              "(reuses apply-tagged ns/nl/as/al -- no HMM re-run; linear reads).",
+              file=sys.stderr)
+        nuc_cfg = _NucCfg(
+            recall_nucs=True,
+            split_min_llr=args.split_min_llr,
+            split_min_opps=args.split_min_opps,
+            nuc_min_size=args.nuc_min_size,
+            msp_min_size=args.msp_min_size,
+            phase_nrl=_resolve_recall_nucs_phase_nrl(args),
+        )
+
     # Open BAMs with io-threads. pysam accepts "-" as stdin/stdout natively.
     bam_in = pysam.AlignmentFile(args.in_bam, 'rb',
                                   check_sq=False,
@@ -524,6 +785,7 @@ def main():
                 llr_hit, llr_miss, mode, k,
                 min_llr, args.min_opps, args.unify_threshold,
                 also_write_legacy, args.downstream_compat, args.max_reads,
+                nuc_cfg,
             )
         else:
             n_reads, n_v2, n_tf, n_demoted, n_failed = _parallel_loop(
@@ -531,7 +793,7 @@ def main():
                 llr_hit, llr_miss, mode, k,
                 min_llr, args.min_opps, args.unify_threshold,
                 also_write_legacy, args.downstream_compat, args.max_reads,
-                n_cores, args.chunk_size,
+                n_cores, args.chunk_size, nuc_cfg,
             )
     finally:
         bam_in.close()
@@ -549,6 +811,11 @@ def main():
             "after recall errors",
             file=sys.stderr,
         )
+
+
+def main_recall_nucs():
+    """Entry point for ``fiberhmm-recall-nucs`` -- same tool, nuc recall on."""
+    main(default_recall_nucs=True)
 
 
 if __name__ == '__main__':
