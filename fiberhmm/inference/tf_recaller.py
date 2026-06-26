@@ -654,8 +654,25 @@ def _raw_legacy_recall_tags(read):
 def _seq_frame_legacy_recall_tags(
     read,
     raw_tags: _RawLegacyRecallTags,
+    input_molecular_frame: bool = True,
 ) -> _RawLegacyRecallTags:
-    # Tags are stored molecular frame; recall works in SEQ (query) frame.
+    """Bring legacy ns/nl/as/al into SEQ (query) frame for recall.
+
+    Current FiberHMM stores these tags in MOLECULAR frame, so for a reverse
+    read they must be flipped molecular->seq before recall (which works in seq
+    frame). But legacy/v1.0 BAMs store them already in SEQ (query) frame -- the
+    output lacks the ``@CO fiberhmm:coord=molecular`` marker. Flipping those a
+    second time mis-places every reverse-strand nucleosome/MSP (the calls land
+    on accessible DNA). When ``input_molecular_frame`` is False we skip the flip
+    and use the tags as-is. Forward reads are unaffected either way (the frames
+    coincide)."""
+    if not input_molecular_frame:
+        return _RawLegacyRecallTags(
+            [int(x) for x in raw_tags.nuc_starts],
+            [int(x) for x in raw_tags.nuc_lengths],
+            [int(x) for x in raw_tags.msp_starts],
+            [int(x) for x in raw_tags.msp_lengths],
+        )
     nuc_starts, nuc_lengths = flip_intervals_to_seq(
         raw_tags.nuc_starts,
         raw_tags.nuc_lengths,
@@ -770,6 +787,7 @@ def recall_read(
     min_llr: float,
     min_opps: int,
     unify_threshold: int,
+    input_molecular_frame: bool = True,
 ) -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
     """Process one read.
 
@@ -779,13 +797,18 @@ def recall_read(
         - kept_nuc_intervals: v2 nucs that survive --unify
                               (>= unify_threshold OR no overlapping TF call)
         - msp_intervals: v2 MSPs unchanged
+
+    ``input_molecular_frame`` controls how the read's existing ns/nl/as/al are
+    interpreted: True (default) = molecular frame (current FiberHMM output),
+    flipped to seq for recall; False = legacy/v1.0 SEQ-frame tags, used as-is.
+    Pass the wrong value and reverse-strand calls get mis-placed.
     """
     raw_tags = _raw_legacy_recall_tags(read)
 
     if len(raw_tags.nuc_starts) == 0 and len(raw_tags.msp_starts) == 0:
         return [], [], []
 
-    seq_tags = _seq_frame_legacy_recall_tags(read, raw_tags)
+    seq_tags = _seq_frame_legacy_recall_tags(read, raw_tags, input_molecular_frame)
 
     extracted = extract_modifications(read, mode, context_size)
     if extracted is None:

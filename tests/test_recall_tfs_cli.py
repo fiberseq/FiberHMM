@@ -173,6 +173,7 @@ def test_recall_tfs_worker_init_accepts_config_and_legacy_args(monkeypatch):
 
     # Nuc-recall globals default off so the TF-only path is unchanged.
     nuc_defaults = {
+        "input_molecular_frame": True,
         "recall_nucs": False,
         "split_min_llr": 4.0,
         "split_min_opps": 3,
@@ -1033,3 +1034,39 @@ def test_main_recall_nucs_sets_default_on(monkeypatch):
     monkeypatch.setattr(recall_tfs, "main", fake_main)
     recall_tfs.main_recall_nucs()
     assert captured["default"] is True
+
+
+# --------------------------------------------------------------------------- #
+#  input coordinate-frame auto-detection (legacy v1.0 query-frame BAMs)        #
+# --------------------------------------------------------------------------- #
+
+
+def test_resolve_input_molecular_frame_auto_detects_marker():
+    mol = {"CO": ["fiberhmm:coord=molecular"]}
+    legacy = {"CO": []}
+    R = recall_tfs._resolve_input_molecular_frame
+    # auto: marker present -> molecular; absent -> legacy query-frame
+    assert R(SimpleNamespace(input_frame="auto"), mol) is True
+    assert R(SimpleNamespace(input_frame="auto"), legacy) is False
+    # explicit overrides
+    assert R(SimpleNamespace(input_frame="molecular"), legacy) is True
+    assert R(SimpleNamespace(input_frame="query"), mol) is False
+
+
+def test_seq_frame_legacy_tags_skips_flip_for_query_input():
+    from fiberhmm.inference.tf_recaller import (
+        _seq_frame_legacy_recall_tags, _RawLegacyRecallTags,
+    )
+
+    class RevRead:
+        is_reverse = True
+        query_sequence = "A" * 1000
+
+    raw = _RawLegacyRecallTags([100], [50], [200], [30])  # molecular-ish
+    # molecular input: reverse read -> flipped to seq frame (positions change)
+    flipped = _seq_frame_legacy_recall_tags(RevRead(), raw, input_molecular_frame=True)
+    assert list(flipped.nuc_starts) != [100]
+    # query input: used as-is (no flip), so reverse calls stay put
+    asis = _seq_frame_legacy_recall_tags(RevRead(), raw, input_molecular_frame=False)
+    assert list(asis.nuc_starts) == [100] and list(asis.nuc_lengths) == [50]
+    assert list(asis.msp_starts) == [200] and list(asis.msp_lengths) == [30]

@@ -90,7 +90,7 @@ from fiberhmm.inference.tf_recaller import (
     recall_read,
     write_ma_tags,
 )
-from fiberhmm.io.bam_header import append_coord_marker
+from fiberhmm.io.bam_header import append_coord_marker, header_has_coord_marker
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 # ---------------------------------------------------------------------------
@@ -168,6 +168,9 @@ class _RecallWorkerConfig:
     min_llr: float
     min_opps: int
     unify_threshold: int
+    # Whether the input BAM's ns/nl/as/al are molecular-frame (current FiberHMM,
+    # auto-detected via the @CO coord marker) or legacy seq/query-frame (v1.0).
+    input_molecular_frame: bool = True
     # --recall-nucs path (default off keeps the TF-only behavior unchanged).
     recall_nucs: bool = False
     split_min_llr: float = 4.0
@@ -302,6 +305,7 @@ def _worker_init_from_config(config: _RecallWorkerConfig) -> None:
     _WORKER['min_llr'] = config.min_llr
     _WORKER['min_opps'] = config.min_opps
     _WORKER['unify_threshold'] = config.unify_threshold
+    _WORKER['input_molecular_frame'] = config.input_molecular_frame
     _WORKER['recall_nucs'] = config.recall_nucs
     _WORKER['split_min_llr'] = config.split_min_llr
     _WORKER['split_min_opps'] = config.split_min_opps
@@ -439,6 +443,7 @@ def _process_payload_record(payload) -> tuple:
         min_llr=_WORKER['min_llr'],
         min_opps=_WORKER['min_opps'],
         unify_threshold=unify_threshold,
+        input_molecular_frame=_WORKER.get('input_molecular_frame', True),
     )
     _record_recall_stats(stats, tf_calls, kept_nucs, v2_short_count, unify_threshold)
 
@@ -467,7 +472,9 @@ def _process_nuc_payload_record(read, payload) -> tuple:
     if len(raw_tags.nuc_starts) == 0 and len(raw_tags.msp_starts) == 0:
         return _RecallResult([], [], [], None), stats
 
-    seq_tags = _seq_frame_legacy_recall_tags(read, raw_tags)
+    seq_tags = _seq_frame_legacy_recall_tags(
+        read, raw_tags, _WORKER.get('input_molecular_frame', True),
+    )
     extracted = extract_modifications(read, _WORKER['mode'], _WORKER['k'])
     if extracted is None:
         # No modification data: pass the v2 calls through unchanged.
@@ -814,6 +821,13 @@ def parse_args(default_recall_nucs: bool = False):
     p.add_argument('--unify-threshold', type=int, default=90,
                    help='v2 nucs with nl < this are scanned + may be demoted '
                         'to tf+ if overlapped by a recaller call (default 90)')
+    p.add_argument('--input-frame', choices=['auto', 'molecular', 'query'],
+                   default='auto',
+                   help='Coordinate frame of the input ns/nl/as/al tags. '
+                        '"auto" (default) detects the @CO fiberhmm:coord=molecular '
+                        'marker: present -> molecular (current FiberHMM), absent '
+                        '-> query/seq (legacy v1.0). Force with molecular/query. '
+                        'Wrong frame mis-places reverse-strand calls.')
     p.add_argument('--no-legacy-tags', action='store_true',
                    help='Skip refreshed ns/nl/as/al -- emit only MA/AQ.')
     p.add_argument('--downstream-compat', action='store_true',
@@ -1076,6 +1090,7 @@ def _run_recall_processing(
                 min_llr=min_llr,
                 min_opps=args.min_opps,
                 unify_threshold=args.unify_threshold,
+                input_molecular_frame=getattr(args, '_input_molecular_frame', True),
                 recall_nucs=bool(getattr(args, 'recall_nucs', False)),
                 split_min_llr=getattr(args, 'split_min_llr', 4.0),
                 split_min_opps=getattr(args, 'split_min_opps', 3),
@@ -1202,6 +1217,28 @@ def _print_recall_summary(summary: _RecallProcessingSummary) -> None:
         )
 
 
+def _resolve_input_molecular_frame(args, header) -> bool:
+    """Decide whether the input ns/nl/as/al are molecular-frame.
+
+    --input-frame: auto (default) detects the @CO coord marker; molecular/query
+    force it. Returns True for molecular (flip reverse tags to seq), False for
+    legacy seq/query frame (use as-is)."""
+    choice = str(getattr(args, 'input_frame', 'auto')).lower()
+    if choice == 'molecular':
+        return True
+    if choice == 'query':
+        print("  [recall] input-frame=query: treating ns/nl/as/al as legacy "
+              "SEQ-frame tags (no molecular flip).", file=sys.stderr)
+        return False
+    is_mol = header_has_coord_marker(header)
+    if not is_mol:
+        print("  [recall] NOTE: input BAM has no @CO fiberhmm:coord=molecular "
+              "marker -> treating ns/nl/as/al as legacy SEQ-frame (v1.0). "
+              "Reverse-strand calls are kept in place (no double flip).",
+              file=sys.stderr)
+    return is_mol
+
+
 def main(default_recall_nucs: bool = False):
     args = parse_args(default_recall_nucs=default_recall_nucs)
 
@@ -1229,6 +1266,14 @@ def main(default_recall_nucs: bool = False):
                                   threads=args.io_threads)
     bam_out = None
     try:
+        # Resolve input coordinate frame for the existing ns/nl/as/al tags.
+        # Current FiberHMM stamps the molecular @CO marker; legacy/v1.0 BAMs
+        # lack it and store tags in SEQ (query) frame -- flipping those again
+        # mis-places every reverse-strand call. Auto-detect, overridable.
+        args._input_molecular_frame = _resolve_input_molecular_frame(
+            args, bam_in.header,
+        )
+
         bam_out = pysam.AlignmentFile(args.out_bam, 'wb',
                                        header=append_coord_marker(bam_in.header),
                                        threads=args.io_threads)
