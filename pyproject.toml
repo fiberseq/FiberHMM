@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fiberhmm"
-version = "2.13.3"
+version = "2.13.4"
 description = "Hidden Markov Model for calling chromatin footprints from fiber-seq and DAF-seq data"
 readme = "README.md"
 license = {text = "MIT"}
@@ -68,17 +68,17 @@ Repository = "https://github.com/fiberseq/FiberHMM"
 Issues = "https://github.com/fiberseq/FiberHMM/issues"
 
 [project.scripts]
-fiberhmm-apply = "fiberhmm.cli.apply:main"
-fiberhmm-train = "fiberhmm.cli.train:main"
-fiberhmm-extract = "fiberhmm.cli.extract_tags:main"
-fiberhmm-probs = "fiberhmm.cli.generate_probs:main"
-fiberhmm-utils = "fiberhmm.cli.utils:main"
-fiberhmm-posteriors = "fiberhmm.cli.export_posteriors:main"
-fiberhmm-daf-encode = "fiberhmm.cli.daf_encode:main"
-fiberhmm-recall-tfs = "fiberhmm.cli.recall_tfs:main"
-fiberhmm-recall-nucs = "fiberhmm.cli.recall_tfs:main_recall_nucs"
-fiberhmm-call = "fiberhmm.cli.call:main"
-fiberhmm-run = "fiberhmm.cli.run:main"
+fiberhmm-apply = "fiberhmm.cli._entry:apply_main"
+fiberhmm-train = "fiberhmm.cli._entry:train_main"
+fiberhmm-extract = "fiberhmm.cli._entry:extract_main"
+fiberhmm-probs = "fiberhmm.cli._entry:probs_main"
+fiberhmm-utils = "fiberhmm.cli._entry:utils_main"
+fiberhmm-posteriors = "fiberhmm.cli._entry:posteriors_main"
+fiberhmm-daf-encode = "fiberhmm.cli._entry:daf_encode_main"
+fiberhmm-recall-tfs = "fiberhmm.cli._entry:recall_tfs_main"
+fiberhmm-recall-nucs = "fiberhmm.cli._entry:recall_nucs_main"
+fiberhmm-call = "fiberhmm.cli._entry:call_main"
+fiberhmm-run = "fiberhmm.cli._entry:run_main"
 
 # Top-level scripts kept for backward compatibility
 [tool.setuptools]

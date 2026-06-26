@@ -3,7 +3,7 @@ FiberHMM - Hidden Markov Model toolkit for chromatin footprint calling
 from fiber-seq and DAF-seq single-molecule data.
 """
 
-__version__ = "2.13.3"
+__version__ = "2.13.4"
 
 from fiberhmm.core.bam_reader import ContextEncoder, FiberRead, read_bam
 from fiberhmm.core.hmm import FiberHMM
