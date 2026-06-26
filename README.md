@@ -174,7 +174,10 @@ and nearby TF footprints absorbed into nucleosomes. The nucleosome recaller is a
 per-read pass that fixes these by reusing the TF recaller's LLR machinery with
 the hypothesis inverted — an accessible run inside a footprint is a cut.
 
-**`fiberhmm-call` runs it by default** (except DddA — see below). It produces
+**`fiberhmm-call` runs it by default** for all enzymes. Hia5/DddB use the
+accessible-cut split described here; DddA uses a separate radial-template variant
+(see [DddA radial nucleosome recall](#ddda-radial-nucleosome-recall-experimental)).
+It produces
 `nuc.QQQ` annotations: a quality byte plus left/right **edge-sharpness** bytes
 (the conservative/loose edge convention, same as `tf.QQQ`). The stages, in order:
 
@@ -201,6 +204,19 @@ fiberhmm-call -i in.bam -o out.bam --enzyme dddb --no-recall-nucs --region-paral
 fiberhmm-call -i in.bam -o out.bam --enzyme dddb --phase-nrl 185 ...
 fiberhmm-call -i in.bam -o out.bam --enzyme dddb --phase-nrl off ...
 ```
+
+### DddA radial nucleosome recall (experimental)
+
+> ⚠️ **Early — still in testing (added in 2.14.0).** The DddA radial recaller is
+> new and under active validation. Inspect nucleosome calls before relying on
+> them, and please [report issues](https://github.com/fiberseq/FiberHMM/issues).
+
+DddA deaminates *inside* nucleosomes, so the accessible-cut split above shatters
+them. For `--enzyme ddda`, `fiberhmm-call` instead match-filters a
+single-nucleosome **radial deamination template** (`ddda_nuc_profile.json`,
+bundled) to place dyads, then sets edges at the protected→linker density
+transition. This runs **on by default** for DddA; use `--no-recall-nucs` to fall
+back to the raw HMM nucleosomes.
 
 **DAF strand-swap chimera filter** (DAF only, on by default): reads deaminated
 C→T in one segment and G→A in another (template-switch / merged molecules) are
