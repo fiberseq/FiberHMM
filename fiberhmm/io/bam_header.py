@@ -63,3 +63,15 @@ def append_coord_marker(header):
         comments.append(COORD_MOLECULAR_MARKER)
     d['CO'] = comments
     return pysam.AlignmentHeader.from_dict(d)
+
+
+def header_has_coord_marker(header) -> bool:
+    """Return True if the header carries the molecular-frame @CO marker.
+
+    Every FiberHMM tool that writes molecular-frame ns/nl/as/al/MA stamps the
+    output header with ``@CO fiberhmm:coord=molecular`` (via
+    ``append_coord_marker``). Its ABSENCE means the legacy/v1.0 convention:
+    ns/nl are stored in SEQ (query) frame -- a 2nd-pass recaller must NOT flip
+    them molecular->seq again, or reverse-strand calls get mis-placed."""
+    d = _header_to_dict(header)
+    return COORD_MOLECULAR_MARKER in list(d.get('CO', []))

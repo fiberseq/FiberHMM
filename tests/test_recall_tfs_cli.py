@@ -65,6 +65,55 @@ def test_recall_tfs_reverse_read_preserves_nq(monkeypatch):
     assert nq_for_kept == [77]
 
 
+# --------------------------------------------------------------------------- #
+#  input coordinate-frame auto-detection (legacy v1.0 query-frame BAMs)        #
+# --------------------------------------------------------------------------- #
+
+
+def test_resolve_input_molecular_frame_auto_detects_marker():
+    mol = {"CO": ["fiberhmm:coord=molecular"]}
+    legacy = {"CO": []}
+    R = recall_tfs._resolve_input_molecular_frame
+    # auto: marker present -> molecular; absent -> legacy query-frame
+    assert R(SimpleNamespace(input_frame="auto"), mol) is True
+    assert R(SimpleNamespace(input_frame="auto"), legacy) is False
+    # explicit overrides win regardless of the marker
+    assert R(SimpleNamespace(input_frame="molecular"), legacy) is True
+    assert R(SimpleNamespace(input_frame="query"), mol) is False
+
+
+def test_recall_query_frame_input_skips_reverse_flip(monkeypatch):
+    # CORRECTNESS GUARD for legacy/v1.0 BAMs. ns/nl already in SEQ (query) frame
+    # must NOT be flipped again on reverse reads -- otherwise the nuc lands on
+    # accessible DNA (open promoters fill with spurious nucleosome).
+    import numpy as np
+
+    for key, val in {
+        "llr_hit": np.zeros(1), "llr_miss": np.zeros(1), "mode": "m6a",
+        "k": 3, "min_llr": 5.0, "min_opps": 3, "unify_threshold": 85,
+        "nuc_cfg": None,
+    }.items():
+        monkeypatch.setitem(recall_tfs._WORKER, key, val)
+
+    L = 1000
+    payload = {
+        "seq": "A" * L,                       # no MM/ML -> recall_read pass-through
+        "is_reverse": True,
+        "tags": {"ns": [100], "nl": [50], "nq": [77]},   # already SEQ-frame (v1.0)
+    }
+
+    # Molecular (default): reverse read flips (100,50) -> (850,50).
+    monkeypatch.setitem(recall_tfs._WORKER, "input_molecular_frame", True)
+    (_, kept_mol, _, _), _ = recall_tfs._process_payload_record(payload)
+    assert kept_mol == [(850, 50)]
+
+    # Query-frame input: no flip, the nuc stays put at (100,50).
+    monkeypatch.setitem(recall_tfs._WORKER, "input_molecular_frame", False)
+    (_, kept_query, _, nq_for_kept), _ = recall_tfs._process_payload_record(payload)
+    assert kept_query == [(100, 50)]
+    assert nq_for_kept == [77]   # nq lookup keyed in the same (seq) frame
+
+
 def test_recall_tfs_payload_chunk_counts_per_read_failures(monkeypatch):
     def fake_process(payload):
         if payload == "bad":

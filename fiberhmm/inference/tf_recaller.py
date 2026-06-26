@@ -408,7 +408,8 @@ def extract_modifications(read, mode: str, context_size: int = 3
 def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
                 mode: str, context_size: int,
                 min_llr: float, min_opps: int,
-                unify_threshold: int) -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
+                unify_threshold: int,
+                input_molecular_frame: bool = True) -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
     """Process one read.
 
     Returns:
@@ -417,6 +418,12 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
         - kept_nuc_intervals: v2 nucs that survive --unify
                               (>= unify_threshold OR no overlapping TF call)
         - msp_intervals: v2 MSPs unchanged
+
+    ``input_molecular_frame`` controls how the read's existing ns/nl/as/al are
+    interpreted: True (default) = molecular frame (current FiberHMM output),
+    flipped to seq for recall; False = legacy/v1.0 SEQ-frame tags, used as-is.
+    Pass the wrong value and reverse-strand calls get mis-placed (they land on
+    accessible m6A-rich DNA -- e.g. open promoters fill with spurious nuc).
     """
     try:
         ns_raw = read.get_tag('ns')
@@ -432,10 +439,15 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
     if len(ns_raw) == 0 and len(as_raw) == 0:
         return [], [], []
 
-    # Tags are stored molecular frame; recall works in SEQ (query) frame, and
-    # write_ma_tags flips back to molecular on output. Flip on read here.
-    ns_raw, nl_raw = flip_intervals_to_seq(ns_raw, nl_raw, read)
-    as_raw, al_raw = flip_intervals_to_seq(as_raw, al_raw, read)
+    # Current FiberHMM stores ns/nl/as/al in MOLECULAR frame; recall works in
+    # SEQ (query) frame, and write_ma_tags flips back to molecular on output --
+    # so flip on read here. But legacy/v1.0 BAMs already store these tags in SEQ
+    # frame (no @CO coord marker); flipping those a second time mis-places every
+    # reverse-strand call. When input_molecular_frame is False, use them as-is.
+    # Forward reads are unaffected either way (the frames coincide).
+    if input_molecular_frame:
+        ns_raw, nl_raw = flip_intervals_to_seq(ns_raw, nl_raw, read)
+        as_raw, al_raw = flip_intervals_to_seq(as_raw, al_raw, read)
 
     extracted = extract_modifications(read, mode, context_size)
     if extracted is None:

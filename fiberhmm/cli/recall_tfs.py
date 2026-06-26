@@ -61,7 +61,7 @@ import pysam
 
 from fiberhmm.core.bam_reader import encode_from_query_sequence
 from fiberhmm.core.model_io import load_model_with_metadata
-from fiberhmm.io.bam_header import append_coord_marker
+from fiberhmm.io.bam_header import append_coord_marker, header_has_coord_marker
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 from fiberhmm.inference.fused_stages import build_fused_recall_result
 from fiberhmm.inference.tagging import write_fused_recall_tags
@@ -92,7 +92,7 @@ _NucCfg = namedtuple(
 
 
 def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
-                 nuc_cfg=None):
+                 nuc_cfg=None, input_molecular_frame=True):
     """Set per-process globals once per worker.
 
     Slim version: workers receive compact payloads and return compact results —
@@ -106,6 +106,9 @@ def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
     _WORKER['min_opps'] = min_opps
     _WORKER['unify_threshold'] = unify_threshold
     _WORKER['nuc_cfg'] = nuc_cfg
+    # Frame of the input ns/nl/as/al: molecular (current FiberHMM, flip reverse
+    # tags to seq) vs legacy seq/query (v1.0, use as-is). See recall_read().
+    _WORKER['input_molecular_frame'] = input_molecular_frame
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +219,7 @@ def _process_payload_record(payload) -> tuple:
         min_llr=_WORKER['min_llr'],
         min_opps=_WORKER['min_opps'],
         unify_threshold=unify_threshold,
+        input_molecular_frame=_WORKER.get('input_molecular_frame', True),
     )
     stats['tf'] = len(tf_calls)
     survived_short = sum(1 for _, length in kept_nucs if length < unify_threshold)
@@ -230,7 +234,12 @@ def _process_payload_record(payload) -> tuple:
             # before building the lookup -- otherwise reverse-read nucs miss their
             # original score and get 0.
             from fiberhmm.io.ma_tags import flip_intervals_to_seq
-            ns_seq, nl_seq = flip_intervals_to_seq(tags['ns'], tags['nl'], read)
+            if _WORKER.get('input_molecular_frame', True):
+                ns_seq, nl_seq = flip_intervals_to_seq(tags['ns'], tags['nl'], read)
+            else:
+                # Legacy seq/query-frame input: kept_nucs come back unflipped,
+                # so key the nq lookup on the original (seq-frame) intervals.
+                ns_seq, nl_seq = tags['ns'], tags['nl']
             old_to_nq = {(int(s), int(length)): int(v2_nq[i])
                          for i, (s, length) in enumerate(zip(ns_seq, nl_seq))
                          if i < len(v2_nq)}
@@ -280,9 +289,15 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
     if len(ns_raw) == 0 and len(as_raw) == 0:
         return (None, None, None, None, None), stats
 
-    # Tags are stored molecular frame; recall works in SEQ (query) frame.
-    ns_seq, nl_seq = flip_intervals_to_seq(ns_raw, nl_raw, read)
-    as_seq, al_seq = flip_intervals_to_seq(as_raw, al_raw, read)
+    # Current FiberHMM stores tags molecular frame; recall works in SEQ (query)
+    # frame. Legacy/v1.0 BAMs already store them seq-frame -- flipping those
+    # again mis-places reverse-strand calls, so use as-is when not molecular.
+    if _WORKER.get('input_molecular_frame', True):
+        ns_seq, nl_seq = flip_intervals_to_seq(ns_raw, nl_raw, read)
+        as_seq, al_seq = flip_intervals_to_seq(as_raw, al_raw, read)
+    else:
+        ns_seq, nl_seq = ns_raw, nl_raw
+        as_seq, al_seq = as_raw, al_raw
 
     extracted = extract_modifications(read, _WORKER['mode'], _WORKER['k'])
     if extracted is None:
@@ -375,10 +390,10 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
                         llr_hit, llr_miss, mode, k,
                         min_llr, min_opps, unify_threshold,
                         also_write_legacy, downstream_compat, max_reads,
-                        nuc_cfg=None):
+                        nuc_cfg=None, input_molecular_frame=True):
     """Single-threaded path.  No IPC — process reads directly."""
     _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
-                 nuc_cfg)
+                 nuc_cfg, input_molecular_frame)
     n_reads = n_v2 = n_tf = n_demoted = n_failed = 0
     for read in bam_in:
         if max_reads and n_reads >= max_reads:
@@ -404,7 +419,8 @@ def _parallel_loop(bam_in, bam_out, _header_text,
                    llr_hit, llr_miss, mode, k,
                    min_llr, min_opps, unify_threshold,
                    also_write_legacy, downstream_compat,
-                   max_reads, n_cores, chunk_size, nuc_cfg=None):
+                   max_reads, n_cores, chunk_size, nuc_cfg=None,
+                   input_molecular_frame=True):
     """Multi-core path with slim IPC and bounded in-flight queue.
 
     Uses apply_async + a bounded deque instead of imap to cap how many chunks
@@ -440,7 +456,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         processes=n_cores,
         initializer=_worker_init,
         initargs=(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
-                  nuc_cfg),
+                  nuc_cfg, input_molecular_frame),
     ) as pool:
         buf_reads: list = []
         buf_payloads: list = []
@@ -507,6 +523,13 @@ def parse_args(default_recall_nucs: bool = False):
     p.add_argument('--unify-threshold', type=int, default=90,
                    help='v2 nucs with nl < this are scanned + may be demoted '
                         'to tf+ if overlapped by a recaller call (default 90)')
+    p.add_argument('--input-frame', choices=['auto', 'molecular', 'query'],
+                   default='auto',
+                   help='Coordinate frame of the input ns/nl/as/al tags. '
+                        '"auto" (default) detects the @CO fiberhmm:coord=molecular '
+                        'marker: present -> molecular (current FiberHMM), absent '
+                        '-> query/seq (legacy v1.0). Force with molecular/query. '
+                        'Wrong frame mis-places reverse-strand calls.')
     p.add_argument('--no-legacy-tags', action='store_true',
                    help='Skip refreshed ns/nl/as/al -- emit only MA/AQ.')
     p.add_argument('--downstream-compat', action='store_true',
@@ -660,6 +683,28 @@ def _resolve_recall_nucs_phase_nrl(args) -> int:
     return int(res['nrl'])
 
 
+def _resolve_input_molecular_frame(args, header) -> bool:
+    """Decide whether the input ns/nl/as/al are molecular-frame.
+
+    --input-frame: auto (default) detects the @CO coord marker; molecular/query
+    force it. Returns True for molecular (flip reverse tags to seq), False for
+    legacy seq/query frame (use as-is)."""
+    choice = str(getattr(args, 'input_frame', 'auto')).lower()
+    if choice == 'molecular':
+        return True
+    if choice == 'query':
+        print("  [recall] input-frame=query: treating ns/nl/as/al as legacy "
+              "SEQ-frame tags (no molecular flip).", file=sys.stderr)
+        return False
+    is_mol = header_has_coord_marker(header)
+    if not is_mol:
+        print("  [recall] NOTE: input BAM has no @CO fiberhmm:coord=molecular "
+              "marker -> treating ns/nl/as/al as legacy SEQ-frame (v1.0). "
+              "Reverse-strand calls are kept in place (no double flip).",
+              file=sys.stderr)
+    return is_mol
+
+
 def main(default_recall_nucs: bool = False):
     args = parse_args(default_recall_nucs=default_recall_nucs)
 
@@ -769,6 +814,12 @@ def main(default_recall_nucs: bool = False):
     bam_in = pysam.AlignmentFile(args.in_bam, 'rb',
                                   check_sq=False,
                                   threads=args.io_threads)
+    # Resolve the coordinate frame of the input ns/nl/as/al tags. Current
+    # FiberHMM stamps the @CO molecular marker; legacy/v1.0 BAMs lack it and
+    # store the tags in SEQ (query) frame -- flipping those again mis-places
+    # every reverse-strand call. Auto-detect from the header, overridable.
+    input_molecular_frame = _resolve_input_molecular_frame(args, bam_in.header)
+
     bam_out = None
     try:
         bam_out = pysam.AlignmentFile(args.out_bam, 'wb',
@@ -785,7 +836,7 @@ def main(default_recall_nucs: bool = False):
                 llr_hit, llr_miss, mode, k,
                 min_llr, args.min_opps, args.unify_threshold,
                 also_write_legacy, args.downstream_compat, args.max_reads,
-                nuc_cfg,
+                nuc_cfg, input_molecular_frame,
             )
         else:
             n_reads, n_v2, n_tf, n_demoted, n_failed = _parallel_loop(
@@ -793,7 +844,7 @@ def main(default_recall_nucs: bool = False):
                 llr_hit, llr_miss, mode, k,
                 min_llr, args.min_opps, args.unify_threshold,
                 also_write_legacy, args.downstream_compat, args.max_reads,
-                n_cores, args.chunk_size, nuc_cfg,
+                n_cores, args.chunk_size, nuc_cfg, input_molecular_frame,
             )
     finally:
         bam_in.close()
