@@ -180,6 +180,15 @@ def _resolve_recall_model(args):
     return None  # reuse apply model
 
 
+def _resolve_nuc_profile_path(args, recall_nucs: bool):
+    """DddA uses a radial deamination-profile match-filter for the nucleosome
+    split; other enzymes use the accessible-cut Kadane split (no profile)."""
+    if recall_nucs and args.enzyme == 'ddda':
+        from fiberhmm.models import _bundled_model_path
+        return _bundled_model_path('ddda_nuc_profile.json')
+    return None
+
+
 def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
                        recall_nucs) -> int:
     """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off)."""
@@ -314,19 +323,17 @@ def main():
     uplift = args.emission_uplift if args.emission_uplift is not None \
              else preset.get('emission_uplift', 1.0)
 
-    # Nucleosome recaller: ON by default, except DddA (the bundled DddA recall
-    # model is the uplifted TF model, too aggressive for nuc splitting). Explicit
-    # --recall-nucs / --no-recall-nucs always wins.
+    # Nucleosome recaller: ON by default for all enzymes. DddA uses a dedicated
+    # radial deamination-profile match-filter (the accessible-cut Kadane split
+    # shatters DddA nucleosomes, since DddA deaminates *inside* them); other
+    # enzymes use the Kadane split. Explicit --recall-nucs / --no-recall-nucs wins.
     if args.recall_nucs is None:
-        recall_nucs = (args.enzyme != 'ddda')
+        recall_nucs = True
         if args.enzyme == 'ddda':
-            print("  NOTE: nucleosome recaller is OFF by default for DddA "
-                  "(use --recall-nucs to force it on).", file=sys.stderr)
+            print("  NOTE: DddA nucleosome recall uses the radial-template split "
+                  "(bundled ddda_nuc_profile.json).", file=sys.stderr)
     else:
         recall_nucs = bool(args.recall_nucs)
-        if recall_nucs and args.enzyme == 'ddda':
-            print("  WARNING: --recall-nucs on DddA uses the uplifted TF model for "
-                  "splitting (aggressive) — verify results.", file=sys.stderr)
 
     # Fast-fail sniff for --mode daf BEFORE any BAM scanning (e.g. --phase-nrl
     # auto estimation): the DAF path needs R/Y in the stored sequence, MD tags,
@@ -338,6 +345,10 @@ def main():
     # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
     phase_nrl = _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
                                    recall_nucs)
+
+    # DddA uses a radial deamination-profile match-filter for the nucleosome
+    # split; other enzymes use the accessible-cut Kadane split (no profile).
+    nuc_profile_path = _resolve_nuc_profile_path(args, recall_nucs)
 
     # @PG provenance for the output BAM header. The molecular-frame note is the
     # important bit: it tells downstream tools how to read ns/nl/as/al/MA.
@@ -417,6 +428,7 @@ def main():
             chimera_min_seg=args.chimera_min_seg,
             chimera_purity=args.chimera_purity,
             phase_nrl=phase_nrl,
+            nuc_profile_path=nuc_profile_path,
             pg_record=pg_record,
         )
     else:
@@ -456,6 +468,7 @@ def main():
             chimera_min_seg=args.chimera_min_seg,
             chimera_purity=args.chimera_purity,
             phase_nrl=phase_nrl,
+            nuc_profile_path=nuc_profile_path,
             pg_record=pg_record,
         )
 

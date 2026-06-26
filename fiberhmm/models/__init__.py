@@ -27,6 +27,12 @@ import warnings
 
 _MODELS_DIR = os.path.dirname(os.path.abspath(__file__))
 
+
+def _bundled_model_path(filename: str) -> str:
+    """Absolute path to a bundled file under fiberhmm/models/ (no existence check)."""
+    return os.path.join(_MODELS_DIR, filename)
+
+
 # (enzyme, seq_or_None)  →  {tool: filename}
 # 'seq_or_None' is None for enzymes where platform does not matter
 _BUNDLED: dict[tuple[str, str | None], dict[str, str]] = {

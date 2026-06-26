@@ -39,6 +39,19 @@ _worker_model = None
 _worker_region_params = None
 _worker_recall_state = {}
 
+_REGION_NUC_PROFILE_CACHE: dict = {}
+
+
+def _region_nuc_profile(path):
+    """Load (and cache per worker) the DddA radial profile, or None."""
+    if not path:
+        return None
+    if path not in _REGION_NUC_PROFILE_CACHE:
+        from fiberhmm.inference.nuc_recaller import load_nuc_profile
+        _REGION_NUC_PROFILE_CACHE[path] = load_nuc_profile(path)
+    return _REGION_NUC_PROFILE_CACHE[path]
+
+
 _PRE_OWNERSHIP_SKIP_REASONS = {"unmapped", "secondary_supplementary"}
 
 
@@ -532,6 +545,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         split_min_llr = float(params.get('split_min_llr', 4.0))
         split_min_opps = int(params.get('split_min_opps', 3))
         phase_nrl = int(params.get('phase_nrl', 0))
+        nuc_profile = _region_nuc_profile(params.get('nuc_profile_path'))
 
         pysam.set_verbosity(0)
 
@@ -642,6 +656,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         nuc_min_size=nuc_min_size,
                         msp_min_size=msp_min_size,
                         phase_nrl=phase_nrl,
+                        nuc_profile=nuc_profile,
                     )
                     write_fused_recall_tags(
                         read,
