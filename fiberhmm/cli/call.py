@@ -105,8 +105,10 @@ def parse_args():
     p.add_argument('--recall-nucs', action=argparse.BooleanOptionalAction, default=None,
                    help='Split over-merged nucleosomes + refine conservative edges '
                         '(emits nuc.QQQ), promote nucleosome-sized TF leaks to nuc, '
-                        'and run the Pass-2 phase prior. ON by default (except DddA). '
-                        'Use --no-recall-nucs for baseline HMM nucleosomes (nuc.Q).')
+                        'and run the Pass-2 phase prior. ON by default for all '
+                        'enzymes (DddA uses the radial-template split, others the '
+                        'accessible-cut Kadane split). Use --no-recall-nucs for '
+                        'baseline HMM nucleosomes (nuc.Q).')
     p.add_argument('--split-min-llr', type=float, default=4.0,
                    help='Min accessible-run LLR to split a nucleosome (default 4.0).')
     p.add_argument('--split-min-opps', type=int, default=3,
@@ -148,6 +150,19 @@ def parse_args():
     p.add_argument('--dedup-flag-only', action='store_true',
                    help='With --dedup: mark duplicates (0x400 + di/ds tags) '
                         'instead of collapsing to one read per molecule.')
+    p.add_argument('--dedup-min-deam', type=int, default=10,
+                   help='With --dedup: reads with fewer deamination calls are '
+                        'not fingerprinted and pass through (default 10).')
+    p.add_argument('--dedup-prob-threshold', type=int, default=0,
+                   help='With --dedup: min ML probability for MM/ML-native dU '
+                        'calls, 0-255 (default 0 = accept all).')
+    p.add_argument('--dedup-ignore-strand', action='store_true',
+                   help='With --dedup: allow reads on opposite strands to be '
+                        'duplicates (default: strand-aware).')
+    p.add_argument('--dedup-stats-tsv', default=None,
+                   help='With --dedup: write a cluster_id<TAB>n_reads table.')
+    # MinHash internals (num-hashes/bands/seed) are intentionally not exposed
+    # here; use the standalone fiberhmm-dedup to tune those.
 
     # --- Parallelism ---
     p.add_argument('-c', '--cores', type=int, default=4,
@@ -323,7 +338,8 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
 
 
 def _dedup_input_first(input_bam, output_bam, min_jaccard, flag_only, io_threads,
-                       region_parallel):
+                       region_parallel, min_deam=10, prob_threshold=0,
+                       ignore_strand=False, stats_tsv=None):
     """PCR-dedup the input BAM BEFORE footprinting (DAF/deaminase only).
 
     Deduping first means the HMM/recaller only processes unique molecules
@@ -345,7 +361,9 @@ def _dedup_input_first(input_bam, output_bam, min_jaccard, flag_only, io_threads
     fd, tmp = tempfile.mkstemp(prefix='fiberhmm_dedup_', suffix='.bam', dir=outdir)
     os.close(fd)
     stats = run_dedup(input_bam, tmp, min_jaccard=min_jaccard,
-                      collapse=not flag_only, io_threads=io_threads)
+                      collapse=not flag_only, io_threads=io_threads,
+                      min_deam=min_deam, prob_threshold=prob_threshold,
+                      ignore_strand=ignore_strand, stats_tsv=stats_tsv)
     if stats is None:
         if os.path.exists(tmp):
             os.remove(tmp)
@@ -418,7 +436,11 @@ def main():
         else:
             dedup_tmp = _dedup_input_first(
                 args.input, args.output, args.dedup_min_jaccard,
-                args.dedup_flag_only, args.io_threads, args.region_parallel)
+                args.dedup_flag_only, args.io_threads, args.region_parallel,
+                min_deam=args.dedup_min_deam,
+                prob_threshold=args.dedup_prob_threshold,
+                ignore_strand=args.dedup_ignore_strand,
+                stats_tsv=args.dedup_stats_tsv)
             if dedup_tmp is not None:
                 working_input = dedup_tmp
 

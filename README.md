@@ -383,6 +383,13 @@ fiberhmm-call -i sorted.bam -o out.dedup.bam --enzyme ddda \
               -c 8 --region-parallel --dedup
 ```
 
+> **Amplicon DAF-seq users:** these libraries are typically heavily PCR-
+> duplicated (often ~80%), and coordinate dedup (Picard/markdup) does **not**
+> apply — every read piles up on the same locus with primer-fixed ends.
+> Add `--dedup` (or run [`fiberhmm-dedup`](#fiberhmm-dedup) first) to collapse
+> duplicates by deamination-pattern fingerprint before footprinting. It is
+> **opt-in** by design (it removes reads), so it never runs unless you ask.
+
 Key flags:
 
 | Flag | Default | Description |
@@ -400,7 +407,7 @@ Key flags:
 | `-r/--circular` | off | Circular molecule mode: tiles reads internally and emits wrapped features as clipped `MA/AQ/AN` annotations. |
 | `--no-legacy-tags` | off | Emit only MA/AQ spec tags, skip `ns/nl/as/al`. |
 | `--downstream-compat` | off | Write TF calls into legacy `ns/nl` (skip MA/AQ). |
-| `--dedup` | off | **DAF (ddda/dddb) only.** Remove PCR duplicates by deamination-pattern fingerprint (see [fiberhmm-dedup](#fiberhmm-dedup)) **before footprinting**, so the HMM/recaller only process unique molecules (and NRL/phase estimation isn't biased by duplicates). Requires a file input. Tune with `--dedup-min-jaccard` (0.95); `--dedup-flag-only` marks instead of collapsing. Ignored for `hia5`. |
+| `--dedup` | off | **DAF (ddda/dddb) only.** Remove PCR duplicates by deamination-pattern fingerprint (see [fiberhmm-dedup](#fiberhmm-dedup)) **before footprinting**, so the HMM/recaller only process unique molecules (and NRL/phase estimation isn't biased by duplicates). Requires a file input. Tunable with `--dedup-min-jaccard` (0.95), `--dedup-flag-only`, `--dedup-min-deam`, `--dedup-prob-threshold`, `--dedup-ignore-strand`, `--dedup-stats-tsv` (MinHash internals stay at defaults — use standalone `fiberhmm-dedup` to tune those). Ignored for `hia5`. |
 
 FIRE scoring: `ft fire` is a separate Rust binary from fibertools-rs; pipe `fiberhmm-call -o -` into it directly, or run as a second step on the region-parallel output.
 

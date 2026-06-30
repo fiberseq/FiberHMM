@@ -120,6 +120,29 @@ def test_call_dedup_first_collapses_daf(daf_bam):
     assert len(list(pysam.AlignmentFile(str(daf_bam), check_sq=False))) == 9
 
 
+def test_call_dedup_forwards_practical_params(daf_bam, monkeypatch):
+    # The call wrapper must forward min_deam/prob_threshold/ignore_strand/
+    # stats_tsv through to run_dedup, not silently drop them at defaults.
+    import fiberhmm.cli.call as callmod
+    captured = {}
+
+    def fake_run_dedup(in_bam, out_bam, **kw):
+        captured.update(kw)
+        return {'n_clusters': 1}
+
+    monkeypatch.setattr('fiberhmm.cli.dedup.run_dedup', fake_run_dedup)
+    callmod._dedup_input_first(
+        str(daf_bam), str(daf_bam.parent / 'o.bam'), 0.90, True, 2,
+        region_parallel=False, min_deam=25, prob_threshold=200,
+        ignore_strand=True, stats_tsv='x.tsv')
+    assert captured['min_jaccard'] == 0.90
+    assert captured['collapse'] is False  # flag_only=True
+    assert captured['min_deam'] == 25
+    assert captured['prob_threshold'] == 200
+    assert captured['ignore_strand'] is True
+    assert captured['stats_tsv'] == 'x.tsv'
+
+
 def test_cluster_tags_present(daf_bam, tmp_path):
     out = tmp_path / 'flag.bam'
     run_dedup(str(daf_bam), str(out), min_jaccard=0.95, min_deam=10, collapse=False)
