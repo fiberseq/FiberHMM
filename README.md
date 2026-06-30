@@ -14,6 +14,7 @@ FiberHMM identifies protected regions (footprints) and accessible regions (methy
 - **Tagged BAM output** — `ns`/`nl`/`as`/`al` legacy tags AND `MA`/`AQ` [Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec) tags with `nuc.QQQ` / `tf.QQQ` scoring
 - **Native HMM implementation** — no hmmlearn dependency; Numba JIT enabled by default for ~10× speedup
 - **Multi-platform** — PacBio fiber-seq, Nanopore fiber-seq, DAF-seq (DddB, DddA)
+- **`fiberhmm-dedup`** — PCR-duplicate removal for amplicon/UMI-less DAF-seq by deamination-pattern fingerprint, where coordinate dedup can't work. See [fiberhmm-dedup](#fiberhmm-dedup).
 - **Region-parallel** — near-linear scaling with `--cores`, up to chromosome count
 - **Legacy model support** — loads old hmmlearn-trained pickle/NPZ models seamlessly
 
@@ -376,6 +377,10 @@ fiberhmm-call -i unaligned.bam -o - --enzyme hia5 --seq pacbio \
 some_basecaller ... | \
     fiberhmm-call -i - -o - --enzyme dddb -c 8 --io-threads 16 \
     | ft fire - final.bam
+
+# DddA/DddB amplicons with PCR-duplicate removal in one step
+fiberhmm-call -i sorted.bam -o out.dedup.bam --enzyme ddda \
+              -c 8 --region-parallel --dedup
 ```
 
 Key flags:
@@ -395,6 +400,7 @@ Key flags:
 | `-r/--circular` | off | Circular molecule mode: tiles reads internally and emits wrapped features as clipped `MA/AQ/AN` annotations. |
 | `--no-legacy-tags` | off | Emit only MA/AQ spec tags, skip `ns/nl/as/al`. |
 | `--downstream-compat` | off | Write TF calls into legacy `ns/nl` (skip MA/AQ). |
+| `--dedup` | off | **DAF (ddda/dddb) only.** Post-pipeline PCR-duplicate removal by deamination-pattern fingerprint (see [fiberhmm-dedup](#fiberhmm-dedup)); collapses each molecule to one read. Requires file output. Tune with `--dedup-min-jaccard` (0.95); `--dedup-flag-only` marks instead of collapsing. Ignored for `hia5`. |
 
 FIRE scoring: `ft fire` is a separate Rust binary from fibertools-rs; pipe `fiberhmm-call -o -` into it directly, or run as a second step on the region-parallel output.
 
@@ -520,6 +526,47 @@ into one track. The name is sanitized to a dot/space-free token so that
 vs `…_filtered_GA` no longer collapse to the same tag and overwrite each
 other's layers. To repair bigBeds produced before this fix, see
 [`fiberhmm-utils fix-bigbed`](#fiberhmm-utils).
+
+### fiberhmm-dedup
+
+PCR-duplicate detection for DAF-seq libraries via the per-read **deamination
+pattern**. DAF-seq is typically run on amplicons — every read piles up on the
+same locus with primer-fixed ends, so coordinate-based dedup (Picard /
+samtools markdup) has no positional signal and would wrongly collapse distinct
+molecules; there are no UMIs either. The molecular fingerprint is the set of
+reference positions deaminated by the enzyme (R/Y, MM/ML dU, or MD mismatch —
+same sources as `fiberhmm-extract --deam`). PCR copies of one original
+molecule share that pattern, but rarely *exactly*: sequencing error and
+missed/over-called deaminations perturb a handful of the hundreds of calls, so
+exact-match dedup misses most duplicates.
+
+`fiberhmm-dedup` fingerprints each read, clusters reads whose deamination sets
+match within a Jaccard threshold (MinHash + LSH, near-linear; ~20 s for 75k
+reads), and **collapses each cluster to one representative read by default**
+(highest MAPQ / most-complete / fewest mismatches). The representative carries
+`ds` = number of copies it represents.
+
+```bash
+# Default: collapse to one representative read per molecule
+fiberhmm-dedup -i sample.bam -o sample.dedup.bam
+
+# Keep all reads, only mark duplicates (SAM 0x400 + di/ds cluster tags)
+fiberhmm-dedup -i sample.bam -o sample.markdup.bam --flag-only
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-i/--input` | required | Input DAF-seq BAM (R/Y-, MM/ML-dU-, or MD-encoded deaminations). |
+| `-o/--output` | required | Output BAM (stays coordinate-sorted if the input was). |
+| `--flag-only` | off | Keep all reads and set the 0x400 duplicate flag + `di`/`ds` tags instead of collapsing. |
+| `--min-jaccard` | 0.95 | Min deamination-set Jaccard to call two reads the same molecule. The duplicate-vs-distinct distribution is bimodal with a gap around 0.90–0.95; lower = more aggressive collapsing. |
+| `--min-deam` | 10 | Reads with fewer deamination calls can't be fingerprinted reliably; passed through untouched. |
+| `--ignore-strand` | off | Allow reads on opposite strands to be duplicates (deamination is strand-specific, so off by default). |
+| `-p/--prob-threshold` | 0 | Min ML probability for MM/ML-native dU calls (0–255). |
+| `--stats-tsv` | — | Write a `cluster_id<TAB>n_reads` table. |
+
+> Tags: `di` = duplicate-cluster id, `ds` = cluster size (copies). Both are
+> lowercase (locally-defined) per the SAM spec.
 
 ### fiberhmm-recall-tfs (BETA)
 

@@ -82,3 +82,9 @@ def run_main():
     _notify()
     from fiberhmm.cli.run import main
     return main()
+
+
+def dedup_main():
+    _notify()
+    from fiberhmm.cli.dedup import main
+    return main()

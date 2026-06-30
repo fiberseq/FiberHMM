@@ -933,8 +933,41 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     read_id = read.query_name
 
     aligned_pairs = query_to_ref if query_to_ref is not None else _build_query_to_ref(read)
-    n = len(aligned_pairs)
 
+    positions_list = _deam_positions_list(read, aligned_pairs, prob_threshold)
+
+    if not positions_list:
+        return 0
+
+    positions_list.sort(key=lambda x: x[0])
+
+    chrom_start = positions_list[0][0]
+    chrom_end = positions_list[-1][0] + 1
+    block_count = len(positions_list)
+    block_sizes = ','.join('1' for _ in positions_list)
+    block_starts = ','.join(str(pos - chrom_start) for pos, _ in positions_list)
+
+    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t255\t{strand}\t"
+           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
+    if block_scores:
+        block_mod = ','.join(str(code) for _, code in positions_list)
+        row += f"\t{block_mod}"
+    bed_out.write(row + "\n")
+
+    return len(positions_list)
+
+
+def _deam_positions_list(read, aligned_pairs, prob_threshold: int = 0):
+    """Return unsorted ``[(ref_pos, flavor), ...]`` deamination calls for a read.
+
+    Single source of truth for DAF deamination calling, shared by
+    ``_extract_deam`` (BED export) and ``fiberhmm-dedup`` (PCR-duplicate
+    fingerprints). Same source priority as FiberBrowser: (1) MM/ML-native
+    ``u`` dU calls, (2) IUPAC R/Y in the query, (3) MD ref-mismatch fallback.
+    First non-empty source wins. ``flavor``: 0 = R (G->U, GA strand),
+    1 = Y (C->U, CT strand).
+    """
+    n = len(aligned_pairs)
     positions_list = []  # (ref_pos, code) where code: 0=R, 1=Y
 
     # --- Priority 1: MM/ML-native 'u' dU calls --------------------------
@@ -1040,25 +1073,7 @@ def _extract_deam(read, bed_out, query_to_ref=None,
                     elif ref_up == 'G' and q_up == 'A':
                         positions_list.append((int(rpos), 0))
 
-    if not positions_list:
-        return 0
-
-    positions_list.sort(key=lambda x: x[0])
-
-    chrom_start = positions_list[0][0]
-    chrom_end = positions_list[-1][0] + 1
-    block_count = len(positions_list)
-    block_sizes = ','.join('1' for _ in positions_list)
-    block_starts = ','.join(str(pos - chrom_start) for pos, _ in positions_list)
-
-    row = (f"{ref_name}\t{chrom_start}\t{chrom_end}\t{read_id}\t255\t{strand}\t"
-           f"{chrom_start}\t{chrom_end}\t0\t{block_count}\t{block_sizes}\t{block_starts}")
-    if block_scores:
-        block_mod = ','.join(str(code) for _, code in positions_list)
-        row += f"\t{block_mod}"
-    bed_out.write(row + "\n")
-
-    return len(positions_list)
+    return positions_list
 
 
 def _sort_supports_parallel() -> bool:

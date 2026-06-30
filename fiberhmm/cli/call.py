@@ -133,6 +133,21 @@ def parse_args():
                    help='DAF chimera: min same-strand purity per segment '
                         '(default 0.8).')
 
+    # --- PCR dedup (DAF / ddda|dddb only) ---
+    p.add_argument('--dedup', action='store_true',
+                   help='DAF (ddda/dddb) only: after calling, remove PCR '
+                        'duplicates by deamination-pattern fingerprint (see '
+                        'fiberhmm-dedup). Amplicon/UMI-less DAF libraries can be '
+                        'heavily PCR-duplicated and coordinate dedup does not '
+                        'apply. Collapses each molecule to one read. Requires '
+                        'file output (not stdout). Ignored for fiber-seq (hia5).')
+    p.add_argument('--dedup-min-jaccard', type=float, default=0.95,
+                   help='Deamination-set Jaccard threshold for --dedup '
+                        '(default 0.95).')
+    p.add_argument('--dedup-flag-only', action='store_true',
+                   help='With --dedup: mark duplicates (0x400 + di/ds tags) '
+                        'instead of collapsing to one read per molecule.')
+
     # --- Parallelism ---
     p.add_argument('-c', '--cores', type=int, default=4,
                    help='Worker processes (default 4).')
@@ -302,9 +317,48 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
     sys.exit(2)
 
 
+def _run_post_dedup(output_bam, mode, min_jaccard, flag_only, io_threads):
+    """Post-pipeline PCR dedup on the final BAM (DAF/deaminase only).
+
+    Runs in place: dedups output_bam -> temp, atomically replaces, re-indexes.
+    No-op (with a note) for non-DAF modes -- fiber-seq (hia5) has no
+    deamination signal to fingerprint.
+    """
+    if mode != 'daf':
+        print(f"  NOTE: --dedup applies to DAF-seq (ddda/dddb) deamination data; "
+              f"mode is {mode!r} (fiber-seq has no deamination) -- skipping dedup.",
+              file=sys.stderr)
+        return
+    import os
+
+    import pysam
+
+    from fiberhmm.cli.dedup import run_dedup
+    print("\n  --dedup: removing PCR duplicates by deamination fingerprint "
+          f"(Jaccard >= {min_jaccard}, {'flag' if flag_only else 'collapse'})...",
+          file=sys.stderr)
+    tmp = output_bam + '.dedup.tmp.bam'
+    stats = run_dedup(output_bam, tmp, min_jaccard=min_jaccard,
+                      collapse=not flag_only, io_threads=io_threads)
+    if stats is None:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        return
+    os.replace(tmp, output_bam)
+    try:
+        pysam.index(output_bam)
+    except pysam.SamtoolsError:
+        pass
+
+
 def main():
     args = parse_args()
     stdout_mode = (args.output == '-')
+
+    if args.dedup and stdout_mode:
+        print("error: --dedup requires file output (it re-reads the BAM); "
+              "cannot dedup a stdout stream.", file=sys.stderr)
+        sys.exit(1)
 
     if stdout_mode:
         sys.stdout = sys.stderr  # informational prints → stderr, BAM → real stdout
@@ -479,6 +533,10 @@ def main():
             pysam.index(args.output)
         except pysam.SamtoolsError:
             pass
+
+    if args.dedup:
+        _run_post_dedup(args.output, mode, args.dedup_min_jaccard,
+                        args.dedup_flag_only, args.io_threads)
 
 
 if __name__ == '__main__':
