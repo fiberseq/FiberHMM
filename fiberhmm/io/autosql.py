@@ -32,8 +32,26 @@ Two schema flavors:
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from typing import Optional
+
+
+def sample_token(sample_name: str) -> str:
+    """Collapse a sample name into a single dot-free, whitespace-free token.
+
+    The ``Sample: <name>.`` autoSQL marker is parsed by downstream viewers
+    (FiberBrowser ``bigbed_detection._SAMPLE_TAG_RE``) to group a sample's
+    layers (footprint/msp/tf/...) into one track. Older viewers capture the
+    tag only up to the *first* ``.`` or space, so a dotted name like
+    ``BioSample70.decorated.reads.MA.filtered_T`` collapsed to
+    ``BioSample70`` -- identical to its ``..._GA`` sibling pool -- and the
+    two pools' layers overwrote each other. Replacing ``.`` and whitespace
+    runs with ``_`` keeps the full distinguishing name intact under every
+    viewer. Other identifier-safe characters (``-``, digits) are preserved.
+    """
+    token = re.sub(r'[\s.]+', '_', sample_name.strip()).strip('_')
+    return token or sample_name
 
 _BED12_FIELDS = """    string  chrom;       "Reference chromosome / contig"
     uint    chromStart;  "Start position on the reference (0-based)"
@@ -118,8 +136,11 @@ def _make_schema(table_name: str, description: str,
     if sample_name:
         # Prepend a machine-parseable "Sample: <name>." marker. The autoSQL
         # description is a free-form string so we stay format-compatible;
-        # bigBedInfo -as surfaces this to downstream tools.
-        description = f'Sample: {sample_name}. {description}'
+        # bigBedInfo -as surfaces this to downstream tools. The name is
+        # collapsed to a dot/space-free token (see sample_token) so viewers
+        # that split the tag on the first '.' still recover the full,
+        # pool-distinguishing identifier.
+        description = f'Sample: {sample_token(sample_name)}. {description}'
     return (
         f'table {table_name}\n'
         f'"{description}"\n'

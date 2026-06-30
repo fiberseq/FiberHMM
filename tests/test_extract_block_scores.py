@@ -9,6 +9,7 @@ Covers:
 from __future__ import annotations
 
 import io
+import re
 from array import array
 
 import numpy as np
@@ -998,6 +999,52 @@ def test_write_autosql_for_with_sample_name(tmp_path):
         content = f.read()
     assert 'Sample: Dl_recalled. ' in content
     assert 'int[blockCount] blockTq' in content
+
+
+def test_sample_token_collapses_dots_and_spaces():
+    from fiberhmm.io.autosql import sample_token
+    # Dots and whitespace runs -> single underscore; hyphens/digits preserved.
+    assert sample_token('a.b.c') == 'a_b_c'
+    assert sample_token('  x  y ') == 'x_y'
+    assert sample_token('yw_2-4') == 'yw_2-4'
+    assert sample_token('S...filtered_T') == 'S_filtered_T'
+
+
+def test_dotted_sample_names_stay_pool_distinct():
+    # Regression: a dotted sample name used to collapse to its first token
+    # under a viewer's first-dot split, so _T and _GA pools became
+    # indistinguishable and their layers overwrote each other. The embedded
+    # tag must now differ between pools under BOTH the legacy first-dot regex
+    # and the sentence-boundary regex.
+    base = 'BioSample70.decorated.reads.MA.filtered_'
+    sch_t = get_schema('tf', sample_name=base + 'T')
+    sch_g = get_schema('tf', sample_name=base + 'GA')
+    legacy = re.compile(r'Sample:\s*([^\s.]+?)\.')
+    boundary = re.compile(r'Sample:\s*(.+?)\.(?:\s|$)')
+    assert legacy.search(sch_t).group(1) != legacy.search(sch_g).group(1)
+    assert boundary.search(sch_t).group(1) != boundary.search(sch_g).group(1)
+    # And the tag itself carries no dot (the property that guarantees this).
+    assert legacy.search(sch_t).group(1) == boundary.search(sch_t).group(1)
+
+
+def test_fix_bigbed_helpers():
+    from fiberhmm.cli.utils import (
+        _derive_sample_from_filename,
+        _patch_autosql_sample,
+    )
+    # Filename derivation strips the _<layer> suffix and extension.
+    assert (_derive_sample_from_filename('S.a.b.filtered_T_tf.bb')
+            == 'S.a.b.filtered_T')
+    assert (_derive_sample_from_filename('x_GA_msp.bigbed') == 'x_GA')
+    # Patch replaces an existing dotted Sample tag up to the sentence boundary.
+    lines = ['table fiberhmm_tf',
+             '"Sample: old.a.b.filtered_T. FiberHMM TF calls."', '(', ')']
+    out = _patch_autosql_sample(lines, 'new_token')
+    assert out[1] == '"Sample: new_token. FiberHMM TF calls."'
+    # Patch injects a tag when none is present.
+    lines2 = ['table fiberhmm_msp', '"FiberHMM MSP calls."', '(', ')']
+    out2 = _patch_autosql_sample(lines2, 'tok')
+    assert out2[1] == '"Sample: tok. FiberHMM MSP calls."'
 
 
 def _write_circular_ma_an_bam(path, *, read_length=1000, ref_start=100_000):

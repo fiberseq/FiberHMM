@@ -1061,6 +1061,48 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     return len(positions_list)
 
 
+def _sort_supports_parallel() -> bool:
+    """True if the system ``sort`` is GNU coreutils (supports --parallel).
+
+    BSD/macOS ``sort`` has neither ``--parallel`` nor ``--version``; passing
+    ``--parallel`` there is a hard error, so we feature-detect once.
+    """
+    try:
+        out = subprocess.run(['sort', '--version'], capture_output=True,
+                             text=True)
+        return out.returncode == 0 and 'GNU coreutils' in out.stdout
+    except (FileNotFoundError, OSError):
+        return False
+
+
+def _build_sort_cmd(in_path: str, out_path: str, tmp_dir: Optional[str],
+                    sort_mem: Optional[str], sort_parallel: int):
+    """Assemble a fast ``sort`` invocation for the concatenated BED.
+
+    Speed levers, all optional and safe to combine:
+      - ``LC_ALL=C`` -- byte-wise compare instead of locale collation; the
+        single biggest win for ASCII BED and always correct for our keys.
+      - ``-S <mem>`` -- in-memory buffer; bigger = fewer temp-file merge
+        passes. Portable to both GNU and BSD sort.
+      - ``--parallel=<n>`` -- GNU-only; gated behind feature detection.
+      - ``-T <dir>`` -- keep spill files on the extract temp volume rather
+        than a possibly-small /tmp.
+
+    Returns (cmd_list, env_dict).
+    """
+    env = dict(os.environ)
+    env['LC_ALL'] = 'C'
+    cmd = ['sort', '-k1,1', '-k2,2n']
+    if sort_mem:
+        cmd.append(f'-S{sort_mem}')
+    if tmp_dir:
+        cmd.extend(['-T', tmp_dir])
+    if sort_parallel and sort_parallel > 1 and _sort_supports_parallel():
+        cmd.append(f'--parallel={sort_parallel}')
+    cmd.extend([in_path, '-o', out_path])
+    return cmd, env
+
+
 def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           n_cores: int = 1, region_size: int = 10_000_000,
                           min_mapq: int = 0, prob_threshold: int = 125,
@@ -1069,7 +1111,9 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           block_scores: bool = False,
                           circular_groups: bool = False,
                           skip_scaffolds: bool = False,
-                          chroms: Optional[Set[str]] = None):
+                          chroms: Optional[Set[str]] = None,
+                          sort_mem: Optional[str] = None,
+                          sort_parallel: int = 0):
     """Extract one or more tag types from BAM in a single region-parallel pass.
 
     All requested extract types share a single BAM traversal + a single
@@ -1177,8 +1221,9 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
             if os.path.getsize(out_path) > 0:
                 print(f"  [{t}] sorting BED...")
                 sorted_bed = out_path + '.sorted'
-                subprocess.run(['sort', '-k1,1', '-k2,2n', out_path, '-o', sorted_bed],
-                               check=True)
+                sort_cmd, sort_env = _build_sort_cmd(
+                    out_path, sorted_bed, temp_dir, sort_mem, sort_parallel)
+                subprocess.run(sort_cmd, check=True, env=sort_env)
                 os.replace(sorted_bed, out_path)
 
         elapsed = time.time() - start_time
@@ -1550,6 +1595,20 @@ Examples:
     parser.add_argument('--skip-scaffolds', action='store_true', help='Skip scaffold chromosomes')
     parser.add_argument('--chroms', type=str, help='Comma-separated chromosomes to process')
 
+    # Sort tuning (the post-extract BED sort can dominate runtime on
+    # deep/whole-genome BAMs).
+    parser.add_argument('--sort-mem', '-S', default='1G',
+                        help='Memory buffer for the BED sort, passed to '
+                             '`sort -S` (e.g. 4G, 8G, or 50%% on GNU sort). '
+                             'Bigger = fewer temp-file merge passes = faster. '
+                             'Default 1G; pass an empty string to disable. '
+                             'The sort also runs under LC_ALL=C regardless, '
+                             'which alone is a large speedup.')
+    parser.add_argument('--sort-parallel', type=int, default=0,
+                        help='Threads for the BED sort (GNU coreutils only; '
+                             'ignored on BSD/macOS sort). 0 = use --cores. '
+                             'Feature-detected, so safe to leave on.')
+
     args = parser.parse_args()
 
     # Validate input
@@ -1653,6 +1712,8 @@ Examples:
         circular_groups=args.circular_groups,
         skip_scaffolds=args.skip_scaffolds,
         chroms=chroms,
+        sort_mem=args.sort_mem,
+        sort_parallel=args.sort_parallel or args.cores,
     )
 
     print()

@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import pickle
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -782,6 +783,194 @@ def cmd_adjust(args):
 
 
 # =============================================================================
+# fix-bigbed subcommand: repair the embedded autoSQL Sample tag
+# =============================================================================
+
+# Type suffix tokens fiberhmm-extract appends to each layer's filename.
+_BB_LAYER_SUFFIXES = (
+    'footprint', 'nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam',
+)
+
+
+def _run_capture(cmd):
+    import subprocess
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def _bigbed_info_as(bb_path):
+    """Return (field_count, autosql_lines) for a bigBed.
+
+    autosql_lines is the list of raw schema lines (``table ...`` through the
+    closing ``)``), or None when the file embeds no autoSQL.
+    """
+    res = _run_capture(['bigBedInfo', '-as', bb_path])
+    if res.returncode != 0:
+        raise RuntimeError(f"bigBedInfo failed on {bb_path}: {res.stderr.strip()}")
+    field_count = None
+    autosql = None
+    lines = res.stdout.splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith('fieldCount:'):
+            field_count = int(line.split(':', 1)[1].strip())
+        elif line.strip() == 'as:':
+            block = []
+            for sub in lines[i + 1:]:
+                block.append(sub)
+                if sub.strip() == ')':
+                    break
+            autosql = block
+            break
+    return field_count, autosql
+
+
+def _bigbed_chrom_sizes(bb_path):
+    """Parse ``bigBedInfo -chroms`` into {chrom: size}. Warn on truncation."""
+    res = _run_capture(['bigBedInfo', '-chroms', bb_path])
+    if res.returncode != 0:
+        raise RuntimeError(f"bigBedInfo -chroms failed on {bb_path}: {res.stderr.strip()}")
+    sizes = {}
+    declared = None
+    for line in res.stdout.splitlines():
+        if line.startswith('chromCount:'):
+            declared = int(line.split(':', 1)[1].strip().replace(',', ''))
+            continue
+        if line and line[0] in ' \t':
+            parts = line.split()
+            if len(parts) == 3 and parts[1] == '0':
+                sizes[parts[0]] = int(parts[2])
+    if declared is not None and len(sizes) != declared:
+        print(f"  Warning: parsed {len(sizes)} of {declared} chroms from "
+              f"bigBedInfo; sizes may be incomplete.", file=sys.stderr)
+    return sizes
+
+
+def _derive_sample_from_filename(bb_path):
+    """Strip the .bb extension and a trailing _<layer> suffix to recover the
+    pool-distinguishing sample name (e.g. '..._filtered_T_tf.bb' -> '..._filtered_T')."""
+    stem = os.path.basename(bb_path)
+    for ext in ('.bb', '.bigbed', '.BB'):
+        if stem.lower().endswith(ext.lower()):
+            stem = stem[:-len(ext)]
+            break
+    for suffix in _BB_LAYER_SUFFIXES:
+        for sep in ('_', '.'):
+            if stem.lower().endswith(f'{sep}{suffix}'):
+                return stem[:-(len(suffix) + 1)]
+    return stem
+
+
+def _patch_autosql_sample(autosql_lines, token):
+    """Return autoSQL lines with the description's ``Sample:`` tag set to token.
+
+    Replaces an existing tag (matching up to the first '. ' / '."' boundary,
+    so dotted names survive) or injects one when absent."""
+    out = []
+    patched = False
+    for line in autosql_lines:
+        stripped = line.lstrip()
+        if not patched and stripped.startswith('"'):
+            if re.search(r'"\s*Sample:', line):
+                line = re.sub(r'("\s*)Sample:\s*.+?\.(\s|")',
+                              rf'\1Sample: {token}.\2', line, count=1)
+            else:
+                line = re.sub(r'"', f'"Sample: {token}. ', line, count=1)
+            patched = True
+        out.append(line)
+    return out
+
+
+def cmd_fix_bigbed(args):
+    """Re-embed a corrected, pool-distinct ``Sample:`` autoSQL tag in bigBed(s).
+
+    Existing bigBeds whose Sample tag collapses to a non-distinct token under
+    a viewer's first-dot split (so FiberBrowser drops/overwrites a sample's
+    layers) are rebuilt with a dot-free token via
+    bigBedToBed -> bedToBigBed, without re-running fiberhmm-extract.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    from fiberhmm.io.autosql import sample_token
+
+    for tool in ('bigBedInfo', 'bigBedToBed', 'bedToBigBed'):
+        if shutil.which(tool) is None:
+            print(f"Error: required UCSC tool '{tool}' not found in PATH.\n"
+                  f"  Install with: conda install -c bioconda ucsc-{tool.lower()}",
+                  file=sys.stderr)
+            sys.exit(1)
+
+    inputs = args.inputs
+    if args.output and len(inputs) != 1:
+        print("Error: -o/--output is only valid with a single input bigBed.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    n_fixed = 0
+    for bb_path in inputs:
+        if not os.path.exists(bb_path):
+            print(f"  [skip] not found: {bb_path}", file=sys.stderr)
+            continue
+
+        field_count, autosql = _bigbed_info_as(bb_path)
+        if autosql is None:
+            print(f"  [skip] no embedded autoSQL to fix: {bb_path}\n"
+                  f"         (re-run fiberhmm-extract to add a schema)",
+                  file=sys.stderr)
+            continue
+
+        raw_sample = args.sample_name or _derive_sample_from_filename(bb_path)
+        token = sample_token(raw_sample)
+        new_autosql = _patch_autosql_sample(autosql, token)
+
+        sizes = _bigbed_chrom_sizes(bb_path)
+        n_extra = max(0, (field_count or 12) - 12)
+        type_flag = f'-type=bed12+{n_extra}' if n_extra > 0 else '-type=bed12'
+
+        if args.output:
+            out_path = args.output
+        elif args.in_place:
+            out_path = bb_path
+        else:
+            base = bb_path[:-3] if bb_path.lower().endswith('.bb') else bb_path
+            out_path = base + '.fixed.bb'
+
+        tmpdir = tempfile.mkdtemp(prefix='fiberhmm_fixbb_')
+        try:
+            bed_path = os.path.join(tmpdir, 'data.bed')
+            as_path = os.path.join(tmpdir, 'schema.as')
+            sizes_path = os.path.join(tmpdir, 'chrom.sizes')
+            bb_tmp = os.path.join(tmpdir, 'out.bb')
+
+            res = _run_capture(['bigBedToBed', bb_path, bed_path])
+            if res.returncode != 0:
+                print(f"  [fail] bigBedToBed: {res.stderr.strip()}", file=sys.stderr)
+                continue
+            with open(as_path, 'w') as f:
+                f.write('\n'.join(new_autosql) + '\n')
+            with open(sizes_path, 'w') as f:
+                for chrom, size in sorted(sizes.items()):
+                    f.write(f"{chrom}\t{size}\n")
+
+            res = subprocess.run(
+                ['bedToBigBed', f'-as={as_path}', type_flag,
+                 bed_path, sizes_path, bb_tmp],
+                capture_output=True, text=True)
+            if res.returncode != 0:
+                print(f"  [fail] bedToBigBed: {res.stderr.strip()}", file=sys.stderr)
+                continue
+
+            shutil.move(bb_tmp, out_path)
+            print(f"  [ok] {os.path.basename(bb_path)} -> "
+                  f"{os.path.basename(out_path)}  (Sample: {token})")
+            n_fixed += 1
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    print(f"\nFixed {n_fixed}/{len(inputs)} bigBed file(s).")
+
+
+# =============================================================================
 # main: argument parsing with subcommands
 # =============================================================================
 
@@ -794,8 +983,9 @@ def main():
 Subcommands:
   convert   Convert pickle/NPZ models to JSON format
   inspect   Print model metadata, parameters, and emission statistics
-  transfer  Transfer emission probs between modalities (e.g., fiber-seq to DAF-seq)
-  adjust    Apply scaling to emission probabilities
+  transfer    Transfer emission probs between modalities (e.g., fiber-seq to DAF-seq)
+  adjust      Apply scaling to emission probabilities
+  fix-bigbed  Repair the embedded autoSQL Sample tag in existing bigBed(s)
 
 Examples:
   fiberhmm-utils convert old_model.pickle new_model.json
@@ -803,6 +993,7 @@ Examples:
   fiberhmm-utils inspect model.json --full
   fiberhmm-utils transfer --target daf.bam --reference-bam fiber.bam -o probs/
   fiberhmm-utils adjust model.json --state accessible --scale 1.1 -o adjusted.json
+  fiberhmm-utils fix-bigbed sample.filtered_T_*.bb sample.filtered_GA_*.bb --in-place
         """
     )
     subparsers = parser.add_subparsers(dest='command')
@@ -877,6 +1068,30 @@ Examples:
     p_adjust.add_argument('-o', '--output', required=True,
                          help='Output model file (.json)')
 
+    # --- fix-bigbed ---
+    p_fixbb = subparsers.add_parser(
+        'fix-bigbed',
+        help='Repair the embedded autoSQL Sample tag in bigBed(s)',
+        description='Rebuild bigBed(s) with a dot-free, pool-distinct '
+                    '"Sample:" autoSQL tag so multi-layer tracks group '
+                    'correctly in FiberBrowser. Use when split/filtered '
+                    'pools (e.g. _filtered_T vs _filtered_GA) had layers go '
+                    'missing because their Sample tags collapsed to the same '
+                    'token. Requires UCSC bigBedInfo/bigBedToBed/bedToBigBed.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_fixbb.add_argument('inputs', nargs='+', help='Input bigBed file(s)')
+    p_fixbb.add_argument('--sample-name', default=None,
+                        help='Explicit sample name to embed (sanitized to a '
+                             'dot/space-free token). Default: derived per file '
+                             'from the filename (stem minus the _<layer> suffix).')
+    g = p_fixbb.add_mutually_exclusive_group()
+    g.add_argument('--in-place', action='store_true',
+                   help='Overwrite the input bigBed(s) in place.')
+    g.add_argument('-o', '--output', default=None,
+                   help='Output path (single input only). Default: write '
+                        '<name>.fixed.bb alongside each input.')
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -891,6 +1106,8 @@ Examples:
         cmd_transfer(args)
     elif args.command == 'adjust':
         cmd_adjust(args)
+    elif args.command == 'fix-bigbed':
+        cmd_fix_bigbed(args)
 
 
 if __name__ == '__main__':

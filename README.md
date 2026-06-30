@@ -500,7 +500,26 @@ fiberhmm-extract -i output/sample_footprints.bam --keep-bed
 
 # Preserve circular wrapped-feature grouping fields for FiberBrowser
 fiberhmm-extract -i output/sample_footprints.bam --tf --msp --circular-groups
+
+# Faster sort on deep / whole-genome BAMs: bigger buffer + more threads
+fiberhmm-extract -i output/sample_footprints.bam -c 8 -S 8G --sort-parallel 8
 ```
+
+The post-extract BED sort can dominate runtime on deep BAMs. It now runs
+under `LC_ALL=C` (byte-wise compare — a large speedup on its own) and accepts:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-S/--sort-mem` | `1G` | Memory buffer passed to `sort -S` (e.g. `8G`, or `50%` on GNU sort). Bigger = fewer temp-file merge passes. Pass `''` to disable. |
+| `--sort-parallel` | `--cores` | Sort threads (GNU coreutils only; feature-detected, ignored on BSD/macOS sort). |
+
+Each output bigBed embeds a `Sample: <name>.` autoSQL tag (from the BAM
+stem, or `--sample-name`) that FiberBrowser uses to group a sample's layers
+into one track. The name is sanitized to a dot/space-free token so that
+**split or genotype-filtered pools stay distinct** — e.g. `…_filtered_T`
+vs `…_filtered_GA` no longer collapse to the same tag and overwrite each
+other's layers. To repair bigBeds produced before this fix, see
+[`fiberhmm-utils fix-bigbed`](#fiberhmm-utils).
 
 ### fiberhmm-recall-tfs (BETA)
 
@@ -819,6 +838,22 @@ fiberhmm-utils transfer \
 **adjust** -- Scale emission probabilities in a model (clamped to [0, 1]):
 ```bash
 fiberhmm-utils adjust model.json --state accessible --scale 1.1 -o adjusted.json
+```
+
+**fix-bigbed** -- Repair the embedded `Sample:` autoSQL tag in existing
+bigBeds. Use when split/genotype-filtered pools loaded side-by-side in
+FiberBrowser had layers go missing (e.g. TF present for one pool, MSP for
+another) because their `Sample:` tags were not distinct. Rebuilds each file
+via `bigBedToBed → bedToBigBed` with a corrected, pool-distinct token — no
+need to re-run `fiberhmm-extract`. The sample name is derived per file from
+the filename (stem minus the `_<layer>` suffix) unless `--sample-name` is given.
+Requires UCSC `bigBedInfo`/`bigBedToBed`/`bedToBigBed`.
+```bash
+# Fix every layer of both pools in place
+fiberhmm-utils fix-bigbed sample.filtered_T_*.bb sample.filtered_GA_*.bb --in-place
+
+# Write *.fixed.bb alongside the originals instead
+fiberhmm-utils fix-bigbed sample_tf.bb sample_msp.bb
 ```
 
 ## Output
