@@ -135,12 +135,13 @@ def parse_args():
 
     # --- PCR dedup (DAF / ddda|dddb only) ---
     p.add_argument('--dedup', action='store_true',
-                   help='DAF (ddda/dddb) only: after calling, remove PCR '
-                        'duplicates by deamination-pattern fingerprint (see '
-                        'fiberhmm-dedup). Amplicon/UMI-less DAF libraries can be '
+                   help='DAF (ddda/dddb) only: remove PCR duplicates by '
+                        'deamination-pattern fingerprint (see fiberhmm-dedup) '
+                        'BEFORE footprinting, so the HMM/recaller only process '
+                        'unique molecules. Amplicon/UMI-less DAF libraries can be '
                         'heavily PCR-duplicated and coordinate dedup does not '
-                        'apply. Collapses each molecule to one read. Requires '
-                        'file output (not stdout). Ignored for fiber-seq (hia5).')
+                        'apply. Requires a file input (not stdin). Ignored for '
+                        'fiber-seq (hia5).')
     p.add_argument('--dedup-min-jaccard', type=float, default=0.95,
                    help='Deamination-set Jaccard threshold for --dedup '
                         '(default 0.95).')
@@ -205,8 +206,12 @@ def _resolve_nuc_profile_path(args, recall_nucs: bool):
 
 
 def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
-                       recall_nucs) -> int:
-    """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off)."""
+                       recall_nucs, input_bam) -> int:
+    """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off).
+
+    ``input_bam`` is the BAM to sample for auto-estimation -- the deduped
+    file when --dedup ran, so the NRL isn't biased by PCR duplicates.
+    """
     raw = str(args.phase_nrl).strip().lower()
     if raw in ('off', '', '0', 'none'):
         return 0
@@ -221,13 +226,13 @@ def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
                   file=sys.stderr)
             return 0
     # auto-estimate
-    if args.input == '-':
+    if input_bam == '-':
         print("  NOTE: --phase-nrl auto needs a file input to sample; "
               "falling back to anchor 185 bp.", file=sys.stderr)
         return 185
     from fiberhmm.inference.nrl_estimate import estimate_phase_nrl
     res = estimate_phase_nrl(
-        args.input, apply_model_path, recall_model_path,
+        input_bam, apply_model_path, recall_model_path,
         mode=mode, context_size=k,
         split_min_llr=args.split_min_llr, split_min_opps=args.split_min_opps,
         nuc_min_size=args.nuc_min_size, msp_min_size=args.msp_min_size,
@@ -317,47 +322,51 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
     sys.exit(2)
 
 
-def _run_post_dedup(output_bam, mode, min_jaccard, flag_only, io_threads):
-    """Post-pipeline PCR dedup on the final BAM (DAF/deaminase only).
+def _dedup_input_first(input_bam, output_bam, min_jaccard, flag_only, io_threads,
+                       region_parallel):
+    """PCR-dedup the input BAM BEFORE footprinting (DAF/deaminase only).
 
-    Runs in place: dedups output_bam -> temp, atomically replaces, re-indexes.
-    No-op (with a note) for non-DAF modes -- fiber-seq (hia5) has no
-    deamination signal to fingerprint.
+    Deduping first means the HMM/recaller only processes unique molecules
+    (collapse mode removes ~the duplicate fraction of reads) and NRL/phase
+    estimation isn't biased by duplicate reads. Returns the path to a
+    temporary deduped BAM to footprint instead of the original, or None if
+    nothing was deduplicated (caller keeps the original input).
     """
-    if mode != 'daf':
-        print(f"  NOTE: --dedup applies to DAF-seq (ddda/dddb) deamination data; "
-              f"mode is {mode!r} (fiber-seq has no deamination) -- skipping dedup.",
-              file=sys.stderr)
-        return
     import os
+    import tempfile
 
     import pysam
 
     from fiberhmm.cli.dedup import run_dedup
-    print("\n  --dedup: removing PCR duplicates by deamination fingerprint "
-          f"(Jaccard >= {min_jaccard}, {'flag' if flag_only else 'collapse'})...",
-          file=sys.stderr)
-    tmp = output_bam + '.dedup.tmp.bam'
-    stats = run_dedup(output_bam, tmp, min_jaccard=min_jaccard,
+    print("\n  --dedup: collapsing PCR duplicates by deamination fingerprint "
+          f"(Jaccard >= {min_jaccard}, {'flag' if flag_only else 'collapse'}) "
+          "BEFORE footprinting...", file=sys.stderr)
+    outdir = os.path.dirname(os.path.abspath(output_bam)) if output_bam != '-' else None
+    fd, tmp = tempfile.mkstemp(prefix='fiberhmm_dedup_', suffix='.bam', dir=outdir)
+    os.close(fd)
+    stats = run_dedup(input_bam, tmp, min_jaccard=min_jaccard,
                       collapse=not flag_only, io_threads=io_threads)
     if stats is None:
         if os.path.exists(tmp):
             os.remove(tmp)
-        return
-    os.replace(tmp, output_bam)
-    try:
-        pysam.index(output_bam)
-    except pysam.SamtoolsError:
-        pass
+        return None
+    if region_parallel:
+        # region-parallel needs a coordinate index on its input; dedup
+        # preserves the input's sort order so this is valid.
+        try:
+            pysam.index(tmp)
+        except pysam.SamtoolsError:
+            pass
+    return tmp
 
 
 def main():
     args = parse_args()
     stdout_mode = (args.output == '-')
 
-    if args.dedup and stdout_mode:
-        print("error: --dedup requires file output (it re-reads the BAM); "
-              "cannot dedup a stdout stream.", file=sys.stderr)
+    if args.dedup and args.input == '-':
+        print("error: --dedup requires a file input (it two-passes the BAM to "
+              "fingerprint reads); cannot dedup a stdin stream.", file=sys.stderr)
         sys.exit(1)
 
     if stdout_mode:
@@ -396,9 +405,26 @@ def main():
     if mode == 'daf' and args.input != '-':
         _check_daf_inputs(args.input, args.reference)
 
+    # PCR dedup runs FIRST (DAF only): collapse duplicates before footprinting so
+    # the HMM/recaller only process unique molecules and NRL/phase estimation
+    # isn't biased by duplicate reads. working_input feeds everything downstream.
+    working_input = args.input
+    dedup_tmp = None
+    if args.dedup:
+        if mode != 'daf':
+            print(f"  NOTE: --dedup applies to DAF-seq (ddda/dddb) deamination "
+                  f"data; mode is {mode!r} (fiber-seq has no deamination) -- "
+                  f"skipping dedup.", file=sys.stderr)
+        else:
+            dedup_tmp = _dedup_input_first(
+                args.input, args.output, args.dedup_min_jaccard,
+                args.dedup_flag_only, args.io_threads, args.region_parallel)
+            if dedup_tmp is not None:
+                working_input = dedup_tmp
+
     # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
     phase_nrl = _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
-                                   recall_nucs)
+                                   recall_nucs, working_input)
 
     # DddA uses a radial deamination-profile match-filter for the nucleosome
     # split; other enzymes use the accessible-cut Kadane split (no profile).
@@ -409,6 +435,9 @@ def main():
     import fiberhmm as _fh
     chimera_state = ('n/a' if mode != 'daf'
                      else ('off' if args.keep_chimeras else 'on'))
+    dedup_state = ('off' if not args.dedup or dedup_tmp is None
+                   else f"j{args.dedup_min_jaccard}"
+                        f"{'/flag' if args.dedup_flag_only else '/collapse'}")
     pg_record = {
         'PN': 'fiberhmm-call',
         'VN': getattr(_fh, '__version__', 'unknown'),
@@ -419,7 +448,7 @@ def main():
         'DS': (f"FiberHMM fused apply+recall; coord=molecular "
                f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
                f"mode={mode} recall_nucs={recall_nucs} phase_nrl={phase_nrl} "
-               f"chimera_filter={chimera_state}"),
+               f"chimera_filter={chimera_state} dedup={dedup_state}"),
     }
 
     mode_label = 'region-parallel' if args.region_parallel else 'streaming'
@@ -447,7 +476,7 @@ def main():
             sys.exit(1)
         chroms_set = set(args.chroms) if args.chroms else None
         n_reads, n_fp = _process_bam_region_parallel_fused(
-            input_bam=args.input,
+            input_bam=working_input,
             output_bam=args.output,
             apply_model_path=apply_model_path,
             recall_model_path=recall_model_path,
@@ -487,7 +516,7 @@ def main():
         )
     else:
         n_reads, n_fp = _process_bam_streaming_pipeline_fused(
-            input_bam=args.input,
+            input_bam=working_input,
             output_bam=args.output,
             model_path=apply_model_path,
             recall_model_path=recall_model_path,
@@ -534,9 +563,14 @@ def main():
         except pysam.SamtoolsError:
             pass
 
-    if args.dedup:
-        _run_post_dedup(args.output, mode, args.dedup_min_jaccard,
-                        args.dedup_flag_only, args.io_threads)
+    # Clean up the pre-footprinting dedup temp (+ its index), if any.
+    if dedup_tmp is not None:
+        import os
+        for _p in (dedup_tmp, dedup_tmp + '.bai'):
+            try:
+                os.remove(_p)
+            except OSError:
+                pass
 
 
 if __name__ == '__main__':

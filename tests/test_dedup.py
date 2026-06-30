@@ -107,20 +107,17 @@ def test_collapse_is_default_keeps_one_per_molecule(daf_bam, tmp_path):
     assert 'lowdeam' in {r.query_name for r in recs}
 
 
-def test_call_post_dedup_collapses_daf(daf_bam):
-    from fiberhmm.cli.call import _run_post_dedup
-    # In-place dedup on the final BAM (mode=daf): 9 reads -> 2 reps + 1 low-deam.
-    _run_post_dedup(str(daf_bam), 'daf', 0.95, False, 1)
-    recs = list(pysam.AlignmentFile(str(daf_bam), check_sq=False))
+def test_call_dedup_first_collapses_daf(daf_bam):
+    from fiberhmm.cli.call import _dedup_input_first
+    # Pre-footprinting dedup returns a deduped temp BAM to footprint instead of
+    # the original: 9 reads -> 2 reps + 1 low-deam passthrough.
+    tmp = _dedup_input_first(str(daf_bam), str(daf_bam.parent / 'out.bam'),
+                             0.95, False, 1, region_parallel=False)
+    assert tmp is not None
+    recs = list(pysam.AlignmentFile(tmp, check_sq=False))
     assert len(recs) == 3
-
-
-def test_call_post_dedup_skips_non_daf(daf_bam):
-    from fiberhmm.cli.call import _run_post_dedup
-    before = len(list(pysam.AlignmentFile(str(daf_bam), check_sq=False)))
-    _run_post_dedup(str(daf_bam), 'pacbio-fiber', 0.95, False, 1)  # not DAF -> no-op
-    after = len(list(pysam.AlignmentFile(str(daf_bam), check_sq=False)))
-    assert before == after == 9
+    # Original input is left untouched (dedup writes a temp, not in place).
+    assert len(list(pysam.AlignmentFile(str(daf_bam), check_sq=False))) == 9
 
 
 def test_cluster_tags_present(daf_bam, tmp_path):

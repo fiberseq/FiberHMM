@@ -400,7 +400,7 @@ Key flags:
 | `-r/--circular` | off | Circular molecule mode: tiles reads internally and emits wrapped features as clipped `MA/AQ/AN` annotations. |
 | `--no-legacy-tags` | off | Emit only MA/AQ spec tags, skip `ns/nl/as/al`. |
 | `--downstream-compat` | off | Write TF calls into legacy `ns/nl` (skip MA/AQ). |
-| `--dedup` | off | **DAF (ddda/dddb) only.** Post-pipeline PCR-duplicate removal by deamination-pattern fingerprint (see [fiberhmm-dedup](#fiberhmm-dedup)); collapses each molecule to one read. Requires file output. Tune with `--dedup-min-jaccard` (0.95); `--dedup-flag-only` marks instead of collapsing. Ignored for `hia5`. |
+| `--dedup` | off | **DAF (ddda/dddb) only.** Remove PCR duplicates by deamination-pattern fingerprint (see [fiberhmm-dedup](#fiberhmm-dedup)) **before footprinting**, so the HMM/recaller only process unique molecules (and NRL/phase estimation isn't biased by duplicates). Requires a file input. Tune with `--dedup-min-jaccard` (0.95); `--dedup-flag-only` marks instead of collapsing. Ignored for `hia5`. |
 
 FIRE scoring: `ft fire` is a separate Rust binary from fibertools-rs; pipe `fiberhmm-call -o -` into it directly, or run as a second step on the region-parallel output.
 
