@@ -229,6 +229,11 @@ def get_modified_positions_pysam(read, prob_threshold: int = 125, mode: str = 'p
             elif mode == 'nanopore-fiber':
                 if base != 'A' or mod_code not in ('a', 21839):
                     continue
+            # GpC / CpG 5mC methylation footprinting: cytosine + 5mC.
+            # Motif restriction (GpC vs CpG) is applied later in the encoder.
+            elif mode in ('gpc', 'cpg'):
+                if base != 'C' or mod_code not in ('m', 27551):  # 27551 = ChEBI 5mC
+                    continue
 
             for pos, qual in positions:
                 # qual is 256*prob, threshold is on 0-255 scale
@@ -541,6 +546,10 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
             if target_base != 'A':
                 ml_idx += n_mods
                 continue
+        elif mode in ('gpc', 'cpg'):
+            if target_base != 'C':
+                ml_idx += n_mods
+                continue
         elif mode == 'daf':
             if target_base not in ('T', 'A', 'C', 'G'):
                 ml_idx += n_mods
@@ -752,8 +761,52 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
             non_target_code, unmethylated_offset,
         )
 
+    elif mode in ('gpc', 'cpg'):
+        return _encode_5mc_observations(
+            sequence, mod_positions, edge_trim, context_size, mode,
+            non_target_code, unmethylated_offset,
+        )
+
     else:
         raise ValueError(f"Unknown mode: {mode}")
+
+
+def _encode_5mc_observations(sequence: str, mod_positions: Set[int],
+                             edge_trim: int, context_size: int, motif: str,
+                             non_target_code: int,
+                             unmethylated_offset: int) -> np.ndarray:
+    """Encode 5mC methylation footprinting at a dinucleotide motif.
+
+    ``motif='gpc'`` (M.CviPI, GpC) or ``'cpg'`` (M.SssI / M.SssI-class, CpG). Target
+    base is C; only C's inside the motif are informative (others become non-target).
+    5mC marks ACCESSIBLE DNA (same polarity as m6A — the accessible state simply has a
+    high emission probability, set by generate-probs from the +MTase control, so no
+    state inversion is needed here). GCG positions are both GpC and CpG and are masked
+    as ambiguous (standard dSMF practice). This targets C on the read strand only
+    (nanopore single-strand); the opposite-strand C appears as G and is not scored.
+    """
+    seq_len = len(sequence)
+    mod_mask = _mod_positions_mask(mod_positions, seq_len)
+    # C-centered context codes; non-C positions are already non_target_code.
+    context_codes = _encode_vectorized(
+        sequence, 'C', context_size, edge_trim, non_target_code, include_rc=False,
+    )
+    sb = np.frombuffer(sequence.upper().encode('ascii'), dtype=np.uint8)
+    is_C = sb == ord('C')
+    prev_G = np.zeros(seq_len, dtype=bool)
+    next_G = np.zeros(seq_len, dtype=bool)
+    if seq_len > 1:
+        prev_G[1:] = sb[:-1] == ord('G')   # G immediately 5' of this position
+        next_G[:-1] = sb[1:] == ord('G')   # G immediately 3' of this position
+    if motif == 'gpc':
+        motif_ok = is_C & prev_G & ~next_G   # GpC, excluding GCG
+    elif motif == 'cpg':
+        motif_ok = is_C & next_G & ~prev_G   # CpG, excluding GCG
+    else:
+        raise ValueError(f"Unknown 5mC motif: {motif!r}")
+    context_codes[~motif_ok] = non_target_code
+    return _apply_m6a_mod_status(context_codes, mod_mask, non_target_code,
+                                 unmethylated_offset)
 
 
 def _sequence_base_int_array(sequence: str, *, uppercase: bool = False,

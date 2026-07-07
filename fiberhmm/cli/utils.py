@@ -1029,7 +1029,7 @@ Examples:
                            help='Target BAM file (e.g., DAF-seq)')
     p_transfer.add_argument('-o', '--output', required=True,
                            help='Output directory')
-    p_transfer.add_argument('--mode', choices=['pacbio-fiber', 'nanopore-fiber', 'daf'],
+    p_transfer.add_argument('--mode', choices=['pacbio-fiber', 'nanopore-fiber', 'daf', 'gpc', 'cpg'],
                            default='daf', help='Analysis mode for target data')
     p_transfer.add_argument('--reference-bam', '-rb',
                            help='Reference BAM with footprint tags (ns/nl)')

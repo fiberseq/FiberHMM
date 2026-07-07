@@ -13,7 +13,7 @@ def add_mode_args(parser: argparse.ArgumentParser,
     """Add --mode argument."""
     parser.add_argument(
         '--mode',
-        choices=['pacbio-fiber', 'nanopore-fiber', 'daf'],
+        choices=['pacbio-fiber', 'nanopore-fiber', 'daf', 'gpc', 'cpg'],
         default=None if required else default,
         required=required,
         help=f"Analysis mode (default: {default})"

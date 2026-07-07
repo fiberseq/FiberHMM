@@ -53,7 +53,7 @@ def parse_args():
                         help='Output directory')
 
     # Mode selection
-    parser.add_argument('--mode', choices=['pacbio-fiber', 'nanopore-fiber', 'daf'], default='pacbio-fiber',
+    parser.add_argument('--mode', choices=['pacbio-fiber', 'nanopore-fiber', 'daf', 'gpc', 'cpg'], default='pacbio-fiber',
                         help='Analysis mode: pacbio-fiber (PacBio), nanopore-fiber (Nanopore), daf (DAF-seq)')
 
     # Context size

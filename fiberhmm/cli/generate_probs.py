@@ -55,7 +55,7 @@ def parse_args():
     parser.add_argument('-k', '--context-sizes', type=int, nargs='+', default=[3, 4, 5, 6],
                         help='Context size(s) to compute (bases on each side: 3=7mer, 6=13mer). '
                              'Single value or list. Default: 3 4 5 6')
-    parser.add_argument('--mode', choices=['pacbio-fiber', 'nanopore-fiber', 'daf'], default='pacbio-fiber',
+    parser.add_argument('--mode', choices=['pacbio-fiber', 'nanopore-fiber', 'daf', 'gpc', 'cpg'], default='pacbio-fiber',
                         help='Analysis mode: pacbio-fiber (PacBio), nanopore-fiber (Nanopore), daf (DAF-seq)')
 
     # Sampling
