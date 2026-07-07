@@ -47,6 +47,11 @@ def detect_strand_and_base(sequence: str, mod_positions: Set[int], mode: str) ->
     if mode in ('pacbio-fiber', 'nanopore-fiber'):
         return '.', 'A'
 
+    if mode in ('gpc', 'cpg'):
+        # 5mC methylation footprinting: C-centered; motif restriction (GpC/CpG) is
+        # applied in ContextCounter.process_read_5mc, not here.
+        return '.', 'C'
+
     seq_upper = sequence.upper()
 
     if mode == 'daf':
@@ -184,6 +189,33 @@ class ContextCounter:
             if seq_upper[i] == self.center_base:
                 is_mod = i in mod_positions
                 self.add_position(sequence, i, is_mod)
+
+    def process_read_5mc(self, sequence: str, mod_positions: Set[int],
+                         motif: str, edge_trim: int = 10):
+        """Count C positions restricted to a dinucleotide motif for 5mC footprinting.
+
+        ``motif='gpc'`` (M.CviPI, GpC) or ``'cpg'`` (M.SssI, CpG). Only C's inside the
+        motif are counted; GCG positions (both GpC and CpG) are masked as ambiguous
+        (standard dSMF practice). Requires ``center_base == 'C'``. Single-strand
+        (nanopore) — the opposite-strand C appears as G and is not counted.
+        """
+        seq_upper = sequence.upper()
+        seq_len = len(sequence)
+        lo = max(edge_trim, 1)
+        hi = min(seq_len - edge_trim, seq_len - 1)
+        for i in range(lo, hi):
+            if seq_upper[i] != 'C':
+                continue
+            prev_g = seq_upper[i - 1] == 'G'
+            next_g = seq_upper[i + 1] == 'G'
+            if motif == 'gpc':
+                ok = prev_g and not next_g   # GpC, exclude GCG
+            elif motif == 'cpg':
+                ok = next_g and not prev_g   # CpG, exclude GCG
+            else:
+                ok = False
+            if ok:
+                self.add_position(sequence, i, i in mod_positions)
 
     def process_read_daf(self, sequence: str, mod_positions: Set[int],
                          strand: str, edge_trim: int = 10):

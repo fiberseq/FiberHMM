@@ -212,6 +212,12 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                     counters['C'].process_read_daf(
                         read.query_sequence, mod_positions, strand, args.edge_trim
                     )
+            elif mode in ('gpc', 'cpg'):
+                # 5mC methylation footprinting: count only C's in the GpC/CpG motif
+                if 'C' in counters:
+                    counters['C'].process_read_5mc(
+                        read.query_sequence, mod_positions, mode, args.edge_trim
+                    )
             elif target_base in counters:
                 counters[target_base].process_read(
                     read.query_sequence, mod_positions, args.edge_trim
@@ -344,6 +350,9 @@ def main():
         target_bases = ['A']
     elif args.mode == 'daf':
         # DAF mode uses only C-centered contexts; G contexts are reverse complemented to C
+        target_bases = ['C']
+    elif args.mode in ('gpc', 'cpg'):
+        # 5mC methylation footprinting: C-centered, restricted to the GpC/CpG motif
         target_bases = ['C']
     else:
         target_bases = ['A']
