@@ -82,9 +82,12 @@ UNMETH_OFFSET = 4097   # miss codes live at [4097, 4097 + 4096)
 # enzymes that need it (DddA) get a pre-uplifted model file (ddda_TF.json)
 # instead of a runtime power transform, to keep the preset semantics simple.
 ENZYME_PRESETS = {
-    'hia5':  dict(min_llr=5.0, emission_uplift=1.0),
-    'dddb':  dict(min_llr=4.0, emission_uplift=1.0),
-    'ddda':  dict(min_llr=5.0, emission_uplift=1.0),
+    'hia5':   dict(min_llr=5.0, emission_uplift=1.0),
+    # EcoGII deposits the same m6A mark as Hia5; the ecogii model carries EcoGII-calibrated
+    # emissions, so the LLR needs no uplift. Same min_llr as Hia5 (same chemistry).
+    'ecogii': dict(min_llr=5.0, emission_uplift=1.0),
+    'dddb':   dict(min_llr=4.0, emission_uplift=1.0),
+    'ddda':   dict(min_llr=5.0, emission_uplift=1.0),
 }
 
 

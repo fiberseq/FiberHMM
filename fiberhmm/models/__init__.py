@@ -15,6 +15,8 @@ hia5    pacbio    apply    hia5_pacbio.json
 hia5    pacbio    recall   hia5_pacbio.json
 hia5    nanopore  apply    hia5_nanopore.json
 hia5    nanopore  recall   hia5_nanopore.json
+ecogii  pacbio    apply    ecogii_pacbio.json
+ecogii  pacbio    recall   ecogii_pacbio.json
 dddb    (any)     apply    dddb_nanopore.json
 dddb    (any)     recall   dddb_nanopore.json
 ddda    (any)     apply    ddda_nuc.json
@@ -38,13 +40,16 @@ def _bundled_model_path(filename: str) -> str:
 _BUNDLED: dict[tuple[str, str | None], dict[str, str]] = {
     ('hia5', 'pacbio'):   {'apply': 'hia5_pacbio.json',   'recall': 'hia5_pacbio.json'},
     ('hia5', 'nanopore'): {'apply': 'hia5_nanopore.json', 'recall': 'hia5_nanopore.json'},
+    ('ecogii', 'pacbio'): {'apply': 'ecogii_pacbio.json', 'recall': 'ecogii_pacbio.json'},
     ('dddb', None):       {'apply': 'dddb_nanopore.json', 'recall': 'dddb_nanopore.json'},
     ('ddda', None):       {'apply': 'ddda_nuc.json',      'recall': 'ddda_TF.json'},
 }
 
 SUPPORTED_ENZYMES = sorted({e for e, _ in _BUNDLED})
-# Enzymes where --seq matters
-_SEQ_REQUIRED = {'hia5'}
+# Enzymes where --seq matters (m6A on PacBio vs Nanopore differ). EcoGII deposits the
+# same m6A mark as Hia5, so it reuses the pacbio-fiber machinery; only a PacBio model
+# is bundled today (from SAMOSA), a nanopore EcoGII model can be added later.
+_SEQ_REQUIRED = {'hia5', 'ecogii'}
 _SEQ_DEFAULT  = 'pacbio'   # default when --seq omitted for hia5
 
 
