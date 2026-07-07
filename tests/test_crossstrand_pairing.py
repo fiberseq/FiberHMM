@@ -5,6 +5,8 @@ These exercise the I/O-free pairing library directly with synthetic
 the diploid locus structure: <=2 CT + <=2 GA reads, where the same molecule's
 two strands share nucleosome dyads and different homologs do not.
 """
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -88,6 +90,21 @@ def test_ambiguous_locus_left_unresolved(params):
     res = assign_pairs([ct, gaX, gaY], params)
     assert 0 not in res.partner              # ct not confidently paired
     assert res.status[0] == STATUS_UNRESOLVED
+
+
+def test_lone_pair_must_beat_null_floor(params, homolog_dyads):
+    # A 1+1 locus (no alternative) still pairs when its score clears the null,
+    # but is held back when the null floor is raised above it -- the virtual
+    # competitor stands in for the missing second-best.
+    a, _ = homolog_dyads
+    ct = _mk(0, 'ct', FLAVOR_CT, 900, 4800, a, params)
+    ga = _mk(1, 'ga', FLAVOR_GA, 1000, 4900, a, params)
+    res = assign_pairs([ct, ga], params)          # score ~1.0, null_floor 0.25
+    assert res.partner == {0: 1, 1: 0}
+    strict = replace(params, null_floor=0.99, min_margin=0.05)
+    res2 = assign_pairs([ct, ga], strict)
+    assert 0 not in res2.partner
+    assert res2.status[0] == STATUS_UNRESOLVED
 
 
 def test_non_overlapping_not_scored(params, homolog_dyads):

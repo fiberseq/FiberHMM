@@ -45,17 +45,28 @@ class PairParams:
                      phase offset should not be penalized).
     min_overlap_bp : minimum genomic overlap for a pair to be scorable.
     min_nucs       : minimum dyads *within the overlap* on each read.
-    min_score      : minimum cross-correlation to accept a pair.
-    min_margin     : minimum (best - second_best) on both reads to accept
-                     (the ambiguity gate; below this the locus is unresolved).
+    min_score      : minimum cross-correlation floor to accept any pair.
+    min_margin     : minimum (best - competitor) on both reads to accept, where
+                     the competitor is ``max(second_best, null_floor)``. At a
+                     2x2 locus the real second-best dominates (relative gate); at
+                     a 1+1 locus (no alternative) ``null_floor`` dominates, so a
+                     lone pair must beat the wrong-pair null to merge.
+    null_floor     : the wrong-pair (different-homolog) correlation baseline,
+                     calibrated from data (~null p90). Acts as a virtual
+                     competitor so incomplete loci are still held to the null.
+
+    Defaults are calibrated from the SRR33130342 2x2-locus null (p90~0.24,
+    p95~0.30): the margin/reciprocal comparison controls precision, so the
+    absolute floor is deliberately low and the null_floor guards lone pairs.
     """
     grid_bp: int = 10
     sigma_bp: float = 30.0
     max_lag_bp: int = 60
     min_overlap_bp: int = 1500
     min_nucs: int = 4
-    min_score: float = 0.5
+    min_score: float = 0.25
     min_margin: float = 0.05
+    null_floor: float = 0.24
 
 
 @dataclass
@@ -266,9 +277,12 @@ def assign_pairs(feats: Sequence[ReadFeat], params: PairParams) -> PairResult:
         if bj < 0:
             status[idx] = STATUS_NONE
             continue
-        # reciprocal check
+        # reciprocal check; the competitor is the stronger of the runner-up and
+        # the wrong-pair null floor, so lone (1+1) pairs must still beat the null.
         recip = best[bj][1] == idx
-        marg = min(bs - second[idx], best[bj][0] - second[bj])
+        comp_i = max(second[idx], params.null_floor)
+        comp_j = max(second[bj], params.null_floor)
+        marg = min(bs - comp_i, best[bj][0] - comp_j)
         if recip and bs >= params.min_score and marg >= params.min_margin:
             partner[idx] = bj
             score[idx] = bs

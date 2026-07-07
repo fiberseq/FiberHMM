@@ -153,8 +153,9 @@ Examples:
     p.add_argument('-i', '--input', required=True, help='Footprint-called DAF BAM (coordinate-sorted + indexed)')
     p.add_argument('-o', '--output', required=True, help='Output BAM (all reads, mate tags added)')
     p.add_argument('--pairs-tsv', default=None, help='Write resolved pairs to this TSV')
-    p.add_argument('--min-score', type=float, default=0.5, help='Min cross-correlation to accept a pair (default 0.5)')
-    p.add_argument('--min-margin', type=float, default=0.05, help='Min best-minus-second margin, both reads (default 0.05)')
+    p.add_argument('--min-score', type=float, default=0.25, help='Min cross-correlation floor to accept any pair (default 0.25)')
+    p.add_argument('--min-margin', type=float, default=0.05, help='Min best-minus-competitor margin, both reads (default 0.05)')
+    p.add_argument('--null-floor', type=float, default=0.24, help='Wrong-pair correlation baseline; virtual competitor for lone (1+1) pairs (default 0.24, ~data null p90)')
     p.add_argument('--min-overlap', type=int, default=1500, help='Min genomic overlap bp (default 1500)')
     p.add_argument('--min-nucs', type=int, default=4, help='Min nucleosome dyads within the overlap, each read (default 4)')
     p.add_argument('--sigma', type=float, default=30.0, help='Gaussian dyad width bp (default 30)')
@@ -172,6 +173,7 @@ Examples:
         grid_bp=args.grid, sigma_bp=args.sigma, max_lag_bp=args.max_lag,
         min_overlap_bp=args.min_overlap, min_nucs=args.min_nucs,
         min_score=args.min_score, min_margin=args.min_margin,
+        null_floor=args.null_floor,
     )
     run_pair(args.input, args.output, params, prob_threshold=args.prob_threshold,
              pairs_tsv=args.pairs_tsv, io_threads=args.io_threads)
