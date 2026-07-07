@@ -32,6 +32,7 @@ import pysam
 
 from fiberhmm.crossstrand.consensus import build_consensus
 from fiberhmm.crossstrand.pairing import FLAVOR_CT, read_flavor
+from fiberhmm.crossstrand.recall import attach_footprint_tags, recall_consensus_read
 
 _TAG_SOURCES = 'cs'
 _TAG_CORR = 'mc'
@@ -85,8 +86,16 @@ def _merged_bp(intervals):
     return total
 
 
-def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4):
+def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
+              recall=False, enzyme='ddda'):
     t0 = time.time()
+    model = model_k = None
+    if recall:
+        from fiberhmm.core.model_io import load_model_with_metadata
+        from fiberhmm.models import get_model_path
+        model, model_k, _mode = load_model_with_metadata(get_model_path(enzyme, tool='apply'))
+        print(f"merge-recall: loaded {enzyme} model (k={model_k}); "
+              f"re-calling footprints on both-strand consensus reads", file=sys.stderr)
     bam = pysam.AlignmentFile(in_bam, 'rb')
     header = bam.header
 
@@ -123,7 +132,13 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4)
                 n_build_fail += 1
                 continue
             corr = read.get_tag('mc') if read.has_tag('mc') else None
-            out.write(_make_consensus_segment(cons, header, tid, corr))
+            seg = _make_consensus_segment(cons, header, tid, corr)
+            if model is not None:
+                fp = recall_consensus_read(seg, model, model_k)
+                if fp is not None:
+                    deam_suffix = cons.ma.split(';', 1)[1]  # "deam+:...;deam-:..."
+                    attach_footprint_tags(seg, fp, deam_suffix)
+            out.write(seg)
             n_consensus += 1
             merged_names.add(ct_read.query_name)
             merged_names.add(ga_read.query_name)
@@ -206,6 +221,11 @@ Examples:
     p.add_argument('-o', '--output', required=True, help='Output consensus BAM (sorted + indexed)')
     p.add_argument('--pairs-only', action='store_true',
                    help='Emit only consensus reads (default: also pass through unmerged reads)')
+    p.add_argument('--recall', action='store_true',
+                   help='Re-call footprints on each both-strand consensus read (HMM '
+                        'layer over both strands; writes ns/nl/as/al + MA nuc./msp.). '
+                        'Reads the deam+/deam- regime and uses C and G targets jointly.')
+    p.add_argument('--enzyme', default='ddda', help='Model preset for --recall (default ddda)')
     p.add_argument('-p', '--prob-threshold', type=int, default=0,
                    help='Min ML prob for MM/ML dU calls (default 0)')
     p.add_argument('--io-threads', type=int, default=4, help='htslib compression threads (default 4)')
@@ -215,7 +235,8 @@ Examples:
         print(f"Error: input not found: {args.input}", file=sys.stderr)
         sys.exit(1)
     run_merge(args.input, args.output, prob_threshold=args.prob_threshold,
-              pairs_only=args.pairs_only, io_threads=args.io_threads)
+              pairs_only=args.pairs_only, io_threads=args.io_threads,
+              recall=args.recall, enzyme=args.enzyme)
 
 
 if __name__ == '__main__':
