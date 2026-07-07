@@ -764,7 +764,7 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
     elif mode in ('gpc', 'cpg'):
         return _encode_5mc_observations(
             sequence, mod_positions, edge_trim, context_size, mode,
-            non_target_code, unmethylated_offset,
+            is_reverse, non_target_code, unmethylated_offset,
         )
 
     else:
@@ -773,35 +773,45 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
 
 def _encode_5mc_observations(sequence: str, mod_positions: Set[int],
                              edge_trim: int, context_size: int, motif: str,
+                             is_reverse: bool,
                              non_target_code: int,
                              unmethylated_offset: int) -> np.ndarray:
     """Encode 5mC methylation footprinting at a dinucleotide motif.
 
-    ``motif='gpc'`` (M.CviPI, GpC) or ``'cpg'`` (M.SssI / M.SssI-class, CpG). Target
-    base is C; only C's inside the motif are informative (others become non-target).
-    5mC marks ACCESSIBLE DNA (same polarity as m6A — the accessible state simply has a
-    high emission probability, set by generate-probs from the +MTase control, so no
-    state inversion is needed here). GCG positions are both GpC and CpG and are masked
-    as ambiguous (standard dSMF practice). This targets C on the read strand only
-    (nanopore single-strand); the opposite-strand C appears as G and is not scored.
+    ``motif='gpc'`` (M.CviPI, GpC) or ``'cpg'`` (M.SssI-class, CpG). 5mC marks
+    ACCESSIBLE DNA (same polarity as m6A — the accessible state just has a high
+    emission probability, set from the +MTase control; no state inversion). GCG
+    positions are both GpC and CpG and are masked as ambiguous (standard dSMF).
+
+    NANOPORE single-strand handling: each read is one strand. For forward-aligned
+    reads the methylated cytosine sits on a SEQ ``C``; for REVERSE-aligned reads the
+    stored SEQ is the reverse-complement of the basecall, so the methylated cytosine
+    appears as a SEQ ``G`` (pysam reports it as base 'C' strand 1 at that position).
+    So reverse reads target ``G`` with the reverse-complemented motif and RC context,
+    recovering the basecalled-forward emission space (mirrors nanopore-fiber A->T).
     """
     seq_len = len(sequence)
     mod_mask = _mod_positions_mask(mod_positions, seq_len)
-    # C-centered context codes; non-C positions are already non_target_code.
+    # Reverse reads: methylated C is stored as G; use G-centered RC context and the
+    # RC image of the motif. Forward reads: C-centered forward context.
+    target = 'G' if is_reverse else 'C'
+    neighbor = 'C' if is_reverse else 'G'   # the partner base of the dinucleotide in SEQ
     context_codes = _encode_vectorized(
-        sequence, 'C', context_size, edge_trim, non_target_code, include_rc=False,
+        sequence, target, context_size, edge_trim, non_target_code, include_rc=is_reverse,
     )
     sb = np.frombuffer(sequence.upper().encode('ascii'), dtype=np.uint8)
-    is_C = sb == ord('C')
-    prev_G = np.zeros(seq_len, dtype=bool)
-    next_G = np.zeros(seq_len, dtype=bool)
+    is_target = sb == ord(target)
+    prev_nb = np.zeros(seq_len, dtype=bool)
+    next_nb = np.zeros(seq_len, dtype=bool)
     if seq_len > 1:
-        prev_G[1:] = sb[:-1] == ord('G')   # G immediately 5' of this position
-        next_G[:-1] = sb[1:] == ord('G')   # G immediately 3' of this position
+        prev_nb[1:] = sb[:-1] == ord(neighbor)   # neighbor immediately 5'
+        next_nb[:-1] = sb[1:] == ord(neighbor)   # neighbor immediately 3'
+    # Forward: GpC = C with G before; CpG = C with G after. Reverse is the RC image:
+    # GpC -> G with C after; CpG -> G with C before. GCG (both neighbors) masked.
     if motif == 'gpc':
-        motif_ok = is_C & prev_G & ~next_G   # GpC, excluding GCG
+        motif_ok = is_target & (next_nb if is_reverse else prev_nb) & ~(prev_nb if is_reverse else next_nb)
     elif motif == 'cpg':
-        motif_ok = is_C & next_G & ~prev_G   # CpG, excluding GCG
+        motif_ok = is_target & (prev_nb if is_reverse else next_nb) & ~(next_nb if is_reverse else prev_nb)
     else:
         raise ValueError(f"Unknown 5mC motif: {motif!r}")
     context_codes[~motif_ok] = non_target_code

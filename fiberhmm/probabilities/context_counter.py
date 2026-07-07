@@ -191,14 +191,23 @@ class ContextCounter:
                 self.add_position(sequence, i, is_mod)
 
     def process_read_5mc(self, sequence: str, mod_positions: Set[int],
-                         motif: str, edge_trim: int = 10):
+                         motif: str, edge_trim: int = 10, is_reverse: bool = False):
         """Count C positions restricted to a dinucleotide motif for 5mC footprinting.
 
         ``motif='gpc'`` (M.CviPI, GpC) or ``'cpg'`` (M.SssI, CpG). Only C's inside the
         motif are counted; GCG positions (both GpC and CpG) are masked as ambiguous
-        (standard dSMF practice). Requires ``center_base == 'C'``. Single-strand
-        (nanopore) — the opposite-strand C appears as G and is not counted.
+        (standard dSMF practice). Requires ``center_base == 'C'``.
+
+        NANOPORE single-strand: reverse-aligned reads store SEQ as the reverse-
+        complement of the basecall, so the methylated cytosine appears as a SEQ ``G``.
+        We reverse-complement such reads into the basecalled-forward frame (methylated
+        C back on a ``C``) and remap mod positions, then count uniformly — matching the
+        encoder's G-target/RC-context handling and pooling both strands' contexts.
         """
+        if is_reverse:
+            L = len(sequence)
+            sequence = reverse_complement(sequence)
+            mod_positions = {L - 1 - p for p in mod_positions if 0 <= p < L}
         seq_upper = sequence.upper()
         seq_len = len(sequence)
         lo = max(edge_trim, 1)

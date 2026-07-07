@@ -216,7 +216,8 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 # 5mC methylation footprinting: count only C's in the GpC/CpG motif
                 if 'C' in counters:
                     counters['C'].process_read_5mc(
-                        read.query_sequence, mod_positions, mode, args.edge_trim
+                        read.query_sequence, mod_positions, mode, args.edge_trim,
+                        is_reverse=read.is_reverse,
                     )
             elif target_base in counters:
                 counters[target_base].process_read(
