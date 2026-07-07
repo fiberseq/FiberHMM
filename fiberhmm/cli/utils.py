@@ -425,6 +425,8 @@ def _process_target_bam(bam_path, mode, max_context, args):
         target_bases = ['A']
     elif mode == 'daf':
         target_bases = ['C', 'G']
+    elif mode in ('gpc', 'cpg'):
+        target_bases = ['C']  # 5mC, motif-restricted in process_read_5mc
     else:
         target_bases = ['A']
 
@@ -471,7 +473,12 @@ def _process_target_bam(bam_path, mode, max_context, args):
                 read.query_sequence, mod_positions, mode
             )
 
-            if target_base in counters:
+            if mode in ('gpc', 'cpg'):
+                if 'C' in counters:
+                    counters['C'].process_read_5mc(
+                        read.query_sequence, mod_positions, mode, args.edge_trim
+                    )
+            elif target_base in counters:
                 counters[target_base].process_read(
                     read.query_sequence, mod_positions, args.edge_trim
                 )
