@@ -94,3 +94,9 @@ def pair_main():
     _notify()
     from fiberhmm.cli.pair import main
     return main()
+
+
+def merge_main():
+    _notify()
+    from fiberhmm.cli.merge import main
+    return main()
