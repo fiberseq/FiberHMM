@@ -86,6 +86,8 @@ ENZYME_PRESETS = {
     # EcoGII deposits the same m6A mark as Hia5; the ecogii model carries EcoGII-calibrated
     # emissions, so the LLR needs no uplift. Same min_llr as Hia5 (same chemistry).
     'ecogii': dict(min_llr=5.0, emission_uplift=1.0),
+    # M.SssI CpG 5mC footprinting (nanopore); emissions calibrated from naked controls.
+    'sssi':   dict(min_llr=5.0, emission_uplift=1.0),
     'dddb':   dict(min_llr=4.0, emission_uplift=1.0),
     'ddda':   dict(min_llr=5.0, emission_uplift=1.0),
 }
