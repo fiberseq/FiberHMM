@@ -399,7 +399,8 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                 # pure tag-presence checks — nucleosome, msp, tf, m6a, m5c, deam
                 # all need query->ref mapping.
                 need_mapping = any(t in extract_types for t in
-                                   ('nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam'))
+                                   ('nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam',
+                                    'bothstrand'))
 
                 for read in read_iter:
                     if read.is_unmapped or read.is_secondary or read.is_supplementary:
@@ -457,6 +458,12 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                             read, bed_outs['deam'], query_to_ref,
                             block_scores=block_scores,
                             prob_threshold=prob_threshold)
+
+                    if 'bothstrand' in extract_types:
+                        if query_to_ref is None:
+                            query_to_ref = _build_query_to_ref(read)
+                        n_features['bothstrand'] += _extract_both_strand(
+                            read, bed_outs['bothstrand'], query_to_ref)
 
         return (temp_bed_paths, n_reads, n_features)
 
@@ -1118,6 +1125,75 @@ def _build_sort_cmd(in_path: str, out_path: str, tmp_dir: Optional[str],
     return cmd, env
 
 
+def _interval_intersection(a_ivals, b_ivals):
+    """Intersection of two lists of (start, end) query intervals, merged."""
+    hits = []
+    for a0, a1 in a_ivals:
+        for b0, b1 in b_ivals:
+            lo, hi = max(a0, b0), min(a1, b1)
+            if hi > lo:
+                hits.append((lo, hi))
+    hits.sort()
+    merged = []
+    for s, e in hits:
+        if merged and s <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def _extract_both_strand(read, bed_out, query_to_ref=None) -> int:
+    """BED12 of the both-strand region per read: ``deam+ ∩ deam-``.
+
+    These are the intervals where a cross-strand consensus read has deamination
+    coverage on BOTH strands -- so every C *and* every G is informative and the
+    footprint calls there are the highest-confidence ("extra-good"). FiberBrowser
+    can toggle this as an overlay. Reads without both a ``deam+`` and a ``deam-``
+    MA track (i.e. non-consensus reads) contribute nothing.
+    """
+    if query_to_ref is None:
+        query_to_ref = _build_query_to_ref(read)
+    try:
+        parsed = parse_ma_tag(read.get_tag('MA'))
+    except (KeyError, ValueError):
+        return 0
+    is_reverse = bool(read.is_reverse)
+    read_length = int(parsed['read_length'])
+    plus, minus = [], []
+    for name, strand, _qspec, intervals in parsed['raw_types']:
+        if name != 'deam':
+            continue
+        for s, length in intervals:
+            if is_reverse:
+                s, length = flip_interval_frame(int(s), int(length), read_length)
+            iv = (int(s), int(s) + int(length))
+            if strand == '+':
+                plus.append(iv)
+            elif strand == '-':
+                minus.append(iv)
+    if not plus or not minus:
+        return 0
+    both = _interval_intersection(plus, minus)
+    blocks = []
+    for qs, qe in both:
+        ref_start = _q2r_lookup(query_to_ref, qs)
+        ref_end = _q2r_lookup(query_to_ref, qe - 1)
+        if ref_start is None or ref_end is None:
+            continue
+        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
+        blocks.append((ref_start, ref_end))
+    if not blocks:
+        return 0
+    blocks.sort()
+    chrom_start, chrom_end = blocks[0][0], blocks[-1][1]
+    strand = '-' if is_reverse else '+'
+    row = _bed12_row(read.reference_name, chrom_start, chrom_end,
+                     read.query_name, 1000, strand, blocks)
+    bed_out.write(row + "\n")
+    return len(blocks)
+
+
 def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           n_cores: int = 1, region_size: int = 10_000_000,
                           min_mapq: int = 0, prob_threshold: int = 125,
@@ -1475,6 +1551,7 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
         predicted['msp'] = 'as/al'
     if diag['has_MA_AQ']:
         predicted['tf'] = 'MA/AQ tf. annotations'
+        predicted['bothstrand'] = 'MA deam+/deam- (consensus reads)'
     if diag['has_MM'] and any('a' in s.lower() for s in diag['mm_subtypes']):
         predicted['m6a'] = 'MM/ML (A+a)'
     if diag['has_MM'] and any('+m' in s.lower() or '-m' in s.lower()
@@ -1576,6 +1653,13 @@ Examples:
                              '(3) MD-tag ref mismatches as a fallback for raw DAF BAMs. '
                              'First non-empty source wins per read. blockMod: '
                              '0 = R/GA-dea, 1 = Y/CT-dea, matching FiberBrowser flavor codes.')
+    parser.add_argument('--both-strand', '--bothstrand', dest='both_strand',
+                        action='store_true',
+                        help='Extract the both-strand region (deam+ ∩ deam-) of '
+                             'cross-strand consensus reads as a BED12 overlay -- '
+                             'where every C and G is informative and footprint '
+                             'calls are highest-confidence ("extra-good"). '
+                             'Toggle it as an overlay in FiberBrowser.')
     parser.add_argument('--all', action='store_true', help='Extract all tag types (default if none specified)')
 
     # Output options (default: bigbed)
@@ -1640,9 +1724,9 @@ Examples:
     # Determine what to extract (default: all)
     extract_types = []
     any_selected = (args.nucleosome or args.msp or args.tf or
-                    args.m6a or args.m5c or args.deam)
+                    args.m6a or args.m5c or args.deam or args.both_strand)
     if args.all or not any_selected:
-        extract_types = ['nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam']
+        extract_types = ['nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam', 'bothstrand']
     else:
         if args.nucleosome:
             extract_types.append('nucleosome')
@@ -1656,6 +1740,8 @@ Examples:
             extract_types.append('m5c')
         if args.deam:
             extract_types.append('deam')
+        if args.both_strand:
+            extract_types.append('bothstrand')
 
     # Default to bigbed unless --bed-only specified
     make_bigbed = not args.bed_only
