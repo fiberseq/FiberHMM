@@ -128,6 +128,74 @@ def recall_consensus_read(read, model, context_size: int, edge_trim: int = 10,
         nuc_min_size=nuc_min_size)
 
 
+class RecallContext:
+    """Loaded models/tables for both-strand recall (build once, reuse per read)."""
+
+    def __init__(self, enzyme: str = 'ddda'):
+        from fiberhmm.core.model_io import load_model_with_metadata
+        from fiberhmm.inference.nuc_recaller import load_nuc_profile
+        from fiberhmm.inference.tf_recaller import build_llr_tables
+        from fiberhmm.models import _bundled_model_path, get_model_path
+        self.apply_model, self.k, _ = load_model_with_metadata(get_model_path(enzyme, tool='apply'))
+        recall_model, _, _ = load_model_with_metadata(get_model_path(enzyme, tool='recall'))
+        self.llr_hit, self.llr_miss = build_llr_tables(recall_model)
+        self.nuc_profile = (load_nuc_profile(_bundled_model_path('ddda_nuc_profile.json'))
+                            if enzyme == 'ddda' else None)
+
+
+def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
+                          min_llr: float = 5.0, min_opps: int = 3,
+                          unify_threshold: int = 90, split_min_llr: float = 4.0,
+                          split_min_opps: int = 3, nuc_min_size: int = 85,
+                          msp_min_size: int = 0, phase_nrl: int = 196) -> bool:
+    """Full both-strand recall (HMM + nucleosome recaller + TF recaller) on one
+    consensus read, writing MA/AQ + legacy tags in place. Returns False if the
+    read is not a both-strand consensus.
+
+    Reuses the canonical fused recall (``build_fused_recall_result``) on the
+    both-strand observation, so the LLR accumulates over both strands' informative
+    positions (C via the C-table, G reverse-complemented into it), with
+    single-strand-flank bases of the absent strand left non-target.
+    """
+    from fiberhmm.inference.engine import predict_footprints_and_msps
+    from fiberhmm.inference.fused_stages import build_fused_recall_result
+    from fiberhmm.inference.tf_recaller import write_ma_tags
+
+    seq = seg.query_sequence
+    masks = deam_regime_masks(seg)
+    if seq is None or masks is None:
+        return False
+    plus_mask, minus_mask = masks
+    conv, ct_mods, ga_mods = decode_ry_consensus(seq)
+    obs = encode_daf_both_strand(conv, ct_mods, ga_mods, plus_mask, minus_mask,
+                                 edge_trim, ctx.k)
+    if len(obs) == 0:
+        return False
+    # preserve the strand-regime (deam+/deam-) to re-append after write_ma_tags
+    deam_parts = [c for c in seg.get_tag('MA').split(';')[1:] if c.startswith('deam')]
+
+    fp = predict_footprints_and_msps(ctx.apply_model, obs, msp_min_size=msp_min_size,
+                                     with_scores=False, nuc_min_size=nuc_min_size)
+    apply_result = {'ns': fp['footprint_starts'], 'nl': fp['footprint_sizes'],
+                    'as': fp['msp_starts'], 'al': fp['msp_sizes'], 'encoded': obs}
+    res = build_fused_recall_result(
+        {'query_sequence': conv}, apply_result, ctx.llr_hit, ctx.llr_miss,
+        min_llr, min_opps, unify_threshold, with_scores=True, recall_nucs=True,
+        split_min_llr=split_min_llr, split_min_opps=split_min_opps,
+        nuc_min_size=nuc_min_size, msp_min_size=msp_min_size, phase_nrl=phase_nrl,
+        nuc_profile=ctx.nuc_profile)
+
+    kept_nucs = list(zip([int(x) for x in res['ns']], [int(x) for x in res['nl']]))
+    msps = list(zip([int(x) for x in res['as']], [int(x) for x in res['al']]))
+    write_ma_tags(seg, seg.query_length, res['tf_calls'], kept_nucs, msps,
+                  nq_for_kept_nucs=res.get('nq_for_kept_nucs'),
+                  nuc_el_for_kept=res.get('nuc_el_for_kept'),
+                  nuc_er_for_kept=res.get('nuc_er_for_kept'))
+    if deam_parts:  # write_ma_tags rebuilt MA; restore the strand-regime tracks
+        seg.set_tag('MA', seg.get_tag('MA') + ';' + ';'.join(deam_parts), value_type='Z')
+    return True
+
+
 def attach_footprint_tags(seg, fp, deam_ma_suffix: str) -> None:
     """Write HMM footprint calls onto a consensus segment.
 

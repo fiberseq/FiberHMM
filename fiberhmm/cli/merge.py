@@ -32,7 +32,7 @@ import pysam
 
 from fiberhmm.crossstrand.consensus import build_consensus
 from fiberhmm.crossstrand.pairing import FLAVOR_CT, read_flavor
-from fiberhmm.crossstrand.recall import attach_footprint_tags, recall_consensus_read
+from fiberhmm.crossstrand.recall import RecallContext, recall_consensus_full
 
 _TAG_SOURCES = 'cs'
 _TAG_CORR = 'mc'
@@ -89,13 +89,12 @@ def _merged_bp(intervals):
 def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
               recall=False, enzyme='ddda'):
     t0 = time.time()
-    model = model_k = None
+    ctx = None
     if recall:
-        from fiberhmm.core.model_io import load_model_with_metadata
-        from fiberhmm.models import get_model_path
-        model, model_k, _mode = load_model_with_metadata(get_model_path(enzyme, tool='apply'))
-        print(f"merge-recall: loaded {enzyme} model (k={model_k}); "
-              f"re-calling footprints on both-strand consensus reads", file=sys.stderr)
+        ctx = RecallContext(enzyme)
+        print(f"merge-recall: loaded {enzyme} apply+recall models (k={ctx.k}); "
+              f"re-calling footprints (HMM + nuc + TF recallers) on both-strand "
+              f"consensus reads", file=sys.stderr)
     bam = pysam.AlignmentFile(in_bam, 'rb')
     header = bam.header
 
@@ -133,11 +132,8 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
                 continue
             corr = read.get_tag('mc') if read.has_tag('mc') else None
             seg = _make_consensus_segment(cons, header, tid, corr)
-            if model is not None:
-                fp = recall_consensus_read(seg, model, model_k)
-                if fp is not None:
-                    deam_suffix = cons.ma.split(';', 1)[1]  # "deam+:...;deam-:..."
-                    attach_footprint_tags(seg, fp, deam_suffix)
+            if ctx is not None:
+                recall_consensus_full(seg, ctx)
             out.write(seg)
             n_consensus += 1
             merged_names.add(ct_read.query_name)
