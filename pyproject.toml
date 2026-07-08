@@ -82,6 +82,7 @@ fiberhmm-run = "fiberhmm.cli._entry:run_main"
 fiberhmm-dedup = "fiberhmm.cli._entry:dedup_main"
 fiberhmm-pair = "fiberhmm.cli._entry:pair_main"
 fiberhmm-merge = "fiberhmm.cli._entry:merge_main"
+fiberhmm-crossstrand = "fiberhmm.cli._entry:crossstrand_main"
 
 # Top-level scripts kept for backward compatibility
 [tool.setuptools]

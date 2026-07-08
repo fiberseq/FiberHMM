@@ -100,3 +100,9 @@ def merge_main():
     _notify()
     from fiberhmm.cli.merge import main
     return main()
+
+
+def crossstrand_main():
+    _notify()
+    from fiberhmm.cli.crossstrand import main
+    return main()

@@ -41,6 +41,51 @@ def test_both_strand_encoder_regime_masking():
     assert enc[36] != fill       # G in both: informative
 
 
+def test_both_strand_hit_miss_and_swap():
+    # Deaminated targets -> hit codes; non-deaminated targets -> miss codes; and
+    # the merged obs equals each strand's own production encoding in its region.
+    from fiberhmm.core.bam_reader import _encode_daf_observations
+    n_codes = ContextEncoder.get_n_codes(3)
+    non_target, unmeth = n_codes, n_codes + 1
+    # long enough that interior C/G have valid 7-mer context past edge_trim
+    conv = ('ACGTACGT' * 8)             # regular C's and G's throughout
+    L = len(conv)
+    both = np.ones(L, dtype=bool)       # whole read is both-strand
+    ct = {i for i, b in enumerate(conv) if b == 'C' and 12 <= i <= 20}  # some C's deaminated
+    ga = {i for i, b in enumerate(conv) if b == 'G' and 30 <= i <= 40}  # some G's deaminated
+    conv_d = list(conv)
+    for i in ct:
+        conv_d[i] = 'T'                 # deaminated C shows as T
+    for i in ga:
+        conv_d[i] = 'A'                 # deaminated G shows as A
+    conv_d = ''.join(conv_d)
+
+    enc = encode_daf_both_strand(conv_d, ct, ga, both, both, edge_trim=10, context_size=3)
+    plus_full = _encode_daf_observations(conv_d, ct, 10, '+', 3, non_target, unmeth)
+    minus_full = _encode_daf_observations(conv_d, ga, 10, '-', 3, non_target, unmeth)
+
+    def is_hit(c):
+        return 0 <= c < n_codes
+
+    def is_miss(c):
+        return unmeth <= c < unmeth + n_codes
+
+    # swap: merged == + encoding at C-origin, == - encoding at G-origin (interior)
+    for i in range(15, L - 15):
+        b = conv[i]
+        if b == 'C':
+            assert enc[i] == plus_full[i]
+        elif b == 'G':
+            assert enc[i] == minus_full[i]
+    # every interior deaminated C/G that is scorable is a hit; non-deam target is a miss
+    for i in ct:
+        if 12 < i < L - 12 and is_hit(plus_full[i]):
+            assert is_hit(enc[i])
+    for i in range(15, L - 15):
+        if conv[i] == 'C' and i not in ct and is_miss(plus_full[i]):
+            assert is_miss(enc[i])
+
+
 def test_both_strand_doubles_informative_density_in_core():
     # A stretch of alternating C/G: in a both-strand region every C and G is
     # informative; in a C-only region only the C's are.
