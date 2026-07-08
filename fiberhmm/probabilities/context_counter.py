@@ -365,15 +365,23 @@ class ContextCounter:
 
             self.total_positions += 1
 
-    def get_probabilities(self, context_size: int = 3) -> pd.DataFrame:
+    def get_probabilities(self, context_size: int = 3,
+                          encode_by_code: bool = False) -> pd.DataFrame:
         """
         Get probability table for a specific context size.
 
         Args:
             context_size: Bases on each side (3 = 7-mer hexamer)
+            encode_by_code: If False (default, legacy) the ``encode`` column is a
+                sequential index over sorted contexts — this equals the apply-time
+                base-4 hexamer code ONLY when coverage is dense (all contexts present,
+                e.g. m6A/daf). If True, ``encode`` is the actual base-4 code from
+                ContextEncoder (center = ``self.center_base``, no RC), which is REQUIRED
+                for sparse motif modes (gpc/cpg) where only GpC/CpG contexts appear and
+                sequential numbering would misalign with the encoder.
 
         Returns:
-            DataFrame with columns: context, hit, nohit, ratio
+            DataFrame with columns: context, hit, nohit, ratio, encode
         """
         if context_size > self.max_context:
             raise ValueError(f"Requested context size {context_size} > max {self.max_context}")
@@ -405,11 +413,32 @@ class ContextCounter:
         df = pd.DataFrame(rows)
         if len(df) > 0:
             df = df.sort_values('context').reset_index(drop=True)
-            df['encode'] = range(len(df))
+            if encode_by_code:
+                # Assign the code the APPLY-TIME encoder produces for each context, by
+                # running that exact function (_encode_vectorized) on the context
+                # string and reading the center-position code. This guarantees the
+                # emission table lines up with apply-time observations. Required for
+                # sparse motif modes (gpc/cpg); ContextEncoder.get_lookup uses a
+                # DIFFERENT scheme and does not match the encoder.
+                from fiberhmm.core.bam_reader import _encode_vectorized
+                nc = 4 ** (2 * context_size)
+                k = context_size
+
+                def _code(ctx):
+                    codes = _encode_vectorized(ctx, self.center_base, k, 0, nc,
+                                               include_rc=False)
+                    return int(codes[k]) if len(codes) > k else nc
+
+                df['encode'] = df['context'].map(_code)
+                df = df[df['encode'] < nc].reset_index(drop=True)
+                df['encode'] = df['encode'].astype(int)
+            else:
+                df['encode'] = range(len(df))
 
         return df
 
-    def get_encoding_table(self, context_size: int = 3, fill_missing: bool = False) -> Tuple[Dict[str, int], pd.DataFrame]:
+    def get_encoding_table(self, context_size: int = 3, fill_missing: bool = False,
+                           encode_by_code: bool = False) -> Tuple[Dict[str, int], pd.DataFrame]:
         """
         Get encoding lookup table and probabilities for a context size.
 
@@ -421,7 +450,7 @@ class ContextCounter:
         Returns:
             (context_to_code dict, probability DataFrame with 'encode' column)
         """
-        probs = self.get_probabilities(context_size)
+        probs = self.get_probabilities(context_size, encode_by_code=encode_by_code)
 
         # Handle empty DataFrame
         if len(probs) == 0:
@@ -451,6 +480,12 @@ class ContextCounter:
             if missing:
                 probs = pd.concat([probs, pd.DataFrame(missing)], ignore_index=True)
 
+            probs = probs.sort_values('encode').reset_index(drop=True)
+        elif encode_by_code:
+            # Keep the true base-4 codes assigned by get_probabilities (they match the
+            # apply-time encoder). Do NOT re-index sequentially, which would misalign
+            # sparse motif modes (gpc/cpg).
+            context_to_code = dict(zip(probs['context'], probs['encode']))
             probs = probs.sort_values('encode').reset_index(drop=True)
         else:
             # Fast path: only observed contexts, encode alphabetically

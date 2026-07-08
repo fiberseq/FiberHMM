@@ -428,14 +428,14 @@ def main():
             print(f"\n  Generating TSV files for k={min(args.context_sizes)} to k={max(args.context_sizes)}...")
         for ctx_size in args.context_sizes:
             # Accessible probabilities
-            _, acc_probs = acc.get_encoding_table(ctx_size)
+            _, acc_probs = acc.get_encoding_table(ctx_size, encode_by_code=(args.mode in ('gpc','cpg')))
             acc_tsv = os.path.join(tables_dir, f"{base_name}_accessible_{base}_k{ctx_size}.tsv")
             acc_probs[['encode', 'context', 'hit', 'nohit', 'ratio']].to_csv(
                 acc_tsv, sep='\t', index=False
             )
 
             # Inaccessible probabilities
-            _, inacc_probs = inacc.get_encoding_table(ctx_size)
+            _, inacc_probs = inacc.get_encoding_table(ctx_size, encode_by_code=(args.mode in ('gpc','cpg')))
             inacc_tsv = os.path.join(tables_dir, f"{base_name}_inaccessible_{base}_k{ctx_size}.tsv")
             inacc_probs[['encode', 'context', 'hit', 'nohit', 'ratio']].to_csv(
                 inacc_tsv, sep='\t', index=False
@@ -456,8 +456,8 @@ def main():
                inaccessible_counters[base].total_positions == 0:
                 continue
 
-            _, acc_probs = accessible_counters[base].get_encoding_table(ctx_size)
-            _, inacc_probs = inaccessible_counters[base].get_encoding_table(ctx_size)
+            _, acc_probs = accessible_counters[base].get_encoding_table(ctx_size, encode_by_code=(args.mode in ('gpc','cpg')))
+            _, inacc_probs = inaccessible_counters[base].get_encoding_table(ctx_size, encode_by_code=(args.mode in ('gpc','cpg')))
 
             # Skip if both are empty
             if len(acc_probs) == 0 and len(inacc_probs) == 0:

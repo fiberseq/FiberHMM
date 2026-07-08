@@ -644,7 +644,8 @@ def cmd_transfer(args):
         regression_data_k = {}
 
         for base in target_bases:
-            target_rates = target_counters[base].get_probabilities(k)
+            target_rates = target_counters[base].get_probabilities(
+                k, encode_by_code=(args.mode in ('gpc', 'cpg')))
 
             if accessibility_priors_df is not None:
                 center_idx = k

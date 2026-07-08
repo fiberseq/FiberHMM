@@ -931,6 +931,19 @@ def main():
             print(f"  Check that context_size matches (k={args.context_size})")
             sys.exit(1)
 
+        # Align the new emissions to the base model's state convention. The base
+        # model's transitions/startprob assign a specific row to the accessible
+        # (high-modification) state; make_emission_probs always returns accessible in
+        # row 0. If the base model's accessible state is row 1 (e.g. hia5_nanopore,
+        # whose canonical state 0 is the footprint), swap the new emission rows so
+        # emissions and inherited transitions stay consistent (otherwise the states
+        # invert and accessible DNA gets called as footprint).
+        base_acc = int(np.argmax(base_model.emissionprob_[:, :n_codes].mean(axis=1)))
+        new_acc = int(np.argmax(emission_probs[:, :n_codes].mean(axis=1)))
+        if base_acc != new_acc:
+            emission_probs = emission_probs[::-1].copy()
+            print(f"  Swapped emission rows to match base accessible state (row {base_acc})")
+
         # Create new model with base model's transitions and new emissions
         best_model = FiberHMM(n_states=2)
         best_model.startprob_ = base_model.startprob_.copy()
