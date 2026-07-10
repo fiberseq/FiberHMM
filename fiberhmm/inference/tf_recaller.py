@@ -62,6 +62,7 @@ from fiberhmm.core.bam_reader import (
     parse_mm_tag_query_positions,
 )
 from fiberhmm.io.ma_tags import (
+    DDDA_MCG_HEMI_FEATURE,
     DDDA_MCG_FEATURE,
     ambiguity_to_edge,
     flip_interval_frame,
@@ -654,7 +655,9 @@ def write_ma_tags(read, read_length: int,
             group_names = old_names[name_offset:name_offset + annotation_count]
             group_names.extend([''] * (annotation_count - len(group_names)))
             name_offset += annotation_count
-            if ma_group_feature(group) == DDDA_MCG_FEATURE:
+            if ma_group_feature(group) in {
+                DDDA_MCG_FEATURE, DDDA_MCG_HEMI_FEATURE,
+            }:
                 preserved_m5c.append(group)
                 preserved_m5c_names.extend(group_names)
     n_preserved_m5c = sum(

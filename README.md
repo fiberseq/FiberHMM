@@ -30,7 +30,9 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
   deamination-pattern fingerprint, where coordinate dedup can't work.
 - **DddA-inferred mCG recovery** — `fiberhmm-tag-m5c` calls conservative, molecule-specific
   methylated CpG runs even though amplification removes the native 5mC channel;
-  DddA TF recall then corrects CpG emissions inside those spans.
+  DddA TF recall then corrects CpG emissions inside those spans. Merged
+  cross-strand reads carrying `deam+`/`deam-` coverage are called jointly for
+  strand-resolved mCG and conservative hemimethylated blocks.
 - **No genome context files** — hexamer context computed from read sequences.
 - **Spec-compliant tags** — `ns`/`nl`/`as`/`al` legacy tags plus `MA`/`AQ`
   [Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec)

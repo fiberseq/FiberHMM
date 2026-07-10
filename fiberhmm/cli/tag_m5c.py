@@ -94,7 +94,9 @@ def parse_args(argv=None):
         prog="fiberhmm-tag-m5c",
         description=("Opt-in genome-wide DddA DAF-seq caller: infer "
                      "molecule-specific mCG state along ordered CpGs and add "
-                     "confident runs as ddda_mcg MA spans."),
+                     "confident runs as ddda_mcg MA spans. Cross-strand "
+                     "consensus reads carrying MA deam+/deam- coverage are "
+                     "called jointly for strand-resolved mCG and hemi states."),
     )
     add_version_args(parser)
     parser.add_argument("-i", "--input", required=True,
@@ -166,6 +168,7 @@ def main(argv=None):
         "VN": getattr(fiberhmm, "__version__", "unknown"),
         "CL": " ".join(sys.argv),
         "DS": ("DddA molecule-specific mCG HMM; ddda_mcg_frame=molecular; "
+               "cross_strand=auto; paired_states=UU,UM,MU,MM; "
                f"run_bp={args.run_bp} posterior={args.posterior} "
                f"baseline_radius={args.baseline_radius} "
                f"min_other={args.min_other} min_run_cpg={args.min_run_cpg} "

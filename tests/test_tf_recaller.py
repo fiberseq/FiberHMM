@@ -418,6 +418,20 @@ def test_write_ma_tags_preserves_existing_ddda_mcg_group():
     assert read.get_tag('MA') == '200;nuc.Q:1-100;ddda_mcg.:21-50'
 
 
+def test_write_ma_tags_preserves_stranded_mcg_and_hemi_groups():
+    read = _FakeRead()
+    read.set_tag(
+        'MA',
+        '200;ddda_mcg+:21-50;ddda_mcg-:31-40;ddda_mcg_hemi+:41-20',
+        value_type='Z',
+    )
+    write_ma_tags(read, 200, tf_calls=[], kept_nucs=[(0, 100)], msps=[])
+    assert read.get_tag('MA') == (
+        '200;nuc.Q:1-100;ddda_mcg+:21-50;ddda_mcg-:31-40;'
+        'ddda_mcg_hemi+:41-20'
+    )
+
+
 def test_write_ma_tags_keeps_ddda_mcg_as_only_unqualified_annotation():
     read = _FakeRead()
     read.set_tag('MA', '200;ddda_mcg.:21-50', value_type='Z')

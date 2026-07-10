@@ -48,7 +48,7 @@ tags carrying TF/Pol II footprints with full LLR scoring:
 
 | Tag | Type | Description |
 |-----|------|-------------|
-| `MA` | Z | Annotation string: `<readlen>;nuc.Q:...;msp.:...;tf.QQQ:...;ddda_mcg.:...` (1-based coords per spec) |
+| `MA` | Z | Annotation string: `<readlen>;nuc.Q:...;msp.:...;tf.QQQ:...;ddda_mcg.:...` (plus the strand-resolved DddA groups below; 1-based coords per spec) |
 | `AQ` | B,C | Quality bytes interleaved per annotation: `nq` for nucs; `tq, el, er` for TFs (no bytes for MSPs) |
 
 Legacy `ns`/`nl`/`as`/`al` are rewritten to reflect the unified call set (v2
@@ -89,6 +89,8 @@ Coordinates are 1-based (per the spec); internal storage stays 0-based.
 | `msp.` | none | Methylase-sensitive patches (v2 MSPs unchanged) |
 | `tf.QQQ` | `tq, el, er` | Recaller TF calls (see below). |
 | `ddda_mcg.` | none | Conservative molecule-specific methylated-CpG runs inferred from DddA deamination contrast. |
+| `ddda_mcg+` / `ddda_mcg-` | none | Methylated runs on the CT/reference-C or GA/reference-G channel of a merged cross-strand DAF molecule. |
+| `ddda_mcg_hemi+` / `ddda_mcg_hemi-` | none | High-confidence hemimethylated runs where both channels are observed; the qualifier identifies the methylated channel. |
 
 The recalled nucleosome track from the nucleosome recaller is `nuc.QQQ` =
 `(nq, el, er)` — same byte layout as `tf.QQQ`.
@@ -102,6 +104,14 @@ to DddB DAF-seq. It is an experimental opt-in for genome-wide DddA data, not a
 default stage of the targeted DddA workflow. Enable the integrated path with
 `fiberhmm-call --enzyme ddda --ddda-mcg --reference ref.fa`; without that flag,
 the ordinary DddA call is unchanged.
+
+Merged cross-strand DAF reads declare CT and GA source coverage with `deam+`
+and `deam-` MA groups. `fiberhmm-tag-m5c` detects these groups automatically,
+keeps the two non-CpG baselines separate, and runs an equal-odds four-state HMM
+(`UU`, `UM`, `MU`, `MM`) over canonical CpG dyads. Strand-resolved mCG may be
+called wherever its source channel is observed; `ddda_mcg_hemi+/-` is emitted
+only across multiple CpGs with scored evidence from both channels. BAM reverse
+alignment flags are not used as chemical-strand identity.
 
 ## Quality bytes: tq / el / er
 

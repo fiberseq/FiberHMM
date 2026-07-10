@@ -9,19 +9,24 @@ from fiberhmm.daf.m5c import (
     U_UNMETH,
     M5CDomain,
     M5CObservation,
+    add_paired_m5c_ma_tags,
     add_m5c_ma_tag,
     build_ddda_mcg_observation_payload,
     call_read_m5c,
+    call_paired_read_m5c,
     call_domains,
     deamination_probability,
     distance_forward_backward,
     distance_transition,
     collect_read_observations,
+    collect_paired_read_observations,
     estimate_five_prime_factors,
     make_windows,
     ma_intervals,
+    ma_strand_intervals,
     observations_from_ddda_mcg_payload,
     project_domains_to_query,
+    symmetric_distance_transition,
     write_bed,
 )
 from fiberhmm.inference.tf_recaller import (
@@ -357,9 +362,68 @@ def test_ma_interval_parser_accepts_legacy_plus_strand_group():
     assert ma_intervals(Read(), "nuc") == [(10, 30)]
 
 
+def test_ma_interval_parser_keeps_cross_strand_coverage_separate():
+    class Read:
+        query_sequence = "A" * 100
+        query_length = 100
+        is_reverse = False
+
+        def has_tag(self, tag):
+            return tag == "MA"
+
+        def get_tag(self, tag):
+            return "100;deam+:1-80;deam-:21-80"
+
+    assert ma_strand_intervals(Read(), "deam") == {
+        "+": [(0, 80)], "-": [(20, 100)],
+    }
+
+
 def test_shared_ma_parser_exposes_ddda_mcg_intervals():
     parsed = parse_ma_tag("100;nuc.Q:1-10;ddda_mcg.:21-5,31-6")
     assert parsed["ddda_mcg"] == [(20, 5), (30, 6)]
+
+
+def test_shared_ma_parser_exposes_stranded_mcg_and_hemi_intervals():
+    parsed = parse_ma_tag(
+        "100;ddda_mcg+:11-20;ddda_mcg-:31-10;"
+        "ddda_mcg_hemi+:51-5;ddda_mcg_hemi-:61-6"
+    )
+    assert parsed["ddda_mcg"] == [(10, 20), (30, 10)]
+    assert parsed["ddda_mcg_hemi"] == [(50, 5), (60, 6)]
+
+
+def test_paired_m5c_tag_preserves_deam_groups_and_encodes_hemi_direction():
+    class Read:
+        query_sequence = "A" * 100
+        query_length = 100
+        is_reverse = False
+
+        def __init__(self):
+            self.tags = {
+                "MA": "100;nuc.Q:1-10;deam+:1-100;deam-:1-100",
+            }
+
+        def has_tag(self, tag):
+            return tag in self.tags
+
+        def get_tag(self, tag):
+            return self.tags[tag]
+
+        def set_tag(self, tag, value, **_kwargs):
+            if value is None:
+                self.tags.pop(tag, None)
+            else:
+                self.tags[tag] = value
+
+    read = Read()
+    add_paired_m5c_ma_tags(
+        read, [(10, 30)], [(20, 40)], [(15, 25)], [],
+    )
+    assert read.get_tag("MA") == (
+        "100;nuc.Q:1-10;deam+:1-100;deam-:1-100;"
+        "ddda_mcg+:11-20;ddda_mcg-:21-20;ddda_mcg_hemi+:16-10"
+    )
 
 
 def test_add_m5c_tag_preserves_an_alignment_when_replacing_middle_group():
@@ -430,6 +494,19 @@ def test_distance_transition_is_symmetric_and_forgets_across_long_gap():
     assert np.allclose(far, 0.5)
 
 
+def test_four_state_transition_preserves_each_strand_two_state_marginal():
+    two = distance_transition(250, 1000)
+    four = symmetric_distance_transition(250, 1000, 4)
+    # States are UU, UM, MU, MM. From UU, staying C-unmethylated is UU+UM;
+    # switching C to methylated is MU+MM. The G marginal is identical.
+    assert np.isclose(four[0, 0] + four[0, 1], two[0, 0])
+    assert np.isclose(four[0, 2] + four[0, 3], two[0, 1])
+    assert np.isclose(four[0, 0] + four[0, 2], two[0, 0])
+    assert np.isclose(four[0, 1] + four[0, 3], two[0, 1])
+    assert np.allclose(four.sum(axis=1), 1.0)
+    assert np.allclose(four, four.T)
+
+
 def test_single_site_distance_hmm_still_validates_run_length():
     try:
         distance_forward_backward(np.zeros((1, 2)), np.array([10]), 0)
@@ -496,6 +573,129 @@ def _read_observations(cpg_deaminated, reverse_query=False):
             1700 - i * 50 if reverse_query else 300 + i * 50,
         ))
     return observations
+
+
+def _paired_observations(cpg_deaminated, strand):
+    observations = []
+    query_shift = 0 if strand == "C" else 1
+    for i in range(80):
+        observations.append(M5CObservation(
+            0, i * 25, False, i % 5 != 0, 0,
+            i * 25 + query_shift, strand,
+        ))
+    for i, deaminated in enumerate(cpg_deaminated):
+        observations.append(M5CObservation(
+            0, 300 + i * 50, True, deaminated, 0,
+            300 + i * 50 + query_shift, strand,
+        ))
+    return observations
+
+
+@pytest.mark.parametrize(
+    "c_deaminated,g_deaminated,expected_state",
+    [
+        ([False] * 10, [True] * 10, "MU"),
+        ([True] * 10, [False] * 10, "UM"),
+    ],
+)
+def test_paired_hmm_calls_directional_hemimethylation(
+    c_deaminated, g_deaminated, expected_state,
+):
+    result = call_paired_read_m5c(
+        _paired_observations(c_deaminated, "C"),
+        _paired_observations(g_deaminated, "G"),
+        np.ones(4), expected_run_bp=1000, posterior_threshold=0.9,
+        baseline_radius=500, min_other=10, min_call_cpg=2,
+    )
+    assert result.hemi_calls
+    assert {call.state for call in result.hemi_calls} == {expected_state}
+    assert sum(call.n_cpg for call in result.hemi_calls) >= 8
+    assert result.c_observed.all() and result.g_observed.all()
+
+
+def test_paired_hmm_is_exactly_symmetric_under_strand_swap():
+    c = _paired_observations([False] * 10, "C")
+    g = _paired_observations([True] * 10, "G")
+    forward = call_paired_read_m5c(
+        c, g, np.ones(4), posterior_threshold=0.9,
+        baseline_radius=500, min_other=10,
+    )
+    swapped = call_paired_read_m5c(
+        [M5CObservation(
+            obs.molecule, obs.reference_pos, obs.is_cpg, obs.deaminated,
+            obs.five_prime_base, obs.query_pos, "C",
+        ) for obs in g],
+        [M5CObservation(
+            obs.molecule, obs.reference_pos, obs.is_cpg, obs.deaminated,
+            obs.five_prime_base, obs.query_pos, "G",
+        ) for obs in c],
+        np.ones(4), posterior_threshold=0.9,
+        baseline_radius=500, min_other=10,
+    )
+    assert np.allclose(forward.state_posterior[:, 2],
+                       swapped.state_posterior[:, 1])
+    assert {call.state for call in forward.hemi_calls} == {"MU"}
+    assert {call.state for call in swapped.hemi_calls} == {"UM"}
+
+
+def test_symmetric_duplex_states_do_not_emit_hemi_calls():
+    for deaminated, state_index in ((True, 0), (False, 3)):
+        result = call_paired_read_m5c(
+            _paired_observations([deaminated] * 10, "C"),
+            _paired_observations([deaminated] * 10, "G"),
+            np.ones(4), posterior_threshold=0.9,
+            baseline_radius=500, min_other=10,
+        )
+        assert result.hemi_calls == ()
+        assert result.state_posterior[:, state_index].min() > 0.9
+
+
+def test_symmetric_state_cliff_does_not_force_a_hemi_intermediate():
+    pattern = [False] * 8 + [True] * 8  # MM -> UU
+    result = call_paired_read_m5c(
+        _paired_observations(pattern, "C"),
+        _paired_observations(pattern, "G"),
+        np.ones(4), expected_run_bp=500, posterior_threshold=0.9,
+        baseline_radius=500, min_other=10,
+    )
+    assert result.hemi_calls == ()
+    assert result.state_posterior[:, [1, 2]].max() < 0.1
+    assert result.state_posterior[:6, 3].min() > 0.9
+    assert result.state_posterior[-6:, 0].min() > 0.9
+
+
+@pytest.mark.parametrize("methylated", [False, True])
+def test_paired_generative_symmetric_null_has_no_high_confidence_hemi(methylated):
+    rng = np.random.default_rng(7123 + int(methylated))
+    p = float(deamination_probability(float(methylated), 0.8))
+    hemi_runs = 0
+    for _ in range(50):
+        c_deaminated = rng.random(12) < p
+        g_deaminated = rng.random(12) < p
+        result = call_paired_read_m5c(
+            _paired_observations(c_deaminated, "C"),
+            _paired_observations(g_deaminated, "G"),
+            np.ones(4), expected_run_bp=1000, posterior_threshold=0.99,
+            baseline_radius=500, min_other=10,
+        )
+        hemi_runs += len(result.hemi_calls)
+    assert hemi_runs == 0
+
+
+def test_missing_mate_matches_original_strand_marginal_and_cannot_call_hemi():
+    c = _paired_observations([False] * 10, "C")
+    ordinary = call_read_m5c(
+        c, np.ones(4), expected_run_bp=1000, posterior_threshold=0.9,
+        baseline_radius=500, min_other=10,
+    )
+    paired = call_paired_read_m5c(
+        c, [], np.ones(4), expected_run_bp=1000, posterior_threshold=0.9,
+        baseline_radius=500, min_other=10,
+    )
+    assert np.array_equal(ordinary.reference_pos, paired.reference_pos)
+    assert np.allclose(ordinary.methylated_posterior,
+                       paired.c_methylated_posterior)
+    assert paired.hemi_calls == ()
 
 
 def test_call_read_m5c_emits_only_the_methylated_side_of_a_cliff():
@@ -650,3 +850,47 @@ def test_bottom_strand_cpg_uses_canonical_reference_c_coordinate():
     assert len(cpg) == 1
     assert cpg[0].query_pos == 2  # observation is the reference G
     assert cpg[0].reference_pos == 101  # canonical CpG C coordinate
+
+
+def test_cross_strand_collector_keeps_both_cpg_dyad_members():
+    reference_read = "ACGC" * 30
+    sequence = list(reference_read)
+    sequence[1] = "Y"  # top/reference-C member of CpG at canonical pos 1
+    sequence[2] = "R"  # bottom/reference-G member of the same CpG dyad
+
+    class Read:
+        query_sequence = "".join(sequence)
+        query_length = len(query_sequence)
+        reference_start = 100
+        reference_end = 100 + query_length
+        reference_name = "chr1"
+        is_unmapped = False
+        is_reverse = False
+        cigartuples = [(0, query_length)]
+
+        def has_tag(self, tag):
+            return tag == "MA"
+
+        def get_tag(self, tag):
+            return (
+                f"{self.query_length};msp.:1-{self.query_length};"
+                f"deam+:1-{self.query_length};deam-:1-{self.query_length}"
+            )
+
+    class Fasta:
+        sequence = "N" * 100 + reference_read + "NN"
+
+        def fetch(self, _chrom, start, end):
+            return self.sequence[start:end]
+
+    c_observations, g_observations = collect_paired_read_observations(
+        Read(), Fasta(), min_deaminations=0,
+    )
+    c_cpg = [obs for obs in c_observations if obs.is_cpg]
+    g_cpg = [obs for obs in g_observations if obs.is_cpg]
+    assert c_cpg and g_cpg
+    assert c_cpg[0].reference_pos == g_cpg[0].reference_pos == 101
+    assert c_cpg[0].query_pos == 1
+    assert g_cpg[0].query_pos == 2
+    assert c_cpg[0].strand == "C" and g_cpg[0].strand == "G"
+    assert c_cpg[0].deaminated and g_cpg[0].deaminated

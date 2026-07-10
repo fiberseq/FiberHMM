@@ -15,6 +15,12 @@ tags written by FiberHMM <= 2.13.1, which used ``+``, still read back.)
                  left-edge sharpness, right-edge sharpness).
   - ``ddda_mcg.`` molecule-specific DddA-inferred methylated-CpG runs
                    (no quality bytes).
+  - ``ddda_mcg+/-`` strand-resolved methylated-CpG runs on a cross-strand
+                    DAF consensus (``+`` = CT/reference-C template,
+                    ``-`` = GA/reference-G template).
+  - ``ddda_mcg_hemi+/-`` high-confidence hemimethylated runs in regions with
+                         both DAF template strands observed; the qualifier is
+                         the methylated strand.
 
 tq encoding
 -----------
@@ -58,6 +64,7 @@ from typing import List, Optional, Sequence, Tuple
 TQ_SCALE = 10.0          # tq = round(LLR * TQ_SCALE); saturates at LLR=25.5 nats
 EDGE_AMBIGUITY_SAT = 30  # bp; el/er = 0 at ambiguity >= this
 DDDA_MCG_FEATURE = 'ddda_mcg'
+DDDA_MCG_HEMI_FEATURE = 'ddda_mcg_hemi'
 
 
 def llr_to_tq(llr: float) -> int:
@@ -280,6 +287,7 @@ def parse_ma_tag(ma_string: str) -> dict:
         'msp': [],
         'tf': [],
         DDDA_MCG_FEATURE: [],
+        DDDA_MCG_HEMI_FEATURE: [],
         'raw_types': [],
     }
     for chunk in pieces[1:]:
