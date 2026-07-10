@@ -26,7 +26,7 @@ Two schema flavors:
       - nucleosome: +3  (blockNq, blockEl, blockEr) -- matches MA nuc.QQQ;
                         el/er are 0 for HMM-only/legacy nucs (edges not refined)
       - msp       : +1  (blockAq)
-      - m6a / m5c : +1  (blockMl)
+      - m6a / m5c : +1  (blockMl; DddA ddda_mcg interval spans carry 0)
       - tf        : +3  (blockTq, blockEl, blockEr) -- matches MA tf.QQQ
 """
 from __future__ import annotations
@@ -99,7 +99,8 @@ _BLOCK_SCORE_FIELDS = {
     ),
     'm5c': (
         '    int[blockCount] blockMl; '
-        '"Per-position ML (modified-base probability), 0-255"\n'
+        '"Native per-position ML probability, 0-255; 0 for DddA-inferred '
+        'ddda_mcg interval spans"\n'
     ),
     'deam': (
         '    int[blockCount] blockMod; '
@@ -178,9 +179,11 @@ _DESCRIPTIONS = {
         'probability above the threshold.'
     ),
     'm5c': (
-        'FiberHMM per-position 5mC / DAF-seq deamination calls (from '
-        'MM/ML tags). One BED12 row per read; each block is a 1 bp '
-        'modified/deaminated position passing --prob-threshold.'
+        'FiberHMM 5mC annotations. For DddA data, each block is a conservative '
+        'molecule-specific methylated-CpG interval from an MA ddda_mcg. group; '
+        'absence means no confident call, not unmethylated. For native 5mC '
+        'assays, each block is a 1 bp MM/ML modification call passing '
+        '--prob-threshold. DAF spans have BED score 0 and no quality byte.'
     ),
     'deam': (
         'FiberHMM DAF-seq deamination calls (R/Y IUPAC codes written into '

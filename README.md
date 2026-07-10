@@ -16,6 +16,8 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
 - [Pre-trained models](#pre-trained-models)
 - [Performance tips](#performance-tips)
 - [Deep reference](docs/reference.md) — MA/AQ schema, LLR scoring model, tag glossary
+- DddA mCG caller — molecule-specific methylation tags and
+  methylation-aware DddA TF recall
 
 ## Key features
 
@@ -26,6 +28,9 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
   accessible evidence, refines edges, runs an evidence-gated periodicity prior.
 - **`fiberhmm-dedup`** — PCR-duplicate removal for amplicon/UMI-less DAF-seq by
   deamination-pattern fingerprint, where coordinate dedup can't work.
+- **DddA-inferred mCG recovery** — `fiberhmm-tag-m5c` calls conservative, molecule-specific
+  methylated CpG runs even though amplification removes the native 5mC channel;
+  DddA TF recall then corrects CpG emissions inside those spans.
 - **No genome context files** — hexamer context computed from read sequences.
 - **Spec-compliant tags** — `ns`/`nl`/`as`/`al` legacy tags plus `MA`/`AQ`
   [Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec)
@@ -93,6 +98,9 @@ fiberhmm-extract -i calls.bam --nucleosome --msp --tf
 | Only nucleosome/MSP calls, no TF recall | `fiberhmm-apply` |
 | Already have an apply-tagged BAM, add TF calls | `fiberhmm-recall-tfs` |
 | Apply-tagged BAM, full recall without re-running the HMM | `fiberhmm-recall-nucs` |
+| Add molecule-specific DddA-inferred mCG spans | `fiberhmm-tag-m5c` |
+| Full genome DddA calling with integrated mCG | `fiberhmm-call --enzyme ddda --ddda-mcg --reference ref.fa` |
+| Build an aggregate DddA mCG domain BED | `fiberhmm-call-m5c` |
 | Calls → BED12 / bigBed | `fiberhmm-extract` |
 
 `fiberhmm-call` has two modes: **region-parallel** (`--region-parallel`, requires
@@ -159,6 +167,40 @@ fiberhmm-call -i aligned.bam -o calls.bam --enzyme ddda \
               -c 8 --region-parallel --dedup
 ```
 
+Genome-wide DddA DAF-seq amplification removes native 5mC tags, but methylated
+CpGs retain a strong DddA rate signature. The experimental mCG caller is an
+explicit opt-in. Add it to the fused whole-genome workflow with:
+
+```bash
+fiberhmm-call -i aligned.bam -o calls.bam --enzyme ddda \
+              --ddda-mcg --reference reference.fa \
+              -c 8 --region-parallel
+```
+
+The integrated stage runs after preliminary nucleosome calling and before
+TF/nucleosome recall, writes molecule-specific `ddda_mcg.` MA spans, and uses
+those same spans to correct CpG TF emissions. Without `--ddda-mcg`, DddA output
+and runtime behavior remain unchanged; the CLI prints a whole-genome-only hint.
+The auditable staged equivalent remains available:
+
+```bash
+fiberhmm-apply -i encoded.bam -o apply_dir --enzyme ddda --mode daf
+fiberhmm-tag-m5c -i apply_dir/encoded_footprints.bam -o apply.m5c.bam \
+                    -r reference.fa --enzyme ddda
+fiberhmm-recall-nucs -i apply.m5c.bam -o calls.bam --enzyme ddda -c 8
+```
+
+The tagger uses each read's local non-CpG deamination as its accessibility
+control and a distance-aware HMM over ordered CpGs. Calls start at equal state
+odds, require posterior >=0.99 and at least two supported CpGs, and do not copy
+an aggregate locus state onto the molecule. `fiberhmm-recall-tfs` and
+`fiberhmm-recall-nucs` consume these spans by default for DddA; use
+`--no-use-m5c` for an ablation.
+
+This caller and its emission correction are calibrated specifically for
+genome-wide DddA DAF-seq. They must not be applied to DddB and are not part of
+the ordinary targeted/amplicon DddA workflow.
+
 > **DddA amplicons are typically ~80% PCR-duplicated**, and coordinate dedup
 > (Picard/markdup) does **not** apply — every read piles up on the same locus with
 > primer-fixed ends. `--dedup` collapses duplicates by deamination fingerprint
@@ -215,7 +257,8 @@ modes.
 | `--enzyme` | — | `hia5`, `dddb`, or `ddda` (auto-selects bundled model). |
 | `--seq` | — | `pacbio` or `nanopore` (required for Hia5). |
 | `--mode` | from model | `pacbio-fiber` / `nanopore-fiber` / `daf`. |
-| `--reference` | — | FASTA fallback for `--mode daf` when no R/Y or MD. |
+| `--reference` | — | FASTA fallback for raw DAF; required and always used by `--ddda-mcg`. |
+| `--ddda-mcg` | off | **Experimental whole-genome DddA only.** Infer `ddda_mcg.` spans and correct CpG TF emissions in the fused workflow. |
 | `-c/--cores` | 4 | Worker processes. |
 | `--io-threads` | 8 | htslib I/O threads. |
 | `--region-parallel` | off | Per-region worker pool (requires sorted+indexed input). |

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from types import SimpleNamespace
 
 from fiberhmm.inference import fused_stages
 from fiberhmm.inference.tf_recaller import TFCall
@@ -26,6 +27,38 @@ def test_apply_result_has_footprints_detects_nucs_or_msps():
     assert fused_stages.apply_result_has_footprints(empty) is False
     assert fused_stages.apply_result_has_footprints(nuc_only) is True
     assert fused_stages.apply_result_has_footprints(msp_only) is True
+
+
+def test_run_ddda_mcg_stage_excludes_apply_nucs_and_builds_mask(monkeypatch):
+    from fiberhmm.daf import m5c
+
+    captured = {}
+
+    def fake_call(observations, factors, **kwargs):
+        captured["observations"] = observations
+        captured["factors"] = factors
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(calls=(SimpleNamespace(start=30, end=51),))
+
+    monkeypatch.setattr(m5c, "call_read_m5c", fake_call)
+    payload = {
+        "query_pos": np.array([10, 20, 30, 40], dtype=np.int32),
+        "reference_pos": np.array([110, 120, 130, 140], dtype=np.int64),
+        "is_cpg": np.array([False, True, False, True]),
+        "deaminated": np.array([True, False, True, False]),
+        "five_prime_base": np.zeros(4, dtype=np.int8),
+    }
+    apply_result = {
+        "ns": np.array([0], dtype=np.int32),
+        "nl": np.array([25], dtype=np.int32),
+    }
+    mask, spans = fused_stages.run_ddda_mcg_stage(
+        payload, apply_result, read_length=100,
+    )
+    assert [obs.query_pos for obs in captured["observations"]] == [30, 40]
+    assert spans == [(30, 51)]
+    assert mask.sum() == 21
+    assert mask[30] and mask[50] and not mask[51]
 
 
 def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatch):
@@ -100,6 +133,8 @@ def test_build_fused_recall_result_runs_recall_and_aligns_kept_scores(monkeypatc
 
 
 def test_build_fused_recall_result_projects_circular_tf_calls(monkeypatch):
+    captured = {}
+
     def fake_build_scan_intervals(ns, nl, msps, msp_lengths, read_length, unify_threshold):
         assert read_length == 300
         assert list(ns) == [195]
@@ -108,7 +143,10 @@ def test_build_fused_recall_result_projects_circular_tf_calls(monkeypatch):
         assert list(msp_lengths) == [40]
         return [(190, 230)]
 
-    def fake_call_tfs_in_interval(obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps):
+    def fake_call_tfs_in_interval(
+        obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps, **kwargs,
+    ):
+        captured.update(kwargs)
         return [
             TFCall(
                 start=195,
@@ -150,6 +188,9 @@ def test_build_fused_recall_result_projects_circular_tf_calls(monkeypatch):
         min_opps=3,
         unify_threshold=90,
         with_scores=True,
+        m5c_mask=np.arange(100) % 7 == 0,
+        m5c_llr_hit="m5c-hit",
+        m5c_llr_miss="m5c-miss",
     )
 
     assert result["circular"] is True
@@ -162,3 +203,29 @@ def test_build_fused_recall_result_projects_circular_tf_calls(monkeypatch):
     assert result["ns"].tolist() == []
     assert result["nl"].tolist() == []
     assert result["nq_for_kept_nucs"] == []
+    assert np.array_equal(
+        captured["m5c_mask"], np.tile(np.arange(100) % 7 == 0, 3),
+    )
+
+
+def test_run_tf_recall_stage_forwards_m5c_tables_and_mask(monkeypatch):
+    captured = {}
+
+    monkeypatch.setattr(
+        fused_stages, "build_scan_intervals", lambda *_args, **_kwargs: [(0, 4)],
+    )
+
+    def fake_call(*args, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(fused_stages, "call_tfs_in_interval", fake_call)
+    mask = np.array([False, True, True, False])
+    fused_stages.run_tf_recall_stage(
+        np.zeros(4, dtype=np.int32), [], [], [0], [4], 4,
+        "hit", "miss", 5.0, 3, 90,
+        m5c_mask=mask, m5c_llr_hit="m5c-hit", m5c_llr_miss="m5c-miss",
+    )
+    assert captured["m5c_mask"] is mask
+    assert captured["m5c_llr_hit"] == "m5c-hit"
+    assert captured["m5c_llr_miss"] == "m5c-miss"

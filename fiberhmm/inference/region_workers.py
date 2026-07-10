@@ -20,6 +20,7 @@ from fiberhmm.inference.engine import (
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
+    run_ddda_mcg_stage,
     run_hmm_apply_stage,
 )
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
@@ -453,6 +454,7 @@ def _init_fused_region_worker(
 
     os.environ['NUMBA_CACHE_DIR'] = ''
 
+    _worker_recall_state = {}
     _worker_model = freeze_model_for_inference(load_model(apply_model_path))
     # Open the reference FASTA after fork: pysam.FastaFile is not fork-safe.
     ref_path = params.get('ref_fasta_path')
@@ -464,7 +466,11 @@ def _init_fused_region_worker(
     _worker_region_params = params
 
     from fiberhmm.core.model_io import load_model_with_metadata
-    from fiberhmm.inference.tf_recaller import apply_emission_uplift, build_llr_tables
+    from fiberhmm.inference.tf_recaller import (
+        apply_emission_uplift,
+        build_llr_tables,
+        build_m5c_llr_tables,
+    )
 
     r_path = recall_model_path or apply_model_path
     r_model, _, _ = load_model_with_metadata(r_path)
@@ -473,6 +479,13 @@ def _init_fused_region_worker(
         llr_hit, llr_miss = apply_emission_uplift(llr_hit, llr_miss, r_model, emission_uplift)
     _worker_recall_state['llr_hit'] = llr_hit
     _worker_recall_state['llr_miss'] = llr_miss
+    _worker_recall_state['ddda_mcg'] = bool(params.get('ddda_mcg', False))
+    if _worker_recall_state['ddda_mcg']:
+        m5c_hit, m5c_miss = build_m5c_llr_tables(
+            r_model, emission_uplift=emission_uplift,
+        )
+        _worker_recall_state['m5c_llr_hit'] = m5c_hit
+        _worker_recall_state['m5c_llr_miss'] = m5c_miss
 
     configure_daf_chimera_filter(
         params.get('filter_chimeras', True),
@@ -558,6 +571,11 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
             'too_short': 0, 'training_excluded': 0, 'no_modifications': 0,
             'extraction_failed': 0, 'no_footprints': 0, 'chimera': 0,
         }
+        metrics = {
+            'ddda_mcg_reads': 0,
+            'ddda_mcg_spans': 0,
+            'ddda_mcg_failures': 0,
+        }
         filter_config = ReadFilterConfig(
             min_mapq=min_mapq,
             min_read_length=min_read_length,
@@ -593,7 +611,10 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         skipped += 1
                         continue
 
-                    payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
+                    payload = make_apply_payload(
+                        read, mode=mode, ref_fasta=ref_fasta,
+                        include_ddda_mcg=bool(params.get('ddda_mcg', False)),
+                    )
                     if payload is None:
                         outbam.write(read)
                         written += 1
@@ -641,6 +662,19 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         skip_reasons['no_footprints'] += 1
                         continue
 
+                    m5c_mask = None
+                    m5c_spans = []
+                    m5c_failed = False
+                    if _worker_recall_state.get('ddda_mcg'):
+                        try:
+                            m5c_mask, m5c_spans = run_ddda_mcg_stage(
+                                payload.get('_ddda_mcg_observations'),
+                                apply_result,
+                                len(fiber_read['query_sequence']),
+                            )
+                        except Exception:
+                            m5c_mask, m5c_spans, m5c_failed = None, [], True
+
                     fused_result = build_fused_recall_result(
                         fiber_read,
                         apply_result,
@@ -657,7 +691,16 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         msp_min_size=msp_min_size,
                         phase_nrl=phase_nrl,
                         nuc_profile=nuc_profile,
+                        m5c_mask=m5c_mask,
+                        m5c_llr_hit=_worker_recall_state.get('m5c_llr_hit'),
+                        m5c_llr_miss=_worker_recall_state.get('m5c_llr_miss'),
                     )
+                    if _worker_recall_state.get('ddda_mcg'):
+                        fused_result['ddda_mcg_spans'] = m5c_spans
+                        fused_result['ddda_mcg_failed'] = m5c_failed
+                        metrics['ddda_mcg_reads'] += int(bool(m5c_spans))
+                        metrics['ddda_mcg_spans'] += len(m5c_spans)
+                        metrics['ddda_mcg_failures'] += int(m5c_failed)
                     write_fused_recall_tags(
                         read,
                         read_length=len(fiber_read['query_sequence']),
@@ -671,7 +714,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
 
         return RegionBamResult(
             temp_bam_path, total_reads, reads_with_fp,
-            written, None, skip_reasons,
+            written, None, skip_reasons, metrics,
         )
 
     except Exception:

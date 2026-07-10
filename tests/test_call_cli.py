@@ -13,6 +13,7 @@ from conftest import make_synthetic_bam, make_synthetic_iupac_bam
 
 from fiberhmm.cli.call import (
     _check_daf_inputs,
+    _configure_ddda_mcg,
     _resolve_apply_model,
     _resolve_recall_model,
 )
@@ -143,3 +144,45 @@ def test_call_model_resolution_requires_model_or_enzyme(capsys):
 
     assert exc.value.code == 1
     assert "one of --model or --enzyme required" in capsys.readouterr().err
+
+
+def test_ddda_mode_surfaces_whole_genome_mcg_hint(capsys):
+    args = SimpleNamespace(ddda_mcg=False, enzyme="ddda")
+    assert _configure_ddda_mcg(args, "daf") is False
+    message = capsys.readouterr().err
+    assert "whole-genome DddA DAF-seq" in message
+    assert "--ddda-mcg --reference ref.fa" in message
+    assert "unnecessary for targeted/amplicon" in message
+
+
+def test_integrated_ddda_mcg_guardrails(capsys, tmp_path):
+    reference = tmp_path / "ref.fa"
+    reference.write_text(">chr1\nACGTACGT\n")
+    pysam.faidx(str(reference))
+    valid = SimpleNamespace(
+        ddda_mcg=True,
+        enzyme="ddda",
+        reference=str(reference),
+        circular=False,
+        downstream_compat=False,
+        input="-",
+    )
+    assert _configure_ddda_mcg(valid, "daf") is True
+    assert "integrated DddA mCG calling enabled" in capsys.readouterr().err
+
+    invalid = SimpleNamespace(
+        ddda_mcg=True,
+        enzyme="dddb",
+        reference=None,
+        circular=True,
+        downstream_compat=True,
+        input="-",
+    )
+    with pytest.raises(SystemExit) as exc:
+        _configure_ddda_mcg(invalid, "daf")
+    assert exc.value.code == 2
+    message = capsys.readouterr().err
+    assert "requires --enzyme ddda" in message
+    assert "requires --reference ref.fa" in message
+    assert "does not support --circular" in message
+    assert "cannot be combined with --downstream-compat" in message

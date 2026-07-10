@@ -62,6 +62,7 @@ from fiberhmm.core.bam_reader import (
     parse_mm_tag_query_positions,
 )
 from fiberhmm.io.ma_tags import (
+    DDDA_MCG_FEATURE,
     ambiguity_to_edge,
     flip_interval_frame,
     flip_intervals_to_seq,
@@ -69,6 +70,7 @@ from fiberhmm.io.ma_tags import (
     format_aq_array,
     format_ma_tag,
     llr_to_tq,
+    parse_an_tag,
     split_circular_interval,
 )
 
@@ -126,6 +128,54 @@ def build_llr_tables(model) -> Tuple[np.ndarray, np.ndarray]:
             np.log(miss_prot) - np.log(miss_acc))
 
 
+def build_m5c_llr_tables(model, rate_ratio: Optional[float] = None,
+                         emission_uplift: float = 1.0
+                         ) -> Tuple[np.ndarray, np.ndarray]:
+    """LLRs for CpGs inside a DddA ``ddda_mcg`` span.
+
+    The fitted TF model supplies the unmethylated accessible probability.
+    5mC changes the accessible-state rate by F/U, while the protected state
+    remains model-derived.  Non-CpG entries are returned unchanged; callers
+    still select these tables only at positions covered by an m5c mask.
+    """
+    if rate_ratio is None:
+        from fiberhmm.daf.m5c import F_METH, U_UNMETH
+        rate_ratio = F_METH / U_UNMETH
+    if not 0.0 < rate_ratio < 1.0:
+        raise ValueError("rate_ratio must be between zero and one")
+    EP = np.asarray(model.emissionprob_, dtype=np.float64)
+    if EP.ndim != 2 or EP.shape[0] != 2 or EP.shape[1] < UNMETH_OFFSET + N_CTX:
+        raise ValueError(
+            f"Expected a two-state emission table with at least "
+            f"{UNMETH_OFFSET + N_CTX} columns, got {EP.shape}"
+        )
+    hit_prot = EP[0, :N_CTX]
+    hit_acc = EP[1, :N_CTX]
+    miss_prot = EP[0, UNMETH_OFFSET:UNMETH_OFFSET + N_CTX]
+    miss_acc = EP[1, UNMETH_OFFSET:UNMETH_OFFSET + N_CTX]
+    eps = 1e-30
+    context_prot = np.clip(hit_prot + miss_prot, eps, None)
+    context_acc = np.clip(hit_acc + miss_acc, eps, None)
+    p_prot = hit_prot / context_prot
+    p_acc = hit_acc / context_acc
+    if emission_uplift <= 0:
+        raise ValueError("emission_uplift must be positive")
+    if abs(emission_uplift - 1.0) > 1e-9:
+        p_acc = 1.0 - np.power(1.0 - p_acc, emission_uplift)
+        p_prot = np.power(p_prot, emission_uplift)
+    # Context codes are base-4 with A,C,T,G = 0,1,2,3. The first base of
+    # the right flank is the 3' neighbor; CpG therefore has digit G (=3).
+    codes = np.arange(N_CTX)
+    is_cpg = ((codes % 64) // 16) == 3
+    adjusted = p_acc.copy()
+    adjusted[is_cpg] = 1.0 - np.power(1.0 - p_acc[is_cpg], rate_ratio)
+    adjusted = np.clip(adjusted, eps, 1.0 - eps)
+    p_prot = np.clip(p_prot, eps, 1.0 - eps)
+    context_llr = np.log(context_prot) - np.log(context_acc)
+    return context_llr + np.log(p_prot) - np.log(adjusted), \
+        context_llr + np.log1p(-p_prot) - np.log1p(-adjusted)
+
+
 def apply_emission_uplift(llr_hit: np.ndarray, llr_miss: np.ndarray,
                           model, uplift: float) -> Tuple[np.ndarray, np.ndarray]:
     """Sharpen the per-context emission table and rebuild LLR tables.
@@ -147,14 +197,18 @@ def apply_emission_uplift(llr_hit: np.ndarray, llr_miss: np.ndarray,
     hit_acc = np.clip(EP[1, :N_CTX], eps, 1.0)
     miss_prot = np.clip(EP[0, UNMETH_OFFSET:UNMETH_OFFSET + N_CTX], eps, 1.0)
     miss_acc = np.clip(EP[1, UNMETH_OFFSET:UNMETH_OFFSET + N_CTX], eps, 1.0)
-    p_hit_acc = hit_acc / (hit_acc + miss_acc)
-    p_hit_prot = hit_prot / (hit_prot + miss_prot)
+    context_prot = hit_prot + miss_prot
+    context_acc = hit_acc + miss_acc
+    p_hit_acc = hit_acc / context_acc
+    p_hit_prot = hit_prot / context_prot
     p_hit_acc_new = 1.0 - np.power(np.clip(1.0 - p_hit_acc, eps, 1.0), uplift)
     p_hit_prot_new = np.power(np.clip(p_hit_prot, eps, 1.0), uplift)
     p_hit_acc_new = np.clip(p_hit_acc_new, eps, 1.0 - eps)
     p_hit_prot_new = np.clip(p_hit_prot_new, eps, 1.0 - eps)
-    new_llr_miss = np.log(1.0 - p_hit_prot_new) - np.log(1.0 - p_hit_acc_new)
-    new_llr_hit = np.log(p_hit_prot_new) - np.log(p_hit_acc_new)
+    context_llr = np.log(context_prot) - np.log(context_acc)
+    new_llr_miss = (context_llr + np.log(1.0 - p_hit_prot_new) -
+                    np.log(1.0 - p_hit_acc_new))
+    new_llr_hit = context_llr + np.log(p_hit_prot_new) - np.log(p_hit_acc_new)
     return new_llr_hit, new_llr_miss
 
 
@@ -212,7 +266,8 @@ def _is_miss_code(code: int) -> bool:
 
 @_numba_jit(nopython=True, cache=True)
 def _call_tfs_numba(obs, lo, hi, llr_hit, llr_miss,
-                    min_llr, min_opps):
+                    min_llr, min_opps, use_m5c, m5c_mask,
+                    m5c_llr_hit, m5c_llr_miss):
     """Numba-JIT Kadane local-maximum scan with edge-ambiguity scoring.
 
     Returns five equal-length 1D numpy arrays:
@@ -253,10 +308,12 @@ def _call_tfs_numba(obs, lo, hi, llr_hit, llr_miss,
         is_opp = False
         step = 0.0
         if 0 <= code < N_CTX:
-            step = llr_hit[code]
+            step = m5c_llr_hit[code] if use_m5c and m5c_mask[i] else llr_hit[code]
             is_opp = True
         elif UNMETH_OFFSET <= code < UNMETH_OFFSET + N_CTX:
-            step = llr_miss[code - UNMETH_OFFSET]
+            context = code - UNMETH_OFFSET
+            step = (m5c_llr_miss[context]
+                    if use_m5c and m5c_mask[i] else llr_miss[context])
             is_opp = True
 
         if cur_start < 0:
@@ -332,7 +389,10 @@ def _call_tfs_numba(obs, lo, hi, llr_hit, llr_miss,
 
 def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
                          llr_hit: np.ndarray, llr_miss: np.ndarray,
-                         min_llr: float, min_opps: int) -> List[TFCall]:
+                         min_llr: float, min_opps: int,
+                         m5c_mask: Optional[np.ndarray] = None,
+                         m5c_llr_hit: Optional[np.ndarray] = None,
+                         m5c_llr_miss: Optional[np.ndarray] = None) -> List[TFCall]:
     """Kadane local-maximum scan on obs[lo:hi].
 
     Thin Python wrapper around ``_call_tfs_numba``; builds TFCall objects
@@ -344,9 +404,26 @@ def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
     obs_arr = np.ascontiguousarray(obs, dtype=np.int32)
     hit_arr = np.ascontiguousarray(llr_hit, dtype=np.float64)
     miss_arr = np.ascontiguousarray(llr_miss, dtype=np.float64)
+    use_m5c = m5c_mask is not None
+    if use_m5c and (m5c_llr_hit is None or m5c_llr_miss is None):
+        raise ValueError(
+            "m5c_mask requires both m5c_llr_hit and m5c_llr_miss tables"
+        )
+    mask_arr = (np.zeros(1, dtype=np.bool_) if m5c_mask is None else
+                np.ascontiguousarray(m5c_mask, dtype=np.bool_))
+    m5c_hit_arr = hit_arr if m5c_llr_hit is None else \
+        np.ascontiguousarray(m5c_llr_hit, dtype=np.float64)
+    m5c_miss_arr = miss_arr if m5c_llr_miss is None else \
+        np.ascontiguousarray(m5c_llr_miss, dtype=np.float64)
+    if use_m5c and len(mask_arr) != len(obs_arr):
+        raise ValueError("m5c_mask length must match obs")
+    if use_m5c and (m5c_hit_arr.shape != hit_arr.shape or
+                    m5c_miss_arr.shape != miss_arr.shape):
+        raise ValueError("m5c LLR tables must match the standard LLR table shapes")
     starts, ends, llrs, opps_arr, l_amb, r_amb = _call_tfs_numba(
         obs_arr, int(lo), int(hi), hit_arr, miss_arr,
-        float(min_llr), int(min_opps),
+        float(min_llr), int(min_opps), use_m5c, mask_arr,
+        m5c_hit_arr, m5c_miss_arr,
     )
     calls: List[TFCall] = []
     for i in range(len(starts)):
@@ -414,7 +491,9 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
                 mode: str, context_size: int,
                 min_llr: float, min_opps: int,
                 unify_threshold: int,
-                input_molecular_frame: bool = True) -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
+                input_molecular_frame: bool = True,
+                m5c_llr_hit: Optional[np.ndarray] = None,
+                m5c_llr_miss: Optional[np.ndarray] = None) -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
     """Process one read.
 
     Returns:
@@ -476,6 +555,14 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
         is_reverse=bool(read.is_reverse),
     )
     read_len = len(seq)
+    m5c_mask = None
+    if m5c_llr_hit is not None and m5c_llr_miss is not None and read.has_tag('MA'):
+        from fiberhmm.daf.m5c import ma_intervals
+        intervals = ma_intervals(read, DDDA_MCG_FEATURE)
+        if intervals:
+            m5c_mask = np.zeros(read_len, dtype=bool)
+            for m5c_start, m5c_end in intervals:
+                m5c_mask[max(0, m5c_start):min(read_len, m5c_end)] = True
 
     intervals = build_scan_intervals(ns_raw, nl_raw, as_raw, al_raw,
                                       read_len, unify_threshold=unify_threshold)
@@ -484,6 +571,8 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
     for lo, hi in intervals:
         tf_calls.extend(call_tfs_in_interval(
             obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps,
+            m5c_mask=m5c_mask, m5c_llr_hit=m5c_llr_hit,
+            m5c_llr_miss=m5c_llr_miss,
         ))
 
     # Unify: drop v2 short-nucs (nl < threshold) that overlap any TF call.
@@ -547,6 +636,31 @@ def write_ma_tags(read, read_length: int,
     exclusive; compat mode always writes the legacy track.
     """
     import array as pyarray
+
+    # ddda_mcg is a molecule-specific layer produced before TF recall.
+    # Preserve it when this writer refreshes nuc/msp/tf groups; it has no AQ
+    # bytes itself.
+    preserved_m5c = []
+    preserved_m5c_names = []
+    if read.has_tag('MA'):
+        from fiberhmm.daf.m5c import ma_group_feature
+        old_names = (parse_an_tag(str(read.get_tag('AN')))
+                     if read.has_tag('AN') else [])
+        name_offset = 0
+        for group in str(read.get_tag('MA')).split(';')[1:]:
+            annotation_count = sum(
+                bool(item) for item in group.partition(':')[2].split(',')
+            )
+            group_names = old_names[name_offset:name_offset + annotation_count]
+            group_names.extend([''] * (annotation_count - len(group_names)))
+            name_offset += annotation_count
+            if ma_group_feature(group) == DDDA_MCG_FEATURE:
+                preserved_m5c.append(group)
+                preserved_m5c_names.extend(group_names)
+    n_preserved_m5c = sum(
+        sum(bool(item) for item in group.partition(':')[2].split(','))
+        for group in preserved_m5c
+    )
 
     if downstream_compat and not also_write_legacy:
         raise ValueError(
@@ -644,18 +758,19 @@ def write_ma_tags(read, read_length: int,
     ma_tfs, tf_names, tf_q_split, tf_split = split_named_intervals(
         tf_intervals, "tf", tf_q_rows,
     )
-    needs_an = nuc_split or msp_split or tf_split
+    needs_an = (nuc_split or msp_split or tf_split or
+                any(preserved_m5c_names))
 
     if not downstream_compat:
         # Spec mode: write MA + AQ. The fiberseq Molecular-annotation spec
         # (https://github.com/fiberseq/Molecular-annotation-spec) requires:
         #   - the MA string to contain >= 1 annotation (regex
         #     ^\d+;(...annotation...;?)+$), so don't emit MA for reads with
-        #     no nucs/msps/tfs at all
+        #     no nucs/msps/tfs/m5c at all
         #   - AQ to only be present if SOME annotation type specifies P or Q
         #     (we use Q on nuc+ and tf+; if neither has any annotations and
         #     only msp+ is emitted, AQ stays unwritten)
-        has_any_annotation = bool(ma_nucs or ma_msps or ma_tfs)
+        has_any_annotation = bool(ma_nucs or ma_msps or ma_tfs or preserved_m5c)
         if not has_any_annotation:
             # Strip any stale tags, leave the read with no MA/AQ
             for tag in ('MA', 'AQ', 'AN'):
@@ -672,9 +787,17 @@ def write_ma_tags(read, read_length: int,
                 tf_intervals=ma_tfs,
                 nuc_qual_spec='QQQ' if nuc_qqq else 'Q',
             )
+            if preserved_m5c:
+                ma = ';'.join([ma, *preserved_m5c])
             read.set_tag('MA', ma, value_type='Z')
             if needs_an:
-                read.set_tag('AN', format_an_tag(nuc_names + msp_names + tf_names),
+                m5c_names = (
+                    preserved_m5c_names if any(preserved_m5c_names)
+                    else [f'fh_{DDDA_MCG_FEATURE}_{i}'
+                          for i in range(n_preserved_m5c)]
+                )
+                read.set_tag('AN', format_an_tag(
+                    nuc_names + msp_names + tf_names + m5c_names),
                              value_type='Z')
             elif read.has_tag('AN'):
                 try:

@@ -1,15 +1,20 @@
 """Characterization tests for the fused `fiberhmm-call` pipelines."""
 
 import os
+import subprocess
+import sys
 
 import pysam
 from conftest import make_synthetic_bam
 
 from fiberhmm.inference.parallel import (
     _process_bam_region_parallel_fused,
+    _process_bam_streaming_pipeline,
     _process_bam_streaming_pipeline_fused,
 )
+from fiberhmm.daf.m5c import DDDA_FIVE_PRIME_FACTORS, annotate_bam_per_read
 from fiberhmm.models import get_model_path
+from fiberhmm.io.ma_tags import parse_ma_tag
 
 
 def _run_fused_streaming(input_bam, output_bam, model_path, *,
@@ -75,7 +80,8 @@ def _run_fused_region(input_bam, output_bam, model_path, *,
     )
 
 
-def _run_daf_fused_streaming(input_bam, output_bam, *, ref_fasta_path=None):
+def _run_daf_fused_streaming(input_bam, output_bam, *, ref_fasta_path=None,
+                             ddda_mcg=False):
     return _process_bam_streaming_pipeline_fused(
         input_bam=input_bam,
         output_bam=output_bam,
@@ -103,6 +109,41 @@ def _run_daf_fused_streaming(input_bam, output_bam, *, ref_fasta_path=None):
         chunk_size=10,
         io_threads=1,
         ref_fasta_path=ref_fasta_path,
+        ddda_mcg=ddda_mcg,
+    )
+
+
+def _run_daf_fused_region(input_bam, output_bam, *, ref_fasta_path,
+                          ddda_mcg=False):
+    return _process_bam_region_parallel_fused(
+        input_bam=input_bam,
+        output_bam=output_bam,
+        apply_model_path=get_model_path("ddda", tool="apply"),
+        recall_model_path=get_model_path("ddda", tool="recall"),
+        train_rids=set(),
+        edge_trim=10,
+        circular=False,
+        mode="daf",
+        context_size=3,
+        msp_min_size=0,
+        nuc_min_size=85,
+        min_mapq=0,
+        prob_threshold=0,
+        min_read_length=0,
+        with_scores=True,
+        min_llr=1000.0,
+        min_opps=3,
+        unify_threshold=90,
+        emission_uplift=1.0,
+        also_write_legacy=True,
+        downstream_compat=False,
+        n_cores=1,
+        region_size=2000,
+        skip_scaffolds=False,
+        chroms=None,
+        io_threads=1,
+        ref_fasta_path=ref_fasta_path,
+        ddda_mcg=ddda_mcg,
     )
 
 
@@ -178,6 +219,57 @@ def _write_ct_daf_fixture_bams(tmp_path):
         pysam.index(str(path))
 
     return paths["raw_md"], paths["raw_ref"], paths["iupac"], ref_fasta
+
+
+def _write_mcg_daf_fixture_bams(tmp_path):
+    """Matched raw-MD and R/Y reads with a strong methylated-CpG contrast."""
+    read_length = 1500
+    chromosome = ("ACACG" * 2400)[:10_000]
+    ref_fasta = tmp_path / "mcg_ref.fa"
+    ref_fasta.write_text(">chr1\n" + chromosome + "\n")
+    pysam.faidx(str(ref_fasta))
+    header = pysam.AlignmentHeader.from_dict({
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": "chr1", "LN": len(chromosome)}],
+    })
+    paths = {"raw_md": tmp_path / "mcg_raw_md.bam",
+             "iupac": tmp_path / "mcg_iupac.bam"}
+
+    for flavor, path in paths.items():
+        with pysam.AlignmentFile(path, "wb", header=header) as out:
+            for number, start in enumerate((100, 2100, 4100)):
+                reference_read = chromosome[start:start + read_length]
+                non_cpg = [
+                    pos for pos, base in enumerate(reference_read[:-1])
+                    if base == "C" and reference_read[pos + 1] != "G"
+                ]
+                deaminated = [pos for index, pos in enumerate(non_cpg)
+                              if index % 5 != 0]
+                sequence = list(reference_read)
+                for pos in deaminated:
+                    sequence[pos] = "Y" if flavor == "iupac" else "T"
+
+                read = pysam.AlignedSegment()
+                read.query_name = f"mcg_{number}"
+                read.query_sequence = "".join(sequence)
+                read.query_qualities = pysam.qualitystring_to_array(
+                    "I" * read_length
+                )
+                read.flag = 0
+                read.reference_id = 0
+                read.reference_start = start
+                read.mapping_quality = 60
+                read.cigar = [(0, read_length)]
+                if flavor == "raw_md":
+                    read.set_tag(
+                        "MD", _md_for_ct_mismatches(read_length, deaminated),
+                        value_type="Z",
+                    )
+                else:
+                    read.set_tag("st", "CT", value_type="Z")
+                out.write(read)
+        pysam.index(str(path))
+    return paths["raw_md"], paths["iupac"], ref_fasta
 
 
 def test_fused_streaming_emits_spec_and_legacy_tags(
@@ -259,6 +351,138 @@ def test_daf_raw_md_and_reference_streaming_match_iupac_output(tmp_path):
     assert any("ns" in tag_set for tag_set in iupac_tags.values())
     assert _read_tags_by_name(md_out) == iupac_tags
     assert _read_tags_by_name(ref_out) == iupac_tags
+
+
+def test_integrated_ddda_mcg_streaming_writes_same_spans_from_md_and_iupac(tmp_path):
+    raw_md, iupac, ref_fasta = _write_mcg_daf_fixture_bams(tmp_path)
+    md_out = str(tmp_path / "mcg_md_out.bam")
+    iupac_out = str(tmp_path / "mcg_iupac_out.bam")
+
+    md_counts = _run_daf_fused_streaming(
+        str(raw_md), md_out, ref_fasta_path=str(ref_fasta), ddda_mcg=True,
+    )
+    iupac_counts = _run_daf_fused_streaming(
+        str(iupac), iupac_out, ref_fasta_path=str(ref_fasta), ddda_mcg=True,
+    )
+    assert md_counts == iupac_counts
+    md_tags = _read_tags_by_name(md_out)
+    iupac_tags = _read_tags_by_name(iupac_out)
+    assert md_tags == iupac_tags
+    ma_tags = [tags.get("MA", "") for tags in md_tags.values()]
+    assert ma_tags
+    assert all("ddda_mcg." in ma for ma in ma_tags)
+
+
+def test_integrated_ddda_mcg_region_parallel_matches_streaming(tmp_path):
+    raw_md, _iupac, ref_fasta = _write_mcg_daf_fixture_bams(tmp_path)
+    stream_out = str(tmp_path / "mcg_stream.bam")
+    region_out = str(tmp_path / "mcg_region.bam")
+    stream_counts = _run_daf_fused_streaming(
+        str(raw_md), stream_out,
+        ref_fasta_path=str(ref_fasta), ddda_mcg=True,
+    )
+    region_counts = _run_daf_fused_region(
+        str(raw_md), region_out,
+        ref_fasta_path=str(ref_fasta), ddda_mcg=True,
+    )
+    assert region_counts == stream_counts
+    assert _read_tags_by_name(region_out) == _read_tags_by_name(stream_out)
+
+
+def test_integrated_ddda_mcg_spans_match_standalone_tagger(tmp_path):
+    _raw_md, iupac, ref_fasta = _write_mcg_daf_fixture_bams(tmp_path)
+    apply_output = str(tmp_path / "mcg_apply.bam")
+    standalone_output = str(tmp_path / "mcg_standalone.bam")
+    integrated_output = str(tmp_path / "mcg_integrated.bam")
+
+    _process_bam_streaming_pipeline(
+        input_bam=str(iupac),
+        output_bam=apply_output,
+        model_path=get_model_path("ddda", tool="apply"),
+        train_rids=set(),
+        edge_trim=10,
+        circular=False,
+        mode="daf",
+        context_size=3,
+        msp_min_size=0,
+        nuc_min_size=85,
+        min_mapq=0,
+        prob_threshold=0,
+        min_read_length=0,
+        with_scores=True,
+        n_cores=1,
+        chunk_size=10,
+        io_threads=1,
+    )
+    annotate_bam_per_read(
+        apply_output,
+        standalone_output,
+        str(ref_fasta),
+        DDDA_FIVE_PRIME_FACTORS,
+        threads=1,
+    )
+    _run_daf_fused_streaming(
+        str(iupac), integrated_output,
+        ref_fasta_path=str(ref_fasta), ddda_mcg=True,
+    )
+
+    def ddda_spans(path):
+        result = {}
+        with pysam.AlignmentFile(path, "rb", check_sq=False) as bam:
+            for read in bam.fetch(until_eof=True):
+                parsed = parse_ma_tag(read.get_tag("MA"))
+                result[read.query_name] = parsed["ddda_mcg"]
+        return result
+
+    assert ddda_spans(integrated_output) == ddda_spans(standalone_output)
+
+
+def test_fiberhmm_call_cli_integrates_ddda_mcg_before_default_recall(tmp_path):
+    raw_md, _iupac, ref_fasta = _write_mcg_daf_fixture_bams(tmp_path)
+    output = tmp_path / "mcg_cli.bam"
+    command = [
+        sys.executable, "-m", "fiberhmm.cli.call",
+        "-i", str(raw_md),
+        "-o", str(output),
+        "--enzyme", "ddda",
+        "--ddda-mcg",
+        "--reference", str(ref_fasta),
+        "--phase-nrl", "off",
+        "--min-llr", "1000",
+        "--min-read-length", "0",
+        "--chunk-size", "10",
+        "--io-threads", "1",
+        "-c", "1",
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=os.path.dirname(os.path.dirname(__file__)),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stderr
+    combined_log = completed.stdout + completed.stderr
+    assert "integrated DddA mCG calling enabled" in combined_log
+    assert "DddA mCG: 3 spans on 3 reads" in combined_log
+    tags = _read_tags_by_name(str(output))
+    assert all("ddda_mcg." in record.get("MA", "") for record in tags.values())
+    with pysam.AlignmentFile(output, "rb", check_sq=False) as bam:
+        descriptions = [record.get("DS", "") for record in bam.header.to_dict().get("PG", [])]
+        for read in bam.fetch(until_eof=True):
+            parsed = parse_ma_tag(read.get_tag("MA"))
+            expected_aq = sum(
+                len(quality_spec) * len(intervals)
+                for _name, _strand, quality_spec, intervals in parsed["raw_types"]
+            )
+            actual_aq = len(read.get_tag("AQ")) if read.has_tag("AQ") else 0
+            assert actual_aq == expected_aq
+            if read.has_tag("AN"):
+                annotation_count = sum(
+                    len(intervals) for *_prefix, intervals in parsed["raw_types"]
+                )
+                assert len(read.get_tag("AN").split(",")) == annotation_count
+    assert any("ddda_mcg=on" in description for description in descriptions)
 
 
 def test_daf_reference_fasta_is_closed_after_streaming(tmp_path, monkeypatch):

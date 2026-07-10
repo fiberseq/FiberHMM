@@ -76,6 +76,13 @@ package-lock.json
 # Proposals and design docs
 docs/proposals/
 
+# Local DddA analysis and handoff artifacts
+ddda_profile/
+docs/daf-m5c.md
+docs/daf-m5c-validation.md
+docs/fiberbrowser-m5c-handoff.md
+docs/fiberhmm-for-daf-seq-guide-pr.md
+
 # Agent instructions
 CLAUDE.md
 AGENTS.md

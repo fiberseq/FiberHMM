@@ -60,6 +60,18 @@ def daf_encode_main():
     return main()
 
 
+def call_m5c_main():
+    _notify()
+    from fiberhmm.cli.call_m5c import main
+    return main()
+
+
+def tag_m5c_main():
+    _notify()
+    from fiberhmm.cli.tag_m5c import main
+    return main()
+
+
 def recall_tfs_main():
     _notify()
     from fiberhmm.cli.recall_tfs import main

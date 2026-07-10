@@ -66,12 +66,17 @@ def append_coord_marker(header):
 
 
 def header_has_coord_marker(header) -> bool:
-    """Return True if the header carries the molecular-frame @CO marker.
+    """Return True if the header records molecular-frame coordinates.
 
-    Every FiberHMM tool that writes molecular-frame ns/nl/as/al/MA stamps the
-    output header with ``@CO fiberhmm:coord=molecular`` (via
-    ``append_coord_marker``). Its ABSENCE means the legacy/v1.0 convention:
-    ns/nl are stored in SEQ (query) frame -- a 2nd-pass recaller must NOT flip
-    them molecular->seq again, or reverse-strand calls get mis-placed."""
+    FiberHMM records this as either ``@CO fiberhmm:coord=molecular`` or a full
+    ``@PG`` record whose ``DS`` contains ``coord=molecular``. Its absence means
+    the legacy/v1.0 convention: ns/nl are stored in SEQ (query) frame, so a
+    second-pass recaller must not flip them again on reverse reads.
+    """
     d = _header_to_dict(header)
-    return COORD_MOLECULAR_MARKER in list(d.get('CO', []))
+    if COORD_MOLECULAR_MARKER in list(d.get('CO', [])):
+        return True
+    return any(
+        "coord=molecular" in str(program.get("DS", ""))
+        for program in d.get("PG", [])
+    )

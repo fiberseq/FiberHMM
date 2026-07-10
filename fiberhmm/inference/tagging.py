@@ -225,3 +225,9 @@ def write_fused_recall_tags(
         nuc_el_for_kept=result.get("nuc_el_for_kept"),
         nuc_er_for_kept=result.get("nuc_er_for_kept"),
     )
+    if "ddda_mcg_spans" in result:
+        # The fused caller generated these in SEQ/query coordinates. Append
+        # after nuc/msp/tf writing so the shared helper can preserve AQ/AN
+        # alignment while replacing any stale prior ddda_mcg group.
+        from fiberhmm.daf.m5c import add_m5c_ma_tag
+        add_m5c_ma_tag(read, result.get("ddda_mcg_spans") or [])

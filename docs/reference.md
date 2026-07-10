@@ -48,7 +48,7 @@ tags carrying TF/Pol II footprints with full LLR scoring:
 
 | Tag | Type | Description |
 |-----|------|-------------|
-| `MA` | Z | Annotation string: `<readlen>;nuc.Q:...;msp.:...;tf.QQQ:...` (1-based coords per spec) |
+| `MA` | Z | Annotation string: `<readlen>;nuc.Q:...;msp.:...;tf.QQQ:...;ddda_mcg.:...` (1-based coords per spec) |
 | `AQ` | B,C | Quality bytes interleaved per annotation: `nq` for nucs; `tq, el, er` for TFs (no bytes for MSPs) |
 
 Legacy `ns`/`nl`/`as`/`al` are rewritten to reflect the unified call set (v2
@@ -77,7 +77,7 @@ derives strand internally from MD and doesn't modify the stored sequence.
 The recaller writes one `MA` tag and one `AQ` tag per processed read:
 
 ```
-MA:Z:<read_length>;nuc.Q:s1-l1,s2-l2,...;msp.:s1-l1,...;tf.QQQ:s1-l1,...
+MA:Z:<read_length>;nuc.Q:s1-l1,s2-l2,...;msp.:s1-l1,...;tf.QQQ:s1-l1,...;ddda_mcg.:s1-l1,...
 AQ:B:C: nq, nq, ..., tq, el, er, tq, el, er, ...
 ```
 
@@ -88,9 +88,20 @@ Coordinates are 1-based (per the spec); internal storage stays 0-based.
 | `nuc.Q` | `nq` | Nucleosomes (`nl ≥ unify_threshold`, or v2 short-nucs the recaller did not match). `nq` carries v2's posterior mean (0 sentinel for unverified entries). |
 | `msp.` | none | Methylase-sensitive patches (v2 MSPs unchanged) |
 | `tf.QQQ` | `tq, el, er` | Recaller TF calls (see below). |
+| `ddda_mcg.` | none | Conservative molecule-specific methylated-CpG runs inferred from DddA deamination contrast. |
 
 The recalled nucleosome track from the nucleosome recaller is `nuc.QQQ` =
 `(nq, el, er)` — same byte layout as `tf.QQQ`.
+
+`ddda_mcg.` is a molecular interval annotation, not a native per-base `MM:C+m`
+modification call. DAF amplification removes that native channel. The span
+marks a run whose observed CpGs jointly support the methylated state; it is
+called independently for each read unless the caller's explicit locus mode is
+used. The model and its calibration are DddA-specific and must not be applied
+to DddB DAF-seq. It is an experimental opt-in for genome-wide DddA data, not a
+default stage of the targeted DddA workflow. Enable the integrated path with
+`fiberhmm-call --enzyme ddda --ddda-mcg --reference ref.fa`; without that flag,
+the ordinary DddA call is unchanged.
 
 ## Quality bytes: tq / el / er
 
@@ -144,6 +155,14 @@ where a *hit* denotes an observed modification and a *miss* an unmodified
 instance of the target base. Because the modifying enzyme acts preferentially on
 accessible DNA, hits are evidence for the accessible state (ℓ_hit < 0) and misses
 for the protected state (ℓ_miss > 0).
+
+For DddA reads carrying a `ddda_mcg.` span, TF recall adjusts only CpG contexts
+inside that span. If the fitted accessible-state deamination probability is
+`p`, the methylated value is `1 - (1 - p)^(F/U)`, with calibrated
+`F/U = 0.167/1.113`. This is a rate-scale correction: protected-state and
+non-CpG emissions remain unchanged. Consequently an undeaminated methylated
+CpG supplies less false evidence for a footprint, while an observed
+deamination is also a less absolute accessible-state veto.
 
 **Maximal-segment inference.** Over a candidate interval the recaller accumulates
 the per-position log-likelihood ratio and identifies the contiguous sub-interval

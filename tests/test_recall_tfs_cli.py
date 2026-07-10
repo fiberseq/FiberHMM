@@ -72,10 +72,15 @@ def test_recall_tfs_reverse_read_preserves_nq(monkeypatch):
 
 def test_resolve_input_molecular_frame_auto_detects_marker():
     mol = {"CO": ["fiberhmm:coord=molecular"]}
+    fused = {"PG": [{
+        "ID": "fiberhmm-call",
+        "DS": "FiberHMM fused apply+recall; coord=molecular; mode=daf",
+    }]}
     legacy = {"CO": []}
     R = recall_tfs._resolve_input_molecular_frame
     # auto: marker present -> molecular; absent -> legacy query-frame
     assert R(SimpleNamespace(input_frame="auto"), mol) is True
+    assert R(SimpleNamespace(input_frame="auto"), fused) is True
     assert R(SimpleNamespace(input_frame="auto"), legacy) is False
     # explicit overrides win regardless of the marker
     assert R(SimpleNamespace(input_frame="molecular"), legacy) is True

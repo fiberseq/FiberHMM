@@ -182,6 +182,10 @@ def test_autosql_block_scores_adds_per_type_columns():
         schema = get_schema(t, block_scores=True)
         assert 'blockMl' in schema
 
+    m5c = get_schema('m5c', block_scores=True)
+    assert 'MA ddda_mcg. group' in m5c
+    assert '0 for DddA-inferred ddda_mcg interval spans' in m5c
+
 
 def test_autosql_circular_groups_adds_group_columns():
     schema = get_schema('tf', block_scores=True, circular_groups=True)

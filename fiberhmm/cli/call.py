@@ -57,8 +57,8 @@ def parse_args():
                    help='Reference FASTA for --mode daf on raw BAMs that lack '
                         'both R/Y IUPAC encoding and MD tags. When present, acts '
                         'as a fallback source for deamination-site detection. '
-                        'Ignored for BAMs that already have R/Y in the sequence '
-                        'or have MD tags.')
+                        'Required and always used by --ddda-mcg to determine '
+                        'CpG and DddA sequence context.')
 
     # --- Apply params ---
     p.add_argument('--mode', default=None,
@@ -134,6 +134,13 @@ def parse_args():
     p.add_argument('--chimera-purity', type=float, default=0.8,
                    help='DAF chimera: min same-strand purity per segment '
                         '(default 0.8).')
+    p.add_argument(
+        '--ddda-mcg', action='store_true',
+        help='EXPERIMENTAL, opt-in whole-genome DddA only: infer per-read mCG '
+             'spans after preliminary HMM calling, write MA:ddda_mcg., and '
+             'adjust CpG TF emissions in the same recall pass. Requires '
+             '--enzyme ddda and --reference; not recommended for amplicons.',
+    )
 
     # --- PCR dedup (DAF / ddda|dddb only) ---
     p.add_argument('--dedup', action='store_true',
@@ -337,6 +344,77 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
     sys.exit(2)
 
 
+def _configure_ddda_mcg(args, mode: str) -> bool:
+    """Validate the opt-in integrated caller or print the DddA WGS hint."""
+    enabled = bool(getattr(args, 'ddda_mcg', False))
+    enzyme = getattr(args, 'enzyme', None)
+    if not enabled:
+        if enzyme == 'ddda' and mode == 'daf':
+            print(
+                "\n  NOTE: If this is whole-genome DddA DAF-seq, consider "
+                "the experimental\n"
+                "        --ddda-mcg --reference ref.fa\n"
+                "        option to recover per-read mCG spans and correct CpG "
+                "TF emissions.\n"
+                "        It is unnecessary for targeted/amplicon DddA data.\n",
+                file=sys.stderr,
+            )
+        return False
+
+    errors = []
+    if enzyme != 'ddda':
+        errors.append('--ddda-mcg requires --enzyme ddda')
+    if mode != 'daf':
+        errors.append('--ddda-mcg requires DAF observation mode')
+    if not getattr(args, 'reference', None):
+        errors.append('--ddda-mcg requires --reference ref.fa')
+    if getattr(args, 'circular', False):
+        errors.append('--ddda-mcg does not support --circular')
+    if getattr(args, 'downstream_compat', False):
+        errors.append('--ddda-mcg cannot be combined with --downstream-compat')
+    if errors:
+        print('error: ' + '; '.join(errors), file=sys.stderr)
+        raise SystemExit(2)
+
+    import pysam
+    try:
+        with pysam.FastaFile(args.reference):
+            pass
+    except (OSError, ValueError) as error:
+        print(
+            f"error: --ddda-mcg could not open indexed reference FASTA "
+            f"{args.reference!r}: {error}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    # Reject positive evidence of another chemistry. Legacy/custom headers may
+    # be silent, so the explicit --enzyme ddda assertion remains required.
+    input_bam = getattr(args, 'input', '-')
+    if input_bam != '-':
+        from fiberhmm.cli.tag_m5c import _declared_enzymes
+        try:
+            with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+                declared = _declared_enzymes(bam.header)
+        except (OSError, ValueError):
+            declared = set()
+        if declared and declared != {'ddda'}:
+            labels = ', '.join(sorted(declared))
+            print(
+                'error: --ddda-mcg rejected incompatible or mixed BAM '
+                f'provenance ({labels}); only DddA is supported.',
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+
+    print(
+        "  EXPERIMENTAL: integrated DddA mCG calling enabled "
+        "(whole-genome workflow).",
+        file=sys.stderr,
+    )
+    return True
+
+
 def _dedup_input_first(input_bam, output_bam, min_jaccard, flag_only, io_threads,
                        region_parallel, min_deam=10, prob_threshold=0,
                        ignore_strand=False, stats_tsv=None):
@@ -397,6 +475,7 @@ def main():
     _, model_k, model_mode = load_model_with_metadata(apply_model_path)
     mode = args.mode or model_mode or 'pacbio-fiber'
     k = args.context_size or int(model_k or 3)
+    ddda_mcg = _configure_ddda_mcg(args, mode)
 
     # Enzyme preset for recall params
     preset = ENZYME_PRESETS.get(args.enzyme, {}) if args.enzyme else {}
@@ -469,8 +548,10 @@ def main():
         # and MA are in molecular (original-fiber) frame -- keep the exact token.
         'DS': (f"FiberHMM fused apply+recall; coord=molecular "
                f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
-               f"mode={mode} recall_nucs={recall_nucs} phase_nrl={phase_nrl} "
-               f"chimera_filter={chimera_state} dedup={dedup_state}"),
+               f"mode={mode} enzyme={args.enzyme or 'custom'} "
+               f"recall_nucs={recall_nucs} phase_nrl={phase_nrl} "
+               f"chimera_filter={chimera_state} dedup={dedup_state} "
+               f"ddda_mcg={'on' if ddda_mcg else 'off'}"),
     }
 
     mode_label = 'region-parallel' if args.region_parallel else 'streaming'
@@ -482,7 +563,8 @@ def main():
         f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'}\n"
         f"  min_llr={min_llr} min_opps={args.min_opps} "
         f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
-        f"  cores={args.cores} io-threads={args.io_threads}"
+        f"  cores={args.cores} io-threads={args.io_threads} "
+        f"ddda_mcg={'on' if ddda_mcg else 'off'}"
         f"{' circular=on' if args.circular else ''}\n"
         "=========================================================================\n",
         file=sys.stderr,
@@ -535,6 +617,7 @@ def main():
             phase_nrl=phase_nrl,
             nuc_profile_path=nuc_profile_path,
             pg_record=pg_record,
+            ddda_mcg=ddda_mcg,
         )
     else:
         n_reads, n_fp = _process_bam_streaming_pipeline_fused(
@@ -575,6 +658,7 @@ def main():
             phase_nrl=phase_nrl,
             nuc_profile_path=nuc_profile_path,
             pg_record=pg_record,
+            ddda_mcg=ddda_mcg,
         )
 
     if not stdout_mode and not args.region_parallel:

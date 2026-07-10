@@ -411,6 +411,30 @@ def test_spec_mode_strips_stale_an_when_next_read_is_linear():
     assert not read.has_tag('AN')
 
 
+def test_write_ma_tags_preserves_existing_ddda_mcg_group():
+    read = _FakeRead()
+    read.set_tag('MA', '200;ddda_mcg.:21-50', value_type='Z')
+    write_ma_tags(read, 200, tf_calls=[], kept_nucs=[(0, 100)], msps=[])
+    assert read.get_tag('MA') == '200;nuc.Q:1-100;ddda_mcg.:21-50'
+
+
+def test_write_ma_tags_keeps_ddda_mcg_as_only_unqualified_annotation():
+    read = _FakeRead()
+    read.set_tag('MA', '200;ddda_mcg.:21-50', value_type='Z')
+    write_ma_tags(read, 200, tf_calls=[], kept_nucs=[], msps=[])
+    assert read.get_tag('MA') == '200;ddda_mcg.:21-50'
+    assert not read.has_tag('AQ')
+
+
+def test_write_ma_tags_preserves_circular_ddda_mcg_an_grouping():
+    read = _FakeRead()
+    read.set_tag('MA', '200;ddda_mcg.:1-10,191-10', value_type='Z')
+    read.set_tag('AN', 'fhw_ddda_mcg_0,fhw_ddda_mcg_0', value_type='Z')
+    write_ma_tags(read, 200, tf_calls=[], kept_nucs=[], msps=[])
+    assert read.get_tag('MA') == '200;ddda_mcg.:1-10,191-10'
+    assert read.get_tag('AN') == 'fhw_ddda_mcg_0,fhw_ddda_mcg_0'
+
+
 def test_compat_requires_legacy():
     import pytest
     read = _FakeRead()

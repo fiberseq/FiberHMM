@@ -60,6 +60,7 @@ def _process_bam_streaming_pipeline_fused(
     phase_nrl: int = 0,
     nuc_profile_path: str = None,
     pg_record: dict = None,
+    ddda_mcg: bool = False,
 ):
     """Fused apply+recall streaming pipeline."""
     ref_fasta = None
@@ -72,6 +73,9 @@ def _process_bam_streaming_pipeline_fused(
         'worker_failures': 0,
         'written': 0,
         'chimera': 0,
+        'ddda_mcg_reads': 0,
+        'ddda_mcg_spans': 0,
+        'ddda_mcg_failures': 0,
     }
 
     total_reads = 0
@@ -109,7 +113,7 @@ def _process_bam_streaming_pipeline_fused(
                 initargs=(model_path, recall_model_path, emission_uplift, False,
                           recall_nucs, split_min_llr, split_min_opps,
                           filter_chimeras, chimera_min_seg, chimera_purity,
-                          phase_nrl, nuc_profile_path),
+                          phase_nrl, nuc_profile_path, ddda_mcg),
             )
 
             inflight = deque()
@@ -133,7 +137,10 @@ def _process_bam_streaming_pipeline_fused(
                         _buffer_skip(read, skip_reason)
                         continue
 
-                    payload = make_apply_payload(read, mode=mode, ref_fasta=ref_fasta)
+                    payload = make_apply_payload(
+                        read, mode=mode, ref_fasta=ref_fasta,
+                        include_ddda_mcg=ddda_mcg,
+                    )
                     if payload is None:
                         _buffer_skip(read, 'no_modifications')
                         continue
@@ -230,6 +237,13 @@ def _process_bam_streaming_pipeline_fused(
     if counters.get('chimera'):
         print(f"  DAF strand-swap chimeras filtered: {counters['chimera']:,}",
               file=_log)
+    if ddda_mcg:
+        print(
+            f"  DddA mCG: {counters['ddda_mcg_spans']:,} spans on "
+            f"{counters['ddda_mcg_reads']:,} reads; "
+            f"per-read failures={counters['ddda_mcg_failures']:,}",
+            file=_log,
+        )
 
     return total_reads, reads_with_fp
 

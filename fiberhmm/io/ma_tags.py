@@ -13,6 +13,8 @@ tags written by FiberHMM <= 2.13.1, which used ``+``, still read back.)
   - ``tf.QQQ``   recaller TF footprints. Quality bytes per call:
                  (``tq``, ``el``, ``er``) = (LLR-derived score,
                  left-edge sharpness, right-edge sharpness).
+  - ``ddda_mcg.`` molecule-specific DddA-inferred methylated-CpG runs
+                   (no quality bytes).
 
 tq encoding
 -----------
@@ -55,6 +57,7 @@ from typing import List, Optional, Sequence, Tuple
 
 TQ_SCALE = 10.0          # tq = round(LLR * TQ_SCALE); saturates at LLR=25.5 nats
 EDGE_AMBIGUITY_SAT = 30  # bp; el/er = 0 at ambiguity >= this
+DDDA_MCG_FEATURE = 'ddda_mcg'
 
 
 def llr_to_tq(llr: float) -> int:
@@ -258,6 +261,7 @@ def parse_ma_tag(ma_string: str) -> dict:
             'nuc': [(start_0based, length), ...],
             'msp': [(start_0based, length), ...],
             'tf':  [(start_0based, length), ...],
+            'ddda_mcg': [(start_0based, length), ...],
             'raw_types': [(name, strand, qual_spec, [(s,l), ...]), ...],
         }
 
@@ -270,8 +274,14 @@ def parse_ma_tag(ma_string: str) -> dict:
         read_length = int(pieces[0])
     except ValueError:
         raise ValueError(f'MA tag must start with read length; got {pieces[0]!r}')
-    out = {'read_length': read_length, 'nuc': [], 'msp': [], 'tf': [],
-           'raw_types': []}
+    out = {
+        'read_length': read_length,
+        'nuc': [],
+        'msp': [],
+        'tf': [],
+        DDDA_MCG_FEATURE: [],
+        'raw_types': [],
+    }
     for chunk in pieces[1:]:
         if not chunk:
             continue

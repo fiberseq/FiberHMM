@@ -62,7 +62,7 @@ import pysam
 from fiberhmm.core.bam_reader import encode_from_query_sequence
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.io.bam_header import append_coord_marker, header_has_coord_marker
-from fiberhmm.io.ma_tags import flip_intervals_to_seq
+from fiberhmm.io.ma_tags import DDDA_MCG_FEATURE, flip_intervals_to_seq
 from fiberhmm.inference.fused_stages import build_fused_recall_result
 from fiberhmm.inference.tagging import write_fused_recall_tags
 from fiberhmm.inference.tf_recaller import (
@@ -70,6 +70,7 @@ from fiberhmm.inference.tf_recaller import (
     HAS_NUMBA,
     apply_emission_uplift,
     build_llr_tables,
+    build_m5c_llr_tables,
     extract_modifications,
     recall_read,
     write_ma_tags,
@@ -92,7 +93,8 @@ _NucCfg = namedtuple(
 
 
 def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
-                 nuc_cfg=None, input_molecular_frame=True):
+                 nuc_cfg=None, input_molecular_frame=True,
+                 m5c_llr_hit=None, m5c_llr_miss=None):
     """Set per-process globals once per worker.
 
     Slim version: workers receive compact payloads and return compact results —
@@ -109,6 +111,8 @@ def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
     # Frame of the input ns/nl/as/al: molecular (current FiberHMM, flip reverse
     # tags to seq) vs legacy seq/query (v1.0, use as-is). See recall_read().
     _WORKER['input_molecular_frame'] = input_molecular_frame
+    _WORKER['m5c_llr_hit'] = m5c_llr_hit
+    _WORKER['m5c_llr_miss'] = m5c_llr_miss
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +141,10 @@ class _PayloadRead:
     def get_tag(self, t):
         return self._tags[t]
 
+    @property
+    def query_length(self):
+        return len(self.query_sequence) if self.query_sequence else 0
+
 
 def _make_payload(read, mode=None) -> dict:
     """Extract only the tag data workers need from a pysam read.
@@ -152,7 +160,7 @@ def _make_payload(read, mode=None) -> dict:
     parse_mm_tag_query_positions accepts bytes directly via np.frombuffer.
     """
     tags = {}
-    for t in ('MM', 'Mm', 'ML', 'Ml', 'ns', 'nl', 'as', 'al', 'nq', 'st'):
+    for t in ('MM', 'Mm', 'ML', 'Ml', 'ns', 'nl', 'as', 'al', 'nq', 'st', 'MA'):
         if read.has_tag(t):
             val = read.get_tag(t)
             if t in ('ML', 'Ml'):
@@ -220,6 +228,8 @@ def _process_payload_record(payload) -> tuple:
         min_opps=_WORKER['min_opps'],
         unify_threshold=unify_threshold,
         input_molecular_frame=_WORKER.get('input_molecular_frame', True),
+        m5c_llr_hit=_WORKER.get('m5c_llr_hit'),
+        m5c_llr_miss=_WORKER.get('m5c_llr_miss'),
     )
     stats['tf'] = len(tf_calls)
     survived_short = sum(1 for _, length in kept_nucs if length < unify_threshold)
@@ -317,6 +327,15 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
         'as': as_seq, 'al': al_seq,
         'ns_scores': None, 'as_scores': None,
     }
+    m5c_mask = None
+    if _WORKER.get('m5c_llr_hit') is not None and read.has_tag('MA'):
+        import numpy as np
+        from fiberhmm.daf.m5c import ma_intervals
+        intervals = ma_intervals(read, DDDA_MCG_FEATURE)
+        if intervals:
+            m5c_mask = np.zeros(len(seq), dtype=bool)
+            for start, end in intervals:
+                m5c_mask[max(0, start):min(len(seq), end)] = True
     fiber_read = {'query_sequence': payload['seq']}
     result = build_fused_recall_result(
         fiber_read, apply_result,
@@ -329,6 +348,9 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
         nuc_min_size=nuc_cfg.nuc_min_size,
         msp_min_size=nuc_cfg.msp_min_size,
         phase_nrl=nuc_cfg.phase_nrl,
+        m5c_mask=m5c_mask,
+        m5c_llr_hit=_WORKER.get('m5c_llr_hit'),
+        m5c_llr_miss=_WORKER.get('m5c_llr_miss'),
     )
 
     stats['tf'] = len(result['tf_calls'])
@@ -390,10 +412,11 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
                         llr_hit, llr_miss, mode, k,
                         min_llr, min_opps, unify_threshold,
                         also_write_legacy, downstream_compat, max_reads,
-                        nuc_cfg=None, input_molecular_frame=True):
+                        nuc_cfg=None, input_molecular_frame=True,
+                        m5c_llr_hit=None, m5c_llr_miss=None):
     """Single-threaded path.  No IPC — process reads directly."""
     _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
-                 nuc_cfg, input_molecular_frame)
+                 nuc_cfg, input_molecular_frame, m5c_llr_hit, m5c_llr_miss)
     n_reads = n_v2 = n_tf = n_demoted = n_failed = 0
     for read in bam_in:
         if max_reads and n_reads >= max_reads:
@@ -420,7 +443,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
                    min_llr, min_opps, unify_threshold,
                    also_write_legacy, downstream_compat,
                    max_reads, n_cores, chunk_size, nuc_cfg=None,
-                   input_molecular_frame=True):
+                   input_molecular_frame=True, m5c_llr_hit=None, m5c_llr_miss=None):
     """Multi-core path with slim IPC and bounded in-flight queue.
 
     Uses apply_async + a bounded deque instead of imap to cap how many chunks
@@ -456,7 +479,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         processes=n_cores,
         initializer=_worker_init,
         initargs=(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
-                  nuc_cfg, input_molecular_frame),
+                  nuc_cfg, input_molecular_frame, m5c_llr_hit, m5c_llr_miss),
     ) as pool:
         buf_reads: list = []
         buf_payloads: list = []
@@ -520,6 +543,10 @@ def parse_args(default_recall_nucs: bool = False):
                    help='Power transform on emission probabilities. Default 1.0 '
                         '(identity). Use a pre-uplifted model file (e.g. '
                         'ddda_TF.json) for DddA rather than setting this.')
+    p.add_argument('--use-m5c', action=argparse.BooleanOptionalAction, default=None,
+                   help='Adjust CpG TF emissions inside ddda_mcg MA spans. Enabled '
+                        'automatically for DddA, disabled for other enzymes; '
+                        'use --use-m5c explicitly with a custom DddA model.')
     p.add_argument('--unify-threshold', type=int, default=90,
                    help='v2 nucs with nl < this are scanned + may be demoted '
                         'to tf+ if overlapped by a recaller call (default 90)')
@@ -784,12 +811,24 @@ def main(default_recall_nucs: bool = False):
     k = args.context_size or int(model_k)
 
     llr_hit, llr_miss = build_llr_tables(model)
+    m5c_llr_hit = m5c_llr_miss = None
+    use_m5c_arg = getattr(args, 'use_m5c', None)
+    use_m5c = args.enzyme == 'ddda' if use_m5c_arg is None else use_m5c_arg
+    if use_m5c and (mode != 'daf' or args.enzyme not in (None, 'ddda')):
+        raise SystemExit(
+            '--use-m5c is calibrated only for DddA or a custom DAF/DddA model'
+        )
+    if use_m5c:
+        m5c_llr_hit, m5c_llr_miss = build_m5c_llr_tables(
+            model, emission_uplift=uplift,
+        )
     if abs(uplift - 1.0) > 1e-9:
         llr_hit, llr_miss = apply_emission_uplift(llr_hit, llr_miss, model, uplift)
 
     print(
         f"[recall_tfs] enzyme={args.enzyme or 'custom'} mode={mode} k={k} "
         f"min_llr={min_llr:.2f} uplift={uplift:.2f} "
+        f"ddda_mcg={'on' if m5c_llr_hit is not None else 'off'} "
         f"unify_threshold={args.unify_threshold} cores={n_cores} "
         f"numba={'on' if HAS_NUMBA else 'off'}",
         file=sys.stderr,
@@ -837,6 +876,7 @@ def main(default_recall_nucs: bool = False):
                 min_llr, args.min_opps, args.unify_threshold,
                 also_write_legacy, args.downstream_compat, args.max_reads,
                 nuc_cfg, input_molecular_frame,
+                m5c_llr_hit, m5c_llr_miss,
             )
         else:
             n_reads, n_v2, n_tf, n_demoted, n_failed = _parallel_loop(
@@ -845,6 +885,7 @@ def main(default_recall_nucs: bool = False):
                 min_llr, args.min_opps, args.unify_threshold,
                 also_write_legacy, args.downstream_compat, args.max_reads,
                 n_cores, args.chunk_size, nuc_cfg, input_molecular_frame,
+                m5c_llr_hit, m5c_llr_miss,
             )
     finally:
         bam_in.close()

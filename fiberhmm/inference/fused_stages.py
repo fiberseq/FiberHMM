@@ -53,6 +53,56 @@ def apply_result_has_footprints(apply_result: Optional[Mapping[str, Any]]) -> bo
     return len(apply_result["ns"]) > 0 or len(apply_result["as"]) > 0
 
 
+def run_ddda_mcg_stage(
+    observation_payload,
+    apply_result: Mapping[str, Any],
+    read_length: int,
+):
+    """Call per-read DddA mCG after apply and return its TF mask + spans.
+
+    The preliminary HMM nucleosomes are the accessibility exclusion used by
+    the validated standalone tagger. This stage deliberately runs before
+    nucleosome/TF recall so the same-molecule mask can alter TF emissions in
+    that recall pass.
+    """
+    if not observation_payload or read_length <= 0:
+        return None, []
+    from fiberhmm.daf.m5c import (
+        DDDA_FIVE_PRIME_FACTORS,
+        call_read_m5c,
+        observations_from_ddda_mcg_payload,
+    )
+
+    excluded = [
+        (int(start), int(start) + int(length))
+        for start, length in zip(apply_result.get("ns", ()),
+                                 apply_result.get("nl", ()))
+        if int(length) > 0
+    ]
+    observations = observations_from_ddda_mcg_payload(
+        observation_payload, excluded,
+    )
+    if not observations:
+        return None, []
+    result = call_read_m5c(
+        observations,
+        DDDA_FIVE_PRIME_FACTORS,
+        expected_run_bp=5000.0,
+        posterior_threshold=0.99,
+        baseline_radius=250,
+        min_other=10,
+        min_call_cpg=2,
+        max_call_gap_bp=5000.0,
+    )
+    spans = [(int(call.start), int(call.end)) for call in result.calls]
+    if not spans:
+        return None, []
+    mask = np.zeros(int(read_length), dtype=bool)
+    for lo, hi in spans:
+        mask[max(0, lo):min(int(read_length), hi)] = True
+    return mask, spans
+
+
 def run_hmm_apply_stage(
     fiber_read: Mapping[str, Any],
     model,
@@ -92,6 +142,9 @@ def run_tf_recall_stage(
     min_llr: float,
     min_opps: int,
     unify_threshold: int,
+    m5c_mask=None,
+    m5c_llr_hit=None,
+    m5c_llr_miss=None,
 ) -> list:
     """Build recall scan intervals and run the TF LLR scan over each one."""
     intervals = build_scan_intervals(
@@ -104,9 +157,17 @@ def run_tf_recall_stage(
     )
     tf_calls = []
     for lo, hi in intervals:
-        tf_calls.extend(
-            call_tfs_in_interval(obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps)
-        )
+        if m5c_mask is None:
+            calls = call_tfs_in_interval(
+                obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps,
+            )
+        else:
+            calls = call_tfs_in_interval(
+                obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps,
+                m5c_mask=m5c_mask, m5c_llr_hit=m5c_llr_hit,
+                m5c_llr_miss=m5c_llr_miss,
+            )
+        tf_calls.extend(calls)
     return tf_calls
 
 
@@ -126,6 +187,9 @@ def build_fused_recall_result(
     msp_min_size: int = 0,
     phase_nrl: int = 0,
     nuc_profile=None,
+    m5c_mask=None,
+    m5c_llr_hit=None,
+    m5c_llr_miss=None,
 ) -> dict:
     """Run TF recall and nucleosome/TF unification after an HMM apply result.
 
@@ -151,6 +215,7 @@ def build_fused_recall_result(
                 split_min_llr, split_min_opps, nuc_min_size, msp_min_size,
                 phase_nrl,
                 nuc_profile,
+                m5c_mask, m5c_llr_hit, m5c_llr_miss,
             )
         return _build_fused_recall_result_with_nucs(
             fiber_read, apply_result, llr_hit, llr_miss,
@@ -158,6 +223,7 @@ def build_fused_recall_result(
             split_min_llr, split_min_opps, nuc_min_size, msp_min_size,
             phase_nrl,
             nuc_profile,
+            m5c_mask, m5c_llr_hit, m5c_llr_miss,
         )
 
     recall_ns = apply_result.get("tiled_ns", ns) if is_circular else ns
@@ -165,6 +231,19 @@ def build_fused_recall_result(
     recall_msps = apply_result.get("tiled_as", msps) if is_circular else msps
     recall_msp_lengths = apply_result.get("tiled_al", msp_lengths) if is_circular else msp_lengths
     recall_read_length = len(apply_result["encoded"]) if is_circular else len(fiber_read["query_sequence"])
+    recall_m5c_mask = m5c_mask
+    if is_circular and m5c_mask is not None and len(m5c_mask) != recall_read_length:
+        read_length = int(
+            apply_result.get("circular_read_length")
+            or len(fiber_read["query_sequence"])
+        )
+        if len(m5c_mask) != read_length or recall_read_length % read_length:
+            raise ValueError(
+                "circular m5c mask must match one molecule or tiled observations"
+            )
+        recall_m5c_mask = np.tile(
+            np.asarray(m5c_mask, dtype=bool), recall_read_length // read_length
+        )
 
     tf_calls = run_tf_recall_stage(
         apply_result["encoded"],
@@ -178,6 +257,7 @@ def build_fused_recall_result(
         min_llr,
         min_opps,
         unify_threshold,
+        recall_m5c_mask, m5c_llr_hit, m5c_llr_miss,
     )
     if is_circular:
         read_length = int(apply_result.get("circular_read_length") or len(fiber_read["query_sequence"]))
@@ -249,6 +329,9 @@ def _build_fused_recall_result_with_nucs(
     msp_min_size: int,
     phase_nrl: int = 0,
     nuc_profile=None,
+    m5c_mask=None,
+    m5c_llr_hit=None,
+    m5c_llr_miss=None,
 ) -> dict:
     """nuc recall -> MSP re-derive -> TF recall (non-circular only)."""
     obs = apply_result["encoded"]
@@ -278,6 +361,7 @@ def _build_fused_recall_result_with_nucs(
     tf_calls = run_tf_recall_stage(
         obs, refined_ns, refined_nl, msp_starts, msp_len, read_length,
         llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
+        m5c_mask, m5c_llr_hit, m5c_llr_miss,
     )
 
     # 3b) promote nucleosome-sized TF leaks (>= unify_threshold) back to nuc+
@@ -326,6 +410,9 @@ def _build_fused_recall_result_with_nucs_circular(
     msp_min_size: int,
     phase_nrl: int = 0,
     nuc_profile=None,
+    m5c_mask=None,
+    m5c_llr_hit=None,
+    m5c_llr_miss=None,
 ) -> dict:
     """nuc recall for circular reads: split/refine in tiled space, then project
     the refined nucs, MSPs and TF calls back to molecule coordinates."""
@@ -350,11 +437,18 @@ def _build_fused_recall_result_with_nucs_circular(
 
     # 2) re-derive MSPs (still tiled), then 3) TF recall on the refined structure
     tiled_new_msps = rederive_msps(tiled_msps, tiled_access, tiled_len, msp_min_size)
+    tiled_m5c_mask = m5c_mask
+    if m5c_mask is not None and len(m5c_mask) != tiled_len:
+        if len(m5c_mask) != read_length or tiled_len % read_length:
+            raise ValueError("circular m5c mask must match one molecule or tiled observations")
+        tiled_m5c_mask = np.tile(np.asarray(m5c_mask, dtype=bool),
+                                 tiled_len // read_length)
     tiled_tf = run_tf_recall_stage(
         obs,
         [nc.start for nc in tiled_nucs], [nc.length for nc in tiled_nucs],
         [s for s, _ in tiled_new_msps], [length for _, length in tiled_new_msps],
         tiled_len, llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
+        tiled_m5c_mask, m5c_llr_hit, m5c_llr_miss,
     )
     # 3b) promote nucleosome-sized TF leaks back to nuc+ (still tiled)
     tiled_tf, tiled_promoted = promote_large_tf_calls(

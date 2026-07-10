@@ -4,6 +4,7 @@ Tests for fiberhmm.inference.parallel module — region splitting and chromosome
 from collections import deque
 from concurrent.futures import Future
 
+import numpy as np
 import pytest
 
 import fiberhmm.inference.legacy_pipeline as legacy_pipeline
@@ -275,6 +276,59 @@ def test_fused_payload_worker_counts_per_read_failures(monkeypatch):
         None,
         None,
     ]
+
+
+def test_fused_payload_worker_runs_integrated_ddda_mcg_and_forwards_mask(monkeypatch):
+    captured = {}
+    mask = np.array([False, True, True, False])
+
+    monkeypatch.setattr(
+        streaming_workers,
+        "extract_fiber_read_from_payload",
+        lambda *_args: {"query_sequence": "ACGT"},
+    )
+    monkeypatch.setattr(
+        streaming_workers,
+        "run_hmm_apply_stage",
+        lambda *_args, **_kwargs: {"ns": [], "nl": [], "as": [0], "al": [4]},
+    )
+    monkeypatch.setattr(
+        streaming_workers,
+        "run_ddda_mcg_stage",
+        lambda observations, _apply, _length: (
+            mask,
+            [(1, 3)],
+        ) if observations == "contexts" else (None, []),
+    )
+
+    def fake_build(*_args, **kwargs):
+        captured.update(kwargs)
+        return {"tf_calls": [], "ns": [], "nl": [], "as": [], "al": []}
+
+    monkeypatch.setattr(streaming_workers, "build_fused_recall_result", fake_build)
+    monkeypatch.setattr(streaming_workers, "_worker_model", object())
+    monkeypatch.setattr(streaming_workers, "_worker_recall_state", {
+        "llr_hit": "hit",
+        "llr_miss": "miss",
+        "ddda_mcg": True,
+        "m5c_llr_hit": "m-hit",
+        "m5c_llr_miss": "m-miss",
+    })
+
+    result = streaming_workers._process_fused_payload_chunk_worker(
+        [{"_ddda_mcg_observations": "contexts"}],
+        edge_trim=0,
+        circular=False,
+        mode="daf",
+        context_size=3,
+        msp_min_size=0,
+    )
+    assert result.read_failures == 0
+    assert result.results[0]["ddda_mcg_spans"] == [(1, 3)]
+    assert result.results[0]["ddda_mcg_failed"] is False
+    assert captured["m5c_mask"] is mask
+    assert captured["m5c_llr_hit"] == "m-hit"
+    assert captured["m5c_llr_miss"] == "m-miss"
 
 
 def test_streaming_drain_counts_worker_failures_and_passes_read_through():

@@ -513,7 +513,8 @@ class _ApplyPayloadRead:
         return self._tags[t]
 
 
-def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[dict]:
+def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
+                       include_ddda_mcg: bool = False) -> Optional[dict]:
     """Extract slim payload from a pysam read for the apply slim-IPC path.
 
     Runs in the *main* process.  Does NOT parse MM/ML — that moves to the
@@ -553,7 +554,13 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[di
         'tags': tags,
     }
 
+    if include_ddda_mcg and (mode != 'daf' or ref_fasta is None):
+        raise ValueError(
+            "include_ddda_mcg requires DAF mode and an open reference FASTA"
+        )
+
     # DAF MD-fallback precomputation (live-read side, before slim-IPC handoff).
+    md_res = None
     if mode == 'daf':
         from fiberhmm.core.bam_reader import has_iupac_encoding
         if not has_iupac_encoding(seq):
@@ -561,6 +568,14 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[di
             md_res = get_daf_positions(read, ref_fasta=ref_fasta)
             if md_res is not None:
                 payload['_daf_md_result'] = md_res   # (ct_list, ga_list, strand_tag)
+
+    if include_ddda_mcg:
+        from fiberhmm.daf.m5c import build_ddda_mcg_observation_payload
+        observations = build_ddda_mcg_observation_payload(
+            read, ref_fasta, daf_result=md_res,
+        )
+        if observations:
+            payload['_ddda_mcg_observations'] = observations
 
     return payload
 

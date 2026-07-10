@@ -19,6 +19,7 @@ CHIMERA_RESULT = "__fiberhmm_chimera_skip__"
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
+    run_ddda_mcg_stage,
     run_hmm_apply_stage,
 )
 from fiberhmm.inference.worker_results import WorkerChunkResult
@@ -70,6 +71,7 @@ def _init_fused_worker(
     chimera_purity=0.8,
     phase_nrl=0,
     nuc_profile_path=None,
+    ddda_mcg=False,
 ):
     """Initialize worker process for the fused apply+recall pipeline.
 
@@ -82,6 +84,7 @@ def _init_fused_worker(
 
     os.environ['NUMBA_CACHE_DIR'] = ''
 
+    _worker_recall_state = {}
     _worker_model = freeze_model_for_inference(load_model(apply_model_path))
     _worker_debug_timing = debug_timing
 
@@ -90,6 +93,7 @@ def _init_fused_worker(
     from fiberhmm.inference.tf_recaller import (
         apply_emission_uplift,
         build_llr_tables,
+        build_m5c_llr_tables,
     )
 
     r_path = recall_model_path or apply_model_path
@@ -104,6 +108,13 @@ def _init_fused_worker(
         )
     _worker_recall_state['llr_hit'] = llr_hit
     _worker_recall_state['llr_miss'] = llr_miss
+    _worker_recall_state['ddda_mcg'] = bool(ddda_mcg)
+    if ddda_mcg:
+        m5c_hit, m5c_miss = build_m5c_llr_tables(
+            r_model, emission_uplift=emission_uplift,
+        )
+        _worker_recall_state['m5c_llr_hit'] = m5c_hit
+        _worker_recall_state['m5c_llr_miss'] = m5c_miss
     _worker_recall_state['recall_nucs'] = recall_nucs
     _worker_recall_state['split_min_llr'] = split_min_llr
     _worker_recall_state['split_min_opps'] = split_min_opps
@@ -240,7 +251,22 @@ def _process_fused_payload_chunk_worker(
                 results.append(None)
                 continue
 
-            results.append(build_fused_recall_result(
+            m5c_mask = None
+            m5c_spans = []
+            m5c_failed = False
+            if _worker_recall_state.get('ddda_mcg'):
+                try:
+                    m5c_mask, m5c_spans = run_ddda_mcg_stage(
+                        payload.get('_ddda_mcg_observations'),
+                        apply_result,
+                        len(fiber_read['query_sequence']),
+                    )
+                except Exception:
+                    # Keep ordinary apply/recall output even if this optional
+                    # early feature fails on one malformed read.
+                    m5c_mask, m5c_spans, m5c_failed = None, [], True
+
+            fused_result = build_fused_recall_result(
                 fiber_read,
                 apply_result,
                 llr_hit,
@@ -256,7 +282,14 @@ def _process_fused_payload_chunk_worker(
                 msp_min_size=msp_min_size,
                 phase_nrl=_worker_recall_state.get('phase_nrl', 0),
                 nuc_profile=_worker_recall_state.get('nuc_profile'),
-            ))
+                m5c_mask=m5c_mask,
+                m5c_llr_hit=_worker_recall_state.get('m5c_llr_hit'),
+                m5c_llr_miss=_worker_recall_state.get('m5c_llr_miss'),
+            )
+            if _worker_recall_state.get('ddda_mcg'):
+                fused_result['ddda_mcg_spans'] = m5c_spans
+                fused_result['ddda_mcg_failed'] = m5c_failed
+            results.append(fused_result)
         except Exception:
             # Per-read failure must not kill the worker or the whole chunk.
             read_failures += 1

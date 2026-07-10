@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 GenomicRegion = Tuple[str, int, int]
 SkipReasons = Dict[str, int]
+Metrics = Dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ class RegionBamResult:
     written: int
     temp_tsv_path: Optional[str] = None
     skip_reasons: SkipReasons = field(default_factory=dict)
+    metrics: Metrics = field(default_factory=dict)
 
     @classmethod
     def from_value(
@@ -49,21 +51,29 @@ class RegionBamResult:
     ) -> "RegionBamResult":
         if isinstance(value, cls):
             return value
-        if len(value) == 6:
+        if len(value) == 7:
+            (
+                temp_bam_path, total_reads, reads_with_footprints,
+                written, temp_tsv_path, skip_reasons, metrics,
+            ) = value
+        elif len(value) == 6:
             (
                 temp_bam_path, total_reads, reads_with_footprints,
                 written, temp_tsv_path, skip_reasons,
             ) = value
+            metrics = {}
         elif len(value) == 5:
             (
                 temp_bam_path, total_reads, reads_with_footprints,
                 written, temp_tsv_path,
             ) = value
             skip_reasons = {}
+            metrics = {}
         else:
             temp_bam_path, total_reads, reads_with_footprints, written = value
             temp_tsv_path = None
             skip_reasons = {}
+            metrics = {}
         return cls(
             temp_bam_path=temp_bam_path,
             total_reads=total_reads,
@@ -71,6 +81,7 @@ class RegionBamResult:
             written=written,
             temp_tsv_path=temp_tsv_path,
             skip_reasons=skip_reasons or {},
+            metrics=metrics or {},
         )
 
 
@@ -82,6 +93,7 @@ class RegionBamAggregation:
     reads_with_footprints: int = 0
     total_skipped: int = 0
     skip_reasons: SkipReasons = field(default_factory=dict)
+    metrics: Metrics = field(default_factory=dict)
     temp_bams: List[Tuple[int, str]] = field(default_factory=list)
     temp_tsvs: List[Tuple[int, str]] = field(default_factory=list)
 
@@ -103,6 +115,9 @@ class RegionBamAggregation:
         for reason, count in result.skip_reasons.items():
             self.skip_reasons[reason] = self.skip_reasons.get(reason, 0) + count
             self.total_skipped += count
+
+        for name, count in result.metrics.items():
+            self.metrics[name] = self.metrics.get(name, 0) + count
 
         if include_tsv and result.temp_tsv_path:
             self.temp_tsvs.append((region_index, result.temp_tsv_path))

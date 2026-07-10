@@ -111,6 +111,12 @@ def _drain_oldest_fused_chunk(
                 also_write_legacy=also_write_legacy,
                 downstream_compat=downstream_compat,
             )
+            spans = result.get('ddda_mcg_spans')
+            if spans:
+                counters['ddda_mcg_reads'] = counters.get('ddda_mcg_reads', 0) + 1
+                counters['ddda_mcg_spans'] = counters.get('ddda_mcg_spans', 0) + len(spans)
+            if result.get('ddda_mcg_failed'):
+                counters['ddda_mcg_failures'] = counters.get('ddda_mcg_failures', 0) + 1
             counters['reads_with_footprints'] += 1
         else:
             counters['no_footprints'] += 1

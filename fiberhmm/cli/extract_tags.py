@@ -10,7 +10,7 @@ Supported annotation types:
          Quality filter: --min-tq (default 50 = LLR >= 5 nats,
          matches fiberhmm-recall-tfs's default emission floor).
   - m6a:  m6A modification positions (MM/ML) -> BED12 (one line per read)
-  - m5c:  5mC modification positions (for DAF-seq) -> BED12
+  - m5c:  DddA MA ddda_mcg spans, or native MM/ML 5mC positions -> BED12
   - deam: DAF-seq deamination calls from R/Y IUPAC codes in the query
           sequence (written by fiberhmm-daf-encode) -> BED12 (one line per
           read). The DAF analogue of --m6a for IUPAC-encoded BAMs that
@@ -20,7 +20,7 @@ Extracts various tag types from tagged BAM files using region-parallel processin
   - nucleosome: Nucleosomes (ns/nl tags) -> BED12 (one line per read)
   - msp: Methylase-sensitive patches (as/al tags) -> BED12 (one line per read)
   - m6a: m6A modification positions (from MM/ML tags) -> BED12 (one line per read)
-  - m5c: 5mC modification positions (for DAF-seq) -> BED12 (one line per read)
+  - m5c: DddA MA ddda_mcg spans or native MM/ML 5mC -> BED12 (one line per read)
 
 Output files are named: {dataset}_{type}.bb (bigBed by default)
 
@@ -55,6 +55,7 @@ import pysam
 from fiberhmm.core.bam_reader import cigar_to_query_ref
 from fiberhmm.inference.parallel import _get_genome_regions
 from fiberhmm.io.ma_tags import (
+    DDDA_MCG_FEATURE,
     flip_interval_frame,
     flip_intervals_to_seq,
     parse_an_tag,
@@ -449,7 +450,8 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['m5c'] += _extract_m5c(
                             read, bed_outs['m5c'], prob_threshold, query_to_ref,
-                            block_scores=block_scores)
+                            block_scores=block_scores,
+                            circular_groups=circular_groups)
                     if 'deam' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
@@ -856,12 +858,27 @@ def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None,
 
 
 def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
-                 block_scores: bool = False) -> int:
-    """Extract 5mC positions from MM/ML tags as BED12 (one line per read).
+                 block_scores: bool = False,
+                 circular_groups: bool = False) -> int:
+    """Extract DddA ``MA:ddda_mcg.`` spans or native MM/ML 5mC as BED12.
+
+    Molecule-specific DAF calls are intervals and take precedence when present.
+    Reads without an MA ddda_mcg group retain the native per-position MM/ML
+    fallback used by other 5mC assays.
 
     When ``block_scores=True``, appends a 13th column of comma-separated
-    per-position ML values (int[blockCount] blockMl).
+    per-position ML values (int[blockCount] blockMl). DAF spans have no quality
+    byte and therefore emit zero for this compatibility column.
     """
+    if query_to_ref is None:
+        query_to_ref = _build_query_to_ref(read)
+    ma_annotations = _parse_ma_annotations(read, DDDA_MCG_FEATURE)
+    if ma_annotations:
+        return _extract_ma_interval_type(
+            read, bed_out, DDDA_MCG_FEATURE, True, query_to_ref,
+            block_scores, circular_groups,
+        ) or 0
+
     positions = _parse_mod_positions_safe(read, {'m'})
     if not positions:
         return 0
@@ -870,7 +887,7 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
     strand = '-' if read.is_reverse else '+'
     read_id = read.query_name
 
-    aligned_pairs = query_to_ref if query_to_ref is not None else _build_query_to_ref(read)
+    aligned_pairs = query_to_ref
     n = len(aligned_pairs)
 
     positions_list = []
@@ -1372,6 +1389,7 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
         'reads_scanned': 0,
         # Footprint / MSP / TF tags
         'has_ns_nl': 0, 'has_as_al': 0, 'has_MA_AQ': 0,
+        'has_MA_ddda_mcg': 0,
         # Modified-base tags
         'has_MM': 0, 'has_ML': 0,
         'mm_subtypes': set(),
@@ -1398,6 +1416,17 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
                     counts['has_as_al'] += 1
                 if read.has_tag('MA') and read.has_tag('AQ'):
                     counts['has_MA_AQ'] += 1
+                if read.has_tag('MA'):
+                    try:
+                        groups = str(read.get_tag('MA')).split(';')[1:]
+                        if any(
+                            group.partition(':')[0].split('.', 1)[0]
+                            == DDDA_MCG_FEATURE
+                            for group in groups
+                        ):
+                            counts['has_MA_ddda_mcg'] += 1
+                    except Exception:
+                        pass
 
                 mm_present = read.has_tag('MM') or read.has_tag('Mm')
                 ml_present = read.has_tag('ML') or read.has_tag('Ml')
@@ -1448,6 +1477,10 @@ def diagnose_bam_tags(input_bam: str, n_reads: int = 20) -> Dict[str, object]:
         parts.append(f"as/al={frac(counts['has_as_al'])}")
     if counts['has_MA_AQ']:
         parts.append(f"MA/AQ={frac(counts['has_MA_AQ'])}")
+    if counts['has_MA_ddda_mcg']:
+        parts.append(
+            f"MA-{DDDA_MCG_FEATURE}={frac(counts['has_MA_ddda_mcg'])}"
+        )
     if counts['has_MM']:
         sub = (' [' + ','.join(counts['mm_subtypes']) + ']'
                if counts['mm_subtypes'] else '')
@@ -1477,8 +1510,10 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
         predicted['tf'] = 'MA/AQ tf. annotations'
     if diag['has_MM'] and any('a' in s.lower() for s in diag['mm_subtypes']):
         predicted['m6a'] = 'MM/ML (A+a)'
-    if diag['has_MM'] and any('+m' in s.lower() or '-m' in s.lower()
-                               for s in diag['mm_subtypes']):
+    if diag.get('has_MA_ddda_mcg'):
+        predicted['m5c'] = f'MA {DDDA_MCG_FEATURE}. spans'
+    elif diag['has_MM'] and any('+m' in s.lower() or '-m' in s.lower()
+                                 for s in diag['mm_subtypes']):
         predicted['m5c'] = 'MM/ML (C+m)'
     # deam: any of MM/ML u, R/Y in seq, or MD-only
     mm_has_u = any(('+u' in s.lower() or '+55797' in s)
@@ -1491,16 +1526,17 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
         predicted['deam'] = 'MD-only (path-3 fallback)'
 
     expected = []
-    empty = []
+    not_detected = []
     for t in extract_types:
         if t in predicted:
             expected.append(f"{t}[{predicted[t]}]")
         else:
-            empty.append(t)
+            not_detected.append(t)
     if expected:
         print(f"  will populate: {', '.join(expected)}")
-    if empty:
-        print(f"  will be empty: {', '.join(empty)}")
+    if not_detected:
+        print("  not detected in sniff (sparse annotations may still be present): "
+              + ", ".join(not_detected))
 
     # Warn about stale MD tags (common on consensus BAMs). Only flag when
     # --deam actually depends on MD (i.e. no MM/ML u code and no R/Y in
@@ -1567,7 +1603,8 @@ Examples:
                              'emission floor. Set to 0 for every call, 100+ for '
                              'high-confidence only.')
     parser.add_argument('--m6a', action='store_true', help='Extract m6A positions')
-    parser.add_argument('--m5c', action='store_true', help='Extract 5mC positions (DAF-seq)')
+    parser.add_argument('--m5c', action='store_true',
+                        help='Extract DddA MA ddda_mcg spans, or native MM/ML 5mC positions')
     parser.add_argument('--deam', action='store_true',
                         help='Extract DAF-seq deamination calls. Priority: '
                              '(1) MM/ML-native dU calls (mod code "u" or ChEBI 55797); '
@@ -1587,12 +1624,13 @@ Examples:
     # Filtering
     parser.add_argument('-q', '--min-mapq', type=int, default=0, help='Min mapping quality (default: 0, no filtering)')
     parser.add_argument('-p', '--prob-threshold', type=int, default=125,
-                        help='Min probability for m6a/m5c (0-255)')
+                        help='Min probability for native MM/ML m6a/m5c (0-255); '
+                             'not applied to DddA MA ddda_mcg spans')
     parser.add_argument('--no-scores', action='store_true', help='Omit scores from output')
     parser.add_argument('--block-scores', action='store_true',
                         help='Append per-block quality as extra BED column(s) (BED12+N). '
                              'nucleosome -> blockNq/blockEl/blockEr, msp -> blockAq, '
-                             'm6a/m5c -> blockMl, '
+                             'm6a/native-m5c -> blockMl (DddA ddda_mcg spans -> 0), '
                              'tf -> blockTq/blockEl/blockEr. bigBed uses -type=bed12+N and '
                              'the matching autoSQL schema so FiberBrowser/UCSC can surface '
                              'per-feature quality without a sidecar database.')
