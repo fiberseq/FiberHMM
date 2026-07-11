@@ -1418,8 +1418,11 @@ def annotate_bam_from_domains(input_bam: str, output_bam: str,
         )
     total = tagged = 0
     with pysam.AlignmentFile(input_bam, "rb", threads=threads) as source:
-        from fiberhmm.io.bam_header import maybe_append_pg
-        output_header = maybe_append_pg(source.header, header_record)
+        from fiberhmm.io.bam_header import append_ma_types, maybe_append_pg
+        output_header = append_ma_types(
+            maybe_append_pg(source.header, header_record),
+            (DDDA_MCG_FEATURE,),
+        )
         with pysam.AlignmentFile(output_bam, "wb", header=output_header,
                                  threads=threads) as sink:
             for read in source:
@@ -1465,8 +1468,11 @@ def annotate_bam_per_read(input_bam: str, output_bam: str, reference: str,
             if input_molecular_frame is None:
                 from fiberhmm.io.bam_header import header_has_coord_marker
                 input_molecular_frame = header_has_coord_marker(source.header)
-            from fiberhmm.io.bam_header import maybe_append_pg
-            output_header = maybe_append_pg(source.header, header_record)
+            from fiberhmm.io.bam_header import append_ma_types, maybe_append_pg
+            output_header = append_ma_types(
+                maybe_append_pg(source.header, header_record),
+                (DDDA_MCG_FEATURE, DDDA_MCG_HEMI_FEATURE),
+            )
             with pysam.AlignmentFile(output_bam, "wb", header=output_header,
                                      threads=threads) as sink:
                 for read in source:

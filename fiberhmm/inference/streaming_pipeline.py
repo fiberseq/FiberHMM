@@ -13,7 +13,11 @@ import pysam
 
 from fiberhmm.inference.bam_output import _sort_and_index_bam
 from fiberhmm.inference.engine import make_apply_payload
-from fiberhmm.io.bam_header import append_coord_marker, maybe_append_pg
+from fiberhmm.io.bam_header import (
+    append_coord_marker,
+    append_ma_types,
+    maybe_append_pg,
+)
 from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.streaming_drain import (
@@ -100,8 +104,14 @@ def _process_bam_streaming_pipeline_fused(
         _output_target = os.fdopen(1, 'wb', closefd=False)
 
     with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
+        ma_types = [] if downstream_compat else ["nuc", "msp", "tf"]
+        if ddda_mcg:
+            ma_types.append("ddda_mcg")
+        output_header = append_ma_types(
+            maybe_append_pg(inbam.header, pg_record), ma_types,
+        )
         with pysam.AlignmentFile(_output_target, "wb",
-                                 header=maybe_append_pg(inbam.header, pg_record),
+                                 header=output_header,
                                  threads=io_threads) as outbam:
             if ref_fasta_path:
                 ref_fasta = pysam.FastaFile(ref_fasta_path)

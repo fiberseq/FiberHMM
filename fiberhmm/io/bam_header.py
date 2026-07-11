@@ -1,9 +1,17 @@
 """Helpers for recording FiberHMM provenance in the output BAM header."""
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 import pysam
+
+
+# Optional FiberBrowser discovery convention for logical MA annotation names.
+# A pysam header dict stores only the text following ``@CO<TAB>``.
+MA_TYPES_PREFIX = "MA-TYPES:v1:"
+_MA_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
+_MA_SECTION_HEAD_RE = re.compile(r"^([A-Za-z0-9_]+)[+.-][PQ]*$")
 
 
 def _header_to_dict(header) -> dict:
@@ -46,6 +54,92 @@ def append_pg_record(header, record: dict):
 def maybe_append_pg(header, record: Optional[dict]):
     """``append_pg_record`` when ``record`` is provided, else ``header`` unchanged."""
     return append_pg_record(header, record) if record else header
+
+
+def is_valid_ma_name(name: str) -> bool:
+    """Return whether ``name`` satisfies the MA logical-name grammar."""
+    return bool(_MA_NAME_RE.fullmatch(str(name)))
+
+
+def ma_types_from_tag(ma_value) -> list[str]:
+    """Discover valid, non-empty logical annotation names in one MA value.
+
+    Invalid sections are skipped independently so one malformed extension does
+    not hide otherwise discoverable names. Strand and quality suffixes are
+    deliberately discarded.
+    """
+    names = []
+    seen = set()
+    for section in str(ma_value).split(";")[1:]:
+        head, separator, body = section.partition(":")
+        match = _MA_SECTION_HEAD_RE.fullmatch(head)
+        if not separator or match is None or not any(body.split(",")):
+            continue
+        name = match.group(1)
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def declared_ma_types(header) -> list[str]:
+    """Return valid declared MA names in union/first-seen order.
+
+    The declaration is advisory. Malformed comments, unknown convention
+    versions, invalid names, and duplicate names are ignored gracefully.
+    Names are case-sensitive and contain neither strand nor quality suffixes.
+    """
+    d = _header_to_dict(header)
+    names: list[str] = []
+    seen = set()
+    for raw_comment in d.get("CO", []):
+        comment = str(raw_comment)
+        if not comment.startswith(MA_TYPES_PREFIX):
+            continue
+        fields = comment[len(MA_TYPES_PREFIX):].split(",")
+        # One bad field invalidates this declaration, but not other @CO lines.
+        if not fields or any(not is_valid_ma_name(name) for name in fields):
+            continue
+        for name in fields:
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+    return names
+
+
+def append_ma_types(header, annotation_names):
+    """Append one ``MA-TYPES:v1`` @CO declaration for newly advertised names.
+
+    Existing declarations and unrelated comments are left untouched. Only
+    names absent from the valid ordered union are appended, making repeated
+    calls idempotent while allowing successive tools to extend the header.
+    Invalid producer-supplied names raise ``ValueError`` because they indicate
+    a programming error; invalid declarations already present in an input
+    header remain untouched and are ignored by :func:`declared_ma_types`.
+    """
+    if isinstance(annotation_names, str):
+        annotation_names = (annotation_names,)
+
+    requested = []
+    requested_seen = set()
+    for raw_name in annotation_names:
+        name = str(raw_name)
+        if not is_valid_ma_name(name):
+            raise ValueError(f"invalid MA annotation name: {name!r}")
+        if name not in requested_seen:
+            requested_seen.add(name)
+            requested.append(name)
+
+    declared = set(declared_ma_types(header))
+    missing = [name for name in requested if name not in declared]
+    if not missing:
+        return header
+
+    d = _header_to_dict(header)
+    comments = list(d.get("CO", []))
+    comments.append(MA_TYPES_PREFIX + ",".join(missing))
+    d["CO"] = comments
+    return pysam.AlignmentHeader.from_dict(d)
 
 
 # Stable, version-independent token marking that ns/nl/as/al (and MA) are written

@@ -861,8 +861,12 @@ def main(default_recall_nucs: bool = False):
 
     bam_out = None
     try:
+        from fiberhmm.io.bam_header import append_ma_types
+        output_header = append_coord_marker(bam_in.header)
+        if not args.downstream_compat:
+            output_header = append_ma_types(output_header, ("nuc", "msp", "tf"))
         bam_out = pysam.AlignmentFile(args.out_bam, 'wb',
-                                       header=append_coord_marker(bam_in.header),
+                                       header=output_header,
                                        threads=args.io_threads)
         header_text = str(bam_in.header)
 

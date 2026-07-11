@@ -9,6 +9,7 @@ import pytest
 
 from fiberhmm.cli import extract_tags, recall_tfs
 from fiberhmm.inference.parallel import process_bam_for_footprints
+from fiberhmm.io.bam_header import declared_ma_types
 from fiberhmm.models import get_model_path
 
 WORKFLOW_READ_LENGTH = 600
@@ -359,6 +360,9 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
     )
     recall_tfs.main()
     pysam.index(recalled_bam)
+
+    with pysam.AlignmentFile(recalled_bam, "rb", check_sq=False) as bam:
+        assert declared_ma_types(bam.header) == ["nuc", "msp", "tf"]
 
     recalled_read = _read_only_record(recalled_bam)
     assert recalled_read.query_name == query_name

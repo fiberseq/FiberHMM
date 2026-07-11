@@ -13,6 +13,7 @@ from fiberhmm.inference.parallel import (
     _process_bam_streaming_pipeline_fused,
 )
 from fiberhmm.daf.m5c import DDDA_FIVE_PRIME_FACTORS, annotate_bam_per_read
+from fiberhmm.io.bam_header import declared_ma_types
 from fiberhmm.models import get_model_path
 from fiberhmm.io.ma_tags import parse_ma_tag
 
@@ -286,6 +287,8 @@ def test_fused_streaming_emits_spec_and_legacy_tags(
     assert any("AQ" in t for t in tags.values())
     assert any("ns" in t and "nl" in t for t in tags.values())
     assert any("as" in t and "al" in t for t in tags.values())
+    with pysam.AlignmentFile(output, "rb", check_sq=False) as bam:
+        assert declared_ma_types(bam.header) == ["nuc", "msp", "tf"]
 
 
 def test_fused_with_scores_writes_nq_for_kept_nucs(
@@ -325,6 +328,10 @@ def test_fused_region_matches_streaming_on_single_region(benchmark_model_path, t
 
     assert stream_counts == region_counts
     assert _read_tags_by_name(stream_out) == _read_tags_by_name(region_out)
+    with pysam.AlignmentFile(stream_out, "rb", check_sq=False) as stream_bam:
+        assert declared_ma_types(stream_bam.header) == ["nuc", "msp", "tf"]
+    with pysam.AlignmentFile(region_out, "rb", check_sq=False) as region_bam:
+        assert declared_ma_types(region_bam.header) == ["nuc", "msp", "tf"]
     assert not any(
         p.name.startswith(".fiberhmm_call_tmp_")
         for p in tmp_path.iterdir()
@@ -371,6 +378,8 @@ def test_integrated_ddda_mcg_streaming_writes_same_spans_from_md_and_iupac(tmp_p
     ma_tags = [tags.get("MA", "") for tags in md_tags.values()]
     assert ma_tags
     assert all("ddda_mcg." in ma for ma in ma_tags)
+    with pysam.AlignmentFile(md_out, "rb", check_sq=False) as bam:
+        assert declared_ma_types(bam.header) == ["nuc", "msp", "tf", "ddda_mcg"]
 
 
 def test_integrated_ddda_mcg_region_parallel_matches_streaming(tmp_path):
@@ -421,6 +430,8 @@ def test_integrated_ddda_mcg_spans_match_standalone_tagger(tmp_path):
         DDDA_FIVE_PRIME_FACTORS,
         threads=1,
     )
+    with pysam.AlignmentFile(standalone_output, "rb", check_sq=False) as bam:
+        assert declared_ma_types(bam.header) == ["ddda_mcg", "ddda_mcg_hemi"]
     _run_daf_fused_streaming(
         str(iupac), integrated_output,
         ref_fasta_path=str(ref_fasta), ddda_mcg=True,
