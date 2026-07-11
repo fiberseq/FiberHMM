@@ -792,6 +792,245 @@ def cmd_adjust(args):
 
 
 # =============================================================================
+# ma-types subcommand: repair the advisory MA discovery declaration in place
+# =============================================================================
+
+def _parse_ma_type_arguments(values):
+    """Normalize comma- and space-separated CLI values in first-seen order."""
+    from fiberhmm.io.bam_header import is_valid_ma_name
+
+    names = []
+    seen = set()
+    for value in values:
+        for field in str(value).split(','):
+            name = field.strip()
+            if not is_valid_ma_name(name):
+                raise ValueError(
+                    f"invalid MA annotation name {name!r}; supply logical names "
+                    "only (for example tf, not tf.QQQ)"
+                )
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+    return names
+
+
+def _scan_bam_ma_types(bam_path, io_threads=1):
+    """Exhaustively scan every alignment and return MA names in observed order."""
+    import pysam
+
+    from fiberhmm.io.bam_header import ma_types_from_tag
+
+    names = []
+    seen = set()
+    records = records_with_ma = 0
+    with pysam.AlignmentFile(
+        bam_path, 'rb', check_sq=False, threads=io_threads,
+    ) as bam:
+        reads = tqdm(
+            bam.fetch(until_eof=True),
+            desc='Scanning MA types',
+            unit='reads',
+            disable=not sys.stderr.isatty(),
+        )
+        for read in reads:
+            records += 1
+            if not read.has_tag('MA'):
+                continue
+            records_with_ma += 1
+            for name in ma_types_from_tag(read.get_tag('MA')):
+                if name not in seen:
+                    seen.add(name)
+                    names.append(name)
+    return names, records, records_with_ma
+
+
+def _existing_bam_indexes(bam_path):
+    """Return existing BAI/CSI paths and their index kind, without duplicates."""
+    root, extension = os.path.splitext(bam_path)
+    roots = [bam_path]
+    if extension.lower() == '.bam':
+        roots.append(root)
+    candidates = [
+        *((value + '.bai', 'bai') for value in roots),
+        *((value + '.csi', 'csi') for value in roots),
+    ]
+    found = []
+    seen = set()
+    for path, kind in candidates:
+        absolute = os.path.abspath(path)
+        if absolute not in seen and os.path.exists(path):
+            seen.add(absolute)
+            found.append((path, kind))
+    return found
+
+
+def _rewrite_bam_ma_types_in_place(bam_path, annotation_names, io_threads=1):
+    """Safely add missing MA declarations and atomically replace ``bam_path``.
+
+    BAM headers cannot generally grow in place. The complete BAM is therefore
+    copied to a validated temporary file in the same directory. Any existing
+    BAI/CSI indexes are rebuilt before the BAM and indexes are atomically
+    replaced. The original files remain untouched if writing, validation, or
+    indexing fails.
+
+    Returns ``(missing_names, copied_records, rebuilt_index_paths)``. When no
+    names are missing, no files are rewritten and the latter two values are
+    zero/an empty list.
+    """
+    import shutil
+    import stat
+    import tempfile
+
+    import pysam
+
+    from fiberhmm.io.bam_header import append_ma_types, declared_ma_types
+
+    annotation_names = _parse_ma_type_arguments(annotation_names)
+    bam_path = os.path.abspath(bam_path)
+    if not os.path.isfile(bam_path):
+        raise FileNotFoundError(f"BAM not found: {bam_path}")
+    if io_threads < 1:
+        raise ValueError('--io-threads must be positive')
+
+    with pysam.AlignmentFile(
+        bam_path, 'rb', check_sq=False, threads=io_threads,
+    ) as source:
+        existing = set(declared_ma_types(source.header))
+    missing = [name for name in annotation_names if name not in existing]
+    if not missing:
+        return [], 0, []
+
+    output_dir = os.path.dirname(bam_path) or '.'
+    prefix = f".{os.path.basename(bam_path)}.ma_types."
+    descriptor, temp_bam = tempfile.mkstemp(
+        prefix=prefix, suffix='.bam', dir=output_dir,
+    )
+    os.close(descriptor)
+    temp_artifacts = {temp_bam}
+    prepared_indexes = []
+    copied_records = 0
+    try:
+        with pysam.AlignmentFile(
+            bam_path, 'rb', check_sq=False, threads=io_threads,
+        ) as source:
+            output_header = append_ma_types(source.header, annotation_names)
+            with pysam.AlignmentFile(
+                temp_bam, 'wb', header=output_header, threads=io_threads,
+            ) as sink:
+                for read in source.fetch(until_eof=True):
+                    sink.write(read)
+                    copied_records += 1
+
+        original_mode = stat.S_IMODE(os.stat(bam_path).st_mode)
+        os.chmod(temp_bam, original_mode)
+        with pysam.AlignmentFile(temp_bam, 'rb', check_sq=False) as check:
+            repaired = set(declared_ma_types(check.header))
+            still_missing = [name for name in annotation_names if name not in repaired]
+            if still_missing:
+                raise RuntimeError(
+                    'temporary BAM failed MA-TYPES validation: ' +
+                    ','.join(still_missing)
+                )
+
+        index_targets = _existing_bam_indexes(bam_path)
+        built_by_kind = {}
+        for kind in dict.fromkeys(kind for _path, kind in index_targets):
+            index_args = ['-@', str(io_threads)]
+            if kind == 'csi':
+                index_args.insert(0, '-c')
+            pysam.index(*index_args, temp_bam)
+            built_path = temp_bam + f'.{kind}'
+            if not os.path.exists(built_path):
+                raise RuntimeError(f"indexer did not create {built_path}")
+            built_by_kind[kind] = built_path
+            temp_artifacts.add(built_path)
+
+        # Prepare one temporary index file per existing target before changing
+        # the original BAM, including the unusual case where both accepted BAI
+        # naming forms exist.
+        used_kind = set()
+        for index_number, (target, kind) in enumerate(index_targets):
+            source_index = built_by_kind[kind]
+            if kind in used_kind:
+                install_index = f"{source_index}.copy{index_number}"
+                shutil.copyfile(source_index, install_index)
+                temp_artifacts.add(install_index)
+            else:
+                install_index = source_index
+                used_kind.add(kind)
+            os.chmod(install_index, stat.S_IMODE(os.stat(target).st_mode))
+            prepared_indexes.append((install_index, target))
+
+        os.replace(temp_bam, bam_path)
+        temp_artifacts.discard(temp_bam)
+        for install_index, target in prepared_indexes:
+            os.replace(install_index, target)
+            temp_artifacts.discard(install_index)
+        return missing, copied_records, [target for _source, target in prepared_indexes]
+    finally:
+        for path in temp_artifacts:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def cmd_ma_types(args):
+    """Add an advisory MA-TYPES declaration to a BAM in place."""
+    import pysam
+
+    from fiberhmm.io.bam_header import declared_ma_types
+
+    if args.io_threads < 1:
+        raise SystemExit('--io-threads must be positive')
+    if not os.path.isfile(args.bam):
+        raise SystemExit(f"BAM not found: {args.bam}")
+
+    if args.scan:
+        try:
+            names, scanned, with_ma = _scan_bam_ma_types(
+                args.bam, io_threads=args.io_threads,
+            )
+        except (OSError, ValueError) as error:
+            raise SystemExit(f"failed to scan MA types: {error}") from error
+        print(
+            f"Scanned all {scanned:,} alignments ({with_ma:,} with MA); "
+            f"observed: {','.join(names) if names else '(none)'}"
+        )
+    else:
+        try:
+            names = _parse_ma_type_arguments(args.types)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
+
+    if not names:
+        print('No non-empty MA annotation types found; BAM left unchanged.')
+        return 0
+
+    try:
+        missing, copied, rebuilt = _rewrite_bam_ma_types_in_place(
+            args.bam, names, io_threads=args.io_threads,
+        )
+    except (OSError, ValueError, RuntimeError, pysam.SamtoolsError) as error:
+        raise SystemExit(f"failed to update MA-TYPES: {error}") from error
+
+    if not missing:
+        print('All requested MA types were already declared; BAM left unchanged.')
+        return 0
+
+    with pysam.AlignmentFile(args.bam, 'rb', check_sq=False) as bam:
+        union = declared_ma_types(bam.header)
+    print(
+        f"Updated {args.bam} in place ({copied:,} alignments); "
+        f"added: {','.join(missing)}; declared union: {','.join(union)}"
+    )
+    if rebuilt:
+        print('Rebuilt index: ' + ', '.join(rebuilt))
+    return 0
+
+
+# =============================================================================
 # fix-bigbed subcommand: repair the embedded autoSQL Sample tag
 # =============================================================================
 
@@ -994,6 +1233,7 @@ Subcommands:
   inspect   Print model metadata, parameters, and emission statistics
   transfer    Transfer emission probs between modalities (e.g., fiber-seq to DAF-seq)
   adjust      Apply scaling to emission probabilities
+  ma-types    Add/repair the advisory MA type declaration in a BAM, in place
   fix-bigbed  Repair the embedded autoSQL Sample tag in existing bigBed(s)
 
 Examples:
@@ -1002,6 +1242,8 @@ Examples:
   fiberhmm-utils inspect model.json --full
   fiberhmm-utils transfer --target daf.bam --reference-bam fiber.bam -o probs/
   fiberhmm-utils adjust model.json --state accessible --scale 1.1 -o adjusted.json
+  fiberhmm-utils ma-types calls.bam --types nuc,msp,tf
+  fiberhmm-utils ma-types calls.bam --scan
   fiberhmm-utils fix-bigbed sample.filtered_T_*.bb sample.filtered_GA_*.bb --in-place
         """
     )
@@ -1077,6 +1319,32 @@ Examples:
     p_adjust.add_argument('-o', '--output', required=True,
                          help='Output model file (.json)')
 
+    # --- ma-types ---
+    p_ma_types = subparsers.add_parser(
+        'ma-types',
+        help='Add/repair the advisory MA type declaration in a BAM, in place',
+        description=(
+            'Add missing @CO MA-TYPES:v1 logical annotation names to a BAM. '
+            'Supply the names explicitly, or scan every alignment to discover '
+            'all non-empty MA sections. The BAM is replaced atomically only '
+            'after a temporary rewrite and any existing indexes succeed.'
+        ),
+    )
+    p_ma_types.add_argument('bam', help='BAM to update in place')
+    discovery = p_ma_types.add_mutually_exclusive_group(required=True)
+    discovery.add_argument(
+        '--types', nargs='+', metavar='NAME[,NAME...]',
+        help='Logical MA name(s), comma- or space-separated (no strand/quality suffixes)',
+    )
+    discovery.add_argument(
+        '--scan', action='store_true',
+        help='Exhaustively scan every alignment and discover non-empty MA types',
+    )
+    p_ma_types.add_argument(
+        '--io-threads', type=int, default=4,
+        help='BAM compression and index threads (default: 4)',
+    )
+
     # --- fix-bigbed ---
     p_fixbb = subparsers.add_parser(
         'fix-bigbed',
@@ -1115,6 +1383,8 @@ Examples:
         cmd_transfer(args)
     elif args.command == 'adjust':
         cmd_adjust(args)
+    elif args.command == 'ma-types':
+        cmd_ma_types(args)
     elif args.command == 'fix-bigbed':
         cmd_fix_bigbed(args)
 
