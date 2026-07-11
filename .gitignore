@@ -76,6 +76,9 @@ package-lock.json
 # Proposals and design docs
 docs/proposals/
 
+# Local implementation handoffs (not repository documentation)
+docs/crossstrand-fiberbrowser.md
+
 # Agent instructions
 CLAUDE.md
 AGENTS.md

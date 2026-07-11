@@ -1,7 +1,10 @@
 """Tests for both-strand consensus footprint re-calling (fiberhmm-merge --recall)."""
 import numpy as np
+import pytest
 
+from fiberhmm.cli.crossstrand import run_pipeline
 from fiberhmm.core.bam_reader import ContextEncoder
+from fiberhmm.crossstrand.pairing import PairParams
 from fiberhmm.crossstrand.recall import decode_ry_consensus, encode_daf_both_strand
 
 
@@ -100,3 +103,8 @@ def test_both_strand_doubles_informative_density_in_core():
     info_both = np.mean(enc_both[1:-1] != fill)
     info_conly = np.mean(enc_conly[1:-1] != fill)
     assert info_both > 1.8 * info_conly   # ~2x denser
+
+
+def test_crossstrand_pipeline_rejects_non_ddda_enzyme():
+    with pytest.raises(ValueError, match='specific to double-strand DddA'):
+        run_pipeline('unused.bam', 'unused.out.bam', PairParams(), enzyme='dddb')

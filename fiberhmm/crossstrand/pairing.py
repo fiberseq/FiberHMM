@@ -1,20 +1,17 @@
-"""Cross-strand read pairing by nucleosome dyad-pattern cross-correlation.
+"""Sequence-first cross-strand read pairing with footprint fallback.
 
 Core (I/O-free) library behind ``fiberhmm-pair``. Given footprint-called DAF
 reads, it:
 
-1. extracts each read's deamination **flavor** (CT/GA strand) and its MA ``nuc``
-   dyad centers in reference coordinates, and rasterizes the dyads into a
-   Gaussian dyad-density signal on a fixed reference grid;
-2. scores a candidate cross-strand pair by the lag-tolerant normalized
-   cross-correlation of the two signals over their genomic overlap;
-3. resolves pairs per read by **reciprocal best match with a margin gate**: a
-   read pairs with its top-scoring opposite-strand partner only when that
-   partner also ranks the read first *and* the score beats the read's
-   second-best partner by ``min_margin`` on both sides. This is the
-   whole-genome generalization of the local 2x2 assignment at a diploid locus
-   (second-best == the competing wrong matching); low-margin loci are left
-   unresolved rather than force-paired.
+1. compares opposite-flavor reads at reference A/T positions, excluding the
+   reference C/G sites that DddA can alter;
+2. accepts strict reciprocal sequence preferences, plus complete local 2x2
+   assignments only when a grossly discordant edge rules out one diagonal;
+3. removes those pairs and applies reciprocal-best nucleosome-dyad correlation
+   to the sequence-ambiguous remainder, while vetoing gross sequence conflicts.
+
+Staggered overlap chains are never globally optimized: weak sequence choices
+cannot propagate into forced chromosome-scale assignments.
 
 Everything here operates on lightweight feature objects so it is unit-testable
 without a BAM.
@@ -22,7 +19,7 @@ without a BAM.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -54,6 +51,14 @@ class PairParams:
     null_floor     : the wrong-pair (different-homolog) correlation baseline,
                      calibrated from data (~null p90). Acts as a virtual
                      competitor so incomplete loci are still held to the null.
+    min_sequence_bases: minimum shared reference-A/T bases for sequence use.
+    max_sequence_mismatch_rate: gross-discordance threshold; edges above it
+                     cannot enter footprint fallback and can rule out a 2x2.
+    min_sequence_margin: minimum difference-rate advantage over the competing
+                     reciprocal edge or 2x2 diagonal.
+    max_sequence_pair_rate: maximum difference rate for a selected sequence
+                     edge. This guards against choosing the least-bad edge in
+                     a uniformly poor local component.
 
     Defaults are calibrated from the SRR33130342 2x2-locus null (p90~0.24,
     p95~0.30): the margin/reciprocal comparison controls precision, so the
@@ -67,6 +72,10 @@ class PairParams:
     min_score: float = 0.25
     min_margin: float = 0.05
     null_floor: float = 0.24
+    min_sequence_bases: int = 500
+    max_sequence_mismatch_rate: float = 0.02
+    min_sequence_margin: float = 0.001
+    max_sequence_pair_rate: float = 0.01
 
 
 @dataclass
@@ -80,6 +89,8 @@ class ReadFeat:
     dyads: np.ndarray       # sorted reference dyad-center positions (int64)
     grid0: int              # first grid bin index (ref_start // grid_bp)
     signal: np.ndarray      # float32 dyad-density over [grid0 .. ref_end//grid]
+    sequence_pos: Optional[np.ndarray] = None  # deamination-safe ref A/T sites
+    sequence_base: Optional[np.ndarray] = None # canonical A/C/G/T query bases
 
     @property
     def flavor_name(self) -> str:
@@ -138,12 +149,35 @@ def nuc_dyads_ref(read) -> np.ndarray:
     return np.asarray(out, dtype=np.int64)
 
 
+def _sequence_signature(read, reference: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Return deamination-safe reference-position/query-base arrays.
+
+    Reference C/G positions are excluded because DddA changes those bases.
+    At reference A/T positions, query Y/R are canonicalized to C/G so genuine
+    alternate alleles remain informative rather than being discarded.
+    """
+    q2r = _build_query_to_ref(read)
+    seq = np.frombuffer((read.query_sequence or '').upper().encode(), dtype=np.uint8)
+    n = min(len(q2r), len(seq))
+    q2r, seq = q2r[:n], seq[:n].copy()
+    seq[seq == ord('Y')] = ord('C')
+    seq[seq == ord('R')] = ord('G')
+    valid = (q2r >= 0) & (q2r < len(reference))
+    q2r, seq = q2r[valid], seq[valid]
+    ref = reference[q2r]
+    valid = (((ref == ord('A')) | (ref == ord('T'))) &
+             np.isin(seq, np.asarray(list(map(ord, 'ACGT')), dtype=np.uint8)))
+    return q2r[valid].astype(np.int64), seq[valid]
+
+
 def build_feature(read, index: int, params: PairParams,
-                  prob_threshold: int = 0) -> Optional[ReadFeat]:
+                  prob_threshold: int = 0,
+                  reference: Optional[np.ndarray] = None) -> Optional[ReadFeat]:
     """Build a :class:`ReadFeat` for a primary mapped read, or None if unusable.
 
     None when: unmapped/secondary/supplementary, no sequence, no deamination
-    flavor, or fewer than 2 mappable nucleosome dyads (too little pattern).
+    flavor. Nucleosome dyads and sequence evidence are optional individually;
+    a read may be sequence-pairable even when it lacks a footprint pattern.
     """
     if read.is_unmapped or read.is_secondary or read.is_supplementary:
         return None
@@ -153,8 +187,6 @@ def build_feature(read, index: int, params: PairParams,
     if flavor is None:
         return None
     dyads = nuc_dyads_ref(read)
-    if dyads.size < 2:
-        return None
     g = params.grid_bp
     grid0 = int(read.reference_start) // g
     grid1 = int(read.reference_end) // g
@@ -168,10 +200,16 @@ def build_feature(read, index: int, params: PairParams,
         if hi > lo:
             klo = lo - (cb - krad)
             sig[lo:hi] += kern[klo:klo + (hi - lo)]
+    if reference is None:
+        seq_pos = np.empty(0, dtype=np.int64)
+        seq_base = np.empty(0, dtype=np.uint8)
+    else:
+        seq_pos, seq_base = _sequence_signature(read, reference)
     return ReadFeat(index=index, name=read.query_name, flavor=flavor,
                     ref_start=int(read.reference_start),
                     ref_end=int(read.reference_end),
-                    dyads=dyads, grid0=grid0, signal=sig)
+                    dyads=dyads, grid0=grid0, signal=sig,
+                    sequence_pos=seq_pos, sequence_base=seq_base)
 
 
 def score_pair(a: ReadFeat, b: ReadFeat, params: PairParams) -> Optional[float]:
@@ -217,6 +255,27 @@ def score_pair(a: ReadFeat, b: ReadFeat, params: PairParams) -> Optional[float]:
     return best
 
 
+@dataclass(frozen=True)
+class SequenceScore:
+    bases: int
+    mismatches: int
+    rate: float
+
+
+def score_sequence(a: ReadFeat, b: ReadFeat) -> SequenceScore:
+    """Compare two reads only at shared, deamination-safe reference A/T sites."""
+    if a.sequence_pos is None or b.sequence_pos is None:
+        return SequenceScore(0, 0, float('nan'))
+    pos, ai, bi = np.intersect1d(
+        a.sequence_pos, b.sequence_pos, assume_unique=True, return_indices=True,
+    )
+    bases = int(len(pos))
+    mismatches = int(np.count_nonzero(a.sequence_base[ai] != b.sequence_base[bi]))
+    return SequenceScore(
+        bases, mismatches, mismatches / bases if bases else float('nan'),
+    )
+
+
 # Pairing status codes written to the ``mt:A`` tag.
 STATUS_PAIRED = 'P'       # resolved reciprocal-best pair above score+margin
 STATUS_UNRESOLVED = 'U'   # had candidate(s) but failed margin/score gate
@@ -229,67 +288,235 @@ class PairResult:
     score: Dict[int, float]        # read index -> pair correlation
     margin: Dict[int, float]       # read index -> min(best-2nd over both reads)
     status: Dict[int, str]         # read index -> STATUS_*
+    method: Dict[int, str]         # S = sequence assignment, F = footprint
+    sequence: Dict[int, SequenceScore]
+    sequence_margin: Dict[int, float]
+    sequence_kind: Dict[int, str]  # R = reciprocal, C = constrained 2x2
 
 
-def assign_pairs(feats: Sequence[ReadFeat], params: PairParams) -> PairResult:
-    """Resolve cross-strand pairs within one batch (typically one chromosome).
-
-    Reciprocal-best with a two-sided margin gate. ``feats`` may be in any order;
-    scoring uses a start-sorted sweep so only genomically overlapping
-    opposite-strand pairs are compared.
-    """
-    n = len(feats)
-    by_idx = {f.index: f for f in feats}
+def _overlapping_opposite_pairs(feats: Sequence[ReadFeat]):
+    """Yield each genomically overlapping opposite-flavor pair once."""
     order = sorted(feats, key=lambda f: f.ref_start)
-    # best[idx] = (score, partner_idx); second[idx] = score of runner-up
+    for ai, a in enumerate(order):
+        for b in order[ai + 1:]:
+            if b.ref_start >= a.ref_end:
+                break
+            if b.flavor != a.flavor:
+                yield a, b
+
+
+def _sequence_assignment(
+    feats: Sequence[ReadFeat], params: PairParams,
+) -> Tuple[Dict[int, int], Dict[int, SequenceScore], Dict[int, float],
+           Dict[Tuple[int, int], SequenceScore], Set[int], Dict[int, str]]:
+    """Resolve stable edges of local bipartite sequence assignments.
+
+    Strict reciprocal-best edges are accepted with a two-sided difference-rate
+    margin. Complete 2x2 components receive one additional comparison of the
+    two possible diagonals, but only when a grossly incompatible rejected edge
+    supplies the constraint; larger overlap chains are never jointly solved.
+    """
+    by_idx = {f.index: f for f in feats}
+    edge_score: Dict[Tuple[int, int], SequenceScore] = {}
+    neighbors: Dict[int, Set[int]] = {f.index: set() for f in feats}
+    candidate_nodes: Set[int] = set()
+    for a, b in _overlapping_opposite_pairs(feats):
+        seq = score_sequence(a, b)
+        key = tuple(sorted((a.index, b.index)))
+        edge_score[key] = seq
+        if seq.bases < params.min_sequence_bases:
+            continue
+        neighbors[a.index].add(b.index)
+        neighbors[b.index].add(a.index)
+        candidate_nodes.update((a.index, b.index))
+
+    components: List[Set[int]] = []
+    unseen = set(candidate_nodes)
+    while unseen:
+        root = unseen.pop()
+        component, stack = {root}, [root]
+        while stack:
+            node = stack.pop()
+            for other in neighbors[node]:
+                if other not in component:
+                    component.add(other)
+                    unseen.discard(other)
+                    stack.append(other)
+        components.append(component)
+
+    partner: Dict[int, int] = {}
+    selected_score: Dict[int, SequenceScore] = {}
+    margin: Dict[int, float] = {}
+    kind: Dict[int, str] = {}
+
+    # First take only strict two-sided sequence preferences. Unlike a global
+    # chromosome matching, this cannot propagate a weak choice down a chain.
+    best: Dict[int, Tuple[float, int]] = {}
+    second: Dict[int, float] = {}
+    for key, seq in edge_score.items():
+        if (seq.bases < params.min_sequence_bases or
+                seq.rate > params.max_sequence_pair_rate):
+            continue
+        i, j = key
+        for left, right in ((i, j), (j, i)):
+            old = best.get(left)
+            if old is None or seq.rate < old[0]:
+                if old is not None:
+                    second[left] = old[0]
+                best[left] = (seq.rate, right)
+            elif left not in second or seq.rate < second[left]:
+                second[left] = seq.rate
+    for i, (rate, j) in best.items():
+        if i in partner or j in partner or best.get(j, (None, None))[1] != i:
+            continue
+        if i not in second or j not in second:
+            continue
+        seq_margin = min(second[i] - rate, second[j] - best[j][0])
+        if seq_margin + 1e-12 < params.min_sequence_margin:
+            continue
+        seq = edge_score[tuple(sorted((i, j)))]
+        partner[i] = j
+        partner[j] = i
+        selected_score[i] = selected_score[j] = seq
+        margin[i] = margin[j] = seq_margin
+        kind[i] = kind[j] = 'R'
+
+    for component in components:
+        # Larger connected components are staggered overlap chains, not local
+        # molecule sets. Never let joint optimization force matches through
+        # them; the strict reciprocal pass above and footprint fallback below
+        # remain available.
+        if len(component) != 4 or any(i in partner for i in component):
+            continue
+        ct = sorted(i for i in component if by_idx[i].flavor == FLAVOR_CT)
+        ga = sorted(i for i in component if by_idx[i].flavor == FLAVOR_GA)
+        if len(ct) != 2 or len(ga) != 2:
+            continue
+        # Require both possible diagonals to be sequence-comparable.
+        real_edges = sum(j in neighbors[i] for i in ct for j in ga)
+        if real_edges != 4:
+            continue
+        diagonals = (
+            ((ct[0], ga[0]), (ct[1], ga[1])),
+            ((ct[0], ga[1]), (ct[1], ga[0])),
+        )
+        diagonal_scores = []
+        for diagonal in diagonals:
+            seqs = [edge_score[tuple(sorted(edge))] for edge in diagonal]
+            diagonal_scores.append(sum(seq.rate for seq in seqs))
+        chosen_index = int(diagonal_scores[1] < diagonal_scores[0])
+        assignment_margin = abs(diagonal_scores[0] - diagonal_scores[1])
+        if assignment_margin + 1e-12 < params.min_sequence_margin:
+            continue
+        chosen = diagonals[chosen_index]
+        rejected = diagonals[1 - chosen_index]
+        chosen_seqs = [edge_score[tuple(sorted(edge))] for edge in chosen]
+        rejected_seqs = [edge_score[tuple(sorted(edge))] for edge in rejected]
+        if any(seq.rate > params.max_sequence_pair_rate for seq in chosen_seqs):
+            continue
+        # A 2x2 constraint is used only for the case it was designed to solve:
+        # at least one opposite edge is grossly sequence-incompatible. Ordinary
+        # SNP-scale differences are too easily confounded by residual consensus
+        # errors and remain for the physical footprint fallback.
+        if max(seq.rate for seq in rejected_seqs) <= params.max_sequence_mismatch_rate:
+            continue
+        for (i, j), seq in zip(chosen, chosen_seqs):
+            partner[i] = j
+            partner[j] = i
+            selected_score[i] = selected_score[j] = seq
+            margin[i] = margin[j] = assignment_margin
+            kind[i] = kind[j] = 'C'
+    return partner, selected_score, margin, edge_score, candidate_nodes, kind
+
+
+def _footprint_assignment(
+    feats: Sequence[ReadFeat], params: PairParams,
+    sequence_edges: Dict[Tuple[int, int], SequenceScore],
+) -> Tuple[Dict[int, int], Dict[int, float], Dict[int, float], Set[int]]:
+    """Reciprocal-best footprint matching, vetoing gross sequence conflicts."""
+    by_idx = {f.index: f for f in feats}
     best: Dict[int, Tuple[float, int]] = {f.index: (-2.0, -1) for f in feats}
     second: Dict[int, float] = {f.index: -2.0 for f in feats}
+    candidate_nodes: Set[int] = set()
 
     def offer(i: int, val: float, j: int) -> None:
-        bs, _bi = best[i]
+        bs, _ = best[i]
         if val > bs:
             second[i] = bs
             best[i] = (val, j)
         elif val > second[i]:
             second[i] = val
 
-    for ai in range(n):
-        a = order[ai]
-        a_end = a.ref_end
-        for bi in range(ai + 1, n):
-            b = order[bi]
-            if b.ref_start >= a_end:
-                break  # start-sorted: no further overlaps with a
-            if b.flavor == a.flavor:
-                continue
-            s = score_pair(a, b, params)
-            if s is None:
-                continue
-            offer(a.index, s, b.index)
-            offer(b.index, s, a.index)
+    for a, b in _overlapping_opposite_pairs(feats):
+        seq = sequence_edges.get(tuple(sorted((a.index, b.index))))
+        if (seq is not None and seq.bases >= params.min_sequence_bases and
+                seq.rate > params.max_sequence_mismatch_rate):
+            continue
+        value = score_pair(a, b, params)
+        if value is None:
+            continue
+        candidate_nodes.update((a.index, b.index))
+        offer(a.index, value, b.index)
+        offer(b.index, value, a.index)
 
     partner: Dict[int, int] = {}
     score: Dict[int, float] = {}
     margin: Dict[int, float] = {}
-    status: Dict[int, str] = {}
     for idx in by_idx:
         bs, bj = best[idx]
         if bj < 0:
-            status[idx] = STATUS_NONE
             continue
-        # reciprocal check; the competitor is the stronger of the runner-up and
-        # the wrong-pair null floor, so lone (1+1) pairs must still beat the null.
-        recip = best[bj][1] == idx
         comp_i = max(second[idx], params.null_floor)
         comp_j = max(second[bj], params.null_floor)
         marg = min(bs - comp_i, best[bj][0] - comp_j)
-        if recip and bs >= params.min_score and marg >= params.min_margin:
+        if (best[bj][1] == idx and bs >= params.min_score and
+                marg >= params.min_margin):
             partner[idx] = bj
             score[idx] = bs
             margin[idx] = marg
+    return partner, score, margin, candidate_nodes
+
+
+def assign_pairs(feats: Sequence[ReadFeat], params: PairParams) -> PairResult:
+    """Resolve sequence assignments first, then footprint-match leftovers."""
+    by_idx = {f.index: f for f in feats}
+    seq_partner, seq_score, seq_margin, seq_edges, seq_nodes, seq_kind = \
+        _sequence_assignment(feats, params)
+    remaining = [f for f in feats if f.index not in seq_partner]
+    fp_partner, fp_score, fp_margin, fp_nodes = _footprint_assignment(
+        remaining, params, seq_edges,
+    )
+
+    partner = dict(seq_partner)
+    partner.update(fp_partner)
+    score: Dict[int, float] = {}
+    margin: Dict[int, float] = {}
+    method: Dict[int, str] = {}
+    sequence: Dict[int, SequenceScore] = dict(seq_score)
+    sequence_margin: Dict[int, float] = dict(seq_margin)
+    for idx, mate in seq_partner.items():
+        method[idx] = 'S'
+        footprint = score_pair(by_idx[idx], by_idx[mate], params)
+        if footprint is not None:
+            score[idx] = footprint
+        margin[idx] = seq_margin[idx]
+    for idx, mate in fp_partner.items():
+        method[idx] = 'F'
+        score[idx] = fp_score[idx]
+        margin[idx] = fp_margin[idx]
+        seq = seq_edges.get(tuple(sorted((idx, mate))))
+        if seq is not None:
+            sequence[idx] = seq
+    status: Dict[int, str] = {}
+    for idx in by_idx:
+        if idx in partner:
             status[idx] = STATUS_PAIRED
-        else:
-            score[idx] = bs
-            margin[idx] = marg
+        elif idx in seq_nodes or idx in fp_nodes:
             status[idx] = STATUS_UNRESOLVED
-    return PairResult(partner=partner, score=score, margin=margin, status=status)
+        else:
+            status[idx] = STATUS_NONE
+    return PairResult(
+        partner=partner, score=score, margin=margin, status=status,
+        method=method, sequence=sequence, sequence_margin=sequence_margin,
+        sequence_kind=seq_kind,
+    )

@@ -8,11 +8,13 @@ two strands share nucleosome dyads and different homologs do not.
 from dataclasses import replace
 
 import numpy as np
+import pysam
 import pytest
 
 from fiberhmm.crossstrand.pairing import (
     FLAVOR_CT, FLAVOR_GA, PairParams, ReadFeat, STATUS_NONE, STATUS_PAIRED,
-    STATUS_UNRESOLVED, _gaussian_kernel, assign_pairs, score_pair,
+    STATUS_UNRESOLVED, _gaussian_kernel, _sequence_signature, assign_pairs,
+    score_pair,
 )
 
 
@@ -30,6 +32,29 @@ def _mk(index, name, flavor, start, end, dyads, params):
         sig[lo:hi] += kern[(lo - (cb - krad)):(lo - (cb - krad)) + (hi - lo)]
     return ReadFeat(index, name, flavor, start, end,
                     np.array(sorted(dyads), dtype=np.int64), grid0, sig)
+
+
+def _with_sequence(feat, base, n=1000):
+    feat.sequence_pos = np.arange(1000, 1000 + n, dtype=np.int64)
+    feat.sequence_base = np.full(n, ord(base), dtype=np.uint8)
+    return feat
+
+
+def test_sequence_signature_excludes_reference_cg_but_keeps_at_variants():
+    header = pysam.AlignmentHeader.from_dict(
+        {'SQ': [{'SN': 'chr1', 'LN': 6}]},
+    )
+    read = pysam.AlignedSegment(header)
+    read.query_name = 'r'
+    read.reference_id = 0
+    read.reference_start = 0
+    read.cigartuples = [(0, 6)]
+    read.query_sequence = 'ATGTYR'
+    pos, base = _sequence_signature(
+        read, np.frombuffer(b'ACGTAT', dtype=np.uint8),
+    )
+    assert pos.tolist() == [0, 3, 4, 5]
+    assert bytes(base).decode() == 'ATCG'
 
 
 @pytest.fixture
@@ -115,3 +140,71 @@ def test_non_overlapping_not_scored(params, homolog_dyads):
     assert score_pair(ct, far, params) is None
     res = assign_pairs([ct, far], params)
     assert res.status[0] == STATUS_NONE and res.status[1] == STATUS_NONE
+
+
+def test_sequence_component_resolves_diagonal_without_footprints(params):
+    # The joint 2x2 assignment uses the discordant off-diagonal edges to infer
+    # both opposite pairs. No dyads are present, so footprint matching cannot
+    # be responsible for the result.
+    empty = []
+    feats = [
+        _with_sequence(_mk(0, 'ctA', FLAVOR_CT, 900, 4800, empty, params), 'A'),
+        _with_sequence(_mk(1, 'ctB', FLAVOR_CT, 900, 4800, empty, params), 'G'),
+        _with_sequence(_mk(2, 'gaA', FLAVOR_GA, 900, 4800, empty, params), 'A'),
+        _with_sequence(_mk(3, 'gaB', FLAVOR_GA, 900, 4800, empty, params), 'G'),
+    ]
+    res = assign_pairs(feats, params)
+    assert res.partner == {0: 2, 2: 0, 1: 3, 3: 1}
+    assert set(res.method.values()) == {'S'}
+    assert all(res.sequence[i].mismatches == 0 for i in range(4))
+
+
+def test_sequence_ambiguous_component_falls_back_to_footprints(
+        params, homolog_dyads):
+    a, b = homolog_dyads
+    feats = [
+        _with_sequence(_mk(0, 'ctA', FLAVOR_CT, 900, 4800, a, params), 'A'),
+        _with_sequence(_mk(1, 'ctB', FLAVOR_CT, 900, 4800, b, params), 'A'),
+        _with_sequence(_mk(2, 'gaA', FLAVOR_GA, 900, 4800, a, params), 'A'),
+        _with_sequence(_mk(3, 'gaB', FLAVOR_GA, 900, 4800, b, params), 'A'),
+    ]
+    res = assign_pairs(feats, params)
+    assert res.partner == {0: 2, 2: 0, 1: 3, 3: 1}
+    assert set(res.method.values()) == {'F'}
+
+
+def test_sequence_discordance_vetoes_high_footprint_match(params, homolog_dyads):
+    a, _ = homolog_dyads
+    ct = _with_sequence(_mk(0, 'ct', FLAVOR_CT, 900, 4800, a, params), 'A')
+    ga = _with_sequence(_mk(1, 'ga', FLAVOR_GA, 900, 4800, a, params), 'G')
+    res = assign_pairs([ct, ga], params)
+    assert res.partner == {}
+    assert res.status[0] == STATUS_UNRESOLVED
+
+
+def test_sequence_does_not_force_lone_identical_overlap(params):
+    empty = []
+    ct = _with_sequence(_mk(0, 'ct', FLAVOR_CT, 900, 4800, empty, params), 'A')
+    ga = _with_sequence(_mk(1, 'ga', FLAVOR_GA, 900, 4800, empty, params), 'A')
+    res = assign_pairs([ct, ga], params)
+    assert res.partner == {}
+    assert res.status[0] == STATUS_UNRESOLVED
+
+
+def test_snp_scale_2x2_difference_is_not_force_assigned(params):
+    # A single SNP supports one diagonal, but without gross discordance this is
+    # deliberately left for footprints. This guards against the overmatching
+    # seen when residual consensus errors were treated as global constraints.
+    strict = replace(params, min_sequence_margin=0.002)
+    feats = [
+        _with_sequence(_mk(0, 'ctA', FLAVOR_CT, 900, 4800, [], strict), 'A'),
+        _with_sequence(_mk(1, 'ctB', FLAVOR_CT, 900, 4800, [], strict), 'A'),
+        _with_sequence(_mk(2, 'gaA', FLAVOR_GA, 900, 4800, [], strict), 'A'),
+        _with_sequence(_mk(3, 'gaB', FLAVOR_GA, 900, 4800, [], strict), 'A'),
+    ]
+    # Homolog B differs at one of 1,000 safe positions.
+    feats[1].sequence_base[0] = ord('G')
+    feats[3].sequence_base[0] = ord('G')
+    res = assign_pairs(feats, strict)
+    assert res.partner == {}
+    assert all(res.status[i] == STATUS_UNRESOLVED for i in range(4))

@@ -3,9 +3,9 @@
 
 Runs the full cross-strand pipeline on a footprint-called DAF-seq BAM:
 
-    1. fiberhmm-pair   -- pair CT/GA reads of the same molecule by nucleosome
-                          dyad-pattern cross-correlation (reciprocal-best +
-                          null-calibrated margin gate);
+    1. fiberhmm-pair   -- pair CT/GA reads sequence-first at reference A/T
+                          positions, then use nucleosome patterns for the
+                          sequence-ambiguous remainder;
     2. fiberhmm-merge  -- build one both-strand consensus read per pair (union
                           span, deam+/deam- regime in MA);
     3. --recall (ON)   -- re-call footprints on each consensus with BOTH the
@@ -30,12 +30,19 @@ from fiberhmm.crossstrand.pairing import PairParams
 
 
 def run_pipeline(in_bam, out_bam, params: PairParams, recall=True, enzyme='ddda',
-                 pairs_only=False, prob_threshold=0, pairs_tsv=None, io_threads=4):
+                 pairs_only=False, prob_threshold=0, pairs_tsv=None, io_threads=4,
+                 reference_path=None):
+    if enzyme.lower() != 'ddda':
+        raise ValueError(
+            "cross-strand consensus is specific to double-strand DddA DAF-seq; "
+            f"unsupported enzyme preset: {enzyme!r}"
+        )
     t0 = time.time()
     tmp_paired = out_bam + '.paired.tmp.bam'
     print("=== [1/2] fiberhmm-pair ===", file=sys.stderr)
     run_pair(in_bam, tmp_paired, params, prob_threshold=prob_threshold,
-             pairs_tsv=pairs_tsv, io_threads=io_threads)
+             pairs_tsv=pairs_tsv, io_threads=io_threads,
+             reference_path=reference_path)
     print(f"=== [2/2] fiberhmm-merge {'--recall' if recall else ''} ===", file=sys.stderr)
     try:
         run_merge(tmp_paired, out_bam, prob_threshold=prob_threshold,
@@ -60,16 +67,20 @@ def main():
         epilog="""
 Examples:
     # Full pipeline, both recallers on the both-strand consensus (default)
-    fiberhmm-crossstrand -i calls.bam -o consensus.bam
+    fiberhmm-crossstrand -i calls.bam -o consensus.bam -r hg38.fa
 
     # Consensus only (skip the footprint re-call), and only consensus reads
-    fiberhmm-crossstrand -i calls.bam -o consensus.bam --no-recall --pairs-only
+    fiberhmm-crossstrand -i calls.bam -o consensus.bam -r hg38.fa --no-recall --pairs-only
         """,
     )
     p.add_argument('-i', '--input', required=True, help='Footprint-called DAF BAM (coord-sorted + indexed)')
     p.add_argument('-o', '--output', required=True, help='Output consensus BAM (sorted + indexed)')
+    p.add_argument('-r', '--reference', default=None,
+                   help='Reference FASTA enabling sequence-first pairing; '
+                        'omit for footprint-only legacy behavior')
     p.add_argument('--no-recall', action='store_true', help='Skip re-calling footprints on consensus reads')
-    p.add_argument('--enzyme', default='ddda', help='Model preset for re-call (default ddda)')
+    p.add_argument('--enzyme', default='ddda', choices=['ddda'],
+                   help='Cross-strand mode is specific to DddA DAF-seq')
     p.add_argument('--pairs-only', action='store_true', help='Emit only consensus reads (drop unmerged passthrough)')
     p.add_argument('--pairs-tsv', default=None, help='Write resolved pairs to this TSV')
     # pairing gate (calibrated defaults)
@@ -81,6 +92,14 @@ Examples:
     p.add_argument('--sigma', type=float, default=30.0, help='Gaussian dyad width bp (default 30)')
     p.add_argument('--grid', type=int, default=10, help='Signal resolution bp (default 10)')
     p.add_argument('--max-lag', type=int, default=60, help='+/- register-shift searched bp (default 60)')
+    p.add_argument('--min-sequence-bases', type=int, default=500,
+                   help='Min shared reference-A/T bases for a sequence edge (default 500)')
+    p.add_argument('--max-sequence-mismatch-rate', type=float, default=0.02,
+                   help='Hard veto above this sequence difference rate (default 0.02)')
+    p.add_argument('--max-sequence-pair-rate', type=float, default=0.01,
+                   help='Max difference rate on a sequence-selected pair (default 0.01)')
+    p.add_argument('--min-sequence-margin', type=float, default=0.001,
+                   help='Min sequence preference/assignment margin (default 0.001)')
     p.add_argument('-p', '--prob-threshold', type=int, default=0, help='Min ML prob for MM/ML dU calls (default 0)')
     p.add_argument('--io-threads', type=int, default=4, help='htslib compression threads (default 4)')
     args = p.parse_args()
@@ -93,11 +112,15 @@ Examples:
         grid_bp=args.grid, sigma_bp=args.sigma, max_lag_bp=args.max_lag,
         min_overlap_bp=args.min_overlap, min_nucs=args.min_nucs,
         min_score=args.min_score, min_margin=args.min_margin, null_floor=args.null_floor,
+        min_sequence_bases=args.min_sequence_bases,
+        max_sequence_mismatch_rate=args.max_sequence_mismatch_rate,
+        min_sequence_margin=args.min_sequence_margin,
+        max_sequence_pair_rate=args.max_sequence_pair_rate,
     )
     run_pipeline(args.input, args.output, params, recall=not args.no_recall,
                  enzyme=args.enzyme, pairs_only=args.pairs_only,
                  prob_threshold=args.prob_threshold, pairs_tsv=args.pairs_tsv,
-                 io_threads=args.io_threads)
+                 io_threads=args.io_threads, reference_path=args.reference)
 
 
 if __name__ == '__main__':

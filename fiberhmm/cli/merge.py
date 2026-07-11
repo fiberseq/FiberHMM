@@ -16,8 +16,8 @@ reads. Output is coordinate-sorted and indexed.
 Consensus reads carry:
     MA:Z   ...;deam+:<CT coverage>;deam-:<GA coverage>
     cs:Z   source read names, "<ct_name>;<ga_name>"
-    mc:i   pairing cross-correlation x1000 (carried from fiberhmm-pair)
-    MD:Z / NM:i  reference-frame deaminations (C->T and G->A)
+    mc/mg/pm/pa/sb/sd/sr/sg  pairing evidence carried from fiberhmm-pair
+    NM:i   reference-frame deamination count (C->T and G->A)
 """
 from __future__ import annotations
 
@@ -35,10 +35,10 @@ from fiberhmm.crossstrand.pairing import FLAVOR_CT, read_flavor
 from fiberhmm.crossstrand.recall import RecallContext, recall_consensus_full
 
 _TAG_SOURCES = 'cs'
-_TAG_CORR = 'mc'
+_PAIR_TAGS = ('mc', 'mg', 'pm', 'pa', 'sb', 'sd', 'sr', 'sg')
 
 
-def _make_consensus_segment(cons, header, tid, corr):
+def _make_consensus_segment(cons, header, tid, pair_tags=None):
     seg = pysam.AlignedSegment(header)
     seg.query_name = f"{cons.ct_name}.cs"
     seg.flag = 0
@@ -51,8 +51,8 @@ def _make_consensus_segment(cons, header, tid, corr):
     seg.set_tag('NM', cons.nm, value_type='i')
     seg.set_tag('MA', cons.ma, value_type='Z')
     seg.set_tag(_TAG_SOURCES, f"{cons.ct_name};{cons.ga_name}", value_type='Z')
-    if corr is not None:
-        seg.set_tag(_TAG_CORR, int(corr), value_type='i')
+    for tag, value, value_type in pair_tags or ():
+        seg.set_tag(tag, value, value_type=value_type)
     return seg
 
 
@@ -130,8 +130,9 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
             if cons is None:
                 n_build_fail += 1
                 continue
-            corr = read.get_tag('mc') if read.has_tag('mc') else None
-            seg = _make_consensus_segment(cons, header, tid, corr)
+            pair_tags = [item for item in read.get_tags(with_value_type=True)
+                         if item[0] in _PAIR_TAGS]
+            seg = _make_consensus_segment(cons, header, tid, pair_tags)
             if ctx is not None:
                 recall_consensus_full(seg, ctx)
             out.write(seg)
