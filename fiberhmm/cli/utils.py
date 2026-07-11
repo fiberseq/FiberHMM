@@ -2,7 +2,7 @@
 """
 FiberHMM utilities: models, BAM metadata, and bigBed repair.
 
-Consolidated utility script for model and emission probability management.
+Consolidated utility script for model management, BAM metadata, and browser files.
 
 Usage:
     fiberhmm-utils convert input.pickle output.json
@@ -801,6 +801,8 @@ def _parse_ma_type_arguments(values):
     """Normalize comma- and space-separated CLI values in first-seen order."""
     from fiberhmm.io.bam_header import is_valid_ma_name
 
+    if isinstance(values, str):
+        values = (values,)
     names = []
     seen = set()
     for value in values:

@@ -7,15 +7,15 @@ import sys
 import pysam
 from conftest import make_synthetic_bam
 
+from fiberhmm.daf.m5c import DDDA_FIVE_PRIME_FACTORS, annotate_bam_per_read
 from fiberhmm.inference.parallel import (
     _process_bam_region_parallel_fused,
     _process_bam_streaming_pipeline,
     _process_bam_streaming_pipeline_fused,
 )
-from fiberhmm.daf.m5c import DDDA_FIVE_PRIME_FACTORS, annotate_bam_per_read
 from fiberhmm.io.bam_header import declared_ma_types
-from fiberhmm.models import get_model_path
 from fiberhmm.io.ma_tags import parse_ma_tag
+from fiberhmm.models import get_model_path
 
 
 def _run_fused_streaming(input_bam, output_bam, model_path, *,
