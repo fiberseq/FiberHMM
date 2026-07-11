@@ -19,7 +19,8 @@ from fiberhmm.io.ma_tags import parse_ma_tag
 
 
 def _run_fused_streaming(input_bam, output_bam, model_path, *,
-                          with_scores=False, circular=False, min_llr=1000.0):
+                          with_scores=False, circular=False, min_llr=1000.0,
+                          downstream_compat=False):
     return _process_bam_streaming_pipeline_fused(
         input_bam=input_bam,
         output_bam=output_bam,
@@ -41,7 +42,7 @@ def _run_fused_streaming(input_bam, output_bam, model_path, *,
         unify_threshold=90,
         emission_uplift=1.0,
         also_write_legacy=True,
-        downstream_compat=False,
+        downstream_compat=downstream_compat,
         max_reads=0,
         n_cores=1,
         chunk_size=10,
@@ -308,6 +309,23 @@ def test_fused_with_scores_writes_nq_for_kept_nucs(
         if "nq" in tag_set:
             assert len(tag_set["nq"]) == len(tag_set["ns"])
             assert all(0 <= q <= 255 for q in tag_set["nq"])
+
+
+def test_fused_legacy_compat_does_not_initialize_ma_types(
+    synthetic_bam_small, benchmark_model_path, tmp_path
+):
+    output = str(tmp_path / "fused_compat.bam")
+
+    _run_fused_streaming(
+        synthetic_bam_small,
+        output,
+        benchmark_model_path,
+        downstream_compat=True,
+    )
+
+    with pysam.AlignmentFile(output, "rb", check_sq=False) as bam:
+        assert declared_ma_types(bam.header) == []
+        assert all(not read.has_tag("MA") for read in bam.fetch(until_eof=True))
 
 
 def test_fused_region_matches_streaming_on_single_region(benchmark_model_path, tmp_path):

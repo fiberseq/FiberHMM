@@ -36,7 +36,8 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
 - **No genome context files** — hexamer context computed from read sequences.
 - **Spec-compliant tags** — `ns`/`nl`/`as`/`al` legacy tags plus `MA`/`AQ`
   [Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec)
-  tags with `nuc.QQQ` / `tf.QQQ` scoring.
+  tags with `nuc.QQQ` / `tf.QQQ` scoring, plus advisory `MA-TYPES:v1` header
+  declarations so FiberBrowser can initialize rare layers without sampling.
 - **Multi-platform** — PacBio fiber-seq, Nanopore fiber-seq, DAF-seq (DddB, DddA).
 - **Native, fast** — no hmmlearn dependency; Numba JIT for ~10× speedup.
 
@@ -104,6 +105,7 @@ fiberhmm-extract -i calls.bam --nucleosome --msp --tf
 | Full genome DddA calling with integrated mCG | `fiberhmm-call --enzyme ddda --ddda-mcg --reference ref.fa` |
 | Build an aggregate DddA mCG domain BED | `fiberhmm-call-m5c` |
 | Calls → BED12 / bigBed | `fiberhmm-extract` |
+| Add or repair MA layer discovery metadata | `fiberhmm-utils ma-types calls.bam --types ...` (known names) or `--scan` (every alignment) |
 
 `fiberhmm-call` has two modes: **region-parallel** (`--region-parallel`, requires
 a coordinate-sorted + indexed BAM; near-linear scaling up to chromosome count,
@@ -440,15 +442,23 @@ training read IDs, config, and `--stats` plots.
 
 ### fiberhmm-utils
 
-Model and bigBed utilities:
+Model, BAM-header, and bigBed utilities:
 
 ```bash
 fiberhmm-utils convert old_model.pickle new_model.json   # legacy → JSON
 fiberhmm-utils inspect model.json [--full]               # metadata + emissions
 fiberhmm-utils transfer --target daf.bam --reference-bam fiber.bam -o probs/ --mode daf
 fiberhmm-utils adjust model.json --state accessible --scale 1.1 -o adjusted.json
+fiberhmm-utils ma-types calls.bam --types nuc,msp,tf,ddda_mcg
+fiberhmm-utils ma-types calls.bam --scan
 fiberhmm-utils fix-bigbed sample.filtered_T_*.bb sample.filtered_GA_*.bb --in-place
 ```
+
+`ma-types` repairs the optional FiberBrowser discovery declaration in place.
+`--types` accepts logical names without strand/quality suffixes; `--scan`
+exhaustively visits every alignment, so rare annotations are not missed. The
+command safely rewrites through a temporary BAM, preserves all records and
+per-read tags, and rebuilds an existing BAI/CSI index before replacement.
 
 `fix-bigbed` repairs the embedded `Sample:` autoSQL tag in existing bigBeds (use
 when split/genotype-filtered pools loaded side-by-side in FiberBrowser had layers
@@ -462,7 +472,10 @@ bedToBigBed`; needs UCSC `bigBedInfo`/`bigBedToBed`/`bedToBigBed`.
 tags carrying `nuc.Q` / `msp.` / `tf.QQQ` with full LLR scoring. **TF calls live
 only in `MA`/`AQ`** (legacy tags carry nucleosomes only, by design); use
 `--downstream-compat` to fold TFs into `ns`/`nl` for tools that read only legacy
-tags. Full schema, byte layouts, and parsing examples are in the
+tags. MA-producing commands also append an advisory `@CO` `MA-TYPES:v1:`
+declaration of logical names for fast FiberBrowser layer discovery; it never
+creates empty per-read annotations and remains non-authoritative. Full schema,
+header semantics, byte layouts, and parsing examples are in the
 [deep reference](docs/reference.md).
 
 This makes FiberHMM output directly usable across the

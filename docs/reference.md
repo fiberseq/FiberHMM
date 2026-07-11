@@ -6,6 +6,7 @@ For installation and day-to-day usage see the [README](../README.md).
 - [Analysis modes](#analysis-modes)
 - [BAM tag glossary](#bam-tag-glossary)
 - [MA/AQ molecular-annotation schema](#maaq-molecular-annotation-schema)
+- [MA type discovery header](#ma-type-discovery-header)
 - [Quality bytes: tq / el / er](#quality-bytes-tq--el--er)
 - [The log-likelihood-ratio recaller](#the-log-likelihood-ratio-recaller)
 - [recall-tfs output modes](#recall-tfs-output-modes)
@@ -112,6 +113,60 @@ keeps the two non-CpG baselines separate, and runs an equal-odds four-state HMM
 called wherever its source channel is observed; `ddda_mcg_hemi+/-` is emitted
 only across multiple CpGs with scored evidence from both channels. BAM reverse
 alignment flags are not used as chemical-strand identity.
+
+## MA type discovery header
+
+MA names are extensible and otherwise appear only inside per-read `MA:Z`
+values. FiberHMM therefore advertises the logical annotation names an output
+BAM may contain with this optional SAM header-comment convention:
+
+```text
+@CO<TAB>MA-TYPES:v1:nuc,msp,tf,ddda_mcg
+```
+
+`<TAB>` above means one literal ASCII tab (`0x09`), as required between `@CO`
+and its text in a SAM header; the five characters `<TAB>` are not written.
+`pysam` exposes the comment text itself as `MA-TYPES:v1:...`.
+
+Declarations contain names only—never the per-annotation strand (`.`, `+`,
+`-`) or quality suffix (`Q`, `QQQ`). Names are case-sensitive and follow the MA
+grammar `[A-Za-z0-9_]+`. Multiple declarations are valid:
+
+```text
+@CO<TAB>MA-TYPES:v1:nuc,msp
+@CO<TAB>MA-TYPES:v1:tf,ddda_mcg
+```
+
+Readers take the ordered union, discard duplicates, and preserve first-seen
+ordering. FiberHMM producers retain existing comments and append one new
+declaration containing only names that were not already validly declared. When
+emitting MA, the main caller and recall tools advertise `nuc,msp,tf`; DddA mCG
+paths additionally advertise `ddda_mcg` and, where cross-strand calling is
+possible, `ddda_mcg_hemi`.
+
+This metadata is a discovery hint, not part of MA correctness:
+
+- Records remain authoritative. Readers accept observed names that were not
+  declared and may add those layers dynamically.
+- A missing name does not establish biological absence, and declarations must
+  never determine `AQ` arity.
+- Missing, stale, malformed, or header-tool-removed declarations are ignored.
+- Advertising a name never creates an empty per-read section such as
+  `ddda_mcg.:`.
+
+To repair an older BAM in place, either state the known logical names or scan
+every alignment (not a sample):
+
+```bash
+fiberhmm-utils ma-types calls.bam --types nuc,msp,tf,ddda_mcg
+fiberhmm-utils ma-types calls.bam --scan
+```
+
+Because a compressed BAM header cannot generally grow byte-for-byte in place,
+the utility writes and validates a temporary BAM beside the original, rebuilds
+any existing BAI/CSI index, and then atomically replaces each file. Per-read
+tags are copied unchanged. If all requested names are already declared, it
+does not rewrite the BAM.
 
 ## Quality bytes: tq / el / er
 

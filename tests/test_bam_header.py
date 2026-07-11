@@ -179,6 +179,29 @@ def test_repair_rebuilds_an_existing_csi_index(tmp_path):
         assert len(list(bam.fetch("chr1"))) == 3
 
 
+def test_repair_index_failure_leaves_original_and_cleans_temporary_files(
+    tmp_path, monkeypatch,
+):
+    bam_path = tmp_path / "failure.bam"
+    _write_ma_bam(bam_path)
+    index_path = tmp_path / "failure.bam.bai"
+    before_bam = bam_path.read_bytes()
+    before_index = index_path.read_bytes()
+
+    def fail_index(*_args, **_kwargs):
+        raise RuntimeError("injected index failure")
+
+    monkeypatch.setattr(pysam, "index", fail_index)
+    with pytest.raises(RuntimeError, match="injected index failure"):
+        utils._rewrite_bam_ma_types_in_place(
+            str(bam_path), ["tf"], io_threads=1,
+        )
+
+    assert bam_path.read_bytes() == before_bam
+    assert index_path.read_bytes() == before_index
+    assert not list(tmp_path.glob(".failure.bam.ma_types.*"))
+
+
 def test_repair_rejects_suffixes_before_mutating_bam(tmp_path):
     bam_path = tmp_path / "invalid.bam"
     _write_ma_bam(bam_path)

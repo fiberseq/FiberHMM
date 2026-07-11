@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FiberHMM utilities: convert, inspect, transfer, adjust.
+FiberHMM utilities: models, BAM metadata, and bigBed repair.
 
 Consolidated utility script for model and emission probability management.
 
@@ -9,6 +9,8 @@ Usage:
     fiberhmm-utils inspect model.json
     fiberhmm-utils transfer --target daf.bam --reference-bam fiber.bam -o out/
     fiberhmm-utils adjust model.json --state accessible --scale 1.1 -o adjusted.json
+    fiberhmm-utils ma-types calls.bam --types nuc,msp,tf
+    fiberhmm-utils ma-types calls.bam --scan
 """
 
 import argparse
@@ -1225,7 +1227,7 @@ def cmd_fix_bigbed(args):
 def main():
     parser = argparse.ArgumentParser(
         prog='fiberhmm-utils',
-        description='FiberHMM utilities: model conversion, inspection, and probability transfer',
+        description='FiberHMM utilities: models, BAM metadata, and bigBed repair',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Subcommands:
