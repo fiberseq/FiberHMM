@@ -208,3 +208,10 @@ def test_snp_scale_2x2_difference_is_not_force_assigned(params):
     res = assign_pairs(feats, strict)
     assert res.partner == {}
     assert all(res.status[i] == STATUS_UNRESOLVED for i in range(4))
+
+    # Tightening the footprint fallback veto must not make the independent 2x2
+    # constraint more permissive.
+    tighter_fallback = replace(strict, max_sequence_mismatch_rate=0.0005)
+    res = assign_pairs(feats, tighter_fallback)
+    assert res.partner == {}
+    assert all(res.status[i] == STATUS_UNRESOLVED for i in range(4))

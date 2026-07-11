@@ -53,7 +53,9 @@ class PairParams:
                      competitor so incomplete loci are still held to the null.
     min_sequence_bases: minimum shared reference-A/T bases for sequence use.
     max_sequence_mismatch_rate: gross-discordance threshold; edges above it
-                     cannot enter footprint fallback and can rule out a 2x2.
+                     cannot enter footprint fallback.
+    min_component_discordance_rate: minimum rejected-edge difference rate
+                     needed to constrain a complete local 2x2 assignment.
     min_sequence_margin: minimum difference-rate advantage over the competing
                      reciprocal edge or 2x2 diagonal.
     max_sequence_pair_rate: maximum difference rate for a selected sequence
@@ -73,7 +75,8 @@ class PairParams:
     min_margin: float = 0.05
     null_floor: float = 0.24
     min_sequence_bases: int = 500
-    max_sequence_mismatch_rate: float = 0.02
+    max_sequence_mismatch_rate: float = 0.002
+    min_component_discordance_rate: float = 0.02
     min_sequence_margin: float = 0.001
     max_sequence_pair_rate: float = 0.01
 
@@ -418,7 +421,8 @@ def _sequence_assignment(
         # at least one opposite edge is grossly sequence-incompatible. Ordinary
         # SNP-scale differences are too easily confounded by residual consensus
         # errors and remain for the physical footprint fallback.
-        if max(seq.rate for seq in rejected_seqs) <= params.max_sequence_mismatch_rate:
+        if (max(seq.rate for seq in rejected_seqs) <=
+                params.min_component_discordance_rate):
             continue
         for (i, j), seq in zip(chosen, chosen_seqs):
             partner[i] = j

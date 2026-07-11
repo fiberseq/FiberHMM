@@ -232,8 +232,10 @@ Examples:
     p.add_argument('--max-lag', type=int, default=60, help='+/- register-shift searched bp (default 60)')
     p.add_argument('--min-sequence-bases', type=int, default=500,
                    help='Min shared reference-A/T bases for a sequence edge (default 500)')
-    p.add_argument('--max-sequence-mismatch-rate', type=float, default=0.02,
-                   help='Hard veto above this sequence difference rate (default 0.02)')
+    p.add_argument('--max-sequence-mismatch-rate', type=float, default=0.002,
+                   help='Hard veto above this sequence difference rate (default 0.002)')
+    p.add_argument('--min-component-discordance-rate', type=float, default=0.02,
+                   help='Min rejected-edge difference rate to constrain a 2x2 (default 0.02)')
     p.add_argument('--max-sequence-pair-rate', type=float, default=0.01,
                    help='Max difference rate on a sequence-selected pair (default 0.01)')
     p.add_argument('--min-sequence-margin', type=float, default=0.001,
@@ -253,6 +255,7 @@ Examples:
         null_floor=args.null_floor,
         min_sequence_bases=args.min_sequence_bases,
         max_sequence_mismatch_rate=args.max_sequence_mismatch_rate,
+        min_component_discordance_rate=args.min_component_discordance_rate,
         min_sequence_margin=args.min_sequence_margin,
         max_sequence_pair_rate=args.max_sequence_pair_rate,
     )
