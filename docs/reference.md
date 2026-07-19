@@ -213,6 +213,26 @@ FiberBrowser and `fiberhmm-extract --circular-groups` use `AN` to reconstruct th
 single wrapped feature. Legacy `ns/nl` and `as/al` are also split to stay
 coordinate-valid but do not carry the fused identity.
 
+## Haplotype fields in BED / bigBed extraction
+
+`fiberhmm-extract --haplotype-fields` copies the source BAM record's scalar
+`HP:i` (haplotype) and `PS:i` (phase set) tags into every emitted feature row.
+The option is off by default, so existing BED text and bigBed autoSQL schemas
+remain byte/schema compatible unless it is requested.
+
+Optional columns always have a deterministic order:
+
+```
+BED12 | per-block scores | circular grouping | hp | ps
+```
+
+Both appended autoSQL fields are signed integers. `-1` means that tag was absent
+or not integer-valued; the sentinels are independent, so `HP:i:1` without `PS`
+is written as `1, -1`. Valid HP values are positive and valid PS identifiers are
+non-negative. Wrapped circular pieces each repeat the source read's same HP/PS
+values. Extraction only propagates tags: it does not phase reads, infer missing
+values, or alter calls.
+
 ## Reading the output
 
 ```python

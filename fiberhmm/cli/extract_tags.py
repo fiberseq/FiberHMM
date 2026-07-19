@@ -47,6 +47,7 @@ import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from contextlib import ExitStack
+from numbers import Integral
 from typing import Dict, Optional, Set, Tuple
 
 import numpy as np
@@ -130,6 +131,45 @@ def _bed12_row(ref_name, chrom_start, chrom_end, read_id, score, strand,
     if extra_columns:
         row += "\t" + "\t".join(str(c) for c in extra_columns)
     return row
+
+
+MISSING_HAPLOTYPE_VALUE = -1
+HAPLOTYPE_INT_MIN = -(2 ** 31)
+HAPLOTYPE_INT_MAX = 2 ** 31 - 1
+
+
+def _haplotype_columns(read, enabled: bool):
+    """Return scalar ``HP``/``PS`` values for an optional BED suffix.
+
+    ``HP`` is defined on phased records as a positive haplotype number and
+    ``PS`` as a non-negative phase-set identifier.  ``-1`` is therefore an
+    unambiguous missing sentinel for either field.  Non-integer tag payloads
+    are treated as missing rather than making an extraction worker fail.
+    """
+    if not enabled:
+        return ()
+
+    values = []
+    for tag in ('HP', 'PS'):
+        try:
+            raw_value = read.get_tag(tag)
+        except KeyError:
+            values.append(MISSING_HAPLOTYPE_VALUE)
+            continue
+
+        # autoSQL ``int`` is signed 32-bit.  Require an actual integral BAM
+        # payload instead of silently truncating floats or parsing strings.
+        # ``bool`` is an Integral subclass in Python but is not a valid HP/PS
+        # payload.
+        if isinstance(raw_value, bool) or not isinstance(raw_value, Integral):
+            values.append(MISSING_HAPLOTYPE_VALUE)
+            continue
+        value = int(raw_value)
+        if not HAPLOTYPE_INT_MIN <= value <= HAPLOTYPE_INT_MAX:
+            values.append(MISSING_HAPLOTYPE_VALUE)
+            continue
+        values.append(value)
+    return tuple(values)
 
 
 def _parse_ma_annotations(read, target_name: str):
@@ -246,6 +286,7 @@ def _extract_ma_interval_type(
     block_scores: bool,
     circular_groups: bool,
     min_tq: int = 0,
+    haplotype_fields: bool = False,
 ) -> Optional[int]:
     annotations = _parse_ma_annotations(read, target_name)
     if annotations is None:
@@ -306,6 +347,7 @@ def _extract_ma_interval_type(
                 ann['mol_start'],
                 ann['mol_length'],
             ])
+            extra.extend(_haplotype_columns(read, haplotype_fields))
             name = read_id
             if ann['circ_id'] != '.':
                 name = f"{read_id}|{target_name}|{ann['circ_id']}|{ann['circ_part']}/{ann['circ_parts']}"
@@ -334,6 +376,7 @@ def _extract_ma_interval_type(
             ])
         else:
             extra.append(','.join(str(b[3][0]) for b in blocks))
+    extra.extend(_haplotype_columns(read, haplotype_fields))
     row = _bed12_row(
         ref_name,
         chrom_start,
@@ -379,6 +422,7 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
         with_scores = params['with_scores']
         block_scores = bool(params.get('block_scores', False))
         circular_groups = bool(params.get('circular_groups', False))
+        haplotype_fields = bool(params.get('haplotype_fields', False))
 
         n_reads = 0
         n_features = {t: 0 for t in extract_types}
@@ -423,40 +467,46 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                         n_features['nucleosome'] += _extract_footprints(
                             read, bed_outs['nucleosome'], with_scores, query_to_ref,
                             block_scores=block_scores,
-                            circular_groups=circular_groups)
+                            circular_groups=circular_groups,
+                            haplotype_fields=haplotype_fields)
                     if 'msp' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['msp'] += _extract_msps(
                             read, bed_outs['msp'], with_scores, query_to_ref,
                             block_scores=block_scores,
-                            circular_groups=circular_groups)
+                            circular_groups=circular_groups,
+                            haplotype_fields=haplotype_fields)
                     if 'tf' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['tf'] += _extract_tfs(
                             read, bed_outs['tf'], with_scores, min_tq, query_to_ref,
                             block_scores=block_scores,
-                            circular_groups=circular_groups)
+                            circular_groups=circular_groups,
+                            haplotype_fields=haplotype_fields)
                     if 'm6a' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['m6a'] += _extract_m6a(
                             read, bed_outs['m6a'], prob_threshold, query_to_ref,
-                            block_scores=block_scores)
+                            block_scores=block_scores,
+                            haplotype_fields=haplotype_fields)
                     if 'm5c' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['m5c'] += _extract_m5c(
                             read, bed_outs['m5c'], prob_threshold, query_to_ref,
-                            block_scores=block_scores)
+                            block_scores=block_scores,
+                            haplotype_fields=haplotype_fields)
                     if 'deam' in extract_types:
                         if query_to_ref is None:
                             query_to_ref = _build_query_to_ref(read)
                         n_features['deam'] += _extract_deam(
                             read, bed_outs['deam'], query_to_ref,
                             block_scores=block_scores,
-                            prob_threshold=prob_threshold)
+                            prob_threshold=prob_threshold,
+                            haplotype_fields=haplotype_fields)
 
         return (temp_bed_paths, n_reads, n_features)
 
@@ -478,7 +528,8 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
 def _extract_footprints(read, bed_out, with_scores: bool,
                         query_to_ref: Optional[dict] = None,
                         block_scores: bool = False,
-                        circular_groups: bool = False) -> int:
+                        circular_groups: bool = False,
+                        haplotype_fields: bool = False) -> int:
     """Extract nucleosome intervals as BED12 (one line per read).
 
     Prefers the MA ``nuc`` annotation when present; falls back to the legacy
@@ -495,6 +546,7 @@ def _extract_footprints(read, bed_out, with_scores: bool,
     ma_count = _extract_ma_interval_type(
         read, bed_out, 'nuc', with_scores, query_to_ref,
         block_scores, circular_groups,
+        haplotype_fields=haplotype_fields,
     )
     if ma_count is not None:
         return ma_count
@@ -564,6 +616,10 @@ def _extract_footprints(read, bed_out, with_scores: bool,
         row += f"\t{block_nq}\t{block_zero}\t{block_zero}"
     if circular_groups:
         row += "\t.\t1\t1\t0\t0"
+    if haplotype_fields:
+        row += "\t" + "\t".join(
+            str(v) for v in _haplotype_columns(read, True)
+        )
     bed_out.write(row + "\n")
 
     return len(blocks)
@@ -572,7 +628,8 @@ def _extract_footprints(read, bed_out, with_scores: bool,
 def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
                  query_to_ref: Optional[dict] = None,
                  block_scores: bool = False,
-                 circular_groups: bool = False) -> int:
+                 circular_groups: bool = False,
+                 haplotype_fields: bool = False) -> int:
     """Extract TF footprints from MA/AQ tags (tf.QQQ annotations) as BED12.
 
     Reads the spec-compliant MA/AQ tags written by ``fiberhmm-recall-tfs``
@@ -591,6 +648,7 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
     ma_count = _extract_ma_interval_type(
         read, bed_out, 'tf', with_scores, query_to_ref,
         block_scores, circular_groups, min_tq=min_tq,
+        haplotype_fields=haplotype_fields,
     )
     if ma_count is not None:
         return ma_count
@@ -665,6 +723,10 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
         block_el = ','.join(str(b[3]) for b in blocks)
         block_er = ','.join(str(b[4]) for b in blocks)
         row += f"\t{block_tq}\t{block_el}\t{block_er}"
+    if haplotype_fields:
+        row += "\t" + "\t".join(
+            str(v) for v in _haplotype_columns(read, True)
+        )
     bed_out.write(row + "\n")
     return len(blocks)
 
@@ -672,7 +734,8 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
 def _extract_msps(read, bed_out, with_scores: bool,
                   query_to_ref: Optional[dict] = None,
                   block_scores: bool = False,
-                  circular_groups: bool = False) -> int:
+                  circular_groups: bool = False,
+                  haplotype_fields: bool = False) -> int:
     """Extract MSP intervals from as/al tags as BED12 (one line per read).
 
     When ``block_scores=True``, appends a 13th column of comma-separated
@@ -683,6 +746,7 @@ def _extract_msps(read, bed_out, with_scores: bool,
     ma_count = _extract_ma_interval_type(
         read, bed_out, 'msp', with_scores, query_to_ref,
         block_scores, circular_groups,
+        haplotype_fields=haplotype_fields,
     )
     if ma_count is not None:
         return ma_count
@@ -746,6 +810,10 @@ def _extract_msps(read, bed_out, with_scores: bool,
         row += f"\t{block_aq}"
     if circular_groups:
         row += "\t.\t1\t1\t0\t0"
+    if haplotype_fields:
+        row += "\t" + "\t".join(
+            str(v) for v in _haplotype_columns(read, True)
+        )
     bed_out.write(row + "\n")
 
     return len(blocks)
@@ -804,7 +872,8 @@ def _parse_mod_positions_safe(read, target_mod_codes):
 
 
 def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None,
-                 block_scores: bool = False) -> int:
+                 block_scores: bool = False,
+                 haplotype_fields: bool = False) -> int:
     """Extract m6A positions from MM/ML tags as BED12 (one line per read).
 
     When ``block_scores=True``, appends a 13th column of comma-separated
@@ -850,13 +919,18 @@ def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None,
     if block_scores:
         block_ml = ','.join(str(sc) for _, sc in positions_list)
         row += f"\t{block_ml}"
+    if haplotype_fields:
+        row += "\t" + "\t".join(
+            str(v) for v in _haplotype_columns(read, True)
+        )
     bed_out.write(row + "\n")
 
     return len(positions_list)
 
 
 def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
-                 block_scores: bool = False) -> int:
+                 block_scores: bool = False,
+                 haplotype_fields: bool = False) -> int:
     """Extract 5mC positions from MM/ML tags as BED12 (one line per read).
 
     When ``block_scores=True``, appends a 13th column of comma-separated
@@ -902,6 +976,10 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
     if block_scores:
         block_ml = ','.join(str(sc) for _, sc in positions_list)
         row += f"\t{block_ml}"
+    if haplotype_fields:
+        row += "\t" + "\t".join(
+            str(v) for v in _haplotype_columns(read, True)
+        )
     bed_out.write(row + "\n")
 
     return len(positions_list)
@@ -909,7 +987,8 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
 
 def _extract_deam(read, bed_out, query_to_ref=None,
                   block_scores: bool = False,
-                  prob_threshold: int = 0) -> int:
+                  prob_threshold: int = 0,
+                  haplotype_fields: bool = False) -> int:
     """Extract DAF-seq deamination calls as BED12 (one row per read).
 
     Matches FiberBrowser's BAM parsing priority: first the MM/ML-native
@@ -952,6 +1031,10 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     if block_scores:
         block_mod = ','.join(str(code) for _, code in positions_list)
         row += f"\t{block_mod}"
+    if haplotype_fields:
+        row += "\t" + "\t".join(
+            str(v) for v in _haplotype_columns(read, True)
+        )
     bed_out.write(row + "\n")
 
     return len(positions_list)
@@ -1125,6 +1208,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           min_tq: int = 50,
                           block_scores: bool = False,
                           circular_groups: bool = False,
+                          haplotype_fields: bool = False,
                           skip_scaffolds: bool = False,
                           chroms: Optional[Set[str]] = None,
                           sort_mem: Optional[str] = None,
@@ -1180,6 +1264,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
             'min_tq': min_tq,
             'block_scores': block_scores,
             'circular_groups': circular_groups,
+            'haplotype_fields': haplotype_fields,
         }
 
         # Work items: per region, a dict of {type: temp_bed_path}
@@ -1256,7 +1341,8 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
                    extract_type: Optional[str] = None,
                    block_scores: bool = False,
                    sample_name: Optional[str] = None,
-                   circular_groups: bool = False) -> bool:
+                   circular_groups: bool = False,
+                   haplotype_fields: bool = False) -> bool:
     """Convert BED to bigBed using bedToBigBed.
 
     If ``extract_type`` matches a FiberHMM autoSQL schema
@@ -1281,6 +1367,7 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
     from fiberhmm.io.autosql import (
         CIRCULAR_FIELD_COUNT,
         EXTRA_FIELD_COUNTS,
+        HAPLOTYPE_FIELD_COUNT,
         write_autosql_for,
     )
 
@@ -1291,12 +1378,15 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
 
     as_file = (write_autosql_for(extract_type, block_scores=block_scores,
                                   sample_name=sample_name,
-                                  circular_groups=circular_groups)
+                                  circular_groups=circular_groups,
+                                  haplotype_fields=haplotype_fields)
                if extract_type else None)
 
     n_extra = EXTRA_FIELD_COUNTS.get(extract_type, 0) if block_scores else 0
     if circular_groups:
         n_extra += CIRCULAR_FIELD_COUNT
+    if haplotype_fields:
+        n_extra += HAPLOTYPE_FIELD_COUNT
 
     try:
         cmd = ['bedToBigBed']
@@ -1599,6 +1689,11 @@ Examples:
     parser.add_argument('--circular-groups', action='store_true',
                         help='Append circId/circPart/circParts/molStart/molLength columns '
                              'and preserve MA/AN groups for circular wrapped features.')
+    parser.add_argument('--haplotype-fields', action='store_true',
+                        help='Append scalar hp and ps columns copied from the source BAM '
+                             'HP/PS tags after every other optional BED field. Missing or '
+                             'non-integer tags are written as -1. Off by default to preserve '
+                             'the existing BED/bigBed schema byte-for-byte.')
     parser.add_argument('--sample-name', default=None,
                         help='Sample/dataset identifier to embed in the autoSQL '
                              'description of every output bigBed ("Sample: <name>. ..."). '
@@ -1725,6 +1820,7 @@ Examples:
         min_tq=args.min_tq,
         block_scores=args.block_scores,
         circular_groups=args.circular_groups,
+        haplotype_fields=args.haplotype_fields,
         skip_scaffolds=args.skip_scaffolds,
         chroms=chroms,
         sort_mem=args.sort_mem,
@@ -1757,7 +1853,8 @@ Examples:
                               extract_type=extract_type,
                               block_scores=args.block_scores,
                               sample_name=sample_name,
-                              circular_groups=circular_groups_for_type):
+                              circular_groups=circular_groups_for_type,
+                              haplotype_fields=args.haplotype_fields):
                 print(f"  [{extract_type}] bigBed: {bb_path}")
                 if not args.keep_bed:
                     try:

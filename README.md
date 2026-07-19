@@ -305,6 +305,7 @@ fiberhmm-extract -i calls.bam -o output/ -c 8        # all types
 fiberhmm-extract -i calls.bam --nucleosome --msp --tf
 fiberhmm-extract -i calls.bam --keep-bed             # keep BED alongside bigBed
 fiberhmm-extract -i calls.bam --tf --msp --circular-groups   # FiberBrowser grouping
+fiberhmm-extract -i calls.bam --nucleosome --msp --tf --haplotype-fields
 ```
 
 | Flag | Default | Description |
@@ -313,6 +314,7 @@ fiberhmm-extract -i calls.bam --tf --msp --circular-groups   # FiberBrowser grou
 | `--bed-only` / `--keep-bed` | off | BED only / keep BED beside bigBed. |
 | `--block-scores` | off | Append per-block quality columns (BED12+N). |
 | `--circular-groups` | off | Emit circular grouping fields for FiberBrowser. |
+| `--haplotype-fields` | off | Append scalar `hp` and `ps` columns copied from BAM `HP`/`PS`; `-1` means missing. |
 | `--sample-name` | BAM stem | Sample tag embedded in each bigBed's autoSQL. |
 | `-S/--sort-mem` | `1G` | Buffer for the BED sort (`sort -S`; e.g. `8G`). |
 | `--sort-parallel` | `--cores` | Sort threads (GNU sort; feature-detected). |
@@ -323,6 +325,12 @@ The post-extract sort runs under `LC_ALL=C` (a large speedup on its own); `-S` a
 `Sample:` autoSQL tag (sanitized to a dot/space-free token) that FiberBrowser uses
 to group a sample's layers; repair older bigBeds with
 [`fiberhmm-utils fix-bigbed`](#fiberhmm-utils).
+
+`--haplotype-fields` is deliberately opt-in so default BED rows and bigBed
+schemas remain unchanged. When enabled, the signed integer fields are appended
+after every other optional field in the order `hp`, `ps`. Each is copied from
+the source read independently; a missing or non-integer tag is `-1`. FiberHMM
+does not infer or revise phasing during extraction.
 
 ### fiberhmm-dedup
 
