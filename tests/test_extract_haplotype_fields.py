@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import inspect
 import shutil
 from array import array
 
@@ -25,6 +26,29 @@ from fiberhmm.io.autosql import (
 
 
 EXTRACT_TYPES = ('nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam')
+
+
+def test_parallel_extractor_preserves_legacy_positional_parameter_order():
+    """The opt-in field must not shift arguments accepted before v2.16.4."""
+    parameter_names = list(inspect.signature(extract_tags_parallel).parameters)
+    assert parameter_names == [
+        'input_bam',
+        'output_beds',
+        'extract_types',
+        'n_cores',
+        'region_size',
+        'min_mapq',
+        'prob_threshold',
+        'with_scores',
+        'min_tq',
+        'block_scores',
+        'circular_groups',
+        'skip_scaffolds',
+        'chroms',
+        'sort_mem',
+        'sort_parallel',
+        'haplotype_fields',
+    ]
 
 
 class _FakeRead:

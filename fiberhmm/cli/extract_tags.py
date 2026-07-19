@@ -1208,11 +1208,11 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           min_tq: int = 50,
                           block_scores: bool = False,
                           circular_groups: bool = False,
-                          haplotype_fields: bool = False,
                           skip_scaffolds: bool = False,
                           chroms: Optional[Set[str]] = None,
                           sort_mem: Optional[str] = None,
-                          sort_parallel: int = 0):
+                          sort_parallel: int = 0,
+                          haplotype_fields: bool = False):
     """Extract one or more tag types from BAM in a single region-parallel pass.
 
     All requested extract types share a single BAM traversal + a single
