@@ -5,6 +5,10 @@ Default values can be overridden per-script where needed.
 """
 
 import argparse
+import sys
+from typing import Optional
+
+OBSERVATION_MODES = ('pacbio-fiber', 'nanopore-fiber', 'daf')
 
 
 def add_mode_args(parser: argparse.ArgumentParser,
@@ -13,10 +17,104 @@ def add_mode_args(parser: argparse.ArgumentParser,
     """Add --mode argument."""
     parser.add_argument(
         '--mode',
-        choices=['pacbio-fiber', 'nanopore-fiber', 'daf'],
+        choices=OBSERVATION_MODES,
         default=None if required else default,
         required=required,
         help=f"Analysis mode (default: {default})"
+    )
+
+
+def add_legacy_mode_override(parser: argparse.ArgumentParser) -> None:
+    """Accept the old high-level --mode override without advertising it.
+
+    High-level commands infer the observation mode from the selected bundled
+    enzyme/platform model, or from custom-model metadata. The hidden option is
+    retained so existing scripts and models with incorrect metadata can still
+    override that inference explicitly.
+    """
+    parser.add_argument(
+        '--mode',
+        choices=OBSERVATION_MODES,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
+
+
+def resolve_observation_mode(
+    model_mode: Optional[str],
+    *,
+    inferred_mode: Optional[str] = None,
+    explicit_mode: Optional[str] = None,
+    source_label: str = 'selected model',
+) -> str:
+    """Resolve a high-level command's observation mode.
+
+    Precedence is explicit legacy override, bundled enzyme/platform inference,
+    then custom-model metadata. Bundled inference is authoritative because
+    historical model files can contain stale mode metadata.
+    """
+    valid_model_mode = (
+        model_mode if model_mode in OBSERVATION_MODES else None
+    )
+    valid_inferred_mode = (
+        inferred_mode if inferred_mode in OBSERVATION_MODES else None
+    )
+
+    if inferred_mode is not None and valid_inferred_mode is None:
+        raise ValueError(
+            f"internal error: inferred unsupported observation mode "
+            f"{inferred_mode!r}"
+        )
+    if explicit_mode is not None and explicit_mode not in OBSERVATION_MODES:
+        raise ValueError(f"unsupported observation mode {explicit_mode!r}")
+
+    expected_mode = valid_inferred_mode or valid_model_mode
+    if explicit_mode is not None:
+        if expected_mode and explicit_mode != expected_mode:
+            print(
+                f"WARNING: legacy --mode {explicit_mode!r} overrides the "
+                f"{source_label} mode {expected_mode!r}. This is allowed for "
+                "compatibility and recovery from incorrect model metadata; "
+                "verify that the override is intentional.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "WARNING: high-level --mode is deprecated and normally "
+                "unnecessary; mode is inferred from --enzyme/--seq or custom-"
+                "model metadata.",
+                file=sys.stderr,
+            )
+        return explicit_mode
+
+    if valid_inferred_mode is not None:
+        if valid_model_mode is not None and valid_model_mode != valid_inferred_mode:
+            print(
+                f"WARNING: {source_label} metadata declares mode "
+                f"{valid_model_mode!r}, but --enzyme/--seq selects "
+                f"{valid_inferred_mode!r}; using the enzyme/platform mode.",
+                file=sys.stderr,
+            )
+        elif model_mode not in (None, '', 'unknown') and valid_model_mode is None:
+            print(
+                f"WARNING: {source_label} metadata contains unsupported mode "
+                f"{model_mode!r}; using inferred mode {valid_inferred_mode!r}.",
+                file=sys.stderr,
+            )
+        return valid_inferred_mode
+
+    if valid_model_mode is not None:
+        return valid_model_mode
+
+    detail = (
+        "does not declare an observation mode"
+        if model_mode in (None, '', 'unknown')
+        else f"declares unsupported observation mode {model_mode!r}"
+    )
+    raise ValueError(
+        f"{source_label} {detail}. Add valid 'mode' metadata "
+        f"({', '.join(OBSERVATION_MODES)}) to the custom model. For a legacy "
+        "model, --mode remains available as a temporary explicit override."
     )
 
 

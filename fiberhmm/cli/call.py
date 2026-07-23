@@ -24,13 +24,17 @@ Examples:
 import argparse
 import sys
 
+from fiberhmm.cli.common import (
+    add_legacy_mode_override,
+    resolve_observation_mode,
+)
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.inference.parallel import (
     _process_bam_region_parallel_fused,
     _process_bam_streaming_pipeline_fused,
 )
 from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
-from fiberhmm.models import SUPPORTED_ENZYMES
+from fiberhmm.models import SUPPORTED_ENZYMES, get_observation_mode
 from fiberhmm.models import get_model_path as _get_bundled_model
 
 
@@ -52,17 +56,17 @@ def parse_args():
     p.add_argument('--enzyme', choices=sorted(SUPPORTED_ENZYMES), default=None,
                    help='Enzyme preset (hia5/dddb/ddda).')
     p.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                   help='Platform (required for hia5).')
+                   help='Hia5 platform; omission warns and defaults to pacbio. '
+                        'Ignored for dddb/ddda.')
     p.add_argument('--reference', default=None,
-                   help='Reference FASTA for --mode daf on raw BAMs that lack '
+                   help='Reference FASTA for DAF-seq BAMs that lack '
                         'both R/Y IUPAC encoding and MD tags. When present, acts '
                         'as a fallback source for deamination-site detection. '
                         'Ignored for BAMs that already have R/Y in the sequence '
                         'or have MD tags.')
 
     # --- Apply params ---
-    p.add_argument('--mode', default=None,
-                   help='Observation mode override. Default: from model.')
+    add_legacy_mode_override(p)
     p.add_argument('-k', '--context-size', type=int, default=None,
                    help='Context size override. Default: from model.')
     p.add_argument('--edge-trim', type=int, default=10,
@@ -322,7 +326,7 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
         return
 
     print(
-        "error: --mode daf needs deamination calls, and none of the supported\n"
+        "error: DAF-seq calling needs deamination calls, and none of the supported\n"
         f"  sources were found in the first {checked} mapped reads of {input_bam}:\n"
         "    - R/Y IUPAC codes in the stored query sequence\n"
         "      (produced by fiberhmm-daf-encode), or\n"
@@ -381,6 +385,7 @@ def _dedup_input_first(input_bam, output_bam, min_jaccard, flag_only, io_threads
 def main():
     args = parse_args()
     stdout_mode = (args.output == '-')
+    using_bundled_model = args.model is None
 
     if args.dedup and args.input == '-':
         print("error: --dedup requires a file input (it two-passes the BAM to "
@@ -395,7 +400,25 @@ def main():
 
     # Resolve mode/k from model metadata
     _, model_k, model_mode = load_model_with_metadata(apply_model_path)
-    mode = args.mode or model_mode or 'pacbio-fiber'
+    inferred_mode = (
+        get_observation_mode(
+            args.enzyme, args.seq, warn_missing_seq=False
+        )
+        if using_bundled_model else None
+    )
+    try:
+        mode = resolve_observation_mode(
+            model_mode,
+            inferred_mode=inferred_mode,
+            explicit_mode=args.mode,
+            source_label=(
+                f"bundled {args.enzyme} model"
+                if using_bundled_model else "custom model"
+            ),
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
     k = args.context_size or int(model_k or 3)
 
     # Enzyme preset for recall params
@@ -416,7 +439,7 @@ def main():
     else:
         recall_nucs = bool(args.recall_nucs)
 
-    # Fast-fail sniff for --mode daf BEFORE any BAM scanning (e.g. --phase-nrl
+    # Fast-fail sniff for DAF mode BEFORE any BAM scanning (e.g. --phase-nrl
     # auto estimation): the DAF path needs R/Y in the stored sequence, MD tags,
     # or --reference. If none are available every read is silently skipped, so
     # error out in under a second with an actionable message.

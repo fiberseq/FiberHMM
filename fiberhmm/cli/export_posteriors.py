@@ -31,10 +31,11 @@ from tqdm import tqdm
 
 from fiberhmm.cli.common import (
     add_edge_trim_args,
-    add_mode_args,
+    add_legacy_mode_override,
     add_parallel_args,
     add_verbose_args,
     add_version_args,
+    resolve_observation_mode,
 )
 
 # Package imports
@@ -313,7 +314,11 @@ def export_posteriors_tsv(
     from fiberhmm.posteriors.tsv_backend import PosteriorsTSVWriter
 
     model, model_context_size, model_mode = load_model_with_metadata(model_path, normalize=True)
-    mode = mode_override if mode_override else model_mode
+    mode = (
+        mode_override
+        if mode_override
+        else resolve_observation_mode(model_mode, source_label='custom model')
+    )
     context_size = context_size_override if context_size_override else model_context_size
 
     if verbose:
@@ -386,7 +391,11 @@ def export_posteriors_hdf5(
     import h5py
 
     model, model_context_size, model_mode = load_model_with_metadata(model_path, normalize=True)
-    mode = mode_override if mode_override else model_mode
+    mode = (
+        mode_override
+        if mode_override
+        else resolve_observation_mode(model_mode, source_label='custom model')
+    )
     context_size = context_size_override if context_size_override else model_context_size
 
     if verbose:
@@ -742,9 +751,10 @@ def main():
     parser.add_argument('--enzyme', choices=_ENZYMES, default=None,
                        help='Auto-select bundled model: hia5, dddb, or ddda.')
     parser.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                       help='Sequencing platform. Required for hia5; ignored for dddb/ddda.')
+                       help='Hia5 sequencing platform; omission warns and defaults '
+                            'to pacbio. Ignored for dddb/ddda.')
 
-    add_mode_args(parser, required=False)
+    add_legacy_mode_override(parser)
     add_edge_trim_args(parser, default=100)
     add_parallel_args(parser, default_cores=4, default_region_size=5_000_000)
 
@@ -756,6 +766,7 @@ def main():
 
     args = parser.parse_args()
 
+    using_bundled_model = args.model is None
     model_path = args.model
     if model_path is None:
         if args.enzyme is None:
@@ -766,6 +777,27 @@ def main():
         except (KeyError, FileNotFoundError) as e:
             parser.error(str(e))
         print(f"Using bundled model: {model_path}")
+
+    _, _, model_mode = load_model_with_metadata(model_path, normalize=False)
+    from fiberhmm.models import get_observation_mode
+    inferred_mode = (
+        get_observation_mode(
+            args.enzyme, args.seq, warn_missing_seq=False
+        )
+        if using_bundled_model else None
+    )
+    try:
+        effective_mode = resolve_observation_mode(
+            model_mode,
+            inferred_mode=inferred_mode,
+            explicit_mode=args.mode,
+            source_label=(
+                f"bundled {args.enzyme} model"
+                if using_bundled_model else "custom model"
+            ),
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
 
     chroms = set(args.chroms) if args.chroms else None
 
@@ -780,7 +812,7 @@ def main():
         region_size=args.region_size,
         write_batch_size=args.batch_size,
         verbose=args.verbose or True,
-        mode_override=args.mode,
+        mode_override=effective_mode,
     )
 
 

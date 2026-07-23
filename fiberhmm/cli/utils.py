@@ -39,7 +39,7 @@ def _load_pickle_model_raw(filepath):
     if isinstance(data, dict):
         model = data.get('model', data)
         context_size = data.get('context_size', 3)
-        mode = data.get('mode', 'pacbio-fiber')
+        mode = data.get('mode', 'unknown')
 
         if hasattr(model, 'startprob_'):
             return {
@@ -57,11 +57,11 @@ def _load_pickle_model_raw(filepath):
                 'emissionprob': np.array(data.get('emissionprob', data.get('emissionprob_'))),
                 'n_states': data.get('n_states', 2),
                 'context_size': data.get('context_size', 3),
-                'mode': data.get('mode', 'pacbio-fiber'),
+                'mode': data.get('mode', 'unknown'),
             }
     else:
         context_size = getattr(data, 'context_size', 3)
-        mode = getattr(data, 'mode', 'pacbio-fiber')
+        mode = getattr(data, 'mode', 'unknown')
         return {
             'startprob': np.array(data.startprob_),
             'transmat': np.array(data.transmat_),
@@ -81,7 +81,7 @@ def _load_npz_model_raw(filepath):
         'emissionprob': data['emissionprob'],
         'n_states': int(data.get('n_states', 2)),
         'context_size': int(data.get('context_size', 3)),
-        'mode': str(data.get('mode', 'pacbio-fiber')),
+        'mode': str(data.get('mode', 'unknown')),
     }
 
 

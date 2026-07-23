@@ -108,7 +108,7 @@ def test_daf_input_sniff_rejects_missing_deamination_source(tmp_path, capsys):
 
     assert exc.value.code == 2
     err = capsys.readouterr().err
-    assert "--mode daf needs deamination calls" in err
+    assert "DAF-seq calling needs deamination calls" in err
     assert "--reference ref.fa" in err
 
 

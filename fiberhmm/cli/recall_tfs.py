@@ -59,10 +59,12 @@ from collections import deque, namedtuple
 
 import pysam
 
+from fiberhmm.cli.common import (
+    add_legacy_mode_override,
+    resolve_observation_mode,
+)
 from fiberhmm.core.bam_reader import encode_from_query_sequence
 from fiberhmm.core.model_io import load_model_with_metadata
-from fiberhmm.io.bam_header import append_coord_marker, header_has_coord_marker
-from fiberhmm.io.ma_tags import flip_intervals_to_seq
 from fiberhmm.inference.fused_stages import build_fused_recall_result
 from fiberhmm.inference.tagging import write_fused_recall_tags
 from fiberhmm.inference.tf_recaller import (
@@ -74,6 +76,8 @@ from fiberhmm.inference.tf_recaller import (
     recall_read,
     write_ma_tags,
 )
+from fiberhmm.io.bam_header import append_coord_marker, header_has_coord_marker
+from fiberhmm.io.ma_tags import flip_intervals_to_seq
 
 # ---------------------------------------------------------------------------
 # Per-worker global state (set by the initializer; avoids repickling arrays)
@@ -510,8 +514,8 @@ def parse_args(default_recall_nucs: bool = False):
                         f'min-llr/emission-uplift defaults '
                         f'({", ".join(sorted(ENZYME_PRESETS))}).')
     p.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                   help='Sequencing platform. Required for hia5 '
-                        '(pacbio or nanopore); ignored for dddb/ddda.')
+                   help='Hia5 sequencing platform; omission warns and defaults '
+                        'to pacbio. Ignored for dddb/ddda.')
     p.add_argument('--min-llr', type=float, default=None,
                    help='Override min LLR (nats). Default: enzyme preset.')
     p.add_argument('--min-opps', type=int, default=3,
@@ -547,8 +551,7 @@ def parse_args(default_recall_nucs: bool = False):
                         'is constrained (each chunk holds reads in memory).')
     p.add_argument('--io-threads', type=int, default=4,
                    help='htslib BAM compression threads (default 4).')
-    p.add_argument('--mode', default=None,
-                   help='Override observation mode. Default: read from model.')
+    add_legacy_mode_override(p)
     p.add_argument('--context-size', type=int, default=None,
                    help='Override context size. Default: read from model.')
     p.add_argument('--max-reads', type=int, default=0,
@@ -584,7 +587,7 @@ def parse_args(default_recall_nucs: bool = False):
 
 
 def _resolve_model_metadata(model_path):
-    mode = 'pacbio-fiber'
+    mode = 'unknown'
     k = 3
     if model_path.endswith('.json'):
         try:
@@ -707,6 +710,7 @@ def _resolve_input_molecular_frame(args, header) -> bool:
 
 def main(default_recall_nucs: bool = False):
     args = parse_args(default_recall_nucs=default_recall_nucs)
+    using_bundled_model = args.model is None
 
     stdout_mode = (args.out_bam == '-')
     if stdout_mode:
@@ -780,7 +784,26 @@ def main(default_recall_nucs: bool = False):
         fb_mode, fb_k = _resolve_model_metadata(model_path)
         model_mode = model_mode or fb_mode
         model_k = model_k or fb_k
-    mode = args.mode or model_mode
+    from fiberhmm.models import get_observation_mode
+    inferred_mode = (
+        get_observation_mode(
+            args.enzyme, args.seq, warn_missing_seq=False
+        )
+        if using_bundled_model else None
+    )
+    try:
+        mode = resolve_observation_mode(
+            model_mode,
+            inferred_mode=inferred_mode,
+            explicit_mode=args.mode,
+            source_label=(
+                f"bundled {args.enzyme} model"
+                if using_bundled_model else "custom model"
+            ),
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
     k = args.context_size or int(model_k)
 
     llr_hit, llr_miss = build_llr_tables(model)

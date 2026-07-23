@@ -33,19 +33,83 @@ def _bundled_model_path(filename: str) -> str:
     return os.path.join(_MODELS_DIR, filename)
 
 
-# (enzyme, seq_or_None)  →  {tool: filename}
+# (enzyme, seq_or_None)  →  {tool: filename, mode: observation mode}
 # 'seq_or_None' is None for enzymes where platform does not matter
 _BUNDLED: dict[tuple[str, str | None], dict[str, str]] = {
-    ('hia5', 'pacbio'):   {'apply': 'hia5_pacbio.json',   'recall': 'hia5_pacbio.json'},
-    ('hia5', 'nanopore'): {'apply': 'hia5_nanopore.json', 'recall': 'hia5_nanopore.json'},
-    ('dddb', None):       {'apply': 'dddb_nanopore.json', 'recall': 'dddb_nanopore.json'},
-    ('ddda', None):       {'apply': 'ddda_nuc.json',      'recall': 'ddda_TF.json'},
+    ('hia5', 'pacbio'): {
+        'apply': 'hia5_pacbio.json',
+        'recall': 'hia5_pacbio.json',
+        'mode': 'pacbio-fiber',
+    },
+    ('hia5', 'nanopore'): {
+        'apply': 'hia5_nanopore.json',
+        'recall': 'hia5_nanopore.json',
+        'mode': 'nanopore-fiber',
+    },
+    ('dddb', None): {
+        'apply': 'dddb_nanopore.json',
+        'recall': 'dddb_nanopore.json',
+        'mode': 'daf',
+    },
+    ('ddda', None): {
+        'apply': 'ddda_nuc.json',
+        'recall': 'ddda_TF.json',
+        'mode': 'daf',
+    },
 }
 
 SUPPORTED_ENZYMES = sorted({e for e, _ in _BUNDLED})
 # Enzymes where --seq matters
 _SEQ_REQUIRED = {'hia5'}
 _SEQ_DEFAULT  = 'pacbio'   # default when --seq omitted for hia5
+
+
+def _get_bundled_entry(
+    enzyme: str,
+    seq: str | None,
+    *,
+    warn_missing_seq: bool,
+) -> dict[str, str]:
+    """Resolve a registry entry shared by model-path and mode lookup."""
+    enz = enzyme.lower()
+
+    if enz in _SEQ_REQUIRED:
+        if seq is None:
+            if warn_missing_seq:
+                warnings.warn(
+                    f"--seq not specified for {enz}; defaulting to "
+                    f"'{_SEQ_DEFAULT}'. Use --seq nanopore if your data is "
+                    "Nanopore.",
+                    stacklevel=3,
+                )
+            seq_key: str | None = _SEQ_DEFAULT
+        else:
+            seq_key = seq.lower()
+    else:
+        seq_key = None
+
+    entry = _BUNDLED.get((enz, seq_key))
+    if entry is None:
+        choices = [f"{e}/{s or 'any'}" for e, s in sorted(_BUNDLED)]
+        raise KeyError(
+            f"No bundled model for enzyme={enzyme!r} seq={seq!r}. "
+            f"Valid enzyme/seq combos: {choices}. "
+            f"Use --model to provide a custom JSON file."
+        )
+    return entry
+
+
+def get_observation_mode(
+    enzyme: str,
+    seq: str | None = None,
+    *,
+    warn_missing_seq: bool = True,
+) -> str:
+    """Return the authoritative mode for a bundled enzyme/platform workflow."""
+    entry = _get_bundled_entry(
+        enzyme, seq, warn_missing_seq=warn_missing_seq
+    )
+    return entry['mode']
 
 
 def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) -> str:
@@ -69,35 +133,8 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
     FileNotFoundError
         If the bundled file is missing from the installation.
     """
-    enz = enzyme.lower()
     t   = tool.lower()
-
-    # Normalise seq: only matters for enzymes in _SEQ_REQUIRED
-    if enz in _SEQ_REQUIRED:
-        if seq is None:
-            warnings.warn(
-                f"--seq not specified for {enz}; defaulting to '{_SEQ_DEFAULT}'. "
-                f"Use --seq nanopore if your data is Nanopore.",
-                stacklevel=2,
-            )
-            seq_key: str | None = _SEQ_DEFAULT
-        else:
-            seq_key = seq.lower()
-    else:
-        if seq is not None:
-            # accepted but ignored — no platform distinction for this enzyme
-            pass
-        seq_key = None
-
-    key = (enz, seq_key)
-    entry = _BUNDLED.get(key)
-    if entry is None:
-        choices = [f"{e}/{s or 'any'}" for e, s in sorted(_BUNDLED)]
-        raise KeyError(
-            f"No bundled model for enzyme={enzyme!r} seq={seq!r} tool={tool!r}. "
-            f"Valid enzyme/seq combos: {choices}. "
-            f"Use --model to provide a custom JSON file."
-        )
+    entry = _get_bundled_entry(enzyme, seq, warn_missing_seq=True)
 
     fname = entry.get(t)
     if fname is None:

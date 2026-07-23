@@ -13,10 +13,11 @@ import pandas as pd
 from fiberhmm.cli.common import (
     add_edge_trim_args,
     add_filter_args,
-    add_mode_args,
+    add_legacy_mode_override,
     add_parallel_args,
     add_stats_args,
     add_version_args,
+    resolve_observation_mode,
 )
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.inference.parallel import process_bam_for_footprints
@@ -68,11 +69,11 @@ Examples:
                         help='Auto-select bundled model: hia5, dddb, or ddda. '
                              'Use with --seq pacbio|nanopore for Hia5.')
     parser.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                        help='Sequencing platform. Required for hia5 '
-                             '(pacbio or nanopore); ignored for dddb/ddda.')
+                        help='Hia5 sequencing platform; omission warns and '
+                             'defaults to pacbio. Ignored for dddb/ddda.')
 
-    # Mode
-    add_mode_args(parser, default=None)
+    # Backward-compatible escape hatch; normal workflows infer this.
+    add_legacy_mode_override(parser)
 
     # Context size (auto-detected from model by default)
     parser.add_argument('-k', '--context-size', type=int, default=None,
@@ -138,6 +139,7 @@ Examples:
 
 def main():
     args = parse_args()
+    using_bundled_model = args.model is None
 
     # Handle stdout output mode — redirect all prints to stderr
     # so they don't corrupt the BAM stream
@@ -220,16 +222,28 @@ def main():
         context_size = model_context_size
     print(f"  Context size: k={context_size} ({2*context_size + 1}-mer)")
 
-    # Determine mode (priority: command line > model > default)
-    if args.mode is not None:
-        mode = args.mode
-        if mode != model_mode:
-            print(f"  NOTE: Command line mode '{mode}' overrides model mode '{model_mode}'")
-    elif model_mode and model_mode != 'unknown':
-        mode = model_mode
-    else:
-        mode = 'pacbio-fiber'
-        print(f"  No mode in model metadata, defaulting to '{mode}'")
+    # Bundled workflows infer mode from enzyme/platform; custom models use
+    # metadata. The hidden legacy --mode remains the highest-priority override.
+    from fiberhmm.models import get_observation_mode
+    inferred_mode = (
+        get_observation_mode(
+            args.enzyme, args.seq, warn_missing_seq=False
+        )
+        if using_bundled_model else None
+    )
+    try:
+        mode = resolve_observation_mode(
+            model_mode,
+            inferred_mode=inferred_mode,
+            explicit_mode=args.mode,
+            source_label=(
+                f"bundled {args.enzyme} model"
+                if using_bundled_model else "custom model"
+            ),
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     print(f"  Mode: {mode}")
     args.mode = mode

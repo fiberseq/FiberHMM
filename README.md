@@ -30,8 +30,16 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
 - **Spec-compliant tags** — `ns`/`nl`/`as`/`al` legacy tags plus `MA`/`AQ`
   [Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec)
   tags with `nuc.QQQ` / `tf.QQQ` scoring.
-- **Multi-platform** — PacBio fiber-seq, Nanopore fiber-seq, DAF-seq (DddB, DddA).
+- **Validated workflows** — PacBio and Nanopore Hia5 fiber-seq, plus DAF-seq
+  with DddB and DddA.
 - **Native, fast** — no hmmlearn dependency; Numba JIT for ~10× speedup.
+
+GpC/CpG methylase workflows (including M.CviPI/M.SssI-style data) are not yet
+fully implemented or validated, and no bundled model is provided. The control
+datasets we found were from much older Nanopore generations and were not
+suitable for reliable current calibration, so these chemistries should
+currently be treated as unsupported rather than assuming a Hia5 model will
+transfer.
 
 ## Installation
 
@@ -100,8 +108,8 @@ fiberhmm-extract -i calls.bam --nucleosome --msp --tf
 (`--region-parallel`, requires a coordinate-sorted + indexed BAM; near-linear
 scaling up to chromosome count, writes sorted+indexed output) and **streaming**
 (default; accepts unaligned/unsorted BAM or stdin `-i -`, and pipes to stdout
-`-o -` for `ft fire`). These are separate from the HMM observation setting
-exposed by the advanced `--mode` override.
+`-o -` for `ft fire`). The observation mode is selected automatically from
+`--enzyme` and, for Hia5, `--seq`.
 
 > `fiberhmm-run` was removed in 2.8.0 — it chained apply + recall + fire as
 > separate piped subprocesses. `fiberhmm-call` fuses those stages in-process and
@@ -123,9 +131,8 @@ stream it (see Quick start).
 
 ### DAF-seq (DddB)
 
-`--enzyme dddb` selects the bundled DddB model, whose metadata sets the
-observation mode to `daf`. You normally do not need to add `--mode daf`;
-`--mode` is retained as an advanced override for custom models.
+`--enzyme dddb` selects both the bundled DddB model and DAF observation mode; no
+separate mode flag is needed.
 
 FiberHMM must distinguish DAF conversions from bases already present in the
 reference. For normal file-input workflows, the supported sources are used in
@@ -256,7 +263,6 @@ execution strategies.
 | `-o/--output` | required | Output BAM, or `-` for stdout (unsorted). |
 | `--enzyme` | — | `hia5`, `dddb`, or `ddda` (auto-selects bundled model). |
 | `--seq` | chemistry-dependent | Hia5 supports `pacbio`/`nanopore`; omission warns and defaults to `pacbio`. Ignored for DddA/DddB. |
-| `--mode` | from model | Advanced observation-mode override (`pacbio-fiber`, `nanopore-fiber`, or `daf`); normally inferred from the selected model. |
 | `--reference` | — | Indexed FASTA fallback for DAF reads with no R/Y and missing/unusable `MD`; does not override R/Y or usable `MD`. |
 | `-c/--cores` | 4 | Worker processes. |
 | `--io-threads` | 8 | htslib I/O threads. |
@@ -293,7 +299,6 @@ fiberhmm-apply -i experiment.bam --enzyme hia5 --seq pacbio -o output/ -c 8
 | `--enzyme` | optional | `hia5`, `dddb`, or `ddda`. Required unless `-m` is given. |
 | `--seq` | chemistry-dependent | Hia5 supports `pacbio`/`nanopore`; omission warns and defaults to `pacbio`. Ignored for DddA/DddB. |
 | `-o/--outdir` | required | Output directory, or `-` for stdout BAM. |
-| `--mode` | from model | Advanced observation-mode override; normally inferred from the selected model. |
 | `-c/--cores` | 1 | CPU cores (0 = auto). |
 | `--io-threads` | 4 | htslib I/O threads. |
 | `-q/--min-mapq` | 0 | Min mapping quality (`0` = no filtering). |
@@ -484,6 +489,15 @@ This makes FiberHMM output directly usable across the
 
 Bundled with the package — `--enzyme` (+ `--seq` for Hia5) selects automatically;
 `-m` only for custom models.
+
+For bundled models, the enzyme/platform registry is authoritative even if stale
+model metadata disagrees. Custom models use their embedded `mode`; a custom
+model without valid mode metadata now stops with an actionable error instead of
+silently being treated as PacBio. The old high-level `--mode` option remains
+accepted but hidden for backward compatibility: it emits a warning and, when
+supplied, explicitly overrides inference or model metadata. New workflows
+should not use it. Low-level `fiberhmm-probs`, training, and transfer commands
+still expose mode where it is an actual input to model construction.
 
 | Model | `--enzyme` | `--seq` | Mode | Used by |
 |-------|-----------|---------|------|---------|
