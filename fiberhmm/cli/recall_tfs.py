@@ -91,8 +91,9 @@ _STATS_KEYS = ('v2', 'tf', 'demoted', 'failed')
 _NucCfg = namedtuple(
     '_NucCfg',
     ('recall_nucs', 'split_min_llr', 'split_min_opps',
-     'nuc_min_size', 'msp_min_size', 'phase_nrl'),
+     'nuc_min_size', 'msp_min_size', 'phase_nrl', 'nuc_recall_policy'),
 )
+_NucCfg.__new__.__defaults__ = ('conservative',)
 
 
 def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
@@ -333,6 +334,7 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
         nuc_min_size=nuc_cfg.nuc_min_size,
         msp_min_size=nuc_cfg.msp_min_size,
         phase_nrl=nuc_cfg.phase_nrl,
+        nuc_recall_policy=nuc_cfg.nuc_recall_policy,
     )
 
     stats['tf'] = len(result['tf_calls'])
@@ -560,7 +562,7 @@ def parse_args(default_recall_nucs: bool = False):
     nuc = p.add_argument_group(
         'nucleosome recall (--recall-nucs)',
         'Run the per-read nucleosome recaller (split over-merged HMM footprints '
-        'on accessible evidence + refine conservative edges) BEFORE TF recall, '
+        'on accessible evidence + resolve platform-aware edges) BEFORE TF recall, '
         'reusing the existing apply-tagged ns/nl/as/al -- no HMM re-run. Linear '
         'reads only.',
     )
@@ -572,6 +574,13 @@ def parse_args(default_recall_nucs: bool = False):
                      help='Min accessible-cut LLR to split a footprint (default 4.0)')
     nuc.add_argument('--split-min-opps', type=int, default=3,
                      help='Min informative positions for a split cut (default 3)')
+    nuc.add_argument(
+        '--nuc-recall-policy',
+        choices=['auto', 'conservative', 'topology'],
+        default='auto',
+        help='"auto" uses topology-constrained, ambiguity-preserving recall '
+             'for Nanopore and historical conservative edges otherwise.',
+    )
     nuc.add_argument('--nuc-min-size', type=int, default=85,
                      help='Min refined nucleosome size; smaller footprints are '
                           'demoted to accessible/MSP (default 85)')
@@ -598,6 +607,13 @@ def _resolve_model_metadata(model_path):
         except (OSError, ValueError):
             pass
     return mode, k
+
+
+def _resolve_nuc_recall_policy(args, mode: str) -> str:
+    policy = str(getattr(args, 'nuc_recall_policy', 'auto')).lower()
+    if policy == 'auto':
+        return 'topology' if mode == 'nanopore-fiber' else 'conservative'
+    return policy
 
 
 def _parse_phase_nrl_option(raw):
@@ -805,6 +821,7 @@ def main(default_recall_nucs: bool = False):
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
     k = args.context_size or int(model_k)
+    nuc_recall_policy = _resolve_nuc_recall_policy(args, mode)
 
     llr_hit, llr_miss = build_llr_tables(model)
     if abs(uplift - 1.0) > 1e-9:
@@ -822,7 +839,8 @@ def main(default_recall_nucs: bool = False):
     nuc_cfg = None
     if getattr(args, 'recall_nucs', False):
         print("  +RECALL-NUCS: nucleosome recaller runs before TF recall "
-              "(reuses apply-tagged ns/nl/as/al -- no HMM re-run; linear reads).",
+              f"(policy={nuc_recall_policy}; reuses apply-tagged ns/nl/as/al "
+              "-- no HMM re-run; linear reads).",
               file=sys.stderr)
         nuc_cfg = _NucCfg(
             recall_nucs=True,
@@ -831,6 +849,7 @@ def main(default_recall_nucs: bool = False):
             nuc_min_size=args.nuc_min_size,
             msp_min_size=args.msp_min_size,
             phase_nrl=_resolve_recall_nucs_phase_nrl(args),
+            nuc_recall_policy=nuc_recall_policy,
         )
 
     # Open BAMs with io-threads. pysam accepts "-" as stdin/stdout natively.

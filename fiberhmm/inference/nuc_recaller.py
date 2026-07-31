@@ -1,9 +1,11 @@
 """Per-read nucleosome recaller.
 
-Splits over-merged HMM footprints on accessible (m6a/deam) evidence, then refines
+Splits over-merged HMM footprints on accessible (m6a/deam) evidence, then resolves
 each resulting fragment's edges and quality. Reuses the TF recaller's Kadane kernel
 with *inverted* emission tables for splitting and *non-inverted* tables for the
-nucleosome edge + quality pass -- no new scoring code.
+nucleosome edge + quality pass -- no new scoring code. The topology policy adds
+an HMM-occupancy constraint for sparse single-strand evidence: cuts must separate
+nucleosome-sized pieces, and unresolved edge ambiguity stays protected.
 
   SPLIT:  call_tfs_in_interval(obs, ..., -llr_hit, -llr_miss)  over a footprint
           interior -> accessible runs == cuts. Footprint is split at the cuts.
@@ -46,13 +48,15 @@ class NucCall:
 
 
 def _refine_fragment(obs, a, b, llr_hit, llr_miss,
-                     nuc_min_size, edge_min_llr, edge_min_opps):
+                     nuc_min_size, edge_min_llr, edge_min_opps,
+                     preserve_fragment=False):
     """Edge-refine one protected fragment into a NucCall (or demote it).
 
     Returns ``(nuc_or_None, access_intervals)``. A fragment shorter than
-    ``nuc_min_size``, with no protected evidence, or whose conservative core
-    trims below the floor, is demoted: ``nuc`` is None (signal-desert keeps a
-    quality-0 NucCall) and the residue goes to ``access``.
+    ``nuc_min_size`` is demoted. Under the historical conservative policy, a
+    protected core that trims below the floor is also demoted; signal deserts
+    retain a quality-0 NucCall. ``preserve_fragment`` instead keeps a qualifying
+    HMM fragment and records unresolved edges.
     """
     access: List[Interval] = []
     if b - a < nuc_min_size:
@@ -65,6 +69,19 @@ def _refine_fragment(obs, a, b, llr_hit, llr_miss,
         return NucCall(a, b - a, nq=0, el=0, er=0), access
     prot = sorted(prot, key=lambda p: p.start)
     first, last = prot[0], prot[-1]
+    total_llr = sum(p.llr for p in prot)
+    if preserve_fragment:
+        # Sparse single-strand evidence does not identify conservative edges.
+        # The HMM extent remains the occupancy prior; the protected scan still
+        # supplies a quality score, while zero edge bytes honestly record that
+        # the exact boundaries were not resolved by bracketing evidence.
+        return NucCall(
+            start=a,
+            length=b - a,
+            nq=llr_to_tq(total_llr),
+            el=0,
+            er=0,
+        ), access
     cstart = first.start
     cend = last.start + last.length
     if cend - cstart < nuc_min_size:
@@ -72,9 +89,6 @@ def _refine_fragment(obs, a, b, llr_hit, llr_miss,
         # protected island) -> not a nucleosome, demote the whole fragment.
         access.append((a, b - a))
         return None, access
-    total_llr = 0.0
-    for p in prot:
-        total_llr += p.llr
     nuc = NucCall(
         start=cstart,
         length=cend - cstart,
@@ -89,8 +103,63 @@ def _refine_fragment(obs, a, b, llr_hit, llr_miss,
     return nuc, access
 
 
+def _select_nucleosome_separating_cuts(
+    cuts,
+    start: int,
+    end: int,
+    nuc_min_size: int,
+):
+    """Select the maximum-evidence cut chain with nuc-sized pieces throughout.
+
+    The accessible Kadane scan can find isolated ONT events inside a single
+    HMM-protected footprint. Treating every such run as a split can shatter one
+    nucleosome into sub-floor fragments, after which the old recaller labels the
+    entire footprint accessible. A true *nucleosome split* must instead leave a
+    possible nucleosome on both outer sides and between consecutive cuts.
+
+    Dynamic programming maximizes retained cut LLR subject to that topology.
+    All current call LLRs are positive, so an eligible non-conflicting cut is
+    retained unless a stronger incompatible chain exists.
+    """
+    floor = max(1, int(nuc_min_size))
+    eligible = [
+        cut
+        for cut in sorted(cuts, key=lambda call: call.start)
+        if (
+            int(cut.start) - int(start) >= floor
+            and int(end) - int(cut.start + cut.length) >= floor
+        )
+    ]
+    if not eligible:
+        return []
+
+    best_score: List[float] = []
+    predecessor: List[int | None] = []
+    for i, cut in enumerate(eligible):
+        score = float(cut.llr)
+        pred = None
+        for j in range(i):
+            gap = int(cut.start) - int(
+                eligible[j].start + eligible[j].length
+            )
+            candidate = best_score[j] + float(cut.llr)
+            if gap >= floor and candidate > score:
+                score = candidate
+                pred = j
+        best_score.append(score)
+        predecessor.append(pred)
+
+    cursor: int | None = int(np.argmax(np.asarray(best_score)))
+    selected = []
+    while cursor is not None:
+        selected.append(eligible[cursor])
+        cursor = predecessor[cursor]
+    return list(reversed(selected))
+
+
 def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
-                        phase_min_llr, phase_min_opps, phase_window):
+                        phase_min_llr, phase_min_opps, phase_window,
+                        min_fragment_size=0):
     """Evidence-gated periodicity split of a long protected fragment.
 
     A fragment of length L >= 1.5*nrl is assumed to hold ``n = round(L/nrl)``
@@ -107,7 +176,7 @@ def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
     if n < 2:
         return [(a, b)], []
     spacing = L / float(n)
-    cut_pairs: List[Interval] = []
+    cut_calls = []
     for i in range(1, n):
         pred = a + int(round(i * spacing))
         lo = max(a, pred - phase_window)
@@ -118,9 +187,16 @@ def _phase_subfragments(obs, a, b, nhit, nmiss, nrl,
                                      phase_min_llr, phase_min_opps)
         if found:
             best = max(found, key=lambda c: c.llr)
-            cut_pairs.append((best.start, best.start + best.length))
-    if not cut_pairs:
+            cut_calls.append(best)
+    if min_fragment_size > 0:
+        cut_calls = _select_nucleosome_separating_cuts(
+            cut_calls, a, b, min_fragment_size)
+    if not cut_calls:
         return [(a, b)], []
+    cut_pairs = [
+        (int(call.start), int(call.start + call.length))
+        for call in cut_calls
+    ]
     cut_pairs.sort()
     subs: List[Interval] = []
     cur = a
@@ -328,6 +404,7 @@ def recall_nucs_in_read(
     phase_min_opps: int = 1,
     phase_window: int = 35,
     nuc_profile: NucProfile | None = None,
+    recall_policy: str = "conservative",
 ) -> Tuple[List[NucCall], List[Interval]]:
     """Split + edge-refine the footprints (``ns``/``nl``) of one read.
 
@@ -348,10 +425,24 @@ def recall_nucs_in_read(
 
     When ``nuc_profile`` is supplied (DddA mode), the accessible-cut split is
     replaced by a radial template match-filter -- see ``radial_split_in_read``.
+
+    ``recall_policy="conservative"`` preserves the historical behavior: every
+    qualifying accessible run becomes a cut and protected evidence defines
+    conservative nucleosome edges. ``recall_policy="topology"`` is intended for
+    sparse single-strand evidence such as Nanopore m6A: a cut is accepted only
+    when every resulting piece can contain a nucleosome, and post-cut fragments
+    retain their HMM extent instead of converting unresolved edge ambiguity to
+    accessibility.
     """
+    if recall_policy not in {"conservative", "topology"}:
+        raise ValueError(
+            "recall_policy must be 'conservative' or 'topology', got "
+            f"{recall_policy!r}"
+        )
     if nuc_profile is not None:
         return radial_split_in_read(obs, ns, nl, read_length,
                                     nuc_profile, nuc_min_size)
+    topology_policy = recall_policy == "topology"
     nhit = -llr_hit
     nmiss = -llr_miss
     nucs: List[NucCall] = []
@@ -370,6 +461,9 @@ def recall_nucs_in_read(
         cuts = call_tfs_in_interval(obs, s, e, nhit, nmiss,
                                     split_min_llr, split_min_opps)
         cuts = sorted(cuts, key=lambda c: c.start)
+        if topology_policy:
+            cuts = _select_nucleosome_separating_cuts(
+                cuts, s, e, nuc_min_size)
         for c in cuts:
             access.append((c.start, c.length))
 
@@ -390,7 +484,10 @@ def recall_nucs_in_read(
             if phase_nrl > 0:
                 subs, phase_cuts = _phase_subfragments(
                     obs, a, b, nhit, nmiss, phase_nrl,
-                    phase_min_llr, phase_min_opps, phase_window)
+                    phase_min_llr, phase_min_opps, phase_window,
+                    min_fragment_size=(
+                        nuc_min_size if topology_policy else 0
+                    ))
                 access.extend(phase_cuts)
             else:
                 subs = [(a, b)]
@@ -398,7 +495,8 @@ def recall_nucs_in_read(
             for sa, sb in subs:
                 nuc, acc = _refine_fragment(
                     obs, sa, sb, llr_hit, llr_miss,
-                    nuc_min_size, edge_min_llr, edge_min_opps)
+                    nuc_min_size, edge_min_llr, edge_min_opps,
+                    preserve_fragment=topology_policy)
                 if nuc is not None:
                     nucs.append(nuc)
                 access.extend(acc)
@@ -604,7 +702,8 @@ def drop_short_nucs_overlapping_promoted(nuc_calls, promoted, unify_threshold):
 
 
 def promote_large_tf_calls(tf_calls, obs, llr_hit, llr_miss, threshold,
-                           nuc_min_size, edge_min_llr=2.0, edge_min_opps=2):
+                           nuc_min_size, edge_min_llr=2.0, edge_min_opps=2,
+                           preserve_fragment=False):
     """Promote nucleosome-sized TF calls (length >= ``threshold``) to NucCalls.
 
     The TF recaller emits ANY protected run inside an MSP as ``tf+`` with no size
@@ -619,7 +718,8 @@ def promote_large_tf_calls(tf_calls, obs, llr_hit, llr_miss, threshold,
         if c.length >= threshold:
             nuc, _ = _refine_fragment(obs, c.start, c.start + c.length,
                                       llr_hit, llr_miss, nuc_min_size,
-                                      edge_min_llr, edge_min_opps)
+                                      edge_min_llr, edge_min_opps,
+                                      preserve_fragment=preserve_fragment)
             if nuc is not None:
                 promoted.append(nuc)
                 continue

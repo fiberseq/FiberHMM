@@ -165,8 +165,25 @@ statistic. The TF recaller scans accessible regions for protected segments
 (positive ℓ), reporting sub-nucleosomal footprints. The nucleosome recaller scans
 an over-merged protected footprint for accessible segments (negative ℓ); a
 sufficiently supported accessible segment denotes a buried linker at which the
-footprint is divided, after which the positive-sign scan re-estimates each
-resulting nucleosome's conservative boundaries and confidence.
+footprint may be divided.
+
+The nucleosome geometry is controlled by `--nuc-recall-policy`:
+
+- `conservative` is the historical policy. Every qualifying accessible run is
+  a cut, after which the positive-sign scan defines conservative inner
+  nucleosome boundaries. On sparse single-strand data, this can turn unresolved
+  sequence into apparent accessibility.
+- `topology` accepts a set of cuts only when every outer and intervening
+  fragment remains at least `--nuc-min-size`. It retains each post-cut HMM
+  fragment as the occupancy interval and records unresolved edges with zero
+  edge-sharpness bytes. Thus isolated events cannot shatter one nucleosome and
+  neutral edge ambiguity is not reported as an NFR.
+- `auto` (the CLI default) selects `topology` for `nanopore-fiber` models and
+  `conservative` otherwise. Either behavior can be forced explicitly.
+
+The topology policy still recalls over-merged nucleosomes: supported internal
+linkers divide long footprints, and the maximum-total-LLR compatible cut chain
+is selected when several candidate linkers occur.
 
 ## recall-tfs output modes
 

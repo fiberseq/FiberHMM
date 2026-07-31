@@ -107,7 +107,7 @@ def parse_args():
 
     # --- Nucleosome recall params ---
     p.add_argument('--recall-nucs', action=argparse.BooleanOptionalAction, default=None,
-                   help='Split over-merged nucleosomes + refine conservative edges '
+                   help='Split over-merged nucleosomes + resolve platform-aware edges '
                         '(emits nuc.QQQ), promote nucleosome-sized TF leaks to nuc, '
                         'and run the Pass-2 phase prior. ON by default for all '
                         'enzymes (DddA uses the radial-template split, others the '
@@ -118,6 +118,16 @@ def parse_args():
     p.add_argument('--split-min-opps', type=int, default=3,
                    help='Min informative positions in a nucleosome-splitting cut '
                         '(default 3).')
+    p.add_argument(
+        '--nuc-recall-policy',
+        choices=['auto', 'conservative', 'topology'],
+        default='auto',
+        help='Nucleosome-recaller geometry policy. "auto" (default) uses '
+             'topology-constrained, ambiguity-preserving recall for Nanopore '
+             'and the historical conservative-edge policy otherwise. '
+             '"topology" only accepts cuts that leave nucleosome-sized pieces '
+             'and does not turn unresolved edge ambiguity into accessibility.',
+    )
     p.add_argument('--phase-nrl', default='auto',
                    help='Pass-2 periodicity prior (with --recall-nucs): '
                         '"auto" (default; estimate the nucleosome repeat length from '
@@ -254,6 +264,7 @@ def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
         input_bam, apply_model_path, recall_model_path,
         mode=mode, context_size=k,
         split_min_llr=args.split_min_llr, split_min_opps=args.split_min_opps,
+        nuc_recall_policy=_resolve_nuc_recall_policy(args, mode),
         nuc_min_size=args.nuc_min_size, msp_min_size=args.msp_min_size,
         prob_threshold=args.prob_threshold, edge_trim=args.edge_trim,
     )
@@ -263,6 +274,14 @@ def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
           f"{res['n_pairs']:,} pairs from {res['n_reads']:,} reads{ci_str})",
           file=sys.stderr)
     return int(res['nrl'])
+
+
+def _resolve_nuc_recall_policy(args, mode: str) -> str:
+    """Resolve the public auto policy to the core recaller policy."""
+    policy = str(getattr(args, 'nuc_recall_policy', 'auto')).lower()
+    if policy == 'auto':
+        return 'topology' if mode == 'nanopore-fiber' else 'conservative'
+    return policy
 
 
 def _check_daf_inputs(input_bam: str, reference: str = None,
@@ -438,6 +457,7 @@ def main():
                   "(bundled ddda_nuc_profile.json).", file=sys.stderr)
     else:
         recall_nucs = bool(args.recall_nucs)
+    nuc_recall_policy = _resolve_nuc_recall_policy(args, mode)
 
     # Fast-fail sniff for DAF mode BEFORE any BAM scanning (e.g. --phase-nrl
     # auto estimation): the DAF path needs R/Y in the stored sequence, MD tags,
@@ -492,7 +512,8 @@ def main():
         # and MA are in molecular (original-fiber) frame -- keep the exact token.
         'DS': (f"FiberHMM fused apply+recall; coord=molecular "
                f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
-               f"mode={mode} recall_nucs={recall_nucs} phase_nrl={phase_nrl} "
+               f"mode={mode} recall_nucs={recall_nucs} "
+               f"nuc_recall_policy={nuc_recall_policy} phase_nrl={phase_nrl} "
                f"chimera_filter={chimera_state} dedup={dedup_state}"),
     }
 
@@ -505,6 +526,7 @@ def main():
         f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'}\n"
         f"  min_llr={min_llr} min_opps={args.min_opps} "
         f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
+        f"  nuc-recall-policy={nuc_recall_policy} phase-nrl={phase_nrl}\n"
         f"  cores={args.cores} io-threads={args.io_threads}"
         f"{' circular=on' if args.circular else ''}\n"
         "=========================================================================\n",
@@ -552,6 +574,7 @@ def main():
             recall_nucs=recall_nucs,
             split_min_llr=args.split_min_llr,
             split_min_opps=args.split_min_opps,
+            nuc_recall_policy=nuc_recall_policy,
             filter_chimeras=not args.keep_chimeras,
             chimera_min_seg=args.chimera_min_seg,
             chimera_purity=args.chimera_purity,
@@ -592,6 +615,7 @@ def main():
             recall_nucs=recall_nucs,
             split_min_llr=args.split_min_llr,
             split_min_opps=args.split_min_opps,
+            nuc_recall_policy=nuc_recall_policy,
             filter_chimeras=not args.keep_chimeras,
             chimera_min_seg=args.chimera_min_seg,
             chimera_purity=args.chimera_purity,

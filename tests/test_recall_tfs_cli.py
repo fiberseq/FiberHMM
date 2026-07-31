@@ -250,6 +250,23 @@ def test_parse_phase_nrl_option_off_auto_fixed():
     assert recall_tfs._parse_phase_nrl_option("banana") == ("auto", 0)
 
 
+def test_nuc_recall_policy_auto_is_platform_aware():
+    args = SimpleNamespace(nuc_recall_policy="auto")
+    assert (
+        recall_tfs._resolve_nuc_recall_policy(args, "nanopore-fiber")
+        == "topology"
+    )
+    assert (
+        recall_tfs._resolve_nuc_recall_policy(args, "pacbio-fiber")
+        == "conservative"
+    )
+    args.nuc_recall_policy = "topology"
+    assert (
+        recall_tfs._resolve_nuc_recall_policy(args, "pacbio-fiber")
+        == "topology"
+    )
+
+
 def test_resolve_phase_nrl_off_when_recall_nucs_disabled():
     args = SimpleNamespace(recall_nucs=False, phase_nrl="auto", in_bam="x.bam")
     assert recall_tfs._resolve_recall_nucs_phase_nrl(args) == 0

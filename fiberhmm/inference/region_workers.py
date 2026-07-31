@@ -544,6 +544,8 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         recall_nucs = bool(params.get('recall_nucs', False))
         split_min_llr = float(params.get('split_min_llr', 4.0))
         split_min_opps = int(params.get('split_min_opps', 3))
+        nuc_recall_policy = str(
+            params.get('nuc_recall_policy', 'conservative'))
         phase_nrl = int(params.get('phase_nrl', 0))
         nuc_profile = _region_nuc_profile(params.get('nuc_profile_path'))
 
@@ -653,6 +655,7 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         recall_nucs=recall_nucs,
                         split_min_llr=split_min_llr,
                         split_min_opps=split_min_opps,
+                        nuc_recall_policy=nuc_recall_policy,
                         nuc_min_size=nuc_min_size,
                         msp_min_size=msp_min_size,
                         phase_nrl=phase_nrl,

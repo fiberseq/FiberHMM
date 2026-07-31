@@ -39,6 +39,7 @@ def estimate_phase_nrl(
     min_pairs: int = 300,
     split_min_llr: float = 4.0,
     split_min_opps: int = 3,
+    nuc_recall_policy: str = 'conservative',
     nuc_min_size: int = 85,
     msp_min_size: int = 0,
     prob_threshold: int = 128,
@@ -73,7 +74,8 @@ def estimate_phase_nrl(
                 apply_result['encoded'], apply_result['ns'], apply_result['nl'],
                 len(apply_result['encoded']), llr_hit, llr_miss,
                 split_min_llr=split_min_llr, split_min_opps=split_min_opps,
-                nuc_min_size=nuc_min_size)
+                nuc_min_size=nuc_min_size,
+                recall_policy=nuc_recall_policy)
             nucs = sorted(nucs, key=lambda n: n.start)
             for i in range(len(nucs) - 1):
                 c1 = nucs[i].start + nucs[i].length / 2.0

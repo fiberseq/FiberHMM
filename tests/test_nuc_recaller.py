@@ -97,6 +97,50 @@ def test_refined_core_below_floor_is_demoted_not_emitted():
     assert (0, 100) in access
 
 
+def test_topology_policy_preserves_ambiguous_hmm_nucleosome():
+    # With sparse single-strand evidence, a short protected core plus neutral
+    # flanks is unresolved, not evidence that the entire HMM footprint is open.
+    obs = _obs((NONTARGET, 40), (MISS, 20), (NONTARGET, 40))
+    llr_hit, llr_miss = _llr_tables()
+    nucs, access = recall_nucs_in_read(
+        obs, ns=[0], nl=[len(obs)], read_length=len(obs),
+        llr_hit=llr_hit, llr_miss=llr_miss,
+        split_min_llr=4.0, split_min_opps=3, nuc_min_size=85,
+        recall_policy="topology",
+    )
+    assert [(n.start, n.length) for n in nucs] == [(0, 100)]
+    assert nucs[0].el == 0 and nucs[0].er == 0
+    assert access == []
+
+
+def test_topology_policy_rejects_cut_that_shatters_one_nucleosome():
+    # Both sides of the apparent cut are below the nucleosome floor. The old
+    # policy demotes all 126 bp; topology-aware recall keeps the HMM occupancy.
+    obs = _obs((MISS, 60), (HIT, 6), (MISS, 60))
+    llr_hit, llr_miss = _llr_tables()
+    nucs, access = recall_nucs_in_read(
+        obs, ns=[0], nl=[len(obs)], read_length=len(obs),
+        llr_hit=llr_hit, llr_miss=llr_miss,
+        split_min_llr=4.0, split_min_opps=3, nuc_min_size=85,
+        recall_policy="topology",
+    )
+    assert [(n.start, n.length) for n in nucs] == [(0, 126)]
+    assert access == []
+
+
+def test_topology_policy_still_splits_an_overmerged_pair():
+    obs = _obs((MISS, 100), (HIT, 6), (MISS, 100))
+    llr_hit, llr_miss = _llr_tables()
+    nucs, access = recall_nucs_in_read(
+        obs, ns=[0], nl=[len(obs)], read_length=len(obs),
+        llr_hit=llr_hit, llr_miss=llr_miss,
+        split_min_llr=4.0, split_min_opps=3, nuc_min_size=85,
+        recall_policy="topology",
+    )
+    assert [(n.start, n.length) for n in nucs] == [(0, 100), (106, 100)]
+    assert any(start == 100 and length == 6 for start, length in access)
+
+
 def test_genuine_85bp_nuc_survives_edge_pass():
     obs = _obs((MISS, 85))
     llr_hit, llr_miss = _llr_tables()

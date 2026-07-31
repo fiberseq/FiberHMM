@@ -231,10 +231,19 @@ fiberhmm-recall-tfs  -i apply.bam -o recalled.bam --enzyme hia5 --seq pacbio -c 
 
 # Full recall: nucleosome refine → MSP re-derive → TF recall → promotion
 fiberhmm-recall-nucs -i apply.bam -o recalled.bam --enzyme hia5 --seq pacbio -c 8
+
+# Nanopore m6A: auto selects topology-constrained recall
+fiberhmm-recall-nucs -i ont.apply.bam -o ont.recalled.bam \
+                     --enzyme hia5 --seq nanopore -c 8
 ```
 
 `fiberhmm-recall-nucs` is byte-identical to `fiberhmm-call --recall-nucs` for a
-matched `--phase-nrl`. **Linear reads only** — circular reads must use
+matched `--phase-nrl` and `--nuc-recall-policy`. For Nanopore, the default
+`auto` policy resolves to `topology`: an accessible cut must leave a
+nucleosome-sized candidate on every side, and unresolved single-strand edge
+ambiguity remains protected rather than being labeled accessible. Use
+`--nuc-recall-policy conservative` only to reproduce the historical
+conservative-edge behavior. **Linear reads only** — circular reads must use
 `fiberhmm-call -r --recall-nucs`.
 
 ### PCR deduplication
@@ -270,6 +279,7 @@ execution strategies.
 | `--skip-scaffolds` | off | Drop small scaffolds (region-parallel). |
 | `--chroms chr1 …` | all | Restrict to specific chromosomes (region-parallel). |
 | `--no-recall-nucs` | recall on | Disable nucleosome recall (baseline HMM `nuc.Q`). |
+| `--nuc-recall-policy` | `auto` | `auto` uses topology-constrained, ambiguity-preserving recall for Nanopore and historical `conservative` edges otherwise; either policy can be forced explicitly. |
 | `--phase-nrl` | `auto` | Periodicity prior: `auto` (estimate, ~150–215 bp), `off`, or a fixed bp. |
 | `--min-llr` | enzyme preset | Override TF LLR threshold. |
 | `-r/--circular` | off | Circular molecule mode (see [reference](docs/reference.md#circular-molecules)). |
@@ -334,6 +344,7 @@ fiberhmm-recall-tfs -i apply.bam -o recalled.bam --enzyme hia5 --seq pacbio -c 8
 | `--min-llr` | preset | Min cumulative LLR (nats) per call (hia5 5.0, dddb 4.0, ddda 5.0). |
 | `--min-opps` | 3 | Min informative target positions per call. |
 | `--unify-threshold` | 90 | Footprints with `nl <` this may be demoted to `tf.`. |
+| `--nuc-recall-policy` | `auto` | With nucleosome recall, use Nanopore-aware `topology` automatically or force `topology`/`conservative`. |
 | `--no-legacy-tags` | off | Emit only `MA`/`AQ`. |
 | `--downstream-compat` | off | TF calls into legacy `ns/nl`, no `MA/AQ` (per-TF quality lost). |
 | `-c/--cores` | 1 | Worker processes (0 = auto). |

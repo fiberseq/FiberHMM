@@ -126,16 +126,17 @@ def build_fused_recall_result(
     msp_min_size: int = 0,
     phase_nrl: int = 0,
     nuc_profile=None,
+    nuc_recall_policy: str = "conservative",
 ) -> dict:
     """Run TF recall and nucleosome/TF unification after an HMM apply result.
 
     When ``recall_nucs`` is True, the per-read nucleosome recaller runs FIRST:
-    it splits over-merged footprints on accessible evidence and refines each
-    nucleosome's conservative edges + quality (nuc+QQQ). MSPs are then re-derived
-    from the new boundaries, and TF recall runs over the cleaner accessible
-    space. Circular reads run the same flow in tiled coordinates and project the
-    refined nucs/MSPs/TFs back to the molecule. ``recall_nucs=False`` (the
-    default) is byte-for-byte the original behavior.
+    it splits over-merged footprints on accessible evidence and resolves each
+    nucleosome according to ``nuc_recall_policy`` (nuc+QQQ). MSPs are then
+    re-derived from the new boundaries, and TF recall runs over the cleaner
+    accessible space. Circular reads run the same flow in tiled coordinates and
+    project the refined nucs/MSPs/TFs back to the molecule.
+    ``recall_nucs=False`` (the default) is byte-for-byte the original behavior.
     """
     ns = apply_result["ns"]
     nl = apply_result["nl"]
@@ -151,6 +152,7 @@ def build_fused_recall_result(
                 split_min_llr, split_min_opps, nuc_min_size, msp_min_size,
                 phase_nrl,
                 nuc_profile,
+                nuc_recall_policy,
             )
         return _build_fused_recall_result_with_nucs(
             fiber_read, apply_result, llr_hit, llr_miss,
@@ -158,6 +160,7 @@ def build_fused_recall_result(
             split_min_llr, split_min_opps, nuc_min_size, msp_min_size,
             phase_nrl,
             nuc_profile,
+            nuc_recall_policy,
         )
 
     recall_ns = apply_result.get("tiled_ns", ns) if is_circular else ns
@@ -249,6 +252,7 @@ def _build_fused_recall_result_with_nucs(
     msp_min_size: int,
     phase_nrl: int = 0,
     nuc_profile=None,
+    nuc_recall_policy: str = "conservative",
 ) -> dict:
     """nuc recall -> MSP re-derive -> TF recall (non-circular only)."""
     obs = apply_result["encoded"]
@@ -264,7 +268,7 @@ def _build_fused_recall_result_with_nucs(
         obs, ns, nl, read_length, llr_hit, llr_miss,
         split_min_llr=split_min_llr, split_min_opps=split_min_opps,
         nuc_min_size=nuc_min_size, phase_nrl=phase_nrl,
-        nuc_profile=nuc_profile,
+        nuc_profile=nuc_profile, recall_policy=nuc_recall_policy,
     )
 
     # 2) re-derive MSPs from the new nucleosome boundaries
@@ -282,7 +286,8 @@ def _build_fused_recall_result_with_nucs(
 
     # 3b) promote nucleosome-sized TF leaks (>= unify_threshold) back to nuc+
     tf_calls, promoted = promote_large_tf_calls(
-        tf_calls, obs, llr_hit, llr_miss, unify_threshold, nuc_min_size)
+        tf_calls, obs, llr_hit, llr_miss, unify_threshold, nuc_min_size,
+        preserve_fragment=nuc_recall_policy == "topology")
     nuc_calls = drop_short_nucs_overlapping_promoted(
         nuc_calls, promoted, unify_threshold) + promoted
 
@@ -326,6 +331,7 @@ def _build_fused_recall_result_with_nucs_circular(
     msp_min_size: int,
     phase_nrl: int = 0,
     nuc_profile=None,
+    nuc_recall_policy: str = "conservative",
 ) -> dict:
     """nuc recall for circular reads: split/refine in tiled space, then project
     the refined nucs, MSPs and TF calls back to molecule coordinates."""
@@ -345,7 +351,7 @@ def _build_fused_recall_result_with_nucs_circular(
         obs, tiled_ns, tiled_nl, tiled_len, llr_hit, llr_miss,
         split_min_llr=split_min_llr, split_min_opps=split_min_opps,
         nuc_min_size=nuc_min_size, phase_nrl=phase_nrl,
-        nuc_profile=nuc_profile,
+        nuc_profile=nuc_profile, recall_policy=nuc_recall_policy,
     )
 
     # 2) re-derive MSPs (still tiled), then 3) TF recall on the refined structure
@@ -358,7 +364,8 @@ def _build_fused_recall_result_with_nucs_circular(
     )
     # 3b) promote nucleosome-sized TF leaks back to nuc+ (still tiled)
     tiled_tf, tiled_promoted = promote_large_tf_calls(
-        tiled_tf, obs, llr_hit, llr_miss, unify_threshold, nuc_min_size)
+        tiled_tf, obs, llr_hit, llr_miss, unify_threshold, nuc_min_size,
+        preserve_fragment=nuc_recall_policy == "topology")
     tiled_nucs = drop_short_nucs_overlapping_promoted(
         tiled_nucs, tiled_promoted, unify_threshold) + tiled_promoted
 
