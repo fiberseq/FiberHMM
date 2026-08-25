@@ -7,6 +7,14 @@ FiberHMM identifies protected regions (nucleosomes, TF/Pol II footprints) and
 accessible regions (methylase-sensitive patches, MSPs) from single-molecule DNA
 modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq).
 
+> **Current release: v2.16.8.** File-based DddA/DddB calls now mark PCR
+> duplicates automatically and nondestructively, screen adequately covered
+> samples for recurrent C→T/G→A SNPs after duplicate marking, and run bounded
+> assay-matched QC after footprint calling. `fiberhmm-qc` also accepts multiple
+> BAMs for per-sample panels plus a combined comparison report. Use
+> `--no-dedup`, `--no-daf-call-snps`, or `--no-qc` to disable an automatic
+> stage; only `--dedup-collapse` removes duplicate reads.
+
 - [Installation](#installation)
 - [Quick start](#quick-start)
 - [Choosing a command](#choosing-a-command)
@@ -24,8 +32,13 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
   scaling. Coordinate-sorted input → sorted + indexed output, no separate sort.
 - **Nucleosome recaller (on by default)** — splits over-merged nucleosomes on
   accessible evidence, refines edges, runs an evidence-gated periodicity prior.
-- **`fiberhmm-dedup`** — PCR-duplicate removal for amplicon/UMI-less DAF-seq by
-  deamination-pattern fingerprint, where coordinate dedup can't work.
+- **DAF duplicate marking + SNP masking** — file-based DddA/DddB calls
+  automatically mark endpoint-concordant deamination-fingerprint duplicates,
+  retain every read, then mask well-supported recurrent SNPs from HMM
+  observations. The original sequence and `MD` tag are preserved.
+- **Bounded QC** — assay-aware signal rate, nucleosome-scale periodicity,
+  footprint sizes, example molecules, duplication, and SNP diagnostics with
+  terminal PASS/WARN/FAIL scores and Illustrator-editable vector PDFs.
 - **No genome context files** — hexamer context computed from read sequences.
 - **Spec-compliant tags** — `ns`/`nl`/`as`/`al` legacy tags plus `MA`/`AQ`
   [Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec)
@@ -80,9 +93,12 @@ fiberhmm-call -i sorted.bam -o calls.bam --enzyme hia5 --seq pacbio \
 fiberhmm-call -i aligned.bam -o calls.bam --enzyme dddb \
               -c 8 --region-parallel
 
-# DAF-seq amplicons (DddA) with MD tags and PCR-duplicate removal
+# DAF-seq amplicons (DddA): duplicate marking, SNP screening, and QC are automatic
 fiberhmm-call -i aligned.bam -o calls.bam --enzyme ddda \
-              -c 8 --region-parallel --dedup
+              -c 8 --region-parallel
+
+# Compare several completed datasets in one QC report
+fiberhmm-qc -i embryo.bam spatial_1.bam spatial_2.bam -o qc_comparison/
 
 # Unaligned / stdin → streaming mode, pipe straight into FIRE
 fiberhmm-call -i unaligned.bam -o - --enzyme hia5 --seq pacbio -c 8 \
@@ -98,7 +114,8 @@ fiberhmm-extract -i calls.bam --nucleosome --msp --tf
 |-----------|---------|
 | **Full pipeline, sorted+indexed BAM** (default) | `fiberhmm-call --region-parallel` |
 | Unaligned/unsorted BAM, or reading from stdin | `fiberhmm-call` (streaming, no `--region-parallel`) |
-| DAF-seq amplicons with PCR duplicates | `fiberhmm-call --dedup` (or `fiberhmm-dedup` first) |
+| File-based DddA/DddB call | `fiberhmm-call` (automatic nondestructive dedup → SNP mask → footprint call → QC) |
+| Compare one or more completed BAMs | `fiberhmm-qc -i sample1.bam [sample2.bam …]` |
 | Only nucleosome/MSP calls, no TF recall | `fiberhmm-apply` |
 | Already have an apply-tagged BAM, add TF calls | `fiberhmm-recall-tfs` |
 | Apply-tagged BAM, full recall without re-running the HMM | `fiberhmm-recall-nucs` |
@@ -176,8 +193,10 @@ Important options shared by DddB and DddA workflows:
 | Option | When to use it | Effect |
 |--------|----------------|--------|
 | `--reference ref.fa` | R/Y is absent and `MD` is missing/unusable | Uses an indexed FASTA as the per-read mismatch fallback described above. |
-| `--dedup` | PCR-amplified or amplicon/UMI-less DAF libraries | Collapses PCR duplicates by deamination-pattern similarity **before** footprinting. Requires a file input with fingerprintable MM/ML dU, R/Y, or usable `MD` calls; this pre-pass does not use `--reference`. |
-| `--dedup-flag-only` | You need every read retained | With `--dedup`, marks duplicate-cluster reads (`0x400` plus `di`/`ds`) instead of collapsing them. All reads continue into footprinting, so this does not de-bias calling or phase estimation. |
+| `--no-dedup` | You explicitly do not want automatic DAF duplicate detection | Disables the default endpoint-constrained deamination-fingerprint pass. By default every read is retained and duplicate copies receive `0x400` plus `di`/`ds`. |
+| `--dedup-collapse` | You explicitly want a destructive, one-representative-per-cluster BAM | Changes automatic duplicate marking into removal. This is never the default. |
+| `--no-daf-call-snps` | You do not want automatic recurrent-SNP screening | Disables the post-dedup, coverage-gated SNP mask. Low-depth samples skip it automatically. |
+| `--no-qc` | You do not want bounded post-call QC | Disables the default assay-matched QC report. |
 | `--keep-chimeras` | QC or intentional retention of strand-swap reads | Disables the default DAF strand-swap chimera filter. |
 | `--region-parallel` | Coordinate-sorted, indexed BAMs | Processes genomic regions in parallel and writes sorted, indexed output. |
 
@@ -205,14 +224,15 @@ For any BAM that depends on the FASTA fallback, first add a usable `MD` tag with
 ```bash
 # --dedup needs fingerprintable MM/ML dU, R/Y, or usable MD evidence
 fiberhmm-call -i aligned.bam -o calls.bam --enzyme ddda \
-              -c 8 --region-parallel --dedup
+              -c 8 --region-parallel
 ```
 
 > **DddA amplicons can be heavily PCR-duplicated**, and coordinate dedup
 > (Picard/markdup) does **not** apply — every read piles up on the same locus with
-> primer-fixed ends. `--dedup` collapses duplicates by deamination fingerprint
-> *before* footprinting (see [`fiberhmm-dedup`](#fiberhmm-dedup)). It is opt-in
-> because it removes reads.
+> primer-fixed ends. File-based DddA/DddB calls therefore compare deamination
+> fingerprints only among reads with similar aligned ends, before footprinting.
+> The integrated default is nondestructive: duplicates are marked (`0x400`,
+> `di`, `ds`) and retained. Use `--dedup-collapse` only when removal is intended.
 
 > ⚠️ The DddA radial nucleosome recaller (added 2.14.0) is still under active
 > validation — inspect nucleosome calls before relying on them, and
@@ -247,6 +267,10 @@ conservative-edge behavior. **Linear reads only** — circular reads must use
 `fiberhmm-call -r --recall-nucs`.
 
 ### PCR deduplication
+
+`fiberhmm-call` automatically uses the second, nondestructive behavior below
+for file-based DddA/DddB input. The standalone command retains its historical
+collapse default so existing scripts do not change semantics.
 
 ```bash
 # Collapse to one representative read per molecule (default)
@@ -286,12 +310,17 @@ execution strategies.
 | `--keep-chimeras` | off | DAF: keep strand-swap chimeric reads (default: filter + count). |
 | `--no-legacy-tags` | off | Emit only `MA`/`AQ`, skip `ns/nl/as/al`. |
 | `--downstream-compat` | off | Write TF calls into legacy `ns/nl` (skip `MA/AQ`). |
-| `--dedup` | off | **DAF only.** PCR-dedup before footprinting (see below). Ignored for non-DAF modes. |
+| `--dedup` / `--no-dedup` | automatic for file-based DddA/DddB | Force or disable endpoint-constrained duplicate detection. Integrated detection marks and retains all reads. |
+| `--dedup-collapse` | off | Destructively keep one representative per duplicate cluster. |
+| `--daf-call-snps` / `--no-daf-call-snps` | coverage-gated automatic for file-based DddA/DddB | Force or disable recurrent opposite-conversion SNP discovery and masking after duplicate marking. |
+| `--qc` / `--no-qc` | on for file output | Run or disable bounded assay-matched post-call QC. |
 
-`--dedup` tunables (forwarded to the dedup pass): `--dedup-min-jaccard` (0.95),
-`--dedup-flag-only`, `--dedup-min-deam`, `--dedup-prob-threshold`,
-`--dedup-ignore-strand`, `--dedup-stats-tsv`. MinHash internals stay at defaults —
-use standalone `fiberhmm-dedup` to tune those.
+Duplicate tunables include `--dedup-min-jaccard` (0.95),
+`--dedup-max-end-diff` (50 bp), `--dedup-min-deam`,
+`--dedup-prob-threshold`, `--dedup-ignore-strand`, and `--dedup-stats-tsv`.
+`--dedup-flag-only` is retained as a compatibility spelling for the integrated
+nondestructive default. MinHash internals stay at defaults; use standalone
+`fiberhmm-dedup` to tune those.
 
 ### fiberhmm-apply
 
@@ -378,6 +407,10 @@ fiberhmm-extract -i calls.bam --nucleosome --msp --tf --haplotype-fields
 | `--sort-parallel` | `--cores` | Sort threads (GNU sort; feature-detected). |
 | `-c/--cores` | 1 | Worker processes. |
 
+Every extracted BED/bigBed row also carries an `isDuplicate` field copied from
+the BAM `0x400` flag. FiberBrowser uses it to hide marked PCR copies by default
+and let users reveal them without requiring a second dataset.
+
 The post-extract sort runs under `LC_ALL=C` (a large speedup on its own); `-S` and
 `--sort-parallel` help further on deep/whole-genome BAMs. Each bigBed embeds a
 `Sample:` autoSQL tag (sanitized to a dot/space-free token) that FiberBrowser uses
@@ -422,6 +455,50 @@ fiberhmm-dedup -i sample.bam -o sample.markdup.bam --flag-only # mark only
 | `--ignore-strand` | off | Allow opposite-strand reads to be duplicates. |
 | `-p/--prob-threshold` | 0 | Min ML probability for MM/ML-native dU calls. |
 | `--stats-tsv` | — | Write a `cluster_id<TAB>n_reads` table. |
+
+### fiberhmm-daf-snps
+
+Call recurrent C→T/G→A genomic mismatches in DAF-seq while requiring support
+from both conversion-direction fiber classes. The validated defaults require
+the minimum fraction, depth, and alternate-fiber count to pass independently
+in both classes. Duplicate-flagged reads are excluded. Outputs include a BED
+mask, VCF, JSON report, mismatch landscape, amplicon table, and an amplicon map
+with coverage, coordinates, and SNP positions.
+
+```bash
+fiberhmm-daf-snps -i aligned.bam -o qc/sample.daf_snps
+```
+
+The mask removes those positions only from DAF observations supplied to the
+HMM; it does not rewrite read bases or `MD` tags. `fiberhmm-call` runs the same
+caller automatically after duplicate marking when a bounded preflight finds
+adequate local depth. Thresholds remain available as
+`--daf-snp-min-fraction`, `--daf-snp-min-depth`, and
+`--daf-snp-min-alt-fibers`.
+
+### fiberhmm-qc
+
+Generate bounded per-sample QC for a completed FiberHMM-compatible BAM, or pass
+several BAMs for individual reports plus a combined comparison dashboard.
+Indexed inputs are sampled through deterministic random genomic windows; the
+default target is 2,000 reads, so QC does not rescan a multi-terabyte BAM.
+
+```bash
+# One BAM: writes qc/sample.qc.{png,pdf,json,tsv}
+fiberhmm-qc -i sample.bam
+
+# Multiple BAMs: individual reports plus combined.qc.{png,pdf,json,tsv,html}
+fiberhmm-qc -i sample_1.bam sample_2.bam sample_3.bam -o comparison_qc/
+```
+
+Reference selection follows the enzyme/sequencing combination recorded by
+`fiberhmm-call`. Reports include signal-rate median and empirical 5th–95th
+range, nucleosome-scale phasing metrics, nucleosome/TF size distributions,
+example molecules, duplicate statistics, and SNP diagnostics when available.
+The terminal and report show PASS/WARN/FAIL scores. PDFs embed TrueType fonts
+as editable text for Illustrator. The package contains only aggregate control
+curves and anonymized visual exemplars—not source datasets; see
+[QC control provenance](fiberhmm/qc/README.md) for sources and construction.
 
 ### fiberhmm-daf-encode
 

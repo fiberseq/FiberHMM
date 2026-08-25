@@ -19,6 +19,7 @@ from fiberhmm.cli.extract_tags import (
     extract_tags_parallel,
 )
 from fiberhmm.io.autosql import (
+    DUPLICATE_FIELD_COUNT,
     HAPLOTYPE_FIELD_COUNT,
     get_schema,
     write_autosql_for,
@@ -184,6 +185,8 @@ def test_autosql_appends_haplotype_fields_after_other_optional_fields(tmp_path):
     assert schema.index('blockTq') < schema.index('circId')
     assert schema.index('circId') < schema.index('int hp;')
     assert schema.index('int hp;') < schema.index('int ps;')
+    assert schema.index('int ps;') < schema.index('uint isDuplicate;')
+    assert DUPLICATE_FIELD_COUNT == 1
     assert schema.count('-1 if absent or not an integer') == 2
 
     path = write_autosql_for(
@@ -214,9 +217,9 @@ def test_hp_ps_are_last_with_score_and_circular_schema_combinations(
     columns = bed.getvalue().rstrip().split('\t')
     expected_count = 12 + (3 if block_scores else 0) + (
         5 if circular_groups else 0
-    ) + 2
+    ) + 2 + DUPLICATE_FIELD_COUNT
     assert len(columns) == expected_count
-    assert columns[-2:] == ['2', '4242']
+    assert columns[-3:] == ['2', '4242', '0']
 
 
 def test_default_output_is_unchanged_even_when_source_read_is_phased():
@@ -234,7 +237,8 @@ def test_default_output_is_unchanged_even_when_source_read_is_phased():
     _extract_tfs(bed_out=implicit_default, **kwargs)
     _extract_tfs(bed_out=explicit_off, haplotype_fields=False, **kwargs)
     assert implicit_default.getvalue() == explicit_off.getvalue()
-    assert len(implicit_default.getvalue().rstrip().split('\t')) == 20
+    assert len(implicit_default.getvalue().rstrip().split('\t')) == 21
+    assert implicit_default.getvalue().rstrip().split('\t')[-1] == '0'
 
 
 def test_all_extract_types_round_trip_phased_and_unphased_bam(tmp_path):
@@ -252,19 +256,19 @@ def test_all_extract_types_round_trip_phased_and_unphased_bam(tmp_path):
     assert counts == {kind: 2 for kind in EXTRACT_TYPES}
 
     expected_columns = {
-        'nucleosome': 22,  # BED12 + QQQ + circular + HP/PS
-        'msp': 20,         # BED12 + AQ + circular + HP/PS
-        'tf': 22,          # BED12 + QQQ + circular + HP/PS
-        'm6a': 15,         # BED12 + ML + HP/PS
-        'm5c': 15,         # BED12 + ML + HP/PS
-        'deam': 15,        # BED12 + blockMod + HP/PS
+        'nucleosome': 23,  # BED12 + QQQ + circular + HP/PS + duplicate
+        'msp': 21,         # BED12 + AQ + circular + HP/PS + duplicate
+        'tf': 23,          # BED12 + QQQ + circular + HP/PS + duplicate
+        'm6a': 16,         # BED12 + ML + HP/PS + duplicate
+        'm5c': 16,         # BED12 + ML + HP/PS + duplicate
+        'deam': 16,        # BED12 + blockMod + HP/PS + duplicate
     }
     for kind, bed_path in output_beds.items():
         rows = [line.rstrip().split('\t') for line in open(bed_path) if line.strip()]
         assert [row[3].split('|', 1)[0] for row in rows] == ['phased', 'unphased']
         assert all(len(row) == expected_columns[kind] for row in rows)
-        assert rows[0][-2:] == ['1', '12345']
-        assert rows[1][-2:] == ['-1', '-1']
+        assert rows[0][-3:] == ['1', '12345', '0']
+        assert rows[1][-3:] == ['-1', '-1', '0']
 
 
 @pytest.mark.skipif(
@@ -303,7 +307,9 @@ def test_bigbed_embeds_haplotype_schema_and_preserves_rows(tmp_path):
             schema = schema.decode('utf-8')
         assert 'int hp;' in schema
         assert 'int ps;' in schema
+        assert 'uint isDuplicate;' in schema
         assert schema.index('circId') < schema.index('int hp;')
+        assert schema.index('int ps;') < schema.index('uint isDuplicate;')
         entries = bigbed.entries('chr1', 0, 10_000)
 
     round_trip_rows = [
@@ -311,5 +317,5 @@ def test_bigbed_embeds_haplotype_schema_and_preserves_rows(tmp_path):
         for start, end, payload in entries
     ]
     assert round_trip_rows == source_rows
-    assert round_trip_rows[0][-2:] == ['1', '12345']
-    assert round_trip_rows[1][-2:] == ['-1', '-1']
+    assert round_trip_rows[0][-3:] == ['1', '12345', '0']
+    assert round_trip_rows[1][-3:] == ['-1', '-1', '0']

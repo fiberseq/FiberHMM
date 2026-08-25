@@ -399,7 +399,8 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
     tf_lines = [line for line in tf_bed.read_text().splitlines() if line]
     assert tf_lines
     tf_cols = tf_lines[0].split("\t")
-    assert len(tf_cols) == 15
+    assert len(tf_cols) == 16
     assert tf_cols[3] == query_name
     assert int(tf_cols[9]) == n_features["tf"]
     assert all(tf_cols[idx] for idx in (12, 13, 14))
+    assert tf_cols[15] in {"0", "1"}

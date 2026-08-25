@@ -397,6 +397,7 @@ def _process_bam_region_parallel_fused(
     phase_nrl: int = 0,
     nuc_profile_path: str = None,
     pg_record: dict = None,
+    daf_snp_mask_path: str = None,
 ):
     """Region-parallel fused apply+recall.
 
@@ -436,6 +437,7 @@ def _process_bam_region_parallel_fused(
         'chimera_purity': chimera_purity,
         'phase_nrl': phase_nrl,
         'nuc_profile_path': nuc_profile_path,
+        'daf_snp_mask_path': daf_snp_mask_path,
         'pg_record': pg_record,
         # Path string, NOT an open handle: pysam.FastaFile is not fork-safe,
         # so each worker opens it lazily in _init_fused_region_worker.

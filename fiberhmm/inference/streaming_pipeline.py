@@ -12,7 +12,7 @@ from typing import Optional, Set, Tuple
 import pysam
 
 from fiberhmm.inference.bam_output import _sort_and_index_bam
-from fiberhmm.inference.engine import make_apply_payload
+from fiberhmm.inference.engine import configure_daf_snp_mask, make_apply_payload
 from fiberhmm.io.bam_header import append_coord_marker, maybe_append_pg
 from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
@@ -26,7 +26,6 @@ from fiberhmm.inference.streaming_workers import (
     _process_fused_payload_chunk_worker,
     _process_payload_chunk_worker,
 )
-
 try:
     from fiberhmm.posteriors.hdf5_backend import PosteriorWriter
     HAS_POSTERIOR_WRITER = True
@@ -61,8 +60,10 @@ def _process_bam_streaming_pipeline_fused(
     phase_nrl: int = 0,
     nuc_profile_path: str = None,
     pg_record: dict = None,
+    daf_snp_mask_path: str = None,
 ):
     """Fused apply+recall streaming pipeline."""
+    configure_daf_snp_mask(daf_snp_mask_path)
     ref_fasta = None
     pysam.set_verbosity(0)
     max_inflight = n_cores + 2

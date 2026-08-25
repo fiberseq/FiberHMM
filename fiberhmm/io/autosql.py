@@ -20,8 +20,9 @@ not an integer.
 
 Two base schema flavors:
 
-  - **BED12** (default): the standard 12 columns. Mean quality flattened
-    into column 5 (``score``).
+  - **BED12 + 1** (default): the standard 12 columns plus ``isDuplicate``.
+    Mean quality is flattened into column 5 (``score``); the final flag
+    preserves BAM 0x400 for browsers and other downstream consumers.
   - **BED12 + N** (``block_scores=True``): adds one or more per-block
     ``int[blockCount]`` arrays after ``chromStarts``. Carries the
     per-feature quality that would otherwise be lost to the read-level
@@ -130,6 +131,11 @@ _HAPLOTYPE_FIELDS = (
 
 HAPLOTYPE_FIELD_COUNT = 2
 
+_DUPLICATE_FIELD = (
+    '    uint isDuplicate; "1 when the source BAM record carried flag 0x400; 0 otherwise"\n'
+)
+DUPLICATE_FIELD_COUNT = 1
+
 
 # Number of extra int[blockCount] columns per type when block_scores=True.
 EXTRA_FIELD_COUNTS = {t: f.count('int[blockCount]')
@@ -149,6 +155,7 @@ def _make_schema(table_name: str, description: str,
         fields = fields + _CIRCULAR_FIELDS
     if haplotype_fields:
         fields = fields + _HAPLOTYPE_FIELDS
+    fields = fields + _DUPLICATE_FIELD
     if sample_name:
         # Prepend a machine-parseable "Sample: <name>." marker. The autoSQL
         # description is a free-form string so we stay format-compatible;

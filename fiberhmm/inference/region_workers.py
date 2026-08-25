@@ -14,6 +14,7 @@ from fiberhmm.inference.engine import (
     _extract_fiber_read_from_pysam,
     _process_single_read,
     configure_daf_chimera_filter,
+    configure_daf_snp_mask,
     extract_fiber_read_from_payload,
     make_apply_payload,
 )
@@ -80,6 +81,7 @@ def _init_region_worker(model_path: str, params: dict):
             params.get('chimera_min_seg', 5),
             params.get('chimera_purity', 0.8),
         )
+        configure_daf_snp_mask(params.get('daf_snp_mask_path'))
 
         # Warm up numba JIT.
         from fiberhmm.core.hmm import HAS_NUMBA
@@ -479,6 +481,7 @@ def _init_fused_region_worker(
         params.get('chimera_min_seg', 5),
         params.get('chimera_purity', 0.8),
     )
+    configure_daf_snp_mask(params.get('daf_snp_mask_path'))
 
     from fiberhmm.core.hmm import HAS_NUMBA
 

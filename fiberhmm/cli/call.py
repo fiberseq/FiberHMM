@@ -29,6 +29,12 @@ from fiberhmm.cli.common import (
     resolve_observation_mode,
 )
 from fiberhmm.core.model_io import load_model_with_metadata
+from fiberhmm.daf.snps import (
+    DEFAULT_SNP_MIN_ALT_FIBERS,
+    DEFAULT_SNP_MIN_DEPTH,
+    DEFAULT_SNP_MIN_FRACTION,
+    describe_snp_threshold_policy,
+)
 from fiberhmm.inference.parallel import (
     _process_bam_region_parallel_fused,
     _process_bam_streaming_pipeline_fused,
@@ -148,22 +154,70 @@ def parse_args():
     p.add_argument('--chimera-purity', type=float, default=0.8,
                    help='DAF chimera: min same-strand purity per segment '
                         '(default 0.8).')
+    p.add_argument('--daf-snp-mask', default=None,
+                   help='DAF only: 0-based BED of recurrent C>T/G>A SNP sites '
+                        'to exclude from deamination observations. MD is preserved.')
+    snp_mode = p.add_mutually_exclusive_group()
+    snp_mode.add_argument('--daf-call-snps', dest='daf_call_snps', action='store_true',
+                          default=None,
+                          help='DAF only: force two-pass recurrent opposite-conversion '
+                               'SNP masking. By default file-based DddA/DddB runs '
+                               'screen automatically after a bounded depth preflight.')
+    snp_mode.add_argument('--no-daf-call-snps', dest='daf_call_snps', action='store_false',
+                          help='Disable automatic recurrent SNP screening.')
+    p.add_argument('--daf-snp-output-prefix', default=None,
+                   help='Output prefix for --daf-call-snps (default: '
+                        'qc/<output BAM stem>.daf_snps).')
+    p.add_argument('--daf-snp-min-fraction', type=float,
+                   default=DEFAULT_SNP_MIN_FRACTION,
+                   help='Minimum opposite-direction fiber fraction for '
+                        f'--daf-call-snps (validated default '
+                        f'{DEFAULT_SNP_MIN_FRACTION:g}).')
+    p.add_argument('--daf-snp-min-depth', type=int,
+                   default=DEFAULT_SNP_MIN_DEPTH,
+                   help='Minimum fiber depth in each conversion-direction class '
+                        f'for --daf-call-snps (validated default '
+                        f'{DEFAULT_SNP_MIN_DEPTH}; all thresholds must '
+                        'pass in both classes).')
+    p.add_argument('--daf-snp-min-alt-fibers', type=int,
+                   default=DEFAULT_SNP_MIN_ALT_FIBERS,
+                   help='Minimum alternate fibers in each direction for '
+                        f'--daf-call-snps (validated default '
+                        f'{DEFAULT_SNP_MIN_ALT_FIBERS}).')
+    p.add_argument('--daf-snp-min-dominant-events', type=int, default=5,
+                   help='Minimum dominant conversions to classify a fiber for '
+                        '--daf-call-snps (default 5).')
+    p.add_argument('--daf-snp-min-dominant-purity', type=float, default=0.80,
+                   help='Minimum conversion-direction purity for '
+                        '--daf-call-snps (default 0.80).')
+    p.add_argument('--daf-snp-min-amplicon-reads', type=int, default=20,
+                   help='Minimum aligned reads required to discover and plot an '
+                        'amplicon consensus in SNP QC (default 20).')
 
     # --- PCR dedup (DAF / ddda|dddb only) ---
-    p.add_argument('--dedup', action='store_true',
-                   help='DAF (ddda/dddb) only: remove PCR duplicates by '
+    dedup_mode = p.add_mutually_exclusive_group()
+    dedup_mode.add_argument('--dedup', dest='dedup', action='store_true',
+                   default=None,
+                   help='DAF (ddda/dddb) only: force PCR duplicate detection '
+                        '(already automatic for file-based DddA/DddB calls). Detect by '
                         'deamination-pattern fingerprint (see fiberhmm-dedup) '
-                        'BEFORE footprinting, so the HMM/recaller only process '
-                        'unique molecules. Amplicon/UMI-less DAF libraries can be '
+                        'and similar alignment ends BEFORE footprinting. The '
+                        'integrated default is nondestructive: retain every read '
+                        'and set 0x400 plus di/ds cluster tags. Amplicon/UMI-less DAF libraries can be '
                         'heavily PCR-duplicated and coordinate dedup does not '
                         'apply. Requires a file input (not stdin). Ignored for '
                         'fiber-seq (hia5).')
+    dedup_mode.add_argument('--no-dedup', dest='dedup', action='store_false',
+                   help='Disable automatic DddA/DddB duplicate marking.')
     p.add_argument('--dedup-min-jaccard', type=float, default=0.95,
                    help='Deamination-set Jaccard threshold for --dedup '
                         '(default 0.95).')
     p.add_argument('--dedup-flag-only', action='store_true',
-                   help='With --dedup: mark duplicates (0x400 + di/ds tags) '
-                        'instead of collapsing to one read per molecule.')
+                   help='Deprecated compatibility spelling for the nondestructive '
+                        'integrated default (0x400 + di/ds; retain every read).')
+    p.add_argument('--dedup-collapse', action='store_true',
+                   help='With --dedup: destructively collapse each duplicate cluster '
+                        'to one representative. Default: mark and retain all reads.')
     p.add_argument('--dedup-min-deam', type=int, default=10,
                    help='With --dedup: reads with fewer deamination calls are '
                         'not fingerprinted and pass through (default 10).')
@@ -173,6 +227,9 @@ def parse_args():
     p.add_argument('--dedup-ignore-strand', action='store_true',
                    help='With --dedup: allow reads on opposite strands to be '
                         'duplicates (default: strand-aware).')
+    p.add_argument('--dedup-max-end-diff', type=int, default=50,
+                   help='With --dedup: maximum difference at both aligned reference '
+                        'ends for duplicate matching (default 50 bp).')
     p.add_argument('--dedup-stats-tsv', default=None,
                    help='With --dedup: write a cluster_id<TAB>n_reads table.')
     # MinHash internals (num-hashes/bands/seed) are intentionally not exposed
@@ -187,6 +244,19 @@ def parse_args():
                    help='htslib I/O threads per stage (default 8).')
     p.add_argument('--max-reads', type=int, default=0,
                    help='0 = no limit (default; streaming mode only)')
+
+    # --- Bounded post-call QC ---
+    p.add_argument('--qc', action=argparse.BooleanOptionalAction, default=True,
+                   help='Run bounded signal/periodicity/footprint QC after a file '
+                        'output (default: on; use --no-qc to disable).')
+    p.add_argument('--qc-sample-reads', type=int, default=2000,
+                   help='Target random-window QC sample size (default 2000).')
+    p.add_argument('--qc-seed', type=int, default=20260824,
+                   help='Deterministic QC sampler seed (default 20260824).')
+    p.add_argument('--qc-min-mapq', type=int, default=20,
+                   help='Minimum mapping quality for the QC sample (default 20).')
+    p.add_argument('--qc-output-prefix', default=None,
+                   help='QC output prefix (default: qc/<BAM stem> beside output BAM).')
 
     # --- Region-parallel mode ---
     p.add_argument('--region-parallel', action='store_true',
@@ -284,6 +354,15 @@ def _resolve_nuc_recall_policy(args, mode: str) -> str:
     return policy
 
 
+def _resolve_dedup(args, mode: str) -> bool:
+    """Resolve automatic, explicit, and compatibility DAF dedup settings."""
+    if args.dedup is not None:
+        return bool(args.dedup)
+    if args.dedup_collapse or args.dedup_flag_only:
+        return True
+    return mode == 'daf' and args.enzyme in ('ddda', 'dddb')
+
+
 def _check_daf_inputs(input_bam: str, reference: str = None,
                        n_sniff: int = 10) -> None:
     """Sniff the first ~N mapped reads of a DAF-mode input BAM and confirm
@@ -362,14 +441,16 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
 
 def _dedup_input_first(input_bam, output_bam, min_jaccard, flag_only, io_threads,
                        region_parallel, min_deam=10, prob_threshold=0,
-                       ignore_strand=False, stats_tsv=None):
+                       ignore_strand=False, stats_tsv=None, max_end_diff=50):
     """PCR-dedup the input BAM BEFORE footprinting (DAF/deaminase only).
 
-    Deduping first means the HMM/recaller only processes unique molecules
-    (collapse mode removes ~the duplicate fraction of reads) and NRL/phase
-    estimation isn't biased by duplicate reads. Returns the path to a
-    temporary deduped BAM to footprint instead of the original, or None if
-    nothing was deduplicated (caller keeps the original input).
+    The default flag-only mode is nondestructive: every read is retained and
+    duplicate cluster members receive 0x400 plus di/ds tags. Collapse mode is
+    explicit. Pooled downstream analyses can ignore marked duplicates while
+    the HMM/recaller still annotates every read. Returns a
+    ``(temporary_bam, statistics)`` tuple. The BAM is ``None`` if nothing was
+    fingerprintable; the statistics are forwarded to automatic QC so its
+    duplication panel reports the full run rather than a bounded estimate.
     """
     import os
     import tempfile
@@ -377,8 +458,9 @@ def _dedup_input_first(input_bam, output_bam, min_jaccard, flag_only, io_threads
     import pysam
 
     from fiberhmm.cli.dedup import run_dedup
-    print("\n  --dedup: collapsing PCR duplicates by deamination fingerprint "
-          f"(Jaccard >= {min_jaccard}, {'flag' if flag_only else 'collapse'}) "
+    print("\n  --dedup: detecting PCR duplicates by deamination fingerprint "
+          f"(Jaccard >= {min_jaccard}, ends ±{max_end_diff} bp, "
+          f"{'mark/retain' if flag_only else 'collapse'}) "
           "BEFORE footprinting...", file=sys.stderr)
     outdir = os.path.dirname(os.path.abspath(output_bam)) if output_bam != '-' else None
     fd, tmp = tempfile.mkstemp(prefix='fiberhmm_dedup_', suffix='.bam', dir=outdir)
@@ -386,11 +468,12 @@ def _dedup_input_first(input_bam, output_bam, min_jaccard, flag_only, io_threads
     stats = run_dedup(input_bam, tmp, min_jaccard=min_jaccard,
                       collapse=not flag_only, io_threads=io_threads,
                       min_deam=min_deam, prob_threshold=prob_threshold,
-                      ignore_strand=ignore_strand, stats_tsv=stats_tsv)
+                      ignore_strand=ignore_strand, stats_tsv=stats_tsv,
+                      max_end_diff=max_end_diff)
     if stats is None:
         if os.path.exists(tmp):
             os.remove(tmp)
-        return None
+        return None, None
     if region_parallel:
         # region-parallel needs a coordinate index on its input; dedup
         # preserves the input's sort order so this is valid.
@@ -398,18 +481,108 @@ def _dedup_input_first(input_bam, output_bam, min_jaccard, flag_only, io_threads
             pysam.index(tmp)
         except pysam.SamtoolsError:
             pass
-    return tmp
+    return tmp, stats
+
+
+def _daf_snp_depth_preflight(
+    input_bam,
+    min_mapq=20,
+    min_local_depth=20,
+    max_records=20_000,
+):
+    """Bounded screen for enough local coverage to justify full SNP passes.
+
+    A bounded interval sweep measures exact physical overlap depth rather than
+    counting reads that merely touch the same coarse bin. The exact SNP caller
+    still enforces conversion-direction and per-position mismatch support; this
+    screen only prevents an obviously sub-threshold BAM from being rescanned.
+    """
+    from collections import Counter
+
+    import pysam
+
+    events = Counter()
+    start_bins = Counter()
+    examined = 0
+    eligible = 0
+    aligned_bases = 0
+    mapped_total = None
+    reference_bases = 0
+    with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+        reference_bases = sum(int(length) for length in bam.lengths)
+        try:
+            mapped_total = sum(item.mapped for item in bam.get_index_statistics())
+        except (ValueError, OSError, AttributeError):
+            mapped_total = None
+        for read in bam.fetch(until_eof=True):
+            examined += 1
+            if examined > max_records:
+                break
+            if (
+                read.is_unmapped
+                or read.is_secondary
+                or read.is_supplementary
+                or read.is_duplicate
+                or read.mapping_quality < min_mapq
+                or read.reference_end is None
+            ):
+                continue
+            eligible += 1
+            reference_id = int(read.reference_id)
+            start = int(read.reference_start)
+            end = int(read.reference_end)
+            aligned_bases += max(0, end - start)
+            start_bins[(reference_id, start // 10_000)] += 1
+            events[(reference_id, start)] += 1
+            events[(reference_id, end)] -= 1
+    maximum = 0
+    current_reference = None
+    depth = 0
+    for (reference_id, _position), change in sorted(events.items()):
+        if reference_id != current_reference:
+            current_reference = reference_id
+            depth = 0
+        depth += change
+        maximum = max(maximum, depth)
+    mean_span = aligned_bases / eligible if eligible else 0.0
+    estimated_coverage = (
+        mapped_total * mean_span / reference_bases
+        if mapped_total is not None and reference_bases
+        else aligned_bases / reference_bases if reference_bases else 0.0
+    )
+    max_start_bin_reads = max(start_bins.values(), default=0)
+    supported_start_bin_reads = sum(
+        count for count in start_bins.values() if count >= min_local_depth
+    )
+    supported_start_bin_fraction = (
+        supported_start_bin_reads / eligible if eligible else 0.0
+    )
+    genome_supported = estimated_coverage >= min_local_depth
+    targeted_supported = (
+        max_start_bin_reads >= min_local_depth
+        and supported_start_bin_fraction >= 0.10
+    )
+    return {
+        'run': bool(genome_supported or targeted_supported),
+        'reason': (
+            'genome_coverage' if genome_supported
+            else 'targeted_locus' if targeted_supported
+            else 'low_coverage'
+        ),
+        'records_examined': min(examined, max_records),
+        'eligible_reads': eligible,
+        'max_local_depth': maximum,
+        'max_alignment_start_bin_reads': max_start_bin_reads,
+        'supported_start_bin_fraction': float(supported_start_bin_fraction),
+        'estimated_genome_coverage': float(estimated_coverage),
+        'minimum_depth': min_local_depth,
+    }
 
 
 def main():
     args = parse_args()
     stdout_mode = (args.output == '-')
     using_bundled_model = args.model is None
-
-    if args.dedup and args.input == '-':
-        print("error: --dedup requires a file input (it two-passes the BAM to "
-              "fingerprint reads); cannot dedup a stdin stream.", file=sys.stderr)
-        sys.exit(1)
 
     if stdout_mode:
         sys.stdout = sys.stderr  # informational prints → stderr, BAM → real stdout
@@ -440,6 +613,26 @@ def main():
         sys.exit(2)
     k = args.context_size or int(model_k or 3)
 
+    explicit_dedup = args.dedup
+    if explicit_dedup is False and (args.dedup_collapse or args.dedup_flag_only):
+        print(
+            "error: --no-dedup conflicts with --dedup-collapse/--dedup-flag-only",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    args.dedup = _resolve_dedup(args, mode)
+    if args.dedup and args.input == '-':
+        if explicit_dedup is True or args.dedup_collapse or args.dedup_flag_only:
+            print("error: --dedup requires a file input (it two-passes the BAM to "
+                  "fingerprint reads); cannot dedup a stdin stream.", file=sys.stderr)
+            sys.exit(1)
+        print(
+            "  automatic DAF dedup skipped for stdin; save the input BAM or use "
+            "--no-dedup to silence this note.",
+            file=sys.stderr,
+        )
+        args.dedup = False
+
     # Enzyme preset for recall params
     preset = ENZYME_PRESETS.get(args.enzyme, {}) if args.enzyme else {}
     min_llr = args.min_llr if args.min_llr is not None else preset.get('min_llr', 5.0)
@@ -466,26 +659,167 @@ def main():
     if mode == 'daf' and args.input != '-':
         _check_daf_inputs(args.input, args.reference)
 
-    # PCR dedup runs FIRST (DAF only): collapse duplicates before footprinting so
-    # the HMM/recaller only process unique molecules and NRL/phase estimation
-    # isn't biased by duplicate reads. working_input feeds everything downstream.
+    if args.daf_call_snps and args.daf_snp_mask:
+        print(
+            "error: use either --daf-call-snps or --daf-snp-mask, not both",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if (args.daf_call_snps or args.daf_snp_mask) and mode != 'daf':
+        print("error: DAF SNP masking requires --mode daf", file=sys.stderr)
+        sys.exit(2)
+    if args.daf_call_snps and (args.input == '-' or args.output == '-'):
+        print(
+            "error: --daf-call-snps requires file input and output (two-pass pre-call)",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if args.dedup_collapse and args.dedup_flag_only:
+        print(
+            "error: --dedup-collapse conflicts with --dedup-flag-only",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if args.dedup_max_end_diff < 0:
+        print("error: --dedup-max-end-diff must be non-negative", file=sys.stderr)
+        sys.exit(2)
+
+    snp_mask_path = args.daf_snp_mask
+    snp_report_path = None
+    snp_mask_sites = 0
+
+    # PCR dedup runs FIRST (DAF only). The default mark/retain mode preserves
+    # every molecule record while flagging non-representatives; explicit
+    # collapse mode keeps one representative per cluster. working_input feeds
+    # every downstream stage.
     working_input = args.input
     dedup_tmp = None
+    dedup_stats = None
     if args.dedup:
         if mode != 'daf':
             print(f"  NOTE: --dedup applies to DAF-seq (ddda/dddb) deamination "
                   f"data; mode is {mode!r} (fiber-seq has no deamination) -- "
                   f"skipping dedup.", file=sys.stderr)
         else:
-            dedup_tmp = _dedup_input_first(
+            dedup_tmp, dedup_stats = _dedup_input_first(
                 args.input, args.output, args.dedup_min_jaccard,
-                args.dedup_flag_only, args.io_threads, args.region_parallel,
+                not args.dedup_collapse, args.io_threads, args.region_parallel,
                 min_deam=args.dedup_min_deam,
                 prob_threshold=args.dedup_prob_threshold,
                 ignore_strand=args.dedup_ignore_strand,
-                stats_tsv=args.dedup_stats_tsv)
+                stats_tsv=args.dedup_stats_tsv,
+                max_end_diff=args.dedup_max_end_diff)
             if dedup_tmp is not None:
                 working_input = dedup_tmp
+
+    # Recurrent SNP discovery follows deduplication so PCR copies cannot
+    # inflate opposite-direction support. In nondestructive mark/retain mode,
+    # the SNP caller ignores 0x400 records while FiberHMM still annotates them.
+    run_snp_discovery = args.daf_call_snps is True
+    snp_preflight = None
+    auto_snp = (
+        args.daf_call_snps is None
+        and snp_mask_path is None
+        and mode == 'daf'
+        and args.enzyme in ('ddda', 'dddb')
+    )
+    if auto_snp and args.input != '-' and args.output != '-':
+        snp_preflight = _daf_snp_depth_preflight(
+            args.input,
+            min_mapq=args.min_mapq,
+            min_local_depth=2 * args.daf_snp_min_depth,
+        )
+        run_snp_discovery = bool(snp_preflight['run'])
+        if run_snp_discovery:
+            print(
+                "  automatic DAF SNP screen enabled: bounded preflight found "
+                f"{snp_preflight['reason'].replace('_', ' ')} support "
+                f"(estimated genome coverage {snp_preflight['estimated_genome_coverage']:.2f}x; "
+                f"max start-bin reads {snp_preflight['max_alignment_start_bin_reads']:,}; "
+                f"targeted-bin fraction {100 * snp_preflight['supported_start_bin_fraction']:.1f}%; "
+                f"max sampled depth {snp_preflight['max_local_depth']:,}) "
+                f"within {snp_preflight['records_examined']:,} records",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "  automatic DAF SNP screen skipped: bounded preflight found "
+                f"estimated genome coverage {snp_preflight['estimated_genome_coverage']:.2f}x; "
+                f"max start-bin reads {snp_preflight['max_alignment_start_bin_reads']:,}; "
+                f"targeted-bin fraction "
+                f"{100 * snp_preflight['supported_start_bin_fraction']:.1f}% "
+                f"(targeted trigger requires >= {snp_preflight['minimum_depth']:,} "
+                "start-bin reads and >= 10% of eligible reads); "
+                "isolated sampled depth peak "
+                f"{snp_preflight['max_local_depth']:,} "
+                f"({snp_preflight['records_examined']:,} records examined)",
+                file=sys.stderr,
+            )
+    elif auto_snp:
+        print(
+            "  automatic DAF SNP screen skipped for stdin/stdout; use saved BAMs "
+            "or force --daf-call-snps with file input/output",
+            file=sys.stderr,
+        )
+
+    if run_snp_discovery:
+        from pathlib import Path
+
+        from fiberhmm.daf.snps import (
+            call_opposite_conversion_snps,
+            write_snp_outputs,
+        )
+
+        output_path = Path(args.output)
+        snp_prefix = args.daf_snp_output_prefix or str(
+            output_path.parent / 'qc' / f"{output_path.with_suffix('').name}.daf_snps"
+        )
+        snp_policy_name = describe_snp_threshold_policy(
+            args.daf_snp_min_fraction,
+            args.daf_snp_min_depth,
+            args.daf_snp_min_alt_fibers,
+        )['name']
+        print(
+            "\n  --daf-call-snps: two-pass opposite-conversion SNP discovery "
+            f"after deduplication (policy={snp_policy_name}; "
+            f"fraction >= {args.daf_snp_min_fraction:g}, "
+            f"depth >= {args.daf_snp_min_depth}, "
+            f"alternate fibers >= {args.daf_snp_min_alt_fibers})...",
+            file=sys.stderr,
+        )
+        snp_payload = call_opposite_conversion_snps(
+            working_input,
+            min_fraction=args.daf_snp_min_fraction,
+            min_depth=args.daf_snp_min_depth,
+            min_alt_fibers=args.daf_snp_min_alt_fibers,
+            min_dominant_events=args.daf_snp_min_dominant_events,
+            min_dominant_purity=args.daf_snp_min_dominant_purity,
+            min_mapq=args.min_mapq,
+            reference_fasta=args.reference,
+            min_amplicon_reads=args.daf_snp_min_amplicon_reads,
+        )
+        if dedup_tmp is not None:
+            snp_payload["input"] = str(Path(args.input).resolve())
+            snp_payload["preprocessing"] = {
+                "deduplication": "duplicate-flagged records excluded",
+                "mode": dedup_stats.get("mode") if dedup_stats else None,
+                "n_duplicates": (
+                    int(dedup_stats.get("n_duplicates", 0)) if dedup_stats else 0
+                ),
+                "max_end_diff_bp": args.dedup_max_end_diff,
+            }
+        snp_payload = write_snp_outputs(snp_payload, snp_prefix)
+        snp_mask_path = snp_payload['outputs']['bed']
+        snp_report_path = snp_payload['outputs']['json']
+        snp_mask_sites = snp_payload['n_called_snps']
+        print(
+            f"  DAF SNP mask: {snp_mask_sites:,} sites -> {snp_mask_path}",
+            file=sys.stderr,
+        )
+    elif snp_mask_path:
+        from fiberhmm.daf.snps import mask_summary
+
+        snp_mask_sites = mask_summary(snp_mask_path)['n_sites']
 
     # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
     phase_nrl = _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
@@ -502,7 +836,14 @@ def main():
                      else ('off' if args.keep_chimeras else 'on'))
     dedup_state = ('off' if not args.dedup or dedup_tmp is None
                    else f"j{args.dedup_min_jaccard}"
-                        f"{'/flag' if args.dedup_flag_only else '/collapse'}")
+                        f"{'/collapse' if args.dedup_collapse else '/mark'}"
+                        f"/ends{args.dedup_max_end_diff}")
+    if snp_mask_path:
+        snp_state = f"on/{snp_mask_sites}sites"
+    elif snp_preflight is not None and not snp_preflight['run']:
+        snp_state = f"auto-skip/depth{snp_preflight['max_local_depth']}"
+    else:
+        snp_state = 'off'
     pg_record = {
         'PN': 'fiberhmm-call',
         'VN': getattr(_fh, '__version__', 'unknown'),
@@ -512,9 +853,12 @@ def main():
         # and MA are in molecular (original-fiber) frame -- keep the exact token.
         'DS': (f"FiberHMM fused apply+recall; coord=molecular "
                f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
-               f"mode={mode} recall_nucs={recall_nucs} "
-               f"nuc_recall_policy={nuc_recall_policy} phase_nrl={phase_nrl} "
-               f"chimera_filter={chimera_state} dedup={dedup_state}"),
+               f"mode={mode} enzyme={args.enzyme or 'custom'} "
+               f"recall_nucs={recall_nucs} "
+               f"nuc_recall_policy={nuc_recall_policy} "
+               f"phase_nrl={phase_nrl} "
+               f"chimera_filter={chimera_state} dedup={dedup_state} "
+               f"daf_snp_mask={snp_state}"),
     }
 
     mode_label = 'region-parallel' if args.region_parallel else 'streaming'
@@ -581,6 +925,7 @@ def main():
             phase_nrl=phase_nrl,
             nuc_profile_path=nuc_profile_path,
             pg_record=pg_record,
+            daf_snp_mask_path=snp_mask_path,
         )
     else:
         n_reads, n_fp = _process_bam_streaming_pipeline_fused(
@@ -622,6 +967,7 @@ def main():
             phase_nrl=phase_nrl,
             nuc_profile_path=nuc_profile_path,
             pg_record=pg_record,
+            daf_snp_mask_path=snp_mask_path,
         )
 
     if not stdout_mode and not args.region_parallel:
@@ -635,11 +981,91 @@ def main():
     # Clean up the pre-footprinting dedup temp (+ its index), if any.
     if dedup_tmp is not None:
         import os
-        for _p in (dedup_tmp, dedup_tmp + '.bai'):
+        dedup_stem = dedup_tmp[:-4] if dedup_tmp.endswith('.bam') else dedup_tmp
+        for _p in (
+            dedup_tmp,
+            dedup_tmp + '.bai',
+            dedup_tmp + '.csi',
+            dedup_stem + '.bai',
+            dedup_stem + '.csi',
+        ):
             try:
                 os.remove(_p)
             except OSError:
                 pass
+
+    # Preserve only aggregate full-run deduplication statistics beside QC.
+    # This lets a later standalone/multi-BAM fiberhmm-qc reproduce the exact
+    # duplication panel without rescanning or packaging molecule identities.
+    if dedup_stats is not None and not stdout_mode:
+        import json
+        from pathlib import Path
+
+        output_path = Path(args.output)
+        dedup_report_path = (
+            output_path.parent / "qc" /
+            f"{output_path.with_suffix('').name}.dedup.json"
+        )
+        dedup_report_path.parent.mkdir(parents=True, exist_ok=True)
+        dedup_payload = {
+            "schema_version": 1,
+            "method": "fiberhmm_deamination_fingerprint",
+            "input": str(Path(args.input).resolve()),
+            "output": str(output_path.resolve()),
+            "statistics": dedup_stats,
+        }
+        temporary = dedup_report_path.with_name(dedup_report_path.name + ".tmp")
+        temporary.write_text(json.dumps(dedup_payload, indent=2, sort_keys=True) + "\n")
+        temporary.replace(dedup_report_path)
+        print(f"  PCR deduplication report: {dedup_report_path}", file=sys.stderr)
+
+    # Bounded post-call QC. Indexed BAMs are sampled via random genomic
+    # windows; unindexed outputs use a capped prefix reservoir. This never
+    # rescans the whole BAM and is deliberately independent of deduplication.
+    if args.qc:
+        if stdout_mode:
+            print("  NOTE: automatic QC skipped for stdout BAM output; run "
+                  "fiberhmm-qc on the saved BAM.", file=sys.stderr)
+        elif mode not in ('daf', 'pacbio-fiber', 'nanopore-fiber'):
+            print(f"  NOTE: automatic QC is not defined for mode {mode!r}; "
+                  "skipping.", file=sys.stderr)
+        else:
+            try:
+                from pathlib import Path
+
+                from fiberhmm.qc.core import run_qc
+
+                qc_prefix = args.qc_output_prefix
+                if qc_prefix is None:
+                    output_path = Path(args.output)
+                    qc_prefix = str(
+                        output_path.parent / 'qc' / output_path.with_suffix('').name
+                    )
+
+                run_qc(
+                    input_path=args.output,
+                    output_prefix=qc_prefix,
+                    mode=mode,
+                    enzyme=args.enzyme or 'auto',
+                    # The automatic reference is locked to the resolved
+                    # enzyme/platform combination selected for this call.
+                    # Explicit profile overrides belong to standalone
+                    # fiberhmm-qc, where they cannot silently mislabel a call.
+                    reference_profile='auto',
+                    reference_fasta=args.reference,
+                    sample_reads=args.qc_sample_reads,
+                    seed=args.qc_seed,
+                    min_mapq=args.qc_min_mapq,
+                    prob_threshold=args.prob_threshold,
+                    snp_report_path=snp_report_path,
+                    snp_mask_path=snp_mask_path,
+                    snp_preflight_summary=snp_preflight,
+                    dedup_run_summary=dedup_stats,
+                )
+            except Exception as exc:
+                # QC must never invalidate a successfully written callset.
+                print(f"  WARNING: automatic FiberHMM QC could not run: {exc}",
+                      file=sys.stderr)
 
 
 if __name__ == '__main__':

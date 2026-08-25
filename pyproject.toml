@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fiberhmm"
-version = "2.16.7"
+version = "2.16.8"
 description = "Hidden Markov Model for calling chromatin footprints from fiber-seq and DAF-seq data"
 readme = "README.md"
 license = {text = "MIT"}
@@ -75,11 +75,13 @@ fiberhmm-probs = "fiberhmm.cli._entry:probs_main"
 fiberhmm-utils = "fiberhmm.cli._entry:utils_main"
 fiberhmm-posteriors = "fiberhmm.cli._entry:posteriors_main"
 fiberhmm-daf-encode = "fiberhmm.cli._entry:daf_encode_main"
+fiberhmm-daf-snps = "fiberhmm.cli._entry:daf_snps_main"
 fiberhmm-recall-tfs = "fiberhmm.cli._entry:recall_tfs_main"
 fiberhmm-recall-nucs = "fiberhmm.cli._entry:recall_nucs_main"
 fiberhmm-call = "fiberhmm.cli._entry:call_main"
 fiberhmm-run = "fiberhmm.cli._entry:run_main"
 fiberhmm-dedup = "fiberhmm.cli._entry:dedup_main"
+fiberhmm-qc = "fiberhmm.cli._entry:qc_main"
 
 # Top-level scripts kept for backward compatibility
 [tool.setuptools]
@@ -97,6 +99,7 @@ include = ["fiberhmm*"]
 
 [tool.setuptools.package-data]
 "fiberhmm.models" = ["*.json", "legacy/*.json"]
+"fiberhmm.qc" = ["*.json", "*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

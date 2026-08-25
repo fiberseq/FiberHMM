@@ -94,7 +94,12 @@ def md_matches_cigar(read) -> bool:
 # Per-read encoding
 # ---------------------------------------------------------------------------
 
-def get_daf_positions(read, force_strand=None, ref_fasta=None):
+def get_daf_positions(
+    read,
+    force_strand=None,
+    ref_fasta=None,
+    excluded_reference_positions=None,
+):
     """Collect C->T and G->A mismatch positions for a DAF-seq read.
 
     Pure position-collection helper used by both ``encode_read_daf``
@@ -163,8 +168,11 @@ def get_daf_positions(read, force_strand=None, ref_fasta=None):
     ct_positions = []  # C->T (+ strand deamination)
     ga_positions = []  # G->A (- strand deamination)
 
+    excluded_reference_positions = excluded_reference_positions or set()
     for query_pos, ref_pos, ref_base in pairs:
         if query_pos is None or ref_pos is None or ref_base is None:
+            continue
+        if ref_pos in excluded_reference_positions:
             continue
         ref_base = ref_base.upper()
         query_base = seq[query_pos].upper()
@@ -243,7 +251,12 @@ def is_daf_chimera(ct_positions, ga_positions,
     return False
 
 
-def encode_read_daf(read, force_strand=None, ref_fasta=None):
+def encode_read_daf(
+    read,
+    force_strand=None,
+    ref_fasta=None,
+    excluded_reference_positions=None,
+):
     """Identify deamination mismatches and encode as IUPAC R/Y.
 
     Thin wrapper over ``get_daf_positions`` that adds the IUPAC
@@ -257,7 +270,12 @@ def encode_read_daf(read, force_strand=None, ref_fasta=None):
         ``(new_sequence, st_tag, n_deaminations)`` on success.
         ``None`` if the read should be skipped.
     """
-    res = get_daf_positions(read, force_strand=force_strand, ref_fasta=ref_fasta)
+    res = get_daf_positions(
+        read,
+        force_strand=force_strand,
+        ref_fasta=ref_fasta,
+        excluded_reference_positions=excluded_reference_positions,
+    )
     if res is None:
         return None
     ct_positions, ga_positions, strand = res

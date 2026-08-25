@@ -60,6 +60,12 @@ def daf_encode_main():
     return main()
 
 
+def daf_snps_main():
+    _notify()
+    from fiberhmm.cli.daf_snps import main
+    return main()
+
+
 def recall_tfs_main():
     _notify()
     from fiberhmm.cli.recall_tfs import main
@@ -87,4 +93,10 @@ def run_main():
 def dedup_main():
     _notify()
     from fiberhmm.cli.dedup import main
+    return main()
+
+
+def qc_main():
+    _notify()
+    from fiberhmm.cli.qc import main
     return main()

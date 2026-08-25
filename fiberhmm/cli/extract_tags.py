@@ -172,6 +172,11 @@ def _haplotype_columns(read, enabled: bool):
     return tuple(values)
 
 
+def _duplicate_bed_value(read) -> int:
+    """Return the BED-safe representation of BAM duplicate flag 0x400."""
+    return int(bool(getattr(read, 'is_duplicate', False)))
+
+
 def _parse_ma_annotations(read, target_name: str):
     """Return target annotations from MA/AQ/AN in positional annotation order."""
     try:
@@ -348,6 +353,7 @@ def _extract_ma_interval_type(
                 ann['mol_length'],
             ])
             extra.extend(_haplotype_columns(read, haplotype_fields))
+            extra.append(_duplicate_bed_value(read))
             name = read_id
             if ann['circ_id'] != '.':
                 name = f"{read_id}|{target_name}|{ann['circ_id']}|{ann['circ_part']}/{ann['circ_parts']}"
@@ -377,6 +383,7 @@ def _extract_ma_interval_type(
         else:
             extra.append(','.join(str(b[3][0]) for b in blocks))
     extra.extend(_haplotype_columns(read, haplotype_fields))
+    extra.append(_duplicate_bed_value(read))
     row = _bed12_row(
         ref_name,
         chrom_start,
@@ -620,6 +627,7 @@ def _extract_footprints(read, bed_out, with_scores: bool,
         row += "\t" + "\t".join(
             str(v) for v in _haplotype_columns(read, True)
         )
+    row += f"\t{_duplicate_bed_value(read)}"
     bed_out.write(row + "\n")
 
     return len(blocks)
@@ -727,6 +735,7 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
         row += "\t" + "\t".join(
             str(v) for v in _haplotype_columns(read, True)
         )
+    row += f"\t{_duplicate_bed_value(read)}"
     bed_out.write(row + "\n")
     return len(blocks)
 
@@ -814,6 +823,7 @@ def _extract_msps(read, bed_out, with_scores: bool,
         row += "\t" + "\t".join(
             str(v) for v in _haplotype_columns(read, True)
         )
+    row += f"\t{_duplicate_bed_value(read)}"
     bed_out.write(row + "\n")
 
     return len(blocks)
@@ -923,6 +933,7 @@ def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None,
         row += "\t" + "\t".join(
             str(v) for v in _haplotype_columns(read, True)
         )
+    row += f"\t{_duplicate_bed_value(read)}"
     bed_out.write(row + "\n")
 
     return len(positions_list)
@@ -980,6 +991,7 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
         row += "\t" + "\t".join(
             str(v) for v in _haplotype_columns(read, True)
         )
+    row += f"\t{_duplicate_bed_value(read)}"
     bed_out.write(row + "\n")
 
     return len(positions_list)
@@ -1035,6 +1047,7 @@ def _extract_deam(read, bed_out, query_to_ref=None,
         row += "\t" + "\t".join(
             str(v) for v in _haplotype_columns(read, True)
         )
+    row += f"\t{_duplicate_bed_value(read)}"
     bed_out.write(row + "\n")
 
     return len(positions_list)
@@ -1366,6 +1379,7 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
     """
     from fiberhmm.io.autosql import (
         CIRCULAR_FIELD_COUNT,
+        DUPLICATE_FIELD_COUNT,
         EXTRA_FIELD_COUNTS,
         HAPLOTYPE_FIELD_COUNT,
         write_autosql_for,
@@ -1387,6 +1401,8 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
         n_extra += CIRCULAR_FIELD_COUNT
     if haplotype_fields:
         n_extra += HAPLOTYPE_FIELD_COUNT
+    if as_file:
+        n_extra += DUPLICATE_FIELD_COUNT
 
     try:
         cmd = ['bedToBigBed']

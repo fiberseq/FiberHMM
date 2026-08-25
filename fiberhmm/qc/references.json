@@ -1,0 +1,216 @@
+{
+  "description": "Empirical FiberHMM QC references. Scores are screening diagnostics, not biological inclusion criteria.",
+  "profiles": {
+    "ddda": {
+      "label": "Human DddA DAF-seq controls",
+      "periodicity": {
+        "pass_strength": 0.008,
+        "pass_curve_correlation": 0.75,
+        "pass_reference_projection": 0.60,
+        "reference_nrl_bp": 212,
+        "reference_strength": 0.0089470449840736,
+        "search_interval_bp": [
+          160,
+          220
+        ],
+        "warn_strength": 0.004,
+        "warn_curve_correlation": 0.60,
+        "warn_reference_projection": 0.50
+      },
+      "rate": {
+        "metric": "median_per_read",
+        "pass_interval": [
+          0.0038944180008654264,
+          0.017245098330903572
+        ],
+        "reference_iqr": [
+          0.0038944180008654264,
+          0.017245098330903572
+        ],
+        "reference_median": 0.006956521739130435,
+        "reference_quantile_probabilities": [
+          0.05,
+          0.25,
+          0.5,
+          0.75,
+          0.95
+        ],
+        "reference_quantiles": [
+          0.0017899227652516214,
+          0.0038944180008654264,
+          0.006956521739130435,
+          0.017245098330903572,
+          0.07937748373065172
+        ],
+        "warn_interval": [
+          0.0017899227652516214,
+          0.07937748373065172
+        ]
+      },
+      "scoring_enabled": true,
+      "signal_label": "deamination",
+      "sources": [
+        "Human DddA DAF-seq controls (two targeted loci; fixed-seed bounded samples)"
+      ]
+    },
+    "dddb": {
+      "label": "Drosophila embryo DddB DAF-seq control",
+      "periodicity": {
+        "pass_strength": 0.04,
+        "pass_curve_correlation": 0.75,
+        "pass_reference_projection": 0.60,
+        "reference_nrl_bp": 194,
+        "reference_strength": 0.11671930489101963,
+        "search_interval_bp": [
+          160,
+          220
+        ],
+        "warn_strength": 0.015,
+        "warn_curve_correlation": 0.60,
+        "warn_reference_projection": 0.50
+      },
+      "rate": {
+        "metric": "median_per_read",
+        "pass_interval": [
+          0.06873351171184472,
+          0.10764475106581968
+        ],
+        "reference_iqr": [
+          0.06873351171184472,
+          0.10764475106581968
+        ],
+        "reference_median": 0.08739365815931942,
+        "reference_quantile_probabilities": [
+          0.05,
+          0.25,
+          0.5,
+          0.75,
+          0.95
+        ],
+        "reference_quantiles": [
+          0.039474099541026125,
+          0.06873351171184472,
+          0.08739365815931942,
+          0.10764475106581968,
+          0.15125911448545443
+        ],
+        "warn_interval": [
+          0.039474099541026125,
+          0.15125911448545443
+        ]
+      },
+      "scoring_enabled": true,
+      "signal_label": "deamination",
+      "sources": [
+        "Drosophila embryo DddB DAF-seq control"
+      ]
+    },
+    "hia5_nanopore": {
+      "label": "Drosophila embryo Nanopore Fiber-seq control",
+      "periodicity": {
+        "pass_strength": 0.04,
+        "pass_curve_correlation": 0.75,
+        "pass_reference_projection": 0.60,
+        "reference_nrl_bp": 192,
+        "reference_strength": 0.18409564876245782,
+        "search_interval_bp": [
+          160,
+          220
+        ],
+        "warn_strength": 0.015,
+        "warn_curve_correlation": 0.60,
+        "warn_reference_projection": 0.50
+      },
+      "rate": {
+        "metric": "median_per_read",
+        "pass_interval": [
+          0.03881636205395997,
+          0.1111111111111111
+        ],
+        "probability_threshold": 248,
+        "reference_iqr": [
+          0.03881636205395997,
+          0.1111111111111111
+        ],
+        "reference_median": 0.07349081364829396,
+        "reference_quantile_probabilities": [
+          0.05,
+          0.25,
+          0.5,
+          0.75,
+          0.95
+        ],
+        "reference_quantiles": [
+          0.0020933334684132498,
+          0.03881636205395997,
+          0.07349081364829396,
+          0.1111111111111111,
+          0.18319492212621982
+        ],
+        "warn_interval": [
+          0.0020933334684132498,
+          0.18319492212621982
+        ]
+      },
+      "scoring_enabled": true,
+      "signal_label": "m6A labeling",
+      "sources": [
+        "Drosophila embryo Nanopore Fiber-seq control (fixed-seed bounded sample)"
+      ]
+    },
+    "hia5_pacbio": {
+      "label": "Drosophila embryo PacBio Fiber-seq control",
+      "periodicity": {
+        "pass_strength": 0.08,
+        "pass_curve_correlation": 0.75,
+        "pass_reference_projection": 0.60,
+        "reference_nrl_bp": 191,
+        "reference_strength": 0.4751856504911486,
+        "search_interval_bp": [
+          160,
+          220
+        ],
+        "warn_strength": 0.03,
+        "warn_curve_correlation": 0.60,
+        "warn_reference_projection": 0.50
+      },
+      "rate": {
+        "metric": "median_per_read",
+        "pass_interval": [
+          0.04255183903743977,
+          0.10171774050765185
+        ],
+        "probability_threshold": 125,
+        "reference_iqr": [
+          0.04255183903743977,
+          0.10171774050765185
+        ],
+        "reference_median": 0.07043310956394033,
+        "reference_quantile_probabilities": [
+          0.05,
+          0.25,
+          0.5,
+          0.75,
+          0.95
+        ],
+        "reference_quantiles": [
+          0.012250356279558021,
+          0.04255183903743977,
+          0.07043310956394033,
+          0.10171774050765185,
+          0.14386804642559176
+        ],
+        "warn_interval": [
+          0.012250356279558021,
+          0.14386804642559176
+        ]
+      },
+      "scoring_enabled": true,
+      "signal_label": "m6A labeling",
+      "sources": [
+        "Drosophila embryo PacBio Fiber-seq control (fixed-seed bounded sample)"
+      ]
+    }
+  },
+  "schema_version": 1
+}

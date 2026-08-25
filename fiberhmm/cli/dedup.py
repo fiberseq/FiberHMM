@@ -11,9 +11,10 @@ original molecule share that pattern, but rarely *exactly*: sequencing error
 and missed/over-called deaminations typically perturb a handful of the ~hundreds
 of calls, so exact-match dedup misses most duplicates.
 
-This tool fingerprints each read's deamination set, clusters reads whose sets
-match within a Jaccard threshold (MinHash + LSH, near-linear), and by default
-collapses each cluster to one representative read. Pass ``--flag-only`` to
+This tool fingerprints each read's deamination set, requires their aligned
+reference starts and ends to agree within a configurable tolerance, clusters
+reads whose sets match within a Jaccard threshold (MinHash + LSH, near-linear),
+and by default collapses each cluster to one representative read. Pass ``--flag-only`` to
 instead keep every read and just set the SAM 0x400 duplicate flag + cluster
 tags. Reads with too few deamination calls to fingerprint reliably
 (``--min-deam``) are passed through untouched.
@@ -75,16 +76,24 @@ def _jaccard(a: frozenset, b: frozenset) -> float:
     return inter / (len(a) + len(b) - inter)
 
 
-def cluster_reads(pos_sets, group_keys, min_jaccard, k, bands, seed):
+def cluster_reads(
+    pos_sets,
+    group_keys,
+    min_jaccard,
+    k,
+    bands,
+    seed,
+    endpoints=None,
+    max_end_diff=50,
+):
     """Cluster fingerprintable reads (pos_sets[i] truthy) within a shared
     group_key by deamination-set Jaccard >= min_jaccard. Returns a labels
     array (cluster id per read; -1 for un-fingerprintable reads).
 
     LSH banding surfaces candidate pairs; each candidate is verified by exact
-    Jaccard, so precision comes from verification and only recall depends on
-    the band/row geometry. Within each band bucket we union members to the
-    bucket representative (linear in members), and union-find transitivity
-    stitches clusters across bands.
+    Jaccard and, when endpoints are supplied, similar alignment starts/ends.
+    Thus even highly similar overlapping whole-genome fibers cannot collapse
+    unless they are consistent with copies of the same physical molecule.
     """
     n = len(pos_sets)
     rows = k // bands
@@ -102,11 +111,26 @@ def cluster_reads(pos_sets, group_keys, min_jaccard, k, bands, seed):
         for ids in buckets.values():
             if len(ids) < 2:
                 continue
-            rep = ids[0]
-            rep_set = pos_sets[rep]
-            for j in ids[1:]:
-                if _jaccard(rep_set, pos_sets[j]) >= min_jaccard:
-                    uf.union(rep, j)
+            representatives = []
+            for j in ids:
+                matched = False
+                for rep in representatives:
+                    if endpoints is not None:
+                        rep_ends = endpoints[rep]
+                        query_ends = endpoints[j]
+                        if (
+                            rep_ends is None
+                            or query_ends is None
+                            or abs(rep_ends[0] - query_ends[0]) > max_end_diff
+                            or abs(rep_ends[1] - query_ends[1]) > max_end_diff
+                        ):
+                            continue
+                    if _jaccard(pos_sets[rep], pos_sets[j]) >= min_jaccard:
+                        uf.union(rep, j)
+                        matched = True
+                        break
+                if not matched:
+                    representatives.append(j)
 
     labels = np.full(n, -1, dtype=np.int64)
     remap = {}
@@ -134,11 +158,12 @@ def _read_quality(read) -> tuple:
 
 def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=False,
               k=32, bands=8, seed=7, collapse=True, prob_threshold=0,
-              stats_tsv=None, io_threads=4):
+              stats_tsv=None, io_threads=4, max_end_diff=50):
     t0 = time.time()
     # ---- Pass 1: fingerprint every record (order = until_eof iteration) ----
     pos_sets: List[Optional[frozenset]] = []
     group_keys: List[Optional[tuple]] = []
+    endpoints: List[Optional[tuple[int, int]]] = []
     quals: List[tuple] = []
     n_total = n_fingerprintable = n_lowdeam = n_unmapped = 0
 
@@ -152,6 +177,7 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
             if not clusterable:
                 pos_sets.append(None)
                 group_keys.append(None)
+                endpoints.append(None)
                 quals.append(())
                 if read.is_unmapped:
                     n_unmapped += 1
@@ -161,12 +187,14 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
             if len(calls) < min_deam:
                 pos_sets.append(None)
                 group_keys.append(None)
+                endpoints.append(None)
                 quals.append(())
                 n_lowdeam += 1
                 continue
             pos_sets.append(frozenset(p for p, _ in calls))
             strand_key = '' if ignore_strand else ('-' if read.is_reverse else '+')
             group_keys.append((read.reference_id, strand_key))
+            endpoints.append((int(read.reference_start), int(read.reference_end)))
             quals.append(_read_quality(read))
             n_fingerprintable += 1
 
@@ -181,7 +209,16 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
           f"{n_unmapped:,} unmapped) [{time.time()-t0:.0f}s]", file=sys.stderr)
 
     # ---- Cluster ----
-    labels = cluster_reads(pos_sets, group_keys, min_jaccard, k, bands, seed)
+    labels = cluster_reads(
+        pos_sets,
+        group_keys,
+        min_jaccard,
+        k,
+        bands,
+        seed,
+        endpoints=endpoints,
+        max_end_diff=max_end_diff,
+    )
     cluster_sizes = Counter(int(c) for c in labels if c >= 0)
     n_clusters = len(cluster_sizes)
     n_dups = n_fingerprintable - n_clusters
@@ -197,7 +234,8 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
             best_in_cluster[c] = idx
     representatives = set(best_in_cluster.values())
 
-    print(f"Clustering (Jaccard >= {min_jaccard}): {n_fingerprintable:,} reads -> "
+    print(f"Clustering (Jaccard >= {min_jaccard}; ends ±{max_end_diff} bp): "
+          f"{n_fingerprintable:,} reads -> "
           f"{n_clusters:,} molecules | {n_dups:,} duplicates ({dup_pct:.1f}%) | "
           f"mean {n_fingerprintable / n_clusters:.2f} copies/molecule "
           f"[{time.time()-t0:.0f}s]", file=sys.stderr)
@@ -241,6 +279,14 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
         'n_total': n_total, 'n_fingerprintable': n_fingerprintable,
         'n_clusters': n_clusters, 'n_duplicates': n_dups,
         'duplication_pct': dup_pct, 'n_written': n_written,
+        'n_below_min_deam': n_lowdeam, 'n_unmapped': n_unmapped,
+        'n_singleton_molecules': singletons,
+        'largest_cluster': max(cluster_sizes.values()),
+        'max_end_diff_bp': int(max_end_diff),
+        'mode': mode,
+        'cluster_size_histogram': {
+            str(size): int(count) for size, count in sorted(size_hist.items())
+        },
     }
 
 
@@ -276,6 +322,9 @@ Examples:
     parser.add_argument('--min-deam', type=int, default=10,
                         help='Reads with fewer than this many deamination calls are '
                              'not fingerprintable; passed through untouched (default 10).')
+    parser.add_argument('--max-end-diff', type=int, default=50,
+                        help='Maximum difference at both aligned reference ends for '
+                             'two reads to be duplicates (default 50 bp).')
     parser.add_argument('--ignore-strand', action='store_true',
                         help='Cluster across strands. Default: only reads on the same '
                              'strand (deamination is strand-specific) can be duplicates.')
@@ -300,6 +349,9 @@ Examples:
     if not 0.0 < args.min_jaccard <= 1.0:
         print("Error: --min-jaccard must be in (0, 1].", file=sys.stderr)
         sys.exit(1)
+    if args.max_end_diff < 0:
+        print("Error: --max-end-diff must be non-negative.", file=sys.stderr)
+        sys.exit(1)
 
     run_dedup(
         in_bam=args.input, out_bam=args.output,
@@ -307,6 +359,7 @@ Examples:
         ignore_strand=args.ignore_strand, k=args.num_hashes, bands=args.bands,
         seed=args.seed, collapse=not args.flag_only, prob_threshold=args.prob_threshold,
         stats_tsv=args.stats_tsv, io_threads=args.io_threads,
+        max_end_diff=args.max_end_diff,
     )
 
 

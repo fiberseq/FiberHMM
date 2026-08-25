@@ -25,6 +25,7 @@ from fiberhmm.cli.extract_tags import (
 from fiberhmm.io.autosql import (
     AUTOSQL_SCHEMAS,
     CIRCULAR_FIELD_COUNT,
+    DUPLICATE_FIELD_COUNT,
     EXTRA_FIELD_COUNTS,
     get_schema,
     write_autosql_for,
@@ -38,11 +39,13 @@ class _FakeRead:
     pysam fixtures to keep the test fast and hermetic.
     """
     def __init__(self, read_id='r', ref_name='chr1', is_reverse=False,
+                 is_duplicate=False,
                  query_len=2000, ref_start=1_000_000):
         self._tags = {}
         self.query_name = read_id
         self.reference_name = ref_name
         self.is_reverse = is_reverse
+        self.is_duplicate = is_duplicate
         self._query_len = query_len
         self._ref_start = ref_start
 
@@ -153,8 +156,8 @@ def test_extract_region_worker_closes_temp_beds_when_partial_open_fails(
 
 # ------------------- autoSQL schemas --------------------------------
 
-def test_autosql_default_is_bed12_only():
-    """AUTOSQL_SCHEMAS has the classic BED12 shape (12 columns)."""
+def test_autosql_default_preserves_duplicate_flag_after_bed12():
+    """Default schemas append BAM duplicate status to the BED12 fields."""
     for t, schema in AUTOSQL_SCHEMAS.items():
         # Classic BED12 fields; no per-block score arrays.
         assert 'chromStarts' in schema
@@ -162,6 +165,7 @@ def test_autosql_default_is_bed12_only():
         assert 'blockAq' not in schema
         assert 'blockTq' not in schema
         assert 'blockMl' not in schema
+        assert 'uint isDuplicate;' in schema
 
 
 def test_autosql_block_scores_adds_per_type_columns():
@@ -187,6 +191,7 @@ def test_autosql_circular_groups_adds_group_columns():
     schema = get_schema('tf', block_scores=True, circular_groups=True)
 
     assert CIRCULAR_FIELD_COUNT == 5
+    assert DUPLICATE_FIELD_COUNT == 1
     assert 'circId' in schema
     assert 'circPart' in schema
     assert 'molLength' in schema
@@ -253,9 +258,23 @@ def test_footprint_bed12_when_flag_off():
     assert n == 3
     line = buf.getvalue().rstrip('\n')
     cols = line.split('\t')
-    assert len(cols) == 12  # classic BED12
+    assert len(cols) == 13  # BED12 + isDuplicate
+    assert cols[12] == '0'
     assert int(cols[9]) == 3   # blockCount
     assert cols[10].count(',') == 2  # blockSizes (3 entries)
+
+
+def test_duplicate_bam_flag_is_preserved_in_last_bed_column():
+    read = _FakeRead(is_duplicate=True)
+    read.set_tag('ns', array('I', [100]))
+    read.set_tag('nl', array('I', [120]))
+
+    buf = io.StringIO()
+    assert _extract_footprints(
+        read, buf, with_scores=False,
+        query_to_ref=_identity_map(read), block_scores=False,
+    ) == 1
+    assert buf.getvalue().rstrip('\n').split('\t')[-1] == '1'
 
 
 def test_footprint_bed12_plus_nq_when_flag_on():
@@ -270,7 +289,7 @@ def test_footprint_bed12_plus_nq_when_flag_on():
                             block_scores=True)
     assert n == 3
     cols = buf.getvalue().rstrip('\n').split('\t')
-    assert len(cols) == 15  # BED12 + blockNq + blockEl + blockEr
+    assert len(cols) == 16  # BED12 + blockNq + blockEl + blockEr + isDuplicate
     block_count = int(cols[9])
     nq_arr = cols[12].split(',')
     assert len(nq_arr) == block_count == 3
@@ -281,6 +300,7 @@ def test_footprint_bed12_plus_nq_when_flag_on():
     # legacy ns/nl nucs have no edge refinement -> el/er all zero
     assert [int(v) for v in cols[13].split(',')] == [0, 0, 0]
     assert [int(v) for v in cols[14].split(',')] == [0, 0, 0]
+    assert cols[15] == '0'
 
 
 def test_footprint_missing_nq_when_flag_on_writes_zeros():
@@ -296,10 +316,11 @@ def test_footprint_missing_nq_when_flag_on_writes_zeros():
                             block_scores=True)
     assert n == 2
     cols = buf.getvalue().rstrip('\n').split('\t')
-    assert len(cols) == 15  # BED12 + blockNq + blockEl + blockEr
+    assert len(cols) == 16  # BED12 + blockNq + blockEl + blockEr + isDuplicate
     assert [int(v) for v in cols[12].split(',')] == [0, 0]
     assert [int(v) for v in cols[13].split(',')] == [0, 0]
     assert [int(v) for v in cols[14].split(',')] == [0, 0]
+    assert cols[15] == '0'
 
 
 # ------------------- msp --------------------------------------------
@@ -316,8 +337,9 @@ def test_msp_bed12_plus_aq_when_flag_on():
                       block_scores=True)
     assert n == 2
     cols = buf.getvalue().rstrip('\n').split('\t')
-    assert len(cols) == 13
+    assert len(cols) == 14
     assert [int(v) for v in cols[12].split(',')] == [90, 255]
+    assert cols[13] == '0'
 
 
 # ------------------- tf (MA/AQ tf+QQQ) ------------------------------
@@ -361,7 +383,7 @@ def test_tf_bed12_plus_qqq_when_flag_on():
                      block_scores=True)
     assert n == 2
     cols = buf.getvalue().rstrip('\n').split('\t')
-    assert len(cols) == 15   # 12 + 3 (tq, el, er)
+    assert len(cols) == 16   # BED12 + QQQ + isDuplicate
 
     block_count = int(cols[9])
     tq_arr = [int(v) for v in cols[12].split(',')]
@@ -391,13 +413,13 @@ def test_tf_min_tq_filter_drops_low_quality_and_shrinks_blocks():
                      block_scores=True)
     assert n == 1  # only the tq=200 TF survives
     cols = buf.getvalue().rstrip('\n').split('\t')
-    assert len(cols) == 15
+    assert len(cols) == 16
     assert int(cols[9]) == 1
     assert [int(v) for v in cols[12].split(',')] == [200]
 
 
-def test_tf_bed12_only_unchanged_when_flag_off():
-    """Sanity: BED12-only output has exactly 12 tab-separated columns."""
+def test_tf_default_output_appends_duplicate_flag():
+    """The default output is BED12 plus the source BAM duplicate flag."""
     read = _FakeRead()
     ma, aq = _build_ma_aq(
         nuc_intervals=[],
@@ -414,7 +436,8 @@ def test_tf_bed12_only_unchanged_when_flag_off():
                      block_scores=False)
     assert n == 2
     cols = buf.getvalue().rstrip('\n').split('\t')
-    assert len(cols) == 12
+    assert len(cols) == 13
+    assert cols[12] == '0'
 
 
 def test_tf_extractor_consumes_aq_without_upfront_list_copy():
@@ -465,9 +488,10 @@ def test_tf_circular_groups_emit_one_row_per_clipped_piece():
     rows = [line.split('\t') for line in buf.getvalue().rstrip('\n').splitlines()]
     assert len(rows) == 2
     assert [int(row[1]) for row in rows] == [0, 970]
-    assert all(len(row) == 20 for row in rows)  # BED12 + tf QQQ + circular fields
-    assert rows[0][15:] == ['fhw_tf_0', '1', '2', '970', '75']
-    assert rows[1][15:] == ['fhw_tf_0', '2', '2', '970', '75']
+    assert all(len(row) == 21 for row in rows)  # BED12 + tf QQQ + circular + duplicate
+    assert rows[0][15:20] == ['fhw_tf_0', '1', '2', '970', '75']
+    assert rows[1][15:20] == ['fhw_tf_0', '2', '2', '970', '75']
+    assert rows[0][20] == rows[1][20] == '0'
 
 
 def test_footprint_and_msp_extractors_prefer_ma_an_when_present():
@@ -502,8 +526,10 @@ def test_footprint_and_msp_extractors_prefer_ma_an_when_present():
     # legacy '+' strand to prove backward-compatible parsing.)
     assert nuc_rows[0][12] == '222'
     assert nuc_rows[0][13:15] == ['0', '0']
-    assert nuc_rows[0][15:] == ['fhw_nuc_0', '1', '2', '990', '20']
-    assert msp_rows[0][13:] == ['fhw_msp_0', '1', '2', '980', '40']
+    assert nuc_rows[0][15:20] == ['fhw_nuc_0', '1', '2', '990', '20']
+    assert nuc_rows[0][20] == '0'
+    assert msp_rows[0][13:18] == ['fhw_msp_0', '1', '2', '980', '40']
+    assert msp_rows[0][18] == '0'
 
 
 # ------------------- deam (DAF IUPAC R/Y) ---------------------------
@@ -529,7 +555,8 @@ def test_deam_extracts_both_codes_and_sorts_by_ref_position():
                     block_scores=False)
     assert n == 4
     cols = buf.getvalue().rstrip('\n').split('\t')
-    assert len(cols) == 12
+    assert len(cols) == 13
+    assert cols[12] == '0'
     # chromStart = first mod position = 1003 ; chromEnd = last + 1 = 1009
     assert int(cols[1]) == 1003
     assert int(cols[2]) == 1009
@@ -551,8 +578,9 @@ def test_deam_block_scores_disambiguates_r_vs_y():
                     block_scores=True)
     assert n == 5
     cols = buf.getvalue().rstrip('\n').split('\t')
-    assert len(cols) == 13
+    assert len(cols) == 14
     assert [int(v) for v in cols[12].split(',')] == [1, 1, 0, 0, 1]
+    assert cols[13] == '0'
 
 
 def test_deam_empty_sequence_returns_zero():
@@ -1115,15 +1143,15 @@ def test_extract_tags_parallel_circular_groups_end_to_end(tmp_path):
     nuc_rows = [line.split('\t') for line in nuc_bed.read_text().splitlines()]
     tf_rows = [line.split('\t') for line in tf_bed.read_text().splitlines()]
 
-    # BED12 (12) + nucleosome block_scores (3: blockNq/El/Er) + circular (5) = 20.
-    assert all(len(row) == 20 for row in nuc_rows)
-    # BED12 (12) + tf block_scores (3 blockTq/El/Er) + circular (5) = 20 cols.
-    assert all(len(row) == 20 for row in tf_rows)
+    # BED12 + three scores + five circular fields + isDuplicate = 21.
+    assert all(len(row) == 21 for row in nuc_rows)
+    assert all(len(row) == 21 for row in tf_rows)
 
     # Standalone (non-wrapped) nuc: blockNq=200, blockEl/Er=0 (nuc.Q, unrefined),
     # then circId=., circPart/Parts=1, molStart/molLength echo its coords.
     assert nuc_rows[0][12:15] == ['200', '0', '0']
-    assert nuc_rows[0][15:] == ['.', '1', '1', '200', '50']
+    assert nuc_rows[0][15:20] == ['.', '1', '1', '200', '50']
+    assert nuc_rows[0][20] == '0'
 
     # Wrapped TF: both clipped pieces share AN name, have circParts=2, and
     # their molStart/molLength describe the molecular feature (not the clipped
@@ -1138,6 +1166,7 @@ def test_extract_tags_parallel_circular_groups_end_to_end(tmp_path):
         # the molecule); molLength is the fused circular feature length.
         assert int(row[18]) == 985
         assert int(row[19]) == 30
+        assert row[20] == '0'
     # circPart numbers cover both pieces.
     assert sorted(int(r[16]) for r in tf_rows) == [1, 2]
     # Names encode the wrapped grouping.

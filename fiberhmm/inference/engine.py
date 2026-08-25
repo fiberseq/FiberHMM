@@ -480,6 +480,40 @@ def detect_mode_from_bam(bam_path: str, n_sample: int = 100) -> str:
 # ---------------------------------------------------------------------------
 
 
+_DAF_SNP_MASK = {}
+
+
+def configure_daf_snp_mask(mask_path=None) -> None:
+    """Load an optional 0-based BED mask once in each inference process."""
+    global _DAF_SNP_MASK
+    if not mask_path:
+        _DAF_SNP_MASK = {}
+        return
+    from fiberhmm.daf.snps import load_snp_mask
+
+    _DAF_SNP_MASK = load_snp_mask(mask_path)
+
+
+def _daf_reference_mask(read):
+    return _DAF_SNP_MASK.get(getattr(read, "reference_name", None), set())
+
+
+def _daf_excluded_query_positions(read):
+    reference_mask = _daf_reference_mask(read)
+    if not reference_mask or not hasattr(read, "get_aligned_pairs"):
+        return set()
+    try:
+        return {
+            int(query_position)
+            for query_position, reference_position in read.get_aligned_pairs()
+            if query_position is not None
+            and reference_position is not None
+            and reference_position in reference_mask
+        }
+    except (ValueError, TypeError, IndexError):
+        return set()
+
+
 class _ApplyPayloadRead:
     """Minimal duck-type for pysam.AlignedSegment used inside apply workers.
 
@@ -496,15 +530,18 @@ class _ApplyPayloadRead:
     does not implement).
     """
     __slots__ = ('query_name', 'query_sequence', 'is_reverse', '_tags',
-                 '_daf_md_result')
+                 '_daf_md_result', '_daf_excluded_query_positions')
 
     def __init__(self, query_name, query_sequence, is_reverse, tags,
-                 daf_md_result=None):
+                 daf_md_result=None, daf_excluded_query_positions=None):
         self.query_name = query_name
         self.query_sequence = query_sequence
         self.is_reverse = is_reverse
         self._tags = tags
         self._daf_md_result = daf_md_result
+        self._daf_excluded_query_positions = set(
+            daf_excluded_query_positions or ()
+        )
 
     def has_tag(self, t):
         return t in self._tags
@@ -556,9 +593,16 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None) -> Optional[di
     # DAF MD-fallback precomputation (live-read side, before slim-IPC handoff).
     if mode == 'daf':
         from fiberhmm.core.bam_reader import has_iupac_encoding
+        excluded_query_positions = _daf_excluded_query_positions(read)
+        if excluded_query_positions:
+            payload['_daf_excluded_query_positions'] = excluded_query_positions
         if not has_iupac_encoding(seq):
             from fiberhmm.daf.encoder import get_daf_positions
-            md_res = get_daf_positions(read, ref_fasta=ref_fasta)
+            md_res = get_daf_positions(
+                read,
+                ref_fasta=ref_fasta,
+                excluded_reference_positions=_daf_reference_mask(read),
+            )
             if md_res is not None:
                 payload['_daf_md_result'] = md_res   # (ct_list, ga_list, strand_tag)
 
@@ -578,6 +622,9 @@ def extract_fiber_read_from_payload(payload: dict, mode: str, prob_threshold: in
             payload['query_name'], payload['query_sequence'],
             payload['is_reverse'], payload['tags'],
             daf_md_result=payload.get('_daf_md_result'),
+            daf_excluded_query_positions=payload.get(
+                '_daf_excluded_query_positions'
+            ),
         ),
         mode, prob_threshold,
     )
@@ -610,6 +657,14 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
     if mode == 'daf' and has_iupac_encoding(query_sequence):
         st_tag = read.get_tag('st') if read.has_tag('st') else None
         mod_positions, strand, conv_seq = extract_daf_iupac_positions(query_sequence, st_tag)
+        excluded_query_positions = getattr(
+            read,
+            '_daf_excluded_query_positions',
+            None,
+        )
+        if excluded_query_positions is None:
+            excluded_query_positions = _daf_excluded_query_positions(read)
+        mod_positions.difference_update(excluded_query_positions)
         if not mod_positions:
             return None
         return {
@@ -634,7 +689,11 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         md_result = getattr(read, '_daf_md_result', None)
         if md_result is None and hasattr(read, 'get_aligned_pairs'):
             from fiberhmm.daf.encoder import get_daf_positions
-            md_result = get_daf_positions(read, ref_fasta=ref_fasta)
+            md_result = get_daf_positions(
+                read,
+                ref_fasta=ref_fasta,
+                excluded_reference_positions=_daf_reference_mask(read),
+            )
         if md_result is not None:
             ct_pos, ga_pos, strand_tag = md_result
             # Strand-swap chimera filter (DAF only): a read deaminated CT in one
