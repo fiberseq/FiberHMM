@@ -410,7 +410,7 @@ def main():
     else:
         print("\nDone!")
         print("\nTo extract BED12/bigBed for browser visualization:")
-        print(f"  fiberhmm-extract-tags -i {output_bam}")
+        print(f"  fiberhmm-extract -i {output_bam}")
 
 
 if __name__ == '__main__':
