@@ -749,10 +749,10 @@ def main():
 
     from fiberhmm.models import SUPPORTED_ENZYMES as _ENZYMES
     parser.add_argument('--enzyme', choices=_ENZYMES, default=None,
-                       help='Auto-select bundled model: hia5, dddb, or ddda.')
+                       help='Auto-select a bundled enzyme model.')
     parser.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                       help='Hia5 sequencing platform; omission warns and defaults '
-                            'to pacbio. Ignored for dddb/ddda.')
+                       help='Hia5/EcoGII platform; omission warns and defaults to '
+                            'pacbio. Ignored for dddb/ddda.')
 
     add_legacy_mode_override(parser)
     add_edge_trim_args(parser, default=100)
@@ -779,12 +779,18 @@ def main():
         print(f"Using bundled model: {model_path}")
 
     _, _, model_mode = load_model_with_metadata(model_path, normalize=False)
-    from fiberhmm.models import get_observation_mode
+    from fiberhmm.models import get_metadata_mode_aliases, get_observation_mode
     inferred_mode = (
         get_observation_mode(
             args.enzyme, args.seq, warn_missing_seq=False
         )
         if using_bundled_model else None
+    )
+    metadata_mode_aliases = (
+        get_metadata_mode_aliases(
+            args.enzyme, args.seq, warn_missing_seq=False
+        )
+        if using_bundled_model else ()
     )
     try:
         effective_mode = resolve_observation_mode(
@@ -795,6 +801,7 @@ def main():
                 f"bundled {args.enzyme} model"
                 if using_bundled_model else "custom model"
             ),
+            metadata_mode_aliases=metadata_mode_aliases,
         )
     except ValueError as exc:
         parser.error(str(exc))

@@ -461,7 +461,7 @@ execution strategies.
 | `-i/--input` | required | Input BAM, or `-` for stdin. |
 | `-o/--output` | required | Output BAM, or `-` for stdout (unsorted). |
 | `--enzyme` | — | Supported presets are `hia5`, `dddb`, and `ddda`. The development tree also exposes experimental `ecogii` and `sssi` presets; see [Experimental chemistry paths](#experimental-chemistry-paths). |
-| `--seq` | chemistry-dependent | Hia5 supports `pacbio`/`nanopore` (omission warns and defaults to `pacbio`); ignored for DddA/DddB. Experimental EcoGII is PacBio-only and experimental SssI requires Nanopore. |
+| `--seq` | chemistry-dependent | Hia5 and EcoGII support `pacbio`/`nanopore` (omission warns and defaults to `pacbio`); ignored for DddA/DddB. Experimental SssI requires Nanopore. |
 | `--mode` | from model | Advanced observation-mode override; normally inferred from the selected model. Supported models use `pacbio-fiber`, `nanopore-fiber`, or `daf`; `gpc` and `cpg` are development-only. |
 | `--reference` | — | Indexed FASTA fallback for ordinary DAF reads with no R/Y and missing/unusable `MD`; does not override R/Y or usable `MD`. Required and always used by `--ddda-mcg`. |
 | `--ddda-mcg` | off | **Experimental whole-genome DddA only.** Infer `ddda_mcg.` spans and correct CpG TF emissions in the fused workflow. |
@@ -641,7 +641,7 @@ fiberhmm-apply -i experiment.bam --enzyme hia5 --seq pacbio -o output/ -c 8
 | `-i/--input` | required | Input BAM, or `-` for stdin. |
 | `-m/--model` | optional | Custom model (`.json`/`.npz`/`.pickle`); overrides `--enzyme`. |
 | `--enzyme` | optional | Supported presets are `hia5`, `dddb`, and `ddda`; experimental `ecogii` and `sssi` presets also exist in the development tree. Required unless `-m` is given. |
-| `--seq` | chemistry-dependent | Hia5 supports `pacbio`/`nanopore` (omission warns and defaults to `pacbio`); ignored for DddA/DddB. Experimental EcoGII is PacBio-only and experimental SssI requires Nanopore. |
+| `--seq` | chemistry-dependent | Hia5 and EcoGII support `pacbio`/`nanopore` (omission warns and defaults to `pacbio`); ignored for DddA/DddB. Experimental SssI requires Nanopore. |
 | `-o/--outdir` | required | Output directory, or `-` for stdout BAM. |
 | `--mode` | from model | Advanced observation-mode override; normally inferred from the selected model. |
 | `-c/--cores` | 1 | CPU cores (0 = auto). |
@@ -958,10 +958,15 @@ pass is optional refinement. Older models live in `models/legacy/`
 The current development tree contains additional artifacts, but they are **not
 part of the supported release surface**:
 
-- **EcoGII PacBio:** `--enzyme ecogii --seq pacbio` selects
-  `ecogii_pacbio.json`. It has held-out yeast nucleosome-level validation, but is
-  unreleased and its TF recall has not been independently calibrated or covered
-  by an enzyme-specific regression test.
+- **EcoGII:** `--enzyme ecogii --seq pacbio|nanopore` selects the existing
+  `ecogii_pacbio.json` parameter file. PacBio uses the unstranded
+  `pacbio-fiber` observation frame; Nanopore uses the strand-aware
+  `nanopore-fiber` frame. This makes the existing chemistry model directly
+  testable on ONT without changing its context table, but the file's emissions
+  and transitions were fitted from PacBio data and ONT calibration remains to
+  be benchmarked. TF recall has not yet been independently calibrated for this
+  enzyme/platform combination. Automatic QC reports descriptive metrics but
+  does not score EcoGII against the bundled Hia5 control profile.
 - **M.SssI/CpG Nanopore:** `--enzyme sssi --seq nanopore` selects the prototype
   `cpg_nanopore.json`. Its emissions were fitted to naked-DNA controls while its
   transitions were inherited from the Hia5 Nanopore model. Transition

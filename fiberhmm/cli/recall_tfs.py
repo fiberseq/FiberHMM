@@ -549,7 +549,7 @@ def parse_args(default_recall_nucs: bool = False):
                         f'min-llr/emission-uplift defaults '
                         f'({", ".join(sorted(ENZYME_PRESETS))}).')
     p.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                   help='Hia5 sequencing platform; omission warns and defaults '
+                   help='Hia5/EcoGII sequencing platform; omission warns and defaults '
                         'to pacbio. Ignored for dddb/ddda.')
     p.add_argument('--min-llr', type=float, default=None,
                    help='Override min LLR (nats). Default: enzyme preset.')
@@ -846,12 +846,18 @@ def main(default_recall_nucs: bool = False):
         fb_mode, fb_k = _resolve_model_metadata(model_path)
         model_mode = model_mode or fb_mode
         model_k = model_k or fb_k
-    from fiberhmm.models import get_observation_mode
+    from fiberhmm.models import get_metadata_mode_aliases, get_observation_mode
     inferred_mode = (
         get_observation_mode(
             args.enzyme, args.seq, warn_missing_seq=False
         )
         if using_bundled_model else None
+    )
+    metadata_mode_aliases = (
+        get_metadata_mode_aliases(
+            args.enzyme, args.seq, warn_missing_seq=False
+        )
+        if using_bundled_model else ()
     )
     try:
         mode = resolve_observation_mode(
@@ -862,6 +868,7 @@ def main(default_recall_nucs: bool = False):
                 f"bundled {args.enzyme} model"
                 if using_bundled_model else "custom model"
             ),
+            metadata_mode_aliases=metadata_mode_aliases,
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)

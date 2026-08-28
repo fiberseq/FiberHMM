@@ -42,7 +42,11 @@ from fiberhmm.inference.parallel import (
     _process_bam_streaming_pipeline_fused,
 )
 from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
-from fiberhmm.models import SUPPORTED_ENZYMES, get_observation_mode
+from fiberhmm.models import (
+    SUPPORTED_ENZYMES,
+    get_metadata_mode_aliases,
+    get_observation_mode,
+)
 from fiberhmm.models import get_model_path as _get_bundled_model
 
 
@@ -96,9 +100,9 @@ def parse_args():
     p.add_argument('--recall-model', default=None,
                    help='Separate model for TF LLR tables. Default: reuse apply model.')
     p.add_argument('--enzyme', choices=sorted(SUPPORTED_ENZYMES), default=None,
-                   help='Enzyme preset (hia5/dddb/ddda).')
+                   help='Bundled enzyme preset.')
     p.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                   help='Hia5 platform; omission warns and defaults to pacbio. '
+                   help='Hia5/EcoGII platform; omission warns and defaults to pacbio. '
                         'Ignored for dddb/ddda.')
     p.add_argument('--reference', default=None,
                    help='Reference FASTA for DAF-seq BAMs that lack '
@@ -738,6 +742,12 @@ def main():
         )
         if using_bundled_model else None
     )
+    metadata_mode_aliases = (
+        get_metadata_mode_aliases(
+            args.enzyme, args.seq, warn_missing_seq=False
+        )
+        if using_bundled_model else ()
+    )
     try:
         mode = resolve_observation_mode(
             model_mode,
@@ -747,6 +757,7 @@ def main():
                 f"bundled {args.enzyme} model"
                 if using_bundled_model else "custom model"
             ),
+            metadata_mode_aliases=metadata_mode_aliases,
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)

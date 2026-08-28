@@ -66,11 +66,11 @@ Examples:
     # Enzyme / platform (bundled model selection)
     from fiberhmm.models import SUPPORTED_ENZYMES as _ENZYMES
     parser.add_argument('--enzyme', choices=_ENZYMES, default=None,
-                        help='Auto-select bundled model: hia5, dddb, or ddda. '
-                             'Use with --seq pacbio|nanopore for Hia5.')
+                        help='Auto-select a bundled chemistry model. Use '
+                             '--seq pacbio|nanopore for Hia5 or EcoGII.')
     parser.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                        help='Hia5 sequencing platform; omission warns and '
-                             'defaults to pacbio. Ignored for dddb/ddda.')
+                        help='Hia5/EcoGII sequencing platform; omission warns '
+                             'and defaults to pacbio. Ignored for dddb/ddda.')
 
     # Backward-compatible escape hatch; normal workflows infer this.
     add_legacy_mode_override(parser)
@@ -224,12 +224,18 @@ def main():
 
     # Bundled workflows infer mode from enzyme/platform; custom models use
     # metadata. The hidden legacy --mode remains the highest-priority override.
-    from fiberhmm.models import get_observation_mode
+    from fiberhmm.models import get_metadata_mode_aliases, get_observation_mode
     inferred_mode = (
         get_observation_mode(
             args.enzyme, args.seq, warn_missing_seq=False
         )
         if using_bundled_model else None
+    )
+    metadata_mode_aliases = (
+        get_metadata_mode_aliases(
+            args.enzyme, args.seq, warn_missing_seq=False
+        )
+        if using_bundled_model else ()
     )
     try:
         mode = resolve_observation_mode(
@@ -240,6 +246,7 @@ def main():
                 f"bundled {args.enzyme} model"
                 if using_bundled_model else "custom model"
             ),
+            metadata_mode_aliases=metadata_mode_aliases,
         )
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)

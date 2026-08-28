@@ -6,7 +6,7 @@ Default values can be overridden per-script where needed.
 
 import argparse
 import sys
-from typing import Optional
+from typing import Collection, Optional
 
 OBSERVATION_MODES = ('pacbio-fiber', 'nanopore-fiber', 'daf', 'gpc', 'cpg')
 
@@ -46,6 +46,7 @@ def resolve_observation_mode(
     inferred_mode: Optional[str] = None,
     explicit_mode: Optional[str] = None,
     source_label: str = 'selected model',
+    metadata_mode_aliases: Collection[str] = (),
 ) -> str:
     """Resolve a high-level command's observation mode.
 
@@ -88,7 +89,11 @@ def resolve_observation_mode(
         return explicit_mode
 
     if valid_inferred_mode is not None:
-        if valid_model_mode is not None and valid_model_mode != valid_inferred_mode:
+        if (
+            valid_model_mode is not None
+            and valid_model_mode != valid_inferred_mode
+            and valid_model_mode not in metadata_mode_aliases
+        ):
             print(
                 f"WARNING: {source_label} metadata declares mode "
                 f"{valid_model_mode!r}, but --enzyme/--seq selects "

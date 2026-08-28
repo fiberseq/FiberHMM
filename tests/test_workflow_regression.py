@@ -45,6 +45,33 @@ WORKFLOW_CASES = [
         "nanopore-fiber",
         id="hia5-nanopore-reverse",
     ),
+    pytest.param(
+        "ecogii_pacbio",
+        "m6a_forward",
+        None,
+        "ecogii",
+        "pacbio",
+        "pacbio-fiber",
+        id="ecogii-pacbio",
+    ),
+    pytest.param(
+        "ecogii_nanopore_forward",
+        "m6a_forward",
+        None,
+        "ecogii",
+        "nanopore",
+        "nanopore-fiber",
+        id="ecogii-nanopore-forward",
+    ),
+    pytest.param(
+        "ecogii_nanopore_reverse",
+        "m6a_reverse",
+        None,
+        "ecogii",
+        "nanopore",
+        "nanopore-fiber",
+        id="ecogii-nanopore-reverse",
+    ),
 ]
 
 for _enzyme in ("dddb", "ddda"):
@@ -304,7 +331,6 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
     applied_bam = str(tmp_path / f"{case_name}_applied.bam")
     recalled_bam = str(tmp_path / f"{case_name}_recalled.bam")
     apply_model_path = get_model_path(enzyme, tool="apply", seq=seq)
-    recall_model_path = get_model_path(enzyme, tool="recall", seq=seq)
 
     assert process_bam_for_footprints(
         input_bam=input_bam,
@@ -341,9 +367,9 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
         lambda default_recall_nucs=False: SimpleNamespace(
             in_bam=applied_bam,
             out_bam=recalled_bam,
-            model=recall_model_path,
-            enzyme=None,
-            seq=None,
+            model=None,
+            enzyme=enzyme,
+            seq=seq,
             downstream_compat=False,
             cores=1,
             min_llr=0.0,

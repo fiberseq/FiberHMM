@@ -226,8 +226,15 @@ def reference_profile_for_assay(mode: str, enzyme: Optional[str]) -> str:
     if mode in ("pacbio-fiber", "nanopore-fiber"):
         if enzyme in ("ddda", "dddb"):
             raise ValueError(
-                f"incompatible QC assay: {mode} requires Hia5, not {enzyme}"
+                f"incompatible QC assay: {mode} requires an m6A fiber enzyme, "
+                f"not {enzyme}"
             )
+        # EcoGII uses the same m6A observation machinery, but its rate
+        # distribution is not interchangeable with the bundled Hia5 QC
+        # controls.  Keep descriptive QC enabled without assigning a
+        # misleading Hia5 reference score.
+        if enzyme == "ecogii":
+            return ""
         return "hia5_nanopore" if mode == "nanopore-fiber" else "hia5_pacbio"
     return ""
 
@@ -259,11 +266,11 @@ def infer_assay(
 
     resolved_enzyme: Optional[str] = None if enzyme == "auto" else enzyme
     if resolved_enzyme is None:
-        match = re.search(r"enzyme=(hia5|ddda|dddb)", text)
+        match = re.search(r"enzyme=(hia5|ecogii|ddda|dddb|sssi)", text)
         if match:
             resolved_enzyme = match.group(1)
         else:
-            match = re.search(r"--enzyme[ =](hia5|ddda|dddb)", text)
+            match = re.search(r"--enzyme[ =](hia5|ecogii|ddda|dddb|sssi)", text)
             if match:
                 resolved_enzyme = match.group(1)
 

@@ -51,6 +51,7 @@ def test_ddda_derived_tf_edge_gap_is_ddda_recall_only():
         ("dddb", "daf", None, ("daf", "dddb", "nanopore", "daf")),
         ("hia5", "pacbio-fiber", None, ("fiber-seq", "hia5", "pacbio", "pacbio-fiber")),
         ("hia5", "nanopore-fiber", None, ("fiber-seq", "hia5", "nanopore", "nanopore-fiber")),
+        ("ecogii", "nanopore-fiber", None, ("fiber-seq", "ecogii", "nanopore", "nanopore-fiber")),
     ],
 )
 def test_chemistry_declaration_records_supported_platform(enzyme, mode, seq, expected):
@@ -115,6 +116,55 @@ def test_fiberhmm_call_stdout_is_clean_bam_stream(benchmark_model_path, tmp_path
         "platform": "pacbio",
         "mode": "pacbio-fiber",
         "model": Path(benchmark_model_path).stem,
+    }]
+
+
+def test_fiberhmm_call_ecogii_nanopore_uses_shared_model_quietly(tmp_path):
+    input_bam = str(tmp_path / "ecogii_ont_input.bam")
+    output_bam = str(tmp_path / "ecogii_ont_output.bam")
+    make_synthetic_bam(
+        input_bam,
+        n_reads=3,
+        read_length=600,
+        n_chroms=1,
+        chrom_length=10_000,
+        mod_rate=0.30,
+        seed=322,
+    )
+    command = [
+        sys.executable, "-m", "fiberhmm.cli.call",
+        "-i", input_bam,
+        "-o", output_bam,
+        "--enzyme", "ecogii",
+        "--seq", "nanopore",
+        "--min-read-length", "0",
+        "--prob-threshold", "0",
+        "--min-llr", "1000",
+        "--chunk-size", "3",
+        "--io-threads", "1",
+        "--no-qc",
+        "-c", "1",
+    ]
+    result = subprocess.run(
+        command,
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "metadata declares mode" not in result.stderr
+    with pysam.AlignmentFile(output_bam, "rb", check_sq=False) as bam:
+        reads = list(bam.fetch(until_eof=True))
+        chemistry = declared_chemistries(bam.header)
+    assert len(reads) == 3
+    assert chemistry == [{
+        "assay": "fiber-seq",
+        "enzyme": "ecogii",
+        "platform": "nanopore",
+        "mode": "nanopore-fiber",
+        "model": "ecogii_pacbio",
     }]
 
 

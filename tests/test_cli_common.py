@@ -71,6 +71,17 @@ class TestHighLevelModeResolution:
         assert mode == 'daf'
         assert "metadata declares mode 'pacbio-fiber'" in capsys.readouterr().err
 
+    def test_intentional_shared_model_alias_is_quiet(self, capsys):
+        mode = resolve_observation_mode(
+            'pacbio-fiber',
+            inferred_mode='nanopore-fiber',
+            source_label='bundled ecogii model',
+            metadata_mode_aliases=('pacbio-fiber',),
+        )
+
+        assert mode == 'nanopore-fiber'
+        assert capsys.readouterr().err == ''
+
     def test_explicit_mode_can_contradict_inference(self, capsys):
         mode = resolve_observation_mode(
             'daf',

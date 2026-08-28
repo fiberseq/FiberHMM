@@ -14,6 +14,7 @@ from fiberhmm.qc.core import (
     _range_score,
     analyze_sample,
     format_terminal,
+    infer_assay,
     load_control_curves,
     load_control_examples,
     load_references,
@@ -137,6 +138,8 @@ def test_reference_pattern_amplitude_prevents_flat_false_pass():
         ("daf", "ddda", "ddda"),
         ("pacbio-fiber", "hia5", "hia5_pacbio"),
         ("nanopore-fiber", "hia5", "hia5_nanopore"),
+        ("pacbio-fiber", "ecogii", ""),
+        ("nanopore-fiber", "ecogii", ""),
     ],
 )
 def test_reference_profile_is_locked_to_assay(mode, enzyme, expected):
@@ -146,6 +149,29 @@ def test_reference_profile_is_locked_to_assay(mode, enzyme, expected):
 def test_reference_profile_rejects_incompatible_assay():
     with pytest.raises(ValueError, match="incompatible QC assay"):
         reference_profile_for_assay("daf", "hia5")
+
+
+def test_ecogii_qc_does_not_borrow_hia5_calibration():
+    assert reference_profile_for_assay("pacbio-fiber", "ecogii") == ""
+    assert reference_profile_for_assay("nanopore-fiber", "ecogii") == ""
+
+
+def test_ecogii_nanopore_header_infers_descriptive_qc(tmp_path):
+    path = tmp_path / "ecogii.bam"
+    header = pysam.AlignmentHeader.from_dict({
+        "HD": {"VN": "1.6"},
+        "SQ": [{"SN": "chr1", "LN": 1000}],
+        "PG": [{
+            "ID": "fiberhmm-call",
+            "PN": "fiberhmm-call",
+            "DS": "mode=nanopore-fiber enzyme=ecogii coord=molecular",
+        }],
+    })
+    with pysam.AlignmentFile(path, "wb", header=header):
+        pass
+    assert infer_assay(str(path), [], mode="auto", enzyme="auto") == (
+        "nanopore-fiber", "ecogii", ""
+    )
 
 
 def test_packaged_controls_are_aggregate_curves_only():

@@ -17,6 +17,8 @@ hia5    nanopore  apply    hia5_nanopore.json
 hia5    nanopore  recall   hia5_nanopore.json
 ecogii  pacbio    apply    ecogii_pacbio.json
 ecogii  pacbio    recall   ecogii_pacbio.json
+ecogii  nanopore  apply    ecogii_pacbio.json
+ecogii  nanopore  recall   ecogii_pacbio.json
 sssi    nanopore  apply    cpg_nanopore.json
 sssi    nanopore  recall   cpg_nanopore.json
 dddb    (any)     apply    dddb_nanopore.json
@@ -39,7 +41,7 @@ def _bundled_model_path(filename: str) -> str:
 
 # (enzyme, seq_or_None)  →  {tool: filename, mode: observation mode}
 # 'seq_or_None' is None for enzymes where platform does not matter
-_BUNDLED: dict[tuple[str, str | None], dict[str, str]] = {
+_BUNDLED: dict[tuple[str, str | None], dict[str, object]] = {
     ('hia5', 'pacbio'): {
         'apply': 'hia5_pacbio.json',
         'recall': 'hia5_pacbio.json',
@@ -54,6 +56,19 @@ _BUNDLED: dict[tuple[str, str | None], dict[str, str]] = {
         'apply': 'ecogii_pacbio.json',
         'recall': 'ecogii_pacbio.json',
         'mode': 'pacbio-fiber',
+    },
+    # The existing EcoGII parameter file can be evaluated on both platforms.
+    # ONT changes the observation frame to strand-aware nanopore-fiber; the
+    # parameter file itself was fitted on PacBio data and remains subject to
+    # independent ONT calibration/benchmarking.
+    ('ecogii', 'nanopore'): {
+        'apply': 'ecogii_pacbio.json',
+        'recall': 'ecogii_pacbio.json',
+        'mode': 'nanopore-fiber',
+        # The shared JSON predates ONT support and truthfully records the
+        # PacBio frame in its standalone metadata. For this bundled alias the
+        # registry supplies the ONT frame, so this mismatch is intentional.
+        'metadata_mode_aliases': ('pacbio-fiber',),
     },
     ('sssi', 'nanopore'): {
         'apply': 'cpg_nanopore.json',
@@ -73,11 +88,11 @@ _BUNDLED: dict[tuple[str, str | None], dict[str, str]] = {
 }
 
 SUPPORTED_ENZYMES = sorted({e for e, _ in _BUNDLED})
-# Enzymes where --seq matters (m6A on PacBio vs Nanopore differ). EcoGII deposits the
-# same m6A mark as Hia5, so it reuses the pacbio-fiber machinery; only a PacBio model
-# is bundled today (from SAMOSA), a nanopore EcoGII model can be added later.
+# Enzymes where --seq selects the observation frame. EcoGII reuses one
+# chemistry-calibrated emission table; ONT selects strand-aware nanopore-fiber
+# encoding while PacBio selects pacbio-fiber encoding.
 _SEQ_REQUIRED = {'hia5', 'ecogii', 'sssi'}
-_SEQ_DEFAULT  = 'pacbio'   # default when --seq omitted for hia5
+_SEQ_DEFAULT  = 'pacbio'   # default when --seq is omitted for a platform model
 
 
 def _get_bundled_entry(
@@ -85,7 +100,7 @@ def _get_bundled_entry(
     seq: str | None,
     *,
     warn_missing_seq: bool,
-) -> dict[str, str]:
+) -> dict[str, object]:
     """Resolve a registry entry shared by model-path and mode lookup."""
     enz = enzyme.lower()
 
@@ -125,7 +140,25 @@ def get_observation_mode(
     entry = _get_bundled_entry(
         enzyme, seq, warn_missing_seq=warn_missing_seq
     )
-    return entry['mode']
+    return str(entry['mode'])
+
+
+def get_metadata_mode_aliases(
+    enzyme: str,
+    seq: str | None = None,
+    *,
+    warn_missing_seq: bool = True,
+) -> tuple[str, ...]:
+    """Return intentional bundled metadata modes accepted without warning.
+
+    This is narrowly used when one calibrated chemistry file is registered for
+    more than one platform observation frame. It does not weaken validation
+    for custom models or unrelated bundled-model metadata mismatches.
+    """
+    entry = _get_bundled_entry(
+        enzyme, seq, warn_missing_seq=warn_missing_seq
+    )
+    return tuple(entry.get('metadata_mode_aliases', ()))
 
 
 def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) -> str:
@@ -134,13 +167,14 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
     Parameters
     ----------
     enzyme:
-        One of ``'hia5'``, ``'dddb'``, ``'ddda'``.
+        One of the bundled enzyme presets, including ``'hia5'``, ``'ecogii'``,
+        ``'dddb'``, ``'ddda'``, and ``'sssi'``.
     tool:
         ``'apply'`` (fiberhmm-apply nuc HMM) or ``'recall'``
         (fiberhmm-recall-tfs TF recaller).
     seq:
         Sequencing platform: ``'pacbio'`` or ``'nanopore'``.
-        Required for Hia5; ignored for DddB / DddA.
+        Required for Hia5, EcoGII, and SssI; ignored for DddB / DddA.
 
     Raises
     ------
@@ -153,7 +187,7 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
     entry = _get_bundled_entry(enzyme, seq, warn_missing_seq=True)
 
     fname = entry.get(t)
-    if fname is None:
+    if not isinstance(fname, str):
         raise KeyError(
             f"Tool {tool!r} not recognised; use 'apply' or 'recall'."
         )
