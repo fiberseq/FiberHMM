@@ -17,17 +17,23 @@ For installation and day-to-day usage see the [README](../README.md).
 
 ## Analysis modes
 
-| Mode | Flag | Description | Target bases |
-|------|------|-------------|--------------|
-| **PacBio fiber-seq** | `--mode pacbio-fiber` | Default. m6A at A and T (both strands) | A, T (with RC) |
-| **Nanopore fiber-seq** | `--mode nanopore-fiber` | m6A at A only (single strand) | A only |
-| **DAF-seq** | `--mode daf` | Deamination at C/G (strand-specific) | C or G |
+| Mode | Normal selection | Description | Target bases |
+|------|------------------|-------------|--------------|
+| **PacBio fiber-seq** | `--enzyme hia5 --seq pacbio` | m6A at A and T (both strands) | A, T (with RC) |
+| **Nanopore fiber-seq** | `--enzyme hia5 --seq nanopore` | m6A at A only (single strand) | A only |
+| **DAF-seq** | `--enzyme dddb` or `--enzyme ddda` | Deamination at C/G (strand-specific) | C or G |
 
 The `pacbio-fiber` vs `nanopore-fiber` distinction only matters for Hia5 (m6A),
 where PacBio detects modifications on both strands while Nanopore detects only
-one. For deaminase methods (DddA, DddB), `--mode daf` is always used regardless
-of sequencing platform — the chemistry is inherently strand-specific. `--mode`
-defaults to the value baked into the model, so `--enzyme` usually sets it for you.
+one. For deaminase methods (DddA, DddB), DAF mode is selected regardless of
+sequencing platform. High-level commands infer this from `--enzyme`/`--seq`;
+custom models use their embedded mode metadata.
+
+The legacy high-level `--mode` flag is hidden but still accepted for old scripts
+and recovery from incorrect custom-model metadata. An explicit value wins even
+when it contradicts normal inference, and emits a warning. New commands should
+select the chemistry and platform instead. Low-level model-building tools still
+take an explicit mode because it is an input to constructing the model.
 
 ## BAM tag glossary
 
@@ -63,7 +69,7 @@ names. Use `--no-legacy-tags` to skip the legacy refresh and emit only `MA`/`AQ`
 |-----|------|-------------|
 | `st` | Z | Conversion strand: `CT` (+ strand, C→T) or `GA` (− strand, G→A) |
 
-The `--mode daf` one-pass path in `fiberhmm-call` does **not** write `st:Z` — it
+The DAF one-pass path in `fiberhmm-call` does **not** write `st:Z` — it
 derives strand internally from MD and doesn't modify the stored sequence.
 
 `fiberhmm-dedup` writes:
@@ -445,6 +451,26 @@ Tools that ignore `AN` still see valid linear `MA/AQ` intervals at both ends;
 FiberBrowser and `fiberhmm-extract --circular-groups` use `AN` to reconstruct the
 single wrapped feature. Legacy `ns/nl` and `as/al` are also split to stay
 coordinate-valid but do not carry the fused identity.
+
+## Haplotype fields in BED / bigBed extraction
+
+`fiberhmm-extract --haplotype-fields` copies the source BAM record's scalar
+`HP:i` (haplotype) and `PS:i` (phase set) tags into every emitted feature row.
+The option is off by default, so existing BED text and bigBed autoSQL schemas
+remain byte/schema compatible unless it is requested.
+
+Optional columns always have a deterministic order:
+
+```
+BED12 | per-block scores | circular grouping | hp | ps
+```
+
+Both appended autoSQL fields are signed integers. `-1` means that tag was absent
+or not integer-valued; the sentinels are independent, so `HP:i:1` without `PS`
+is written as `1, -1`. Valid HP values are positive and valid PS identifiers are
+non-negative. Wrapped circular pieces each repeat the source read's same HP/PS
+values. Extraction only propagates tags: it does not phase reads, infer missing
+values, or alter calls.
 
 ## Reading the output
 

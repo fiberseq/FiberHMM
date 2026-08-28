@@ -12,7 +12,13 @@ We ship one autoSQL per extract type so any bigBed viewer (UCSC, IGV,
 FiberBrowser) opens a FiberHMM file and immediately knows whether it's
 a nucleosome / MSP / TF / m6A / m5C track and what each column means.
 
-Two schema flavors:
+The default schema is BED12. Optional fields are appended in this order:
+per-block scores, circular grouping, then haplotype fields. The opt-in
+``haplotype_fields=True`` variant adds scalar ``hp`` and ``ps`` columns copied
+from the source BAM record; ``-1`` means the corresponding tag was absent or
+not an integer.
+
+Two base schema flavors:
 
   - **BED12 + 1** (default): the standard 12 columns plus ``isDuplicate``.
     Mean quality is flattened into column 5 (``score``); the final flag
@@ -119,6 +125,13 @@ _CIRCULAR_FIELDS = (
 
 CIRCULAR_FIELD_COUNT = 5
 
+_HAPLOTYPE_FIELDS = (
+    '    int hp; "Source BAM HP tag (haplotype); -1 if absent or not an integer"\n'
+    '    int ps; "Source BAM PS tag (phase set); -1 if absent or not an integer"\n'
+)
+
+HAPLOTYPE_FIELD_COUNT = 2
+
 _DUPLICATE_FIELD = (
     '    uint isDuplicate; "1 when the source BAM record carried flag 0x400; 0 otherwise"\n'
 )
@@ -134,12 +147,15 @@ def _make_schema(table_name: str, description: str,
                  extract_type: Optional[str] = None,
                  block_scores: bool = False,
                  sample_name: Optional[str] = None,
-                 circular_groups: bool = False) -> str:
+                 circular_groups: bool = False,
+                 haplotype_fields: bool = False) -> str:
     fields = _BED12_FIELDS
     if block_scores and extract_type in _BLOCK_SCORE_FIELDS:
         fields = fields + _BLOCK_SCORE_FIELDS[extract_type]
     if circular_groups:
         fields = fields + _CIRCULAR_FIELDS
+    if haplotype_fields:
+        fields = fields + _HAPLOTYPE_FIELDS
     fields = fields + _DUPLICATE_FIELD
     if sample_name:
         # Prepend a machine-parseable "Sample: <name>." marker. The autoSQL
@@ -200,6 +216,12 @@ _DESCRIPTIONS = {
         'not probabilistic). Use --block-scores to carry the R/Y '
         'disambiguation in a blockMod per-block column.'
     ),
+    'bothstrand': (
+        'FiberHMM paired-duplex DAF coverage. Each BED12 block marks a span '
+        'where both physical strands contributed deamination evidence to a '
+        'joint consensus molecule. Ordinary single-strand reads contribute '
+        'no row.'
+    ),
 }
 
 
@@ -214,7 +236,8 @@ _TYPE_ALIASES = {'footprint': 'nucleosome'}
 
 def get_schema(extract_type: str, block_scores: bool = False,
                sample_name: Optional[str] = None,
-               circular_groups: bool = False) -> Optional[str]:
+               circular_groups: bool = False,
+               haplotype_fields: bool = False) -> Optional[str]:
     """Return the autoSQL schema string for ``extract_type``, optionally
     with the per-block score columns appended and/or a ``Sample: <name>.``
     marker prepended to the description."""
@@ -226,13 +249,15 @@ def get_schema(extract_type: str, block_scores: bool = False,
                         extract_type=extract_type,
                         block_scores=block_scores,
                         sample_name=sample_name,
-                        circular_groups=circular_groups)
+                        circular_groups=circular_groups,
+                        haplotype_fields=haplotype_fields)
 
 
 def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
                       block_scores: bool = False,
                       sample_name: Optional[str] = None,
-                      circular_groups: bool = False) -> Optional[str]:
+                      circular_groups: bool = False,
+                      haplotype_fields: bool = False) -> Optional[str]:
     """Write the autoSQL file for a given extract_type to disk.
 
     Returns the path to the written file, or None if no schema exists
@@ -244,7 +269,8 @@ def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
     extract_type = _TYPE_ALIASES.get(extract_type, extract_type)
     schema = get_schema(extract_type, block_scores=block_scores,
                         sample_name=sample_name,
-                        circular_groups=circular_groups)
+                        circular_groups=circular_groups,
+                        haplotype_fields=haplotype_fields)
     if schema is None:
         return None
     variant = ''
@@ -252,6 +278,8 @@ def write_autosql_for(extract_type: str, out_dir: Optional[str] = None,
         variant += '.bs'
     if circular_groups:
         variant += '.circ'
+    if haplotype_fields:
+        variant += '.hap'
     suffix = f'{variant}.as' if variant else '.as'
     if out_dir is None:
         fd, path = tempfile.mkstemp(prefix=f'fiberhmm_{extract_type}_',

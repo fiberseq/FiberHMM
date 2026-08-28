@@ -26,6 +26,10 @@ from pathlib import Path
 import re
 import sys
 
+from fiberhmm.cli.common import (
+    add_legacy_mode_override,
+    resolve_observation_mode,
+)
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.daf.snps import (
     DEFAULT_SNP_MIN_ALT_FIBERS,
@@ -38,7 +42,7 @@ from fiberhmm.inference.parallel import (
     _process_bam_streaming_pipeline_fused,
 )
 from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
-from fiberhmm.models import SUPPORTED_ENZYMES
+from fiberhmm.models import SUPPORTED_ENZYMES, get_observation_mode
 from fiberhmm.models import get_model_path as _get_bundled_model
 
 
@@ -94,17 +98,17 @@ def parse_args():
     p.add_argument('--enzyme', choices=sorted(SUPPORTED_ENZYMES), default=None,
                    help='Enzyme preset (hia5/dddb/ddda).')
     p.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                   help='Platform (required for hia5).')
+                   help='Hia5 platform; omission warns and defaults to pacbio. '
+                        'Ignored for dddb/ddda.')
     p.add_argument('--reference', default=None,
-                   help='Reference FASTA for --mode daf on raw BAMs that lack '
+                   help='Reference FASTA for DAF-seq BAMs that lack '
                         'both R/Y IUPAC encoding and MD tags. When present, acts '
                         'as a fallback source for deamination-site detection. '
                         'Required and always used by --ddda-mcg to determine '
                         'CpG and DddA sequence context.')
 
     # --- Apply params ---
-    p.add_argument('--mode', default=None,
-                   help='Observation mode override. Default: from model.')
+    add_legacy_mode_override(p)
     p.add_argument('-k', '--context-size', type=int, default=None,
                    help='Context size override. Default: from model.')
     p.add_argument('--edge-trim', type=int, default=10,
@@ -489,7 +493,7 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
         return
 
     print(
-        "error: --mode daf needs deamination calls, and none of the supported\n"
+        "error: DAF-seq calling needs deamination calls, and none of the supported\n"
         f"  sources were found in the first {checked} mapped reads of {input_bam}:\n"
         "    - R/Y IUPAC codes in the stored query sequence\n"
         "      (produced by fiberhmm-daf-encode), or\n"
@@ -718,6 +722,7 @@ def _daf_snp_depth_preflight(
 def main():
     args = parse_args()
     stdout_mode = (args.output == '-')
+    using_bundled_model = args.model is None
 
     if stdout_mode:
         sys.stdout = sys.stderr  # informational prints → stderr, BAM → real stdout
@@ -727,9 +732,47 @@ def main():
 
     # Resolve mode/k from model metadata
     _, model_k, model_mode = load_model_with_metadata(apply_model_path)
-    mode = args.mode or model_mode or 'pacbio-fiber'
+    inferred_mode = (
+        get_observation_mode(
+            args.enzyme, args.seq, warn_missing_seq=False
+        )
+        if using_bundled_model else None
+    )
+    try:
+        mode = resolve_observation_mode(
+            model_mode,
+            inferred_mode=inferred_mode,
+            explicit_mode=args.mode,
+            source_label=(
+                f"bundled {args.enzyme} model"
+                if using_bundled_model else "custom model"
+            ),
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
     k = args.context_size or int(model_k or 3)
     ddda_mcg = _configure_ddda_mcg(args, mode)
+
+    explicit_dedup = args.dedup
+    if explicit_dedup is False and (args.dedup_collapse or args.dedup_flag_only):
+        print(
+            "error: --no-dedup conflicts with --dedup-collapse/--dedup-flag-only",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    args.dedup = _resolve_dedup(args, mode)
+    if args.dedup and args.input == '-':
+        if explicit_dedup is True or args.dedup_collapse or args.dedup_flag_only:
+            print("error: --dedup requires a file input (it two-passes the BAM to "
+                  "fingerprint reads); cannot dedup a stdin stream.", file=sys.stderr)
+            sys.exit(1)
+        print(
+            "  automatic DAF dedup skipped for stdin; save the input BAM or use "
+            "--no-dedup to silence this note.",
+            file=sys.stderr,
+        )
+        args.dedup = False
 
     explicit_dedup = args.dedup
     if explicit_dedup is False and (args.dedup_collapse or args.dedup_flag_only):
@@ -770,7 +813,7 @@ def main():
         recall_nucs = bool(args.recall_nucs)
     nuc_recall_policy = _resolve_nuc_recall_policy(args, mode)
 
-    # Fast-fail sniff for --mode daf BEFORE any BAM scanning (e.g. --phase-nrl
+    # Fast-fail sniff for DAF mode BEFORE any BAM scanning (e.g. --phase-nrl
     # auto estimation): the DAF path needs R/Y in the stored sequence, MD tags,
     # or --reference. If none are available every read is silently skipped, so
     # error out in under a second with an actionable message.

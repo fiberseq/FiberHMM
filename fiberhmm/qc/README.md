@@ -72,12 +72,14 @@ near-flat sample approaches zero even if its correlation is spuriously high.
 summaries. `control_curves.json` stores the aggregate curves and size
 distributions used as plot overlays. Automatic `fiberhmm-call` QC chooses
 exactly one profile from the resolved enzyme/platform combination; it never
-chooses a reference by sample filename. Endpoint-constrained
-deamination-fingerprint deduplication is run only when explicitly requested by
-`fiberhmm-call --dedup`; integrated dedup marks and retains all reads unless
-destructive collapse is requested. Marked PCR copies are excluded from pooled
-SNP, phase, and QC signal calculations, and the exact full-run duplication
-summary is forwarded into automatic QC.
+chooses a reference by sample filename. File-based DddA/DddB calls
+automatically run endpoint-constrained deamination-fingerprint duplicate
+detection before SNP discovery. The integrated default is nondestructive:
+every record is retained, and copies are marked with SAM flag `0x400` plus
+`di`/`ds` cluster tags. Only `--dedup-collapse` removes reads;
+`--no-dedup` disables the automatic pass. Marked PCR copies are excluded from
+pooled SNP, phase, and QC signal calculations, and the exact full-run
+duplication summary is forwarded into automatic QC.
 
 Automatic file-based DddA/DddB SNP calling adds two diagnostic panels when a
 bounded local-depth preflight reaches the configured threshold. Low-coverage

@@ -1,9 +1,43 @@
 """Failure-path coverage for posterior export CLI helpers."""
 
+import sys
+
 import pytest
 
 from fiberhmm.cli import export_posteriors
 from fiberhmm.posteriors import tsv_backend
+
+
+def test_cli_infers_dddb_mode_instead_of_defaulting_to_pacbio(
+    monkeypatch, tmp_path, capsys
+):
+    captured = {}
+
+    monkeypatch.setattr(
+        export_posteriors,
+        "load_model_with_metadata",
+        lambda *args, **kwargs: (object(), 3, "pacbio-fiber"),
+    )
+    monkeypatch.setattr(
+        export_posteriors,
+        "export_posteriors",
+        lambda **kwargs: captured.update(kwargs),
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fiberhmm-posteriors",
+            "-i", "input.bam",
+            "-o", str(tmp_path / "posteriors.tsv.gz"),
+            "--enzyme", "dddb",
+        ],
+    )
+
+    export_posteriors.main()
+
+    assert captured["mode_override"] == "daf"
+    assert "--enzyme/--seq selects 'daf'" in capsys.readouterr().err
 
 
 def test_export_posteriors_tsv_closes_writer_when_region_processing_fails(

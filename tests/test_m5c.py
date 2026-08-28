@@ -485,6 +485,33 @@ def test_extract_m5c_reads_daf_ma_spans_without_native_mm_tag():
     )
 
 
+def test_extract_m5c_does_not_emit_undeclared_circular_columns():
+    class Read:
+        reference_name = "chr1"
+        query_name = "read1"
+        is_reverse = False
+
+        def __init__(self):
+            self.tags = {"MA": "100;ddda_mcg.:1-10,91-10"}
+
+        def has_tag(self, tag):
+            return tag in self.tags
+
+        def get_tag(self, tag):
+            if tag not in self.tags:
+                raise KeyError(tag)
+            return self.tags[tag]
+
+    output = io.StringIO()
+    count = _extract_m5c(
+        Read(), output, 125, np.arange(100, dtype=np.int64) + 1000,
+        block_scores=True, circular_groups=True, haplotype_fields=True,
+    )
+    assert count == 2
+    # BED12 + blockMl + HP + PS + isDuplicate. m5C has no circular schema.
+    assert len(output.getvalue().strip().split("\t")) == 16
+
+
 def test_distance_transition_is_symmetric_and_forgets_across_long_gap():
     near = distance_transition(1, 1000)
     far = distance_transition(100_000, 1000)

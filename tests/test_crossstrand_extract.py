@@ -39,6 +39,20 @@ def test_both_strand_extract_intersection_to_bed():
     assert int(fields[1]) == 1050 and int(fields[2]) == 1100   # both-strand ref span
     assert fields[3] == 'm.cs'
     assert fields[9] == '1' and fields[10].startswith('50')    # one 50bp block
+    assert fields[-1] == '0'                                  # isDuplicate
+
+
+def test_both_strand_extract_appends_haplotype_then_duplicate_fields():
+    r = _consensus_read('200;deam+:1-100;deam-:51-100')
+    r.set_tag('HP', 2, value_type='i')
+    r.set_tag('PS', 4242, value_type='i')
+    r.flag |= 0x400
+    out = io.StringIO()
+
+    assert _extract_both_strand(r, out, haplotype_fields=True) == 1
+    fields = out.getvalue().strip().split('\t')
+    assert len(fields) == 15
+    assert fields[-3:] == ['2', '4242', '1']
 
 
 def test_non_consensus_read_yields_nothing():

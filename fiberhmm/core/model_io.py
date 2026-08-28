@@ -230,7 +230,7 @@ def load_model_with_metadata(filepath: str, normalize: bool = True) -> Tuple[Fib
         model.emissionprob_ = data['emissionprob']
 
         context_size = int(data.get('context_size', 3))
-        mode = str(data.get('mode', 'pacbio-fiber'))
+        mode = str(data.get('mode', 'unknown'))
 
     elif filepath.endswith('.json'):
         with open(filepath, 'r') as f:
@@ -242,7 +242,7 @@ def load_model_with_metadata(filepath: str, normalize: bool = True) -> Tuple[Fib
         model.emissionprob_ = np.array(data['emissionprob'])
 
         context_size = data.get('context_size', 3)
-        mode = data.get('mode', 'pacbio-fiber')
+        mode = data.get('mode', 'unknown')
 
     else:
         # Pickle format
@@ -254,15 +254,15 @@ def load_model_with_metadata(filepath: str, normalize: bool = True) -> Tuple[Fib
             if not isinstance(model, FiberHMM):
                 model = _convert_hmmlearn_model(model)
             context_size = obj.get('context_size', 3)
-            mode = obj.get('mode', 'pacbio-fiber')
+            mode = obj.get('mode', 'unknown')
         elif isinstance(obj, FiberHMM):
             model = obj
             context_size = 3
-            mode = 'pacbio-fiber'
+            mode = 'unknown'
         else:
             model = _convert_hmmlearn_model(obj)
             context_size = 3
-            mode = 'pacbio-fiber'
+            mode = 'unknown'
 
     # Normalize states to ensure correct assignment
     if normalize:

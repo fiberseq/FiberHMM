@@ -9,11 +9,13 @@ from fiberhmm.cli.common import (
     add_context_args,
     add_edge_trim_args,
     add_filter_args,
+    add_legacy_mode_override,
     add_mode_args,
     add_output_args,
     add_parallel_args,
     add_stats_args,
     add_verbose_args,
+    resolve_observation_mode,
 )
 
 
@@ -48,6 +50,56 @@ class TestAddModeArgs:
         add_mode_args(parser, required=True)
         with pytest.raises(SystemExit):
             parser.parse_args([])
+
+
+class TestHighLevelModeResolution:
+    def test_legacy_override_is_hidden_but_accepted(self):
+        parser = argparse.ArgumentParser()
+        add_legacy_mode_override(parser)
+
+        assert '--mode' not in parser.format_help()
+        assert parser.parse_args([]).mode is None
+        assert parser.parse_args(['--mode', 'daf']).mode == 'daf'
+
+    def test_bundled_inference_wins_over_stale_model_metadata(self, capsys):
+        mode = resolve_observation_mode(
+            'pacbio-fiber',
+            inferred_mode='daf',
+            source_label='bundled dddb model',
+        )
+
+        assert mode == 'daf'
+        assert "metadata declares mode 'pacbio-fiber'" in capsys.readouterr().err
+
+    def test_explicit_mode_can_contradict_inference(self, capsys):
+        mode = resolve_observation_mode(
+            'daf',
+            inferred_mode='daf',
+            explicit_mode='pacbio-fiber',
+            source_label='bundled ddda model',
+        )
+
+        assert mode == 'pacbio-fiber'
+        warning = capsys.readouterr().err
+        assert "legacy --mode 'pacbio-fiber' overrides" in warning
+        assert "verify that the override is intentional" in warning
+
+    def test_explicit_mode_can_recover_missing_metadata(self, capsys):
+        mode = resolve_observation_mode(
+            'unknown',
+            explicit_mode='nanopore-fiber',
+            source_label='custom model',
+        )
+
+        assert mode == 'nanopore-fiber'
+        assert 'deprecated' in capsys.readouterr().err
+
+    def test_custom_model_uses_valid_metadata(self):
+        assert resolve_observation_mode('nanopore-fiber') == 'nanopore-fiber'
+
+    def test_custom_model_without_mode_fails_instead_of_defaulting_pacbio(self):
+        with pytest.raises(ValueError, match='does not declare.*mode'):
+            resolve_observation_mode('unknown', source_label='custom model')
 
 
 class TestAddFilterArgs:

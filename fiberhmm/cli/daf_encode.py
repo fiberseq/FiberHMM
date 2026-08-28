@@ -2,7 +2,7 @@
 """CLI entry point for fiberhmm-daf-encode.
 
 Reads a plain aligned BAM, identifies C->T / G->A deamination mismatches,
-and encodes them as IUPAC Y/R with an st:Z tag for fiberhmm-apply --mode daf.
+and encodes them as IUPAC Y/R with an st:Z tag for DAF-seq calling.
 """
 
 import argparse
@@ -16,7 +16,7 @@ def parse_args(argv=None):
         prog="fiberhmm-daf-encode",
         description=(
             "Call deamination mismatches from aligned DAF-seq BAM and encode "
-            "as IUPAC R/Y for fiberhmm-apply --mode daf."
+            "as IUPAC R/Y for FiberHMM DAF-seq calling."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
@@ -26,12 +26,12 @@ Examples:
 
   # Pipe directly to footprint calling
   fiberhmm-daf-encode -i aligned.bam -o - | \\
-      fiberhmm-apply --mode daf --streaming -i - -o output/
+      fiberhmm-apply --enzyme dddb --streaming -i - -o output/
 
   # Full pipeline from alignment
   minimap2 --MD -a ref.fa reads.fq | samtools view -b | \\
       fiberhmm-daf-encode -i - -o - | \\
-      fiberhmm-apply --mode daf --streaming -i - -o output/
+      fiberhmm-apply --enzyme dddb --streaming -i - -o output/
 
   # Use reference FASTA when MD tags are missing
   fiberhmm-daf-encode -i aligned.bam -o encoded.bam --reference ref.fa

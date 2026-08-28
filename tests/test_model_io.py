@@ -101,6 +101,45 @@ class TestLoadSaveRoundTrip:
 
 
 class TestModeAliases:
+    def test_json_without_mode_is_unknown(self, sample_model, tmp_path):
+        filepath = str(tmp_path / "model.json")
+        data = {
+            'model_type': 'FiberHMM',
+            'version': '2.0',
+            'n_states': 2,
+            'startprob': sample_model.startprob_.tolist(),
+            'transmat': sample_model.transmat_.tolist(),
+            'emissionprob': sample_model.emissionprob_.tolist(),
+            'context_size': 3,
+        }
+        with open(filepath, 'w') as f:
+            json.dump(data, f)
+
+        _, _, mode = load_model_with_metadata(filepath, normalize=False)
+        assert mode == 'unknown'
+
+    def test_npz_without_mode_is_unknown(self, sample_model, tmp_path):
+        filepath = str(tmp_path / "model.npz")
+        np.savez(
+            filepath,
+            n_states=2,
+            startprob=sample_model.startprob_,
+            transmat=sample_model.transmat_,
+            emissionprob=sample_model.emissionprob_,
+            context_size=3,
+        )
+
+        _, _, mode = load_model_with_metadata(filepath, normalize=False)
+        assert mode == 'unknown'
+
+    def test_plain_pickle_without_mode_is_unknown(self, sample_model, tmp_path):
+        filepath = str(tmp_path / "model.pickle")
+        with open(filepath, 'wb') as f:
+            pickle.dump(sample_model, f)
+
+        _, _, mode = load_model_with_metadata(filepath, normalize=False)
+        assert mode == 'unknown'
+
     def test_nanopore_alias(self, sample_model, tmp_path):
         filepath = str(tmp_path / "model.json")
         # Manually write a JSON with old mode name
