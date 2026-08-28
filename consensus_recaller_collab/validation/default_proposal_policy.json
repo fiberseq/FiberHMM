@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "description": "Conservative report-only policy. Source-selected focality is diagnostic; strong claims require an independent assay calibrated on other loci.",
+  "evidence": {
+    "minimum_controls": 3,
+    "minimum_informative": 10,
+    "minimum_site_opportunities": 5,
+    "support_log_bf": 5.0,
+    "source_min_local_enrichment": 1.5,
+    "source_max_boundary_mad": 12.0,
+    "source_min_support": 3,
+    "independent_strong_q": 0.05,
+    "independent_review_q": 0.20
+  },
+  "calibration": {
+    "minimum_heldout_null": 50,
+    "multiple_testing": "Benjamini-Hochberg within assay family",
+    "source_selected_tests_are_formal": false
+  },
+  "families": {
+    "hia5_pacbio": {
+      "minimum_site_opportunities": 3,
+      "minimum_replicate_local_enriched": 2
+    },
+    "ddda": {
+      "minimum_informative": 20,
+      "minimum_site_opportunities": 10
+    },
+    "dddb": {
+      "minimum_informative": 20,
+      "minimum_site_opportunities": 10
+    },
+    "hia5_nanopore": {
+      "minimum_informative": 5,
+      "minimum_site_opportunities": 3
+    }
+  }
+}

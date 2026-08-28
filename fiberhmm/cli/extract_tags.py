@@ -133,8 +133,17 @@ def _bed12_row(ref_name, chrom_start, chrom_end, read_id, score, strand,
     return row
 
 
-def _parse_ma_annotations(read, target_name: str):
-    """Return target annotations from MA/AQ/AN in positional annotation order."""
+def _duplicate_bed_value(read) -> int:
+    """Return the BED-safe representation of BAM duplicate flag 0x400."""
+    return int(bool(getattr(read, 'is_duplicate', False)))
+
+
+def _parse_all_ma_annotations(read):
+    """Parse MA/AQ/AN once and return annotations grouped by type.
+
+    Values retain the exact target-specific ordering and quality orientation
+    historically returned by :func:`_parse_ma_annotations`.
+    """
     try:
         ma_str = read.get_tag('MA')
     except KeyError:
@@ -156,7 +165,7 @@ def _parse_ma_annotations(read, target_name: str):
     n_per_type = [len(rt[3]) for rt in parsed['raw_types']]
     per_annotation = parse_aq_array(aq, qual_specs, n_per_type)
 
-    annotations = []
+    annotations = {}
     ann_idx = 0
     read_length = int(parsed['read_length'])
     is_reverse = bool(getattr(read, 'is_reverse', False))
@@ -164,25 +173,32 @@ def _parse_ma_annotations(read, target_name: str):
         for s, length in intervals:
             quals = per_annotation[ann_idx] if ann_idx < len(per_annotation) else []
             ann_name = an_names[ann_idx] if ann_idx < len(an_names) else ''
-            if name == target_name:
-                # MA is molecular frame; flip to SEQ (query) for ref mapping.
-                a_start, a_len = (flip_interval_frame(int(s), int(length), read_length)
-                                  if is_reverse else (int(s), int(length)))
-                q_out = [int(q) for q in quals]
-                # The BED is genomic, so emit QQQ edge bytes in GENOMIC left/right
-                # order: on a reverse read the molecular 5' edge (el) is the
-                # genomic-right edge, so swap el<->er. (q[0] = nq/tq is unchanged.)
-                if is_reverse and len(q_out) >= 3:
-                    q_out[1], q_out[2] = q_out[2], q_out[1]
-                annotations.append({
-                    'start': a_start,
-                    'length': a_len,
-                    'quals': q_out,
-                    'name': ann_name,
-                    'read_length': read_length,
-                })
+            # MA is molecular frame; flip to SEQ (query) for ref mapping.
+            a_start, a_len = (flip_interval_frame(int(s), int(length), read_length)
+                              if is_reverse else (int(s), int(length)))
+            q_out = [int(q) for q in quals]
+            # The BED is genomic, so emit QQQ edge bytes in GENOMIC left/right
+            # order: on a reverse read the molecular 5' edge (el) is the
+            # genomic-right edge, so swap el<->er. (q[0] = nq/tq is unchanged.)
+            if is_reverse and len(q_out) >= 3:
+                q_out[1], q_out[2] = q_out[2], q_out[1]
+            annotations.setdefault(name, []).append({
+                'start': a_start,
+                'length': a_len,
+                'quals': q_out,
+                'name': ann_name,
+                'read_length': read_length,
+            })
             ann_idx += 1
     return annotations
+
+
+def _parse_ma_annotations(read, target_name: str):
+    """Return target annotations from MA/AQ/AN in positional annotation order."""
+    parsed = _parse_all_ma_annotations(read)
+    if parsed is None:
+        return None
+    return parsed.get(target_name, [])
 
 
 def _annotate_circular_parts(annotations, read_length: int):
@@ -307,6 +323,7 @@ def _extract_ma_interval_type(
                 ann['mol_start'],
                 ann['mol_length'],
             ])
+            extra.append(_duplicate_bed_value(read))
             name = read_id
             if ann['circ_id'] != '.':
                 name = f"{read_id}|{target_name}|{ann['circ_id']}|{ann['circ_part']}/{ann['circ_parts']}"
@@ -335,6 +352,7 @@ def _extract_ma_interval_type(
             ])
         else:
             extra.append(','.join(str(b[3][0]) for b in blocks))
+    extra.append(_duplicate_bed_value(read))
     row = _bed12_row(
         ref_name,
         chrom_start,
@@ -400,7 +418,8 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                 # pure tag-presence checks — nucleosome, msp, tf, m6a, m5c, deam
                 # all need query->ref mapping.
                 need_mapping = any(t in extract_types for t in
-                                   ('nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam'))
+                                   ('nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam',
+                                    'bothstrand'))
 
                 for read in read_iter:
                     if read.is_unmapped or read.is_secondary or read.is_supplementary:
@@ -459,6 +478,11 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
                             read, bed_outs['deam'], query_to_ref,
                             block_scores=block_scores,
                             prob_threshold=prob_threshold)
+                    if 'bothstrand' in extract_types:
+                        if query_to_ref is None:
+                            query_to_ref = _build_query_to_ref(read)
+                        n_features['bothstrand'] += _extract_both_strand(
+                            read, bed_outs['bothstrand'], query_to_ref)
 
         return (temp_bed_paths, n_reads, n_features)
 
@@ -566,6 +590,7 @@ def _extract_footprints(read, bed_out, with_scores: bool,
         row += f"\t{block_nq}\t{block_zero}\t{block_zero}"
     if circular_groups:
         row += "\t.\t1\t1\t0\t0"
+    row += f"\t{_duplicate_bed_value(read)}"
     bed_out.write(row + "\n")
 
     return len(blocks)
@@ -667,6 +692,7 @@ def _extract_tfs(read, bed_out, with_scores: bool, min_tq: int,
         block_el = ','.join(str(b[3]) for b in blocks)
         block_er = ','.join(str(b[4]) for b in blocks)
         row += f"\t{block_tq}\t{block_el}\t{block_er}"
+    row += f"\t{_duplicate_bed_value(read)}"
     bed_out.write(row + "\n")
     return len(blocks)
 
@@ -748,6 +774,7 @@ def _extract_msps(read, bed_out, with_scores: bool,
         row += f"\t{block_aq}"
     if circular_groups:
         row += "\t.\t1\t1\t0\t0"
+    row += f"\t{_duplicate_bed_value(read)}"
     bed_out.write(row + "\n")
 
     return len(blocks)
@@ -852,6 +879,7 @@ def _extract_m6a(read, bed_out, prob_threshold: int, query_to_ref=None,
     if block_scores:
         block_ml = ','.join(str(sc) for _, sc in positions_list)
         row += f"\t{block_ml}"
+    row += f"\t{_duplicate_bed_value(read)}"
     bed_out.write(row + "\n")
 
     return len(positions_list)
@@ -919,6 +947,7 @@ def _extract_m5c(read, bed_out, prob_threshold: int, query_to_ref=None,
     if block_scores:
         block_ml = ','.join(str(sc) for _, sc in positions_list)
         row += f"\t{block_ml}"
+    row += f"\t{_duplicate_bed_value(read)}"
     bed_out.write(row + "\n")
 
     return len(positions_list)
@@ -969,6 +998,7 @@ def _extract_deam(read, bed_out, query_to_ref=None,
     if block_scores:
         block_mod = ','.join(str(code) for _, code in positions_list)
         row += f"\t{block_mod}"
+    row += f"\t{_duplicate_bed_value(read)}"
     bed_out.write(row + "\n")
 
     return len(positions_list)
@@ -1091,6 +1121,75 @@ def _deam_positions_list(read, aligned_pairs, prob_threshold: int = 0):
                         positions_list.append((int(rpos), 0))
 
     return positions_list
+
+
+def _interval_intersection(a_ivals, b_ivals):
+    """Intersection of two lists of half-open query intervals, merged."""
+    hits = []
+    for a0, a1 in a_ivals:
+        for b0, b1 in b_ivals:
+            lo, hi = max(a0, b0), min(a1, b1)
+            if hi > lo:
+                hits.append((lo, hi))
+    hits.sort()
+    merged = []
+    for start, end in hits:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _extract_both_strand(read, bed_out, query_to_ref=None) -> int:
+    """Write the ``deam+``/``deam-`` intersection of a duplex consensus.
+
+    The BED12 blocks mark query spans for which both physical strands supply
+    deamination evidence. Ordinary single-strand reads contribute nothing.
+    """
+    if query_to_ref is None:
+        query_to_ref = _build_query_to_ref(read)
+    try:
+        parsed = parse_ma_tag(read.get_tag('MA'))
+    except (KeyError, ValueError):
+        return 0
+    is_reverse = bool(read.is_reverse)
+    read_length = int(parsed['read_length'])
+    plus, minus = [], []
+    for name, strand, _qspec, intervals in parsed['raw_types']:
+        if name != 'deam':
+            continue
+        for start, length in intervals:
+            if is_reverse:
+                start, length = flip_interval_frame(
+                    int(start), int(length), read_length,
+                )
+            interval = (int(start), int(start) + int(length))
+            if strand == '+':
+                plus.append(interval)
+            elif strand == '-':
+                minus.append(interval)
+    if not plus or not minus:
+        return 0
+
+    blocks = []
+    for query_start, query_end in _interval_intersection(plus, minus):
+        ref_start = _q2r_lookup(query_to_ref, query_start)
+        ref_end = _q2r_lookup(query_to_ref, query_end - 1)
+        if ref_start is None or ref_end is None:
+            continue
+        ref_start, ref_end = min(ref_start, ref_end), max(ref_start, ref_end) + 1
+        blocks.append((ref_start, ref_end))
+    if not blocks:
+        return 0
+    blocks.sort()
+    chrom_start, chrom_end = blocks[0][0], blocks[-1][1]
+    strand = '-' if is_reverse else '+'
+    bed_out.write(_bed12_row(
+        read.reference_name, chrom_start, chrom_end, read.query_name, 1000,
+        strand, blocks,
+    ) + '\n')
+    return len(blocks)
 
 
 def _sort_supports_parallel() -> bool:
@@ -1297,6 +1396,7 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
     """
     from fiberhmm.io.autosql import (
         CIRCULAR_FIELD_COUNT,
+        DUPLICATE_FIELD_COUNT,
         EXTRA_FIELD_COUNTS,
         write_autosql_for,
     )
@@ -1314,6 +1414,8 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
     n_extra = EXTRA_FIELD_COUNTS.get(extract_type, 0) if block_scores else 0
     if circular_groups:
         n_extra += CIRCULAR_FIELD_COUNT
+    if as_file:
+        n_extra += DUPLICATE_FIELD_COUNT
 
     try:
         cmd = ['bedToBigBed']
@@ -1508,6 +1610,7 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
         predicted['msp'] = 'as/al'
     if diag['has_MA_AQ']:
         predicted['tf'] = 'MA/AQ tf. annotations'
+        predicted['bothstrand'] = 'MA deam+/deam- (duplex consensus reads)'
     if diag['has_MM'] and any('a' in s.lower() for s in diag['mm_subtypes']):
         predicted['m6a'] = 'MM/ML (A+a)'
     if diag.get('has_MA_ddda_mcg'):
@@ -1613,6 +1716,10 @@ Examples:
                              '(3) MD-tag ref mismatches as a fallback for raw DAF BAMs. '
                              'First non-empty source wins per read. blockMod: '
                              '0 = R/GA-dea, 1 = Y/CT-dea, matching FiberBrowser flavor codes.')
+    parser.add_argument('--both-strand', '--bothstrand', dest='both_strand',
+                        action='store_true',
+                        help='Extract the deam+ / deam- intersection of paired '
+                             'DddA consensus reads as a BED12 coverage overlay.')
     parser.add_argument('--all', action='store_true', help='Extract all tag types (default if none specified)')
 
     # Output options (default: bigbed)
@@ -1678,9 +1785,11 @@ Examples:
     # Determine what to extract (default: all)
     extract_types = []
     any_selected = (args.nucleosome or args.msp or args.tf or
-                    args.m6a or args.m5c or args.deam)
+                    args.m6a or args.m5c or args.deam or args.both_strand)
     if args.all or not any_selected:
-        extract_types = ['nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam']
+        extract_types = [
+            'nucleosome', 'msp', 'tf', 'm6a', 'm5c', 'deam', 'bothstrand',
+        ]
     else:
         if args.nucleosome:
             extract_types.append('nucleosome')
@@ -1694,6 +1803,8 @@ Examples:
             extract_types.append('m5c')
         if args.deam:
             extract_types.append('deam')
+        if args.both_strand:
+            extract_types.append('bothstrand')
 
     # Default to bigbed unless --bed-only specified
     make_bigbed = not args.bed_only

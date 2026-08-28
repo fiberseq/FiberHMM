@@ -47,6 +47,7 @@ dependencies = [
 
 [project.optional-dependencies]
 numba = ["numba>=0.55"]
+cuda = ["torch>=2.0"]
 plots = ["matplotlib>=3.5"]
 posteriors = ["h5py>=3.0"]
 all = [
@@ -75,6 +76,7 @@ fiberhmm-probs = "fiberhmm.cli._entry:probs_main"
 fiberhmm-utils = "fiberhmm.cli._entry:utils_main"
 fiberhmm-posteriors = "fiberhmm.cli._entry:posteriors_main"
 fiberhmm-daf-encode = "fiberhmm.cli._entry:daf_encode_main"
+fiberhmm-daf-snps = "fiberhmm.cli._entry:daf_snps_main"
 fiberhmm-call-m5c = "fiberhmm.cli._entry:call_m5c_main"
 fiberhmm-tag-m5c = "fiberhmm.cli._entry:tag_m5c_main"
 fiberhmm-recall-tfs = "fiberhmm.cli._entry:recall_tfs_main"
@@ -82,6 +84,16 @@ fiberhmm-recall-nucs = "fiberhmm.cli._entry:recall_nucs_main"
 fiberhmm-call = "fiberhmm.cli._entry:call_main"
 fiberhmm-run = "fiberhmm.cli._entry:run_main"
 fiberhmm-dedup = "fiberhmm.cli._entry:dedup_main"
+fiberhmm-pair = "fiberhmm.cli._entry:pair_main"
+fiberhmm-merge = "fiberhmm.cli._entry:merge_main"
+fiberhmm-crossstrand = "fiberhmm.cli._entry:crossstrand_main"
+fiberhmm-strand-rescue = "fiberhmm.cli._entry:strand_rescue_main"
+fiberhmm-strand-rescue-annotate = "fiberhmm.cli._entry:strand_rescue_annotate_main"
+fiberhmm-strand-rescue-audit = "fiberhmm.cli._entry:strand_rescue_audit_main"
+fiberhmm-footprint-model = "fiberhmm.cli._entry:footprint_model_main"
+fiberhmm-tag-families = "fiberhmm.cli._entry:tag_families_main"
+fiberhmm-targeted-families = "fiberhmm.cli._entry:targeted_families_main"
+fiberhmm-qc = "fiberhmm.cli._entry:qc_main"
 
 # Top-level scripts kept for backward compatibility
 [tool.setuptools]
@@ -99,6 +111,7 @@ include = ["fiberhmm*"]
 
 [tool.setuptools.package-data]
 "fiberhmm.models" = ["*.json", "legacy/*.json"]
+"fiberhmm.qc" = ["*.json", "*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

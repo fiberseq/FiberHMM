@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from types import SimpleNamespace
 
 from fiberhmm.inference import fused_stages
@@ -27,6 +28,79 @@ def test_apply_result_has_footprints_detects_nucs_or_msps():
     assert fused_stages.apply_result_has_footprints(empty) is False
     assert fused_stages.apply_result_has_footprints(nuc_only) is True
     assert fused_stages.apply_result_has_footprints(msp_only) is True
+
+
+def test_nuc_derived_tf_edge_gate_preserves_original_scan_space():
+    calls = [
+        TFCall(10, 15, 6.0, 3, 40, 40),
+        TFCall(60, 15, 6.0, 3, 12, 12),
+        TFCall(90, 15, 6.0, 3, 13, 2),
+    ]
+
+    obs = np.full(120, 4096, dtype=np.int32)
+    obs[[47, 87, 118]] = 0
+    kept = fused_stages.filter_nuc_derived_tf_calls(
+        calls,
+        original_scan_intervals=[(0, 30)],
+        obs=obs,
+        max_edge_ambiguity=12,
+    )
+
+    # The first call keeps the ordinary recaller contract because its centre
+    # was HMM-accessible. Newly exposed calls require a nearby hit on both
+    # sides, so 12/12 passes and 13/2 fails.
+    assert kept == calls[:2]
+    assert kept[0] is calls[0]
+    assert (kept[1].left_ambiguity, kept[1].right_ambiguity) == (12, 12)
+
+
+def test_nuc_derived_tf_edge_gate_rewrites_full_molecule_ambiguity():
+    call = TFCall(60, 15, 6.0, 3, 255, 255)
+    obs = np.full(100, 4096, dtype=np.int32)
+    obs[[58, 77]] = 0
+
+    kept = fused_stages.filter_nuc_derived_tf_calls(
+        [call], original_scan_intervals=[], obs=obs, max_edge_ambiguity=12,
+    )
+
+    assert len(kept) == 1
+    assert (kept[0].left_ambiguity, kept[0].right_ambiguity) == (1, 2)
+
+
+def test_nuc_derived_tf_edge_gate_can_be_disabled():
+    calls = [TFCall(90, 15, 6.0, 3, 255, 255)]
+
+    assert fused_stages.filter_nuc_derived_tf_calls(
+        calls, original_scan_intervals=[], obs=np.zeros(1),
+        max_edge_ambiguity=None,
+    ) == calls
+
+
+def test_circular_derived_tf_gate_requires_tiled_hmm_coordinates():
+    apply_result = {
+        "ns": np.asarray([], dtype=np.int32),
+        "nl": np.asarray([], dtype=np.int32),
+        "as": np.asarray([], dtype=np.int32),
+        "al": np.asarray([], dtype=np.int32),
+        "encoded": np.zeros(300, dtype=np.int32),
+        "circular": True,
+        "circular_read_length": 100,
+    }
+
+    with pytest.raises(ValueError, match="requires tiled HMM"):
+        fused_stages.build_fused_recall_result(
+            {"query_sequence": "A" * 100},
+            apply_result,
+            llr_hit="hit",
+            llr_miss="miss",
+            min_llr=4.0,
+            min_opps=3,
+            unify_threshold=90,
+            with_scores=True,
+            recall_nucs=True,
+            nuc_profile=object(),
+            derived_tf_max_edge_ambiguity=12,
+        )
 
 
 def test_run_ddda_mcg_stage_excludes_apply_nucs_and_builds_mask(monkeypatch):

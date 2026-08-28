@@ -61,6 +61,8 @@ docs/fiberseq-site/
 probs/
 training_datasets/
 test_datasets/
+consensus_visualization_outputs/
+consensus_validation_outputs/
 
 # Images / figures (scratch)
 *.png

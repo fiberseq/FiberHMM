@@ -390,13 +390,16 @@ def _process_bam_region_parallel_fused(
     recall_nucs: bool = False,
     split_min_llr: float = 4.0,
     split_min_opps: int = 3,
+    nuc_recall_policy: str = "conservative",
     filter_chimeras: bool = True,
     chimera_min_seg: int = 5,
     chimera_purity: float = 0.8,
     phase_nrl: int = 0,
     nuc_profile_path: str = None,
+    derived_tf_max_edge_ambiguity: int = None,
     pg_record: dict = None,
     ddda_mcg: bool = False,
+    daf_snp_mask_path: str = None,
 ):
     """Region-parallel fused apply+recall.
 
@@ -430,12 +433,15 @@ def _process_bam_region_parallel_fused(
         'recall_nucs': recall_nucs,
         'split_min_llr': split_min_llr,
         'split_min_opps': split_min_opps,
+        'nuc_recall_policy': nuc_recall_policy,
         'filter_chimeras': filter_chimeras,
         'chimera_min_seg': chimera_min_seg,
         'chimera_purity': chimera_purity,
         'phase_nrl': phase_nrl,
         'nuc_profile_path': nuc_profile_path,
+        'derived_tf_max_edge_ambiguity': derived_tf_max_edge_ambiguity,
         'ddda_mcg': ddda_mcg,
+        'daf_snp_mask_path': daf_snp_mask_path,
         'pg_record': pg_record,
         # Path string, NOT an open handle: pysam.FastaFile is not fork-safe,
         # so each worker opens it lazily in _init_fused_region_worker.

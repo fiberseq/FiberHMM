@@ -1,0 +1,8 @@
+label	stage	count	p10	p25	median	p75	p90
+pacbio_2_4_topology	core_below_floor_fragment	769	85.0	86.0	87.0	90.0	94.0
+pacbio_2_4_topology	cut	37959	4.0	5.0	7.0	9.0	13.0
+pacbio_2_4_topology	fragment	237082	13.0	25.0	135.0	170.0	316.0
+pacbio_2_4_topology	postsplit_subfloor	85314	9.0	12.0	18.0	29.0	51.0
+pacbio_2_4_topology	protected_core	151768	117.0	134.0	155.0	225.0	364.0
+pacbio_2_4_topology	protected_loose	151768	121.0	137.0	158.0	227.0	368.0
+pacbio_2_4_topology	raw_footprint	199123	15.0	42.0	144.0	186.0	356.0

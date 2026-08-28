@@ -18,6 +18,18 @@ from fiberhmm.io.ma_tags import parse_ma_tag
 from fiberhmm.models import get_model_path
 
 
+def test_call_nuc_recall_policy_auto_is_nanopore_aware():
+    from types import SimpleNamespace
+
+    from fiberhmm.cli.call import _resolve_nuc_recall_policy
+
+    args = SimpleNamespace(nuc_recall_policy="auto")
+    assert _resolve_nuc_recall_policy(args, "nanopore-fiber") == "topology"
+    assert _resolve_nuc_recall_policy(args, "pacbio-fiber") == "conservative"
+    args.nuc_recall_policy = "conservative"
+    assert _resolve_nuc_recall_policy(args, "nanopore-fiber") == "conservative"
+
+
 def _run_fused_streaming(input_bam, output_bam, model_path, *,
                           with_scores=False, circular=False, min_llr=1000.0,
                           downstream_compat=False):

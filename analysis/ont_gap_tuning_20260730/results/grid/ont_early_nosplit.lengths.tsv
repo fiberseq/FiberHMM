@@ -1,0 +1,7 @@
+label	stage	count	p10	p25	median	p75	p90
+ont_early_nosplit	core_below_floor_fragment	5539	87.0	92.0	104.0	121.0	142.0
+ont_early_nosplit	fragment	99006	31.0	61.0	147.0	296.0	556.0
+ont_early_nosplit	postsplit_subfloor	30699	24.0	29.0	39.0	56.0	72.0
+ont_early_nosplit	protected_core	68155	89.0	118.0	169.0	346.0	677.0
+ont_early_nosplit	protected_loose	68155	99.0	128.0	178.0	355.0	686.0
+ont_early_nosplit	raw_footprint	99006	31.0	61.0	147.0	296.0	556.0

@@ -1,0 +1,691 @@
+"""Call recurrent opposite-conversion SNPs in DAF-seq alignments."""
+from __future__ import annotations
+
+import json
+import hashlib
+import heapq
+import os
+from collections import Counter, defaultdict
+from pathlib import Path
+from typing import Optional
+
+import pysam
+
+
+_SITE_PROFILE_SEED = 20260824
+_SITE_PROFILE_MAX_SITES = 5000
+_SITE_PROFILE_MIN_DEPTH = 3
+_AMPLICON_BIN_BP = 10_000
+_AMPLICON_MIN_READS = 20
+_AMPLICON_MIN_BIN_READS = 3
+
+# Canonical production policy selected by the FiberHMM DAF SNP downsampling
+# validation.  Keep these values centralized: the Python API and both CLI
+# routes import them, while callers can still override every threshold.
+VALIDATED_SNP_POLICY_NAME = "bidirectional_five_fiber_v1"
+DEFAULT_SNP_MIN_FRACTION = 0.20
+DEFAULT_SNP_MIN_DEPTH = 5
+DEFAULT_SNP_MIN_ALT_FIBERS = 5
+
+
+def describe_snp_threshold_policy(
+    min_fraction: float,
+    min_depth: int,
+    min_alt_fibers: int,
+) -> dict:
+    """Describe whether thresholds match the validated production policy."""
+    validated = {
+        "min_fraction_each_direction": DEFAULT_SNP_MIN_FRACTION,
+        "min_depth_each_direction": DEFAULT_SNP_MIN_DEPTH,
+        "min_mismatch_fibers_each_direction": DEFAULT_SNP_MIN_ALT_FIBERS,
+        "bidirectional_support_required": True,
+    }
+    uses_validated_defaults = (
+        float(min_fraction) == DEFAULT_SNP_MIN_FRACTION
+        and int(min_depth) == DEFAULT_SNP_MIN_DEPTH
+        and int(min_alt_fibers) == DEFAULT_SNP_MIN_ALT_FIBERS
+    )
+    return {
+        "name": VALIDATED_SNP_POLICY_NAME if uses_validated_defaults else "custom",
+        "uses_validated_defaults": uses_validated_defaults,
+        "validated_defaults": validated,
+        "validation": "scripts/validation/validate_daf_snp_downsampling.py",
+    }
+
+
+def _site_rank(key: tuple[str, int, str], seed: int) -> int:
+    """Stable rank for deterministic bottom-k sampling of genomic sites."""
+    digest = hashlib.blake2b(
+        f"{seed}|{key[0]}|{key[1]}|{key[2]}".encode(), digest_size=8
+    ).digest()
+    return int.from_bytes(digest, "big")
+
+
+def _consider_profile_site(
+    key: tuple[str, int, str],
+    heap: list[tuple[int, tuple[str, int, str]]],
+    selected: set[tuple[str, int, str]],
+    maximum: int,
+    seed: int,
+) -> None:
+    """Maintain a bounded, order-independent sample of reference C/G sites."""
+    if key in selected or maximum <= 0:
+        return
+    rank = _site_rank(key, seed)
+    item = (-rank, key)
+    if len(heap) < maximum:
+        heapq.heappush(heap, item)
+        selected.add(key)
+    elif rank < -heap[0][0]:
+        _old_rank, old_key = heapq.heapreplace(heap, item)
+        selected.remove(old_key)
+        selected.add(key)
+
+
+def _discover_amplicon_groups(
+    bin_counts: Counter,
+    minimum_reads: int,
+) -> list[dict]:
+    """Discover high-support amplicons from adjacent alignment-start bins.
+
+    A small per-bin support floor rejects the nearly continuous sprinkling of
+    genomic starts in ordinary whole-genome data. Adjacent supported bins are
+    merged, then one occupied flanking bin is absorbed to retain endpoint
+    jitter. Consensus endpoints and exact read counts are measured in pass 2.
+    """
+    core_floor = max(
+        _AMPLICON_MIN_BIN_READS,
+        min(10, int(round(minimum_reads * 0.10))),
+    )
+    cores_by_chrom: dict[str, list[int]] = defaultdict(list)
+    for (chrom, bin_index), count in bin_counts.items():
+        if count >= core_floor:
+            cores_by_chrom[chrom].append(int(bin_index))
+
+    groups = []
+    for chrom, raw_bins in cores_by_chrom.items():
+        current: list[int] = []
+        core_groups: list[list[int]] = []
+        for bin_index in sorted(raw_bins):
+            if current and bin_index > current[-1] + 1:
+                core_groups.append(current)
+                current = []
+            current.append(bin_index)
+        if current:
+            core_groups.append(current)
+        for core in core_groups:
+            members = set(core)
+            for flank in (core[0] - 1, core[-1] + 1):
+                if bin_counts.get((chrom, flank), 0) > 0:
+                    members.add(flank)
+            support = sum(bin_counts[(chrom, bin_index)] for bin_index in members)
+            if support >= minimum_reads:
+                groups.append(
+                    {
+                        "chrom": chrom,
+                        "bin_indices": sorted(members),
+                        "discovery_reads": int(support),
+                    }
+                )
+    groups.sort(
+        key=lambda item: (
+            -item["discovery_reads"],
+            item["chrom"],
+            item["bin_indices"][0],
+        )
+    )
+    for index, group in enumerate(groups, 1):
+        group["amplicon_id"] = f"amplicon_{index}"
+    return groups
+
+
+def _counter_quantile(counter: Counter, probability: float) -> Optional[int]:
+    total = sum(counter.values())
+    if total <= 0:
+        return None
+    threshold = probability * (total - 1)
+    cumulative = 0
+    for value, count in sorted(counter.items()):
+        cumulative += count
+        if cumulative > threshold:
+            return int(value)
+    return int(max(counter))
+
+
+def _aligned_pairs(read, reference_handle=None):
+    try:
+        return read.get_aligned_pairs(with_seq=True)
+    except (ValueError, TypeError, IndexError, AssertionError):
+        if reference_handle is None or read.reference_name is None:
+            return None
+    try:
+        start = int(read.reference_start)
+        end = int(read.reference_end)
+        reference = reference_handle.fetch(read.reference_name, start, end).upper()
+        return [
+            (query_position, reference_position, reference[reference_position - start])
+            for query_position, reference_position in read.get_aligned_pairs(
+                matches_only=True
+            )
+            if start <= reference_position < end
+        ]
+    except (ValueError, TypeError, IndexError, OSError):
+        return None
+
+
+def _profile(read, reference_handle=None):
+    sequence = (read.query_sequence or "").upper()
+    pairs = _aligned_pairs(read, reference_handle)
+    if not sequence or pairs is None:
+        return None
+    ct_positions = []
+    ga_positions = []
+    usable_pairs = []
+    for query_position, reference_position, reference_base in pairs:
+        if query_position is None or reference_position is None or reference_base is None:
+            continue
+        reference_base = reference_base.upper()
+        query_base = sequence[query_position]
+        usable_pairs.append(
+            (int(query_position), int(reference_position), reference_base, query_base)
+        )
+        if reference_base == "C" and query_base in ("T", "Y"):
+            ct_positions.append(int(reference_position))
+        elif reference_base == "G" and query_base in ("A", "R"):
+            ga_positions.append(int(reference_position))
+    return ct_positions, ga_positions, usable_pairs
+
+
+def _dominant_direction(
+    ct_count: int,
+    ga_count: int,
+    minimum_events: int,
+    minimum_purity: float,
+) -> Optional[str]:
+    total = ct_count + ga_count
+    if total == 0:
+        return None
+    if ct_count >= minimum_events and ct_count / total >= minimum_purity:
+        return "CT"
+    if ga_count >= minimum_events and ga_count / total >= minimum_purity:
+        return "GA"
+    return None
+
+
+def call_opposite_conversion_snps(
+    input_path: str,
+    min_fraction: float = DEFAULT_SNP_MIN_FRACTION,
+    min_depth: int = DEFAULT_SNP_MIN_DEPTH,
+    min_alt_fibers: int = DEFAULT_SNP_MIN_ALT_FIBERS,
+    min_dominant_events: int = 5,
+    min_dominant_purity: float = 0.80,
+    min_mapq: int = 20,
+    reference_fasta: Optional[str] = None,
+    max_profile_sites: int = _SITE_PROFILE_MAX_SITES,
+    profile_min_depth: int = _SITE_PROFILE_MIN_DEPTH,
+    profile_seed: int = _SITE_PROFILE_SEED,
+    min_amplicon_reads: int = _AMPLICON_MIN_READS,
+) -> dict:
+    """Two-pass DAF SNP call using recurrent events on opposite-direction fibers.
+
+    A C→T event is screened on otherwise G→A-dominant molecules, and a G→A
+    event on otherwise C→T-dominant molecules. A call then requires adequate
+    depth, recurrent mismatch support, and the mismatch-fraction threshold in
+    both conversion-direction classes. This rejects direction-specific
+    deamination/basecalling artifacts without imposing a brittle high-depth
+    cliff. A deterministic bounded sample of ordinary C/G positions is
+    retained so QC can display the background mismatch distribution rather
+    than showing called variants alone. Original MD tags are never modified.
+    """
+    if not 0 < min_fraction <= 1:
+        raise ValueError("min_fraction must be in (0, 1]")
+    if min_depth < 1 or min_alt_fibers < 1 or min_dominant_events < 1:
+        raise ValueError("depth/event thresholds must be positive")
+    if not 0.5 <= min_dominant_purity <= 1:
+        raise ValueError("min_dominant_purity must be in [0.5, 1]")
+    if max_profile_sites < 0 or profile_min_depth < 1:
+        raise ValueError("site-profile limits must be non-negative/positive")
+    if min_amplicon_reads < 1:
+        raise ValueError("minimum amplicon reads must be positive")
+
+    reference_handle = pysam.FastaFile(reference_fasta) if reference_fasta else None
+    candidate_alt_counts: Counter = Counter()
+    accounting = Counter()
+    profile_heap: list[tuple[int, tuple[str, int, str]]] = []
+    sampled_profile_sites: set[tuple[str, int, str]] = set()
+    amplicon_bins: Counter = Counter()
+    try:
+        with pysam.AlignmentFile(input_path, "rb", check_sq=False) as bam:
+            for read in bam.fetch(until_eof=True):
+                accounting["records_examined_pass1"] += 1
+                if (
+                    read.is_unmapped
+                    or read.is_secondary
+                    or read.is_supplementary
+                    or read.is_duplicate
+                    or read.mapping_quality < min_mapq
+                ):
+                    continue
+                amplicon_bins[
+                    (read.reference_name, int(read.reference_start) // _AMPLICON_BIN_BP)
+                ] += 1
+                profile = _profile(read, reference_handle)
+                if profile is None:
+                    accounting["unusable_alignment_records"] += 1
+                    continue
+                ct_positions, ga_positions, _pairs = profile
+                direction = _dominant_direction(
+                    len(ct_positions),
+                    len(ga_positions),
+                    min_dominant_events,
+                    min_dominant_purity,
+                )
+                if direction is None:
+                    accounting["ambiguous_direction_records"] += 1
+                    continue
+                accounting[f"{direction.lower()}_dominant_records"] += 1
+                for _query_position, position, reference_base, _query_base in _pairs:
+                    if reference_base in ("C", "G"):
+                        _consider_profile_site(
+                            (read.reference_name, position, reference_base),
+                            profile_heap,
+                            sampled_profile_sites,
+                            max_profile_sites,
+                            profile_seed,
+                        )
+                if direction == "GA":
+                    for position in set(ct_positions):
+                        candidate_alt_counts[(read.reference_name, position, "C", "T", "GA")] += 1
+                else:
+                    for position in set(ga_positions):
+                        candidate_alt_counts[(read.reference_name, position, "G", "A", "CT")] += 1
+
+        candidates = {
+            key: count
+            for key, count in candidate_alt_counts.items()
+            if count >= min_alt_fibers
+        }
+        profiled_sites = set(sampled_profile_sites)
+        for chrom, position, reference, _alternate, _direction in candidates:
+            profiled_sites.add((chrom, position, reference))
+        profiled_by_chrom = defaultdict(dict)
+        for chrom, position, reference in profiled_sites:
+            alternate = "T" if reference == "C" else "A"
+            expected_direction = "CT" if reference == "C" else "GA"
+            profiled_by_chrom[chrom][position] = (
+                reference,
+                alternate,
+                expected_direction,
+            )
+
+        site_stats: dict[tuple[str, int, str], Counter] = defaultdict(Counter)
+        amplicon_groups = _discover_amplicon_groups(
+            amplicon_bins, min_amplicon_reads
+        )
+        amplicon_lookup = {}
+        amplicon_endpoint_stats = []
+        for group_index, group in enumerate(amplicon_groups):
+            for bin_index in group["bin_indices"]:
+                amplicon_lookup[(group["chrom"], bin_index)] = group_index
+            amplicon_endpoint_stats.append(
+                {"starts": Counter(), "ends": Counter(), "total_reads": 0}
+            )
+        with pysam.AlignmentFile(input_path, "rb", check_sq=False) as bam:
+            for read in bam.fetch(until_eof=True):
+                accounting["records_examined_pass2"] += 1
+                if (
+                    read.is_unmapped
+                    or read.is_secondary
+                    or read.is_supplementary
+                    or read.is_duplicate
+                    or read.mapping_quality < min_mapq
+                ):
+                    continue
+                bin_key = (
+                    read.reference_name,
+                    int(read.reference_start) // _AMPLICON_BIN_BP,
+                )
+                amplicon_index = amplicon_lookup.get(bin_key)
+                if amplicon_index is not None:
+                    endpoint_stats = amplicon_endpoint_stats[amplicon_index]
+                    endpoint_stats["starts"][int(read.reference_start)] += 1
+                    endpoint_stats["ends"][int(read.reference_end or read.reference_start)] += 1
+                    endpoint_stats["total_reads"] += 1
+                chrom_sites = profiled_by_chrom.get(read.reference_name)
+                if not chrom_sites:
+                    continue
+                profile = _profile(read, reference_handle)
+                if profile is None:
+                    continue
+                ct_positions, ga_positions, pairs = profile
+                direction = _dominant_direction(
+                    len(ct_positions),
+                    len(ga_positions),
+                    min_dominant_events,
+                    min_dominant_purity,
+                )
+                if direction is None:
+                    continue
+                seen = set()
+                for _query_position, position, reference_base, query_base in pairs:
+                    site = chrom_sites.get(position)
+                    if site is None or position in seen:
+                        continue
+                    reference, alternate, expected_direction = site
+                    if reference_base != reference:
+                        continue
+                    key = (read.reference_name, position, reference)
+                    mismatch = query_base in (("T", "Y") if reference == "C" else ("A", "R"))
+                    if direction == expected_direction:
+                        site_stats[key]["expected_depth"] += 1
+                        site_stats[key]["expected_mismatches"] += int(mismatch)
+                    else:
+                        site_stats[key]["opposite_depth"] += 1
+                        site_stats[key]["opposite_mismatches"] += int(mismatch)
+                    seen.add(position)
+    finally:
+        if reference_handle is not None:
+            reference_handle.close()
+
+    calls = []
+    for key, alt_fibers in sorted(candidates.items()):
+        chrom, position, reference, alternate, direction = key
+        stats = site_stats[(chrom, position, reference)]
+        depth = stats["opposite_depth"]
+        observed_alt = stats["opposite_mismatches"]
+        # Pass-2 mismatch accounting is authoritative; pass-1 counts are kept
+        # only as a candidate-screening statistic.
+        fraction = observed_alt / depth if depth else 0.0
+        expected_depth = stats["expected_depth"]
+        expected_mismatches = stats["expected_mismatches"]
+        expected_fraction = (
+            expected_mismatches / expected_depth if expected_depth else 0.0
+        )
+        if (
+            depth >= min_depth
+            and expected_depth >= min_depth
+            and observed_alt >= min_alt_fibers
+            and expected_mismatches >= min_alt_fibers
+            and fraction >= min_fraction
+            and expected_fraction >= min_fraction
+        ):
+            calls.append(
+                {
+                    "chrom": chrom,
+                    "position_0based": int(position),
+                    "reference": reference,
+                    "alternate": alternate,
+                    "opposite_dominant_direction": direction,
+                    "alternate_fibers": int(observed_alt),
+                    "opposite_direction_depth": int(depth),
+                    "alternate_fraction": float(fraction),
+                    "expected_dominant_direction": (
+                        "CT" if reference == "C" else "GA"
+                    ),
+                    "expected_direction_depth": int(expected_depth),
+                    "expected_direction_mismatch_fibers": int(expected_mismatches),
+                    "expected_direction_mismatch_fraction": (
+                        float(expected_fraction)
+                    ),
+                    "candidate_alt_fibers_pass1": int(alt_fibers),
+                }
+            )
+    called_keys = {
+        (call["chrom"], call["position_0based"], call["reference"])
+        for call in calls
+    }
+    site_distribution = []
+    for chrom, position, reference in sorted(profiled_sites):
+        stats = site_stats[(chrom, position, reference)]
+        expected_depth = int(stats["expected_depth"])
+        opposite_depth = int(stats["opposite_depth"])
+        is_called = (chrom, position, reference) in called_keys
+        if (
+            not is_called
+            and (expected_depth < profile_min_depth or opposite_depth < profile_min_depth)
+        ):
+            continue
+        expected_mismatches = int(stats["expected_mismatches"])
+        opposite_mismatches = int(stats["opposite_mismatches"])
+        site_distribution.append(
+            {
+                "chrom": chrom,
+                "position_0based": int(position),
+                "reference": reference,
+                "alternate": "T" if reference == "C" else "A",
+                "expected_dominant_direction": "CT" if reference == "C" else "GA",
+                "expected_direction_depth": expected_depth,
+                "expected_direction_mismatch_fibers": expected_mismatches,
+                "expected_direction_mismatch_fraction": (
+                    float(expected_mismatches / expected_depth)
+                    if expected_depth else None
+                ),
+                "opposite_direction_depth": opposite_depth,
+                "opposite_direction_mismatch_fibers": opposite_mismatches,
+                "opposite_direction_mismatch_fraction": (
+                    float(opposite_mismatches / opposite_depth)
+                    if opposite_depth else None
+                ),
+                "total_dominant_fiber_depth": expected_depth + opposite_depth,
+                "called_as_snp": is_called,
+            }
+        )
+
+    amplicons = []
+    for group, endpoint_stats in zip(amplicon_groups, amplicon_endpoint_stats):
+        consensus_start = _counter_quantile(endpoint_stats["starts"], 0.50)
+        consensus_end = _counter_quantile(endpoint_stats["ends"], 0.50)
+        if consensus_start is None or consensus_end is None or consensus_end <= consensus_start:
+            continue
+        start_q05 = _counter_quantile(endpoint_stats["starts"], 0.05)
+        start_q95 = _counter_quantile(endpoint_stats["starts"], 0.95)
+        end_q05 = _counter_quantile(endpoint_stats["ends"], 0.05)
+        end_q95 = _counter_quantile(endpoint_stats["ends"], 0.95)
+        amplicon_calls = []
+        for call in calls:
+            position = int(call["position_0based"])
+            if (
+                call["chrom"] == group["chrom"]
+                and consensus_start <= position < consensus_end
+            ):
+                relative_bp = position - consensus_start
+                amplicon_calls.append(
+                    {
+                        "position_0based": position,
+                        "change": f"{call['reference']}>{call['alternate']}",
+                        "relative_position_bp": int(relative_bp),
+                        "relative_position_fraction": float(
+                            relative_bp / (consensus_end - consensus_start)
+                        ),
+                        "opposite_mismatch_fraction": float(
+                            call["alternate_fraction"]
+                        ),
+                    }
+                )
+                call.setdefault("amplicon_ids", []).append(group["amplicon_id"])
+        amplicons.append(
+            {
+                "amplicon_id": group["amplicon_id"],
+                "chrom": group["chrom"],
+                "consensus_start_0based": int(consensus_start),
+                "consensus_end_0based_exclusive": int(consensus_end),
+                "consensus_length_bp": int(consensus_end - consensus_start),
+                "total_aligned_reads": int(endpoint_stats["total_reads"]),
+                "discovery_start_bin_reads": int(group["discovery_reads"]),
+                "endpoint_quantiles_0based": {
+                    "start_q05": start_q05,
+                    "start_q95": start_q95,
+                    "end_q05": end_q05,
+                    "end_q95": end_q95,
+                },
+                "n_called_snps": len(amplicon_calls),
+                "snp_positions": amplicon_calls,
+            }
+        )
+    amplicons.sort(
+        key=lambda item: (
+            -item["total_aligned_reads"],
+            item["chrom"],
+            item["consensus_start_0based"],
+        )
+    )
+    for index, amplicon in enumerate(amplicons, 1):
+        old_id = amplicon["amplicon_id"]
+        new_id = f"amplicon_{index}"
+        if old_id != new_id:
+            for call in calls:
+                ids = call.get("amplicon_ids", [])
+                call["amplicon_ids"] = [new_id if value == old_id else value for value in ids]
+        amplicon["amplicon_id"] = new_id
+
+    dominant_amplicon = None
+    if amplicons:
+        first = amplicons[0]
+        dominant_amplicon = {
+            "chrom": first["chrom"],
+            "start_0based": first["consensus_start_0based"],
+            "end_0based_exclusive": first["consensus_end_0based_exclusive"],
+            "overlapping_dominant_fibers": first["total_aligned_reads"],
+            "selection": (
+                f"highest-coverage discovered amplicon with >= "
+                f"{min_amplicon_reads:,} aligned reads"
+            ),
+        }
+    return {
+        "schema_version": 3,
+        "method": "bidirectional_recurrent_daf_snp",
+        "threshold_policy": describe_snp_threshold_policy(
+            min_fraction,
+            min_depth,
+            min_alt_fibers,
+        ),
+        "input": str(Path(input_path).resolve()),
+        "parameters": {
+            "min_fraction": min_fraction,
+            "min_depth": min_depth,
+            "min_alt_fibers": min_alt_fibers,
+            "bidirectional_support_required": True,
+            "min_dominant_events": min_dominant_events,
+            "min_dominant_purity": min_dominant_purity,
+            "min_mapq": min_mapq,
+            "site_profile_max_sites": int(max_profile_sites),
+            "site_profile_min_depth_per_direction": int(profile_min_depth),
+            "site_profile_seed": int(profile_seed),
+            "min_amplicon_reads": int(min_amplicon_reads),
+            "amplicon_start_bin_bp": int(_AMPLICON_BIN_BP),
+        },
+        "accounting": dict(accounting),
+        "n_candidate_sites_after_min_alt": len(candidates),
+        "n_called_snps": len(calls),
+        "n_profiled_sites": len(site_distribution),
+        "site_distribution": site_distribution,
+        "n_discovered_amplicons": len(amplicons),
+        "amplicons": amplicons,
+        "dominant_amplicon": dominant_amplicon,
+        "calls": calls,
+    }
+
+
+def write_snp_outputs(payload: dict, output_prefix: str) -> dict:
+    prefix = Path(output_prefix)
+    prefix.parent.mkdir(parents=True, exist_ok=True)
+    bed_path = Path(str(prefix) + ".bed")
+    vcf_path = Path(str(prefix) + ".vcf")
+    json_path = Path(str(prefix) + ".json")
+    amplicon_path = Path(str(prefix) + ".amplicons.tsv")
+    with bed_path.open("w") as handle:
+        handle.write(
+            "#chrom\tstart\tend\tchange\talt_fibers\topposite_depth\talt_fraction\topposite_direction\n"
+        )
+        for call in payload["calls"]:
+            handle.write(
+                f"{call['chrom']}\t{call['position_0based']}\t{call['position_0based'] + 1}\t"
+                f"{call['reference']}>{call['alternate']}\t{call['alternate_fibers']}\t"
+                f"{call['opposite_direction_depth']}\t{call['alternate_fraction']:.8f}\t"
+                f"{call['opposite_dominant_direction']}\n"
+            )
+    with vcf_path.open("w") as handle:
+        handle.write("##fileformat=VCFv4.3\n")
+        handle.write("##source=FiberHMM-bidirectional-recurrent-DAF-SNP\n")
+        handle.write('##INFO=<ID=AF,Number=1,Type=Float,Description="Opposite-direction fiber fraction">\n')
+        handle.write('##INFO=<ID=DP,Number=1,Type=Integer,Description="Opposite-direction fiber depth">\n')
+        handle.write('##INFO=<ID=AC,Number=1,Type=Integer,Description="Alternate fibers">\n')
+        handle.write('##INFO=<ID=ED,Number=1,Type=Integer,Description="Expected-direction fiber depth">\n')
+        handle.write('##INFO=<ID=EA,Number=1,Type=Integer,Description="Expected-direction mismatch fibers">\n')
+        handle.write('##INFO=<ID=EF,Number=1,Type=Float,Description="Expected-direction mismatch fraction">\n')
+        handle.write('##INFO=<ID=OD,Number=1,Type=String,Description="Dominant direction on which event is unexpected">\n')
+        handle.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+        for call in payload["calls"]:
+            handle.write(
+                f"{call['chrom']}\t{call['position_0based'] + 1}\t.\t"
+                f"{call['reference']}\t{call['alternate']}\t.\tPASS\t"
+                f"AF={call['alternate_fraction']:.8f};DP={call['opposite_direction_depth']};"
+                f"AC={call['alternate_fibers']};ED={call['expected_direction_depth']};"
+                f"EA={call['expected_direction_mismatch_fibers']};"
+                f"EF={call['expected_direction_mismatch_fraction']:.8f};"
+                f"OD={call['opposite_dominant_direction']}\n"
+            )
+    with amplicon_path.open("w") as handle:
+        handle.write(
+            "amplicon_id\tchrom\tconsensus_start_0based\t"
+            "consensus_end_0based_exclusive\tconsensus_length_bp\t"
+            "total_aligned_reads\tn_called_snps\tsnp_positions_relative_bp\n"
+        )
+        for amplicon in payload.get("amplicons", []):
+            positions = ",".join(
+                f"{site['change']}@{site['relative_position_bp']}"
+                for site in amplicon.get("snp_positions", [])
+            )
+            handle.write(
+                f"{amplicon['amplicon_id']}\t{amplicon['chrom']}\t"
+                f"{amplicon['consensus_start_0based']}\t"
+                f"{amplicon['consensus_end_0based_exclusive']}\t"
+                f"{amplicon['consensus_length_bp']}\t"
+                f"{amplicon['total_aligned_reads']}\t"
+                f"{amplicon['n_called_snps']}\t{positions}\n"
+            )
+    payload = {
+        **payload,
+        "outputs": {
+            "bed": str(bed_path.resolve()),
+            "vcf": str(vcf_path.resolve()),
+            "json": str(json_path.resolve()),
+            "amplicons_tsv": str(amplicon_path.resolve()),
+        },
+    }
+    temporary = json_path.with_name(json_path.name + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    os.replace(temporary, json_path)
+    return payload
+
+
+def load_snp_mask(path: Optional[str]) -> dict[str, set[int]]:
+    mask: dict[str, set[int]] = defaultdict(set)
+    if not path:
+        return {}
+    with Path(path).open() as handle:
+        for line in handle:
+            if not line.strip() or line.startswith("#"):
+                continue
+            fields = line.rstrip("\n").split("\t")
+            if len(fields) < 3:
+                raise ValueError(f"invalid SNP mask line: {line.rstrip()!r}")
+            mask[fields[0]].update(range(int(fields[1]), int(fields[2])))
+    return dict(mask)
+
+
+def mask_summary(path: Optional[str]) -> dict:
+    mask = load_snp_mask(path)
+    return {
+        "path": str(Path(path).resolve()) if path else None,
+        "n_sites": sum(len(positions) for positions in mask.values()),
+        "n_contigs": len(mask),
+    }
+
+
+__all__ = [
+    "call_opposite_conversion_snps",
+    "load_snp_mask",
+    "mask_summary",
+    "write_snp_outputs",
+]

@@ -1,0 +1,195 @@
+{
+  "classes": {
+    "footprint_model_assignments": {
+      "color": "#7B3294",
+      "id": "footprint_model_assignments",
+      "kind": "footprint_class",
+      "label": "Footprint model assignments",
+      "rules": {
+        "recommended_site_filter": {
+          "all": [
+            {
+              "equals": 1,
+              "field": "geometry_ready"
+            },
+            {
+              "equals": 1,
+              "field": "population_ready"
+            }
+          ]
+        },
+        "rule_id": "fiberhmm_footprint_model_v1",
+        "site_catalog": "YWMJBX_4_siGAF_4.5-5.5hr_kr.footprint-model.tsv",
+        "type": "footprint_model_assignment"
+      },
+      "source_layer": "tf",
+      "version": 1
+    }
+  },
+  "extensions": {
+    "block_site_ids": {
+      "alignment": [
+        "blockSizes",
+        "chromStarts",
+        "blockQuality"
+      ],
+      "field": "blockSiteIds",
+      "schema": "fiberbrowser.block_site_ids.v1"
+    },
+    "duplicate_class_rows": {
+      "merge_key": [
+        "chrom",
+        "name",
+        "class_id"
+      ],
+      "reason": "non_overlapping_bed12_lane_partition",
+      "schema": "fiberbrowser.duplicate_class_rows.v1",
+      "semantics": "concatenate blocks from every matching row"
+    }
+  },
+  "files": {
+    "assignments_tsv": "YWMJBX_4_siGAF_4.5-5.5hr_kr.footprint-model.assignments.tsv",
+    "autosql": "YWMJBX_4_siGAF_4.5-5.5hr_kr.footprint-model.fiberlayers.as",
+    "bed": "YWMJBX_4_siGAF_4.5-5.5hr_kr.footprint-model.fiberlayers.bed",
+    "bigbed": "YWMJBX_4_siGAF_4.5-5.5hr_kr.footprint-model.fiberlayers.bb",
+    "population_autosql": "YWMJBX_4_siGAF_4.5-5.5hr_kr.footprint-model.as",
+    "population_bed": "YWMJBX_4_siGAF_4.5-5.5hr_kr.footprint-model.bed",
+    "population_bigbed": "YWMJBX_4_siGAF_4.5-5.5hr_kr.footprint-model.bb",
+    "population_tsv": "YWMJBX_4_siGAF_4.5-5.5hr_kr.footprint-model.tsv",
+    "strata_tsv": "YWMJBX_4_siGAF_4.5-5.5hr_kr.footprint-model.strata.tsv"
+  },
+  "model": {
+    "config": {
+      "assignment_radius_bp": 10,
+      "edge_compatibility_bp": 12,
+      "minimum_geometry_support": 3,
+      "minimum_geometry_support_per_stratum": 3,
+      "minimum_mapped_fraction": 0.95,
+      "minimum_population_support": 3,
+      "peak_distance_bp": 15,
+      "smoothing_sigma_bp": 3.0
+    },
+    "diagnostics": {
+      "assigned_tf_calls": 4130,
+      "geometry_tf_calls": 4018,
+      "input_records": 915,
+      "raw_tf_calls": 4170,
+      "unassigned_tf_calls": 40,
+      "unique_molecules": 915,
+      "unique_tf_calls": 4170
+    },
+    "object": "footprint_population_model",
+    "row_object": "tf_binding_hypothesis",
+    "schema": "fiberhmm.footprint_population_model.v1",
+    "support": {
+      "analysis_ready": {
+        "api_property": "analysis_ready",
+        "expression": "geometry_ready == 1 and population_ready == 1",
+        "meaning": "geometry_ready_and_population_ready"
+      },
+      "bed_score": {
+        "formula": "min(population_support, 1000)",
+        "meaning": "population_support_capped_at_1000"
+      },
+      "geometry": {
+        "bigbed_field": "clusterSupportMolecules",
+        "meaning": "unique_eligible_molecules_establishing_geometry",
+        "tsv_field": "cluster_support_molecules"
+      },
+      "null_background": null,
+      "population": {
+        "api_property": "population_support",
+        "bigbed_field": "nTf",
+        "meaning": "unique_fully_mapped_molecules_assigned",
+        "tsv_field": "n_tf"
+      }
+    }
+  },
+  "provenance": {
+    "created_at": null,
+    "exporter": "FiberHMM",
+    "exporter_version": "2.16.3",
+    "rule_id": "fiberhmm_footprint_model_v1"
+  },
+  "schema": "fiberlayers.v1",
+  "scope": {
+    "contigs": [
+      "chr2R",
+      "chr3L",
+      "chr3R",
+      "chrX"
+    ],
+    "coordinate_system": "0-based-half-open",
+    "genomewide": false,
+    "regions": [],
+    "spanning": false
+  },
+  "source_dataset": {
+    "adapter": {
+      "annotation_source": "MA:tf,msp",
+      "diagnostics": {
+        "duplicate_region_records": 0,
+        "emitted_molecules": 915,
+        "geometry_eligible_tf_annotations": 4088,
+        "incomplete_msp_annotations": 251,
+        "msp_annotations": 17404,
+        "out_of_scope_tf_annotations": 0,
+        "primary_mapped_records": 984,
+        "projected_msp_annotations": 17084,
+        "projected_tf_annotations": 4170,
+        "reads_with_alignment_stratum": 1,
+        "reads_with_tag_stratum": 914,
+        "records_seen": 1067,
+        "skipped_duplicate": 0,
+        "skipped_low_mapq": 0,
+        "skipped_missing_ma": 69,
+        "skipped_qcfail": 0,
+        "skipped_secondary": 20,
+        "skipped_supplementary": 62,
+        "skipped_unmapped": 1,
+        "skipped_without_mapped_blocks": 0,
+        "tf_annotations": 4178,
+        "unprojectable_msp_annotations": 69,
+        "unprojectable_tf_annotations": 8
+      },
+      "filters": {
+        "exclude_duplicates": true,
+        "exclude_qcfail": true,
+        "min_mapq": 0,
+        "minimum_projection_fraction": 0.95,
+        "missing_ma": "exclude_as_not_analyzed",
+        "primary_only": true
+      },
+      "schema": "fiberhmm.footprint_bam_adapter.v1",
+      "stratum_rule": {
+        "accepted_tag_values": [
+          "CT",
+          "GA"
+        ],
+        "fallback": "alignment_orientation:FWD/REV",
+        "preferred_tag": "st"
+      }
+    },
+    "genome": "dm6",
+    "id": "YWMJBX_4_siGAF_4.5-5.5hr_kr_recalled",
+    "mtime_ns": 1780433750373060246,
+    "path": "/Users/tt7739/Dropbox/Fiber-NET-seq/Drosophila_phase2/Datasets/DAF-seq/spacetime_updated/kr_compare/fp/YWMJBX_4_siGAF_4.5-5.5hr_kr_recalled.bam",
+    "size_bytes": 8757405
+  },
+  "statistics": {
+    "analysis_ready_sites": 432,
+    "assigned_calls": 4130,
+    "classes": {
+      "footprint_model_assignments": {
+        "intervals": 4130,
+        "reads": 753,
+        "rows": 753
+      }
+    },
+    "geometry_ready_sites": 434,
+    "loci": 601,
+    "population_ready_sites": 443,
+    "sites": 1829,
+    "unassigned_calls": 40
+  }
+}

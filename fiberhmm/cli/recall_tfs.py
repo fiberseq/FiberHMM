@@ -88,8 +88,10 @@ _STATS_KEYS = ('v2', 'tf', 'demoted', 'failed')
 _NucCfg = namedtuple(
     '_NucCfg',
     ('recall_nucs', 'split_min_llr', 'split_min_opps',
-     'nuc_min_size', 'msp_min_size', 'phase_nrl'),
+     'nuc_min_size', 'msp_min_size', 'phase_nrl', 'nuc_recall_policy',
+     'nuc_profile_path', 'derived_tf_max_edge_ambiguity'),
 )
+_NucCfg.__new__.__defaults__ = ('conservative', None, None)
 
 
 def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
@@ -108,6 +110,10 @@ def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
     _WORKER['min_opps'] = min_opps
     _WORKER['unify_threshold'] = unify_threshold
     _WORKER['nuc_cfg'] = nuc_cfg
+    _WORKER['nuc_profile'] = None
+    if nuc_cfg is not None and nuc_cfg.nuc_profile_path:
+        from fiberhmm.inference.nuc_recaller import load_nuc_profile
+        _WORKER['nuc_profile'] = load_nuc_profile(nuc_cfg.nuc_profile_path)
     # Frame of the input ns/nl/as/al: molecular (current FiberHMM, flip reverse
     # tags to seq) vs legacy seq/query (v1.0, use as-is). See recall_read().
     _WORKER['input_molecular_frame'] = input_molecular_frame
@@ -348,6 +354,10 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
         nuc_min_size=nuc_cfg.nuc_min_size,
         msp_min_size=nuc_cfg.msp_min_size,
         phase_nrl=nuc_cfg.phase_nrl,
+        nuc_recall_policy=nuc_cfg.nuc_recall_policy,
+        nuc_profile=_WORKER.get('nuc_profile'),
+        derived_tf_max_edge_ambiguity=(
+            nuc_cfg.derived_tf_max_edge_ambiguity),
         m5c_mask=m5c_mask,
         m5c_llr_hit=_WORKER.get('m5c_llr_hit'),
         m5c_llr_miss=_WORKER.get('m5c_llr_miss'),
@@ -584,7 +594,7 @@ def parse_args(default_recall_nucs: bool = False):
     nuc = p.add_argument_group(
         'nucleosome recall (--recall-nucs)',
         'Run the per-read nucleosome recaller (split over-merged HMM footprints '
-        'on accessible evidence + refine conservative edges) BEFORE TF recall, '
+        'on accessible evidence + resolve platform-aware edges) BEFORE TF recall, '
         'reusing the existing apply-tagged ns/nl/as/al -- no HMM re-run. Linear '
         'reads only.',
     )
@@ -593,9 +603,25 @@ def parse_args(default_recall_nucs: bool = False):
                      help='Enable nucleosome recall before TF recall. '
                           '(Default on for fiberhmm-recall-nucs.)')
     nuc.add_argument('--split-min-llr', type=float, default=4.0,
-                     help='Min accessible-cut LLR to split a footprint (default 4.0)')
+                     help='Min accessible-cut LLR to split a footprint; for '
+                          'DddA, the linker-residue LLR after subtracting '
+                          'provisional TFs (default 4.0)')
     nuc.add_argument('--split-min-opps', type=int, default=3,
-                     help='Min informative positions for a split cut (default 3)')
+                     help='Min informative positions for a split cut or DddA '
+                          'linker residue (default 3)')
+    nuc.add_argument(
+        '--ddda-derived-tf-max-edge-gap', type=int, default=12, metavar='BP',
+        help='DddA radial recall only: require TF scan space opened solely by '
+             'nucleosome refinement to have a deamination hit within BP on '
+             'both sides (default 12; -1 disables).',
+    )
+    nuc.add_argument(
+        '--nuc-recall-policy',
+        choices=['auto', 'conservative', 'topology'],
+        default='auto',
+        help='"auto" uses topology-constrained, ambiguity-preserving recall '
+             'for Nanopore and historical conservative edges otherwise.',
+    )
     nuc.add_argument('--nuc-min-size', type=int, default=85,
                      help='Min refined nucleosome size; smaller footprints are '
                           'demoted to accessible/MSP (default 85)')
@@ -622,6 +648,13 @@ def _resolve_model_metadata(model_path):
         except (OSError, ValueError):
             pass
     return mode, k
+
+
+def _resolve_nuc_recall_policy(args, mode: str) -> str:
+    policy = str(getattr(args, 'nuc_recall_policy', 'auto')).lower()
+    if policy == 'auto':
+        return 'topology' if mode == 'nanopore-fiber' else 'conservative'
+    return policy
 
 
 def _parse_phase_nrl_option(raw):
@@ -809,6 +842,7 @@ def main(default_recall_nucs: bool = False):
         model_k = model_k or fb_k
     mode = args.mode or model_mode
     k = args.context_size or int(model_k)
+    nuc_recall_policy = _resolve_nuc_recall_policy(args, mode)
 
     llr_hit, llr_miss = build_llr_tables(model)
     m5c_llr_hit = m5c_llr_miss = None
@@ -838,8 +872,20 @@ def main(default_recall_nucs: bool = False):
     nuc_cfg = None
     if getattr(args, 'recall_nucs', False):
         print("  +RECALL-NUCS: nucleosome recaller runs before TF recall "
-              "(reuses apply-tagged ns/nl/as/al -- no HMM re-run; linear reads).",
+              f"(policy={nuc_recall_policy}; reuses apply-tagged ns/nl/as/al "
+              "-- no HMM re-run; linear reads).",
               file=sys.stderr)
+        nuc_profile_path = None
+        derived_tf_max_edge_ambiguity = None
+        if args.enzyme == 'ddda':
+            from fiberhmm.models import _bundled_model_path
+            nuc_profile_path = _bundled_model_path('ddda_nuc_profile.json')
+            if args.ddda_derived_tf_max_edge_gap < -1:
+                raise SystemExit(
+                    '--ddda-derived-tf-max-edge-gap must be -1 or >= 0')
+            if args.ddda_derived_tf_max_edge_gap >= 0:
+                derived_tf_max_edge_ambiguity = (
+                    args.ddda_derived_tf_max_edge_gap)
         nuc_cfg = _NucCfg(
             recall_nucs=True,
             split_min_llr=args.split_min_llr,
@@ -847,6 +893,9 @@ def main(default_recall_nucs: bool = False):
             nuc_min_size=args.nuc_min_size,
             msp_min_size=args.msp_min_size,
             phase_nrl=_resolve_recall_nucs_phase_nrl(args),
+            nuc_recall_policy=nuc_recall_policy,
+            nuc_profile_path=nuc_profile_path,
+            derived_tf_max_edge_ambiguity=derived_tf_max_edge_ambiguity,
         )
 
     # Open BAMs with io-threads. pysam accepts "-" as stdin/stdout natively.

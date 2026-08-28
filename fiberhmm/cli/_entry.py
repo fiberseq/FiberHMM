@@ -60,6 +60,12 @@ def daf_encode_main():
     return main()
 
 
+def daf_snps_main():
+    _notify()
+    from fiberhmm.cli.daf_snps import main
+    return main()
+
+
 def call_m5c_main():
     _notify()
     from fiberhmm.cli.call_m5c import main
@@ -99,4 +105,64 @@ def run_main():
 def dedup_main():
     _notify()
     from fiberhmm.cli.dedup import main
+    return main()
+
+
+def pair_main():
+    _notify()
+    from fiberhmm.cli.pair import main
+    return main()
+
+
+def merge_main():
+    _notify()
+    from fiberhmm.cli.merge import main
+    return main()
+
+
+def crossstrand_main():
+    _notify()
+    from fiberhmm.cli.crossstrand import main
+    return main()
+
+
+def strand_rescue_main():
+    _notify()
+    from fiberhmm.cli.strand_rescue import main
+    return main()
+
+
+def strand_rescue_annotate_main():
+    _notify()
+    from fiberhmm.cli.strand_rescue_annotate import main
+    return main()
+
+
+def strand_rescue_audit_main():
+    _notify()
+    from fiberhmm.cli.strand_rescue_audit import main
+    return main()
+
+
+def footprint_model_main():
+    _notify()
+    from fiberhmm.cli.footprint_model import main
+    return main()
+
+
+def tag_families_main():
+    _notify()
+    from fiberhmm.cli.tag_families import main
+    return main()
+
+
+def targeted_families_main():
+    _notify()
+    from fiberhmm.cli.targeted_families import main
+    return main()
+
+
+def qc_main():
+    _notify()
+    from fiberhmm.cli.qc import main
     return main()

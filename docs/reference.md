@@ -49,8 +49,8 @@ tags carrying TF/Pol II footprints with full LLR scoring:
 
 | Tag | Type | Description |
 |-----|------|-------------|
-| `MA` | Z | Annotation string: `<readlen>;nuc.Q:...;msp.:...;tf.QQQ:...;ddda_mcg.:...` (plus the strand-resolved DddA groups below; 1-based coords per spec) |
-| `AQ` | B,C | Quality bytes interleaved per annotation: `nq` for nucs; `tq, el, er` for TFs (no bytes for MSPs) |
+| `MA` | Z | Annotation string: `<readlen>;nuc.Q:...;msp.:...;tf.QQQ:...;ddda_mcg.:...` (plus the strand-resolved DddA and optional strand-rescue groups below; 1-based coords per spec) |
+| `AQ` | B,C | Quality bytes interleaved per annotation: `nq` for nucs; `tq, el, er` for ordinary TFs; three bytes for each normalized strand-rescue nuc or TF (no bytes for MSPs) |
 
 Legacy `ns`/`nl`/`as`/`al` are rewritten to reflect the unified call set (v2
 short-nucs absorbed into TF calls are removed). **TF calls live only in
@@ -92,9 +92,94 @@ Coordinates are 1-based (per the spec); internal storage stays 0-based.
 | `ddda_mcg.` | none | Conservative molecule-specific methylated-CpG runs inferred from DddA deamination contrast. |
 | `ddda_mcg+` / `ddda_mcg-` | none | Methylated runs on the CT/reference-C or GA/reference-G channel of a merged cross-strand DAF molecule. |
 | `ddda_mcg_hemi+` / `ddda_mcg_hemi-` | none | High-confidence hemimethylated runs where both channels are observed; the qualifier identifies the methylated channel. |
+| `nuc_sr.QQQ` | `SR alternative, molecular-left edge, molecular-right edge` | Complete optional nucleosome shadow layer from `fiberhmm-strand-rescue-annotate`: exactly one same-class call per ordinary nuc, with one-for-one shared edges where accepted. Identity and cardinality are fixed; SR cannot reclassify, split, merge, promote, demote, create, or remove a nuc. |
+| `tf_sr.QQQ` | `SR alternative, molecular-left edge, molecular-right edge` | Complete optional TF shadow layer: one call per ordinary TF plus atomic weak-positive MSP-to-TF rescues. Accepted ordinary TFs may receive shared same-class edges. |
 
 The recalled nucleosome track from the nucleosome recaller is `nuc.QQQ` =
 `(nq, el, er)` — same byte layout as `tf.QQQ`.
+
+For DddA radial recall, `nq` scores the topology-changing linker configuration,
+not the much easier question of protected DNA versus open linker.  A retained
+split or inward edge uses the accessible-residue log Bayes factor after
+subtracting its provisional TF configuration.  A broad HMM block restored
+because its internal topology was unresolved receives `nq=0`.  This avoids the
+uninformative saturation produced by scoring a full protected radial window.
+An unchanged single-nucleosome hypothesis retains its protected-window score
+because no split decision was made.
+
+For an MSP-to-TF rescue (`R`), `q0 = round(255 * P(H* | A or S))`, where
+`H*` is the exact selected TF configuration, `A` is the exact ordinary MSP
+baseline, and `S` is the complete supported local TF-configuration action set.
+The log scores combine the opposite-strand population prior and the target
+molecule's hard-chemistry likelihood. All
+components of a multi-TF rescue share one `AN` prefix with `R0`, `R1`, ...
+roles and one `q0`, so they switch atomically. Their component-specific `q1`
+and `q2` are canonical molecular-left and molecular-right boundary reliability
+scores. An `R` role is valid only in `tf_sr`.
+
+An accepted ordinary TF or nuc edge alternative is a singleton `H` role. Its
+`q0` is the equal-prior posterior for the bivariate canonical start/end
+hypothesis versus that exact ordinary interval. The log odds combine
+molecule-collapsed opposite-strand start/end population evidence under a
+regularized bivariate geometry model with the target molecule's joint
+changed-base chemistry evidence. `q1` and `q2` are corresponding marginal
+molecular-left and molecular-right edge posteriors; an unchanged edge is shared
+by both hypotheses and receives `255`. A changed edge with no target-molecule
+opportunity receives `0` in q1/q2 even when the population nominates the
+canonical geometry; the full population-plus-chemistry posterior remains in
+q0 and the report. Family assignment still has to beat an
+explicit unmatched null, and overlap/order checks retain the ordinary edges on
+topology conflicts. An `H` changes edges only and always remains the same class
+as its source ordinary call.
+
+These are linear 0--255 quantities, not Phred scores, ordinary TF `tq`, or
+nucleosome `nq`. Ordinary `tq` is not used to decide which source TF calls
+count. `q1` and `q2` are always in molecular orientation; on reverse
+alignments the annotator swaps the reference-left and reference-right values.
+
+Unchanged calls in either complete shadow layer are unnamed (`AN` token `.`)
+and receive `(255,0,0)`. This is a completeness sentinel, not a high-confidence
+SR alternative; their original evidence qualities remain on ordinary `nuc` and
+`tf`.
+
+FiberBrowser applies one threshold only to named `R` and `H` groups. At
+`q0 >= T`, it displays the named SR interval or atomic interval set; below the
+threshold it displays the exact ordinary baseline: the containing MSP for `R`,
+or the same-class ordinary TF/nuc identified by the `H` source ordinal.
+Unnamed sentinel rows must be ignored by the threshold. `nuc_sr` and `tf_sr`
+are complete shadows, not complementary N/TF alternatives and not the CR
+nucleosome-versus-reconstruction slider.
+
+Ordinary nuc, MSP, and TF intervals, quality rows, and annotation identities
+remain unchanged. Edge updates that would introduce a new overlap in the
+combined shadow callset, or invert order within one layer, retain their baseline
+edges. An edge expansion also yields to a nonoverlapping-baseline rescued TF
+rather than hiding it. Existing baseline overlaps are grandfathered. No
+nucleosome can be split, merged, promoted, demoted, or removed, and no
+nucleosome-length ceiling applies.
+
+Every `H` annotation name carries the type-local ordinal of the ordinary call
+it replaces in the shadow layer. Report identity also includes the canonical
+input path, alignment fields, source-record SHA-256, occurrence among
+byte-identical records, molecular interval, and annotation ordinal. Duplicate
+ordinary intervals and duplicate alignment records therefore retain literal
+one-for-one shadow identity.
+
+`fiberhmm-strand-rescue-annotate` writes only new indexed regional BAMs.
+`fiberhmm-strand-rescue-audit` validates the v4 two-layer cardinality, quality,
+role, MA/AQ/AN alignment, overlap, header contract, and index integrity. The
+annotator accepts v2/v3 reports and emits the v4 `QQQ` contract; the auditor can
+also validate existing v2/v3 BAM contracts.
+
+Repeated SR `--bam` inputs explicitly define one pooled same-assay cohort. BAM
+identity is retained for output routing and per-input amplified-DAF duplicate
+collapse, never used as a cross-library prior. Independent assays do not enter
+inference. SR consumes only standard sequence, hard MM/ML (or DAF mismatches),
+and existing MA calls. The `hia5-nanopore` preset reads standard Dorado m6A and
+uses the strict hard-call threshold `ML >= 248`. Consensus reconstruction from
+annotation combinations is specified
+separately for FiberBrowser in
+[`FIBERBROWSER_CONSENSUS_RECONSTRUCTION.md`](./FIBERBROWSER_CONSENSUS_RECONSTRUCTION.md).
 
 `ddda_mcg.` is a molecular interval annotation, not a native per-base `MM:C+m`
 modification call. DAF amplification removes that native channel. The span
@@ -167,6 +252,38 @@ the utility writes and validates a temporary BAM beside the original, rebuilds
 any existing BAI/CSI index, and then atomically replaces each file. Per-read
 tags are copied unchanged. If all requested names are already declared, it
 does not rewrite the BAM.
+
+## Chemistry declaration header
+
+FiberHMM records the scientific observation model independently of filenames
+and free-text command provenance with a versioned SAM header comment:
+
+```text
+@CO<TAB>FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=pacbio;mode=daf;model=ddda_TF
+```
+
+The required v1 fields are `assay`, `enzyme`, `platform`, and `mode`. Producers
+may append fields such as `model`. Field names match `[a-z][a-z0-9_]*`; values
+are non-empty tokens matching `[A-Za-z0-9_.+-]+`. The supported vocabulary is:
+
+- `assay=daf`, `enzyme=ddda|dddb`, `mode=daf`, with the actual sequencing
+  `platform=pacbio|nanopore` (or `unknown` only when unavailable);
+- `assay=fiber-seq`, `enzyme=hia5`, and either
+  `platform=pacbio;mode=pacbio-fiber` or
+  `platform=nanopore;mode=nanopore-fiber`;
+- `custom` for an explicitly custom assay, enzyme, or mode.
+
+Valid v1 declarations are authoritative scientific metadata. Multiple lines
+with the same four required fields are allowed (for example after successive
+models add distinct `model` values); incompatible required fields constitute a
+conflict and FiberHMM producers refuse to silently relabel them. Readers ignore
+malformed lines and unknown convention versions. For BAMs made before this
+contract, tools may report lower-confidence compatibility inference from a
+`fiberhmm-call` `@PG` record, but filename inference is never equivalent to a
+declaration.
+
+`fiberhmm-call` emits this line together with its ordinary `@PG` provenance.
+Downstream BAM transformations retain it as part of the copied header.
 
 ## Quality bytes: tq / el / er
 
@@ -243,8 +360,40 @@ statistic. The TF recaller scans accessible regions for protected segments
 (positive ℓ), reporting sub-nucleosomal footprints. The nucleosome recaller scans
 an over-merged protected footprint for accessible segments (negative ℓ); a
 sufficiently supported accessible segment denotes a buried linker at which the
-footprint is divided, after which the positive-sign scan re-estimates each
-resulting nucleosome's conservative boundaries and confidence.
+footprint may be divided.
+
+The nucleosome geometry is controlled by `--nuc-recall-policy`:
+
+- `conservative` is the historical policy. Every qualifying accessible run is
+  a cut, after which the positive-sign scan defines conservative inner
+  nucleosome boundaries. On sparse single-strand data, this can turn unresolved
+  sequence into apparent accessibility.
+- `topology` accepts a set of cuts only when every outer and intervening
+  fragment remains at least `--nuc-min-size`. It retains each post-cut HMM
+  fragment as the occupancy interval and records unresolved edges with zero
+  edge-sharpness bytes. Thus isolated events cannot shatter one nucleosome and
+  neutral edge ambiguity is not reported as an NFR.
+- `auto` (the CLI default) selects `topology` for `nanopore-fiber` models and
+  `conservative` otherwise. Either behavior can be forced explicitly.
+
+The topology policy still recalls over-merged nucleosomes: supported internal
+linkers divide long footprints, and the maximum-total-LLR compatible cut chain
+is selected when several candidate linkers occur.
+
+**DddA radial configuration validation.** DddA internal deaminations make the
+ordinary accessible-cut pass unsuitable, so the radial template is used only
+to nominate protected dyads and candidate gaps. The caller performs provisional
+TF recall in those gaps, subtracts the protected TF components, and asks whether
+the remaining opportunities support linker over protected sequence at
+`--split-min-llr` and `--split-min-opps`. Unsupported outer residue is restored
+to the HMM footprint; radial calls separated by an unsupported boundary are
+merged back into one broad `nq=0` block; and an HMM nucleosome with no radial
+dyad is preserved. The process is repeated to stability; each changing pass is
+monotonic and the finite bound is set by the initial radial-call count. Radial
+calls are clamped to their source HMM
+footprint, so refinement cannot erase pre-existing HMM MSP/TF scan space.
+`--ddda-derived-tf-max-edge-gap` remains a secondary two-sided boundary check,
+not the primary split criterion.
 
 ## recall-tfs output modes
 

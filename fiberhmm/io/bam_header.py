@@ -13,6 +13,18 @@ MA_TYPES_PREFIX = "MA-TYPES:v1:"
 _MA_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 _MA_SECTION_HEAD_RE = re.compile(r"^([A-Za-z0-9_]+)[+.-][PQ]*$")
 
+# Stable assay/enzyme/platform contract consumed by FiberBrowser and other
+# downstream tools. This is deliberately separate from free-text @PG DS/CL
+# provenance so scientific model selection never depends on filenames or
+# command-line parsing.
+CHEMISTRY_PREFIX = "FIBERHMM-CHEMISTRY:v1:"
+_CHEMISTRY_FIELD_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+_CHEMISTRY_VALUE_RE = re.compile(r"^[A-Za-z0-9_.+-]+$")
+_CHEMISTRY_REQUIRED_FIELDS = ("assay", "enzyme", "platform", "mode")
+_LEGACY_MODE_RE = re.compile(r"(?:^|[\s;(])mode=([A-Za-z0-9_.+-]+)", re.IGNORECASE)
+_LEGACY_ENZYME_RE = re.compile(r"(?:^|[\s;(])enzyme=([A-Za-z0-9_.+-]+)", re.IGNORECASE)
+_LEGACY_SEQ_RE = re.compile(r"(?:^|\s)--seq(?:=|\s+)(pacbio|nanopore)(?:\s|$)", re.IGNORECASE)
+
 
 def _header_to_dict(header) -> dict:
     """Header -> dict, accepting a pysam AlignmentHeader or a plain dict."""
@@ -53,7 +65,136 @@ def append_pg_record(header, record: dict):
 
 def maybe_append_pg(header, record: Optional[dict]):
     """``append_pg_record`` when ``record`` is provided, else ``header`` unchanged."""
-    return append_pg_record(header, record) if record else header
+    if not record:
+        return header
+    output = append_pg_record(header, record)
+    chemistry = record.get("chemistry")
+    return append_chemistry(output, chemistry) if chemistry else output
+
+
+def _parse_chemistry_comment(comment: str) -> Optional[dict[str, str]]:
+    if not str(comment).startswith(CHEMISTRY_PREFIX):
+        return None
+    payload = str(comment)[len(CHEMISTRY_PREFIX):]
+    fields: dict[str, str] = {}
+    for item in payload.split(";"):
+        key, separator, value = item.partition("=")
+        if (
+            not separator
+            or key in fields
+            or not _CHEMISTRY_FIELD_RE.fullmatch(key)
+            or not _CHEMISTRY_VALUE_RE.fullmatch(value)
+        ):
+            return None
+        fields[key] = value
+    if any(not fields.get(key) for key in _CHEMISTRY_REQUIRED_FIELDS):
+        return None
+    return fields
+
+
+def declared_chemistries(header) -> list[dict[str, str]]:
+    """Return valid v1 chemistry declarations in first-seen order."""
+    declarations: list[dict[str, str]] = []
+    seen = set()
+    for raw_comment in _header_to_dict(header).get("CO", []):
+        parsed = _parse_chemistry_comment(str(raw_comment))
+        if parsed is None:
+            continue
+        identity = tuple(sorted(parsed.items()))
+        if identity not in seen:
+            seen.add(identity)
+            declarations.append(parsed)
+    return declarations
+
+
+def infer_legacy_chemistry(header) -> Optional[dict[str, str]]:
+    """Recover chemistry from a pre-v1 ``fiberhmm-call`` program record.
+
+    This compatibility path is intentionally narrower than general filename or
+    read-content guessing. Its result is inferred provenance, never equivalent
+    to an explicit :data:`CHEMISTRY_PREFIX` declaration.
+    """
+    programs = _header_to_dict(header).get("PG", [])
+    for program in reversed(programs):
+        program_name = str(program.get("PN") or program.get("ID") or "").lower()
+        if "fiberhmm-call" not in program_name:
+            continue
+        description = str(program.get("DS", ""))
+        command = str(program.get("CL", ""))
+        joined = f"{description} {command}"
+        mode_match = _LEGACY_MODE_RE.search(joined)
+        enzyme_match = _LEGACY_ENZYME_RE.search(joined)
+        seq_match = _LEGACY_SEQ_RE.search(command)
+        mode = mode_match.group(1).lower() if mode_match else ""
+        enzyme = enzyme_match.group(1).lower() if enzyme_match else ""
+        platform = seq_match.group(1).lower() if seq_match else ""
+        if not platform and mode == "pacbio-fiber":
+            platform = "pacbio"
+        elif not platform and mode == "nanopore-fiber":
+            platform = "nanopore"
+        if mode == "daf":
+            assay = "daf"
+        elif mode in {"pacbio-fiber", "nanopore-fiber"}:
+            assay = "fiber-seq"
+        else:
+            assay = "custom"
+        if not mode and not enzyme:
+            continue
+        return {
+            "assay": assay,
+            "enzyme": enzyme or "custom",
+            "platform": platform or "unknown",
+            "mode": mode or "custom",
+        }
+    return None
+
+
+def append_chemistry(header, chemistry):
+    """Append an authoritative ``FIBERHMM-CHEMISTRY:v1`` declaration.
+
+    Existing incompatible declarations are rejected: silently relabelling a
+    BAM would be worse than requiring an explicit reprocessing decision.
+    Additional safe fields such as ``model`` are permitted for provenance.
+    """
+    if not isinstance(chemistry, dict):
+        raise ValueError("chemistry declaration must be a mapping")
+    normalized: dict[str, str] = {}
+    for raw_key, raw_value in chemistry.items():
+        key = str(raw_key).strip().lower()
+        value = str(raw_value).strip()
+        if not _CHEMISTRY_FIELD_RE.fullmatch(key):
+            raise ValueError(f"invalid chemistry field name: {raw_key!r}")
+        if key in normalized:
+            raise ValueError(f"duplicate chemistry field after normalization: {raw_key!r}")
+        if not _CHEMISTRY_VALUE_RE.fullmatch(value):
+            raise ValueError(f"invalid chemistry field value for {key}: {raw_value!r}")
+        normalized[key] = value
+    missing = [key for key in _CHEMISTRY_REQUIRED_FIELDS if not normalized.get(key)]
+    if missing:
+        raise ValueError("chemistry declaration missing required fields: " + ",".join(missing))
+
+    existing = declared_chemistries(header)
+    if normalized in existing:
+        return header
+    core = {key: normalized[key].lower() for key in _CHEMISTRY_REQUIRED_FIELDS}
+    for declaration in existing:
+        prior_core = {
+            key: declaration[key].lower() for key in _CHEMISTRY_REQUIRED_FIELDS
+        }
+        if prior_core != core:
+            raise ValueError(
+                "incompatible FIBERHMM-CHEMISTRY declarations: "
+                f"existing={prior_core}, requested={core}"
+            )
+
+    ordered_keys = [*_CHEMISTRY_REQUIRED_FIELDS]
+    ordered_keys.extend(sorted(key for key in normalized if key not in ordered_keys))
+    comment = CHEMISTRY_PREFIX + ";".join(
+        f"{key}={normalized[key]}" for key in ordered_keys
+    )
+    data = _header_to_dict(header)
+    data["CO"] = [*list(data.get("CO", [])), comment]
+    return pysam.AlignmentHeader.from_dict(data)
 
 
 def is_valid_ma_name(name: str) -> bool:

@@ -1,0 +1,21 @@
+table fiberbrowser_fiberlayers
+"FiberHMM per-read assignments to footprint-model binding hypotheses"
+    (
+    string chrom;        "Chromosome"
+    uint chromStart;     "Start position"
+    uint chromEnd;       "End position"
+    string name;         "Source read / molecule ID"
+    uint score;          "Categorical assignment confidence (1000)"
+    char[1] strand;      "Strand (.)"
+    uint thickStart;     "Start position (same as chromStart)"
+    uint thickEnd;       "End position (same as chromEnd)"
+    uint reserved;       "Class color encoded as R,G,B in the BED input"
+    int blockCount;      "Number of non-overlapping assignment blocks in this lane"
+    int[blockCount] blockSizes;  "Observed TF-call interval sizes"
+    int[blockCount] chromStarts; "Observed TF-call starts relative to chromStart"
+    string class_id;     "Stable derived-layer class ID"
+    string source_layer; "Native layer supplying the observations"
+    string rule_id;      "Stable footprint-model assignment rule ID"
+    lstring blockQuality; "Comma-separated categorical values (255), aligned to blocks"
+    lstring blockSiteIds; "Comma-separated stable site IDs, aligned to blocks"
+    )

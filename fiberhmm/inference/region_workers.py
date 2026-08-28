@@ -8,16 +8,12 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model
-from fiberhmm.io.bam_header import (
-    append_coord_marker,
-    append_ma_types,
-    maybe_append_pg,
-)
 from fiberhmm.inference.engine import (
     CHIMERA_SKIP,
     _extract_fiber_read_from_pysam,
     _process_single_read,
     configure_daf_chimera_filter,
+    configure_daf_snp_mask,
     extract_fiber_read_from_payload,
     make_apply_payload,
 )
@@ -37,6 +33,11 @@ from fiberhmm.inference.region_types import (
 from fiberhmm.inference.tagging import (
     set_legacy_apply_tags,
     write_fused_recall_tags,
+)
+from fiberhmm.io.bam_header import (
+    append_coord_marker,
+    append_ma_types,
+    maybe_append_pg,
 )
 from fiberhmm.posteriors.region_tsv import format_region_posterior_line
 
@@ -85,6 +86,7 @@ def _init_region_worker(model_path: str, params: dict):
             params.get('chimera_min_seg', 5),
             params.get('chimera_purity', 0.8),
         )
+        configure_daf_snp_mask(params.get('daf_snp_mask_path'))
 
         # Warm up numba JIT.
         from fiberhmm.core.hmm import HAS_NUMBA
@@ -496,6 +498,7 @@ def _init_fused_region_worker(
         params.get('chimera_min_seg', 5),
         params.get('chimera_purity', 0.8),
     )
+    configure_daf_snp_mask(params.get('daf_snp_mask_path'))
 
     from fiberhmm.core.hmm import HAS_NUMBA
 
@@ -561,8 +564,12 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         recall_nucs = bool(params.get('recall_nucs', False))
         split_min_llr = float(params.get('split_min_llr', 4.0))
         split_min_opps = int(params.get('split_min_opps', 3))
+        nuc_recall_policy = str(
+            params.get('nuc_recall_policy', 'conservative'))
         phase_nrl = int(params.get('phase_nrl', 0))
         nuc_profile = _region_nuc_profile(params.get('nuc_profile_path'))
+        derived_tf_max_edge_ambiguity = params.get(
+            'derived_tf_max_edge_ambiguity')
 
         pysam.set_verbosity(0)
 
@@ -698,10 +705,13 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         recall_nucs=recall_nucs,
                         split_min_llr=split_min_llr,
                         split_min_opps=split_min_opps,
+                        nuc_recall_policy=nuc_recall_policy,
                         nuc_min_size=nuc_min_size,
                         msp_min_size=msp_min_size,
                         phase_nrl=phase_nrl,
                         nuc_profile=nuc_profile,
+                        derived_tf_max_edge_ambiguity=(
+                            derived_tf_max_edge_ambiguity),
                         m5c_mask=m5c_mask,
                         m5c_llr_hit=_worker_recall_state.get('m5c_llr_hit'),
                         m5c_llr_miss=_worker_recall_state.get('m5c_llr_miss'),

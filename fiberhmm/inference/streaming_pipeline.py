@@ -12,12 +12,7 @@ from typing import Optional, Set, Tuple
 import pysam
 
 from fiberhmm.inference.bam_output import _sort_and_index_bam
-from fiberhmm.inference.engine import make_apply_payload
-from fiberhmm.io.bam_header import (
-    append_coord_marker,
-    append_ma_types,
-    maybe_append_pg,
-)
+from fiberhmm.inference.engine import configure_daf_snp_mask, make_apply_payload
 from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
 from fiberhmm.inference.streaming_drain import (
@@ -29,6 +24,11 @@ from fiberhmm.inference.streaming_workers import (
     _init_fused_worker,
     _process_fused_payload_chunk_worker,
     _process_payload_chunk_worker,
+)
+from fiberhmm.io.bam_header import (
+    append_coord_marker,
+    append_ma_types,
+    maybe_append_pg,
 )
 
 try:
@@ -58,15 +58,19 @@ def _process_bam_streaming_pipeline_fused(
     recall_nucs: bool = False,
     split_min_llr: float = 4.0,
     split_min_opps: int = 3,
+    nuc_recall_policy: str = "conservative",
     filter_chimeras: bool = True,
     chimera_min_seg: int = 5,
     chimera_purity: float = 0.8,
     phase_nrl: int = 0,
     nuc_profile_path: str = None,
+    derived_tf_max_edge_ambiguity: int = None,
     pg_record: dict = None,
     ddda_mcg: bool = False,
+    daf_snp_mask_path: str = None,
 ):
     """Fused apply+recall streaming pipeline."""
+    configure_daf_snp_mask(daf_snp_mask_path)
     ref_fasta = None
     pysam.set_verbosity(0)
     max_inflight = n_cores + 2
@@ -122,8 +126,10 @@ def _process_bam_streaming_pipeline_fused(
                 initializer=_init_fused_worker,
                 initargs=(model_path, recall_model_path, emission_uplift, False,
                           recall_nucs, split_min_llr, split_min_opps,
+                          nuc_recall_policy,
                           filter_chimeras, chimera_min_seg, chimera_purity,
-                          phase_nrl, nuc_profile_path, ddda_mcg),
+                          phase_nrl, nuc_profile_path,
+                          derived_tf_max_edge_ambiguity, ddda_mcg),
             )
 
             inflight = deque()

@@ -9,11 +9,13 @@ from fiberhmm.inference.nuc_recaller import (
     assemble_circular_nuc_msp_tiling,
     assemble_nuc_msp_tiling,
     drop_short_nucs_overlapping_promoted,
+    exclude_nucleosomes_from_msps,
     promote_large_tf_calls,
     recall_nucs_in_read,
     rederive_msps,
     unify_circular_nuc_calls_with_tf_calls,
     unify_nuc_calls_with_tf_calls,
+    validate_radial_access_in_read,
 )
 from fiberhmm.inference.tf_recaller import TFCall, N_CTX, UNMETH_OFFSET
 from fiberhmm.io.ma_tags import format_aq_array, parse_aq_array
@@ -95,6 +97,50 @@ def test_refined_core_below_floor_is_demoted_not_emitted():
     # the 20bp core must NOT be emitted as a nuc; whole fragment -> accessible
     assert nucs == []
     assert (0, 100) in access
+
+
+def test_topology_policy_preserves_ambiguous_hmm_nucleosome():
+    # With sparse single-strand evidence, a short protected core plus neutral
+    # flanks is unresolved, not evidence that the entire HMM footprint is open.
+    obs = _obs((NONTARGET, 40), (MISS, 20), (NONTARGET, 40))
+    llr_hit, llr_miss = _llr_tables()
+    nucs, access = recall_nucs_in_read(
+        obs, ns=[0], nl=[len(obs)], read_length=len(obs),
+        llr_hit=llr_hit, llr_miss=llr_miss,
+        split_min_llr=4.0, split_min_opps=3, nuc_min_size=85,
+        recall_policy="topology",
+    )
+    assert [(n.start, n.length) for n in nucs] == [(0, 100)]
+    assert nucs[0].el == 0 and nucs[0].er == 0
+    assert access == []
+
+
+def test_topology_policy_rejects_cut_that_shatters_one_nucleosome():
+    # Both sides of the apparent cut are below the nucleosome floor. The old
+    # policy demotes all 126 bp; topology-aware recall keeps the HMM occupancy.
+    obs = _obs((MISS, 60), (HIT, 6), (MISS, 60))
+    llr_hit, llr_miss = _llr_tables()
+    nucs, access = recall_nucs_in_read(
+        obs, ns=[0], nl=[len(obs)], read_length=len(obs),
+        llr_hit=llr_hit, llr_miss=llr_miss,
+        split_min_llr=4.0, split_min_opps=3, nuc_min_size=85,
+        recall_policy="topology",
+    )
+    assert [(n.start, n.length) for n in nucs] == [(0, 126)]
+    assert access == []
+
+
+def test_topology_policy_still_splits_an_overmerged_pair():
+    obs = _obs((MISS, 100), (HIT, 6), (MISS, 100))
+    llr_hit, llr_miss = _llr_tables()
+    nucs, access = recall_nucs_in_read(
+        obs, ns=[0], nl=[len(obs)], read_length=len(obs),
+        llr_hit=llr_hit, llr_miss=llr_miss,
+        split_min_llr=4.0, split_min_opps=3, nuc_min_size=85,
+        recall_policy="topology",
+    )
+    assert [(n.start, n.length) for n in nucs] == [(0, 100), (106, 100)]
+    assert any(start == 100 and length == 6 for start, length in access)
 
 
 def test_genuine_85bp_nuc_survives_edge_pass():
@@ -330,3 +376,153 @@ def test_radial_split_splits_dinucleosome_block():
     assert any(s <= 170 <= s + length for s, length in access)
     # edge-sharpness bytes are populated
     assert all(0 <= n.el <= 255 and 0 <= n.er <= 255 for n in nucs)
+
+
+def test_radial_configuration_preserves_hmm_nuc_when_no_dyad_is_emitted():
+    llr_hit, llr_miss = _llr_tables()
+    nucs, access = validate_radial_access_in_read(
+        _obs((MISS, 220)),
+        original_ns=[10],
+        original_nl=[180],
+        radial_nucs=[],
+        provisional_tf_calls=[],
+        read_length=220,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        min_llr=4.0,
+        min_opps=3,
+        nuc_min_size=85,
+    )
+
+    assert [(call.start, call.length, call.nq, call.el, call.er)
+            for call in nucs] == [(10, 180, 0, 0, 0)]
+    assert access == []
+
+
+def test_radial_configuration_preserves_short_hmm_tf_scan_space():
+    llr_hit, llr_miss = _llr_tables()
+    nucs, access = validate_radial_access_in_read(
+        _obs((MISS, 120)),
+        original_ns=[20],
+        original_nl=[40],
+        radial_nucs=[],
+        provisional_tf_calls=[],
+        read_length=120,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        min_llr=4.0,
+        min_opps=3,
+        nuc_min_size=85,
+    )
+
+    assert nucs == []
+    assert access == [(20, 40)]
+
+
+def test_radial_configuration_restores_unsupported_outer_flanks():
+    llr_hit, llr_miss = _llr_tables()
+    nucs, access = validate_radial_access_in_read(
+        _obs((MISS, 180)),
+        original_ns=[0],
+        original_nl=[180],
+        radial_nucs=[NucCall(20, 140, 200, 240, 230)],
+        provisional_tf_calls=[],
+        read_length=180,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        min_llr=4.0,
+        min_opps=3,
+        nuc_min_size=85,
+    )
+
+    assert [(call.start, call.length, call.el, call.er)
+            for call in nucs] == [(0, 180, 0, 0)]
+    assert access == []
+
+
+def test_radial_configuration_closes_unsupported_internal_tf_gap():
+    llr_hit, llr_miss = _llr_tables()
+    nucs, access = validate_radial_access_in_read(
+        _obs((MISS, 360)),
+        original_ns=[0],
+        original_nl=[360],
+        radial_nucs=[
+            NucCall(0, 145, 220, 255, 200),
+            NucCall(215, 145, 210, 190, 255),
+        ],
+        provisional_tf_calls=[TFCall(170, 20, 8.0, 4, 5, 5)],
+        read_length=360,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        min_llr=4.0,
+        min_opps=3,
+        nuc_min_size=85,
+    )
+
+    assert [(call.start, call.length, call.nq, call.el, call.er)
+            for call in nucs] == [(0, 360, 0, 255, 255)]
+    assert access == []
+
+
+def test_radial_configuration_merges_adjacent_dyads_without_linker():
+    llr_hit, llr_miss = _llr_tables()
+    nucs, access = validate_radial_access_in_read(
+        _obs((MISS, 300)),
+        original_ns=[0],
+        original_nl=[300],
+        radial_nucs=[
+            NucCall(0, 150, 255, 255, 0),
+            NucCall(150, 150, 255, 0, 255),
+        ],
+        provisional_tf_calls=[],
+        read_length=300,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        min_llr=4.0,
+        min_opps=3,
+        nuc_min_size=85,
+    )
+
+    assert [(call.start, call.length, call.nq) for call in nucs] == [(0, 300, 0)]
+    assert access == []
+
+
+def test_radial_configuration_keeps_tf_gap_with_accessible_residue():
+    llr_hit, llr_miss = _llr_tables()
+    obs = _obs(
+        (MISS, 145),
+        (HIT, 25),
+        (MISS, 20),
+        (HIT, 25),
+        (MISS, 145),
+    )
+    original = [
+        NucCall(0, 145, 220, 255, 200),
+        NucCall(215, 145, 210, 190, 255),
+    ]
+    nucs, access = validate_radial_access_in_read(
+        obs,
+        original_ns=[0],
+        original_nl=[360],
+        radial_nucs=original,
+        provisional_tf_calls=[TFCall(170, 20, 8.0, 4, 5, 5)],
+        read_length=360,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        min_llr=4.0,
+        min_opps=3,
+        nuc_min_size=85,
+    )
+
+    assert [(call.start, call.length) for call in nucs] == [(0, 145), (215, 145)]
+    assert access == [(145, 70)]
+
+
+def test_exclude_nucleosomes_from_msps_removes_expanded_overlap():
+    result = exclude_nucleosomes_from_msps(
+        [(0, 100), (120, 100)],
+        [NucCall(80, 80, 0, 0, 0)],
+        msp_min_size=5,
+    )
+
+    assert result == [(0, 80), (160, 60)]

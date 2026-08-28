@@ -13,10 +13,55 @@ from conftest import make_synthetic_bam, make_synthetic_iupac_bam
 
 from fiberhmm.cli.call import (
     _check_daf_inputs,
+    _chemistry_declaration,
     _configure_ddda_mcg,
+    _daf_snp_depth_preflight,
     _resolve_apply_model,
+    _resolve_dedup,
+    _resolve_derived_tf_edge_gap,
     _resolve_recall_model,
 )
+from fiberhmm.cli.call import parse_args as parse_call_args
+from fiberhmm.daf.snps import (
+    DEFAULT_SNP_MIN_ALT_FIBERS,
+    DEFAULT_SNP_MIN_DEPTH,
+    DEFAULT_SNP_MIN_FRACTION,
+)
+from fiberhmm.io.bam_header import declared_chemistries
+
+
+def test_ddda_derived_tf_edge_gap_is_ddda_recall_only():
+    args = SimpleNamespace(
+        ddda_derived_tf_max_edge_gap=12,
+        enzyme="ddda",
+    )
+    assert _resolve_derived_tf_edge_gap(args, recall_nucs=True) == 12
+    assert _resolve_derived_tf_edge_gap(args, recall_nucs=False) is None
+    args.enzyme = "hia5"
+    assert _resolve_derived_tf_edge_gap(args, recall_nucs=True) is None
+    args.enzyme = "ddda"
+    args.ddda_derived_tf_max_edge_gap = -1
+    assert _resolve_derived_tf_edge_gap(args, recall_nucs=True) is None
+
+
+@pytest.mark.parametrize(
+    ("enzyme", "mode", "seq", "expected"),
+    [
+        ("ddda", "daf", None, ("daf", "ddda", "pacbio", "daf")),
+        ("dddb", "daf", None, ("daf", "dddb", "nanopore", "daf")),
+        ("hia5", "pacbio-fiber", None, ("fiber-seq", "hia5", "pacbio", "pacbio-fiber")),
+        ("hia5", "nanopore-fiber", None, ("fiber-seq", "hia5", "nanopore", "nanopore-fiber")),
+    ],
+)
+def test_chemistry_declaration_records_supported_platform(enzyme, mode, seq, expected):
+    declaration = _chemistry_declaration(
+        SimpleNamespace(enzyme=enzyme, seq=seq),
+        mode,
+        "/models/apply model.json",
+        None,
+    )
+    assert tuple(declaration[key] for key in ("assay", "enzyme", "platform", "mode")) == expected
+    assert declaration["model"] == "apply_model"
 
 
 def test_fiberhmm_call_stdout_is_clean_bam_stream(benchmark_model_path, tmp_path):
@@ -61,8 +106,16 @@ def test_fiberhmm_call_stdout_is_clean_bam_stream(benchmark_model_path, tmp_path
     stdout_bam.write_bytes(result.stdout)
     with pysam.AlignmentFile(stdout_bam, "rb", check_sq=False) as bam:
         reads = list(bam.fetch(until_eof=True))
+        chemistry = declared_chemistries(bam.header)
 
     assert len(reads) == 4
+    assert chemistry == [{
+        "assay": "fiber-seq",
+        "enzyme": "custom",
+        "platform": "pacbio",
+        "mode": "pacbio-fiber",
+        "model": Path(benchmark_model_path).stem,
+    }]
 
 
 def test_daf_input_sniff_accepts_iupac_encoding(tmp_path):
@@ -123,6 +176,124 @@ def test_call_model_resolution_uses_custom_paths():
 
     assert _resolve_apply_model(args) == "/tmp/custom_apply.json"
     assert _resolve_recall_model(args) == "/tmp/custom_recall.json"
+
+
+def test_call_qc_is_default_on_and_can_be_disabled(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["fiberhmm-call", "-i", "in.bam", "-o", "out.bam", "--enzyme", "dddb"],
+    )
+    args = parse_call_args()
+    assert args.qc is True
+    assert args.qc_min_mapq == 20
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fiberhmm-call", "-i", "in.bam", "-o", "out.bam",
+            "--enzyme", "dddb", "--no-qc",
+        ],
+    )
+    assert parse_call_args().qc is False
+
+
+def test_daf_snp_and_nondestructive_dedup_defaults(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["fiberhmm-call", "-i", "in.bam", "-o", "out.bam", "--enzyme", "dddb"],
+    )
+    args = parse_call_args()
+    assert args.daf_call_snps is None
+    assert args.daf_snp_min_fraction == DEFAULT_SNP_MIN_FRACTION
+    assert args.daf_snp_min_depth == DEFAULT_SNP_MIN_DEPTH
+    assert args.daf_snp_min_alt_fibers == DEFAULT_SNP_MIN_ALT_FIBERS
+    assert args.dedup is None
+    assert _resolve_dedup(args, "daf") is True
+    assert args.dedup_collapse is False
+    assert args.dedup_max_end_diff == 50
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fiberhmm-call", "-i", "in.bam", "-o", "out.bam",
+            "--enzyme", "dddb", "--no-dedup",
+        ],
+    )
+    no_dedup = parse_call_args()
+    assert no_dedup.dedup is False
+    assert _resolve_dedup(no_dedup, "daf") is False
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fiberhmm-call", "-i", "in.bam", "-o", "out.bam",
+            "--enzyme", "hia5",
+        ],
+    )
+    fiber = parse_call_args()
+    assert _resolve_dedup(fiber, "pacbio-fiber") is False
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "fiberhmm-call",
+            "-i",
+            "in.bam",
+            "-o",
+            "out.bam",
+            "--enzyme",
+            "dddb",
+            "--daf-snp-min-fraction",
+            "0.3",
+            "--daf-snp-min-depth",
+            "10",
+            "--daf-snp-min-alt-fibers",
+            "7",
+        ],
+    )
+    custom = parse_call_args()
+    assert (
+        custom.daf_snp_min_fraction,
+        custom.daf_snp_min_depth,
+        custom.daf_snp_min_alt_fibers,
+    ) == (0.3, 10, 7)
+
+
+def _write_depth_preflight_bam(path: Path, n_reads: int) -> None:
+    header = pysam.AlignmentHeader.from_dict(
+        {"HD": {"VN": "1.6", "SO": "coordinate"}, "SQ": [{"SN": "chr1", "LN": 10_000}]}
+    )
+    with pysam.AlignmentFile(path, "wb", header=header) as bam:
+        for index in range(n_reads):
+            read = pysam.AlignedSegment(header)
+            read.query_name = f"read_{index}"
+            read.query_sequence = "C" * 200
+            read.reference_id = 0
+            read.reference_start = 100 + index
+            read.mapping_quality = 60
+            read.cigar = [(0, 200)]
+            bam.write(read)
+
+
+def test_daf_snp_preflight_skips_low_depth_and_triggers_supported_locus(tmp_path):
+    low = tmp_path / "low.bam"
+    high = tmp_path / "high.bam"
+    _write_depth_preflight_bam(low, 8)
+    _write_depth_preflight_bam(high, 25)
+
+    low_result = _daf_snp_depth_preflight(str(low), min_local_depth=20)
+    high_result = _daf_snp_depth_preflight(str(high), min_local_depth=20)
+
+    assert low_result["run"] is False
+    assert low_result["max_local_depth"] == 8
+    assert high_result["run"] is True
+    assert high_result["max_local_depth"] == 25
 
 
 def test_call_model_resolution_uses_separate_ddda_models():

@@ -1,0 +1,317 @@
+{
+  "schema_version": 1,
+  "description": "Verified local primary panels for hierarchical consensus-recaller validation.",
+  "cohorts": [
+    {
+      "cohort_id": "gm12878",
+      "organism": "Homo sapiens",
+      "assembly": "hg38",
+      "biological_condition": "GM12878"
+    },
+    {
+      "cohort_id": "fly_wt_2_4hr",
+      "organism": "Drosophila melanogaster",
+      "assembly": "dm6",
+      "biological_condition": "wild-type/yw embryo, pooled 2-4 hr"
+    },
+    {
+      "cohort_id": "fly_sigaf_early",
+      "organism": "Drosophila melanogaster",
+      "assembly": "dm6",
+      "biological_condition": "siGAF embryo, 1.5-4.5 hr",
+      "truth_compatible_with": []
+    }
+  ],
+  "loci": [
+    {
+      "locus_id": "gm_napa",
+      "cohort_id": "gm12878",
+      "region": "chr19:47514400-47519050",
+      "comparison_group": "gm_targeted_ddda"
+    },
+    {
+      "locus_id": "gm_uba1",
+      "cohort_id": "gm12878",
+      "region": "chrX:47190000-47197000",
+      "comparison_group": "gm_targeted_ddda"
+    },
+    {
+      "locus_id": "fly_dddb_target_chr2l_1548",
+      "cohort_id": "fly_wt_2_4hr",
+      "region": "chr2L:15474775-15488394",
+      "comparison_group": "fly_dddb_timecourse"
+    },
+    {
+      "locus_id": "fly_dddb_target_chr2r_1175",
+      "cohort_id": "fly_wt_2_4hr",
+      "region": "chr2R:11752016-11758870",
+      "comparison_group": "fly_dddb_timecourse"
+    },
+    {
+      "locus_id": "fly_dddb_target_chr2r_2523",
+      "cohort_id": "fly_wt_2_4hr",
+      "region": "chr2R:25221305-25231958",
+      "comparison_group": "fly_dddb_timecourse"
+    },
+    {
+      "locus_id": "fly_dddb_target_chr3l_0146",
+      "cohort_id": "fly_wt_2_4hr",
+      "region": "chr3L:1459952-1465934",
+      "comparison_group": "fly_dddb_timecourse"
+    },
+    {
+      "locus_id": "fly_dddb_target_ind",
+      "cohort_id": "fly_wt_2_4hr",
+      "region": "chr3L:15038751-15051054",
+      "comparison_group": "fly_dddb_timecourse"
+    },
+    {
+      "locus_id": "fly_dddb_target_zen",
+      "cohort_id": "fly_wt_2_4hr",
+      "region": "chr3R:6749863-6760148",
+      "comparison_group": "fly_dddb_timecourse"
+    },
+    {
+      "locus_id": "fly_dddb_target_hb",
+      "cohort_id": "fly_wt_2_4hr",
+      "region": "chr3R:8692534-8704267",
+      "comparison_group": "fly_dddb_timecourse"
+    },
+    {
+      "locus_id": "fly_dddb_target_chr3r_2859",
+      "cohort_id": "fly_wt_2_4hr",
+      "region": "chr3R:28581948-28589253",
+      "comparison_group": "fly_dddb_timecourse"
+    },
+    {
+      "locus_id": "fly_dddb_target_tll",
+      "cohort_id": "fly_wt_2_4hr",
+      "region": "chr3R:30845680-30859108",
+      "comparison_group": "fly_dddb_timecourse"
+    },
+    {
+      "locus_id": "fly_nhomie",
+      "cohort_id": "fly_wt_2_4hr",
+      "region": "chr2R:9972790-9973386",
+      "comparison_group": "fly_insulator_exploratory"
+    },
+    {
+      "locus_id": "fly_homie",
+      "cohort_id": "fly_wt_2_4hr",
+      "region": "chr2R:9988750-9989118",
+      "comparison_group": "fly_insulator_exploratory"
+    },
+    {
+      "locus_id": "fly_sf1",
+      "cohort_id": "fly_wt_2_4hr",
+      "region": "chr3R:6853644-6855684",
+      "comparison_group": "fly_insulator_exploratory"
+    },
+    {
+      "locus_id": "fly_sf2",
+      "cohort_id": "fly_wt_2_4hr",
+      "region": "chr3R:6869630-6871751",
+      "comparison_group": "fly_insulator_exploratory"
+    }
+  ],
+  "samples": [
+    {
+      "sample_id": "gm12878_hia5_pacbio_full",
+      "cohort_id": "gm12878",
+      "assay_family": "hia5_pacbio",
+      "preset": "hia5-pacbio",
+      "bams": [
+        "/mnt/g/gm12878/GM12878.fiberhmm.bam"
+      ],
+      "availability": "available",
+      "call_stage": "post_nuc_post_tf",
+      "ascertainment": "unselected_full_depth",
+      "negative_evidence_allowed": true,
+      "truth_vote": true,
+      "discovery": {
+        "min_tq": 100,
+        "min_tf_support": 5,
+        "min_nuc_support": 5
+      },
+      "axis_permissions": {
+        "broad_nucleosome": "anchor",
+        "fine_tf": "anchor",
+        "occupancy_frequency": "anchor"
+      }
+    },
+    {
+      "sample_id": "gm12878_ddda_napa_targeted",
+      "cohort_id": "gm12878",
+      "assay_family": "ddda",
+      "preset": "ddda",
+      "bams": [
+        "ddda_nuc_output/napa_recaller_TF.bam"
+      ],
+      "restrict_loci": ["gm_napa"],
+      "availability": "available",
+      "call_stage": "post_nuc_post_tf",
+      "ascertainment": "targeted_amplicon",
+      "independence_unit": "PCR-family weighting required",
+      "molecule_collapse": {
+        "enabled": true,
+        "method": "deamination_fingerprint",
+        "min_jaccard": 0.95,
+        "min_deam": 10
+      },
+      "negative_evidence_allowed": false,
+      "truth_vote": true,
+      "discovery": {
+        "min_tq": 100,
+        "min_tf_support": 50,
+        "min_nuc_support": 0
+      },
+      "axis_permissions": {
+        "broad_nucleosome": "none",
+        "fine_tf": "anchor",
+        "occupancy_frequency": "support"
+      }
+    },
+    {
+      "sample_id": "gm12878_ddda_uba1_targeted",
+      "cohort_id": "gm12878",
+      "assay_family": "ddda",
+      "preset": "ddda",
+      "bams": [
+        "ddda_profile/uba1_ddda_recall.bam"
+      ],
+      "restrict_loci": ["gm_uba1"],
+      "availability": "available",
+      "call_stage": "post_nuc_post_tf",
+      "ascertainment": "targeted_amplicon",
+      "independence_unit": "PCR-family weighting required",
+      "molecule_collapse": {
+        "enabled": true,
+        "method": "deamination_fingerprint",
+        "min_jaccard": 0.95,
+        "min_deam": 10
+      },
+      "negative_evidence_allowed": false,
+      "truth_vote": true,
+      "discovery": {
+        "min_tq": 100,
+        "min_tf_support": 20,
+        "min_nuc_support": 0
+      },
+      "axis_permissions": {
+        "broad_nucleosome": "none",
+        "fine_tf": "anchor",
+        "occupancy_frequency": "support"
+      }
+    },
+    {
+      "sample_id": "fly_hia5_pacbio_2_4hr",
+      "cohort_id": "fly_wt_2_4hr",
+      "assay_family": "hia5_pacbio",
+      "preset": "hia5-pacbio",
+      "bams": [
+        "/mnt/g/v3seg_mp/2-4hr_11.bam",
+        "/mnt/g/v3seg_mp/2-4hr_4.bam",
+        "/mnt/g/v3seg_mp/2-4hr_6.bam",
+        "/mnt/g/v3seg_mp/2-4hr_7.bam",
+        "/mnt/g/v3seg_mp/2-4hr_9.bam"
+      ],
+      "availability": "available",
+      "call_stage": "post_nuc_post_tf",
+      "ascertainment": "unselected_full_depth",
+      "negative_evidence_allowed": true,
+      "truth_vote": true,
+      "discovery": {
+        "min_tq": 100,
+        "min_tf_support": 20,
+        "min_nuc_support": 20
+      },
+      "axis_permissions": {
+        "broad_nucleosome": "anchor",
+        "fine_tf": "anchor",
+        "occupancy_frequency": "anchor"
+      }
+    },
+    {
+      "sample_id": "fly_dddb_yw_2_4hr_pooled",
+      "cohort_id": "fly_wt_2_4hr",
+      "assay_family": "dddb",
+      "preset": "dddb",
+      "bams": [
+        "/mnt/g/Dropbox/Fiber-NET-seq/Drosophila_phase2/Datasets/DAF-seq/spacetime_updated/fp_update/yw_2-4_recalled.bam"
+      ],
+      "restrict_comparison_groups": ["fly_dddb_timecourse"],
+      "availability": "available",
+      "call_stage": "post_nuc_post_tf",
+      "ascertainment": "targeted_amplicon_pool",
+      "independence_unit": "PCR-family weighting required",
+      "molecule_collapse": {
+        "enabled": true,
+        "method": "deamination_fingerprint",
+        "min_jaccard": 0.95,
+        "min_deam": 10
+      },
+      "negative_evidence_allowed": false,
+      "truth_vote": true,
+      "discovery": {
+        "min_tq": 100,
+        "min_tf_support": 100,
+        "min_nuc_support": 0,
+        "allow_support_seed": true,
+        "candidate_geometry_tier": 99
+      },
+      "axis_permissions": {
+        "broad_nucleosome": "support",
+        "fine_tf": "support",
+        "occupancy_frequency": "support"
+      }
+    },
+    {
+      "sample_id": "fly_hia5_nanopore_sigaf_1_5_3hr",
+      "cohort_id": "fly_sigaf_early",
+      "assay_family": "hia5_nanopore",
+      "preset": "hia5-nanopore",
+      "bams": [
+        "/mnt/g/Dropbox/Fiber-NET-seq/Drosophila_phase2/Datasets/Fiber-seq/2-point_timecourse/bam/siGAF_1.5-3hr.fiberhmm.thr248.bam"
+      ],
+      "availability": "available",
+      "call_stage": "post_nuc_post_tf",
+      "ascertainment": "unselected_but_perturbed",
+      "prob_threshold": 248,
+      "negative_evidence_allowed": false,
+      "truth_vote": false,
+      "exploratory_comparison_groups": [
+        "fly_dddb_timecourse",
+        "fly_insulator_exploratory"
+      ],
+      "axis_permissions": {
+        "broad_nucleosome": "support",
+        "fine_tf": "support",
+        "occupancy_frequency": "none"
+      }
+    },
+    {
+      "sample_id": "fly_hia5_nanopore_sigaf_3_4_5hr",
+      "cohort_id": "fly_sigaf_early",
+      "assay_family": "hia5_nanopore",
+      "preset": "hia5-nanopore",
+      "bams": [
+        "/mnt/g/Dropbox/Fiber-NET-seq/Drosophila_phase2/Datasets/Fiber-seq/2-point_timecourse/bam/siGAF_3-4.5hr.fiberhmm.thr248.bam"
+      ],
+      "availability": "available",
+      "call_stage": "post_nuc_post_tf",
+      "ascertainment": "unselected_but_perturbed",
+      "prob_threshold": 248,
+      "negative_evidence_allowed": false,
+      "truth_vote": false,
+      "exploratory_comparison_groups": [
+        "fly_dddb_timecourse",
+        "fly_insulator_exploratory"
+      ],
+      "axis_permissions": {
+        "broad_nucleosome": "support",
+        "fine_tf": "support",
+        "occupancy_frequency": "none"
+      }
+    }
+  ]
+}

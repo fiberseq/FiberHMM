@@ -100,6 +100,30 @@ class TestPackageImports:
         from fiberhmm.cli.export_posteriors import main
         assert callable(main)
 
+    def test_strand_rescue_imports(self):
+        from fiberhmm.cli.strand_rescue import main as report_main
+        from fiberhmm.cli.strand_rescue_annotate import main as annotate_main
+        from fiberhmm.cli.strand_rescue_audit import main as audit_main
+        from fiberhmm.inference.strand_rescue import analyze_strand_rescue
+
+        assert callable(report_main)
+        assert callable(annotate_main)
+        assert callable(audit_main)
+        assert callable(analyze_strand_rescue)
+
+    def test_footprint_population_model_imports(self):
+        from fiberhmm.cli.footprint_model import main
+        from fiberhmm.inference import build_footprint_population_model
+        from fiberhmm.io import (
+            load_footprint_molecules_from_bam,
+            write_footprint_model_bundle,
+        )
+
+        assert callable(main)
+        assert callable(build_footprint_population_model)
+        assert callable(load_footprint_molecules_from_bam)
+        assert callable(write_footprint_model_bundle)
+
 
 class TestEncodingConsistency:
     """Verify encoding produces consistent results via package path."""

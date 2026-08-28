@@ -66,11 +66,13 @@ def _init_fused_worker(
     recall_nucs=False,
     split_min_llr=4.0,
     split_min_opps=3,
+    nuc_recall_policy="conservative",
     filter_chimeras=True,
     chimera_min_seg=5,
     chimera_purity=0.8,
     phase_nrl=0,
     nuc_profile_path=None,
+    derived_tf_max_edge_ambiguity=None,
     ddda_mcg=False,
 ):
     """Initialize worker process for the fused apply+recall pipeline.
@@ -118,12 +120,16 @@ def _init_fused_worker(
     _worker_recall_state['recall_nucs'] = recall_nucs
     _worker_recall_state['split_min_llr'] = split_min_llr
     _worker_recall_state['split_min_opps'] = split_min_opps
+    _worker_recall_state['nuc_recall_policy'] = nuc_recall_policy
     _worker_recall_state['phase_nrl'] = phase_nrl
     nuc_profile = None
     if nuc_profile_path:
         from fiberhmm.inference.nuc_recaller import load_nuc_profile
         nuc_profile = load_nuc_profile(nuc_profile_path)
     _worker_recall_state['nuc_profile'] = nuc_profile
+    _worker_recall_state['derived_tf_max_edge_ambiguity'] = (
+        derived_tf_max_edge_ambiguity
+    )
     configure_daf_chimera_filter(filter_chimeras, chimera_min_seg, chimera_purity)
 
     # Warmup: apply Viterbi + TF Kadane scan.
@@ -278,10 +284,14 @@ def _process_fused_payload_chunk_worker(
                 recall_nucs=_worker_recall_state.get('recall_nucs', False),
                 split_min_llr=_worker_recall_state.get('split_min_llr', 4.0),
                 split_min_opps=_worker_recall_state.get('split_min_opps', 3),
+                nuc_recall_policy=_worker_recall_state.get(
+                    'nuc_recall_policy', 'conservative'),
                 nuc_min_size=nuc_min_size,
                 msp_min_size=msp_min_size,
                 phase_nrl=_worker_recall_state.get('phase_nrl', 0),
                 nuc_profile=_worker_recall_state.get('nuc_profile'),
+                derived_tf_max_edge_ambiguity=_worker_recall_state.get(
+                    'derived_tf_max_edge_ambiguity'),
                 m5c_mask=m5c_mask,
                 m5c_llr_hit=_worker_recall_state.get('m5c_llr_hit'),
                 m5c_llr_miss=_worker_recall_state.get('m5c_llr_miss'),

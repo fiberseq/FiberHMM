@@ -481,7 +481,7 @@ def test_extract_m5c_reads_daf_ma_spans_without_native_mm_tag():
     )
     assert count == 2
     assert output.getvalue() == (
-        "chr1\t1010\t1060\tread1\t0\t+\t1010\t1060\t0\t2\t20,10\t0,40\n"
+        "chr1\t1010\t1060\tread1\t0\t+\t1010\t1060\t0\t2\t20,10\t0,40\t0\n"
     )
 
 

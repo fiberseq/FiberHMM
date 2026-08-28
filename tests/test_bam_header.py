@@ -7,9 +7,13 @@ import pytest
 
 from fiberhmm.cli import utils
 from fiberhmm.io.bam_header import (
+    append_chemistry,
     append_ma_types,
+    declared_chemistries,
     declared_ma_types,
+    infer_legacy_chemistry,
     ma_types_from_tag,
+    maybe_append_pg,
 )
 
 
@@ -19,6 +23,111 @@ def _header(*comments):
         "SQ": [{"SN": "chr1", "LN": 1000}],
         "CO": list(comments),
     })
+
+
+def test_chemistry_declaration_round_trips_exactly_and_is_idempotent():
+    header = _header("keep me")
+    chemistry = {
+        "assay": "daf",
+        "enzyme": "ddda",
+        "platform": "pacbio",
+        "mode": "daf",
+        "model": "ddda_recall_k1",
+    }
+
+    updated = append_chemistry(header, chemistry)
+
+    assert updated.to_dict()["CO"] == [
+        "keep me",
+        (
+            "FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=pacbio;"
+            "mode=daf;model=ddda_recall_k1"
+        ),
+    ]
+    assert declared_chemistries(updated) == [chemistry]
+    assert append_chemistry(updated, chemistry).to_dict() == updated.to_dict()
+
+
+def test_chemistry_reader_ignores_malformed_or_future_declarations():
+    header = _header(
+        "FIBERHMM-CHEMISTRY:v2:assay=daf;enzyme=ddda;platform=pacbio;mode=daf",
+        "FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=pacbio",
+        "FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=pac bio;mode=daf",
+        "FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=pacbio;mode=daf",
+    )
+
+    assert declared_chemistries(header) == [{
+        "assay": "daf",
+        "enzyme": "ddda",
+        "platform": "pacbio",
+        "mode": "daf",
+    }]
+
+
+def test_chemistry_writer_rejects_missing_unsafe_and_conflicting_metadata():
+    with pytest.raises(ValueError, match="missing required fields"):
+        append_chemistry(_header(), {"assay": "daf"})
+    with pytest.raises(ValueError, match="invalid chemistry field value"):
+        append_chemistry(_header(), {
+            "assay": "daf seq", "enzyme": "ddda", "platform": "pacbio", "mode": "daf",
+        })
+    with pytest.raises(ValueError, match="duplicate chemistry field"):
+        append_chemistry(_header(), {
+            "Assay": "daf", "assay": "daf", "enzyme": "ddda",
+            "platform": "pacbio", "mode": "daf",
+        })
+
+    prior = append_chemistry(_header(), {
+        "assay": "daf", "enzyme": "ddda", "platform": "pacbio", "mode": "daf",
+    })
+    with pytest.raises(ValueError, match="incompatible FIBERHMM-CHEMISTRY"):
+        append_chemistry(prior, {
+            "assay": "fiber-seq", "enzyme": "hia5",
+            "platform": "pacbio", "mode": "pacbio-fiber",
+        })
+
+
+def test_maybe_append_pg_emits_program_and_chemistry_records():
+    updated = maybe_append_pg(_header(), {
+        "PN": "fiberhmm-call",
+        "VN": "2.17.0",
+        "DS": "free text",
+        "chemistry": {
+            "assay": "fiber-seq", "enzyme": "hia5",
+            "platform": "nanopore", "mode": "nanopore-fiber",
+        },
+    })
+
+    data = updated.to_dict()
+    assert data["PG"][-1]["PN"] == "fiberhmm-call"
+    assert declared_chemistries(updated) == [{
+        "assay": "fiber-seq", "enzyme": "hia5",
+        "platform": "nanopore", "mode": "nanopore-fiber",
+    }]
+
+
+def test_legacy_chemistry_inference_is_limited_to_fiberhmm_call_pg():
+    header = pysam.AlignmentHeader.from_dict({
+        "HD": {"VN": "1.6"},
+        "SQ": [{"SN": "chr1", "LN": 1000}],
+        "PG": [
+            {"ID": "unrelated", "PN": "aligner", "CL": "--enzyme dddb --seq nanopore"},
+            {
+                "ID": "fiberhmm-call",
+                "PN": "fiberhmm-call",
+                "DS": "FiberHMM; mode=daf enzyme=dddb recall_nucs=True",
+                "CL": "fiberhmm-call --enzyme dddb --seq pacbio -i in.bam -o out.bam",
+            },
+        ],
+    })
+
+    assert infer_legacy_chemistry(header) == {
+        "assay": "daf",
+        "enzyme": "dddb",
+        "platform": "pacbio",
+        "mode": "daf",
+    }
+    assert infer_legacy_chemistry(_header("mode=daf enzyme=ddda")) is None
 
 
 def test_declared_ma_types_unions_valid_comments_in_first_seen_order():
