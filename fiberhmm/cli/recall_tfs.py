@@ -28,9 +28,10 @@ per-read nucleosome recaller BEFORE TF recall: it splits over-merged HMM
 footprints on accessible evidence and refines each nucleosome's conservative
 edges + quality (nuc+QQQ), re-derives MSPs, then runs TF recall over the
 cleaner accessible space. It reuses the apply-tagged ``ns``/``nl``/``as``/``al``
--- the HMM is NOT re-run -- so it is byte-identical to
+-- the HMM is NOT re-run -- so its footprint tags are equivalent to
 ``fiberhmm-call --recall-nucs`` for a given ``--phase-nrl`` (linear reads only;
-``--phase-nrl auto`` is estimated from the existing nuc tags).
+``--phase-nrl auto`` is estimated from the existing nuc tags). The BAM headers
+retain distinct command provenance.
 
 Examples:
   # Add nucleosome recall to an apply-tagged BAM (no HMM re-run)
@@ -40,8 +41,8 @@ Examples:
 
   # DddA amplicon BAM (two-pass workflow) -- bundled models, no -m needed
   fiberhmm-apply -i input.bam --enzyme ddda -o tmp/
-  fiberhmm-recall-tfs -i tmp/input_footprints.bam -o recalled.bam \\
-                       --enzyme ddda -c 8
+  fiberhmm-recall-nucs -i tmp/input_footprints.bam -o recalled.bam \\
+                        --enzyme ddda -c 8
 
   # Hia5 streaming composition
   fiberhmm-apply -i input.bam --enzyme hia5 -o - | \\
@@ -63,9 +64,18 @@ from fiberhmm.cli.common import (
     add_legacy_mode_override,
     resolve_observation_mode,
 )
+from fiberhmm.cli.provenance import (
+    chemistry_declaration,
+    nuc_profile_identity,
+    nuc_profile_sha256,
+)
 from fiberhmm.core.bam_reader import encode_from_query_sequence
 from fiberhmm.core.model_io import load_model_with_metadata
-from fiberhmm.io.bam_header import append_coord_marker, header_has_coord_marker
+from fiberhmm.io.bam_header import (
+    append_coord_marker,
+    header_has_coord_marker,
+    maybe_append_pg,
+)
 from fiberhmm.io.ma_tags import DDDA_MCG_FEATURE, flip_intervals_to_seq
 from fiberhmm.inference.fused_stages import build_fused_recall_result
 from fiberhmm.inference.tagging import write_fused_recall_tags
@@ -73,15 +83,13 @@ from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
     HAS_NUMBA,
     apply_emission_uplift,
+    build_conditional_hit_tables,
     build_llr_tables,
     build_m5c_llr_tables,
     extract_modifications,
     recall_read,
     write_ma_tags,
 )
-from fiberhmm.io.bam_header import append_coord_marker, header_has_coord_marker
-from fiberhmm.io.ma_tags import flip_intervals_to_seq
-
 # ---------------------------------------------------------------------------
 # Per-worker global state (set by the initializer; avoids repickling arrays)
 # ---------------------------------------------------------------------------
@@ -100,9 +108,53 @@ _NucCfg = namedtuple(
 _NucCfg.__new__.__defaults__ = ('conservative', None, None)
 
 
+def _build_recall_pg_record(args, mode, model_path, nuc_cfg):
+    """Build command and exact nucleosome-profile provenance for output BAM."""
+    profile_path = (
+        getattr(nuc_cfg, 'nuc_profile_path', None)
+        if nuc_cfg is not None else None
+    )
+    profile_identity = nuc_profile_identity(profile_path)
+    profile_sha256 = nuc_profile_sha256(profile_path)
+    recall_nucs = bool(nuc_cfg is not None and nuc_cfg.recall_nucs)
+    program_name = (
+        'fiberhmm-recall-nucs' if recall_nucs else 'fiberhmm-recall-tfs'
+    )
+    policy = (
+        getattr(nuc_cfg, 'nuc_recall_policy', 'off')
+        if recall_nucs else 'off'
+    )
+    phase_nrl = getattr(nuc_cfg, 'phase_nrl', 'off') if recall_nucs else 'off'
+
+    import fiberhmm as _fh
+
+    return {
+        'PN': program_name,
+        'VN': getattr(_fh, '__version__', 'unknown'),
+        'CL': ' '.join(sys.argv),
+        'chemistry': chemistry_declaration(
+            args,
+            mode,
+            model_path,
+            None,
+            profile_identity,
+            profile_sha256,
+        ),
+        'DS': (
+            'FiberHMM second-pass footprint refinement; coord=molecular '
+            '(ns/nl/as/al/MA in molecular original-fiber coordinates); '
+            f'mode={mode} enzyme={args.enzyme or "custom"} '
+            f'recall_nucs={recall_nucs} nuc_recall_policy={policy} '
+            f'nuc_profile={profile_identity or "off"} '
+            f'nuc_sha256={profile_sha256 or "off"} phase_nrl={phase_nrl}'
+        ),
+    }
+
+
 def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
                  nuc_cfg=None, input_molecular_frame=True,
-                 m5c_llr_hit=None, m5c_llr_miss=None):
+                 m5c_llr_hit=None, m5c_llr_miss=None,
+                 nuc_protected_hit=None, nuc_accessible_hit=None):
     """Set per-process globals once per worker.
 
     Slim version: workers receive compact payloads and return compact results —
@@ -118,8 +170,16 @@ def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
     _WORKER['nuc_cfg'] = nuc_cfg
     _WORKER['nuc_profile'] = None
     if nuc_cfg is not None and nuc_cfg.nuc_profile_path:
-        from fiberhmm.inference.nuc_recaller import load_nuc_profile
-        _WORKER['nuc_profile'] = load_nuc_profile(nuc_cfg.nuc_profile_path)
+        from fiberhmm.inference.nuc_recaller import (
+            attach_nuc_profile_emissions,
+            load_nuc_profile,
+        )
+        profile = load_nuc_profile(nuc_cfg.nuc_profile_path)
+        if nuc_protected_hit is not None and nuc_accessible_hit is not None:
+            profile = attach_nuc_profile_emissions(
+                profile, nuc_protected_hit, nuc_accessible_hit,
+            )
+        _WORKER['nuc_profile'] = profile
     # Frame of the input ns/nl/as/al: molecular (current FiberHMM, flip reverse
     # tags to seq) vs legacy seq/query (v1.0, use as-is). See recall_read().
     _WORKER['input_molecular_frame'] = input_molecular_frame
@@ -429,10 +489,12 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
                         min_llr, min_opps, unify_threshold,
                         also_write_legacy, downstream_compat, max_reads,
                         nuc_cfg=None, input_molecular_frame=True,
-                        m5c_llr_hit=None, m5c_llr_miss=None):
+                        m5c_llr_hit=None, m5c_llr_miss=None,
+                        nuc_protected_hit=None, nuc_accessible_hit=None):
     """Single-threaded path.  No IPC — process reads directly."""
     _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
-                 nuc_cfg, input_molecular_frame, m5c_llr_hit, m5c_llr_miss)
+                 nuc_cfg, input_molecular_frame, m5c_llr_hit, m5c_llr_miss,
+                 nuc_protected_hit, nuc_accessible_hit)
     n_reads = n_v2 = n_tf = n_demoted = n_failed = 0
     for read in bam_in:
         if max_reads and n_reads >= max_reads:
@@ -459,7 +521,8 @@ def _parallel_loop(bam_in, bam_out, _header_text,
                    min_llr, min_opps, unify_threshold,
                    also_write_legacy, downstream_compat,
                    max_reads, n_cores, chunk_size, nuc_cfg=None,
-                   input_molecular_frame=True, m5c_llr_hit=None, m5c_llr_miss=None):
+                   input_molecular_frame=True, m5c_llr_hit=None, m5c_llr_miss=None,
+                   nuc_protected_hit=None, nuc_accessible_hit=None):
     """Multi-core path with slim IPC and bounded in-flight queue.
 
     Uses apply_async + a bounded deque instead of imap to cap how many chunks
@@ -495,7 +558,8 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         processes=n_cores,
         initializer=_worker_init,
         initargs=(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
-                  nuc_cfg, input_molecular_frame, m5c_llr_hit, m5c_llr_miss),
+                  nuc_cfg, input_molecular_frame, m5c_llr_hit, m5c_llr_miss,
+                  nuc_protected_hit, nuc_accessible_hit),
     ) as pool:
         buf_reads: list = []
         buf_payloads: list = []
@@ -609,14 +673,14 @@ def parse_args(default_recall_nucs: bool = False):
                           '(Default on for fiberhmm-recall-nucs.)')
     nuc.add_argument('--split-min-llr', type=float, default=4.0,
                      help='Min accessible-cut LLR to split a footprint; for '
-                          'DddA, the linker-residue LLR after subtracting '
-                          'provisional TFs (default 4.0)')
+                          'DddA, the molecule-local linker-residue '
+                          'configuration LLR (default 4.0)')
     nuc.add_argument('--split-min-opps', type=int, default=3,
                      help='Min informative positions for a split cut or DddA '
                           'linker residue (default 3)')
     nuc.add_argument(
         '--ddda-derived-tf-max-edge-gap', type=int, default=12, metavar='BP',
-        help='DddA radial recall only: require TF scan space opened solely by '
+        help='DddA phase-aware radial recall only: require TF scan space opened solely by '
              'nucleosome refinement to have a deamination hit within BP on '
              'both sides (default 12; -1 disables).',
     )
@@ -930,6 +994,12 @@ def main(default_recall_nucs: bool = False):
             derived_tf_max_edge_ambiguity=derived_tf_max_edge_ambiguity,
         )
 
+    nuc_protected_hit = nuc_accessible_hit = None
+    if nuc_cfg is not None and nuc_cfg.nuc_profile_path:
+        nuc_protected_hit, nuc_accessible_hit = build_conditional_hit_tables(
+            model, emission_uplift=uplift,
+        )
+
     # Open BAMs with io-threads. pysam accepts "-" as stdin/stdout natively.
     bam_in = pysam.AlignmentFile(args.in_bam, 'rb',
                                   check_sq=False,
@@ -946,6 +1016,10 @@ def main(default_recall_nucs: bool = False):
         output_header = append_coord_marker(bam_in.header)
         if not args.downstream_compat:
             output_header = append_ma_types(output_header, ("nuc", "msp", "tf"))
+        output_header = maybe_append_pg(
+            output_header,
+            _build_recall_pg_record(args, mode, model_path, nuc_cfg),
+        )
         bam_out = pysam.AlignmentFile(args.out_bam, 'wb',
                                        header=output_header,
                                        threads=args.io_threads)
@@ -962,6 +1036,7 @@ def main(default_recall_nucs: bool = False):
                 also_write_legacy, args.downstream_compat, args.max_reads,
                 nuc_cfg, input_molecular_frame,
                 m5c_llr_hit, m5c_llr_miss,
+                nuc_protected_hit, nuc_accessible_hit,
             )
         else:
             n_reads, n_v2, n_tf, n_demoted, n_failed = _parallel_loop(
@@ -971,6 +1046,7 @@ def main(default_recall_nucs: bool = False):
                 also_write_legacy, args.downstream_compat, args.max_reads,
                 n_cores, args.chunk_size, nuc_cfg, input_molecular_frame,
                 m5c_llr_hit, m5c_llr_miss,
+                nuc_protected_hit, nuc_accessible_hit,
             )
     finally:
         bam_in.close()

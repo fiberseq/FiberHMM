@@ -22,13 +22,16 @@ Examples:
   fiberhmm-call -i in.bam -o - --enzyme hia5 --seq pacbio | ft fire - -
 """
 import argparse
-from pathlib import Path
-import re
 import sys
 
 from fiberhmm.cli.common import (
     add_legacy_mode_override,
     resolve_observation_mode,
+)
+from fiberhmm.cli.provenance import (
+    chemistry_declaration as _chemistry_declaration,
+    nuc_profile_identity as _nuc_profile_identity,
+    nuc_profile_sha256 as _nuc_profile_sha256,
 )
 from fiberhmm.core.model_io import load_model_with_metadata
 from fiberhmm.daf.snps import (
@@ -48,40 +51,6 @@ from fiberhmm.models import (
     get_observation_mode,
 )
 from fiberhmm.models import get_model_path as _get_bundled_model
-
-
-def _chemistry_declaration(args, mode, apply_model_path, recall_model_path):
-    """Build the stable BAM-header chemistry contract for this call run."""
-    if mode == "daf":
-        assay = "daf"
-    elif mode in {"pacbio-fiber", "nanopore-fiber"}:
-        assay = "fiber-seq"
-    else:
-        assay = "custom"
-
-    platform = args.seq
-    if not platform and mode == "pacbio-fiber":
-        platform = "pacbio"
-    elif not platform and mode == "nanopore-fiber":
-        platform = "nanopore"
-    elif not platform and mode == "daf" and args.enzyme == "ddda":
-        # Supported DddA models are calibrated to the PacBio DAF workflow.
-        platform = "pacbio"
-    elif not platform and mode == "daf" and args.enzyme == "dddb":
-        # The bundled DddB model is the Nanopore DAF calibration.
-        platform = "nanopore"
-
-    model_stem = Path(recall_model_path or apply_model_path).stem
-    model_name = re.sub(r"[^A-Za-z0-9_.+-]+", "_", model_stem).strip("_")
-    declaration = {
-        "assay": assay,
-        "enzyme": args.enzyme or "custom",
-        "platform": platform or "unknown",
-        "mode": mode,
-    }
-    if model_name:
-        declaration["model"] = model_name
-    return declaration
 
 
 def parse_args():
@@ -156,12 +125,12 @@ def parse_args():
                    help='Split over-merged nucleosomes + resolve platform-aware edges '
                         '(emits nuc.QQQ), promote nucleosome-sized TF leaks to nuc, '
                         'and run the Pass-2 phase prior. ON by default for all '
-                        'enzymes (DddA uses the radial-template split, others the '
+                        'enzymes (DddA uses phase-aware radial inference, others the '
                         'accessible-cut Kadane split). Use --no-recall-nucs for '
                         'baseline HMM nucleosomes (nuc.Q).')
     p.add_argument('--split-min-llr', type=float, default=4.0,
                    help='Min accessible-run LLR to split a nucleosome; for DddA, '
-                        'the linker-residue LLR after subtracting provisional TFs '
+                        'the molecule-local linker-residue configuration LLR '
                         '(default 4.0).')
     p.add_argument('--split-min-opps', type=int, default=3,
                    help='Min informative positions in a nucleosome-splitting cut '
@@ -171,7 +140,7 @@ def parse_args():
         type=int,
         default=12,
         metavar='BP',
-        help='DddA radial nucleosome recall only: TF calls exposed solely by '
+        help='DddA phase-aware radial recall only: TF calls exposed solely by '
              'nucleosome refinement must have a deamination hit within BP on '
              'both sides (default 12). Original HMM-accessible TF scan space '
              'is unchanged. Use -1 to disable the safeguard.',
@@ -355,8 +324,11 @@ def _resolve_recall_model(args):
 
 
 def _resolve_nuc_profile_path(args, recall_nucs: bool):
-    """DddA uses a radial deamination-profile match-filter for the nucleosome
-    split; other enzymes use the accessible-cut Kadane split (no profile)."""
+    """DddA uses phase-aware radial nucleosome inference.
+
+    Other enzymes use the accessible-cut Kadane split and have no radial
+    profile.
+    """
     if recall_nucs and args.enzyme == 'ddda':
         from fiberhmm.models import _bundled_model_path
         return _bundled_model_path('ddda_nuc_profile.json')
@@ -812,14 +784,18 @@ def main():
              else preset.get('emission_uplift', 1.0)
 
     # Nucleosome recaller: ON by default for all enzymes. DddA uses a dedicated
-    # radial deamination-profile match-filter (the accessible-cut Kadane split
-    # shatters DddA nucleosomes, since DddA deaminates *inside* them); other
-    # enzymes use the Kadane split. Explicit --recall-nucs / --no-recall-nucs wins.
+    # radial dyad model plus a context-aware phase-marginal edge posterior (the
+    # accessible-cut Kadane split shatters DddA nucleosomes because DddA
+    # deaminates inside them); other enzymes use the Kadane split. Explicit
+    # --recall-nucs / --no-recall-nucs wins.
     if args.recall_nucs is None:
         recall_nucs = True
         if args.enzyme == 'ddda':
-            print("  NOTE: DddA nucleosome recall uses the radial-template split "
-                  "(bundled ddda_nuc_profile.json).", file=sys.stderr)
+            print(
+                "  NOTE: DddA nucleosome recall uses phase-aware radial "
+                "inference (bundled ddda_nuc_profile.json).",
+                file=sys.stderr,
+            )
     else:
         recall_nucs = bool(args.recall_nucs)
     nuc_recall_policy = _resolve_nuc_recall_policy(args, mode)
@@ -997,9 +973,11 @@ def main():
     phase_nrl = _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
                                    recall_nucs, working_input)
 
-    # DddA uses a radial deamination-profile match-filter for the nucleosome
-    # split; other enzymes use the accessible-cut Kadane split (no profile).
+    # DddA uses phase-aware radial nucleosome inference; other enzymes use the
+    # accessible-cut Kadane split (no profile).
     nuc_profile_path = _resolve_nuc_profile_path(args, recall_nucs)
+    nuc_profile_identity = _nuc_profile_identity(nuc_profile_path)
+    nuc_profile_sha256 = _nuc_profile_sha256(nuc_profile_path)
     derived_tf_max_edge_ambiguity = _resolve_derived_tf_edge_gap(
         args, recall_nucs)
 
@@ -1025,7 +1003,12 @@ def main():
         # Machine-readable, versioned scientific metadata. Unlike DS/CL this
         # contract is safe for downstream model selection and survives renames.
         'chemistry': _chemistry_declaration(
-            args, mode, apply_model_path, recall_model_path,
+            args,
+            mode,
+            apply_model_path,
+            recall_model_path,
+            nuc_profile_identity,
+            nuc_profile_sha256,
         ),
         # The `coord=molecular` token is a stable, version-independent contract
         # for downstream consumers (e.g. FiberBrowser) to detect that ns/nl/as/al
@@ -1035,6 +1018,8 @@ def main():
                f"mode={mode} enzyme={args.enzyme or 'custom'} "
                f"recall_nucs={recall_nucs} "
                f"nuc_recall_policy={nuc_recall_policy} "
+               f"nuc_profile={nuc_profile_identity or 'off'} "
+               f"nuc_sha256={nuc_profile_sha256 or 'off'} "
                f"phase_nrl={phase_nrl} "
                f"ddda_derived_tf_edge_gap="
                f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'} "

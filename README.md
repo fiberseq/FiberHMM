@@ -340,10 +340,18 @@ the automatic dedup pre-pass (or use `--no-dedup`).
 - **Two models** — `ddda_nuc.json` for nucleosomes and `ddda_TF.json` for TF/Pol II
   recall — are selected and run in one pass. (For QC you can run them separately:
   `fiberhmm-apply --enzyme ddda` then `fiberhmm-recall-tfs --enzyme ddda`.)
-- **Radial nucleosome recall** is **on by default** (DddA deaminates *inside*
-  nucleosomes, so the standard accessible-cut split would shatter them; instead a
-  radial deamination template places dyads). Use `--no-recall-nucs` for raw HMM
-  nucleosomes.
+- **Phase-aware radial nucleosome recall** is **on by default**. DddA deaminates
+  *inside* nucleosomes, so the standard accessible-cut split would shatter them.
+  FiberHMM instead uses the radial deamination profile to nominate dyads and a
+  molecule-local, sequence-context-aware likelihood marginalized over uncertain
+  helical register and 9–12-bp local pitch to infer each edge. Every
+  dyad-nominated raw edge uses the same continuous posterior estimator; broad
+  support lowers `el`/`er` rather than selecting a different raw-edge
+  estimator. Final emitted boundaries can still be constrained by the
+  molecule-local HMM-versus-posterior configuration test and non-overlapping
+  tiling. Calls without a radial dyad and promoted/fallback calls are outside
+  this posterior-edge contract.
+  Use `--no-recall-nucs` for raw HMM nucleosomes.
 - **Nuc-derived TF edge safeguard** — TF candidates exposed only because radial
   recall opened new scan space require observed deaminations within 12 bp on
   both sides. Calls already supported by the original HMM-accessible scan space
@@ -400,9 +408,11 @@ the ordinary targeted/amplicon DddA workflow.
 > (see [`fiberhmm-dedup`](#fiberhmm-dedup)). Integrated dedup retains every read
 > unless `--dedup-collapse` is explicitly requested.
 
-> ⚠️ The DddA radial nucleosome recaller (added 2.14.0) is still under active
-> validation — inspect nucleosome calls before relying on them, and
-> [report issues](https://github.com/fiberseq/FiberHMM/issues).
+> The phase-aware DddA nucleosome caller is the production default. Its locked
+> profile was validated on twelve independent HG002 scDAF libraries and the
+> GM12878 NAPA and UBA1 targeted cohorts. The baseline caller remains
+> molecule-local: population/strand consensus is a separate optional pass and
+> is not required to obtain these nucleosome calls.
 
 ### Second-pass recall on an apply-tagged BAM
 
@@ -423,8 +433,10 @@ fiberhmm-recall-nucs -i ont.apply.bam -o ont.recalled.bam \
                      --enzyme hia5 --seq nanopore -c 8
 ```
 
-`fiberhmm-recall-nucs` is byte-identical to `fiberhmm-call --recall-nucs` for a
-matched `--phase-nrl` and `--nuc-recall-policy`. For Nanopore, the default
+`fiberhmm-recall-nucs` produces equivalent footprint tags to
+`fiberhmm-call --recall-nucs` for matched `--phase-nrl` and
+`--nuc-recall-policy`; their BAM headers retain the distinct command histories.
+For Nanopore, the default
 `auto` policy resolves to `topology`: an accessible cut must leave a
 nucleosome-sized candidate on every side, and unresolved single-strand edge
 ambiguity remains protected rather than being labeled accessible. Use
@@ -472,7 +484,7 @@ execution strategies.
 | `--chroms chr1 …` | all | Restrict to specific chromosomes (region-parallel). |
 | `--no-recall-nucs` | recall on | Disable nucleosome recall (baseline HMM `nuc.Q`). |
 | `--nuc-recall-policy` | `auto` | `auto` uses topology-constrained, ambiguity-preserving recall for Nanopore and historical `conservative` edges otherwise; either policy can be forced explicitly. |
-| `--ddda-derived-tf-max-edge-gap` | 12 | DddA radial recall only: maximum full-molecule gap to an observed deamination on each side of a TF call exposed solely by nuc refinement; `-1` disables. |
+| `--ddda-derived-tf-max-edge-gap` | 12 | DddA phase-aware radial recall only: maximum full-molecule gap to an observed deamination on each side of a TF call exposed solely by nuc refinement; `-1` disables. |
 | `--phase-nrl` | `auto` | Periodicity prior: `auto` (estimate, ~150–215 bp), `off`, or a fixed bp. |
 | `--min-llr` | enzyme preset | Override TF LLR threshold. |
 | `-r/--circular` | off | Circular molecule mode (see [reference](docs/reference.md#circular-molecules)). |
@@ -680,7 +692,7 @@ fiberhmm-recall-tfs -i apply.bam -o recalled.bam --enzyme hia5 --seq pacbio -c 8
 | `--min-opps` | 3 | Min informative target positions per call. |
 | `--unify-threshold` | 90 | Footprints with `nl <` this may be demoted to `tf.`. |
 | `--nuc-recall-policy` | `auto` | With nucleosome recall, use Nanopore-aware `topology` automatically or force `topology`/`conservative`. |
-| `--ddda-derived-tf-max-edge-gap` | 12 | Same DddA radial-recall safeguard as `fiberhmm-call`; `-1` disables. |
+| `--ddda-derived-tf-max-edge-gap` | 12 | Same DddA phase-aware radial-recall safeguard as `fiberhmm-call`; `-1` disables. |
 | `--no-legacy-tags` | off | Emit only `MA`/`AQ`. |
 | `--downstream-compat` | off | TF calls into legacy `ns/nl`, no `MA/AQ` (per-TF quality lost). |
 | `-c/--cores` | 1 | Worker processes (0 = auto). |

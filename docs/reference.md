@@ -104,14 +104,14 @@ Coordinates are 1-based (per the spec); internal storage stays 0-based.
 The recalled nucleosome track from the nucleosome recaller is `nuc.QQQ` =
 `(nq, el, er)` — same byte layout as `tf.QQQ`.
 
-For DddA radial recall, `nq` scores the topology-changing linker configuration,
-not the much easier question of protected DNA versus open linker.  A retained
-split or inward edge uses the accessible-residue log Bayes factor after
-subtracting its provisional TF configuration.  A broad HMM block restored
-because its internal topology was unresolved receives `nq=0`.  This avoids the
-uninformative saturation produced by scoring a full protected radial window.
-An unchanged single-nucleosome hypothesis retains its protected-window score
-because no split decision was made.
+For DddA phase-aware radial recall, `nq` scores the topology-changing linker
+configuration, not the much easier question of protected DNA versus open
+linker. A retained split or inward edge uses the molecule-local
+accessible-residue log Bayes factor. Baseline nucleosome refinement receives no
+provisional TF calls or population prior; TF recall runs once afterward. An
+unresolved boundary or a retained HMM footprint with no radial dyad receives
+`nq=0`. This avoids the uninformative saturation produced by scoring a full
+protected radial window as though it verified the boundary topology.
 
 For an MSP-to-TF rescue (`R`), `q0 = round(255 * P(H* | A or S))`, where
 `H*` is the exact selected TF configuration, `A` is the exact ordinary MSP
@@ -265,12 +265,15 @@ FiberHMM records the scientific observation model independently of filenames
 and free-text command provenance with a versioned SAM header comment:
 
 ```text
-@CO<TAB>FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=pacbio;mode=daf;model=ddda_TF
+@CO<TAB>FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=pacbio;mode=daf;model=ddda_TF;nuc_model=ddda_phase_posterior_v1;nuc_sha256=c86b05dc07e45392880e3460cf7f8880593ecad174e0a338d36ac53b7d0172d6
 ```
 
 The required v1 fields are `assay`, `enzyme`, `platform`, and `mode`. Producers
-may append fields such as `model`. Field names match `[a-z][a-z0-9_]*`; values
-are non-empty tokens matching `[A-Za-z0-9_.+-]+`. The supported vocabulary is:
+may append fields such as `model`; `fiberhmm-call` and the standalone recall
+tools also record `nuc_model` and the exact profile-file digest `nuc_sha256`
+when a distinct nucleosome profile is active. Field names match
+`[a-z][a-z0-9_]*`; values are non-empty tokens matching
+`[A-Za-z0-9_.+-]+`. The supported vocabulary is:
 
 - `assay=daf`, `enzyme=ddda|dddb`, `mode=daf`, with the actual sequencing
   `platform=pacbio|nanopore` (or `unknown` only when unavailable);
@@ -320,7 +323,15 @@ er = round(255 * max(0, 1 - right_ambiguity_bp / 30))
 - `0` — the bracketing hit is ≥30 bp away (edge could extend further; size is a lower bound)
 
 The interval (`ns`/`nl`) is written at the **conservative (strict) boundary**;
-the edge-sharpness bytes recover the loose boundary.
+the edge-sharpness bytes recover the loose boundary. A DddA dyad-nominated raw
+nucleosome edge is the median of its continuous phase-marginal posterior, and
+`el`/`er` encode the width of the central 90% interval using the same 30-bp
+saturation convention. Edge quality never chooses between raw-edge estimators.
+The final emitted coordinate can nevertheless be constrained by the uniform
+molecule-local comparison with the HMM configuration and by non-overlapping
+tiling. HMM calls with no radial dyad and non-radial promoted or fallback calls
+are outside this posterior-edge contract; unresolved final boundaries are
+explicitly Q0.
 
 ## The log-likelihood-ratio recaller
 
@@ -386,20 +397,45 @@ The topology policy still recalls over-merged nucleosomes: supported internal
 linkers divide long footprints, and the maximum-total-LLR compatible cut chain
 is selected when several candidate linkers occur.
 
-**DddA radial configuration validation.** DddA internal deaminations make the
-ordinary accessible-cut pass unsuitable, so the radial template is used only
-to nominate protected dyads and candidate gaps. The caller performs provisional
-TF recall in those gaps, subtracts the protected TF components, and asks whether
-the remaining opportunities support linker over protected sequence at
-`--split-min-llr` and `--split-min-opps`. Unsupported outer residue is restored
-to the HMM footprint; radial calls separated by an unsupported boundary are
-merged back into one broad `nq=0` block; and an HMM nucleosome with no radial
-dyad is preserved. The process is repeated to stability; each changing pass is
-monotonic and the finite bound is set by the initial radial-call count. Radial
-calls are clamped to their source HMM
-footprint, so refinement cannot erase pre-existing HMM MSP/TF scan space.
-`--ddda-derived-tf-max-edge-gap` remains a secondary two-sided boundary check,
-not the primary split criterion.
+**DddA phase-aware radial configuration validation.** DddA internal
+deaminations make the ordinary accessible-cut pass unsuitable, so the radial
+template nominates protected dyads and candidate gaps. At each dyad, the caller
+scores raw candidate edges with the chemistry's sequence-context emissions
+while marginalizing a calibrated grid of uncertain helical registers and local
+9–12-bp pitch. On-phase internal deaminations can remain compatible with
+wrapping, and missing one or several rotational opportunities does not force an
+edge. A weak, broad particle-extent prior is applied identically to every
+molecule. The posterior median defines each dyad-nominated raw edge and
+posterior width affects only `el`/`er`; there is no confidence-selected
+coordinate switch.
+
+Final configuration validation starts from a non-overlapping tiling constrained
+by the HMM nucleosome topology. Whenever a raw posterior edge would reclaim
+HMM-accessible sequence, the same molecule-local, sequence-context and
+phase-aware configuration Bayes-factor test is applied at every posterior
+width. Direct linker evidence can retain the HMM edge; protected evidence can
+accept the posterior crossing. A supported internal linker separates adjacent
+phase-supported particles. If the intervening state is unresolved, the
+particles remain separate with facing Q0 edges and the residue is withheld from
+TF scan space rather than being averaged into one giant particle or declared
+accessible. An HMM footprint with no radial dyad is retained as a Q0 fallback.
+
+This baseline pass receives no TF calls, strand consensus, or population prior.
+After it fixes the nucleosome configuration and rebuilds MSPs, TF recall runs
+once. Nucleosome-sized protected calls exposed in that scan can be promoted back
+to nucleosomes, and `--ddda-derived-tf-max-edge-gap` provides a secondary
+two-sided evidence check for small TF calls created only by the new scan space.
+Coverage-gated strand/family consensus and its optional `nuc_sr` alternative are
+later analyses; they do not alter the baseline call.
+
+The production profile (`ddda_phase_posterior_v1`) was locked after validation
+on deterministic whole-genome samples from twelve independent HG002 scDAF
+libraries (35,727 primary reads) and independent GM12878 NAPA and UBA1 targeted
+molecules (3,016 and 5,539 reads). Unsmoothed one-base size distributions were
+inspected per library and jointly for estimator cliffs and residual one-sided
+10-bp combs. This is a distributional and implementation validation, not a
+claim that population size is ground truth; coordinates remain determined from
+each molecule's chemistry likelihood.
 
 ## recall-tfs output modes
 

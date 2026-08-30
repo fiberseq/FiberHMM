@@ -16,6 +16,8 @@ from fiberhmm.cli.call import (
     _chemistry_declaration,
     _configure_ddda_mcg,
     _daf_snp_depth_preflight,
+    _nuc_profile_identity,
+    _nuc_profile_sha256,
     _resolve_apply_model,
     _resolve_dedup,
     _resolve_derived_tf_edge_gap,
@@ -63,6 +65,27 @@ def test_chemistry_declaration_records_supported_platform(enzyme, mode, seq, exp
     )
     assert tuple(declaration[key] for key in ("assay", "enzyme", "platform", "mode")) == expected
     assert declaration["model"] == "apply_model"
+
+
+def test_ddda_chemistry_declaration_records_locked_nuc_profile():
+    from fiberhmm.models import _bundled_model_path
+
+    profile_path = _bundled_model_path("ddda_nuc_profile.json")
+    identity = _nuc_profile_identity(profile_path)
+    digest = _nuc_profile_sha256(profile_path)
+    declaration = _chemistry_declaration(
+        SimpleNamespace(enzyme="ddda", seq=None),
+        "daf",
+        "/models/ddda_nuc.json",
+        "/models/ddda_TF.json",
+        identity,
+        digest,
+    )
+
+    assert identity == "ddda_phase_posterior_v1"
+    assert declaration["nuc_model"] == "ddda_phase_posterior_v1"
+    assert digest == "c86b05dc07e45392880e3460cf7f8880593ecad174e0a338d36ac53b7d0172d6"
+    assert declaration["nuc_sha256"] == digest
 
 
 def test_fiberhmm_call_stdout_is_clean_bam_stream(benchmark_model_path, tmp_path):

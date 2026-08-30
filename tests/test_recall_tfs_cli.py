@@ -10,6 +10,42 @@ import pytest
 import fiberhmm.cli.recall_tfs as recall_tfs
 
 
+def test_ddda_recall_nucs_header_locks_exact_profile_provenance():
+    from fiberhmm.io.bam_header import declared_chemistries, maybe_append_pg
+    from fiberhmm.models import _bundled_model_path
+
+    profile_path = _bundled_model_path('ddda_nuc_profile.json')
+    model_path = _bundled_model_path('ddda_TF.json')
+    cfg = recall_tfs._NucCfg(
+        recall_nucs=True,
+        split_min_llr=4.0,
+        split_min_opps=3,
+        nuc_min_size=85,
+        msp_min_size=0,
+        phase_nrl=0,
+        nuc_recall_policy='conservative',
+        nuc_profile_path=profile_path,
+        derived_tf_max_edge_ambiguity=12,
+    )
+    record = recall_tfs._build_recall_pg_record(
+        SimpleNamespace(enzyme='ddda', seq=None),
+        'daf',
+        model_path,
+        cfg,
+    )
+    header = maybe_append_pg({'HD': {'VN': '1.6'}}, record)
+    chemistry = declared_chemistries(header)[-1]
+
+    assert record['PN'] == 'fiberhmm-recall-nucs'
+    assert chemistry['nuc_model'] == 'ddda_phase_posterior_v1'
+    assert chemistry['nuc_sha256'] == (
+        'c86b05dc07e45392880e3460cf7f8880593ecad174e0a338d36ac53b7d0172d6'
+    )
+    program = header.to_dict()['PG'][-1]
+    assert program['PN'] == 'fiberhmm-recall-nucs'
+    assert f"nuc_sha256={chemistry['nuc_sha256']}" in program['DS']
+
+
 def test_recall_tfs_make_payload_keeps_legacy_tag_arrays_compact():
     tags = {
         "MM": "A+a,0;",

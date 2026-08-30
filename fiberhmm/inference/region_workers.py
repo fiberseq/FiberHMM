@@ -474,6 +474,7 @@ def _init_fused_region_worker(
     from fiberhmm.core.model_io import load_model_with_metadata
     from fiberhmm.inference.tf_recaller import (
         apply_emission_uplift,
+        build_conditional_hit_tables,
         build_llr_tables,
         build_m5c_llr_tables,
     )
@@ -485,6 +486,22 @@ def _init_fused_region_worker(
         llr_hit, llr_miss = apply_emission_uplift(llr_hit, llr_miss, r_model, emission_uplift)
     _worker_recall_state['llr_hit'] = llr_hit
     _worker_recall_state['llr_miss'] = llr_miss
+    nuc_profile_path = params.get('nuc_profile_path')
+    if nuc_profile_path:
+        from fiberhmm.inference.nuc_recaller import (
+            attach_nuc_profile_emissions,
+            load_nuc_profile,
+        )
+        protected_hit, accessible_hit = build_conditional_hit_tables(
+            r_model, emission_uplift=emission_uplift,
+        )
+        _REGION_NUC_PROFILE_CACHE[nuc_profile_path] = (
+            attach_nuc_profile_emissions(
+                load_nuc_profile(nuc_profile_path),
+                protected_hit,
+                accessible_hit,
+            )
+        )
     _worker_recall_state['ddda_mcg'] = bool(params.get('ddda_mcg', False))
     if _worker_recall_state['ddda_mcg']:
         m5c_hit, m5c_miss = build_m5c_llr_tables(

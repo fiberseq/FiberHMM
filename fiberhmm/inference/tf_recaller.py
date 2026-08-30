@@ -129,6 +129,37 @@ def build_llr_tables(model) -> Tuple[np.ndarray, np.ndarray]:
             np.log(miss_prot) - np.log(miss_acc))
 
 
+def build_conditional_hit_tables(
+    model,
+    emission_uplift: float = 1.0,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Return P(hit | context, protected/accessibile) for generative recall.
+
+    Unlike an LLR table, these conditional probabilities can be mixed into a
+    partially exposed rotational state without linearly interpolating log odds.
+    """
+    EP = np.asarray(model.emissionprob_, dtype=np.float64)
+    if EP.ndim != 2 or EP.shape[0] != 2 or EP.shape[1] < UNMETH_OFFSET + N_CTX:
+        raise ValueError(
+            "Expected a two-state emission table with complete hit/miss contexts"
+        )
+    eps = 1e-12
+    hit = np.clip(EP[:, :N_CTX], 0.0, None)
+    miss = np.clip(EP[:, UNMETH_OFFSET:UNMETH_OFFSET + N_CTX], 0.0, None)
+    conditional = hit / np.maximum(hit + miss, eps)
+    protected = np.clip(conditional[0], eps, 1.0 - eps)
+    accessible = np.clip(conditional[1], eps, 1.0 - eps)
+    if emission_uplift <= 0.0:
+        raise ValueError("emission_uplift must be positive")
+    if abs(float(emission_uplift) - 1.0) > 1e-9:
+        accessible = 1.0 - np.power(1.0 - accessible, emission_uplift)
+        protected = np.power(protected, emission_uplift)
+    return (
+        np.clip(protected, eps, 1.0 - eps),
+        np.clip(accessible, eps, 1.0 - eps),
+    )
+
+
 def build_m5c_llr_tables(model, rate_ratio: Optional[float] = None,
                          emission_uplift: float = 1.0
                          ) -> Tuple[np.ndarray, np.ndarray]:

@@ -94,6 +94,7 @@ def _init_fused_worker(
     from fiberhmm.core.model_io import load_model_with_metadata
     from fiberhmm.inference.tf_recaller import (
         apply_emission_uplift,
+        build_conditional_hit_tables,
         build_llr_tables,
         build_m5c_llr_tables,
     )
@@ -124,8 +125,18 @@ def _init_fused_worker(
     _worker_recall_state['phase_nrl'] = phase_nrl
     nuc_profile = None
     if nuc_profile_path:
-        from fiberhmm.inference.nuc_recaller import load_nuc_profile
-        nuc_profile = load_nuc_profile(nuc_profile_path)
+        from fiberhmm.inference.nuc_recaller import (
+            attach_nuc_profile_emissions,
+            load_nuc_profile,
+        )
+        protected_hit, accessible_hit = build_conditional_hit_tables(
+            r_model, emission_uplift=emission_uplift,
+        )
+        nuc_profile = attach_nuc_profile_emissions(
+            load_nuc_profile(nuc_profile_path),
+            protected_hit,
+            accessible_hit,
+        )
     _worker_recall_state['nuc_profile'] = nuc_profile
     _worker_recall_state['derived_tf_max_edge_ambiguity'] = (
         derived_tf_max_edge_ambiguity

@@ -233,114 +233,61 @@ def run_tf_recall_stage(
     return tf_calls
 
 
-def stabilize_radial_recall_configuration(
+def finalize_baseline_radial_nuc_configuration(
     obs,
     original_ns,
     original_nl,
     original_msps,
     radial_nucs,
-    radial_access,
     read_length,
     llr_hit,
     llr_miss,
-    min_llr,
-    min_opps,
-    unify_threshold,
     split_min_llr,
     split_min_opps,
     nuc_min_size,
     msp_min_size,
-    derived_tf_max_edge_ambiguity,
+    nuc_profile=None,
     m5c_mask=None,
     m5c_llr_hit=None,
     m5c_llr_miss=None,
 ):
-    """Jointly validate radial nuc gaps and the provisional TF configuration.
+    """Finish molecule-local DddA nucleosome refinement before TF recall.
 
-    The radial match-filter nominates dyads and candidate accessible residue.
-    TF recall supplies the protected components that may live inside a linker;
-    :func:`validate_radial_access_in_read` then requires the remaining residue
-    to support accessibility.  Unsupported gaps are closed monotonically and
-    recall is rerun, so no protected HMM residue becomes TF scan space merely
-    because it was not covered by a radial template.
+    The radial/rotational pass nominates dyads, edges, and accessible residue.
+    This validation uses only the molecule's chemistry evidence and the HMM
+    topology.  It deliberately receives no TF calls, TF families, strand
+    consensus, or population prior: baseline inference is strictly
+
+        HMM -> nucleosome refinement -> TF refinement.
+
+    A later, coverage-gated consensus stage may test these baseline
+    nucleosomes against a population-supported TF hypothesis and write an
+    ``nuc_sr`` overlay.  That is a separate operation.
     """
-    original_scan = build_scan_intervals(
+    nuc_calls, accessible = validate_radial_access_in_read(
+        obs,
         original_ns,
         original_nl,
-        [start for start, _ in original_msps],
-        [length for _, length in original_msps],
+        radial_nucs,
+        (),
         read_length,
-        unify_threshold=unify_threshold,
+        llr_hit,
+        llr_miss,
+        min_llr=split_min_llr,
+        min_opps=split_min_opps,
+        nuc_min_size=nuc_min_size,
+        nuc_profile=nuc_profile,
+        m5c_mask=m5c_mask,
+        m5c_llr_hit=m5c_llr_hit,
+        m5c_llr_miss=m5c_llr_miss,
     )
-
-    def recall(nuc_calls, accessible):
-        msps = rederive_msps(
-            original_msps, accessible, read_length, msp_min_size,
-        )
-        msps = exclude_nucleosomes_from_msps(
-            msps, nuc_calls, msp_min_size,
-        )
-        tf_calls = run_tf_recall_stage(
-            obs,
-            [call.start for call in nuc_calls],
-            [call.length for call in nuc_calls],
-            [start for start, _ in msps],
-            [length for _, length in msps],
-            read_length,
-            llr_hit,
-            llr_miss,
-            min_llr,
-            min_opps,
-            unify_threshold,
-            m5c_mask,
-            m5c_llr_hit,
-            m5c_llr_miss,
-        )
-        if derived_tf_max_edge_ambiguity is not None:
-            tf_calls = filter_nuc_derived_tf_calls(
-                tf_calls,
-                original_scan,
-                obs,
-                derived_tf_max_edge_ambiguity,
-            )
-        return msps, tf_calls
-
-    nuc_calls = list(radial_nucs)
-    accessible = list(radial_access)
-    msps, tf_calls = recall(nuc_calls, accessible)
-    # Every changing pass either removes an unsupported radial boundary,
-    # restores an outer HMM edge, or lowers a configuration score.  The state
-    # is monotone, so one pass per initial call plus a final equality check is a
-    # finite convergence bound without silently returning a three-pass partial.
-    for _ in range(max(1, len(nuc_calls) + 1)):
-        before = [
-            (call.start, call.length, call.nq, call.el, call.er)
-            for call in nuc_calls
-        ]
-        nuc_calls, accessible = validate_radial_access_in_read(
-            obs,
-            original_ns,
-            original_nl,
-            nuc_calls,
-            tf_calls,
-            read_length,
-            llr_hit,
-            llr_miss,
-            min_llr=split_min_llr,
-            min_opps=split_min_opps,
-            nuc_min_size=nuc_min_size,
-            m5c_mask=m5c_mask,
-            m5c_llr_hit=m5c_llr_hit,
-            m5c_llr_miss=m5c_llr_miss,
-        )
-        msps, tf_calls = recall(nuc_calls, accessible)
-        after = [
-            (call.start, call.length, call.nq, call.el, call.er)
-            for call in nuc_calls
-        ]
-        if after == before:
-            break
-    return nuc_calls, msps, tf_calls
+    msps = rederive_msps(
+        original_msps, accessible, read_length, msp_min_size,
+    )
+    msps = exclude_nucleosomes_from_msps(
+        msps, nuc_calls, msp_min_size,
+    )
+    return nuc_calls, msps
 
 
 def build_fused_recall_result(
@@ -369,10 +316,17 @@ def build_fused_recall_result(
 
     When ``recall_nucs`` is True, the per-read nucleosome recaller runs FIRST:
     it splits over-merged footprints on accessible evidence and resolves each
-    nucleosome according to ``nuc_recall_policy`` (nuc+QQQ). MSPs are then
-    re-derived from the new boundaries, and TF recall runs over the cleaner
-    accessible space. Circular reads run the same flow in tiled coordinates and
-    project the refined nucs/MSPs/TFs back to the molecule.
+    nucleosome according to ``nuc_recall_policy`` (nuc+QQQ). In DddA mode this
+    includes the molecule-local radial/rotational edge model. MSPs are then
+    re-derived from the fixed baseline nucleosome configuration, and TF recall
+    runs once over the resulting accessible space. No TF-family, strand, or
+    population evidence is available to this baseline path. Circular reads run
+    the same order in tiled coordinates and project the refined nucs/MSPs/TFs
+    back to the molecule.
+
+    Coverage-gated TF consensus and its subsequent nucleosome reconciliation
+    are separate downstream operations that write ``tf_sr``/``nuc_sr`` while
+    preserving these ordinary ``tf``/``nuc`` calls.
     ``recall_nucs=False`` (the default) is byte-for-byte the original behavior.
     """
     ns = apply_result["ns"]
@@ -530,49 +484,46 @@ def _build_fused_recall_result_with_nucs(
         nuc_profile=nuc_profile, recall_policy=nuc_recall_policy,
     )
 
-    # 2) re-derive MSPs and 3) recall TFs.  DddA radial residue receives a
-    # joint nuc/linker/TF validation pass before it can become scan space.
+    # 2) finish baseline nucleosome refinement without TF/population evidence,
+    # then re-derive MSPs.  3) run baseline TF refinement exactly once on that
+    # fixed nucleosome configuration.
     if nuc_profile is not None:
-        nuc_calls, new_msps, tf_calls = stabilize_radial_recall_configuration(
+        nuc_calls, new_msps = finalize_baseline_radial_nuc_configuration(
             obs,
             ns,
             nl,
             orig_msps,
             nuc_calls,
-            access,
             read_length,
             llr_hit,
             llr_miss,
-            min_llr,
-            min_opps,
-            unify_threshold,
             split_min_llr,
             split_min_opps,
             nuc_min_size,
             msp_min_size,
-            derived_tf_max_edge_ambiguity,
-            m5c_mask,
-            m5c_llr_hit,
-            m5c_llr_miss,
+            nuc_profile=nuc_profile,
+            m5c_mask=m5c_mask,
+            m5c_llr_hit=m5c_llr_hit,
+            m5c_llr_miss=m5c_llr_miss,
         )
     else:
         new_msps = rederive_msps(orig_msps, access, read_length, msp_min_size)
-        tf_calls = run_tf_recall_stage(
-            obs,
-            [nc.start for nc in nuc_calls],
-            [nc.length for nc in nuc_calls],
-            [start for start, _ in new_msps],
-            [length for _, length in new_msps],
-            read_length,
-            llr_hit,
-            llr_miss,
-            min_llr,
-            min_opps,
-            unify_threshold,
-            m5c_mask,
-            m5c_llr_hit,
-            m5c_llr_miss,
-        )
+    tf_calls = run_tf_recall_stage(
+        obs,
+        [nc.start for nc in nuc_calls],
+        [nc.length for nc in nuc_calls],
+        [start for start, _ in new_msps],
+        [length for _, length in new_msps],
+        read_length,
+        llr_hit,
+        llr_miss,
+        min_llr,
+        min_opps,
+        unify_threshold,
+        m5c_mask,
+        m5c_llr_hit,
+        m5c_llr_miss,
+    )
     # 3b) promote nucleosome-sized TF leaks (>= unify_threshold) back to nuc+
     tf_calls, promoted = promote_large_tf_calls(
         tf_calls, obs, llr_hit, llr_miss, unify_threshold, nuc_min_size,
@@ -676,42 +627,38 @@ def _build_fused_recall_result_with_nucs_circular(
             raise ValueError("circular m5c mask must match one molecule or tiled observations")
         tiled_m5c_mask = np.tile(np.asarray(m5c_mask, dtype=bool),
                                  tiled_len // read_length)
-    # 2) re-derive tiled MSPs and 3) recall TFs.  Use the same joint radial
-    # configuration validation as the linear path before projection.
+    # 2) finish molecule-local baseline nucleosome refinement and re-derive
+    # tiled MSPs. 3) run TF refinement once on that fixed configuration.
     if nuc_profile is not None:
-        tiled_nucs, tiled_new_msps, tiled_tf = stabilize_radial_recall_configuration(
+        tiled_nucs, tiled_new_msps = finalize_baseline_radial_nuc_configuration(
             obs,
             tiled_ns,
             tiled_nl,
             tiled_msps,
             tiled_nucs,
-            tiled_access,
             tiled_len,
             llr_hit,
             llr_miss,
-            min_llr,
-            min_opps,
-            unify_threshold,
             split_min_llr,
             split_min_opps,
             nuc_min_size,
             msp_min_size,
-            derived_tf_max_edge_ambiguity,
-            tiled_m5c_mask,
-            m5c_llr_hit,
-            m5c_llr_miss,
+            nuc_profile=nuc_profile,
+            m5c_mask=tiled_m5c_mask,
+            m5c_llr_hit=m5c_llr_hit,
+            m5c_llr_miss=m5c_llr_miss,
         )
     else:
         tiled_new_msps = rederive_msps(
             tiled_msps, tiled_access, tiled_len, msp_min_size,
         )
-        tiled_tf = run_tf_recall_stage(
-            obs,
-            [nc.start for nc in tiled_nucs], [nc.length for nc in tiled_nucs],
-            [s for s, _ in tiled_new_msps], [length for _, length in tiled_new_msps],
-            tiled_len, llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
-            tiled_m5c_mask, m5c_llr_hit, m5c_llr_miss,
-        )
+    tiled_tf = run_tf_recall_stage(
+        obs,
+        [nc.start for nc in tiled_nucs], [nc.length for nc in tiled_nucs],
+        [s for s, _ in tiled_new_msps], [length for _, length in tiled_new_msps],
+        tiled_len, llr_hit, llr_miss, min_llr, min_opps, unify_threshold,
+        tiled_m5c_mask, m5c_llr_hit, m5c_llr_miss,
+    )
     # 3b) promote nucleosome-sized TF leaks back to nuc+ (still tiled)
     tiled_tf, tiled_promoted = promote_large_tf_calls(
         tiled_tf, obs, llr_hit, llr_miss, unify_threshold, nuc_min_size,

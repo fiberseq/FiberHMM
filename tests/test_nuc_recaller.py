@@ -6,6 +6,11 @@ import numpy as np
 from fiberhmm.inference.circular import project_center_nuc_calls
 from fiberhmm.inference.nuc_recaller import (
     NucCall,
+    NucProfile,
+    _complete_radial_nuc_from_adjacent_tf,
+    _find_density_edge,
+    _radial_extension_evidence,
+    _smoothed_deam_rate,
     assemble_circular_nuc_msp_tiling,
     assemble_nuc_msp_tiling,
     drop_short_nucs_overlapping_promoted,
@@ -18,7 +23,7 @@ from fiberhmm.inference.nuc_recaller import (
     validate_radial_access_in_read,
 )
 from fiberhmm.inference.tf_recaller import TFCall, N_CTX, UNMETH_OFFSET
-from fiberhmm.io.ma_tags import format_aq_array, parse_aq_array
+from fiberhmm.io.ma_tags import ambiguity_to_edge, format_aq_array, parse_aq_array
 
 HIT = 0                 # ctx 0, modified (accessible evidence)
 MISS = UNMETH_OFFSET    # ctx 0, unmodified (protected evidence)
@@ -333,13 +338,68 @@ def test_nuc_qqq_aq_roundtrip():
 
 
 def test_load_bundled_ddda_nuc_profile():
+    import json
     from fiberhmm.inference.nuc_recaller import NucProfile, load_nuc_profile
     from fiberhmm.models import _bundled_model_path
-    prof = load_nuc_profile(_bundled_model_path('ddda_nuc_profile.json'))
+    profile_path = _bundled_model_path('ddda_nuc_profile.json')
+    prof = load_nuc_profile(profile_path)
+    with open(profile_path) as handle:
+        metadata = json.load(handle)
     assert isinstance(prof, NucProfile)
+    assert metadata['kind'] == 'ddda_phase_posterior_v1'
+    assert metadata['status'] == 'production'
+    assert metadata['validation']['locked'] == '2026-08-30'
     assert 0.5 < prof.linker < 0.95          # DddA linker deam rate
     assert prof.radial[0] < prof.linker       # dyad core is protected
     assert prof.half >= 60
+    assert prof.edge_prior_center > 0.0
+    assert prof.edge_prior_sd > 0.0
+    assert 9.0 < prof.rotation_period < 12.0
+    assert prof.rotation_period_sd > 0.0
+    assert prof.rotation_band_sd > 0.0
+    assert prof.rotation_phase_bins > 0
+    assert prof.rotation_fraction > 0.0
+    assert prof.rotation_min_phase_information > 0.0
+    assert prof.rotation_edge_break_min_surprisal > 0.0
+
+
+def test_bundled_ddda_phase_posterior_parameters_are_locked():
+    """Changing these values requires a new named profile and validation."""
+    from fiberhmm.inference.nuc_recaller import load_nuc_profile
+    from fiberhmm.models import _bundled_model_path
+
+    profile = load_nuc_profile(_bundled_model_path('ddda_nuc_profile.json'))
+
+    assert profile.half == 73
+    assert profile.min_sep == 150
+    assert profile.edge_frac == 0.82
+    assert profile.edge_prior_center == 73.0
+    assert profile.edge_prior_sd == 25.0
+    assert profile.edge_likelihood_temperature == 1.0
+    assert profile.rotation_period == 10.12
+    assert profile.rotation_period_sd == 0.2
+    assert profile.rotation_phase == 5.70
+    assert profile.rotation_phase_sd == 0.8
+    assert profile.rotation_phase_bins == 8
+    assert profile.rotation_band_sd == 1.5
+    assert profile.rotation_fraction == 1.0
+    assert profile.rotation_edge_break_min_surprisal == 1.5
+    assert profile.rotation_min_phase_information == 0.5
+
+
+def test_bundled_ddda_phase_posterior_artifact_is_locked():
+    """Any byte change requires a new named profile and fresh validation."""
+    import hashlib
+    from pathlib import Path
+
+    from fiberhmm.models import _bundled_model_path
+
+    profile_path = _bundled_model_path('ddda_nuc_profile.json')
+    digest = hashlib.sha256(Path(profile_path).read_bytes()).hexdigest()
+
+    assert digest == (
+        'c86b05dc07e45392880e3460cf7f8880593ecad174e0a338d36ac53b7d0172d6'
+    )
 
 
 def test_radial_split_splits_dinucleosome_block():
@@ -376,6 +436,508 @@ def test_radial_split_splits_dinucleosome_block():
     assert any(s <= 170 <= s + length for s, length in access)
     # edge-sharpness bytes are populated
     assert all(0 <= n.el <= 255 and 0 <= n.er <= 255 for n in nucs)
+
+
+def test_ddda_density_rate_rejects_isolated_rotational_hit():
+    opportunity = np.zeros(101, dtype=bool)
+    deaminated = np.zeros(101, dtype=bool)
+    opportunity[50] = True
+    deaminated[50] = True
+
+    rate = _smoothed_deam_rate(opportunity, deaminated)
+
+    assert np.all(np.isnan(rate))
+
+
+def test_ddda_density_rate_uses_wider_window_for_sparse_sequence():
+    opportunity = np.zeros(101, dtype=bool)
+    deaminated = np.zeros(101, dtype=bool)
+    opportunity[[30, 40, 60, 70]] = True
+    deaminated[[30, 70]] = True
+
+    rate = _smoothed_deam_rate(opportunity, deaminated)
+
+    assert np.isclose(rate[50], 0.41)
+
+
+def test_ddda_density_prior_rejects_two_of_three_but_accepts_three_of_four():
+    opportunity = np.zeros(101, dtype=bool)
+    deaminated = np.zeros(101, dtype=bool)
+    opportunity[[45, 50, 55]] = True
+    deaminated[[45, 55]] = True
+    two_of_three = _smoothed_deam_rate(
+        opportunity, deaminated, sparse_win=None
+    )[50]
+
+    opportunity[60] = True
+    deaminated[60] = True
+    three_of_four = _smoothed_deam_rate(
+        opportunity, deaminated, sparse_win=None
+    )[50]
+
+    threshold = 0.82 * 0.7356
+    assert two_of_three < threshold < three_of_four
+
+
+def test_ddda_density_edge_preserves_unresolved_topology():
+    profile = NucProfile(
+        radial=np.full(96, 0.05),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+    )
+    unsupported = np.full(240, np.nan)
+
+    right, right_ambiguity = _find_density_edge(
+        unsupported, 120, +1, 230, profile, fallback=198
+    )
+    left, left_ambiguity = _find_density_edge(
+        unsupported, 120, -1, 10, profile, fallback=42
+    )
+
+    # With no molecule-supported edge, preserve the structural boundary and
+    # state the uncertainty in the edge bytes; do not invent a +/-73-bp span.
+    assert (left, right) == (42, 198)
+    assert left_ambiguity >= 30 and right_ambiguity >= 30
+
+
+def test_ddda_phase_edge_reports_prior_median_and_q0_on_complete_dropout():
+    profile = NucProfile(
+        radial=np.full(96, 0.05),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+        edge_prior_center=73.0,
+        edge_prior_sd=18.0,
+        rotation_period=10.12,
+        rotation_period_sd=0.4,
+        rotation_phase_bins=8,
+        rotation_band_sd=1.1,
+        rotation_fraction=1.0,
+        rotation_edge_break_min_surprisal=1.5,
+        protected_hit=np.full(N_CTX, 0.02),
+        accessible_hit=np.full(N_CTX, 0.75),
+    )
+    center = 120
+    observations = np.full(280, NONTARGET, dtype=np.int32)
+    opportunity = np.zeros(280, dtype=bool)
+    deaminated = np.zeros(280, dtype=bool)
+    llr_hit = np.full(N_CTX, -3.0, dtype=np.float64)
+    llr_miss = np.full(N_CTX, 1.2, dtype=np.float64)
+
+    edge, ambiguity = _find_density_edge(
+        np.full(280, np.nan),
+        center,
+        +1,
+        center + 110,
+        profile,
+        fallback=center + 90,
+        opportunity=opportunity,
+        deaminated=deaminated,
+        observations=observations,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        phase_core_radius=42,
+    )
+
+    assert edge == center + 73
+    assert ambiguity >= 30
+
+
+def test_ddda_phase_edge_never_switches_to_topology_at_low_confidence():
+    """A broad posterior changes Q, never the coordinate estimator.
+
+    This guards the population-size cliff caused by sending low-confidence
+    molecules to one of a few HMM/adjacent-dyad structural coordinates.
+    """
+    profile = NucProfile(
+        radial=np.full(128, 0.05),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+        edge_prior_center=73.0,
+        edge_prior_sd=25.0,
+        rotation_period=10.12,
+        rotation_period_sd=0.4,
+        rotation_phase_bins=8,
+        rotation_band_sd=1.1,
+        rotation_fraction=1.0,
+        protected_hit=np.full(N_CTX, 0.02),
+        accessible_hit=np.full(N_CTX, 0.75),
+    )
+    center = 140
+    length = 360
+    observations = np.full(length, NONTARGET, dtype=np.int32)
+    opportunity = np.zeros(length, dtype=bool)
+    deaminated = np.zeros(length, dtype=bool)
+    # Deliberately sparse evidence leaves a broad posterior.
+    for offset, code in ((24, MISS), (47, HIT), (82, MISS)):
+        position = center + offset
+        opportunity[position] = True
+        deaminated[position] = code == HIT
+        observations[position] = code
+    llr_hit = np.full(N_CTX, -3.0, dtype=np.float64)
+    llr_miss = np.full(N_CTX, 1.2, dtype=np.float64)
+
+    results = [
+        _find_density_edge(
+            np.full(length, np.nan),
+            center,
+            +1,
+            center + 120,
+            profile,
+            fallback=center + topology_offset,
+            opportunity=opportunity,
+            deaminated=deaminated,
+            observations=observations,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            phase_core_radius=42,
+        )
+        for topology_offset in (75, 90, 110)
+    ]
+
+    assert len({edge for edge, _ambiguity in results}) == 1
+    assert all(ambiguity >= 30 for _edge, ambiguity in results)
+
+
+def test_ddda_density_edge_ignores_rotational_hits_inside_clean_nuc():
+    length = 320
+    center = 160
+    true_right_edge = center + 73
+    opportunity = np.zeros(length, dtype=bool)
+    deaminated = np.zeros(length, dtype=bool)
+    opportunity[::3] = True
+    # Strong periodic internal hits should not become a linker transition.
+    for position in range(center, true_right_edge, 10):
+        nearest = position - (position % 3)
+        deaminated[nearest] = True
+    # Deterministic high linker rate after the true edge.
+    linker_opportunities = np.flatnonzero(
+        opportunity & (np.arange(length) >= true_right_edge)
+    )
+    deaminated[
+        linker_opportunities[np.arange(len(linker_opportunities)) % 4 != 0]
+    ] = True
+    profile = NucProfile(
+        radial=np.full(96, 0.05),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+    )
+
+    rate = _smoothed_deam_rate(opportunity, deaminated)
+    edge, ambiguity = _find_density_edge(
+        rate, center, +1, center + 110, profile
+    )
+
+    assert true_right_edge - 3 <= edge <= true_right_edge + 15
+    assert ambiguity >= 0
+
+
+def test_ddda_density_edge_requires_sustained_outward_linker():
+    profile = NucProfile(
+        radial=np.full(96, 0.05),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+    )
+    center = 120
+    signal = np.full(260, np.nan)
+    # A rotational band crosses the centered density threshold 23 bp before
+    # the physical edge.  The real linker transition begins at +73.
+    signal[center + 50] = 0.70
+    signal[center + 73:] = 0.70
+    opportunity = np.zeros(260, dtype=bool)
+    deaminated = np.zeros(260, dtype=bool)
+    opportunity[center + 52:center + 73:4] = True
+    opportunity[center + 74:center + 105:4] = True
+    deaminated[center + 74:center + 105:4] = True
+
+    edge, _ambiguity = _find_density_edge(
+        signal,
+        center,
+        +1,
+        center + 110,
+        profile,
+        fallback=center + 80,
+        opportunity=opportunity,
+        deaminated=deaminated,
+    )
+
+    # No opportunity occurs exactly at +73, so the molecularly identified
+    # boundary is the short interval between the last wrapped miss and first
+    # linker opportunity rather than a forced single base.
+    assert center + 71 <= edge <= center + 75
+
+
+def test_ddda_density_edge_models_multiple_rotational_bands_before_linker():
+    profile = NucProfile(
+        radial=np.full(96, 0.08),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+    )
+    center = 120
+    true_edge = center + 73
+    opportunity = np.zeros(280, dtype=bool)
+    opportunity[::3] = True
+    deaminated = np.zeros(280, dtype=bool)
+    # Three separate outward-facing turns are hit inside one wrapped particle.
+    for offset in (42, 52, 62):
+        local = np.flatnonzero(
+            opportunity
+            & (np.abs(np.arange(len(opportunity)) - (center + offset)) <= 2)
+        )
+        deaminated[local[0]] = True
+    linker_sites = np.flatnonzero(
+        opportunity & (np.arange(len(opportunity)) >= true_edge)
+    )
+    deaminated[linker_sites[np.arange(len(linker_sites)) % 4 != 0]] = True
+
+    edge, ambiguity = _find_density_edge(
+        _smoothed_deam_rate(opportunity, deaminated),
+        center,
+        +1,
+        center + 110,
+        profile,
+        fallback=center + 80,
+        opportunity=opportunity,
+        deaminated=deaminated,
+    )
+
+    assert true_edge - 3 <= edge <= true_edge + 5
+    assert ambiguity >= 0
+
+
+def test_ddda_phase_edge_allows_jitter_and_skipped_turns():
+    profile = NucProfile(
+        radial=np.full(96, 0.08),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+        rotation_period=10.12,
+        rotation_period_sd=0.4,
+        rotation_phase=5.7,
+        rotation_phase_sd=0.8,
+        rotation_phase_bins=8,
+        rotation_band_sd=1.1,
+        rotation_fraction=1.0,
+        rotation_edge_break_min_surprisal=1.5,
+        protected_hit=np.full(N_CTX, 0.02),
+        accessible_hit=np.full(N_CTX, 0.75),
+    )
+    center = 120
+    true_edge = center + 73
+    opportunity = np.zeros(280, dtype=bool)
+    deaminated = np.zeros(280, dtype=bool)
+    observations = np.full(280, NONTARGET, dtype=np.int32)
+    sites = np.arange(center + 1, center + 111, 2)
+    opportunity[sites] = True
+    observations[sites] = MISS
+
+    # Same latent phase with 21- and 28-bp separations: individual turns were
+    # skipped and the retained bands are not at exact 10-bp coordinates.
+    for offset in (16, 37, 65):
+        position = sites[int(np.argmin(np.abs(sites - (center + offset))))]
+        deaminated[position] = True
+        observations[position] = HIT
+    linker_sites = sites[sites >= true_edge]
+    linker_hits = linker_sites[np.arange(len(linker_sites)) % 4 != 0]
+    deaminated[linker_hits] = True
+    observations[linker_hits] = HIT
+    llr_hit = np.full(N_CTX, -3.0, dtype=np.float64)
+    llr_miss = np.full(N_CTX, 1.2, dtype=np.float64)
+
+    edge, ambiguity = _find_density_edge(
+        _smoothed_deam_rate(opportunity, deaminated),
+        center,
+        +1,
+        center + 110,
+        profile,
+        fallback=center + 85,
+        opportunity=opportunity,
+        deaminated=deaminated,
+        observations=observations,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+    )
+
+    assert true_edge - 3 <= edge <= true_edge + 5
+    assert ambiguity < 30
+
+
+def test_ddda_phase_edge_requires_direct_off_phase_break():
+    profile = NucProfile(
+        radial=np.full(128, 0.08),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+        rotation_period=10.12,
+        rotation_period_sd=0.4,
+        rotation_phase=5.7,
+        rotation_phase_sd=0.8,
+        rotation_phase_bins=8,
+        rotation_band_sd=1.1,
+        rotation_fraction=1.0,
+        rotation_edge_break_min_surprisal=1.5,
+        protected_hit=np.full(N_CTX, 0.02),
+        accessible_hit=np.full(N_CTX, 0.75),
+    )
+    center = 140
+    length = 320
+    opportunity = np.zeros(length, dtype=bool)
+    deaminated = np.zeros(length, dtype=bool)
+    observations = np.full(length, NONTARGET, dtype=np.int32)
+
+    # Protected opportunities establish one particle and its latent phase.
+    protected_offsets = np.arange(10, 71, 10)
+    protected_sites = center + protected_offsets
+    opportunity[protected_sites] = True
+    observations[protected_sites] = MISS
+    for offset in (16, 37, 65):
+        position = center + offset
+        opportunity[position] = True
+        deaminated[position] = True
+        observations[position] = HIT
+
+    # A run of hits that continues the inferred rotational phase is not, by
+    # itself, a directly observed linker edge even though its aggregate can
+    # make all-linker beat all-wrapped.
+    on_phase_offsets = np.asarray((76, 86, 96, 106, 116))
+    on_phase_sites = center + on_phase_offsets
+    opportunity[on_phase_sites] = True
+    deaminated[on_phase_sites] = True
+    observations[on_phase_sites] = HIT
+    llr_hit = np.full(N_CTX, -3.0, dtype=np.float64)
+    llr_miss = np.full(N_CTX, 1.2, dtype=np.float64)
+
+    unresolved_edge, unresolved_ambiguity = _find_density_edge(
+        _smoothed_deam_rate(opportunity, deaminated),
+        center,
+        +1,
+        center + 120,
+        profile,
+        fallback=center + 90,
+        opportunity=opportunity,
+        deaminated=deaminated,
+        observations=observations,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+    )
+    assert unresolved_ambiguity >= 30
+
+    # A single half-turn-shifted hit now breaks that phase. Its exact offset is
+    # not a rule: the context-conditioned posterior-predictive Bayes factor is.
+    off_phase_site = center + 81
+    opportunity[off_phase_site] = True
+    deaminated[off_phase_site] = True
+    observations[off_phase_site] = HIT
+    resolved_edge, resolved_ambiguity = _find_density_edge(
+        _smoothed_deam_rate(opportunity, deaminated),
+        center,
+        +1,
+        center + 120,
+        profile,
+        fallback=center + 90,
+        opportunity=opportunity,
+        deaminated=deaminated,
+        observations=observations,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+    )
+    assert center + 55 <= resolved_edge < off_phase_site
+    assert resolved_ambiguity < unresolved_ambiguity
+
+
+def test_ddda_extension_is_conditioned_on_particle_phase():
+    profile = NucProfile(
+        radial=np.full(96, 0.08),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+        rotation_period=10.0,
+        rotation_phase_bins=10,
+        rotation_band_sd=1.3,
+        rotation_fraction=1.0,
+        protected_hit=np.full(N_CTX, 0.02),
+        accessible_hit=np.full(N_CTX, 0.75),
+    )
+    dyad = 100
+    core_start, core_end = 100, 160
+    extension_start, extension_end = 160, 185
+    llr_hit, llr_miss = _llr_tables()
+
+    def evidence(extension_hits, extension_misses):
+        obs = np.full(240, NONTARGET, dtype=np.int32)
+        # The core learns one helical register from repeated hits, with
+        # protected half-turn opportunities anchoring the opposite phase.
+        for offset in (6, 16, 26, 36, 46, 56):
+            obs[dyad + offset] = HIT
+        for offset in (11, 21, 31, 41, 51):
+            obs[dyad + offset] = MISS
+        for offset in extension_hits:
+            obs[dyad + offset] = HIT
+        for offset in extension_misses:
+            obs[dyad + offset] = MISS
+        return _radial_extension_evidence(
+            obs,
+            extension_start,
+            extension_end,
+            dyad,
+            profile,
+            [],
+            llr_hit,
+            llr_miss,
+            condition_start=core_start,
+            condition_end=core_end,
+        )
+
+    on_phase = evidence((66, 76), (71, 81))
+    broken_phase = evidence((71, 81), (66, 76))
+    assert on_phase[1] > broken_phase[1] + 2.0
+    assert on_phase[4] is not None and on_phase[4] < 1.5
+    assert broken_phase[4] is not None and broken_phase[4] >= 1.5
+
+
+def test_ddda_density_edge_does_not_rescue_without_linker_opportunities():
+    profile = NucProfile(
+        radial=np.full(96, 0.05),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+    )
+    center = 120
+    signal = np.full(260, np.nan)
+    signal[center + 50] = 0.70
+    opportunity = np.zeros(260, dtype=bool)
+    deaminated = np.zeros(260, dtype=bool)
+
+    edge, ambiguity = _find_density_edge(
+        signal,
+        center,
+        +1,
+        center + 110,
+        profile,
+        fallback=center + 80,
+        opportunity=opportunity,
+        deaminated=deaminated,
+    )
+
+    # The unsupported rotational hit is rejected; the topology coordinate is
+    # preserved and marked explicitly unresolved.
+    assert edge == center + 80
+    assert ambiguity >= 30
 
 
 def test_radial_configuration_preserves_hmm_nuc_when_no_dyad_is_emitted():
@@ -419,7 +981,7 @@ def test_radial_configuration_preserves_short_hmm_tf_scan_space():
     assert access == [(20, 40)]
 
 
-def test_radial_configuration_restores_unsupported_outer_flanks():
+def test_radial_configuration_preserves_core_across_unsupported_outer_flanks():
     llr_hit, llr_miss = _llr_tables()
     nucs, access = validate_radial_access_in_read(
         _obs((MISS, 180)),
@@ -436,11 +998,11 @@ def test_radial_configuration_restores_unsupported_outer_flanks():
     )
 
     assert [(call.start, call.length, call.el, call.er)
-            for call in nucs] == [(0, 180, 0, 0)]
+            for call in nucs] == [(20, 140, 0, 0)]
     assert access == []
 
 
-def test_radial_configuration_closes_unsupported_internal_tf_gap():
+def test_radial_configuration_preserves_phase_cores_across_unsupported_gap():
     llr_hit, llr_miss = _llr_tables()
     nucs, access = validate_radial_access_in_read(
         _obs((MISS, 360)),
@@ -460,11 +1022,14 @@ def test_radial_configuration_closes_unsupported_internal_tf_gap():
     )
 
     assert [(call.start, call.length, call.nq, call.el, call.er)
-            for call in nucs] == [(0, 360, 0, 255, 255)]
+            for call in nucs] == [
+                (0, 145, 220, 255, 0),
+                (215, 145, 210, 0, 255),
+            ]
     assert access == []
 
 
-def test_radial_configuration_merges_adjacent_dyads_without_linker():
+def test_radial_configuration_keeps_adjacent_dyads_without_inventing_linker():
     llr_hit, llr_miss = _llr_tables()
     nucs, access = validate_radial_access_in_read(
         _obs((MISS, 300)),
@@ -483,7 +1048,11 @@ def test_radial_configuration_merges_adjacent_dyads_without_linker():
         nuc_min_size=85,
     )
 
-    assert [(call.start, call.length, call.nq) for call in nucs] == [(0, 300, 0)]
+    assert [(call.start, call.length, call.nq, call.el, call.er)
+            for call in nucs] == [
+                (0, 150, 255, 255, 0),
+                (150, 150, 255, 0, 255),
+            ]
     assert access == []
 
 
@@ -516,6 +1085,261 @@ def test_radial_configuration_keeps_tf_gap_with_accessible_residue():
 
     assert [(call.start, call.length) for call in nucs] == [(0, 145), (215, 145)]
     assert access == [(145, 70)]
+
+
+def test_radial_configuration_rescues_sequence_supported_clipped_edges():
+    llr_hit, llr_miss = _llr_tables()
+    profile = NucProfile(
+        radial=np.full(96, 0.05),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+    )
+    nucs, access = validate_radial_access_in_read(
+        _obs((MISS, 200)),
+        original_ns=[20],
+        original_nl=[110],
+        radial_nucs=[NucCall(0, 146, 220, 240, 230, dyad=73)],
+        provisional_tf_calls=[],
+        read_length=200,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        min_llr=4.0,
+        min_opps=3,
+        nuc_min_size=85,
+        nuc_profile=profile,
+    )
+
+    assert [(call.start, call.length, call.el, call.er, call.dyad)
+            for call in nucs] == [(0, 146, 240, 230, 73)]
+    assert access == []
+
+
+def test_radial_hmm_crossing_is_independent_of_edge_q_threshold():
+    """Ambiguity 29 vs 30 may change Q, never the selected coordinates."""
+    llr_hit, llr_miss = _llr_tables()
+    profile = NucProfile(
+        radial=np.full(96, 0.05),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+    )
+
+    def call_with(observations, ambiguity):
+        resolved = ambiguity < 30
+        edge_q = ambiguity_to_edge(ambiguity)
+        nucs, _access = validate_radial_access_in_read(
+            observations,
+            original_ns=[20],
+            original_nl=[110],
+            radial_nucs=[NucCall(
+                0,
+                146,
+                220,
+                edge_q,
+                edge_q,
+                dyad=73,
+                radial_start=0,
+                radial_end=146,
+                phase_resolved_left=resolved,
+                phase_resolved_right=resolved,
+            )],
+            provisional_tf_calls=[],
+            read_length=200,
+            llr_hit=llr_hit,
+            llr_miss=llr_miss,
+            min_llr=4.0,
+            min_opps=3,
+            nuc_min_size=85,
+            nuc_profile=profile,
+        )
+        return [(call.start, call.length) for call in nucs]
+
+    protected = _obs((MISS, 200))
+    accessible_flanks = _obs(
+        (HIT, 20),
+        (MISS, 110),
+        (HIT, 16),
+        (MISS, 54),
+    )
+
+    # Molecular configuration evidence, not the 29/30-bp Q boundary, decides
+    # whether the posterior crossing can reclaim HMM-accessible sequence.
+    assert call_with(protected, 29) == call_with(protected, 30) == [(0, 146)]
+    assert call_with(accessible_flanks, 29) == call_with(
+        accessible_flanks, 30,
+    ) == [(20, 110)]
+
+
+def test_radial_configuration_does_not_cross_supported_linker_before_tf():
+    llr_hit, llr_miss = _llr_tables()
+    profile = NucProfile(
+        radial=np.full(96, 0.05),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+    )
+    obs = _obs((MISS, 130), (HIT, 6), (MISS, 64))
+    nucs, access = validate_radial_access_in_read(
+        obs,
+        original_ns=[20],
+        original_nl=[110],
+        radial_nucs=[NucCall(20, 126, 220, 240, 230, dyad=73)],
+        provisional_tf_calls=[TFCall(136, 10, 8.0, 4, 5, 5)],
+        read_length=200,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        min_llr=4.0,
+        min_opps=3,
+        nuc_min_size=85,
+        nuc_profile=profile,
+    )
+
+    assert [(call.start, call.length, call.el, call.er)
+            for call in nucs] == [(20, 110, 240, 0)]
+    assert access == []
+
+
+def test_radial_configuration_preserves_stronger_abutting_tf_hypothesis():
+    llr_hit = np.full(N_CTX, -3.0, dtype=np.float64)
+    llr_miss = np.full(N_CTX, 2.0, dtype=np.float64)
+    profile = NucProfile(
+        radial=np.full(96, 0.05),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+    )
+    nucs, access = validate_radial_access_in_read(
+        _obs((MISS, 200)),
+        original_ns=[20],
+        original_nl=[110],
+        radial_nucs=[NucCall(20, 126, 220, 240, 230, dyad=73)],
+        provisional_tf_calls=[TFCall(130, 16, 20.0, 8, 2, 2)],
+        read_length=200,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        min_llr=4.0,
+        min_opps=3,
+        nuc_min_size=85,
+        nuc_profile=profile,
+    )
+
+    assert [(call.start, call.length, call.er) for call in nucs] == [
+        (20, 110, 0),
+    ]
+    assert access == []
+
+
+def test_radial_configuration_uses_equivalent_adjacent_tf_as_edge_proposal():
+    llr_hit = np.full(N_CTX, -3.0, dtype=np.float64)
+    # Uniform TF protection is slightly preferred, but by <2 nats over the
+    # whole flank: the one-nucleosome and nuc+TF models are indistinguishable.
+    llr_miss = np.full(N_CTX, 1.36, dtype=np.float64)
+    profile = NucProfile(
+        radial=np.full(96, 0.05),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+    )
+    nucs, access = validate_radial_access_in_read(
+        _obs((MISS, 200)),
+        original_ns=[20],
+        original_nl=[110],
+        radial_nucs=[NucCall(
+            20, 130, 220, 240, 230,
+            dyad=73, radial_start=20, radial_end=150,
+        )],
+        provisional_tf_calls=[TFCall(130, 20, 20.0, 10, 2, 2)],
+        read_length=200,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        min_llr=4.0,
+        min_opps=3,
+        nuc_min_size=85,
+        nuc_profile=profile,
+    )
+
+    assert [(call.start, call.length, call.er) for call in nucs] == [
+        (20, 130, 0),
+    ]
+    assert access == []
+
+
+def test_radial_configuration_searches_past_truncated_radial_edge():
+    llr_hit = np.full(N_CTX, -3.0, dtype=np.float64)
+    llr_miss = np.full(N_CTX, 1.36, dtype=np.float64)
+    profile = NucProfile(
+        radial=np.full(96, 0.05),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+    )
+    nucs, access = validate_radial_access_in_read(
+        _obs((MISS, 200)),
+        original_ns=[20],
+        original_nl=[100],
+        radial_nucs=[NucCall(
+            20, 100, 220, 240, 0,
+            dyad=70, radial_start=20, radial_end=120,
+        )],
+        provisional_tf_calls=[TFCall(120, 20, 20.0, 10, 2, 2)],
+        read_length=200,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+        min_llr=4.0,
+        min_opps=3,
+        nuc_min_size=85,
+        nuc_profile=profile,
+    )
+
+    # radial_end is the truncated emitted edge, not the search limit. The
+    # adjacent TF edge is a valid alternative boundary inside the dyad search
+    # envelope and is absorbed when the likelihoods are indistinguishable.
+    assert [(call.start, call.length, call.er) for call in nucs] == [
+        (20, 120, 0),
+    ]
+    assert access == []
+
+
+def test_radial_completion_scores_multiple_tf_fragments_without_size_gate():
+    llr_hit = np.full(N_CTX, -3.0, dtype=np.float64)
+    llr_miss = np.full(N_CTX, 1.36, dtype=np.float64)
+    profile = NucProfile(
+        radial=np.full(96, 0.05),
+        linker=0.75,
+        half=73,
+        min_sep=150,
+        edge_frac=0.82,
+    )
+    call = NucCall(
+        20, 100, 220, 240, 0,
+        dyad=73, radial_start=20, radial_end=150,
+    )
+
+    completed = _complete_radial_nuc_from_adjacent_tf(
+        call,
+        _obs((MISS, 200)),
+        [
+            TFCall(120, 10, 10.0, 10, 2, 2),
+            TFCall(135, 10, 10.0, 10, 2, 2),
+        ],
+        profile,
+        left_limit=20,
+        right_limit=150,
+        nuc_min_size=85,
+        llr_hit=llr_hit,
+        llr_miss=llr_miss,
+    )
+
+    # The joint likelihood prefers the outer edge of the two-fragment chain.
+    # A historical >=130-bp acceptance rule would reject this 125-bp result.
+    assert (completed.start, completed.length, completed.er) == (20, 125, 0)
 
 
 def test_exclude_nucleosomes_from_msps_removes_expanded_overlap():

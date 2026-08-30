@@ -150,14 +150,28 @@ class RecallContext:
 
     def __init__(self, enzyme: str = 'ddda'):
         from fiberhmm.core.model_io import load_model_with_metadata
-        from fiberhmm.inference.nuc_recaller import load_nuc_profile
-        from fiberhmm.inference.tf_recaller import build_llr_tables
+        from fiberhmm.inference.nuc_recaller import (
+            attach_nuc_profile_emissions,
+            load_nuc_profile,
+        )
+        from fiberhmm.inference.tf_recaller import (
+            build_conditional_hit_tables,
+            build_llr_tables,
+        )
         from fiberhmm.models import _bundled_model_path, get_model_path
         self.apply_model, self.k, _ = load_model_with_metadata(get_model_path(enzyme, tool='apply'))
         recall_model, _, _ = load_model_with_metadata(get_model_path(enzyme, tool='recall'))
         self.llr_hit, self.llr_miss = build_llr_tables(recall_model)
-        self.nuc_profile = (load_nuc_profile(_bundled_model_path('ddda_nuc_profile.json'))
-                            if enzyme == 'ddda' else None)
+        self.nuc_profile = None
+        if enzyme == 'ddda':
+            protected_hit, accessible_hit = build_conditional_hit_tables(
+                recall_model,
+            )
+            self.nuc_profile = attach_nuc_profile_emissions(
+                load_nuc_profile(_bundled_model_path('ddda_nuc_profile.json')),
+                protected_hit,
+                accessible_hit,
+            )
 
 
 def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,

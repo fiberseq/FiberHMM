@@ -7,6 +7,7 @@ import pytest
 from types import SimpleNamespace
 
 from fiberhmm.inference import fused_stages
+from fiberhmm.inference.nuc_recaller import NucCall
 from fiberhmm.inference.tf_recaller import TFCall
 
 
@@ -303,3 +304,168 @@ def test_run_tf_recall_stage_forwards_m5c_tables_and_mask(monkeypatch):
     assert captured["m5c_mask"] is mask
     assert captured["m5c_llr_hit"] == "m5c-hit"
     assert captured["m5c_llr_miss"] == "m5c-miss"
+
+
+def test_baseline_radial_nuc_finalization_never_receives_tf_calls(monkeypatch):
+    radial = [NucCall(20, 120, 200, 10, 12, dyad=80)]
+    profile = object()
+    seen = {}
+
+    def fake_validate(*args, **kwargs):
+        seen["provisional_tf_calls"] = args[4]
+        seen["nuc_profile"] = kwargs.get("nuc_profile")
+        return radial, [(140, 20)]
+
+    def fake_rederive(original_msps, accessible, read_length, msp_min_size):
+        seen["rederive"] = (
+            list(original_msps), list(accessible), read_length, msp_min_size,
+        )
+        return [(140, 20)]
+
+    def fake_exclude(msps, nucs, msp_min_size):
+        seen["exclude"] = (list(msps), list(nucs), msp_min_size)
+        return list(msps)
+
+    monkeypatch.setattr(
+        fused_stages, "validate_radial_access_in_read", fake_validate,
+    )
+    monkeypatch.setattr(fused_stages, "rederive_msps", fake_rederive)
+    monkeypatch.setattr(
+        fused_stages, "exclude_nucleosomes_from_msps", fake_exclude,
+    )
+
+    nucs, msps = fused_stages.finalize_baseline_radial_nuc_configuration(
+        np.zeros(200, dtype=np.int32),
+        [20],
+        [120],
+        [(140, 20)],
+        radial,
+        200,
+        np.zeros(1),
+        np.zeros(1),
+        4.0,
+        3,
+        85,
+        0,
+        nuc_profile=profile,
+    )
+
+    assert seen["provisional_tf_calls"] == ()
+    assert seen["nuc_profile"] is profile
+    assert seen["rederive"] == ([(140, 20)], [(140, 20)], 200, 0)
+    assert seen["exclude"] == ([(140, 20)], radial, 0)
+    assert nucs == radial
+    assert msps == [(140, 20)]
+
+
+def test_ddda_baseline_stage_order_is_nuc_then_tf(monkeypatch):
+    events = []
+    radial = [NucCall(20, 120, 200, 10, 12, dyad=80)]
+
+    def fake_recall_nucs(*args, **kwargs):
+        events.append("nuc_refine")
+        return radial, [(140, 20)]
+
+    profile = object()
+
+    def fake_finalize(*args, **kwargs):
+        assert events == ["nuc_refine"]
+        assert kwargs["nuc_profile"] is profile
+        events.append("nuc_finalize")
+        return radial, [(140, 20)]
+
+    def fake_recall_tfs(*args, **kwargs):
+        assert events == ["nuc_refine", "nuc_finalize"]
+        events.append("tf_refine")
+        return []
+
+    monkeypatch.setattr(fused_stages, "recall_nucs_in_read", fake_recall_nucs)
+    monkeypatch.setattr(
+        fused_stages,
+        "finalize_baseline_radial_nuc_configuration",
+        fake_finalize,
+    )
+    monkeypatch.setattr(fused_stages, "run_tf_recall_stage", fake_recall_tfs)
+    monkeypatch.setattr(
+        fused_stages,
+        "promote_large_tf_calls",
+        lambda calls, *_args, **_kwargs: (list(calls), []),
+    )
+
+    result = fused_stages.build_fused_recall_result(
+        {"query_sequence": "A" * 200},
+        {
+            "ns": np.asarray([20], dtype=np.int32),
+            "nl": np.asarray([120], dtype=np.int32),
+            "as": np.asarray([140], dtype=np.int32),
+            "al": np.asarray([20], dtype=np.int32),
+            "encoded": np.zeros(200, dtype=np.int32),
+        },
+        np.zeros(1),
+        np.zeros(1),
+        5.0,
+        3,
+        90,
+        True,
+        recall_nucs=True,
+        nuc_profile=profile,
+    )
+
+    assert events == ["nuc_refine", "nuc_finalize", "tf_refine"]
+    assert result["tf_calls"] == []
+
+
+@pytest.mark.parametrize("circular", [False, True])
+def test_ddda_driver_threads_nuc_profile_to_finalizer(monkeypatch, circular):
+    """Both production drivers must activate HMM-crossing model comparison."""
+    profile = object()
+
+    class ProfileObserved(RuntimeError):
+        pass
+
+    monkeypatch.setattr(
+        fused_stages,
+        "recall_nucs_in_read",
+        lambda *_args, **_kwargs: ([], []),
+    )
+
+    def fake_finalize(*_args, **kwargs):
+        assert kwargs["nuc_profile"] is profile
+        raise ProfileObserved
+
+    monkeypatch.setattr(
+        fused_stages,
+        "finalize_baseline_radial_nuc_configuration",
+        fake_finalize,
+    )
+    encoded_length = 300 if circular else 100
+    apply_result = {
+        "ns": np.asarray([], dtype=np.int32),
+        "nl": np.asarray([], dtype=np.int32),
+        "as": np.asarray([], dtype=np.int32),
+        "al": np.asarray([], dtype=np.int32),
+        "encoded": np.zeros(encoded_length, dtype=np.int32),
+    }
+    if circular:
+        apply_result.update({
+            "circular": True,
+            "circular_read_length": 100,
+            "tiled_ns": np.asarray([], dtype=np.int32),
+            "tiled_nl": np.asarray([], dtype=np.int32),
+            "tiled_as": np.asarray([], dtype=np.int32),
+            "tiled_al": np.asarray([], dtype=np.int32),
+        })
+
+    with pytest.raises(ProfileObserved):
+        fused_stages.build_fused_recall_result(
+            {"query_sequence": "A" * 100},
+            apply_result,
+            llr_hit=np.zeros(1),
+            llr_miss=np.zeros(1),
+            min_llr=5.0,
+            min_opps=3,
+            unify_threshold=90,
+            with_scores=True,
+            recall_nucs=True,
+            nuc_profile=profile,
+        )
