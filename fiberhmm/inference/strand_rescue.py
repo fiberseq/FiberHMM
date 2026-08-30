@@ -730,9 +730,25 @@ def finalize_alignment_actions(
                         baseline[left_key], baseline[right_key]
                     )
                 ):
-                    rejected.update(
+                    candidate_keys = [
                         key for key in (left_key, right_key) if key in valid
-                    )
+                    ]
+                    call_types = {left_key[0], right_key[0]}
+                    if call_types == {"tf", "nuc"}:
+                        # Stage order is TF consensus, then nucleosome
+                        # reconciliation. A nuc edge proposal may not veto an
+                        # already-supported TF edge proposal. Revert the nuc
+                        # proposal first and re-evaluate the complete topology.
+                        # If the TF still conflicts with the baseline nuc, the
+                        # next fixed-point pass must leave that TF proposal
+                        # unmaterialized; only the dedicated TF-conditioned nuc
+                        # stage can represent such a split safely.
+                        nuc_candidates = [
+                            key for key in candidate_keys if key[0] == "nuc"
+                        ]
+                        rejected.update(nuc_candidates or candidate_keys)
+                    else:
+                        rejected.update(candidate_keys)
         # V4 compares every same-class H pair in its original annotation order.
         # The strict ``<`` relation is intentional: collapsing two distinct
         # starts to equality (or separating equal starts inconsistently) is an
@@ -9500,7 +9516,12 @@ def analyze_shared_geometry(
 
 
 def resolve_joint_edge_topology(*edge_results: dict) -> None:
-    """Reject all proposed members of a newly overlapping edge component."""
+    """Resolve edge collisions in TF-then-nucleosome stage order.
+
+    Same-layer collisions remain symmetric. For a newly overlapping TF/nuc
+    pair, retain the TF consensus proposal and reject the nuc proposal: the
+    latter is the downstream reconciliation layer and cannot veto its input.
+    """
     grouped: Dict[Tuple[object, ...], List[dict]] = {}
     for result in edge_results:
         for decision in result.get("harmonizations", []):
@@ -9539,7 +9560,13 @@ def resolve_joint_edge_topology(*edge_results: dict) -> None:
                     != (left_canonical.start < right_canonical.start)
                 )
                 if (new_overlap and not old_overlap) or order_inverted:
-                    rejected_ids.update((id(left), id(right)))
+                    call_types = {left["call_type"], right["call_type"]}
+                    if call_types == {"tf", "nuc"}:
+                        rejected_ids.add(id(
+                            left if left["call_type"] == "nuc" else right
+                        ))
+                    else:
+                        rejected_ids.update((id(left), id(right)))
     for result in edge_results:
         counts = result.get("counts", {})
         rejected = 0

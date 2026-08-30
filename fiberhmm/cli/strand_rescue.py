@@ -1272,8 +1272,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--skip-nuc-edge-refinement",
+        dest="skip_nuc_edge_refinement",
         action="store_true",
-        help="Disable one-for-one nucleosome edge normalization",
+        default=True,
+        help=(
+            "Do not run independent one-for-one nucleosome edge normalization "
+            "(default; retained for command-line compatibility)"
+        ),
+    )
+    parser.add_argument(
+        "--independent-nuc-edge-refinement",
+        dest="skip_nuc_edge_refinement",
+        action="store_false",
+        help=(
+            "Legacy/experimental population nucleosome-edge normalization. "
+            "This is not the TF-conditioned consensus-nuc reconciliation stage."
+        ),
     )
     parser.add_argument(
         "--strand-min-source-support",

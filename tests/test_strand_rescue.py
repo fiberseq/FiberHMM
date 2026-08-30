@@ -512,7 +512,7 @@ def test_v5_finalizer_gives_rescue_priority_over_colliding_edge_expansion():
     assert diagnostics["rescue_collision"] == 0
 
 
-def test_v5_finalizer_rejects_both_sides_of_new_cross_layer_overlap():
+def test_v5_finalizer_gives_tf_consensus_precedence_over_nuc_edge():
     read = _v5_read(
         molecular_nucs=((0, 20),),
         molecular_tfs=((30, 10),),
@@ -545,8 +545,50 @@ def test_v5_finalizer_rejects_both_sides_of_new_cross_layer_overlap():
     )
 
     assert rescues == []
-    assert accepted_edges == []
-    assert diagnostics["edge_joint_collision"] == 2
+    assert [value["call_type"] for value in accepted_edges] == ["tf"]
+    assert diagnostics["edge_joint_collision"] == 1
+    assert diagnostics["nuc_edge_joint_collision"] == 1
+
+
+def test_inline_topology_resolution_gives_tf_precedence_over_nuc():
+    common = {
+        "status": "edge_update",
+        "library_id": "/cohort.bam",
+        "read": "read-1",
+        "alignment": {
+            "reference_start": 0,
+            "flag": 0,
+            "cigar": "100M",
+            "record_sha256": "a" * 64,
+            "occurrence": 0,
+        },
+        "target_edge_evidence": {"changed_opportunities": 2},
+        "molecule_probability": 0.9,
+        "extreme_edge_shift": False,
+    }
+    tf_decision = {
+        **common,
+        "call_type": "tf",
+        "current_interval": [30, 40],
+        "canonical_interval": [22, 32],
+    }
+    nuc_decision = {
+        **common,
+        "call_type": "nuc",
+        "current_interval": [0, 20],
+        "canonical_interval": [0, 25],
+    }
+    tf_result = {"harmonizations": [tf_decision], "counts": {}}
+    nuc_result = {"harmonizations": [nuc_decision], "counts": {}}
+
+    strand_rescue_inference.resolve_joint_edge_topology(
+        tf_result, nuc_result,
+    )
+
+    assert tf_decision["status"] == "edge_update"
+    assert nuc_decision["status"] == "joint_topology_conflict_retained"
+    assert tf_result["counts"]["edge_updates"] == 1
+    assert nuc_result["counts"]["edge_updates"] == 0
 
 
 def test_v5_joint_h_rejection_precedes_rescue_vs_h_rejection():
@@ -592,10 +634,10 @@ def test_v5_joint_h_rejection_precedes_rescue_vs_h_rejection():
     )
 
     assert len(rescues) == 1
-    assert accepted_edges == []
-    assert diagnostics["edge_joint_collision"] == 2
-    # V4 first rejects the entire newly overlapping H component. It therefore
-    # never reclassifies the left member as a later rescue/H conflict.
+    assert [value["call_type"] for value in accepted_edges] == ["tf"]
+    assert diagnostics["edge_joint_collision"] == 1
+    # The downstream nuc proposal is rejected first; TF consensus and the
+    # non-overlapping rescue survive.
     assert diagnostics["edge_rescue_collision"] == 0
 
 
