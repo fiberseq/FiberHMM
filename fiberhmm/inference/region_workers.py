@@ -486,6 +486,22 @@ def _init_fused_region_worker(
         llr_hit, llr_miss = apply_emission_uplift(llr_hit, llr_miss, r_model, emission_uplift)
     _worker_recall_state['llr_hit'] = llr_hit
     _worker_recall_state['llr_miss'] = llr_miss
+    n_model = r_model
+    nuc_emission_uplift = emission_uplift
+    if params.get('recall_nucs', False):
+        n_path = params.get('nuc_model_path') or r_path
+        nuc_emission_uplift = (
+            1.0 if params.get('nuc_model_path') else emission_uplift
+        )
+        if n_path != r_path:
+            n_model, _, _ = load_model_with_metadata(n_path)
+        nuc_llr_hit, nuc_llr_miss = build_llr_tables(n_model)
+        if abs(nuc_emission_uplift - 1.0) > 1e-9:
+            nuc_llr_hit, nuc_llr_miss = apply_emission_uplift(
+                nuc_llr_hit, nuc_llr_miss, n_model, nuc_emission_uplift,
+            )
+        _worker_recall_state['nuc_llr_hit'] = nuc_llr_hit
+        _worker_recall_state['nuc_llr_miss'] = nuc_llr_miss
     nuc_profile_path = params.get('nuc_profile_path')
     if nuc_profile_path:
         from fiberhmm.inference.nuc_recaller import (
@@ -493,7 +509,7 @@ def _init_fused_region_worker(
             load_nuc_profile,
         )
         protected_hit, accessible_hit = build_conditional_hit_tables(
-            r_model, emission_uplift=emission_uplift,
+            n_model, emission_uplift=nuc_emission_uplift,
         )
         _REGION_NUC_PROFILE_CACHE[nuc_profile_path] = (
             attach_nuc_profile_emissions(
@@ -509,6 +525,12 @@ def _init_fused_region_worker(
         )
         _worker_recall_state['m5c_llr_hit'] = m5c_hit
         _worker_recall_state['m5c_llr_miss'] = m5c_miss
+        if params.get('recall_nucs', False):
+            nuc_m5c_hit, nuc_m5c_miss = build_m5c_llr_tables(
+                n_model, emission_uplift=nuc_emission_uplift,
+            )
+            _worker_recall_state['nuc_m5c_llr_hit'] = nuc_m5c_hit
+            _worker_recall_state['nuc_m5c_llr_miss'] = nuc_m5c_miss
 
     configure_daf_chimera_filter(
         params.get('filter_chimeras', True),
@@ -732,6 +754,12 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         m5c_mask=m5c_mask,
                         m5c_llr_hit=_worker_recall_state.get('m5c_llr_hit'),
                         m5c_llr_miss=_worker_recall_state.get('m5c_llr_miss'),
+                        nuc_llr_hit=_worker_recall_state.get('nuc_llr_hit'),
+                        nuc_llr_miss=_worker_recall_state.get('nuc_llr_miss'),
+                        nuc_m5c_llr_hit=_worker_recall_state.get(
+                            'nuc_m5c_llr_hit'),
+                        nuc_m5c_llr_miss=_worker_recall_state.get(
+                            'nuc_m5c_llr_miss'),
                     )
                     if _worker_recall_state.get('ddda_mcg'):
                         fused_result['ddda_mcg_spans'] = m5c_spans

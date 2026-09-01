@@ -415,6 +415,68 @@ def test_ddda_baseline_stage_order_is_nuc_then_tf(monkeypatch):
     assert result["tf_calls"] == []
 
 
+def test_fused_ddda_uses_separate_tf_and_nuc_likelihood_tables(monkeypatch):
+    seen = {}
+    radial = [NucCall(20, 120, 200, 10, 12, dyad=80)]
+
+    def fake_recall_nucs(*args, **_kwargs):
+        seen["initial_nuc"] = args[4:6]
+        return radial, [(140, 20)]
+
+    def fake_finalize(*args, **kwargs):
+        seen["final_nuc"] = args[6:8]
+        seen["final_nuc_m5c"] = (
+            kwargs["m5c_llr_hit"], kwargs["m5c_llr_miss"],
+        )
+        return radial, [(140, 20)]
+
+    def fake_tf(*args, **_kwargs):
+        seen["tf"] = args[6:8]
+        return []
+
+    monkeypatch.setattr(fused_stages, "recall_nucs_in_read", fake_recall_nucs)
+    monkeypatch.setattr(
+        fused_stages, "finalize_baseline_radial_nuc_configuration", fake_finalize,
+    )
+    monkeypatch.setattr(fused_stages, "run_tf_recall_stage", fake_tf)
+    monkeypatch.setattr(
+        fused_stages,
+        "promote_large_tf_calls",
+        lambda calls, *_args, **_kwargs: (list(calls), []),
+    )
+
+    tf_hit, tf_miss = object(), object()
+    nuc_hit, nuc_miss = object(), object()
+    nuc_m5c_hit, nuc_m5c_miss = object(), object()
+    fused_stages.build_fused_recall_result(
+        {"query_sequence": "A" * 200},
+        {
+            "ns": np.asarray([20], dtype=np.int32),
+            "nl": np.asarray([120], dtype=np.int32),
+            "as": np.asarray([140], dtype=np.int32),
+            "al": np.asarray([20], dtype=np.int32),
+            "encoded": np.zeros(200, dtype=np.int32),
+        },
+        tf_hit,
+        tf_miss,
+        5.0,
+        3,
+        90,
+        True,
+        recall_nucs=True,
+        nuc_profile=object(),
+        nuc_llr_hit=nuc_hit,
+        nuc_llr_miss=nuc_miss,
+        nuc_m5c_llr_hit=nuc_m5c_hit,
+        nuc_m5c_llr_miss=nuc_m5c_miss,
+    )
+
+    assert seen["initial_nuc"] == (nuc_hit, nuc_miss)
+    assert seen["final_nuc"] == (nuc_hit, nuc_miss)
+    assert seen["final_nuc_m5c"] == (nuc_m5c_hit, nuc_m5c_miss)
+    assert seen["tf"] == (tf_hit, tf_miss)
+
+
 @pytest.mark.parametrize("circular", [False, True])
 def test_ddda_driver_threads_nuc_profile_to_finalizer(monkeypatch, circular):
     """Both production drivers must activate HMM-crossing model comparison."""

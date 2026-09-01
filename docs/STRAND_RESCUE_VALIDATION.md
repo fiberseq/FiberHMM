@@ -413,6 +413,13 @@ MSP rescue. DddB and Nanopore Hia5 use one assay model for both edge types.
 | DddB | `models/dddb_nanopore.json` | `c936f971e671f2350e4469323fd9cbe04214fc0a77184d1bf01a7e19d8d0d164` | same | same | DAF call; no ML threshold |
 | Nanopore Hia5 | `models/hia5_nanopore.json` | `73bc6ddfe9dfecddb81a30d0a26a6a22e00119196cdc0a999663235144737286` | same | same | `ML >= 248` |
 
+This table records the exact models used for the historical v5 validation
+outputs below; it is not a current-model registry. The current DddA preset
+resolves the packaged `fiberhmm/models/ddda_TF.json`. Its independently
+promoted physical-duplex calibration and frozen nucleosome likelihood table
+are documented by the paper-analysis promotion receipt and require a fresh SR
+validation receipt before replacing these historical report hashes.
+
 The final report hashes, also embedded in output `@CO` provenance, are:
 
 | report | SHA-256 |

@@ -1,5 +1,6 @@
 """Bundled model registry mode inference."""
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -40,3 +41,36 @@ def test_ecogii_platforms_share_emissions_but_not_observation_frame():
 
     embedded_mode = json.loads(Path(nanopore).read_text())["mode"]
     assert embedded_mode in get_metadata_mode_aliases("ecogii", "nanopore")
+
+
+def test_ddda_nuc_refinement_model_is_separately_frozen():
+    tf_model = Path(get_model_path("ddda", tool="recall"))
+    nuc_model = Path(get_model_path("ddda", tool="nuc_refine"))
+
+    assert tf_model.name == "ddda_TF.json"
+    assert nuc_model.name == "ddda_nuc_refine.json"
+    # At introduction the frozen nuc model is an exact snapshot of the
+    # historical TF table. Future TF calibration may change ddda_TF.json
+    # without changing this assertion's scientific intent; the independent
+    # path is the permanent contract.
+    assert json.loads(nuc_model.read_text())["mode"] == "daf"
+    assert hashlib.sha256(nuc_model.read_bytes()).hexdigest() == (
+        "5e1f29ba6abbf7c1909f2566efbd4c3f82cf4ecf4aa5de2c96f0a51b48e85bfb"
+    )
+
+
+def test_ddda_tf_model_is_physical_duplex_calibrated_release_artifact():
+    tf_model = Path(get_model_path("ddda", tool="recall"))
+    expected = (
+        "2b23b0905189d0638b682845ea5adae32144cf10e7a5e90b8f0bac199dbbbffe"
+    )
+    assert hashlib.sha256(tf_model.read_bytes()).hexdigest() == expected
+    source_tree_mirror = tf_model.parents[2] / "models" / "ddda_TF.json"
+    assert hashlib.sha256(source_tree_mirror.read_bytes()).hexdigest() == expected
+
+
+def test_ddda_first_pass_hmm_is_unchanged_by_tf_calibration():
+    apply_model = Path(get_model_path("ddda", tool="apply"))
+    assert hashlib.sha256(apply_model.read_bytes()).hexdigest() == (
+        "c9da3116b4148ba67a85fa5cf86edd31ea7e434fcea52794e65c953be0b86c4b"
+    )

@@ -337,9 +337,13 @@ the automatic dedup pre-pass (or use `--no-dedup`).
 
 `--enzyme ddda` handles DddA's specifics automatically:
 
-- **Two models** — `ddda_nuc.json` for nucleosomes and `ddda_TF.json` for TF/Pol II
-  recall — are selected and run in one pass. (For QC you can run them separately:
-  `fiberhmm-apply --enzyme ddda` then `fiberhmm-recall-tfs --enzyme ddda`.)
+- **Independent state models** — `ddda_nuc.json` drives the first-pass
+  nucleosome HMM; `ddda_TF.json` contains physical-duplex-calibrated TF
+  emissions; and the internal `ddda_nuc_refine.json` freezes the likelihoods
+  used by radial nucleosome refinement. Updating TF calibration therefore does
+  not silently retune the HMM or radial nucleosome caller. (For QC you can run
+  the stages separately: `fiberhmm-apply --enzyme ddda` followed by
+  `fiberhmm-recall-tfs --enzyme ddda`.)
 - **Phase-aware radial nucleosome recall** is **on by default**. DddA deaminates
   *inside* nucleosomes, so the standard accessible-cut split would shatter them.
   FiberHMM instead uses the radial deamination profile to nominate dyads and a
@@ -688,7 +692,7 @@ fiberhmm-recall-tfs -i apply.bam -o recalled.bam --enzyme hia5 --seq pacbio -c 8
 | `-m/--model` | optional | Custom model JSON; overrides `--enzyme`. |
 | `--enzyme` | optional | Supported presets are `hia5`/`dddb`/`ddda`; experimental `ecogii`/`sssi` presets also exist in the development tree. Sets the model + `--min-llr` preset. |
 | `--seq` | chemistry-dependent | Platform selector as above; experimental SssI requires `--seq nanopore`. |
-| `--min-llr` | preset | Min cumulative LLR (nats) per call (`dddb` 4.0; all other enzyme presets 5.0). |
+| `--min-llr` | preset | Min cumulative LLR (nats) per call (`dddb` 4.0; `ddda` 7.0; other enzyme presets 5.0). DddA's held-out physical-mate operating point corresponds to `TQ >= 70`. |
 | `--min-opps` | 3 | Min informative target positions per call. |
 | `--unify-threshold` | 90 | Footprints with `nl <` this may be demoted to `tf.`. |
 | `--nuc-recall-policy` | `auto` | With nucleosome recall, use Nanopore-aware `topology` automatically or force `topology`/`conservative`. |
@@ -957,6 +961,7 @@ still expose mode where it is an actual input to model construction.
 | `hia5_nanopore.json` | `hia5` | `nanopore` | `nanopore-fiber` | apply / recall-tfs |
 | `ddda_nuc.json` | `ddda` | — | `daf` | apply — **nucleosomes only** |
 | `ddda_TF.json` | `ddda` | — | `daf` | recall-tfs — **required 2nd pass** |
+| `ddda_nuc_refine.json` | `ddda` | — | `daf` | internal radial-nucleosome likelihood snapshot |
 | `dddb_nanopore.json` | `dddb` | — | `daf` | apply / recall-tfs |
 
 For DddA, `fiberhmm-call --enzyme ddda` runs both models in one pass. Hia5 and
@@ -964,6 +969,13 @@ DddB each use one model for both nucleosomes and small footprints, so the recall
 pass is optional refinement. Older models live in `models/legacy/`
 (reproducibility only); custom models load with `-m`. Formats: `.json` (primary),
 `.npz`, `.pickle` (legacy, load-only) — convert with `fiberhmm-utils convert`.
+
+For TF calls, `TQ = min(255, round(10 × LLR))` is continuous evidence under the selected
+emission table. It is not a posterior probability or calibrated FDR, and its
+numeric scale is model-version specific; values at 255 are saturated. The DddA default was selected by
+leave-one-library-out scoring of untouched physical mates from 23,388 scDAF
+duplexes across twelve libraries; users can retain the continuous TQ values and
+sweep stricter thresholds downstream.
 
 ### Experimental chemistry paths
 

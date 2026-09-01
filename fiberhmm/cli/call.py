@@ -335,6 +335,22 @@ def _resolve_nuc_profile_path(args, recall_nucs: bool):
     return None
 
 
+def _resolve_nuc_model_path(args, recall_nucs: bool):
+    """Return the frozen likelihood model for bundled DddA nuc refinement.
+
+    ``--recall-model`` changes TF scoring only. A caller that explicitly
+    identifies the chemistry as DddA therefore retains the locked bundled nuc
+    refinement model; fully custom workflows without ``--enzyme ddda`` retain
+    the historical shared-table fallback.
+    """
+    if (
+        recall_nucs
+        and args.enzyme == 'ddda'
+    ):
+        return _get_bundled_model(args.enzyme, tool='nuc_refine', seq=args.seq)
+    return None
+
+
 def _resolve_derived_tf_edge_gap(args, recall_nucs: bool):
     """Resolve the DddA-only radial-recall TF edge safeguard."""
     value = int(args.ddda_derived_tf_max_edge_gap)
@@ -969,8 +985,14 @@ def main():
 
         snp_mask_sites = mask_summary(snp_mask_path)['n_sites']
 
+    # Freeze DddA nucleosome-refinement likelihoods independently of the TF
+    # recaller. NRL estimation is part of nuc refinement and uses the same
+    # frozen model.
+    nuc_model_path = _resolve_nuc_model_path(args, recall_nucs)
+
     # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
-    phase_nrl = _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
+    phase_nrl = _resolve_phase_nrl(
+        args, apply_model_path, nuc_model_path or recall_model_path, mode, k,
                                    recall_nucs, working_input)
 
     # DddA uses phase-aware radial nucleosome inference; other enzymes use the
@@ -1034,6 +1056,7 @@ def main():
         f"  fiberhmm-call [BETA] — fused apply + recall-tfs ({mode_label})\n"
         f"  apply model:  {apply_model_path}\n"
         f"  recall model: {recall_model_path or '(reuse apply model)'}\n"
+        f"  nuc likelihood model: {nuc_model_path or '(reuse recall model)'}\n"
         f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'}\n"
         f"  min_llr={min_llr} min_opps={args.min_opps} "
         f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
@@ -1094,6 +1117,7 @@ def main():
             chimera_purity=args.chimera_purity,
             phase_nrl=phase_nrl,
             nuc_profile_path=nuc_profile_path,
+            nuc_model_path=nuc_model_path,
             derived_tf_max_edge_ambiguity=derived_tf_max_edge_ambiguity,
             pg_record=pg_record,
             ddda_mcg=ddda_mcg,
@@ -1138,6 +1162,7 @@ def main():
             chimera_purity=args.chimera_purity,
             phase_nrl=phase_nrl,
             nuc_profile_path=nuc_profile_path,
+            nuc_model_path=nuc_model_path,
             derived_tf_max_edge_ambiguity=derived_tf_max_edge_ambiguity,
             pg_record=pg_record,
             ddda_mcg=ddda_mcg,

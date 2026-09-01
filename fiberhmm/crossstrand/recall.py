@@ -155,6 +155,7 @@ class RecallContext:
             load_nuc_profile,
         )
         from fiberhmm.inference.tf_recaller import (
+            ENZYME_PRESETS,
             build_conditional_hit_tables,
             build_llr_tables,
         )
@@ -162,10 +163,19 @@ class RecallContext:
         self.apply_model, self.k, _ = load_model_with_metadata(get_model_path(enzyme, tool='apply'))
         recall_model, _, _ = load_model_with_metadata(get_model_path(enzyme, tool='recall'))
         self.llr_hit, self.llr_miss = build_llr_tables(recall_model)
+        self.min_llr = float(
+            ENZYME_PRESETS.get(enzyme.lower(), {}).get('min_llr', 5.0)
+        )
+        self.nuc_llr_hit = self.llr_hit
+        self.nuc_llr_miss = self.llr_miss
         self.nuc_profile = None
         if enzyme == 'ddda':
+            nuc_model, _, _ = load_model_with_metadata(
+                get_model_path(enzyme, tool='nuc_refine')
+            )
+            self.nuc_llr_hit, self.nuc_llr_miss = build_llr_tables(nuc_model)
             protected_hit, accessible_hit = build_conditional_hit_tables(
-                recall_model,
+                nuc_model,
             )
             self.nuc_profile = attach_nuc_profile_emissions(
                 load_nuc_profile(_bundled_model_path('ddda_nuc_profile.json')),
@@ -175,7 +185,7 @@ class RecallContext:
 
 
 def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
-                          min_llr: float = 5.0, min_opps: int = 3,
+                          min_llr: float | None = None, min_opps: int = 3,
                           unify_threshold: int = 90, split_min_llr: float = 4.0,
                           split_min_opps: int = 3, nuc_min_size: int = 85,
                           msp_min_size: int = 0, phase_nrl: int = 196,
@@ -211,14 +221,19 @@ def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
                                      with_scores=False, nuc_min_size=nuc_min_size)
     apply_result = {'ns': fp['footprint_starts'], 'nl': fp['footprint_sizes'],
                     'as': fp['msp_starts'], 'al': fp['msp_sizes'], 'encoded': obs}
+    resolved_min_llr = ctx.min_llr if min_llr is None else float(min_llr)
     res = build_fused_recall_result(
         {'query_sequence': conv}, apply_result, ctx.llr_hit, ctx.llr_miss,
-        min_llr, min_opps, unify_threshold, with_scores=True, recall_nucs=True,
+        resolved_min_llr, min_opps, unify_threshold, with_scores=True,
+        recall_nucs=True,
         split_min_llr=split_min_llr, split_min_opps=split_min_opps,
         nuc_min_size=nuc_min_size, msp_min_size=msp_min_size, phase_nrl=phase_nrl,
         nuc_profile=ctx.nuc_profile, nuc_recall_policy=nuc_recall_policy,
         derived_tf_max_edge_ambiguity=(
-            derived_tf_max_edge_ambiguity if ctx.nuc_profile is not None else None))
+            derived_tf_max_edge_ambiguity if ctx.nuc_profile is not None else None),
+        nuc_llr_hit=ctx.nuc_llr_hit,
+        nuc_llr_miss=ctx.nuc_llr_miss,
+    )
 
     kept_nucs = list(zip([int(x) for x in res['ns']], [int(x) for x in res['nl']]))
     msps = list(zip([int(x) for x in res['as']], [int(x) for x in res['al']]))

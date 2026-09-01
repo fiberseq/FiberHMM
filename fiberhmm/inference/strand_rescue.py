@@ -57,8 +57,11 @@ PRESETS = {
         "prob_threshold": None,
     },
     "ddda": {
-        "model": "models/ddda_TF.json",
-        "nuc_model": "models/ddda_nuc.json",
+        # Package-qualified paths prevent a stale top-level ``models/`` copy
+        # from changing the preset merely because FiberHMM was launched from
+        # a source checkout instead of an installed environment.
+        "model": "fiberhmm/models/ddda_TF.json",
+        "nuc_model": "fiberhmm/models/ddda_nuc.json",
         "strand_mode": "daf",
         "prob_threshold": None,
     },
@@ -78,14 +81,18 @@ DEFAULT_ACCESSIBLE_SITE_GAP = 220
 def resolve_resource_path(path: str) -> str:
     """Resolve a user path or a path relative to the installed fiberhmm package."""
     candidate = Path(path).expanduser()
-    if candidate.exists() or candidate.is_absolute():
+    if candidate.is_absolute():
         return str(candidate)
     package_dir = Path(__file__).resolve().parents[1]
-    relative = (
-        Path(*candidate.parts[1:])
-        if candidate.parts[:1] == ("fiberhmm",)
-        else candidate
-    )
+    if candidate.parts[:1] == ("fiberhmm",):
+        # ``fiberhmm/...`` denotes a package resource, not a cwd-relative user
+        # path. Resolve it from the installed package even if the working
+        # directory happens to contain a shadow ``fiberhmm`` tree.
+        packaged = package_dir / Path(*candidate.parts[1:])
+        return str(packaged if packaged.exists() else candidate)
+    if candidate.exists():
+        return str(candidate)
+    relative = candidate
     packaged = package_dir / relative
     return str(packaged if packaged.exists() else candidate)
 

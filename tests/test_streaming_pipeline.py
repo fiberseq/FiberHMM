@@ -2,6 +2,7 @@
 Correctness tests for the streaming producer-consumer pipeline.
 """
 
+import numpy as np
 import pysam
 
 from fiberhmm.inference.parallel import process_bam_for_footprints
@@ -303,3 +304,30 @@ class TestStreamingEdgeCases:
             min_mapq=0, min_read_length=0, prob_threshold=0,
         )
         assert total == _count_bam_reads(synthetic_bam_small)
+
+
+def test_separate_ddda_nuc_model_ignores_tf_emission_uplift():
+    from fiberhmm.core.model_io import load_model_with_metadata
+    from fiberhmm.inference import streaming_workers
+    from fiberhmm.inference.tf_recaller import build_llr_tables
+    from fiberhmm.models import get_model_path
+
+    apply_path = get_model_path("ddda", tool="apply")
+    tf_path = get_model_path("ddda", tool="recall")
+    nuc_path = get_model_path("ddda", tool="nuc_refine")
+    streaming_workers._init_fused_worker(
+        apply_path,
+        tf_path,
+        emission_uplift=2.0,
+        recall_nucs=True,
+        filter_chimeras=False,
+        nuc_model_path=nuc_path,
+    )
+    nuc_model, _k, _mode = load_model_with_metadata(nuc_path)
+    expected_hit, expected_miss = build_llr_tables(nuc_model)
+    np.testing.assert_array_equal(
+        streaming_workers._worker_recall_state["nuc_llr_hit"], expected_hit
+    )
+    np.testing.assert_array_equal(
+        streaming_workers._worker_recall_state["nuc_llr_miss"], expected_miss
+    )

@@ -1192,6 +1192,27 @@ def test_nanopore_hia5_uses_requested_248_hard_threshold():
     assert PRESETS["hia5-nanopore"]["prob_threshold"] == 248
 
 
+def test_ddda_preset_resolves_packaged_model_independent_of_cwd(
+    monkeypatch, tmp_path
+):
+    stale = tmp_path / "models"
+    stale.mkdir()
+    (stale / "ddda_TF.json").write_text("stale")
+    shadow = tmp_path / "fiberhmm" / "models"
+    shadow.mkdir(parents=True)
+    (shadow / "ddda_TF.json").write_text("shadow")
+    monkeypatch.chdir(tmp_path)
+
+    resolved = Path(strand_rescue_inference.resolve_resource_path(
+        PRESETS["ddda"]["model"]
+    ))
+
+    assert resolved.name == "ddda_TF.json"
+    assert resolved.parent.name == "models"
+    assert resolved.parent.parent.name == "fiberhmm"
+    assert resolved.read_text() != "stale"
+
+
 def test_stage_profiler_records_wall_time_and_unambiguous_rss(monkeypatch):
     timestamps = iter([10.0, 12.5, 14.0])
     monkeypatch.setattr(

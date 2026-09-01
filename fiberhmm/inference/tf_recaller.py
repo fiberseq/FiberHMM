@@ -1,10 +1,16 @@
 """LLR-based TF footprint recaller -- second pass on FiberHMM-tagged BAMs.
 
-The first pass (``fiberhmm-apply``) calls nucleosomes and MSPs with the
-trained 2-state HMM. This second pass scans the MSPs and short
-sub-nucleosomal calls for sequence-context-aware TF footprints, using
-the same emission table as the null model. The result: ``MA``/``AQ``
-spec-compliant tags with a ``tf+QQQ`` annotation type.
+The first pass (``fiberhmm-apply``) calls nucleosomes and MSPs with a trained
+2-state HMM. This second pass scans MSPs and short sub-nucleosomal calls for
+sequence-context-aware TF footprints. The result is ``MA``/``AQ``
+spec-compliant output with a ``tf.QQQ`` annotation type.
+
+The DddA TF table is calibrated from physical scDAF duplexes: one strand
+nominates a strict state and its untouched mate estimates accessible- and
+protected-state event probabilities. It is deliberately independent of both
+the first-pass DddA HMM and the frozen likelihood table used by the radial
+nucleosome refiner. DddA therefore does *not* reuse or transform the DddB
+model.
 
 Algorithm summary
 -----------------
@@ -30,12 +36,10 @@ For each read:
    short nucs that overlap a recaller call are *dropped* from the
    ``nuc+`` annotation (they live solely in ``tf+`` now).
 
-Per-enzyme defaults are baked into ``ENZYME_PRESETS``. Hia5 uses the
-trained pacbio model directly. DddB uses ``min_llr=4.0`` to compensate
-for sparser per-position evidence. DddA reuses the DddB model with an
-``emission_uplift=2.0`` power transform, since DddA's ~3x higher
-deamination efficiency makes the DddB-trained P(hit | accessible)
-underestimate the true signal.
+Per-enzyme defaults are baked into ``ENZYME_PRESETS``. Hia5 uses its trained
+platform model directly. DddB uses ``min_llr=4.0`` for its sparser
+per-position evidence. DddA uses the physical-duplex-calibrated table and a
+held-out-mate operating point of ``min_llr=7.0``.
 """
 from __future__ import annotations
 
@@ -81,9 +85,9 @@ NON_TARGET = N_CTX     # code 4096
 UNMETH_OFFSET = 4097   # miss codes live at [4097, 4097 + 4096)
 
 
-# Per-enzyme defaults: (min_llr, emission_uplift). All presets use uplift=1.0;
-# enzymes that need it (DddA) get a pre-uplifted model file (ddda_TF.json)
-# instead of a runtime power transform, to keep the preset semantics simple.
+# Per-enzyme defaults: (min_llr, emission_uplift). All bundled models are used
+# directly; ``emission_uplift`` remains available only as an explicit custom
+# sensitivity override.
 ENZYME_PRESETS = {
     'hia5':   dict(min_llr=5.0, emission_uplift=1.0),
     # EcoGII deposits the same m6A mark as Hia5; the ecogii model carries EcoGII-calibrated
@@ -92,7 +96,9 @@ ENZYME_PRESETS = {
     # M.SssI CpG 5mC footprinting (nanopore); emissions calibrated from naked controls.
     'sssi':   dict(min_llr=5.0, emission_uplift=1.0),
     'dddb':   dict(min_llr=4.0, emission_uplift=1.0),
-    'ddda':   dict(min_llr=5.0, emission_uplift=1.0),
+    # Calibrated on untouched physical mates from 23,388 scDAF duplexes across
+    # 12 libraries. TQ=70 is an empirical operating point, not an FDR cutoff.
+    'ddda':   dict(min_llr=7.0, emission_uplift=1.0),
 }
 
 

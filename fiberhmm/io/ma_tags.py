@@ -26,16 +26,19 @@ tq encoding
 -----------
 
 ``tq = min(255, round(LLR * 10))``. LLR is the cumulative log-likelihood
-ratio (nats) of the protected vs accessible hypothesis under the trained
+ratio (nats) of the protected versus accessible hypothesis under the selected
 emission table.
 
   - tq =  50  -> LLR =  5  nats (likelihood ratio ~ 148:1)
   - tq = 100  -> LLR = 10  nats (LR ~ 22,000:1)
   - tq = 255  -> LLR >= 25.5 nats (LR >= 1.2e11, saturated)
 
-Mnemonic: every 23 tq points adds one order of magnitude to the
-likelihood ratio. tq >= 50 is the soft floor (recommended default
-emission threshold); tq >= 100 is "high confidence".
+Mnemonic: every 23 tq points adds one order of magnitude to the likelihood
+ratio. The default floor is enzyme/model specific (for example, DddA uses
+``tq >= 70``). TQ is continuous model evidence, not a posterior probability or
+calibrated false-discovery rate. Because a recalibrated emission table changes
+the LLR scale, TQ values should not be compared numerically across model
+versions without an explicit calibration analysis.
 
 el / er (edge sharpness) encoding
 ---------------------------------

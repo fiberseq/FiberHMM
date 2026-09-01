@@ -74,6 +74,7 @@ def _init_fused_worker(
     nuc_profile_path=None,
     derived_tf_max_edge_ambiguity=None,
     ddda_mcg=False,
+    nuc_model_path=None,
 ):
     """Initialize worker process for the fused apply+recall pipeline.
 
@@ -111,6 +112,23 @@ def _init_fused_worker(
         )
     _worker_recall_state['llr_hit'] = llr_hit
     _worker_recall_state['llr_miss'] = llr_miss
+    n_model = r_model
+    nuc_emission_uplift = emission_uplift
+    if recall_nucs:
+        n_path = nuc_model_path or r_path
+        nuc_emission_uplift = 1.0 if nuc_model_path else emission_uplift
+        if n_path != r_path:
+            n_model, _, _ = load_model_with_metadata(n_path)
+        nuc_llr_hit, nuc_llr_miss = build_llr_tables(n_model)
+        if abs(nuc_emission_uplift - 1.0) > 1e-9:
+            nuc_llr_hit, nuc_llr_miss = apply_emission_uplift(
+                nuc_llr_hit,
+                nuc_llr_miss,
+                n_model,
+                nuc_emission_uplift,
+            )
+        _worker_recall_state['nuc_llr_hit'] = nuc_llr_hit
+        _worker_recall_state['nuc_llr_miss'] = nuc_llr_miss
     _worker_recall_state['ddda_mcg'] = bool(ddda_mcg)
     if ddda_mcg:
         m5c_hit, m5c_miss = build_m5c_llr_tables(
@@ -118,6 +136,12 @@ def _init_fused_worker(
         )
         _worker_recall_state['m5c_llr_hit'] = m5c_hit
         _worker_recall_state['m5c_llr_miss'] = m5c_miss
+        if recall_nucs:
+            nuc_m5c_hit, nuc_m5c_miss = build_m5c_llr_tables(
+                n_model, emission_uplift=nuc_emission_uplift,
+            )
+            _worker_recall_state['nuc_m5c_llr_hit'] = nuc_m5c_hit
+            _worker_recall_state['nuc_m5c_llr_miss'] = nuc_m5c_miss
     _worker_recall_state['recall_nucs'] = recall_nucs
     _worker_recall_state['split_min_llr'] = split_min_llr
     _worker_recall_state['split_min_opps'] = split_min_opps
@@ -130,7 +154,7 @@ def _init_fused_worker(
             load_nuc_profile,
         )
         protected_hit, accessible_hit = build_conditional_hit_tables(
-            r_model, emission_uplift=emission_uplift,
+            n_model, emission_uplift=nuc_emission_uplift,
         )
         nuc_profile = attach_nuc_profile_emissions(
             load_nuc_profile(nuc_profile_path),
@@ -306,6 +330,10 @@ def _process_fused_payload_chunk_worker(
                 m5c_mask=m5c_mask,
                 m5c_llr_hit=_worker_recall_state.get('m5c_llr_hit'),
                 m5c_llr_miss=_worker_recall_state.get('m5c_llr_miss'),
+                nuc_llr_hit=_worker_recall_state.get('nuc_llr_hit'),
+                nuc_llr_miss=_worker_recall_state.get('nuc_llr_miss'),
+                nuc_m5c_llr_hit=_worker_recall_state.get('nuc_m5c_llr_hit'),
+                nuc_m5c_llr_miss=_worker_recall_state.get('nuc_m5c_llr_miss'),
             )
             if _worker_recall_state.get('ddda_mcg'):
                 fused_result['ddda_mcg_spans'] = m5c_spans

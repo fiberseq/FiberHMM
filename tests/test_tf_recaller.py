@@ -563,12 +563,13 @@ def test_enzyme_presets_present():
         assert enz in ENZYME_PRESETS
         for k in ('min_llr', 'emission_uplift'):
             assert k in ENZYME_PRESETS[enz]
-    # All presets use uplift=1.0; DddA gets a pre-uplifted model file
-    # (ddda_TF.json) rather than a runtime power transform.
+    # All bundled presets use their calibrated table directly.
     for enz in ('hia5', 'dddb', 'ddda'):
         assert ENZYME_PRESETS[enz]['emission_uplift'] == 1.0
     # DddB uses lower min_llr than Hia5 (single-strand evidence)
     assert ENZYME_PRESETS['dddb']['min_llr'] < ENZYME_PRESETS['hia5']['min_llr']
+    # DddA uses the held-out physical-mate operating point (TQ >= 70).
+    assert ENZYME_PRESETS['ddda']['min_llr'] == 7.0
 
 
 def test_recall_read_accepts_compact_array_tag_sequences_without_modifications():

@@ -64,6 +64,7 @@ def _process_bam_streaming_pipeline_fused(
     chimera_purity: float = 0.8,
     phase_nrl: int = 0,
     nuc_profile_path: str = None,
+    nuc_model_path: str = None,
     derived_tf_max_edge_ambiguity: int = None,
     pg_record: dict = None,
     ddda_mcg: bool = False,
@@ -129,7 +130,8 @@ def _process_bam_streaming_pipeline_fused(
                           nuc_recall_policy,
                           filter_chimeras, chimera_min_seg, chimera_purity,
                           phase_nrl, nuc_profile_path,
-                          derived_tf_max_edge_ambiguity, ddda_mcg),
+                          derived_tf_max_edge_ambiguity, ddda_mcg,
+                          nuc_model_path),
             )
 
             inflight = deque()

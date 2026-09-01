@@ -25,6 +25,7 @@ dddb    (any)     apply    dddb_nanopore.json
 dddb    (any)     recall   dddb_nanopore.json
 ddda    (any)     apply    ddda_nuc.json
 ddda    (any)     recall   ddda_TF.json
+ddda    (any)     nuc_refine  ddda_nuc_refine.json (internal frozen likelihoods)
 """
 from __future__ import annotations
 
@@ -83,6 +84,10 @@ _BUNDLED: dict[tuple[str, str | None], dict[str, object]] = {
     ('ddda', None): {
         'apply': 'ddda_nuc.json',
         'recall': 'ddda_TF.json',
+        # The radial nucleosome refiner was calibrated with the original
+        # TF-table likelihoods. Keep those likelihoods frozen independently
+        # of future DddA TF-recaller calibration.
+        'nuc_refine': 'ddda_nuc_refine.json',
         'mode': 'daf',
     },
 }
@@ -170,8 +175,9 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
         One of the bundled enzyme presets, including ``'hia5'``, ``'ecogii'``,
         ``'dddb'``, ``'ddda'``, and ``'sssi'``.
     tool:
-        ``'apply'`` (fiberhmm-apply nuc HMM) or ``'recall'``
-        (fiberhmm-recall-tfs TF recaller).
+        ``'apply'`` (fiberhmm-apply nuc HMM), ``'recall'``
+        (fiberhmm-recall-tfs TF recaller), or the internal ``'nuc_refine'``
+        likelihood model where bundled separately.
     seq:
         Sequencing platform: ``'pacbio'`` or ``'nanopore'``.
         Required for Hia5, EcoGII, and SssI; ignored for DddB / DddA.
@@ -189,7 +195,7 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
     fname = entry.get(t)
     if not isinstance(fname, str):
         raise KeyError(
-            f"Tool {tool!r} not recognised; use 'apply' or 'recall'."
+            f"Tool {tool!r} not recognised for {enzyme!r}."
         )
 
     path = os.path.join(_MODELS_DIR, fname)

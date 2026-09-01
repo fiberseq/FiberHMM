@@ -5,7 +5,7 @@
 This tool ships as beta: the algorithm, tag schema, and per-enzyme
 defaults are stable enough to use, but downstream integrations (fibertools,
 FiberBrowser) may still be catching up and calibration outside the
-validated enzymes (Hia5 PacBio, DddB DAF, DddA amplicons) has not been
+validated enzymes (Hia5 PacBio, DddB DAF, DddA DAF-seq) has not been
 exhaustively tested. Please report surprises on the FiberHMM issue tracker.
 
 Runs as a 2nd pass on a BAM already tagged by ``fiberhmm-apply``.
@@ -39,7 +39,7 @@ Examples:
                         --enzyme hia5 --seq pacbio -c 8
   # equivalent: fiberhmm-recall-tfs --recall-nucs ...
 
-  # DddA amplicon BAM (two-pass workflow) -- bundled models, no -m needed
+  # DddA DAF-seq BAM (two-pass workflow) -- bundled models, no -m needed
   fiberhmm-apply -i input.bam --enzyme ddda -o tmp/
   fiberhmm-recall-nucs -i tmp/input_footprints.bam -o recalled.bam \\
                         --enzyme ddda -c 8
@@ -154,7 +154,9 @@ def _build_recall_pg_record(args, mode, model_path, nuc_cfg):
 def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
                  nuc_cfg=None, input_molecular_frame=True,
                  m5c_llr_hit=None, m5c_llr_miss=None,
-                 nuc_protected_hit=None, nuc_accessible_hit=None):
+                 nuc_protected_hit=None, nuc_accessible_hit=None,
+                 nuc_llr_hit=None, nuc_llr_miss=None,
+                 nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None):
     """Set per-process globals once per worker.
 
     Slim version: workers receive compact payloads and return compact results —
@@ -185,6 +187,10 @@ def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
     _WORKER['input_molecular_frame'] = input_molecular_frame
     _WORKER['m5c_llr_hit'] = m5c_llr_hit
     _WORKER['m5c_llr_miss'] = m5c_llr_miss
+    _WORKER['nuc_llr_hit'] = nuc_llr_hit
+    _WORKER['nuc_llr_miss'] = nuc_llr_miss
+    _WORKER['nuc_m5c_llr_hit'] = nuc_m5c_llr_hit
+    _WORKER['nuc_m5c_llr_miss'] = nuc_m5c_llr_miss
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +433,10 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
         m5c_mask=m5c_mask,
         m5c_llr_hit=_WORKER.get('m5c_llr_hit'),
         m5c_llr_miss=_WORKER.get('m5c_llr_miss'),
+        nuc_llr_hit=_WORKER.get('nuc_llr_hit'),
+        nuc_llr_miss=_WORKER.get('nuc_llr_miss'),
+        nuc_m5c_llr_hit=_WORKER.get('nuc_m5c_llr_hit'),
+        nuc_m5c_llr_miss=_WORKER.get('nuc_m5c_llr_miss'),
     )
 
     stats['tf'] = len(result['tf_calls'])
@@ -490,11 +500,15 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
                         also_write_legacy, downstream_compat, max_reads,
                         nuc_cfg=None, input_molecular_frame=True,
                         m5c_llr_hit=None, m5c_llr_miss=None,
-                        nuc_protected_hit=None, nuc_accessible_hit=None):
+                        nuc_protected_hit=None, nuc_accessible_hit=None,
+                        nuc_llr_hit=None, nuc_llr_miss=None,
+                        nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None):
     """Single-threaded path.  No IPC — process reads directly."""
     _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
                  nuc_cfg, input_molecular_frame, m5c_llr_hit, m5c_llr_miss,
-                 nuc_protected_hit, nuc_accessible_hit)
+                 nuc_protected_hit, nuc_accessible_hit,
+                 nuc_llr_hit, nuc_llr_miss,
+                 nuc_m5c_llr_hit, nuc_m5c_llr_miss)
     n_reads = n_v2 = n_tf = n_demoted = n_failed = 0
     for read in bam_in:
         if max_reads and n_reads >= max_reads:
@@ -522,7 +536,9 @@ def _parallel_loop(bam_in, bam_out, _header_text,
                    also_write_legacy, downstream_compat,
                    max_reads, n_cores, chunk_size, nuc_cfg=None,
                    input_molecular_frame=True, m5c_llr_hit=None, m5c_llr_miss=None,
-                   nuc_protected_hit=None, nuc_accessible_hit=None):
+                   nuc_protected_hit=None, nuc_accessible_hit=None,
+                   nuc_llr_hit=None, nuc_llr_miss=None,
+                   nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None):
     """Multi-core path with slim IPC and bounded in-flight queue.
 
     Uses apply_async + a bounded deque instead of imap to cap how many chunks
@@ -559,7 +575,9 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         initializer=_worker_init,
         initargs=(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
                   nuc_cfg, input_molecular_frame, m5c_llr_hit, m5c_llr_miss,
-                  nuc_protected_hit, nuc_accessible_hit),
+                  nuc_protected_hit, nuc_accessible_hit,
+                  nuc_llr_hit, nuc_llr_miss,
+                  nuc_m5c_llr_hit, nuc_m5c_llr_miss),
     ) as pool:
         buf_reads: list = []
         buf_payloads: list = []
@@ -884,7 +902,7 @@ def main(default_recall_nucs: bool = False):
         "========================================================================\n"
         "  fiberhmm-recall-tfs  [BETA]\n"
         "  LLR TF footprint recaller -- beta feature shipped in fiberhmm 2.6.0.\n"
-        "  Defaults validated on Hia5 PacBio, DddB DAF, and DddA amplicons.\n"
+        "  Defaults validated on Hia5 PacBio, DddB DAF, and DddA DAF-seq.\n"
         "\n"
         + mode_banner +
         "\n"
@@ -995,9 +1013,37 @@ def main(default_recall_nucs: bool = False):
         )
 
     nuc_protected_hit = nuc_accessible_hit = None
+    nuc_llr_hit = nuc_llr_miss = None
+    nuc_m5c_llr_hit = nuc_m5c_llr_miss = None
+    if nuc_cfg is not None:
+        nuc_model = model
+        nuc_model_path = model_path
+        nuc_uplift = uplift
+        if args.enzyme == 'ddda':
+            from fiberhmm.models import get_model_path as _get_bundled
+            nuc_model_path = _get_bundled(
+                'ddda', tool='nuc_refine', seq=args.seq,
+            )
+            nuc_model, _, _ = load_model_with_metadata(nuc_model_path)
+            # A TF-emission sensitivity override must not retune the frozen
+            # DddA radial-nucleosome likelihoods.
+            nuc_uplift = 1.0
+        nuc_llr_hit, nuc_llr_miss = build_llr_tables(nuc_model)
+        if abs(nuc_uplift - 1.0) > 1e-9:
+            nuc_llr_hit, nuc_llr_miss = apply_emission_uplift(
+                nuc_llr_hit, nuc_llr_miss, nuc_model, nuc_uplift,
+            )
+        if use_m5c:
+            nuc_m5c_llr_hit, nuc_m5c_llr_miss = build_m5c_llr_tables(
+                nuc_model, emission_uplift=nuc_uplift,
+            )
+        print(
+            f"  nuc likelihood model: {nuc_model_path}",
+            file=sys.stderr,
+        )
     if nuc_cfg is not None and nuc_cfg.nuc_profile_path:
         nuc_protected_hit, nuc_accessible_hit = build_conditional_hit_tables(
-            model, emission_uplift=uplift,
+            nuc_model, emission_uplift=nuc_uplift,
         )
 
     # Open BAMs with io-threads. pysam accepts "-" as stdin/stdout natively.
@@ -1037,6 +1083,8 @@ def main(default_recall_nucs: bool = False):
                 nuc_cfg, input_molecular_frame,
                 m5c_llr_hit, m5c_llr_miss,
                 nuc_protected_hit, nuc_accessible_hit,
+                nuc_llr_hit, nuc_llr_miss,
+                nuc_m5c_llr_hit, nuc_m5c_llr_miss,
             )
         else:
             n_reads, n_v2, n_tf, n_demoted, n_failed = _parallel_loop(
@@ -1047,6 +1095,8 @@ def main(default_recall_nucs: bool = False):
                 n_cores, args.chunk_size, nuc_cfg, input_molecular_frame,
                 m5c_llr_hit, m5c_llr_miss,
                 nuc_protected_hit, nuc_accessible_hit,
+                nuc_llr_hit, nuc_llr_miss,
+                nuc_m5c_llr_hit, nuc_m5c_llr_miss,
             )
     finally:
         bam_in.close()

@@ -311,6 +311,10 @@ def build_fused_recall_result(
     m5c_llr_hit=None,
     m5c_llr_miss=None,
     derived_tf_max_edge_ambiguity: int | None = None,
+    nuc_llr_hit=None,
+    nuc_llr_miss=None,
+    nuc_m5c_llr_hit=None,
+    nuc_m5c_llr_miss=None,
 ) -> dict:
     """Run TF recall and nucleosome/TF unification after an HMM apply result.
 
@@ -336,6 +340,18 @@ def build_fused_recall_result(
     is_circular = bool(apply_result.get("circular"))
 
     if recall_nucs:
+        # Backward-compatible fallback: callers that do not supply a locked
+        # nucleosome likelihood model retain the historical shared-table
+        # behavior. Bundled DddA callers supply independent frozen tables so a
+        # TF-emission update cannot silently retune radial nuc refinement.
+        if nuc_llr_hit is None:
+            nuc_llr_hit = llr_hit
+        if nuc_llr_miss is None:
+            nuc_llr_miss = llr_miss
+        if nuc_m5c_llr_hit is None:
+            nuc_m5c_llr_hit = m5c_llr_hit
+        if nuc_m5c_llr_miss is None:
+            nuc_m5c_llr_miss = m5c_llr_miss
         if is_circular:
             return _build_fused_recall_result_with_nucs_circular(
                 fiber_read, apply_result, llr_hit, llr_miss,
@@ -346,6 +362,10 @@ def build_fused_recall_result(
                 nuc_recall_policy,
                 m5c_mask, m5c_llr_hit, m5c_llr_miss,
                 derived_tf_max_edge_ambiguity=derived_tf_max_edge_ambiguity,
+                nuc_llr_hit=nuc_llr_hit,
+                nuc_llr_miss=nuc_llr_miss,
+                nuc_m5c_llr_hit=nuc_m5c_llr_hit,
+                nuc_m5c_llr_miss=nuc_m5c_llr_miss,
             )
         return _build_fused_recall_result_with_nucs(
             fiber_read, apply_result, llr_hit, llr_miss,
@@ -356,6 +376,10 @@ def build_fused_recall_result(
             nuc_recall_policy,
             m5c_mask, m5c_llr_hit, m5c_llr_miss,
             derived_tf_max_edge_ambiguity=derived_tf_max_edge_ambiguity,
+            nuc_llr_hit=nuc_llr_hit,
+            nuc_llr_miss=nuc_llr_miss,
+            nuc_m5c_llr_hit=nuc_m5c_llr_hit,
+            nuc_m5c_llr_miss=nuc_m5c_llr_miss,
         )
 
     recall_ns = apply_result.get("tiled_ns", ns) if is_circular else ns
@@ -466,6 +490,10 @@ def _build_fused_recall_result_with_nucs(
     m5c_llr_hit=None,
     m5c_llr_miss=None,
     derived_tf_max_edge_ambiguity: int | None = None,
+    nuc_llr_hit=None,
+    nuc_llr_miss=None,
+    nuc_m5c_llr_hit=None,
+    nuc_m5c_llr_miss=None,
 ) -> dict:
     """nuc recall -> MSP re-derive -> TF recall (non-circular only)."""
     obs = apply_result["encoded"]
@@ -478,7 +506,7 @@ def _build_fused_recall_result_with_nucs(
 
     # 1) split + edge-refine footprints (+ optional Pass-2 phase prior)
     nuc_calls, access = recall_nucs_in_read(
-        obs, ns, nl, read_length, llr_hit, llr_miss,
+        obs, ns, nl, read_length, nuc_llr_hit, nuc_llr_miss,
         split_min_llr=split_min_llr, split_min_opps=split_min_opps,
         nuc_min_size=nuc_min_size, phase_nrl=phase_nrl,
         nuc_profile=nuc_profile, recall_policy=nuc_recall_policy,
@@ -495,16 +523,16 @@ def _build_fused_recall_result_with_nucs(
             orig_msps,
             nuc_calls,
             read_length,
-            llr_hit,
-            llr_miss,
+            nuc_llr_hit,
+            nuc_llr_miss,
             split_min_llr,
             split_min_opps,
             nuc_min_size,
             msp_min_size,
             nuc_profile=nuc_profile,
             m5c_mask=m5c_mask,
-            m5c_llr_hit=m5c_llr_hit,
-            m5c_llr_miss=m5c_llr_miss,
+            m5c_llr_hit=nuc_m5c_llr_hit,
+            m5c_llr_miss=nuc_m5c_llr_miss,
         )
     else:
         new_msps = rederive_msps(orig_msps, access, read_length, msp_min_size)
@@ -591,6 +619,10 @@ def _build_fused_recall_result_with_nucs_circular(
     m5c_llr_hit=None,
     m5c_llr_miss=None,
     derived_tf_max_edge_ambiguity: int | None = None,
+    nuc_llr_hit=None,
+    nuc_llr_miss=None,
+    nuc_m5c_llr_hit=None,
+    nuc_m5c_llr_miss=None,
 ) -> dict:
     """nuc recall for circular reads: split/refine in tiled space, then project
     the refined nucs, MSPs and TF calls back to molecule coordinates."""
@@ -615,7 +647,7 @@ def _build_fused_recall_result_with_nucs_circular(
 
     # 1) split + edge-refine in tiled coordinates (+ optional Pass-2 phase prior)
     tiled_nucs, tiled_access = recall_nucs_in_read(
-        obs, tiled_ns, tiled_nl, tiled_len, llr_hit, llr_miss,
+        obs, tiled_ns, tiled_nl, tiled_len, nuc_llr_hit, nuc_llr_miss,
         split_min_llr=split_min_llr, split_min_opps=split_min_opps,
         nuc_min_size=nuc_min_size, phase_nrl=phase_nrl,
         nuc_profile=nuc_profile, recall_policy=nuc_recall_policy,
@@ -637,16 +669,16 @@ def _build_fused_recall_result_with_nucs_circular(
             tiled_msps,
             tiled_nucs,
             tiled_len,
-            llr_hit,
-            llr_miss,
+            nuc_llr_hit,
+            nuc_llr_miss,
             split_min_llr,
             split_min_opps,
             nuc_min_size,
             msp_min_size,
             nuc_profile=nuc_profile,
             m5c_mask=tiled_m5c_mask,
-            m5c_llr_hit=m5c_llr_hit,
-            m5c_llr_miss=m5c_llr_miss,
+            m5c_llr_hit=nuc_m5c_llr_hit,
+            m5c_llr_miss=nuc_m5c_llr_miss,
         )
     else:
         tiled_new_msps = rederive_msps(

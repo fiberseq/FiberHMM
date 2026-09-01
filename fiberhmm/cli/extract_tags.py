@@ -1796,10 +1796,10 @@ Examples:
                              'default (spec) mode. See --min-tq for the quality floor.')
     parser.add_argument('--min-tq', type=int, default=50,
                         help='Minimum TF quality (tq) to extract. 0-255 scale where '
-                             'tq = round(LLR * 10). Default 50 (LLR >= 5 nats, ~148:1 '
-                             'likelihood ratio) matches fiberhmm-recall-tfs\'s default '
-                             'emission floor. Set to 0 for every call, 100+ for '
-                             'high-confidence only.')
+                             'tq = min(255, round(LLR * 10)). Default 50 (LLR >= 5 '
+                             'nats, ~148:1 likelihood ratio); enzyme presets may use '
+                             'different call floors (for example DddA uses 70). Set '
+                             'to 0 for every emitted call, 100+ for a stricter view.')
     parser.add_argument('--m6a', action='store_true', help='Extract m6A positions')
     parser.add_argument('--m5c', action='store_true',
                         help='Extract DddA MA ddda_mcg spans, or native MM/ML 5mC positions')
