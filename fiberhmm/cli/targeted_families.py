@@ -328,6 +328,7 @@ def _fit_family_worker(payload):
         str(family["family_id"]),
         [tuple(int(value) for value in interval) for interval in family["seed_intervals"]],
         boundary_search_radius=profile.boundary_search_radius,
+        candidate_interval_mode="seed_local_boundary_grid",
         minimum_molecule_opportunities=profile.minimum_molecule_opportunities,
         stratum_semantics=(
             "physical_complementary"
@@ -761,7 +762,7 @@ def _quantify(args, command_line: str) -> int:
         raise ValueError(f"output directory already exists: {output_dir}")
     families = list(catalog["families"])
     if not families:
-        raise ValueError("catalog contains no footprint families")
+        raise ValueError("catalog contains no site-consensus states")
     chemistry = str(catalog["chemistry"])
     if chemistry not in CHEMISTRY_PROFILES:
         raise ValueError(f"unsupported catalog chemistry: {chemistry}")
@@ -789,7 +790,7 @@ def _quantify(args, command_line: str) -> int:
         strand_mode = str(preset["strand_mode"])
         probability_threshold = preset["prob_threshold"]
     elif chemistry == "hia5-pacbio":
-        model_path = Path(resolve_resource_path("models/hia5_pacbio.json"))
+        model_path = Path(resolve_resource_path("fiberhmm/models/hia5_pacbio.json"))
         strand_mode = "alignment"
         probability_threshold = 125
     else:
@@ -1507,9 +1508,9 @@ def _discover(args, command_line: str) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="fiberhmm-targeted-families",
+        prog="fiberhmm-site-consensus",
         description=(
-            "Discover chemistry-aware footprint families in short targeted windows. "
+            "Discover chemistry-aware site-consensus states in short targeted windows. "
             "Then quantify frozen geometry on the complete unbiased locus cohort."
         ),
     )
@@ -1530,10 +1531,20 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument("--minimum-informative-molecules", type=int, default=3)
     discover.add_argument("--minimum-informative-fraction", type=float, default=0.01)
     discover.add_argument("--discovery-reads", type=int, default=500)
-    discover.add_argument("--minimum-family-support", type=int, default=3)
-    discover.add_argument("--minimum-family-fraction", type=float, default=0.05)
+    discover.add_argument(
+        "--minimum-state-support",
+        dest="minimum_family_support",
+        type=int,
+        default=3,
+    )
+    discover.add_argument(
+        "--minimum-state-fraction",
+        dest="minimum_family_fraction",
+        type=float,
+        default=0.05,
+    )
     discover.add_argument("--min-mapq", type=int, default=20)
-    discover.add_argument("--seed", default="fiberhmm-targeted-family-discovery-v1")
+    discover.add_argument("--seed", default="fiberhmm-site-consensus-discovery-v1")
     discover.add_argument("--daf-minimum-jaccard", type=float, default=0.95)
     discover.add_argument("--daf-minimum-deaminations", type=int, default=10)
     discover.add_argument(
@@ -1571,7 +1582,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("auto", "cpu", "cuda"),
         default="cpu",
         help=(
-            "Family/null likelihood backend. CPU is the unchanged reference; "
+            "State/null likelihood backend. CPU is the unchanged reference; "
             "auto uses CUDA only when an accessible PyTorch CUDA device exists."
         ),
     )
@@ -1591,12 +1602,13 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     quantify.add_argument(
-        "--cuda-family-batch-span-bp",
+        "--cuda-state-batch-span-bp",
+        dest="cuda_family_batch_span_bp",
         type=int,
         default=25000,
         help=(
-            "Maximum genomic span of one sparse CUDA family/read batch; nearby "
-            "families share resident fibers without scoring distant pairs"
+            "Maximum genomic span of one sparse CUDA state/read batch; nearby "
+            "states share resident fibers without scoring distant pairs"
         ),
     )
     quantify.add_argument(
@@ -1611,13 +1623,11 @@ def build_parser() -> argparse.ArgumentParser:
     quantify.add_argument("--occupancy-pseudocount", type=float, default=0.5)
     quantify.add_argument(
         "--minimum-assignment-standardized-posterior",
-        "--minimum-assignment-posterior",
         dest="minimum_assignment_standardized_posterior",
         type=float,
         default=0.5,
         help=(
-            "Equal-prior family-vs-null posterior threshold; the legacy shorter "
-            "option name is retained as an alias"
+            "Equal-prior state-vs-null posterior threshold"
         ),
     )
     quantify.add_argument(
@@ -1669,7 +1679,7 @@ def main(argv=None) -> int:
     values = sys.argv[1:] if argv is None else list(argv)
     args = parser.parse_args(values)
     command_line = " ".join(
-        ["fiberhmm-targeted-families"] + [shlex.quote(str(value)) for value in values]
+        ["fiberhmm-site-consensus"] + [shlex.quote(str(value)) for value in values]
     )
     try:
         if args.subcommand == "discover":

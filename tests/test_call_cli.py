@@ -56,7 +56,7 @@ def test_ddda_derived_tf_edge_gap_is_ddda_recall_only():
         ("ecogii", "nanopore-fiber", None, ("fiber-seq", "ecogii", "nanopore", "nanopore-fiber")),
     ],
 )
-def test_chemistry_declaration_records_supported_platform(enzyme, mode, seq, expected):
+def test_chemistry_declaration_records_platform(enzyme, mode, seq, expected):
     declaration = _chemistry_declaration(
         SimpleNamespace(enzyme=enzyme, seq=seq),
         mode,
@@ -142,7 +142,7 @@ def test_fiberhmm_call_stdout_is_clean_bam_stream(benchmark_model_path, tmp_path
     }]
 
 
-def test_fiberhmm_call_ecogii_nanopore_uses_shared_model_quietly(tmp_path):
+def test_fiberhmm_call_rejects_development_ecogii_as_public_preset(tmp_path):
     input_bam = str(tmp_path / "ecogii_ont_input.bam")
     output_bam = str(tmp_path / "ecogii_ont_output.bam")
     make_synthetic_bam(
@@ -176,19 +176,8 @@ def test_fiberhmm_call_ecogii_nanopore_uses_shared_model_quietly(tmp_path):
         timeout=60,
     )
 
-    assert result.returncode == 0, result.stderr
-    assert "metadata declares mode" not in result.stderr
-    with pysam.AlignmentFile(output_bam, "rb", check_sq=False) as bam:
-        reads = list(bam.fetch(until_eof=True))
-        chemistry = declared_chemistries(bam.header)
-    assert len(reads) == 3
-    assert chemistry == [{
-        "assay": "fiber-seq",
-        "enzyme": "ecogii",
-        "platform": "nanopore",
-        "mode": "nanopore-fiber",
-        "model": "ecogii_pacbio",
-    }]
+    assert result.returncode == 2
+    assert "invalid choice: 'ecogii'" in result.stderr
 
 
 def test_daf_input_sniff_accepts_iupac_encoding(tmp_path):

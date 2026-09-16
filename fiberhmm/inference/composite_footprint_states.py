@@ -1,4 +1,4 @@
-"""Nominate recurrent component states compatible with a broader TF family.
+"""Nominate recurrent component states compatible with a broader site-consensus state.
 
 This is deliberately a second layer beneath the stable parent-family call.
 It tests whether the union of two or more narrower recurrent families can
@@ -17,7 +17,7 @@ from typing import Mapping, Sequence
 
 @dataclass(frozen=True)
 class CompositeFootprintStateConfig:
-    """Bounded controls for one targeted family catalog."""
+    """Bounded controls for one targeted site-consensus catalog."""
 
     boundary_tolerance_bp: int = 18
     maximum_members: int = 12

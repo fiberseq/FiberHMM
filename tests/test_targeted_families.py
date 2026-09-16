@@ -11,14 +11,99 @@ import pysam
 import pytest
 
 from fiberhmm.inference.targeted_families import (
+    CHEMISTRY_PROFILES,
     TargetedFamilyDiscoveryConfig,
+    TargetedFootprintFamily,
+    _reconcile_families,
     discover_targeted_families,
+    geometry_compatible,
     index_informative_windows,
     score_boundary_families_on_unbiased_cohort,
     score_boundary_family_on_unbiased_cohort,
     select_discovery_molecules,
 )
 from fiberhmm.inference.tf_sites import BaselineMolecule, TFObservation
+
+
+def _family(name: str, start: int, end: int) -> TargetedFootprintFamily:
+    return TargetedFootprintFamily(
+        family_id=name,
+        contig="chr1",
+        start=start,
+        end=end,
+        seed_intervals=((start, end),),
+        member_site_ids=(name,),
+        discovery_support_molecules=10,
+        discovery_denominator_molecules=20,
+        source_window_ordinals=(0,),
+    )
+
+
+def test_geometry_compatible_keeps_edge_anchored_nested_substates_together():
+    chemistry = CHEMISTRY_PROFILES["ddda"]
+    assert geometry_compatible(
+        _family("compact", 100, 113),
+        _family("broad", 100, 141),
+        chemistry,
+    )
+
+
+def test_geometry_compatible_rejects_partial_or_unbounded_nested_intervals():
+    chemistry = CHEMISTRY_PROFILES["ddda"]
+    compact = _family("compact", 100, 113)
+    assert not geometry_compatible(
+        compact,
+        _family("partial", 109, 141),
+        chemistry,
+    )
+    assert not geometry_compatible(
+        compact,
+        _family("unbounded", 100, 171),
+        chemistry,
+    )
+
+
+def test_geometry_compatible_is_symmetric_for_right_anchored_nested_substates():
+    chemistry = CHEMISTRY_PROFILES["ddda"]
+    compact = _family("compact", 128, 141)
+    broad = _family("broad", 100, 141)
+    assert geometry_compatible(compact, broad, chemistry)
+    assert geometry_compatible(broad, compact, chemistry)
+    reconciled = _reconcile_families((compact, broad), chemistry)
+    assert len(reconciled) == 1
+
+
+def test_reconciliation_can_preserve_nested_substates_as_overlapping_families():
+    chemistry = CHEMISTRY_PROFILES["ddda"]
+    compact = _family("compact", 128, 141)
+    broad = _family("broad", 100, 141)
+    reconciled = _reconcile_families(
+        (compact, broad),
+        chemistry,
+        merge_nested_substates=False,
+    )
+    assert len(reconciled) == 2
+
+
+def test_geometry_compatible_enforces_complete_linkage_across_member_seeds():
+    chemistry = CHEMISTRY_PROFILES["ddda"]
+    broad_and_right = TargetedFootprintFamily(
+        family_id="broad_and_right",
+        contig="chr1",
+        start=100,
+        end=141,
+        seed_intervals=((100, 141), (128, 141)),
+        member_site_ids=("broad", "right"),
+        discovery_support_molecules=10,
+        discovery_denominator_molecules=20,
+        source_window_ordinals=(0,),
+    )
+    disjoint_left = _family("disjoint_left", 85, 98)
+    assert not geometry_compatible(broad_and_right, disjoint_left, chemistry)
+    reconciled = _reconcile_families(
+        (broad_and_right, disjoint_left), chemistry
+    )
+    assert len(reconciled) == 2
 
 
 def _molecule(
@@ -320,7 +405,7 @@ def test_discover_cli_writes_restartable_catalog(tmp_path, capsys):
             "hia5-pacbio",
             "--minimum-informative-fraction",
             "0",
-            "--minimum-family-support",
+            "--minimum-state-support",
             "3",
             "--discovery-reads",
             "6",
@@ -351,7 +436,7 @@ def test_discover_cli_writes_restartable_catalog(tmp_path, capsys):
             "nuc",
             "--chunk-size",
             "3",
-            "--minimum-assignment-posterior",
+            "--minimum-assignment-standardized-posterior",
             "0",
             "--minimum-assignment-log-bayes-factor",
             "-100",
@@ -400,7 +485,7 @@ def test_discover_cli_writes_restartable_catalog(tmp_path, capsys):
             "nuc",
             "--chunk-size",
             "3",
-            "--minimum-assignment-posterior",
+            "--minimum-assignment-standardized-posterior",
             "0",
             "--minimum-assignment-log-bayes-factor",
             "-100",
@@ -447,7 +532,7 @@ def test_discover_cli_writes_restartable_catalog(tmp_path, capsys):
         "200",
         "--minimum-informative-fraction",
         "0",
-        "--minimum-family-support",
+        "--minimum-state-support",
         "3",
         "--discovery-reads",
         "6",
@@ -455,7 +540,7 @@ def test_discover_cli_writes_restartable_catalog(tmp_path, capsys):
         "tf",
         "--nuc-layer",
         "nuc",
-        "--minimum-assignment-posterior",
+        "--minimum-assignment-standardized-posterior",
         "0",
         "--minimum-assignment-log-bayes-factor",
         "-100",
@@ -538,7 +623,7 @@ def test_discover_cli_writes_restartable_catalog(tmp_path, capsys):
             "0",
             "--efficiency-evidence-scope",
             "full-alignment",
-            "--minimum-assignment-posterior",
+            "--minimum-assignment-standardized-posterior",
             "0",
             "--minimum-assignment-log-bayes-factor",
             "-100",
@@ -889,6 +974,18 @@ def test_joint_torch_backend_matches_cpu_via_cpu_device(monkeypatch):
                 "family_vs_null_log_bayes_factor"
             ] == pytest.approx(
                 expected_molecule["family_vs_null_log_bayes_factor"], abs=1e-12
+            )
+            assert observed_molecule[
+                "family_log_predictive_ratio_to_accessible"
+            ] == pytest.approx(
+                expected_molecule["family_log_predictive_ratio_to_accessible"],
+                abs=1e-12,
+            )
+            assert observed_molecule[
+                "null_log_predictive_ratio_to_accessible"
+            ] == pytest.approx(
+                expected_molecule["null_log_predictive_ratio_to_accessible"],
+                abs=1e-12,
             )
 
 

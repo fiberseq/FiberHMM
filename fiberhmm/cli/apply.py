@@ -66,10 +66,10 @@ Examples:
     # Enzyme / platform (bundled model selection)
     from fiberhmm.models import SUPPORTED_ENZYMES as _ENZYMES
     parser.add_argument('--enzyme', choices=_ENZYMES, default=None,
-                        help='Auto-select a bundled chemistry model. Use '
-                             '--seq pacbio|nanopore for Hia5 or EcoGII.')
+                        help='Auto-select a supported bundled chemistry model. Use '
+                             '--seq pacbio|nanopore for Hia5.')
     parser.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                        help='Hia5/EcoGII sequencing platform; omission warns '
+                        help='Hia5 sequencing platform; omission warns '
                              'and defaults to pacbio. Ignored for dddb/ddda.')
 
     # Backward-compatible escape hatch; normal workflows infer this.

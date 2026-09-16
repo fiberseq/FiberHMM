@@ -18,7 +18,7 @@ without a BAM.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
@@ -79,6 +79,7 @@ class PairParams:
     min_component_discordance_rate: float = 0.02
     min_sequence_margin: float = 0.002
     max_sequence_pair_rate: float = 0.01
+    single_cell_haplotype: bool = False
 
 
 @dataclass
@@ -336,6 +337,69 @@ class PairResult:
     sequence_kind: Dict[int, str]  # R = reciprocal, C = constrained 2x2
 
 
+def _single_cell_haplotype_assignment(
+    feats: Sequence[ReadFeat], params: PairParams,
+) -> PairResult:
+    """Pair reciprocal-unique CT/GA overlaps on one phased haplotype contig.
+
+    A haplotype-resolved single-cell library contains at most the CT and GA
+    strands of one maternal or paternal duplex at a locus after PCR-family
+    collapse.  Consequently a local 1+1 overlap is identified by the phased
+    contig itself; matching fragment endpoints or chromatin footprints would
+    discard valid staggered strand recovery.  Components with more than one
+    possible opposite-flavor mate fail closed.
+
+    The caller must invoke this only for ``*_MATERNAL``/``*_PATERNAL`` contigs
+    and must keep libraries separate.
+    """
+    neighbors: Dict[int, Set[int]] = {f.index: set() for f in feats}
+    by_idx = {f.index: f for f in feats}
+    candidate_nodes: Set[int] = set()
+    for a, b in _overlapping_opposite_pairs(feats):
+        overlap = min(a.ref_end, b.ref_end) - max(a.ref_start, b.ref_start)
+        if overlap < params.min_overlap_bp:
+            continue
+        neighbors[a.index].add(b.index)
+        neighbors[b.index].add(a.index)
+        candidate_nodes.update((a.index, b.index))
+
+    partner: Dict[int, int] = {}
+    sequence: Dict[int, SequenceScore] = {}
+    for i in sorted(candidate_nodes):
+        if i in partner or len(neighbors[i]) != 1:
+            continue
+        j = next(iter(neighbors[i]))
+        if j in partner or len(neighbors[j]) != 1 or next(iter(neighbors[j])) != i:
+            continue
+        partner[i] = j
+        partner[j] = i
+        seq = score_sequence(by_idx[i], by_idx[j])
+        if seq.bases:
+            sequence[i] = sequence[j] = seq
+
+    status = {
+        f.index: (
+            STATUS_PAIRED if f.index in partner
+            else STATUS_UNRESOLVED if f.index in candidate_nodes
+            else STATUS_NONE
+        )
+        for f in feats
+    }
+    method = {idx: 'H' for idx in partner}
+    # No evidence-derived score or margin is needed: the library + phased
+    # haplotype + reciprocal-unique overlap is the physical linkage rule.
+    return PairResult(
+        partner=partner,
+        score={},
+        margin={idx: 0.0 for idx in partner},
+        status=status,
+        method=method,
+        sequence=sequence,
+        sequence_margin={},
+        sequence_kind={idx: 'H' for idx in partner},
+    )
+
+
 def _overlapping_opposite_pairs(feats: Sequence[ReadFeat]):
     """Yield each genomically overlapping opposite-flavor pair once."""
     order = sorted(feats, key=lambda f: f.ref_start)
@@ -522,6 +586,36 @@ def _footprint_assignment(
 
 def assign_pairs(feats: Sequence[ReadFeat], params: PairParams) -> PairResult:
     """Resolve sequence assignments first, then footprint-match leftovers."""
+    if params.single_cell_haplotype:
+        hap = _single_cell_haplotype_assignment(feats, params)
+        remaining = [f for f in feats if f.index not in hap.partner]
+        fallback = assign_pairs(
+            remaining, replace(params, single_cell_haplotype=False)
+        )
+        partner = {**hap.partner, **fallback.partner}
+        status = {}
+        for f in feats:
+            if f.index in partner:
+                status[f.index] = STATUS_PAIRED
+            elif (
+                hap.status.get(f.index) == STATUS_UNRESOLVED
+                or fallback.status.get(f.index) == STATUS_UNRESOLVED
+            ):
+                status[f.index] = STATUS_UNRESOLVED
+            else:
+                status[f.index] = STATUS_NONE
+        return PairResult(
+            partner=partner,
+            score={**hap.score, **fallback.score},
+            margin={**hap.margin, **fallback.margin},
+            status=status,
+            method={**hap.method, **fallback.method},
+            sequence={**hap.sequence, **fallback.sequence},
+            sequence_margin={
+                **hap.sequence_margin, **fallback.sequence_margin,
+            },
+            sequence_kind={**hap.sequence_kind, **fallback.sequence_kind},
+        )
     by_idx = {f.index: f for f in feats}
     seq_partner, seq_score, seq_margin, seq_edges, seq_nodes, seq_kind = \
         _sequence_assignment(feats, params)

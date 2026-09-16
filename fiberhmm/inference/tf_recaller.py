@@ -22,13 +22,15 @@ For each read:
 2. From v2 tags, derive the scan space:
      - all MSPs (``as``/``al``)
      - all short v2 nucs (``ns``/``nl`` with ``nl < unify_threshold``)
-3. Inside each scan interval, run a Kadane local-maximum scan with
-   per-context LLR steps:
+3. Inside each scan interval, find the best non-overlapping configuration
+   of protected intervals using per-context LLR steps:
      - miss step: ``log P(miss | ctx, protected) - log P(miss | ctx, accessible)``
      - hit  step: ``log P(hit  | ctx, protected) - log P(hit  | ctx, accessible)``
-   When the running sum drops to 0 or below, flush the peak (if it
-   crossed ``min_llr`` and contained at least ``min_opps`` informative
-   target positions).
+   Maximize ``sum(interval LLR) - min_llr * number_of_intervals``, with
+   at least ``min_opps`` informative target positions per interval. This is
+   an exact interval dynamic program, not one maximum per positive-score
+   excursion. A modified gap can therefore separate two footprints even
+   when it does not exhaust the evidence accumulated by the first one.
 4. For each emitted call, compute edge ambiguity = bp distance from the
    conservative boundary (last informative miss + 1 on the right; first
    informative miss on the left) to the bracketing hit.
@@ -40,6 +42,13 @@ Per-enzyme defaults are baked into ``ENZYME_PRESETS``. Hia5 uses its trained
 platform model directly. DddB uses ``min_llr=4.0`` for its sparser
 per-position evidence. DddA uses the physical-duplex-calibrated table and a
 held-out-mate operating point of ``min_llr=7.0``.
+
+The emission tables and reported per-call LLRs are unchanged. The configuration
+penalty is an explicit regularizer, not an FDR threshold or calibrated posterior.
+Its numerical default retains the native minimum-score setting, but changing the
+search/selection procedure requires a fresh detector-specific calibration. The
+single-excursion implementation remains available for comparison and is kept by
+nucleosome refinement; this TF change does not change its scanning algorithm.
 """
 from __future__ import annotations
 
@@ -83,6 +92,7 @@ from fiberhmm.io.ma_tags import (
 N_CTX = 4096           # 4^(2*3) hexamer contexts
 NON_TARGET = N_CTX     # code 4096
 UNMETH_OFFSET = 4097   # miss codes live at [4097, 4097 + 4096)
+TF_DECODER_VERSION = "multi_interval_v1"
 
 
 # Per-enzyme defaults: (min_llr, emission_uplift). All bundled models are used
@@ -90,11 +100,6 @@ UNMETH_OFFSET = 4097   # miss codes live at [4097, 4097 + 4096)
 # sensitivity override.
 ENZYME_PRESETS = {
     'hia5':   dict(min_llr=5.0, emission_uplift=1.0),
-    # EcoGII deposits the same m6A mark as Hia5; the ecogii model carries EcoGII-calibrated
-    # emissions, so the LLR needs no uplift. Same min_llr as Hia5 (same chemistry).
-    'ecogii': dict(min_llr=5.0, emission_uplift=1.0),
-    # M.SssI CpG 5mC footprinting (nanopore); emissions calibrated from naked controls.
-    'sssi':   dict(min_llr=5.0, emission_uplift=1.0),
     'dddb':   dict(min_llr=4.0, emission_uplift=1.0),
     # Calibrated on untouched physical mates from 23,388 scDAF duplexes across
     # 12 libraries. TQ=70 is an empirical operating point, not an FDR cutoff.
@@ -117,7 +122,11 @@ def build_llr_tables(model) -> Tuple[np.ndarray, np.ndarray]:
     """Return (llr_hit, llr_miss) lookup arrays, length N_CTX each.
 
     Assumes model.normalize_states() has been applied (state 0 = protected,
-    state 1 = accessible). load_model_with_metadata enforces this.
+    state 1 = accessible). load_model_with_metadata enforces this. Only
+    ``emissionprob_`` enters these likelihood-ratio tables: ``startprob_`` and
+    ``transmat_`` are required by the shared model container and participate in
+    state-order normalization, but they do not contribute to TF recall scores
+    or impose a duration/transition prior on the local scan.
     """
     EP = np.asarray(model.emissionprob_, dtype=np.float64)
     if EP.shape[0] != 2:
@@ -425,19 +434,148 @@ def _call_tfs_numba(obs, lo, hi, llr_hit, llr_miss,
             opps_out[:n_calls], left_amb[:n_calls], right_amb[:n_calls])
 
 
+@_numba_jit(nopython=True, cache=True)
+def _call_tf_configurations_numba(obs, lo, hi, llr_hit, llr_miss,
+                                   interval_penalty, min_opps, use_m5c, m5c_mask,
+                                   m5c_llr_hit, m5c_llr_miss):
+    """Exact penalized multi-interval decoding on the native opportunity lattice.
+
+    For disjoint intervals C, maximize sum(LR(I) - interval_penalty for I in C).
+    Every interval contains >= min_opps target observations and begins/ends on
+    a positive LLR step. Neutral bases do not create opportunities or evidence.
+    The all-accessible configuration has score zero. Ties prefer fewer intervals
+    and then less protected span; an interval exactly at the penalty need not be
+    selected over the empty configuration. Reported call scores exclude the
+    penalty and remain sums of the unchanged native emission LLRs.
+
+    With prefix LLR S and optimal prefix objective F, a call ending at t has
+    objective S[t] - penalty + max_s(F[s] - S[s]), where s <= t-min_opps.
+    Admitting starts incrementally makes time/memory linear in the scan domain.
+    No fixed cap on the number of footprints, family proposals, or unique hits
+    is imposed. A constant per-interval cost is an unnormalized configuration
+    prior; this MAP-style decoder does not produce posterior probabilities.
+    """
+    capacity = hi - lo
+    positions = np.empty(capacity, dtype=np.int64)
+    steps = np.empty(capacity, dtype=np.float64)
+    n = 0
+    for i in range(lo, hi):
+        code = obs[i]
+        if 0 <= code < 4096:
+            positions[n] = i
+            steps[n] = m5c_llr_hit[code] if use_m5c and m5c_mask[i] else llr_hit[code]
+            n += 1
+        elif 4097 <= code < 8193:
+            context = code - 4097
+            positions[n] = i
+            steps[n] = (m5c_llr_miss[context]
+                        if use_m5c and m5c_mask[i] else llr_miss[context])
+            n += 1
+
+    prefix = np.zeros(n + 1, dtype=np.float64)
+    objective = np.zeros(n + 1, dtype=np.float64)
+    counts = np.zeros(n + 1, dtype=np.int64)
+    protected_bp = np.zeros(n + 1, dtype=np.int64)
+    chosen_start = np.full(n + 1, -1, dtype=np.int64)
+    best_start = -1
+    best_start_score = -np.inf
+    best_start_count = 0
+    best_start_span_key = 0
+    eps = 1e-10
+    for t in range(1, n + 1):
+        prefix[t] = prefix[t - 1] + steps[t - 1]
+        objective[t] = objective[t - 1]
+        counts[t] = counts[t - 1]
+        protected_bp[t] = protected_bp[t - 1]
+        s = t - min_opps
+        if s >= 0 and steps[s] > 0.0:
+            start_score = objective[s] - prefix[s]
+            span_key = protected_bp[s] - positions[s]
+            better = start_score > best_start_score + eps
+            if abs(start_score - best_start_score) <= eps:
+                better = (counts[s] < best_start_count or
+                          (counts[s] == best_start_count and span_key < best_start_span_key))
+            if best_start < 0 or better:
+                best_start = s
+                best_start_score = start_score
+                best_start_count = counts[s]
+                best_start_span_key = span_key
+        if best_start < 0 or steps[t - 1] <= 0.0:
+            continue
+        candidate = prefix[t] - interval_penalty + best_start_score
+        candidate_count = best_start_count + 1
+        candidate_bp = best_start_span_key + positions[t - 1] + 1
+        better = candidate > objective[t] + eps
+        if abs(candidate - objective[t]) <= eps:
+            better = (candidate_count < counts[t] or
+                      (candidate_count == counts[t] and candidate_bp < protected_bp[t]))
+        if better:
+            objective[t] = candidate
+            counts[t] = candidate_count
+            protected_bp[t] = candidate_bp
+            chosen_start[t] = best_start
+
+    n_calls = counts[n]
+    starts = np.empty(n_calls, dtype=np.int64)
+    ends = np.empty(n_calls, dtype=np.int64)
+    llrs = np.empty(n_calls, dtype=np.float64)
+    opps_out = np.empty(n_calls, dtype=np.int64)
+    left_amb = np.empty(n_calls, dtype=np.int64)
+    right_amb = np.empty(n_calls, dtype=np.int64)
+    t, ci = n, n_calls - 1
+    while t > 0:
+        s = chosen_start[t]
+        if s < 0:
+            t -= 1
+            continue
+        starts[ci] = positions[s]
+        ends[ci] = positions[t - 1] + 1
+        llrs[ci] = prefix[t] - prefix[s]
+        opps_out[ci] = t - s
+        ci -= 1
+        t = s
+
+    for ci in range(n_calls):
+        s, e = starts[ci], ends[ci]
+        amb, j = 0, s - 1
+        while j >= lo:
+            if 0 <= obs[j] < 4096:
+                break
+            amb += 1
+            j -= 1
+        left_amb[ci] = amb
+        amb, j = 0, e
+        while j < hi:
+            if 0 <= obs[j] < 4096:
+                break
+            amb += 1
+            j += 1
+        right_amb[ci] = amb
+    return starts, ends, llrs, opps_out, left_amb, right_amb
+
+
 def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
                          llr_hit: np.ndarray, llr_miss: np.ndarray,
                          min_llr: float, min_opps: int,
                          m5c_mask: Optional[np.ndarray] = None,
                          m5c_llr_hit: Optional[np.ndarray] = None,
-                         m5c_llr_miss: Optional[np.ndarray] = None) -> List[TFCall]:
-    """Kadane local-maximum scan on obs[lo:hi].
+                         m5c_llr_miss: Optional[np.ndarray] = None,
+                         *, decoder: str = "multi_interval") -> List[TFCall]:
+    """Decode TF intervals from unchanged native emission evidence.
 
-    Thin Python wrapper around ``_call_tfs_numba``; builds TFCall objects
-    from the numpy result arrays.
+    ``multi_interval`` selects a complete non-overlapping configuration with a
+    cost of ``min_llr`` per footprint. ``single_excursion`` retains the previous
+    one-peak-per-positive-excursion scan for audits and nucleosome refinement.
+    Output LLRs contain native emission evidence only, not the interval penalty.
     """
+    if decoder not in {"multi_interval", "single_excursion"}:
+        raise ValueError(f"Unknown TF decoder: {decoder!r}")
+    if decoder == "multi_interval" and (min_opps < 1 or min_llr < 0 or not np.isfinite(min_llr)):
+        raise ValueError("Multi-interval TF decoding requires min_opps >= 1 and finite min_llr >= 0")
     if hi <= lo:
         return []
+    if lo < 0 or hi > len(obs):
+        raise ValueError("TF scan interval must lie inside the observation array")
     # Ensure dtypes numba can bind to cleanly
     obs_arr = np.ascontiguousarray(obs, dtype=np.int32)
     hit_arr = np.ascontiguousarray(llr_hit, dtype=np.float64)
@@ -458,7 +596,8 @@ def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
     if use_m5c and (m5c_hit_arr.shape != hit_arr.shape or
                     m5c_miss_arr.shape != miss_arr.shape):
         raise ValueError("m5c LLR tables must match the standard LLR table shapes")
-    starts, ends, llrs, opps_arr, l_amb, r_amb = _call_tfs_numba(
+    kernel = _call_tf_configurations_numba if decoder == "multi_interval" else _call_tfs_numba
+    starts, ends, llrs, opps_arr, l_amb, r_amb = kernel(
         obs_arr, int(lo), int(hi), hit_arr, miss_arr,
         float(min_llr), int(min_opps), use_m5c, mask_arr,
         m5c_hit_arr, m5c_miss_arr,
@@ -474,6 +613,20 @@ def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
             right_ambiguity=int(r_amb[i]),
         ))
     return calls
+
+
+def call_single_excursion_intervals(obs: np.ndarray, lo: int, hi: int,
+                                    llr_hit: np.ndarray, llr_miss: np.ndarray,
+                                    min_llr: float, min_opps: int,
+                                    m5c_mask: Optional[np.ndarray] = None,
+                                    m5c_llr_hit: Optional[np.ndarray] = None,
+                                    m5c_llr_miss: Optional[np.ndarray] = None) -> List[TFCall]:
+    """Preserve the existing single-excursion kernel for non-TF consumers."""
+    return call_tfs_in_interval(
+        obs, lo, hi, llr_hit, llr_miss, min_llr, min_opps,
+        m5c_mask=m5c_mask, m5c_llr_hit=m5c_llr_hit, m5c_llr_miss=m5c_llr_miss,
+        decoder="single_excursion",
+    )
 
 
 def extract_modifications(read, mode: str, context_size: int = 3

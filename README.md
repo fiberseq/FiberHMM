@@ -7,11 +7,13 @@ FiberHMM identifies protected regions (nucleosomes, TF/Pol II footprints) and
 accessible regions (methylase-sensitive patches, MSPs) from single-molecule DNA
 modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq).
 
-> **Current release: v2.16.8.** File-based DddA/DddB calls now mark PCR
-> duplicates automatically and nondestructively, screen adequately covered
-> samples for recurrent C→T/G→A SNPs after duplicate marking, and run bounded
-> assay-matched QC after footprint calling. `fiberhmm-qc` also accepts multiple
-> BAMs for per-sample panels plus a combined comparison report. Use
+> **Development snapshot for the preprint-scale FiberHMM/FiberBrowser update.**
+> No release number will be assigned before the caller, models, browser, paper
+> and preprint package pass final integration. File-based DddA/DddB calls
+> mark PCR duplicates automatically and nondestructively, screen adequately
+> covered samples for recurrent C→T/G→A SNPs after duplicate marking, and run
+> bounded assay-matched QC after footprint calling. `fiberhmm-qc` also accepts
+> multiple BAMs for per-sample panels plus a combined comparison report. Use
 > `--no-dedup`, `--no-daf-call-snps`, or `--no-qc` to disable an automatic
 > stage; only `--dedup-collapse` removes duplicate reads.
 
@@ -24,8 +26,7 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
 - [Pre-trained models](#pre-trained-models)
 - [Performance tips](#performance-tips)
 - [Deep reference](docs/reference.md) — MA/AQ schema, LLR scoring model, tag glossary
-- DddA mCG caller — molecule-specific methylation tags and
-  methylation-aware DddA TF recall
+- [Experimental modules](#experimental-ddda-mcg-module)
 
 ## Key features
 
@@ -74,18 +75,16 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
   input BAMs stay unchanged.
   `fiberhmm-strand-rescue-audit` validates MA/AQ/AN alignment, atomic multi-TF
   groups, geometry roles, scores, header contract, and indexing. See the
-  [model/CLI contract](docs/strand_rescue.md) and
-  [v6 development/validation contract](docs/STRAND_RESCUE_V6_DEVELOPMENT.md).
-  The older [v4 validation record](docs/STRAND_RESCUE_VALIDATION.md) is retained
-  as a historical software/materialization snapshot.
-- **`fiberhmm-tag-families`** — materializes a frozen TF-family assignment
+  [model/CLI contract](docs/strand_rescue.md).
+- **`fiberhmm-tag-consensus`** — materializes a frozen
+  site-consensus footprint-state assignment
   table entirely inside the BAM by extending `tf_sr.QQQ` to `tf_sr.QQQQQ`.
-  The added `fi` byte is a locally reusable family ID (`0` = unassigned), and
-  `fq` is the producer-declared call-to-family assignment confidence on a
+  The added `fi` byte is a locally reusable consensus-state slot (`0` = unassigned), and
+  `fq` is the producer-declared call-to-state assignment confidence on a
   0–255 scale (not a biological occupancy posterior). IDs are interpreted
   together with genomic position; raw `tf` calls
   and normalized `tf_sr` intervals remain unchanged.
-- **`fiberhmm-targeted-families discover/quantify`** — coverage-aware family
+- **`fiberhmm-site-consensus discover/quantify`** — coverage-aware site-consensus state
   discovery for amplicons or selected genome-wide coordinates. It gates 1-kb
   cores on recurrent >=150-bp MSPs, learns chemistry-aware geometry from a
   deterministic source/strand-balanced cap, freezes that catalog, then scores
@@ -95,7 +94,7 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
   allowlist, and ordinary `tf`/`nuc` annotations are never overwritten.
   Quantification defaults to the unchanged CPU likelihood reference. Install a
   CUDA-enabled PyTorch build and pass `--likelihood-backend cuda` to evaluate
-  anchored-family, spatial-null, and diffuse-null likelihoods in deterministic
+  anchored-state, spatial-null, and diffuse-null likelihoods in deterministic
   float64 resident batches;
   `--likelihood-backend auto` falls back to CPU when no CUDA device is
   accessible. CUDA uses VRAM-aware, sparse genomic-locality batches, exact
@@ -110,19 +109,19 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
   scanning intervening chromosomes:
 
   ```bash
-  fiberhmm-targeted-families batch \
+  fiberhmm-site-consensus batch \
     --bed oct4_peaks.bed \
     -i replicate1.bam -i replicate2.bam \
     --site-padding 500 --unit-workers 8 -c 1 \
     --likelihood-backend cpu --skip-input-hash \
-    -o oct4_family_scan
+    -o oct4_site_consensus_scan
   ```
 
   Batch targets are snapped to the global 1-kb discovery grid. Overlapping
   padded targets are never split; nearby targets share bounded indexed BAM
   fetches; and gap-only families are removed before fitting. Discovery finishes
   first, then the batch freezes one calibration mask containing every padded
-  target and every BED-retained family's complete candidate envelope. Every
+  target and every retained consensus state's complete candidate envelope. Every
   work unit calibrates against that same mask and full-alignment evidence, so
   BED partitioning changes results only at floating-point roundoff. Discovery
   and CPU quantification run across work units in parallel. CUDA quantification
@@ -132,17 +131,25 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
   `--resume` restarts only incomplete units. Parent progress is concise, while
   detailed discovery and quantification logs remain beside each unit.
   Aggregate TSVs include both padded-target and direct BED-overlap membership,
-  globally allocated reusable family slots, and explicit `unscorable` rows.
+  globally allocated reusable consensus-state slots, and explicit `unscorable` rows.
   Per-unit model/score provenance is stored as compact JSONL rather than one
-  small file per family.
+  small file per consensus state.
 - **`fiberhmm-pair` / `fiberhmm-crossstrand`** — optional scDAF paired-duplex
   workflow. It infers CT/GA copies of the same physical duplex using
   deamination-safe sequence first and nucleosome-pattern fallback, unions the
   two molecule-specific evidence channels, and runs the ordinary callers once
   on the joint molecule. This is duplex-local evidence integration: it does
-  not use a locus-population TF-class prior or cross-molecule strand rescue.
+  not use a locus-population site-consensus prior or cross-molecule strand rescue.
   See the [paired-duplex contract](docs/paired-duplex.md).
-- **DddA-inferred mCG recovery** — `fiberhmm-tag-m5c` calls conservative, molecule-specific
+- **`fiberhmm-duplex`** — sequence-identity-free scDAF pairing for experiments
+  where A/T agreement must remain an independent validation label. It combines
+  the nucleosome lattice with raw and component-residual DddA protection,
+  selects reciprocal-best CT/GA edges with an abstention margin, and never uses
+  A/T mismatches, haplotypes, TF LLR, or a sequence veto. Current rotational
+  DddA calls and archived MA calls have separate frozen calibrations selected
+  from BAM provenance. See [sequence-free duplex pairing](docs/duplex.md).
+- **Experimental DddA-inferred mCG recovery (outside the paper-validated
+  preset surface)** — `fiberhmm-tag-m5c` calls conservative, molecule-specific
   methylated CpG runs even though amplification removes the native 5mC channel;
   DddA TF recall then corrects CpG emissions inside those spans. Merged
   cross-strand reads carrying `deam+`/`deam-` coverage are called jointly for
@@ -238,8 +245,9 @@ fiberhmm-footprint-model -i calls.bam -o results/sample --genome dm6 --bigbed
 | Focal two-strand TF rescue + TF/nuc edge normalization | `fiberhmm-strand-rescue` |
 | Strand-rescue report → normalized regional shadow layers | `fiberhmm-strand-rescue-annotate` |
 | Audit normalized strand-rescue BAMs | `fiberhmm-strand-rescue-audit` |
-| Add compact family IDs/confidence to normalized TF calls | `fiberhmm-tag-families` |
+| Add compact consensus-state slots/confidence to normalized TF calls | `fiberhmm-tag-consensus` |
 | Infer scDAF CT/GA physical pairs | `fiberhmm-pair` |
+| Infer scDAF CT/GA pairs without sequence identity | `fiberhmm-duplex` |
 | Pair, merge, and jointly re-call inferred scDAF duplexes | `fiberhmm-crossstrand` |
 | Calls → BED12 / bigBed | `fiberhmm-extract` |
 | Add or repair MA layer discovery metadata | `fiberhmm-utils ma-types calls.bam --types ...` (known names) or `--scan` (every alignment) |
@@ -371,8 +379,12 @@ fiberhmm-call -i aligned.bam -o calls.bam --enzyme ddda \
               -c 8 --region-parallel
 ```
 
-Genome-wide DddA DAF-seq amplification removes native 5mC tags, but methylated
-CpGs retain a strong DddA rate signature. The experimental mCG caller is an
+### Experimental DddA mCG module
+
+This opt-in research module was not run or evaluated in the FiberHMM methods
+paper and is not part of its validated preset surface. Genome-wide DddA
+DAF-seq amplification removes native 5mC tags, but methylated CpGs retain a
+strong DddA rate signature. The experimental mCG caller is an
 explicit opt-in. Add it to the fused whole-genome workflow with:
 
 ```bash
@@ -444,14 +456,14 @@ For Nanopore, the default
 `auto` policy resolves to `topology`: an accessible cut must leave a
 nucleosome-sized candidate on every side, and unresolved single-strand edge
 ambiguity remains protected rather than being labeled accessible. Use
-`--nuc-recall-policy conservative` only to reproduce the historical
+`--nuc-recall-policy conservative` only to request the explicit
 conservative-edge behavior. **Linear reads only** — circular reads must use
 `fiberhmm-call -r --recall-nucs`.
 
 ### PCR deduplication
 
 `fiberhmm-call` automatically uses the second, nondestructive behavior below
-for file-based DddA/DddB input. The standalone command retains its historical
+for file-based DddA/DddB input. The standalone command retains its explicit
 collapse default so existing scripts do not change semantics.
 
 ```bash
@@ -476,8 +488,8 @@ execution strategies.
 |------|---------|-------------|
 | `-i/--input` | required | Input BAM, or `-` for stdin. |
 | `-o/--output` | required | Output BAM, or `-` for stdout (unsorted). |
-| `--enzyme` | — | Supported presets are `hia5`, `dddb`, and `ddda`. The development tree also exposes experimental `ecogii` and `sssi` presets; see [Experimental chemistry paths](#experimental-chemistry-paths). |
-| `--seq` | chemistry-dependent | Hia5 and EcoGII support `pacbio`/`nanopore` (omission warns and defaults to `pacbio`); ignored for DddA/DddB. Experimental SssI requires Nanopore. |
+| `--enzyme` | — | Supported presets are `hia5`, `dddb`, and `ddda`. |
+| `--seq` | chemistry-dependent | Hia5 supports `pacbio`/`nanopore` (omission warns and defaults to `pacbio`); ignored for DddA/DddB after DAF encoding. |
 | `--mode` | from model | Advanced observation-mode override; normally inferred from the selected model. Supported models use `pacbio-fiber`, `nanopore-fiber`, or `daf`; `gpc` and `cpg` are development-only. |
 | `--reference` | — | Indexed FASTA fallback for ordinary DAF reads with no R/Y and missing/unusable `MD`; does not override R/Y or usable `MD`. Required and always used by `--ddda-mcg`. |
 | `--ddda-mcg` | off | **Experimental whole-genome DddA only.** Infer `ddda_mcg.` spans and correct CpG TF emissions in the fused workflow. |
@@ -487,7 +499,7 @@ execution strategies.
 | `--skip-scaffolds` | off | Drop small scaffolds (region-parallel). |
 | `--chroms chr1 …` | all | Restrict to specific chromosomes (region-parallel). |
 | `--no-recall-nucs` | recall on | Disable nucleosome recall (baseline HMM `nuc.Q`). |
-| `--nuc-recall-policy` | `auto` | `auto` uses topology-constrained, ambiguity-preserving recall for Nanopore and historical `conservative` edges otherwise; either policy can be forced explicitly. |
+| `--nuc-recall-policy` | `auto` | `auto` uses topology-constrained, ambiguity-preserving recall for Nanopore and `conservative` edges otherwise; either policy can be forced explicitly. |
 | `--ddda-derived-tf-max-edge-gap` | 12 | DddA phase-aware radial recall only: maximum full-molecule gap to an observed deamination on each side of a TF call exposed solely by nuc refinement; `-1` disables. |
 | `--phase-nrl` | `auto` | Periodicity prior: `auto` (estimate, ~150–215 bp), `off`, or a fixed bp. |
 | `--min-llr` | enzyme preset | Override TF LLR threshold. |
@@ -656,8 +668,8 @@ fiberhmm-apply -i experiment.bam --enzyme hia5 --seq pacbio -o output/ -c 8
 |------|---------|-------------|
 | `-i/--input` | required | Input BAM, or `-` for stdin. |
 | `-m/--model` | optional | Custom model (`.json`/`.npz`/`.pickle`); overrides `--enzyme`. |
-| `--enzyme` | optional | Supported presets are `hia5`, `dddb`, and `ddda`; experimental `ecogii` and `sssi` presets also exist in the development tree. Required unless `-m` is given. |
-| `--seq` | chemistry-dependent | Hia5 and EcoGII support `pacbio`/`nanopore` (omission warns and defaults to `pacbio`); ignored for DddA/DddB. Experimental SssI requires Nanopore. |
+| `--enzyme` | optional | Supported presets are `hia5`, `dddb`, and `ddda`. Required unless `-m` is given. |
+| `--seq` | chemistry-dependent | Hia5 supports `pacbio`/`nanopore` (omission warns and defaults to `pacbio`); ignored for DddA/DddB after DAF encoding. |
 | `-o/--outdir` | required | Output directory, or `-` for stdout BAM. |
 | `--mode` | from model | Advanced observation-mode override; normally inferred from the selected model. |
 | `-c/--cores` | 1 | CPU cores (0 = auto). |
@@ -690,8 +702,8 @@ fiberhmm-recall-tfs -i apply.bam -o recalled.bam --enzyme hia5 --seq pacbio -c 8
 | `-i/--in-bam` | required | Input BAM tagged by `fiberhmm-apply`. `-` for stdin. |
 | `-o/--out-bam` | required | Output BAM (`MA`/`AQ` + refreshed legacy tags). `-` for stdout. |
 | `-m/--model` | optional | Custom model JSON; overrides `--enzyme`. |
-| `--enzyme` | optional | Supported presets are `hia5`/`dddb`/`ddda`; experimental `ecogii`/`sssi` presets also exist in the development tree. Sets the model + `--min-llr` preset. |
-| `--seq` | chemistry-dependent | Platform selector as above; experimental SssI requires `--seq nanopore`. |
+| `--enzyme` | optional | Supported presets are `hia5`/`dddb`/`ddda`; sets the model and `--min-llr` preset. |
+| `--seq` | chemistry-dependent | Hia5 platform selector as above; ignored for DddA/DddB after DAF encoding. |
 | `--min-llr` | preset | Min cumulative LLR (nats) per call (`dddb` 4.0; `ddda` 7.0; other enzyme presets 5.0). DddA's held-out physical-mate operating point corresponds to `TQ >= 70`. |
 | `--min-opps` | 3 | Min informative target positions per call. |
 | `--unify-threshold` | 90 | Footprints with `nl <` this may be demoted to `tf.`. |
@@ -977,30 +989,13 @@ leave-one-library-out scoring of untouched physical mates from 23,388 scDAF
 duplexes across twelve libraries; users can retain the continuous TQ values and
 sweep stricter thresholds downstream.
 
-### Experimental chemistry paths
+### Model-development artifacts
 
-The current development tree contains additional artifacts, but they are **not
-part of the supported release surface**:
-
-- **EcoGII:** `--enzyme ecogii --seq pacbio|nanopore` selects the existing
-  `ecogii_pacbio.json` parameter file. PacBio uses the unstranded
-  `pacbio-fiber` observation frame; Nanopore uses the strand-aware
-  `nanopore-fiber` frame. This makes the existing chemistry model directly
-  testable on ONT without changing its context table, but the file's emissions
-  and transitions were fitted from PacBio data and ONT calibration remains to
-  be benchmarked. TF recall has not yet been independently calibrated for this
-  enzyme/platform combination. Automatic QC reports descriptive metrics but
-  does not score EcoGII against the bundled Hia5 control profile.
-- **M.SssI/CpG Nanopore:** `--enzyme sssi --seq nanopore` selects the prototype
-  `cpg_nanopore.json`. Its emissions were fitted to naked-DNA controls while its
-  transitions were inherited from the Hia5 Nanopore model. Transition
-  calibration, representative chromatin validation, and dedicated tests remain
-  incomplete; reverse-strand CpG/GpC context encoding is currently broken.
-  Enzyme-deposited 5mC also cannot currently be separated from endogenous CpG
-  methylation.
-- **GpC/CpG modes:** the low-level `--mode gpc` and `--mode cpg` encoder/training
-  paths are model-development scaffolding. GpC has no bundled M.CviPI model or
-  enzyme preset, and neither mode is an end-to-end supported workflow.
+The public preset surface is defined by
+`fiberhmm/models/SUPPORTED_MODES.json` and contains only Hia5, DddB and DddA.
+Additional chemistry files and low-level encoders may be present for model
+development, but they are not accepted as `--enzyme` presets, are not claimed
+as supported workflows and require an explicit custom model path.
 
 ## Performance tips
 

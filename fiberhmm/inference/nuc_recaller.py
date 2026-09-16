@@ -30,7 +30,9 @@ import numpy as np
 from fiberhmm.inference.tf_recaller import (
     N_CTX,
     UNMETH_OFFSET,
-    call_tfs_in_interval,
+    # TF configuration decoding must not silently change the existing nuc
+    # split/edge algorithm, which uses this kernel with both emission signs.
+    call_single_excursion_intervals as call_tfs_in_interval,
     merge_intervals,
 )
 from fiberhmm.io.ma_tags import ambiguity_to_edge, llr_to_tq
@@ -71,7 +73,7 @@ def _refine_fragment(obs, a, b, llr_hit, llr_miss,
     """Edge-refine one protected fragment into a NucCall (or demote it).
 
     Returns ``(nuc_or_None, access_intervals)``. A fragment shorter than
-    ``nuc_min_size`` is demoted. Under the historical conservative policy, a
+    ``nuc_min_size`` is demoted. Under the explicit conservative policy, a
     protected core that trims below the floor is also demoted; signal deserts
     retain a quality-0 NucCall. ``preserve_fragment`` instead keeps a qualifying
     HMM fragment and records unresolved edges.
@@ -254,7 +256,7 @@ class NucProfile:
     edge_prior_sd: float = 0.0
     edge_likelihood_temperature: float = 1.0
     # Optional dropout-tolerant rotational-access model. A zero period keeps
-    # historical/custom profiles on the radial-only behavior.
+    # custom profiles without these fields on the radial-only behavior.
     rotation_period: float = 0.0
     rotation_period_sd: float = 0.0
     rotation_phase: float = 0.0
@@ -599,7 +601,7 @@ def _rotational_edge_posterior(
     distributions.
 
     Returns ``None`` when the rotational/context model is unavailable so the
-    historical radial-density path can handle custom profiles.  Otherwise
+    radial-density fallback can handle custom profiles.  Otherwise
     returns ``(edge, ambiguity_bp)`` for both resolved and unresolved cases.
     """
     if (
@@ -670,7 +672,7 @@ def _rotational_edge_posterior(
         # A weak physical particle-extent prior is part of the same posterior
         # for every molecule.  It must never be substituted as a point estimate
         # only for an ambiguity-selected subset: that estimator switch created
-        # the historical 146-bp population cliff.
+        # the superseded ambiguity-selected 146-bp population cliff.
         log_posterior -= 0.5 * np.square(
             (distances.astype(np.float64) - prior_center) / prior_sd
         )
@@ -866,7 +868,7 @@ def _find_density_edge(
     support is broad or censored. There is no confidence-selected switch to an
     HMM, adjacent-dyad, or canonical coordinate.
 
-    Historical/custom profiles that lack the rotational model or attached
+    Custom profiles that lack the rotational model or attached
     chemistry emissions retain the radial change-point/topology fallback.
     """
     L = profile.linker
@@ -2542,7 +2544,7 @@ def recall_nucs_in_read(
     When ``nuc_profile`` is supplied (DddA mode), the accessible-cut split is
     replaced by a radial template match-filter -- see ``radial_split_in_read``.
 
-    ``recall_policy="conservative"`` preserves the historical behavior: every
+    ``recall_policy="conservative"`` uses the explicit behavior in which every
     qualifying accessible run becomes a cut and protected evidence defines
     conservative nucleosome edges. ``recall_policy="topology"`` is intended for
     sparse single-strand evidence such as Nanopore m6A: a cut is accepted only

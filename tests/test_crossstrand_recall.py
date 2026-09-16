@@ -150,3 +150,17 @@ def test_both_strand_doubles_informative_density_in_core():
 def test_crossstrand_pipeline_rejects_non_ddda_enzyme():
     with pytest.raises(ValueError, match='specific to double-strand DddA'):
         run_pipeline('unused.bam', 'unused.out.bam', PairParams(), enzyme='dddb')
+
+
+def test_full_recall_preserves_deam_masks_when_no_footprints_remain(monkeypatch):
+    from types import SimpleNamespace
+    import pysam
+    from fiberhmm.crossstrand.recall import recall_consensus_full
+    from fiberhmm.inference import engine,fused_stages,tf_recaller
+    r=pysam.AlignedSegment();r.query_sequence='CYGR'*20
+    r.set_tag('MA','80;deam+:1-80;deam-:1-80')
+    monkeypatch.setattr(engine,'predict_footprints_and_msps',lambda *a,**k:dict(footprint_starts=[],footprint_sizes=[],msp_starts=[],msp_sizes=[]))
+    monkeypatch.setattr(fused_stages,'build_fused_recall_result',lambda *a,**k:dict(ns=[],nl=[],**{'as':[]},al=[],tf_calls=[]))
+    ctx=SimpleNamespace(k=3,apply_model=None,min_llr=7,llr_hit=None,llr_miss=None,nuc_profile=None,nuc_llr_hit=None,nuc_llr_miss=None)
+    assert recall_consensus_full(r,ctx)
+    assert r.get_tag('MA')=='80;deam+:1-80;deam-:1-80'

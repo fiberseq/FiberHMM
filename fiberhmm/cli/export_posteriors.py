@@ -751,7 +751,7 @@ def main():
     parser.add_argument('--enzyme', choices=_ENZYMES, default=None,
                        help='Auto-select a bundled enzyme model.')
     parser.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                       help='Hia5/EcoGII platform; omission warns and defaults to '
+                       help='Hia5 platform; omission warns and defaults to '
                             'pacbio. Ignored for dddb/ddda.')
 
     add_legacy_mode_override(parser)

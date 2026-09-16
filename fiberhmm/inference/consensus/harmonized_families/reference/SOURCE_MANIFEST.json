@@ -1,0 +1,261 @@
+{
+  "bounded_parent_prototype": {
+    "extracted_sha256": "ef990c5bbd6eca249a38a4e2a55fe0912eecfb8d580f360a6c899ff26c5008b2",
+    "original_ast_sha256": "1b43aa671d8366fbc3237c5ab56d26c984785f5b374f34df4d4cbd9d094e0666",
+    "selected_symbols": [
+      "Counter",
+      "_native_values",
+      "bounded_cells",
+      "center_profiles",
+      "evaluate_parent",
+      "fit_native_distribution",
+      "fit_parent",
+      "hashlib",
+      "maximum_filter",
+      "np",
+      "predictive_reference",
+      "prepare_events",
+      "score_event",
+      "summarize_boundary_cells"
+    ],
+    "source_sha256": "a3a2de2b3347d7179196f57685b4949b1f4872303e4169f6c19b4d0f76113c05"
+  },
+  "cross_source_family_consolidation": {
+    "extracted_sha256": "fefef1010975603574bef9e6cdd5f45686546e4f17b48070172f781242ab6af9",
+    "original_ast_sha256": "b0635a0117dbe9b575e3c2956635d3d0f97ba56115c189fac34c471c344b3c49",
+    "selected_symbols": [
+      "Counter",
+      "NativeReadCache",
+      "Path",
+      "TransferGeometryCache",
+      "annotate",
+      "boundary_grid",
+      "call_key",
+      "combine_cases",
+      "cross_annotation",
+      "deepcopy",
+      "defaultdict",
+      "digest",
+      "foreign_child_scores",
+      "freeze_children",
+      "frozen_model_geometry",
+      "np",
+      "overlaps",
+      "read_json",
+      "transfer_child",
+      "transferred_call"
+    ],
+    "source_sha256": "8241d24b586ce5105de1013c642a4110d11e7f82ef87338102a344ccc697823c"
+  },
+  "family_retirement": {
+    "extracted_sha256": "a73c49efb5923d35895ce21bba4f45dd6a364cea15839d4cca1439e3414fbddc",
+    "original_ast_sha256": "94022243fbd40d2a3c0b3658f8d34d42eec228d8451d2a362858e9e4395599c0",
+    "selected_symbols": [
+      "defaultdict",
+      "direct_decisions",
+      "retention_checks"
+    ],
+    "source_sha256": "fdebe367d1bf6738d4c5ccb28117464e6867b835240b8fd1c102359d09930940"
+  },
+  "fitted_geometry_nomination": {
+    "extracted_sha256": "8908a30cda3a325f110129e788cb7177158f8bea9286554fb283c62a6360baf8",
+    "original_ast_sha256": "e5b316548e9e59cbcb4e352b1f75e08dc9626e3c166beeda64bff46647730e19",
+    "selected_symbols": [
+      "density_cell",
+      "freeze_children",
+      "nominate_fitted_parents",
+      "nominate_parents",
+      "np",
+      "source_density_cells",
+      "transfer_density"
+    ],
+    "source_sha256": "f03f0165015be2b1795d879f7fd5192109473a14256ff07213d8198aba2a79f3"
+  },
+  "native_cell_consolidation": {
+    "extracted_sha256": "ea5d00b2a5920685d6c249eab8c128f6af4f9c9a8cf0fc25ec0d159c3de88da5",
+    "original_ast_sha256": "d0d2333be3d73be4d46d117d6f2aeea08490f7edd359a121f5542cd99ace65ab",
+    "selected_symbols": [
+      "Counter",
+      "annotate",
+      "call_key",
+      "center_box",
+      "deepcopy",
+      "defaultdict",
+      "hashlib",
+      "intersect_boxes",
+      "itertools",
+      "maximal_sets",
+      "nominate_parents",
+      "overlaps",
+      "promotion"
+    ],
+    "source_sha256": "02f29b0cfdea41d6702bb5f99a7524242d544bb940702c248a38e6108958ffed"
+  },
+  "native_support_nomination": {
+    "extracted_sha256": "3d17dfee91106512f163ffd0c734bf419d5fd8cfea81a152b86d5d4d29e4f480",
+    "original_ast_sha256": "eacb6fa449605499441ef6a508d9a40972da4c754ec5138d9767ecbc56abaef4",
+    "selected_symbols": [
+      "call_key",
+      "defaultdict",
+      "hashlib",
+      "maximal_sets",
+      "nominate_parents",
+      "nominate_supported_unions"
+    ],
+    "source_sha256": "726589394acda59eafaf1ca3199b9fbc42dc45e49864a23678e1cb6917fcfedd"
+  },
+  "overlapping_family_update": {
+    "extracted_sha256": "6e179eeac3833f082f5f9cfcad858970ddeadb63c13570181fc563857847d7c3",
+    "original_ast_sha256": "2dcdcd20d0b30b18a4ea75ba14f81a545b9b157fa781537a56944f6c26f3b9bb",
+    "selected_symbols": [
+      "Counter",
+      "call_key",
+      "defaultdict",
+      "extend_parent",
+      "hashlib",
+      "np",
+      "overlaps",
+      "prepare_events",
+      "reindex_fit",
+      "score_event"
+    ],
+    "source_sha256": "85687f00c4967d86d11c90fcd3820b49642a5f4042c7c47c73ada6b2a0baed21"
+  },
+  "raw_family_segmented_region": {
+    "extracted_sha256": "db73885648a1f91af16f816bf7bab791cc23efb84bbff9c8d225177ce3f6c4a0",
+    "original_ast_sha256": "1010d6eae3065f24f8d1d695eb7e01828655926f72f7840f53c8ed9a124b9711",
+    "selected_symbols": [
+      "Counter",
+      "eligible_intervals",
+      "hashlib",
+      "intersect_intervals",
+      "merge_intervals",
+      "np",
+      "prepare_stratum",
+      "subtract_intervals"
+    ],
+    "source_sha256": "bbec799f8a578b6cab8f8d387da76f2e1cee8ccecaa70b6058c2ee05f25863d5"
+  },
+  "refine_consensus_parents": {
+    "extracted_sha256": "3a538bdd93c1caecec9bbce34aaaaa517bf5ae14b59140f281847c7078fa04ae",
+    "original_ast_sha256": "bb9ff4ec7558f60254ab7a2759468566cefd46d199680370e2528c9e3277f734",
+    "selected_symbols": [
+      "Counter",
+      "call_key",
+      "deepcopy",
+      "defaultdict",
+      "hashlib",
+      "math",
+      "nominate_parents",
+      "nominate_refinements",
+      "promotion",
+      "refine_annotation",
+      "retention_checks",
+      "support_diagnostics"
+    ],
+    "source_sha256": "cc5bdbf8db296daf9ecfd9f199bc6f64c30ed5e22efa787bdc781800a77429bc"
+  },
+  "resolve_consensus_representatives": {
+    "extracted_sha256": "a0922378509df8a9c016c3fc180ac08e2ce968f8e9062e302fbf4e0f0ba73c30",
+    "original_ast_sha256": "92937e246c1e95d7759336061a30901110f256823480075ccba67b32b20a73dc",
+    "selected_symbols": [
+      "deepcopy",
+      "digest",
+      "resolve_representatives",
+      "reuse_consensus"
+    ],
+    "source_sha256": "bf7f046ae6e423db9f25ef0809b053d1c46e673f124a0380ba869be7b8eaf923"
+  },
+  "resolve_fit_aliases": {
+    "extracted_sha256": "f3bd61e9a171205d53554eb92356939e46106ebeb9f0265c74a231c5b9deb74a",
+    "original_ast_sha256": "9533df116a602ed5be1e264dfbb4fae99a3be44fe52e1031133fcaeb5a283cc9",
+    "selected_symbols": [
+      "coalesce_fit_alias_proposals",
+      "deepcopy",
+      "defaultdict",
+      "hashlib",
+      "np",
+      "promotion"
+    ],
+    "source_sha256": "b10aaeb136ec8aeb776269ec98504d366fc583552de28d2c340d768864da201a"
+  },
+  "reuse_consensus_fits": {
+    "extracted_sha256": "e698ce0d40eb9ce56e48c363bbc0311cf84db09f3578df17fcb27815080def00",
+    "original_ast_sha256": "7dd54162a7e0578d16cd7b3419891eef2f642a4417f3c849cf1740fedd62081f",
+    "selected_symbols": [
+      "call_key",
+      "combinations",
+      "deepcopy",
+      "nominate_refinements",
+      "promotion",
+      "refine_annotation",
+      "reuse_consensus"
+    ],
+    "source_sha256": "97de519174c641bfcbc5d25759ced5353db6ad00cdce5ebd8571a9c3acdeabcd"
+  },
+  "run_bounded_parent_panel": {
+    "extracted_sha256": "50178280f063baa8a89e68f06f056fbc3cf467e98ceafb0a0d87d1d3565bea2a",
+    "original_ast_sha256": "b04828e83faec90d8dea7121ea7b4154df748c75b0a95634141d13a383b008db",
+    "selected_symbols": [
+      "Counter",
+      "call_key",
+      "evaluate_cohort",
+      "evaluate_parent",
+      "hashlib",
+      "prepare_events",
+      "score_event"
+    ],
+    "source_sha256": "b4862274816256c4f89fc51462d1a7f3ad112d9773d48f2ab6ef3192a4510763"
+  },
+  "run_native_cell_consolidation": {
+    "extracted_sha256": "8a7ef6cde666b4aad5590ab943c69c3891d82c9cf852c62d7953f5b31e25fb8e",
+    "original_ast_sha256": "b6a8698d9cc60d32f561628388c216db071ee2c4fd0c84ae6aeca1c8ea38d2de",
+    "selected_symbols": [
+      "call_key",
+      "candidate_inputs",
+      "evaluate_cohort"
+    ],
+    "source_sha256": "d3c5c54138b3ad0a2cd7a0096ac05ef703c72691a7be2a1c7756e2bb2e670161"
+  },
+  "run_native_locus_map": {
+    "extracted_sha256": "5e557fd1c3d3163fc6552b8d916e0ca31d62c9461655b49c49317843cb07cce9",
+    "original_ast_sha256": "bf0977ca3a46414383d0388fd1b20fa075fe68200e49664e25c013bdc166ba41",
+    "selected_symbols": [
+      "Counter",
+      "call_ledger",
+      "deepcopy",
+      "digest",
+      "prepare_input",
+      "prepare_stratum",
+      "read_json",
+      "summarize"
+    ],
+    "source_sha256": "308de4ecf198a786f555570a9e395b6b4ed46c7935bc948da8f18c9b000ede04"
+  },
+  "synthetic_state_benchmark": {
+    "extracted_sha256": "c3c95f64e70c3e089f234276ed35609592dc2437a5145495a93e085bec0f5f8c",
+    "original_ast_sha256": "d11ec802304ae65792d30e7d0936d5c2ca2c914a37e6bbd8386780403b1f8e4b",
+    "selected_symbols": [
+      "digest",
+      "gzip",
+      "hashlib",
+      "json",
+      "read_json"
+    ],
+    "source_sha256": "f61d30d40fcd9c2eb8264e0a9414d6fac1e6f3ee071d741f8d458d24d698d59d"
+  },
+  "windowless_llr_inventory": {
+    "extracted_sha256": "571764c5d51775009674adcd75f1ba443ab75efd8ef07ddc5bb8b149ebe15d13",
+    "original_ast_sha256": "9924a65a13fc8bb67663d59a727d94461a9096d63ed453e523b8f1a778c2d1b5",
+    "selected_symbols": [
+      "Counter",
+      "call_ledger",
+      "hashlib",
+      "intersect_intervals",
+      "prepare_stratum",
+      "scaffold_intervals",
+      "subtract_intervals"
+    ],
+    "source_sha256": "9ea751a832a0e0da243c5aac207b34e1ffb8859242795b7d8f6d59af1f1135ae"
+  }
+}

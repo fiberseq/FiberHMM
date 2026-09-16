@@ -162,7 +162,7 @@ def test_fully_maps_index_falls_back_for_unsafe_blocks_and_invalidates():
     assert read._alignment_block_index is original_index
     assert "_alignment_block_index" not in strand_rescue_inference.asdict(read)
 
-    # These overlaps deliberately make the historical summed coverage exceed
+    # These overlaps deliberately make the former summed coverage exceed
     # the union coverage.  The indexed path must not silently normalize it.
     read.alignment_blocks = ((100, 180), (150, 190), (199, 200))
     assert read.fully_maps(100, 200) == _fully_maps_brute_reference(
@@ -3308,7 +3308,7 @@ def test_iterative_tf_geometry_rejects_two_substates_in_one_configuration():
     right.substate_id = "right"
     with pytest.raises(
         ValueError,
-        match="multiple substates of one TF family",
+        match="multiple substates of one site-consensus state",
     ):
         strand_rescue_inference.fit_iterative_tf_class_geometry_model(
             [],
@@ -6665,6 +6665,187 @@ def test_boundary_family_model_ids_include_hyperparameters_and_fit():
     assert low_prior["model_structure_id"] != high_prior["model_structure_id"]
     assert low_prior["model_fit_id"] != high_prior["model_fit_id"]
     assert len(low_prior["training_cohort_evidence_sha256"]) == 64
+
+
+def test_boundary_family_supports_a_shared_spatial_null_universe():
+    positions = np.arange(90, 141, 5, dtype=np.int64)
+    reads = [
+        _read(
+            f"train-{index}",
+            "CT" if index % 2 == 0 else "GA",
+            positions,
+            np.where(
+                (positions >= 100) & (positions < 122),
+                2.0,
+                -1.0,
+            ),
+        )
+        for index in range(20)
+    ]
+    native_probe = strand_rescue_inference.fit_boundary_marginalized_tf_family_model(
+        reads,
+        "native_probe",
+        [(100, 120)],
+        boundary_search_radius=1,
+        analysis_envelope=(90, 140),
+    )
+    transported_probe = (
+        strand_rescue_inference.fit_boundary_marginalized_tf_family_model(
+            reads,
+            "transported_probe",
+            [(102, 122)],
+            boundary_search_radius=1,
+            analysis_envelope=(90, 140),
+        )
+    )
+    common_exclusions = sorted(
+        {
+            tuple(interval)
+            for model in (native_probe, transported_probe)
+            for interval in model["candidate_intervals"]
+        }
+    )
+
+    native = strand_rescue_inference.fit_boundary_marginalized_tf_family_model(
+        reads,
+        "native",
+        [(100, 120)],
+        boundary_search_radius=1,
+        analysis_envelope=(90, 140),
+        spatial_null_exclusion_intervals=common_exclusions,
+    )
+    transported = strand_rescue_inference.fit_boundary_marginalized_tf_family_model(
+        reads,
+        "transported",
+        [(102, 122)],
+        boundary_search_radius=1,
+        analysis_envelope=(90, 140),
+        spatial_null_exclusion_intervals=common_exclusions,
+    )
+
+    assert native["candidate_intervals"] != transported["candidate_intervals"]
+    assert native["spatial_null_exclusions_explicit"] is True
+    assert native["spatial_null_exclusion_intervals"] == transported[
+        "spatial_null_exclusion_intervals"
+    ]
+    assert native["spatial_null_exclusion_sha256"] == transported[
+        "spatial_null_exclusion_sha256"
+    ]
+    assert native["spatial_null_candidate_interval_count"] == transported[
+        "spatial_null_candidate_interval_count"
+    ]
+
+    with pytest.raises(
+        ValueError, match="must contain every anchored family candidate"
+    ):
+        strand_rescue_inference.fit_boundary_marginalized_tf_family_model(
+            reads,
+            "invalid_common_null",
+            [(100, 120)],
+            boundary_search_radius=1,
+            analysis_envelope=(90, 140),
+            spatial_null_exclusion_intervals=[(99, 119)],
+        )
+
+
+def test_boundary_family_exact_seed_mode_does_not_invent_hybrid_intervals():
+    positions = np.arange(90, 141, 5, dtype=np.int64)
+    reads = [
+        _read(
+            f"train-{index}",
+            "CT",
+            positions,
+            np.where(
+                (positions >= 100) & (positions < 120),
+                2.0,
+                -1.0,
+            ),
+        )
+        for index in range(12)
+    ]
+    seeds = [(100, 120), (105, 115)]
+
+    exact = strand_rescue_inference.fit_boundary_marginalized_tf_family_model(
+        reads,
+        "exact_support",
+        seeds,
+        boundary_search_radius=0,
+        candidate_interval_mode="exact_seed_intervals",
+        analysis_envelope=(90, 140),
+    )
+    rectangular = strand_rescue_inference.fit_boundary_marginalized_tf_family_model(
+        reads,
+        "rectangular_support",
+        seeds,
+        boundary_search_radius=0,
+        analysis_envelope=(90, 140),
+    )
+    seed_local = strand_rescue_inference.fit_boundary_marginalized_tf_family_model(
+        reads,
+        "seed_local_support",
+        seeds,
+        boundary_search_radius=1,
+        candidate_interval_mode="seed_local_boundary_grid",
+        analysis_envelope=(90, 140),
+    )
+
+    assert exact["candidate_intervals"] == [[100, 120], [105, 115]]
+    assert [100, 115] not in exact["candidate_intervals"]
+    assert [105, 120] not in exact["candidate_intervals"]
+    assert [100, 115] in rectangular["candidate_intervals"]
+    assert [105, 120] in rectangular["candidate_intervals"]
+    assert [100, 115] not in seed_local["candidate_intervals"]
+    assert [105, 120] not in seed_local["candidate_intervals"]
+    assert [99, 120] in seed_local["candidate_intervals"]
+    assert [104, 115] in seed_local["candidate_intervals"]
+    with pytest.raises(ValueError, match="require boundary_search_radius=0"):
+        strand_rescue_inference.fit_boundary_marginalized_tf_family_model(
+            reads,
+            "invalid_exact_support",
+            seeds,
+            boundary_search_radius=1,
+            candidate_interval_mode="exact_seed_intervals",
+            analysis_envelope=(90, 140),
+        )
+
+
+def test_boundary_family_molecule_records_expose_paired_predictive_score():
+    positions = np.arange(90, 141, 5, dtype=np.int64)
+    reads = [
+        _read(
+            f"train-{index}",
+            "CT",
+            positions,
+            np.where(
+                (positions >= 100) & (positions < 120),
+                2.0,
+                -1.0,
+            ),
+        )
+        for index in range(12)
+    ]
+    model = strand_rescue_inference.fit_boundary_marginalized_tf_family_model(
+        reads,
+        "paired_predictive",
+        [(100, 120)],
+        boundary_search_radius=1,
+        analysis_envelope=(90, 140),
+    )
+
+    score = strand_rescue_inference.score_boundary_marginalized_tf_family_model(
+        reads, model, include_molecule_records=True
+    )
+
+    assert sum(
+        molecule["mixture_log_likelihood_ratio_to_accessible"]
+        for molecule in score["molecules"]
+    ) == pytest.approx(score["raw_mixture_log_likelihood_ratio"], abs=1e-12)
+    for molecule in score["molecules"]:
+        assert molecule["family_vs_null_log_bayes_factor"] == pytest.approx(
+            molecule["family_log_predictive_ratio_to_accessible"]
+            - molecule["null_log_predictive_ratio_to_accessible"],
+            abs=1e-12,
+        )
 
 
 def test_boundary_family_null_cohort_does_not_force_a_family():

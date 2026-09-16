@@ -1,0 +1,86 @@
+[
+  {
+    "example": "cage",
+    "windows": 4,
+    "selected_calls": 8,
+    "datasets": [
+      "GM12878",
+      "PS01372"
+    ],
+    "strands": [
+      "+",
+      "-"
+    ]
+  },
+  {
+    "example": "ctcf",
+    "windows": 3,
+    "selected_calls": 23,
+    "datasets": [
+      "GM12878",
+      "PS01307",
+      "PS01369",
+      "PS01370",
+      "PS01372",
+      "PS01373",
+      "PS01375",
+      "PS01376"
+    ],
+    "strands": [
+      "+",
+      "-"
+    ]
+  },
+  {
+    "example": "gata_tal1",
+    "windows": 3,
+    "selected_calls": 6,
+    "datasets": [
+      "PS01369"
+    ],
+    "strands": [
+      "+",
+      "-"
+    ]
+  },
+  {
+    "example": "pause",
+    "windows": 4,
+    "selected_calls": 8,
+    "datasets": [
+      "PS01369",
+      "PS01375"
+    ],
+    "strands": [
+      "+",
+      "-"
+    ]
+  },
+  {
+    "example": "tata",
+    "windows": 4,
+    "selected_calls": 8,
+    "datasets": [
+      "GM12878",
+      "PS01372"
+    ],
+    "strands": [
+      "+",
+      "-"
+    ]
+  },
+  {
+    "example": "upstream_pause",
+    "windows": 4,
+    "selected_calls": 7,
+    "datasets": [
+      "PS01369",
+      "PS01375",
+      "PS01376"
+    ],
+    "strands": [
+      "+",
+      "-"
+    ]
+  }
+]

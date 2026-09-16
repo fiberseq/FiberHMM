@@ -51,8 +51,8 @@ from fiberhmm.io.ma_tags import flip_interval_frame, parse_ma_tag
 
 PRESETS = {
     "dddb": {
-        "model": "models/dddb_nanopore.json",
-        "nuc_model": "models/dddb_nanopore.json",
+        "model": "fiberhmm/models/dddb_nanopore.json",
+        "nuc_model": "fiberhmm/models/dddb_nanopore.json",
         "strand_mode": "daf",
         "prob_threshold": None,
     },
@@ -66,8 +66,8 @@ PRESETS = {
         "prob_threshold": None,
     },
     "hia5-nanopore": {
-        "model": "models/hia5_nanopore.json",
-        "nuc_model": "models/hia5_nanopore.json",
+        "model": "fiberhmm/models/hia5_nanopore.json",
+        "nuc_model": "fiberhmm/models/hia5_nanopore.json",
         "strand_mode": "alignment",
         # Nanopore Hia5 is intentionally a strict hard-call assay here.
         "prob_threshold": 248,
@@ -140,7 +140,7 @@ class _AlignmentBlockIndex:
     def build(cls, blocks: object) -> Optional["_AlignmentBlockIndex"]:
         # BAM loading creates exactly this immutable shape.  Anything more
         # permissive keeps the brute path so unusual synthetic inputs retain
-        # their historical iteration and arithmetic behavior.
+        # their established iteration and arithmetic behavior.
         if not isinstance(blocks, tuple):
             return None
         starts: List[int] = []
@@ -219,6 +219,10 @@ class ReadEvidence:
     molecular_msps: Optional[Tuple[Tuple[int, int], ...]] = None
     amplification_fingerprint_status: Optional[str] = None
     amplification_family_id: Optional[str] = None
+    pair_partner: Optional[str] = None
+    duplex_sources: Tuple[str, ...] = ()
+    pairing_method: Optional[str] = None
+    pairing_model: Optional[str] = None
     # Multiplicative per-molecule conversion/detection factor used when
     # rebuilding chemistry likelihoods outside ``steps`` (for example the
     # DddA radial nucleosome likelihood).  Cohort calibration updates this
@@ -1180,6 +1184,16 @@ def hard_observations(
     if not sequence:
         return None
     symbol = "."
+    if strand_mode == "daf" and read.has_tag('cs'):
+        from ..crossstrand.recall import deam_regime_masks,decode_ry_consensus,encode_daf_both_strand
+        masks=deam_regime_masks(read)
+        sources=str(read.get_tag('cs')).split(';')
+        if masks is None or not all(mask.any() for mask in masks) or len(sources)!=2 or len(set(sources))!=2 or not all(sources):
+            raise ValueError('Joint duplex requires two source names and MA deam+/deam- coverage')
+        if read.is_reverse:
+            raise ValueError('Joint duplex evidence requires the forward reference-frame merge output')
+        conv,ct,ga=decode_ry_consensus(sequence)
+        return encode_daf_both_strand(conv,ct,ga,*masks,edge_trim=10,context_size=context_size), 'BOTH'
     if strand_mode == "daf":
         extracted = extract_modifications(read, "daf", context_size)
         if extracted is None:
@@ -1233,6 +1247,7 @@ def load_region_evidence(
     required_read_names: Optional[Sequence[str]] = None,
     projection: str = "full",
     evidence_scope: str = "region",
+    legacy_annotation_frame: Optional[str] = None,
 ) -> List[ReadEvidence]:
     """Load hard-call evidence and selected TF/nucleosome MA layers.
 
@@ -1389,10 +1404,17 @@ def load_region_evidence(
                 parsed_annotations = _parse_all_ma_annotations(read) or {}
             except (KeyError, TypeError, ValueError):
                 parsed_annotations = {}
+            if legacy_annotation_frame is not None and not read.has_tag('MA'):
+                from .legacy_annotations import legacy_annotations
+                parsed_annotations = legacy_annotations(read, legacy_annotation_frame) or {}
             projected_full = projection == "full"
             reads.append(
                 ReadEvidence(
                     name=read.query_name,
+                    pair_partner=str(read.get_tag('mp')) if read.has_tag('mt') and read.get_tag('mt')=='P' and read.has_tag('mp') else None,
+                    duplex_sources=tuple(str(read.get_tag('cs')).split(';')) if strand=='BOTH' else (),
+                    pairing_method=str(read.get_tag('pm')) if read.has_tag('pm') else None,
+                    pairing_model=str(read.get_tag('mv')) if read.has_tag('mv') else None,
                     strand=strand,
                     ref_start=int(read.reference_start),
                     ref_end=int(read.reference_end or read.reference_start),
@@ -1472,7 +1494,7 @@ def load_region_evidence(
                 )
             )
             # ``max_reads`` is a deterministic BAM-order cap.  Once the same
-            # first N eligible records returned by the historical loader have
+            # first N eligible records returned by the original loader have
             # been collected, continuing to decompress the rest of a deep
             # targeted region cannot change the returned evidence.
             if max_reads and len(reads) >= max_reads:
@@ -4812,7 +4834,7 @@ def fit_iterative_tf_class_geometry_model(
             set(configuration_family_ids)
         ):
             raise ValueError(
-                "configuration contains multiple substates of one TF family"
+                "configuration contains multiple substates of one site-consensus state"
             )
         ordered_indices = sorted(
             configuration.site_indices,
@@ -7524,6 +7546,45 @@ def _boundary_family_candidate_intervals(
     ]
 
 
+def _boundary_family_seed_local_candidate_intervals(
+    seed_intervals: Sequence[Tuple[int, int]],
+    boundary_search_radius: int,
+) -> List[Tuple[int, int]]:
+    """Expand each observed substate locally without inventing hybrid edges.
+
+    A family may contain compact and broad protected substates.  Combining the
+    minimum/maximum edge ranges into one rectangle permits an unsupported
+    interval whose left edge comes from one substate and right edge from
+    another.  The union of seed-local grids preserves chemistry-specific edge
+    uncertainty while retaining the observed width neighborhood of each
+    substate.
+    """
+
+    seeds = sorted({(int(start), int(end)) for start, end in seed_intervals})
+    if not seeds or any(end <= start for start, end in seeds):
+        raise ValueError("boundary family requires positive-width seed intervals")
+    if boundary_search_radius < 0:
+        raise ValueError("boundary search radius must be non-negative")
+    candidates = set()
+    for seed_start, seed_end in seeds:
+        seed_width = seed_end - seed_start
+        minimum_width = max(1, seed_width - boundary_search_radius)
+        maximum_width = seed_width + boundary_search_radius
+        candidates.update(
+            (start, end)
+            for start in range(
+                seed_start - boundary_search_radius,
+                seed_start + boundary_search_radius + 1,
+            )
+            for end in range(
+                seed_end - boundary_search_radius,
+                seed_end + boundary_search_radius + 1,
+            )
+            if minimum_width <= end - start <= maximum_width
+        )
+    return sorted(candidates)
+
+
 def _boundary_family_projection_groups(
     left_indices: np.ndarray,
     right_indices: np.ndarray,
@@ -7655,8 +7716,12 @@ def fit_boundary_marginalized_tf_family_model(
     seed_intervals: Sequence[Tuple[int, int]],
     *,
     boundary_search_radius: int = 3,
+    candidate_interval_mode: str = "rectangular_boundary_grid",
     pseudocount: float = 0.5,
     analysis_envelope: Optional[Tuple[int, int]] = None,
+    spatial_null_exclusion_intervals: Optional[
+        Sequence[Tuple[int, int]]
+    ] = None,
     spatial_null_padding: int = 20,
     spatial_null_minimum_width: int = 1,
     spatial_null_maximum_width: int = 80,
@@ -7667,7 +7732,7 @@ def fit_boundary_marginalized_tf_family_model(
     stratum_semantics: str = "unspecified",
     evidence_summation_mode: str = "prefix",
 ) -> dict:
-    """Fit one TF family while marginalizing modest boundary ambiguity.
+    """Fit one site-consensus state while marginalizing modest boundary ambiguity.
 
     Candidate coordinates are first quotiented by their complete opportunity
     projection across the fitted molecules.  The anchored-TF pseudocount is
@@ -7675,7 +7740,7 @@ def fit_boundary_marginalized_tf_family_model(
     so adding coordinates inside an opportunity gap cannot inflate the family
     prior.  Geometry-class probabilities sum to one conditional on the family;
     raw calls and evidence arrays are never modified.  ``prefix`` evaluates
-    the same additive interval likelihood as the historical ``slice_sum``
+    the same additive interval likelihood as the reference ``slice_sum``
     reference backend using immutable per-read cumulative-sum caches.  The
     backend is recorded in the frozen model, and ``slice_sum`` remains
     available for numerical regression and legacy reproduction.
@@ -7702,9 +7767,28 @@ def fit_boundary_marginalized_tf_family_model(
     if evidence_summation_mode not in {"prefix", "slice_sum"}:
         raise ValueError("invalid interval evidence summation mode")
     seeds = sorted({(int(start), int(end)) for start, end in seed_intervals})
-    candidates = _boundary_family_candidate_intervals(
-        seeds, boundary_search_radius
-    )
+    if candidate_interval_mode not in {
+        "rectangular_boundary_grid",
+        "seed_local_boundary_grid",
+        "exact_seed_intervals",
+    }:
+        raise ValueError("invalid boundary-family candidate interval mode")
+    if candidate_interval_mode == "exact_seed_intervals":
+        if boundary_search_radius != 0:
+            raise ValueError(
+                "exact seed intervals require boundary_search_radius=0"
+            )
+        if not seeds or any(end <= start for start, end in seeds):
+            raise ValueError("boundary family requires positive-width seed intervals")
+        candidates = list(seeds)
+    elif candidate_interval_mode == "seed_local_boundary_grid":
+        candidates = _boundary_family_seed_local_candidate_intervals(
+            seeds, boundary_search_radius
+        )
+    else:
+        candidates = _boundary_family_candidate_intervals(
+            seeds, boundary_search_radius
+        )
     if analysis_envelope is None:
         envelope = IntervalCall(
             min(start for start, _end in candidates) - spatial_null_padding,
@@ -7762,9 +7846,40 @@ def fit_boundary_marginalized_tf_family_model(
     geometry_scores = np.column_stack(
         [score_matrix[:, members[0]] for members in projection_groups]
     )
+    if spatial_null_exclusion_intervals is None:
+        spatial_null_exclusions = list(candidates)
+        spatial_null_exclusions_explicit = False
+    else:
+        spatial_null_exclusions = sorted(
+            {
+                (int(start), int(end))
+                for start, end in spatial_null_exclusion_intervals
+            }
+        )
+        if not spatial_null_exclusions or any(
+            end <= start for start, end in spatial_null_exclusions
+        ):
+            raise ValueError(
+                "spatial-null exclusion intervals must be non-empty and positive"
+            )
+        if any(
+            start < envelope.start or end > envelope.end
+            for start, end in spatial_null_exclusions
+        ):
+            raise ValueError(
+                "spatial-null exclusion intervals must lie inside the analysis envelope"
+            )
+        if not set(candidates).issubset(spatial_null_exclusions):
+            raise ValueError(
+                "spatial-null exclusions must contain every anchored family candidate"
+            )
+        spatial_null_exclusions_explicit = True
+    spatial_null_exclusion_sha256 = hashlib.sha256(
+        np.asarray(spatial_null_exclusions, dtype="<i8").tobytes()
+    ).hexdigest()
     spatial_intervals = _spatial_null_candidate_intervals(
         envelope,
-        [candidates],
+        [spatial_null_exclusions],
         minimum_width=spatial_null_minimum_width,
         maximum_width=spatial_null_maximum_width,
     )
@@ -7905,25 +8020,37 @@ def fit_boundary_marginalized_tf_family_model(
                 ),
             }
         )
+    structure_tokens = [
+        family_id,
+        *(f"seed={start}-{end}" for start, end in seeds),
+        *(record["geometry_class_id"] for record in geometry_classes),
+        f"envelope={envelope.start}-{envelope.end}",
+        f"boundary_search_radius={boundary_search_radius}",
+        f"pseudocount={pseudocount:.17g}",
+        f"minimum_molecule_opportunities={minimum_molecule_opportunities}",
+        f"spatial_null_padding={spatial_null_padding}",
+        f"spatial_null_minimum_width={spatial_null_minimum_width}",
+        f"spatial_null_maximum_width={spatial_null_maximum_width}",
+        f"max_iter={max_iter}",
+        f"tol={tol:.17g}",
+        f"objective_tol_per_molecule={objective_tol_per_molecule:.17g}",
+        f"stratum_semantics={stratum_semantics}",
+        "prior=equal_four_blocks_equal_projection_classes",
+    ]
+    if spatial_null_exclusions_explicit:
+        structure_tokens.extend(
+            (
+                "spatial_null_exclusions=explicit_common_universe",
+                f"spatial_null_exclusion_sha256={spatial_null_exclusion_sha256}",
+            )
+        )
+    if candidate_interval_mode != "rectangular_boundary_grid":
+        structure_tokens.append(
+            f"candidate_interval_mode={candidate_interval_mode}"
+        )
     model_structure_id = "tfboundaryfamily_" + hashlib.sha256(
         "|".join(
-            [
-                family_id,
-                *(f"seed={start}-{end}" for start, end in seeds),
-                *(record["geometry_class_id"] for record in geometry_classes),
-                f"envelope={envelope.start}-{envelope.end}",
-                f"boundary_search_radius={boundary_search_radius}",
-                f"pseudocount={pseudocount:.17g}",
-                f"minimum_molecule_opportunities={minimum_molecule_opportunities}",
-                f"spatial_null_padding={spatial_null_padding}",
-                f"spatial_null_minimum_width={spatial_null_minimum_width}",
-                f"spatial_null_maximum_width={spatial_null_maximum_width}",
-                f"max_iter={max_iter}",
-                f"tol={tol:.17g}",
-                f"objective_tol_per_molecule={objective_tol_per_molecule:.17g}",
-                f"stratum_semantics={stratum_semantics}",
-                "prior=equal_four_blocks_equal_projection_classes",
-            ]
+            structure_tokens
         ).encode("utf-8")
     ).hexdigest()[:16]
     training_cohort_evidence_sha256 = hashlib.sha256(
@@ -7982,12 +8109,15 @@ def fit_boundary_marginalized_tf_family_model(
         "envelope": [int(envelope.start), int(envelope.end)],
         "analysis_envelope_explicit": analysis_envelope_explicit,
         "boundary_search_radius": int(boundary_search_radius),
+        "candidate_interval_mode": candidate_interval_mode,
         "minimum_molecule_opportunities": int(minimum_molecule_opportunities),
         "spatial_null_minimum_width": int(spatial_null_minimum_width),
         "spatial_null_maximum_width": int(spatial_null_maximum_width),
         "spatial_null_candidate_interval_count": len(spatial_intervals),
+        "spatial_null_exclusions_explicit": spatial_null_exclusions_explicit,
+        "spatial_null_exclusion_sha256": spatial_null_exclusion_sha256,
         "spatial_null_exclusion_intervals": [
-            [int(start), int(end)] for start, end in candidates
+            [int(start), int(end)] for start, end in spatial_null_exclusions
         ],
         "eligible_molecules": len(retained_reads),
         "eligible_molecules_by_strand": {
@@ -8034,7 +8164,7 @@ def score_boundary_marginalized_tf_family_model(
     """Score a frozen boundary-marginalized family on independent molecules.
 
     Models created before the optimized backend was recorded reproduce their
-    historical ``slice_sum`` scoring by default.  Optional molecule-record
+    reference ``slice_sum`` scoring by default.  Optional molecule-record
     thresholds only suppress expensive conditional-boundary construction for
     rejected molecules; every cohort summary is still computed over the full
     eligible set.
@@ -8313,6 +8443,15 @@ def score_boundary_marginalized_tf_family_model(
                     ),
                     "family_vs_null_log_bayes_factor": float(
                         family_vs_null_log_bayes_factors[read_index]
+                    ),
+                    "family_log_predictive_ratio_to_accessible": float(
+                        family_log_predictive[read_index]
+                    ),
+                    "null_log_predictive_ratio_to_accessible": float(
+                        null_log_predictive[read_index]
+                    ),
+                    "mixture_log_likelihood_ratio_to_accessible": float(
+                        log_normalizers[read_index]
                     ),
                     "accessible_posterior": float(responsibilities[read_index, 0]),
                     "spatial_null_posterior": float(

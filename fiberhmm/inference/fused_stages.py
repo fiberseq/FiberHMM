@@ -208,7 +208,7 @@ def run_tf_recall_stage(
     m5c_llr_hit=None,
     m5c_llr_miss=None,
 ) -> list:
-    """Build recall scan intervals and run the TF LLR scan over each one."""
+    """Build TF scan domains and decode native multi-interval configurations."""
     intervals = build_scan_intervals(
         ns,
         nl,
@@ -341,7 +341,7 @@ def build_fused_recall_result(
 
     if recall_nucs:
         # Backward-compatible fallback: callers that do not supply a locked
-        # nucleosome likelihood model retain the historical shared-table
+        # nucleosome likelihood model retain the compatibility shared-table
         # behavior. Bundled DddA callers supply independent frozen tables so a
         # TF-emission update cannot silently retune radial nuc refinement.
         if nuc_llr_hit is None:

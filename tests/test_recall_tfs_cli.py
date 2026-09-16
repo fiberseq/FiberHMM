@@ -44,6 +44,7 @@ def test_ddda_recall_nucs_header_locks_exact_profile_provenance():
     program = header.to_dict()['PG'][-1]
     assert program['PN'] == 'fiberhmm-recall-nucs'
     assert f"nuc_sha256={chemistry['nuc_sha256']}" in program['DS']
+    assert "tf_decoder=multi_interval_v1" in program['DS']
 
 
 def test_recall_tfs_make_payload_keeps_legacy_tag_arrays_compact():

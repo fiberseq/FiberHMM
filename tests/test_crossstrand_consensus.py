@@ -140,3 +140,54 @@ def test_merge_fails_closed_on_nonreciprocal_pair_tags(tmp_path):
 
     with pytest.raises(ValueError, match='not reciprocal'):
         run_merge(str(input_bam), str(tmp_path / 'merged.bam'), io_threads=1)
+
+
+@pytest.mark.parametrize('conflict', [False, True])
+def test_merge_preserves_duplex_score_model_and_margin(tmp_path, pair, conflict):
+    ct, ga = pair
+    for read, mate in ((ct, ga), (ga, ct)):
+        read.set_tag('mt', 'P', value_type='A')
+        read.set_tag('mp', mate.query_name)
+        read.set_tag('pm', 'D', value_type='A')
+        read.set_tag('dm', 5000)
+        read.set_tag('mg', 1500)
+        read.set_tag('mv', 'ddda-duplex-v1')
+    if conflict: ga.set_tag('mv', 'different-model')
+    source = tmp_path/'paired.bam'
+    with pysam.AlignmentFile(source, 'wb', header=ct.header) as out:
+        out.write(ct); out.write(ga)
+    target = tmp_path/'joint.bam'
+    if conflict:
+        with pytest.raises(ValueError, match='mv'):
+            run_merge(str(source), str(target), io_threads=1)
+        return
+    run_merge(str(source), str(target), io_threads=1)
+    with pysam.AlignmentFile(target) as bam:
+        records = list(bam)
+    assert len(records) == 1
+    merged = records[0]
+    assert [merged.get_tag(t) for t in ('pm','dm','mg','mv')] == ['D',5000,1500,'ddda-duplex-v1']
+    assert set(merged.get_tag('cs').split(';')) == {'ct','ga'}
+
+
+def test_consensus_honors_requested_modification_threshold(pair,monkeypatch):
+    from fiberhmm.crossstrand import consensus as module
+    thresholds=[]
+    original=module._deam_positions_list
+    def capture(read,q2r,threshold):
+        thresholds.append(threshold)
+        return original(read,q2r,threshold)
+    monkeypatch.setattr(module,'_deam_positions_list',capture)
+    assert module.build_consensus(*pair,prob_threshold=125) is not None
+    assert thresholds==[125,125]
+
+
+@pytest.mark.parametrize('reverse,base,sequence,expected',[(False,'C','CCCC',1),(True,'C','GGGG',0),(False,'G','GGGG',0),(True,'G','CCCC',1)])
+def test_mm_duplex_flavor_is_reference_oriented(reverse,base,sequence,expected):
+    from array import array
+    from fiberhmm.cli.extract_tags import _deam_positions_list,_build_query_to_ref
+    from fiberhmm.crossstrand.pairing import read_flavor
+    read=_read(_header(),'mm',100,sequence);read.flag=16 if reverse else 0
+    read.set_tag('MM',base+'+u,0;');read.set_tag('ML',array('B',[200]))
+    assert _deam_positions_list(read,_build_query_to_ref(read),125)==[(103 if reverse else 100,expected)]
+    assert read_flavor(read,125)==expected

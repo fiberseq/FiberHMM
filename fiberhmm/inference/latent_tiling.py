@@ -3,7 +3,7 @@
 The ordinary FiberHMM call layers describe one molecule at a time.  At deep
 targeted coverage, recurrent TF-family boundaries can additionally explain a
 continuous protected block as several adjacent biological objects (for
-example, a TF family abutting a nucleosome).  Those explanations can be
+example, a site-consensus state abutting a nucleosome).  Those explanations can be
 chemically indistinguishable on one molecule when no accessible linker lies
 between them.  This module deliberately keeps that distinction explicit:
 raw chemistry scores the union of protected intervals, while frozen

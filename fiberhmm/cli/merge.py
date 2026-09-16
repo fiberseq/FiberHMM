@@ -37,7 +37,7 @@ from fiberhmm.crossstrand.recall import RecallContext, recall_consensus_full
 from fiberhmm.io.bam_header import append_ma_types
 
 _TAG_SOURCES = 'cs'
-_PAIR_TAGS = ('mc', 'mg', 'pm', 'pa', 'sb', 'sd', 'sr', 'sg')
+_PAIR_TAGS = ('mc', 'mg', 'pm', 'pa', 'sb', 'sd', 'sr', 'sg', 'dm', 'mv')
 
 
 def _make_consensus_segment(cons, header, tid, pair_tags=None):
@@ -147,15 +147,19 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
                     f"pair {name!r}/{mate_name!r} does not contain one CT and one GA read"
                 )
             ct_read, ga_read = (read, mate) if fl == FLAVOR_CT else (mate, read)
-            cons = build_consensus(ct_read, ga_read)
+            cons = build_consensus(ct_read, ga_read, prob_threshold=prob_threshold)
             if cons is None:
                 n_build_fail += 1
                 continue
             pair_method = read.get_tag('pm') if read.has_tag('pm') else None
+            if pair_method=='D':
+                for tag in ('pm','dm','mg','mv'):
+                    if not read.has_tag(tag) or not mate.has_tag(tag) or read.get_tag(tag)!=mate.get_tag(tag):
+                        raise ValueError(f'Conflicting or missing duplex {tag} provenance for {name!r}/{mate_name!r}')
             pair_tags = [
                 item for item in read.get_tags(with_value_type=True)
                 if item[0] in _PAIR_TAGS
-                and not (item[0] == 'mg' and pair_method != 'F')
+                and not (item[0] == 'mg' and pair_method not in ('F','D'))
             ]
             seg = _make_consensus_segment(cons, header, tid, pair_tags)
             if ctx is not None:

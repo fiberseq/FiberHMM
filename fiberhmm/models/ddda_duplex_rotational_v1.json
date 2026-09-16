@@ -1,0 +1,87 @@
+{
+  "model_id": "ddda-duplex-rotational-v1",
+  "status": "externally_replicated_experimental",
+  "description": "Sequence-identity-free scDAF CT/GA duplex ranker calibrated for the FiberHMM phase-marginal rotational DddA nucleosome recaller.",
+  "training_interval": "GRCh38 chr1:[0,40100000)",
+  "external_validation_interval": "GRCh38 chr1:[40500000,80500000)",
+  "training_cases": 241,
+  "training_edges": 1000,
+  "source_pairing_sha256": "f832d5d6dda04f645569ddf400ef990ba18777ad365d41e19222c071d4de5811",
+  "development_edge_scores_sha256": "d5a4c92ff2e90c8daf9aa263030ac99b7236b0eb8ccc7130d9590218350f3836",
+  "benchmark_script_sha256": "ce7b79154d7b3072db11f9afb66b8e4652566c0bde2684e6b465d92e9de66b93",
+  "call_layer": "ddda_phase_posterior_v1",
+  "nuc_profile_sha256": "c86b05dc07e45392880e3460cf7f8880593ecad174e0a338d36ac53b7d0172d6",
+  "feature_names": [
+    "baseline_score",
+    "anchor_f1_tol15_shift0",
+    "anchor_f1_tol25_shift30",
+    "anchor_f1_tol40_shift0",
+    "log_overlap",
+    "log_min_dyads",
+    "dyad_balance",
+    "span_jaccard",
+    "raw_protection_sigma20_lag0",
+    "residual_all_reads_sigma20_lag0"
+  ],
+  "standard_scaler_mean": [
+    0.3789222981625935,
+    0.24943192139570108,
+    0.49196138217870683,
+    0.5262493313371086,
+    8.092365253109985,
+    2.760727731034165,
+    0.9343504815671265,
+    0.3889934924354206,
+    0.19426957885723095,
+    -0.26497278193803503
+  ],
+  "standard_scaler_scale": [
+    0.21508842341695172,
+    0.19211401397772487,
+    0.19677889798901824,
+    0.23315479798925434,
+    0.5891836890549391,
+    0.6106679487887201,
+    0.06697044892364083,
+    0.21491045011411491,
+    0.34086255119370107,
+    0.4387873941006519
+  ],
+  "logistic_coefficients": [
+    0.545295277600956,
+    0.056100258313859834,
+    -0.47508651800847046,
+    0.3647944565269219,
+    -0.6673076274665497,
+    0.4375436646876607,
+    0.12493760644208143,
+    0.5617788768791784,
+    0.3922856890585389,
+    1.152283235433119
+  ],
+  "logistic_intercept": -0.5977056721580776,
+  "selection": {
+    "rule": "reciprocal_best_with_virtual_null",
+    "default_margin": 1.0,
+    "null_floor": 0.0,
+    "min_overlap_bp": 1500,
+    "min_dyads_per_read": 4
+  },
+  "external_validation": {
+    "competitive_true_pairs": 80,
+    "true_ranked_first": 73,
+    "ranking_rate": 0.9125,
+    "margin_1_attempts": 53,
+    "margin_1_correct": 48,
+    "margin_1_wrong": 5,
+    "margin_1_observed_precision": 0.9056603773584906,
+    "legacy_layer_common_case_rescues": 1,
+    "legacy_layer_common_case_regressions": 0
+  },
+  "prohibited_score_inputs": [
+    "A/T sequence mismatch",
+    "haplotype label",
+    "TF LLR",
+    "sequence veto"
+  ]
+}

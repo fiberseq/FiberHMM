@@ -7,25 +7,22 @@ Most users can rely on enzyme-specific defaults:
 
 Use ``--model /path/to/custom.json`` to override with a custom file.
 
-Bundled models
---------------
+Supported bundled models
+------------------------
 Enzyme  Seq       Tool     Model
 ------  --------  -------  ----------------------
 hia5    pacbio    apply    hia5_pacbio.json
 hia5    pacbio    recall   hia5_pacbio.json
 hia5    nanopore  apply    hia5_nanopore.json
 hia5    nanopore  recall   hia5_nanopore.json
-ecogii  pacbio    apply    ecogii_pacbio.json
-ecogii  pacbio    recall   ecogii_pacbio.json
-ecogii  nanopore  apply    ecogii_pacbio.json
-ecogii  nanopore  recall   ecogii_pacbio.json
-sssi    nanopore  apply    cpg_nanopore.json
-sssi    nanopore  recall   cpg_nanopore.json
 dddb    (any)     apply    dddb_nanopore.json
 dddb    (any)     recall   dddb_nanopore.json
 ddda    (any)     apply    ddda_nuc.json
 ddda    (any)     recall   ddda_TF.json
 ddda    (any)     nuc_refine  ddda_nuc_refine.json (internal frozen likelihoods)
+
+Additional model-development artifacts may be present in this package, but
+they are not public enzyme presets and carry no supported-workflow claim.
 """
 from __future__ import annotations
 
@@ -92,7 +89,10 @@ _BUNDLED: dict[tuple[str, str | None], dict[str, object]] = {
     },
 }
 
-SUPPORTED_ENZYMES = sorted({e for e, _ in _BUNDLED})
+SUPPORTED_ENZYMES = ("ddda", "dddb", "hia5")
+DEVELOPMENT_ENZYMES = tuple(
+    sorted({enzyme for enzyme, _seq in _BUNDLED} - set(SUPPORTED_ENZYMES))
+)
 # Enzymes where --seq selects the observation frame. EcoGII reuses one
 # chemistry-calibrated emission table; ONT selects strand-aware nanopore-fiber
 # encoding while PacBio selects pacbio-fiber encoding.
@@ -172,15 +172,17 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
     Parameters
     ----------
     enzyme:
-        One of the bundled enzyme presets, including ``'hia5'``, ``'ecogii'``,
-        ``'dddb'``, ``'ddda'``, and ``'sssi'``.
+        One of the public enzyme presets: ``'hia5'``, ``'dddb'`` or ``'ddda'``.
+        Registry entries for development artifacts are an internal API and do
+        not constitute a supported workflow.
     tool:
         ``'apply'`` (fiberhmm-apply nuc HMM), ``'recall'``
         (fiberhmm-recall-tfs TF recaller), or the internal ``'nuc_refine'``
         likelihood model where bundled separately.
     seq:
         Sequencing platform: ``'pacbio'`` or ``'nanopore'``.
-        Required for Hia5, EcoGII, and SssI; ignored for DddB / DddA.
+        Required for the public Hia5 preset; ignored for DddB / DddA.
+        Internal development entries follow their registry metadata.
 
     Raises
     ------

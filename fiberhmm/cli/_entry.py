@@ -114,6 +114,12 @@ def pair_main():
     return main()
 
 
+def duplex_main():
+    _notify()
+    from fiberhmm.cli.duplex import main
+    return main()
+
+
 def merge_main():
     _notify()
     from fiberhmm.cli.merge import main

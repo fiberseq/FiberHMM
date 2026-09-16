@@ -80,7 +80,7 @@ also excluded from geometry learning, but retained as a topology-only obstacle:
 an edge alternative can never overwrite it merely because most of the call is
 soft-clipped.
 
-## Shared TF vocabulary
+## Shared site-consensus vocabulary
 
 Every geometry-eligible ordinary `tf` annotation can support a recurrent
 footprint, regardless of TQ. The baseline recaller has already made the
@@ -93,7 +93,7 @@ TF site construction is:
 
 1. project ordinary TF intervals to reference coordinates;
 2. cluster recurrent centers independently on each strand;
-3. merge matching strand clusters into one footprint family;
+3. merge matching strand clusters into one site-consensus state;
 4. record unique-molecule support, local enrichment, and robust start/end
    geometry separately for each strand; and
 5. calculate one canonical start/end from the median of the represented
@@ -106,7 +106,7 @@ The report retains each strand's medians, MADs, call counts, clipped-source
 exclusions, and disagreement with the canonical interval.
 
 `--site START-END` is a seed, not an authoritative footprint size. Its center
-nominates the family; support and canonical edges are learned again from all
+nominates the state; support and canonical edges are learned again from all
 ordinary calls in the selected cohort. If the cohort has no supporting calls,
 the seed cannot manufacture an opposite-strand prior.
 
@@ -127,8 +127,8 @@ biological length ceiling.
 
 ## Source-strand occupancy model
 
-For each TF family and strand, SR fits a local `A / TF / N` mixture from the
-hard observations of molecules spanning that family:
+For each TF site-consensus state and strand, SR fits a local `A / TF / N` mixture from the
+hard observations of molecules spanning that state:
 
 ```text
 log L(A)  = 0
@@ -136,7 +136,7 @@ log L(TF) = sum protected-vs-accessible LLR inside the canonical footprint
 log L(N)  = sum protected-vs-accessible LLR across the local protected window
 ```
 
-A geometry-eligible ordinary TF on a molecule spanning the family is anchored
+A geometry-eligible ordinary TF on a molecule spanning the state is anchored
 to the TF component; SR does not use its chemistry to re-test that accepted
 call. A geometry-eligible ordinary nuc covering the family center anchors the
 source-side N nuisance component. Topology-only annotations never anchor the
@@ -155,7 +155,7 @@ complete configuration. It does not claim to estimate pairwise co-occupancy.
 
 ## MSP-only missed-call recovery
 
-For target strand `s`, a TF family may supply a prior from the opposite strand
+For target strand `s`, a TF site-consensus state may supply a prior from the opposite strand
 only when it meets the source support and focal-enrichment requirements and is
 at least as well represented there as on `s`. Representation is the accepted
 TF-call fraction among reads that fully map the family, not its raw call count
@@ -180,7 +180,7 @@ This is the “borderline, not unsupported” rule. The target molecule does not
 need to pass the baseline caller's full TF threshold by itself. SR combines its
 weak positive likelihood with the opposite-strand occupancy prior.
 
-An ordinary nucleosome containing a source-supported TF family is counted as
+An ordinary nucleosome containing a source-supported TF site-consensus state is counted as
 `source_sites_inside_nucs_ignored` and receives no TF-rescue decision. The
 separate nuc-edge pass can still normalize that nucleosome one-for-one; it does
 not reinterpret the nucleosome as TF occupancy. TQ and DddA subnucleosomal
@@ -248,10 +248,10 @@ P(H* | A or S) = exp(log score(H*))
 
 where each log score combines the opposite-strand population prior with the
 target molecule's hard-chemistry likelihood. A strong TF-versus-accessible
-signal therefore cannot give one exact footprint family high quality when
-several size or position families remain plausible. The report retains the
-probability partition among the accessible state, the selected family, and all
-other supported families, plus the legacy pairwise selected-versus-accessible
+signal therefore cannot give one exact site-consensus state high quality when
+several size or position states remain plausible. The report retains the
+probability partition among the accessible state, the selected state, and all
+other supported states, plus the pairwise selected-versus-accessible
 value for diagnosis.
 
 The proposal tiers use the exact-configuration probability:
@@ -434,8 +434,7 @@ concordance rather than molecule-level truth.
 The exact event, configuration, matching, bootstrap, audit, figure-source, and
 artifact-receipt tables are documented in the
 [two-locus benchmark bundle](../../paper/analysis/strand_consensus/two_locus_20260824/README.md).
-The current development contract and claim boundary are in
-[`STRAND_RESCUE_V6_DEVELOPMENT.md`](./STRAND_RESCUE_V6_DEVELOPMENT.md).
+The current claim boundary is defined by this document and the emitted audit report.
 
 ## Commands
 
@@ -460,5 +459,5 @@ fiberhmm-strand-rescue-audit \
 ```
 
 For Nanopore Hia5, `--preset hia5-nanopore` automatically applies the hard
-threshold 248. The reproducible DddA, DddB, and Nanopore checks are recorded in
-[`STRAND_RESCUE_VALIDATION.md`](./STRAND_RESCUE_VALIDATION.md).
+threshold 248. Reproducible DddA, DddB, and nanopore checks are emitted by the
+audit command and covered by the release test suite.

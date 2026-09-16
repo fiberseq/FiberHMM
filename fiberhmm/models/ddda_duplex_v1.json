@@ -1,0 +1,83 @@
+{
+  "model_id": "ddda-duplex-v1",
+  "status": "externally_replicated_experimental",
+  "description": "Sequence-identity-free scDAF CT/GA duplex ranker using FiberHMM nucleosome lattice and non-CpG DddA protection profiles.",
+  "training_interval": "GRCh38 chr1:[0,40100000)",
+  "external_validation_interval": "GRCh38 chr1:[40500000,80500000)",
+  "training_cases": 241,
+  "training_edges": 1000,
+  "training_labels_sha256": "96d3e75036dcf85d6abc19594b34d37d95ed9c21c7f1c343c85e4d161980558d",
+  "training_features_sha256": "6922f781d9ced4145b7868898835e9605e5bec04ec66eb1423fa59ed9a6fff75",
+  "call_layer": "FiberHMM 2.16.3 recalled input MA nucleosomes",
+  "feature_names": [
+    "baseline_score",
+    "anchor_f1_tol15_shift0",
+    "anchor_f1_tol25_shift30",
+    "anchor_f1_tol40_shift0",
+    "log_overlap",
+    "log_min_dyads",
+    "dyad_balance",
+    "span_jaccard",
+    "raw_protection_sigma20_lag0",
+    "residual_all_reads_sigma20_lag0"
+  ],
+  "standard_scaler_mean": [
+    0.34012231858575254,
+    0.22207946968798367,
+    0.4625770010781921,
+    0.48551602139214395,
+    8.092365253109987,
+    2.6544803808375654,
+    0.909726379134722,
+    0.3889934924354206,
+    0.19426957885723095,
+    -0.26497278193803503
+  ],
+  "standard_scaler_scale": [
+    0.19984153885412967,
+    0.17268303725260337,
+    0.19317343929901973,
+    0.22443821035598002,
+    0.5891836890549391,
+    0.6236966005077577,
+    0.08781192585072357,
+    0.21491045011411491,
+    0.340862551193701,
+    0.4387873941006519
+  ],
+  "logistic_coefficients": [
+    0.35933460683295143,
+    0.24796691801589532,
+    0.01770661851689411,
+    -0.09495753497984574,
+    -0.5020900528865412,
+    0.30854356571156966,
+    0.024915382776879904,
+    0.5727405591689738,
+    0.3699880573635071,
+    1.116562875441345
+  ],
+  "logistic_intercept": -0.5852797131042041,
+  "selection": {
+    "rule": "reciprocal_best_with_virtual_null",
+    "default_margin": 1.0,
+    "null_floor": 0.0,
+    "min_overlap_bp": 1500,
+    "min_dyads_per_read": 4
+  },
+  "external_validation": {
+    "competitive_true_pairs": 80,
+    "true_ranked_first": 72,
+    "ranking_rate": 0.9,
+    "margin_1_attempts": 55,
+    "margin_1_correct": 51,
+    "margin_1_wrong": 4,
+    "margin_1_observed_precision": 0.9272727272727272
+  },
+  "prohibited_score_inputs": [
+    "A/T sequence mismatch",
+    "haplotype label",
+    "TF LLR",
+    "sequence veto"
+  ]
+}

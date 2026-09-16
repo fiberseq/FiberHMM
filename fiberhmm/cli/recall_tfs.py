@@ -81,6 +81,7 @@ from fiberhmm.inference.fused_stages import build_fused_recall_result
 from fiberhmm.inference.tagging import write_fused_recall_tags
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
+    TF_DECODER_VERSION,
     HAS_NUMBA,
     apply_emission_uplift,
     build_conditional_hit_tables,
@@ -144,6 +145,7 @@ def _build_recall_pg_record(args, mode, model_path, nuc_cfg):
             'FiberHMM second-pass footprint refinement; coord=molecular '
             '(ns/nl/as/al/MA in molecular original-fiber coordinates); '
             f'mode={mode} enzyme={args.enzyme or "custom"} '
+            f'tf_decoder={TF_DECODER_VERSION} '
             f'recall_nucs={recall_nucs} nuc_recall_policy={policy} '
             f'nuc_profile={profile_identity or "off"} '
             f'nuc_sha256={profile_sha256 or "off"} phase_nrl={phase_nrl}'
@@ -631,10 +633,11 @@ def parse_args(default_recall_nucs: bool = False):
                         f'min-llr/emission-uplift defaults '
                         f'({", ".join(sorted(ENZYME_PRESETS))}).')
     p.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                   help='Hia5/EcoGII sequencing platform; omission warns and defaults '
+                   help='Hia5 sequencing platform; omission warns and defaults '
                         'to pacbio. Ignored for dddb/ddda.')
     p.add_argument('--min-llr', type=float, default=None,
-                   help='Override min LLR (nats). Default: enzyme preset.')
+                   help='Override native LLR cost per TF interval in joint decoding '
+                        '(nats; default: enzyme preset; not an FDR threshold).')
     p.add_argument('--min-opps', type=int, default=3,
                    help='Min informative target positions per call (default 3)')
     p.add_argument('--emission-uplift', type=float, default=None,
@@ -707,7 +710,7 @@ def parse_args(default_recall_nucs: bool = False):
         choices=['auto', 'conservative', 'topology'],
         default='auto',
         help='"auto" uses topology-constrained, ambiguity-preserving recall '
-             'for Nanopore and historical conservative edges otherwise.',
+             'for Nanopore and conservative edges otherwise.',
     )
     nuc.add_argument('--nuc-min-size', type=int, default=85,
                      help='Min refined nucleosome size; smaller footprints are '
@@ -976,6 +979,7 @@ def main(default_recall_nucs: bool = False):
     print(
         f"[recall_tfs] enzyme={args.enzyme or 'custom'} mode={mode} k={k} "
         f"min_llr={min_llr:.2f} uplift={uplift:.2f} "
+        f"tf_decoder={TF_DECODER_VERSION} "
         f"ddda_mcg={'on' if m5c_llr_hit is not None else 'off'} "
         f"unify_threshold={args.unify_threshold} cores={n_cores} "
         f"numba={'on' if HAS_NUMBA else 'off'}",

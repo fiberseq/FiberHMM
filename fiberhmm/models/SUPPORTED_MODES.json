@@ -1,0 +1,40 @@
+{
+  "schema": "fiberhmm.supported_modes.v1",
+  "authoritative_model_root": "fiberhmm/models",
+  "public_enzyme_presets": [
+    {
+      "enzyme": "hia5",
+      "sequencing": "pacbio",
+      "observation_mode": "pacbio-fiber",
+      "apply_model": "hia5_pacbio.json",
+      "tf_model": "hia5_pacbio.json",
+      "tf_min_llr": 5.0
+    },
+    {
+      "enzyme": "hia5",
+      "sequencing": "nanopore",
+      "observation_mode": "nanopore-fiber",
+      "apply_model": "hia5_nanopore.json",
+      "tf_model": "hia5_nanopore.json",
+      "tf_min_llr": 5.0
+    },
+    {
+      "enzyme": "dddb",
+      "sequencing": "platform-neutral after DAF encoding",
+      "observation_mode": "daf",
+      "apply_model": "dddb_nanopore.json",
+      "tf_model": "dddb_nanopore.json",
+      "tf_min_llr": 4.0
+    },
+    {
+      "enzyme": "ddda",
+      "sequencing": "platform-neutral after DAF encoding",
+      "observation_mode": "daf",
+      "apply_model": "ddda_nuc.json",
+      "tf_model": "ddda_TF.json",
+      "nucleosome_refinement_model": "ddda_nuc_refine.json",
+      "tf_min_llr": 7.0
+    }
+  ],
+  "development_artifact_policy": "Additional chemistry model files are not public enzyme presets and carry no supported-workflow claim; use an explicit custom model path for method development."
+}

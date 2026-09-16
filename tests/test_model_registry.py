@@ -7,10 +7,36 @@ from pathlib import Path
 import pytest
 
 from fiberhmm.models import (
+    DEVELOPMENT_ENZYMES,
+    SUPPORTED_ENZYMES,
     get_metadata_mode_aliases,
     get_model_path,
     get_observation_mode,
 )
+
+
+def test_public_supported_modes_manifest_matches_cli_surface():
+    model_root = Path(__file__).resolve().parents[1] / "fiberhmm" / "models"
+    manifest = json.loads((model_root / "SUPPORTED_MODES.json").read_text())
+    enzymes = {row["enzyme"] for row in manifest["public_enzyme_presets"]}
+    assert enzymes == set(SUPPORTED_ENZYMES) == {"ddda", "dddb", "hia5"}
+    assert {"ecogii", "sssi"}.issubset(DEVELOPMENT_ENZYMES)
+    assert not ({"ecogii", "sssi"} & enzymes)
+
+
+def test_source_tree_current_model_mirror_matches_authoritative_package_root():
+    source_root = Path(__file__).resolve().parents[1]
+    package_root = source_root / "fiberhmm" / "models"
+    mirror_root = source_root / "models"
+    for filename in (
+        "ddda_TF.json",
+        "ddda_nuc.json",
+        "ddda_nuc_profile.json",
+        "dddb_nanopore.json",
+        "hia5_nanopore.json",
+        "hia5_pacbio.json",
+    ):
+        assert (mirror_root / filename).read_bytes() == (package_root / filename).read_bytes()
 
 
 @pytest.mark.parametrize(
@@ -30,7 +56,8 @@ def test_bundled_observation_modes(enzyme, seq, expected):
     assert get_observation_mode(enzyme, seq) == expected
 
 
-def test_ecogii_platforms_share_emissions_but_not_observation_frame():
+def test_development_ecogii_registry_entry_is_not_a_public_preset():
+    assert "ecogii" not in SUPPORTED_ENZYMES
     pacbio = get_model_path("ecogii", tool="apply", seq="pacbio")
     nanopore = get_model_path("ecogii", tool="apply", seq="nanopore")
     assert Path(pacbio) == Path(nanopore)
@@ -49,10 +76,8 @@ def test_ddda_nuc_refinement_model_is_separately_frozen():
 
     assert tf_model.name == "ddda_TF.json"
     assert nuc_model.name == "ddda_nuc_refine.json"
-    # At introduction the frozen nuc model is an exact snapshot of the
-    # historical TF table. Future TF calibration may change ddda_TF.json
-    # without changing this assertion's scientific intent; the independent
-    # path is the permanent contract.
+    # The frozen nucleosome-refinement table is an independent snapshot.
+    # TF calibration may change ddda_TF.json without changing this contract.
     assert json.loads(nuc_model.read_text())["mode"] == "daf"
     assert hashlib.sha256(nuc_model.read_bytes()).hexdigest() == (
         "5e1f29ba6abbf7c1909f2566efbd4c3f82cf4ecf4aa5de2c96f0a51b48e85bfb"

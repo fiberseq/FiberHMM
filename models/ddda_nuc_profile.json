@@ -1,5 +1,6 @@
 {
-"kind": "ddda_radial_v1",
+"kind": "ddda_phase_posterior_v1",
+"status": "production",
 "dyad_rate": [
 0.03215,
 0.02933,
@@ -102,5 +103,30 @@
 "half": 73,
 "min_sep": 150,
 "edge_frac": 0.82,
-"note": "edge-anchored DddA within-nucleosome deam rate vs |dist from dyad|; pooled NAPA/UBA1/PS01499"
+"edge_prior": {
+  "center": 73.0,
+  "sd": 25.0,
+  "likelihood_temperature": 1.0
+},
+"rotation": {
+  "period": 10.12,
+  "period_sd": 0.2,
+  "phase": 5.70,
+  "phase_sd": 0.8,
+  "phase_bins": 8,
+  "band_sd": 1.5,
+  "fraction": 1.0,
+  "edge_break_min_surprisal": 1.5,
+  "min_phase_information": 0.5
+},
+"validation": {
+  "locked": "2026-08-30",
+  "design": "12 independent HG002 scDAF libraries (deterministic whole-genome samples of approximately 3000 reads each) plus independent-molecule NAPA and UBA1 targeted cohorts",
+  "scdaf_libraries": 12,
+  "scdaf_primary_reads": 35727,
+  "napa_independent_reads": 3016,
+  "uba1_independent_reads": 5539,
+  "criterion": "Full production-pipeline, unsmoothed 1-bp nucleosome-size distributions were inspected within every cohort and jointly for estimator cliffs and residual one-sided 10-bp combs."
+},
+"note": "Production DddA nucleosome profile. The radial template nominates dyads; molecule-local sequence-context emissions and a phase-marginal rotational model define one continuous raw edge posterior. Each dyad-nominated raw edge proposal reports the posterior median, while posterior width is retained in el/er. A proposed crossing of pre-existing HMM-accessible space is tested against that competing molecular configuration identically at every posterior width. Final tiling can therefore constrain a proposal; no-dyad HMM calls and non-radial promoted or fallback calls are outside this posterior-edge contract."
 }

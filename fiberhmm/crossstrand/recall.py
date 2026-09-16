@@ -242,7 +242,8 @@ def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
                   nuc_el_for_kept=res.get('nuc_el_for_kept'),
                   nuc_er_for_kept=res.get('nuc_er_for_kept'))
     if deam_parts:  # write_ma_tags rebuilt MA; restore the strand-regime tracks
-        seg.set_tag('MA', seg.get_tag('MA') + ';' + ';'.join(deam_parts), value_type='Z')
+        base_ma = seg.get_tag('MA') if seg.has_tag('MA') else str(seg.query_length)
+        seg.set_tag('MA', base_ma + ';' + ';'.join(deam_parts), value_type='Z')
         # AN is optional. If the standard writer needed it for split/named
         # annotations, preserve positional alignment by appending anonymous
         # entries for every restored deam interval.

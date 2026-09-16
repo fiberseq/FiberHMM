@@ -47,11 +47,15 @@ dependencies = [
 
 [project.optional-dependencies]
 numba = ["numba>=0.55"]
+consensus = ["numba>=0.55", "scikit-learn>=1.1", "joblib>=1.4.2", "threadpoolctl>=3.1"]
 cuda = ["torch>=2.0"]
 plots = ["matplotlib>=3.5"]
 posteriors = ["h5py>=3.0"]
 all = [
     "numba>=0.55",
+    "scikit-learn>=1.1",
+    "joblib>=1.4.2",
+    "threadpoolctl>=3.1",
     "matplotlib>=3.5",
     "h5py>=3.0",
 ]
@@ -85,14 +89,17 @@ fiberhmm-call = "fiberhmm.cli._entry:call_main"
 fiberhmm-run = "fiberhmm.cli._entry:run_main"
 fiberhmm-dedup = "fiberhmm.cli._entry:dedup_main"
 fiberhmm-pair = "fiberhmm.cli._entry:pair_main"
+fiberhmm-duplex = "fiberhmm.cli._entry:duplex_main"
 fiberhmm-merge = "fiberhmm.cli._entry:merge_main"
 fiberhmm-crossstrand = "fiberhmm.cli._entry:crossstrand_main"
 fiberhmm-strand-rescue = "fiberhmm.cli._entry:strand_rescue_main"
 fiberhmm-strand-rescue-annotate = "fiberhmm.cli._entry:strand_rescue_annotate_main"
 fiberhmm-strand-rescue-audit = "fiberhmm.cli._entry:strand_rescue_audit_main"
 fiberhmm-footprint-model = "fiberhmm.cli._entry:footprint_model_main"
-fiberhmm-tag-families = "fiberhmm.cli._entry:tag_families_main"
-fiberhmm-targeted-families = "fiberhmm.cli._entry:targeted_families_main"
+fiberhmm-tag-consensus = "fiberhmm.cli._entry:tag_families_main"
+fiberhmm-site-consensus = "fiberhmm.cli._entry:targeted_families_main"
+fiberhmm-consensus = "fiberhmm.inference.consensus.cli:main"
+fiberhmm-transfer = "fiberhmm.inference.consensus.transfer_cli:main"
 fiberhmm-qc = "fiberhmm.cli._entry:qc_main"
 
 # Top-level scripts kept for backward compatibility
@@ -110,7 +117,7 @@ py-modules = [
 include = ["fiberhmm*"]
 
 [tool.setuptools.package-data]
-"fiberhmm.models" = ["*.json", "legacy/*.json"]
+"fiberhmm.models" = ["*.json", "*.md", "legacy/*.json"]
 "fiberhmm.qc" = ["*.json", "*.md"]
 
 [tool.pytest.ini_options]

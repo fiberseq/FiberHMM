@@ -44,7 +44,7 @@ Interval = Tuple[int, int]
 
 @dataclass(frozen=True)
 class TargetedFamilyChemistry:
-    """Chemistry-aware geometry tolerances for targeted family discovery."""
+    """Chemistry-aware geometry tolerances for targeted site-consensus discovery."""
 
     maximum_boundary_delta: int
     maximum_width_delta: int
@@ -52,13 +52,21 @@ class TargetedFamilyChemistry:
     minimum_shorter_overlap_fraction: float
     boundary_search_radius: int
     minimum_molecule_opportunities: int
+    nested_substate_anchor_delta: int
+    nested_substate_divergent_boundary_delta: int
+    nested_substate_center_delta: float
+    nested_substate_minimum_overlap_fraction: float
 
 
 CHEMISTRY_PROFILES: Mapping[str, TargetedFamilyChemistry] = {
-    "ddda": TargetedFamilyChemistry(18, 18, 12.0, 0.75, 4, 3),
-    "dddb": TargetedFamilyChemistry(28, 32, 18.0, 0.55, 8, 2),
-    "hia5-pacbio": TargetedFamilyChemistry(24, 28, 16.0, 0.60, 7, 2),
-    "hia5-nanopore": TargetedFamilyChemistry(24, 28, 16.0, 0.60, 7, 2),
+    "ddda": TargetedFamilyChemistry(18, 18, 12.0, 0.75, 4, 3, 8, 36, 24.0, 0.55),
+    "dddb": TargetedFamilyChemistry(28, 32, 18.0, 0.55, 8, 2, 12, 64, 36.0, 0.50),
+    "hia5-pacbio": TargetedFamilyChemistry(
+        24, 28, 16.0, 0.60, 7, 2, 12, 56, 32.0, 0.50
+    ),
+    "hia5-nanopore": TargetedFamilyChemistry(
+        24, 28, 16.0, 0.60, 7, 2, 12, 56, 32.0, 0.50
+    ),
 }
 
 
@@ -82,6 +90,7 @@ class TargetedFamilyDiscoveryConfig:
     maximum_discovery_molecules: int = 500
     minimum_family_support: int = 3
     minimum_family_fraction: float = 0.05
+    merge_nested_substates: bool = True
     seed: str = "fiberhmm-targeted-family-discovery-v1"
 
     def __post_init__(self) -> None:
@@ -114,6 +123,8 @@ class TargetedFamilyDiscoveryConfig:
             or not 0.0 <= float(family_fraction) <= 1.0
         ):
             raise ValueError("minimum_family_fraction must be in [0,1]")
+        if not isinstance(self.merge_nested_substates, bool):
+            raise ValueError("merge_nested_substates must be boolean")
         if not self.seed:
             raise ValueError("seed must be non-empty")
 
@@ -1065,6 +1076,18 @@ def _summarize_prescribed_boundary_family(
                 "fitted_family_posterior": float(fitted_posteriors[index]),
                 "standardized_family_posterior_equal_prior": float(
                     standardized_posteriors[index]
+                ),
+                # Keep the two predictive terms, not only their difference.
+                # The family term has a common accessible reference and is
+                # therefore the quantity needed to compare two overlapping
+                # protected geometries directly.  Comparing their Bayes
+                # factors would be invalid when their local null envelopes
+                # differ.
+                "family_log_predictive_ratio_to_accessible": float(
+                    contribution.family_log_predictive
+                ),
+                "null_log_predictive_ratio_to_accessible": float(
+                    contribution.null_log_predictive
                 ),
                 "family_vs_null_log_bayes_factor": float(log_bayes_factors[index]),
             }
@@ -2109,17 +2132,72 @@ def geometry_compatible(
     left: TargetedFootprintFamily,
     right: TargetedFootprintFamily,
     chemistry: TargetedFamilyChemistry,
+    *,
+    allow_nested_substates: bool = True,
 ) -> bool:
-    """Return chemistry-aware complete-link compatibility for two geometries."""
+    """Return chemistry-aware complete-link compatibility for two geometries.
 
-    return bool(
-        left.contig == right.contig
-        and abs(left.start - right.start) <= chemistry.maximum_boundary_delta
-        and abs(left.end - right.end) <= chemistry.maximum_boundary_delta
-        and abs(left.width - right.width) <= chemistry.maximum_width_delta
-        and abs(left.center - right.center) <= chemistry.maximum_center_delta
-        and _overlap_fraction((left.start, left.end), (right.start, right.end))
-        >= chemistry.minimum_shorter_overlap_fraction
+    Besides ordinary modest boundary jitter, retain deeply nested calls that
+    share one well-resolved edge as alternative substates of one biological
+    family.  This is important when one assay resolves a compact protected
+    core on some molecules and a broader protected interval on others.  The
+    shared-edge, near-complete-overlap, and bounded-divergent-edge conditions
+    deliberately exclude generic partial overlaps and chains of adjacent
+    footprints; group construction remains complete-linkage downstream.
+    """
+
+    if left.contig != right.contig:
+        return False
+
+    def interval_compatible(left_interval: Interval, right_interval: Interval) -> bool:
+        left_start, left_end = left_interval
+        right_start, right_end = right_interval
+        left_width = left_end - left_start
+        right_width = right_end - right_start
+        overlap_fraction = _overlap_fraction(left_interval, right_interval)
+        start_delta = abs(left_start - right_start)
+        end_delta = abs(left_end - right_end)
+        center_delta = abs(
+            (left_start + left_end - right_start - right_end) / 2.0
+        )
+        ordinary = bool(
+            start_delta <= chemistry.maximum_boundary_delta
+            and end_delta <= chemistry.maximum_boundary_delta
+            and abs(left_width - right_width) <= chemistry.maximum_width_delta
+            and center_delta <= chemistry.maximum_center_delta
+            and overlap_fraction >= chemistry.minimum_shorter_overlap_fraction
+        )
+        if ordinary:
+            return True
+        if not allow_nested_substates:
+            return False
+        if left_width <= right_width:
+            shorter = left_interval
+            longer = right_interval
+        else:
+            shorter = right_interval
+            longer = left_interval
+        anchor = chemistry.nested_substate_anchor_delta
+        contained_with_anchor_uncertainty = bool(
+            shorter[0] >= longer[0] - anchor
+            and shorter[1] <= longer[1] + anchor
+        )
+        return bool(
+            overlap_fraction
+            >= chemistry.nested_substate_minimum_overlap_fraction
+            and contained_with_anchor_uncertainty
+            and min(start_delta, end_delta) <= anchor
+            and max(start_delta, end_delta)
+            <= chemistry.nested_substate_divergent_boundary_delta
+            and center_delta <= chemistry.nested_substate_center_delta
+        )
+
+    left_seeds = left.seed_intervals or ((left.start, left.end),)
+    right_seeds = right.seed_intervals or ((right.start, right.end),)
+    return all(
+        interval_compatible(left_seed, right_seed)
+        for left_seed in left_seeds
+        for right_seed in right_seeds
     )
 
 
@@ -2163,6 +2241,7 @@ def _families_from_catalog(
     chemistry: TargetedFamilyChemistry,
     minimum_support: int,
     minimum_fraction: float,
+    merge_nested_substates: bool,
 ) -> Tuple[TargetedFootprintFamily, ...]:
     sites = [
         site
@@ -2194,7 +2273,15 @@ def _families_from_catalog(
         eligible = [
             index
             for index, group in enumerate(groups)
-            if all(geometry_compatible(candidate, member, chemistry) for member in group)
+            if all(
+                geometry_compatible(
+                    candidate,
+                    member,
+                    chemistry,
+                    allow_nested_substates=merge_nested_substates,
+                )
+                for member in group
+            )
         ]
         if eligible:
             selected = min(
@@ -2264,6 +2351,7 @@ def _discover_window_task(payload) -> TargetedWindowResult:
         chemistry,
         config.minimum_family_support,
         config.minimum_family_fraction,
+        config.merge_nested_substates,
     )
     stratum_counts: Dict[str, int] = {}
     for molecule in selected:
@@ -2283,6 +2371,8 @@ def _discover_window_task(payload) -> TargetedWindowResult:
 def _reconcile_families(
     candidates: Sequence[TargetedFootprintFamily],
     chemistry: TargetedFamilyChemistry,
+    *,
+    merge_nested_substates: bool = True,
 ) -> Tuple[TargetedFootprintFamily, ...]:
     groups: List[List[TargetedFootprintFamily]] = []
     active_group_indices: List[int] = []
@@ -2293,7 +2383,10 @@ def _reconcile_families(
         if family.contig != current_contig:
             current_contig = family.contig
             active_group_indices = []
-        cutoff = family.start - chemistry.maximum_boundary_delta
+        cutoff = family.start - max(
+            chemistry.maximum_boundary_delta,
+            chemistry.nested_substate_divergent_boundary_delta,
+        )
         active_group_indices = [
             index
             for index in active_group_indices
@@ -2303,7 +2396,12 @@ def _reconcile_families(
             index
             for index in active_group_indices
             if all(
-                geometry_compatible(family, member, chemistry)
+                geometry_compatible(
+                    family,
+                    member,
+                    chemistry,
+                    allow_nested_substates=merge_nested_substates,
+                )
                 for member in groups[index]
             )
         ]
@@ -2448,6 +2546,7 @@ def discover_targeted_families(
     families = _reconcile_families(
         [family for result in results for family in result.families],
         chemistry_profile,
+        merge_nested_substates=config.merge_nested_substates,
     )
     return TargetedFamilyDiscovery(
         schema="fiberhmm.targeted_family_discovery.v1",

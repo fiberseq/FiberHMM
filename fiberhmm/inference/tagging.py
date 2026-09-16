@@ -81,7 +81,7 @@ def _u32_bam_array(values) -> pyarray.array:
 def set_legacy_apply_tags(read, result: dict, with_scores: bool, write_msps: bool = True) -> None:
     """Write legacy apply tags (`ns/nl/as/al`, optional `nq/aq`) in place.
 
-    This intentionally preserves the historical apply behavior: a non-empty
+    This intentionally preserves the compatibility apply behavior: a non-empty
     result writes only the tag groups that have calls, and skipped/empty reads
     are passed through by callers.
     """

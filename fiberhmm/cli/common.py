@@ -52,7 +52,7 @@ def resolve_observation_mode(
 
     Precedence is explicit legacy override, bundled enzyme/platform inference,
     then custom-model metadata. Bundled inference is authoritative because
-    historical model files can contain stale mode metadata.
+    packaged compatibility model files can contain stale mode metadata.
     """
     valid_model_mode = (
         model_mode if model_mode in OBSERVATION_MODES else None

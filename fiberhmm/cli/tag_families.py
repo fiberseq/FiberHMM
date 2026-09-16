@@ -254,7 +254,7 @@ def _family_header(header, *, assignment_sha256: str, command_line: str):
     return append_pg_record(
         output,
         {
-            "PN": "fiberhmm-tag-families",
+            "PN": "fiberhmm-tag-consensus",
             "VN": FIBERHMM_VERSION,
             "CL": command_line,
             "DS": (
@@ -271,7 +271,7 @@ def tag_tf_families(
     assignment_tsv: str | Path,
     *,
     force: bool = False,
-    command_line: str = "fiberhmm-tag-families",
+    command_line: str = "fiberhmm-tag-consensus",
 ) -> Mapping[str, object]:
     """Materialize assignment rows into ``tf_sr`` while preserving geometry."""
 
@@ -465,7 +465,7 @@ def tag_tf_families(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="fiberhmm-tag-families",
+        prog="fiberhmm-tag-consensus",
         description=(
             "Append local TF-family ID and assignment-confidence bytes to the "
             "complete tf_sr Molecular Annotation layer."
@@ -485,7 +485,7 @@ def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     command_line = " ".join(
-        ["fiberhmm-tag-families"]
+        ["fiberhmm-tag-consensus"]
         + [shlex.quote(str(value)) for value in (sys.argv[1:] if argv is None else argv)]
     )
     try:

@@ -3,7 +3,7 @@
 
 Eliminates the streaming-pipeline pipe serialization between `fiberhmm-apply`
 and `fiberhmm-recall-tfs` by running the 2-state HMM (nucleosome/MSP calls)
-and the LLR Kadane scan (TF calls) in the same worker per read.  Uses the
+and native-LLR multi-interval decoding (TF calls) in the same worker per read. Uses the
 same slim-IPC main→worker payload as `fiberhmm-apply`.
 
 Output BAM has BOTH:
@@ -44,7 +44,7 @@ from fiberhmm.inference.parallel import (
     _process_bam_region_parallel_fused,
     _process_bam_streaming_pipeline_fused,
 )
-from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
+from fiberhmm.inference.tf_recaller import ENZYME_PRESETS, TF_DECODER_VERSION
 from fiberhmm.models import (
     SUPPORTED_ENZYMES,
     get_metadata_mode_aliases,
@@ -71,7 +71,7 @@ def parse_args():
     p.add_argument('--enzyme', choices=sorted(SUPPORTED_ENZYMES), default=None,
                    help='Bundled enzyme preset.')
     p.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                   help='Hia5/EcoGII platform; omission warns and defaults to pacbio. '
+                   help='Hia5 platform; omission warns and defaults to pacbio. '
                         'Ignored for dddb/ddda.')
     p.add_argument('--reference', default=None,
                    help='Reference FASTA for DAF-seq BAMs that lack '
@@ -108,7 +108,8 @@ def parse_args():
 
     # --- Recall params ---
     p.add_argument('--min-llr', type=float, default=None,
-                   help='Min LLR for TF call (default: enzyme preset).')
+                   help='Native LLR cost per TF interval in joint decoding '
+                        '(default: enzyme preset; not a calibrated FDR threshold).')
     p.add_argument('--min-opps', type=int, default=3,
                    help='Min informative target positions per TF call (default 3).')
     p.add_argument('--unify-threshold', type=int, default=90,
@@ -151,7 +152,7 @@ def parse_args():
         default='auto',
         help='Nucleosome-recaller geometry policy. "auto" (default) uses '
              'topology-constrained, ambiguity-preserving recall for Nanopore '
-             'and the historical conservative-edge policy otherwise. '
+             'and the conservative-edge policy otherwise. '
              '"topology" only accepts cuts that leave nucleosome-sized pieces '
              'and does not turn unresolved edge ambiguity into accessibility.',
     )
@@ -341,7 +342,7 @@ def _resolve_nuc_model_path(args, recall_nucs: bool):
     ``--recall-model`` changes TF scoring only. A caller that explicitly
     identifies the chemistry as DddA therefore retains the locked bundled nuc
     refinement model; fully custom workflows without ``--enzyme ddda`` retain
-    the historical shared-table fallback.
+    the compatibility shared-table fallback.
     """
     if (
         recall_nucs
@@ -1038,6 +1039,7 @@ def main():
         'DS': (f"FiberHMM fused apply+recall; coord=molecular "
                f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
                f"mode={mode} enzyme={args.enzyme or 'custom'} "
+               f"tf_decoder={TF_DECODER_VERSION} tf_interval_penalty={min_llr} "
                f"recall_nucs={recall_nucs} "
                f"nuc_recall_policy={nuc_recall_policy} "
                f"nuc_profile={nuc_profile_identity or 'off'} "
@@ -1060,6 +1062,7 @@ def main():
         f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'}\n"
         f"  min_llr={min_llr} min_opps={args.min_opps} "
         f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
+        f"  tf-decoder={TF_DECODER_VERSION} interval-penalty={min_llr}\n"
         f"  nuc-recall-policy={nuc_recall_policy} phase-nrl={phase_nrl}\n"
         f"  ddda-derived-tf-edge-gap="
         f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'}\n"

@@ -32,7 +32,7 @@ from fiberhmm.cli.extract_tags import _build_query_to_ref, _deam_positions_list
 from fiberhmm.crossstrand.pairing import FLAVOR_CT, FLAVOR_GA
 
 
-def _ref_base_map_and_deam(read):
+def _ref_base_map_and_deam(read, prob_threshold=0):
     """Return ``(ref_base_map, ct_deam, ga_deam)`` for one read.
 
     ``ref_base_map`` maps reference position -> canonical reference base
@@ -44,7 +44,7 @@ def _ref_base_map_and_deam(read):
     if seq is None:
         return None
     q2r = _build_query_to_ref(read)
-    calls = _deam_positions_list(read, q2r, 0)
+    calls = _deam_positions_list(read, q2r, prob_threshold)
     ct = {p for p, f in calls if f == FLAVOR_CT}
     ga = {p for p, f in calls if f == FLAVOR_GA}
     ref: Dict[int, str] = {}
@@ -129,11 +129,11 @@ class Consensus:
     ga_name: str
 
 
-def build_consensus(ct_read, ga_read) -> Optional[Consensus]:
+def build_consensus(ct_read, ga_read, prob_threshold=0) -> Optional[Consensus]:
     """Build a both-strand :class:`Consensus` from a CT/GA pair, or None if a
     read is unusable (no sequence)."""
-    a = _ref_base_map_and_deam(ct_read)
-    b = _ref_base_map_and_deam(ga_read)
+    a = _ref_base_map_and_deam(ct_read, prob_threshold)
+    b = _ref_base_map_and_deam(ga_read, prob_threshold)
     if a is None or b is None:
         return None
     ref_ct, ct_deam, _ = a

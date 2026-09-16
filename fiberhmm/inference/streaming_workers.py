@@ -27,7 +27,7 @@ from fiberhmm.inference.worker_results import WorkerChunkResult
 _worker_model = None
 _worker_debug_timing = False
 
-# Per-worker recall state: LLR tables for the TF Kadane scan. Lives alongside
+# Per-worker recall state: LLR tables for native TF configuration decoding. Lives alongside
 # _worker_model and is populated by _init_fused_worker.
 _worker_recall_state = {}
 
@@ -78,7 +78,7 @@ def _init_fused_worker(
 ):
     """Initialize worker process for the fused apply+recall pipeline.
 
-    Loads the apply HMM model plus the LLR tables used for the TF Kadane
+    Loads the apply HMM model plus the LLR tables used for TF configuration
     scan. recall_model_path=None means reuse the apply model's emissions
     (the common case -- same model file drives both passes).
     """
@@ -167,7 +167,7 @@ def _init_fused_worker(
     )
     configure_daf_chimera_filter(filter_chimeras, chimera_min_seg, chimera_purity)
 
-    # Warmup: apply Viterbi + TF Kadane scan.
+    # Warmup: apply Viterbi + native TF configuration decoding.
     from fiberhmm.core.hmm import HAS_NUMBA
 
     if HAS_NUMBA:

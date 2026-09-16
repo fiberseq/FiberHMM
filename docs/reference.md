@@ -381,7 +381,7 @@ footprint may be divided.
 
 The nucleosome geometry is controlled by `--nuc-recall-policy`:
 
-- `conservative` is the historical policy. Every qualifying accessible run is
+- `conservative` treats every qualifying accessible run as
   a cut, after which the positive-sign scan defines conservative inner
   nucleosome boundaries. On sparse single-strand data, this can turn unresolved
   sequence into apparent accessibility.

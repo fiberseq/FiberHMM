@@ -205,6 +205,39 @@ def test_sequence_does_not_force_lone_identical_overlap(params):
     assert res.status[0] == STATUS_UNRESOLVED
 
 
+def test_single_cell_haplotype_pairs_staggered_one_plus_one_without_footprints(params):
+    phased = replace(params, single_cell_haplotype=True)
+    ct = _mk(0, 'ct', FLAVOR_CT, 900, 4800, [], phased)
+    ga = _mk(1, 'ga', FLAVOR_GA, 1800, 5600, [], phased)
+    res = assign_pairs([ct, ga], phased)
+    assert res.partner == {0: 1, 1: 0}
+    assert set(res.method.values()) == {'H'}
+    assert all(res.status[i] == STATUS_PAIRED for i in range(2))
+
+
+def test_single_cell_haplotype_fails_closed_on_ambiguous_overlap(params):
+    phased = replace(params, single_cell_haplotype=True)
+    ct = _mk(0, 'ct', FLAVOR_CT, 900, 4800, [], phased)
+    ga1 = _mk(1, 'ga1', FLAVOR_GA, 1000, 4900, [], phased)
+    ga2 = _mk(2, 'ga2', FLAVOR_GA, 1100, 5000, [], phased)
+    res = assign_pairs([ct, ga1, ga2], phased)
+    assert res.partner == {}
+    assert all(res.status[i] == STATUS_UNRESOLVED for i in range(3))
+
+
+def test_single_cell_haplotype_preserves_sequence_fallback_for_ambiguous_component(params):
+    phased = replace(params, single_cell_haplotype=True)
+    feats = [
+        _with_sequence(_mk(0, 'ctA', FLAVOR_CT, 900, 4800, [], phased), 'A'),
+        _with_sequence(_mk(1, 'ctB', FLAVOR_CT, 900, 4800, [], phased), 'G'),
+        _with_sequence(_mk(2, 'gaA', FLAVOR_GA, 900, 4800, [], phased), 'A'),
+        _with_sequence(_mk(3, 'gaB', FLAVOR_GA, 900, 4800, [], phased), 'G'),
+    ]
+    res = assign_pairs(feats, phased)
+    assert res.partner == {0: 2, 2: 0, 1: 3, 3: 1}
+    assert set(res.method.values()) == {'S'}
+
+
 def test_snp_scale_2x2_difference_is_not_force_assigned(params):
     # A single SNP supports one diagonal, but without gross discordance this is
     # deliberately left for footprints. This guards against the overmatching

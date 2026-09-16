@@ -1,4 +1,4 @@
-"""BED-driven orchestration for targeted footprint-family scans."""
+"""BED-driven orchestration for targeted site-consensus scans."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ from fiberhmm.inference.tf_family_ids import (
 def add_batch_parser(subparsers) -> None:
     batch = subparsers.add_parser(
         "batch",
-        help="Discover and quantify families across BED-defined target sites",
+        help="Discover and quantify site-consensus states across BED-defined targets",
     )
     batch.add_argument("--bed", required=True)
     batch.add_argument("-i", "--input", action="append", required=True)
@@ -66,10 +66,20 @@ def add_batch_parser(subparsers) -> None:
     batch.add_argument("--minimum-informative-molecules", type=int, default=3)
     batch.add_argument("--minimum-informative-fraction", type=float, default=0.01)
     batch.add_argument("--discovery-reads", type=int, default=500)
-    batch.add_argument("--minimum-family-support", type=int, default=3)
-    batch.add_argument("--minimum-family-fraction", type=float, default=0.05)
+    batch.add_argument(
+        "--minimum-state-support",
+        dest="minimum_family_support",
+        type=int,
+        default=3,
+    )
+    batch.add_argument(
+        "--minimum-state-fraction",
+        dest="minimum_family_fraction",
+        type=float,
+        default=0.05,
+    )
     batch.add_argument("--min-mapq", type=int, default=20)
-    batch.add_argument("--seed", default="fiberhmm-targeted-family-discovery-v1")
+    batch.add_argument("--seed", default="fiberhmm-site-consensus-discovery-v1")
     batch.add_argument("--daf-minimum-jaccard", type=float, default=0.95)
     batch.add_argument("--daf-minimum-deaminations", type=int, default=10)
     batch.add_argument("--daf-already-deduplicated", action="store_true")
@@ -85,14 +95,18 @@ def add_batch_parser(subparsers) -> None:
     )
     batch.add_argument("--cuda-interval-chunk-size", type=int, default=1024)
     batch.add_argument("--cuda-read-chunk-size", type=int, default=0)
-    batch.add_argument("--cuda-family-batch-span-bp", type=int, default=25000)
+    batch.add_argument(
+        "--cuda-state-batch-span-bp",
+        dest="cuda_family_batch_span_bp",
+        type=int,
+        default=25000,
+    )
     batch.add_argument("--cuda-replay-guard-nats", type=float, default=1e-8)
     batch.add_argument("--tf-layer", choices=("tf", "tf_sr"), default="tf_sr")
     batch.add_argument("--nuc-layer", choices=("nuc", "nuc_sr"), default="nuc_sr")
     batch.add_argument("--occupancy-pseudocount", type=float, default=0.5)
     batch.add_argument(
         "--minimum-assignment-standardized-posterior",
-        "--minimum-assignment-posterior",
         dest="minimum_assignment_standardized_posterior",
         type=float,
         default=0.5,
@@ -202,7 +216,7 @@ def _stage_args(parent_parser, values, input_provenance):
 
 def _stage_command_line(values) -> str:
     return " ".join(
-        ["fiberhmm-targeted-families"]
+        ["fiberhmm-site-consensus"]
         + [shlex.quote(str(value)) for value in values]
     )
 
@@ -360,8 +374,8 @@ def _discover_values(args, unit, output_directory: Path):
             "--minimum-informative-molecules", str(args.minimum_informative_molecules),
             "--minimum-informative-fraction", str(args.minimum_informative_fraction),
             "--discovery-reads", str(args.discovery_reads),
-            "--minimum-family-support", str(args.minimum_family_support),
-            "--minimum-family-fraction", str(args.minimum_family_fraction),
+            "--minimum-state-support", str(args.minimum_family_support),
+            "--minimum-state-fraction", str(args.minimum_family_fraction),
             "--min-mapq", str(args.min_mapq),
             "--seed", str(args.seed),
             "--daf-minimum-jaccard", str(args.daf_minimum_jaccard),
@@ -395,7 +409,7 @@ def _quantify_values(
             "--likelihood-backend", args.likelihood_backend,
             "--cuda-interval-chunk-size", str(args.cuda_interval_chunk_size),
             "--cuda-read-chunk-size", str(args.cuda_read_chunk_size),
-            "--cuda-family-batch-span-bp", str(args.cuda_family_batch_span_bp),
+            "--cuda-state-batch-span-bp", str(args.cuda_family_batch_span_bp),
             "--cuda-replay-guard-nats", str(args.cuda_replay_guard_nats),
             "--min-mapq", str(args.min_mapq),
             "--tf-layer", args.tf_layer,

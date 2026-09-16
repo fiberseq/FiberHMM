@@ -1285,7 +1285,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="skip_nuc_edge_refinement",
         action="store_false",
         help=(
-            "Legacy/experimental population nucleosome-edge normalization. "
+            "Experimental population nucleosome-edge normalization. "
             "This is not the TF-conditioned consensus-nuc reconciliation stage."
         ),
     )
@@ -1308,27 +1308,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.5,
         help=(
             "Symmetric per-configuration pseudocount for localized single/"
-            "composite TF class priors"
+            "composite site-consensus priors"
         ),
     )
     parser.add_argument(
         "--tf-class-locus-gap",
         type=int,
         default=30,
-        help="Maximum gap joining atomic footprint families into one TF class locus",
+        help="Maximum gap joining atomic footprint states into one consensus locus",
     )
     parser.add_argument(
         "--tf-class-max-span",
         type=int,
         default=250,
-        help="Maximum span in bp of one localized TF class locus",
+        help="Maximum span in bp of one localized site-consensus locus",
     )
     parser.add_argument(
         "--tf-class-max-sites",
         type=int,
         default=10,
         help=(
-            "Maximum atomic families enumerated in a complete TF class action set; "
+            "Maximum atomic states enumerated in a complete site-consensus action set; "
             "larger loci are reported as skipped"
         ),
     )

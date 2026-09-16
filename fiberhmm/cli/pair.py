@@ -19,7 +19,8 @@ for added local tags on reads that received a confident mate --
     mg:i  footprint-correlation best-minus-competitor margin x1000
     mt:A  status: 'P' paired, 'U' unresolved (had candidates, failed gate),
           '.' no overlapping opposite-strand candidate
-    pm:A  pairing method: 'S' sequence assignment, 'F' footprint fallback
+    pm:A  pairing method: 'H' phased single-cell 1+1 overlap,
+          'S' sequence assignment, 'F' footprint fallback
     sb:i  shared deamination-safe sequence bases
     sd:i  sequence differences
     sr:i  sequence difference rate x1,000,000
@@ -36,6 +37,7 @@ import os
 import sys
 import time
 from collections import Counter
+from dataclasses import replace
 from itertools import chain
 
 import numpy as np
@@ -64,7 +66,8 @@ def _has_usable_sequence_score(score: SequenceScore | None) -> bool:
 
 
 def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
-             pairs_tsv=None, io_threads=4, reference_path=None):
+             pairs_tsv=None, io_threads=4, reference_path=None,
+             paired_only=False):
     t0 = time.time()
     if reference_path is None:
         print("Info: no reference FASTA supplied; sequence-first pairing will "
@@ -124,7 +127,12 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
         if not feats:
             continue
         n_feat += len(feats)
-        res = assign_pairs(feats, params)
+        chrom_params = params
+        if params.single_cell_haplotype and not (
+            chrom.endswith('_MATERNAL') or chrom.endswith('_PATERNAL')
+        ):
+            chrom_params = replace(params, single_cell_haplotype=False)
+        res = assign_pairs(feats, chrom_params)
         by_index = {f.index: f for f in feats}
         for i, st in res.status.items():
             f = by_index[i]
@@ -151,7 +159,8 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
     print(f"Pass 1: {n_reads:,} reads ({n_feat:,} featurizable) -> "
           f"{n_pairs:,} cross-strand pairs covering {n_paired:,} reads "
           f"({100.0*n_paired/max(n_feat,1):.1f}% of featurizable) "
-          f"[sequence {per_method['S']//2:,}; footprint {per_method['F']//2:,}] "
+          f"[haplotype {per_method['H']//2:,}; sequence {per_method['S']//2:,}; "
+          f"footprint {per_method['F']//2:,}] "
           f"[{time.time()-t0:.0f}s]", file=sys.stderr)
 
     if pairs_tsv:
@@ -187,6 +196,7 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
     out = pysam.AlignmentFile(out_bam, 'wb', template=bam, threads=io_threads)
     n_written = 0
     for read in bam.fetch(until_eof=True):
+        write_record = not paired_only
         if not (read.is_unmapped or read.is_secondary or read.is_supplementary):
             fl = read_flavor(read, prob_threshold)
             if fl is not None:
@@ -195,6 +205,7 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
                 if st is not None:
                     read.set_tag(_TAG_STATUS, st, value_type='A')
                     if st == STATUS_PAIRED:
+                        write_record = True
                         mate, corr, marg, method, seq, seq_marg, assignment = resolved[key]
                         read.set_tag(_TAG_PARTNER, mate, value_type='Z')
                         if corr is not None:
@@ -218,8 +229,9 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
                             )
                         if assignment is not None:
                             read.set_tag(_TAG_ASSIGNMENT, assignment, value_type='A')
-        out.write(read)
-        n_written += 1
+        if write_record:
+            out.write(read)
+            n_written += 1
     out.close()
     bam.close()
     print(f"Pass 2: wrote {n_written:,} reads -> {out_bam} [{time.time()-t0:.0f}s]",
@@ -246,6 +258,18 @@ Examples:
                         'omitted, MD+CIGAR evidence is used where available '
                         'before footprint fallback')
     p.add_argument('--pairs-tsv', default=None, help='Write resolved pairs to this TSV')
+    p.add_argument(
+        '--paired-only', action='store_true',
+        help='Write only the two primary source records for resolved pairs. '
+             'Default writes every input record with pair status tags.',
+    )
+    p.add_argument(
+        '--single-cell-haplotype', action='store_true',
+        help='For one PCR-collapsed single-cell library aligned to phased '
+             '*_MATERNAL/*_PATERNAL contigs, assign reciprocal-unique CT/GA '
+             'overlaps directly (pm:H) before the existing sequence/footprint '
+             'routes. Run each library separately.',
+    )
     p.add_argument('--min-score', type=float, default=0.25, help='Min cross-correlation floor to accept any pair (default 0.25)')
     p.add_argument('--min-margin', type=float, default=0.05, help='Min best-minus-competitor margin, both reads (default 0.05)')
     p.add_argument('--null-floor', type=float, default=0.24, help='Wrong-pair correlation baseline; virtual competitor for lone (1+1) pairs (default 0.24, ~data null p90)')
@@ -282,10 +306,11 @@ Examples:
         min_component_discordance_rate=args.min_component_discordance_rate,
         min_sequence_margin=args.min_sequence_margin,
         max_sequence_pair_rate=args.max_sequence_pair_rate,
+        single_cell_haplotype=args.single_cell_haplotype,
     )
     run_pair(args.input, args.output, params, prob_threshold=args.prob_threshold,
              pairs_tsv=args.pairs_tsv, io_threads=args.io_threads,
-             reference_path=args.reference)
+             reference_path=args.reference, paired_only=args.paired_only)
 
 
 if __name__ == '__main__':

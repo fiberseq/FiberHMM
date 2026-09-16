@@ -1338,7 +1338,7 @@ def test_radial_completion_scores_multiple_tf_fragments_without_size_gate():
     )
 
     # The joint likelihood prefers the outer edge of the two-fragment chain.
-    # A historical >=130-bp acceptance rule would reject this 125-bp result.
+    # The superseded >=130-bp acceptance rule would reject this 125-bp result.
     assert (completed.start, completed.length, completed.er) == (20, 125, 0)
 
 

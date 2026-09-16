@@ -182,7 +182,7 @@ def _parse_all_ma_annotations(read):
     """Parse MA/AQ/AN once and return annotations grouped by type.
 
     Values retain the exact target-specific ordering and quality orientation
-    historically returned by :func:`_parse_ma_annotations`.
+    previously returned by :func:`_parse_ma_annotations`.
     """
     try:
         ma_str = read.get_tag('MA')
@@ -1135,6 +1135,9 @@ def _deam_positions_list(read, aligned_pairs, prob_threshold: int = 0):
             continue
         # Flavor: C->U = 1 (Y/CT-dea), G->U = 0 (R/GA-dea).
         b = base.upper() if isinstance(base, str) else chr(base).upper()
+        # MM bases are in the original molecule frame; positions are already SEQ-frame.
+        if read.is_reverse:
+            b = {'C':'G','G':'C'}.get(b,b)
         if b == 'C':
             flavor = 1
         elif b == 'G':
