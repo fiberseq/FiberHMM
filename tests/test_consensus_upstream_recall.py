@@ -61,3 +61,26 @@ def test_missing_scaffold_does_not_become_an_accessible_read(monkeypatch):
     result=recall_hia5_alignment(read,unit,model,'alignment','pacbio-fiber',3,125,5)
     assert result['status']=='no_original_scaffold'
     assert result['calls']==result['msps']==result['nucleosomes']==[]
+
+
+def test_scaffold_mismatch_message_is_a_declared_per_molecule_failure(monkeypatch):
+    from fiberhmm.inference.consensus.upstream_recall import MOLECULE_RECALL_FAILURES
+    read,unit,model=setup_case(monkeypatch,'resolved_gap');unit['raw_nuc_intervals']=[[150,350]]
+    with pytest.raises(ValueError) as error:
+        recall_hia5_alignment(read,unit,model,'alignment','pacbio-fiber',3,125,5,legacy_annotation_frame='seq')
+    assert str(error.value).startswith(MOLECULE_RECALL_FAILURES)
+    # configuration errors stay fatal: they are not per-molecule inconsistencies
+    assert not 'Nuc recall needs MA annotations or an explicit legacy tag frame'.startswith(MOLECULE_RECALL_FAILURES)
+
+
+def test_bad_molecules_are_excluded_with_receipts_but_systematic_failure_raises():
+    from fiberhmm.inference.consensus.bam import _exclude_recall_failures
+    units=[dict(unit_id=f'u{i:03d}') for i in range(200)]
+    bad={id(units[7]):dict(unit_id='u007',read_name='r7',reason='Upstream TF overlaps a final nucleosome')}
+    kept,diagnostics=_exclude_recall_failures(units,bad,'hia5',dict(files=[]))
+    assert len(kept)==199 and all(u['unit_id']!='u007' for u in kept)
+    assert diagnostics['hia5_recall_excluded']==[bad[id(units[7])]] and diagnostics['files']==[]
+    assert _exclude_recall_failures(units,{},'hia5',{})==(units,{})
+    many={id(u):dict(unit_id=u['unit_id'],read_name='r',reason='x') for u in units[:3]}
+    with pytest.raises(ValueError,match='3 of 200 molecules'):
+        _exclude_recall_failures(units,many,'hia5',{})

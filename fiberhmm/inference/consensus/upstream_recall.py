@@ -10,6 +10,12 @@ from .adapter import reference_gap_inside
 from .geometry import merged
 
 
+# Per-molecule inconsistencies: the loader excludes such a molecule (with a
+# receipt) rather than aborting the dataset. Anything else still raises.
+MOLECULE_RECALL_FAILURES = ('Upstream TF overlaps a final nucleosome',
+                            'Query annotations do not match the loaded original scaffold')
+
+
 def recall_hia5_alignment(read, unit, model, strand_mode, mode, context_size,
                           probability_threshold, minimum_llr, *,
                           minimum_opportunities=3, split_minimum_llr=4.,

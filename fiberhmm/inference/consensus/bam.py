@@ -132,6 +132,26 @@ def _projection_members(raw_reads: list, retained_reads: list, *, exact_records=
     return result
 
 
+# Largest fraction of a dataset's molecules that may be excluded for a per-molecule
+# Hia5 recall inconsistency before the load fails instead (systematic, not one bad read).
+MAXIMUM_RECALL_EXCLUDED_FRACTION = .01
+
+
+def _exclude_recall_failures(units, excluded, label, diagnostics):
+    """Drop molecules whose Hia5 recall hit a per-molecule inconsistency.
+
+    ``excluded`` maps id(unit) to its receipt. Returns the kept units and the
+    diagnostics with the receipts; fails when the failures are systematic."""
+    if not excluded:
+        return units,diagnostics
+    if len(excluded)>MAXIMUM_RECALL_EXCLUDED_FRACTION*len(units):
+        raise ValueError(f'{label}: Hia5 nucleosome recall failed on {len(excluded)} of {len(units)} molecules, '
+            f'more than {MAXIMUM_RECALL_EXCLUDED_FRACTION:.0%}; first: {next(iter(excluded.values()))["reason"]}. '
+            'Check the input annotations or disable families.recall_hia5_nucleosomes')
+    kept=[u for u in units if id(u) not in excluded]
+    return kept,dict(diagnostics,hia5_recall_excluded=sorted(excluded.values(),key=lambda r:r['unit_id']))
+
+
 def _load_payload(state,request,options,progress):
     """Every regional read before collapse; no viewport read sample enters inference."""
     from fiberhmm.inference.consensus.adapter import evidence_unit,replay_alignment,condition_unit_on_m5c
@@ -165,7 +185,7 @@ def _load_payload(state,request,options,progress):
         if options['input'].correct_native or (use_m5c and ds.data_type=='bam'):
             if ds.data_type!='bam':raise ValueError(f'{ds.label}: actual-query decoder replay requires BAM; disable native replay to use existing BigBed TF calls')
             import pysam
-            lookup=defaultdict(list)
+            lookup=defaultdict(list);recall_excluded={}
             for read,unit in zip(representatives,units):lookup[str(read.record_sha256)].append((read,unit))
             found=set()
             _,_,context_size,mode,_,_=_chemistry_runtime(runtime,chemistry,allow_population=True)
@@ -189,13 +209,21 @@ def _load_payload(state,request,options,progress):
                             if use_m5c:condition_unit_on_m5c(alignment,u)
                             if options['input'].correct_native:
                                 if options['cr'].engine==STAGED_MODE and chemistry.startswith('hia5') and options['families'].recall_hia5_nucleosomes:
-                                    from fiberhmm.inference.consensus.upstream_recall import recall_hia5_alignment,install_recall
-                                    recalled=recall_hia5_alignment(alignment,u,model,preset['strand_mode'],mode,context_size,preset.get('prob_threshold'),
-                                        minimum_llr,minimum_opportunities=options['input'].native_minimum_opportunities,
-                                        split_minimum_llr=options['families'].nuc_split_minimum_llr,
-                                        maximum_alignment_gap_bp=options['input'].native_maximum_alignment_gap_bp,
-                                        minimum_nfr_length=options['input'].minimum_nfr_length,
-                                        legacy_annotation_frame=options['input'].legacy_hia5_annotation_frame)
+                                    from fiberhmm.inference.consensus.upstream_recall import (recall_hia5_alignment,install_recall,
+                                        MOLECULE_RECALL_FAILURES)
+                                    try:
+                                        recalled=recall_hia5_alignment(alignment,u,model,preset['strand_mode'],mode,context_size,preset.get('prob_threshold'),
+                                            minimum_llr,minimum_opportunities=options['input'].native_minimum_opportunities,
+                                            split_minimum_llr=options['families'].nuc_split_minimum_llr,
+                                            maximum_alignment_gap_bp=options['input'].native_maximum_alignment_gap_bp,
+                                            minimum_nfr_length=options['input'].minimum_nfr_length,
+                                            legacy_annotation_frame=options['input'].legacy_hia5_annotation_frame)
+                                    except ValueError as error:
+                                        # One inconsistent molecule (e.g. a whole-read nucleosome
+                                        # annotation) must not abort the dataset: exclude it, with a receipt.
+                                        if not str(error).startswith(MOLECULE_RECALL_FAILURES):raise
+                                        recall_excluded[id(u)]=dict(unit_id=u['unit_id'],read_name=alignment.query_name,reason=str(error))
+                                        continue
                                     install_recall(u,recalled)
                                     continue
                                 replay_unit=u
@@ -211,6 +239,7 @@ def _load_payload(state,request,options,progress):
                                 u['native_multi_interval_calls']=calls;u['native_multi_interval_tf_intervals']=[c['interval'] for c in calls]
                         found.add(key)
             if len(found)!=len(lookup):raise ValueError(f'{ds.label}: could not identify every representative alignment for native replay')
+            units,diagnostics=_exclude_recall_failures(units,recall_excluded,ds.label,diagnostics)
         # Keep chemical CT/GA order, but never split Hia5 by mapping orientation.
         units.sort(key=lambda u:((0 if u['strand']=='CT' else 1),u['unit_id']) if chemistry in ('ddda','dddb') else (0,u['unit_id']))
         model_hash=hashlib.sha256(model.emissionprob_.astype('<f8').tobytes()).hexdigest()
