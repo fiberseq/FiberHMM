@@ -134,7 +134,9 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
   globally allocated reusable consensus-state slots, and explicit `unscorable` rows.
   Per-unit model/score provenance is stored as compact JSONL rather than one
   small file per consensus state.
-- **`fiberhmm-pair`** — the scDAF paired-duplex workflow. By default it combines
+- **`fiberhmm-pair`** — the scDAF paired-duplex workflow in one command: pair, then
+  merge each pair into one both-strand molecule, then jointly re-call (the default;
+  `--stop-after pair|merge` and `--from-paired` run parts). For pairing it combines
   independently sequence-supported CT/GA assignments with high-confidence
   assignments from the frozen sequence-free model. The latter uses the
   nucleosome lattice, aligned geometry, and raw and component-residual DddA
@@ -244,9 +246,10 @@ fiberhmm-footprint-model -i calls.bam -o results/sample --genome dm6 --bigbed
 | Strand-rescue report → normalized regional shadow layers | `fiberhmm-strand-rescue-annotate` |
 | Audit normalized strand-rescue BAMs | `fiberhmm-strand-rescue-audit` |
 | Add compact consensus-state slots/confidence to normalized TF calls | `fiberhmm-tag-consensus` |
-| Infer scDAF CT/GA physical pairs | `fiberhmm-pair` |
+| Pair, merge, and jointly re-call inferred scDAF duplexes | `fiberhmm-pair` |
 | Require direct sequence support for every pair | `fiberhmm-pair --sequence-only` |
-| Pair, merge, and jointly re-call inferred scDAF duplexes | `fiberhmm-pair --merge --recall` |
+| Only tag CT/GA physical pairs (no merging) | `fiberhmm-pair --stop-after pair` |
+| Merge/re-call an already paired BAM | `fiberhmm-pair --from-paired` |
 | Calls → BED12 / bigBed | `fiberhmm-extract` |
 | Add or repair MA layer discovery metadata | `fiberhmm-utils ma-types calls.bam --types ...` (known names) or `--scan` (every alignment) |
 

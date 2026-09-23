@@ -251,26 +251,34 @@ def main():
     p = argparse.ArgumentParser(
         prog='fiberhmm-pair',
         description=(
-            'Pair DddA CT/GA reads using sequence-supported assignments plus '
-            'the high-confidence sequence-free duplex model.'
+            'DddA duplex workflow in one command: pair CT/GA reads of the same '
+            'physical molecule (sequence-supported assignments plus the '
+            'high-confidence sequence-free duplex model), merge each pair into one '
+            'both-strand molecule, and jointly re-call nucleosomes and footprints.'
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Stages: pair -> merge -> recall (default: all three).
+
 Examples:
-    # Default: sequence-supported + high-confidence sequence-free pairs
-    fiberhmm-pair -i calls.bam -o calls.paired.bam -r hg38.fa --pairs-tsv pairs.tsv
+    # Default: pair, merge each duplex, jointly re-call footprints
+    fiberhmm-pair -i calls.bam -o calls.duplex.bam -r hg38.fa --pairs-tsv pairs.tsv
+
+    # Only tag pairs (paired source reads with mt/mp tags); no merging
+    fiberhmm-pair -i calls.bam -o calls.paired.bam -r hg38.fa --stop-after pair
 
     # Require direct A/T sequence support; FASTA is optional when MD is present
-    fiberhmm-pair -i calls.bam -o calls.sequence-paired.bam --sequence-only
+    fiberhmm-pair -i calls.bam -o calls.duplex.bam --sequence-only
 
-    # Pair, merge each duplex, and jointly re-call footprints in one command
-    fiberhmm-pair -i calls.bam -o calls.duplex.bam -r hg38.fa --merge --recall
+    # Start from an already paired BAM (formerly fiberhmm-merge)
+    fiberhmm-pair -i calls.paired.bam -o calls.duplex.bam --from-paired
         """,
     )
     p.add_argument('-i', '--input', required=True,
                    help='Coordinate-sorted, indexed FiberHMM-called DddA BAM')
     p.add_argument('-o', '--output', required=True,
-                   help='Output paired-source BAM, or consensus BAM with --merge')
+                   help='Output BAM: joint duplex molecules by default; paired source '
+                        'reads with --stop-after pair')
     p.add_argument('-r', '--reference', default=None,
                    help='Matching indexed FASTA. Required by the default '
                         'sequence-free score; optional with --sequence-only '
@@ -284,14 +292,19 @@ Examples:
                    help='Write a machine-readable pairing receipt')
     p.add_argument(
         '--pairs-only', '--paired-only', dest='pairs_only', action='store_true',
-        help='Without --merge, write only paired source records. With --merge, '
-             'write only consensus records.',
+        help='Write only paired records: merged duplex molecules (default), or '
+             'paired source reads with --stop-after pair. Otherwise unpaired '
+             'reads pass through unchanged.',
     )
-    p.add_argument('--merge', action='store_true',
-                   help='Merge each accepted pair into one both-strand consensus record')
-    p.add_argument('--recall', action='store_true',
-                   help='After merging, jointly re-call nucleosome and TF footprints '
-                        '(implies --merge)')
+    p.add_argument('--stop-after', choices=['pair', 'merge', 'recall'], default='recall',
+                   help='Last stage to run: pair (tag pairs only), merge (both-strand '
+                        'molecules without re-calling) or recall (default)')
+    p.add_argument('--from-paired', action='store_true',
+                   help='Input is already pair-tagged (mt/mp from an earlier '
+                        '--stop-after pair run): skip pairing and start at merge')
+    # Accepted for older command lines; the full workflow is now the default.
+    p.add_argument('--merge', action='store_true', help=argparse.SUPPRESS)
+    p.add_argument('--recall', action='store_true', help=argparse.SUPPRESS)
     p.add_argument('--model', default=None,
                    help='Override the bundled frozen sequence-free model JSON')
     p.add_argument('--call-layer', choices=['auto', 'input-ma', 'rotational-recall'],
@@ -336,7 +349,12 @@ Examples:
         p.error(f'input not found: {args.input}')
     if args.reference is not None and not os.path.isfile(args.reference):
         p.error(f'reference not found: {args.reference}')
-    if not args.sequence_only and not args.reference:
+    # Older command lines: --merge alone meant "merge, do not re-call".
+    if args.merge and not args.recall and args.stop_after == 'recall':
+        args.stop_after = 'merge'
+    if args.from_paired and args.stop_after == 'pair':
+        p.error('--from-paired starts at merge; it cannot stop after pair')
+    if not args.from_paired and not args.sequence_only and not args.reference:
         p.error('--reference is required for default pairing; use --sequence-only '
                 'to require sequence-supported pairs only')
     if os.path.abspath(args.input) == os.path.abspath(args.output):
@@ -355,27 +373,36 @@ Examples:
         min_sequence_margin=args.min_sequence_margin,
         max_sequence_pair_rate=args.max_sequence_pair_rate,
     )
-    merge = args.merge or args.recall
+    stages = ['pair', 'merge', 'recall']
+    stages = stages[stages.index('merge') if args.from_paired else 0:stages.index(args.stop_after)+1]
+    merge = 'merge' in stages
+    print(f"fiberhmm-pair: stages {' -> '.join(stages)}"
+          + ('' if args.stop_after != 'recall' or args.from_paired else
+             ' (use --stop-after pair to write tagged pairs only)'), file=sys.stderr)
     paired_output = args.output if not merge else args.output + '.paired.tmp.bam'
+    if args.from_paired:
+        paired_output = args.input
+    receipt = None
     try:
-        receipt = run_pairing(
-            args.input, paired_output, args.reference,
-            params=duplex_params, sequence_params=sequence_params,
-            model_path=args.model, prob_threshold=args.prob_threshold,
-            pairs_tsv=args.pairs_tsv, receipt_json=args.receipt_json,
-            paired_only=(args.pairs_only and not merge),
-            io_threads=args.io_threads, max_component=args.max_component,
-            call_layer=args.call_layer,
-            create_index=(not merge and not args.no_index),
-            pairing_mode='sequence-only' if args.sequence_only else 'hybrid',
-        )
+        if not args.from_paired:
+            receipt = run_pairing(
+                args.input, paired_output, args.reference,
+                params=duplex_params, sequence_params=sequence_params,
+                model_path=args.model, prob_threshold=args.prob_threshold,
+                pairs_tsv=args.pairs_tsv, receipt_json=args.receipt_json,
+                paired_only=(args.pairs_only and not merge),
+                io_threads=args.io_threads, max_component=args.max_component,
+                call_layer=args.call_layer,
+                create_index=(not merge and not args.no_index),
+                pairing_mode='sequence-only' if args.sequence_only else 'hybrid',
+            )
         if merge:
             run_merge(
                 paired_output, args.output,
                 prob_threshold=args.prob_threshold,
                 pairs_only=args.pairs_only,
                 io_threads=args.io_threads,
-                recall=args.recall,
+                recall='recall' in stages,
                 enzyme='ddda',
                 phase_nrl=args.phase_nrl,
                 nuc_recall_policy=args.nuc_recall_policy,
@@ -388,13 +415,16 @@ Examples:
         print(f'fiberhmm-pair: error: {error}', file=sys.stderr)
         raise SystemExit(2) from error
     finally:
-        if merge:
+        if merge and not args.from_paired:
             for path in (paired_output, paired_output + '.bai'):
                 try:
                     os.remove(path)
                 except OSError:
                     pass
 
+    if receipt is None:
+        print('fiberhmm-pair: merged the pairs tagged in the input', file=sys.stderr)
+        return
     counts = receipt['counts']
     print(
         f"fiberhmm-pair: {counts.get('pairs', 0):,} pairs "

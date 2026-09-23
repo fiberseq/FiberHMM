@@ -43,7 +43,7 @@ The BAM retains all input records by default. Pair members carry `mt:A:P`,
 their reciprocal partner in `mp:Z`, `pm:A:D`, the decision score in `dm:i`
 (×1,000), margin in `mg:i` (×1,000), and model ID in `mv:Z`. Candidate reads
 that abstain carry `mt:A:U`. `--paired-only` writes only selected primary source
-records and remains compatible with `fiberhmm-merge`.
+records and remains compatible with `fiberhmm-pair --from-paired`.
 
 ## Nucleosome call layers
 

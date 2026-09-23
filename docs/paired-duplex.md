@@ -20,17 +20,21 @@ one reference-frame joint molecule with deam+ and deam- source coverage
 ordinary HMM + nucleosome recaller + TF recaller on both channels
 ```
 
-The one-command form is:
+One command runs all three stages (pair -> merge -> recall) by default:
 
 ```bash
 fiberhmm-pair \
   -i calls.bam \
   -o duplex-recalled.bam \
   -r hg38.fa \
-  --merge --recall \
   --pairs-tsv duplex-pairs.tsv \
   --pairs-only
 ```
+
+`--stop-after pair` writes only the tagged pair members, and `--stop-after merge`
+merges without re-calling. `--from-paired` starts from an already paired BAM.
+The older `fiberhmm-merge` and `fiberhmm-crossstrand` commands still work but are
+deprecated aliases for these forms.
 
 The input must already contain ordinary FiberHMM calls and be coordinate
 sorted and indexed. The default workflow requires a reference FASTA because

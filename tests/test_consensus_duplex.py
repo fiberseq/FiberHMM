@@ -58,7 +58,7 @@ def test_joint_bam_is_one_unit_with_both_lattices_and_provenance(tmp_path):
 
 def test_unmerged_pair_is_rejected_before_population_fit(tmp_path):
     p=tmp_path/'paired.bam';joint_bam(p,paired=True)
-    with pytest.raises(ValueError,match='fiberhmm-merge'):
+    with pytest.raises(ValueError,match='fiberhmm-pair'):
         load_bam_payload([dict(dataset_id='d',paths=[str(p)])],dict(chrom='chr1',start=120,end=220))
 
 

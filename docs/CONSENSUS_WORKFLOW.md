@@ -271,8 +271,8 @@ this command does not silently fit a new classifier.
 
 ### Footprint-paired duplex molecules
 
-Run `fiberhmm-pair` on the called, coordinate-sorted source BAM, then
-`fiberhmm-merge --recall` before population consensus. The merge recaller uses
+Run `fiberhmm-pair` (pair -> merge -> recall, the default) on the called,
+coordinate-sorted source BAM before population consensus. The merge recaller uses
 both assay channels together (including the rotational nucleosome recaller).
 Consensus preparation preserves the `cs` source identities and counts the
 merged read once; `deam+` and `deam-` MA coverage masks determine which C/G
@@ -283,7 +283,7 @@ and `mv` pairing provenance.
 Unmerged records with live `mt:P`/`mp` pair annotations cannot enter population
 CR as independent molecules. Merge intentionally preserves failed pairs by
 default so source data are not silently discarded. Check its failure count;
-`fiberhmm-merge --recall --pairs-only` produces only successfully merged joint
+`fiberhmm-pair --pairs-only` produces only successfully merged joint
 molecules and excludes unresolved pairs and ordinary unpaired reads. Keep the
 source BAM for inspection. Use the merge recaller for joint reads; ordinary
 single-strand calling commands are not a supported way to recall this output.

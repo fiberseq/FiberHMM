@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compatibility wrapper for ``fiberhmm-pair --merge --recall``.
+"""DEPRECATED compatibility wrapper: use ``fiberhmm-pair`` (pair -> merge -> recall).
 
 Runs the full cross-strand pipeline on a footprint-called DAF-seq BAM:
 
@@ -137,6 +137,8 @@ Examples:
              '(default 12; -1 disables).',
     )
     args = p.parse_args()
+    print('fiberhmm-crossstrand is deprecated: use `fiberhmm-pair` (pair -> merge -> recall).',
+          file=sys.stderr)
     try:
         apply_daf_run_mask_arguments(args, args.enzyme)
     except ValueError as exc:

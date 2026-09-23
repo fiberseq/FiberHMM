@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """fiberhmm-merge -- build both-strand consensus reads from cross-strand pairs.
 
+DEPRECATED as a command: use ``fiberhmm-pair``, which pairs, merges and re-calls
+in one step, or ``fiberhmm-pair --from-paired`` for an already paired BAM. This
+module keeps ``run_merge`` (the merge stage) and a working compatibility CLI.
+
 Consumes a BAM tagged by ``fiberhmm-pair`` (reads carrying ``mt:A:P`` + ``mp:Z``)
 and, for each resolved CT/GA pair, emits one both-strand consensus read spanning
 the union of the two spans (see :mod:`fiberhmm.crossstrand.consensus`). The
@@ -257,6 +261,8 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
 
 
 def main():
+    print('fiberhmm-merge is deprecated: use `fiberhmm-pair` (pair -> merge -> recall), '
+          'or `fiberhmm-pair --from-paired` for an already paired BAM.', file=sys.stderr)
     p = argparse.ArgumentParser(
         prog='fiberhmm-merge',
         description='Build both-strand consensus reads from fiberhmm-pair output.',

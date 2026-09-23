@@ -101,3 +101,49 @@ def test_default_hybrid_retains_independent_sequence_pairs(tmp_path):
     assert receipt["counts"]["pairs"] == 2
     with pysam.AlignmentFile(output, "rb") as bam:
         assert {read.get_tag("pm") for read in bam.fetch(until_eof=True)} == {"S"}
+
+
+def _run_pair_cli(monkeypatch, *argv):
+    import sys
+    from fiberhmm.cli import pair
+    monkeypatch.setattr(sys, "argv", ["fiberhmm-pair", *argv])
+    pair.main()
+
+
+def _records(path):
+    with pysam.AlignmentFile(path, "rb", check_sq=False) as bam:
+        return list(bam.fetch(until_eof=True))
+
+
+def test_one_command_stages_and_from_paired(tmp_path, monkeypatch, capsys):
+    source, reference = _write_sequence_resolved_fixture(tmp_path)
+    common = ["-r", str(reference), "--sequence-only", "--min-overlap", "100", "--min-nucs", "1", "--io-threads", "1"]
+    paired = tmp_path / "paired.bam"
+    _run_pair_cli(monkeypatch, "-i", str(source), "-o", str(paired), *common, "--stop-after", "pair")
+    assert "stages pair" in capsys.readouterr().err
+    assert [r.get_tag("mt") for r in _records(paired)] == ["P"] * 4
+
+    merged = tmp_path / "merged.bam"
+    _run_pair_cli(monkeypatch, "-i", str(source), "-o", str(merged), *common,
+                  "--stop-after", "merge", "--pairs-only")
+    assert "stages pair -> merge" in capsys.readouterr().err
+    assert len(_records(merged)) == 2
+
+    # formerly fiberhmm-merge: start from the tagged pairs
+    again = tmp_path / "again.bam"
+    _run_pair_cli(monkeypatch, "-i", str(paired), "-o", str(again), "--from-paired",
+                  "--stop-after", "merge", "--pairs-only", "--io-threads", "1")
+    assert "stages merge" in capsys.readouterr().err
+    assert len(_records(again)) == 2
+
+    # older command line: --merge alone still means merge without re-calling
+    legacy = tmp_path / "legacy.bam"
+    _run_pair_cli(monkeypatch, "-i", str(source), "-o", str(legacy), *common, "--merge", "--pairs-only")
+    assert "stages pair -> merge" in capsys.readouterr().err and "recall" not in capsys.readouterr().err
+    assert len(_records(legacy)) == 2
+
+
+def test_from_paired_cannot_stop_after_pair(tmp_path, monkeypatch):
+    with pytest.raises(SystemExit):
+        _run_pair_cli(monkeypatch, "-i", str(tmp_path / "x.bam"), "-o", str(tmp_path / "y.bam"),
+                      "--from-paired", "--stop-after", "pair")
