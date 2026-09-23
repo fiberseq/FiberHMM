@@ -1,6 +1,8 @@
 """Pure display projection of frozen native-classification evidence.
 
-No fitting, new calls, changed source geometry, or invented posterior/Q values.
+No fitting, new calls, changed source geometry, or invented posterior values.
+The one per-call score added here, q0 (class support), is a declared relative
+profile-likelihood share under a uniform prior, not a calibrated probability.
 The compatible set grows monotonically; the best full-span representative may
 change as additional alternatives become available. The source span never does.
 """
@@ -10,6 +12,39 @@ import hashlib
 import math
 
 MODE = 'native_family_distribution'
+
+Q0_SEMANTICS = ('assigned_class_share_of_scored_class_evidence_x255: w_k = exp(recipient_optimum_k - '
+                'floor_adjusted_loss_k) over every scored candidate class, uniform prior; relative profile '
+                'likelihood, not a calibrated probability; 0 = unresolved')
+
+
+def class_shares(scores):
+    """Each scored class's share of the evidence for one call (uniform prior).
+
+    ``floor_adjusted_loss`` is the recipient's best unconstrained profile
+    log-likelihood minus the best value its projections reach under the
+    class's shape penalty (nats), so exp(-loss) is a relative profile
+    likelihood. Candidates can be scored on slightly different grids, so each
+    is referred to a common scale through its own ``recipient_optimum`` when
+    every candidate carries one. Unscored or loss-free entries are ignored.
+    """
+    usable = {}
+    for score in scores:
+        if score.get('status') == 'scored' and score.get('floor_adjusted_loss') is not None:
+            usable[score['family']] = score
+    if not usable:
+        return {}
+    anchored = all(s.get('recipient_optimum') is not None for s in usable.values())
+    log_weight = {family: (float(s['recipient_optimum']) if anchored else 0.) - float(s['floor_adjusted_loss'])
+                  for family, s in usable.items()}
+    top = max(log_weight.values())
+    total = sum(math.exp(v-top) for v in log_weight.values())
+    return {family: math.exp(v-top)/total for family, v in log_weight.items()}
+
+
+def q0_byte(share):
+    """Class-support byte: round(255 x share); 0 when the class was not scored."""
+    return int(round(255*share)) if share else 0
 
 
 def member_families(accepted, membership_loss_odds=1.):
@@ -51,6 +86,12 @@ def classify_proposal(proposal, reference_percent, membership_loss_odds=1.):
     if membership_loss_odds > 1.:
         out['member_families'] = member_families(accepted, membership_loss_odds)
         out['membership_loss_odds'] = float(membership_loss_odds)
+    # Class support over EVERY scored candidate, not only those accepted at
+    # this reference, so it does not move with the stringency slider.
+    shares = class_shares(proposal.get('candidate_evidence', []))
+    members = out.get('member_families') or [s['family'] for s in accepted]
+    out['q0'] = q0_byte(shares.get(out['family'], 0.)) if accepted else 0
+    out['member_q0'] = {family: q0_byte(shares.get(family, 0.)) for family in members}
     return out
 
 

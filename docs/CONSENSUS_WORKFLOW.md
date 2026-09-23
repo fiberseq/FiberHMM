@@ -160,9 +160,14 @@ The established molecular-annotation convention is used:
 * Reruns replace this producer's previous family layers and catalog, and rebuild
   its generated source read groups. Original sequencing/library RGs survive,
   with source provenance in DS. Unknown producers' target layers are not overwritten.
-* Derived tf_consensus.QQQQQ (CR/SR) or tf_cross_consensus.QQQQQ (XCR) uses
-  AQ dimensions tq,fi,fq,op,sq; AN carries the full stable family token.
-  (Exports before the strand-quality byte used QQQQ without sq.)
+* Derived tf_consensus.QQQQQQ (CR/SR) or tf_cross_consensus.QQQQQQ (XCR) uses
+  AQ dimensions tq,fi,fq,op,sq,q0; AN carries the full stable family token.
+  (Earlier exports used QQQQ without sq/q0, then QQQQQ without q0.)
+* q0 (class support) is the class's share of the call's evidence among every
+  displayed class the call was scored against, x255: w_k = exp(recipient_optimum_k
+  - floor_adjusted_loss_k), uniform prior. It is a relative profile-likelihood
+  share, not a calibrated probability; it does not change with the assignment
+  stringency. Each membership row carries that class's own share; 0 = unresolved.
 * sq is the DAF molecule's own core protection ceiling for the family:
   1 + LLR x 10 (saturated at 255), where LLR is the protection log-likelihood a
   fully protected molecule would give from its own lattice sites and context

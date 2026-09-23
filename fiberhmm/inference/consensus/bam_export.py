@@ -17,6 +17,7 @@ from ...io.bam_header import append_ma_types, append_pg_record
 from ...io.ma_tags import parse_ma_tag, parse_an_tag, format_an_tag, llr_to_tq
 from ..tf_family_ids import allocate_repeating_family_ids, TFFamilyInterval
 from .artifacts import digest, write_json
+from .native_presentation import Q0_SEMANTICS
 
 CONTRACT = 'FIBERHMM-CONSENSUS-MA:v1:'
 FAMILY = 'FIBERHMM-CONSENSUS-FAMILY:v1:'
@@ -79,6 +80,8 @@ def assignment_plan(analyses):
                     op=sum(span[0]<=p<span[1] for p in unit['positions'])
                     for family in proposal.get('compatible_families',[]):
                         sq=strand_quality(unit,chemistry.get(ds),catalog.get(family))
+                        # Each membership row carries that class's own support share.
+                        q0=int(proposal.get('member_q0',{}).get(family,proposal.get('q0',0) if family==proposal.get('family') else 0))
                         token=('fhxcr_' if layer=='tf_cross_consensus' else 'fhcr_')+digest([run,family])[:24]
                         for member in members:
                             sha=member.get('record_sha256')
@@ -101,7 +104,7 @@ def assignment_plan(analyses):
                                 if catalog.get(family,{}).get('strand_resolution'):
                                     f.setdefault('strand_resolution',{})[ds]=catalog[family]['strand_resolution']
                                 planned[path][(sha,int(member.get('alignment_occurrence',0)))].append(
-                                    dict(layer=layer,token=token,chrom=actual_chrom,interval=interval,tq=tq,op=min(255,op),sq=sq))
+                                    dict(layer=layer,token=token,chrom=actual_chrom,interval=interval,tq=tq,op=min(255,op),sq=sq,q0=q0))
     for layer in {key[0] for key in families}:
         selected={key:f for key,f in families.items() if key[0]==layer}
         slots=allocate_repeating_family_ids([TFFamilyInterval(digest(key),f['chrom'],f['start'],f['end']) for key,f in selected.items()])
@@ -165,9 +168,10 @@ def _append_annotations(read, rows):
         tokens=[]
         for (interval,token),row in sorted(values.items()):
             start,length=interval;tokens.append(f'{start+1}-{length}')
-            aq.extend([native_tq.get(interval,0) if row['tq'] is None else row['tq'],row['fi'],0,row['op'],row.get('sq',0)])
+            aq.extend([native_tq.get(interval,0) if row['tq'] is None else row['tq'],row['fi'],0,row['op'],
+                       row.get('sq',0),row.get('q0',0)])
             names.append(token)
-        suffix.append(layer+'.QQQQQ:'+','.join(tokens))
+        suffix.append(layer+'.QQQQQQ:'+','.join(tokens))
     read.set_tag('MA',old+';'+ ';'.join(suffix),value_type='Z')
     read.set_tag('AQ',array.array('B',aq))
     read.set_tag('AN',format_an_tag(names),value_type='Z')
@@ -252,12 +256,13 @@ def _export_source_bams(analyses, output_dir, scope):
                         owned_layers.update(json.loads(comment[len(CONTRACT):]).get('layers',[]))
                 owned_layers.intersection_update({'tf_consensus','tf_cross_consensus'})
                 comments=[c for c in old_comments if not c.startswith((CONTRACT,FAMILY))]
-                comments.append(CONTRACT+json.dumps(dict(layers=layers,quality_names=['tq','fi','fq','op','sq'],
+                comments.append(CONTRACT+json.dumps(dict(layers=layers,quality_names=['tq','fi','fq','op','sq','q0'],
                     tq='native_LLR_times_10_saturated_255_or_zero_if_unavailable',
                     fi='local_repeating_uint8_slot; AN_is_authoritative_family_identity',
                     fq='zero_unavailable_no_calibrated_assignment_probability',
                     op='representative_native_opportunities_saturated_255',
                     sq='DAF_molecule_core_protection_ceiling: 1+LLR_times_10_saturated_255 (1 = no core site); 0 = not DAF or unavailable',
+                    q0=Q0_SEMANTICS+'; per membership row, that class\'s share',
                     strand_resolution='per-family catalog entry, per dataset: trusted_strand (CT/GA/both), core_resolution, per-strand median core ceilings and native floor; use it to choose which chemical strand to quantify',
                     memberships='all_compatible_families_nonexclusive',
                     export_scope=scope,export_windows=windows,

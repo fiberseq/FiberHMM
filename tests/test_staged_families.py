@@ -1,5 +1,6 @@
 from copy import deepcopy
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -255,3 +256,38 @@ def test_staged_run_retains_numeric_assignment_evidence(tmp_path):
                     record=expand(call['family_evidence'],result['evidence_pool'])
                     assert set(record['assignment_compatibility'])==set(record['display_hypotheses'])
                     assert all('predictive_tail_interval' in score for score in record['assignment_compatibility'].values())
+
+
+@pytest.mark.parametrize('reference',[99.9,95.,50.])
+def test_class_support_q0_is_a_fixed_share_across_stringency(reference):
+    source=payload()['strata'][0];source['units']=source['units'][:1]
+    support={'weak':dict(status='scored',floor_adjusted_loss=math.log(3.),recipient_optimum=10.),
+             'strong':dict(status='scored',floor_adjusted_loss=0.,recipient_optimum=10.),
+             'absent':dict(status='core_contradicted')}
+    record=dict(unit_id='test::u0',interval=[12,51],display_hypotheses=['weak','strong'],
+        original=dict(compatible_families=['weak','strong'],inference_eligible=True),
+        status='multi_compatible',candidate_support=support,assignment_compatibility={
+            'weak':dict(status='scored',predictive_tail_interval=[.001,.01]),
+            'strong':dict(status='scored',predictive_tail_interval=[.1,.2])})
+    annotation=dict(records=[record],hypotheses=[dict(id=f,reference_interval=[12,51],
+        display=True,status='retained_alternative') for f in ['weak','strong']])
+    cr=browser_snapshot([(None,annotation)],[source],'CR','resolved',
+        assignment_reference_percent=reference)['datasets']['test']['cr']
+    call=cr['records'][0]['proposals'][0]
+    # weights 1/3 : 1 -> strong 0.75 (191), weak 0.25 (64); unaffected by the reference
+    expected={'weak':64,'strong':191,None:0}[call['family']]
+    assert call['q0']==expected
+    assert all(call['member_q0'][f]=={'weak':64,'strong':191}[f] for f in call['compatible_families'])
+    assert cr['class_support']['quality']=='q0'
+
+
+def test_staged_run_writes_class_support(tmp_path):
+    result=run_workflow(payload(),parameters(),tmp_path)
+    for stage in result['stage_results'].values():
+        for ds in stage['datasets'].values():
+            for row in ds['cr']['records']:
+                for call in row['proposals']:
+                    assert 0<=call['q0']<=255
+                    if call['family'] is None: assert call['q0']==0 and call['member_q0']=={}
+                    else: assert call['q0']==call['member_q0'][call['family']]
+                    assert set(call['member_q0'])==set(call['compatible_families'])

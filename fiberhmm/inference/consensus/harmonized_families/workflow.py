@@ -143,7 +143,8 @@ def attach_assignment_scores(snapshots, parts, results, foreign):
     scores = defaultdict(dict)
     def add(key, fid, score):
         scores[tuple(key)][fid] = {k:deepcopy(score[k]) for k in
-            ('status', 'predictive_tail_interval', 'exact_for_tail_cuts_at_most') if k in score}
+            ('status', 'predictive_tail_interval', 'exact_for_tail_cuts_at_most',
+             'floor_adjusted_loss', 'recipient_optimum') if k in score}
     for channel, part in parts.items():
         native = read_json(part['native_cell_provenance']['path'])
         if digest(native) != part['native_cell_provenance']['digest']:
@@ -165,11 +166,19 @@ def attach_assignment_scores(snapshots, parts, results, foreign):
                     raise ValueError('Cyclic reused score model')
                 seen.add(fid);fid=hypotheses[fid]['reused_from']
             return fid
+        displayed = sorted(fid for fid, h in hypotheses.items() if h.get('display'))
         for row in annotation['records']:
             evidence = scores[(row['unit_id'], *row['interval'])]
             row['assignment_compatibility'] = {
                 fid:deepcopy(evidence[root(fid)]) for fid in row['display_hypotheses']
                 if root(fid) in evidence}
+            # Every displayed hypothesis this call was scored against, compatible
+            # or not: the candidate set for class support (q0), which therefore
+            # does not depend on the assignment reference.
+            row['candidate_support'] = {
+                fid: {k: evidence[root(fid)][k] for k in ('status', 'floor_adjusted_loss', 'recipient_optimum')
+                      if k in evidence[root(fid)]}
+                for fid in displayed if root(fid) in evidence}
 
 
 def consolidate_scope(parts, radius, folder, maximum_bytes, stop_after, progress, *, cache, scope_key, cores, minimum_retention_groups=2, predictive_stop=0):

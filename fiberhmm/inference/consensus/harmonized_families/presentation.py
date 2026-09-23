@@ -8,6 +8,7 @@ import numpy as np
 from . import MODE
 from .reference.raw_family_segmented_region import eligible_intervals
 from .evidence import intern
+from ..native_presentation import Q0_SEMANTICS, class_shares, q0_byte
 
 
 def presentation_context(sources,compact=False):
@@ -134,7 +135,7 @@ def browser_snapshot(scopes, sources, mode, stage, context=None,
             rescue=dict(status='disabled', records=[], accepted_calls=0),
             split=dict(status='disabled', records=[], accepted_spans=0),
             comparability=dict(status='disabled', records=[]))
-    rows = defaultdict(dict)
+    rows = defaultdict(dict); shares = {}
     for case, annotation in scopes:
         hypotheses = {h['id']:h for h in annotation['hypotheses'] if h['display']}
         counts = defaultdict(Counter); primary = defaultdict(Counter); members = defaultdict(lambda: defaultdict(set))
@@ -191,6 +192,8 @@ def browser_snapshot(scopes, sources, mode, stage, context=None,
             if not families: proposal['display_color']='#94a3b8'
             row = rows[ds].setdefault(uid, dict(unit_id=uid, strand=strand, source_calls=[], proposals=[]))
             row['source_calls'].append(list(iv)); row['proposals'].append(proposal)
+            shares[id(proposal)] = class_shares(
+                [dict(score, family=fid) for fid, score in record.get('candidate_support', {}).items()])
             for f in families:
                 counts[f][(ds,strand)] += 1; members[f][(ds,strand)].add(uid); family_datasets[f].add(ds)
             if families:
@@ -342,6 +345,12 @@ def browser_snapshot(scopes, sources, mode, stage, context=None,
                 )
                 if not retained:
                     proposal['display_color'] = '#94a3b8'
+                # Class support: this call's share of the evidence among every
+                # displayed class it was scored against (fixed across stringency).
+                share = shares.get(id(proposal), {})
+                proposal['q0'] = q0_byte(share.get(proposal['family'], 0.)) if proposal['family'] else 0
+                proposal['member_q0'] = {fid: q0_byte(share.get(fid, 0.)) for fid in retained}
+        dataset['cr']['class_support'] = dict(quality='q0', semantics=Q0_SEMANTICS)
         dataset['cr']['support_filter'] = dict(
             minimum_primary_units=minimum_units,
             minimum_primary_fraction=minimum_fraction,
