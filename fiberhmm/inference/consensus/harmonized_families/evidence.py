@@ -52,7 +52,11 @@ def _intern(value,pool,memo=None):
         if hit is not None and hit[0] is value:
             return hit[1],hit[2]
         interned,raw=_intern_container(value,pool,memo)
-        memo[id(value)]=(value,interned,raw)  # holding value keeps its id unique
+        # Only pooled subtrees are worth remembering: a small container is
+        # cheap to re-intern, and keeping it (and its source) alive for the
+        # whole run costs gigabytes at full-locus scale.
+        if type(interned) is dict and REF in interned:
+            memo[id(value)]=(value,interned,raw)  # holding value keeps its id unique
         return interned,raw
     return _intern_container(value,pool,memo)
 

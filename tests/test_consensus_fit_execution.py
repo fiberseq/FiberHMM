@@ -65,7 +65,10 @@ def test_parallel_fit_keeps_reference_and_fold_initializations():
     assert pool.executor is None
 
 
-def test_memory_budget_reduces_parallelism_not_training_rows():
+def test_memory_budget_reduces_parallelism_not_training_rows(monkeypatch):
+    import threadpoolctl
+    # Single-threaded BLAS, so the serial path runs in-process (see the next test).
+    monkeypatch.setattr(threadpoolctl,'threadpool_info',lambda:[dict(user_api='blas',num_threads=1)])
     assert _parallel_capacity((100, 1000), 11, 4, 2*1024**3) == 4
     assert _parallel_capacity((1295, 20301), 11, 4, 2*1024**3) == 1
     arrays, kw = inputs(), options()
