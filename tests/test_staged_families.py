@@ -334,3 +334,10 @@ def test_cross_chemistry_units_defer_to_the_coarser_chemistry():
     assert provenance['governing_edge_sd_bp'][0] > 8          # the coarse (DAF) scatter governs
     wide = next(u for u in units if u['unit'] == unit_of['wide'])
     assert wide['counts']['daf']['CT']['compatible_units'] == 20
+    # A fixed per-chemistry resolution (e.g. pooled over regions) replaces the
+    # region's own estimate: at 1 bp, wide and wide2 (3 bp apart) are separable.
+    context['xcr_edge_sd_bp'] = {'daf': [1., 1.], 'hia5': [1., 1.]}
+    units, unit_of, provenance = resolution_units(datasets, shared, set(shared), context)
+    assert unit_of['wide'] != unit_of['wide2'] and provenance['governing_edge_sd_bp'] == [1., 1.]
+    assert provenance['edge_scatter_source'] == {'daf': 'fixed', 'hia5': 'fixed'}
+    assert provenance['estimated_edge_scatter_sd_bp']['daf'][0] > 8

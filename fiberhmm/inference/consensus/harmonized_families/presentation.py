@@ -145,7 +145,8 @@ def resolution_units(datasets, shared, visible, context):
     - A class a DAF chemistry cannot report (strand_resolution 'none': both
       strands' core ceilings below the native floor) does not define a unit.
     - Each chemistry's call-edge scatter (robust SD per edge, from calls
-      compatible with exactly one class) sets its resolution. Two overlapping
+      compatible with exactly one class; context['xcr_edge_sd_bp'] can fix it
+      per dataset) sets its resolution. Two overlapping
       reportable classes merge when a single call of ANY compared chemistry
       would land nearer its own class less than XCR_ASSIGN_ACCURACY of the time:
       Phi(d/2), d = sqrt((dL/sd_L)^2 + (dR/sd_R)^2), largest SD per edge.
@@ -177,6 +178,11 @@ def resolution_units(datasets, shared, visible, context):
                     offsets[ds].append((a-lo[f], b-hi[f]))
     scatter = {ds: (max(_robust_sd([o[0] for o in v]), 1.), max(_robust_sd([o[1] for o in v]), 1.))
                for ds, v in offsets.items() if len(v) >= XCR_MIN_EDGE_CALLS}
+    # A caller comparing several regions of the same data can fix each
+    # chemistry's resolution (e.g. pooled over the regions), so units do not
+    # depend on which classes one region happens to show.
+    fixed = {ds: tuple(map(float, v)) for ds, v in (context.get('xcr_edge_sd_bp') or {}).items()}
+    estimated = dict(scatter); scatter.update(fixed)
     sd_l = max((v[0] for v in scatter.values()), default=None); sd_r = max((v[1] for v in scatter.values()), default=None)
     min_d = 2*float(norm.ppf(XCR_ASSIGN_ACCURACY))
     parent = {f: f for f in classes}
@@ -220,6 +226,9 @@ def resolution_units(datasets, shared, visible, context):
         units.append(dict(unit=uid, representative=rep_f, members=sorted(fs), consensus_start=left, consensus_end=right,
                           reportable_members=sum(reportable[f] for f in fs), counts=counts))
     provenance = dict(edge_scatter_sd_bp={ds: list(v) for ds, v in scatter.items()},
+                      edge_scatter_calls={ds: len(v) for ds, v in offsets.items()},
+                      edge_scatter_source={ds: 'fixed' if ds in fixed else 'estimated' for ds in scatter},
+                      estimated_edge_scatter_sd_bp={ds: list(v) for ds, v in estimated.items()},
                       governing_edge_sd_bp=[sd_l, sd_r], assign_accuracy=XCR_ASSIGN_ACCURACY,
                       merged_pairs=merged_pairs, nested_fraction=XCR_NESTED_FRACTION,
                       not_resolvable_by_coarser_chemistry=sorted(unresolved),
