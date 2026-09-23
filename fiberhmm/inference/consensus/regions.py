@@ -119,8 +119,30 @@ def pool_payloads(payloads, windows):
         input_files=payloads[0].get('input_files',[]))
 
 
+def machine_compute_defaults():
+    """Resource defaults for this machine: cores = usable CPUs - 2 (at most 16)
+    and a matrix budget of a quarter of physical memory within [2, 32] GiB.
+    Execution only: both are recorded in the manifest and never change a result.
+    Memory limits imposed by a scheduler (cgroups, SLURM) are not detected; set
+    compute.maximum_matrix_mb explicitly there."""
+    import os
+    try:available=len(os.sched_getaffinity(0))  # respects taskset/cgroup cpusets (Linux)
+    except AttributeError:available=os.cpu_count() or 2
+    cores=max(1,min(16,available-2))
+    try:memory_mb=os.sysconf('SC_PAGE_SIZE')*os.sysconf('SC_PHYS_PAGES')//1024**2
+    except (ValueError,OSError,AttributeError):memory_mb=8192
+    budget=max(2048,min(32768,memory_mb//4))
+    return dict(cores=cores,maximum_matrix_mb=budget-budget%16)
+
+
 def automatic_parameters(parameters, strata):
     values=deepcopy(parameters or {})
+    # Unset compute controls follow the machine; explicit values always win.
+    # Decision stopping leaves every predictive decision identical (see
+    # measurement_distribution.predictive_decision_stop_record).
+    compute=values.setdefault('compute',{})
+    for key,value in machine_compute_defaults().items():compute.setdefault(key,value)
+    compute.setdefault('predictive_stopping','decision')
     if values.get('cr',{}).get('engine','staged_native_families')!='staged_native_families':
         raise ValueError('run_analysis requires the full staged engine; use run_workflow for historical engine replay')
     values.setdefault('cr',{})['engine']='staged_native_families'

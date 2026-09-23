@@ -224,3 +224,17 @@ def test_reversed_call_metadata_remains_in_interval_order():
     v=orient_unit(u,dict(chrom='chr1',start=0,end=81,name='minus',strand='-'))
     assert [c['interval'] for c in v['native_multi_interval_calls']]==v['native_multi_interval_tf_intervals']
     assert [c['llr'] for c in v['native_multi_interval_calls']]==[8,3]
+
+
+def test_unset_compute_follows_the_machine_and_explicit_values_win():
+    from fiberhmm.inference.consensus.regions import machine_compute_defaults
+    from fiberhmm.inference.consensus.parameters import parse_options
+    strata=[dict(dataset_id='a',chemistry='ddda')]
+    machine=machine_compute_defaults()
+    assert 1<=machine['cores']<=16 and 2048<=machine['maximum_matrix_mb']<=32768 and machine['maximum_matrix_mb']%16==0
+    auto=automatic_parameters({},strata)['compute']
+    assert auto['cores']==machine['cores'] and auto['maximum_matrix_mb']==machine['maximum_matrix_mb']
+    assert auto['predictive_stopping']=='decision'
+    explicit=automatic_parameters({'compute':{'cores':3,'maximum_matrix_mb':4096,'predictive_stopping':'full'}},strata)['compute']
+    assert (explicit['cores'],explicit['maximum_matrix_mb'],explicit['predictive_stopping'])==(3,4096,'full')
+    parse_options(automatic_parameters({},strata))
