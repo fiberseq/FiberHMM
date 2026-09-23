@@ -15,8 +15,12 @@ def encoded(value):
     return json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
 
 
-def intern(value,pool):
-    return _intern(value,pool)[0]
+def intern(value,pool,memo=None):
+    """Intern ``value`` into ``pool``. ``memo`` (optional, owned by the caller
+    together with ``pool``) remembers containers already interned by identity,
+    so a subtree shared by several records or stage snapshots is serialized
+    once. Only valid while those objects are not mutated."""
+    return _intern(value,pool,memo)[0]
 
 
 _INFINITY=float('inf')
@@ -36,22 +40,33 @@ def _scalar_text(value):
     return encoded(value).decode()
 
 
-def _intern(value,pool):
+def _intern(value,pool,memo=None):
     """(interned value, its canonical JSON text), built bottom-up.
 
     Each container's text is assembled from its children's, so every node is
     serialized once instead of once per ancestor. The text equals ``encoded``
     of the interned value (ASCII, sorted keys, compact separators); a key the
     fast path cannot order exactly as json.dumps does falls back to it."""
+    if memo is not None and isinstance(value,(dict,list)):
+        hit=memo.get(id(value))
+        if hit is not None and hit[0] is value:
+            return hit[1],hit[2]
+        interned,raw=_intern_container(value,pool,memo)
+        memo[id(value)]=(value,interned,raw)  # holding value keeps its id unique
+        return interned,raw
+    return _intern_container(value,pool,memo)
+
+
+def _intern_container(value,pool,memo):
     if isinstance(value,dict):
         if REF in value:raise ValueError('Reserved evidence reference field in source data')
-        parts={k:_intern(v,pool) for k,v in value.items()}
+        parts={k:_intern(v,pool,memo) for k,v in value.items()}
         result={k:v for k,(v,_) in parts.items()}
         if all(type(k) is str for k in parts):
             raw='{'+','.join(encode_basestring_ascii(k)+':'+parts[k][1] for k in sorted(parts))+'}'
         else:raw=encoded(result).decode()
     elif isinstance(value,list):
-        parts=[_intern(v,pool) for v in value]
+        parts=[_intern(v,pool,memo) for v in value]
         result=[v for v,_ in parts]
         raw='['+','.join(r for _,r in parts)+']'
     else:return value,_scalar_text(value)

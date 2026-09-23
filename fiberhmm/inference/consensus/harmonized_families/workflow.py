@@ -163,6 +163,7 @@ def attach_assignment_scores(snapshots, parts, results, foreign):
     for fid, result in results.items():
         for score in result['records']:
             add(call_key(score['call']), fid, score)
+    compat_copies = {}; support_copies = {}
     for annotation in snapshots.values():
         hypotheses = {h['id']:h for h in annotation['hypotheses']}
         def root(fid):
@@ -175,16 +176,26 @@ def attach_assignment_scores(snapshots, parts, results, foreign):
         displayed = sorted(fid for fid, h in hypotheses.items() if h.get('display'))
         for row in annotation['records']:
             evidence = scores[(row['unit_id'], *row['interval'])]
+            call = (row['unit_id'], *row['interval'])
+            # One copy per (call, scored model), shared by every stage snapshot:
+            # the content is identical, and snapshot interning then serializes it once.
+            def compat(fid):
+                key = (call, root(fid))
+                if key not in compat_copies:
+                    compat_copies[key] = {k:copied(v) for k,v in evidence[key[1]].items()}
+                return compat_copies[key]
+            def support(fid):
+                key = (call, root(fid))
+                if key not in support_copies:
+                    support_copies[key] = {k: evidence[key[1]][k] for k in
+                        ('status', 'floor_adjusted_loss', 'recipient_optimum') if k in evidence[key[1]]}
+                return support_copies[key]
             row['assignment_compatibility'] = {
-                fid:{k:copied(v) for k,v in evidence[root(fid)].items()} for fid in row['display_hypotheses']
-                if root(fid) in evidence}
+                fid:compat(fid) for fid in row['display_hypotheses'] if root(fid) in evidence}
             # Every displayed hypothesis this call was scored against, compatible
             # or not: the candidate set for class support (q0), which therefore
             # does not depend on the assignment reference.
-            row['candidate_support'] = {
-                fid: {k: evidence[root(fid)][k] for k in ('status', 'floor_adjusted_loss', 'recipient_optimum')
-                      if k in evidence[root(fid)]}
-                for fid in displayed if root(fid) in evidence}
+            row['candidate_support'] = {fid: support(fid) for fid in displayed if root(fid) in evidence}
 
 
 def consolidate_scope(parts, radius, folder, maximum_bytes, stop_after, progress, *, cache, scope_key, cores, minimum_retention_groups=2, predictive_stop=0):

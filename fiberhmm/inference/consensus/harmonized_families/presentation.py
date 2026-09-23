@@ -291,7 +291,7 @@ def browser_snapshot(scopes, sources, mode, stage, context=None,
                 compatible_families=families, classification_status='compatible_catalog_label' if families else 'provisional_unresolved',
                 assessment_status=record['status'], inference_eligible=original['inference_eligible'],
                 unclassified=not families, cr_mode=MODE, new_call=False, stage=stage,
-                family_evidence=intern(evidence,context['evidence_pool']) if context['compact'] else evidence, raw_interval_unchanged=True,
+                family_evidence=intern(evidence,context['evidence_pool'],context.setdefault('intern_memo',{})) if context['compact'] else evidence, raw_interval_unchanged=True,
                 primary_label_semantics='surviving_native_primary_else_deterministic_display_only',
                 exclusive_assignment=False)
             proposal['assignment_reference_percent'] = assignment_reference_percent

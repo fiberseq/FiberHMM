@@ -1,6 +1,7 @@
 # Extracted reference kernels; see SOURCE_MANIFEST.json.
 from copy import deepcopy
 from .reuse_consensus_fits import reuse_consensus
+from .refine_consensus_parents import annotation_view
 from .synthetic_state_benchmark import digest
 
 def resolve_representatives(case, annotation, load_result, minimum_retention_groups=2):
@@ -22,7 +23,9 @@ def resolve_representatives(case, annotation, load_result, minimum_retention_gro
             seen.add(fid)
             fid = hypotheses[fid]['reused_from']
         return fid
-    view = deepcopy(annotation)
+    # Shallow view: only top-level keys and settings are edited here; the final
+    # digest assertion still proves the input annotation is unchanged.
+    view = annotation_view(annotation)
     previous_decisions = view.pop('refinement_decisions')
     view['settings'].pop('refinement')
     view['settings']['frozen_representative_input_digest'] = frozen

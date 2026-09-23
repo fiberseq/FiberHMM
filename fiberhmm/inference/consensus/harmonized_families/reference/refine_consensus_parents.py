@@ -78,8 +78,20 @@ def support_diagnostics(case, old, prop, result, members=None):
         parent_info[fid] = dict(**comparison(keys, original_members[fid]), all_prior_compatible_calls=len(original_members[fid]), all_prior_calls_compatible_with_union=len(original_members[fid] & joint), box_touches_support=touches, nomination_box_censored=any(touches.values()))
     return dict(children=child_info, constituent_parents=parent_info, union_physical_support=support, fractions_are_diagnostics_not_promotion_gates=True, nomination_censored=any((d['nomination_box_censored'] for d in parent_info.values())))
 
+def annotation_view(old):
+    """A copy of ``old`` whose hypotheses, records, summary and settings may be
+    edited field by field. Nested values stay shared with ``old`` and must only be
+    replaced, never mutated in place (the callers below assign; they never edit
+    nested values). Whole-annotation deepcopies dominated consolidation time."""
+    ann = dict(old)
+    ann['hypotheses'] = [dict(h) for h in old['hypotheses']]
+    ann['records'] = [dict(r) for r in old['records']]
+    ann['summary'] = dict(old['summary'])
+    ann['settings'] = dict(old['settings'])
+    return ann
+
 def refine_annotation(case, old, proposals, results, minimum_retention_groups=2):
-    ann = deepcopy(old)
+    ann = annotation_view(old)
     before = {h['id']: h for h in old['hypotheses']}
     replacements = defaultdict(list)
     passing = defaultdict(list)
