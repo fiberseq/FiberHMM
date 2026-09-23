@@ -214,8 +214,11 @@ def _load_payload(state,request,options,progress):
         # Keep chemical CT/GA order, but never split Hia5 by mapping orientation.
         units.sort(key=lambda u:((0 if u['strand']=='CT' else 1),u['unit_id']) if chemistry in ('ddda','dddb') else (0,u['unit_id']))
         model_hash=hashlib.sha256(model.emissionprob_.astype('<f8').tobytes()).hexdigest()
+        from fiberhmm.core.bam_reader import daf_run_mask_min_length,daf_run_mask_policy
         strata.append(dict(dataset_id=dsid,stratum_id=dsid,chemistry=chemistry,units=units,
             model_manifest=dict(preset=chemistry,emissions_sha256=model_hash,efficiency_scaling=False,
+                daf_run_mask_min_length=daf_run_mask_min_length() if chemistry in ('ddda','dddb') else None,
+                daf_run_mask_policy=daf_run_mask_policy() if chemistry in ('ddda','dddb') and daf_run_mask_min_length() else None,
                 native_minimum_llr=minimum_llr if options['input'].correct_native else None,
                 replay_scope=('query_nuc_recall_then_TF_replay' if any('upstream_nuc_tf_recall' in u for u in units) else
                     'fixed_MSP_intersection_with_analysis_region' if options['cr'].engine==HARMONIZATION_MODE else 'fixed_MSP_only') if options['input'].correct_native else 'existing_calls',

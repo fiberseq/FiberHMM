@@ -176,6 +176,14 @@ def parse_args():
     p.add_argument('--chimera-purity', type=float, default=0.8,
                    help='DAF chimera: min same-strand purity per segment '
                         '(default 0.8).')
+    p.add_argument('--daf-mask-runs', type=int, default=0, metavar='N',
+                   help='DAF only: thin targets lying in same-strand runs of >= N '
+                        'original C (CT) or G (GA) bases (CC/GG and longer at N=2) '
+                        'in all observations (see --daf-run-policy). Adjacent conversions are coupled and '
+                        'do not follow the per-site emission model. 0 disables (default).')
+    p.add_argument('--daf-run-policy', choices=['keep-one', 'drop'], default='keep-one',
+                   help='With --daf-mask-runs: keep the 5\'-most target of each run '
+                        '(keep-one, default) or remove the whole run (drop).')
     p.add_argument('--daf-snp-mask', default=None,
                    help='DAF only: 0-based BED of recurrent C>T/G>A SNP sites '
                         'to exclude from deamination observations. MD is preserved.')
@@ -786,6 +794,16 @@ def main():
             file=sys.stderr,
         )
         sys.exit(2)
+    if args.daf_mask_runs:
+        if mode != 'daf':
+            print("error: --daf-mask-runs requires --mode daf", file=sys.stderr)
+            sys.exit(2)
+        if args.daf_mask_runs < 2:
+            print("error: --daf-mask-runs must be 0 (off) or >= 2", file=sys.stderr)
+            sys.exit(2)
+    # Always set explicitly (also 0) so an inherited environment value cannot leak in.
+    from fiberhmm.core.bam_reader import configure_daf_run_mask
+    configure_daf_run_mask(args.daf_mask_runs if mode == 'daf' else 0, args.daf_run_policy)
     if (args.daf_call_snps or args.daf_snp_mask) and mode != 'daf':
         print("error: DAF SNP masking requires --mode daf", file=sys.stderr)
         sys.exit(2)
@@ -1005,6 +1023,7 @@ def main():
                f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'} "
                f"chimera_filter={chimera_state} dedup={dedup_state} "
                f"daf_snp_mask={snp_state} "
+               f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'} "
                f"ddda_mcg={'on' if ddda_mcg else 'off'}"),
     }
 
@@ -1023,7 +1042,8 @@ def main():
         f"  ddda-derived-tf-edge-gap="
         f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'}\n"
         f"  cores={args.cores} io-threads={args.io_threads} "
-        f"ddda_mcg={'on' if ddda_mcg else 'off'}"
+        f"ddda_mcg={'on' if ddda_mcg else 'off'} "
+        f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'}"
         f"{' circular=on' if args.circular else ''}\n"
         "=========================================================================\n",
         file=sys.stderr,

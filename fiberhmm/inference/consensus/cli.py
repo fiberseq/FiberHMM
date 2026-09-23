@@ -47,11 +47,16 @@ def main(argv=None):
     p.add_argument('--cores',type=int)
     p.add_argument('--cache',help='Persistent exact fit cache directory')
     p.add_argument('--json-progress',action='store_true',help='Structured progress on stderr')
+    p.add_argument('--daf-mask-runs',type=int,default=0,metavar='N',help='DAF only: thin targets in same-strand runs of >= N original C (CT) or G (GA) bases in the evidence (2 = CC/GG and longer; 0 = off)')
+    p.add_argument('--daf-run-policy',choices=['keep-one','drop'],default='keep-one',help="With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run")
     p.add_argument('--no-bam',action='store_true',help='Save frozen results/reports without materializing family-tagged BAMs')
     p.add_argument('--bam-scope',choices=['regions','full'],default='regions',help='Export whole alignments overlapping analyzed windows (default), or the full source BAM')
     p.add_argument('--bam-grouping',choices=['datasets','files'],default='datasets',help='One BAM per logical dataset (default) or original source file')
     p.add_argument('--output',help='New or empty result directory')
     args=p.parse_args(argv)
+    from fiberhmm.core.bam_reader import configure_daf_run_mask
+    try: configure_daf_run_mask(args.daf_mask_runs,args.daf_run_policy)
+    except ValueError as error: p.error(str(error))
     if args.schema:
         schema=parameter_schema()
         for control in schema['cr']:

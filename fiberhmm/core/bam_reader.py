@@ -10,6 +10,7 @@ Supports:
 - Variable context sizes (default k=3 for 7-mer, up to k=10 for 21-mer)
 """
 
+import os
 from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 
@@ -932,16 +933,110 @@ def _encode_daf_observations(sequence: str, mod_positions: Set[int],
     mod_mask = _mod_positions_mask(mod_positions, seq_len)
 
     if _HAS_NUMBA:
-        return _daf_context_codes_numba(
+        codes = _daf_context_codes_numba(
             seq_int, mod_mask, context_size, edge_trim,
             non_target_code, unmethylated_offset,
             deam_int, orig_int, use_rc,
         )
+    else:
+        codes = _encode_daf_vectorized_observations(
+            seq_int, mod_mask, context_size, edge_trim,
+            non_target_code, unmethylated_offset, deam_int, orig_int, use_rc,
+        )
+    min_run = daf_run_mask_min_length()
+    if min_run:
+        codes = _mask_daf_runs(codes, seq_int, mod_mask, deam_int, orig_int,
+                               min_run, non_target_code + unmethylated_offset,
+                               keep_one=daf_run_mask_policy() == 'keep-one',
+                               use_rc=use_rc)
+    return codes
 
-    return _encode_daf_vectorized_observations(
-        seq_int, mod_mask, context_size, edge_trim,
-        non_target_code, unmethylated_offset, deam_int, orig_int, use_rc,
-    )
+
+# Optional DAF adjacent-run mask. Conversions at adjacent same-strand targets
+# (CC on the CT strand, GG in reference orientation on the GA strand) are
+# strongly coupled and do not follow the per-site emission model. Policy
+# 'keep-one' (default) keeps only the 5'-most target of each run on the
+# deaminated strand, so a run contributes one observation; 'drop' removes the
+# whole run. 0 disables. Settings are mirrored into the environment so spawned
+# worker processes inherit them.
+_DAF_RUN_MASK_ENV = 'FIBERHMM_DAF_RUN_MASK'
+_DAF_RUN_POLICY_ENV = 'FIBERHMM_DAF_RUN_POLICY'
+_DAF_RUN_POLICIES = ('keep-one', 'drop')
+_DAF_RUN_MASK_MIN = None
+_DAF_RUN_POLICY = None
+
+
+def _validate_run_mask(value) -> int:
+    n = int(value)
+    if n < 0 or n == 1:
+        raise ValueError('DAF run mask must be 0 (off) or a minimum run length >= 2')
+    return n
+
+
+def _validate_run_policy(value) -> str:
+    if value not in _DAF_RUN_POLICIES:
+        raise ValueError(f'DAF run policy must be one of {_DAF_RUN_POLICIES}')
+    return value
+
+
+def configure_daf_run_mask(min_run_length: int = 0, policy: str = 'keep-one') -> None:
+    """Thin DAF targets in runs of >= min_run_length original C (CT) or G (GA) bases."""
+    global _DAF_RUN_MASK_MIN, _DAF_RUN_POLICY
+    _DAF_RUN_MASK_MIN = _validate_run_mask(min_run_length)
+    _DAF_RUN_POLICY = _validate_run_policy(policy)
+    os.environ[_DAF_RUN_MASK_ENV] = str(_DAF_RUN_MASK_MIN)
+    os.environ[_DAF_RUN_POLICY_ENV] = _DAF_RUN_POLICY
+
+
+def daf_run_mask_policy() -> str:
+    global _DAF_RUN_POLICY
+    if _DAF_RUN_POLICY is None:
+        _DAF_RUN_POLICY = _validate_run_policy(os.environ.get(_DAF_RUN_POLICY_ENV) or 'keep-one')
+    return _DAF_RUN_POLICY
+
+
+def daf_run_mask_min_length() -> int:
+    global _DAF_RUN_MASK_MIN
+    if _DAF_RUN_MASK_MIN is None:
+        _DAF_RUN_MASK_MIN = _validate_run_mask(os.environ.get(_DAF_RUN_MASK_ENV, '0') or 0)
+        # Inherited, not configured in this process: expected in workers, but a
+        # main process (training, export, Browser) must not change silently.
+        import multiprocessing
+        if _DAF_RUN_MASK_MIN and multiprocessing.parent_process() is None:
+            import sys
+            print(f'warning: DAF run mask active from environment '
+                  f'({_DAF_RUN_MASK_ENV}={_DAF_RUN_MASK_MIN}, policy '
+                  f'{daf_run_mask_policy()}); unset it to disable',
+                  file=sys.stderr)
+    return _DAF_RUN_MASK_MIN
+
+
+def _mask_daf_runs(codes: np.ndarray, seq_int: np.ndarray, mod_mask: np.ndarray,
+                   deam_int: int, orig_int: int, min_run: int,
+                   masked_code: int, keep_one: bool = False,
+                   use_rc: bool = False) -> np.ndarray:
+    """Set positions in runs of >= min_run original target bases to non-target.
+
+    Runs are defined on the original molecule: deaminated positions are restored
+    before runs are measured, so a run is thinned whether or not it converted.
+    With keep_one, the 5'-most target of each run on the deaminated strand keeps
+    its own observation (leftmost in SEQ for CT, rightmost for GA).
+    """
+    recon = seq_int.copy()
+    recon[mod_mask & (seq_int == deam_int)] = orig_int
+    edges = np.diff(np.r_[0, (recon == orig_int).astype(np.int8), 0])
+    starts = np.flatnonzero(edges == 1); ends = np.flatnonzero(edges == -1)
+    long_runs = (ends - starts) >= min_run
+    if not long_runs.any():
+        return codes
+    delta = np.zeros(len(codes) + 1, dtype=np.int32)
+    np.add.at(delta, starts[long_runs], 1)
+    np.add.at(delta, ends[long_runs], -1)
+    in_run = np.cumsum(delta[:-1]) > 0
+    if keep_one:
+        in_run[(ends[long_runs] - 1) if use_rc else starts[long_runs]] = False
+    codes[in_run] = masked_code
+    return codes
 
 
 def _encode_daf_vectorized_observations(seq_int: np.ndarray, mod_mask: np.ndarray,
