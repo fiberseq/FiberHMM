@@ -63,21 +63,29 @@ def nominate_parents(models, radius):
         result.append(dict(id=f'P:G{key}:r{radius}', children=ids, center_bounds=box, actual_reference_overlap=ref, radius=radius, nomination='common_native_best_projection_cells_not_confidence_regions', every_pair_actual_overlap=all((overlaps(by_id[a]['reference_interval'], by_id[b]['reference_interval']) for (a, b) in itertools.combinations(ids, 2)))))
     return sorted(result, key=lambda g: (g['center_bounds'][0][0], g['center_bounds'][1][0], g['id']))
 
-def promotion(case, proposal, result, minimum_source_groups=2):
+def ledger_members(case):
+    """family -> {(unit, start, end)} of the case's original compatible calls."""
+    members = defaultdict(set)
+    for r in case['ledger']:
+        for f in r['compatible_families']:
+            members[f].add((r['unit_id'], *r['interval']))
+    return members
+
+def promotion(case, proposal, result, minimum_source_groups=2, own_members=None):
     """Constructive support for the shared proposal, never all-read agreement.
 
     This is an operational support gate, NOT statistical equality/recurrence
     certification. Each nominated child must have a source observation that
     supports both its original child fit and the refitted parent. All rejects
     remain in the ledger; they do not each instantiate another active family.
+    ``own_members`` is ``ledger_members(case)``; callers scoring many proposals
+    against one unchanged case pass it once instead of rebuilding it per call.
     """
     fits = [result['full_model'], *result['fold_models'].values()]
     converged = all((f.get('status') == 'fitted' and f.get('diagnostics', {}).get('converged') for f in fits))
     models = {m['family']: m for m in case['models']}
-    own_members = defaultdict(set)
-    for r in case['ledger']:
-        for f in r['compatible_families']:
-            own_members[f].add((r['unit_id'], *r['interval']))
+    if own_members is None:
+        own_members = ledger_members(case)
     supported = {call_key(r['call']): r for r in result['records'] if r.get('compatible') is True and (not r.get('fit_warning'))}
     children = {}
     for f in proposal['children']:
@@ -91,10 +99,7 @@ def promotion(case, proposal, result, minimum_source_groups=2):
 
 def annotate(case, proposals, results, radius):
     model_by_id = {m['family']: m for m in case['models']}
-    child_members = defaultdict(set)
-    for r in case['ledger']:
-        for f in r['compatible_families']:
-            child_members[f].add((r['unit_id'], *r['interval']))
+    child_members = ledger_members(case)
     replaced = defaultdict(list)
     parent_members = defaultdict(list)
     evaluations = defaultdict(list)
@@ -105,7 +110,7 @@ def annotate(case, proposals, results, radius):
         if result is None:
             decisions.append(dict(proposal=p, accepted=False, reason='unassessed_fit'))
             continue
-        decision = promotion(case, p, result)
+        decision = promotion(case, p, result, own_members=child_members)
         decisions.append(dict(proposal=p, **decision))
         fit = result['full_model']
         accepted = decision['accepted']

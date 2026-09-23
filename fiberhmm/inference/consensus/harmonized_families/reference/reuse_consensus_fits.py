@@ -2,7 +2,7 @@
 from copy import deepcopy
 from itertools import combinations
 from .run_bounded_parent_panel import call_key
-from .native_cell_consolidation import promotion
+from .native_cell_consolidation import ledger_members, promotion
 from .refine_consensus_parents import nominate_refinements, refine_annotation
 
 def reuse_consensus(case, annotation, load_result, nomination_mode='fitted_boxes', score_identity=None, minimum_retention_groups=2):
@@ -20,6 +20,7 @@ def reuse_consensus(case, annotation, load_result, nomination_mode='fitted_boxes
     results = {}
     receipts = []
     score_maps = {}
+    members = ledger_members(case)
     for prop in proposals:
         prop['id'] = prop['id'].replace('P:R', 'P:C', 1)
         prop['nomination_geometry_bounds'] = prop.pop('center_bounds')
@@ -52,7 +53,7 @@ def reuse_consensus(case, annotation, load_result, nomination_mode='fitted_boxes
                 raise ValueError('Cached result lacks complete direct overlap scoring')
             if result['full_model']['physical_radius'] != annotation['radius']:
                 raise ValueError('Cannot reuse a different physical radius')
-            decision = promotion(case, prop, result)
+            decision = promotion(case, prop, result, own_members=members)
             checks.append(dict(candidate=fid, accepted=decision['accepted'], reason=decision['reason'], compatible_source_groups=decision['compatible_source_groups'], children_without_support=[f for (f, s) in decision['child_support'].items() if not s['compatible_source_groups']]))
             if decision['accepted']:
                 candidates.append((-len(result['full_model']['training_groups']), fid))

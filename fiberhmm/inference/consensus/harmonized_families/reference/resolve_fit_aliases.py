@@ -3,7 +3,7 @@ from collections import defaultdict
 from copy import deepcopy
 import hashlib
 import numpy as np
-from .native_cell_consolidation import promotion
+from .native_cell_consolidation import ledger_members, promotion
 
 def coalesce_fit_alias_proposals(case, proposals, results, receipts, identity):
     groups = defaultdict(list)
@@ -11,6 +11,7 @@ def coalesce_fit_alias_proposals(case, proposals, results, receipts, identity):
         if receipt['reused_from']:
             groups[identity(receipt['reused_from'])].append(receipt)
     models = {m['family']: m for m in case['models']}
+    members = ledger_members(case)
     removed = set()
     additions = []
     new_receipts = []
@@ -36,7 +37,7 @@ def coalesce_fit_alias_proposals(case, proposals, results, receipts, identity):
         ids = sorted((r['proposal']['id'] for r in group))
         token = hashlib.sha256('|'.join(ids).encode()).hexdigest()[:12]
         prop.update(id=f"P:I{token}:r{prop['radius']}", children=children, replaces_parents=sorted({p for r in group for p in r['proposal']['replaces_parents']}), actual_reference_overlap=overlap, nomination_geometry_bounds=None, nomination='exact_cached_model_identity_with_common_actual_overlap', exact_fit_alias_groups=[deepcopy(r['proposal']) for r in group])
-        decision = promotion(case, prop, result)
+        decision = promotion(case, prop, result, own_members=members)
         if not decision['accepted']:
             raise AssertionError('Identical witnesses lost constructive support')
         selected = first['reused_from']

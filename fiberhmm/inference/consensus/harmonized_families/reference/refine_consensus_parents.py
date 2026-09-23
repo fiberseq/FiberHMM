@@ -3,7 +3,7 @@ from collections import Counter, defaultdict
 from copy import deepcopy
 import hashlib
 import math
-from .native_cell_consolidation import nominate_parents, promotion
+from .native_cell_consolidation import ledger_members, nominate_parents, promotion
 from .run_bounded_parent_panel import call_key
 from .family_retirement import retention_checks
 
@@ -77,6 +77,7 @@ def refine_annotation(case, old, proposals, results, minimum_retention_groups=2)
     passing = defaultdict(list)
     evaluations = defaultdict(list)
     (decisions, additions) = ([], [])
+    members = ledger_members(case)
     for prop in proposals:
         fid = prop['id']
         if fid in before:
@@ -85,7 +86,7 @@ def refine_annotation(case, old, proposals, results, minimum_retention_groups=2)
         if result is None:
             decisions.append(dict(proposal=prop, accepted=False, reason='unassessed_fit'))
             continue
-        decision = promotion(case, prop, result)
+        decision = promotion(case, prop, result, own_members=members)
         decision['support_diagnostics'] = support_diagnostics(case, old, prop, result)
         decisions.append(dict(proposal=prop, **decision))
         accepted = decision['accepted']
