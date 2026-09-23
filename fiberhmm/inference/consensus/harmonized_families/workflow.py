@@ -174,6 +174,11 @@ def attach_assignment_scores(snapshots, parts, results, foreign):
                 seen.add(fid);fid=hypotheses[fid]['reused_from']
             return fid
         displayed = sorted(fid for fid, h in hypotheses.items() if h.get('display'))
+        # Displayed hypotheses by scored model, so each call visits only the
+        # models it was scored against instead of every displayed hypothesis.
+        by_root = defaultdict(list)
+        for fid in displayed:
+            by_root[root(fid)].append(fid)
         for row in annotation['records']:
             evidence = scores[(row['unit_id'], *row['interval'])]
             call = (row['unit_id'], *row['interval'])
@@ -195,7 +200,8 @@ def attach_assignment_scores(snapshots, parts, results, foreign):
             # Every displayed hypothesis this call was scored against, compatible
             # or not: the candidate set for class support (q0), which therefore
             # does not depend on the assignment reference.
-            row['candidate_support'] = {fid: support(fid) for fid in displayed if root(fid) in evidence}
+            row['candidate_support'] = {fid: support(fid) for fid in
+                sorted(fid for model in evidence for fid in by_root.get(model, ()))}
 
 
 def consolidate_scope(parts, radius, folder, maximum_bytes, stop_after, progress, *, cache, scope_key, cores, minimum_retention_groups=2, predictive_stop=0):
