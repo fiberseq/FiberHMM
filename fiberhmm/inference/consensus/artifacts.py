@@ -19,18 +19,26 @@ def json_default(value):
     raise TypeError(type(value).__name__)
 
 
+def canonical_bytes(value):
+    """The canonical encoding that ``digest`` hashes (sorted keys, compact)."""
+    return json.dumps(value, sort_keys=True, separators=(',', ':'),
+        allow_nan=False, default=json_default).encode()
+
+
 def digest(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'),
-        allow_nan=False, default=json_default).encode()).hexdigest()
+    return hashlib.sha256(canonical_bytes(value)).hexdigest()
 
 
-def write_json(path, value):
+def write_json(path, value, *, encoded=None):
+    """Write ``value``; ``encoded`` may supply its canonical bytes to avoid a
+    second serialization (same JSON content, sorted key order)."""
     path = Path(path)
     # dumps uses the C encoder. dump instead iterates millions of tiny Python
     # chunks in these audit ledgers. Keep the same JSON semantics/float text;
     # compression level changes only storage, never scientific content/digests.
-    encoded = json.dumps(value, allow_nan=False, default=json_default,
-                         separators=(',', ':')).encode('utf-8')
+    if encoded is None:
+        encoded = json.dumps(value, allow_nan=False, default=json_default,
+                             separators=(',', ':')).encode('utf-8')
     # Never leave a truncated published artifact on cancellation/write failure.
     fd, temporary = tempfile.mkstemp(prefix='.'+path.name+'.', dir=path.parent)
     try:

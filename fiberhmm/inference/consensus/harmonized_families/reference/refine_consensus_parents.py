@@ -33,10 +33,8 @@ def nominate_refinements(case, annotation, box_kind='conditional_95'):
         proposals.append(dict(id=f"P:R{token}:r{annotation['radius']}", children=children, replaces_parents=replaced, center_bounds=nominated['center_bounds'], actual_reference_overlap=nominated['actual_reference_overlap'], radius=annotation['radius'], every_pair_actual_overlap=True, nomination=f'frozen_{box_kind}_edge_box_intersection_no_expansion', original_children_flattened=True, recursive_nomination=False))
     return proposals
 
-def support_diagnostics(case, old, prop, result):
-    """Report all support changes without inventing a fraction/majority gate."""
-    source = {m['family']: m for m in case['models']}
-    parents = {h['id']: h for h in old['hypotheses']}
+def annotation_members(old):
+    """(display-hypothesis members, original native members) of an annotation's calls."""
     original_members = defaultdict(set)
     native_members = defaultdict(set)
     for row in old['records']:
@@ -45,6 +43,16 @@ def support_diagnostics(case, old, prop, result):
             original_members[f].add(key)
         for f in row['original']['compatible_families']:
             native_members[f].add(key)
+    return original_members, native_members
+
+def support_diagnostics(case, old, prop, result, members=None):
+    """Report all support changes without inventing a fraction/majority gate.
+
+    ``members`` is ``annotation_members(old)``; callers scoring many proposals
+    against one unchanged annotation pass it once instead of per proposal."""
+    source = {m['family']: m for m in case['models']}
+    parents = {h['id']: h for h in old['hypotheses']}
+    (original_members, native_members) = members if members is not None else annotation_members(old)
     scores = {call_key(s['call']): s for s in result['records']}
     joint = {k for (k, s) in scores.items() if s.get('compatible') is True and (not s['fit_warning'])}
     fit = result['full_model']
@@ -78,6 +86,7 @@ def refine_annotation(case, old, proposals, results, minimum_retention_groups=2)
     evaluations = defaultdict(list)
     (decisions, additions) = ([], [])
     members = ledger_members(case)
+    old_members = annotation_members(old)
     for prop in proposals:
         fid = prop['id']
         if fid in before:
@@ -87,7 +96,7 @@ def refine_annotation(case, old, proposals, results, minimum_retention_groups=2)
             decisions.append(dict(proposal=prop, accepted=False, reason='unassessed_fit'))
             continue
         decision = promotion(case, prop, result, own_members=members)
-        decision['support_diagnostics'] = support_diagnostics(case, old, prop, result)
+        decision['support_diagnostics'] = support_diagnostics(case, old, prop, result, members=old_members)
         decisions.append(dict(proposal=prop, **decision))
         accepted = decision['accepted']
         fit = result['full_model']

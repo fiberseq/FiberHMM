@@ -21,7 +21,7 @@ from .reference.run_native_cell_consolidation import candidate_inputs
 from .reference.overlapping_family_update import extend_parent
 from .reference.reuse_consensus_fits import reuse_consensus
 from .reference.resolve_consensus_representatives import resolve_representatives
-from ..artifacts import digest, read_json, write_json
+from ..artifacts import canonical_bytes, digest, read_json, write_json
 from ..measurement_family import classify_family_profiles
 from ..measurement_distribution import decision_stop_count
 from ..fit_execution import native_fit_pool
@@ -37,9 +37,9 @@ STAGES = [('native', 'Native state fits'), ('parents', 'Shared-state fits'),
           ('consolidated', 'Consolidated hypotheses'), ('resolved', 'Final recurrent states')]
 
 
-def save(path, value):
+def save(path, value, encoded=None):
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_json(path, value)
+    write_json(path, value, encoded=encoded)
 
 
 def implementation_hashes():
@@ -141,8 +141,14 @@ def attach_assignment_scores(snapshots, parts, results, foreign):
     No refitting, independent confidence invention, or nearest-state fallback.
     """
     scores = defaultdict(dict)
+    def copied(value):
+        # Scores hold scalars and flat numeric intervals; copy those directly
+        # (millions of calls) and deep-copy anything nested.
+        if isinstance(value, list) and not any(isinstance(x, (list, dict)) for x in value):
+            return list(value)
+        return deepcopy(value) if isinstance(value, (list, dict)) else value
     def add(key, fid, score):
-        scores[tuple(key)][fid] = {k:deepcopy(score[k]) for k in
+        scores[tuple(key)][fid] = {k:copied(score[k]) for k in
             ('status', 'predictive_tail_interval', 'exact_for_tail_cuts_at_most',
              'floor_adjusted_loss', 'recipient_optimum') if k in score}
     for channel, part in parts.items():
@@ -170,7 +176,7 @@ def attach_assignment_scores(snapshots, parts, results, foreign):
         for row in annotation['records']:
             evidence = scores[(row['unit_id'], *row['interval'])]
             row['assignment_compatibility'] = {
-                fid:deepcopy(evidence[root(fid)]) for fid in row['display_hypotheses']
+                fid:{k:copied(v) for k,v in evidence[root(fid)].items()} for fid in row['display_hypotheses']
                 if root(fid) in evidence}
             # Every displayed hypothesis this call was scored against, compatible
             # or not: the candidate set for class support (q0), which therefore
@@ -232,11 +238,11 @@ def consolidate_scope(parts, radius, folder, maximum_bytes, stop_after, progress
     save(folder/'nominations.json', proposals)
     results = {}; failures = []; tasks=[];parent_keys={}
     parent_started=time.monotonic()
-    def install_parent(pid,value):
+    def install_parent(pid,value,encoded_result=None):
         if 'failure' in value:failures.append(value['failure'])
         else:
             results[pid]=value['result']
-            save(folder/'parents'/(pid.split(':')[1]+'.json.gz'),value['result'])
+            save(folder/'parents'/(pid.split(':')[1]+'.json.gz'),value['result'],encoded=encoded_result)
     for i, proposal in enumerate(proposals):
         report(progress,'parent_cache',f'Checking shared-fit checkpoints {i+1}/{len(proposals)}',
                completed=i+1,total=len(proposals),unit='hypotheses')
@@ -246,7 +252,14 @@ def consolidate_scope(parts, radius, folder, maximum_bytes, stop_after, progress
             tasks.append((pid,(str(context.resolve()),proposal,maximum_bytes,predictive_stop),parent_working_bytes(case,proposal)))
         else:install_parent(pid,value)
     def save_parent(pid,value):
-        cache.put('parent',parent_keys[pid],value);install_parent(pid,value)
+        # Serialize a fitted result once: its canonical bytes feed the parents/
+        # artifact, and (composed with seconds) the checkpoint and its digest.
+        if set(value)=={'result','seconds'}:
+            result=canonical_bytes(value['result'])
+            whole=b'{"result":'+result+b',"seconds":'+canonical_bytes(value['seconds'])+b'}'
+            cache.put('parent',parent_keys[pid],value,encoded=whole);install_parent(pid,value,result)
+        else:
+            cache.put('parent',parent_keys[pid],value);install_parent(pid,value)
     if tasks:ordered_tasks(parent_task,tasks,cores=cores,maximum_bytes=maximum_bytes,
         progress=progress,stage='parent_fit',on_result=save_parent)
     # Completion order never controls annotation, representative order or seeds.

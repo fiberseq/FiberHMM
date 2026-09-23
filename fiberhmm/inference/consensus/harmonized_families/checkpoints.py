@@ -4,7 +4,8 @@ import hashlib
 import shutil
 import sys
 
-from ..artifacts import digest, read_json, write_json
+import json
+from ..artifacts import canonical_bytes, digest, read_json, write_json
 
 
 def numerical_signature():
@@ -41,9 +42,17 @@ class Checkpoints:
         self.hits[stage]=self.hits.get(stage,0)+1
         return record['value']
 
-    def put(self, stage, key, value):
+    def put(self, stage, key, value, encoded=None):
+        """Store ``value``; ``encoded`` may supply ``canonical_bytes(value)``.
+
+        The value is serialized once: its canonical bytes give the digest and
+        are embedded in the record, which is the same JSON object as before
+        (keys digest, key, value) and passes the same integrity check."""
         folder=self.folder(stage,key); folder.mkdir(parents=True,exist_ok=True)
-        write_json(folder/'checkpoint.json.gz',dict(key=key,digest=digest(value),value=value))
+        encoded=canonical_bytes(value) if encoded is None else encoded
+        record=(b'{"digest":'+json.dumps(hashlib.sha256(encoded).hexdigest()).encode()
+                +b',"key":'+json.dumps(key).encode()+b',"value":'+encoded+b'}')
+        write_json(folder/'checkpoint.json.gz',None,encoded=record)
 
     def statistics(self):
         return dict(directory=str(self.root.resolve()), hits=dict(self.hits), misses=dict(self.misses),
