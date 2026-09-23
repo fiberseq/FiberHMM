@@ -107,6 +107,59 @@ WORKER_NUMBA_THREAD_LIMIT = 4
 _shared_pool = ContextVar('consensus_shared_worker_pool', default=None)
 
 
+def _exit_when_orphaned(poll_seconds=2.):
+    """Worker initializer: exit if the parent process disappears.
+
+    A SIGKILLed or crashed parent cannot shut its pool down, and loky workers
+    would otherwise idle forever holding their stage payloads."""
+    import os
+    import threading
+    import time
+    parent = os.getppid()
+
+    def watch():
+        while True:
+            time.sleep(poll_seconds)
+            if os.getppid() != parent:
+                os._exit(0)
+    threading.Thread(target=watch, name='orphan-watchdog', daemon=True).start()
+
+
+def _process_pool(workers):
+    from joblib.externals.loky import ProcessPoolExecutor
+    from joblib.externals.loky.backend.context import get_context
+    return ProcessPoolExecutor(max_workers=max(1, int(workers)), timeout=None,
+                               context=get_context('loky'), env=WORKER_ENV,
+                               initializer=_exit_when_orphaned)
+
+
+@contextmanager
+def _terminate_as_exit():
+    """In the main thread, turn SIGTERM/SIGHUP into SystemExit so cleanup runs.
+
+    Without this a plain `kill` ends the interpreter without executing any
+    finally block and leaves every worker orphaned. Other threads (for
+    example a Browser job worker) are unaffected: signals only reach the main
+    thread, and their cancellation path already raises through cleanup."""
+    import signal
+    import threading
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = {}
+
+    def handler(signum, frame):
+        raise SystemExit(128 + signum)
+    for sig in (signal.SIGTERM, getattr(signal, 'SIGHUP', None)):
+        if sig is not None:
+            previous[sig] = signal.signal(sig, handler)
+    try:
+        yield
+    finally:
+        for sig, old in previous.items():
+            signal.signal(sig, old)
+
+
 class SharedWorkerPool:
     def __init__(self, cores):
         self.cores = int(cores)
@@ -114,10 +167,7 @@ class SharedWorkerPool:
 
     def get(self):
         if self.executor is None:
-            from joblib.externals.loky import ProcessPoolExecutor
-            from joblib.externals.loky.backend.context import get_context
-            self.executor = ProcessPoolExecutor(max_workers=self.cores, timeout=None,
-                                                context=get_context('loky'), env=WORKER_ENV)
+            self.executor = _process_pool(self.cores)
         return self.executor
 
     def close(self, kill=False):
@@ -134,11 +184,16 @@ def shared_worker_pool(cores):
         return
     pool = SharedWorkerPool(cores)
     token = _shared_pool.set(pool)
+    completed = False
     try:
-        yield pool
+        with _terminate_as_exit():
+            yield pool
+        completed = True
     finally:
         _shared_pool.reset(token)
-        pool.close()
+        # Interrupted or failed runs kill their workers instead of waiting for
+        # in-flight tasks that nobody will collect.
+        pool.close(kill=not completed)
 
 
 def stage_executor(workers):
@@ -157,10 +212,7 @@ def stage_executor(workers):
             if failed:
                 pool.close(kill=True)
         return executor, release
-    from joblib.externals.loky import ProcessPoolExecutor
-    from joblib.externals.loky.backend.context import get_context
-    executor = ProcessPoolExecutor(max_workers=max(1, int(workers)), timeout=None,
-                                   context=get_context('loky'), env=WORKER_ENV)
+    executor = _process_pool(workers)
     def release(failed=False):
         executor.shutdown(wait=True, kill_workers=failed)
     return executor, release

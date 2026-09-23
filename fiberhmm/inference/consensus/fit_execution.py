@@ -213,8 +213,9 @@ class NativeFitPool:
             else:
                 from joblib.externals.loky import ProcessPoolExecutor
                 from joblib.externals.loky.backend.context import get_context
+                from .execution import _exit_when_orphaned
                 self.executor = ProcessPoolExecutor(max_workers=capacity, timeout=None,
-                    context=get_context('loky'), env=_CHILD_THREADS)
+                    context=get_context('loky'), env=_CHILD_THREADS, initializer=_exit_when_orphaned)
             self.executor_workers = capacity
         note(f'fitting {len(jobs)} independent full/held-out models; {capacity} concurrent workers')
         with tempfile.TemporaryDirectory(prefix='fiberhmm-native-fits-') as directory:
