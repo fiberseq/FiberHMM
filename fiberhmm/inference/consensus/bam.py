@@ -144,7 +144,8 @@ def _exclude_recall_failures(units, excluded, label, diagnostics):
     diagnostics with the receipts; fails when the failures are systematic."""
     if not excluded:
         return units,diagnostics
-    if len(excluded)>MAXIMUM_RECALL_EXCLUDED_FRACTION*len(units):
+    # One bad molecule is tolerated even in a small window; more than 1% is systematic.
+    if len(excluded)>max(1,MAXIMUM_RECALL_EXCLUDED_FRACTION*len(units)):
         raise ValueError(f'{label}: Hia5 nucleosome recall failed on {len(excluded)} of {len(units)} molecules, '
             f'more than {MAXIMUM_RECALL_EXCLUDED_FRACTION:.0%}; first: {next(iter(excluded.values()))["reason"]}. '
             'Check the input annotations or disable families.recall_hia5_nucleosomes')
@@ -246,8 +247,10 @@ def _load_payload(state,request,options,progress):
         from fiberhmm.core.bam_reader import daf_run_mask_min_length,daf_run_mask_policy
         strata.append(dict(dataset_id=dsid,stratum_id=dsid,chemistry=chemistry,units=units,
             model_manifest=dict(preset=chemistry,emissions_sha256=model_hash,efficiency_scaling=False,
-                daf_run_mask_min_length=daf_run_mask_min_length() if chemistry in ('ddda','dddb') else None,
-                daf_run_mask_policy=daf_run_mask_policy() if chemistry in ('ddda','dddb') and daf_run_mask_min_length() else None,
+                # Recorded only when the mask is on, so unmasked input digests
+                # (and family tokens) match runs made before the option existed.
+                **(dict(daf_run_mask_min_length=daf_run_mask_min_length(),daf_run_mask_policy=daf_run_mask_policy())
+                   if chemistry in ('ddda','dddb') and daf_run_mask_min_length() else {}),
                 native_minimum_llr=minimum_llr if options['input'].correct_native else None,
                 replay_scope=('query_nuc_recall_then_TF_replay' if any('upstream_nuc_tf_recall' in u for u in units) else
                     'fixed_MSP_intersection_with_analysis_region' if options['cr'].engine==HARMONIZATION_MODE else 'fixed_MSP_only') if options['input'].correct_native else 'existing_calls',

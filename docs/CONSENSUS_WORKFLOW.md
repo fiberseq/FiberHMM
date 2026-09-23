@@ -160,8 +160,16 @@ The established molecular-annotation convention is used:
 * Reruns replace this producer's previous family layers and catalog, and rebuild
   its generated source read groups. Original sequencing/library RGs survive,
   with source provenance in DS. Unknown producers' target layers are not overwritten.
-* Derived tf_consensus.QQQQ (CR/SR) or tf_cross_consensus.QQQQ (XCR) uses
-  AQ dimensions tq,fi,fq,op; AN carries the full stable family token.
+* Derived tf_consensus.QQQQQ (CR/SR) or tf_cross_consensus.QQQQQ (XCR) uses
+  AQ dimensions tq,fi,fq,op,sq; AN carries the full stable family token.
+  (Exports before the strand-quality byte used QQQQ without sq.)
+* sq is the DAF molecule's own core protection ceiling for the family:
+  1 + LLR x 10 (saturated at 255), where LLR is the protection log-likelihood a
+  fully protected molecule would give from its own lattice sites and context
+  emissions; 1 means no site in the core and 0 means non-DAF or unavailable.
+  Each family's header catalog entry carries strand_resolution per dataset
+  (trusted_strand CT/GA/both, core_resolution, per-strand median ceilings and
+  the native floor); use it, not sq alone, to choose which strand to quantify.
 * tq is native footprint LLR times 10 (saturated at 255), or the original native
   TQ if replay was disabled and available. Zero denotes unavailable when no
   source score exists. fi is the established locally reusable byte slot;

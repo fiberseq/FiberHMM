@@ -84,6 +84,8 @@ def flag_strand_limits(by_strand, floor):
     if not ceilings:
         return None
     trusted = sorted(k for k in ceilings if not by_strand[k]['strand_limited'])
+    if not trusted:  # unreachable with monotone emissions (ceilings >= 0); stay total
+        trusted = sorted(ceilings)
     return dict(trusted_strands=trusted,
                 trusted_strand='both' if len(trusted) > 1 else trusted[0],
                 core_resolution=('resolved' if all(ceilings[k] >= floor for k in trusted)

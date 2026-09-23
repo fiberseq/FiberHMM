@@ -81,6 +81,9 @@ def test_bad_molecules_are_excluded_with_receipts_but_systematic_failure_raises(
     assert len(kept)==199 and all(u['unit_id']!='u007' for u in kept)
     assert diagnostics['hia5_recall_excluded']==[bad[id(units[7])]] and diagnostics['files']==[]
     assert _exclude_recall_failures(units,{},'hia5',{})==(units,{})
+    small=units[:50]
+    kept,_=_exclude_recall_failures(small,{id(small[0]):dict(unit_id='u000',read_name='r0',reason='x')},'hia5',{})
+    assert len(kept)==49  # one bad read never aborts a small window
     many={id(u):dict(unit_id=u['unit_id'],read_name='r',reason='x') for u in units[:3]}
     with pytest.raises(ValueError,match='3 of 200 molecules'):
         _exclude_recall_failures(units,many,'hia5',{})

@@ -151,8 +151,12 @@ def _terminate_as_exit():
     def handler(signum, frame):
         raise SystemExit(128 + signum)
     for sig in (signal.SIGTERM, getattr(signal, 'SIGHUP', None)):
-        if sig is not None:
-            previous[sig] = signal.signal(sig, handler)
+        # An ignored signal stays ignored: under nohup, SIGHUP is SIG_IGN and a
+        # closed terminal must not end the run. A handler installed outside
+        # Python (getsignal returns None) is left alone, as it cannot be restored.
+        if sig is None or signal.getsignal(sig) in (signal.SIG_IGN, None):
+            continue
+        previous[sig] = signal.signal(sig, handler)
     try:
         yield
     finally:

@@ -201,12 +201,18 @@ def consolidate_scope(parts, radius, folder, maximum_bytes, stop_after, progress
         if value is None:
             tasks.extend(((channel,k),(str(context.resolve()),channel,(k,blocks),predictive_stop),128*1024**2) for k in range(blocks))
         else:foreign_by_channel[channel]=value
-    done=ordered_tasks(foreign_task,tasks,cores=cores,maximum_bytes=maximum_bytes,
-        progress=progress,stage='foreign_scoring',on_result=lambda key,value:None) if tasks else {}
-    for channel in sorted({c for c,_ in done}):
-        value=dict(records=[r for k in range(blocks) for r in done[(channel,k)]['records']],
-                   seconds=sum(done[(channel,k)]['seconds'] for k in range(blocks)))
-        cache.put('foreign',foreign_keys[channel],value);foreign_by_channel[channel]=value
+    finished=defaultdict(dict)
+    def save_block(key,value):
+        # Checkpoint a channel as soon as all of its blocks are in, so an
+        # interrupted run resumes per channel as before the block split.
+        channel,k=key;finished[channel][k]=value
+        if len(finished[channel])==blocks:
+            parts=finished.pop(channel)
+            merged=dict(records=[r for i in range(blocks) for r in parts[i]['records']],
+                        seconds=sum(parts[i]['seconds'] for i in range(blocks)))
+            cache.put('foreign',foreign_keys[channel],merged);foreign_by_channel[channel]=merged
+    if tasks:ordered_tasks(foreign_task,tasks,cores=cores,maximum_bytes=maximum_bytes,
+        progress=progress,stage='foreign_scoring',on_result=save_block)
     foreign=[r for channel in sorted(parts) for r in foreign_by_channel[channel]['records']]
     timings['foreign_scoring']=time.monotonic()-foreign_started
     save(folder/'foreign_scores.json.gz', foreign)
