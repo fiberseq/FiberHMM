@@ -36,12 +36,15 @@ def test_only_the_asymmetric_strand_is_limited():
     assert not by_strand['GA']['strand_limited'] and not by_strand['GA']['core_below_native_floor']
     both = dict(CT=dict(core_protection_ceiling_llr=3.), GA=dict(core_protection_ceiling_llr=4.))
     verdict = flag_strand_limits(both, 5.)
-    assert verdict['trusted_strand'] == 'both' and verdict['core_resolution'] == 'below_native_floor'
-    assert not any(v['strand_limited'] for v in both.values())
-    assert all(v['core_below_native_floor'] for v in both.values())
+    assert verdict['trusted_strand'] == 'none' and verdict['core_resolution'] == 'below_native_floor'
+    assert all(v['strand_limited'] and v['core_below_native_floor'] for v in both.values())
+    high = dict(CT=dict(core_protection_ceiling_llr=6.), GA=dict(core_protection_ceiling_llr=30.))
+    verdict = flag_strand_limits(high, 5.)
+    assert verdict['trusted_strand'] == 'both' and verdict['core_resolution'] == 'resolved'
 
 
-def test_weak_asymmetric_core_trusts_the_better_strand_but_says_unresolved():
+def test_both_below_floor_trusts_neither_strand():
     verdict = flag_strand_limits(dict(CT=dict(core_protection_ceiling_llr=.8),
                                       GA=dict(core_protection_ceiling_llr=3.)), 5.)
-    assert verdict['trusted_strand'] == 'GA' and verdict['core_resolution'] == 'below_native_floor'
+    assert verdict['trusted_strand'] == 'none' and verdict['trusted_strands'] == []
+    assert verdict['core_resolution'] == 'below_native_floor'

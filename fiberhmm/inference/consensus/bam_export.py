@@ -263,7 +263,7 @@ def _export_source_bams(analyses, output_dir, scope):
                     op='representative_native_opportunities_saturated_255',
                     sq='DAF_molecule_core_protection_ceiling: 1+LLR_times_10_saturated_255 (1 = no core site); 0 = not DAF or unavailable',
                     q0=Q0_SEMANTICS+'; per membership row, that class\'s share',
-                    strand_resolution='per-family catalog entry, per dataset: trusted_strand (CT/GA/both), core_resolution, per-strand median core ceilings and native floor; use it to choose which chemical strand to quantify',
+                    strand_resolution='per-family catalog entry, per dataset: trusted_strand (CT/GA/both/none; a strand is limited when its core ceiling is below the native floor), core_resolution, per-strand median core ceilings and native floor; use it to choose which chemical strand to quantify',
                     memberships='all_compatible_families_nonexclusive',
                     export_scope=scope,export_windows=windows,
                     coordinates='original_source_call_in_molecular_frame',

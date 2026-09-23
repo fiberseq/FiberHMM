@@ -40,7 +40,6 @@ def presentation_context(sources,compact=False):
 
 # Native TF LLR preset used when a source did not record its replay floor.
 DAF_NATIVE_FLOOR = 5.
-STRAND_LIMITED_RATIO = .5
 
 
 def core_informativeness(context, uids, left, right):
@@ -65,34 +64,38 @@ def flag_strand_limits(by_strand, floor):
     """Which chemical strand can report this state's core, from the lattice alone.
 
     Sequence composition decides which sites exist on each strand and the
-    context emission model decides how much each one says, so a strongly
-    strand-biased core (GA-poor, CT-poor, poorly reactive contexts) leaves one
-    strand unable to reach the native floor. A strand is limited when a fully
-    protected molecule stays below the floor in the core and reads it at less
-    than half the other strand's ceiling; its rate can err in either direction
-    (missed calls, or broad calls compatible with many states) and must not be
-    compared across strands. Returns the state-level verdict: the strand(s) to
-    trust, and whether even they resolve the core on its own."""
+    context emission model decides how much each one says. The core ceiling is
+    the protection LLR a fully protected molecule would give. A strand is
+    limited when its ceiling is below the native floor.
+
+    Validated on 15,557 sequence-assigned HG002 scDAF duplexes (2026-09-23):
+    - precision of a strand's calls, read on the complementary strand, rises
+      with its own ceiling (0.53-0.61 below 1 nat, 0.96 at >= 10 nats);
+    - limited strands err mainly by extra calls on accessible DNA;
+    - CT and GA behave identically at equal ceiling;
+    - an extra "under half the other strand" clause added nothing beyond the
+      floor, so it was dropped.
+    A limited strand's class rate must not be used, even directionally.
+    Returns the trusted strand(s): CT, GA or both; 'none' when both are below
+    the floor, since then neither strand reports the core well.
+    """
     ceilings = {k: v['core_protection_ceiling_llr'] for k, v in by_strand.items()
                 if v.get('core_protection_ceiling_llr') is not None}
     for strand, counts in by_strand.items():
         if strand not in ceilings:
             continue
-        mine = ceilings[strand]; other = max((v for k, v in ceilings.items() if k != strand), default=None)
-        counts['core_below_native_floor'] = bool(mine < floor)
-        counts['strand_limited'] = bool(mine < floor and other is not None and mine < STRAND_LIMITED_RATIO*other)
+        limited = bool(ceilings[strand] < floor)
+        counts['core_below_native_floor'] = limited
+        counts['strand_limited'] = limited
         counts['native_floor_llr'] = floor
     if not ceilings:
         return None
-    trusted = sorted(k for k in ceilings if not by_strand[k]['strand_limited'])
-    if not trusted:  # unreachable with monotone emissions (ceilings >= 0); stay total
-        trusted = sorted(ceilings)
+    trusted = sorted(k for k in ceilings if ceilings[k] >= floor)
     return dict(trusted_strands=trusted,
-                trusted_strand='both' if len(trusted) > 1 else trusted[0],
-                core_resolution=('resolved' if all(ceilings[k] >= floor for k in trusted)
-                                 else 'below_native_floor'),
+                trusted_strand='both' if len(trusted) > 1 else trusted[0] if trusted else 'none',
+                core_resolution='resolved' if trusted else 'below_native_floor',
                 core_protection_ceiling_llr={k: ceilings[k] for k in sorted(ceilings)},
-                native_floor_llr=floor, limited_ratio=STRAND_LIMITED_RATIO)
+                native_floor_llr=floor)
 
 
 def eligible_units(context, ds, strand, left, right):

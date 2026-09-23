@@ -173,8 +173,12 @@ The established molecular-annotation convention is used:
   fully protected molecule would give from its own lattice sites and context
   emissions; 1 means no site in the core and 0 means non-DAF or unavailable.
   Each family's header catalog entry carries strand_resolution per dataset
-  (trusted_strand CT/GA/both, core_resolution, per-strand median ceilings and
-  the native floor); use it, not sq alone, to choose which strand to quantify.
+  (trusted_strand CT/GA/both/none, core_resolution, per-strand median ceilings
+  and the native floor); use it, not sq alone, to choose which strand to
+  quantify. A strand is limited when its ceiling is below the native floor.
+  On HG002 scDAF duplexes, a limited strand's calls were confirmed by the
+  complementary strand at only ~0.65 precision (0.96 at >= 10 nats), and
+  its errors were mainly extra calls, so its class rate should not be used.
 * tq is native footprint LLR times 10 (saturated at 255), or the original native
   TQ if replay was disabled and available. Zero denotes unavailable when no
   source score exists. fi is the established locally reusable byte slot;
