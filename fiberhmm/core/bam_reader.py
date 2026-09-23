@@ -965,6 +965,67 @@ _DAF_RUN_POLICIES = ('keep-one', 'drop')
 _DAF_RUN_MASK_MIN = None
 _DAF_RUN_POLICY = None
 
+# Chemistry defaults. DddA: keep-one on runs >= 2 (CC/GG) — validated on the
+# full NAPA locus and on 15,557 HG002 scDAF duplexes (2026-09-23: precision of
+# calls, read on the complementary strand, rose in every stratum). Other DAF
+# chemistries stay off until validated. An explicit setting always wins.
+DAF_RUN_MASK_DEFAULTS = {'ddda': (2, 'keep-one')}
+
+# Per-dataset scope (thread-local via contextvars), used where one process
+# loads several chemistries (consensus evidence, FiberBrowser jobs). It wins
+# over the process-wide setting while active.
+from contextvars import ContextVar as _ContextVar
+_DAF_RUN_MASK_SCOPE = _ContextVar('fiberhmm_daf_run_mask_scope', default=None)
+
+
+def default_daf_run_mask(enzyme):
+    """(min_run_length, policy) the chemistry uses when nothing is requested."""
+    return DAF_RUN_MASK_DEFAULTS.get(enzyme, (0, 'keep-one'))
+
+
+def resolve_daf_run_mask(requested, policy, enzyme):
+    """An explicit request (including 0 = off) wins; None means the chemistry default."""
+    if requested is None:
+        return default_daf_run_mask(enzyme)
+    return _validate_run_mask(requested), _validate_run_policy(policy)
+
+
+def daf_run_mask_scope(min_run_length, policy='keep-one'):
+    """Context manager: use this mask for encodings in the current context."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def scope():
+        token = _DAF_RUN_MASK_SCOPE.set((_validate_run_mask(min_run_length), _validate_run_policy(policy)))
+        try:
+            yield
+        finally:
+            _DAF_RUN_MASK_SCOPE.reset(token)
+    return scope()
+
+
+def add_daf_run_mask_arguments(parser):
+    """--daf-mask-runs / --daf-run-policy with the chemistry default."""
+    parser.add_argument('--daf-mask-runs', type=int, default=None, metavar='N',
+        help='Thin DAF targets in same-strand runs of >= N original C (CT) or G (GA) '
+             'bases (N=2: CC/GG and longer). Default: 2 with keep-one for DddA '
+             '(duplex-validated), off otherwise; 0 disables.')
+    parser.add_argument('--daf-run-policy', choices=list(_DAF_RUN_POLICIES), default='keep-one',
+        help="With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run.")
+
+
+def apply_daf_run_mask_arguments(args, enzyme):
+    """Resolve the parsed flags against the chemistry default and configure the
+    process (and its future workers). Returns (min_run_length, policy)."""
+    resolved = resolve_daf_run_mask(args.daf_mask_runs, args.daf_run_policy, enzyme)
+    configure_daf_run_mask(*resolved)
+    return resolved
+
+
+def daf_run_mask_explicit() -> bool:
+    """True when this process configured the mask or inherited it from the environment."""
+    return _DAF_RUN_MASK_MIN is not None or bool(os.environ.get(_DAF_RUN_MASK_ENV))
+
 
 def _validate_run_mask(value) -> int:
     n = int(value)
@@ -990,6 +1051,9 @@ def configure_daf_run_mask(min_run_length: int = 0, policy: str = 'keep-one') ->
 
 def daf_run_mask_policy() -> str:
     global _DAF_RUN_POLICY
+    scoped = _DAF_RUN_MASK_SCOPE.get()
+    if scoped is not None:
+        return scoped[1]
     if _DAF_RUN_POLICY is None:
         _DAF_RUN_POLICY = _validate_run_policy(os.environ.get(_DAF_RUN_POLICY_ENV) or 'keep-one')
     return _DAF_RUN_POLICY
@@ -997,6 +1061,9 @@ def daf_run_mask_policy() -> str:
 
 def daf_run_mask_min_length() -> int:
     global _DAF_RUN_MASK_MIN
+    scoped = _DAF_RUN_MASK_SCOPE.get()
+    if scoped is not None:
+        return scoped[0]
     if _DAF_RUN_MASK_MIN is None:
         _DAF_RUN_MASK_MIN = _validate_run_mask(os.environ.get(_DAF_RUN_MASK_ENV, '0') or 0)
         # Inherited, not configured in this process: expected in workers, but a

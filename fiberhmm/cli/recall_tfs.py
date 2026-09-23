@@ -149,7 +149,8 @@ def _build_recall_pg_record(args, mode, model_path, nuc_cfg):
             f'tf_decoder={TF_DECODER_VERSION} '
             f'recall_nucs={recall_nucs} nuc_recall_policy={policy} '
             f'nuc_profile={profile_identity or "off"} '
-            f'nuc_sha256={profile_sha256 or "off"} phase_nrl={phase_nrl}'
+            f'nuc_sha256={profile_sha256 or "off"} phase_nrl={phase_nrl} '
+            f'daf_run_mask={(">=" + str(args.daf_mask_runs) + "/" + args.daf_run_policy) if getattr(args, "daf_mask_runs", 0) else "off"}'
         ),
     }
 
@@ -640,6 +641,10 @@ def parse_args(default_recall_nucs: bool = False):
     p.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
                    help='Hia5 sequencing platform; omission warns and defaults '
                         'to pacbio. Ignored for dddb/ddda.')
+    p.add_argument('--daf-mask-runs', type=int, default=None, metavar='N',
+                   help='DAF only: thin targets lying in same-strand runs of >= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables.')
+    p.add_argument('--daf-run-policy', choices=['keep-one', 'drop'], default='keep-one',
+                   help="With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run.")
     p.add_argument('--min-llr', type=float, default=None,
                    help='Override native LLR cost per TF interval in joint decoding '
                         '(nats; default: enzyme preset; not an FDR threshold).')
@@ -971,6 +976,21 @@ def main(default_recall_nucs: bool = False):
         sys.exit(2)
     k = args.context_size or int(model_k)
     nuc_recall_policy = _resolve_nuc_recall_policy(args, mode)
+    # Same observation lattice as the first pass: unset means the chemistry
+    # default (DddA keep-one on runs >= 2). Configured before any worker starts.
+    from fiberhmm.core.bam_reader import configure_daf_run_mask, resolve_daf_run_mask
+    requested = getattr(args, 'daf_mask_runs', None)
+    if requested and mode != 'daf':
+        print("error: --daf-mask-runs requires DAF mode", file=sys.stderr)
+        sys.exit(2)
+    try:
+        args.daf_mask_runs, args.daf_run_policy = resolve_daf_run_mask(
+            requested if mode == 'daf' else 0, getattr(args, 'daf_run_policy', 'keep-one'),
+            getattr(args, 'enzyme', None))
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
+    configure_daf_run_mask(args.daf_mask_runs, args.daf_run_policy)
 
     llr_hit, llr_miss = build_llr_tables(model)
     m5c_llr_hit = m5c_llr_miss = None

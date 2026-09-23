@@ -291,7 +291,13 @@ Examples:
     p.add_argument('-p', '--prob-threshold', type=int, default=0,
                    help='Min ML prob for MM/ML dU calls (default 0)')
     p.add_argument('--io-threads', type=int, default=4, help='htslib compression threads (default 4)')
+    from fiberhmm.core.bam_reader import add_daf_run_mask_arguments, apply_daf_run_mask_arguments
+    add_daf_run_mask_arguments(p)
     args = p.parse_args()
+    try:
+        apply_daf_run_mask_arguments(args, args.enzyme)
+    except ValueError as exc:
+        p.error(str(exc))
 
     if args.ddda_derived_tf_max_edge_gap < -1:
         p.error("--ddda-derived-tf-max-edge-gap must be -1 or >= 0")

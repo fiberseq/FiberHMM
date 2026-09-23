@@ -133,12 +133,20 @@ Examples:
     # Testing
     parser.add_argument('--max-reads', type=int, default=None,
                         help=argparse.SUPPRESS)
+    from fiberhmm.core.bam_reader import add_daf_run_mask_arguments
+    add_daf_run_mask_arguments(parser)
 
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    from fiberhmm.core.bam_reader import apply_daf_run_mask_arguments
+    try:
+        apply_daf_run_mask_arguments(args, args.enzyme)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
     using_bundled_model = args.model is None
 
     # Handle stdout output mode — redirect all prints to stderr

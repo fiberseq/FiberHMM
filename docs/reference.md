@@ -433,6 +433,37 @@ inspected per library and jointly for estimator cliffs and residual one-sided
 claim that population size is ground truth; coordinates remain determined from
 each molecule's chemistry likelihood.
 
+## DAF adjacent-target runs (`--daf-mask-runs`, keep-one)
+
+Adjacent targets on the deaminated strand (CC on CT reads, GG on GA reads; runs of two or more) do not convert independently. The per-site emission model assumes they do.
+
+`--daf-mask-runs N` thins every same-strand run of N or more original targets. Runs are measured on the molecule's original sequence, so a run is thinned whether or not it converted. With `--daf-run-policy keep-one` (the default policy), each run keeps only its 5'-most target on the deaminated strand, with its own observation. `drop` removes the whole run.
+
+The thinning happens in the DAF observation encoder, so it applies at every level:
+- HMM, nucleosome and TF LLR calling (`fiberhmm-call`, `apply`, `recall-tfs`/`recall-nucs`, `pair`/`merge` recall);
+- the consensus (CR) lattices;
+- the opposite-strand and duplex-mate lattices.
+
+**Defaults:**
+
+| chemistry | default |
+|---|---|
+| DddA (`--enzyme ddda`, consensus `ddda` datasets) | `N=2`, keep-one |
+| DddB and others | off |
+
+**Why DddA defaults to keep-one.** On 15,557 sequence-assigned HG002 scDAF duplexes, precision of native TF calls rose in every stratum, read on the complementary strand of the same molecule:
+- 0.95 → 0.98 for calls containing runs;
+- 0.93 → 0.95–0.96 for calls without runs;
+- Youden J (any protection) rose from 0.56 to 0.63.
+
+The cost is 16–27% fewer calls. DddB has not been validated.
+
+**Overriding.** `--daf-mask-runs 0` disables the mask. An explicit value on `fiberhmm-consensus` applies to every DAF dataset.
+
+**Provenance.** The setting is recorded in `@PG` (`daf_run_mask=>=2/keep-one` or `off`) and in the consensus model manifest.
+
+**Native calls must be replayed.** Consensus refuses a masked lattice when native calls are not replayed (`input.correct_native`), because existing BAM calls were decoded on a different lattice.
+
 ## recall-tfs output modes
 
 The recaller supports two mutually-exclusive output modes; pick based on what

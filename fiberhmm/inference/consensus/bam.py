@@ -153,6 +153,20 @@ def _exclude_recall_failures(units, excluded, label, diagnostics):
     return kept,dict(diagnostics,hia5_recall_excluded=sorted(excluded.values(),key=lambda r:r['unit_id']))
 
 
+def _dataset_daf_run_mask(chemistry, options, label):
+    """(min_run_length, policy) for one dataset's lattices and native replay."""
+    from fiberhmm.core.bam_reader import (daf_run_mask_explicit, daf_run_mask_min_length,
+                                          daf_run_mask_policy, default_daf_run_mask)
+    if chemistry not in ('ddda','dddb'):
+        return 0,'keep-one'
+    mask=(daf_run_mask_min_length(),daf_run_mask_policy()) if daf_run_mask_explicit() else default_daf_run_mask(chemistry)
+    if mask[0] and not options['input'].correct_native:
+        raise ValueError(f'{label}: the DAF run mask thins the lattice, so native calls must be replayed on it '
+                         '(input.correct_native); existing BAM calls were decoded on a different lattice. '
+                         'Enable native replay or set the mask to 0 explicitly.')
+    return mask
+
+
 def _load_payload(state,request,options,progress):
     """Every regional read before collapse; no viewport read sample enters inference."""
     from fiberhmm.inference.consensus.adapter import evidence_unit,replay_alignment,condition_unit_on_m5c
@@ -163,102 +177,108 @@ def _load_payload(state,request,options,progress):
         chemistry=request.get('chemistry_overrides',{}).get(dsid) or getattr(ds,'family_scan_chemistry',None)
         if chemistry not in ('ddda','dddb','hia5-pacbio','hia5-nanopore'):
             raise ValueError(f'{ds.label}: choose a datatype in the Footprint panel; guessing the opportunity model is unsafe')
-        from fiberhmm.inference.consensus.progress import report
-        report(progress,'loading',f'{ds.label}: loading all regional observations ({chemistry})',dataset_id=dsid)
-        reads,model,preset,diagnostics=_load_dataset_evidence(state,dsid,chemistry,chrom=chrom,
-            evidence_start=start,evidence_end=end,maximum_reads=0,runtime=runtime,
-            allow_population=True,require_nucleosomes=False,tf_layer='tf',minimum_mapq=options['input'].minimum_mapq,
-            **({'legacy_annotation_frame':options['input'].legacy_hia5_annotation_frame} if chemistry.startswith('hia5') and options['cr'].engine in (HARMONIZATION_MODE,STAGED_MODE) else {}))
-        if any(read.pair_partner for read in reads):
-            raise ValueError('Paired source reads are not independent molecules. Run fiberhmm-merge --recall before population consensus; if pairs failed to merge, --pairs-only excludes those unresolved pairs.')
-        for read in reads:_prefix_library(read,dsid)
-        if chemistry in ('ddda','dddb'):
-            representatives,collapse=runtime['collapse'](reads,min_jaccard=options['input'].molecule_min_jaccard,
-                min_deam=options['input'].molecule_min_deam)
-        else:
-            representatives=reads;collapse=dict(raw_reads=len(reads),analyzed_molecules=len(reads),duplicate_reads_collapsed=0)
-        projections=_projection_members(reads,representatives,exact_records=True)
-        units=[evidence_unit(read,model,dsid,projections.get(_projection_member_key(read),[]),start,end) for read in representatives]
-        use_m5c=chemistry=='ddda' and options['input'].ddda_m5c_correction
-        if use_m5c and ds.data_type!='bam' and ds.available_layers.get('ddda_mcg'):
-            raise ValueError('Tagged DddA mCG conditioning currently needs BAM query coordinates; use BAM or explicitly disable that input option')
-        minimum_llr=None
-        if options['input'].correct_native or (use_m5c and ds.data_type=='bam'):
-            if ds.data_type!='bam':raise ValueError(f'{ds.label}: actual-query decoder replay requires BAM; disable native replay to use existing BigBed TF calls')
-            import pysam
-            lookup=defaultdict(list);recall_excluded={}
-            for read,unit in zip(representatives,units):lookup[str(read.record_sha256)].append((read,unit))
-            found=set()
-            _,_,context_size,mode,_,_=_chemistry_runtime(runtime,chemistry,allow_population=True)
-            enzyme='hia5' if chemistry.startswith('hia5') else chemistry
-            minimum_llr=getattr(options['input'],chemistry.replace('-','_')+'_minimum_llr')
-            if minimum_llr<0:minimum_llr=ENZYME_PRESETS[enzyme]['min_llr']
-            for path in _flatten_paths(getattr(ds,'paths',None) or ds.path):
-                actual,lo,hi,_=_resolve_bam_fetch_region(path,chrom,start,end)
-                with pysam.AlignmentFile(path,'rb') as bam:
-                    for alignment in bam.fetch(actual,lo,hi):
-                        if alignment.is_secondary or alignment.is_supplementary:continue
-                        key=hashlib.sha256(alignment.to_string().encode()).hexdigest()
-                        if key not in lookup or key in found:continue
-                        if len(found)%32==0:
-                            report(progress,'native',f'{ds.label}: replaying the native caller {len(found)}/{len(lookup)} alignments',
-                                dataset_id=dsid,completed=len(found),total=len(lookup),unit='alignments')
-                        else:progress('native',None)
-                        # Identical SAM records may be distinct retained evidence
-                        # units. Replay every unit; never collapse them in this lookup.
-                        for read,u in lookup[key]:
-                            if use_m5c:condition_unit_on_m5c(alignment,u)
-                            if options['input'].correct_native:
-                                if options['cr'].engine==STAGED_MODE and chemistry.startswith('hia5') and options['families'].recall_hia5_nucleosomes:
-                                    from fiberhmm.inference.consensus.upstream_recall import (recall_hia5_alignment,install_recall,
-                                        MOLECULE_RECALL_FAILURES)
-                                    try:
-                                        recalled=recall_hia5_alignment(alignment,u,model,preset['strand_mode'],mode,context_size,preset.get('prob_threshold'),
-                                            minimum_llr,minimum_opportunities=options['input'].native_minimum_opportunities,
-                                            split_minimum_llr=options['families'].nuc_split_minimum_llr,
-                                            maximum_alignment_gap_bp=options['input'].native_maximum_alignment_gap_bp,
-                                            minimum_nfr_length=options['input'].minimum_nfr_length,
-                                            legacy_annotation_frame=options['input'].legacy_hia5_annotation_frame)
-                                    except ValueError as error:
-                                        # One inconsistent molecule (e.g. a whole-read nucleosome
-                                        # annotation) must not abort the dataset: exclude it, with a receipt.
-                                        if not str(error).startswith(MOLECULE_RECALL_FAILURES):raise
-                                        recall_excluded[id(u)]=dict(unit_id=u['unit_id'],read_name=alignment.query_name,reason=str(error))
+        # DAF run mask per dataset: the chemistry default (DddA keep-one on runs
+        # >= 2) unless the caller configured one explicitly. Scoped, so mixed
+        # DddA/DddB loads and concurrent Browser jobs cannot leak into each other.
+        mask=_dataset_daf_run_mask(chemistry,options,ds.label)
+        from fiberhmm.core.bam_reader import daf_run_mask_scope
+        with daf_run_mask_scope(*mask):
+            from fiberhmm.inference.consensus.progress import report
+            report(progress,'loading',f'{ds.label}: loading all regional observations ({chemistry})',dataset_id=dsid)
+            reads,model,preset,diagnostics=_load_dataset_evidence(state,dsid,chemistry,chrom=chrom,
+                evidence_start=start,evidence_end=end,maximum_reads=0,runtime=runtime,
+                allow_population=True,require_nucleosomes=False,tf_layer='tf',minimum_mapq=options['input'].minimum_mapq,
+                **({'legacy_annotation_frame':options['input'].legacy_hia5_annotation_frame} if chemistry.startswith('hia5') and options['cr'].engine in (HARMONIZATION_MODE,STAGED_MODE) else {}))
+            if any(read.pair_partner for read in reads):
+                raise ValueError('Paired source reads are not independent molecules. Run fiberhmm-merge --recall before population consensus; if pairs failed to merge, --pairs-only excludes those unresolved pairs.')
+            for read in reads:_prefix_library(read,dsid)
+            if chemistry in ('ddda','dddb'):
+                representatives,collapse=runtime['collapse'](reads,min_jaccard=options['input'].molecule_min_jaccard,
+                    min_deam=options['input'].molecule_min_deam)
+            else:
+                representatives=reads;collapse=dict(raw_reads=len(reads),analyzed_molecules=len(reads),duplicate_reads_collapsed=0)
+            projections=_projection_members(reads,representatives,exact_records=True)
+            units=[evidence_unit(read,model,dsid,projections.get(_projection_member_key(read),[]),start,end) for read in representatives]
+            use_m5c=chemistry=='ddda' and options['input'].ddda_m5c_correction
+            if use_m5c and ds.data_type!='bam' and ds.available_layers.get('ddda_mcg'):
+                raise ValueError('Tagged DddA mCG conditioning currently needs BAM query coordinates; use BAM or explicitly disable that input option')
+            minimum_llr=None
+            if options['input'].correct_native or (use_m5c and ds.data_type=='bam'):
+                if ds.data_type!='bam':raise ValueError(f'{ds.label}: actual-query decoder replay requires BAM; disable native replay to use existing BigBed TF calls')
+                import pysam
+                lookup=defaultdict(list);recall_excluded={}
+                for read,unit in zip(representatives,units):lookup[str(read.record_sha256)].append((read,unit))
+                found=set()
+                _,_,context_size,mode,_,_=_chemistry_runtime(runtime,chemistry,allow_population=True)
+                enzyme='hia5' if chemistry.startswith('hia5') else chemistry
+                minimum_llr=getattr(options['input'],chemistry.replace('-','_')+'_minimum_llr')
+                if minimum_llr<0:minimum_llr=ENZYME_PRESETS[enzyme]['min_llr']
+                for path in _flatten_paths(getattr(ds,'paths',None) or ds.path):
+                    actual,lo,hi,_=_resolve_bam_fetch_region(path,chrom,start,end)
+                    with pysam.AlignmentFile(path,'rb') as bam:
+                        for alignment in bam.fetch(actual,lo,hi):
+                            if alignment.is_secondary or alignment.is_supplementary:continue
+                            key=hashlib.sha256(alignment.to_string().encode()).hexdigest()
+                            if key not in lookup or key in found:continue
+                            if len(found)%32==0:
+                                report(progress,'native',f'{ds.label}: replaying the native caller {len(found)}/{len(lookup)} alignments',
+                                    dataset_id=dsid,completed=len(found),total=len(lookup),unit='alignments')
+                            else:progress('native',None)
+                            # Identical SAM records may be distinct retained evidence
+                            # units. Replay every unit; never collapse them in this lookup.
+                            for read,u in lookup[key]:
+                                if use_m5c:condition_unit_on_m5c(alignment,u)
+                                if options['input'].correct_native:
+                                    if options['cr'].engine==STAGED_MODE and chemistry.startswith('hia5') and options['families'].recall_hia5_nucleosomes:
+                                        from fiberhmm.inference.consensus.upstream_recall import (recall_hia5_alignment,install_recall,
+                                            MOLECULE_RECALL_FAILURES)
+                                        try:
+                                            recalled=recall_hia5_alignment(alignment,u,model,preset['strand_mode'],mode,context_size,preset.get('prob_threshold'),
+                                                minimum_llr,minimum_opportunities=options['input'].native_minimum_opportunities,
+                                                split_minimum_llr=options['families'].nuc_split_minimum_llr,
+                                                maximum_alignment_gap_bp=options['input'].native_maximum_alignment_gap_bp,
+                                                minimum_nfr_length=options['input'].minimum_nfr_length,
+                                                legacy_annotation_frame=options['input'].legacy_hia5_annotation_frame)
+                                        except ValueError as error:
+                                            # One inconsistent molecule (e.g. a whole-read nucleosome
+                                            # annotation) must not abort the dataset: exclude it, with a receipt.
+                                            if not str(error).startswith(MOLECULE_RECALL_FAILURES):raise
+                                            recall_excluded[id(u)]=dict(unit_id=u['unit_id'],read_name=alignment.query_name,reason=str(error))
+                                            continue
+                                        install_recall(u,recalled)
                                         continue
-                                    install_recall(u,recalled)
-                                    continue
-                                replay_unit=u
-                                if options['cr'].engine==HARMONIZATION_MODE:
-                                    domains=[[max(start,a),min(end,b)] for a,b in u['msp_intervals'] if a<end and b>start]
-                                    replay_unit=dict(u,msp_intervals=domains)
-                                    u['provenance']['native_replay_scope']=dict(region=[start,end],effective_msp_intersections=domains,
-                                        minimum_nfr_length=options['input'].minimum_nfr_length,boundary_clipping_is_scope_not_quality=True)
-                                calls=replay_alignment(alignment,replay_unit,model,preset['strand_mode'],mode,context_size,preset.get('prob_threshold'),
-                                    minimum_llr,minimum_opportunities=options['input'].native_minimum_opportunities,
-                                    minimum_nfr_length=options['input'].minimum_nfr_length,use_m5c=use_m5c,
-                                    maximum_alignment_gap_bp=int(getattr(options['input'],'native_maximum_alignment_gap_bp',0)))
-                                u['native_multi_interval_calls']=calls;u['native_multi_interval_tf_intervals']=[c['interval'] for c in calls]
-                        found.add(key)
-            if len(found)!=len(lookup):raise ValueError(f'{ds.label}: could not identify every representative alignment for native replay')
-            units,diagnostics=_exclude_recall_failures(units,recall_excluded,ds.label,diagnostics)
-        # Keep chemical CT/GA order, but never split Hia5 by mapping orientation.
-        units.sort(key=lambda u:((0 if u['strand']=='CT' else 1),u['unit_id']) if chemistry in ('ddda','dddb') else (0,u['unit_id']))
-        model_hash=hashlib.sha256(model.emissionprob_.astype('<f8').tobytes()).hexdigest()
-        from fiberhmm.core.bam_reader import daf_run_mask_min_length,daf_run_mask_policy
-        strata.append(dict(dataset_id=dsid,stratum_id=dsid,chemistry=chemistry,units=units,
-            model_manifest=dict(preset=chemistry,emissions_sha256=model_hash,efficiency_scaling=False,
-                # Recorded only when the mask is on, so unmasked input digests
-                # (and family tokens) match runs made before the option existed.
-                **(dict(daf_run_mask_min_length=daf_run_mask_min_length(),daf_run_mask_policy=daf_run_mask_policy())
-                   if chemistry in ('ddda','dddb') and daf_run_mask_min_length() else {}),
-                native_minimum_llr=minimum_llr if options['input'].correct_native else None,
-                replay_scope=('query_nuc_recall_then_TF_replay' if any('upstream_nuc_tf_recall' in u for u in units) else
-                    'fixed_MSP_intersection_with_analysis_region' if options['cr'].engine==HARMONIZATION_MODE else 'fixed_MSP_only') if options['input'].correct_native else 'existing_calls',
-                legacy_hia5_annotation_frame=options['input'].legacy_hia5_annotation_frame if chemistry.startswith('hia5') else None,
-                native_minimum_msp_bp=options['input'].minimum_nfr_length,
-                native_minimum_opportunities=options['input'].native_minimum_opportunities,
-                upstream_nuc_tf_recall=any('upstream_nuc_tf_recall' in u for u in units),
-                upstream_nuc_tf_settings=next((u['upstream_nuc_tf_recall']['settings'] for u in units if 'upstream_nuc_tf_recall' in u),None),
-                m5c_conditioned_opportunities=sum(u['provenance'].get('native_m5c_conditioned_opportunities',0) for u in units)),
-            evidence_units=dict(**collapse,physical_duplex_independence_established=bool(units) and all(u.get('physical_source_names') for u in units),joint_duplex_units=sum(bool(u.get('physical_source_names')) for u in units)),load=diagnostics))
+                                    replay_unit=u
+                                    if options['cr'].engine==HARMONIZATION_MODE:
+                                        domains=[[max(start,a),min(end,b)] for a,b in u['msp_intervals'] if a<end and b>start]
+                                        replay_unit=dict(u,msp_intervals=domains)
+                                        u['provenance']['native_replay_scope']=dict(region=[start,end],effective_msp_intersections=domains,
+                                            minimum_nfr_length=options['input'].minimum_nfr_length,boundary_clipping_is_scope_not_quality=True)
+                                    calls=replay_alignment(alignment,replay_unit,model,preset['strand_mode'],mode,context_size,preset.get('prob_threshold'),
+                                        minimum_llr,minimum_opportunities=options['input'].native_minimum_opportunities,
+                                        minimum_nfr_length=options['input'].minimum_nfr_length,use_m5c=use_m5c,
+                                        maximum_alignment_gap_bp=int(getattr(options['input'],'native_maximum_alignment_gap_bp',0)))
+                                    u['native_multi_interval_calls']=calls;u['native_multi_interval_tf_intervals']=[c['interval'] for c in calls]
+                            found.add(key)
+                if len(found)!=len(lookup):raise ValueError(f'{ds.label}: could not identify every representative alignment for native replay')
+                units,diagnostics=_exclude_recall_failures(units,recall_excluded,ds.label,diagnostics)
+            # Keep chemical CT/GA order, but never split Hia5 by mapping orientation.
+            units.sort(key=lambda u:((0 if u['strand']=='CT' else 1),u['unit_id']) if chemistry in ('ddda','dddb') else (0,u['unit_id']))
+            model_hash=hashlib.sha256(model.emissionprob_.astype('<f8').tobytes()).hexdigest()
+            from fiberhmm.core.bam_reader import daf_run_mask_min_length,daf_run_mask_policy
+            strata.append(dict(dataset_id=dsid,stratum_id=dsid,chemistry=chemistry,units=units,
+                model_manifest=dict(preset=chemistry,emissions_sha256=model_hash,efficiency_scaling=False,
+                    # Recorded only when the mask is on, so unmasked input digests
+                    # (and family tokens) match runs made before the option existed.
+                    **(dict(daf_run_mask_min_length=daf_run_mask_min_length(),daf_run_mask_policy=daf_run_mask_policy())
+                       if chemistry in ('ddda','dddb') and daf_run_mask_min_length() else {}),
+                    native_minimum_llr=minimum_llr if options['input'].correct_native else None,
+                    replay_scope=('query_nuc_recall_then_TF_replay' if any('upstream_nuc_tf_recall' in u for u in units) else
+                        'fixed_MSP_intersection_with_analysis_region' if options['cr'].engine==HARMONIZATION_MODE else 'fixed_MSP_only') if options['input'].correct_native else 'existing_calls',
+                    legacy_hia5_annotation_frame=options['input'].legacy_hia5_annotation_frame if chemistry.startswith('hia5') else None,
+                    native_minimum_msp_bp=options['input'].minimum_nfr_length,
+                    native_minimum_opportunities=options['input'].native_minimum_opportunities,
+                    upstream_nuc_tf_recall=any('upstream_nuc_tf_recall' in u for u in units),
+                    upstream_nuc_tf_settings=next((u['upstream_nuc_tf_recall']['settings'] for u in units if 'upstream_nuc_tf_recall' in u),None),
+                    m5c_conditioned_opportunities=sum(u['provenance'].get('native_m5c_conditioned_opportunities',0) for u in units)),
+                evidence_units=dict(**collapse,physical_duplex_independence_established=bool(units) and all(u.get('physical_source_names') for u in units),joint_duplex_units=sum(bool(u.get('physical_source_names')) for u in units)),load=diagnostics))
     return dict(region=dict(chrom=chrom,start=start,end=end),strata=strata)

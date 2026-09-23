@@ -47,7 +47,7 @@ def main(argv=None):
     p.add_argument('--cores',type=int)
     p.add_argument('--cache',help='Persistent exact fit cache directory')
     p.add_argument('--json-progress',action='store_true',help='Structured progress on stderr')
-    p.add_argument('--daf-mask-runs',type=int,default=0,metavar='N',help='DAF only: thin targets in same-strand runs of >= N original C (CT) or G (GA) bases in the evidence (2 = CC/GG and longer; 0 = off)')
+    p.add_argument('--daf-mask-runs',type=int,default=None,metavar='N',help='DAF only: thin targets in same-strand runs of >= N original C (CT) or G (GA) bases in lattices and native replay (2 = CC/GG and longer; 0 = off). Default: per dataset chemistry, DddA keep-one on runs >= 2 (duplex-validated), DddB off')
     p.add_argument('--daf-run-policy',choices=['keep-one','drop'],default='keep-one',help="With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run")
     p.add_argument('--no-bam',action='store_true',help='Save frozen results/reports without materializing family-tagged BAMs')
     p.add_argument('--bam-scope',choices=['regions','full'],default='regions',help='Export whole alignments overlapping analyzed windows (default), or the full source BAM')
@@ -55,8 +55,11 @@ def main(argv=None):
     p.add_argument('--output',help='New or empty result directory')
     args=p.parse_args(argv)
     from fiberhmm.core.bam_reader import configure_daf_run_mask
-    try: configure_daf_run_mask(args.daf_mask_runs,args.daf_run_policy)
-    except ValueError as error: p.error(str(error))
+    # An explicit value applies to every DAF dataset; unset leaves each dataset
+    # on its chemistry default (bam._dataset_daf_run_mask).
+    if args.daf_mask_runs is not None:
+        try: configure_daf_run_mask(args.daf_mask_runs,args.daf_run_policy)
+        except ValueError as error: p.error(str(error))
     if args.schema:
         schema=parameter_schema()
         for control in schema['cr']:

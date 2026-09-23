@@ -324,7 +324,13 @@ Examples:
     p.add_argument('--ddda-derived-tf-max-edge-gap', type=int, default=12,
                    metavar='BP', help='Edge-evidence requirement for TF calls '
                    'exposed only by DddA nucleosome refinement (default 12; -1 disables)')
+    from fiberhmm.core.bam_reader import add_daf_run_mask_arguments, apply_daf_run_mask_arguments
+    add_daf_run_mask_arguments(p)
     args = p.parse_args()
+    try:
+        apply_daf_run_mask_arguments(args, 'ddda')
+    except ValueError as exc:
+        p.error(str(exc))
 
     if not os.path.isfile(args.input):
         p.error(f'input not found: {args.input}')

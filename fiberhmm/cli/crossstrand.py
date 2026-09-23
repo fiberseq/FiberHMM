@@ -100,6 +100,8 @@ Examples:
     p.add_argument('--no-recall', action='store_true', help='Skip re-calling footprints on consensus reads')
     p.add_argument('--enzyme', default='ddda', choices=['ddda'],
                    help='Cross-strand mode is specific to DddA DAF-seq')
+    from fiberhmm.core.bam_reader import add_daf_run_mask_arguments, apply_daf_run_mask_arguments
+    add_daf_run_mask_arguments(p)
     p.add_argument('--pairs-only', action='store_true', help='Emit only consensus reads (drop unmerged passthrough)')
     p.add_argument('--pairs-tsv', default=None, help='Write resolved pairs to this TSV')
     # pairing gate (calibrated defaults)
@@ -135,6 +137,10 @@ Examples:
              '(default 12; -1 disables).',
     )
     args = p.parse_args()
+    try:
+        apply_daf_run_mask_arguments(args, args.enzyme)
+    except ValueError as exc:
+        p.error(str(exc))
 
     if args.ddda_derived_tf_max_edge_gap < -1:
         p.error("--ddda-derived-tf-max-edge-gap must be -1 or >= 0")

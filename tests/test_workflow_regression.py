@@ -369,6 +369,7 @@ def test_hmm_apply_to_tf_recall_to_label_extraction_workflow_by_mode(
             out_bam=recalled_bam,
             model=None,
             enzyme=enzyme,
+            daf_mask_runs=0,  # homopolymer fixture: one read-length run; test plumbing, not the mask
             seq=seq,
             downstream_compat=False,
             cores=1,

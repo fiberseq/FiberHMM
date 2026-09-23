@@ -113,3 +113,44 @@ def test_non_daf_modes_are_unaffected():
     br.configure_daf_run_mask(0)
     b = br.encode_from_query_sequence(seq, {0, 1, 2}, 0, mode='pacbio-fiber', context_size=3)
     assert np.array_equal(a, b)
+
+
+def test_chemistry_default_is_keep_one_for_ddda_only_and_explicit_wins():
+    from fiberhmm.core.bam_reader import default_daf_run_mask, resolve_daf_run_mask
+    assert default_daf_run_mask('ddda') == (2, 'keep-one')
+    assert default_daf_run_mask('dddb') == (0, 'keep-one')
+    assert default_daf_run_mask(None) == (0, 'keep-one')
+    assert resolve_daf_run_mask(None, 'drop', 'ddda') == (2, 'keep-one')
+    assert resolve_daf_run_mask(0, 'keep-one', 'ddda') == (0, 'keep-one')
+    assert resolve_daf_run_mask(3, 'drop', 'dddb') == (3, 'drop')
+
+
+def test_scope_overrides_process_setting_and_is_thread_local():
+    import threading
+    from fiberhmm.core import bam_reader as br
+    br.configure_daf_run_mask(0, 'keep-one')
+    seen = {}
+    def other():
+        seen['other'] = br.daf_run_mask_min_length()
+    with br.daf_run_mask_scope(2, 'keep-one'):
+        assert br.daf_run_mask_min_length() == 2 and br.daf_run_mask_policy() == 'keep-one'
+        t = threading.Thread(target=other); t.start(); t.join()
+    assert seen['other'] == 0 and br.daf_run_mask_min_length() == 0
+
+
+def test_consensus_dataset_mask_follows_chemistry_and_requires_native_replay():
+    from types import SimpleNamespace
+    import pytest
+    from fiberhmm.core import bam_reader as br
+    from fiberhmm.inference.consensus.bam import _dataset_daf_run_mask
+    br._DAF_RUN_MASK_MIN = None; br._DAF_RUN_POLICY = None
+    import os
+    os.environ.pop(br._DAF_RUN_MASK_ENV, None); os.environ.pop(br._DAF_RUN_POLICY_ENV, None)
+    replay = {'input': SimpleNamespace(correct_native=True)}
+    assert _dataset_daf_run_mask('ddda', replay, 'x') == (2, 'keep-one')
+    assert _dataset_daf_run_mask('dddb', replay, 'x') == (0, 'keep-one')
+    assert _dataset_daf_run_mask('hia5-pacbio', replay, 'x') == (0, 'keep-one')
+    with pytest.raises(ValueError, match='replayed'):
+        _dataset_daf_run_mask('ddda', {'input': SimpleNamespace(correct_native=False)}, 'x')
+    br.configure_daf_run_mask(0, 'keep-one')  # explicit off wins for every chemistry
+    assert _dataset_daf_run_mask('ddda', {'input': SimpleNamespace(correct_native=False)}, 'x') == (0, 'keep-one')
