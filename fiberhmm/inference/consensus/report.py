@@ -17,7 +17,9 @@ def write_report(result, output):
                 families.append(dict(stage=stage,dataset=ds,family=f['family'],start=f['consensus_start'],end=f['consensus_end'],
                     width=f['consensus_end']-f['consensus_start'],source_units=f.get('source_units',0),
                     edge_uncertainty=json.dumps(f.get('edge_uncertainty')),fit_flags=json.dumps(f.get('fit_flags',[])),
-                    classification_counts=json.dumps(f.get('classification_counts',{}))))
+                    classification_counts=json.dumps(f.get('classification_counts',{})),
+                    trusted_strand=(f.get('strand_resolution') or {}).get('trusted_strand',''),
+                    core_resolution=(f.get('strand_resolution') or {}).get('core_resolution','')))
             for row in data['cr']['records']:
                 u=units.get(row['unit_id'],{}); genomic=u.get('genomic_provenance',{})
                 for p in row['proposals']:
@@ -30,7 +32,7 @@ def write_report(result, output):
     def table(name,rows,fields):
         with (out/name).open('w',newline='') as handle:
             writer=csv.DictWriter(handle,fieldnames=fields,delimiter='\t');writer.writeheader();writer.writerows(rows)
-    table('families.tsv',families,['stage','dataset','family','start','end','width','source_units','edge_uncertainty','fit_flags','classification_counts'])
+    table('families.tsv',families,['stage','dataset','family','start','end','width','source_units','edge_uncertainty','fit_flags','classification_counts','trusted_strand','core_resolution'])
     table('calls.tsv',calls,['chrom','genomic_start','genomic_end','stage','dataset','unit_id','read_name','source_start','source_end','compatible_families','status','window'])
     write_json(out/'report_data.json',dict(stages=stages,families=families,manifest=result['manifest']))
     final=[f for f in families if f['stage']==result.get('final_stage','final')]

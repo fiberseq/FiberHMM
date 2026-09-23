@@ -18,8 +18,78 @@ def presentation_context(sources,compact=False):
             intervals = eligible_intervals(u, [u['reference_start'],u['reference_end']])
             groups[(source['dataset_id'],u['strand'])].extend(
                 (a,b,source['dataset_id']+'::'+u['unit_id']) for a,b in intervals)
+    # Chemical-strand lattices: cumulative all-miss protection LLR per unit, so
+    # a state's core can be tested for what a fully protected molecule shows.
+    lattices = {}; floors = {}
+    for source in sources:
+        if source['chemistry'] not in ('ddda', 'dddb'):
+            continue
+        floor = (source.get('model_manifest') or {}).get('native_minimum_llr')
+        floors[source['dataset_id']] = float(floor if floor is not None else DAF_NATIVE_FLOOR)
+        for u in source['units']:
+            if 'positions' not in u:
+                continue
+            pa = np.asarray(u['p_accessible'], float); pp = np.asarray(u['p_protected'], float)
+            lattices[source['dataset_id']+'::'+u['unit_id']] = (np.asarray(u['positions']),
+                np.r_[0., np.cumsum(np.log1p(-pp)-np.log1p(-pa))])
     return dict(coverage={key:(np.array([a for a,b,uid in rows]),np.array([b for a,b,uid in rows]),
-        np.array([uid for a,b,uid in rows],dtype=object)) for key,rows in groups.items()}, eligible={},compact=compact,evidence_pool={})
+        np.array([uid for a,b,uid in rows],dtype=object)) for key,rows in groups.items()}, eligible={},compact=compact,evidence_pool={},
+        lattices=lattices, native_floors=floors)
+
+
+# Native TF LLR preset used when a source did not record its replay floor.
+DAF_NATIVE_FLOOR = 5.
+STRAND_LIMITED_RATIO = .5
+
+
+def core_informativeness(context, uids, left, right):
+    """Median over eligible units of core opportunities and the all-miss ceiling.
+
+    The ceiling is the protection LLR a molecule would give if every core site
+    were unconverted: the most one strand can say about this footprint alone."""
+    ceilings = []; sites = []
+    for uid in uids:
+        lattice = context.get('lattices', {}).get(uid)
+        if lattice is None:
+            continue
+        positions, cumulative = lattice
+        a, b = np.searchsorted(positions, [left, right])
+        ceilings.append(cumulative[b]-cumulative[a]); sites.append(b-a)
+    if not ceilings:
+        return None
+    return dict(core_protection_ceiling_llr=float(np.median(ceilings)), core_opportunities=float(np.median(sites)))
+
+
+def flag_strand_limits(by_strand, floor):
+    """Which chemical strand can report this state's core, from the lattice alone.
+
+    Sequence composition decides which sites exist on each strand and the
+    context emission model decides how much each one says, so a strongly
+    strand-biased core (GA-poor, CT-poor, poorly reactive contexts) leaves one
+    strand unable to reach the native floor. A strand is limited when a fully
+    protected molecule stays below the floor in the core and reads it at less
+    than half the other strand's ceiling; its rate can err in either direction
+    (missed calls, or broad calls compatible with many states) and must not be
+    compared across strands. Returns the state-level verdict: the strand(s) to
+    trust, and whether even they resolve the core on its own."""
+    ceilings = {k: v['core_protection_ceiling_llr'] for k, v in by_strand.items()
+                if v.get('core_protection_ceiling_llr') is not None}
+    for strand, counts in by_strand.items():
+        if strand not in ceilings:
+            continue
+        mine = ceilings[strand]; other = max((v for k, v in ceilings.items() if k != strand), default=None)
+        counts['core_below_native_floor'] = bool(mine < floor)
+        counts['strand_limited'] = bool(mine < floor and other is not None and mine < STRAND_LIMITED_RATIO*other)
+        counts['native_floor_llr'] = floor
+    if not ceilings:
+        return None
+    trusted = sorted(k for k in ceilings if not by_strand[k]['strand_limited'])
+    return dict(trusted_strands=trusted,
+                trusted_strand='both' if len(trusted) > 1 else trusted[0],
+                core_resolution=('resolved' if all(ceilings[k] >= floor for k in trusted)
+                                 else 'below_native_floor'),
+                core_protection_ceiling_llr={k: ceilings[k] for k in sorted(ceilings)},
+                native_floor_llr=floor, limited_ratio=STRAND_LIMITED_RATIO)
 
 
 def eligible_units(context, ds, strand, left, right):
@@ -142,7 +212,12 @@ def browser_snapshot(scopes, sources, mode, stage, context=None,
                         eligible_units=len(eligible), primary_units=len(primary_members[fid][(ds,strand)] & eligible),
                         compatible_units=len(members[fid][(ds,strand)] & eligible),
                         eligible_unit_semantics='fitted_mean_span_in_aligned_MSP_without_nucleosome_overlap')
+                    if ds in context.get('native_floors', {}):
+                        by_strand[strand].update(core_informativeness(context, eligible, left, right) or {})
+                resolution = (flag_strand_limits(by_strand, context['native_floors'][ds])
+                              if ds in context.get('native_floors', {}) else None)
                 datasets[ds]['cr']['catalog'].append(dict(common, classification_counts=by_strand,
+                    strand_resolution=resolution,
                     source_units=len(set().union(*(members[fid][key] for key in members[fid] if key[0]==ds)))))
     for ds in datasets:
         datasets[ds]['cr']['records'] = list(rows[ds].values())
