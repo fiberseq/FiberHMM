@@ -8,9 +8,18 @@ from .artifacts import write_json
 
 def write_report(result, output):
     out=Path(output); out.mkdir(parents=True,exist_ok=True)
-    families=[]; calls=[]; stages=[]
+    families=[]; calls=[]; stages=[]; unit_rows=[]
     for stage,snapshot in result.get('stage_results',{result.get('final_stage','final'):result}).items():
         stages.append(dict(stage=stage,**next((s for s in result.get('stages',[]) if s['id']==stage),{})))
+        cross_units=(snapshot.get('cross') or {}).get('resolution_units')
+        for u in (cross_units or {}).get('units',[]):
+            for ds,by_strand in u['counts'].items():
+                for strand,c in by_strand.items():
+                    unit_rows.append(dict(stage=stage,unit=u['unit'],start=u['consensus_start'],end=u['consensus_end'],
+                        width=u['consensus_end']-u['consensus_start'],members=len(u['members']),
+                        reportable_members=u['reportable_members'],dataset=ds,strand=strand,
+                        compatible_units=c['compatible_units'],eligible_units=c['eligible_units'],
+                        occupancy_given_msp=c['compatible_units']/c['eligible_units'] if c['eligible_units'] else ''))
         for ds,data in snapshot['datasets'].items():
             units={u['unit_id']:u for u in data['units']}
             for f in data['cr']['catalog']:
@@ -33,6 +42,9 @@ def write_report(result, output):
         with (out/name).open('w',newline='') as handle:
             writer=csv.DictWriter(handle,fieldnames=fields,delimiter='\t');writer.writeheader();writer.writerows(rows)
     table('families.tsv',families,['stage','dataset','family','start','end','width','source_units','edge_uncertainty','fit_flags','classification_counts','trusted_strand','core_resolution'])
+    if unit_rows:
+        table('units.tsv',unit_rows,['stage','unit','start','end','width','members','reportable_members','dataset','strand',
+                                 'compatible_units','eligible_units','occupancy_given_msp'])
     table('calls.tsv',calls,['chrom','genomic_start','genomic_end','stage','dataset','unit_id','read_name','source_start','source_end','compatible_families','status','window'])
     write_json(out/'report_data.json',dict(stages=stages,families=families,manifest=result['manifest']))
     final=[f for f in families if f['stage']==result.get('final_stage','final')]

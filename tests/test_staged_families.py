@@ -291,3 +291,46 @@ def test_staged_run_writes_class_support(tmp_path):
                     if call['family'] is None: assert call['q0']==0 and call['member_q0']=={}
                     else: assert call['q0']==call['member_q0'][call['family']]
                     assert set(call['member_q0'])==set(call['compatible_families'])
+
+
+def test_cross_chemistry_units_defer_to_the_coarser_chemistry():
+    """A fine class the coarse DAF chemistry cannot report never defines a unit;
+    classes the coarse chemistry cannot separate by call edges merge."""
+    from fiberhmm.inference.consensus.harmonized_families.presentation import (
+        presentation_context, resolution_units)
+    import numpy as np
+    rng = np.random.default_rng(0)
+    shared = {'wide': dict(consensus_start=100., consensus_end=160.),
+              'wide2': dict(consensus_start=103., consensus_end=158.),     # same class at coarse resolution
+              'narrow': dict(consensus_start=120., consensus_end=132.),    # coarse cannot report it
+              'far': dict(consensus_start=300., consensus_end=330.)}
+    def unit(uid, strand):
+        return dict(unit_id=uid, strand=strand, reference_start=0, reference_end=500, raw_nuc_intervals=[],
+                    msp_intervals=[[0, 500]], aligned_blocks=[[0, 500]])
+    sources = [dict(dataset_id='daf', chemistry='dddb', units=[unit(f'd{i}', 'CT') for i in range(40)]),
+               dict(dataset_id='hia5', chemistry='hia5-pacbio', units=[unit(f'h{i}', 'pooled') for i in range(40)])]
+    context = presentation_context(sources)
+    def records(ds, prefix, strand, sd):
+        rows = []
+        for i in range(40):
+            f = ['wide', 'far'][i % 2]; a, b = shared[f]['consensus_start'], shared[f]['consensus_end']
+            span = [a+rng.normal(0, sd), b+rng.normal(0, sd)]
+            fams = [f] + (['wide2'] if f == 'wide' else []) + (['narrow'] if f == 'wide' and ds == 'hia5' else [])
+            rows.append(dict(unit_id=f'{ds}::{prefix}{i}', strand=strand, proposals=[
+                dict(source_interval=span, compatible_families=fams)]))
+            rows.append(dict(unit_id=f'{ds}::{prefix}{i}', strand=strand, proposals=[
+                dict(source_interval=list(span), compatible_families=[f])]))
+        return rows
+    datasets = {'daf': dict(cr=dict(records=records('daf', 'd', 'CT', 12.), catalog=[
+                    dict(family='narrow', strand_resolution=dict(trusted_strand='none')),
+                    dict(family='wide', strand_resolution=dict(trusted_strand='both')),
+                    dict(family='wide2', strand_resolution=dict(trusted_strand='both')),
+                    dict(family='far', strand_resolution=dict(trusted_strand='both'))])),
+                'hia5': dict(cr=dict(records=records('hia5', 'h', 'pooled', 4.), catalog=[]))}
+    units, unit_of, provenance = resolution_units(datasets, shared, set(shared), context)
+    assert unit_of['wide'] == unit_of['wide2']                 # inseparable at the DAF edge scatter
+    assert unit_of['narrow'] == unit_of['wide']                # unreportable class nested in its unit
+    assert unit_of['far'] != unit_of['wide'] and len(units) == 2
+    assert provenance['governing_edge_sd_bp'][0] > 8          # the coarse (DAF) scatter governs
+    wide = next(u for u in units if u['unit'] == unit_of['wide'])
+    assert wide['counts']['daf']['CT']['compatible_units'] == 20

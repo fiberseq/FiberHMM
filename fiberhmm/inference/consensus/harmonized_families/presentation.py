@@ -122,6 +122,111 @@ def browser_unit(ds, unit):
     return result
 
 
+# Cross-chemistry units at the resolution of the coarser chemistry.
+XCR_ASSIGN_ACCURACY = .8      # single-call assignment accuracy needed to resolve two classes
+XCR_NESTED_FRACTION = .8      # an unreportable class joins a unit only if this much lies inside it
+XCR_MIN_EDGE_CALLS = 20       # calls needed to estimate a chemistry's edge scatter
+
+
+def _robust_sd(values):
+    values = np.asarray(values, float)
+    return float(1.4826*np.median(np.abs(values-np.median(values))))
+
+
+def resolution_units(datasets, shared, visible, context):
+    """Cross-chemistry units no compared chemistry would split further.
+
+    A cross-chemistry comparison can only be as fine as its coarser chemistry,
+    and which one is coarser depends on the data (ind: DddB call edges scatter
+    ~13 bp vs Hia5 ~4 bp; NAPA: Hia5 ~10 bp vs DddA ~5.5 bp). Keeping the finer
+    chemistry's classes lets each coarse call count toward several of them,
+    diluting and splitting its rates.
+
+    - A class a DAF chemistry cannot report (strand_resolution 'none': both
+      strands' core ceilings below the native floor) does not define a unit.
+    - Each chemistry's call-edge scatter (robust SD per edge, from calls
+      compatible with exactly one class) sets its resolution. Two overlapping
+      reportable classes merge when a single call of ANY compared chemistry
+      would land nearer its own class less than XCR_ASSIGN_ACCURACY of the time:
+      Phi(d/2), d = sqrt((dL/sd_L)^2 + (dR/sd_R)^2), largest SD per edge.
+    - A unit keeps the geometry of its best-supported member (never a union
+      span, so units cannot chain). An unreportable class joins a unit only
+      when nested in it; otherwise it is listed as not resolvable by the
+      coarser chemistry. Nothing is refit or rescored.
+    Returns (units, unit_of_family, provenance)."""
+    from collections import defaultdict
+    from scipy.stats import norm
+    classes = sorted((f for f in visible if f in shared),
+                     key=lambda f: (shared[f]['consensus_start'], shared[f]['consensus_end'], f))
+    lo = {f: shared[f]['consensus_start'] for f in classes}; hi = {f: shared[f]['consensus_end'] for f in classes}
+    reportable = {f: True for f in classes}
+    for data in datasets.values():
+        for state in data['cr']['catalog']:
+            verdict = state.get('strand_resolution') or {}
+            if state['family'] in reportable and verdict.get('trusted_strand') == 'none':
+                reportable[state['family']] = False
+    members = defaultdict(lambda: defaultdict(set)); offsets = defaultdict(list)
+    for ds, data in datasets.items():
+        for row in data['cr']['records']:
+            for proposal in row['proposals']:
+                fams = [f for f in proposal.get('compatible_families', []) if f in lo]
+                for f in fams:
+                    members[f][(ds, row['strand'])].add(row['unit_id'])
+                if len(fams) == 1:
+                    a, b = proposal['source_interval']; f = fams[0]
+                    offsets[ds].append((a-lo[f], b-hi[f]))
+    scatter = {ds: (max(_robust_sd([o[0] for o in v]), 1.), max(_robust_sd([o[1] for o in v]), 1.))
+               for ds, v in offsets.items() if len(v) >= XCR_MIN_EDGE_CALLS}
+    sd_l = max((v[0] for v in scatter.values()), default=None); sd_r = max((v[1] for v in scatter.values()), default=None)
+    min_d = 2*float(norm.ppf(XCR_ASSIGN_ACCURACY))
+    parent = {f: f for f in classes}
+    def find(f):
+        while parent[f] != f:
+            parent[f] = parent[parent[f]]; f = parent[f]
+        return f
+    merged_pairs = 0
+    if sd_l is not None:
+        for i, f in enumerate(classes):
+            if not reportable[f]: continue
+            for g in classes[i+1:]:
+                if lo[g] >= hi[f]: break
+                if not reportable[g] or min(hi[f], hi[g]) <= max(lo[f], lo[g]): continue
+                if float(np.hypot((lo[f]-lo[g])/sd_l, (hi[f]-hi[g])/sd_r)) < min_d:
+                    parent[find(g)] = find(f); merged_pairs += 1
+    groups = defaultdict(list)
+    for f in classes:
+        if reportable[f]: groups[find(f)].append(f)
+    support = lambda f: sum(len(v) for v in members[f].values())
+    representative = {root: max(fs, key=lambda f: (support(f), -lo[f], f)) for root, fs in groups.items()}
+    unresolved = []
+    for f in classes:
+        if reportable[f]: continue
+        width = hi[f]-lo[f]
+        inside = [(min(hi[f], hi[r]) - max(lo[f], lo[r]), root) for root, r in representative.items()]
+        inside = [(o, root) for o, root in inside if o >= XCR_NESTED_FRACTION*width]
+        if inside: groups[max(inside)[1]].append(f)
+        else: unresolved.append(f)
+    units = []; unit_of = {}
+    for root, fs in sorted(groups.items(), key=lambda kv: (lo[representative[kv[0]]], hi[representative[kv[0]]])):
+        rep_f = representative[root]; left, right = lo[rep_f], hi[rep_f]
+        uid = 'XU:' + rep_f
+        for f in fs: unit_of[f] = uid
+        counts = {}
+        for ds, data in datasets.items():
+            for strand in sorted({row['strand'] for row in data['cr']['records']} | {k[1] for f in fs for k in members[f] if k[0] == ds}):
+                eligible = eligible_units(context, ds, strand, left, right)
+                compatible = set().union(*(members[f][(ds, strand)] for f in fs)) & eligible
+                counts.setdefault(ds, {})[strand] = dict(eligible_units=len(eligible), compatible_units=len(compatible))
+        units.append(dict(unit=uid, representative=rep_f, members=sorted(fs), consensus_start=left, consensus_end=right,
+                          reportable_members=sum(reportable[f] for f in fs), counts=counts))
+    provenance = dict(edge_scatter_sd_bp={ds: list(v) for ds, v in scatter.items()},
+                      governing_edge_sd_bp=[sd_l, sd_r], assign_accuracy=XCR_ASSIGN_ACCURACY,
+                      merged_pairs=merged_pairs, nested_fraction=XCR_NESTED_FRACTION,
+                      not_resolvable_by_coarser_chemistry=sorted(unresolved),
+                      semantics='Cross-chemistry units at the coarser chemistry resolution; per-chemistry classes unchanged')
+    return units, unit_of, provenance
+
+
 def browser_snapshot(scopes, sources, mode, stage, context=None,
                      minimum_primary_units=0, minimum_primary_fraction=0.,
                      assignment_reference_percent=99.9):
@@ -362,6 +467,14 @@ def browser_snapshot(scopes, sources, mode, stage, context=None,
             semantics='primary independent units divided by fitted-span eligible units',
         )
     edges = []
+    cross_units = None
+    if mode == 'XCR' and stage != 'native' and len(datasets) > 1:
+        units, unit_of, provenance = resolution_units(datasets, shared, visible, context)
+        for dataset in datasets.values():
+            for row in dataset['cr']['records']:
+                for proposal in row['proposals']:
+                    proposal['xcr_units'] = sorted({unit_of[f] for f in proposal['compatible_families'] if f in unit_of})
+        cross_units = dict(units=units, **provenance)
     if mode == 'XCR' and stage != 'native':
         for fid, ids in sorted(family_datasets.items()):
             if fid not in visible: continue
@@ -373,4 +486,5 @@ def browser_snapshot(scopes, sources, mode, stage, context=None,
                     semantics='Shared geometry with direct native-call memberships; not equal detection power or occupancy'))
     return dict(datasets=datasets, cross=dict(status='complete' if mode=='XCR' and stage!='native' else 'disabled',
         edges=edges, count_groups=[], comparable_edges=0, shared_family_edges=len(edges),
-        count_semantics='Original-call multi-compatible counts; not an exclusive abundance partition'))
+        count_semantics='Original-call multi-compatible counts; not an exclusive abundance partition',
+        **({'resolution_units': cross_units} if cross_units is not None else {})))
