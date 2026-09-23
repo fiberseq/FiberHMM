@@ -159,7 +159,12 @@ def browser_snapshot(scopes, sources, mode, stage, context=None,
             native_primary = next(iter(original.get('compatible_families',[])),None)
             if native_primary in families:
                 families.remove(native_primary);families.insert(0,native_primary)
-            evidence=deepcopy(record)
+            if context['compact']:
+                # intern() rebuilds every container, so only the containers
+                # edited below need their own copies; the frozen record is
+                # never modified.
+                evidence=dict(record);evidence['original']=dict(original)
+            else:evidence=deepcopy(record)
             native=evidence['original']; channel=record.get('source_channel',original.get('source_channel'))
             if channel:
                 for key in ('primary_display_family','primary_evidence'):
@@ -167,7 +172,7 @@ def browser_snapshot(scopes, sources, mode, stage, context=None,
                     fid=value.get('family') if isinstance(value,dict) else value
                     if fid and not fid.startswith(channel+'::'):
                         native['source_local_'+key]=deepcopy(value)
-                        if isinstance(value,dict):value['family']=channel+'::'+fid
+                        if isinstance(value,dict):value=native[key]=dict(value);value['family']=channel+'::'+fid
                         else:native[key]=channel+'::'+fid
             proposal = dict(source_call_id=source_id, source_interval=list(iv), source_intervals=[list(iv)],
                 source_record_indices=original.get('source_record_indices', []), interval=list(iv),
@@ -213,7 +218,13 @@ def browser_snapshot(scopes, sources, mode, stage, context=None,
                         compatible_units=len(members[fid][(ds,strand)] & eligible),
                         eligible_unit_semantics='fitted_mean_span_in_aligned_MSP_without_nucleosome_overlap')
                     if ds in context.get('native_floors', {}):
-                        by_strand[strand].update(core_informativeness(context, eligible, left, right) or {})
+                        # Stages repeat states with identical geometry; the
+                        # eligible set is determined by (ds, strand, span).
+                        cache = context.setdefault('informativeness', {})
+                        key = (ds, strand, left, right)
+                        if key not in cache:
+                            cache[key] = core_informativeness(context, eligible, left, right)
+                        by_strand[strand].update(cache[key] or {})
                 resolution = (flag_strand_limits(by_strand, context['native_floors'][ds])
                               if ds in context.get('native_floors', {}) else None)
                 datasets[ds]['cr']['catalog'].append(dict(common, classification_counts=by_strand,
@@ -239,37 +250,38 @@ def browser_snapshot(scopes, sources, mode, stage, context=None,
     # Retire one weak state at a time. Simultaneous filtering discards the
     # support which its calls could contribute to a compatible alternative.
     # Memberships are frozen native-evidence tests, never proximity guesses.
-    def recount():
-        primary_members = defaultdict(set)
-        primary_calls = Counter()
-        for ds, dataset in datasets.items():
-            for row in dataset['cr']['records']:
-                for proposal in row['proposals']:
-                    fid = proposal['family']
-                    if fid is None:
-                        continue
-                    key = (ds, row['strand'], fid)
-                    primary_calls[key] += 1
-                    mean = shared[fid]
-                    eligible = eligible_units(context, ds, row['strand'],
-                        mean['consensus_start'], mean['consensus_end'])
-                    if row['unit_id'] in eligible:
-                        primary_members[key].add(row['unit_id'])
-        for fid in support:
-            support[fid][0] = 0
-        for ds, dataset in datasets.items():
-            for state in dataset['cr']['catalog']:
-                fid = state['family']
-                for strand, counts in state['classification_counts'].items():
-                    key = (ds, strand, fid)
-                    counts['primary_calls'] = primary_calls[key]
-                    counts['primary_units'] = len(primary_members[key])
-                    support[fid][0] += counts['primary_units']
+    # Primary calls/units are maintained incrementally: retiring a state moves
+    # only its own proposals, so each step touches those alone rather than
+    # recounting every proposal (identical counts to a full recount).
+    catalog_keys = Counter((ds, strand, state['family']) for ds, dataset in datasets.items()
+                           for state in dataset['cr']['catalog'] for strand in state['classification_counts'])
+    primary_calls = Counter(); unit_calls = defaultdict(Counter); member_count = Counter()
+    unit_support = Counter(); by_family = defaultdict(list)
+
+    def place(ds, strand, uid, fid, sign):
+        key = (ds, strand, fid)
+        primary_calls[key] += sign
+        mean = shared[fid]
+        if uid not in eligible_units(context, ds, strand, mean['consensus_start'], mean['consensus_end']):
+            return
+        before = unit_calls[key][uid] > 0
+        unit_calls[key][uid] += sign
+        change = (unit_calls[key][uid] > 0) - before
+        member_count[key] += change
+        unit_support[fid] += change * catalog_keys[key]
+
+    for ds, dataset in datasets.items():
+        for row in dataset['cr']['records']:
+            for proposal in row['proposals']:
+                if proposal['family'] is not None:
+                    place(ds, row['strand'], row['unit_id'], proposal['family'], 1)
+                    by_family[proposal['family']].append((ds, row['strand'], row['unit_id'], proposal))
 
     def rank(fid):
         units, eligible = support[fid]
         return (units, units / eligible if eligible else 0.)
 
+    retired_any = False
     while True:
         weak = [fid for fid in visible if support[fid][0] < minimum_units
                 or rank(fid)[1] < minimum_fraction]
@@ -277,20 +289,32 @@ def browser_snapshot(scopes, sources, mode, stage, context=None,
             break
         retired = min(weak, key=lambda fid: (*rank(fid), fid))
         visible.remove(retired)
-        for dataset in datasets.values():
-            for row in dataset['cr']['records']:
-                for proposal in row['proposals']:
-                    if proposal['family'] != retired:
-                        continue
-                    alternatives = [fid for fid in proposal['compatible_families'] if fid in visible]
-                    replacement = min(alternatives, key=lambda fid: (-rank(fid)[0], -rank(fid)[1], fid)) if alternatives else None
-                    proposal.setdefault('support_reassignment', dict(
-                        original_family=retired, steps=[],
-                        semantics='highest_support_evidence_compatible_remaining_state'))['steps'].append(
-                            dict(hidden_family=retired, replacement_family=replacement))
-                    proposal['family'] = replacement
-                    proposal['primary_label_semantics'] = 'highest_support_evidence_compatible_remaining_state'
-        recount()
+        moves = []
+        for ds, strand, uid, proposal in by_family.pop(retired, []):
+            alternatives = [fid for fid in proposal['compatible_families'] if fid in visible]
+            replacement = min(alternatives, key=lambda fid: (-rank(fid)[0], -rank(fid)[1], fid)) if alternatives else None
+            proposal.setdefault('support_reassignment', dict(
+                original_family=retired, steps=[],
+                semantics='highest_support_evidence_compatible_remaining_state'))['steps'].append(
+                    dict(hidden_family=retired, replacement_family=replacement))
+            proposal['family'] = replacement
+            proposal['primary_label_semantics'] = 'highest_support_evidence_compatible_remaining_state'
+            moves.append((ds, strand, uid, proposal, replacement))
+        for ds, strand, uid, proposal, replacement in moves:
+            place(ds, strand, uid, retired, -1)
+            if replacement is not None:
+                place(ds, strand, uid, replacement, 1)
+                by_family[replacement].append((ds, strand, uid, proposal))
+        for fid in support:
+            support[fid][0] = unit_support[fid]
+        retired_any = True
+    if retired_any:
+        for ds, dataset in datasets.items():
+            for state in dataset['cr']['catalog']:
+                for strand, counts in state['classification_counts'].items():
+                    key = (ds, strand, state['family'])
+                    counts['primary_calls'] = primary_calls[key]
+                    counts['primary_units'] = member_count[key]
     for dataset in datasets.values():
         original_count = len(dataset['cr']['catalog'])
         dataset['cr']['catalog'] = [

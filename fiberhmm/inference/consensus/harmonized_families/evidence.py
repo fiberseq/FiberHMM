@@ -6,6 +6,7 @@ explicit depth/work limits and content-hash checks on every referenced value.
 from copy import deepcopy
 import hashlib
 import json
+from json.encoder import encode_basestring_ascii
 
 REF='__fiberhmm_family_evidence_ref__'
 
@@ -15,16 +16,50 @@ def encoded(value):
 
 
 def intern(value,pool):
+    return _intern(value,pool)[0]
+
+
+_INFINITY=float('inf')
+
+
+def _scalar_text(value):
+    """json.dumps(value) for a JSON scalar, without building an encoder per call."""
+    if type(value) is str:return encode_basestring_ascii(value)
+    if value is None:return 'null'
+    if value is True:return 'true'
+    if value is False:return 'false'
+    if type(value) is int:return int.__repr__(value)
+    if type(value) is float:
+        if value!=value or value in (_INFINITY,-_INFINITY):
+            raise ValueError('Out of range float values are not JSON compliant: '+repr(value))
+        return float.__repr__(value)
+    return encoded(value).decode()
+
+
+def _intern(value,pool):
+    """(interned value, its canonical JSON text), built bottom-up.
+
+    Each container's text is assembled from its children's, so every node is
+    serialized once instead of once per ancestor. The text equals ``encoded``
+    of the interned value (ASCII, sorted keys, compact separators); a key the
+    fast path cannot order exactly as json.dumps does falls back to it."""
     if isinstance(value,dict):
         if REF in value:raise ValueError('Reserved evidence reference field in source data')
-        result={k:intern(v,pool) for k,v in value.items()}
-    elif isinstance(value,list):result=[intern(v,pool) for v in value]
-    else:return value
-    raw=encoded(result)
-    if len(raw)<512:return result
-    key=hashlib.sha256(raw).hexdigest()
+        parts={k:_intern(v,pool) for k,v in value.items()}
+        result={k:v for k,(v,_) in parts.items()}
+        if all(type(k) is str for k in parts):
+            raw='{'+','.join(encode_basestring_ascii(k)+':'+parts[k][1] for k in sorted(parts))+'}'
+        else:raw=encoded(result).decode()
+    elif isinstance(value,list):
+        parts=[_intern(v,pool) for v in value]
+        result=[v for v,_ in parts]
+        raw='['+','.join(r for _,r in parts)+']'
+    else:return value,_scalar_text(value)
+    if len(raw)<512:return result,raw
+    key=hashlib.sha256(raw.encode()).hexdigest()
     pool.setdefault(key,result)
-    return {REF:key}
+    reference={REF:key}
+    return reference,'{"'+REF+'":"'+key+'"}'
 
 
 def expand(value,pool,*,maximum_nodes=1000000,maximum_depth=64):
