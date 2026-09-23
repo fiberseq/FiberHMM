@@ -95,9 +95,10 @@ Coordinates are 1-based (per the spec); internal storage stays 0-based.
 | `nuc.Q` | `nq` | Nucleosomes (`nl ≥ unify_threshold`, or v2 short-nucs the recaller did not match). `nq` carries v2's posterior mean (0 sentinel for unverified entries). |
 | `msp.` | none | Methylase-sensitive patches (v2 MSPs unchanged) |
 | `tf.QQQ` | `tq, el, er` | Recaller TF calls (see below). |
-| `ddda_mcg.` | none | Conservative molecule-specific methylated-CpG runs inferred from DddA deamination contrast. |
-| `ddda_mcg+` / `ddda_mcg-` | none | Methylated runs on the CT/reference-C or GA/reference-G channel of a merged cross-strand DAF molecule. |
-| `ddda_mcg_hemi+` / `ddda_mcg_hemi-` | none | High-confidence hemimethylated runs where both channels are observed; the qualifier identifies the methylated channel. |
+| `ddda_mcg.` | none | Complete CpG islands assigned a confident molecule-specific methylated state from DddA contrast inside an initial MSP. |
+| `ddda_ucg.` | none | Complete CpG islands assigned a confident molecule-specific unmethylated state; the default CpG-aware footprint whitelist. |
+| `ddda_mcg+` / `ddda_mcg-` | none | Accepted legacy experimental strand-resolved mCG annotations; the production island caller does not emit them. |
+| `ddda_mcg_hemi+` / `ddda_mcg_hemi-` | none | Accepted legacy experimental hemi-methylation annotations; the production island caller does not emit them. |
 | `nuc_sr.QQQ` | `SR alternative, molecular-left edge, molecular-right edge` | Complete optional nucleosome shadow layer from `fiberhmm-strand-rescue-annotate`: exactly one same-class call per ordinary nuc, with one-for-one shared edges where accepted. Identity and cardinality are fixed; SR cannot reclassify, split, merge, promote, demote, create, or remove a nuc. |
 | `tf_sr.QQQ` | `SR alternative, molecular-left edge, molecular-right edge` | Complete optional TF shadow layer: one call per ordinary TF plus atomic weak-positive MSP-to-TF rescues. Accepted ordinary TFs may receive shared same-class edges. |
 
@@ -188,22 +189,18 @@ separately for FiberBrowser in
 [`FIBERBROWSER_CONSENSUS_RECONSTRUCTION.md`](./FIBERBROWSER_CONSENSUS_RECONSTRUCTION.md).
 
 `ddda_mcg.` is a molecular interval annotation, not a native per-base `MM:C+m`
-modification call. DAF amplification removes that native channel. The span
-marks a run whose observed CpGs jointly support the methylated state; it is
-called independently for each read unless the caller's explicit locus mode is
-used. The model and its calibration are DddA-specific and must not be applied
-to DddB DAF-seq. It is an experimental opt-in for genome-wide DddA data, not a
-default stage of the targeted DddA workflow. Enable the integrated path with
-`fiberhmm-call --enzyme ddda --ddda-mcg --reference ref.fa`; without that flag,
-the ordinary DddA call is unchanged.
+modification call. DAF amplification removes that native channel. Each span is
+a complete CpG island assigned a confident methylated state on one molecule;
+the caller does not infer transitions or boundaries within the island. The
+model and its calibration are DddA-specific and must not be applied to DddB.
 
-Merged cross-strand DAF reads declare CT and GA source coverage with `deam+`
-and `deam-` MA groups. `fiberhmm-tag-m5c` detects these groups automatically,
-keeps the two non-CpG baselines separate, and runs an equal-odds four-state HMM
-(`UU`, `UM`, `MU`, `MM`) over canonical CpG dyads. Strand-resolved mCG may be
-called wherever its source channel is observed; `ddda_mcg_hemi+/-` is emitted
-only across multiple CpGs with scored evidence from both channels. BAM reverse
-alignment flags are not used as chemical-strand identity.
+`fiberhmm-tag-m5c` infers CpG islands from the indexed reference by default or
+accepts a merged, nonoverlapping BED with `--cpg-islands`. It uses only CpG and
+non-CpG observations inside an initial MSP, requires at least 15 CpGs and 10
+non-CpGs, and records one methylated, unmethylated or uninformative state per
+molecule-island overlap. `--write-cpg-islands` records the exact catalog used.
+The older strand-resolved and hemi-methylation MA forms remain readable for
+backward compatibility but are not emitted by the production island caller.
 
 ## MA type discovery header
 
@@ -231,9 +228,8 @@ grammar `[A-Za-z0-9_]+`. Multiple declarations are valid:
 Readers take the ordered union, discard duplicates, and preserve first-seen
 ordering. FiberHMM producers retain existing comments and append one new
 declaration containing only names that were not already validly declared. When
-emitting MA, the main caller and recall tools advertise `nuc,msp,tf`; DddA mCG
-paths additionally advertise `ddda_mcg` and, where cross-strand calling is
-possible, `ddda_mcg_hemi`.
+emitting MA, the main caller and recall tools advertise `nuc,msp,tf`; the DddA
+island caller additionally advertises `ddda_mcg,ddda_ucg`.
 
 This metadata is a discovery hint, not part of MA correctness:
 
@@ -355,13 +351,13 @@ instance of the target base. Because the modifying enzyme acts preferentially on
 accessible DNA, hits are evidence for the accessible state (ℓ_hit < 0) and misses
 for the protected state (ℓ_miss > 0).
 
-For DddA reads carrying a `ddda_mcg.` span, TF recall adjusts only CpG contexts
-inside that span. If the fitted accessible-state deamination probability is
-`p`, the methylated value is `1 - (1 - p)^(F/U)`, with calibrated
-`F/U = 0.167/1.113`. This is a rate-scale correction: protected-state and
-non-CpG emissions remain unchanged. Consequently an undeaminated methylated
-CpG supplies less false evidence for a footprint, while an observed
-deamination is also a less absolute accessible-state veto.
+CpG-aware DddA recall uses CpG observations only within confidently unmethylated
+whole-island annotations (`MA:ddda_ucg`) and excludes all other CpGs from the
+opportunity lattice. Excluded sites contribute no likelihood, do not count
+toward minimum evidence, and cannot define footprint boundaries or boundary
+uncertainty; non-CpG observations retain their ordinary emissions. The
+`--cpg-mask-policy methylated-only` compatibility setting reproduces the former
+behavior of excluding CpGs only within `MA:ddda_mcg` spans.
 
 **Maximal-segment inference.** Over a candidate interval the recaller accumulates
 the per-position log-likelihood ratio and identifies the contiguous sub-interval

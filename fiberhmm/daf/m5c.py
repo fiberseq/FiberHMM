@@ -1,9 +1,11 @@
 """DAF-seq CpG methylation-domain and molecule calling.
 
-The aggregate caller compares each molecule's CpG deamination with its own
-non-CpG deamination in the same non-nucleosomal 1 kb window.  The per-read HMM
-uses the same contrast in a centered local neighborhood.  This cancels local
-accessibility while retaining the CpG-specific suppression caused by 5mC.
+The production molecule caller compares CpG deamination with non-CpG
+deamination inside the same initial MSP and reports one state for a complete
+sequence-defined CpG island.  This cancels local accessibility while retaining
+the CpG-specific suppression caused by 5mC, without claiming a boundary inside
+the island.  Aggregate and per-CpG routines remain available for validation of
+the underlying emission model, but are not the default molecule annotation.
 
 Calibration was fit on HG002 LCL chr1_MATERNAL:20-23 Mb and evaluated on the
 disjoint 30-33 Mb interval.  Truth coordinates are not used by this module.
@@ -15,7 +17,11 @@ from typing import Iterable, Sequence
 
 import numpy as np
 
-from fiberhmm.io.ma_tags import DDDA_MCG_FEATURE, DDDA_MCG_HEMI_FEATURE
+from fiberhmm.io.ma_tags import (
+    DDDA_MCG_FEATURE,
+    DDDA_MCG_HEMI_FEATURE,
+    DDDA_UCG_FEATURE,
+)
 
 U_UNMETH = 1.113
 F_METH = 0.167
@@ -70,6 +76,27 @@ class M5CReadResult:
     log_likelihood_ratio: np.ndarray
     methylated_posterior: np.ndarray
     calls: tuple[M5CReadCall, ...]
+
+
+@dataclass(frozen=True)
+class M5CIslandCall:
+    """One whole-CpG-island state call on an individual molecule."""
+    reference_start: int
+    reference_end: int
+    query_start: int
+    query_end: int
+    state: str
+    methylated_posterior: float
+    n_cpg: int
+    deaminated_cpg: int
+    n_non_cpg: int
+    deaminated_non_cpg: int
+
+
+@dataclass(frozen=True)
+class M5CIslandResult:
+    """Whole-island calls; no boundary is inferred within an island."""
+    calls: tuple[M5CIslandCall, ...]
 
 
 @dataclass(frozen=True)
@@ -480,6 +507,94 @@ def call_read_m5c(observations: Sequence[M5CObservation],
     calls.sort(key=lambda call: call.start)
     return M5CReadResult(ref_pos, query_pos, baseline, deaminated, llr,
                          posterior, tuple(calls))
+
+
+def call_read_m5c_islands(
+    observations: Sequence[M5CObservation],
+    islands: Sequence[tuple[int, int]],
+    five_prime_factors: Sequence[float],
+    posterior_threshold: float = 0.99,
+    min_other: int = 10,
+    min_cpg: int = 15,
+) -> M5CIslandResult:
+    """Call one methylation state per supplied CpG island.
+
+    ``observations`` must already be restricted to the molecule's initially
+    called MSPs.  The accessible non-CpG rate is estimated once over the
+    molecule/island overlap and used as the accessibility baseline for every
+    CpG in that overlap.  The calibrated methylated and unmethylated emission
+    likelihoods are combined across CpGs with equal prior odds.  Calls below
+    either evidence floor, or between the two posterior thresholds, are
+    reported as ``uninformative``.  No transition model or internal island
+    boundary is used.
+    """
+    if not 0.5 < posterior_threshold < 1.0:
+        raise ValueError("posterior_threshold must be between 0.5 and 1")
+    if min_other < 1 or min_cpg < 1:
+        raise ValueError("min_other and min_cpg must be positive")
+    factors = np.asarray(five_prime_factors, dtype=float)
+    if (factors.shape != (4,) or not np.all(np.isfinite(factors)) or
+            np.any(factors <= 0)):
+        raise ValueError("five_prime_factors must contain four positive finite values")
+    factors = factors / factors.mean()
+    records = sorted(observations, key=lambda obs: obs.reference_pos)
+    calls = []
+    for start, end in sorted((int(a), int(b)) for a, b in islands):
+        if end <= start:
+            raise ValueError("CpG island intervals must have positive length")
+        selected = [obs for obs in records if start <= obs.reference_pos < end]
+        cpg = [obs for obs in selected if obs.is_cpg]
+        other = [obs for obs in selected if not obs.is_cpg]
+        n_cpg, n_other = len(cpg), len(other)
+        d_cpg = sum(int(obs.deaminated) for obs in cpg)
+        d_other = sum(int(obs.deaminated) for obs in other)
+        state = "uninformative"
+        posterior = float("nan")
+        if n_cpg >= min_cpg and n_other >= min_other:
+            raw_baseline = d_other / n_other
+            baseline = np.clip(
+                raw_baseline * factors[np.asarray(
+                    [obs.five_prime_base for obs in cpg], dtype=np.int8,
+                )],
+                0.01, 0.97,
+            )
+            deaminated = np.asarray([obs.deaminated for obs in cpg], dtype=bool)
+            pu = np.clip(
+                deamination_probability(BETA_UNMETH, baseline), EPS, 1.0 - EPS,
+            )
+            pm = np.clip(
+                deamination_probability(BETA_METH, baseline), EPS, 1.0 - EPS,
+            )
+            log_u = float(np.where(
+                deaminated, np.log(pu), np.log1p(-pu),
+            ).sum())
+            log_m = float(np.where(
+                deaminated, np.log(pm), np.log1p(-pm),
+            ).sum())
+            llr = log_m - log_u
+            if llr >= 0:
+                posterior = 1.0 / (1.0 + np.exp(-llr))
+            else:
+                odds = np.exp(llr)
+                posterior = odds / (1.0 + odds)
+            if posterior >= posterior_threshold:
+                state = "methylated"
+            elif posterior <= 1.0 - posterior_threshold:
+                state = "unmethylated"
+        query = [obs.query_pos for obs in selected if obs.query_pos >= 0]
+        calls.append(M5CIslandCall(
+            reference_start=start,
+            reference_end=end,
+            query_start=min(query) if query else -1,
+            query_end=max(query) + 1 if query else -1,
+            state=state,
+            methylated_posterior=float(posterior),
+            n_cpg=n_cpg,
+            deaminated_cpg=d_cpg,
+            n_non_cpg=n_other,
+            deaminated_non_cpg=d_other,
+        ))
+    return M5CIslandResult(tuple(calls))
 
 
 def _selected_runs(selected: np.ndarray, positions: np.ndarray,
@@ -1346,7 +1461,7 @@ def _replace_m5c_ma_groups(
             group_names.extend([""] * (annotation_count - len(group_names)))
             name_offset += annotation_count
             if ma_group_feature(group) in {
-                DDDA_MCG_FEATURE, DDDA_MCG_HEMI_FEATURE,
+                DDDA_MCG_FEATURE, DDDA_UCG_FEATURE, DDDA_MCG_HEMI_FEATURE,
             }:
                 continue
             old_groups.append(group)
@@ -1379,6 +1494,18 @@ def add_m5c_ma_tag(read, query_spans: Sequence[tuple[int, int]]) -> None:
     """Add/replace the unqualified ``ddda_mcg.`` MA group on one read."""
     _replace_m5c_ma_groups(read, [
         (DDDA_MCG_FEATURE, ".", query_spans),
+    ])
+
+
+def add_island_m5c_ma_tags(
+    read,
+    methylated_spans: Sequence[tuple[int, int]],
+    unmethylated_spans: Sequence[tuple[int, int]],
+) -> None:
+    """Write confident whole-island mCpG and uCpG states on one molecule."""
+    _replace_m5c_ma_groups(read, [
+        (DDDA_MCG_FEATURE, ".", methylated_spans),
+        (DDDA_UCG_FEATURE, ".", unmethylated_spans),
     ])
 
 
@@ -1548,4 +1675,340 @@ def annotate_bam_per_read(input_bam: str, output_bam: str, reference: str,
                         add_m5c_ma_tag(read, spans)
                     stats["tagged_reads"] += int(bool(spans))
                     sink.write(read)
+    return stats
+
+
+def load_cpg_island_bed(path: str) -> dict[str, list[tuple[int, int]]]:
+    """Load a BED3 CpG-island file as sorted, non-overlapping intervals."""
+    import gzip
+
+    opener = gzip.open if str(path).endswith(".gz") else open
+    by_chrom: dict[str, list[tuple[int, int]]] = {}
+    with opener(path, "rt") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip() or line.startswith(("#", "track", "browser")):
+                continue
+            fields = line.rstrip().split("\t")
+            if len(fields) < 3:
+                raise ValueError(f"CpG-island BED line {line_number} has fewer than 3 columns")
+            try:
+                start, end = int(fields[1]), int(fields[2])
+            except ValueError as error:
+                raise ValueError(
+                    f"CpG-island BED line {line_number} has invalid coordinates"
+                ) from error
+            if start < 0 or end <= start:
+                raise ValueError(
+                    f"CpG-island BED line {line_number} must be a positive BED interval"
+                )
+            by_chrom.setdefault(fields[0], []).append((start, end))
+    for chrom, intervals in by_chrom.items():
+        intervals.sort()
+        previous_end = -1
+        for start, end in intervals:
+            if start < previous_end:
+                raise ValueError(
+                    f"CpG-island BED contains overlapping intervals on {chrom}; "
+                    "merge them before calling"
+                )
+            previous_end = end
+    return by_chrom
+
+
+def infer_cpg_islands(
+    reference: str,
+    contigs: Sequence[str] | None = None,
+    window: int = 200,
+    step: int = 10,
+    min_gc: float = 0.50,
+    min_observed_expected: float = 0.60,
+    chunk_bp: int = 5_000_000,
+) -> dict[str, list[tuple[int, int]]]:
+    """Infer merged CpG islands directly from an indexed reference FASTA.
+
+    Windows use the conventional sequence criteria: GC fraction at least
+    ``min_gc`` and CpG observed/expected at least
+    ``min_observed_expected``, where O/E is ``n_CpG * window / (n_C * n_G)``.
+    Qualifying overlapping windows are merged.  Chunking bounds memory without
+    changing the globally aligned sliding-window grid.
+    """
+    import pysam
+
+    if window < 2 or step < 1 or chunk_bp < step:
+        raise ValueError("CpG-island window, step and chunk size must be positive")
+    if not 0.0 <= min_gc <= 1.0 or min_observed_expected < 0.0:
+        raise ValueError("invalid CpG-island GC or observed/expected threshold")
+
+    result: dict[str, list[tuple[int, int]]] = {}
+    with pysam.FastaFile(reference) as fasta:
+        available = set(fasta.references)
+        selected = list(fasta.references) if contigs is None else [
+            str(chrom) for chrom in contigs if str(chrom) in available
+        ]
+        if not selected:
+            raise ValueError("no BAM contigs are present in the reference FASTA")
+        for chrom in selected:
+            length = int(fasta.get_reference_length(chrom))
+            max_start = length - int(window)
+            if max_start < 0:
+                continue
+            merged: list[list[int]] = []
+            # Partition possible window starts.  Each fetch includes the full
+            # final window, so no window or dinucleotide crosses a chunk unseen.
+            for core_start in range(0, max_start + 1, int(chunk_bp)):
+                core_end = min(max_start + 1, core_start + int(chunk_bp))
+                first = core_start + ((-core_start) % int(step))
+                if first >= core_end:
+                    continue
+                starts = np.arange(first, core_end, int(step), dtype=np.int64)
+                fetch_start = int(starts[0])
+                fetch_end = int(starts[-1]) + int(window)
+                sequence = np.frombuffer(
+                    fasta.fetch(chrom, fetch_start, fetch_end).upper().encode("ascii"),
+                    dtype=np.uint8,
+                )
+                is_c = sequence == ord("C")
+                is_g = sequence == ord("G")
+                is_cpg = np.zeros(len(sequence), dtype=np.int8)
+                if len(sequence) > 1:
+                    is_cpg[:-1] = is_c[:-1] & is_g[1:]
+
+                def _prefix(values):
+                    return np.concatenate((
+                        np.zeros(1, dtype=np.int64),
+                        np.cumsum(values, dtype=np.int64),
+                    ))
+
+                c_prefix = _prefix(is_c)
+                g_prefix = _prefix(is_g)
+                cpg_prefix = _prefix(is_cpg)
+                offsets = starts - fetch_start
+                ends = offsets + int(window)
+                n_c = c_prefix[ends] - c_prefix[offsets]
+                n_g = g_prefix[ends] - g_prefix[offsets]
+                n_cpg = cpg_prefix[ends] - cpg_prefix[offsets]
+                gc_fraction = (n_c + n_g) / float(window)
+                denominator = n_c * n_g
+                observed_expected = np.divide(
+                    n_cpg * float(window), denominator,
+                    out=np.zeros(len(starts), dtype=np.float64),
+                    where=denominator > 0,
+                )
+                qualifying = starts[
+                    (gc_fraction >= float(min_gc)) &
+                    (observed_expected >= float(min_observed_expected))
+                ]
+                for start in qualifying:
+                    lo, hi = int(start), int(start) + int(window)
+                    if merged and lo <= merged[-1][1]:
+                        merged[-1][1] = max(merged[-1][1], hi)
+                    else:
+                        merged.append([lo, hi])
+            if merged:
+                result[chrom] = [(lo, hi) for lo, hi in merged]
+    return result
+
+
+def write_cpg_island_bed(
+    islands: dict[str, Sequence[tuple[int, int]]], path: str,
+) -> None:
+    """Write the exact normalized CpG-island catalog used for calling."""
+    import gzip
+
+    opener = gzip.open if str(path).endswith(".gz") else open
+    with opener(path, "wt") as handle:
+        for chrom, intervals in islands.items():
+            for start, end in intervals:
+                handle.write(f"{chrom}\t{int(start)}\t{int(end)}\n")
+
+
+def _initial_msp_intervals_seq(read, input_molecular_frame: bool) -> list[tuple[int, int]]:
+    """Return initial MSPs in SEQ coordinates from MA or legacy as/al tags."""
+    intervals = ma_intervals(read, "msp") if read.has_tag("MA") else []
+    if intervals or not (read.has_tag("as") and read.has_tag("al")):
+        return intervals
+    starts, lengths = list(read.get_tag("as")), list(read.get_tag("al"))
+    if input_molecular_frame:
+        from fiberhmm.io.ma_tags import flip_intervals_to_seq
+        starts, lengths = flip_intervals_to_seq(starts, lengths, read)
+    return [
+        (int(start), int(start) + int(length))
+        for start, length in zip(starts, lengths) if int(length) > 0
+    ]
+
+
+def annotate_bam_per_read_islands(
+    input_bam: str,
+    output_bam: str,
+    reference: str,
+    island_bed: str | None,
+    five_prime_factors: Sequence[float],
+    posterior_threshold: float = 0.99,
+    min_other: int = 10,
+    min_cpg: int = 15,
+    input_molecular_frame: bool | None = None,
+    threads: int = 4,
+    header_record: dict | None = None,
+    calls_tsv: str | None = None,
+    used_islands_bed: str | None = None,
+    island_window: int = 200,
+    island_step: int = 10,
+    island_min_gc: float = 0.50,
+    island_min_observed_expected: float = 0.60,
+) -> dict[str, int]:
+    """Call whole CpG islands from observations inside initial MSPs.
+
+    Confident methylated and unmethylated islands are written as
+    ``MA:ddda_mcg.`` and ``MA:ddda_ucg.`` spans, respectively.  CpG-aware TF
+    recall uses the unmethylated layer as a whitelist: CpGs outside those
+    spans are excluded from the opportunity lattice.  The optional table also
+    records uninformative overlaps.  If ``island_bed`` is absent, islands are
+    inferred from the reference sequence using the conventional windowed GC
+    and CpG observed/expected definition.
+    """
+    import csv
+    import pysam
+
+    if island_bed:
+        islands = load_cpg_island_bed(island_bed)
+    else:
+        with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as source:
+            contigs = source.references
+        with pysam.FastaFile(reference) as fasta:
+            available = set(fasta.references)
+        missing = [chrom for chrom in contigs if chrom not in available]
+        if missing:
+            preview = ", ".join(missing[:5])
+            suffix = " ..." if len(missing) > 5 else ""
+            raise ValueError(
+                "reference FASTA is missing BAM contigs required for automatic "
+                f"CpG-island inference: {preview}{suffix}"
+            )
+        islands = infer_cpg_islands(
+            reference,
+            contigs=contigs,
+            window=island_window,
+            step=island_step,
+            min_gc=island_min_gc,
+            min_observed_expected=island_min_observed_expected,
+        )
+    if used_islands_bed:
+        write_cpg_island_bed(islands, used_islands_bed)
+    starts = {
+        chrom: np.asarray([start for start, _ in values], dtype=np.int64)
+        for chrom, values in islands.items()
+    }
+    stats = {
+        "defined_islands": sum(len(values) for values in islands.values()),
+        "reads": 0,
+        "eligible_reads": 0,
+        "overlapped_islands": 0,
+        "methylated_islands": 0,
+        "unmethylated_islands": 0,
+        "uninformative_islands": 0,
+        "tagged_reads": 0,
+    }
+    table_handle = open(calls_tsv, "w", newline="") if calls_tsv else None
+    writer = None
+    if table_handle:
+        writer = csv.writer(table_handle, delimiter="\t", lineterminator="\n")
+        writer.writerow([
+            "read_name", "chrom", "island_start", "island_end", "state",
+            "methylated_posterior", "n_cpg", "deaminated_cpg", "n_non_cpg",
+            "deaminated_non_cpg",
+        ])
+    try:
+        with pysam.FastaFile(reference) as fasta:
+            with pysam.AlignmentFile(input_bam, "rb", threads=threads) as source:
+                if input_molecular_frame is None:
+                    from fiberhmm.io.bam_header import header_has_coord_marker
+                    input_molecular_frame = header_has_coord_marker(source.header)
+                from fiberhmm.io.bam_header import append_ma_types, maybe_append_pg
+                output_header = append_ma_types(
+                    maybe_append_pg(source.header, header_record),
+                    (DDDA_MCG_FEATURE, DDDA_UCG_FEATURE),
+                )
+                with pysam.AlignmentFile(
+                    output_bam, "wb", header=output_header, threads=threads,
+                ) as sink:
+                    for read in source:
+                        stats["reads"] += 1
+                        candidate_islands = []
+                        chrom = read.reference_name
+                        if (not read.is_unmapped and chrom in islands and
+                                read.reference_start is not None and
+                                read.reference_end is not None):
+                            values = islands[chrom]
+                            chrom_starts = starts[chrom]
+                            left = max(0, int(np.searchsorted(
+                                chrom_starts, read.reference_start, side="right",
+                            )) - 1)
+                            right = int(np.searchsorted(
+                                chrom_starts, read.reference_end, side="left",
+                            ))
+                            candidate_islands = [
+                                interval for interval in values[left:right]
+                                if interval[0] < read.reference_end and
+                                interval[1] > read.reference_start
+                            ]
+                        calls = ()
+                        if candidate_islands:
+                            payload = build_ddda_mcg_observation_payload(read, fasta)
+                            msp = _initial_msp_intervals_seq(
+                                read, bool(input_molecular_frame),
+                            )
+                            if payload and msp:
+                                observations = observations_from_ddda_mcg_payload(payload)
+                                observations = [
+                                    obs for obs in observations
+                                    if any(lo <= obs.query_pos < hi for lo, hi in msp)
+                                ]
+                                if observations:
+                                    stats["eligible_reads"] += 1
+                                    calls = call_read_m5c_islands(
+                                        observations,
+                                        candidate_islands,
+                                        five_prime_factors,
+                                        posterior_threshold=posterior_threshold,
+                                        min_other=min_other,
+                                        min_cpg=min_cpg,
+                                    ).calls
+                        stats["overlapped_islands"] += len(calls)
+                        for call in calls:
+                            stats[f"{call.state}_islands"] += 1
+                            if writer:
+                                writer.writerow([
+                                    read.query_name, chrom,
+                                    call.reference_start, call.reference_end,
+                                    call.state,
+                                    call.methylated_posterior,
+                                    call.n_cpg, call.deaminated_cpg,
+                                    call.n_non_cpg, call.deaminated_non_cpg,
+                                ])
+                        methylated = [
+                            M5CDomain(
+                                chrom, call.reference_start, call.reference_end,
+                                True, call.methylated_posterior,
+                            )
+                            for call in calls if call.state == "methylated"
+                        ]
+                        unmethylated = [
+                            M5CDomain(
+                                chrom, call.reference_start, call.reference_end,
+                                False, 1.0 - call.methylated_posterior,
+                            )
+                            for call in calls if call.state == "unmethylated"
+                        ]
+                        methylated_spans = project_domains_to_query(read, methylated)
+                        unmethylated_spans = project_domains_to_query(read, unmethylated)
+                        add_island_m5c_ma_tags(
+                            read, methylated_spans, unmethylated_spans,
+                        )
+                        stats["tagged_reads"] += int(bool(
+                            methylated_spans or unmethylated_spans
+                        ))
+                        sink.write(read)
+    finally:
+        if table_handle:
+            table_handle.close()
     return stats

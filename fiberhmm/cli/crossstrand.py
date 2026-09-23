@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""fiberhmm-crossstrand -- one-command DAF cross-strand consensus + re-call.
+"""Compatibility wrapper for ``fiberhmm-pair --merge --recall``.
 
 Runs the full cross-strand pipeline on a footprint-called DAF-seq BAM:
 
-    1. fiberhmm-pair   -- pair CT/GA reads sequence-first at reference A/T
-                          positions, then use nucleosome patterns for the
-                          sequence-ambiguous remainder;
+    1. fiberhmm-pair   -- pair CT/GA reads from direct sequence support plus
+                          the high-confidence sequence-free model;
     2. fiberhmm-merge  -- build one both-strand consensus read per pair (union
                           span, deam+/deam- regime in MA);
     3. --recall (ON)   -- re-call footprints on each consensus with BOTH the
@@ -25,8 +24,9 @@ import sys
 import time
 
 from fiberhmm.cli.merge import run_merge
-from fiberhmm.cli.pair import run_pair
+from fiberhmm.cli.duplex import run_pairing
 from fiberhmm.crossstrand.pairing import PairParams
+from fiberhmm.crossstrand.duplex import DuplexParams
 
 
 def run_pipeline(in_bam, out_bam, params: PairParams, recall=True, enzyme='ddda',
@@ -39,12 +39,27 @@ def run_pipeline(in_bam, out_bam, params: PairParams, recall=True, enzyme='ddda'
             "cross-strand consensus is specific to double-strand DddA DAF-seq; "
             f"unsupported enzyme preset: {enzyme!r}"
         )
+    if not reference_path:
+        raise ValueError(
+            "the unified default pairer requires a reference FASTA for "
+            "non-CpG DddA opportunity enumeration"
+        )
     t0 = time.time()
     tmp_paired = out_bam + '.paired.tmp.bam'
     print("=== [1/2] fiberhmm-pair ===", file=sys.stderr)
-    run_pair(in_bam, tmp_paired, params, prob_threshold=prob_threshold,
-             pairs_tsv=pairs_tsv, io_threads=io_threads,
-             reference_path=reference_path)
+    run_pairing(
+        in_bam, tmp_paired, reference_path,
+        params=DuplexParams(
+            min_overlap_bp=params.min_overlap_bp,
+            min_nucs=params.min_nucs,
+        ),
+        sequence_params=params,
+        prob_threshold=prob_threshold,
+        pairs_tsv=pairs_tsv,
+        io_threads=io_threads,
+        create_index=False,
+        pairing_mode='hybrid',
+    )
     print(f"=== [2/2] fiberhmm-merge {'--recall' if recall else ''} ===", file=sys.stderr)
     try:
         run_merge(tmp_paired, out_bam, prob_threshold=prob_threshold,
@@ -81,9 +96,7 @@ Examples:
     p.add_argument('-i', '--input', required=True, help='Footprint-called DAF BAM (coord-sorted + indexed)')
     p.add_argument('-o', '--output', required=True, help='Output consensus BAM (sorted + indexed)')
     p.add_argument('-r', '--reference', default=None,
-                   help='Reference FASTA for sequence-first pairing. If '
-                        'omitted, MD+CIGAR evidence is used where available '
-                        'before footprint fallback')
+                   help='Reference FASTA required by the unified default pairer')
     p.add_argument('--no-recall', action='store_true', help='Skip re-calling footprints on consensus reads')
     p.add_argument('--enzyme', default='ddda', choices=['ddda'],
                    help='Cross-strand mode is specific to DddA DAF-seq')

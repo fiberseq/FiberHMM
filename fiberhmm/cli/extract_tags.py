@@ -178,12 +178,14 @@ def _duplicate_bed_value(read) -> int:
     return int(bool(getattr(read, 'is_duplicate', False)))
 
 
-def _parse_all_ma_annotations(read):
+def _parse_all_ma_annotations(read, *, annotation_frame='molecular'):
     """Parse MA/AQ/AN once and return annotations grouped by type.
 
     Values retain the exact target-specific ordering and quality orientation
     previously returned by :func:`_parse_ma_annotations`.
     """
+    if annotation_frame not in ('seq', 'molecular'):
+        raise ValueError('Unknown MA annotation frame')
     try:
         ma_str = read.get_tag('MA')
     except KeyError:
@@ -208,7 +210,7 @@ def _parse_all_ma_annotations(read):
     annotations = {}
     ann_idx = 0
     read_length = int(parsed['read_length'])
-    is_reverse = bool(getattr(read, 'is_reverse', False))
+    is_reverse = bool(getattr(read, 'is_reverse', False)) and annotation_frame == 'molecular'
     for name, _strand, _qspec, intervals in parsed['raw_types']:
         for s, length in intervals:
             quals = per_annotation[ann_idx] if ann_idx < len(per_annotation) else []

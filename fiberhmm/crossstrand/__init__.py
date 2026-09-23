@@ -7,16 +7,12 @@ reverse strand) -- that overlap in the genome but sample different bases (C vs
 G). They therefore cannot be matched by deamination pattern the way same-strand
 PCR/PTA copies can.
 
-Pairing is sequence-first. Opposite-flavor reads are compared at shared
-reference A/T positions, which are outside the DddA C/G channels, and only
-strict reciprocal preferences or constrained local 2x2 assignments are
-accepted. Reads that remain sequence-ambiguous can enter a separately labeled
-**nucleosome-footprint fallback**: MA ``nuc`` dyads become 1-D density signals
-and reciprocal-best pairs must clear correlation and margin gates while gross
-sequence conflicts are vetoed. The fallback is useful operationally, but later
-footprint-agreement analyses must retain the route label because those pairs
-were selected partly through footprint similarity. Ambiguous cases fail closed
-rather than being forced into a chromosome-scale assignment.
+The public pairer combines two explicit routes. Direct A/T sequence-supported
+assignments carry ``pm:S``. Remaining high-confidence assignments from the
+frozen sequence-free model carry ``pm:D``; that model uses nucleosome lattice,
+alignment geometry, and raw and component-residual DddA protection. Sequence
+assignments take precedence on conflicts. Ambiguous cases fail closed rather
+than being forced into a chromosome-scale assignment.
 
 See :mod:`fiberhmm.crossstrand.pairing`.
 """

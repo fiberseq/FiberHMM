@@ -1127,6 +1127,7 @@ def _has_mapped_annotation_overlap(
     target: str,
     start: int,
     end: int,
+    annotation_frame: str = 'molecular',
 ) -> bool:
     """Test one MA layer against a reference window without decoding evidence.
 
@@ -1152,7 +1153,7 @@ def _has_mapped_annotation_overlap(
                 flip_interval_frame(
                     int(raw_start), int(raw_length), read_length
                 )
-                if read.is_reverse
+                if read.is_reverse and annotation_frame == 'molecular'
                 else (int(raw_start), int(raw_length))
             )
             query_end = query_start + length
@@ -1248,6 +1249,7 @@ def load_region_evidence(
     projection: str = "full",
     evidence_scope: str = "region",
     legacy_annotation_frame: Optional[str] = None,
+    ma_annotation_frame: str = 'molecular',
 ) -> List[ReadEvidence]:
     """Load hard-call evidence and selected TF/nucleosome MA layers.
 
@@ -1259,6 +1261,8 @@ def load_region_evidence(
     recaller can select ``nuc_sr`` to test the current consensus-shadow block
     without mutating or silently substituting the ordinary call layer.
     """
+    if ma_annotation_frame not in ('auto', 'seq', 'molecular'):
+        raise ValueError('Unknown MA annotation frame')
     if not tf_layer or "," in tf_layer or ":" in tf_layer:
         raise ValueError("tf_layer must be one MA annotation type name")
     if not nuc_layer or "," in nuc_layer or ":" in nuc_layer:
@@ -1294,6 +1298,11 @@ def load_region_evidence(
     annotation_overlap_excluded_count = 0
     read_name_excluded_count = 0
     with pysam.AlignmentFile(bam_path, "rb") as bam:
+        if ma_annotation_frame == 'auto':
+            from fiberhmm.io.annotation_frame import ma_annotation_frame as resolve_ma_frame
+            ma_annotation_frame = resolve_ma_frame(bam.header)
+        if load_diagnostics is not None:
+            load_diagnostics['ma_annotation_frame'] = ma_annotation_frame
         if tf_layer != "tf" and tf_layer not in declared_ma_types(bam.header):
             raise ValueError(
                 f"selected TF layer {tf_layer!r} is not declared in the BAM "
@@ -1326,6 +1335,7 @@ def load_region_evidence(
                     str(required_annotation_overlap[0]),
                     int(required_annotation_overlap[1]),
                     int(required_annotation_overlap[2]),
+                    annotation_frame=ma_annotation_frame,
                 )
             ):
                 annotation_overlap_excluded_count += 1
@@ -1401,7 +1411,7 @@ def load_region_evidence(
                 else np.asarray([], dtype=np.int64)
             )
             try:
-                parsed_annotations = _parse_all_ma_annotations(read) or {}
+                parsed_annotations = _parse_all_ma_annotations(read, annotation_frame=ma_annotation_frame) or {}
             except (KeyError, TypeError, ValueError):
                 parsed_annotations = {}
             if legacy_annotation_frame is not None and not read.has_tag('MA'):

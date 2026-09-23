@@ -1,6 +1,6 @@
 # Paired-duplex scDAF integration
 
-`fiberhmm-crossstrand` is an optional DddA scDAF workflow for two sequenced
+`fiberhmm-pair` is the DddA scDAF workflow for two sequenced
 copies inferred to come from the same physical duplex. In this document,
 "consensus" means only that within-duplex evidence union. It never means a
 population TF-class consensus across independent molecules.
@@ -11,7 +11,7 @@ population TF-class consensus across independent molecules.
 ordinary called reads
         |
         v
-sequence-first CT/GA pairing ----> footprint fallback for sequence ambiguity
+sequence-supported assignment + high-confidence sequence-free model
         |
         v
 one reference-frame joint molecule with deam+ and deam- source coverage
@@ -23,18 +23,21 @@ ordinary HMM + nucleosome recaller + TF recaller on both channels
 The one-command form is:
 
 ```bash
-fiberhmm-crossstrand \
+fiberhmm-pair \
   -i calls.bam \
   -o duplex-recalled.bam \
+  -r hg38.fa \
+  --merge --recall \
   --pairs-tsv duplex-pairs.tsv \
   --pairs-only
 ```
 
 The input must already contain ordinary FiberHMM calls and be coordinate
-sorted and indexed. A reference FASTA supplied with `--reference` provides
-deamination-safe A/T sequence for pairing. Without a FASTA, the same evidence
-is reconstructed from MD+CIGAR when possible. Reads that remain
-sequence-ambiguous can be assigned by reciprocal nucleosome-pattern matching.
+sorted and indexed. The default workflow requires a reference FASTA because
+the sequence-free score enumerates non-CpG DddA opportunities. The FASTA also
+supplies deamination-safe A/T evidence for direct sequence-supported
+assignment. `--sequence-only` disables the model route and can reconstruct A/T
+evidence from MD+CIGAR when the FASTA is omitted.
 
 ## Pair evidence
 
@@ -44,24 +47,24 @@ Paired source reads retain explicit tags:
 |---|---|
 | `mt:A:P` | accepted pair member |
 | `mp:Z` | reciprocal mate query name |
-| `pm:A:S/F` | sequence assignment or footprint fallback |
+| `pm:A:S/D` | direct sequence assignment or frozen sequence-free model |
 | `pa:A:R/C` | strict reciprocal sequence edge or constrained complete 2x2 assignment |
 | `sb`, `sd`, `sr`, `sg` | safe sequence bases, differences, rate, and assignment margin |
-| `mc`, `mg` | footprint correlation and footprint-selection margin (`mg` only for fallback pairs) |
+| `mc` | optional nucleosome correlation for a sequence-supported pair |
+| `dm`, `mg`, `mv` | sequence-free decision score, reciprocal margin, and model ID |
 
 Query names must be unique among primary featurizable reads. The pairer and
 merger fail closed on duplicate names, missing mates, same-flavor pairs, or
 non-reciprocal tags.
 
-Sequence assignment is independent of footprint similarity. Footprint
-fallback is useful for the remaining ambiguous reads, but any later analysis
-of footprint agreement must stratify by `pm`: the fallback stratum was selected
-partly for footprint similarity and is therefore not an independent
-concordance benchmark.
+Sequence assignment is independent of footprint similarity. The sequence-free
+route uses nucleosome and DddA protection concordance, so later analyses of
+those features must stratify by `pm` and must not present `pm:D` as an
+independent concordance benchmark.
 
 The default sequence preference margin is 0.002 in difference-rate units. It
-is intentionally conservative: a weak one-base preference is left for the
-footprint fallback rather than promoted as orthogonal pairing evidence.
+is intentionally conservative: a weak one-base preference is left unresolved
+by the sequence route rather than promoted as orthogonal pairing evidence.
 
 ## Joint evidence and coordinates
 

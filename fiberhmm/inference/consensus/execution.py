@@ -93,6 +93,12 @@ def single_threaded_blas():
 # only the process lifecycle changes.
 WORKER_ENV = dict(OPENBLAS_NUM_THREADS='1', OMP_NUM_THREADS='1', MKL_NUM_THREADS='1',
                   VECLIB_MAXIMUM_THREADS='1', NUMEXPR_NUM_THREADS='1', BLIS_NUM_THREADS='1',
+                  # Numba's OpenMP launcher still calls the deprecated
+                  # omp_set_nested API. Intel labels that call "Info #276" on
+                  # every fresh worker even though execution is valid. Keep
+                  # that third-party initialization notice out of user logs;
+                  # Python/numerical warnings remain enabled.
+                  KMP_WARNINGS='0',
                   # Upper bound for numba.set_num_threads inside a task; every
                   # task sets its own count explicitly (1 unless it asks for more).
                   NUMBA_NUM_THREADS='4')

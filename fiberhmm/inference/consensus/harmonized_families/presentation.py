@@ -46,7 +46,11 @@ def browser_unit(ds, unit):
     return result
 
 
-def browser_snapshot(scopes, sources, mode, stage, context=None):
+def browser_snapshot(scopes, sources, mode, stage, context=None,
+                     minimum_primary_units=0, minimum_primary_fraction=0.,
+                     assignment_reference_percent=99.9):
+    if not 50 <= assignment_reference_percent <= 99.9:
+        raise ValueError('Assignment reference must be between 50 and 99.9 percent')
     context = context or presentation_context(sources)
     datasets = {}; family_datasets = defaultdict(set); shared = {}
     raw = {s['dataset_id']+'::'+u['unit_id']:(s['dataset_id'],u) for s in sources for u in s['units']}
@@ -66,6 +70,12 @@ def browser_snapshot(scopes, sources, mode, stage, context=None):
         for record in annotation['records']:
             uid = record['unit_id']; ds,u = raw[uid]; strand = u['strand']; iv = record['interval']
             families = sorted(record['display_hypotheses'])
+            if assignment_reference_percent < 99.9:
+                scores = record.get('assignment_compatibility', {})
+                families = [fid for fid in families
+                    if scores.get(fid, {}).get('status') == 'scored'
+                    and scores[fid].get('predictive_tail_interval', [0., 0.])[1]
+                    >= 1. - assignment_reference_percent / 100.]
             if not set(families) <= hypotheses.keys(): raise ValueError('Membership has no active hypothesis')
             source_id = uid+':'+str(iv[0])+':'+str(iv[1])
             original = record['original']
@@ -94,6 +104,9 @@ def browser_snapshot(scopes, sources, mode, stage, context=None):
                 family_evidence=intern(evidence,context['evidence_pool']) if context['compact'] else evidence, raw_interval_unchanged=True,
                 primary_label_semantics='surviving_native_primary_else_deterministic_display_only',
                 exclusive_assignment=False)
+            proposal['assignment_reference_percent'] = assignment_reference_percent
+            if record['display_hypotheses'] and not families:
+                proposal['classification_status'] = 'below_assignment_stringency'
             if not families: proposal['display_color']='#94a3b8'
             row = rows[ds].setdefault(uid, dict(unit_id=uid, strand=strand, source_calls=[], proposals=[]))
             row['source_calls'].append(list(iv)); row['proposals'].append(proposal)
@@ -130,9 +143,111 @@ def browser_snapshot(scopes, sources, mode, stage, context=None):
     for ds in datasets:
         datasets[ds]['cr']['records'] = list(rows[ds].values())
         datasets[ds]['cr']['catalog'].sort(key=lambda f:(f['consensus_start'],f['consensus_end'],f['family']))
+    # The fitted ledger deliberately retains every tested alternative, but the
+    # main population-state layer must represent recurrent primary structure,
+    # not every permissively compatible shape.  Gate only the Browser-facing
+    # catalog/projection; the complete hypotheses and evidence remain frozen in
+    # each proposal's evidence record and the stage artifacts.
+    support = defaultdict(lambda: [0, 0])
+    for dataset in datasets.values():
+        for state in dataset['cr']['catalog']:
+            for counts_by_strand in state.get('classification_counts', {}).values():
+                support[state['family']][0] += int(counts_by_strand.get('primary_units', 0))
+                support[state['family']][1] += int(counts_by_strand.get('eligible_units', 0))
+    minimum_units = max(0, int(minimum_primary_units))
+    minimum_fraction = max(0., min(1., float(minimum_primary_fraction)))
+    visible = set(support)
+    # Retire one weak state at a time. Simultaneous filtering discards the
+    # support which its calls could contribute to a compatible alternative.
+    # Memberships are frozen native-evidence tests, never proximity guesses.
+    def recount():
+        primary_members = defaultdict(set)
+        primary_calls = Counter()
+        for ds, dataset in datasets.items():
+            for row in dataset['cr']['records']:
+                for proposal in row['proposals']:
+                    fid = proposal['family']
+                    if fid is None:
+                        continue
+                    key = (ds, row['strand'], fid)
+                    primary_calls[key] += 1
+                    mean = shared[fid]
+                    eligible = eligible_units(context, ds, row['strand'],
+                        mean['consensus_start'], mean['consensus_end'])
+                    if row['unit_id'] in eligible:
+                        primary_members[key].add(row['unit_id'])
+        for fid in support:
+            support[fid][0] = 0
+        for ds, dataset in datasets.items():
+            for state in dataset['cr']['catalog']:
+                fid = state['family']
+                for strand, counts in state['classification_counts'].items():
+                    key = (ds, strand, fid)
+                    counts['primary_calls'] = primary_calls[key]
+                    counts['primary_units'] = len(primary_members[key])
+                    support[fid][0] += counts['primary_units']
+
+    def rank(fid):
+        units, eligible = support[fid]
+        return (units, units / eligible if eligible else 0.)
+
+    while True:
+        weak = [fid for fid in visible if support[fid][0] < minimum_units
+                or rank(fid)[1] < minimum_fraction]
+        if not weak:
+            break
+        retired = min(weak, key=lambda fid: (*rank(fid), fid))
+        visible.remove(retired)
+        for dataset in datasets.values():
+            for row in dataset['cr']['records']:
+                for proposal in row['proposals']:
+                    if proposal['family'] != retired:
+                        continue
+                    alternatives = [fid for fid in proposal['compatible_families'] if fid in visible]
+                    replacement = min(alternatives, key=lambda fid: (-rank(fid)[0], -rank(fid)[1], fid)) if alternatives else None
+                    proposal.setdefault('support_reassignment', dict(
+                        original_family=retired, steps=[],
+                        semantics='highest_support_evidence_compatible_remaining_state'))['steps'].append(
+                            dict(hidden_family=retired, replacement_family=replacement))
+                    proposal['family'] = replacement
+                    proposal['primary_label_semantics'] = 'highest_support_evidence_compatible_remaining_state'
+        recount()
+    for dataset in datasets.values():
+        original_count = len(dataset['cr']['catalog'])
+        dataset['cr']['catalog'] = [
+            state for state in dataset['cr']['catalog'] if state['family'] in visible
+        ]
+        for row in dataset['cr']['records']:
+            for proposal in row['proposals']:
+                retained = [
+                    family for family in proposal['compatible_families']
+                    if family in visible
+                ]
+                if proposal['family'] in retained:
+                    retained.remove(proposal['family'])
+                    retained.insert(0, proposal['family'])
+                proposal['compatible_families'] = retained
+                proposal['family'] = retained[0] if retained else None
+                proposal['compatible_alternatives'] = retained[1:]
+                proposal['unclassified'] = not retained
+                proposal['classification_status'] = (
+                    'compatible_catalog_label' if retained
+                    else 'below_recurrent_state_support' if proposal['compatible_families'] or proposal.get('support_reassignment')
+                    else proposal['classification_status']
+                )
+                if not retained:
+                    proposal['display_color'] = '#94a3b8'
+        dataset['cr']['support_filter'] = dict(
+            minimum_primary_units=minimum_units,
+            minimum_primary_fraction=minimum_fraction,
+            fitted_hypotheses=original_count,
+            displayed_states=len(dataset['cr']['catalog']),
+            semantics='primary independent units divided by fitted-span eligible units',
+        )
     edges = []
     if mode == 'XCR' and stage != 'native':
         for fid, ids in sorted(family_datasets.items()):
+            if fid not in visible: continue
             for left,right in combinations(sorted(ids),2):
                 f=shared[fid]; interval=[f['consensus_start'],f['consensus_end']]
                 edges.append(dict(edge_id=fid+'|'+left+'|'+right, left_dataset=left, right_dataset=right,

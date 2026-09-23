@@ -383,12 +383,12 @@ def test_ddda_mode_surfaces_whole_genome_mcg_hint(capsys):
     args = SimpleNamespace(ddda_mcg=False, enzyme="ddda")
     assert _configure_ddda_mcg(args, "daf") is False
     message = capsys.readouterr().err
-    assert "whole-genome DddA DAF-seq" in message
-    assert "--ddda-mcg --reference ref.fa" in message
-    assert "unnecessary for targeted/amplicon" in message
+    assert "fiberhmm-tag-m5c" in message
+    assert "one state per complete CpG island" in message
+    assert "fiberhmm-recall-tfs --use-m5c" in message
 
 
-def test_integrated_ddda_mcg_guardrails(capsys, tmp_path):
+def test_integrated_ddda_mcg_is_retired_in_favor_of_whole_islands(capsys, tmp_path):
     reference = tmp_path / "ref.fa"
     reference.write_text(">chr1\nACGTACGT\n")
     pysam.faidx(str(reference))
@@ -400,8 +400,12 @@ def test_integrated_ddda_mcg_guardrails(capsys, tmp_path):
         downstream_compat=False,
         input="-",
     )
-    assert _configure_ddda_mcg(valid, "daf") is True
-    assert "integrated DddA mCG calling enabled" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as exc:
+        _configure_ddda_mcg(valid, "daf")
+    assert exc.value.code == 2
+    message = capsys.readouterr().err
+    assert "retired per-CpG integrated caller" in message
+    assert "one state per complete CpG island" in message
 
     invalid = SimpleNamespace(
         ddda_mcg=True,
@@ -415,7 +419,4 @@ def test_integrated_ddda_mcg_guardrails(capsys, tmp_path):
         _configure_ddda_mcg(invalid, "daf")
     assert exc.value.code == 2
     message = capsys.readouterr().err
-    assert "requires --enzyme ddda" in message
-    assert "requires --reference ref.fa" in message
-    assert "does not support --circular" in message
-    assert "cannot be combined with --downstream-compat" in message
+    assert "retired per-CpG integrated caller" in message

@@ -308,7 +308,13 @@ def transferred_call(frozen, grid, unit, call, *, floor_bp=0, replicates=4095,
     # Existence testability is over the SAME distributed geometries, not an
     # intersection/median core or information from accessible flanks alone.
     aa,bb=grid['starts'],grid['ends'];op=np.r_[0,np.cumsum(observed)]
-    conditional=np.where(allowed,np.exp(log_mass)/kept,0.)
+    # Normalize in log space. ``np.where`` evaluates both branches, so the
+    # previous exp(log_mass) / kept expression could overflow even where a
+    # geometry was disallowed.  For allowed cells the normalized value is at
+    # most one; subtracting log(kept) before exponentiation preserves that
+    # invariant and avoids a noisy RuntimeWarning during otherwise valid runs.
+    conditional=np.zeros(len(log_mass),dtype=float)
+    conditional[allowed]=np.exp(log_mass[allowed]-math.log(kept))
     observed_mass=float(conditional @ ((op[bb]-op[aa])>0))
     pa,pp=obs['p_accessible'][observed],obs['p_protected'][observed]
     information=np.zeros(len(observed));best_steps=information.copy()

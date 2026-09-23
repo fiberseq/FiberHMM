@@ -24,7 +24,7 @@
       "observation_mode": "daf",
       "apply_model": "dddb_nanopore.json",
       "tf_model": "dddb_nanopore.json",
-      "tf_min_llr": 4.0
+      "tf_min_llr": 5.0
     },
     {
       "enzyme": "ddda",
@@ -33,7 +33,7 @@
       "apply_model": "ddda_nuc.json",
       "tf_model": "ddda_TF.json",
       "nucleosome_refinement_model": "ddda_nuc_refine.json",
-      "tf_min_llr": 7.0
+      "tf_min_llr": 5.0
     }
   ],
   "development_artifact_policy": "Additional chemistry model files are not public enzyme presets and carry no supported-workflow claim; use an explicit custom model path for method development."

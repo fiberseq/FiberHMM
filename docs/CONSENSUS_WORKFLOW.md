@@ -254,7 +254,7 @@ this command does not silently fit a new classifier.
 
 ### Footprint-paired duplex molecules
 
-Run `fiberhmm-duplex` on the called, coordinate-sorted source BAM, then
+Run `fiberhmm-pair` on the called, coordinate-sorted source BAM, then
 `fiberhmm-merge --recall` before population consensus. The merge recaller uses
 both assay channels together (including the rotational nucleosome recaller).
 Consensus preparation preserves the `cs` source identities and counts the

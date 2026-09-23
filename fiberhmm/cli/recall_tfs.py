@@ -76,7 +76,7 @@ from fiberhmm.io.bam_header import (
     header_has_coord_marker,
     maybe_append_pg,
 )
-from fiberhmm.io.ma_tags import DDDA_MCG_FEATURE, flip_intervals_to_seq
+from fiberhmm.io.ma_tags import flip_intervals_to_seq
 from fiberhmm.inference.fused_stages import build_fused_recall_result
 from fiberhmm.inference.tagging import write_fused_recall_tags
 from fiberhmm.inference.tf_recaller import (
@@ -85,6 +85,7 @@ from fiberhmm.inference.tf_recaller import (
     HAS_NUMBA,
     apply_emission_uplift,
     build_conditional_hit_tables,
+    build_cpg_mask,
     build_llr_tables,
     build_m5c_llr_tables,
     extract_modifications,
@@ -156,6 +157,7 @@ def _build_recall_pg_record(args, mode, model_path, nuc_cfg):
 def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
                  nuc_cfg=None, input_molecular_frame=True,
                  m5c_llr_hit=None, m5c_llr_miss=None,
+                 cpg_mask_policy="unmethylated-only",
                  nuc_protected_hit=None, nuc_accessible_hit=None,
                  nuc_llr_hit=None, nuc_llr_miss=None,
                  nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None):
@@ -189,6 +191,7 @@ def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
     _WORKER['input_molecular_frame'] = input_molecular_frame
     _WORKER['m5c_llr_hit'] = m5c_llr_hit
     _WORKER['m5c_llr_miss'] = m5c_llr_miss
+    _WORKER['cpg_mask_policy'] = cpg_mask_policy
     _WORKER['nuc_llr_hit'] = nuc_llr_hit
     _WORKER['nuc_llr_miss'] = nuc_llr_miss
     _WORKER['nuc_m5c_llr_hit'] = nuc_m5c_llr_hit
@@ -310,6 +313,7 @@ def _process_payload_record(payload) -> tuple:
         input_molecular_frame=_WORKER.get('input_molecular_frame', True),
         m5c_llr_hit=_WORKER.get('m5c_llr_hit'),
         m5c_llr_miss=_WORKER.get('m5c_llr_miss'),
+        cpg_mask_policy=_WORKER.get('cpg_mask_policy', 'unmethylated-only'),
     )
     stats['tf'] = len(tf_calls)
     survived_short = sum(1 for _, length in kept_nucs if length < unify_threshold)
@@ -408,14 +412,11 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
         'ns_scores': None, 'as_scores': None,
     }
     m5c_mask = None
-    if _WORKER.get('m5c_llr_hit') is not None and read.has_tag('MA'):
-        import numpy as np
-        from fiberhmm.daf.m5c import ma_intervals
-        intervals = ma_intervals(read, DDDA_MCG_FEATURE)
-        if intervals:
-            m5c_mask = np.zeros(len(seq), dtype=bool)
-            for start, end in intervals:
-                m5c_mask[max(0, start):min(len(seq), end)] = True
+    if _WORKER.get('m5c_llr_hit') is not None:
+        m5c_mask = build_cpg_mask(
+            read, len(seq),
+            _WORKER.get('cpg_mask_policy', 'unmethylated-only'),
+        )
     fiber_read = {'query_sequence': payload['seq']}
     result = build_fused_recall_result(
         fiber_read, apply_result,
@@ -502,12 +503,14 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
                         also_write_legacy, downstream_compat, max_reads,
                         nuc_cfg=None, input_molecular_frame=True,
                         m5c_llr_hit=None, m5c_llr_miss=None,
+                        cpg_mask_policy="unmethylated-only",
                         nuc_protected_hit=None, nuc_accessible_hit=None,
                         nuc_llr_hit=None, nuc_llr_miss=None,
                         nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None):
     """Single-threaded path.  No IPC — process reads directly."""
     _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
                  nuc_cfg, input_molecular_frame, m5c_llr_hit, m5c_llr_miss,
+                 cpg_mask_policy,
                  nuc_protected_hit, nuc_accessible_hit,
                  nuc_llr_hit, nuc_llr_miss,
                  nuc_m5c_llr_hit, nuc_m5c_llr_miss)
@@ -538,6 +541,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
                    also_write_legacy, downstream_compat,
                    max_reads, n_cores, chunk_size, nuc_cfg=None,
                    input_molecular_frame=True, m5c_llr_hit=None, m5c_llr_miss=None,
+                   cpg_mask_policy="unmethylated-only",
                    nuc_protected_hit=None, nuc_accessible_hit=None,
                    nuc_llr_hit=None, nuc_llr_miss=None,
                    nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None):
@@ -577,6 +581,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         initializer=_worker_init,
         initargs=(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
                   nuc_cfg, input_molecular_frame, m5c_llr_hit, m5c_llr_miss,
+                  cpg_mask_policy,
                   nuc_protected_hit, nuc_accessible_hit,
                   nuc_llr_hit, nuc_llr_miss,
                   nuc_m5c_llr_hit, nuc_m5c_llr_miss),
@@ -645,9 +650,15 @@ def parse_args(default_recall_nucs: bool = False):
                         '(identity). Use a pre-uplifted model file (e.g. '
                         'ddda_TF.json) for DddA rather than setting this.')
     p.add_argument('--use-m5c', action=argparse.BooleanOptionalAction, default=None,
-                   help='Adjust CpG TF emissions inside ddda_mcg MA spans. Enabled '
+                   help='Enable CpG-aware DddA recall. By default, retain CpGs only inside confident ddda_ucg MA spans. Enabled '
                         'automatically for DddA, disabled for other enzymes; '
                         'use --use-m5c explicitly with a custom DddA model.')
+    p.add_argument('--cpg-mask-policy',
+                   choices=('unmethylated-only', 'methylated-only'),
+                   default='unmethylated-only',
+                   help='CpG-aware policy: retain CpGs only inside confident '
+                        'unmethylated islands (default), or reproduce the '
+                        'former behavior that masks only ddda_mcg spans.')
     p.add_argument('--unify-threshold', type=int, default=90,
                    help='v2 nucs with nl < this are scanned + may be demoted '
                         'to tf+ if overlapped by a recaller call (default 90)')
@@ -965,6 +976,7 @@ def main(default_recall_nucs: bool = False):
     m5c_llr_hit = m5c_llr_miss = None
     use_m5c_arg = getattr(args, 'use_m5c', None)
     use_m5c = args.enzyme == 'ddda' if use_m5c_arg is None else use_m5c_arg
+    cpg_mask_policy = getattr(args, 'cpg_mask_policy', 'unmethylated-only')
     if use_m5c and (mode != 'daf' or args.enzyme not in (None, 'ddda')):
         raise SystemExit(
             '--use-m5c is calibrated only for DddA or a custom DAF/DddA model'
@@ -980,7 +992,7 @@ def main(default_recall_nucs: bool = False):
         f"[recall_tfs] enzyme={args.enzyme or 'custom'} mode={mode} k={k} "
         f"min_llr={min_llr:.2f} uplift={uplift:.2f} "
         f"tf_decoder={TF_DECODER_VERSION} "
-        f"ddda_mcg={'on' if m5c_llr_hit is not None else 'off'} "
+        f"cpg_mask={cpg_mask_policy if m5c_llr_hit is not None else 'off'} "
         f"unify_threshold={args.unify_threshold} cores={n_cores} "
         f"numba={'on' if HAS_NUMBA else 'off'}",
         file=sys.stderr,
@@ -1085,7 +1097,7 @@ def main(default_recall_nucs: bool = False):
                 min_llr, args.min_opps, args.unify_threshold,
                 also_write_legacy, args.downstream_compat, args.max_reads,
                 nuc_cfg, input_molecular_frame,
-                m5c_llr_hit, m5c_llr_miss,
+                m5c_llr_hit, m5c_llr_miss, cpg_mask_policy,
                 nuc_protected_hit, nuc_accessible_hit,
                 nuc_llr_hit, nuc_llr_miss,
                 nuc_m5c_llr_hit, nuc_m5c_llr_miss,
@@ -1097,7 +1109,7 @@ def main(default_recall_nucs: bool = False):
                 min_llr, args.min_opps, args.unify_threshold,
                 also_write_legacy, args.downstream_compat, args.max_reads,
                 n_cores, args.chunk_size, nuc_cfg, input_molecular_frame,
-                m5c_llr_hit, m5c_llr_miss,
+                m5c_llr_hit, m5c_llr_miss, cpg_mask_policy,
                 nuc_protected_hit, nuc_accessible_hit,
                 nuc_llr_hit, nuc_llr_miss,
                 nuc_m5c_llr_hit, nuc_m5c_llr_miss,

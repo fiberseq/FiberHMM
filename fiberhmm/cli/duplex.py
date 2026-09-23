@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""fiberhmm-duplex -- sequence-identity-free scDAF duplex pairing.
+"""Validated sequence-free scorer used by unified ``fiberhmm-pair``.
 
 The tool reads a coordinate-sorted, indexed FiberHMM-called DddA BAM and a
 matching reference FASTA.  Within complete local overlap components it scores
@@ -45,7 +45,15 @@ from fiberhmm.crossstrand.duplex import (
     infer_call_layer,
     load_duplex_model,
 )
-from fiberhmm.crossstrand.pairing import read_flavor
+from fiberhmm.crossstrand.pairing import (
+    PairParams,
+    SequenceScore,
+    _sequence_assignment,
+    _sequence_signature,
+    _sequence_signature_from_md,
+    read_flavor,
+    score_pair,
+)
 from fiberhmm.io.bam_header import append_pg_record
 
 _TAG_PARTNER = "mp"
@@ -57,12 +65,20 @@ _TAG_MODEL = "mv"
 _PAIR_TAGS = ("mp", "mc", "mg", "mt", "pm", "sb", "sd", "sr", "sg", "pa", "dm", "mv")
 
 
-def _header_with_program(header, model_id: str):
+def _header_with_program(header, model_id: Optional[str], pairing_mode: str):
+    descriptions = {
+        "hybrid": "sequence-supported plus high-confidence sequence-free CT/GA pairing",
+        "sequence-only": "sequence-supported CT/GA pairing",
+        "sequence-free": "sequence-identity-free CT/GA pairing",
+    }
     return append_pg_record(header, {
-        "PN": "fiberhmm-duplex",
+        "PN": "fiberhmm-pair",
         "VN": __version__,
-        "CL": "sequence-identity-free CT/GA duplex pairing",
-        "DS": f"model={model_id}; A/T identity, haplotype and TF LLR unused",
+        "CL": descriptions[pairing_mode],
+        "DS": (
+            f"mode={pairing_mode}; model={model_id or 'none'}; "
+            "TF LLR and haplotype unused"
+        ),
     })
 
 
@@ -70,8 +86,9 @@ def _selected_edge(result, left: int, right: int):
     return result.evidence.get((left, right)) or result.evidence.get((right, left))
 
 
-def run_duplex(in_bam: str, out_bam: str, reference_path: str,
+def run_pairing(in_bam: str, out_bam: str, reference_path: Optional[str],
                params: Optional[DuplexParams] = None,
+               sequence_params: Optional[PairParams] = None,
                model: Optional[DuplexModel] = None,
                model_path: Optional[str] = None,
                prob_threshold: int = 0,
@@ -81,26 +98,53 @@ def run_duplex(in_bam: str, out_bam: str, reference_path: str,
                io_threads: int = 4,
                max_component: int = 10000,
                call_layer: str = "auto",
-               create_index: bool = True):
-    """Run the two-pass pairing workflow and return its machine-readable receipt."""
+               create_index: bool = True,
+               pairing_mode: str = "hybrid"):
+    """Run unified CT/GA pairing and return its machine-readable receipt.
+
+    ``hybrid`` (the public default) takes independently sequence-supported
+    reciprocal pairs first, then adds non-conflicting pairs that pass the
+    externally replicated sequence-free model margin. ``sequence-only`` is
+    provided for analyses that require every accepted pair to have direct A/T
+    support. ``sequence-free`` is retained internally for validation replay.
+    """
     started = time.time()
+    if pairing_mode not in {"hybrid", "sequence-only", "sequence-free"}:
+        raise ValueError(f"unsupported pairing mode: {pairing_mode!r}")
+    use_sequence = pairing_mode != "sequence-free"
+    use_model = pairing_mode != "sequence-only"
+    if use_model and not reference_path:
+        raise ValueError(
+            "default pairing requires --reference to enumerate non-CpG DddA "
+            "opportunities; use --sequence-only to pair from FASTA or MD+CIGAR"
+        )
     params = params or DuplexParams()
+    sequence_params = sequence_params or PairParams(
+        grid_bp=params.grid_bp,
+        sigma_bp=params.dyad_sigma_bp,
+        max_lag_bp=params.max_lag_bp,
+        min_overlap_bp=params.min_overlap_bp,
+        min_nucs=params.min_nucs,
+    )
     with pysam.AlignmentFile(in_bam, "rb") as source:
         detected_call_layer = infer_call_layer(source.header)
     resolved_call_layer = detected_call_layer if call_layer == "auto" else call_layer
-    model = model or load_duplex_model(model_path, resolved_call_layer)
-    resolved: Dict[Tuple[str, int], Tuple[str, float, float]] = {}
+    if use_model:
+        model = model or load_duplex_model(model_path, resolved_call_layer)
+    resolved: Dict[Tuple[str, int], dict] = {}
     status_of: Dict[Tuple[str, int], str] = {}
     seen_names: Dict[str, str] = {}
     counts = Counter()
     pair_rows: List[dict] = []
 
-    with pysam.AlignmentFile(in_bam, "rb") as bam, pysam.FastaFile(reference_path) as fasta:
+    bam = pysam.AlignmentFile(in_bam, "rb")
+    fasta = pysam.FastaFile(reference_path) if reference_path else None
+    try:
         if bam.header.get("HD", {}).get("SO") != "coordinate":
-            raise ValueError("fiberhmm-duplex requires a coordinate-sorted BAM")
+            raise ValueError("fiberhmm-pair requires a coordinate-sorted BAM")
         if not bam.has_index():
-            raise ValueError("fiberhmm-duplex requires an indexed input BAM")
-        fasta_names = set(fasta.references)
+            raise ValueError("fiberhmm-pair requires an indexed input BAM")
+        fasta_names = set(fasta.references) if fasta is not None else set()
         component_number = 0
 
         for chromosome in bam.references:
@@ -108,18 +152,18 @@ def run_duplex(in_bam: str, out_bam: str, reference_path: str,
             first = next(iterator, None)
             if first is None:
                 continue
-            if chromosome not in fasta_names:
+            if fasta is not None and chromosome not in fasta_names:
                 raise ValueError(f"reference FASTA is missing BAM contig {chromosome!r}")
             bam_length = bam.get_reference_length(chromosome)
-            fasta_length = fasta.get_reference_length(chromosome)
-            if bam_length != fasta_length:
+            fasta_length = fasta.get_reference_length(chromosome) if fasta is not None else None
+            if fasta_length is not None and bam_length != fasta_length:
                 raise ValueError(
                     f"reference length mismatch for {chromosome}: "
                     f"BAM={bam_length}, FASTA={fasta_length}"
                 )
-            reference = np.frombuffer(
+            reference = (np.frombuffer(
                 fasta.fetch(chromosome).upper().encode("ascii"), dtype=np.uint8,
-            )
+            ) if fasta is not None else None)
             component = []
             component_end = -1
 
@@ -129,34 +173,102 @@ def run_duplex(in_bam: str, out_bam: str, reference_path: str,
                     return
                 component_number += 1
                 features = [record[0] for record in records]
-                profiles = {record[0].index: record[1] for record in records}
-                result = assign_duplex_pairs(features, profiles, model, params)
+                profiles = {
+                    record[0].index: record[1] for record in records
+                    if record[1] is not None
+                }
                 by_index = {feature.index: feature for feature in features}
                 counts["components"] += 1
                 counts["features"] += len(features)
-                counts["geometric_edges"] += result.geometric_edges
-                counts["scored_edges"] += result.scored_edges
-                counts["unresolved_reads"] += sum(
-                    status == "U" for status in result.status.values()
-                )
-                for index, status in result.status.items():
-                    feature = by_index[index]
-                    status_of[(feature.name, feature.flavor)] = status
-                    if status != STATUS_PAIRED:
-                        continue
-                    mate = by_index[result.partner[index]]
-                    resolved[(feature.name, feature.flavor)] = (
-                        mate.name, result.score[index], result.margin[index],
+                seq_partner = {}
+                seq_scores: Dict[int, SequenceScore] = {}
+                seq_margins = {}
+                seq_nodes = set()
+                seq_kind = {}
+                if use_sequence:
+                    (seq_partner, seq_scores, seq_margins, _seq_edges,
+                     seq_nodes, seq_kind) = _sequence_assignment(
+                        features, sequence_params,
                     )
-                for index, mate_index in result.partner.items():
+
+                model_result = None
+                model_partner = {}
+                if use_model:
+                    model_result = assign_duplex_pairs(features, profiles, model, params)
+                    counts["geometric_edges"] += model_result.geometric_edges
+                    counts["scored_edges"] += model_result.scored_edges
+                    # Sequence evidence is independent and takes precedence.
+                    # Keep only complete model pairs that do not consume either
+                    # member of a sequence-supported pair.
+                    for index, mate in model_result.partner.items():
+                        if index in seq_partner or mate in seq_partner:
+                            continue
+                        model_partner[index] = mate
+
+                partner = {**seq_partner, **model_partner}
+                status = {}
+                for index in by_index:
+                    if index in partner:
+                        status[index] = STATUS_PAIRED
+                    elif (index in seq_nodes or
+                          (model_result is not None and
+                           model_result.status.get(index) != ".")):
+                        status[index] = "U"
+                    else:
+                        status[index] = "."
+                counts["sequence_pairs"] += len(seq_partner) // 2
+                counts["sequence_free_pairs"] += len(model_partner) // 2
+                counts["unresolved_reads"] += sum(value == "U" for value in status.values())
+
+                for index, value in status.items():
+                    feature = by_index[index]
+                    status_of[(feature.name, feature.flavor)] = value
+                    if value != STATUS_PAIRED:
+                        continue
+                    mate = by_index[partner[index]]
+                    if index in seq_partner:
+                        sequence = seq_scores[index]
+                        correlation = score_pair(feature, mate, sequence_params)
+                        resolved[(feature.name, feature.flavor)] = {
+                            "mate": mate.name,
+                            "method": "S",
+                            "correlation": correlation,
+                            "sequence": sequence,
+                            "sequence_margin": seq_margins[index],
+                            "assignment": seq_kind.get(index),
+                        }
+                    else:
+                        resolved[(feature.name, feature.flavor)] = {
+                            "mate": mate.name,
+                            "method": "D",
+                            "score": model_result.score[index],
+                            "margin": model_result.margin[index],
+                        }
+
+                for index, mate_index in partner.items():
                     if index > mate_index:
                         continue
                     a, b = by_index[index], by_index[mate_index]
                     ct, ga = (a, b) if a.flavor == FLAVOR_CT else (b, a)
-                    edge = _selected_edge(result, ct.index, ga.index)
+                    if index in seq_partner:
+                        sequence = seq_scores[index]
+                        pair_rows.append({
+                            "chromosome": chromosome,
+                            "component": f"{chromosome}:{component_number}",
+                            "ct_read": ct.name,
+                            "ga_read": ga.name,
+                            "method": "S",
+                            "assignment": seq_kind.get(index, ""),
+                            "seq_bases": sequence.bases,
+                            "seq_differences": sequence.mismatches,
+                            "seq_rate": f"{sequence.rate:.6f}",
+                            "seq_margin": f"{seq_margins[index]:.6f}",
+                        })
+                        continue
+                    edge = _selected_edge(model_result, ct.index, ga.index)
                     if edge is None:
-                        raise RuntimeError("selected duplex edge lacks evidence")
-                    feature = edge.features
+                        raise RuntimeError("selected sequence-free edge lacks evidence")
+                    evidence = edge.features
                     pair_rows.append({
                         "chromosome": chromosome,
                         "component": f"{chromosome}:{component_number}",
@@ -166,13 +278,13 @@ def run_duplex(in_bam: str, out_bam: str, reference_path: str,
                         "model": model.model_id,
                         "call_layer": resolved_call_layer,
                         "score": f"{edge.score:.6f}",
-                        "margin": f"{result.margin[index]:.6f}",
-                        "overlap_bp": int(feature["overlap_bp"]),
-                        "ct_dyads": int(feature["ct_dyads"]),
-                        "ga_dyads": int(feature["ga_dyads"]),
-                        "span_jaccard": f"{feature['span_jaccard']:.6f}",
-                        "raw_protection_corr": f"{feature['raw_protection_sigma20_lag0']:.6f}",
-                        "residual_protection_corr": f"{feature['residual_all_reads_sigma20_lag0']:.6f}",
+                        "margin": f"{model_result.margin[index]:.6f}",
+                        "overlap_bp": int(evidence["overlap_bp"]),
+                        "ct_dyads": int(evidence["ct_dyads"]),
+                        "ga_dyads": int(evidence["ga_dyads"]),
+                        "span_jaccard": f"{evidence['span_jaccard']:.6f}",
+                        "raw_protection_corr": f"{evidence['raw_protection_sigma20_lag0']:.6f}",
+                        "residual_protection_corr": f"{evidence['residual_all_reads_sigma20_lag0']:.6f}",
                     })
 
             previous_start = -1
@@ -204,9 +316,17 @@ def run_duplex(in_bam: str, out_bam: str, reference_path: str,
                     f"{chromosome}:{feature.ref_start}-{feature.ref_end}"
                 )
                 counts["features_considered"] += 1
-                profile = build_protection_profile(
+                if use_sequence:
+                    if reference is not None:
+                        feature.sequence_pos, feature.sequence_base = _sequence_signature(
+                            read, reference,
+                        )
+                    else:
+                        feature.sequence_pos, feature.sequence_base = \
+                            _sequence_signature_from_md(read)
+                profile = (build_protection_profile(
                     read, reference, params, prob_threshold, feature.flavor,
-                )
+                ) if use_model else None)
                 component.append((feature, profile))
                 component_end = max(component_end, feature.ref_end)
                 if len(component) > max_component:
@@ -217,22 +337,29 @@ def run_duplex(in_bam: str, out_bam: str, reference_path: str,
             process_component(component)
 
         input_header = pysam.AlignmentHeader.from_dict(bam.header.to_dict())
+    finally:
+        bam.close()
+        if fasta is not None:
+            fasta.close()
 
     counts["paired_reads"] = len(resolved)
     counts["pairs"] = len(resolved) // 2
     if pairs_tsv:
         fields = [
             "chromosome", "component", "ct_read", "ga_read", "method",
-            "model", "call_layer", "score", "margin", "overlap_bp",
+            "assignment", "model", "call_layer", "score", "margin", "overlap_bp",
             "ct_dyads", "ga_dyads", "span_jaccard",
             "raw_protection_corr", "residual_protection_corr",
+            "seq_bases", "seq_differences", "seq_rate", "seq_margin",
         ]
         with open(pairs_tsv, "w", newline="") as handle:
             writer = csv.DictWriter(handle, fields, delimiter="\t", lineterminator="\n")
             writer.writeheader()
             writer.writerows(pair_rows)
 
-    output_header = _header_with_program(input_header, model.model_id)
+    output_header = _header_with_program(
+        input_header, model.model_id if model is not None else None, pairing_mode,
+    )
     written = 0
     with pysam.AlignmentFile(in_bam, "rb") as bam, pysam.AlignmentFile(
         out_bam, "wb", header=output_header, threads=io_threads,
@@ -254,12 +381,24 @@ def run_duplex(in_bam: str, out_bam: str, reference_path: str,
                         read.set_tag(_TAG_STATUS, status, value_type="A")
                         if status == STATUS_PAIRED:
                             write_record = True
-                            mate, score, margin = resolved[key]
-                            read.set_tag(_TAG_PARTNER, mate, value_type="Z")
-                            read.set_tag(_TAG_METHOD, "D", value_type="A")
-                            read.set_tag(_TAG_SCORE, int(round(1000 * score)), value_type="i")
-                            read.set_tag(_TAG_MARGIN, int(round(1000 * margin)), value_type="i")
-                            read.set_tag(_TAG_MODEL, model.model_id, value_type="Z")
+                            evidence = resolved[key]
+                            read.set_tag(_TAG_PARTNER, evidence["mate"], value_type="Z")
+                            read.set_tag(_TAG_METHOD, evidence["method"], value_type="A")
+                            if evidence["method"] == "D":
+                                read.set_tag(_TAG_SCORE, int(round(1000 * evidence["score"])), value_type="i")
+                                read.set_tag(_TAG_MARGIN, int(round(1000 * evidence["margin"])), value_type="i")
+                                read.set_tag(_TAG_MODEL, model.model_id, value_type="Z")
+                            else:
+                                sequence = evidence["sequence"]
+                                correlation = evidence.get("correlation")
+                                if correlation is not None:
+                                    read.set_tag("mc", int(round(1000 * correlation)), value_type="i")
+                                read.set_tag("sb", sequence.bases, value_type="i")
+                                read.set_tag("sd", sequence.mismatches, value_type="i")
+                                read.set_tag("sr", int(round(1_000_000 * sequence.rate)), value_type="i")
+                                read.set_tag("sg", int(round(1_000_000 * evidence["sequence_margin"])), value_type="i")
+                                if evidence.get("assignment"):
+                                    read.set_tag("pa", evidence["assignment"], value_type="A")
             if write_record:
                 out.write(read)
                 written += 1
@@ -269,12 +408,13 @@ def run_duplex(in_bam: str, out_bam: str, reference_path: str,
 
     receipt = {
         "status": "complete",
-        "tool": "fiberhmm-duplex",
-        "model_id": model.model_id,
-        "model_status": model.metadata.get("status"),
+        "tool": "fiberhmm-pair",
+        "pairing_mode": pairing_mode,
+        "model_id": model.model_id if model is not None else None,
+        "model_status": model.metadata.get("status") if model is not None else None,
         "input_bam": str(Path(in_bam).resolve()),
         "output_bam": str(Path(out_bam).resolve()),
-        "reference_fasta": str(Path(reference_path).resolve()),
+        "reference_fasta": str(Path(reference_path).resolve()) if reference_path else None,
         "pairs_tsv": str(Path(pairs_tsv).resolve()) if pairs_tsv else None,
         "call_layer": resolved_call_layer,
         "detected_call_layer": detected_call_layer,
@@ -284,9 +424,9 @@ def run_duplex(in_bam: str, out_bam: str, reference_path: str,
             "min_overlap_bp": params.min_overlap_bp,
             "min_nucs": params.min_nucs,
         },
-        "score_inputs": list(model.feature_names),
-        "sequence_identity_used": False,
-        "AT_mismatch_used": False,
+        "score_inputs": list(model.feature_names) if model is not None else [],
+        "sequence_identity_used": use_sequence,
+        "AT_mismatch_used": use_sequence,
         "haplotype_used": False,
         "TF_LLR_used": False,
         "counts": dict(counts),
@@ -295,6 +435,14 @@ def run_duplex(in_bam: str, out_bam: str, reference_path: str,
     if receipt_json:
         Path(receipt_json).write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt
+
+
+def run_duplex(in_bam: str, out_bam: str, reference_path: str, **kwargs):
+    """Compatibility wrapper for validation replay of the sequence-free route."""
+    return run_pairing(
+        in_bam, out_bam, reference_path,
+        pairing_mode="sequence-free", **kwargs,
+    )
 
 
 def main():

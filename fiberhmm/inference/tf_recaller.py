@@ -38,10 +38,13 @@ For each read:
    short nucs that overlap a recaller call are *dropped* from the
    ``nuc+`` annotation (they live solely in ``tf+`` now).
 
-Per-enzyme defaults are baked into ``ENZYME_PRESETS``. Hia5 uses its trained
-platform model directly. DddB uses ``min_llr=4.0`` for its sparser
-per-position evidence. DddA uses the physical-duplex-calibrated table and a
-held-out-mate operating point of ``min_llr=7.0``.
+Per-enzyme defaults are baked into ``ENZYME_PRESETS``. All supported
+chemistries use the conservative shared setting ``min_llr=5.0``. In the
+native-context synthetic benchmark this is the first integer threshold at
+which center-covering TF-recaller calls are below 2% in accessible controls
+for every chemistry. For DddA, the same operating point remains on
+the high-balanced-accuracy plateau in an independent held-out physical-mate
+calibration across 12 libraries.
 
 The emission tables and reported per-call LLRs are unchanged. The configuration
 penalty is an explicit regularizer, not an FDR threshold or calibrated posterior.
@@ -77,6 +80,7 @@ from fiberhmm.core.bam_reader import (
 from fiberhmm.io.ma_tags import (
     DDDA_MCG_HEMI_FEATURE,
     DDDA_MCG_FEATURE,
+    DDDA_UCG_FEATURE,
     ambiguity_to_edge,
     flip_interval_frame,
     flip_intervals_to_seq,
@@ -93,6 +97,39 @@ N_CTX = 4096           # 4^(2*3) hexamer contexts
 NON_TARGET = N_CTX     # code 4096
 UNMETH_OFFSET = 4097   # miss codes live at [4097, 4097 + 4096)
 TF_DECODER_VERSION = "multi_interval_v1"
+CPG_MASK_POLICIES = ("unmethylated-only", "methylated-only")
+
+
+def build_cpg_mask(read, read_len: int,
+                   policy: str = "unmethylated-only") -> np.ndarray:
+    """Return positions at which CpG observations are excluded from recall.
+
+    The production policy is conservative: only CpGs inside confidently
+    unmethylated whole-island calls (``ddda_ucg``) remain available.  The
+    former policy, which masked only ``ddda_mcg`` intervals, is retained for
+    explicit compatibility and comparison runs.
+    """
+    from fiberhmm.daf.m5c import ma_intervals
+
+    if policy not in CPG_MASK_POLICIES:
+        raise ValueError(
+            f"unknown CpG mask policy {policy!r}; expected one of "
+            f"{', '.join(CPG_MASK_POLICIES)}"
+        )
+    if policy == "unmethylated-only":
+        mask = np.ones(int(read_len), dtype=bool)
+        intervals = (ma_intervals(read, DDDA_UCG_FEATURE)
+                     if read.has_tag('MA') else [])
+        for start, end in intervals:
+            mask[max(0, start):min(read_len, end)] = False
+        return mask
+
+    mask = np.zeros(int(read_len), dtype=bool)
+    intervals = (ma_intervals(read, DDDA_MCG_FEATURE)
+                 if read.has_tag('MA') else [])
+    for start, end in intervals:
+        mask[max(0, start):min(read_len, end)] = True
+    return mask
 
 
 # Per-enzyme defaults: (min_llr, emission_uplift). All bundled models are used
@@ -100,10 +137,10 @@ TF_DECODER_VERSION = "multi_interval_v1"
 # sensitivity override.
 ENZYME_PRESETS = {
     'hia5':   dict(min_llr=5.0, emission_uplift=1.0),
-    'dddb':   dict(min_llr=4.0, emission_uplift=1.0),
-    # Calibrated on untouched physical mates from 23,388 scDAF duplexes across
-    # 12 libraries. TQ=70 is an empirical operating point, not an FDR cutoff.
-    'ddda':   dict(min_llr=7.0, emission_uplift=1.0),
+    'dddb':   dict(min_llr=5.0, emission_uplift=1.0),
+    # Confirmed on untouched physical mates from 23,388 scDAF duplexes across
+    # 12 libraries. The interval penalty is not an FDR cutoff.
+    'ddda':   dict(min_llr=5.0, emission_uplift=1.0),
 }
 
 
@@ -178,17 +215,18 @@ def build_conditional_hit_tables(
 def build_m5c_llr_tables(model, rate_ratio: Optional[float] = None,
                          emission_uplift: float = 1.0
                          ) -> Tuple[np.ndarray, np.ndarray]:
-    """LLRs for CpGs inside a DddA ``ddda_mcg`` span.
+    """LLRs inside a confidently methylated DddA CpG island.
 
-    The fitted TF model supplies the unmethylated accessible probability.
-    5mC changes the accessible-state rate by F/U, while the protected state
-    remains model-derived.  Non-CpG entries are returned unchanged; callers
-    still select these tables only at positions covered by an m5c mask.
+    CpG observations are confounded by endogenous 5mC and are therefore
+    neutral.  The decoding kernels also remove these observations from the
+    opportunity lattice so they cannot satisfy ``min_opps`` or define a
+    boundary.  Non-CpG entries are identical to the ordinary recall tables.
+
+    ``rate_ratio`` is retained for API compatibility with the older
+    rate-adjustment implementation; it is validated but no longer changes the
+    conservative, zero-information CpG treatment.
     """
-    if rate_ratio is None:
-        from fiberhmm.daf.m5c import F_METH, U_UNMETH
-        rate_ratio = F_METH / U_UNMETH
-    if not 0.0 < rate_ratio < 1.0:
+    if rate_ratio is not None and not 0.0 < rate_ratio < 1.0:
         raise ValueError("rate_ratio must be between zero and one")
     EP = np.asarray(model.emissionprob_, dtype=np.float64)
     if EP.ndim != 2 or EP.shape[0] != 2 or EP.shape[1] < UNMETH_OFFSET + N_CTX:
@@ -214,13 +252,27 @@ def build_m5c_llr_tables(model, rate_ratio: Optional[float] = None,
     # the right flank is the 3' neighbor; CpG therefore has digit G (=3).
     codes = np.arange(N_CTX)
     is_cpg = ((codes % 64) // 16) == 3
-    adjusted = p_acc.copy()
-    adjusted[is_cpg] = 1.0 - np.power(1.0 - p_acc[is_cpg], rate_ratio)
-    adjusted = np.clip(adjusted, eps, 1.0 - eps)
+    adjusted = np.clip(p_acc, eps, 1.0 - eps)
     p_prot = np.clip(p_prot, eps, 1.0 - eps)
     context_llr = np.log(context_prot) - np.log(context_acc)
-    return context_llr + np.log(p_prot) - np.log(adjusted), \
-        context_llr + np.log1p(-p_prot) - np.log1p(-adjusted)
+    hit = context_llr + np.log(p_prot) - np.log(adjusted)
+    miss = context_llr + np.log1p(-p_prot) - np.log1p(-adjusted)
+    calibrated = getattr(model, 'cpg_methylated_probabilities_', None)
+    if calibrated is None:
+        hit[is_cpg] = 0.0
+        miss[is_cpg] = 0.0
+    else:
+        pa = np.asarray(calibrated['accessible'], dtype=np.float64)
+        pp = np.asarray(calibrated['protected'], dtype=np.float64)
+        if pa.shape != (N_CTX,) or pp.shape != (N_CTX,) or not (
+                np.all(np.isfinite(pa)) and np.all(np.isfinite(pp)) and
+                np.all((pa > 0) & (pa < 1)) and np.all((pp > 0) & (pp < 1))):
+            raise ValueError('Calibrated methylated CpG probabilities must be finite length-4096 arrays strictly between 0 and 1')
+        if emission_uplift != 1.0:
+            raise ValueError('Calibrated CpG probabilities require emission_uplift=1')
+        hit[is_cpg] = np.log(pp[is_cpg] / pa[is_cpg])
+        miss[is_cpg] = np.log1p(-pp[is_cpg]) - np.log1p(-pa[is_cpg])
+    return hit, miss
 
 
 def apply_emission_uplift(llr_hit: np.ndarray, llr_miss: np.ndarray,
@@ -355,13 +407,16 @@ def _call_tfs_numba(obs, lo, hi, llr_hit, llr_miss,
         is_opp = False
         step = 0.0
         if 0 <= code < N_CTX:
-            step = m5c_llr_hit[code] if use_m5c and m5c_mask[i] else llr_hit[code]
-            is_opp = True
+            is_masked_cpg = use_m5c and m5c_mask[i] and ((code % 64) // 16 == 3)
+            if not is_masked_cpg or m5c_llr_hit[code] != 0.0 or m5c_llr_miss[code] != 0.0:
+                step = m5c_llr_hit[code] if is_masked_cpg else llr_hit[code]
+                is_opp = True
         elif UNMETH_OFFSET <= code < UNMETH_OFFSET + N_CTX:
             context = code - UNMETH_OFFSET
-            step = (m5c_llr_miss[context]
-                    if use_m5c and m5c_mask[i] else llr_miss[context])
-            is_opp = True
+            is_masked_cpg = use_m5c and m5c_mask[i] and ((context % 64) // 16 == 3)
+            if not is_masked_cpg or m5c_llr_hit[context] != 0.0 or m5c_llr_miss[context] != 0.0:
+                step = m5c_llr_miss[context] if is_masked_cpg else llr_miss[context]
+                is_opp = True
 
         if cur_start < 0:
             if step > 0.0:
@@ -414,7 +469,12 @@ def _call_tfs_numba(obs, lo, hi, llr_hit, llr_miss,
         j = s - 1
         while j >= lo:
             c = obs[j]
-            if 0 <= c < N_CTX:
+            masked_cpg = (
+                use_m5c and m5c_mask[j] and 0 <= c < N_CTX
+                and ((c % 64) // 16 == 3)
+                and m5c_llr_hit[c] == 0.0 and m5c_llr_miss[c] == 0.0
+            )
+            if 0 <= c < N_CTX and not masked_cpg:
                 break
             amb += 1
             j -= 1
@@ -424,7 +484,12 @@ def _call_tfs_numba(obs, lo, hi, llr_hit, llr_miss,
         j = e
         while j < hi:
             c = obs[j]
-            if 0 <= c < N_CTX:
+            masked_cpg = (
+                use_m5c and m5c_mask[j] and 0 <= c < N_CTX
+                and ((c % 64) // 16 == 3)
+                and m5c_llr_hit[c] == 0.0 and m5c_llr_miss[c] == 0.0
+            )
+            if 0 <= c < N_CTX and not masked_cpg:
                 break
             amb += 1
             j += 1
@@ -437,7 +502,7 @@ def _call_tfs_numba(obs, lo, hi, llr_hit, llr_miss,
 @_numba_jit(nopython=True, cache=True)
 def _call_tf_configurations_numba(obs, lo, hi, llr_hit, llr_miss,
                                    interval_penalty, min_opps, use_m5c, m5c_mask,
-                                   m5c_llr_hit, m5c_llr_miss):
+                                   m5c_llr_hit, m5c_llr_miss, adjacent_run_mode=0):
     """Exact penalized multi-interval decoding on the native opportunity lattice.
 
     For disjoint intervals C, maximize sum(LR(I) - interval_penalty for I in C).
@@ -462,15 +527,45 @@ def _call_tf_configurations_numba(obs, lo, hi, llr_hit, llr_miss,
     for i in range(lo, hi):
         code = obs[i]
         if 0 <= code < 4096:
+            calibrated = use_m5c and m5c_mask[i] and ((code % 64) // 16 == 3)
+            if calibrated and m5c_llr_hit[code] == 0.0 and m5c_llr_miss[code] == 0.0:
+                continue
             positions[n] = i
-            steps[n] = m5c_llr_hit[code] if use_m5c and m5c_mask[i] else llr_hit[code]
+            steps[n] = m5c_llr_hit[code] if calibrated else llr_hit[code]
             n += 1
         elif 4097 <= code < 8193:
             context = code - 4097
+            calibrated = use_m5c and m5c_mask[i] and ((context % 64) // 16 == 3)
+            if calibrated and m5c_llr_hit[context] == 0.0 and m5c_llr_miss[context] == 0.0:
+                continue
             positions[n] = i
-            steps[n] = (m5c_llr_miss[context]
-                        if use_m5c and m5c_mask[i] else llr_miss[context])
+            steps[n] = m5c_llr_miss[context] if calibrated else llr_miss[context]
             n += 1
+
+    # Modes:0=native,1=mean evidence distributed across sites,2=one run unit.
+    end_positions = positions[:n].copy() + 1
+    if adjacent_run_mode:
+        source_n = n
+        out_n = 0
+        i = 0
+        while i < source_n:
+            j = i + 1
+            total = steps[i]
+            while j < source_n and positions[j] == positions[j-1] + 1:
+                total += steps[j]
+                j += 1
+            size = j - i
+            if adjacent_run_mode == 2:
+                end_positions[out_n] = positions[j-1] + 1
+                positions[out_n] = positions[i]
+                steps[out_n] = total / size
+                out_n += 1
+            else:
+                for z in range(i,j):
+                    steps[z] /= size
+            i = j
+        if adjacent_run_mode == 2:
+            n = out_n
 
     prefix = np.zeros(n + 1, dtype=np.float64)
     objective = np.zeros(n + 1, dtype=np.float64)
@@ -504,7 +599,7 @@ def _call_tf_configurations_numba(obs, lo, hi, llr_hit, llr_miss,
             continue
         candidate = prefix[t] - interval_penalty + best_start_score
         candidate_count = best_start_count + 1
-        candidate_bp = best_start_span_key + positions[t - 1] + 1
+        candidate_bp = best_start_span_key + end_positions[t - 1]
         better = candidate > objective[t] + eps
         if abs(candidate - objective[t]) <= eps:
             better = (candidate_count < counts[t] or
@@ -529,7 +624,7 @@ def _call_tf_configurations_numba(obs, lo, hi, llr_hit, llr_miss,
             t -= 1
             continue
         starts[ci] = positions[s]
-        ends[ci] = positions[t - 1] + 1
+        ends[ci] = end_positions[t - 1]
         llrs[ci] = prefix[t] - prefix[s]
         opps_out[ci] = t - s
         ci -= 1
@@ -539,14 +634,26 @@ def _call_tf_configurations_numba(obs, lo, hi, llr_hit, llr_miss,
         s, e = starts[ci], ends[ci]
         amb, j = 0, s - 1
         while j >= lo:
-            if 0 <= obs[j] < 4096:
+            code = obs[j]
+            masked_cpg = (
+                use_m5c and m5c_mask[j] and 0 <= code < 4096
+                and ((code % 64) // 16 == 3)
+                and m5c_llr_hit[code] == 0.0 and m5c_llr_miss[code] == 0.0
+            )
+            if 0 <= code < 4096 and not masked_cpg:
                 break
             amb += 1
             j -= 1
         left_amb[ci] = amb
         amb, j = 0, e
         while j < hi:
-            if 0 <= obs[j] < 4096:
+            code = obs[j]
+            masked_cpg = (
+                use_m5c and m5c_mask[j] and 0 <= code < 4096
+                and ((code % 64) // 16 == 3)
+                and m5c_llr_hit[code] == 0.0 and m5c_llr_miss[code] == 0.0
+            )
+            if 0 <= code < 4096 and not masked_cpg:
                 break
             amb += 1
             j += 1
@@ -560,14 +667,24 @@ def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
                          m5c_mask: Optional[np.ndarray] = None,
                          m5c_llr_hit: Optional[np.ndarray] = None,
                          m5c_llr_miss: Optional[np.ndarray] = None,
-                         *, decoder: str = "multi_interval") -> List[TFCall]:
+                         *, decoder: str = "multi_interval",
+                         adjacent_run_mode: str = "none") -> List[TFCall]:
     """Decode TF intervals from unchanged native emission evidence.
 
     ``multi_interval`` selects a complete non-overlapping configuration with a
     cost of ``min_llr`` per footprint. ``single_excursion`` retains the previous
     one-peak-per-positive-excursion scan for audits and nucleosome refinement.
-    Output LLRs contain native emission evidence only, not the interval penalty.
+    Adjacent-run modes are opt-in for single-strand DddA observations: average
+    divides each site contribution by run length; collapse additionally makes
+    each contiguous observed run one opportunity and preserves its full span.
+    Missing/masked observations break runs. Do not apply to pooled C+G lattices.
+    Output LLRs exclude the interval penalty.
     """
+    run_modes = {"none": 0, "average": 1, "collapse": 2}
+    if adjacent_run_mode not in run_modes:
+        raise ValueError("adjacent_run_mode must be none, average, or collapse")
+    if adjacent_run_mode != "none" and decoder != "multi_interval":
+        raise ValueError("Adjacent-run scoring requires the multi-interval decoder")
     if decoder not in {"multi_interval", "single_excursion"}:
         raise ValueError(f"Unknown TF decoder: {decoder!r}")
     if decoder == "multi_interval" and (min_opps < 1 or min_llr < 0 or not np.isfinite(min_llr)):
@@ -601,6 +718,7 @@ def call_tfs_in_interval(obs: np.ndarray, lo: int, hi: int,
         obs_arr, int(lo), int(hi), hit_arr, miss_arr,
         float(min_llr), int(min_opps), use_m5c, mask_arr,
         m5c_hit_arr, m5c_miss_arr,
+        *([run_modes[adjacent_run_mode]] if decoder == "multi_interval" else []),
     )
     calls: List[TFCall] = []
     for i in range(len(starts)):
@@ -684,7 +802,8 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
                 unify_threshold: int,
                 input_molecular_frame: bool = True,
                 m5c_llr_hit: Optional[np.ndarray] = None,
-                m5c_llr_miss: Optional[np.ndarray] = None) -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
+                m5c_llr_miss: Optional[np.ndarray] = None,
+                cpg_mask_policy: str = "unmethylated-only") -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
     """Process one read.
 
     Returns:
@@ -747,13 +866,8 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
     )
     read_len = len(seq)
     m5c_mask = None
-    if m5c_llr_hit is not None and m5c_llr_miss is not None and read.has_tag('MA'):
-        from fiberhmm.daf.m5c import ma_intervals
-        intervals = ma_intervals(read, DDDA_MCG_FEATURE)
-        if intervals:
-            m5c_mask = np.zeros(read_len, dtype=bool)
-            for m5c_start, m5c_end in intervals:
-                m5c_mask[max(0, m5c_start):min(read_len, m5c_end)] = True
+    if m5c_llr_hit is not None and m5c_llr_miss is not None:
+        m5c_mask = build_cpg_mask(read, read_len, cpg_mask_policy)
 
     intervals = build_scan_intervals(ns_raw, nl_raw, as_raw, al_raw,
                                       read_len, unify_threshold=unify_threshold)
@@ -846,7 +960,7 @@ def write_ma_tags(read, read_length: int,
             group_names.extend([''] * (annotation_count - len(group_names)))
             name_offset += annotation_count
             if ma_group_feature(group) in {
-                DDDA_MCG_FEATURE, DDDA_MCG_HEMI_FEATURE,
+                DDDA_MCG_FEATURE, DDDA_MCG_HEMI_FEATURE, DDDA_UCG_FEATURE,
             }:
                 preserved_m5c.append(group)
                 preserved_m5c_names.extend(group_names)

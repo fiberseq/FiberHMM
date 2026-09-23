@@ -58,25 +58,21 @@ def m5c_query_mask(read, length):
     return mask
 
 
-def adjust_accessible_m5c(probabilities, mask):
-    from ...daf.m5c import F_METH,U_UNMETH
-    result=np.asarray(probabilities,dtype=float).copy()
-    result[np.asarray(mask,dtype=bool)]=1.-np.power(1.-result[np.asarray(mask,dtype=bool)],F_METH/U_UNMETH)
-    return np.clip(result,1e-12,1.-1e-12)
-
-
 def condition_unit_on_m5c(read,unit):
+    """Remove methylated-island CpGs from the native opportunity lattice."""
     from ..strand_rescue import cigar_to_query_ref
     refs=np.asarray(cigar_to_query_ref(read))
     mask=m5c_query_mask(read,len(refs))
     cpg=((np.asarray(unit['contexts'])%64)//16)==3
     observed_mask=np.isin(unit['positions'],refs[mask & (refs>=0)]) & cpg
     if observed_mask.any():
-        unit['p_accessible']=adjust_accessible_m5c(unit['p_accessible'],observed_mask).tolist()
-        unit['m5c_observations']=observed_mask.tolist()
-        unit['provenance']['native_m5c_conditioned_opportunities']=int(observed_mask.sum())
-        unit['provenance']['native_emissions_unchanged']=False
-        unit['provenance']['base_model_emissions_unchanged']=True
+        keep=~observed_mask
+        for key in ('positions','hits','contexts','p_accessible','p_protected'):
+            if key in unit:
+                unit[key]=np.asarray(unit[key])[keep].tolist()
+        unit.pop('m5c_observations',None)
+        unit['provenance']['native_m5c_excluded_opportunities']=int(observed_mask.sum())
+        unit['provenance']['native_emissions_unchanged']=True
 
 
 def reference_gap_inside(lo, hi, domains):

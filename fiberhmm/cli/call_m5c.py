@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Call CpG methylation domains from DAF-seq FiberHMM BAMs."""
+"""Validate aggregate DddA mCG signal and optionally tag whole CpG islands."""
 from __future__ import annotations
 
 import argparse
@@ -19,7 +19,7 @@ from fiberhmm.daf.m5c import (
     M5CDomain,
     U_UNMETH,
     annotate_bam_from_domains,
-    annotate_bam_per_read,
+    annotate_bam_per_read_islands,
     call_domains,
     call_domains_from_emissions,
     collect_bam_observations,
@@ -40,8 +40,9 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         prog="fiberhmm-call-m5c",
         description=("Opt-in genome-wide DddA DAF-seq caller: infer CpG "
-                     "methylation domains from within-molecule CpG versus "
-                     "non-CpG deamination contrast."),
+                     "methylation in aggregate windows for emission-model "
+                     "validation. Molecule BAM annotation uses one state per "
+                     "complete CpG island."),
     )
     add_version_args(parser)
     parser.add_argument("-i", "--input", nargs="+", required=True,
@@ -67,23 +68,20 @@ def parse_args(argv=None):
                         help="Estimate 5' factors from the complete supplied region "
                              "(explicit high-memory audit option)")
     parser.add_argument("--tag-bam", default=None,
-                        help="Optionally add domains as ddda_mcg MA spans to this BAM")
+                        help="Optionally add whole-island annotations to this BAM")
     parser.add_argument("--tag-output", default=None,
                         help="Output BAM for --tag-bam (required with --tag-bam)")
-    parser.add_argument("--tag-mode", choices=("read", "locus"), default="read",
-                        help="read: equal-odds per-read HMM (default); "
-                             "locus: copy aggregate domains")
-    parser.add_argument("--read-run-bp", type=float, default=5000.0,
-                        help="Expected per-read HMM state length (default: 5000)")
+    parser.add_argument("--tag-mode", choices=("island", "locus"), default="island",
+                        help="island: one molecule state per complete CpG island "
+                             "(default); locus: copy aggregate validation domains")
+    parser.add_argument("--cpg-islands",
+                        help="Optional merged BED3 island catalog; default: infer from reference")
+    parser.add_argument("--write-cpg-islands",
+                        help="Optional BED/BED.GZ recording the exact catalog used")
     parser.add_argument("--read-posterior", type=float, default=0.99,
-                        help="Per-CpG posterior required for ddda_mcg spans (default: 0.99)")
-    parser.add_argument("--read-baseline-radius", type=int, default=250,
-                        help="Centered non-CpG baseline radius (default: 250)")
-    parser.add_argument("--read-min-run-cpg", type=int, default=2,
-                        help="Consecutive supported CpGs per span (default: 2)")
-    parser.add_argument("--read-max-cpg-gap", type=float, default=None,
-                        help="Split read spans across longer unsupported gaps; "
-                             "default: --read-run-bp")
+                        help="Whole-island posterior threshold (default: 0.99)")
+    parser.add_argument("--read-min-island-cpg", type=int, default=15,
+                        help="Minimum CpGs per molecule-island call (default: 15)")
     parser.add_argument("--tag-input-frame", choices=("auto", "molecular", "query"),
                         default="auto",
                         help="Frame of tag-BAM legacy ns/nl when MA is absent")
@@ -120,14 +118,10 @@ def main(argv=None):
         raise SystemExit("--posterior must be between 0.5 and 1")
     if args.max_gap < 0 or args.io_threads < 1:
         raise SystemExit("--max-gap must be non-negative and --io-threads positive")
-    if args.read_run_bp <= 0 or args.read_baseline_radius <= 0:
-        raise SystemExit("--read-run-bp and --read-baseline-radius must be positive")
     if not 0.5 < args.read_posterior < 1.0:
         raise SystemExit("--read-posterior must be between 0.5 and 1")
-    if args.read_min_run_cpg < 1:
-        raise SystemExit("--read-min-run-cpg must be positive")
-    if args.read_max_cpg_gap is not None and args.read_max_cpg_gap <= 0:
-        raise SystemExit("--read-max-cpg-gap must be positive")
+    if args.read_min_island_cpg < 1:
+        raise SystemExit("--read-min-island-cpg must be positive")
     if bool(args.tag_bam) != bool(args.tag_output):
         raise SystemExit("--tag-bam and --tag-output must be supplied together")
     if args.output != "-" and any(_same_file(path, args.output) for path in args.input):
@@ -271,24 +265,21 @@ def main(argv=None):
             )
             print(f"m5C locus mode: tagged {tagged:,}/{total:,} reads", file=sys.stderr)
         else:
-            # Keep the molecule caller on the same calibrated, custom, or
-            # explicitly estimated context correction as the aggregate call.
             _preflight_input(args.tag_bam)
-            stats = annotate_bam_per_read(
-                args.tag_bam, args.tag_output, args.reference, factors,
-                expected_run_bp=args.read_run_bp,
+            stats = annotate_bam_per_read_islands(
+                args.tag_bam, args.tag_output, args.reference,
+                args.cpg_islands, factors,
                 posterior_threshold=args.read_posterior,
-                baseline_radius=args.read_baseline_radius,
                 min_other=args.min_other,
-                min_call_cpg=args.read_min_run_cpg,
-                max_call_gap_bp=args.read_max_cpg_gap,
+                min_cpg=args.read_min_island_cpg,
                 input_molecular_frame={
                     "auto": None, "molecular": True, "query": False,
                 }[args.tag_input_frame],
                 threads=args.io_threads,
                 header_record=header_record,
+                used_islands_bed=args.write_cpg_islands,
             )
-            print("m5C read mode: " + ", ".join(
+            print("m5C island mode: " + ", ".join(
                 f"{key}={value:,}" for key, value in stats.items()
             ), file=sys.stderr)
         print(f"m5C: wrote {args.tag_output}", file=sys.stderr)

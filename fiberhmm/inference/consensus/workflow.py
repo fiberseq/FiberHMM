@@ -126,9 +126,6 @@ def _splits(run, opt, progress):
             models={'native_TF':(pp,pa)}
             if nuc_tables is not None:
                 nuc_acc=nuc_tables[1][contexts[qa:qb]]
-                if 'm5c_observations' in u:
-                    from .adapter import adjust_accessible_m5c
-                    nuc_acc=adjust_accessible_m5c(nuc_acc,np.asarray(u['m5c_observations'])[qa:qb])
                 models['installed_nuc']=(nuc_tables[0][contexts[qa:qb]],nuc_acc)
             tests=[];passing=[]
             for name,(pr,ac) in models.items():

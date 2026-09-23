@@ -1,11 +1,12 @@
 # Sequence-free scDAF duplex pairing
 
-`fiberhmm-duplex` predicts which CT- and GA-flavor reads came from the same
-physical duplex without using sequence identity. It is intended for analyses
-where A/T agreement must remain an independent validation label.
+The sequence-free route inside `fiberhmm-pair` predicts which CT- and GA-flavor
+reads came from the same physical duplex without using sequence identity. It is
+used alongside direct sequence-supported assignments by default. Its route
+label is `pm:D`; sequence-supported assignments carry `pm:S`.
 
 ```bash
-fiberhmm-duplex \
+fiberhmm-pair \
   -i sample.fiberhmm.bam \
   -r hg38.fa \
   -o sample.duplex.bam \
@@ -31,6 +32,9 @@ nucleosome dyads on both reads. The frozen linear model combines:
   shared by all reads in the complete local overlap component.
 
 The model has no A/T mismatch, haplotype, TF LLR, or sequence-veto input.
+In the default combined workflow, direct sequence-supported assignments are
+selected independently and take precedence if the two routes consume the same
+read. `--sequence-only` disables this model route completely.
 Within each complete overlap component, an edge must be best for both reads.
 The default two-sided decision-score margin is 1.0 against the next candidate
 or a virtual null score of zero. Reads that fail this gate remain unresolved.

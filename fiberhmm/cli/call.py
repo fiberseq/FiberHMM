@@ -217,10 +217,9 @@ def parse_args():
                         'amplicon consensus in SNP QC (default 20).')
     p.add_argument(
         '--ddda-mcg', action='store_true',
-        help='EXPERIMENTAL, opt-in whole-genome DddA only: infer per-read mCG '
-             'spans after preliminary HMM calling, write MA:ddda_mcg., and '
-             'adjust CpG TF emissions in the same recall pass. Requires '
-             '--enzyme ddda and --reference; not recommended for amplicons.',
+        help='Deprecated integrated per-CpG mode; retained only to emit a clear '
+             'migration error. Run fiberhmm-call, then fiberhmm-tag-m5c '
+             '(whole CpG islands), then fiberhmm-recall-tfs --use-m5c.',
     )
 
     # --- PCR dedup (DAF / ddda|dddb only) ---
@@ -502,74 +501,31 @@ def _check_daf_inputs(input_bam: str, reference: str = None,
 
 
 def _configure_ddda_mcg(args, mode: str) -> bool:
-    """Validate the opt-in integrated caller or print the DddA WGS hint."""
+    """Reject the retired sub-island mode or print the whole-island hint."""
     enabled = bool(getattr(args, 'ddda_mcg', False))
     enzyme = getattr(args, 'enzyme', None)
     if not enabled:
         if enzyme == 'ddda' and mode == 'daf':
             print(
-                "\n  NOTE: If this is whole-genome DddA DAF-seq, consider "
-                "the experimental\n"
-                "        --ddda-mcg --reference ref.fa\n"
-                "        option to recover per-read mCG spans and correct CpG "
-                "TF emissions.\n"
-                "        It is unnecessary for targeted/amplicon DddA data.\n",
+                "\n  NOTE: To infer DddA mCG, first finish ordinary calling, then run\n"
+                "        fiberhmm-tag-m5c -i calls.bam -o mcg.bam "
+                "-r ref.fa --enzyme ddda\n"
+                "        followed by fiberhmm-recall-tfs --use-m5c. The m5C "
+                "caller reports\n"
+                "        one state per complete CpG island inferred from the "
+                "reference by default.\n",
                 file=sys.stderr,
             )
         return False
 
-    errors = []
-    if enzyme != 'ddda':
-        errors.append('--ddda-mcg requires --enzyme ddda')
-    if mode != 'daf':
-        errors.append('--ddda-mcg requires DAF observation mode')
-    if not getattr(args, 'reference', None):
-        errors.append('--ddda-mcg requires --reference ref.fa')
-    if getattr(args, 'circular', False):
-        errors.append('--ddda-mcg does not support --circular')
-    if getattr(args, 'downstream_compat', False):
-        errors.append('--ddda-mcg cannot be combined with --downstream-compat')
-    if errors:
-        print('error: ' + '; '.join(errors), file=sys.stderr)
-        raise SystemExit(2)
-
-    import pysam
-    try:
-        with pysam.FastaFile(args.reference):
-            pass
-    except (OSError, ValueError) as error:
-        print(
-            f"error: --ddda-mcg could not open indexed reference FASTA "
-            f"{args.reference!r}: {error}",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
-
-    # Reject positive evidence of another chemistry. Legacy/custom headers may
-    # be silent, so the explicit --enzyme ddda assertion remains required.
-    input_bam = getattr(args, 'input', '-')
-    if input_bam != '-':
-        from fiberhmm.cli.tag_m5c import _declared_enzymes
-        try:
-            with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
-                declared = _declared_enzymes(bam.header)
-        except (OSError, ValueError):
-            declared = set()
-        if declared and declared != {'ddda'}:
-            labels = ', '.join(sorted(declared))
-            print(
-                'error: --ddda-mcg rejected incompatible or mixed BAM '
-                f'provenance ({labels}); only DddA is supported.',
-                file=sys.stderr,
-            )
-            raise SystemExit(2)
-
     print(
-        "  EXPERIMENTAL: integrated DddA mCG calling enabled "
-        "(whole-genome workflow).",
+        "error: --ddda-mcg used a retired per-CpG integrated caller. "
+        "Run fiberhmm-call without this flag, then fiberhmm-tag-m5c "
+        "(one state per complete CpG island), followed by "
+        "fiberhmm-recall-tfs --use-m5c.",
         file=sys.stderr,
     )
-    return True
+    raise SystemExit(2)
 
 
 def _dedup_input_first(input_bam, output_bam, min_jaccard, flag_only, io_threads,

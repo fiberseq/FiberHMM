@@ -96,6 +96,7 @@ def _load_json(filepath: str) -> FiberHMM:
     model.startprob_ = np.array(data['startprob'])
     model.transmat_ = np.array(data['transmat'])
     model.emissionprob_ = np.array(data['emissionprob'])
+    model.cpg_methylated_probabilities_ = data.get('cpg_methylated_probabilities')
 
     return model
 
@@ -240,6 +241,7 @@ def load_model_with_metadata(filepath: str, normalize: bool = True) -> Tuple[Fib
         model.startprob_ = np.array(data['startprob'])
         model.transmat_ = np.array(data['transmat'])
         model.emissionprob_ = np.array(data['emissionprob'])
+        model.cpg_methylated_probabilities_ = data.get('cpg_methylated_probabilities')
 
         context_size = data.get('context_size', 3)
         mode = data.get('mode', 'unknown')

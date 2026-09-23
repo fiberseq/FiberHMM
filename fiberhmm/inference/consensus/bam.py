@@ -55,7 +55,7 @@ def _load_dataset_evidence(state, dsid, chemistry, *, chrom, evidence_start, evi
         diagnostics=dict(requested_chrom=chrom,bam_chrom=actual,fetch_start=lo,fetch_end=hi)
         reads.extend(runtime['load_bam'](path,actual,lo,hi,strand_mode=preset['strand_mode'],mode=mode,
             context_size=context,prob_threshold=preset.get('prob_threshold'),llr_hit=hit,llr_miss=miss,
-            min_mapq=minimum_mapq,tf_layer='tf',nuc_layer='nuc',max_reads=0,input_index=i,
+            min_mapq=minimum_mapq,tf_layer='tf',nuc_layer='nuc',max_reads=0,input_index=i,ma_annotation_frame='auto',
             load_diagnostics=diagnostics,**({'legacy_annotation_frame':legacy_annotation_frame} if legacy_annotation_frame is not None else {})))
         files.append(diagnostics)
     return reads,model,preset,dict(source_type='bam',evidence_reads=len(reads),files=files)

@@ -35,7 +35,7 @@ def set_default_fit_cache(directory):
 _CHILD_THREADS = dict(OPENBLAS_NUM_THREADS='1', OMP_NUM_THREADS='1',
                      MKL_NUM_THREADS='1', NUMBA_NUM_THREADS='1',
                      VECLIB_MAXIMUM_THREADS='1', NUMEXPR_NUM_THREADS='1',
-                     BLIS_NUM_THREADS='1')
+                     BLIS_NUM_THREADS='1', KMP_WARNINGS='0')
 
 
 def _fit_task(directory, rows, reference, max_iterations, objective_backend='cpu', smoothing_pseudo_units=4.):

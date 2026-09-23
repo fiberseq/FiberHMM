@@ -44,14 +44,16 @@ def test_replay_clips_actual_encoder_cigar_domain_before_native_wrapper(monkeypa
 def test_m5c_conditioning_matches_native_tables_only_at_tagged_cpgs(monkeypatch):
     monkeypatch.setattr(strand_rescue,'cigar_to_query_ref',lambda _:np.arange(6)+100)
     monkeypatch.setattr(adapter,'m5c_query_mask',lambda *_:np.array([True,True,False,False,False,True]))
-    u=dict(positions=list(range(100,106)),contexts=[48,0,48,0,48,48],p_accessible=[.9]*6,
+    u=dict(positions=list(range(100,106)),hits=[0,1,0,1,0,1],contexts=[48,0,48,0,48,48],p_accessible=[.9]*6,
         p_protected=[.1]*6,provenance={})
     adapter.condition_unit_on_m5c(object(),u)
-    assert u['m5c_observations']==[True,False,False,False,False,True]
-    assert u['p_accessible'][1:5]==[.9]*4
-    hit,miss=tf_recaller.build_m5c_llr_tables(model())
-    np.testing.assert_allclose(np.log(.1/u['p_accessible'][0]),hit[48],atol=1e-12)
-    np.testing.assert_allclose(np.log(.9/(1-u['p_accessible'][0])),miss[48],atol=1e-12)
+    assert u['positions']==[101,102,103,104]
+    assert u['hits']==[1,0,1,0]
+    assert u['contexts']==[0,48,0,48]
+    assert u['p_accessible']==[.9]*4
+    assert 'm5c_observations' not in u
+    assert u['provenance']['native_m5c_excluded_opportunities']==2
+    assert u['provenance']['native_emissions_unchanged'] is True
 
 
 def test_native_replay_honors_m5c_tables(monkeypatch):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add molecule-specific DddA-inferred mCG spans with a per-read HMM."""
+"""Add one molecule-specific DddA-inferred mCG state per CpG island."""
 from __future__ import annotations
 
 import argparse
@@ -12,7 +12,7 @@ import numpy as np
 from fiberhmm.cli.common import add_version_args
 from fiberhmm.daf.m5c import (
     DDDA_FIVE_PRIME_FACTORS,
-    annotate_bam_per_read,
+    annotate_bam_per_read_islands,
     estimate_bam_five_prime_factors,
     ma_group_feature,
 )
@@ -92,11 +92,10 @@ def _same_file(left: str, right: str) -> bool:
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         prog="fiberhmm-tag-m5c",
-        description=("Opt-in genome-wide DddA DAF-seq caller: infer "
-                     "molecule-specific mCG state along ordered CpGs and add "
-                     "confident runs as ddda_mcg MA spans. Cross-strand "
-                     "consensus reads carrying MA deam+/deam- coverage are "
-                     "called jointly for strand-resolved mCG and hemi states."),
+        description=("DddA DAF-seq caller: infer one molecule-specific mCG "
+                     "state per complete CpG island using observations inside "
+                     "the initial MSP. By default islands are inferred from the "
+                     "reference sequence; --cpg-islands overrides that catalog."),
     )
     add_version_args(parser)
     parser.add_argument("-i", "--input", required=True,
@@ -107,14 +106,34 @@ def parse_args(argv=None):
         "--enzyme", required=True, choices=("ddda",),
         help="Required chemistry assertion. Only DddA DAF-seq is supported.",
     )
-    parser.add_argument("--run-bp", type=float, default=5000.0)
     parser.add_argument("--posterior", type=float, default=0.99)
-    parser.add_argument("--baseline-radius", type=int, default=250)
     parser.add_argument("--min-other", type=int, default=10)
-    parser.add_argument("--min-run-cpg", type=int, default=2)
-    parser.add_argument("--max-cpg-gap", type=float, default=None,
-                        help="Split output spans across longer evidence-free gaps; "
-                             "default: --run-bp")
+    parser.add_argument(
+        "--cpg-islands",
+        help=("Optional BED3 of merged, non-overlapping CpG islands. Default: "
+              "infer islands from the reference sequence."),
+    )
+    parser.add_argument(
+        "--write-cpg-islands",
+        help="Optional BED or BED.GZ containing the exact island catalog used.",
+    )
+    parser.add_argument(
+        "--min-island-cpg", type=int, default=15,
+        help="Minimum CpG observations for a whole-island call (default 15).",
+    )
+    parser.add_argument(
+        "--calls-tsv",
+        help=("Optional whole-island audit table containing methylated, "
+              "unmethylated and uninformative molecule/island overlaps."),
+    )
+    parser.add_argument("--cpg-island-window", type=int, default=200,
+                        help="Reference inference window in bp (default 200).")
+    parser.add_argument("--cpg-island-step", type=int, default=10,
+                        help="Reference inference step in bp (default 10).")
+    parser.add_argument("--cpg-island-min-gc", type=float, default=0.50,
+                        help="Minimum GC fraction for inferred islands (default 0.50).")
+    parser.add_argument("--cpg-island-min-oe", type=float, default=0.60,
+                        help="Minimum CpG observed/expected for inferred islands (default 0.60).")
     parser.add_argument("--five-prime-factors", default=None,
                         help="Comma-separated A,C,G,T factors; default calibrated DddA values")
     parser.add_argument("--estimate-factors", action="store_true",
@@ -130,18 +149,23 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
-    if args.run_bp <= 0 or args.baseline_radius <= 0:
-        raise SystemExit("--run-bp and --baseline-radius must be positive")
     if not 0.5 < args.posterior < 1.0:
         raise SystemExit("--posterior must be between 0.5 and 1")
-    if args.min_other < 1 or args.min_run_cpg < 1:
-        raise SystemExit("--min-other and --min-run-cpg must be positive")
-    if args.max_cpg_gap is not None and args.max_cpg_gap <= 0:
-        raise SystemExit("--max-cpg-gap must be positive")
+    if args.min_other < 1 or args.min_island_cpg < 1:
+        raise SystemExit(
+            "--min-other and --min-island-cpg must be positive"
+        )
+    if args.cpg_island_window < 2 or args.cpg_island_step < 1:
+        raise SystemExit("--cpg-island-window and --cpg-island-step must be positive")
+    if not 0 <= args.cpg_island_min_gc <= 1 or args.cpg_island_min_oe < 0:
+        raise SystemExit("invalid CpG-island GC or observed/expected threshold")
     if args.factor_sample_reads < 1 or args.io_threads < 1:
         raise SystemExit("--factor-sample-reads and --io-threads must be positive")
     if _same_file(args.input, args.output):
         raise SystemExit("input and output BAM paths must differ")
+    for extra in (args.calls_tsv, args.write_cpg_islands):
+        if extra and (_same_file(extra, args.input) or _same_file(extra, args.output)):
+            raise SystemExit("audit-table and island-BED paths must differ from BAM paths")
     input_molecular_frame = {
         "auto": None, "molecular": True, "query": False,
     }[args.input_frame]
@@ -163,25 +187,39 @@ def main(argv=None):
         factors = DDDA_FIVE_PRIME_FACTORS / DDDA_FIVE_PRIME_FACTORS.mean()
     print(f"[tag_m5c] 5' factors A,C,G,T={np.round(factors, 3)}", file=sys.stderr)
     import fiberhmm
+    island_source = "bed" if args.cpg_islands else "reference_inferred"
+    mode_details = (
+        "initial_msp_only=true; one_state_per_island=true; "
+        f"island_source={island_source}; "
+        f"island_window={args.cpg_island_window} "
+        f"island_step={args.cpg_island_step} "
+        f"island_min_gc={args.cpg_island_min_gc} "
+        f"island_min_oe={args.cpg_island_min_oe}; "
+        f"min_other={args.min_other} min_island_cpg={args.min_island_cpg} "
+    )
     header_record = {
         "PN": "fiberhmm-tag-m5c",
         "VN": getattr(fiberhmm, "__version__", "unknown"),
         "CL": " ".join(sys.argv),
-        "DS": ("DddA molecule-specific mCG HMM; ddda_mcg_frame=molecular; "
-               "cross_strand=auto; paired_states=UU,UM,MU,MM; "
-               f"run_bp={args.run_bp} posterior={args.posterior} "
-               f"baseline_radius={args.baseline_radius} "
-               f"min_other={args.min_other} min_run_cpg={args.min_run_cpg} "
+        "DS": ("DddA molecule-specific mCG; mode=whole_cpg_island; "
+               "ddda_mcg_frame=molecular; "
+               f"{mode_details}posterior={args.posterior} "
                "five_prime_factors=" + ",".join(f"{value:.6g}" for value in factors)),
     }
-    stats = annotate_bam_per_read(
-        args.input, args.output, args.reference, factors,
-        expected_run_bp=args.run_bp, posterior_threshold=args.posterior,
-        baseline_radius=args.baseline_radius, min_other=args.min_other,
-        min_call_cpg=args.min_run_cpg, max_call_gap_bp=args.max_cpg_gap,
+    stats = annotate_bam_per_read_islands(
+        args.input, args.output, args.reference, args.cpg_islands, factors,
+        posterior_threshold=args.posterior,
+        min_other=args.min_other,
+        min_cpg=args.min_island_cpg,
         input_molecular_frame=input_molecular_frame,
         threads=args.io_threads,
         header_record=header_record,
+        calls_tsv=args.calls_tsv,
+        used_islands_bed=args.write_cpg_islands,
+        island_window=args.cpg_island_window,
+        island_step=args.cpg_island_step,
+        island_min_gc=args.cpg_island_min_gc,
+        island_min_observed_expected=args.cpg_island_min_oe,
     )
     print("[tag_m5c] " + ", ".join(
         f"{key}={value:,}" for key, value in stats.items()

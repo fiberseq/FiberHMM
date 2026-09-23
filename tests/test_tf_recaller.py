@@ -12,6 +12,7 @@ from fiberhmm.inference.tf_recaller import (
     N_CTX,
     UNMETH_OFFSET,
     TFCall,
+    build_cpg_mask,
     build_scan_intervals,
     call_tfs_in_interval,
     merge_intervals,
@@ -258,6 +259,8 @@ class _FakeRead:
     def __init__(self):
         self._tags = {}
         self.query_sequence = 'A' * 200
+        self.query_length = 200
+        self.is_reverse = False
 
     def has_tag(self, t):
         return t in self._tags
@@ -418,6 +421,37 @@ def test_write_ma_tags_preserves_existing_ddda_mcg_group():
     assert read.get_tag('MA') == '200;nuc.Q:1-100;ddda_mcg.:21-50'
 
 
+def test_default_cpg_mask_whitelists_only_confident_unmethylated_islands():
+    read = _FakeRead()
+    read.set_tag('MA', '200;ddda_mcg.:21-20;ddda_ucg.:81-40', value_type='Z')
+    mask = build_cpg_mask(read, 200)
+    assert mask[:80].all()
+    assert not mask[80:120].any()
+    assert mask[120:].all()
+
+
+def test_default_cpg_mask_without_unmethylated_island_masks_all_cpgs():
+    read = _FakeRead()
+    read.set_tag('MA', '200;ddda_mcg.:21-20', value_type='Z')
+    assert build_cpg_mask(read, 200).all()
+
+
+def test_legacy_cpg_mask_policy_masks_only_methylated_islands():
+    read = _FakeRead()
+    read.set_tag('MA', '200;ddda_mcg.:21-20;ddda_ucg.:81-40', value_type='Z')
+    mask = build_cpg_mask(read, 200, 'methylated-only')
+    assert not mask[:20].any()
+    assert mask[20:40].all()
+    assert not mask[40:].any()
+
+
+def test_write_ma_tags_preserves_confident_unmethylated_island_group():
+    read = _FakeRead()
+    read.set_tag('MA', '200;ddda_ucg.:81-40', value_type='Z')
+    write_ma_tags(read, 200, tf_calls=[], kept_nucs=[(0, 100)], msps=[])
+    assert read.get_tag('MA') == '200;nuc.Q:1-100;ddda_ucg.:81-40'
+
+
 def test_write_ma_tags_preserves_stranded_mcg_and_hemi_groups():
     read = _FakeRead()
     read.set_tag(
@@ -566,10 +600,9 @@ def test_enzyme_presets_present():
     # All bundled presets use their calibrated table directly.
     for enz in ('hia5', 'dddb', 'ddda'):
         assert ENZYME_PRESETS[enz]['emission_uplift'] == 1.0
-    # DddB uses lower min_llr than Hia5 (single-strand evidence)
-    assert ENZYME_PRESETS['dddb']['min_llr'] < ENZYME_PRESETS['hia5']['min_llr']
-    # DddA uses the held-out physical-mate operating point (TQ >= 70).
-    assert ENZYME_PRESETS['ddda']['min_llr'] == 7.0
+    # The native-context sweep selects one shared operating point, independently
+    # supported for DddA by held-out physical mates.
+    assert {ENZYME_PRESETS[enz]['min_llr'] for enz in ('hia5', 'dddb', 'ddda')} == {5.0}
 
 
 def test_recall_read_accepts_compact_array_tag_sequences_without_modifications():

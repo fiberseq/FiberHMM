@@ -434,6 +434,11 @@ def _rotational_wrapped_llr_matrix(
     contexts = np.zeros(len(pos), dtype=np.int64)
     contexts[hits] = codes[hits]
     contexts[misses] = codes[misses] - UNMETH_OFFSET
+    if m5c_mask is not None:
+        methylated = np.asarray(m5c_mask, dtype=bool)[pos]
+        masked_cpg = methylated & ((contexts % 64) // 16 == 3)
+        hits &= ~masked_cpg
+        misses &= ~masked_cpg
     protected_probability = np.clip(
         np.asarray(protected_table, dtype=np.float64)[contexts],
         1e-12,
@@ -1553,8 +1558,6 @@ def _accessible_configuration_evidence(
         and m5c_llr_miss is not None
     )
     methylated = np.asarray(m5c_mask, dtype=bool) if use_m5c else None
-    methylated_hit = np.asarray(m5c_llr_hit) if use_m5c else None
-    methylated_miss = np.asarray(m5c_llr_miss) if use_m5c else None
     opportunities = 0
     log_bf = 0.0
     for start, end in intervals:
@@ -1563,13 +1566,17 @@ def _accessible_configuration_evidence(
         for position in range(lo, hi):
             code = int(observations[position])
             if 0 <= code < N_CTX:
-                table = methylated_hit if use_m5c and methylated[position] else hit_table
-                log_bf -= float(table[code])
+                if (use_m5c and methylated[position]
+                        and ((code % 64) // 16 == 3)):
+                    continue
+                log_bf -= float(hit_table[code])
                 opportunities += 1
             elif UNMETH_OFFSET <= code < UNMETH_OFFSET + N_CTX:
                 context = code - UNMETH_OFFSET
-                table = methylated_miss if use_m5c and methylated[position] else miss_table
-                log_bf -= float(table[context])
+                if (use_m5c and methylated[position]
+                        and ((context % 64) // 16 == 3)):
+                    continue
+                log_bf -= float(miss_table[context])
                 opportunities += 1
     return opportunities, log_bf
 
@@ -1616,6 +1623,14 @@ def _radial_extension_evidence(
         (codes >= UNMETH_OFFSET)
         & (codes < UNMETH_OFFSET + N_CTX)
     )
+    if m5c_mask is not None:
+        contexts = np.zeros(len(codes), dtype=np.int64)
+        contexts[hit] = codes[hit]
+        contexts[miss] = codes[miss] - UNMETH_OFFSET
+        methylated = np.asarray(m5c_mask, dtype=bool)[positions]
+        masked_cpg = methylated & ((contexts % 64) // 16 == 3)
+        hit &= ~masked_cpg
+        miss &= ~masked_cpg
     informative = hit | miss
     opportunities = int(np.count_nonzero(informative))
     if opportunities == 0:

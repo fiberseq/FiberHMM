@@ -26,7 +26,7 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
 - [Pre-trained models](#pre-trained-models)
 - [Performance tips](#performance-tips)
 - [Deep reference](docs/reference.md) — MA/AQ schema, LLR scoring model, tag glossary
-- [Experimental modules](#experimental-ddda-mcg-module)
+- [DddA CpG-island methylation](#ddda-cpg-island-methylation)
 
 ## Key features
 
@@ -134,26 +134,25 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
   globally allocated reusable consensus-state slots, and explicit `unscorable` rows.
   Per-unit model/score provenance is stored as compact JSONL rather than one
   small file per consensus state.
-- **`fiberhmm-pair` / `fiberhmm-crossstrand`** — optional scDAF paired-duplex
-  workflow. It infers CT/GA copies of the same physical duplex using
-  deamination-safe sequence first and nucleosome-pattern fallback, unions the
-  two molecule-specific evidence channels, and runs the ordinary callers once
-  on the joint molecule. This is duplex-local evidence integration: it does
-  not use a locus-population site-consensus prior or cross-molecule strand rescue.
-  See the [paired-duplex contract](docs/paired-duplex.md).
-- **`fiberhmm-duplex`** — sequence-identity-free scDAF pairing for experiments
-  where A/T agreement must remain an independent validation label. It combines
-  the nucleosome lattice with raw and component-residual DddA protection,
-  selects reciprocal-best CT/GA edges with an abstention margin, and never uses
-  A/T mismatches, haplotypes, TF LLR, or a sequence veto. Current rotational
-  DddA calls and archived MA calls have separate frozen calibrations selected
-  from BAM provenance. See [sequence-free duplex pairing](docs/duplex.md).
-- **Experimental DddA-inferred mCG recovery (outside the paper-validated
-  preset surface)** — `fiberhmm-tag-m5c` calls conservative, molecule-specific
-  methylated CpG runs even though amplification removes the native 5mC channel;
-  DddA TF recall then corrects CpG emissions inside those spans. Merged
-  cross-strand reads carrying `deam+`/`deam-` coverage are called jointly for
-  strand-resolved mCG and conservative hemimethylated blocks.
+- **`fiberhmm-pair`** — the scDAF paired-duplex workflow. By default it combines
+  independently sequence-supported CT/GA assignments with high-confidence
+  assignments from the frozen sequence-free model. The latter uses the
+  nucleosome lattice, aligned geometry, and raw and component-residual DddA
+  protection. At the default two-sided abstention margin, the archived-call
+  calibration achieved 51/55 correct sequence-checkable external assignments
+  (92.7%); the rotational-recall calibration achieved 48/53 (90.6%). Sequence
+  evidence takes precedence on conflicts and every accepted read records its
+  route as `pm:S` or `pm:D`. Use `--sequence-only` when every accepted pair must
+  have direct A/T support. `--merge --recall` unions the two observed channels
+  and runs the ordinary callers on the joint molecule. See the
+  [paired-duplex contract](docs/paired-duplex.md) and
+  [sequence-free validation](docs/duplex.md).
+- **DddA-inferred complete-island mCG states** — `fiberhmm-tag-m5c`
+  infers CpG islands from the indexed reference by default and assigns one
+  molecule-specific state to each complete island using only observations in
+  the initial MSP. Confident methylated islands are written as `ddda_mcg.` MA
+  intervals so DddA TF recall can exclude confounded CpG opportunities without claiming an
+  internal methylation boundary.
 - **No genome context files** — hexamer context computed from read sequences.
 - **Spec-compliant tags** — `ns`/`nl`/`as`/`al` legacy tags plus `MA`/`AQ`
   [Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec)
@@ -239,16 +238,15 @@ fiberhmm-footprint-model -i calls.bam -o results/sample --genome dm6 --bigbed
 | Already have an apply-tagged BAM, add TF calls | `fiberhmm-recall-tfs` |
 | Apply-tagged BAM, full recall without re-running the HMM | `fiberhmm-recall-nucs` |
 | Recalled BAM → footprint population model and binding hypotheses | `fiberhmm-footprint-model` |
-| Add molecule-specific DddA-inferred mCG spans | `fiberhmm-tag-m5c` |
-| Full genome DddA calling with integrated mCG | `fiberhmm-call --enzyme ddda --ddda-mcg --reference ref.fa` |
-| Build an aggregate DddA mCG domain BED | `fiberhmm-call-m5c` |
+| Add one molecule-specific DddA mCG state per complete CpG island | `fiberhmm-tag-m5c -i calls.bam -o mcg.bam -r ref.fa --enzyme ddda` |
+| Build an aggregate DddA mCG validation BED | `fiberhmm-call-m5c` |
 | Focal two-strand TF rescue + TF/nuc edge normalization | `fiberhmm-strand-rescue` |
 | Strand-rescue report → normalized regional shadow layers | `fiberhmm-strand-rescue-annotate` |
 | Audit normalized strand-rescue BAMs | `fiberhmm-strand-rescue-audit` |
 | Add compact consensus-state slots/confidence to normalized TF calls | `fiberhmm-tag-consensus` |
 | Infer scDAF CT/GA physical pairs | `fiberhmm-pair` |
-| Infer scDAF CT/GA pairs without sequence identity | `fiberhmm-duplex` |
-| Pair, merge, and jointly re-call inferred scDAF duplexes | `fiberhmm-crossstrand` |
+| Require direct sequence support for every pair | `fiberhmm-pair --sequence-only` |
+| Pair, merge, and jointly re-call inferred scDAF duplexes | `fiberhmm-pair --merge --recall` |
 | Calls → BED12 / bigBed | `fiberhmm-extract` |
 | Add or repair MA layer discovery metadata | `fiberhmm-utils ma-types calls.bam --types ...` (known names) or `--scan` (every alignment) |
 
@@ -303,9 +301,10 @@ BAM sequence, add R/Y codes, regenerate `MD`, or select a different model. R/Y
 and a structurally usable `MD` tag take precedence, so `--reference` does not
 force FASTA comparison. If an `MD` tag is stale but still has the same span as
 the CIGAR, refresh it explicitly:
-`samtools calmd -b aligned.bam ref.fa > aligned.calmd.bam`. The exception is
-`--ddda-mcg`: that option always requires and reads the FASTA for CpG and DddA
-sequence context, even when R/Y or usable `MD` data are present.
+`samtools calmd -b aligned.bam ref.fa > aligned.calmd.bam`. The separate
+`fiberhmm-tag-m5c` step is the exception: it always requires and reads the
+FASTA for CpG-island inference and DddA sequence context, even when R/Y or a
+usable `MD` tag is present.
 
 ```bash
 # Raw DAF BAM with MD tags (from `minimap2 --MD` or `samtools calmd`)
@@ -327,7 +326,7 @@ Important options shared by DddB and DddA workflows:
 
 | Option | When to use it | Effect |
 |--------|----------------|--------|
-| `--reference ref.fa` | R/Y is absent and `MD` is missing/unusable; always with `--ddda-mcg` | Uses an indexed FASTA as the per-read mismatch fallback described above, or as mandatory CpG/DddA context for `--ddda-mcg`. |
+| `--reference ref.fa` | R/Y is absent and `MD` is missing/unusable | Uses an indexed FASTA as the per-read mismatch fallback described above. The separate `fiberhmm-tag-m5c` command always requires the indexed reference for CpG-island inference and DddA context. |
 | `--dedup` / `--no-dedup` | Force or disable the automatic file-based DddA/DddB pre-pass | By default, nondestructively marks PCR duplicates by similar alignment ends plus deamination-pattern similarity **before** SNP/footprint calling. Every read is retained with `0x400` and `di`/`ds`; pooled SNP, phase, and QC calculations ignore marked copies. Requires fingerprintable MM/ML dU, R/Y, or usable `MD` calls; this pre-pass does not use `--reference`. |
 | `--dedup-collapse` | You explicitly want a smaller unique-molecule BAM | Destructively removes non-representative cluster members instead of the automatic mark-and-retain behavior. |
 | `--no-daf-call-snps` | You do not want automatic recurrent-SNP screening | Disables the post-dedup, coverage-gated SNP mask. Low-depth samples skip it automatically. |
@@ -379,39 +378,38 @@ fiberhmm-call -i aligned.bam -o calls.bam --enzyme ddda \
               -c 8 --region-parallel
 ```
 
-### Experimental DddA mCG module
+### DddA CpG-island methylation
 
-This opt-in research module was not run or evaluated in the FiberHMM methods
-paper and is not part of its validated preset surface. Genome-wide DddA
-DAF-seq amplification removes native 5mC tags, but methylated CpGs retain a
-strong DddA rate signature. The experimental mCG caller is an
-explicit opt-in. Add it to the fused whole-genome workflow with:
+Genome-wide DddA amplification removes native 5mC tags, but methylated CpGs
+retain a strong DddA rate signature. FiberHMM reports this signal at the scale
+of complete CpG islands. Run the ordinary footprint caller first, then the
+island caller and mCG-aware recall:
 
 ```bash
-fiberhmm-call -i aligned.bam -o calls.bam --enzyme ddda \
-              --ddda-mcg --reference reference.fa \
+fiberhmm-call -i aligned.bam -o calls.initial.bam --enzyme ddda \
               -c 8 --region-parallel
+fiberhmm-tag-m5c -i calls.initial.bam -o calls.m5c.bam \
+                 -r reference.fa --enzyme ddda \
+                 --write-cpg-islands islands.used.bed \
+                 --calls-tsv island_calls.tsv
+fiberhmm-recall-tfs -i calls.m5c.bam -o calls.bam \
+                    --enzyme ddda --use-m5c -c 8
 ```
 
-The integrated stage runs after preliminary nucleosome calling and before
-TF/nucleosome recall, writes molecule-specific `ddda_mcg.` MA spans, and uses
-those same spans to correct CpG TF emissions. Without `--ddda-mcg`, DddA output
-and runtime behavior remain unchanged; the CLI prints a whole-genome-only hint.
-The auditable staged equivalent remains available:
+By default the tagger derives islands from 200-bp reference windows stepped by
+10 bp, retaining windows with GC fraction at least 0.50 and CpG
+observed/expected at least 0.60 and merging overlaps. `--cpg-islands` accepts a
+preferred merged BED catalog. This changes which islands are tested, while the
+resolution remains one state per complete island. Only CpG and non-CpG
+observations inside the molecule's initial MSP contribute. Calls require at
+least 15 CpGs, 10 non-CpGs and posterior at least 0.99 (methylated) or at most
+0.01 (unmethylated); other overlaps are recorded as uninformative in the audit
+table. Only confident methylated islands become `ddda_mcg.` MA intervals.
 
-```bash
-fiberhmm-apply -i encoded.bam -o apply_dir --enzyme ddda
-fiberhmm-tag-m5c -i apply_dir/encoded_footprints.bam -o apply.m5c.bam \
-                    -r reference.fa --enzyme ddda
-fiberhmm-recall-nucs -i apply.m5c.bam -o calls.bam --enzyme ddda -c 8
-```
-
-The tagger uses each read's local non-CpG deamination as its accessibility
-control and a distance-aware HMM over ordered CpGs. Calls start at equal state
-odds, require posterior >=0.99 and at least two supported CpGs, and do not copy
-an aggregate locus state onto the molecule. `fiberhmm-recall-tfs` and
-`fiberhmm-recall-nucs` consume these spans by default for DddA; use
-`--no-use-m5c` for an ablation.
+`fiberhmm-recall-tfs` removes CpGs inside those intervals from its opportunity
+lattice by default for DddA; use
+`--no-use-m5c` for an ablation. The retired `fiberhmm-call --ddda-mcg` spelling
+now exits with a migration message rather than running the older per-CpG mode.
 
 This caller and its emission correction are calibrated specifically for
 genome-wide DddA DAF-seq. They must not be applied to DddB and are not part of
@@ -491,8 +489,8 @@ execution strategies.
 | `--enzyme` | — | Supported presets are `hia5`, `dddb`, and `ddda`. |
 | `--seq` | chemistry-dependent | Hia5 supports `pacbio`/`nanopore` (omission warns and defaults to `pacbio`); ignored for DddA/DddB after DAF encoding. |
 | `--mode` | from model | Advanced observation-mode override; normally inferred from the selected model. Supported models use `pacbio-fiber`, `nanopore-fiber`, or `daf`; `gpc` and `cpg` are development-only. |
-| `--reference` | — | Indexed FASTA fallback for ordinary DAF reads with no R/Y and missing/unusable `MD`; does not override R/Y or usable `MD`. Required and always used by `--ddda-mcg`. |
-| `--ddda-mcg` | off | **Experimental whole-genome DddA only.** Infer `ddda_mcg.` spans and correct CpG TF emissions in the fused workflow. |
+| `--reference` | — | Indexed FASTA fallback for ordinary DAF reads with no R/Y and missing/unusable `MD`; does not override R/Y or usable `MD`. |
+| `--ddda-mcg` | retired | Emits a migration error directing users to `fiberhmm-tag-m5c`, which reports complete CpG-island states. |
 | `-c/--cores` | 4 | Worker processes. |
 | `--io-threads` | 8 | htslib I/O threads. |
 | `--region-parallel` | off | Per-region worker pool (requires sorted+indexed input). |

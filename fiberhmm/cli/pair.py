@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""fiberhmm-pair -- sequence-first cross-strand pairing for DAF-seq.
+"""fiberhmm-pair -- unified cross-strand pairing for DAF-seq.
 
 DddA deaminates both strands of a duplex; the two strands are sequenced as
 separate reads of opposite flavor (CT = C->T, GA = G->A) that overlap in the
 genome but sample different bases, so they cannot be matched by deamination
-pattern. This tool first matches local CT/GA components using bases at
-reference A/T positions, which DddA cannot alter. Reference bases come from a
-supplied FASTA or, when available, each alignment's MD+CIGAR record. Assignment
-is strictly reciprocal except at complete local 2x2 loci, where a grossly
-discordant edge can resolve the opposite diagonal. Sequence-ambiguous reads
-then fall back to nucleosome footprints.
+pattern. The default workflow combines direct A/T sequence-supported
+assignments with high-confidence assignments from a frozen sequence-free model
+of the nucleosome lattice, aligned geometry, and non-CpG DddA protection.
+Sequence-supported assignments take precedence on conflicts. ``--sequence-only``
+disables the sequence-free route.
 
 Output is non-destructive: every input read is written through unchanged except
 for added local tags on reads that received a confident mate --
 
     mp:Z  mate partner query_name
-    mc:i  pair cross-correlation x1000 (0..1000)
-    mg:i  footprint-correlation best-minus-competitor margin x1000
+    mc:i  optional nucleosome cross-correlation x1000 for sequence pairs
+    dm:i  sequence-free model decision score x1000
+    mg:i  sequence-free reciprocal margin x1000
+    mv:Z  frozen sequence-free model identifier
     mt:A  status: 'P' paired, 'U' unresolved (had candidates, failed gate),
           '.' no overlapping opposite-strand candidate
-    pm:A  pairing method: 'H' phased single-cell 1+1 overlap,
-          'S' sequence assignment, 'F' footprint fallback
+    pm:A  pairing method: 'S' sequence-supported, 'D' sequence-free model
     sb:i  shared deamination-safe sequence bases
     sd:i  sequence differences
     sr:i  sequence difference rate x1,000,000
@@ -29,6 +29,10 @@ for added local tags on reads that received a confident mate --
 
 and an optional ``--pairs-tsv`` table of resolved pairs. Pairing is done within
 each chromosome, so a coordinate-sorted + indexed BAM is required.
+
+The module-level ``run_pair`` function below preserves the pre-unification
+sequence/footprint implementation for API compatibility and validation replay;
+the public command uses ``run_pairing`` from :mod:`fiberhmm.cli.duplex`.
 """
 from __future__ import annotations
 
@@ -240,48 +244,67 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
 
 
 def main():
+    from fiberhmm.cli.duplex import run_pairing
+    from fiberhmm.cli.merge import run_merge
+    from fiberhmm.crossstrand.duplex import DuplexParams
+
     p = argparse.ArgumentParser(
         prog='fiberhmm-pair',
-        description='Sequence-first cross-strand read pairing for DAF-seq, '
-                    'with nucleosome-footprint fallback.',
+        description=(
+            'Pair DddA CT/GA reads using sequence-supported assignments plus '
+            'the high-confidence sequence-free duplex model.'
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+    # Default: sequence-supported + high-confidence sequence-free pairs
     fiberhmm-pair -i calls.bam -o calls.paired.bam -r hg38.fa --pairs-tsv pairs.tsv
-    fiberhmm-pair -i calls.bam -o calls.paired.bam -r hg38.fa --min-sequence-margin 0.002
+
+    # Require direct A/T sequence support; FASTA is optional when MD is present
+    fiberhmm-pair -i calls.bam -o calls.sequence-paired.bam --sequence-only
+
+    # Pair, merge each duplex, and jointly re-call footprints in one command
+    fiberhmm-pair -i calls.bam -o calls.duplex.bam -r hg38.fa --merge --recall
         """,
     )
-    p.add_argument('-i', '--input', required=True, help='Footprint-called DAF BAM (coordinate-sorted + indexed)')
-    p.add_argument('-o', '--output', required=True, help='Output BAM (all reads, mate tags added)')
+    p.add_argument('-i', '--input', required=True,
+                   help='Coordinate-sorted, indexed FiberHMM-called DddA BAM')
+    p.add_argument('-o', '--output', required=True,
+                   help='Output paired-source BAM, or consensus BAM with --merge')
     p.add_argument('-r', '--reference', default=None,
-                   help='Reference FASTA for sequence-first assignment. If '
-                        'omitted, MD+CIGAR evidence is used where available '
-                        'before footprint fallback')
-    p.add_argument('--pairs-tsv', default=None, help='Write resolved pairs to this TSV')
+                   help='Matching indexed FASTA. Required by the default '
+                        'sequence-free score; optional with --sequence-only '
+                        'when MD+CIGAR is available')
+    p.add_argument('--sequence-only', action='store_true',
+                   help='Accept only direct A/T sequence-supported pairs; '
+                        'disable the sequence-free model')
+    p.add_argument('--pairs-tsv', default=None,
+                   help='Write selected-pair evidence to this TSV')
+    p.add_argument('--receipt-json', default=None,
+                   help='Write a machine-readable pairing receipt')
     p.add_argument(
-        '--paired-only', action='store_true',
-        help='Write only the two primary source records for resolved pairs. '
-             'Default writes every input record with pair status tags.',
+        '--pairs-only', '--paired-only', dest='pairs_only', action='store_true',
+        help='Without --merge, write only paired source records. With --merge, '
+             'write only consensus records.',
     )
-    p.add_argument(
-        '--single-cell-haplotype', action='store_true',
-        help='For one PCR-collapsed single-cell library aligned to phased '
-             '*_MATERNAL/*_PATERNAL contigs, assign reciprocal-unique CT/GA '
-             'overlaps directly (pm:H) before the existing sequence/footprint '
-             'routes. Run each library separately.',
-    )
-    p.add_argument('--min-score', type=float, default=0.25, help='Min cross-correlation floor to accept any pair (default 0.25)')
-    p.add_argument('--min-margin', type=float, default=0.05, help='Min best-minus-competitor margin, both reads (default 0.05)')
-    p.add_argument('--null-floor', type=float, default=0.24, help='Wrong-pair correlation baseline; virtual competitor for lone (1+1) pairs (default 0.24, ~data null p90)')
+    p.add_argument('--merge', action='store_true',
+                   help='Merge each accepted pair into one both-strand consensus record')
+    p.add_argument('--recall', action='store_true',
+                   help='After merging, jointly re-call nucleosome and TF footprints '
+                        '(implies --merge)')
+    p.add_argument('--model', default=None,
+                   help='Override the bundled frozen sequence-free model JSON')
+    p.add_argument('--call-layer', choices=['auto', 'input-ma', 'rotational-recall'],
+                   default='auto',
+                   help='Nucleosome calibration for the sequence-free model (default auto)')
+    p.add_argument('--min-margin', type=float, default=1.0,
+                   help='Minimum two-sided sequence-free model margin (default 1.0)')
+    p.add_argument('--null-floor', type=float, default=0.0,
+                   help='Virtual null model score for a lone candidate (default 0.0)')
     p.add_argument('--min-overlap', type=int, default=1500, help='Min genomic overlap bp (default 1500)')
     p.add_argument('--min-nucs', type=int, default=4, help='Min nucleosome dyads within the overlap, each read (default 4)')
-    p.add_argument('--sigma', type=float, default=30.0, help='Gaussian dyad width bp (default 30)')
-    p.add_argument('--grid', type=int, default=10, help='Signal resolution bp (default 10)')
-    p.add_argument('--max-lag', type=int, default=60, help='+/- register-shift searched bp (default 60)')
     p.add_argument('--min-sequence-bases', type=int, default=500,
                    help='Min shared reference-A/T bases for a sequence edge (default 500)')
-    p.add_argument('--max-sequence-mismatch-rate', type=float, default=0.002,
-                   help='Hard veto above this sequence difference rate (default 0.002)')
     p.add_argument('--min-component-discordance-rate', type=float, default=0.02,
                    help='Min rejected-edge difference rate to constrain a 2x2 (default 0.02)')
     p.add_argument('--max-sequence-pair-rate', type=float, default=0.01,
@@ -289,28 +312,91 @@ Examples:
     p.add_argument('--min-sequence-margin', type=float, default=0.002,
                    help='Min sequence preference/assignment margin (default 0.002)')
     p.add_argument('-p', '--prob-threshold', type=int, default=0, help='Min ML prob for MM/ML dU calls (default 0)')
+    p.add_argument('--max-component', type=int, default=10000,
+                   help='Safety ceiling for a complete overlap component (default 10000)')
     p.add_argument('--io-threads', type=int, default=4, help='htslib compression threads for output (default 4)')
+    p.add_argument('--no-index', action='store_true',
+                   help='Do not index a paired-source output')
+    p.add_argument('--phase-nrl', type=int, default=196,
+                   help='Nucleosome repeat length for consensus recall (default 196)')
+    p.add_argument('--nuc-recall-policy', choices=['conservative', 'topology'],
+                   default='conservative', help='Nucleosome policy for consensus recall')
+    p.add_argument('--ddda-derived-tf-max-edge-gap', type=int, default=12,
+                   metavar='BP', help='Edge-evidence requirement for TF calls '
+                   'exposed only by DddA nucleosome refinement (default 12; -1 disables)')
     args = p.parse_args()
 
-    if not os.path.exists(args.input):
-        print(f"Error: input not found: {args.input}", file=sys.stderr)
-        sys.exit(1)
+    if not os.path.isfile(args.input):
+        p.error(f'input not found: {args.input}')
+    if args.reference is not None and not os.path.isfile(args.reference):
+        p.error(f'reference not found: {args.reference}')
+    if not args.sequence_only and not args.reference:
+        p.error('--reference is required for default pairing; use --sequence-only '
+                'to require sequence-supported pairs only')
+    if os.path.abspath(args.input) == os.path.abspath(args.output):
+        p.error('input and output paths must differ')
+    if args.ddda_derived_tf_max_edge_gap < -1:
+        p.error('--ddda-derived-tf-max-edge-gap must be -1 or >= 0')
 
-    params = PairParams(
-        grid_bp=args.grid, sigma_bp=args.sigma, max_lag_bp=args.max_lag,
+    duplex_params = DuplexParams(
+        min_margin=args.min_margin, null_floor=args.null_floor,
         min_overlap_bp=args.min_overlap, min_nucs=args.min_nucs,
-        min_score=args.min_score, min_margin=args.min_margin,
-        null_floor=args.null_floor,
+    )
+    sequence_params = PairParams(
+        min_overlap_bp=args.min_overlap, min_nucs=args.min_nucs,
         min_sequence_bases=args.min_sequence_bases,
-        max_sequence_mismatch_rate=args.max_sequence_mismatch_rate,
         min_component_discordance_rate=args.min_component_discordance_rate,
         min_sequence_margin=args.min_sequence_margin,
         max_sequence_pair_rate=args.max_sequence_pair_rate,
-        single_cell_haplotype=args.single_cell_haplotype,
     )
-    run_pair(args.input, args.output, params, prob_threshold=args.prob_threshold,
-             pairs_tsv=args.pairs_tsv, io_threads=args.io_threads,
-             reference_path=args.reference, paired_only=args.paired_only)
+    merge = args.merge or args.recall
+    paired_output = args.output if not merge else args.output + '.paired.tmp.bam'
+    try:
+        receipt = run_pairing(
+            args.input, paired_output, args.reference,
+            params=duplex_params, sequence_params=sequence_params,
+            model_path=args.model, prob_threshold=args.prob_threshold,
+            pairs_tsv=args.pairs_tsv, receipt_json=args.receipt_json,
+            paired_only=(args.pairs_only and not merge),
+            io_threads=args.io_threads, max_component=args.max_component,
+            call_layer=args.call_layer,
+            create_index=(not merge and not args.no_index),
+            pairing_mode='sequence-only' if args.sequence_only else 'hybrid',
+        )
+        if merge:
+            run_merge(
+                paired_output, args.output,
+                prob_threshold=args.prob_threshold,
+                pairs_only=args.pairs_only,
+                io_threads=args.io_threads,
+                recall=args.recall,
+                enzyme='ddda',
+                phase_nrl=args.phase_nrl,
+                nuc_recall_policy=args.nuc_recall_policy,
+                derived_tf_max_edge_ambiguity=(
+                    None if args.ddda_derived_tf_max_edge_gap < 0
+                    else args.ddda_derived_tf_max_edge_gap
+                ),
+            )
+    except (OSError, ValueError, RuntimeError) as error:
+        print(f'fiberhmm-pair: error: {error}', file=sys.stderr)
+        raise SystemExit(2) from error
+    finally:
+        if merge:
+            for path in (paired_output, paired_output + '.bai'):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+    counts = receipt['counts']
+    print(
+        f"fiberhmm-pair: {counts.get('pairs', 0):,} pairs "
+        f"[sequence {counts.get('sequence_pairs', 0):,}; "
+        f"sequence-free {counts.get('sequence_free_pairs', 0):,}] "
+        f"in {receipt['seconds']:.1f}s",
+        file=sys.stderr,
+    )
 
 
 if __name__ == '__main__':

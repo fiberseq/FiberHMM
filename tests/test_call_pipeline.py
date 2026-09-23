@@ -478,7 +478,7 @@ def test_integrated_ddda_mcg_spans_match_standalone_tagger(tmp_path):
     assert ddda_spans(integrated_output) == ddda_spans(standalone_output)
 
 
-def test_fiberhmm_call_cli_integrates_ddda_mcg_before_default_recall(tmp_path):
+def test_fiberhmm_call_cli_rejects_retired_per_cpg_mcg_mode(tmp_path):
     raw_md, _iupac, ref_fasta = _write_mcg_daf_fixture_bams(tmp_path)
     output = tmp_path / "mcg_cli.bam"
     command = [
@@ -502,28 +502,11 @@ def test_fiberhmm_call_cli_integrates_ddda_mcg_before_default_recall(tmp_path):
         text=True,
         timeout=60,
     )
-    assert completed.returncode == 0, completed.stderr
+    assert completed.returncode == 2
     combined_log = completed.stdout + completed.stderr
-    assert "integrated DddA mCG calling enabled" in combined_log
-    assert "DddA mCG: 3 spans on 3 reads" in combined_log
-    tags = _read_tags_by_name(str(output))
-    assert all("ddda_mcg." in record.get("MA", "") for record in tags.values())
-    with pysam.AlignmentFile(output, "rb", check_sq=False) as bam:
-        descriptions = [record.get("DS", "") for record in bam.header.to_dict().get("PG", [])]
-        for read in bam.fetch(until_eof=True):
-            parsed = parse_ma_tag(read.get_tag("MA"))
-            expected_aq = sum(
-                len(quality_spec) * len(intervals)
-                for _name, _strand, quality_spec, intervals in parsed["raw_types"]
-            )
-            actual_aq = len(read.get_tag("AQ")) if read.has_tag("AQ") else 0
-            assert actual_aq == expected_aq
-            if read.has_tag("AN"):
-                annotation_count = sum(
-                    len(intervals) for *_prefix, intervals in parsed["raw_types"]
-                )
-                assert len(read.get_tag("AN").split(",")) == annotation_count
-    assert any("ddda_mcg=on" in description for description in descriptions)
+    assert "retired per-CpG integrated caller" in combined_log
+    assert "fiberhmm-tag-m5c" in combined_log
+    assert not output.exists()
 
 
 def test_daf_reference_fasta_is_closed_after_streaming(tmp_path, monkeypatch):

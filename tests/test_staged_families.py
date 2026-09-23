@@ -155,6 +155,30 @@ def test_primary_display_and_counts_preserve_native_order_and_ambiguity():
     assert counts['c::B']['primary_units']==1
 
 
+def test_recurrent_state_gate_filters_display_without_discarding_audit_evidence():
+    source=payload()['strata'][0];source['units']=source['units'][:2]
+    records=[]
+    for i in range(2):
+        records.append(dict(unit_id=f'test::u{i}',interval=[12,51],
+            display_hypotheses=['c::rare'] if i == 0 else [], original=dict(
+                compatible_families=['c::rare'] if i == 0 else [],
+                primary_display_family='rare' if i == 0 else None,
+                inference_eligible=True), status='compatible' if i == 0 else 'unclassified',
+                source_channel='c'))
+    annotation=dict(records=records,hypotheses=[dict(id='c::rare',reference_interval=[12,51],
+        display=True,status='retained_alternative')])
+    result=browser_snapshot([(None,annotation)],[source],'CR','resolved',
+        minimum_primary_units=2,minimum_primary_fraction=.05)['datasets']['test']['cr']
+    assert result['catalog']==[]
+    call=result['records'][0]['proposals'][0]
+    assert call['family'] is None and call['compatible_families']==[]
+    assert call['classification_status']=='below_recurrent_state_support'
+    assert call['family_evidence']['original']['compatible_families']==['c::rare']
+    assert result['support_filter']==dict(minimum_primary_units=2,
+        minimum_primary_fraction=.05,fitted_hypotheses=1,displayed_states=0,
+        semantics='primary independent units divided by fitted-span eligible units')
+
+
 def test_mean_span_eligibility_respects_alignment_gaps_and_nucleosomes():
     source=payload()['strata'][0];source['units']=source['units'][:1]
     unit=source['units'][0];unit['aligned_blocks']=[[0,20],[22,81]];unit['raw_nuc_intervals']=[[40,50]]
@@ -162,3 +186,72 @@ def test_mean_span_eligibility_respects_alignment_gaps_and_nucleosomes():
     assert eligible_units(context,'test','CT',10,19)=={'test::u0'}
     assert not eligible_units(context,'test','CT',10,25)
     assert not eligible_units(context,'test','CT',30,45)
+
+
+def test_hidden_state_reassigns_before_next_support_decision():
+    source=payload()['strata'][0]
+    source['units']=source['units'][:4]
+    memberships=[['rare','common'],['common'],['common'],[]]
+    records=[dict(unit_id=f'test::u{i}',interval=[12,51],
+        display_hypotheses=families,original=dict(compatible_families=families,
+        inference_eligible=True),status='compatible' if families else 'unresolved')
+        for i,families in enumerate(memberships)]
+    annotation=dict(records=records,hypotheses=[dict(id=f,reference_interval=[12,51],
+        display=True,status='retained_alternative') for f in ['rare','common']])
+    before=deepcopy(annotation)
+    result=browser_snapshot([(None,annotation)],[source],'CR','resolved',
+        minimum_primary_units=3)['datasets']['test']['cr']
+    assert annotation==before
+    assert [s['family'] for s in result['catalog']]==['common']
+    calls=[r['proposals'][0] for r in result['records']]
+    assert [c['family'] for c in calls]==['common','common','common',None]
+    assert calls[0]['support_reassignment']['original_family']=='rare'
+    assert calls[0]['interval']==[12,51]
+    assert calls[3]['classification_status']=='provisional_unresolved'
+    counts=result['catalog'][0]['classification_counts']['CT']
+    assert counts['primary_calls']==counts['primary_units']==3
+
+
+def test_hidden_state_never_forces_incompatible_assignment():
+    source=payload()['strata'][0];source['units']=source['units'][:4]
+    memberships=[['rare'],['common'],['common'],['common']]
+    annotation=dict(records=[dict(unit_id=f'test::u{i}',interval=[12,51],
+        display_hypotheses=families,original=dict(compatible_families=families,
+        inference_eligible=True),status='compatible') for i,families in enumerate(memberships)],
+        hypotheses=[dict(id=f,reference_interval=[12,51],display=True,status='retained_alternative')
+            for f in ['rare','common']])
+    result=browser_snapshot([(None,annotation)],[source],'CR','resolved',
+        minimum_primary_units=3)['datasets']['test']['cr']
+    assert result['records'][0]['proposals'][0]['family'] is None
+    assert result['catalog'][0]['classification_counts']['CT']['primary_units']==3
+
+
+@pytest.mark.parametrize('reference,expected',[(99.9,'weak'),(95.,'strong'),(50.,None)])
+def test_assignment_stringency_uses_predictive_evidence(reference,expected):
+    source=payload()['strata'][0];source['units']=source['units'][:1]
+    record=dict(unit_id='test::u0',interval=[12,51],display_hypotheses=['weak','strong'],
+        original=dict(compatible_families=['weak','strong'],inference_eligible=True),
+        status='multi_compatible',assignment_compatibility={
+            'weak':dict(status='scored',predictive_tail_interval=[.001,.01]),
+            'strong':dict(status='scored',predictive_tail_interval=[.1,.2])})
+    annotation=dict(records=[record],hypotheses=[dict(id=f,reference_interval=[12,51],
+        display=True,status='retained_alternative') for f in ['weak','strong']])
+    result=browser_snapshot([(None,annotation)],[source],'CR','resolved',
+        assignment_reference_percent=reference)['datasets']['test']['cr']
+    call=result['records'][0]['proposals'][0]
+    assert call['family']==expected
+    assert call['assignment_reference_percent']==reference
+    assert call['interval']==[12,51]
+    if expected is None:assert call['classification_status']=='below_assignment_stringency'
+
+
+def test_staged_run_retains_numeric_assignment_evidence(tmp_path):
+    result=run_workflow(payload(),parameters(),tmp_path)
+    from fiberhmm.inference.consensus.harmonized_families.evidence import expand
+    for stage in result['stage_results'].values():
+        for ds in stage['datasets'].values():
+            for row in ds['cr']['records']:
+                for call in row['proposals']:
+                    record=expand(call['family_evidence'],result['evidence_pool'])
+                    assert set(record['assignment_compatibility'])==set(record['display_hypotheses'])
+                    assert all('predictive_tail_interval' in score for score in record['assignment_compatibility'].values())

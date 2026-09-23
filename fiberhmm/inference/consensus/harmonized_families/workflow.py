@@ -32,8 +32,8 @@ from .parallel import ordered_tasks, parent_task, foreign_task, parent_working_b
 from ..execution import shared_worker_pool
 from ..progress import report, stage_progress
 
-STAGES = [('native', 'Native family fits'), ('parents', 'Shared-family fits'),
-          ('consolidated', 'Consolidated hypotheses'), ('resolved', 'Final families')]
+STAGES = [('native', 'Native state fits'), ('parents', 'Shared-state fits'),
+          ('consolidated', 'Consolidated hypotheses'), ('resolved', 'Final recurrent states')]
 
 
 def save(path, value):
@@ -134,11 +134,51 @@ def fit_source(source, region, channel, folder, options, progress, seed_catalog=
     return case, dict(seconds=time.monotonic()-started, **summary)
 
 
+def attach_assignment_scores(snapshots, parts, results, foreign):
+    """Retain actual frozen predictive scores, including reused-model aliases.
+
+    No refitting, independent confidence invention, or nearest-state fallback.
+    """
+    scores = defaultdict(dict)
+    def add(key, fid, score):
+        scores[tuple(key)][fid] = {k:deepcopy(score[k]) for k in
+            ('status', 'predictive_tail_interval') if k in score}
+    for channel, part in parts.items():
+        native = read_json(part['native_cell_provenance']['path'])
+        if digest(native) != part['native_cell_provenance']['digest']:
+            raise ValueError('Native scores changed since fitting')
+        for call, evidence in zip(native['calls'], native.get('call_family_evidence', [])):
+            for score in evidence:
+                add(call_key(call), channel+'::'+score['family'], score)
+    for score in foreign:
+        add(score['call_key'], score['hypothesis'], score)
+    for fid, result in results.items():
+        for score in result['records']:
+            add(call_key(score['call']), fid, score)
+    for annotation in snapshots.values():
+        hypotheses = {h['id']:h for h in annotation['hypotheses']}
+        def root(fid):
+            seen=set()
+            while hypotheses.get(fid, {}).get('reused_from'):
+                if fid in seen:
+                    raise ValueError('Cyclic reused score model')
+                seen.add(fid);fid=hypotheses[fid]['reused_from']
+            return fid
+        for row in annotation['records']:
+            evidence = scores[(row['unit_id'], *row['interval'])]
+            row['assignment_compatibility'] = {
+                fid:deepcopy(evidence[root(fid)]) for fid in row['display_hypotheses']
+                if root(fid) in evidence}
+
+
 def consolidate_scope(parts, radius, folder, maximum_bytes, stop_after, progress, *, cache, scope_key, cores, minimum_retention_groups=2):
     case = combine_cases(parts); frozen = digest(case); snapshots = {}; timings = {}
     snapshots['native'] = cross_annotation(case, [], {}, radius, [])
     save(folder/'native.json.gz',snapshots['native'])
-    if stop_after == 'native': return case, snapshots, timings
+    if stop_after == 'native':
+        attach_assignment_scores(snapshots, parts, {}, [])
+        save(folder/'native.json.gz', snapshots['native'])
+        return case, snapshots, timings
     started = time.monotonic()
     progress('foreign_scoring', 'Testing original calls against overlapping foreign native hypotheses')
     # Workers need native evidence, not copied Browser units or full ledgers.
@@ -203,6 +243,7 @@ def consolidate_scope(parts, radius, folder, maximum_bytes, stop_after, progress
             annotation, receipts = resolve_representatives(case, annotation, lambda fid: results[fid], minimum_retention_groups=minimum_retention_groups)
             snapshots['resolved'] = annotation; timings['resolved'] = time.monotonic()-started
             save(folder/'resolution_receipts.json', receipts)
+    attach_assignment_scores(snapshots, parts, results, foreign)
     for stage, snapshot in snapshots.items():
         if len(snapshot['records']) != len(case['ledger']): raise AssertionError('Original calls lost')
         save(folder/(stage+'.json.gz'), snapshot)
@@ -272,7 +313,12 @@ def run_staged_families(payload, options, output_dir=None, progress=None):
     # Empty datasets also retain an empty catalog/ledger rather than disappearing.
     requested_stages = [key for key,_ in STAGES[:1+[key for key,_ in STAGES].index(options['families'].stop_after)]]
     context=presentation_context(sources,compact=True)
-    snapshots = {stage:browser_snapshot(stage_scopes[stage], sources, mode, stage,context) for stage in requested_stages}
+    snapshots = {stage:browser_snapshot(
+        stage_scopes[stage], sources, mode, stage, context,
+        minimum_primary_units=options['families'].minimum_display_primary_units,
+        minimum_primary_fraction=options['families'].minimum_display_primary_fraction,
+        assignment_reference_percent=options['families'].assignment_reference_percent,
+    ) for stage in requested_stages}
     realized_channels={s['dataset_id']:sorted({u['strand'] for u in s['units']}) for s in sources}
     populated=sum(bool(v) for v in realized_channels.values())
     observed_sr=any(s['chemistry'] in ('ddda','dddb') and len([c for c in realized_channels[s['dataset_id']] if c!='BOTH'])>1 for s in sources)
@@ -298,6 +344,11 @@ def run_staged_families(payload, options, output_dir=None, progress=None):
         browser_sources=payload.get('browser_sources'), pooling=payload.get('pooling'), input_files=payload.get('input_files'),
         display_mode=('SR/XCR' if options['cross'].enabled and options['sr'].enabled else mode),
         numerical_environment=environment,implementation_sha256=implementation,
+        recurrent_state_display=dict(
+            minimum_primary_units=options['families'].minimum_display_primary_units,
+            minimum_primary_fraction=options['families'].minimum_display_primary_fraction,
+            fitted_alternatives_retained_in_audit_evidence=True,
+        ),
         parameter_semantics='Active staged controls plus fixed reference policy; unused legacy controls remain default placeholders',
         presentation_revision='staged_browser_v2')
     result = dict(schema='fiberhmm.consensus.v1', cr_mode=MODE, manifest=receipt,
@@ -308,5 +359,5 @@ def run_staged_families(payload, options, output_dir=None, progress=None):
     save(out/'manifest.json', receipt); save(out/'result.json.gz', result)
     from ..report import write_report
     write_report(result,out)
-    progress('complete', f'{mode}: {stages[-1]["families"]} active families; all original calls retained')
+    progress('complete', f'{stages[-1]["families"]} recurrent footprint states ready; all original calls retained')
     return result

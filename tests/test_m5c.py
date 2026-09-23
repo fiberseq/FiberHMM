@@ -5,14 +5,18 @@ import numpy as np
 import pytest
 
 from fiberhmm.daf.m5c import (
+    DDDA_FIVE_PRIME_FACTORS,
     F_METH,
     U_UNMETH,
     M5CDomain,
     M5CObservation,
     add_paired_m5c_ma_tags,
     add_m5c_ma_tag,
+    add_island_m5c_ma_tags,
+    annotate_bam_per_read_islands,
     build_ddda_mcg_observation_payload,
     call_read_m5c,
+    call_read_m5c_islands,
     call_paired_read_m5c,
     call_domains,
     deamination_probability,
@@ -21,6 +25,7 @@ from fiberhmm.daf.m5c import (
     collect_read_observations,
     collect_paired_read_observations,
     estimate_five_prime_factors,
+    infer_cpg_islands,
     make_windows,
     ma_intervals,
     ma_strand_intervals,
@@ -55,7 +60,10 @@ def test_m5c_clis_require_explicit_ddda_chemistry():
     with pytest.raises(SystemExit):
         parse_tag_args(tag_base)
     assert parse_call_args([*call_base, "--enzyme", "ddda"]).enzyme == "ddda"
-    assert parse_tag_args([*tag_base, "--enzyme", "ddda"]).enzyme == "ddda"
+    tag_args = parse_tag_args([*tag_base, "--enzyme", "ddda"])
+    assert tag_args.enzyme == "ddda"
+    assert tag_args.cpg_islands is None
+    assert tag_args.cpg_island_window == 200
     with pytest.raises(SystemExit):
         parse_tag_args([*tag_base, "--enzyme", "dddb"])
 
@@ -89,6 +97,111 @@ def test_rate_exponents_have_expected_order_and_effect_size():
     assert np.all(methylated < baseline)
     assert np.all(unmethylated > baseline)
     assert np.isclose(U_UNMETH / F_METH, 6.6646706587)
+
+
+def test_whole_island_caller_reports_one_state_and_no_internal_boundaries():
+    observations = []
+    query = 0
+    for start, cpg_deaminated, n_cpg in (
+        (100, False, 15),
+        (300, True, 15),
+        (500, False, 3),
+    ):
+        for offset in range(20):
+            observations.append(M5CObservation(
+                0, start + offset, False, True, 0, query,
+            ))
+            query += 1
+        for offset in range(n_cpg):
+            observations.append(M5CObservation(
+                0, start + 30 + offset, True, cpg_deaminated, 0, query,
+            ))
+            query += 1
+    result = call_read_m5c_islands(
+        observations,
+        [(100, 200), (300, 400), (500, 600)],
+        [1.0, 1.0, 1.0, 1.0],
+        min_other=10,
+        min_cpg=15,
+    )
+    assert [call.state for call in result.calls] == [
+        "methylated", "unmethylated", "uninformative",
+    ]
+    assert [(call.reference_start, call.reference_end) for call in result.calls] == [
+        (100, 200), (300, 400), (500, 600),
+    ]
+    assert result.calls[0].methylated_posterior >= 0.99
+    assert result.calls[1].methylated_posterior <= 0.01
+    assert np.isnan(result.calls[2].methylated_posterior)
+
+
+def test_reference_cpg_island_inference_is_chunk_invariant(tmp_path):
+    import pysam
+
+    reference = tmp_path / "reference.fa"
+    reference.write_text(">chr1\n" + "A" * 250 + "CG" * 180 + "A" * 250 + "\n")
+    pysam.faidx(str(reference))
+    whole = infer_cpg_islands(str(reference), ["chr1"], chunk_bp=5000)
+    chunked = infer_cpg_islands(str(reference), ["chr1"], chunk_bp=211)
+    assert chunked == whole
+    assert len(whole["chr1"]) == 1
+    start, end = whole["chr1"][0]
+    assert start < 250 < 610 < end
+    assert end - start >= 360
+
+
+def test_default_whole_island_annotation_infers_catalog_and_tags_complete_island(tmp_path):
+    import pysam
+
+    reference_sequence = "A" * 250 + "CACG" * 100 + "A" * 250
+    reference = tmp_path / "reference.fa"
+    reference.write_text(">chr1\n" + reference_sequence + "\n")
+    pysam.faidx(str(reference))
+
+    sequence = list(reference_sequence)
+    for index, base in enumerate(reference_sequence[:-1]):
+        if base == "C" and reference_sequence[index + 1] != "G":
+            sequence[index] = "Y"
+    input_bam = tmp_path / "input.bam"
+    header = {
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": "chr1", "LN": len(reference_sequence)}],
+        "PG": [{"ID": "fiberhmm-call", "DS": "enzyme=ddda"}],
+    }
+    with pysam.AlignmentFile(input_bam, "wb", header=header) as sink:
+        read = pysam.AlignedSegment(sink.header)
+        read.query_name = "methylated-island"
+        read.query_sequence = "".join(sequence)
+        read.flag = 0
+        read.reference_id = 0
+        read.reference_start = 0
+        read.mapping_quality = 60
+        read.cigartuples = [(0, len(sequence))]
+        read.query_qualities = pysam.qualitystring_to_array("I" * len(sequence))
+        read.set_tag("MA", f"{len(sequence)};msp.:1-{len(sequence)}", value_type="Z")
+        sink.write(read)
+
+    output_bam = tmp_path / "output.bam"
+    used_bed = tmp_path / "islands.used.bed"
+    calls_tsv = tmp_path / "calls.tsv"
+    stats = annotate_bam_per_read_islands(
+        str(input_bam), str(output_bam), str(reference), None,
+        DDDA_FIVE_PRIME_FACTORS,
+        threads=1,
+        used_islands_bed=str(used_bed),
+        calls_tsv=str(calls_tsv),
+    )
+    assert stats["defined_islands"] == 1
+    assert stats["methylated_islands"] == 1
+    assert stats["tagged_reads"] == 1
+    island_fields = used_bed.read_text().strip().split("\t")
+    island = (int(island_fields[1]), int(island_fields[2]))
+    with pysam.AlignmentFile(output_bam, "rb", check_sq=False) as source:
+        tagged = next(source)
+    parsed = parse_ma_tag(tagged.get_tag("MA"))
+    tagged_start, tagged_length = parsed["ddda_mcg"][0]
+    assert (tagged_start, tagged_start + tagged_length) == island
+    assert "\tmethylated\t" in calls_tsv.read_text()
 
 
 def test_fused_ddda_mcg_payload_uses_reference_context_and_can_exclude_nucs():
@@ -249,7 +362,7 @@ def test_locus_projection_uses_only_overlapping_methylated_domains():
     assert project_domains_to_query(Read(), domains) == [(3, 7)]
 
 
-def test_m5c_tf_table_changes_only_cpg_accessible_probability():
+def test_m5c_tf_table_makes_only_cpgs_uninformative():
     class Model:
         emissionprob_ = np.zeros((2, UNMETH_OFFSET + N_CTX))
 
@@ -262,8 +375,8 @@ def test_m5c_tf_table_changes_only_cpg_accessible_probability():
     cpg = 3 * 16  # first right-flank base is G in A,C,T,G base-4 coding
     assert np.isclose(m_hit[non_cpg], hit[non_cpg])
     assert np.isclose(m_miss[non_cpg], miss[non_cpg])
-    assert m_miss[cpg] < miss[cpg]  # an undeaminated CpG is less footprint-like
-    assert m_hit[cpg] > hit[cpg]    # a deaminated CpG is a less extreme veto
+    assert m_miss[cpg] == 0.0
+    assert m_hit[cpg] == 0.0
 
     uplift_hit, uplift_miss = apply_emission_uplift(hit, miss, model, 1.5)
     uplift_m5c_hit, uplift_m5c_miss = build_m5c_llr_tables(
@@ -290,8 +403,30 @@ def test_m5c_tf_table_preserves_non_cpg_with_unequal_context_marginals():
     assert np.isclose(m_miss[0], miss[0])
 
 
+@pytest.mark.parametrize('decoder', ['multi_interval', 'single_excursion'])
+def test_mcg_exclusion_matches_absent_opportunities(decoder):
+    # Masked hits cannot delimit an edge; masked misses cannot provide the
+    # third opportunity. Unmasked CpGs and masked non-CpGs remain informative.
+    obs = np.array([0, 48, 4097, 4145, 4097, 4097, 48, 0, 4145], dtype=np.int32)
+    mask = np.array([False, True, True, True, True, True, True, False, False])
+    absent = obs.copy()
+    absent[[1, 3, 6]] = 8193
+    hit, miss = np.full(N_CTX, -4.0), np.full(N_CTX, 3.0)
+    mh, mm = hit.copy(), miss.copy()
+    cpg = ((np.arange(N_CTX) % 64) // 16) == 3
+    mh[cpg] = mm[cpg] = 0.0
+    for minimum in (3, 4):
+        actual = call_tfs_in_interval(obs, 0, len(obs), hit, miss, 7, minimum,
+            m5c_mask=mask, m5c_llr_hit=mh, m5c_llr_miss=mm, decoder=decoder)
+        expected = call_tfs_in_interval(absent, 0, len(obs), hit, miss, 7, minimum,
+            decoder=decoder)
+        assert actual == expected
+    assert np.array_equal(obs, [0, 48, 4097, 4145, 4097, 4097, 48, 0, 4145])
+
+
 def test_tf_scan_selects_m5c_llr_only_inside_mask():
-    obs = np.array([UNMETH_OFFSET, UNMETH_OFFSET], dtype=np.int32)
+    cpg = 3 * 16
+    obs = np.array([UNMETH_OFFSET + cpg, UNMETH_OFFSET + cpg], dtype=np.int32)
     hit = np.zeros(N_CTX)
     miss = np.ones(N_CTX)
     m_hit = np.zeros(N_CTX)
@@ -382,6 +517,34 @@ def test_ma_interval_parser_keeps_cross_strand_coverage_separate():
 def test_shared_ma_parser_exposes_ddda_mcg_intervals():
     parsed = parse_ma_tag("100;nuc.Q:1-10;ddda_mcg.:21-5,31-6")
     assert parsed["ddda_mcg"] == [(20, 5), (30, 6)]
+
+
+def test_whole_island_tags_record_methylated_and_unmethylated_calls():
+    class Read:
+        query_sequence = "A" * 100
+        query_length = 100
+        is_reverse = False
+
+        def __init__(self):
+            self.tags = {"MA": "100;nuc.Q:1-10"}
+
+        def has_tag(self, tag):
+            return tag in self.tags
+
+        def get_tag(self, tag):
+            return self.tags[tag]
+
+        def set_tag(self, tag, value, **_kwargs):
+            if value is None:
+                self.tags.pop(tag, None)
+            else:
+                self.tags[tag] = value
+
+    read = Read()
+    add_island_m5c_ma_tags(read, [(20, 30)], [(50, 70)])
+    parsed = parse_ma_tag(read.get_tag("MA"))
+    assert parsed["ddda_mcg"] == [(20, 10)]
+    assert parsed["ddda_ucg"] == [(50, 20)]
 
 
 def test_shared_ma_parser_exposes_stranded_mcg_and_hemi_intervals():
