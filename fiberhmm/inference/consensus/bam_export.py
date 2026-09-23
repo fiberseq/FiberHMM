@@ -29,6 +29,24 @@ def genomic_interval(interval, unit, region):
     return w['chrom'],[w['end']-b,w['end']-a] if w['strand']=='-' else [a+w['start'],b+w['start']]
 
 
+def strand_quality(unit, chemistry, family):
+    """AQ ``sq``: this molecule's own core protection ceiling for ``family``.
+
+    The protection LLR the molecule would give if every lattice site in the
+    family's core were unconverted, from its own sites and context emissions:
+    what its chemical strand can say about this footprint at all. Encoded as
+    1 + LLR*10 (saturated at 255) so a DAF molecule with no core site (1) is
+    distinct from 0, which marks non-DAF chemistry or an unavailable lattice."""
+    if chemistry not in ('ddda', 'dddb') or not family or 'p_accessible' not in unit:
+        return 0
+    import numpy as np
+    positions = np.asarray(unit['positions'])
+    core = (positions >= family['consensus_start']) & (positions < family['consensus_end'])
+    pa = np.asarray(unit['p_accessible'], float)[core]; pp = np.asarray(unit['p_protected'], float)[core]
+    ceiling = float(np.sum(np.log1p(-pp)-np.log1p(-pa)))
+    return int(min(255, 1+max(0, round(10*ceiling))))
+
+
 def assignment_plan(analyses):
     """Build exact SAM-record/occurrence matches; aliases keep representative provenance."""
     planned=defaultdict(lambda:defaultdict(list)); families={}; file_stats={}; chrom_cache={}
@@ -36,6 +54,7 @@ def assignment_plan(analyses):
         run=result['manifest'].get('family_identity_digest',result['manifest']['input_digest']);region=payload['region']
         layer='tf_cross_consensus' if result['manifest']['parameters']['cross']['enabled'] else 'tf_consensus'
         units={s['dataset_id']+'::'+u['unit_id']:u for s in payload['strata'] for u in s['units']}
+        chemistry={s['dataset_id']:s.get('chemistry') for s in payload['strata']}
         paths_by_dataset=defaultdict(list)
         for row in payload.get('input_files',[]):
             path=str(Path(row['path']).resolve());paths_by_dataset[row['dataset_id']].append(path)
@@ -46,6 +65,7 @@ def assignment_plan(analyses):
             file_stats[path]=dict(row,path=path)
             planned[path]
         for ds,data in result['datasets'].items():
+            catalog={f['family']:f for f in data['cr'].get('catalog',[])}
             for record in data['cr']['records']:
                 unit=units[record['unit_id']]
                 members=unit.get('source_members') or [dict(
@@ -58,6 +78,7 @@ def assignment_plan(analyses):
                     tq=llr_to_tq(native['llr']) if 'llr' in native else None
                     op=sum(span[0]<=p<span[1] for p in unit['positions'])
                     for family in proposal.get('compatible_families',[]):
+                        sq=strand_quality(unit,chemistry.get(ds),catalog.get(family))
                         token=('fhxcr_' if layer=='tf_cross_consensus' else 'fhcr_')+digest([run,family])[:24]
                         for member in members:
                             sha=member.get('record_sha256')
@@ -77,8 +98,10 @@ def assignment_plan(analyses):
                                 f=families.setdefault(key,dict(layer=layer,annotation_name=token,family_key=family,
                                     input_digest=run,stage=result.get('final_stage'),chrom=actual_chrom,start=interval[0],end=interval[1]))
                                 f['start']=min(f['start'],interval[0]);f['end']=max(f['end'],interval[1])
+                                if catalog.get(family,{}).get('strand_resolution'):
+                                    f.setdefault('strand_resolution',{})[ds]=catalog[family]['strand_resolution']
                                 planned[path][(sha,int(member.get('alignment_occurrence',0)))].append(
-                                    dict(layer=layer,token=token,chrom=actual_chrom,interval=interval,tq=tq,op=min(255,op)))
+                                    dict(layer=layer,token=token,chrom=actual_chrom,interval=interval,tq=tq,op=min(255,op),sq=sq))
     for layer in {key[0] for key in families}:
         selected={key:f for key,f in families.items() if key[0]==layer}
         slots=allocate_repeating_family_ids([TFFamilyInterval(digest(key),f['chrom'],f['start'],f['end']) for key,f in selected.items()])
@@ -142,9 +165,9 @@ def _append_annotations(read, rows):
         tokens=[]
         for (interval,token),row in sorted(values.items()):
             start,length=interval;tokens.append(f'{start+1}-{length}')
-            aq.extend([native_tq.get(interval,0) if row['tq'] is None else row['tq'],row['fi'],0,row['op']])
+            aq.extend([native_tq.get(interval,0) if row['tq'] is None else row['tq'],row['fi'],0,row['op'],row.get('sq',0)])
             names.append(token)
-        suffix.append(layer+'.QQQQ:'+','.join(tokens))
+        suffix.append(layer+'.QQQQQ:'+','.join(tokens))
     read.set_tag('MA',old+';'+ ';'.join(suffix),value_type='Z')
     read.set_tag('AQ',array.array('B',aq))
     read.set_tag('AN',format_an_tag(names),value_type='Z')
@@ -229,11 +252,13 @@ def _export_source_bams(analyses, output_dir, scope):
                         owned_layers.update(json.loads(comment[len(CONTRACT):]).get('layers',[]))
                 owned_layers.intersection_update({'tf_consensus','tf_cross_consensus'})
                 comments=[c for c in old_comments if not c.startswith((CONTRACT,FAMILY))]
-                comments.append(CONTRACT+json.dumps(dict(layers=layers,quality_names=['tq','fi','fq','op'],
+                comments.append(CONTRACT+json.dumps(dict(layers=layers,quality_names=['tq','fi','fq','op','sq'],
                     tq='native_LLR_times_10_saturated_255_or_zero_if_unavailable',
                     fi='local_repeating_uint8_slot; AN_is_authoritative_family_identity',
                     fq='zero_unavailable_no_calibrated_assignment_probability',
                     op='representative_native_opportunities_saturated_255',
+                    sq='DAF_molecule_core_protection_ceiling: 1+LLR_times_10_saturated_255 (1 = no core site); 0 = not DAF or unavailable',
+                    strand_resolution='per-family catalog entry, per dataset: trusted_strand (CT/GA/both), core_resolution, per-strand median core ceilings and native floor; use it to choose which chemical strand to quantify',
                     memberships='all_compatible_families_nonexclusive',
                     export_scope=scope,export_windows=windows,
                     coordinates='original_source_call_in_molecular_frame',

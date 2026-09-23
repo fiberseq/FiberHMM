@@ -47,11 +47,11 @@ def test_family_tags_roundtrip_preserves_native_annotations_and_all_memberships(
     with pysam.AlignmentFile(rows[0]['bam'],'rb') as bam:
         records=list(bam.fetch('chr1',100,700));comments=bam.header.to_dict()['CO']
         read=records[0];parsed=parse_ma_tag(read.get_tag('MA'))
-        assert read.get_tag('MA').startswith('200;msp.:1-200;tf.QQQ:61-20;tf_consensus.QQQQ:')
+        assert read.get_tag('MA').startswith('200;msp.:1-200;tf.QQQ:61-20;tf_consensus.QQQQQ:')
         assert parsed['raw_types'][-1][3]==[(60,20),(60,20)]
         assert list(read.get_tag('AQ'))[:3]==[80,20,30]
         extra=list(read.get_tag('AQ'))[3:]
-        assert sorted([extra[:4],extra[4:]])==[[80,1,0,20],[80,2,0,20]]
+        assert sorted([extra[:5],extra[5:]])==[[80,1,0,20,0],[80,2,0,20,0]]
         names=parse_an_tag(read.get_tag('AN'))
         assert names[:2]==['original_msp','original_tf'] and len(set(names[2:]))==2
         assert records[1].get_tag('MA')=='200;msp.:1-200;tf.QQQ:61-20'
@@ -193,3 +193,27 @@ def test_same_global_family_catalog_can_merge_distinct_window_bounds():
     b['family_key']='different'
     with pytest.raises(ValueError,match='Conflicting'):
         read_family_catalog({'CO':[FAMILY+json.dumps(v) for v in [a,b]]})
+
+
+def test_strand_quality_byte_and_family_strand_resolution(tmp_path):
+    import json, math
+    source,payload,result,_=fixture(tmp_path)
+    unit=payload['strata'][0]['units'][0]
+    unit['p_accessible']=[.6]*200;unit['p_protected']=[.05]*200
+    resolution=dict(trusted_strand='CT',core_resolution='resolved')
+    result['datasets']['a']['cr']['catalog']=[
+        dict(family='compact',consensus_start=160,consensus_end=180,strand_resolution=resolution),
+        dict(family='alternative',consensus_start=150,consensus_end=150.5)]
+    rows=export_bams([(result,payload)],tmp_path/'output',scope='full')
+    with pysam.AlignmentFile(rows[0]['bam'],'rb') as bam:
+        read=next(bam.fetch('chr1',100,300));comments=bam.header.to_dict()['CO']
+    extra=list(read.get_tag('AQ'))[3:];names=parse_an_tag(read.get_tag('AN'))[2:]
+    step=math.log1p(-.05)-math.log1p(-.6)
+    catalog=[json.loads(c[len(FAMILY):]) for c in comments if c.startswith(FAMILY)]
+    by_family={f['family_key']:f for f in catalog}
+    sq={f['family_key']:extra[5*names.index(f['annotation_name'])+4] for f in catalog}
+    assert sq['compact']==min(255,1+round(10*20*step)) and sq['alternative']==1+round(10*step)
+    assert by_family['compact']['strand_resolution']=={'a':resolution}
+    assert 'strand_resolution' not in by_family['alternative']
+    contract=json.loads(next(c for c in comments if c.startswith(CONTRACT))[len(CONTRACT):])
+    assert contract['quality_names']==['tq','fi','fq','op','sq']
