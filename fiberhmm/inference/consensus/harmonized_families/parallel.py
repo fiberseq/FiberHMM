@@ -8,6 +8,7 @@ import time
 
 from ..artifacts import read_json
 from ..execution import register_worker_state, load_worker_state, task_thread_budget, stage_executor
+from ..measurement_distribution import set_predictive_decision_stop, reset_predictive_decision_stop
 from ..progress import report
 from .reference.run_bounded_parent_panel import evaluate_cohort
 from .reference.overlapping_family_update import extend_parent
@@ -23,9 +24,10 @@ def _context(path):
     return _state
 
 
-def parent_task(path, proposal, maximum_bytes):
+def parent_task(path, proposal, maximum_bytes, stop=0):
     started=time.monotonic(); case=_context(path)['case']
     calls,region=candidate_inputs(case,proposal)
+    token=set_predictive_decision_stop(stop)
     try:
         _,result,_=next(evaluate_cohort(case['units'],calls,region,[proposal['radius']],
                         maximum_bytes,center_bounds=proposal['center_bounds']))
@@ -37,11 +39,14 @@ def parent_task(path, proposal, maximum_bytes):
         if not str(exc).startswith(expected):raise
         return dict(failure=dict(proposal=proposal['id'],error=str(exc),status='unassessed'),
                     seconds=time.monotonic()-started)
+    finally:reset_predictive_decision_stop(token)
 
 
-def foreign_task(path, channel):
+def foreign_task(path, channel, block=None, stop=0):
     started=time.monotonic(); context=_context(path)
-    records=foreign_child_scores(context['case'],{channel:context['parts'][channel]})
+    token=set_predictive_decision_stop(stop)
+    try:records=foreign_child_scores(context['case'],{channel:context['parts'][channel]},block=block)
+    finally:reset_predictive_decision_stop(token)
     return dict(records=records,seconds=time.monotonic()-started)
 
 

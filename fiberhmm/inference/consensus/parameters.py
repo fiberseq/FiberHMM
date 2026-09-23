@@ -161,6 +161,7 @@ class ComputeOptions:
     neighborhood_seconds: float = control(300., "Seconds per adaptive neighborhood", "Abort with a visible incomplete result if nomination exceeds its budget; never drop later classes.", 1, 86400, 1)
     batch_size: int = control(24, "Evidence batch size", "Memory/performance control; must not change numerical results.", 1, 2048, 1)
     cores: int = control(4, "Numerical CPU budget", "Concurrency for exact numerical work: nomination threads, single-threaded native-fit processes, or predictive-scoring workers. Memory limits can reduce concurrency without dropping evidence.", 1, 128, 1)
+    predictive_stopping: str = control('full', 'Shared-state predictive stopping', 'Staged families only. decision: a shared-state or foreign-state predictive run stops once it has enough exceedances to pass the families.assignment_reference_percent gate (one at 99.9%). The draws run are the identical prefix of the full experiment, so every compatible/rejected decision is identical to full; stored tails and intervals become lower bounds at the stop. Zero-exceedance rejections still use every draw. full: always run every draw. Native-stage scoring always runs every draw.', choices=['full', 'decision'])
     fit_cache_dir: str = control('', "Persistent native-fit cache directory (blank = off)", "Content-addressed reuse of identical native boundary-distribution fits across runs. Keys cover the complete fit inputs, fold rows, fitter source and numerical-library versions; a hit is bit-identical to a fresh fit. Execution only; no model or evidence changes.")
 
 
@@ -236,12 +237,14 @@ def parse_options(values=None):
             setattr(result['cr'],name,fixed)
         active = dict(cr={'engine','enabled','edge_tolerance_mode','minimum_edge_tolerance_bp'}, sr={'enabled'}, cross={'enabled'},
             rescue={'enabled'}, split={'enabled'}, comparability={'enabled'},
-            compute={'require_native_cache','cores','maximum_matrix_mb','maximum_region_bp','fit_cache_dir','fit_backend','predictive_backend'})
+            compute={'require_native_cache','cores','maximum_matrix_mb','maximum_region_bp','fit_cache_dir','fit_backend','predictive_backend','predictive_stopping'})
         for group, names in active.items():
             default = GROUPS[group]()
             for f in fields(default):
                 if f.name not in names and getattr(result[group],f.name) != getattr(default,f.name):
                     raise ValueError(f'{group}.{f.name} is not used by staged families; reset it to its default and use the families controls')
+    elif result['compute'].predictive_stopping!='full':
+        raise ValueError('compute.predictive_stopping applies only to staged native families')
     for name in ('native_minimum_call_attribution_mass', 'native_minimum_geometry_retention',
                  'native_minimum_visible_geometry_mass'):
         if not 0 < getattr(cross,name) <= 1:

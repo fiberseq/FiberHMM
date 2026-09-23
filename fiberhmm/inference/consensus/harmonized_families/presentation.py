@@ -72,6 +72,10 @@ def browser_snapshot(scopes, sources, mode, stage, context=None,
             families = sorted(record['display_hypotheses'])
             if assignment_reference_percent < 99.9:
                 scores = record.get('assignment_compatibility', {})
+                cut = 1. - assignment_reference_percent / 100.
+                if any(s.get('exact_for_tail_cuts_at_most', 1.) < cut - 1e-12 for s in scores.values()):
+                    raise ValueError('Scores were stopped for a more permissive assignment reference; '
+                                     'rerun with this families.assignment_reference_percent or compute.predictive_stopping=full')
                 families = [fid for fid in families
                     if scores.get(fid, {}).get('status') == 'scored'
                     and scores[fid].get('predictive_tail_interval', [0., 0.])[1]

@@ -83,8 +83,12 @@ def transfer_child(frozen, unit, call, *, replicates=4095, read_cache=None, cach
         raise AssertionError('Transferred call truncated')
     return dict(score, compatible=bool(compatible) if assessed else None)
 
-def foreign_child_scores(case, parts, progress=None):
-    """Every eligible foreign event × actually overlapping fitted child, once."""
+def foreign_child_scores(case, parts, progress=None, block=None):
+    """Every eligible foreign event × actually overlapping fitted child, once.
+
+    ``block=(k, n)`` scores only the k-th of n contiguous blocks of each channel's
+    sorted children, so a channel can be split across workers; concatenating the
+    blocks in order reproduces the unsplit record list exactly."""
     models = {m['family']: m for m in case['models']}
     records = []
     reads = NativeReadCache(64 * 1024 ** 2)
@@ -92,7 +96,11 @@ def foreign_child_scores(case, parts, progress=None):
         source_groups = {u['fold_group_id'] for u in part['units'].values()}
         frozen = freeze_children(part)
         foreign = [c for c in case['calls'] if case['source_by_unit'][c['unit_id']] != channel]
-        for (index, (fid, f)) in enumerate(sorted(frozen.items())):
+        children = sorted(frozen.items())
+        if block is not None:
+            k, n = block; size = -(-len(children) // n)
+            children = children[k * size:(k + 1) * size]
+        for (index, (fid, f)) in enumerate(children):
             qualified = channel + '::' + fid
             model = models[qualified]
             cache = TransferGeometryCache(f, f['grid'], 2, 16 * 1024 ** 2)

@@ -314,6 +314,12 @@ def _monotone_projection_ranges(starts, ends):
 
 @njit(cache=True, nogil=True)
 def _predictive_exceedances(pa, pp, starts, ends, log_penalty, cdf, threshold, replicates, seed):
+    """Exceedance count over all ``replicates`` draws (the reference experiment)."""
+    return _predictive_exceedance_run(pa, pp, starts, ends, log_penalty, cdf, threshold, replicates, seed, 0)[0]
+
+
+@njit(cache=True, nogil=True)
+def _predictive_exceedance_run(pa, pp, starts, ends, log_penalty, cdf, threshold, replicates, seed, stop_count):
     """Same random experiments and exact tail event, with bounded profile work.
 
     The unpenalized maximum uses a sliding range maximum where the complete
@@ -322,6 +328,10 @@ def _predictive_exceedances(pa, pp, starts, ends, log_penalty, cdf, threshold, r
     cannot exceed best, sorted penalties provide an exact early stopping bound.
     Both tests use the original floating-point operations, not an approximate
     penalty cutoff. Every replicate still consumes every original random draw.
+
+    Returns (count, replicates run). With ``stop_count`` > 0 the run ends as soon
+    as ``stop_count`` exceedances are seen; the replicates already run are the
+    identical prefix of the full experiment, so count >= stop_count is exact.
     """
     if (not len(starts) or len(ends) != len(starts) or len(log_penalty) != len(starts)
             or len(cdf) != len(starts) or len(pp) != len(pa)):
@@ -351,7 +361,9 @@ def _predictive_exceedances(pa, pp, starts, ends, log_penalty, cdf, threshold, r
     # Cache its EXACT event, not a probability approximation. Still consume
     # every original RNG draw and construct the same ordered prefix sums.
     memo = np.full(1 << len(pa) if len(pa) <= 16 else 0, -1, np.int8)
-    for _ in range(replicates):
+    for used in range(replicates):
+        if stop_count > 0 and count >= stop_count:
+            return count, used
         g = np.searchsorted(cdf, np.random.random())
         pattern = 0
         for j in range(len(pa)):
@@ -393,7 +405,7 @@ def _predictive_exceedances(pa, pp, starts, ends, log_penalty, cdf, threshold, r
         count += exceeds
         if len(memo):
             memo[pattern] = int(exceeds)
-    return count
+    return count, replicates
 
 
 def predictive_reference(log_density, log_mass, recipient, starts, ends, *, allowed,
@@ -456,6 +468,19 @@ def current_predictive_kernel():
     return _predictive_kernel.get()
 
 
+# Exceedance count at which a reference-kernel run may stop (0 = never). Set only
+# where every consumer applies an upper-bound gate the stop count already passes.
+_predictive_decision_stop = ContextVar('consensus_predictive_decision_stop', default=0)
+
+
+def set_predictive_decision_stop(count):
+    return _predictive_decision_stop.set(int(count))
+
+
+def reset_predictive_decision_stop(token):
+    _predictive_decision_stop.reset(token)
+
+
 def complete_predictive_reference(record):
     """Finish exactly one original-seed simulation, removing its work carrier.
 
@@ -476,9 +501,23 @@ def complete_predictive_reference(record):
             simulations=int(replicates), tail_exceedances=int(info['raw_events']),
             simulation_resolution=1./(replicates+1.), predictive_kernel='vectorized_philox',
             predictive_tilt=str(tilt), weighted_events=float(info['weighted_events']))
-    count = int(_predictive_exceedances(*request))
     replicates = request[-2]
+    stop = _predictive_decision_stop.get()
+    if kernel == 'reference' and stop > 0:
+        count, used = _predictive_exceedance_run(*request, stop)
+        if used < replicates:
+            return predictive_decision_stop_record(result, int(count), int(used), replicates)
+        return predictive_count_record(result, int(count), replicates)
+    count = int(_predictive_exceedances(*request))
     return predictive_count_record(result, count, replicates)
+
+
+def _wilson_interval(count, replicates):
+    z = 1.959963984540054; freq = count/replicates
+    den = 1+z*z/replicates
+    center = (freq+z*z/(2*replicates))/den
+    half = z*np.sqrt(freq*(1-freq)/replicates+z*z/(4*replicates**2))/den
+    return float(max(0., center-half)), float(min(1., center+half))
 
 
 def predictive_count_record(result, count, replicates):
@@ -486,12 +525,29 @@ def predictive_count_record(result, count, replicates):
     # Plus-one reference and Wilson Monte Carlo interval; the interval is about
     # Monte Carlo precision only, not scientific-model or selection uncertainty.
     tail = (count+1.)/(replicates+1.)
-    z = 1.959963984540054; freq = count/replicates
-    den = 1+z*z/replicates
-    center = (freq+z*z/(2*replicates))/den
-    half = z*np.sqrt(freq*(1-freq)/replicates+z*z/(4*replicates**2))/den
-    return result | dict(predictive_tail=float(tail), predictive_tail_interval=[float(max(0., center-half)), float(min(1., center+half))],
+    return result | dict(predictive_tail=float(tail), predictive_tail_interval=list(_wilson_interval(count, replicates)),
         simulations=replicates, tail_exceedances=count, simulation_resolution=1./(replicates+1.))
+
+
+def decision_stop_count(cut, replicates):
+    """Fewest exceedances in ``replicates`` whose Wilson upper bound reaches ``cut``."""
+    for count in range(replicates+1):
+        if _wilson_interval(count, replicates)[1] >= cut:
+            return count
+    raise ValueError('No exceedance count reaches the predictive cut')
+
+
+def predictive_decision_stop_record(result, count, used, replicates):
+    """A run stopped after ``count`` exceedances in its first ``used`` draws.
+
+    The planned ``replicates`` experiment would have at least ``count``
+    exceedances, and every exported value is monotone in the count, so each is
+    the value at ``count`` of the planned experiment: a lower bound, exact for
+    any upper-bound gate at or below ``exact_for_tail_cuts_at_most``."""
+    record = predictive_count_record(result, count, replicates)
+    return record | dict(simulations=used, planned_simulations=replicates,
+        predictive_stopping='decision_v1', predictive_tail_semantics='lower_bound_at_stop',
+        exact_for_tail_cuts_at_most=record['predictive_tail_interval'][1])
 
 
 def _unique_projection_pairs(left, right):

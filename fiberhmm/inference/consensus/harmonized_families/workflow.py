@@ -23,6 +23,7 @@ from .reference.reuse_consensus_fits import reuse_consensus
 from .reference.resolve_consensus_representatives import resolve_representatives
 from ..artifacts import digest, read_json, write_json
 from ..measurement_family import classify_family_profiles
+from ..measurement_distribution import decision_stop_count
 from ..fit_execution import native_fit_pool
 from ..scoring_execution import native_scoring_pool
 from ..parameters import options_dict
@@ -142,7 +143,7 @@ def attach_assignment_scores(snapshots, parts, results, foreign):
     scores = defaultdict(dict)
     def add(key, fid, score):
         scores[tuple(key)][fid] = {k:deepcopy(score[k]) for k in
-            ('status', 'predictive_tail_interval') if k in score}
+            ('status', 'predictive_tail_interval', 'exact_for_tail_cuts_at_most') if k in score}
     for channel, part in parts.items():
         native = read_json(part['native_cell_provenance']['path'])
         if digest(native) != part['native_cell_provenance']['digest']:
@@ -171,7 +172,7 @@ def attach_assignment_scores(snapshots, parts, results, foreign):
                 if root(fid) in evidence}
 
 
-def consolidate_scope(parts, radius, folder, maximum_bytes, stop_after, progress, *, cache, scope_key, cores, minimum_retention_groups=2):
+def consolidate_scope(parts, radius, folder, maximum_bytes, stop_after, progress, *, cache, scope_key, cores, minimum_retention_groups=2, predictive_stop=0):
     case = combine_cases(parts); frozen = digest(case); snapshots = {}; timings = {}
     snapshots['native'] = cross_annotation(case, [], {}, radius, [])
     save(folder/'native.json.gz',snapshots['native'])
@@ -188,15 +189,24 @@ def consolidate_scope(parts, radius, folder, maximum_bytes, stop_after, progress
                for channel,part in parts.items()}))
     foreign_by_channel={};tasks=[];foreign_keys={}
     foreign_started=time.monotonic()
+    # Each channel is split into contiguous blocks of its sorted children so the
+    # stage can use every core; blocks are concatenated in order, reproducing the
+    # single-task record list exactly. The cache stays per channel.
+    blocks=max(1,int(cores))
+    # Decision stopping changes stored tails (not decisions): key it separately.
+    stopping={'predictive_stop':predictive_stop} if predictive_stop else {}
     for channel in sorted(parts):
-        key=cache.key('foreign',dict(scope=scope_key,channel=channel));foreign_keys[channel]=key
+        key=cache.key('foreign',dict(scope=scope_key,channel=channel,**stopping));foreign_keys[channel]=key
         value=cache.get('foreign',key)
-        if value is None:tasks.append((channel,(str(context.resolve()),channel),128*1024**2))
+        if value is None:
+            tasks.extend(((channel,k),(str(context.resolve()),channel,(k,blocks),predictive_stop),128*1024**2) for k in range(blocks))
         else:foreign_by_channel[channel]=value
-    def save_foreign(channel,value):
-        cache.put('foreign',foreign_keys[channel],value)
-    foreign_by_channel.update(ordered_tasks(foreign_task,tasks,cores=cores,maximum_bytes=maximum_bytes,
-        progress=progress,stage='foreign_scoring',on_result=save_foreign) if tasks else {})
+    done=ordered_tasks(foreign_task,tasks,cores=cores,maximum_bytes=maximum_bytes,
+        progress=progress,stage='foreign_scoring',on_result=lambda key,value:None) if tasks else {}
+    for channel in sorted({c for c,_ in done}):
+        value=dict(records=[r for k in range(blocks) for r in done[(channel,k)]['records']],
+                   seconds=sum(done[(channel,k)]['seconds'] for k in range(blocks)))
+        cache.put('foreign',foreign_keys[channel],value);foreign_by_channel[channel]=value
     foreign=[r for channel in sorted(parts) for r in foreign_by_channel[channel]['records']]
     timings['foreign_scoring']=time.monotonic()-foreign_started
     save(folder/'foreign_scores.json.gz', foreign)
@@ -215,10 +225,10 @@ def consolidate_scope(parts, radius, folder, maximum_bytes, stop_after, progress
     for i, proposal in enumerate(proposals):
         report(progress,'parent_cache',f'Checking shared-fit checkpoints {i+1}/{len(proposals)}',
                completed=i+1,total=len(proposals),unit='hypotheses')
-        pid=proposal['id'];key=cache.key('parent',dict(scope=scope_key,proposal=proposal));parent_keys[pid]=key
+        pid=proposal['id'];key=cache.key('parent',dict(scope=scope_key,proposal=proposal,**stopping));parent_keys[pid]=key
         value=cache.get('parent',key)
         if value is None:
-            tasks.append((pid,(str(context.resolve()),proposal,maximum_bytes),parent_working_bytes(case,proposal)))
+            tasks.append((pid,(str(context.resolve()),proposal,maximum_bytes,predictive_stop),parent_working_bytes(case,proposal)))
         else:install_parent(pid,value)
     def save_parent(pid,value):
         cache.put('parent',parent_keys[pid],value);install_parent(pid,value)
@@ -272,6 +282,11 @@ def run_staged_families(payload, options, output_dir=None, progress=None):
                        'harmonized_families/presentation.py'}
     kernel_implementation={name:value for name,value in implementation.items() if name not in presentation_only}
     checkpoints=Checkpoints(Path(cache)/'staged',kernel_implementation);source_keys={}
+    # Shared-state and foreign scores feed only upper-bound gates at 99.9% (the
+    # compatible flag) and at the assignment reference; stopping at the count
+    # that passes the stricter of the two leaves every decision unchanged.
+    predictive_stop=(decision_stop_count(max(.001,1.-options['families'].assignment_reference_percent/100.),4095)
+                     if options['compute'].predictive_stopping=='decision' else 0)
     with shared_worker_pool(options['compute'].cores), native_fit_pool(options['compute'].cores, budget, cache_dir=cache), native_scoring_pool(options['compute'].cores):
         for source in sources:
             strands = ['pooled'] if source['chemistry'].startswith('hia5') else sorted({u['strand'] for u in source['units']})
@@ -307,7 +322,7 @@ def run_staged_families(payload, options, output_dir=None, progress=None):
             case, snapshots, timings = consolidate_scope(selected, options['families'].physical_radius_bp,
                 folder, budget, options['families'].stop_after, progress,cache=checkpoints,
                 scope_key=digest({c:source_keys[c] for c in sorted(selected)}),cores=options['compute'].cores,
-                minimum_retention_groups=options['families'].minimum_retention_groups)
+                minimum_retention_groups=options['families'].minimum_retention_groups,predictive_stop=predictive_stop)
             for stage, snapshot in snapshots.items(): stage_scopes[stage].append((case, snapshot))
             for stage, seconds in timings.items(): stage_times[stage] += seconds
     # Empty datasets also retain an empty catalog/ledger rather than disappearing.
@@ -336,7 +351,8 @@ def run_staged_families(payload, options, output_dir=None, progress=None):
         parameters=options_dict(options), input_digest=before, mode=mode, mode_realized=realized_mode,realized_channels=realized_channels,data_warnings=data_warnings,seconds=time.monotonic()-started,
         all_units=True, read_sample_cap=None, family_count_cap=None, native_source_modified=False,
         nomination='common_native_cell_v1', numerical_policy=dict(native_edge_floor_bp=2, parent_matching_floor_bp=0,
-        edge_tolerance_mode='bounded', reference_percent=99.9, predictive_replicates=4095, scoring_folds=10, fit_iterations=100, retry_iterations=500),
+        edge_tolerance_mode='bounded', reference_percent=99.9, predictive_replicates=4095, scoring_folds=10, fit_iterations=100, retry_iterations=500,
+        shared_state_predictive_stop_exceedances=predictive_stop or None),
         stages=stages, native_timings=native_timings, last_stage=final_stage,
         checkpoints=checkpoints.statistics(),detailed_stage_seconds=dict(stage_times),
         datasets=[dict(dataset_id=s['dataset_id'], chemistry=s['chemistry'], units=len(s['units']),
