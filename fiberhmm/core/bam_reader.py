@@ -964,6 +964,7 @@ _DAF_RUN_POLICY_ENV = 'FIBERHMM_DAF_RUN_POLICY'
 _DAF_RUN_POLICIES = ('keep-one', 'drop')
 _DAF_RUN_MASK_MIN = None
 _DAF_RUN_POLICY = None
+_DAF_RUN_MASK_CONFIGURED = False  # set by configure_daf_run_mask only, never by a lazy read
 
 # Chemistry defaults. DddA: keep-one on runs >= 2 (CC/GG) — validated on the
 # full NAPA locus and on 15,557 HG002 scDAF duplexes (2026-09-23: precision of
@@ -1023,8 +1024,11 @@ def apply_daf_run_mask_arguments(args, enzyme):
 
 
 def daf_run_mask_explicit() -> bool:
-    """True when this process configured the mask or inherited it from the environment."""
-    return _DAF_RUN_MASK_MIN is not None or bool(os.environ.get(_DAF_RUN_MASK_ENV))
+    """True when this process configured the mask or inherited it from the environment.
+
+    A lazily read environment default does not count: only configure_daf_run_mask
+    or an actually set FIBERHMM_DAF_RUN_MASK variable is an explicit request."""
+    return _DAF_RUN_MASK_CONFIGURED or bool(os.environ.get(_DAF_RUN_MASK_ENV))
 
 
 def _validate_run_mask(value) -> int:
@@ -1042,7 +1046,8 @@ def _validate_run_policy(value) -> str:
 
 def configure_daf_run_mask(min_run_length: int = 0, policy: str = 'keep-one') -> None:
     """Thin DAF targets in runs of >= min_run_length original C (CT) or G (GA) bases."""
-    global _DAF_RUN_MASK_MIN, _DAF_RUN_POLICY
+    global _DAF_RUN_MASK_MIN, _DAF_RUN_POLICY, _DAF_RUN_MASK_CONFIGURED
+    _DAF_RUN_MASK_CONFIGURED = True
     _DAF_RUN_MASK_MIN = _validate_run_mask(min_run_length)
     _DAF_RUN_POLICY = _validate_run_policy(policy)
     os.environ[_DAF_RUN_MASK_ENV] = str(_DAF_RUN_MASK_MIN)

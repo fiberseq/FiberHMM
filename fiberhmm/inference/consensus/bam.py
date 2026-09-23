@@ -153,18 +153,49 @@ def _exclude_recall_failures(units, excluded, label, diagnostics):
     return kept,dict(diagnostics,hia5_recall_excluded=sorted(excluded.values(),key=lambda r:r['unit_id']))
 
 
-def _dataset_daf_run_mask(chemistry, options, label):
-    """(min_run_length, policy) for one dataset's lattices and native replay."""
+def _calls_lattice_mask(ds):
+    """The DAF run mask the BAM's existing native calls were decoded with.
+
+    Read from the last FiberHMM @PG record that declares ``daf_run_mask=``;
+    BAMs called before the option existed were unmasked."""
+    import re
+    import pysam
+    found = None
+    if getattr(ds, 'data_type', 'bam') != 'bam':
+        return 0, 'keep-one'
+    for path in _flatten_paths(getattr(ds, 'paths', None) or getattr(ds, 'path', None) or []):
+        try:
+            with pysam.AlignmentFile(path, 'rb', check_sq=False) as bam:
+                programs = bam.header.to_dict().get('PG', [])
+        except (OSError, ValueError):
+            continue
+        for program in programs:
+            match = re.search(r'daf_run_mask=(?:>=(\d+)/([a-z-]+)|off)', str(program.get('DS', '')))
+            if match:
+                found = (int(match.group(1)), match.group(2)) if match.group(1) else (0, 'keep-one')
+    return found or (0, 'keep-one')
+
+
+def _dataset_daf_run_mask(chemistry, options, label, ds=None):
+    """(min_run_length, policy) for one dataset's lattices and native calls.
+
+    With native replay (the default) the chemistry default applies (DddA
+    keep-one on runs >= 2) unless one was requested explicitly. Without replay
+    the BAM's own calls are used, so the lattice follows the mask they were
+    decoded with (from @PG); an explicit request that contradicts it fails."""
     from fiberhmm.core.bam_reader import (daf_run_mask_explicit, daf_run_mask_min_length,
                                           daf_run_mask_policy, default_daf_run_mask)
     if chemistry not in ('ddda','dddb'):
         return 0,'keep-one'
-    mask=(daf_run_mask_min_length(),daf_run_mask_policy()) if daf_run_mask_explicit() else default_daf_run_mask(chemistry)
-    if mask[0] and not options['input'].correct_native:
-        raise ValueError(f'{label}: the DAF run mask thins the lattice, so native calls must be replayed on it '
-                         '(input.correct_native); existing BAM calls were decoded on a different lattice. '
-                         'Enable native replay or set the mask to 0 explicitly.')
-    return mask
+    requested=(daf_run_mask_min_length(),daf_run_mask_policy()) if daf_run_mask_explicit() else None
+    if options['input'].correct_native:
+        return requested or default_daf_run_mask(chemistry)
+    calls=_calls_lattice_mask(ds) if ds is not None else (0,'keep-one')
+    if requested is not None and requested[0]!=calls[0]:
+        raise ValueError(f'{label}: the requested DAF run mask differs from the lattice the BAM calls were '
+                         f'decoded with ({"off" if not calls[0] else ">="+str(calls[0])}); enable native replay '
+                         '(input.correct_native) or request the matching mask.')
+    return calls
 
 
 def _load_payload(state,request,options,progress):
@@ -180,7 +211,7 @@ def _load_payload(state,request,options,progress):
         # DAF run mask per dataset: the chemistry default (DddA keep-one on runs
         # >= 2) unless the caller configured one explicitly. Scoped, so mixed
         # DddA/DddB loads and concurrent Browser jobs cannot leak into each other.
-        mask=_dataset_daf_run_mask(chemistry,options,ds.label)
+        mask=_dataset_daf_run_mask(chemistry,options,ds.label,ds)
         from fiberhmm.core.bam_reader import daf_run_mask_scope
         with daf_run_mask_scope(*mask):
             from fiberhmm.inference.consensus.progress import report
@@ -190,7 +221,7 @@ def _load_payload(state,request,options,progress):
                 allow_population=True,require_nucleosomes=False,tf_layer='tf',minimum_mapq=options['input'].minimum_mapq,
                 **({'legacy_annotation_frame':options['input'].legacy_hia5_annotation_frame} if chemistry.startswith('hia5') and options['cr'].engine in (HARMONIZATION_MODE,STAGED_MODE) else {}))
             if any(read.pair_partner for read in reads):
-                raise ValueError('Paired source reads are not independent molecules. Run fiberhmm-merge --recall before population consensus; if pairs failed to merge, --pairs-only excludes those unresolved pairs.')
+                raise ValueError('Paired source reads are not independent molecules. Run fiberhmm-pair (pair -> merge -> recall) before population consensus; if pairs failed to merge, --pairs-only excludes those unresolved pairs.')
             for read in reads:_prefix_library(read,dsid)
             if chemistry in ('ddda','dddb'):
                 representatives,collapse=runtime['collapse'](reads,min_jaccard=options['input'].molecule_min_jaccard,

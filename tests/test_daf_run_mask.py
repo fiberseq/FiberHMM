@@ -143,14 +143,20 @@ def test_consensus_dataset_mask_follows_chemistry_and_requires_native_replay():
     import pytest
     from fiberhmm.core import bam_reader as br
     from fiberhmm.inference.consensus.bam import _dataset_daf_run_mask
-    br._DAF_RUN_MASK_MIN = None; br._DAF_RUN_POLICY = None
+    br._DAF_RUN_MASK_MIN = None; br._DAF_RUN_POLICY = None; br._DAF_RUN_MASK_CONFIGURED = False
     import os
     os.environ.pop(br._DAF_RUN_MASK_ENV, None); os.environ.pop(br._DAF_RUN_POLICY_ENV, None)
     replay = {'input': SimpleNamespace(correct_native=True)}
     assert _dataset_daf_run_mask('ddda', replay, 'x') == (2, 'keep-one')
     assert _dataset_daf_run_mask('dddb', replay, 'x') == (0, 'keep-one')
     assert _dataset_daf_run_mask('hia5-pacbio', replay, 'x') == (0, 'keep-one')
-    with pytest.raises(ValueError, match='replayed'):
-        _dataset_daf_run_mask('ddda', {'input': SimpleNamespace(correct_native=False)}, 'x')
+    # without native replay the lattice follows the BAM calls (unmasked here: no @PG record)
+    existing = {'input': SimpleNamespace(correct_native=False)}
+    assert _dataset_daf_run_mask('ddda', existing, 'x', SimpleNamespace(data_type='bam', paths=[])) == (0, 'keep-one')
+    br.configure_daf_run_mask(2, 'keep-one')  # an explicit mask that contradicts the calls fails
+    with pytest.raises(ValueError, match='decoded with'):
+        _dataset_daf_run_mask('ddda', existing, 'x', SimpleNamespace(data_type='bam', paths=[]))
     br.configure_daf_run_mask(0, 'keep-one')  # explicit off wins for every chemistry
-    assert _dataset_daf_run_mask('ddda', {'input': SimpleNamespace(correct_native=False)}, 'x') == (0, 'keep-one')
+    assert _dataset_daf_run_mask('ddda', replay, 'x') == (0, 'keep-one')
+    br._DAF_RUN_MASK_CONFIGURED = False; br._DAF_RUN_MASK_MIN = None
+    os.environ.pop(br._DAF_RUN_MASK_ENV, None); os.environ.pop(br._DAF_RUN_POLICY_ENV, None)

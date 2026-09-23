@@ -9,6 +9,22 @@ import pysam
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_daf_run_mask(monkeypatch):
+    """CLI entry points configure the process-wide DAF run mask; keep tests independent."""
+    from fiberhmm.core import bam_reader
+    monkeypatch.setattr(bam_reader, "_DAF_RUN_MASK_MIN", None)
+    monkeypatch.setattr(bam_reader, "_DAF_RUN_POLICY", None)
+    monkeypatch.setattr(bam_reader, "_DAF_RUN_MASK_CONFIGURED", False)
+    monkeypatch.delenv(bam_reader._DAF_RUN_MASK_ENV, raising=False)
+    monkeypatch.delenv(bam_reader._DAF_RUN_POLICY_ENV, raising=False)
+    yield
+    # configure_daf_run_mask writes os.environ directly; monkeypatch restores the
+    # variables it deleted above, but not values set afterwards, so clear them.
+    os.environ.pop(bam_reader._DAF_RUN_MASK_ENV, None)
+    os.environ.pop(bam_reader._DAF_RUN_POLICY_ENV, None)
+
+
 @pytest.fixture
 def simple_emission_probs():
     """
