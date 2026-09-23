@@ -154,7 +154,9 @@ def annotate(case, proposals, results, radius):
                 residual_reason = 'replacing_parent_unassessed'
             else:
                 residual_reason = 'all_replacing_parents_rejected'
-        records.append(dict(original=deepcopy(old), call_id=old['call_id'], unit_id=old['unit_id'], interval=old['interval'], strand=old['strand'], compatible_children=children, compatible_parents=parents, display_hypotheses=active, status=status, parent_evaluations=ev, replacing_hypotheses=replacing, residual_assessment=residual_reason, original_llr_observation_retained=True))
+        # The ledger row is shared, not copied: it is frozen (consolidate_scope
+        # re-digests the case at the end) and only ever read through 'original'.
+        records.append(dict(original=old, call_id=old['call_id'], unit_id=old['unit_id'], interval=old['interval'], strand=old['strand'], compatible_children=children, compatible_parents=parents, display_hypotheses=active, status=status, parent_evaluations=ev, replacing_hypotheses=replacing, residual_assessment=residual_reason, original_llr_observation_retained=True))
     visible_parents = sum((h['kind'] == 'bounded_parent' and h['display'] for h in hypotheses))
     visible_children = sum((h['kind'] == 'native_child' and h['display'] for h in hypotheses))
     baseline = sum((bool(v) for v in child_members.values()))

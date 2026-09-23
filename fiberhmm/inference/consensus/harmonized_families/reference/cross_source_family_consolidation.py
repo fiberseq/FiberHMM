@@ -41,8 +41,10 @@ def combine_cases(parts):
             models.append(model)
             model_source[model['family']] = channel
         for old in case['ledger']:
-            row = deepcopy(old)
-            row['original_source_record'] = deepcopy(old)
+            # Fields below are reassigned, never edited in place, so a shallow row
+            # and a shared source record are content-identical to deep copies.
+            row = dict(old)
+            row['original_source_record'] = old
             row['source_channel'] = channel
             row['call_id'] = channel + '::' + str(old['call_id'])
             row['compatible_families'] = [family(f) for f in old['compatible_families']]
