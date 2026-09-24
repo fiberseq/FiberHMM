@@ -19,7 +19,7 @@ dddb    (any)     apply    dddb_nanopore.json
 dddb    (any)     recall   dddb_nanopore.json
 ddda    (any)     apply    ddda_nuc.json
 ddda    (any)     recall   ddda_TF.json
-ddda    (any)     nuc_refine  ddda_nuc_refine.json (internal frozen likelihoods)
+ddda    (any)     nuc_refine  ddda_nuc_refine.json (internal, deliberately permissive frozen likelihoods)
 
 Additional model-development artifacts may be present in this package, but
 they are not public enzyme presets and carry no supported-workflow claim.
@@ -81,9 +81,12 @@ _BUNDLED: dict[tuple[str, str | None], dict[str, object]] = {
     ('ddda', None): {
         'apply': 'ddda_nuc.json',
         'recall': 'ddda_TF.json',
-        # The radial nucleosome refiner was calibrated with the original
-        # TF-table likelihoods. Keep those likelihoods frozen independently
-        # of future DddA TF-recaller calibration.
+        # Deliberately NOT DddA emissions. The radial nucleosome refiner needs
+        # permissive likelihoods for loose segmentation (it was calibrated with
+        # the original TF-table likelihoods, which are the legacy G/T-swapped
+        # DddB table). True SsDddA LLRs over-split nucleosomes on dense internal
+        # deamination. Do not "correct" or re-index this file; keep it frozen
+        # independently of DddA TF-recaller or DddB table changes.
         'nuc_refine': 'ddda_nuc_refine.json',
         'mode': 'daf',
     },
