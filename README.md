@@ -77,63 +77,13 @@ modification data — m6A methylation (fiber-seq) and deamination marks (DAF-seq
   groups, geometry roles, scores, header contract, and indexing. See the
   [model/CLI contract](docs/strand_rescue.md).
 - **`fiberhmm-tag-consensus`** — materializes a frozen
-  site-consensus footprint-state assignment
+  consensus-state assignment
   table entirely inside the BAM by extending `tf_sr.QQQ` to `tf_sr.QQQQQ`.
   The added `fi` byte is a locally reusable consensus-state slot (`0` = unassigned), and
   `fq` is the producer-declared call-to-state assignment confidence on a
   0–255 scale (not a biological occupancy posterior). IDs are interpreted
   together with genomic position; raw `tf` calls
   and normalized `tf_sr` intervals remain unchanged.
-- **`fiberhmm-site-consensus discover/quantify`** — coverage-aware site-consensus state
-  discovery for amplicons or selected genome-wide coordinates. It gates 1-kb
-  cores on recurrent >=150-bp MSPs, learns chemistry-aware geometry from a
-  deterministic source/strand-balanced cap, freezes that catalog, then scores
-  the complete unbiased independent-molecule cohort with the sequence-context
-  likelihood. The enriched discovery cohort never supplies occupancy. DAF
-  quantification reuses the exact deamination-fingerprint PCR-collapse
-  allowlist, and ordinary `tf`/`nuc` annotations are never overwritten.
-  Quantification defaults to the unchanged CPU likelihood reference. Install a
-  CUDA-enabled PyTorch build and pass `--likelihood-backend cuda` to evaluate
-  anchored-state, spatial-null, and diffuse-null likelihoods in deterministic
-  float64 resident batches;
-  `--likelihood-backend auto` falls back to CPU when no CUDA device is
-  accessible. CUDA uses VRAM-aware, sparse genomic-locality batches, exact
-  vectorized eligibility, and CPU replay only for assignments within
-  `--cuda-replay-guard-nats` of either decision threshold. Multiple
-  same-chemistry BAMs are pooled by repeating
-  `-i/--input` in the same order for discovery and quantification. Use
-  `quantify --reuse-models-from PRIOR_QUANTIFICATION` to rescore a strictly
-  provenance-matched frozen model set with different thresholds or a different
-  backend without repeating the geometry fit.
-  For tens to thousands of predefined loci, use the BED batch path rather than
-  scanning intervening chromosomes:
-
-  ```bash
-  fiberhmm-site-consensus batch \
-    --bed oct4_peaks.bed \
-    -i replicate1.bam -i replicate2.bam \
-    --site-padding 500 --unit-workers 8 -c 1 \
-    --likelihood-backend cpu --skip-input-hash \
-    -o oct4_site_consensus_scan
-  ```
-
-  Batch targets are snapped to the global 1-kb discovery grid. Overlapping
-  padded targets are never split; nearby targets share bounded indexed BAM
-  fetches; and gap-only families are removed before fitting. Discovery finishes
-  first, then the batch freezes one calibration mask containing every padded
-  target and every retained consensus state's complete candidate envelope. Every
-  work unit calibrates against that same mask and full-alignment evidence, so
-  BED partitioning changes results only at floating-point roundoff. Discovery
-  and CPU quantification run across work units in parallel. CUDA quantification
-  uses one fresh, sequential device process per unit—preventing CUDA/fork state
-  inheritance—and is most useful for dense merged units; sparse ChIP-peak lists
-  generally run faster with the CPU default.
-  `--resume` restarts only incomplete units. Parent progress is concise, while
-  detailed discovery and quantification logs remain beside each unit.
-  Aggregate TSVs include both padded-target and direct BED-overlap membership,
-  globally allocated reusable consensus-state slots, and explicit `unscorable` rows.
-  Per-unit model/score provenance is stored as compact JSONL rather than one
-  small file per consensus state.
 - **`fiberhmm-pair`** — the scDAF paired-duplex workflow in one command: pair, then
   merge each pair into one both-strand molecule, then jointly re-call (the default;
   `--stop-after pair|merge` and `--from-paired` run parts). For pairing it combines

@@ -315,3 +315,74 @@ def header_has_coord_marker(header) -> bool:
         "coord=molecular" in str(program.get("DS", ""))
         for program in d.get("PG", [])
     )
+
+
+# Chemistry-profile resolution shared by consensus refinement (moved from the retired
+# fiberhmm-site-consensus CLI; behaviour unchanged).
+def chemistry_profile_from_declaration(declaration) -> str | None:
+    """Map a chemistry declaration to a profile key (ddda, dddb, hia5-pacbio, hia5-nanopore)."""
+    enzyme = str(declaration.get("enzyme", "")).lower()
+    platform = str(declaration.get("platform", "")).lower()
+    assay = str(declaration.get("assay", "")).lower()
+    if enzyme in {"ddda", "dddb"}:
+        return enzyme
+    if enzyme == "hia5" or assay == "fiber-seq":
+        if platform == "pacbio":
+            return "hia5-pacbio"
+        if platform in {"nanopore", "ont"}:
+            return "hia5-nanopore"
+    return None
+
+
+def bam_chemistry_profile(path) -> tuple[str | None, dict | None, str]:
+    """Return (profile, declaration, source) for one BAM from its header."""
+    with pysam.AlignmentFile(str(path), "rb", check_sq=False) as handle:
+        declarations = declared_chemistries(handle.header)
+        if len(declarations) > 1:
+            profiles = {chemistry_profile_from_declaration(value) for value in declarations}
+            profiles.discard(None)
+            if len(profiles) != 1:
+                raise ValueError(f"ambiguous chemistry declarations in {path}")
+        if declarations:
+            declaration = declarations[-1]
+            return chemistry_profile_from_declaration(declaration), declaration, "declared_v1"
+        legacy = infer_legacy_chemistry(handle.header)
+        return (
+            chemistry_profile_from_declaration(legacy) if legacy else None,
+            legacy,
+            "legacy_pg_inference" if legacy else "missing",
+        )
+
+
+def resolve_bam_chemistry(paths, requested: str | None):
+    """Resolve one chemistry profile across BAMs (header declarations, then legacy @PG inference)."""
+    records = []
+    detected = set()
+    for path in paths:
+        profile, declaration, source = bam_chemistry_profile(path)
+        records.append(
+            {
+                "path": str(path),
+                "profile": profile,
+                "source": source,
+                "declaration": declaration,
+            }
+        )
+        if profile is not None:
+            detected.add(profile)
+    if len(detected) > 1:
+        raise ValueError(
+            "inputs declare different chemistries; discover separate catalogs "
+            "before cross-dataset geometry matching"
+        )
+    detected_profile = next(iter(detected), None)
+    if requested is not None and detected_profile is not None and requested != detected_profile:
+        raise ValueError(
+            f"--chemistry {requested} conflicts with BAM chemistry {detected_profile}"
+        )
+    selected = requested or detected_profile
+    if selected is None:
+        raise ValueError(
+            "chemistry is absent or ambiguous in the BAM header; provide --chemistry"
+        )
+    return selected, records

@@ -162,12 +162,6 @@ def tag_families_main():
     return main()
 
 
-def targeted_families_main():
-    _notify()
-    from fiberhmm.cli.targeted_families import main
-    return main()
-
-
 def qc_main():
     _notify()
     from fiberhmm.cli.qc import main

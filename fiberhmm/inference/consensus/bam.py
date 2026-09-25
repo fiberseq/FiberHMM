@@ -63,7 +63,7 @@ def _load_dataset_evidence(state, dsid, chemistry, *, chrom, evidence_start, evi
 
 def load_bam_payload(datasets, region, options=None, progress=None):
     """datasets: [{dataset_id, paths, chemistry?}]; metadata conflicts are errors."""
-    from fiberhmm.cli.targeted_families import _resolve_chemistry, _bam_chemistry
+    from fiberhmm.io.bam_header import resolve_bam_chemistry as _resolve_chemistry, bam_chemistry_profile as _bam_chemistry
     from .parameters import parse_options
     options=options or parse_options({'cr':{'engine':STAGED_MODE}})
     if options['cr'].engine!=STAGED_MODE:

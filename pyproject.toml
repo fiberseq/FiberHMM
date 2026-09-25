@@ -95,7 +95,6 @@ fiberhmm-strand-rescue-annotate = "fiberhmm.cli._entry:strand_rescue_annotate_ma
 fiberhmm-strand-rescue-audit = "fiberhmm.cli._entry:strand_rescue_audit_main"
 fiberhmm-footprint-model = "fiberhmm.cli._entry:footprint_model_main"
 fiberhmm-tag-consensus = "fiberhmm.cli._entry:tag_families_main"
-fiberhmm-site-consensus = "fiberhmm.cli._entry:targeted_families_main"
 fiberhmm-consensus = "fiberhmm.inference.consensus.cli:main"
 fiberhmm-transfer = "fiberhmm.inference.consensus.transfer_cli:main"
 fiberhmm-qc = "fiberhmm.cli._entry:qc_main"
