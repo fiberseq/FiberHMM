@@ -41,6 +41,7 @@ def main(argv=None):
     p.add_argument('--pool-loci',action='store_true',help='CL-CR: pool BED6 windows in their provided orientations')
     p.add_argument('--chemistry',choices=['ddda','dddb','hia5-pacbio','hia5-nanopore'],help='Explicit missing-metadata declaration for --bam; conflicts fail')
     p.add_argument('--parameters',help='JSON parameter groups; see --schema')
+    p.add_argument('--engine',choices=['lattice_recaller','staged_native_families'],help='Consensus engine (default lattice_recaller; staged_native_families is the Monte Carlo engine). Overrides cr.engine from --parameters or --resume')
     p.add_argument('--consolidation-bp',type=int,help='Shared-family edge allowance (default 10; 5 gives finer grouping)')
     p.add_argument('--stop-after',choices=['native','parents','consolidated','resolved'])
     p.add_argument('--start-at',choices=['native','consolidation'],default='native')
@@ -63,7 +64,7 @@ def main(argv=None):
     if args.schema:
         schema=parameter_schema()
         for control in schema['cr']:
-            if control['name']=='engine': control['default']='staged_native_families'
+            if control['name']=='engine': control['default']='lattice_recaller'
         print(json.dumps(schema,indent=2));return
     if not args.output or not any((args.bam,args.datasets,args.evidence,args.resume)): p.error('Supply BAMs/datasets, evidence or resume, and --output')
     out=Path(args.output).resolve()
@@ -78,8 +79,10 @@ def main(argv=None):
     if resume: values=read_json(resume/'manifest.json')['parameters']
     if args.parameters:
         for k,v in read_json(args.parameters).items(): values.setdefault(k,{}).update(v)
-    if values.get('cr',{}).get('engine','staged_native_families')!='staged_native_families': p.error('This command uses the full staged engine; historical engines require the replay API')
-    values.setdefault('cr',{})['engine']='staged_native_families'
+    engine=args.engine or values.get('cr',{}).get('engine') or 'lattice_recaller'
+    if engine not in ('lattice_recaller','staged_native_families'): p.error('This command runs lattice_recaller or staged_native_families; historical engines require the replay API')
+    if engine=='lattice_recaller' and args.start_at=='consolidation': p.error('--start-at consolidation applies to staged_native_families only')
+    values.setdefault('cr',{})['engine']=engine
     for group,name,value in [('families','physical_radius_bp',args.consolidation_bp),('families','stop_after',args.stop_after),
                              ('compute','cores',args.cores),('compute','fit_cache_dir',args.cache)]:
         if value is not None: values.setdefault(group,{})[name]=value

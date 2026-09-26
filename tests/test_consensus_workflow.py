@@ -22,7 +22,7 @@ def payload():
 
 
 def test_parameter_contract_rejects_typos_nonfinite_and_hidden_caps():
-    assert set(parameter_schema())=={'input','sr','cr','cross','rescue','comparability','split','compute','families'}
+    assert set(parameter_schema())=={'input','sr','cr','cross','rescue','comparability','split','compute','families','recaller'}
     for bad in [{'cr':{'max_families':3}},{'cr':{'ambiguity_bp':1.2}},{'rescue':{'prior_scale':float('nan')}},
                 {'sr':{'enabled':'false'}},{'cross':{'enabled':True},'cr':{'enabled':False}}]:
         with pytest.raises(ValueError):parse_options(bad)

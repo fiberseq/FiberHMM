@@ -43,7 +43,7 @@ class SROptions:
 
 @dataclass
 class CROptions:
-    engine: str = control('call_harmonization', 'Consensus algorithm', 'Staged native families uses lattice-aware Monte Carlo fits and shared-geometry consolidation. Call harmonization is the separate lightweight overlap method. Saved historical engines remain available.', choices=['staged_native_families', 'call_harmonization', 'native_family_distribution', 'legacy_lattice'])
+    engine: str = control('call_harmonization', 'Consensus algorithm', 'Lattice recaller (the consensus CLI default) finds class geometries by k-means on confident calls and scores every molecule\'s lattice against them with EM (no Monte Carlo). Staged native families uses lattice-aware Monte Carlo fits and shared-geometry consolidation. Call harmonization is the separate lightweight overlap method. Saved historical engines remain available.', choices=['lattice_recaller', 'staged_native_families', 'call_harmonization', 'native_family_distribution', 'legacy_lattice'])
     harmonization_cut: float = control(.5, 'Native-call clustering distance', 'Average-linkage cut on overlap of the shorter footprint. Larger values merge more similar geometries.', 0, .99, .05)
     harmonization_fold_overlap: float = control(.7, 'Family folding overlap', 'Direct non-transitive overlap required to fold a recurrent family into an anchor.', .01, 1, .05)
     harmonization_max_call_bp: int = control(100, 'Maximum class footprint length (bp)', 'Longer native calls remain visible but are not used to nominate TF-sized classes.', 1, 1000, 1)
@@ -178,7 +178,51 @@ class FamilyStageOptions:
     stop_after: str = control('resolved', 'Last stage to compute', 'Keep every completed stage for inspection. Native: separate measurement-source fits; parents: joint bounded fits; consolidated: cached common explanations; resolved: final representative/alias resolution with no extra fits.', choices=['native', 'parents', 'consolidated', 'resolved'])
 
 
-GROUPS = dict(input=InputOptions, sr=SROptions, cr=CROptions, families=FamilyStageOptions, rescue=RescueOptions,
+@dataclass
+class RecallerOptions:
+    stringency: float = control(0.9, 'k-means stringency (prediction strength)', 'Discovery chooses the largest k whose split-half prediction strength reaches this value and keeps classes at least this stable. Higher = fewer, coarser classes; lower (e.g. 0.6-0.7) finds more and finer classes, such as composite footprints or dense Hia5 data, at the cost of near-duplicates.', 0.05, 1.0, 0.05)
+    kmax: int = control(40, 'Maximum k per tile', 'Upper limit on clusters per discovery tile.', 1, 200, 1)
+    prediction_splits: int = control(6, 'Prediction-strength split-halves', 'Molecule split-halves used to score each k.', 2, 50, 1)
+    seed: int = control(1, 'Discovery seed', 'k-means seed; fixed for reproducibility.', 0, 1000000, 1)
+    minimum_candidate_calls: int = control(5, 'Minimum calls per candidate', 'k-means clusters with fewer calls are not carried forward.', 1, 10000, 1)
+    call_min_llr: float = control(5.0, 'Discovery call LLR', 'Native calls at or above this LLR define geometries (and are the calls assigned in the records).', 0, 1000, 0.5)
+    call_max_bp: int = control(100, 'Discovery call maximum width (bp)', 'Longer calls are not used for discovery.', 5, 1000, 1)
+    censor_bp: int = control(15, 'Edge censoring cap (bp)', 'A call edge is uncertain up to the nearest mark, capped at this distance.', 0, 200, 1)
+    identity_nats: float = control(5.0, 'Identity test threshold (nats)', 'Overlapping candidates merge while two geometries beat one by less than this held-out log-likelihood.', 0, 10000, 0.5)
+    identity_folds: int = control(3, 'Identity test folds', 'Cross-validation folds for the identity test.', 2, 20, 1)
+    identity_pad_bp: int = control(6, 'Identity grid padding (bp)', 'Edge-grid padding around the two candidates.', 0, 100, 1)
+    identity_wide_bp: int = control(40, 'Identity broad-protection reach (bp)', 'Reach of the broad-protection alternative in the identity test.', 0, 500, 1)
+    identity_max_width_bp: int = control(150, 'Identity grid maximum width (bp)', 'Widest footprint on the identity grid.', 10, 2000, 1)
+    edge_quantile_low: float = control(10., 'Edge box lower quantile (%)', 'Edge boxes span these quantiles of the class calls\' censored edge ranges. 25/75 gives tighter boxes for positionally variable data.', 0, 50, 1)
+    edge_quantile_high: float = control(90., 'Edge box upper quantile (%)', 'See the lower quantile.', 50, 100, 1)
+    minimum_core_bp: int = control(3, 'Minimum protected core (bp)', 'A class needs this much DNA between its left and right core-rule boxes; classes whose boxes overlap are dropped as imprecise. -1000 disables the rule.', -1000, 1000, 1)
+    core_quantile_low: float = control(25., 'Core-rule box lower quantile (%)', 'The core rule uses edge boxes at these quantiles of the class calls (25/75: the middle half of calls must share a protected core), independent of the scoring boxes.', 0, 50, 1)
+    core_quantile_high: float = control(75., 'Core-rule box upper quantile (%)', 'See the lower quantile.', 50, 100, 1)
+    jitter_ddda_bp: int = control(0, 'Edge jitter, DddA (bp)', 'Widen DddA edge boxes outward (never into the core) by this much: tolerance for enzyme processivity or binding jitter.', 0, 100, 1)
+    jitter_dddb_bp: int = control(0, 'Edge jitter, DddB (bp)', 'As for DddA.', 0, 100, 1)
+    jitter_hia5_bp: int = control(0, 'Edge jitter, Hia5 (bp)', 'As for DddA; about 10 bp helped Hia5 at NAPA E-box 1.', 0, 100, 1)
+    linker: str = control('both', 'Accessible linker', 'both: a class needs accessible DNA just beyond both edges; either: beyond at least one (footprints abutting a nucleosome, sparse lattices such as DddB).', choices=['both', 'either'])
+    linker_bp: int = control(5, 'Linker width (bp)', 'Sites within this distance beyond an edge (and always the nearest site) must be accessible.', 0, 50, 1)
+    flank_bp: int = control(25, 'Scoring flank (bp)', 'Molecules are scored over the class edge boxes plus this flank.', 5, 200, 1)
+    class_weighting: str = control('bp', 'Class configuration weighting', 'bp: each configuration weighted by the edge positions it covers inside the class boxes (widening boxes adds tolerance without diluting); configurations: uniform over lattice configurations.', choices=['bp', 'configurations'])
+    learned_spots: bool = control(True, 'Learned internal spots', 'Learn a class-specific mark rate at interior positions that are sometimes marked while bound (e.g. CTCF +7/+8 on Hia5); kept only when held-out likelihood improves.')
+    spot_minimum_evidence_nats: float = control(10., 'Spot channel resolution (nats)', 'Spots are learned only on channels whose expected evidence over the class reaches this.', 0, 1000, 0.5)
+    spot_gain_nats: float = control(5., 'Spot held-out gain (nats)', 'A spot is kept only if it raises held-out likelihood by this much, summed over both folds.', 0, 1000, 0.5)
+    spot_cap: float = control(0.35, 'Spot rate cap', 'Maximum learned mark rate; spots that reach it are rejected.', 0.01, 0.99, 0.01)
+    spot_pseudo_units: float = control(30., 'Spot shrinkage (pseudo-molecules)', 'Learned rates are shrunk toward the model rate by this many pseudo-molecules.', 0, 10000, 1)
+    spot_edge_bp: int = control(5, 'Spot interior margin (bp)', 'Spots are learned only this far inside the class span.', 0, 50, 1)
+    spot_iterations: int = control(10, 'Spot EM rounds', 'Rounds of EM alternating with spot updates.', 1, 100, 1)
+    bf_threshold: float = control(3., 'Per-molecule BF threshold', 'Member if the posterior odds exceed the prior odds by this factor, non-member if below its inverse, otherwise abstain. Prevalence comes from EM and does not use it.', 1, 1000, 0.5)
+    support_gain_nats: float = control(5., 'Support: held-out gain (nats)', 'A channel supports a class when including it raises held-out likelihood by at least this much (class weight fixed at 0 in the null).', 0, 10000, 0.5)
+    support_minimum_lower_bound: float = control(0.02, 'Support: minimum prevalence lower bound', 'And its prevalence Wilson lower bound reaches this.', 0, 1, 0.005)
+    resolution_nats: float = control(10., 'Resolution threshold (nats)', 'A channel resolves a class when its expected evidence per molecule over the class reaches this; below it the fraction is reported but flagged unresolved.', 0, 1000, 0.5)
+    efficiency_calibration: bool = control(False, 'Per-channel efficiency calibration', 'Scale each channel\'s accessible rate by the observed/expected rate of its most-marked molecules. Off by default: use calibrated emission tables instead.')
+    tile_bp: int = control(350, 'Discovery tile (bp)', 'Regions longer than this are discovered in overlapping tiles.', 100, 5000, 10)
+    tile_step_bp: int = control(250, 'Discovery tile step (bp)', 'Tile stride; classes found twice are deduplicated.', 50, 5000, 10)
+    minimum_channel_units: int = control(20, 'Minimum molecules per channel', 'Channels with fewer molecules in a tile are not quantified.', 1, 100000, 1)
+
+
+GROUPS = dict(input=InputOptions, sr=SROptions, cr=CROptions, families=FamilyStageOptions, recaller=RecallerOptions, rescue=RescueOptions,
               cross=CrossOptions, comparability=ComparabilityOptions,
               split=SplitOptions, compute=ComputeOptions)
 
@@ -243,6 +287,16 @@ def parse_options(values=None):
             for f in fields(default):
                 if f.name not in names and getattr(result[group],f.name) != getattr(default,f.name):
                     raise ValueError(f'{group}.{f.name} is not used by staged families; reset it to its default and use the families controls')
+    elif result['cr'].engine=='lattice_recaller':
+        if not result['cr'].enabled or any(result[g].enabled for g in ('rescue', 'split', 'comparability')):
+            raise ValueError('The lattice recaller classifies molecules against discovered classes; enable CR and disable rescue, nucleosome splitting and legacy comparability')
+        r = result['recaller']
+        if r.edge_quantile_low >= r.edge_quantile_high or r.core_quantile_low >= r.core_quantile_high:
+            raise ValueError('recaller edge/core quantile pairs must have low < high')
+        if r.tile_step_bp > r.tile_bp:
+            raise ValueError('recaller.tile_step_bp must not exceed recaller.tile_bp (tiles must overlap or abut)')
+        if result['compute'].predictive_stopping!='full':
+            raise ValueError('compute.predictive_stopping applies only to staged native families')
     elif result['compute'].predictive_stopping!='full':
         raise ValueError('compute.predictive_stopping applies only to staged native families')
     for name in ('native_minimum_call_attribution_mass', 'native_minimum_geometry_retention',

@@ -142,10 +142,11 @@ def automatic_parameters(parameters, strata):
     # measurement_distribution.predictive_decision_stop_record).
     compute=values.setdefault('compute',{})
     for key,value in machine_compute_defaults().items():compute.setdefault(key,value)
-    compute.setdefault('predictive_stopping','decision')
-    if values.get('cr',{}).get('engine','staged_native_families')!='staged_native_families':
-        raise ValueError('run_analysis requires the full staged engine; use run_workflow for historical engine replay')
-    values.setdefault('cr',{})['engine']='staged_native_families'
+    engine=values.get('cr',{}).get('engine','staged_native_families')
+    if engine not in ('staged_native_families','lattice_recaller'):
+        raise ValueError('run_analysis requires the staged or lattice-recaller engine; use run_workflow for historical engine replay')
+    if engine=='staged_native_families':compute.setdefault('predictive_stopping','decision')
+    values.setdefault('cr',{})['engine']=engine
     values.setdefault('sr',{})['enabled']=any(s['chemistry'] in ('ddda','dddb') for s in strata)
     values.setdefault('cross',{})['enabled']=len({s['dataset_id'] for s in strata})>1
     return values

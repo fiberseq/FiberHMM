@@ -5,6 +5,9 @@ from types import SimpleNamespace
 import hashlib
 HARMONIZATION_MODE='call_harmonization'
 STAGED_MODE='staged_native_families'
+RECALLER_MODE='lattice_recaller'
+# The lattice recaller consumes exactly the staged engine's native-replay payload.
+STAGED_LIKE=(STAGED_MODE,RECALLER_MODE)
 
 
 def loader_runtime():
@@ -66,8 +69,8 @@ def load_bam_payload(datasets, region, options=None, progress=None):
     from fiberhmm.io.bam_header import resolve_bam_chemistry as _resolve_chemistry, bam_chemistry_profile as _bam_chemistry
     from .parameters import parse_options
     options=options or parse_options({'cr':{'engine':STAGED_MODE}})
-    if options['cr'].engine!=STAGED_MODE:
-        raise ValueError('Shared BAM preparation requires staged_native_families options')
+    if options['cr'].engine not in STAGED_LIKE:
+        raise ValueError('Shared BAM preparation requires staged_native_families or lattice_recaller options')
     rows={};chemistry_records={}
     for item in datasets:
         dsid=item['dataset_id']
@@ -219,7 +222,7 @@ def _load_payload(state,request,options,progress):
             reads,model,preset,diagnostics=_load_dataset_evidence(state,dsid,chemistry,chrom=chrom,
                 evidence_start=start,evidence_end=end,maximum_reads=0,runtime=runtime,
                 allow_population=True,require_nucleosomes=False,tf_layer='tf',minimum_mapq=options['input'].minimum_mapq,
-                **({'legacy_annotation_frame':options['input'].legacy_hia5_annotation_frame} if chemistry.startswith('hia5') and options['cr'].engine in (HARMONIZATION_MODE,STAGED_MODE) else {}))
+                **({'legacy_annotation_frame':options['input'].legacy_hia5_annotation_frame} if chemistry.startswith('hia5') and options['cr'].engine in (HARMONIZATION_MODE,*STAGED_LIKE) else {}))
             if any(read.pair_partner for read in reads):
                 raise ValueError('Paired source reads are not independent molecules. Run fiberhmm-pair (pair -> merge -> recall) before population consensus; if pairs failed to merge, --pairs-only excludes those unresolved pairs.')
             for read in reads:_prefix_library(read,dsid)
@@ -260,7 +263,7 @@ def _load_payload(state,request,options,progress):
                             for read,u in lookup[key]:
                                 if use_m5c:condition_unit_on_m5c(alignment,u)
                                 if options['input'].correct_native:
-                                    if options['cr'].engine==STAGED_MODE and chemistry.startswith('hia5') and options['families'].recall_hia5_nucleosomes:
+                                    if options['cr'].engine in STAGED_LIKE and chemistry.startswith('hia5') and options['families'].recall_hia5_nucleosomes:
                                         from fiberhmm.inference.consensus.upstream_recall import (recall_hia5_alignment,install_recall,
                                             MOLECULE_RECALL_FAILURES)
                                         try:

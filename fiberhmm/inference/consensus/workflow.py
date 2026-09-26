@@ -222,6 +222,9 @@ def _cross(runs, opt, cr, compute, progress):
 
 def run_workflow(payload, parameters=None, output_dir=None, progress=None):
     options=parse_options(parameters);started=time.monotonic()
+    if options['cr'].engine == 'lattice_recaller':
+        from .lattice_recaller import run_lattice_recaller
+        return run_lattice_recaller(payload, options, output_dir, progress)
     if options['cr'].engine == 'staged_native_families':
         from .harmonized_families.workflow import run_staged_families
         return run_staged_families(payload, options, output_dir, progress)
