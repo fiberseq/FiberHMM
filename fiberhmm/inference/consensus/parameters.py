@@ -215,7 +215,7 @@ class RecallerOptions:
     bf_threshold: float = control(3., 'Per-molecule BF threshold', 'Member if the posterior odds exceed the prior odds by this factor, non-member if below its inverse, otherwise abstain. Prevalence comes from EM and does not use it.', 1, 1000, 0.5)
     support_gain_nats: float = control(5., 'Support: held-out gain (nats)', 'A channel supports a class when including it raises held-out likelihood by at least this much (class weight fixed at 0 in the null).', 0, 10000, 0.5)
     support_minimum_lower_bound: float = control(0.02, 'Support: minimum prevalence lower bound', 'And its prevalence Wilson lower bound reaches this.', 0, 1, 0.005)
-    resolution_nats: float = control(10., 'Resolution threshold (nats)', 'A channel resolves a class when its expected evidence per molecule over the class reaches this; below it the fraction is reported but flagged unresolved.', 0, 1000, 0.5)
+    resolution_nats: float = control(5., 'Resolution threshold (nats)', 'A channel resolves a class when its expected evidence per molecule over the class reaches this; below it the fraction is reported but flagged unresolved.', 0, 1000, 0.5)
     efficiency_calibration: bool = control(False, 'Per-channel efficiency calibration', 'Scale each channel\'s accessible rate by the observed/expected rate of its most-marked molecules. Off by default: use calibrated emission tables instead.')
     tile_bp: int = control(350, 'Discovery tile (bp)', 'Regions longer than this are discovered in overlapping tiles.', 100, 5000, 10)
     tile_step_bp: int = control(250, 'Discovery tile step (bp)', 'Tile stride; classes found twice are deduplicated.', 50, 5000, 10)
