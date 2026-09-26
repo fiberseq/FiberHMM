@@ -79,13 +79,14 @@ def quantify(sources, classes, tiles, opt, progress):
                 g = classes[x]; lb = Mo.wilson_lo(w[c]*res['n'], res['n'])
                 gain = res['support_gain'][c]
                 rows.append(dict(class_id=g['id'], group=gi + 1, channel=ch, dataset=ch.split('::', 1)[0], strand=ch.split('::', 1)[1],
-                                 start=round(g['span'][0], 1), end=round(g['span'][1], 1), L0=gs[c]['L'][0], L1=gs[c]['L'][1], R0=gs[c]['R'][0], R1=gs[c]['R'][1],
+                                 start=round(g['span'][0], 1), end=round(g['span'][1], 1), L0=res['gs'][c]['L'][0], L1=res['gs'][c]['L'][1], R0=res['gs'][c]['R'][0], R1=res['gs'][c]['R'][1],
                                  calls=g['calls'], stability=round(g['stability'], 3), molecules=res['n'], prevalence=round(float(w[c]), 4),
                                  prevalence_lower_bound=round(lb, 4), broader=round(float(w[k]), 4), other_shape=round(float(w[k + 1]), 4),
                                  accessible=round(float(w[k + 2]), 4), support_gain_nats=None if gain != gain else round(gain, 2),
                                  supported=bool(gain == gain and gain >= opt.support_gain_nats and lb >= opt.support_minimum_lower_bound),
                                  resolution_nats=round(res['resolution'][c], 2), resolved=bool(res['resolution'][c] >= opt.resolution_nats),
-                                 spots=';'.join(f'{p}:{v:.3f}' for p, v in res['spots'][c].items()), unknown_accessible_fraction=round(f, 4),
+                                 spots=';'.join(f'{p}:{v:.3f}' for p, v in res['spots'][c].items()), edge_contraction=res['edges'][c],
+                                 unknown_accessible_fraction=round(f, 4),
                                  efficiency=None if not efficiency else round(efficiency.get(ch, 1.), 4)))
                 for u, p in zip(res['units'], res['P'][:, c]):
                     lab, lbf = Mo.label(p, w[c], opt.bf_threshold)
@@ -144,7 +145,7 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None):
                                            original_calls=calls, compatible_calls=calls, primary_calls=primary,
                                            eligible_unit_semantics='molecules spanning the scoring window (lattice recaller)')
                 block[r['strand']] = {k: r[k] for k in ('prevalence', 'prevalence_lower_bound', 'broader', 'other_shape', 'accessible',
-                                                        'support_gain_nats', 'supported', 'resolution_nats', 'resolved', 'spots',
+                                                        'support_gain_nats', 'supported', 'resolution_nats', 'resolved', 'spots', 'edge_contraction',
                                                         'L0', 'L1', 'R0', 'R1', 'molecules', 'unknown_accessible_fraction', 'efficiency')}
             if not counts:
                 continue
@@ -166,7 +167,7 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None):
 
 CLASS_FIELDS = ['class_id', 'group', 'channel', 'dataset', 'strand', 'start', 'end', 'L0', 'L1', 'R0', 'R1', 'calls', 'stability', 'molecules',
                 'prevalence', 'prevalence_lower_bound', 'broader', 'other_shape', 'accessible', 'support_gain_nats', 'supported',
-                'resolution_nats', 'resolved', 'spots', 'unknown_accessible_fraction', 'efficiency']
+                'resolution_nats', 'resolved', 'spots', 'edge_contraction', 'unknown_accessible_fraction', 'efficiency']
 MOLECULE_FIELDS = ['class_id', 'channel', 'unit_id', 'posterior', 'log_bf', 'label']
 
 

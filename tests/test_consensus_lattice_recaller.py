@@ -98,6 +98,30 @@ def test_cli_schema_defaults_to_lattice_recaller():
 
 
 # ---------------------------------------------------------------- planted class, end to end
+def planted_units(n, footprint, always_marked=(), occupancy=.5, seed=3):
+    rng = np.random.default_rng(seed); pos = np.arange(1100, 1300, 4); out = []
+    for i in range(n):
+        prot = (rng.random() < occupancy) & (pos >= footprint[0]) & (pos < footprint[1])
+        hit = np.where(prot, rng.random(len(pos)) < PP, rng.random(len(pos)) < PA)
+        for a in always_marked:
+            hit[pos == a] = rng.random() < .99
+        u = lattice(pos, hit); u['uid'] = f'm{i}'; out.append(u)
+    return out
+
+
+def test_edge_contraction_moves_a_box_past_an_always_marked_site_only_where_one_exists():
+    import dataclasses
+    g = dict(L=[1170, 1190], R=[1206, 1214], span=(1180., 1210.))
+    opt = dataclasses.replace(RecallerOptions(), edge_contraction=True, learned_spots=False)
+    narrow = Mo.fit_channel(planted_units(400, (1188, 1210), always_marked=(1184,)), [g], .5, opt)
+    assert narrow['gs'][0]['L'] == [1185, 1188] and narrow['gs'][0]['R'] == [1206, 1214]
+    assert narrow['edges'][0].startswith('left:1170-1190>1185-1188') and abs(narrow['w'][0] - .5) < .06
+    full = Mo.fit_channel(planted_units(400, (1180, 1210), seed=4), [g], .5, opt)
+    assert full['gs'][0]['L'] == [1170, 1190] and full['edges'][0] == ''
+    off = Mo.fit_channel(planted_units(400, (1188, 1210), always_marked=(1184,)), [g], .5, dataclasses.replace(opt, edge_contraction=False))
+    assert off['gs'][0]['L'] == [1170, 1190] and off['edges'][0] == ''
+
+
 def planted_payload(n=160, occupancy=0.4, seed=7):
     """DAF-like dataset, two strands, one 30-bp class at 1180-1210 bound in `occupancy` of molecules."""
     rng = np.random.default_rng(seed); units = []

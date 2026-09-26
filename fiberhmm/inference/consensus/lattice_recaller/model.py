@@ -139,7 +139,99 @@ def learn(units, gs, f, opt, allowed):
 
 
 def interior_positions(units, g, edge_bp):
-    return {int(x) for u in units for x in u['pos'] if g['span'][0] + edge_bp <= x < g['span'][1] - edge_bp}
+    inside = (lambda x: g['L'][0] <= x < g['R'][1]) if g.get('contracted') else (lambda x: True)
+    return {int(x) for u in units for x in u['pos'] if g['span'][0] + edge_bp <= x < g['span'][1] - edge_bp and inside(x)}
+
+
+def propose_edges(keep, P, gs, opt):
+    """Per class, the edge boxes pulled inward past sites its members almost always mark (Codex's rule, 26 Sep 2026).
+
+    Scanning from each end of the class span inward, a run of sites whose posterior-weighted member mark rate exceeds
+    edge_contraction_rate (sites with >= edge_minimum_members members) is moved outside the box, up to the first site
+    members leave unmarked. Only sites inside the existing edge box qualify, so a class is never consumed.
+    Returns [(contracted class or None, [moves])]."""
+    out = []
+    for c, g in enumerate(gs):
+        stats = {}
+        for u, pc in zip(keep, P[:, c]):
+            m = (u['pos'] >= g['span'][0]) & (u['pos'] < g['span'][1])
+            for x, h in zip(u['pos'][m], u['hit'][m]):
+                a = stats.setdefault(int(x), [0., 0.]); a[0] += pc*h; a[1] += pc
+        v = sorted((x, k/n) for x, (k, n) in stats.items() if n >= opt.edge_minimum_members)
+        L, R, moves = list(g['L']), list(g['R']), []
+        for side, seq in (('left', v), ('right', v[::-1])):
+            run = []
+            for x, r in seq:
+                if r > opt.edge_contraction_rate:
+                    run.append(x)
+                else:
+                    break
+            if not run or len(run) == len(seq):
+                continue
+            prot = seq[len(run)][0]
+            if side == 'left':
+                x = max(run)
+                if x > g['L'][1] or prot >= g['R'][0]:
+                    continue
+                new = [max(L[0], x + 1), min(L[1], prot)]
+                if new[0] > new[1]:
+                    continue
+                moves.append(('left', L, new)); L = new
+            else:
+                x = min(run)
+                if x < g['R'][0] or prot <= g['L'][1]:
+                    continue
+                new = [max(R[0], prot + 1), min(R[1], x)]
+                if new[0] > new[1]:
+                    continue
+                moves.append(('right', R, new)); R = new
+        out.append((dict(g, L=L, R=R, contracted=True) if moves and L[1] < R[0] else None, moves))
+    return out
+
+
+def _aligned_rows(units, gs_a, gs_b, f, opt):
+    """Rows for two geometries of the same group over the molecules both score (contracted boxes can admit more)."""
+    Ma, ka = rows_of(units, gs_a, f, opt, None); Mb, kb = rows_of(units, gs_b, f, opt, None)
+    ids = {u['uid'] for u in ka} & {u['uid'] for u in kb}
+    ia = [i for i, u in enumerate(ka) if u['uid'] in ids]; ib = [i for i, u in enumerate(kb) if u['uid'] in ids]
+    return Ma[ia], Mb[ib]
+
+
+def contract_edges(units, gs, f, opt):
+    """Per-channel edge contraction, kept for a class only if proposed on both halves of the molecules and the held-out
+    likelihood of the whole group rises by >= edge_gain_nats (summed over both halves). Returns (gs, records)."""
+    records = [''] * len(gs)
+    none = [set() for _ in gs]
+    _, P, keep, _ = learn(units, gs, f, opt, none)
+    if P is None:
+        return gs, records
+    full = propose_edges(keep, P, gs, opt)
+    cands = [c for c, (g2, _) in enumerate(full) if g2 is not None]
+    if not cands:
+        return gs, records
+    fold = np.array([_hash2(u['uid']) for u in units]); gain = {c: 0. for c in cands}; both = {c: True for c in cands}
+    for k in (0, 1):
+        tr = [u for u, z in zip(units, fold) if z != k]; te = [u for u, z in zip(units, fold) if z == k]
+        _, Ptr, ktr, _ = learn(tr, gs, f, opt, none)
+        if Ptr is None or len(ktr) < 10:
+            return gs, records
+        prop = propose_edges(ktr, Ptr, gs, opt)
+        for c in cands:
+            both[c] &= prop[c][0] is not None
+            alt = [full[c][0] if i == c else g for i, g in enumerate(gs)]
+            M0, M1 = _aligned_rows(tr, gs, alt, f, opt); T0, T1 = _aligned_rows(te, gs, alt, f, opt)
+            if len(M0) < 10 or not len(T0):
+                both[c] = False; continue
+            w0, _ = em(M0); w1, _ = em(M1)
+            gain[c] += loglik(T1, w1) - loglik(T0, w0)
+    out = list(gs)
+    for c in cands:
+        desc = ';'.join(f'{s}:{o[0]}-{o[1]}>{n[0]}-{n[1]}' for s, o, n in full[c][1])
+        if both[c] and gain[c] >= opt.edge_gain_nats:
+            out[c] = full[c][0]; records[c] = f'{desc} (+{gain[c]:.1f} nats)'
+        else:
+            records[c] = f'rejected {desc} ({gain[c]:+.1f} nats{"" if both[c] else ", not proposed in both halves"})'
+    return out, records
 
 
 def select_spots(units, gs, f, opt):
@@ -183,8 +275,12 @@ def wilson_lo(k, n, z=1.96):
 
 
 def fit_channel(units, gs, f, opt):
-    """Everything for one overlap group and channel: EM weights, posteriors, spots, support gains, resolution."""
+    """Everything for one overlap group and channel: EM weights, posteriors, edge contraction, spots, support gains,
+    resolution. Returns the channel's class geometry (gs, contracted where kept) and the contraction records."""
     info = [expected_evidence(units, g) for g in gs]
+    edges = [''] * len(gs)
+    if opt.edge_contraction:
+        gs, edges = contract_edges(units, gs, f, opt)
     if opt.learned_spots:
         acc = select_spots(units, gs, f, opt)
         acc = [a if info[c] >= opt.spot_minimum_evidence_nats else set() for c, a in enumerate(acc)]
@@ -208,7 +304,7 @@ def fit_channel(units, gs, f, opt):
             gain += loglik(te, wf) - loglik(np.delete(te, c, axis=1), wd)
         gains.append(gain)
     return dict(w=w, P=P, units=keep, spots=[{int(x): prof[c][x] for x in sorted(acc[c])} for c in range(len(gs))],
-                support_gain=gains, resolution=info, n=len(M))
+                support_gain=gains, resolution=info, n=len(M), gs=gs, edges=edges)
 
 
 def label(posterior, weight, bf):
