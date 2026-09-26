@@ -38,8 +38,15 @@ def loglik(M, w):
     return float(np.sum(m + np.log(np.exp(X - m[:, None]).sum(1))))
 
 
-def joint(u, gs, f, opt, prof=None):
-    """[class_1..k, broader, other, accessible] log-likelihoods for one molecule, or None if it does not span the group."""
+def _logsumexp(v):
+    m = v.max(); return float(m + math.log(np.exp(v - m).sum()))
+
+
+def _prepare(u, gs, f, opt):
+    """Everything about one molecule that does not depend on learned spots, or None if it does not span the group.
+
+    Per class: the (i, j) configurations it scores (protected sites i..j-1), their spot-free scores s0 and their log
+    weights (bp weighting over the class boxes, or uniform), so that a spot profile only adds a cumulative-sum term."""
     L0 = min(g['L'][0] for g in gs); R1 = max(g['R'][1] for g in gs); lo, hi = L0 - opt.flank_bp, R1 + opt.flank_bp
     pos = u['pos']
     if not (pos.min() < lo and pos.max() >= hi):
@@ -76,62 +83,94 @@ def joint(u, gs, f, opt, prof=None):
     for g in gs:
         br |= valid & (l1 <= g['L'][1]) & (r0 >= g['R'][0])
     br &= ~anycls; other = valid & ~anycls & ~br
-
-    def lbp(s, g, cm):
-        if not cm.any():
-            return -1e3
-        wl = np.clip(np.minimum(l1, g['L'][1]) - np.maximum(l0, g['L'][0]) + 1, 0, None)
-        wr = np.clip(np.minimum(r1, g['R'][1]) - np.maximum(r0, g['R'][0]) + 1, 0, None)
-        W = (wl*wr)[cm].astype(float); v = s[cm]; ok = W > 0
-        if not ok.any():
-            return -1e3
-        m = v[ok].max(); norm = (g['L'][1] - g['L'][0] + 1)*(g['R'][1] - g['R'][0] + 1)
-        return float(m + math.log(np.sum(W[ok]*np.exp(v[ok] - m))/norm))
-
-    score = lbp if opt.class_weighting == 'bp' else (lambda s, g, cm: lme(s, cm))
     cls = []
-    for c, cm in enumerate(cms):
-        s = s0
-        if prof and prof[c]:
-            ppc = np.array([prof[c].get(int(x), np.nan) for x in p]); use = ~np.isnan(ppc)
-            if use.any():
-                ppc = np.where(use, ppc, 0.5); dc = dP.copy()
-                dc[use] = np.where(h[use], np.log(ppc[use]) - np.log(pa[use]), np.log1p(-ppc[use]) - np.log1p(-pa[use]))
-                SPc = np.concatenate([[0.], np.cumsum(dc)]); s = base + (SPc[j] - SPc[i]) - (SU[j] - SU[i])
-        cls.append(score(s, gs[c], cm))
+    for g, cm in zip(gs, cms):
+        if opt.class_weighting == 'bp':
+            wl = np.clip(np.minimum(l1, g['L'][1]) - np.maximum(l0, g['L'][0]) + 1, 0, None)
+            wr = np.clip(np.minimum(r1, g['R'][1]) - np.maximum(r0, g['R'][0]) + 1, 0, None)
+            W = np.broadcast_to(wl*wr, cm.shape); use = cm & (W > 0)
+            norm = (g['L'][1] - g['L'][0] + 1)*(g['R'][1] - g['R'][0] + 1)
+            logw = np.log(W[use].astype(float)) - math.log(norm)
+        else:
+            use = cm; logw = np.full(int(cm.sum()), -math.log(max(int(cm.sum()), 1)))
+        ii, jc = np.nonzero(use)
+        cls.append((ii, jc + 1, s0[use], logw))
     c0 = min(g['span'][0] for g in gs); c1 = max(g['span'][1] for g in gs); ins = (p >= c0) & (p < c1)
-    return cls + [lme(s0, br), lme(s0, other), float(dU[~ins].sum())]
+    return dict(p=p, dP=dP, h=h, pa=pa, cls=cls, fixed=[lme(s0, br), lme(s0, other), float(dU[~ins].sum())])
+
+
+def _class_score(item, c, pc=None):
+    ii, jc, s0c, logw = item['cls'][c]
+    if not len(s0c):
+        return -1e3
+    v = s0c + logw
+    if pc:
+        ppc = np.array([pc.get(int(x), np.nan) for x in item['p']]); use = ~np.isnan(ppc)
+        if use.any():
+            p, h, pa = ppc[use], item['h'][use], item['pa'][use]
+            delta = np.zeros(len(item['p'])); delta[use] = np.where(h, np.log(p) - np.log(pa), np.log1p(-p) - np.log1p(-pa)) - item['dP'][use]
+            D = np.concatenate([[0.], np.cumsum(delta)]); v = v + D[jc] - D[ii]
+    return _logsumexp(v)
+
+
+class Scorer:
+    """Per-molecule configuration scores for one group and channel, computed once; spot profiles are applied on top."""
+
+    def __init__(self, units, gs, f, opt):
+        self.items, self.keep = [], []
+        for u in units:
+            it = _prepare(u, gs, f, opt)
+            if it is not None:
+                self.items.append(it); self.keep.append(u)
+        self.k = len(gs)
+        self.base = np.array([[_class_score(it, c) for c in range(self.k)] + it['fixed'] for it in self.items], float).reshape(-1, self.k + 3)
+
+    def rows(self, prof=None):
+        M = self.base.copy()
+        for c in range(self.k):
+            pc = prof[c] if prof else None
+            if pc:
+                keys = np.fromiter(pc.keys(), float)
+                for r, it in enumerate(self.items):
+                    if np.isin(it['p'], keys).any():
+                        M[r, c] = _class_score(it, c, pc)
+        return M, self.keep
+
+
+def joint(u, gs, f, opt, prof=None):
+    """[class_1..k, broader, other, accessible] log-likelihoods for one molecule, or None if it does not span the group."""
+    it = _prepare(u, gs, f, opt)
+    if it is None:
+        return None
+    return [_class_score(it, c, prof[c] if prof else None) for c in range(len(gs))] + it['fixed']
 
 
 def rows_of(units, gs, f, opt, prof):
-    R, keep = [], []
-    for u in units:
-        r = joint(u, gs, f, opt, prof)
-        if r is not None:
-            R.append(r); keep.append(u)
-    return np.asarray(R, float).reshape(-1, len(gs) + 3), keep
+    return Scorer(units, gs, f, opt).rows(prof)
 
 
-def learn(units, gs, f, opt, allowed):
+def learn(units, gs, f, opt, allowed, scorer=None):
     """EM alternating with learned protected-state mark rates at the allowed interior positions of each class."""
+    sc = scorer or Scorer(units, gs, f, opt)
     prof = [dict() for _ in gs]
     if any(allowed):
+        arr = [np.fromiter(a, float) if a else None for a in allowed]
         for _ in range(opt.spot_iterations):
-            M, keep = rows_of(units, gs, f, opt, prof)
+            M, keep = sc.rows(prof)
             if not len(M):
                 break
             _, P = em(M); new = []
             for c in range(len(gs)):
                 num, den, pp0 = {}, {}, {}
-                for u, pc in zip(keep, P[:, c]):
-                    for x, hh, q in zip(u['pos'], u['hit'], u['pp']):
-                        x = int(x)
-                        if x in allowed[c]:
-                            num[x] = num.get(x, 0.) + pc*hh; den[x] = den.get(x, 0.) + pc; pp0.setdefault(x, []).append(q)
+                if arr[c] is not None:
+                    for u, pc in zip(keep, P[:, c]):
+                        m = np.isin(u['pos'], arr[c])
+                        for x, hh, q in zip(u['pos'][m], u['hit'][m], u['pp'][m]):
+                            x = int(x); num[x] = num.get(x, 0.) + pc*hh; den[x] = den.get(x, 0.) + pc; pp0.setdefault(x, []).append(q)
                 new.append({x: float(min(opt.spot_cap, max(np.median(pp0[x]), (num[x] + opt.spot_pseudo_units*np.median(pp0[x]))/(den[x] + opt.spot_pseudo_units))))
                             for x in den})
             prof = new
-    M, keep = rows_of(units, gs, f, opt, prof)
+    M, keep = sc.rows(prof)
     if not len(M):
         return None, None, keep, prof
     w, P = em(M)
@@ -189,9 +228,9 @@ def propose_edges(keep, P, gs, opt):
     return out
 
 
-def _aligned_rows(units, gs_a, gs_b, f, opt):
+def _aligned_rows(units, sc_a, gs_b, f, opt):
     """Rows for two geometries of the same group over the molecules both score (contracted boxes can admit more)."""
-    Ma, ka = rows_of(units, gs_a, f, opt, None); Mb, kb = rows_of(units, gs_b, f, opt, None)
+    Ma, ka = sc_a.rows(); Mb, kb = rows_of(units, gs_b, f, opt, None)
     ids = {u['uid'] for u in ka} & {u['uid'] for u in kb}
     ia = [i for i, u in enumerate(ka) if u['uid'] in ids]; ib = [i for i, u in enumerate(kb) if u['uid'] in ids]
     return Ma[ia], Mb[ib]
@@ -212,14 +251,15 @@ def contract_edges(units, gs, f, opt):
     fold = np.array([_hash2(u['uid']) for u in units]); gain = {c: 0. for c in cands}; both = {c: True for c in cands}
     for k in (0, 1):
         tr = [u for u, z in zip(units, fold) if z != k]; te = [u for u, z in zip(units, fold) if z == k]
-        _, Ptr, ktr, _ = learn(tr, gs, f, opt, none)
+        sc_tr, sc_te = Scorer(tr, gs, f, opt), Scorer(te, gs, f, opt)
+        _, Ptr, ktr, _ = learn(tr, gs, f, opt, none, scorer=sc_tr)
         if Ptr is None or len(ktr) < 10:
             return gs, records
         prop = propose_edges(ktr, Ptr, gs, opt)
         for c in cands:
             both[c] &= prop[c][0] is not None
             alt = [full[c][0] if i == c else g for i, g in enumerate(gs)]
-            M0, M1 = _aligned_rows(tr, gs, alt, f, opt); T0, T1 = _aligned_rows(te, gs, alt, f, opt)
+            M0, M1 = _aligned_rows(tr, sc_tr, alt, f, opt); T0, T1 = _aligned_rows(te, sc_te, alt, f, opt)
             if len(M0) < 10 or not len(T0):
                 both[c] = False; continue
             w0, _ = em(M0); w1, _ = em(M1)
@@ -241,18 +281,24 @@ def select_spots(units, gs, f, opt):
     gain = [dict() for _ in gs]; seen = [dict() for _ in gs]
     for k in (0, 1):
         tr = [u for u, z in zip(units, fold) if z != k]; te = [u for u, z in zip(units, fold) if z == k]
-        _, _, _, prof = learn(tr, gs, f, opt, allowed)
-        M0, _ = rows_of(tr, gs, f, opt, None); T0, _ = rows_of(te, gs, f, opt, None)
+        sc_tr, sc_te = Scorer(tr, gs, f, opt), Scorer(te, gs, f, opt)
+        _, _, _, prof = learn(tr, gs, f, opt, allowed, scorer=sc_tr)
+        M0, _ = sc_tr.rows(); T0, _ = sc_te.rows()
         if len(M0) < 10 or not len(T0):
             return [set() for _ in gs]
         w0, _ = em(M0); base = loglik(T0, w0)
+        want = np.fromiter({x for pc in prof for x in pc}, float); pps = {}
+        for u in tr:
+            m = np.isin(u['pos'], want)
+            for xx, q in zip(u['pos'][m], u['pp'][m]):
+                pps.setdefault(int(xx), []).append(q)
         for c in range(len(gs)):
             for x, v in prof[c].items():
-                med = np.median([q for u in tr for xx, q in zip(u['pos'], u['pp']) if int(xx) == x])
+                med = np.median(pps[x])
                 if v <= med + 0.02:
                     continue
                 one = [dict() for _ in gs]; one[c] = {x: v}
-                Mq, _ = rows_of(tr, gs, f, opt, one); wq, _ = em(Mq); Tq, _ = rows_of(te, gs, f, opt, one)
+                Mq, _ = sc_tr.rows(one); wq, _ = em(Mq); Tq, _ = sc_te.rows(one)
                 gain[c][x] = gain[c].get(x, 0.) + loglik(Tq, wq) - base; seen[c][x] = seen[c].get(x, 0) + 1
     return [{x for x, gv in gain[c].items() if gv >= opt.spot_gain_nats and seen[c][x] == 2} for c in range(len(gs))]
 
@@ -281,18 +327,19 @@ def fit_channel(units, gs, f, opt):
     edges = [''] * len(gs)
     if opt.edge_contraction:
         gs, edges = contract_edges(units, gs, f, opt)
-    if opt.learned_spots:
+    if opt.learned_spots and any(v >= opt.spot_minimum_evidence_nats for v in info):
         acc = select_spots(units, gs, f, opt)
         acc = [a if info[c] >= opt.spot_minimum_evidence_nats else set() for c, a in enumerate(acc)]
     else:
         acc = [set() for _ in gs]
-    w, P, keep, prof = learn(units, gs, f, opt, acc)
+    sc = Scorer(units, gs, f, opt)
+    w, P, keep, prof = learn(units, gs, f, opt, acc, scorer=sc)
     capped = [{x for x in acc[c] if prof[c].get(x, 0) >= opt.spot_cap - 1e-9} for c in range(len(gs))]
     if any(capped):
-        acc = [acc[c] - capped[c] for c in range(len(gs))]; w, P, keep, prof = learn(units, gs, f, opt, acc)
+        acc = [acc[c] - capped[c] for c in range(len(gs))]; w, P, keep, prof = learn(units, gs, f, opt, acc, scorer=sc)
     if w is None:
         return None
-    M, keep2 = rows_of(units, gs, f, opt, prof)
+    M, keep2 = sc.rows(prof)
     fold = np.array([_hash2(u['uid']) for u in keep2]); gains = []
     for c in range(len(gs)):
         gain = 0.

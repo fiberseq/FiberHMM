@@ -19,6 +19,30 @@ from ..parameters import options_dict
 from . import discovery as D, model as Mo, units as Un
 
 MODE = 'lattice_recaller'
+
+
+def _run_all(fn, tasks, cores, done=None):
+    """fn(*task) for every task, in task order; across processes when cores > 1 (results are deterministic, so the
+    output does not depend on the worker count)."""
+    done = done or (lambda *_: None)
+    if cores <= 1 or len(tasks) <= 1:
+        out = []
+        for t in tasks:
+            out.append(fn(*t)); done(len(out) - 1)
+        return out
+    import warnings
+    from ..execution import _process_pool
+    pool = _process_pool(min(cores, len(tasks)))
+    try:
+        with warnings.catch_warnings():
+            # loky recycles a worker whose memory grew and reruns its task; results are unaffected.
+            warnings.filterwarnings('ignore', message='A worker stopped while some jobs were given to the executor')
+            futures = [pool.submit(fn, *t) for t in tasks]; out = []
+            for i, fut in enumerate(futures):
+                out.append(fut.result()); done(i)
+        return out
+    finally:
+        pool.shutdown(wait=True)
 SCHEMA = 'fiberhmm.consensus.v1'
 
 
@@ -34,15 +58,15 @@ def _jitter(g, chemistry, opt):
     return dict(L=[g['L'][0] - J, g['L'][1]], R=[g['R'][0], g['R'][1] + J], span=g['span'])
 
 
-def discover(sources, region, opt, progress):
+def discover(sources, region, opt, progress, cores=1):
     tiles = _tiles(region['start'], region['end'], opt.tile_bp, opt.tile_step_bp)
-    found, diagnostics = [], []
+    found, diagnostics, tasks, which = [], [], [], []
     for t, (w0, w1) in enumerate(tiles):
         units = Un.tile_units(sources, w0, w1, opt.call_min_llr, opt.call_max_bp)
-        progress('recaller_discovery', f'tile {t + 1}/{len(tiles)} {w0}-{w1}: {len(units)} molecules')
-        if len(units) < opt.minimum_channel_units:
-            continue
-        classes, diag = D.discover_tile(units, opt)
+        if len(units) >= opt.minimum_channel_units:
+            tasks.append((units, opt)); which.append((t, w0, w1, len(units)))
+    done = lambda i: progress('recaller_discovery', f'tile {which[i][0] + 1}/{len(tiles)} {which[i][1]}-{which[i][2]}: {which[i][3]} molecules')
+    for (t, w0, w1, _), (classes, diag) in zip(which, _run_all(D.discover_tile, tasks, cores, done)):
         for g in classes:
             g['tile'] = t
         found += classes; diagnostics.append(dict(tile=[w0, w1], classes=len(classes), **diag))
@@ -54,11 +78,12 @@ def discover(sources, region, opt, progress):
     return kept, dropped, tiles, diagnostics
 
 
-def quantify(sources, classes, tiles, opt, progress):
+def quantify(sources, classes, tiles, opt, progress, cores=1):
     rows, mols = [], []
     efficiency = Un.efficiency_factors(sources) if opt.efficiency_calibration else None
     chem = {s['dataset_id']: s['chemistry'] for s in sources}
     groups = D.overlap_groups(classes)
+    tasks, meta = [], []
     for gi, grp in enumerate(groups):
         centre = np.mean([sum(classes[x]['span'])/2 for x in grp])
         t = next((i for i, (a, b) in enumerate(tiles) if a <= centre < b), min(range(len(tiles)), key=lambda i: abs(sum(tiles[i])/2 - centre)))
@@ -70,27 +95,28 @@ def quantify(sources, classes, tiles, opt, progress):
             chemistry = chem[ch.split('::', 1)[0]]
             gs = [_jitter(classes[x], chemistry, opt) for x in grp]
             f = Un.unknown_accessible_fraction(sources, ch, {u['uid'] for u in us})
-            progress('recaller_quantify', f'group {gi + 1}/{len(groups)} ({len(grp)} classes), {ch}: {len(us)} molecules')
-            res = Mo.fit_channel(us, gs, f, opt)
-            if res is None:
-                continue
-            k = len(grp); w = res['w']
-            for c, x in enumerate(grp):
-                g = classes[x]; lb = Mo.wilson_lo(w[c]*res['n'], res['n'])
-                gain = res['support_gain'][c]
-                rows.append(dict(class_id=g['id'], group=gi + 1, channel=ch, dataset=ch.split('::', 1)[0], strand=ch.split('::', 1)[1],
-                                 start=round(g['span'][0], 1), end=round(g['span'][1], 1), L0=res['gs'][c]['L'][0], L1=res['gs'][c]['L'][1], R0=res['gs'][c]['R'][0], R1=res['gs'][c]['R'][1],
-                                 calls=g['calls'], stability=round(g['stability'], 3), molecules=res['n'], prevalence=round(float(w[c]), 4),
-                                 prevalence_lower_bound=round(lb, 4), broader=round(float(w[k]), 4), other_shape=round(float(w[k + 1]), 4),
-                                 accessible=round(float(w[k + 2]), 4), support_gain_nats=None if gain != gain else round(gain, 2),
-                                 supported=bool(gain == gain and gain >= opt.support_gain_nats and lb >= opt.support_minimum_lower_bound),
-                                 resolution_nats=round(res['resolution'][c], 2), resolved=bool(res['resolution'][c] >= opt.resolution_nats),
-                                 spots=';'.join(f'{p}:{v:.3f}' for p, v in res['spots'][c].items()), edge_contraction=res['edges'][c],
-                                 unknown_accessible_fraction=round(f, 4),
-                                 efficiency=None if not efficiency else round(efficiency.get(ch, 1.), 4)))
-                for u, p in zip(res['units'], res['P'][:, c]):
-                    lab, lbf = Mo.label(p, w[c], opt.bf_threshold)
-                    mols.append(dict(class_id=g['id'], channel=ch, unit_id=u['uid'], posterior=round(float(p), 4), log_bf=round(lbf, 3), label=lab))
+            tasks.append((us, gs, f, opt)); meta.append((gi, grp, ch, len(us)))
+    done = lambda i: progress('recaller_quantify', f'group {meta[i][0] + 1}/{len(groups)} ({len(meta[i][1])} classes), {meta[i][2]}: {meta[i][3]} molecules')
+    for (gi, grp, ch, _), (us, gs, f, _o), res in zip(meta, tasks, _run_all(Mo.fit_channel, tasks, cores, done)):
+        if res is None:
+            continue
+        k = len(grp); w = res['w']
+        for c, x in enumerate(grp):
+            g = classes[x]; lb = Mo.wilson_lo(w[c]*res['n'], res['n'])
+            gain = res['support_gain'][c]
+            rows.append(dict(class_id=g['id'], group=gi + 1, channel=ch, dataset=ch.split('::', 1)[0], strand=ch.split('::', 1)[1],
+                             start=round(g['span'][0], 1), end=round(g['span'][1], 1), L0=res['gs'][c]['L'][0], L1=res['gs'][c]['L'][1], R0=res['gs'][c]['R'][0], R1=res['gs'][c]['R'][1],
+                             calls=g['calls'], stability=round(g['stability'], 3), molecules=res['n'], prevalence=round(float(w[c]), 4),
+                             prevalence_lower_bound=round(lb, 4), broader=round(float(w[k]), 4), other_shape=round(float(w[k + 1]), 4),
+                             accessible=round(float(w[k + 2]), 4), support_gain_nats=None if gain != gain else round(gain, 2),
+                             supported=bool(gain == gain and gain >= opt.support_gain_nats and lb >= opt.support_minimum_lower_bound),
+                             resolution_nats=round(res['resolution'][c], 2), resolved=bool(res['resolution'][c] >= opt.resolution_nats),
+                             spots=';'.join(f'{p}:{v:.3f}' for p, v in res['spots'][c].items()), edge_contraction=res['edges'][c],
+                             unknown_accessible_fraction=round(f, 4),
+                             efficiency=None if not efficiency else round(efficiency.get(ch, 1.), 4)))
+            for u, p in zip(res['units'], res['P'][:, c]):
+                lab, lbf = Mo.label(p, w[c], opt.bf_threshold)
+                mols.append(dict(class_id=g['id'], channel=ch, unit_id=u['uid'], posterior=round(float(p), 4), log_bf=round(lbf, 3), label=lab))
     return rows, mols
 
 
@@ -183,8 +209,9 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None):
     if options['families'].stop_after == 'native':
         classes, dropped, tiles, diagnostics, rows, mols = [], [], [], [], [], []
     else:
-        classes, dropped, tiles, diagnostics = discover(sources, region, opt, progress)
-        rows, mols = quantify(sources, classes, tiles, opt, progress) if classes else ([], [])
+        cores = options['compute'].cores
+        classes, dropped, tiles, diagnostics = discover(sources, region, opt, progress, cores)
+        rows, mols = quantify(sources, classes, tiles, opt, progress, cores) if classes else ([], [])
     snap = snapshot(sources, classes, rows, mols, opt, region=region)
     stages = [dict(id='resolved', label='Lattice recaller', seconds=time.monotonic() - started, families=len(classes),
                    original_calls=sum(len(r['proposals']) for d in snap['datasets'].values() for r in d['cr']['records']),
