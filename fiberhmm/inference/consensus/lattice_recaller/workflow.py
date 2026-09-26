@@ -99,7 +99,7 @@ def _write_tsv(path, rows, fields, compress=False):
         w = csv.DictWriter(handle, fieldnames=fields, delimiter='\t'); w.writeheader(); w.writerows(rows)
 
 
-def snapshot(sources, classes, rows, mols, opt, stage='resolved'):
+def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None):
     from ..harmonized_families.presentation import browser_unit
     datasets = {}
     by_class_ch = {(r['class_id'], r['channel']): r for r in rows}
@@ -118,8 +118,8 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved'):
             key = (ds, u['unit_id']); proposals = []
             for c in u.get('native_multi_interval_calls', []):
                 a, b = c['interval']
-                if c.get('llr', 99.) < opt.call_min_llr:
-                    continue
+                if c.get('llr', 99.) < opt.call_min_llr or (region and not (a < region['end'] and b > region['start'])):
+                    continue                      # records cover native calls overlapping the analysed region
                 fams = [cid for post, cid in sorted(members.get(key, []), reverse=True)
                         if min(b, span[cid][1]) > max(a, span[cid][0])]
                 for i, fid in enumerate(fams):
@@ -160,7 +160,8 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved'):
                             cr=dict(status='complete', cr_mode=MODE, catalog=catalog, records=records, stage=stage),
                             rescue=dict(status='disabled', records=[], accepted_calls=0), split=dict(status='disabled', records=[], accepted_spans=0),
                             comparability=dict(status='disabled', records=[]))
-    return dict(datasets=datasets)
+    return dict(datasets=datasets, cross=dict(status='disabled', edges=[], count_groups=[], comparable_edges=0, shared_family_edges=0,
+                                             count_semantics='Lattice recaller: no cross-dataset edges; classes are shared by construction'))
 
 
 CLASS_FIELDS = ['class_id', 'group', 'channel', 'dataset', 'strand', 'start', 'end', 'L0', 'L1', 'R0', 'R1', 'calls', 'stability', 'molecules',
@@ -183,7 +184,7 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None):
     else:
         classes, dropped, tiles, diagnostics = discover(sources, region, opt, progress)
         rows, mols = quantify(sources, classes, tiles, opt, progress) if classes else ([], [])
-    snap = snapshot(sources, classes, rows, mols, opt)
+    snap = snapshot(sources, classes, rows, mols, opt, region=region)
     stages = [dict(id='resolved', label='Lattice recaller', seconds=time.monotonic() - started, families=len(classes),
                    original_calls=sum(len(r['proposals']) for d in snap['datasets'].values() for r in d['cr']['records']),
                    assignments=sum(bool(p['family']) for d in snap['datasets'].values() for r in d['cr']['records'] for p in r['proposals']))]

@@ -234,7 +234,9 @@ def test_unset_compute_follows_the_machine_and_explicit_values_win():
     assert 1<=machine['cores']<=16 and 2048<=machine['maximum_matrix_mb']<=32768 and machine['maximum_matrix_mb']%16==0
     auto=automatic_parameters({},strata)['compute']
     assert auto['cores']==machine['cores'] and auto['maximum_matrix_mb']==machine['maximum_matrix_mb']
-    assert auto['predictive_stopping']=='decision'
+    assert 'predictive_stopping' not in auto          # default engine: lattice recaller, no Monte Carlo draws
+    staged=automatic_parameters({'cr':{'engine':'staged_native_families'}},strata)['compute']
+    assert staged['predictive_stopping']=='decision'
     explicit=automatic_parameters({'compute':{'cores':3,'maximum_matrix_mb':4096,'predictive_stopping':'full'}},strata)['compute']
     assert (explicit['cores'],explicit['maximum_matrix_mb'],explicit['predictive_stopping'])==(3,4096,'full')
     parse_options(automatic_parameters({},strata))

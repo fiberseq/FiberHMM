@@ -311,6 +311,6 @@ def run_workflow(payload, parameters=None, output_dir=None, progress=None):
 
 
 def run_analysis(payload, parameters=None, output_dir=None, progress=None):
-    """Public Browser/CLI entry point: full engine, metadata-derived source mode."""
+    """Public Browser/CLI entry point: lattice recaller unless cr.engine names the staged engine; metadata-derived source mode."""
     from .regions import automatic_parameters
     return run_workflow(payload, automatic_parameters(parameters,payload['strata']), output_dir, progress)
