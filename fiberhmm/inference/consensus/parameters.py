@@ -216,6 +216,7 @@ class RecallerOptions:
     spot_pseudo_units: float = control(30., 'Spot shrinkage (pseudo-molecules)', 'Learned rates are shrunk toward the model rate by this many pseudo-molecules.', 0, 10000, 1)
     spot_edge_bp: int = control(5, 'Spot interior margin (bp)', 'Spots are learned only this far inside the class span.', 0, 50, 1)
     spot_iterations: int = control(10, 'Spot EM rounds', 'Rounds of EM alternating with spot updates.', 1, 100, 1)
+    report_unsupported_classes: bool = control(False, 'Show classes no channel supports', 'Discovered classes that no channel supports (held-out gain and prevalence bound) are left out of the class catalog and call labels, e.g. short calls inside a nucleosome that the scoring assigns to broader protection. They stay in classes.tsv and are listed in the manifest; turn this on to show them anyway.')
     bf_threshold: float = control(3., 'Per-molecule BF threshold', 'Member if the posterior odds exceed the prior odds by this factor, non-member if below its inverse, otherwise abstain. Prevalence comes from EM and does not use it.', 1, 1000, 0.5)
     support_gain_nats: float = control(5., 'Support: held-out gain (nats)', 'A channel supports a class when including it raises held-out likelihood by at least this much (class weight fixed at 0 in the null).', 0, 10000, 0.5)
     support_minimum_lower_bound: float = control(0.02, 'Support: minimum prevalence lower bound', 'And its prevalence Wilson lower bound reaches this.', 0, 1, 0.005)

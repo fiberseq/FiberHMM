@@ -140,14 +140,16 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None):
     from ..harmonized_families.presentation import browser_unit
     datasets = {}
     by_class_ch = {(r['class_id'], r['channel']): r for r in rows}
+    # Classes no channel supports are candidates the scoring rejected: not catalogued, not used as call labels.
+    shown = {g['id'] for g in classes} if opt.report_unsupported_classes else {r['class_id'] for r in rows if r['supported']}
     members = {}
     for m in mols:
-        if m['label'] == 'member':
+        if m['label'] == 'member' and m['class_id'] in shown:
             members.setdefault((m['channel'].split('::', 1)[0], m['unit_id']), []).append((m['posterior'], m['class_id']))
     span = {g['id']: g['span'] for g in classes}
     member_counts = {}
     for m in mols:
-        if m['label'] == 'member':
+        if m['label'] == 'member' and m['class_id'] in shown:
             key = (m['class_id'], m['channel']); member_counts[key] = member_counts.get(key, 0) + 1
     for s in sources:
         ds = s['dataset_id']; catalog = []; records = []; call_counts = {}
@@ -172,6 +174,8 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None):
                 records.append(dict(unit_id=f"{ds}::{u['unit_id']}", strand=u['strand'], source_calls=[p['source_interval'] for p in proposals],
                                     proposals=proposals))
         for g in classes:
+            if g['id'] not in shown:
+                continue
             counts = {}; block = {}
             for (cid, ch), r in by_class_ch.items():
                 if cid != g['id'] or r['dataset'] != ds:
@@ -243,13 +247,15 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None):
                    family_count_cap=None, native_source_modified=False, stages=stages, last_stage='resolved',
                    datasets=[dict(dataset_id=s['dataset_id'], chemistry=s['chemistry'], units=len(s['units']), model=s.get('model_manifest'))
                              for s in sources],
-                   recaller=dict(classes=len(classes), dropped_by_core_rule=dropped, tiles=[list(t) for t in tiles], discovery=diagnostics,
+                   recaller=dict(classes=len(classes), unsupported_classes=sorted({g['id'] for g in classes} - {r['class_id'] for r in rows if r['supported']}),
+                                 dropped_by_core_rule=dropped, tiles=[list(t) for t in tiles], discovery=diagnostics,
                                  efficiency_calibration=opt.efficiency_calibration),
                    browser_sources=payload.get('browser_sources'), pooling=payload.get('pooling'), input_files=payload.get('input_files'),
                    display_mode=mode, presentation_revision='lattice_recaller_v1')
     result = dict(schema=SCHEMA, cr_mode=MODE, manifest=receipt, stages=stages, stage_results={'resolved': snap}, final_stage='resolved',
                   recaller=dict(classes=[dict(id=g['id'], start=g['span'][0], end=g['span'][1], L=list(g['L']), R=list(g['R']), calls=g['calls'],
-                                              stability=g['stability']) for g in classes], rows=rows), **snap)
+                                              stability=g['stability'], supported_channels=sum(1 for r in rows if r['class_id'] == g['id'] and r['supported']))
+                                         for g in classes], rows=rows), **snap)
     if digest(payload) != before:
         raise AssertionError('Input payload mutated')
     write_json(out/'manifest.json', receipt); write_json(out/'result.json.gz', result)
