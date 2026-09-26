@@ -158,7 +158,13 @@ def test_planted_class_is_recovered_with_all_outputs(tmp_path):
     assert len(assigned) > 30
     with gzip.open(tmp_path/'molecules.tsv.gz', 'rt') as fh:
         header = fh.readline().rstrip('\n').split('\t')
-    assert header == ['class_id', 'channel', 'unit_id', 'posterior', 'log_bf', 'label']
+    assert header == ['class_id', 'channel', 'unit_id', 'posterior', 'log_bf', 'label', 'start', 'end']
+    assert (tmp_path/'broader.tsv.gz').exists()
+    # The recaller's own calls: every member molecule of the class, with its own edges near the planted footprint.
+    rc = [c for r in res['datasets']['planted']['cr']['records'] for c in r.get('recaller_calls', []) if c['family'] == hit[0]['id']]
+    assert len(rc) > 30 and all(c['kind'] == 'class' for c in rc)
+    assert all(abs(c['interval'][0] - 1180) <= 8 and abs(c['interval'][1] - 1210) <= 8 for c in rc)
+    assert all(c['consensus_interval'] == [round(hit[0]['start']), round(hit[0]['end'])] for c in rc)
 
 
 def test_core_rule_can_drop_every_class(tmp_path):

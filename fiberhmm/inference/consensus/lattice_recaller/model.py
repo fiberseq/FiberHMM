@@ -83,7 +83,8 @@ def _prepare(u, gs, f, opt):
     for g in gs:
         br |= valid & (l1 <= g['L'][1]) & (r0 >= g['R'][0])
     br &= ~anycls; other = valid & ~anycls & ~br
-    cls = []
+    cls = []; bounds = []
+    full = lambda x: np.broadcast_to(x, valid.shape)
     for g, cm in zip(gs, cms):
         if opt.class_weighting == 'bp':
             wl = np.clip(np.minimum(l1, g['L'][1]) - np.maximum(l0, g['L'][0]) + 1, 0, None)
@@ -95,14 +96,23 @@ def _prepare(u, gs, f, opt):
             use = cm; logw = np.full(int(cm.sum()), -math.log(max(int(cm.sum()), 1)))
         ii, jc = np.nonzero(use)
         cls.append((ii, jc + 1, s0[use], logw))
+        # Each configuration's edge ranges (left edge in [l0, l1], right edge in [r0, r1]), for the molecule's own call.
+        bounds.append((full(l0)[use], full(l1)[use], full(r0)[use], full(r1)[use]))
+    # The broader-protection configuration that best explains the molecule (its edge ranges), if any.
+    broader = None
+    if br.any():
+        k = np.argmax(np.where(br, s0, -np.inf)); bi, bj = np.unravel_index(k, br.shape)
+        broader = ((float(full(l0)[bi, bj]) + float(full(l1)[bi, bj]))/2, (float(full(r0)[bi, bj]) + float(full(r1)[bi, bj]))/2)
     c0 = min(g['span'][0] for g in gs); c1 = max(g['span'][1] for g in gs); ins = (p >= c0) & (p < c1)
-    return dict(p=p, dP=dP, h=h, pa=pa, cls=cls, fixed=[lme(s0, br), lme(s0, other), float(dU[~ins].sum())])
+    return dict(p=p, dP=dP, h=h, pa=pa, cls=cls, bounds=bounds, broader=broader,
+                fixed=[lme(s0, br), lme(s0, other), float(dU[~ins].sum())])
 
 
-def _class_score(item, c, pc=None):
+def _class_vector(item, c, pc=None):
+    """Log weight + log-likelihood of each configuration of class c (with the learned spots pc), or None."""
     ii, jc, s0c, logw = item['cls'][c]
     if not len(s0c):
-        return -1e3
+        return None
     v = s0c + logw
     if pc:
         ppc = np.array([pc.get(int(x), np.nan) for x in item['p']]); use = ~np.isnan(ppc)
@@ -110,7 +120,25 @@ def _class_score(item, c, pc=None):
             p, h, pa = ppc[use], item['h'][use], item['pa'][use]
             delta = np.zeros(len(item['p'])); delta[use] = np.where(h, np.log(p) - np.log(pa), np.log1p(-p) - np.log1p(-pa)) - item['dP'][use]
             D = np.concatenate([[0.], np.cumsum(delta)]); v = v + D[jc] - D[ii]
-    return _logsumexp(v)
+    return v
+
+
+def _class_score(item, c, pc=None):
+    v = _class_vector(item, c, pc)
+    return -1e3 if v is None else _logsumexp(v)
+
+
+def molecule_edges(item, c, g, pc=None):
+    """The molecule's own call for class c: the best-supported configuration's edge ranges, intersected with the class
+    edge boxes, each taken at its midpoint. None if the molecule has no configuration of the class."""
+    v = _class_vector(item, c, pc)
+    if v is None:
+        return None
+    k = int(np.argmax(v)); l0, l1, r0, r1 = (float(x[k]) for x in item['bounds'][c])
+    a0, a1 = max(l0, g['L'][0]), min(l1, g['L'][1]); b0, b1 = max(r0, g['R'][0]), min(r1, g['R'][1])
+    left = (a0 + a1)/2 if a0 <= a1 else (l0 + l1)/2
+    right = (b0 + b1)/2 if b0 <= b1 else (r0 + r1)/2
+    return (round(left), round(max(right, left + 1)))
 
 
 class Scorer:
@@ -351,7 +379,10 @@ def fit_channel(units, gs, f, opt):
             gain += loglik(te, wf) - loglik(np.delete(te, c, axis=1), wd)
         gains.append(gain)
     return dict(w=w, P=P, units=keep, spots=[{int(x): prof[c][x] for x in sorted(acc[c])} for c in range(len(gs))],
-                support_gain=gains, resolution=info, n=len(M), gs=gs, edges=edges)
+                support_gain=gains, resolution=info, n=len(M), gs=gs, edges=edges,
+                # Per molecule (aligned with P / units): its own edges for each class, and its best broader stretch.
+                calls=[dict(classes=[molecule_edges(it, c, gs[c], prof[c]) for c in range(len(gs))], broader=it['broader'])
+                       for it in sc.items])
 
 
 def label(posterior, weight, bf):

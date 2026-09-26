@@ -79,7 +79,7 @@ def discover(sources, region, opt, progress, cores=1):
 
 
 def quantify(sources, classes, tiles, opt, progress, cores=1):
-    rows, mols = [], []
+    rows, mols, broad = [], [], []
     efficiency = Un.efficiency_factors(sources) if opt.efficiency_calibration else None
     chem = {s['dataset_id']: s['chemistry'] for s in sources}
     groups = D.overlap_groups(classes)
@@ -124,10 +124,17 @@ def quantify(sources, classes, tiles, opt, progress, cores=1):
                              spots=';'.join(f'{p}:{v:.3f}' for p, v in res['spots'][c].items()), edge_contraction=res['edges'][c],
                              unknown_accessible_fraction=round(f, 4),
                              efficiency=None if not efficiency else round(efficiency.get(ch, 1.), 4)))
-            for u, p in zip(res['units'], res['P'][:, c]):
+            for u, p, call in zip(res['units'], res['P'][:, c], res['calls']):
                 lab, lbf = Mo.label(p, w[c], opt.bf_threshold)
-                mols.append(dict(class_id=g['id'], channel=ch, unit_id=u['uid'], posterior=round(float(p), 4), log_bf=round(lbf, 3), label=lab))
-    return rows, mols
+                edges = call['classes'][c] if lab == 'member' else None
+                mols.append(dict(class_id=g['id'], channel=ch, unit_id=u['uid'], posterior=round(float(p), 4), log_bf=round(lbf, 3), label=lab,
+                                 start=edges[0] if edges else None, end=edges[1] if edges else None))
+        # Molecules best explained by protection wider than every class of the group (e.g. a nucleosome over it).
+        for u, pb, call in zip(res['units'], res['P'][:, k], res['calls']):
+            if pb >= .5 and call['broader'] is not None:
+                broad.append(dict(group=gi + 1, classes=';'.join(classes[x]['id'] for x in grp), channel=ch, unit_id=u['uid'],
+                                  posterior=round(float(pb), 4), start=round(call['broader'][0]), end=round(call['broader'][1])))
+    return rows, mols, broad
 
 
 def _write_tsv(path, rows, fields, compress=False):
@@ -136,7 +143,7 @@ def _write_tsv(path, rows, fields, compress=False):
         w = csv.DictWriter(handle, fieldnames=fields, delimiter='\t'); w.writeheader(); w.writerows(rows)
 
 
-def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None):
+def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None, broad=None):
     from ..harmonized_families.presentation import browser_unit
     datasets = {}
     by_class_ch = {(r['class_id'], r['channel']): r for r in rows}
@@ -147,6 +154,19 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None):
         if m['label'] == 'member' and m['class_id'] in shown:
             members.setdefault((m['channel'].split('::', 1)[0], m['unit_id']), []).append((m['posterior'], m['class_id']))
     span = {g['id']: g['span'] for g in classes}
+    # The recaller's own calls per molecule: each class it is a member of (its own edges and the class's consensus
+    # edges), and the wider protection that best explains a molecule assigned to broader protection.
+    rcalls = {}
+    for m in mols:
+        if m['label'] == 'member' and m['class_id'] in shown and m.get('start') is not None:
+            c0, c1 = span[m['class_id']]
+            rcalls.setdefault((m['channel'].split('::', 1)[0], m['unit_id']), []).append(dict(
+                kind='class', family=m['class_id'], interval=[int(m['start']), int(m['end'])],
+                consensus_interval=[int(round(c0)), int(round(c1))], posterior=m['posterior'], log_bf=m['log_bf']))
+    for b in broad or []:
+        rcalls.setdefault((b['channel'].split('::', 1)[0], b['unit_id']), []).append(dict(
+            kind='broader', family=None, interval=[int(b['start']), int(b['end'])], consensus_interval=[int(b['start']), int(b['end'])],
+            posterior=b['posterior'], classes=b['classes'].split(';')))
     member_counts = {}
     for m in mols:
         if m['label'] == 'member' and m['class_id'] in shown:
@@ -170,9 +190,10 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None):
                                       assessment_status='lattice_member' if fams else 'lattice_unassigned', inference_eligible=True,
                                       unclassified=not fams, cr_mode=MODE, new_call=False, stage=stage, raw_interval_unchanged=True,
                                       exclusive_assignment=False, llr=c.get('llr')))
-            if proposals:
+            rc = sorted(rcalls.get(key, []), key=lambda r: r['interval'])
+            if proposals or rc:
                 records.append(dict(unit_id=f"{ds}::{u['unit_id']}", strand=u['strand'], source_calls=[p['source_interval'] for p in proposals],
-                                    proposals=proposals))
+                                    proposals=proposals, recaller_calls=rc))
         for g in classes:
             if g['id'] not in shown:
                 continue
@@ -208,7 +229,8 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None):
 CLASS_FIELDS = ['class_id', 'group', 'channel', 'dataset', 'strand', 'start', 'end', 'L0', 'L1', 'R0', 'R1', 'calls', 'stability', 'molecules',
                 'prevalence', 'prevalence_lower_bound', 'broader', 'other_shape', 'accessible', 'support_gain_nats', 'supported',
                 'resolution_nats', 'resolved', 'spots', 'edge_contraction', 'unknown_accessible_fraction', 'efficiency']
-MOLECULE_FIELDS = ['class_id', 'channel', 'unit_id', 'posterior', 'log_bf', 'label']
+MOLECULE_FIELDS = ['class_id', 'channel', 'unit_id', 'posterior', 'log_bf', 'label', 'start', 'end']
+BROADER_FIELDS = ['group', 'classes', 'channel', 'unit_id', 'posterior', 'start', 'end']
 
 
 def run_lattice_recaller(payload, options, output_dir=None, progress=None):
@@ -221,12 +243,12 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None):
     before = digest(payload); sources = prepare_sources(payload, options)
     write_json(out/'evidence.json.gz', payload)
     if options['families'].stop_after == 'native':
-        classes, dropped, tiles, diagnostics, rows, mols = [], [], [], [], [], []
+        classes, dropped, tiles, diagnostics, rows, mols, broad = [], [], [], [], [], [], []
     else:
         cores = options['compute'].cores
         classes, dropped, tiles, diagnostics = discover(sources, region, opt, progress, cores)
-        rows, mols = quantify(sources, classes, tiles, opt, progress, cores) if classes else ([], [])
-    snap = snapshot(sources, classes, rows, mols, opt, region=region)
+        rows, mols, broad = quantify(sources, classes, tiles, opt, progress, cores) if classes else ([], [], [])
+    snap = snapshot(sources, classes, rows, mols, opt, region=region, broad=broad)
     stages = [dict(id='resolved', label='Lattice recaller', seconds=time.monotonic() - started, families=len(classes),
                    original_calls=sum(len(r['proposals']) for d in snap['datasets'].values() for r in d['cr']['records']),
                    assignments=sum(bool(p['family']) for d in snap['datasets'].values() for r in d['cr']['records'] for p in r['proposals']))]
@@ -260,6 +282,7 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None):
         raise AssertionError('Input payload mutated')
     write_json(out/'manifest.json', receipt); write_json(out/'result.json.gz', result)
     _write_tsv(out/'classes.tsv', rows, CLASS_FIELDS); _write_tsv(out/'molecules.tsv.gz', mols, MOLECULE_FIELDS, compress=True)
+    _write_tsv(out/'broader.tsv.gz', broad, BROADER_FIELDS, compress=True)
     from ..report import write_report
     write_report(result, out)
     progress('complete', f'{len(classes)} classes; {len(rows)} class x channel estimates')
