@@ -84,10 +84,20 @@ def quantify(sources, classes, tiles, opt, progress, cores=1):
     chem = {s['dataset_id']: s['chemistry'] for s in sources}
     groups = D.overlap_groups(classes)
     tasks, meta = [], []
+    jmax = max(opt.jitter_ddda_bp, opt.jitter_dddb_bp, opt.jitter_hia5_bp)
     for gi, grp in enumerate(groups):
         centre = np.mean([sum(classes[x]['span'])/2 for x in grp])
         t = next((i for i, (a, b) in enumerate(tiles) if a <= centre < b), min(range(len(tiles)), key=lambda i: abs(sum(tiles[i])/2 - centre)))
-        units = Un.tile_units(sources, *tiles[t], opt.call_min_llr, opt.call_max_bp, efficiency)
+        # The tile's sites must cover the group's whole scoring window (edge boxes, jitter and flank), or no molecule
+        # spans it and the group is silently unscored (e.g. a class near a tile edge). Keep the centre tile when it
+        # does; otherwise an overlapping tile that does; otherwise a window built around the group.
+        lo = min(classes[x]['L'][0] for x in grp) - jmax - opt.flank_bp; hi = max(classes[x]['R'][1] for x in grp) + jmax + opt.flank_bp
+        covers = lambda w: w[0] - Un.SITE_PAD + 10 <= lo and hi + 10 <= w[1] + Un.SITE_PAD
+        if not covers(tiles[t]):
+            ok = [i for i, w in enumerate(tiles) if covers(w)]
+            t = min(ok, key=lambda i: abs(sum(tiles[i])/2 - centre)) if ok else None
+        window = tiles[t] if t is not None else (int(lo) - 20, int(hi) + 20)
+        units = Un.tile_units(sources, *window, opt.call_min_llr, opt.call_max_bp, efficiency)
         for ch in sorted({u['ch'] for u in units}):
             us = [u for u in units if u['ch'] == ch]
             if len(us) < opt.minimum_channel_units:
