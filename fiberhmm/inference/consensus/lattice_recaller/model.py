@@ -102,7 +102,8 @@ def _prepare(u, gs, f, opt):
     broader = None
     if br.any():
         k = np.argmax(np.where(br, s0, -np.inf)); bi, bj = np.unravel_index(k, br.shape)
-        broader = ((float(full(l0)[bi, bj]) + float(full(l1)[bi, bj]))/2, (float(full(r0)[bi, bj]) + float(full(r1)[bi, bj]))/2)
+        e = [float(full(x)[bi, bj]) for x in (l0, l1, r0, r1)]
+        broader = ((e[0] + e[1])/2, (e[2] + e[3])/2, (round(e[0]), round(e[1])), (round(e[2]), round(e[3])))
     c0 = min(g['span'][0] for g in gs); c1 = max(g['span'][1] for g in gs); ins = (p >= c0) & (p < c1)
     return dict(p=p, dP=dP, h=h, pa=pa, cls=cls, bounds=bounds, broader=broader,
                 fixed=[lme(s0, br), lme(s0, other), float(dU[~ins].sum())])
@@ -136,9 +137,11 @@ def molecule_edges(item, c, g, pc=None):
         return None
     k = int(np.argmax(v)); l0, l1, r0, r1 = (float(x[k]) for x in item['bounds'][c])
     a0, a1 = max(l0, g['L'][0]), min(l1, g['L'][1]); b0, b1 = max(r0, g['R'][0]), min(r1, g['R'][1])
-    left = (a0 + a1)/2 if a0 <= a1 else (l0 + l1)/2
-    right = (b0 + b1)/2 if b0 <= b1 else (r0 + r1)/2
-    return (round(left), round(max(right, left + 1)))
+    if a0 > a1: a0, a1 = l0, l1
+    if b0 > b1: b0, b1 = r0, r1
+    left, right = (a0 + a1)/2, (b0 + b1)/2
+    # Midpoint edges, and each edge's range (how far it can move before a mark says otherwise).
+    return (round(left), round(max(right, left + 1)), (round(a0), round(a1)), (round(b0), round(b1)))
 
 
 class Scorer:

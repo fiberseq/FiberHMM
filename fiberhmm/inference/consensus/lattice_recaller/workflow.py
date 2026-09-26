@@ -128,19 +128,21 @@ def quantify(sources, classes, tiles, opt, progress, cores=1):
                 lab, lbf = Mo.label(p, w[c], opt.bf_threshold)
                 edges = call['classes'][c] if lab == 'member' else None
                 mols.append(dict(class_id=g['id'], channel=ch, unit_id=u['uid'], posterior=round(float(p), 4), log_bf=round(lbf, 3), label=lab,
-                                 start=edges[0] if edges else None, end=edges[1] if edges else None))
+                                 start=edges[0] if edges else None, end=edges[1] if edges else None,
+                                 edge_range=[list(edges[2]), list(edges[3])] if edges else None))
         # Molecules best explained by protection wider than every class of the group (e.g. a nucleosome over it).
         for u, pb, call in zip(res['units'], res['P'][:, k], res['calls']):
             if pb >= .5 and call['broader'] is not None:
                 broad.append(dict(group=gi + 1, classes=';'.join(classes[x]['id'] for x in grp), channel=ch, unit_id=u['uid'],
-                                  posterior=round(float(pb), 4), start=round(call['broader'][0]), end=round(call['broader'][1])))
+                                  posterior=round(float(pb), 4), start=round(call['broader'][0]), end=round(call['broader'][1]),
+                                  edge_range=[list(call['broader'][2]), list(call['broader'][3])]))
     return rows, mols, broad
 
 
 def _write_tsv(path, rows, fields, compress=False):
     opener = (lambda p: gzip.open(p, 'wt', newline='')) if compress else (lambda p: open(p, 'w', newline=''))
     with opener(path) as handle:
-        w = csv.DictWriter(handle, fieldnames=fields, delimiter='\t'); w.writeheader(); w.writerows(rows)
+        w = csv.DictWriter(handle, fieldnames=fields, delimiter='\t', extrasaction='ignore'); w.writeheader(); w.writerows(rows)
 
 
 def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None, broad=None):
@@ -162,11 +164,11 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None, b
             c0, c1 = span[m['class_id']]
             rcalls.setdefault((m['channel'].split('::', 1)[0], m['unit_id']), []).append(dict(
                 kind='class', family=m['class_id'], interval=[int(m['start']), int(m['end'])],
-                consensus_interval=[int(round(c0)), int(round(c1))], posterior=m['posterior'], log_bf=m['log_bf']))
+                consensus_interval=[int(round(c0)), int(round(c1))], edge_range=m.get('edge_range'), posterior=m['posterior'], log_bf=m['log_bf']))
     for b in broad or []:
         rcalls.setdefault((b['channel'].split('::', 1)[0], b['unit_id']), []).append(dict(
             kind='broader', family=None, interval=[int(b['start']), int(b['end'])], consensus_interval=[int(b['start']), int(b['end'])],
-            posterior=b['posterior'], classes=b['classes'].split(';')))
+            edge_range=b.get('edge_range'), posterior=b['posterior'], classes=b['classes'].split(';')))
     member_counts = {}
     for m in mols:
         if m['label'] == 'member' and m['class_id'] in shown:

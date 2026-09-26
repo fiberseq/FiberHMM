@@ -165,6 +165,7 @@ def test_planted_class_is_recovered_with_all_outputs(tmp_path):
     assert len(rc) > 30 and all(c['kind'] == 'class' for c in rc)
     assert all(abs(c['interval'][0] - 1180) <= 8 and abs(c['interval'][1] - 1210) <= 8 for c in rc)
     assert all(c['consensus_interval'] == [round(hit[0]['start']), round(hit[0]['end'])] for c in rc)
+    assert all(c['edge_range'][0][0] <= c['interval'][0] <= c['edge_range'][0][1] and c['edge_range'][1][0] <= c['interval'][1] <= c['edge_range'][1][1] for c in rc)
 
 
 def test_core_rule_can_drop_every_class(tmp_path):
