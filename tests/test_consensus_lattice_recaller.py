@@ -159,14 +159,18 @@ def test_planted_class_is_recovered_with_all_outputs(tmp_path):
     assert len(assigned) > 30
     with gzip.open(tmp_path/'molecules.tsv.gz', 'rt') as fh:
         header = fh.readline().rstrip('\n').split('\t')
-    assert header == ['class_id', 'channel', 'unit_id', 'posterior', 'log_bf', 'label', 'start', 'end']
+    assert header == ['class_id', 'channel', 'unit_id', 'posterior', 'log_bf', 'label', 'tier', 'start', 'end']
     assert (tmp_path/'broader.tsv.gz').exists()
     # The recaller's own calls: every member molecule of the class, with its own edges near the planted footprint.
     rc = [c for r in res['datasets']['planted']['cr']['records'] for c in r.get('recaller_calls', []) if c['family'] == hit[0]['id']]
-    assert len(rc) > 30 and all(c['kind'] == 'class' for c in rc)
+    core = [c for c in rc if c['tier'] == 'core']
+    assert len(core) > 30 and all(c['kind'] == 'class' for c in rc) and {c['tier'] for c in rc} <= {'core', 'edge', 'loose'}
+    # Members with a native call for the class take its edges; the rest keep their lattice edges.
+    assert {c['edge_source'] for c in core} <= {'native', 'lattice'} and any(c['edge_source'] == 'native' for c in core)
+    rc = core
     assert all(abs(c['interval'][0] - 1180) <= 8 and abs(c['interval'][1] - 1210) <= 8 for c in rc)
     assert all(c['consensus_interval'] == [round(hit[0]['start']), round(hit[0]['end'])] for c in rc)
-    assert all(c['edge_range'][0][0] <= c['interval'][0] <= c['edge_range'][0][1] and c['edge_range'][1][0] <= c['interval'][1] <= c['edge_range'][1][1] for c in rc)
+    assert all(c['edge_range'][0][0] <= c['lattice_interval'][0] <= c['edge_range'][0][1] and c['edge_range'][1][0] <= c['lattice_interval'][1] <= c['edge_range'][1][1] for c in rc)
 
 
 def test_core_rule_can_drop_every_class(tmp_path):

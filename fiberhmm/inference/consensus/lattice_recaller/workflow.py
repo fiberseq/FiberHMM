@@ -127,9 +127,13 @@ def quantify(sources, classes, tiles, opt, progress, cores=1):
                              efficiency=None if not efficiency else round(efficiency.get(ch, 1.), 4)))
             for u, p, call in zip(res['units'], res['P'][:, c], res['calls']):
                 lab, lbf = Mo.label(p, w[c], opt.bf_threshold)
-                edges = call['classes'][c] if lab == 'member' else None
+                # tier: 'core' for members; for the rest, 'edge' / 'loose' when their likelier wider or other-shape
+                # protection matches the class (the looser prevalence tiers), with that call's edges.
+                upper = call['tiers'][c] if lab != 'member' else None
+                edges = call['classes'][c] if lab == 'member' else (upper[1] if upper else None)
+                tier = 'core' if lab == 'member' else (upper[0] if upper else '')
                 mols.append(dict(class_id=g['id'], channel=ch, unit_id=u['uid'], posterior=round(float(p), 4), log_bf=round(lbf, 3), label=lab,
-                                 start=edges[0] if edges else None, end=edges[1] if edges else None,
+                                 tier=tier, start=edges[0] if edges else None, end=edges[1] if edges else None,
                                  edge_range=[list(edges[2]), list(edges[3])] if edges else None))
         # Molecules best explained by protection wider than every class of the group (e.g. a nucleosome over it).
         for u, pb, call in zip(res['units'], res['P'][:, k], res['calls']):
@@ -144,6 +148,39 @@ def _write_tsv(path, rows, fields, compress=False):
     opener = (lambda p: gzip.open(p, 'wt', newline='')) if compress else (lambda p: open(p, 'w', newline=''))
     with opener(path) as handle:
         w = csv.DictWriter(handle, fieldnames=fields, delimiter='\t', extrasaction='ignore'); w.writeheader(); w.writerows(rows)
+
+
+def _unit_recaller_calls(calls, proposals, unit):
+    """A molecule's recaller calls as displayed. A class call takes the edges of the molecule's native call for that
+    class when there is one (the caller's own boundaries; edge_source 'native'), else keeps its lattice edges.
+    Wider-protection stretches run to the molecule's nearest marks on either side (not the scoring window) and
+    overlapping stretches are merged."""
+    out = []
+    for c in calls:
+        if c['kind'] != 'class':
+            continue
+        a, b = c['lattice_interval']
+        best = max(((min(b, p['source_interval'][1]) - max(a, p['source_interval'][0]), p['source_interval']) for p in proposals
+                    if p.get('family') == c['family'] or (c['tier'] != 'core' and not p.get('family'))), default=(0, None))
+        if best[1] is not None and best[0] >= .5*min(b - a, best[1][1] - best[1][0]):
+            c = dict(c, interval=[int(best[1][0]), int(best[1][1])], edge_source='native')
+        out.append(c)
+    stretches = sorted((c for c in calls if c['kind'] == 'broader'), key=lambda r: r['interval'])
+    if stretches:
+        pos = np.asarray(unit['positions']); hit = np.asarray(unit['hits']) > 0; marks = pos[hit]
+        merged = []
+        for c in stretches:
+            a, b = c['interval']
+            left = marks[marks < a]; right = marks[marks >= b]
+            a = int(left.max()) + 1 if len(left) else int(unit['reference_start'])
+            b = int(right.min()) if len(right) else int(unit['reference_end'])
+            if merged and a < merged[-1]['interval'][1]:
+                m = merged[-1]; m['interval'] = [m['interval'][0], max(b, m['interval'][1])]
+                m['classes'] = sorted(set(m['classes']) | set(c.get('classes', []))); m['posterior'] = max(m['posterior'], c['posterior'])
+            else:
+                merged.append(dict(c, interval=[a, b], consensus_interval=[a, b], edge_range=None))
+        out += merged
+    return sorted(out, key=lambda r: r['interval'])
 
 
 def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None, broad=None):
@@ -161,11 +198,12 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None, b
     # edges), and the wider protection that best explains a molecule assigned to broader protection.
     rcalls = {}
     for m in mols:
-        if m['label'] == 'member' and m['class_id'] in shown and m.get('start') is not None:
+        if m.get('tier') and m['class_id'] in shown and m.get('start') is not None:
             c0, c1 = span[m['class_id']]
             rcalls.setdefault((m['channel'].split('::', 1)[0], m['unit_id']), []).append(dict(
-                kind='class', family=m['class_id'], interval=[int(m['start']), int(m['end'])],
-                consensus_interval=[int(round(c0)), int(round(c1))], edge_range=m.get('edge_range'), posterior=m['posterior'], log_bf=m['log_bf']))
+                kind='class', family=m['class_id'], tier=m['tier'], interval=[int(m['start']), int(m['end'])],
+                lattice_interval=[int(m['start']), int(m['end'])], consensus_interval=[int(round(c0)), int(round(c1))],
+                edge_range=m.get('edge_range'), edge_source='lattice', posterior=m['posterior'], log_bf=m['log_bf']))
     for b in broad or []:
         rcalls.setdefault((b['channel'].split('::', 1)[0], b['unit_id']), []).append(dict(
             kind='broader', family=None, interval=[int(b['start']), int(b['end'])], consensus_interval=[int(b['start']), int(b['end'])],
@@ -193,7 +231,7 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None, b
                                       assessment_status='lattice_member' if fams else 'lattice_unassigned', inference_eligible=True,
                                       unclassified=not fams, cr_mode=MODE, new_call=False, stage=stage, raw_interval_unchanged=True,
                                       exclusive_assignment=False, llr=c.get('llr')))
-            rc = sorted(rcalls.get(key, []), key=lambda r: r['interval'])
+            rc = _unit_recaller_calls(rcalls.get(key, []), proposals, u)
             if proposals or rc:
                 records.append(dict(unit_id=f"{ds}::{u['unit_id']}", strand=u['strand'], source_calls=[p['source_interval'] for p in proposals],
                                     proposals=proposals, recaller_calls=rc))
@@ -232,7 +270,7 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None, b
 CLASS_FIELDS = ['class_id', 'group', 'channel', 'dataset', 'strand', 'start', 'end', 'L0', 'L1', 'R0', 'R1', 'calls', 'stability', 'molecules',
                 'prevalence', 'prevalence_edge', 'prevalence_loose', 'prevalence_lower_bound', 'broader', 'other_shape', 'accessible', 'support_gain_nats', 'supported',
                 'resolution_nats', 'resolved', 'spots', 'edge_contraction', 'unknown_accessible_fraction', 'efficiency']
-MOLECULE_FIELDS = ['class_id', 'channel', 'unit_id', 'posterior', 'log_bf', 'label', 'start', 'end']
+MOLECULE_FIELDS = ['class_id', 'channel', 'unit_id', 'posterior', 'log_bf', 'label', 'tier', 'start', 'end']
 BROADER_FIELDS = ['group', 'classes', 'channel', 'unit_id', 'posterior', 'start', 'end']
 
 

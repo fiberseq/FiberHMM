@@ -368,30 +368,51 @@ def select_spots(units, gs, f, opt):
 OTHER_SHAPE_MAX_BP = 100     # other-shape protection longer than this (nucleosome-sized) never counts toward a class
 
 
+def tier_match(it, g):
+    """How a molecule's non-class explanation relates to class g: ('edge', call) when its best broader stretch has one
+    edge lined up with a class edge (whole range between marks inside the edge box) and runs on past the other box;
+    ('loose', call) when its best other-shape stretch (<= OTHER_SHAPE_MAX_BP) covers half the class; else None.
+    call = (left, right, (left range), (right range)); the hidden edge of an 'edge' call is the class's box."""
+    out = {}
+    b = it.get('broader')
+    if b is not None:
+        (a0, a1), (b0, b1) = b[2], b[3]
+        if g['L'][0] <= a0 and a1 <= g['L'][1] and b0 > g['R'][1]:
+            out['edge'] = (round((a0 + a1)/2), round(g['span'][1]), (a0, a1), tuple(g['R']))
+        elif g['R'][0] <= b0 and b1 <= g['R'][1] and a1 < g['L'][0]:
+            out['edge'] = (round(g['span'][0]), round((b0 + b1)/2), tuple(g['L']), (b0, b1))
+    o = it.get('oshape')
+    if o is not None and o[1] - o[0] <= OTHER_SHAPE_MAX_BP:
+        ov = min(o[1], g['span'][1]) - max(o[0], g['span'][0])
+        if ov >= .5*(g['span'][1] - g['span'][0]):
+            out['loose'] = (round(o[0]), round(o[1]), o[2], o[3])
+    return out
+
+
 def prevalence_tiers(items, P, w, gs):
     """Three prevalences per class, conservative to loose, from the fitted posteriors:
     core  - the class itself (both edges fit);
-    edge  - plus molecules assigned to broader protection whose best stretch has one edge lined up with a class edge
-            (its whole range between marks inside the class's edge box) and runs on past the other box;
-    loose - plus molecules assigned to another shape whose best stretch (<= OTHER_SHAPE_MAX_BP) covers half the class.
+    edge  - plus molecules assigned to broader protection lined up with a class edge (tier_match 'edge');
+    loose - plus molecules assigned to another shape over the class (tier_match 'loose').
     """
     k = len(gs); n = max(len(items), 1); out = []
     for c, g in enumerate(gs):
         edge = loose = 0.
         for it, pb, po in zip(items, P[:, k], P[:, k + 1]):
-            b = it.get('broader')
-            if b is not None and pb > 0:
-                (a0, a1), (b0, b1) = b[2], b[3]
-                left = g['L'][0] <= a0 and a1 <= g['L'][1] and b0 > g['R'][1]
-                right = g['R'][0] <= b0 and b1 <= g['R'][1] and a1 < g['L'][0]
-                if left or right:
-                    edge += pb
-            o = it.get('oshape')
-            if o is not None and po > 0 and o[1] - o[0] <= OTHER_SHAPE_MAX_BP:
-                ov = min(o[1], g['span'][1]) - max(o[0], g['span'][0])
-                if ov >= .5*(g['span'][1] - g['span'][0]):
-                    loose += po
+            m = tier_match(it, g)
+            edge += pb if 'edge' in m else 0.
+            loose += po if 'loose' in m else 0.
         core = float(w[c]); out.append(dict(core=core, edge=core + edge/n, loose=core + (edge + loose)/n))
+    return out
+
+
+def molecule_tiers(it, pb, po, gs):
+    """Per class, the molecule's upper-tier call when its broader (edge) or other-shape (loose) explanation is the
+    likelier one (posterior >= 0.5): (tier, call) or None."""
+    out = []
+    for g in gs:
+        m = tier_match(it, g)
+        out.append(('edge', m['edge']) if pb >= .5 and 'edge' in m else ('loose', m['loose']) if po >= .5 and 'loose' in m else None)
     return out
 
 
@@ -445,8 +466,9 @@ def fit_channel(units, gs, f, opt):
     return dict(w=w, P=P, units=keep, spots=[{int(x): prof[c][x] for x in sorted(acc[c])} for c in range(len(gs))],
                 support_gain=gains, resolution=info, n=len(M), gs=gs, edges=edges, tiers=prevalence_tiers(sc.items, P, w, gs),
                 # Per molecule (aligned with P / units): its own edges for each class, and its best broader stretch.
-                calls=[dict(classes=[molecule_edges(it, c, gs[c], prof[c]) for c in range(len(gs))], broader=it['broader'])
-                       for it in sc.items])
+                calls=[dict(classes=[molecule_edges(it, c, gs[c], prof[c]) for c in range(len(gs))], broader=it['broader'],
+                            tiers=molecule_tiers(it, pb, po, gs))
+                       for it, pb, po in zip(sc.items, P[:, len(gs)], P[:, len(gs) + 1])])
 
 
 def label(posterior, weight, bf):
