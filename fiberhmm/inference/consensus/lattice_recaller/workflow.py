@@ -152,7 +152,9 @@ def _write_tsv(path, rows, fields, compress=False):
 
 def _unit_recaller_calls(calls, proposals, unit):
     """A molecule's recaller calls as displayed. A class call takes the edges of the molecule's native call for that
-    class when there is one (the caller's own boundaries; edge_source 'native'), else keeps its lattice edges.
+    class when there is one (the caller's own boundaries; edge_source 'native'), else keeps its lattice edges. Only
+    calls labelled with the class lend their edges: an unlabelled native call over a looser-tier call is the wider
+    protection it sits in, not the class footprint.
     Wider-protection stretches run to the molecule's nearest marks on either side (not the scoring window) and
     overlapping stretches are merged."""
     out = []
@@ -161,7 +163,7 @@ def _unit_recaller_calls(calls, proposals, unit):
             continue
         a, b = c['lattice_interval']
         best = max(((min(b, p['source_interval'][1]) - max(a, p['source_interval'][0]), p['source_interval']) for p in proposals
-                    if p.get('family') == c['family'] or (c['tier'] != 'core' and not p.get('family'))), default=(0, None))
+                    if p.get('family') == c['family']), default=(0, None))
         if best[1] is not None and best[0] >= .5*min(b - a, best[1][1] - best[1][0]):
             c = dict(c, interval=[int(best[1][0]), int(best[1][1])], edge_source='native')
         out.append(c)
