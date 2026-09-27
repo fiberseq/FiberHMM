@@ -365,55 +365,69 @@ def select_spots(units, gs, f, opt):
     return [{x for x, gv in gain[c].items() if gv >= opt.spot_gain_nats and seen[c][x] == 2} for c in range(len(gs))]
 
 
-OTHER_SHAPE_MAX_BP = 100     # other-shape protection longer than this (nucleosome-sized) never counts toward a class
 
 
-def tier_match(it, g):
-    """How a molecule's non-class explanation relates to class g: ('edge', call) when its best broader stretch has one
-    edge lined up with a class edge (whole range between marks inside the edge box) and runs on past the other box;
-    ('loose', call) when its best other-shape stretch (<= OTHER_SHAPE_MAX_BP) covers half the class; else None.
-    call = (left, right, (left range), (right range)); the hidden edge of an 'edge' call is the class's box."""
-    out = {}
-    b = it.get('broader')
-    if b is not None:
-        (a0, a1), (b0, b1) = b[2], b[3]
-        if g['L'][0] <= a0 and a1 <= g['L'][1] and b0 > g['R'][1]:
-            out['edge'] = (round((a0 + a1)/2), round(g['span'][1]), (a0, a1), tuple(g['R']))
-        elif g['R'][0] <= b0 and b1 <= g['R'][1] and a1 < g['L'][0]:
-            out['edge'] = (round(g['span'][0]), round((b0 + b1)/2), tuple(g['L']), (b0, b1))
-    o = it.get('oshape')
-    if o is not None and o[1] - o[0] <= OTHER_SHAPE_MAX_BP:
-        ov = min(o[1], g['span'][1]) - max(o[0], g['span'][0])
-        if ov >= .5*(g['span'][1] - g['span'][0]):
-            out['loose'] = (round(o[0]), round(o[1]), o[2], o[3])
-    return out
+CORE_EDGE_TOLERANCE_BP = 5   # a run edge within this far inside the core still lines up with the class edge
+CORE_MIN_NATS = 3.           # a clean core must carry at least this much evidence of protection (~20:1)
 
 
-def prevalence_tiers(items, P, w, gs):
-    """Three prevalences per class, conservative to loose, from the fitted posteriors:
-    core  - the class itself (both edges fit);
-    edge  - plus molecules assigned to broader protection lined up with a class edge (tier_match 'edge');
-    loose - plus molecules assigned to another shape over the class (tier_match 'loose').
-    """
-    k = len(gs); n = max(len(items), 1); out = []
+def core_run(u, g, spots=()):
+    """The molecule's unmodified run over class g's core ([L1, R0], or the span's central half when the edge boxes leave
+    under 8 bp between them), ignoring
+    marks at learned spot positions: (clean, left, right). clean = the core has sites and none is marked (spots
+    excepted) and its unmarked sites carry >= CORE_MIN_NATS of evidence for protection (a sparse lattice can leave a
+    core unmarked by chance); left/right = the run's edges (nearest marks outside, else the molecule's lattice ends)."""
+    s0, s1 = g['span']
+    c0, c1 = (g['L'][1], g['R'][0]) if g['R'][0] - g['L'][1] >= 8 else (s0 + (s1 - s0)/4, s1 - (s1 - s0)/4)
+    pos, hit = u['pos'], u['hit']
+    keep = ~np.isin(pos, list(spots)) if spots else np.ones(len(pos), bool)
+    incore = (pos >= c0) & (pos < c1)
+    if not incore.any():
+        return False, None, None
+    evidence = float(np.sum(np.log1p(-u['pp'][incore & keep]) - np.log1p(-u['pa'][incore & keep])))
+    clean = not bool((hit & incore & keep).any()) and evidence >= CORE_MIN_NATS
+    marks = pos[hit & keep]
+    lo = marks[marks < c0]; hi = marks[marks >= c1]
+    return clean, (int(lo.max()) + 1 if len(lo) else int(pos.min())), (int(hi.min()) if len(hi) else int(pos.max()) + 1)
+
+
+def tier_match(u, g, spots=()):
+    """A non-member molecule's looser-tier call for class g from its own lattice: ('edge', call) when the core is
+    clean and the protected run has an edge lined up with the class edge (between the edge box and
+    CORE_EDGE_TOLERANCE_BP inside the core) on at least one side; ('loose', call) when the core is clean and covered
+    by any protection; else None. call = (left, right, (left range), (right range))."""
+    clean, a, b = core_run(u, g, spots)
+    if not clean:
+        return None
+    t = CORE_EDGE_TOLERANCE_BP
+    left = g['L'][0] <= a <= g['L'][1] + t; right = g['R'][0] - t <= b <= g['R'][1]
+    s0, s1 = round(g['span'][0]), round(g['span'][1])
+    if left or right:
+        return 'edge', (a if left else s0, b if right else s1, (a, a) if left else tuple(g['L']), (b, b) if right else tuple(g['R']))
+    return 'loose', (max(a, s0), min(b, s1), tuple(g['L']), tuple(g['R']))
+
+
+def prevalence_tiers(units, P, w, gs, prof):
+    """Three prevalences per class, conservative to loose: core (the class itself: both edges fit); edge (plus
+    non-member molecules with a clean core whose protected run lines up with a class edge); loose (plus non-member
+    molecules with a clean core under any protection). Non-members: class posterior below 0.5."""
+    n = max(len(units), 1); out = []
     for c, g in enumerate(gs):
-        edge = loose = 0.
-        for it, pb, po in zip(items, P[:, k], P[:, k + 1]):
-            m = tier_match(it, g)
-            edge += pb if 'edge' in m else 0.
-            loose += po if 'loose' in m else 0.
-        core = float(w[c]); out.append(dict(core=core, edge=core + edge/n, loose=core + (edge + loose)/n))
+        spots = set((prof[c] or {}).keys()) if prof else set()
+        e = l = 0
+        for u, pc in zip(units, P[:, c]):
+            if pc >= .5:
+                continue
+            m = tier_match(u, g, spots)
+            if m:
+                e += m[0] == 'edge'; l += 1
+        core = float(w[c]); out.append(dict(core=core, edge=core + e/n, loose=core + l/n))
     return out
 
 
-def molecule_tiers(it, pb, po, gs):
-    """Per class, the molecule's upper-tier call when its broader (edge) or other-shape (loose) explanation is the
-    likelier one (posterior >= 0.5): (tier, call) or None."""
-    out = []
-    for g in gs:
-        m = tier_match(it, g)
-        out.append(('edge', m['edge']) if pb >= .5 and 'edge' in m else ('loose', m['loose']) if po >= .5 and 'loose' in m else None)
-    return out
+def molecule_tiers(u, gs, prof):
+    """Per class, the molecule's looser-tier call (tier, call) or None (see tier_match)."""
+    return [tier_match(u, g, set((prof[c] or {}).keys()) if prof else set()) for c, g in enumerate(gs)]
 
 
 def expected_evidence(units, g, margin=30):
@@ -464,11 +478,11 @@ def fit_channel(units, gs, f, opt):
             gain += loglik(te, wf) - loglik(np.delete(te, c, axis=1), wd)
         gains.append(gain)
     return dict(w=w, P=P, units=keep, spots=[{int(x): prof[c][x] for x in sorted(acc[c])} for c in range(len(gs))],
-                support_gain=gains, resolution=info, n=len(M), gs=gs, edges=edges, tiers=prevalence_tiers(sc.items, P, w, gs),
+                support_gain=gains, resolution=info, n=len(M), gs=gs, edges=edges, tiers=prevalence_tiers(sc.keep, P, w, gs, prof),
                 # Per molecule (aligned with P / units): its own edges for each class, and its best broader stretch.
                 calls=[dict(classes=[molecule_edges(it, c, gs[c], prof[c]) for c in range(len(gs))], broader=it['broader'],
-                            tiers=molecule_tiers(it, pb, po, gs))
-                       for it, pb, po in zip(sc.items, P[:, len(gs)], P[:, len(gs) + 1])])
+                            tiers=molecule_tiers(u, gs, prof))
+                       for it, u in zip(sc.items, sc.keep)])
 
 
 def label(posterior, weight, bf):
