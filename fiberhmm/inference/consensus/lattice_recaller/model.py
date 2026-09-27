@@ -82,30 +82,61 @@ def _prepare(u, gs, f, opt):
     br = np.zeros_like(valid)
     for g in gs:
         br |= valid & (l1 <= g['L'][1]) & (r0 >= g['R'][0])
-    br &= ~anycls; other = valid & ~anycls & ~br
-    cls = []; bounds = []
+    br &= ~anycls
     full = lambda x: np.broadcast_to(x, valid.shape)
-    for g, cm in zip(gs, cms):
+    # Abutting footprints (option): a protected run with one edge in a class edge box that continues past the class's
+    # other box is that class with something abutting it (the aligned edge is the evidence; the hidden edge is taken to
+    # be anywhere in its box), not broader protection.
+    abuts = [None]*len(gs)
+    if opt.abutting:
+        anyab = np.zeros_like(valid)
+        for c, g in enumerate(gs):
+            # The aligned edge must line up tightly: its whole range (between the marks around it) inside the box.
+            inL = (l0 >= g['L'][0]) & (l1 <= g['L'][1]); inR = (r0 >= g['R'][0]) & (r1 <= g['R'][1])
+            left = valid & ~anycls & inL & (r0 > g['R'][1]); right = valid & ~anycls & inR & (l1 < g['L'][0])
+            abuts[c] = (left, right); anyab |= left | right
+        br &= ~anyab
+    else:
+        anyab = np.zeros_like(valid)
+    other = valid & ~anycls & ~br & ~anyab
+    cls = []; bounds = []
+    for c, (g, cm) in enumerate(zip(gs, cms)):
+        Lw, Rw = g['L'][1] - g['L'][0] + 1, g['R'][1] - g['R'][0] + 1
         if opt.class_weighting == 'bp':
             wl = np.clip(np.minimum(l1, g['L'][1]) - np.maximum(l0, g['L'][0]) + 1, 0, None)
             wr = np.clip(np.minimum(r1, g['R'][1]) - np.maximum(r0, g['R'][0]) + 1, 0, None)
-            W = np.broadcast_to(wl*wr, cm.shape); use = cm & (W > 0)
-            norm = (g['L'][1] - g['L'][0] + 1)*(g['R'][1] - g['R'][0] + 1)
-            logw = np.log(W[use].astype(float)) - math.log(norm)
+            W = np.broadcast_to(wl*wr, cm.shape).astype(float)
+            if abuts[c] is not None:     # hidden edge: its whole box
+                W = np.where(abuts[c][0], full(wl*Rw), np.where(abuts[c][1], full(Lw*wr), W))
+            members = cm | (abuts[c][0] | abuts[c][1] if abuts[c] is not None else False)
+            use = members & (W > 0)
+            logw = np.log(W[use]) - math.log(Lw*Rw)
         else:
-            use = cm; logw = np.full(int(cm.sum()), -math.log(max(int(cm.sum()), 1)))
+            use = cm | (abuts[c][0] | abuts[c][1] if abuts[c] is not None else False)
+            logw = np.full(int(use.sum()), -math.log(max(int(use.sum()), 1)))
         ii, jc = np.nonzero(use)
         cls.append((ii, jc + 1, s0[use], logw))
-        # Each configuration's edge ranges (left edge in [l0, l1], right edge in [r0, r1]), for the molecule's own call.
-        bounds.append((full(l0)[use], full(l1)[use], full(r0)[use], full(r1)[use]))
+        # Each configuration's edge ranges (left edge in [l0, l1], right edge in [r0, r1]), for the molecule's own call;
+        # an abutting configuration's hidden edge is its box.
+        el0, el1, er0, er1 = full(l0).astype(float), full(l1).astype(float), full(r0).astype(float), full(r1).astype(float)
+        if abuts[c] is not None:
+            el0, el1 = np.where(abuts[c][1], g['L'][0], el0), np.where(abuts[c][1], g['L'][1], el1)
+            er0, er1 = np.where(abuts[c][0], g['R'][0], er0), np.where(abuts[c][0], g['R'][1], er1)
+        bounds.append((el0[use], el1[use], er0[use], er1[use]))
     # The broader-protection configuration that best explains the molecule (its edge ranges), if any.
     broader = None
     if br.any():
         k = np.argmax(np.where(br, s0, -np.inf)); bi, bj = np.unravel_index(k, br.shape)
         e = [float(full(x)[bi, bj]) for x in (l0, l1, r0, r1)]
         broader = ((e[0] + e[1])/2, (e[2] + e[3])/2, (round(e[0]), round(e[1])), (round(e[2]), round(e[3])))
+    # The best other-shape configuration (edge ranges), for the loosest prevalence tier.
+    oshape = None
+    if other.any():
+        k = np.argmax(np.where(other, s0, -np.inf)); oi, oj = np.unravel_index(k, other.shape)
+        e = [float(full(x)[oi, oj]) for x in (l0, l1, r0, r1)]
+        oshape = ((e[0] + e[1])/2, (e[2] + e[3])/2, (round(e[0]), round(e[1])), (round(e[2]), round(e[3])))
     c0 = min(g['span'][0] for g in gs); c1 = max(g['span'][1] for g in gs); ins = (p >= c0) & (p < c1)
-    return dict(p=p, dP=dP, h=h, pa=pa, cls=cls, bounds=bounds, broader=broader,
+    return dict(p=p, dP=dP, h=h, pa=pa, cls=cls, bounds=bounds, broader=broader, oshape=oshape,
                 fixed=[lme(s0, br), lme(s0, other), float(dU[~ins].sum())])
 
 
@@ -334,6 +365,36 @@ def select_spots(units, gs, f, opt):
     return [{x for x, gv in gain[c].items() if gv >= opt.spot_gain_nats and seen[c][x] == 2} for c in range(len(gs))]
 
 
+OTHER_SHAPE_MAX_BP = 100     # other-shape protection longer than this (nucleosome-sized) never counts toward a class
+
+
+def prevalence_tiers(items, P, w, gs):
+    """Three prevalences per class, conservative to loose, from the fitted posteriors:
+    core  - the class itself (both edges fit);
+    edge  - plus molecules assigned to broader protection whose best stretch has one edge lined up with a class edge
+            (its whole range between marks inside the class's edge box) and runs on past the other box;
+    loose - plus molecules assigned to another shape whose best stretch (<= OTHER_SHAPE_MAX_BP) covers half the class.
+    """
+    k = len(gs); n = max(len(items), 1); out = []
+    for c, g in enumerate(gs):
+        edge = loose = 0.
+        for it, pb, po in zip(items, P[:, k], P[:, k + 1]):
+            b = it.get('broader')
+            if b is not None and pb > 0:
+                (a0, a1), (b0, b1) = b[2], b[3]
+                left = g['L'][0] <= a0 and a1 <= g['L'][1] and b0 > g['R'][1]
+                right = g['R'][0] <= b0 and b1 <= g['R'][1] and a1 < g['L'][0]
+                if left or right:
+                    edge += pb
+            o = it.get('oshape')
+            if o is not None and po > 0 and o[1] - o[0] <= OTHER_SHAPE_MAX_BP:
+                ov = min(o[1], g['span'][1]) - max(o[0], g['span'][0])
+                if ov >= .5*(g['span'][1] - g['span'][0]):
+                    loose += po
+        core = float(w[c]); out.append(dict(core=core, edge=core + edge/n, loose=core + (edge + loose)/n))
+    return out
+
+
 def expected_evidence(units, g, margin=30):
     """Median over spanning molecules of the expected log-likelihood ratio (accessible vs protected) of the class span."""
     a0, b0 = g['span']; vals = []
@@ -382,7 +443,7 @@ def fit_channel(units, gs, f, opt):
             gain += loglik(te, wf) - loglik(np.delete(te, c, axis=1), wd)
         gains.append(gain)
     return dict(w=w, P=P, units=keep, spots=[{int(x): prof[c][x] for x in sorted(acc[c])} for c in range(len(gs))],
-                support_gain=gains, resolution=info, n=len(M), gs=gs, edges=edges,
+                support_gain=gains, resolution=info, n=len(M), gs=gs, edges=edges, tiers=prevalence_tiers(sc.items, P, w, gs),
                 # Per molecule (aligned with P / units): its own edges for each class, and its best broader stretch.
                 calls=[dict(classes=[molecule_edges(it, c, gs[c], prof[c]) for c in range(len(gs))], broader=it['broader'])
                        for it in sc.items])

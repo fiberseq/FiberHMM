@@ -152,6 +152,7 @@ def test_planted_class_is_recovered_with_all_outputs(tmp_path):
     est = {r['strand']: r['prevalence'] for r in rows if r['class_id'] == hit[0]['id']}
     assert set(est) == {'CT', 'GA'} and all(0.28 <= v <= 0.52 for v in est.values())
     assert all(r['supported'] for r in rows if r['class_id'] == hit[0]['id'])
+    assert all(r['prevalence'] <= r['prevalence_edge'] <= r['prevalence_loose'] <= 1 for r in rows)
     catalog = res['datasets']['planted']['cr']['catalog']
     assert any(f['family'] == hit[0]['id'] and set(f['classification_counts']) == {'CT', 'GA'} for f in catalog)
     assigned = [p for r in res['datasets']['planted']['cr']['records'] for p in r['proposals'] if p['family'] == hit[0]['id']]
