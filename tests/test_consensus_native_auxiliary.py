@@ -43,7 +43,8 @@ def native_fixture():
 
 def options(**changes):
     params = dict(input=dict(correct_native=False), sr=dict(enabled=False),
-        cr=dict(ambiguity_bp=2, predictive_replicates=31, family_fit_iterations=100),
+        # Historical engine (call_harmonization was the library default before 3.0), requested explicitly.
+        cr=dict(engine='call_harmonization', ambiguity_bp=2, predictive_replicates=31, family_fit_iterations=100),
         rescue=dict(enabled=True, null_replicates=1, proposal_edge_radius_bp=2),
         comparability=dict(enabled=False), split=dict(enabled=False))
     for section, values in changes.items():

@@ -2,6 +2,9 @@
 
 Native layers are unchanged. Derived tf_consensus/tf_cross_consensus annotations
 retain every compatible family, not only the display-primary assignment.
+Lattice-recaller runs write tf_consensus (never tf_cross_consensus: the recaller
+computes no XCR) and, optionally, a tf_recaller layer with the recaller's own
+per-molecule class calls at every prevalence tier (see RECALLER_LAYER).
 """
 from collections import defaultdict
 from pathlib import Path
@@ -21,6 +24,15 @@ from .native_presentation import Q0_SEMANTICS
 
 CONTRACT = 'FIBERHMM-CONSENSUS-MA:v1:'
 FAMILY = 'FIBERHMM-CONSENSUS-FAMILY:v1:'
+RECALLER_MODE = 'lattice_recaller'
+RECALLER_LAYER = 'tf_recaller'
+OWNED_LAYERS = {'tf_consensus', 'tf_cross_consensus', RECALLER_LAYER}
+QUALITY_NAMES = ['tq', 'fi', 'fq', 'op', 'sq', 'q0']
+RECALLER_QUALITY_NAMES = ['tq', 'fi', 'tier', 'q0', 'lr', 'rr']
+TIER_CODES = {'core': 1, 'edge': 2, 'loose': 3}
+RECALLER_Q0_SEMANTICS = ("lattice_recaller_class_posterior_x255: the molecule's EM posterior for the labelled class on its "
+                         "own channel (dataset x chemical strand), round(255*P), at least 1 for a labelled call; 0 = no class. "
+                         "A mixture posterior, not a calibrated probability or the staged engine's class-evidence share")
 
 
 def genomic_interval(interval, unit, region):
@@ -48,79 +60,158 @@ def strand_quality(unit, chemistry, family):
     return int(min(255, 1+max(0, round(10*ceiling))))
 
 
+def _mapped_span(start, end, unit, region):
+    """A class span (consensus coordinates) on the unit's genome, rounded outward to whole bases."""
+    import math
+    return genomic_interval([math.floor(start), math.ceil(end)], unit, region)
+
+
+class ExportPlan:
+    """Exact SAM-record/occurrence matches for every analysis, accumulated one analysis at a time.
+
+    add() keeps only the planned annotation rows, the family catalog and a slim copy of each run's manifest, windows
+    and input files, so a caller can drop each payload and result once it is added (the CLI streams BED windows this
+    way). recaller_layer: also plan the tf_recaller layer for lattice-recaller runs."""
+
+    def __init__(self, recaller_layer=False):
+        self.recaller_layer = bool(recaller_layer)
+        self.planned = defaultdict(lambda: defaultdict(list)); self.families = {}; self.file_stats = {}; self.chrom_cache = {}
+        self.analyses = []; self.engines = set()
+
+    def _chrom(self, path, chrom, interval):
+        if (path, chrom) not in self.chrom_cache:
+            from .bam import _resolve_bam_fetch_region
+            self.chrom_cache[(path, chrom)] = _resolve_bam_fetch_region(path, chrom, *interval)[0]
+        return self.chrom_cache[(path, chrom)]
+
+    def _targets(self, member, paths):
+        path = member.get('library_id')
+        if path and str(Path(path).resolve()) in paths: return [str(Path(path).resolve())]
+        if not path and len(paths) == 1: return paths
+        raise ValueError('Cannot identify the source BAM for a family member')
+
+    def add(self, result, payload):
+        manifest = result['manifest']; recaller = result.get('cr_mode', manifest.get('cr_mode')) == RECALLER_MODE
+        self.engines.add(RECALLER_MODE if recaller else 'other')
+        if len(self.engines) > 1:
+            raise ValueError('Export lattice-recaller and other-engine results to separate BAMs: their q0 semantics differ')
+        run = manifest.get('family_identity_digest', manifest['input_digest']); region = payload['region']
+        # The recaller computes no XCR (its classes are shared by construction): always tf_consensus.
+        layer = 'tf_cross_consensus' if manifest['parameters']['cross']['enabled'] and not recaller else 'tf_consensus'
+        units = {s['dataset_id']+'::'+u['unit_id']: u for s in payload['strata'] for u in s['units']}
+        chemistry = {s['dataset_id']: s.get('chemistry') for s in payload['strata']}
+        paths_by_dataset = defaultdict(list)
+        for row in payload.get('input_files', []):
+            path = str(Path(row['path']).resolve()); paths_by_dataset[row['dataset_id']].append(path)
+            if path in self.file_stats and self.file_stats[path] != dict(row, path=path):
+                # Dataset labels can differ, but a file cannot change during preparation.
+                if any(self.file_stats[path].get(k) != row.get(k) for k in ('size', 'mtime_ns')):
+                    raise ValueError('Source BAM changed across analyses: '+path)
+            self.file_stats[path] = dict(row, path=path)
+            self.planned[path]
+
+        def family_entry(layer_name, token, family, actual_chrom, interval, unit, catalog, ds):
+            key = (layer_name, token, actual_chrom)
+            if recaller and family in catalog:
+                # Class geometry, not the union of the calls that carry the label.
+                fam = catalog[family]
+                _, span = _mapped_span(fam['consensus_start'], fam['consensus_end'], unit, region)
+                f = self.families.setdefault(key, dict(layer=layer_name, annotation_name=token, family_key=family, input_digest=run,
+                    stage=result.get('final_stage'), chrom=actual_chrom, start=span[0], end=span[1], extent='class_consensus_span'))
+                f['start'] = min(f['start'], span[0]); f['end'] = max(f['end'], span[1])
+            else:
+                f = self.families.setdefault(key, dict(layer=layer_name, annotation_name=token, family_key=family,
+                    input_digest=run, stage=result.get('final_stage'), chrom=actual_chrom, start=interval[0], end=interval[1]))
+                f['start'] = min(f['start'], interval[0]); f['end'] = max(f['end'], interval[1])
+            if catalog.get(family, {}).get('strand_resolution'):
+                f.setdefault('strand_resolution', {})[ds] = catalog[family]['strand_resolution']
+
+        for ds, data in result['datasets'].items():
+            catalog = {f['family']: f for f in data['cr'].get('catalog', [])}
+            for record in data['cr']['records']:
+                unit = units[record['unit_id']]
+                members = unit.get('source_members') or [dict(
+                    record_sha256=unit.get('provenance', {}).get('representative_record_sha256'),
+                    alignment_occurrence=unit.get('provenance', {}).get('alignment_occurrence', 0))]
+                rows = []
+                for proposal in record['proposals']:
+                    span = proposal['source_interval']
+                    chrom, interval = genomic_interval(span, unit, region)
+                    native = next((c for c in unit.get('native_multi_interval_calls', []) if tuple(c['interval']) == tuple(span)), {})
+                    tq = llr_to_tq(native['llr']) if 'llr' in native else None
+                    op = sum(span[0] <= p < span[1] for p in unit['positions'])
+                    for family in proposal.get('compatible_families', []):
+                        sq = strand_quality(unit, chemistry.get(ds), catalog.get(family))
+                        # Each membership row carries that class's own support share (recaller: its class posterior).
+                        q0 = int(proposal.get('member_q0', {}).get(family, proposal.get('q0', 0) if family == proposal.get('family') else 0))
+                        token = ('fhxcr_' if layer == 'tf_cross_consensus' else 'fhcr_')+digest([run, family])[:24]
+                        rows.append((layer, token, family, chrom, interval, dict(tq=tq, op=min(255, op), sq=sq, q0=q0)))
+                if recaller and self.recaller_layer:
+                    for call in record.get('recaller_calls', []):
+                        if call.get('kind') != 'class' or not call.get('family') or call['family'] not in catalog:
+                            continue                  # broader stretches have no class; they stay in result.json.gz
+                        chrom, interval = genomic_interval(call['interval'], unit, region)
+                        width = lambda r: min(255, max(0, int(r[1]) - int(r[0]))) if r else 0
+                        ranges = call.get('edge_range') or [None, None]
+                        native = next((c for c in unit.get('native_multi_interval_calls', [])
+                                       if call.get('edge_source') == 'native' and list(c['interval']) == list(call['interval'])), {})
+                        token = 'fhcr_'+digest([run, call['family']])[:24]
+                        rows.append((RECALLER_LAYER, token, call['family'], chrom, interval, dict(
+                            quals=[llr_to_tq(native['llr']) if 'llr' in native else 0, 0, TIER_CODES.get(call.get('tier'), 0),
+                                   int(round(255*min(1., max(0., float(call.get('posterior') or 0.))))), width(ranges[0]), width(ranges[1])],
+                            tolerant=True)))
+                for member in members:
+                    sha = member.get('record_sha256')
+                    if not sha: raise ValueError('BAM materialization requires exact source SAM-record hashes; reload BAM evidence')
+                    for path in self._targets(member, paths_by_dataset[ds]):
+                        for layer_name, token, family, chrom, interval, values in rows:
+                            actual_chrom = self._chrom(path, chrom, interval)
+                            family_entry(layer_name, token, family, actual_chrom, interval, unit, catalog, ds)
+                            self.planned[path][(sha, int(member.get('alignment_occurrence', 0)))].append(
+                                dict(values, layer=layer_name, token=token, chrom=actual_chrom, interval=interval))
+        slim_payload = {k: payload[k] for k in ('region', 'pooling', 'input_files') if k in payload}
+        slim_result = dict(manifest=manifest, final_stage=result.get('final_stage'), cr_mode=result.get('cr_mode', manifest.get('cr_mode')))
+        self.analyses.append((slim_result, slim_payload))
+        return self
+
+    def finish(self):
+        for layer in {key[0] for key in self.families}:
+            selected = {key: f for key, f in self.families.items() if key[0] == layer}
+            slots = allocate_repeating_family_ids([TFFamilyInterval(digest(key), f['chrom'], f['start'], f['end']) for key, f in selected.items()])
+            for key, f in selected.items(): f['fi'] = slots[digest(key)]
+        for records in self.planned.values():
+            for rows in records.values():
+                for row in rows:
+                    row['fi'] = self.families[(row['layer'], row['token'], row['chrom'])]['fi']
+                    if 'quals' in row: row['quals'][1] = row['fi']
+        return self.planned, list(self.families.values()), self.file_stats
+
+    @property
+    def recaller(self):
+        return self.engines == {RECALLER_MODE}
+
+
+def _as_plan(analyses, recaller_layer=False):
+    if isinstance(analyses, ExportPlan): return analyses
+    plan = ExportPlan(recaller_layer=recaller_layer)
+    for result, payload in analyses: plan.add(result, payload)
+    return plan
+
+
 def assignment_plan(analyses):
     """Build exact SAM-record/occurrence matches; aliases keep representative provenance."""
-    planned=defaultdict(lambda:defaultdict(list)); families={}; file_stats={}; chrom_cache={}
-    for result,payload in analyses:
-        run=result['manifest'].get('family_identity_digest',result['manifest']['input_digest']);region=payload['region']
-        layer='tf_cross_consensus' if result['manifest']['parameters']['cross']['enabled'] else 'tf_consensus'
-        units={s['dataset_id']+'::'+u['unit_id']:u for s in payload['strata'] for u in s['units']}
-        chemistry={s['dataset_id']:s.get('chemistry') for s in payload['strata']}
-        paths_by_dataset=defaultdict(list)
-        for row in payload.get('input_files',[]):
-            path=str(Path(row['path']).resolve());paths_by_dataset[row['dataset_id']].append(path)
-            if path in file_stats and file_stats[path]!=dict(row,path=path):
-                # Dataset labels can differ, but a file cannot change during preparation.
-                if any(file_stats[path].get(k)!=row.get(k) for k in ('size','mtime_ns')):
-                    raise ValueError('Source BAM changed across analyses: '+path)
-            file_stats[path]=dict(row,path=path)
-            planned[path]
-        for ds,data in result['datasets'].items():
-            catalog={f['family']:f for f in data['cr'].get('catalog',[])}
-            for record in data['cr']['records']:
-                unit=units[record['unit_id']]
-                members=unit.get('source_members') or [dict(
-                    record_sha256=unit.get('provenance',{}).get('representative_record_sha256'),
-                    alignment_occurrence=unit.get('provenance',{}).get('alignment_occurrence',0))]
-                for proposal in record['proposals']:
-                    span=proposal['source_interval']
-                    chrom,interval=genomic_interval(span,unit,region)
-                    native=next((c for c in unit.get('native_multi_interval_calls',[]) if tuple(c['interval'])==tuple(span)),{})
-                    tq=llr_to_tq(native['llr']) if 'llr' in native else None
-                    op=sum(span[0]<=p<span[1] for p in unit['positions'])
-                    for family in proposal.get('compatible_families',[]):
-                        sq=strand_quality(unit,chemistry.get(ds),catalog.get(family))
-                        # Each membership row carries that class's own support share.
-                        q0=int(proposal.get('member_q0',{}).get(family,proposal.get('q0',0) if family==proposal.get('family') else 0))
-                        token=('fhxcr_' if layer=='tf_cross_consensus' else 'fhcr_')+digest([run,family])[:24]
-                        for member in members:
-                            sha=member.get('record_sha256')
-                            if not sha: raise ValueError('BAM materialization requires exact source SAM-record hashes; reload BAM evidence')
-                            path=member.get('library_id')
-                            paths=paths_by_dataset[ds]
-                            if path and str(Path(path).resolve()) in paths: targets=[str(Path(path).resolve())]
-                            elif not path and len(paths)==1: targets=paths
-                            else: raise ValueError('Cannot identify the source BAM for a family member')
-                            for path in targets:
-                                cache_key=(path,chrom)
-                                if cache_key not in chrom_cache:
-                                    from .bam import _resolve_bam_fetch_region
-                                    chrom_cache[cache_key]=_resolve_bam_fetch_region(path,chrom,*interval)[0]
-                                actual_chrom=chrom_cache[cache_key]
-                                key=(layer,token,actual_chrom)
-                                f=families.setdefault(key,dict(layer=layer,annotation_name=token,family_key=family,
-                                    input_digest=run,stage=result.get('final_stage'),chrom=actual_chrom,start=interval[0],end=interval[1]))
-                                f['start']=min(f['start'],interval[0]);f['end']=max(f['end'],interval[1])
-                                if catalog.get(family,{}).get('strand_resolution'):
-                                    f.setdefault('strand_resolution',{})[ds]=catalog[family]['strand_resolution']
-                                planned[path][(sha,int(member.get('alignment_occurrence',0)))].append(
-                                    dict(layer=layer,token=token,chrom=actual_chrom,interval=interval,tq=tq,op=min(255,op),sq=sq,q0=q0))
-    for layer in {key[0] for key in families}:
-        selected={key:f for key,f in families.items() if key[0]==layer}
-        slots=allocate_repeating_family_ids([TFFamilyInterval(digest(key),f['chrom'],f['start'],f['end']) for key,f in selected.items()])
-        for key,f in selected.items(): f['fi']=slots[digest(key)]
-    for records in planned.values():
-        for rows in records.values():
-            for row in rows: row['fi']=families[(row['layer'],row['token'],row['chrom'])]['fi']
-    return planned,list(families.values()),file_stats
+    return _as_plan(analyses).finish()
 
 
-def _project_to_molecule(read, interval, molecule_length):
+def _project_to_molecule(read, interval, molecule_length, tolerant=False):
+    """Molecular (start, length) of a reference interval on this read. tolerant: a recaller lattice call whose edge
+    falls on unaligned reference maps to the aligned bases inside it (None if there are none)."""
     refs=read.get_reference_positions(full_length=True)
     if molecule_length!=len(refs):
         raise ValueError('MA/query length mismatch; cannot safely materialize family coordinates')
     a,b=interval;positions=[i for i,p in enumerate(refs) if p is not None and a<=p<b]
-    if not positions or refs[positions[0]]!=a or refs[positions[-1]]!=b-1:
+    if tolerant and not positions: return None
+    if not tolerant and (not positions or refs[positions[0]]!=a or refs[positions[-1]]!=b-1):
         raise ValueError('Family span does not map completely to this alignment: '+str(interval))
     if read.has_tag('MA'):
         matches=[]
@@ -160,18 +251,20 @@ def _append_annotations(read, rows):
             # Preparation permits exact chr/no-chr aliases; compare against BAM here.
             # Callers normalize chrom to the source header before reaching here.
             raise ValueError('Family chromosome does not match source alignment')
-        interval=_project_to_molecule(read,row['interval'],parsed['read_length'])
+        interval=_project_to_molecule(read,row['interval'],parsed['read_length'],tolerant=row.get('tolerant',False))
+        if interval is None: continue
         key=(interval,row['token'])
         groups[row['layer']][key]=row
     suffix=[]
     for layer,values in sorted(groups.items()):
-        tokens=[]
+        tokens=[];width=None
         for (interval,token),row in sorted(values.items()):
             start,length=interval;tokens.append(f'{start+1}-{length}')
-            aq.extend([native_tq.get(interval,0) if row['tq'] is None else row['tq'],row['fi'],0,row['op'],
-                       row.get('sq',0),row.get('q0',0)])
+            quals=row['quals'] if 'quals' in row else [native_tq.get(interval,0) if row['tq'] is None else row['tq'],row['fi'],0,row['op'],
+                       row.get('sq',0),row.get('q0',0)]
+            width=len(quals);aq.extend(quals)
             names.append(token)
-        suffix.append(layer+'.QQQQQQ:'+','.join(tokens))
+        suffix.append(layer+'.'+'Q'*width+':'+','.join(tokens))
     read.set_tag('MA',old+';'+ ';'.join(suffix),value_type='Z')
     read.set_tag('AQ',array.array('B',aq))
     read.set_tag('AN',format_an_tag(names),value_type='Z')
@@ -231,9 +324,50 @@ def _export_reads(bam, windows, scope):
                 yield read
 
 
+def _contract(plan, layers, scope, windows):
+    """The FIBERHMM-CONSENSUS-MA header contract: per-layer quality semantics for this export."""
+    recaller=plan.recaller;analyses=plan.analyses
+    value=dict(layers=layers,quality_names=QUALITY_NAMES,
+        tq='native_LLR_times_10_saturated_255_or_zero_if_unavailable',
+        fi='local_repeating_uint8_slot; AN_is_authoritative_family_identity',
+        fq='zero_unavailable_no_calibrated_assignment_probability',
+        op='representative_native_opportunities_saturated_255',
+        sq='DAF_molecule_core_protection_ceiling: 1+LLR_times_10_saturated_255 (1 = no core site); 0 = not DAF or unavailable',
+        q0=(RECALLER_Q0_SEMANTICS if recaller else Q0_SEMANTICS+'; per membership row, that class\'s share'),
+        strand_resolution=('per-family catalog entry, per DAF dataset (lattice_recaller): trusted_strand (CT/GA/both/none; a strand is trusted when its expected evidence per molecule over the class reaches recaller.resolution_nats), supported_strands, per-strand resolution_nats; use it to choose which chemical strand to quantify'
+            if recaller else 'per-family catalog entry, per dataset: trusted_strand (CT/GA/both/none; a strand is limited when its core ceiling is below the native floor), core_resolution, per-strand median core ceilings and native floor; use it to choose which chemical strand to quantify'),
+        memberships='all_compatible_families_nonexclusive',
+        export_scope=scope,export_windows=windows,
+        coordinates='original_source_call_in_molecular_frame',
+        projection='PCR_aliases_inherit_representative_family_membership',
+        runs=[dict(input_digest=r['manifest']['input_digest'],parameters=r['manifest']['parameters'],
+            mode=r['manifest'].get('display_mode'),stage=r.get('final_stage'),cr_mode=r.get('cr_mode'),
+            family_identity_digest=r['manifest'].get('family_identity_digest'),
+            numerical_policy=r['manifest'].get('numerical_policy'),
+            implementation_sha256=r['manifest'].get('implementation_sha256')) for r,_ in analyses])
+    if recaller:
+        value.update(engine=RECALLER_MODE,
+            family_extent='FAMILY start/end = the class consensus span (not the union of labelled calls)',
+            labels='tf_consensus: native calls of member molecules (per-molecule BF label) that fit the class: width <= recaller.call_max_bp and lattice-censored edges reaching the class edge boxes',
+            recaller_calls=('tf_recaller layer' if RECALLER_LAYER in layers else 'not exported; see result.json.gz recaller_calls'))
+        if RECALLER_LAYER in layers:
+            value['layer_quality_names']={RECALLER_LAYER:RECALLER_QUALITY_NAMES}
+            value[RECALLER_LAYER]=dict(
+                intervals="the recaller's own per-molecule class call (result.json.gz recaller_calls kind=class): the matching native call's edges when edge_source=native, else the lattice edges; clipped to aligned bases",
+                tq='native_LLR_times_10 when the edges are a native call (edge_source=native), 0 = lattice edges',
+                fi='local_repeating_uint8_slot; AN_is_authoritative_family_identity (same fhcr_ token as tf_consensus)',
+                tier='1 = core (class member), 2 = edge (protected run lined up with a class edge), 3 = loose (clean class core under any protection)',
+                q0="class posterior x255 (edge/loose calls are non-members, so usually low); 0 allowed",
+                lr='left edge range width (bp, saturated 255) from the lattice; 0 = exact edge',
+                rr='right edge range width (bp, saturated 255) from the lattice; 0 = exact edge',
+                excluded='broader-protection stretches (no class) stay in result.json.gz and broader.tsv.gz')
+    return value
+
+
 def _export_source_bams(analyses, output_dir, scope):
     """Write indexed derivative BAMs atomically; source BAMs are never modified."""
-    planned,families,file_stats=assignment_plan(analyses)
+    plan=_as_plan(analyses)
+    planned,families,file_stats=plan.finish();analyses=plan.analyses
     out=Path(output_dir);out.mkdir(parents=True,exist_ok=True);outputs=[]
     for index,(source,records) in enumerate(sorted(planned.items()),1):
         source=Path(source)
@@ -254,25 +388,9 @@ def _export_source_bams(analyses, output_dir, scope):
                 for comment in old_comments:
                     if comment.startswith(CONTRACT):
                         owned_layers.update(json.loads(comment[len(CONTRACT):]).get('layers',[]))
-                owned_layers.intersection_update({'tf_consensus','tf_cross_consensus'})
+                owned_layers.intersection_update(OWNED_LAYERS)
                 comments=[c for c in old_comments if not c.startswith((CONTRACT,FAMILY))]
-                comments.append(CONTRACT+json.dumps(dict(layers=layers,quality_names=['tq','fi','fq','op','sq','q0'],
-                    tq='native_LLR_times_10_saturated_255_or_zero_if_unavailable',
-                    fi='local_repeating_uint8_slot; AN_is_authoritative_family_identity',
-                    fq='zero_unavailable_no_calibrated_assignment_probability',
-                    op='representative_native_opportunities_saturated_255',
-                    sq='DAF_molecule_core_protection_ceiling: 1+LLR_times_10_saturated_255 (1 = no core site); 0 = not DAF or unavailable',
-                    q0=Q0_SEMANTICS+'; per membership row, that class\'s share',
-                    strand_resolution='per-family catalog entry, per dataset: trusted_strand (CT/GA/both/none; a strand is limited when its core ceiling is below the native floor), core_resolution, per-strand median core ceilings and native floor; use it to choose which chemical strand to quantify',
-                    memberships='all_compatible_families_nonexclusive',
-                    export_scope=scope,export_windows=windows,
-                    coordinates='original_source_call_in_molecular_frame',
-                    projection='PCR_aliases_inherit_representative_family_membership',
-                    runs=[dict(input_digest=r['manifest']['input_digest'],parameters=r['manifest']['parameters'],
-                        mode=r['manifest'].get('display_mode'),stage=r.get('final_stage'),
-                        family_identity_digest=r['manifest'].get('family_identity_digest'),
-                        numerical_policy=r['manifest'].get('numerical_policy'),
-                        implementation_sha256=r['manifest'].get('implementation_sha256')) for r,_ in analyses]),sort_keys=True))
+                comments.append(CONTRACT+json.dumps(_contract(plan,layers,scope,windows),sort_keys=True))
                 comments.extend(FAMILY+json.dumps(f,sort_keys=True) for f in families)
                 hd['CO']=comments
                 source_rg='fhconsensus_'+digest(str(source))[:16]
@@ -318,17 +436,21 @@ def _export_source_bams(analyses, output_dir, scope):
 
 
 
-def export_bams(analyses, output_dir, *, grouping='datasets', dataset_groups=None, progress=None, scope='regions'):
-    """Group outputs by the current dataset view, or by original input file."""
+def export_bams(analyses, output_dir, *, grouping='datasets', dataset_groups=None, progress=None, scope='regions', recaller_layer=False):
+    """Group outputs by the current dataset view, or by original input file.
+
+    analyses: [(result, payload)] or an ExportPlan built incrementally (then recaller_layer is the plan's own).
+    recaller_layer: for lattice-recaller results, also write the tf_recaller layer."""
     if scope not in ('regions','full'): raise ValueError('BAM scope must be regions or full')
     if grouping not in ('datasets','files'): raise ValueError('BAM grouping must be datasets or files')
     out=Path(output_dir).expanduser().resolve()
     if out.exists() and any(out.iterdir()): raise ValueError('Choose a new or empty BAM output folder')
-    inputs={str(Path(f['path']).resolve()) for _,p in analyses for f in p.get('input_files',[])}
+    analyses=_as_plan(analyses,recaller_layer=recaller_layer)
+    inputs={str(Path(f['path']).resolve()) for _,p in analyses.analyses for f in p.get('input_files',[])}
     if not inputs: raise ValueError('No source BAM paths in this result; reload and run from BAM input')
     if dataset_groups is None:
         grouped=defaultdict(set)
-        for _,p in analyses:
+        for _,p in analyses.analyses:
             for f in p.get('input_files',[]): grouped[f['dataset_id']].add(str(Path(f['path']).resolve()))
         dataset_groups=[dict(dataset_id=k,paths=sorted(v)) for k,v in sorted(grouped.items())]
     if grouping=='files': dataset_groups=[dict(dataset_id=Path(p).stem,paths=[p]) for p in sorted(inputs)]

@@ -1,26 +1,38 @@
-# CR, SR, XCR and cross-locus CR
+# Footprint-class consensus: `fiberhmm-consensus`
 
-The normal `fiberhmm-consensus` command and FiberBrowser use the same full
-FiberHMM engine (`run_analysis`) and the same BAM preparation (`load_bam_payload`).
-The lightweight historical harmonization engine remains available only through
-the lower-level replay API; it is not the normal CLI or Browser analysis.
+`fiberhmm-consensus` finds recurrent footprint classes in a window (or a set of
+oriented windows) and measures, per chemical channel, how often each molecule
+carries each class. FiberBrowser runs the same engine through the same entry
+point (`run_analysis`) and the same BAM preparation (`load_bam_payload`).
+
+The default engine is the **lattice recaller** (`cr.engine=lattice_recaller`).
+It discovers class geometries from confident native calls, then scores every
+molecule's own modification lattice against them with EM. It uses no Monte
+Carlo. The earlier staged Monte Carlo engine (`--engine
+staged_native_families`) is deprecated; it is described at the end of this
+page. The historical call-harmonization engine can only be replayed through the
+library API.
 
 ## Quick start
 
 ```bash
 pip install -e '.[consensus]'
-fiberhmm-consensus --bam calls.bam --bed windows.bed --output families
+fiberhmm-consensus --bam calls.bam --region chr19:47514980-47515330 --output classes
+fiberhmm-consensus --bam calls.bam --bed windows.bed --cores 4 --output classes
 ```
 
-BAMs must be indexed. Chemistry is read from the established
-`FIBERHMM-CHEMISTRY:v1:` BAM `@CO` comments (supported legacy producer metadata
-is also recognized). If missing, supply `--chemistry ddda`, `dddb`,
-`hia5-pacbio`, or `hia5-nanopore`. An explicit setting cannot override conflicting
-metadata. CLI analysis does not modify source BAMs. FiberBrowser's Dataset info
-panel can optionally persist the canonical comments for future use.
+BAMs must be indexed. Chemistry comes from the `FIBERHMM-CHEMISTRY:v1:` BAM
+`@CO` comments that `fiberhmm-call` writes. Supported legacy producer metadata
+is also recognized. If the metadata is missing, or the BAM was called with a
+custom `--model` and no `--enzyme`, supply `--chemistry ddda`, `dddb`,
+`hia5-pacbio` or `hia5-nanopore`. An explicit setting cannot override
+conflicting metadata. Consensus supports only these four chemistries. A BAM
+that declares another enzyme (for example EcoGII) is rejected with an error:
+Hia5 emissions are never substituted for another enzyme. Analysis never
+modifies source BAMs.
 
 Repeat `--bam` for separate datasets. To group several files as one dataset,
-use `--datasets datasets.json` instead:
+use `--datasets datasets.json`:
 
 ```json
 [
@@ -29,270 +41,354 @@ use `--datasets datasets.json` instead:
 ]
 ```
 
-Each dataset can include an explicit `chemistry` when metadata is absent. All
-files in one dataset must have compatible chemistry. No viewport read sampling
-or family-count cap is used. MAPQ, native opportunity, and DAF molecule-collapse
-filters still apply and are recorded. Empty evidence produces an empty report,
-not an invented family.
+Each dataset can declare its `chemistry` when the metadata is absent. All files
+in one dataset must have compatible chemistry. No read sampling or class-count
+cap is used. MAPQ, native-opportunity and DAF molecule-collapse filters still
+apply, and the manifest records them. Empty evidence gives an empty result, not
+an invented class.
 
-Mode is automatic: one Hia5 dataset uses CR, DAF uses SR, multiple datasets use
-XCR (reported as SR/XCR when DAF strands are present). The current validated
-Hia5 engine pools alignment directions, including ONT: alignment direction is
-not treated as an independent chemical-strand measurement. Mode is not a CLI
-switch. The result records both the engine and mode.
+BED and `--region` coordinates are **zero-based, half-open**. Without
+`--pool-loci`, each BED row is an independent analysis in genomic coordinates.
+Windows are streamed: each is loaded, analysed and its BAM assignments recorded
+before the next is loaded, so memory does not grow with the number of rows.
+With more than one window, the output has an index `report.html`, `regions.json`
+and one `window_000001`, `window_000002`, ... directory per row.
+
+## How the lattice recaller works
+
+**Channels.** A channel is one dataset × chemical strand. DAF strands (CT, GA)
+are separate channels. Hia5 alignment orientations (including ONT) are pooled
+into one channel, because orientation is not an independent chemical
+measurement. Channels are labels, never features: one class catalogue is
+discovered from every channel and dataset together, and each class is then
+scored on each channel. The run's mode is therefore always **CR**, with classes
+shared by construction. No SR boundary normalization or XCR relationship graph
+is computed. `sr.enabled` and `cross.enabled` are accepted but change nothing.
+
+1. **Evidence.** Native calls are replayed with the multi-interval decoder
+   (`input.*`). Hia5 nucleosome/TF boundaries are replayed first unless
+   `families.recall_hia5_nucleosomes=false`. The complete payload is saved as
+   `evidence.json.gz`.
+2. **Discovery (per tile).** The window is cut into tiles of `tile_bp`,
+   `tile_step_bp` apart. The native calls used are those with
+   LLR ≥ `call_min_llr` and width ≤ `call_max_bp` that lie entirely inside one
+   tile. `call_max_bp` must not exceed the tile overlap
+   (`tile_bp - tile_step_bp`); otherwise a wide footprint straddling an overlap
+   would never be discovered, so this setting is rejected. Each call's edges are
+   censored by the lattice: an edge is uncertain up to the nearest mark, capped
+   at `censor_bp`. k-means clusters the censored edge midpoints, and k is the
+   largest value whose split-half prediction strength reaches `stringency`.
+   Overlapping candidates merge while two geometries beat one by less than
+   `identity_nats` of held-out likelihood. Classes less stable than
+   `stringency` are dropped. Each class gets left and right **edge boxes**
+   (quantiles `edge_quantile_low`/`_high` of its calls' censored edge ranges)
+   and a span (the median edges). The core rule drops classes whose core-rule
+   boxes (`core_quantile_low`/`_high`) leave less than `minimum_core_bp` of
+   protected DNA between them. Classes found in two overlapping tiles are
+   deduplicated.
+3. **Scoring (per overlap group × channel).** Classes whose spans overlap form
+   a group. Molecules that span the group's edge boxes plus `flank_bp` are
+   scored against these hypotheses: each class; broader protection (one
+   interval covering every edge box); any other single protected interval; and
+   all accessible. A class needs accessible linker DNA beyond both edges
+   (`linker=both`) or at least one (`either`). EM gives the mixture weight
+   (prevalence) and each molecule's posterior. Optional steps:
+   - edge contraction (`edge_contraction`) pulls a box inward past sites that
+     members almost always mark. The boxes are proposed on each validation
+     fold's training half and scored on its held-out half.
+   - learned internal spots (`learned_spots`) are interior positions that are
+     sometimes marked while bound. They are kept only if they raise held-out
+     likelihood.
+4. **Verdicts.** A channel **supports** a class when including the class raises
+   2-fold held-out likelihood by ≥ `support_gain_nats` and the prevalence's
+   Wilson lower bound is ≥ `support_minimum_lower_bound`. A channel
+   **resolves** a class when the expected evidence per molecule over the class
+   span is ≥ `resolution_nats`. An unresolved class is still reported, but it is
+   flagged.
+5. **Per-molecule labels.** A molecule is a `member` when its posterior odds
+   exceed the class's prior odds by `bf_threshold`, a `non_member` below the
+   inverse, and otherwise `abstain`.
+
+### Class status: supported, unsupported, unscored
+
+| status | meaning | shown in the catalogue / BAM labels |
+|---|---|---|
+| `supported` | at least one channel supports it | yes |
+| `unsupported` | scored on at least one channel, supported on none (e.g. short calls inside a nucleosome that scoring assigns to broader protection) | no, unless `recaller.report_unsupported_classes=true` |
+| `unscored` | no channel could score it: no molecule spans its scoring window (edge boxes ± `flank_bp`), or a channel has fewer than `minimum_channel_units` molecules in the window. This is common at contig, amplicon or data ends. It is not a verdict on the class. | no (no estimate exists); listed with the reason per channel |
+
+`manifest.json` lists `recaller.unsupported_classes`,
+`recaller.unscored_classes` and `recaller.unscored` (class, channel, reason,
+molecules). `classes.tsv` has one row per class × channel, including unscored
+pairs.
+
+### Prevalence tiers
+
+Each class × channel has three prevalences, from conservative to loose:
+
+- **core** (`prevalence`): the EM class weight, which is the mean class
+  posterior. Both edges fit the class.
+- **edge** (`prevalence_edge`): core plus non-member molecules whose class core
+  is clean (unmarked, ≥ 3 nats of protection evidence) and whose protected run
+  lines up with a class edge (inside the edge box, up to 5 bp into the core) on
+  at least one side.
+- **loose** (`prevalence_loose`): edge plus non-member molecules with a clean
+  core under any protection.
+
+"Non-member" means the per-molecule label is not `member` (the same
+`bf_threshold` label as `molecules.tsv.gz`). The molecules a tier adds are
+therefore exactly those that `molecules.tsv.gz` labels `edge` or `loose`. Each
+tier is a coherent union: a qualifying molecule adds only its remaining
+`1 - P` class mass, so
+`tier = mean_i [P_i + (1 - P_i) × 1{molecule i is in the tier}] ≤ 1`.
+Before 3.0, a full `1/n` was added per molecule, which counted `P_i` twice and
+could exceed 1. The core tier is unchanged.
+
+`prevalence_lower_bound` is the Wilson 95% lower bound of the core prevalence.
+`broader`, `other_shape` and `accessible` are the remaining mixture weights.
+None of these is a calibrated ChIP occupancy.
+
+### Parameters
+
+`fiberhmm-consensus --schema` prints every group with its defaults and help.
+`--parameters options.json` sets them, for example:
+
+```json
+{
+  "recaller": {"stringency": 0.8, "linker": "either", "jitter_hia5_bp": 10},
+  "input": {"minimum_mapq": 20},
+  "families": {"recall_hia5_nucleosomes": true},
+  "compute": {"cores": 4}
+}
+```
+
+The lattice recaller reads:
+
+- the whole `recaller` group;
+- `input.*`, except that `correct_native` must stay `true` (the recaller
+  discovers and scores from replayed native calls and their LLRs);
+- `families.recall_hia5_nucleosomes` and `families.nuc_split_minimum_llr`;
+- `compute.cores`, `compute.maximum_region_bp` and `compute.maximum_matrix_mb`.
+
+A non-default value anywhere else is rejected rather than silently ignored.
+Examples are `cr.seed`, `families.physical_radius_bp`, `--consolidation-bp`,
+`--stop-after`, `--cache` and device backends. The other engines likewise
+reject non-default `recaller.*` values.
+
+The `recaller` controls:
+
+| control | default | effect |
+|---|---|---|
+| `stringency` | 0.9 | prediction strength needed for k, and class stability. Lower (0.6–0.7) finds more, finer classes |
+| `kmax`, `prediction_splits`, `seed`, `minimum_candidate_calls` | 40, 6, 1, 5 | k-means search |
+| `call_min_llr`, `call_max_bp` | 5.0, 100 | discovery calls (also the calls labelled in records) |
+| `censor_bp` | 15 | edge censoring cap |
+| `identity_nats`, `identity_folds`, `identity_pad_bp`, `identity_wide_bp`, `identity_max_width_bp` | 5, 3, 6, 40, 150 | held-out identity test that merges candidates |
+| `edge_quantile_low`/`_high` | 10/90 | edge boxes. Use 25/75 for tighter boxes |
+| `minimum_core_bp`, `core_quantile_low`/`_high` | 3, 25/75 | core rule (−1000 disables it) |
+| `jitter_ddda_bp`, `jitter_dddb_bp`, `jitter_hia5_bp` | 0 | widen edge boxes outward per chemistry |
+| `linker`, `linker_bp`, `flank_bp` | both, 5, 25 | scoring window and accessible-linker rule |
+| `class_weighting` | bp | weight configurations by the edge positions they cover in the boxes, or uniformly |
+| `edge_contraction`, `edge_contraction_rate`, `edge_minimum_members`, `edge_gain_nats` | off, 0.5, 20, 5 | per-channel edge contraction |
+| `learned_spots`, `spot_*` | on | learned internal spots |
+| `support_gain_nats`, `support_minimum_lower_bound` | 5, 0.02 | support verdict |
+| `resolution_nats` | 5 | resolution verdict (and BAM strand trust) |
+| `bf_threshold` | 3 | per-molecule member/non-member/abstain label |
+| `report_unsupported_classes` | off | also catalogue unsupported classes |
+| `efficiency_calibration` | off | scale each channel's accessible rate by its most-marked molecules |
+| `tile_bp`, `tile_step_bp`, `minimum_channel_units` | 350, 250, 20 | tiling and minimum molecules per channel |
+| `abutting` | off | **Experimental.** Calls a protected stretch that runs on past the class, with one edge in a class box, as the class with something abutting it. Its configuration weights are not a normalized prior: the class gains likelihood from the number of possible extensions even without chemical evidence. Runs that enable it get a warning and a `data_warnings` entry, and their prevalence and support are biased upward. |
+
+## Outputs
+
+Every run directory holds:
+
+- `manifest.json`: parameters, mode (`CR`), realized channels,
+  `data_warnings`, timings, and the `recaller` block (class counts,
+  unsupported and unscored classes, tiles, per-tile discovery diagnostics).
+- `evidence.json.gz`: the complete prepared payload, for replay.
+- `result.json.gz`: the frozen result (schema `fiberhmm.consensus.v1`,
+  `cr_mode: lattice_recaller`). It contains the per-dataset catalogue and
+  records that FiberBrowser reads, and `recaller.classes` (geometry and
+  `status`), `recaller.rows` (the scored rows of `classes.tsv`) and
+  `recaller.unscored`. Each record has `proposals` (native calls with any class
+  label) and `recaller_calls`: the recaller's own per-molecule calls. A class
+  call has `tier` (core/edge/loose), `interval`, `lattice_interval`,
+  `consensus_interval`, `edge_range` and `edge_source` (native when a labelled
+  native call supplies the edges). A `broader` call is a wider-protection
+  stretch.
+- `classes.tsv`, `molecules.tsv.gz` and `broader.tsv.gz` (columns below).
+- `families.tsv`, `calls.tsv`, `families.svg`, `report_data.json` and
+  `report.html`: the standard report.
+- `bams/`: family-tagged BAMs when the input was BAM (see below).
+
+**`classes.tsv`**: one row per class × channel.
+
+| column | meaning |
+|---|---|
+| `class_id`, `group` | class and its overlap group |
+| `channel`, `dataset`, `strand` | `dataset::strand` (`pooled` for Hia5) |
+| `start`, `end` | class span (median discovery edges) |
+| `L0`, `L1`, `R0`, `R1` | left and right edge boxes on this channel (contracted if edge contraction was kept) |
+| `status`, `unscored_reason` | `supported` / `unsupported` / `unscored`, and why a pair is unscored |
+| `calls`, `stability` | discovery calls in the class; prediction strength |
+| `molecules` | molecules scored (for unscored rows: molecules in the window) |
+| `prevalence`, `prevalence_edge`, `prevalence_loose`, `prevalence_lower_bound` | the tiers and the core Wilson lower bound |
+| `broader`, `other_shape`, `accessible` | remaining mixture weights |
+| `support_gain_nats`, `supported` | held-out gain and the support verdict |
+| `resolution_nats`, `resolved` | expected evidence per molecule and the resolution verdict |
+| `spots`, `edge_contraction` | learned spots (`position:rate`); edge contraction record, or why it was rejected |
+| `unknown_accessible_fraction`, `efficiency` | the channel's accessible fraction for unknown sites; efficiency factor if calibrated |
+
+Unscored rows leave the estimate columns empty.
+
+**`molecules.tsv.gz`**: one row per class × channel × scored molecule.
+
+| column | meaning |
+|---|---|
+| `class_id`, `channel`, `unit_id` | class, channel and molecule |
+| `posterior`, `log_bf`, `label` | EM class posterior; log posterior-over-prior odds; member / non_member / abstain |
+| `tier` | `core` for members; `edge` / `loose` for non-members counted in those tiers; empty otherwise |
+| `start`, `end` | the molecule's own call for the class (lattice midpoint edges), when it has one |
+| `edge_range` | `l0-l1,r0-r1`: the ranges each edge can move before a mark contradicts it |
+
+**`broader.tsv.gz`**: molecules best explained (posterior ≥ 0.5) by protection
+wider than every class of a group, for example a nucleosome over it.
+
+| column | meaning |
+|---|---|
+| `group`, `classes`, `channel`, `unit_id`, `posterior` | group, its classes (`;`), channel, molecule and broader-protection posterior |
+| `start`, `end`, `edge_range` | the best broader stretch and its edge ranges |
+
+Counts and fractions from different classes overlap. Do not sum them as
+exclusive abundances.
 
 ## Cross-locus CR (CL-CR)
 
 ```bash
 fiberhmm-consensus --bam calls.bam --bed oriented_windows.bed \
-  --pool-loci --consolidation-bp 10 --cores 4 --output pooled_families
+  --pool-loci --cores 4 --output pooled_classes
 ```
 
-Provide BED6 with unique names, explicit `+`/`-` strands, and equal window
-widths. BED coordinates are **zero-based, half-open**. Choose the windows and
-orientations yourself: no motif lookup, recentering or inferred strand occurs.
-A minus window reverses base `i` to `end-1-i` and interval `[a,b)` to
-`[end-b,end-a)`. Positions, hits, context-specific emissions and m5C masks remain
-paired. The original genomic window and molecule identities are retained.
-Local zero is the oriented window's first base; the pooled report axis is
-`0..window_width`. To center motifs/TSSs, supply windows with the desired
-landmark at the same oriented offset. No genome-wide BAM copy is required.
+Provide BED6 with unique names, explicit `+`/`-` strands and equal window
+widths. Choose the windows and orientations yourself: no motif lookup,
+recentering or strand inference happens. A minus window maps base `i` to
+`end-1-i` and interval `[a,b)` to `[end-b,end-a)`. Positions, hits,
+context-specific emissions and m5C masks stay paired. The original genomic
+window and molecule identities are retained. Local zero is the oriented
+window's first base, and the pooled axis is `0..window_width`. To centre
+motifs or TSSs, supply windows with the landmark at the same oriented offset.
 
-Original variable opportunity lattices remain individual observations. Pooled
-views are not resampled onto a dense average lattice. A physical molecule seen
-in multiple windows contributes one deterministic window view, following the
-paper adapter, to avoid duplicated evidence. The pooling receipt lists excluded
-views. This is not an occupancy estimator for every locus.
+Opportunity lattices stay individual observations and are not resampled onto a
+dense average lattice. A physical molecule seen in several windows contributes
+one deterministic window view, so evidence is not duplicated. The pooling
+receipt lists the excluded views. This is not an occupancy estimator for every
+locus. All windows are loaded together, because they are analysed as one.
 
-Without `--pool-loci`, each BED row is analyzed independently in genomic
-coordinates. Multiple-window output includes an index report and numbered
-subdirectories. `--region chr1:10000-10200` is an alternative with the same
-zero-based half-open convention.
+## Replay
 
-## Steps, parameters and resume
+`--evidence evidence.json.gz` or `--resume run_dir` reruns an analysis on saved
+evidence, for example with different `--parameters`. The recaller runs in one
+pass: `--stop-after`, `--start-at consolidation`, `--consolidation-bp` and
+`--cache` belong to the deprecated staged engine and are rejected before any
+work starts. `--resume` addresses one window or pooled run directory, not a
+batch parent. Progress goes to stderr (`--json-progress` gives structured
+events). Output directories must be new or empty.
 
-The workflow prepares native calls, fits native family distributions, fits
-shared parents, consolidates hypotheses and resolves final representatives.
-Default consolidation edge allowance is ±10 bp; use 5 bp for finer grouping.
-The full reference policy remains 4,095 predictive draws, 10 folds, bounded
-native edge allowance 2 bp, 100 fit iterations with a 500-iteration retry, and
-99.9% predictive compatibility. These are not confidence/accuracy percentages.
-Unsupported legacy knobs are rejected rather than silently ignored.
+## Family-tagged BAMs
 
-```bash
-fiberhmm-consensus --schema > parameter_schema.json
-fiberhmm-consensus --bam calls.bam --bed windows.bed \
-  --stop-after native --output native_run
-fiberhmm-consensus --resume native_run --start-at consolidation \
-  --consolidation-bp 5 --output consolidated_run
-```
+BAM input produces indexed derivative BAMs in `output/bams` by default.
 
-`--resume` addresses a single-window or pooled run directory. For a multi-window
-batch, resume its individual `window_000001` etc. directories. Resume defaults
-to the final resolved stage. `--start-at consolidation` requires exact native
-checkpoints and fails if any are missing/incompatible; it never silently refits.
-Shared-parent fitting may still be required, especially after changing the edge
-allowance. `--resume` without this restriction permits safe recomputation of
-invalidated checkpoints. Source/evidence, implementation and numerical-library
-signatures protect checkpoint reuse. Keep the cache with the run.
+- `--bam-scope regions` (the default) keeps whole alignments that overlap the
+  analysed windows, including reads without class assignments.
+  `--bam-scope full` keeps every source record.
+- `--bam-grouping datasets` (the default) writes one BAM per logical dataset.
+  `--bam-grouping files` writes one per source file.
+- `--no-bam` keeps only reports and frozen artifacts.
 
-`--evidence evidence.json.gz --cache /path/to/fit_cache` also permits replay.
-`--parameters options.json` exposes all supported stage groups, e.g.:
+Source BAMs are never overwritten. Native `tf`, `nuc`, MSP and other MA
+annotations stay intact. Reruns replace this producer's own layers and header
+catalogue. Unknown, changed or incompletely mapped source alignments fail the
+export rather than being matched by read name. FiberBrowser's **Write
+family-tagged BAMs** uses the same exporter.
 
-```json
-{
-  "input": {"minimum_mapq": 20, "correct_native": true},
-  "families": {"physical_radius_bp": 10, "minimum_retention_groups": 2},
-  "compute": {"cores": 4, "maximum_matrix_mb": 2048}
-}
-```
+**Lattice-recaller BAMs** carry:
 
-Common controls have direct flags (`--cores`, `--consolidation-bp`,
-`--stop-after`). Mode fields are derived from the input even if an old parameter
-file contains stale switches. Progress is printed on stderr with work counters;
-`--json-progress` emits structured events. Counters indicate work, not ETA.
-Existing output directories must be empty; runs are never overwritten.
+- `tf_consensus.QQQQQQ` (never `tf_cross_consensus`: the recaller computes no
+  XCR) with AQ bytes `tq,fi,fq,op,sq,q0`. A native call is labelled with a
+  class only if the molecule is a member **and** the call fits the class:
+  width ≤ `recaller.call_max_bp`, and its lattice-censored edges reach the
+  class's edge boxes (widened by the chemistry's jitter). A member's
+  nucleosome-sized call over a small class carries no label. AN is the class
+  token (`fhcr_…`).
+  - `q0` is the molecule's EM class posterior on its channel, `round(255·P)`
+    (1–255 for a label; 0 = no class). It is a mixture posterior, not the
+    staged engine's class-evidence share, and not a calibrated probability.
+  - `tq` is the native call LLR ×10 (saturated at 255). `op` is the call's
+    opportunities. `sq` is the DAF core protection ceiling, as in the staged
+    engine. `fq = 0` means unavailable.
+- **Strand trust.** Each DAF class's `FIBERHMM-CONSENSUS-FAMILY` entry has
+  `strand_resolution` per dataset: `trusted_strand` (CT/GA/both/none),
+  `trusted_strands`, `supported_strands`, per-strand `resolution_nats` and the
+  threshold. A strand is trusted when its expected evidence per molecule over
+  the class reaches `recaller.resolution_nats`. Use it to choose which strand
+  to quantify. Hia5 classes carry no strand verdict, because orientations are
+  pooled.
+- **Class extent.** The FAMILY entry's `start`/`end` is the class consensus
+  span (`extent: class_consensus_span`), not the union of the labelled calls.
+- **Optional `tf_recaller.QQQQQQ` layer** (off by default: `--bam-recaller-layer`
+  in the CLI, `recaller_layer=True` in the library `export_bams`; without it the
+  header contract says the recaller calls are in `result.json.gz` only). It holds the recaller's own class calls at every
+  tier, including molecules with no native call. AN is the same class token as
+  `tf_consensus`. The AQ bytes (`layer_quality_names` in the header contract)
+  are:
+  - `tq`: native LLR ×10 when the edges come from a native call, 0 for lattice
+    edges.
+  - `fi`: slot.
+  - `tier`: 1 core, 2 edge, 3 loose.
+  - `q0`: class posterior ×255. Edge and loose calls are non-members, so it is
+    usually low.
+  - `lr`, `rr`: left and right edge-range widths in bp, saturated at 255.
+    0 means an exact edge.
 
-## Reports and plotting data
+  The exact edge-range positions and the broader-protection stretches stay in
+  `result.json.gz` (and `broader.tsv.gz`).
+- The `FIBERHMM-CONSENSUS-MA:v1:` contract records the engine and the
+  semantics of every byte. Recaller and staged results cannot share one
+  export, because their `q0` semantics differ.
 
-Open `report.html`. It links to `families.svg`, `families.tsv`, `calls.tsv` and
-`report_data.json`. Tables contain all completed stages, fitted geometry,
-uncertainty, fit warnings, dataset/strand counts and multi-compatible call
-memberships. Pooled call rows retain the original window. `manifest.json`
-records parameters, engine hashes, timings, numerical environment and cache
-hits; `evidence.json.gz` and `result.json.gz` preserve replayable evidence and
-frozen results. A family bar is its fitted mean geometry, not the original call.
-Counts may overlap between families and must not be summed as exclusive
-abundances or interpreted as calibrated ChIP occupancy probabilities.
+`read_family_catalog(bam.header)` in `fiberhmm.inference.consensus.bam_export`
+reads the embedded catalogue without external tables.
 
-FiberBrowser requires a compatible FiberHMM providing this API and displays an
-installation command for its own Python environment if unavailable. Restart
-Browser after upgrading. It does not substitute a lighter engine. For numerical
-reproducibility launch the Browser with single-threaded BLAS; the CLI scopes
-BLAS to one thread itself. The environment is included in the manifest.
+## Transfer
 
-## Reproducible family-tagged BAMs
+`fiberhmm-transfer` freezes the classes of a finished run (either engine) and
+scores other molecules against them without rediscovering classes: new datasets
+at the same locus, or other loci aligned to the same frame with oriented BED6
+windows. See [CONSENSUS_TRANSFER.md](CONSENSUS_TRANSFER.md) for the frozen-class
+catalogue format, what stays fixed and what is re-estimated, and the outputs.
 
-BAM input produces indexed derivative BAMs in output/bams by default.
-The default --bam-scope regions retains whole alignments overlapping the union
-of analyzed genomic windows, including reads without family assignments.
-Overlapping or disjoint windows do not duplicate a spanning alignment.
-CL-CR uses the original BED windows, not its synthetic oriented coordinates.
-Use --bam-scope full to retain all source records, including unmapped records.
-Use --no-bam to retain only reports and frozen artifacts. By default,
-multiple paths within one logical dataset are merged into one coordinate-sorted
-BAM; --bam-grouping files writes one BAM per source file. Original BAMs are
-never overwritten. Merged exports retain/reconcile read groups and program
-records; reads lacking a read group receive an explicit source-provenance group.
+## Footprint-paired duplex molecules
 
-In FiberBrowser, open **Write family-tagged BAMs** after a completed run, choose
-a new or empty output folder, then choose **One BAM per dataset as currently
-grouped** (default) or **One BAM per original source file**. Grouping is read
-at export time, so merging or unmerging the view after inference is respected
-for the run's source files. Export uses the frozen automatic final stage, not
-display filtering or manual grouping edits. The **BAM contents** selector defaults to **Analyzed regions only**;
-**Full source BAMs** is also available. Only analyzed calls receive annotations.
-The export receipt records the scope, source windows, and written alignment count.
-
-The established molecular-annotation convention is used:
-
-* Native tf, nuc, MSP and other MA annotations remain intact.
-* Reruns replace this producer's previous family layers and catalog, and rebuild
-  its generated source read groups. Original sequencing/library RGs survive,
-  with source provenance in DS. Unknown producers' target layers are not overwritten.
-* Derived tf_consensus.QQQQQQ (CR/SR) or tf_cross_consensus.QQQQQQ (XCR) uses
-  AQ dimensions tq,fi,fq,op,sq,q0; AN carries the full stable family token.
-  (Earlier exports used QQQQ without sq/q0, then QQQQQ without q0.)
-* q0 (class support) is the class's share of the call's evidence among every
-  displayed class the call was scored against, x255: w_k = exp(recipient_optimum_k
-  - floor_adjusted_loss_k), uniform prior. It is a relative profile-likelihood
-  share, not a calibrated probability; it does not change with the assignment
-  stringency. Each membership row carries that class's own share; 0 = unresolved.
-* sq is the DAF molecule's own core protection ceiling for the family:
-  1 + LLR x 10 (saturated at 255), where LLR is the protection log-likelihood a
-  fully protected molecule would give from its own lattice sites and context
-  emissions; 1 means no site in the core and 0 means non-DAF or unavailable.
-  Each family's header catalog entry carries strand_resolution per dataset
-  (trusted_strand CT/GA/both/none, core_resolution, per-strand median ceilings
-  and the native floor); use it, not sq alone, to choose which strand to
-  quantify. A strand is limited when its ceiling is below the native floor.
-  On HG002 scDAF duplexes, a limited strand's calls were confirmed by the
-  complementary strand at only ~0.65 precision (0.96 at >= 10 nats), and
-  its errors were mainly extra calls, so its class rate should not be used.
-* tq is native footprint LLR times 10 (saturated at 255), or the original native
-  TQ if replay was disabled and available. Zero denotes unavailable when no
-  source score exists. fi is the established locally reusable byte slot;
-  AN plus the embedded catalog gives authoritative family identity across loci.
-* **fq=0 explicitly means unavailable for this producer.** The staged engine
-  has predictive compatibility, not a calibrated assignment probability.
-  No confidence value is manufactured. op is the representative call's
-  opportunity count, saturated at 255.
-* All compatible family memberships are preserved as separate named
-  annotations. They are nonexclusive and must not be summed as molecule counts.
-* FIBERHMM-CONSENSUS-MA:v1: and FIBERHMM-CONSENSUS-FAMILY:v1: header comments
-  preserve score semantics, model keys, family-slot mappings, run parameters,
-  implementation hashes and stage. Existing chemistry comments are retained.
-* Molecular coordinates follow the existing MA convention, including reverse
-  alignments. Pooled BED coordinates are inverted to the original locus first.
-  PCR aliases inherit the representative's classification; this is declared
-  in the BAM contract.
-* Unknown, changed or incompletely mapped source alignments fail export rather
-  than being silently matched by read name. The output folder must be empty.
-
-The shared read_family_catalog(bam.header) helper in
-fiberhmm.inference.consensus.bam_export reads the embedded catalog without
-external tables. FiberBrowser decodes the MA/AQ/AN family layers and discovers
-them from MA-TYPES comments on reload. Frozen JSON retains full-precision
-predictive evidence and alternatives beyond the compact BAM encoding.
-
-## Apply frozen families to new windows
-
-Use the same fitted families across loci or datasets without fitting recipient
-families. First export the final converged models from an oriented CL-CR run:
-
-```bash
-fiberhmm-transfer --freeze-run pooled_result --output frozen_catalog
-fiberhmm-transfer --models frozen_catalog/frozen_models.json.gz \
-  --bam target.fiberhmm.bam --bed oriented_targets.bed --output transferred
-```
-
-The model bundle is versioned, digest-checked JSON (including explicitly typed
-numerical arrays), not executable Python serialization. It contains the exact
-native-cell or bounded-parent model and hashed training-molecule identities.
-Final displayed aliases are resolved to their actual fitted models. Unconverged
-models are excluded. A source CL-CR run must retain its native/source/parent
-artifacts for the export step; the resulting bundle is self-contained.
-
-Target BED6 must provide explicit + or - orientations and windows of the same
-width as the source analysis. BED start on + and BED end on - define the shared
-oriented frame. Historical bundles may declare a nonzero analysis origin;
-transport accounts for it explicitly. The user chooses biologically meaningful
-anchors and compatible reference assemblies. No gene, motif or RNA landmark is
-inferred automatically.
-
-Multiple --bam arguments represent separate datasets. --datasets accepts the
-same dataset JSON as fiberhmm-consensus and supports multiple paths per dataset.
-BAM preparation uses the shared native loader, chemistry comments and native
-replay. --parameters exposes its preparation/memory controls. --evidence accepts
-saved oriented native observations for exact replay. It does not reread BAMs or
-regenerate their emissions. --json-progress emits structured stderr updates.
-
-Scoring uses the existing native transfer and bounded-parent predictive kernels,
-4,095 Monte Carlo replicates, and the established 99.9% reference policy. There
-is no target family nomination, consolidation or refitting. Training molecules
-are excluded using physical identifiers, PacBio molecule names and source-member
-aliases; duplicate target molecules within a window fail instead of inflating
-denominators. Cross-window observations are reported separately and are not
-claimed to be independent.
-
-Outputs include:
-
-- families.tsv: eligible, assessed and compatible molecule counts per family/window.
-- calls.tsv: original spans and all compatible family identities.
-- window_*.json.gz: complete scores, unassessed reasons and exclusions.
-- families.svg and report.html: frozen mean spans and summary tables.
-- manifest.json: frozen-model digest, input digests and source provenance.
-- bams/: indexed MA/AQ/AN subset exports by default; --no-bam disables them,
-  --bam-scope full retains full source BAMs, and --bam-grouping files separates files.
-
-The eligible denominator is coverage of the fitted mean by an aligned MSP without
-nucleosome overlap. An eligible molecule can still have insufficient information
-for a predictive decision; assessed counts are reported separately. The compatible
-fraction is an empirical feature, not a calibrated ChIP occupancy probability.
-
-Optionally supply --chip-bed peaks.bed for an external-label check. Peak overlap
-with the supplied genomic window is joined after scoring. chip_evaluation.json
-reports per-dataset/per-family AUROC and average precision of the direct
-compatibility fraction, when both label classes exist. These are descriptive
-metrics without confidence intervals or target fitting. Choose held-out windows
-and appropriate matched controls before interpreting discrimination. The paper's
-frozen logistic predictor and genomic-block bootstrap remain separate analyses;
-this command does not silently fit a new classifier.
-
-### Footprint-paired duplex molecules
-
-Run `fiberhmm-pair` (pair -> merge -> recall, the default) on the called,
+Run `fiberhmm-pair` (pair → merge → recall, the default) on the called,
 coordinate-sorted source BAM before population consensus. The merge recaller uses
-both assay channels together (including the rotational nucleosome recaller).
+both assay channels together, including the rotational nucleosome recaller.
 Consensus preparation preserves the `cs` source identities and counts the
-merged read once; `deam+` and `deam-` MA coverage masks determine which C/G
+merged read once. The `deam+` and `deam-` MA coverage masks determine which C/G
 opportunities are observed. Missing channel coverage and source deletions do
-not become protected observations. The merged BAM retains `pm`, `dm`, `mg`,
+not become protected observations. The merged BAM retains `pm`, `dm`, `mg`
 and `mv` pairing provenance.
 
 Unmerged records with live `mt:P`/`mp` pair annotations cannot enter population
-CR as independent molecules. Merge intentionally preserves failed pairs by
-default so source data are not silently discarded. Check its failure count;
-`fiberhmm-pair --pairs-only` produces only successfully merged joint
-molecules and excludes unresolved pairs and ordinary unpaired reads. Keep the
-source BAM for inspection. Use the merge recaller for joint reads; ordinary
-single-strand calling commands are not a supported way to recall this output.
+consensus as independent molecules. Merge preserves failed pairs by default, so
+source data are not silently discarded; check its failure count.
+`fiberhmm-pair --pairs-only` produces only successfully merged joint molecules.
 
-### Validation on copied or synchronized source trees
+## Validation on copied or synchronized source trees
 
 Copied Python bytecode can retain filenames from a previous drive, and Numba
 cache replacement can fail on synchronized Windows folders. Use fresh local
-cache directories for release checks, for example:
+cache directories for release checks:
 
 ```bash
 OPENBLAS_NUM_THREADS=1 \
@@ -301,6 +397,47 @@ NUMBA_CACHE_DIR=/tmp/fiberhmm-numba \
 python -m pytest -q
 ```
 
-Build a release wheel from a clean staging copy without `build/`, `*.egg-info`,
-`__pycache__`, or Numba cache files. This avoids importing copied artifacts or
-reusing a locked build directory; it does not change the numerical algorithm.
+## Deprecated engine: `staged_native_families`
+
+`--engine staged_native_families` selects the staged Monte Carlo engine. It
+fits native family distributions, fits shared parents, consolidates hypotheses
+and resolves final representatives. Its fixed reference policy is 4,095
+predictive draws, 10 folds, a bounded native edge allowance of 2 bp, 100 fit
+iterations with a 500-iteration retry, and 99.9% predictive compatibility.
+These are not confidence or accuracy percentages. Its mode follows the data
+unless `sr.enabled`/`cross.enabled` are set explicitly: one Hia5 dataset uses
+CR, DAF uses SR, and several datasets use XCR (SR/XCR with DAF strands). An
+explicit value always wins.
+
+It reads `families.*` (consolidation `physical_radius_bp`, default ±10 bp; use
+5 bp for finer grouping), `input.*` (including `correct_native=false`, which
+classifies the original BAM calls) and the compute controls. Non-default values
+in its unused groups, including `recaller.*`, are rejected.
+
+```bash
+fiberhmm-consensus --engine staged_native_families --bam calls.bam --bed windows.bed \
+  --stop-after native --output native_run
+fiberhmm-consensus --resume native_run --start-at consolidation \
+  --consolidation-bp 5 --output consolidated_run
+```
+
+Resume defaults to the final resolved stage. `--start-at consolidation`
+requires exact native checkpoints and fails if any are missing or incompatible;
+it never silently refits. `--evidence evidence.json.gz --cache fit_cache` also
+permits replay. Source, evidence, implementation and numerical-library
+signatures protect checkpoint reuse, so keep the cache with the run.
+
+Its BAMs use `tf_consensus` (CR/SR) or `tf_cross_consensus` (XCR). Their
+`q0` and `sq` bytes mean:
+
+- `q0` is the class's share of the call's evidence among every class it was
+  scored against, ×255: `w_k = exp(recipient_optimum_k − floor_adjusted_loss_k)`
+  with a uniform prior. It is a relative profile-likelihood share, not a
+  calibrated probability. 0 means unresolved.
+- `sq` is the DAF molecule's own core protection ceiling (1 + LLR × 10). The
+  family's `strand_resolution` is the strand verdict: a strand is limited when
+  its ceiling is below the native floor. On HG002 scDAF duplexes, a limited
+  strand's calls were confirmed by the complementary strand at only about 0.65
+  precision.
+
+Its FAMILY extent is the union of the labelled calls.

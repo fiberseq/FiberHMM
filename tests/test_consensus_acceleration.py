@@ -165,13 +165,15 @@ def test_cuda_fit_validation_cannot_replace_cpu_models(monkeypatch):
 
 def test_device_controls_are_explicit_and_cpu_default():
     from fiberhmm.inference.consensus.parameters import parse_options,parameter_schema
-    defaults=parse_options()['compute']
+    # Device controls belong to the historical engines (the library default before 3.0); the recaller rejects them.
+    defaults=parse_options({'cr':{'engine':'call_harmonization'}})['compute']
     assert defaults.predictive_backend==defaults.fit_backend=='cpu'
     controls={c['name']:c for c in parameter_schema()['compute']}
     assert controls['predictive_backend']['choices']==['cpu','vectorized','cuda','mps','auto']   # vectorized: declared versioned kernel (v11)
     assert 'validation-only' in controls['fit_backend']['help']
     for backend in ('cpu','cuda','mps','auto'):
-        assert parse_options({'compute':{'predictive_backend':backend}})['compute'].predictive_backend==backend
+        assert parse_options({'cr':{'engine':'call_harmonization'},'compute':{'predictive_backend':backend}})['compute'].predictive_backend==backend
+    with pytest.raises(ValueError,match='not used by the lattice recaller'):parse_options({'compute':{'predictive_backend':'auto'}})
 
 
 @pytest.mark.parametrize('bad', ['nan', 'cdf', 'zero_draws'])

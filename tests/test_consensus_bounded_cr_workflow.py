@@ -59,7 +59,8 @@ def test_worker_mode_matches_serial_exactly():
 
 
 def test_workflow_option_and_empty_binding_carry_mode():
-    options = parse_options({'cr': {'edge_tolerance_mode': 'bounded'}})
+    # A historical-engine control (the library default before 3.0 was call_harmonization); request it explicitly.
+    options = parse_options({'cr': {'engine': 'call_harmonization', 'edge_tolerance_mode': 'bounded'}})
     source, _ = fixture()
     kwargs = _fit_kwargs(source, options['cr'], options['compute'])
     assert kwargs['edge_tolerance_mode'] == 'bounded'

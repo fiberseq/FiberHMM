@@ -74,9 +74,11 @@ def test_meaningful_separation_survives_the_practical_floor():
 
 def test_practical_allowance_is_method_independent_and_opt_in():
     from fiberhmm.inference.consensus.parameters import parse_options
-    assert parse_options({})['cr'].predictive_loss_tolerance==0
-    assert parse_options({'cr':{'predictive_loss_tolerance':.2}})['cr'].predictive_loss_tolerance==.2
-    with pytest.raises(ValueError):parse_options({'cr':{'predictive_loss_tolerance':-1}})
+    # Historical-engine control (call_harmonization was the library default before 3.0); request it explicitly.
+    engine={'engine':'call_harmonization'}
+    assert parse_options({'cr':engine})['cr'].predictive_loss_tolerance==0
+    assert parse_options({'cr':{**engine,'predictive_loss_tolerance':.2}})['cr'].predictive_loss_tolerance==.2
+    with pytest.raises(ValueError):parse_options({'cr':{**engine,'predictive_loss_tolerance':-1}})
 
 
 def test_full_workflow_keeps_disconnected_sites_even_at_coarse_setting(tmp_path):

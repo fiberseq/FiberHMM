@@ -317,20 +317,33 @@ def header_has_coord_marker(header) -> bool:
     )
 
 
-# Chemistry-profile resolution shared by consensus refinement (moved from the retired
-# fiberhmm-site-consensus CLI; behaviour unchanged).
-def chemistry_profile_from_declaration(declaration) -> str | None:
-    """Map a chemistry declaration to a profile key (ddda, dddb, hia5-pacbio, hia5-nanopore)."""
-    enzyme = str(declaration.get("enzyme", "")).lower()
+# Chemistry-profile resolution shared by consensus refinement.
+# Profiles consensus has native-replay presets and emission tables for.
+CONSENSUS_CHEMISTRY_PROFILES = ("ddda", "dddb", "hia5-pacbio", "hia5-nanopore")
+
+
+def chemistry_profile_from_declaration(declaration, *, enzyme_recorded=True) -> str | None:
+    """Map a chemistry declaration to a profile key.
+
+    A declared enzyme is honoured: ddda/dddb, hia5-<platform>, and any other
+    named enzyme becomes its own key (e.g. ``ecogii-pacbio``) that consensus
+    rejects as unsupported rather than substituting Hia5 emissions. Only a
+    Fiber-seq declaration with no enzyme recorded (``enzyme_recorded=False``:
+    legacy @PG records that never stated one) keeps the historical Hia5
+    assumption. ``enzyme=custom`` (a user --model without --enzyme) returns
+    None: the caller must state the chemistry explicitly."""
+    enzyme = str(declaration.get("enzyme", "") or "").lower()
     platform = str(declaration.get("platform", "")).lower()
     assay = str(declaration.get("assay", "")).lower()
+    platform = "nanopore" if platform == "ont" else platform
     if enzyme in {"ddda", "dddb"}:
         return enzyme
-    if enzyme == "hia5" or assay == "fiber-seq":
-        if platform == "pacbio":
-            return "hia5-pacbio"
-        if platform in {"nanopore", "ont"}:
-            return "hia5-nanopore"
+    if not enzyme_recorded and enzyme in {"", "custom"}:
+        enzyme = "hia5" if assay == "fiber-seq" else ""
+    if enzyme == "hia5":
+        return f"hia5-{platform}" if platform in {"pacbio", "nanopore"} else None
+    if enzyme and enzyme != "custom":
+        return f"{enzyme}-{platform}" if platform in {"pacbio", "nanopore"} else enzyme
     return None
 
 
@@ -347,8 +360,9 @@ def bam_chemistry_profile(path) -> tuple[str | None, dict | None, str]:
             declaration = declarations[-1]
             return chemistry_profile_from_declaration(declaration), declaration, "declared_v1"
         legacy = infer_legacy_chemistry(handle.header)
+        # Legacy @PG records write "custom" when they never stated an enzyme.
         return (
-            chemistry_profile_from_declaration(legacy) if legacy else None,
+            chemistry_profile_from_declaration(legacy, enzyme_recorded=False) if legacy else None,
             legacy,
             "legacy_pg_inference" if legacy else "missing",
         )
@@ -383,6 +397,14 @@ def resolve_bam_chemistry(paths, requested: str | None):
     selected = requested or detected_profile
     if selected is None:
         raise ValueError(
-            "chemistry is absent or ambiguous in the BAM header; provide --chemistry"
+            "chemistry is absent, custom or ambiguous in the BAM header; provide --chemistry "
+            f"({', '.join(CONSENSUS_CHEMISTRY_PROFILES)})"
+        )
+    if selected not in CONSENSUS_CHEMISTRY_PROFILES:
+        enzyme = selected.split("-", 1)[0]
+        raise ValueError(
+            f"BAM header declares {enzyme} chemistry ({selected}); consensus has no {enzyme} "
+            f"profile (supported: {', '.join(CONSENSUS_CHEMISTRY_PROFILES)}). Another enzyme's "
+            "emissions are never substituted: run consensus only on supported chemistries"
         )
     return selected, records

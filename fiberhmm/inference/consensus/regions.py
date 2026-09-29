@@ -142,11 +142,15 @@ def automatic_parameters(parameters, strata):
     # measurement_distribution.predictive_decision_stop_record).
     compute=values.setdefault('compute',{})
     for key,value in machine_compute_defaults().items():compute.setdefault(key,value)
-    engine=values.get('cr',{}).get('engine','lattice_recaller')      # the default footprint-class engine
+    from .parameters import CROptions
+    engine=values.get('cr',{}).get('engine',CROptions().engine)
     if engine not in ('staged_native_families','lattice_recaller'):
         raise ValueError('run_analysis requires the staged or lattice-recaller engine; use run_workflow for historical engine replay')
     if engine=='staged_native_families':compute.setdefault('predictive_stopping','decision')
     values.setdefault('cr',{})['engine']=engine
-    values.setdefault('sr',{})['enabled']=any(s['chemistry'] in ('ddda','dddb') for s in strata)
-    values.setdefault('cross',{})['enabled']=len({s['dataset_id'] for s in strata})>1
+    # SR/XCR follow the data unless set explicitly; an explicit value always wins.
+    # (The lattice recaller records mode CR whatever these say: its classes are
+    # shared across channels and datasets by construction.)
+    values.setdefault('sr',{}).setdefault('enabled',any(s['chemistry'] in ('ddda','dddb') for s in strata))
+    values.setdefault('cross',{}).setdefault('enabled',len({s['dataset_id'] for s in strata})>1)
     return values

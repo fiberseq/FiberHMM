@@ -10,7 +10,14 @@ from fiberhmm.inference.consensus.call_clustering.comparison import (
     ComparisonOptions, coarse_events, native_counts, compare_counts, comparison_rows,
 )
 from fiberhmm.inference.consensus.parameters import parse_options
-from fiberhmm.inference.consensus.workflow import run_workflow, ConsensusCancelled
+from fiberhmm.inference.consensus.workflow import run_workflow as _run_workflow, ConsensusCancelled
+
+
+def run_workflow(payload, parameters=None, output_dir=None, progress=None):
+    """This module tests the call-harmonization engine, the library default before 3.0 (now lattice_recaller):
+    request it explicitly."""
+    parameters = deepcopy(parameters or {}); parameters.setdefault('cr', {}).setdefault('engine', 'call_harmonization')
+    return _run_workflow(payload, parameters, output_dir, progress)
 from test_consensus_call_clustering import unit, payload
 
 
@@ -28,10 +35,12 @@ def family(name, span, members=()):
     return dict(family_id=name, interval=list(span), members=[list(m) for m in members], established=True)
 
 
-def test_current_default_is_all_msp_native_harmonization():
+def test_current_default_is_all_msp_lattice_recaller():
+    # 3.0: the library default is the lattice recaller (it was call_harmonization; the CLI and FiberBrowser already
+    # patched the default to lattice_recaller).
     options = parse_options()
     assert options['input'].minimum_nfr_length == 0
-    assert options['cr'].engine == 'call_harmonization'
+    assert options['cr'].engine == 'lattice_recaller'
     assert not options['rescue'].enabled and not options['split'].enabled
 
 

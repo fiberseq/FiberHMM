@@ -300,7 +300,9 @@ def _aligned_rows(units, sc_a, gs_b, f, opt):
 
 def contract_edges(units, gs, f, opt):
     """Per-channel edge contraction, kept for a class only if proposed on both halves of the molecules and the held-out
-    likelihood of the whole group rises by >= edge_gain_nats (summed over both halves). Returns (gs, records)."""
+    likelihood of the whole group rises by >= edge_gain_nats (summed over both halves). In each fold the contracted
+    boxes are proposed from that fold's training molecules and scored on its held-out molecules; after acceptance the
+    final boxes are the proposal from all molecules. Returns (gs, records)."""
     records = [''] * len(gs)
     none = [set() for _ in gs]
     _, P, keep, _ = learn(units, gs, f, opt, none)
@@ -319,8 +321,11 @@ def contract_edges(units, gs, f, opt):
             return gs, records
         prop = propose_edges(ktr, Ptr, gs, opt)
         for c in cands:
+            # The fold's boundaries come from its training molecules only; the held-out half never chooses them.
             both[c] &= prop[c][0] is not None
-            alt = [full[c][0] if i == c else g for i, g in enumerate(gs)]
+            if prop[c][0] is None:
+                continue
+            alt = [prop[c][0] if i == c else g for i, g in enumerate(gs)]
             M0, M1 = _aligned_rows(tr, sc_tr, alt, f, opt); T0, T1 = _aligned_rows(te, sc_te, alt, f, opt)
             if len(M0) < 10 or not len(T0):
                 both[c] = False; continue
@@ -407,20 +412,27 @@ def tier_match(u, g, spots=()):
     return 'loose', (max(a, s0), min(b, s1), tuple(g['L']), tuple(g['R']))
 
 
-def prevalence_tiers(units, P, w, gs, prof):
+def prevalence_tiers(units, P, w, gs, prof, bf_threshold):
     """Three prevalences per class, conservative to loose: core (the class itself: both edges fit); edge (plus
     non-member molecules with a clean core whose protected run lines up with a class edge); loose (plus non-member
-    molecules with a clean core under any protection). Non-members: class posterior below 0.5."""
+    molecules with a clean core under any protection).
+
+    Non-members are molecules whose per-molecule label (label() at bf_threshold) is not 'member', so the molecules
+    added here are exactly those molecules.tsv.gz labels tier 'edge' / 'loose'. Each tier is a coherent union of
+    molecule-level contributions: core is the mean class posterior (the EM weight), and a qualifying molecule adds
+    only its remaining 1 - P mass (its posterior P is already in core), i.e.
+    tier = mean_i [P_i + (1 - P_i) * 1{molecule i is in the tier}], never above 1."""
     n = max(len(units), 1); out = []
     for c, g in enumerate(gs):
         spots = set((prof[c] or {}).keys()) if prof else set()
-        e = l = 0
+        e = l = 0.
         for u, pc in zip(units, P[:, c]):
-            if pc >= .5:
+            if label(pc, w[c], bf_threshold)[0] == 'member':
                 continue
             m = tier_match(u, g, spots)
             if m:
-                e += m[0] == 'edge'; l += 1
+                rest = 1. - float(pc)
+                e += rest if m[0] == 'edge' else 0.; l += rest
         core = float(w[c]); out.append(dict(core=core, edge=core + e/n, loose=core + l/n))
     return out
 
@@ -478,7 +490,7 @@ def fit_channel(units, gs, f, opt):
             gain += loglik(te, wf) - loglik(np.delete(te, c, axis=1), wd)
         gains.append(gain)
     return dict(w=w, P=P, units=keep, spots=[{int(x): prof[c][x] for x in sorted(acc[c])} for c in range(len(gs))],
-                support_gain=gains, resolution=info, n=len(M), gs=gs, edges=edges, tiers=prevalence_tiers(sc.keep, P, w, gs, prof),
+                support_gain=gains, resolution=info, n=len(M), gs=gs, edges=edges, tiers=prevalence_tiers(sc.keep, P, w, gs, prof, opt.bf_threshold),
                 # Per molecule (aligned with P / units): its own edges for each class, and its best broader stretch.
                 calls=[dict(classes=[molecule_edges(it, c, gs[c], prof[c]) for c in range(len(gs))], broader=it['broader'],
                             tiers=molecule_tiers(u, gs, prof))

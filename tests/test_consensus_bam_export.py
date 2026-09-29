@@ -217,3 +217,76 @@ def test_strand_quality_byte_and_family_strand_resolution(tmp_path):
     assert 'strand_resolution' not in by_family['alternative']
     contract=json.loads(next(c for c in comments if c.startswith(CONTRACT))[len(CONTRACT):])
     assert contract['quality_names']==['tq','fi','fq','op','sq','q0']
+
+
+# ---------------------------------------------------------------- lattice recaller export (release audit 2026-09-29)
+def recaller_fixture(tmp_path):
+    """fixture() rewritten as a lattice-recaller result: one class (span 165-178) labelling the native call 160-180 at
+    class posterior 0.8, plus the molecule's own recaller calls at the core and edge tiers."""
+    source,payload,result,original=fixture(tmp_path)
+    catalog=[dict(family='class_001',consensus_start=165.,consensus_end=178.,strand_resolution=dict(trusted_strand='CT'))]
+    proposals=[dict(source_interval=[160,180],family='class_001',compatible_families=['class_001'],q0=204,member_q0={'class_001':204})]
+    calls=[dict(kind='class',family='class_001',tier='core',interval=[160,180],lattice_interval=[162,179],edge_range=[[158,166],[176,182]],
+                edge_source='native',posterior=.8),
+           dict(kind='class',family='class_001',tier='edge',interval=[163,190],lattice_interval=[163,190],edge_range=[[163,163],[176,182]],
+                edge_source='lattice',posterior=.1),
+           dict(kind='broader',family=None,interval=[120,260],edge_range=None,posterior=.9)]
+    result=dict(result,cr_mode='lattice_recaller',manifest=dict(result['manifest'],cr_mode='lattice_recaller',parameters={'cross':{'enabled':True}}),
+                datasets={'a':dict(cr=dict(catalog=catalog,records=[dict(unit_id='a::u',proposals=proposals,recaller_calls=calls)]))})
+    return source,payload,result
+
+
+def _decode(path):
+    import json
+    with pysam.AlignmentFile(path,'rb') as bam:
+        read=next(bam.fetch('chr1',100,300));comments=bam.header.to_dict()['CO']
+        parsed=parse_ma_tag(read.get_tag('MA'));aq=list(read.get_tag('AQ'))
+    layers={};cursor=0
+    for name,_,q,intervals in parsed['raw_types']:
+        layers[name]=[(iv,aq[cursor+i*len(q):cursor+(i+1)*len(q)]) for i,iv in enumerate(intervals)];cursor+=len(q)*len(intervals)
+    contract=next(json.loads(c[len(CONTRACT):]) for c in comments if c.startswith(CONTRACT))
+    families=[json.loads(c[len(FAMILY):]) for c in comments if c.startswith(FAMILY)]
+    return layers,contract,families
+
+
+def test_recaller_export_writes_q0_class_extent_and_no_cross_layer(tmp_path):
+    source,payload,result=recaller_fixture(tmp_path)
+    rows=export_bams([(result,payload)],tmp_path/'out',scope='full')
+    layers,contract,families=_decode(rows[0]['bam'])
+    # cross.enabled is recorded, but the recaller computes no XCR: tf_consensus, fhcr_ tokens.
+    assert 'tf_cross_consensus' not in layers and [q for _,q in layers['tf_consensus']][0][5]==204
+    assert contract['q0'].startswith('lattice_recaller_class_posterior_x255') and contract['engine']=='lattice_recaller'
+    assert contract['recaller_calls'].startswith('not exported') and 'tf_recaller' not in layers
+    fam=[f for f in families if f['layer']=='tf_consensus'][0]
+    assert (fam['start'],fam['end'])==(165,178) and fam['extent']=='class_consensus_span'   # class span, not the 160-180 call
+    assert fam['strand_resolution']=={'a':{'trusted_strand':'CT'}} and fam['annotation_name'].startswith('fhcr_')
+
+
+def test_recaller_layer_exports_every_tier_with_documented_bytes(tmp_path):
+    source,payload,result=recaller_fixture(tmp_path)
+    rows=export_bams([(result,payload)],tmp_path/'out',scope='full',recaller_layer=True)
+    layers,contract,families=_decode(rows[0]['bam'])
+    assert contract['layer_quality_names']['tf_recaller']==['tq','fi','tier','q0','lr','rr']
+    got=sorted((iv,[q[2],q[3],q[4],q[5]]) for iv,q in layers['tf_recaller'])
+    assert got==[((60,20),[1,204,8,6]),((63,27),[2,26,0,6])]         # core (native edges) and edge tier; broader excluded
+    assert [q[0] for iv,q in sorted(layers['tf_recaller'])][0]==80    # native edges carry the native LLR
+    tokens={f['layer']:f['annotation_name'] for f in families}
+    assert tokens['tf_recaller']==tokens['tf_consensus']              # same class identity in both layers
+    # Re-exporting the derivative BAM replaces (does not duplicate) the owned tf_recaller layer.
+    import shutil
+    derived=tmp_path/'derived.bam';shutil.copy(rows[0]['bam'],derived);pysam.index(str(derived))
+    payload2=dict(payload,input_files=[dict(payload['input_files'][0],path=str(derived),size=derived.stat().st_size,mtime_ns=derived.stat().st_mtime_ns)])
+    with pysam.AlignmentFile(str(derived),'rb') as bam:
+        read=next(bam.fetch('chr1',100,300))
+        sha=hashlib.sha256(read.to_string().encode()).hexdigest()
+    payload2['strata']=deepcopy(payload['strata']);payload2['strata'][0]['units'][0]['source_members'][0].update(library_id=str(derived),record_sha256=sha)
+    again=export_bams([(result,payload2)],tmp_path/'again',scope='full',recaller_layer=True)
+    layers2,_,_=_decode(again[0]['bam'])
+    assert len(layers2['tf_recaller'])==2 and len(layers2['tf_consensus'])==1
+
+
+def test_recaller_and_staged_results_cannot_share_one_export(tmp_path):
+    source,payload,result=recaller_fixture(tmp_path)
+    _,payload_b,result_b,_=fixture(tmp_path,'b')
+    with pytest.raises(ValueError,match='separate BAMs'):
+        export_bams([(result,payload),(result_b,payload_b)],tmp_path/'mixed',scope='full')

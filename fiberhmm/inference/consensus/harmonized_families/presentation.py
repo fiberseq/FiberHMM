@@ -150,8 +150,10 @@ def resolution_units(datasets, shared, visible, context):
       reportable classes merge when a single call of ANY compared chemistry
       would land nearer its own class less than XCR_ASSIGN_ACCURACY of the time:
       Phi(d/2), d = sqrt((dL/sd_L)^2 + (dR/sd_R)^2), largest SD per edge.
-    - A unit keeps the geometry of its best-supported member (never a union
-      span, so units cannot chain). An unreportable class joins a unit only
+    - Merging is complete-link: a unit forms only if every pair of its
+      classes passes that rule, so A~B and B~C never pull in a resolvable C.
+      A unit keeps the geometry of its best-supported member (never a union
+      span). An unreportable class joins a unit only
       when nested in it; otherwise it is listed as not resolvable by the
       coarser chemistry. Nothing is refit or rescored.
     Returns (units, unit_of_family, provenance)."""
@@ -185,23 +187,32 @@ def resolution_units(datasets, shared, visible, context):
     estimated = dict(scatter); scatter.update(fixed)
     sd_l = max((v[0] for v in scatter.values()), default=None); sd_r = max((v[1] for v in scatter.values()), default=None)
     min_d = 2*float(norm.ppf(XCR_ASSIGN_ACCURACY))
-    parent = {f: f for f in classes}
-    def find(f):
-        while parent[f] != f:
-            parent[f] = parent[parent[f]]; f = parent[f]
-        return f
+    order = {f: i for i, f in enumerate(classes)}
+    distance = lambda f, g: float(np.hypot((lo[f]-lo[g])/sd_l, (hi[f]-hi[g])/sd_r))
+    mergeable = lambda f, g: min(hi[f], hi[g]) > max(lo[f], lo[g]) and distance(f, g) < min_d
+    # Complete linkage: two groups merge only if every pair across them is itself mergeable, so a group never holds
+    # two classes a single call could tell apart (A~B and B~C do not pull in C when A and C are resolvable).
+    # Candidate pairs are taken closest first; ties in class order, so the grouping is deterministic.
+    group_of = {f: f for f in classes if reportable[f]}; group_members = {f: [f] for f in group_of}
     merged_pairs = 0
     if sd_l is not None:
+        pairs = []
         for i, f in enumerate(classes):
             if not reportable[f]: continue
             for g in classes[i+1:]:
                 if lo[g] >= hi[f]: break
-                if not reportable[g] or min(hi[f], hi[g]) <= max(lo[f], lo[g]): continue
-                if float(np.hypot((lo[f]-lo[g])/sd_l, (hi[f]-hi[g])/sd_r)) < min_d:
-                    parent[find(g)] = find(f); merged_pairs += 1
+                if reportable[g] and mergeable(f, g):
+                    pairs.append((distance(f, g), order[f], order[g], f, g))
+        for _, _, _, f, g in sorted(pairs):
+            a, b = group_of[f], group_of[g]
+            if a == b or not all(mergeable(x, y) for x in group_members[a] for y in group_members[b]): continue
+            keep, gone = (a, b) if order[a] < order[b] else (b, a)
+            for x in group_members[gone]: group_of[x] = keep
+            group_members[keep] = sorted(group_members[keep] + group_members.pop(gone), key=order.get)
+            merged_pairs += 1
     groups = defaultdict(list)
     for f in classes:
-        if reportable[f]: groups[find(f)].append(f)
+        if reportable[f]: groups[group_of[f]].append(f)
     support = lambda f: sum(len(v) for v in members[f].values())
     representative = {root: max(fs, key=lambda f: (support(f), -lo[f], f)) for root, fs in groups.items()}
     unresolved = []

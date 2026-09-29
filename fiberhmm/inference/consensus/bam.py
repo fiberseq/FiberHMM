@@ -42,7 +42,7 @@ def _resolve_bam_fetch_region(path, chrom, start, end):
 def _chemistry_runtime(runtime, chemistry, **unused):
     preset=runtime['PRESETS'].get(chemistry)
     if chemistry=='hia5-pacbio': preset=dict(model='fiberhmm/models/hia5_pacbio.json',strand_mode='alignment',prob_threshold=125)
-    if preset is None: raise ValueError('Unsupported chemistry: '+chemistry)
+    if preset is None: raise ValueError(f'Unsupported consensus chemistry {chemistry!r}; supported: ddda, dddb, hia5-pacbio, hia5-nanopore')
     model,context,mode=runtime['load_model'](runtime['resolve_resource'](preset['model']))
     hit,miss=runtime['build_llr'](model)
     return preset,model,context,mode,hit,miss

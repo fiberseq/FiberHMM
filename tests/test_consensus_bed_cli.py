@@ -41,10 +41,14 @@ def test_pool_deduplicates_global_molecule_and_is_order_independent():
     assert len(first['pooling']['excluded_repeated_views'])==6
 
 
-def test_automatic_modes_ignore_stale_ui_switches():
+def test_automatic_modes_follow_the_data_but_never_override_explicit_switches():
+    # Release audit 2026-09-29: explicit sr/cross.enabled used to be overwritten (and the run mislabelled XCR).
+    strata=[dict(dataset_id='a',chemistry='ddda'),dict(dataset_id='b',chemistry='hia5-pacbio')]
     params={'sr':{'enabled':False},'cross':{'enabled':False}}
-    result=automatic_parameters(params,[dict(dataset_id='a',chemistry='ddda'),dict(dataset_id='b',chemistry='hia5-pacbio')])
-    assert result['sr']['enabled'] and result['cross']['enabled']
+    result=automatic_parameters(params,strata)
+    assert not result['sr']['enabled'] and not result['cross']['enabled']
+    auto=automatic_parameters({},strata)
+    assert auto['sr']['enabled'] and auto['cross']['enabled']
     assert not automatic_parameters({},[dict(dataset_id='a',chemistry='hia5-pacbio')])['sr']['enabled']
     assert not params['sr']['enabled']
 
@@ -193,7 +197,9 @@ def test_real_bam_bed_cli_exports_indexed_bams_and_reports(tmp_path,pooled):
     bed=tmp_path/'windows.bed'
     bed.write_text('chr1\t100\t300\tone\t0\t+\nchr1\t400\t600\ttwo\t0\t-\n')
     params=tmp_path/'parameters.json'
-    write_json(params,dict(input=dict(correct_native=False),compute=dict(cores=1,maximum_matrix_mb=128)))
+    # The fixture BAM has no native replay, so the original calls are classified (correct_native=false): that needs
+    # the staged engine. Before 3.0 this ran the lattice recaller, which silently ignored correct_native=false.
+    write_json(params,dict(cr=dict(engine='staged_native_families'),input=dict(correct_native=False),compute=dict(cores=1,maximum_matrix_mb=128)))
     out=tmp_path/'run'
     args=['--bam',str(source),'--bed',str(bed),'--parameters',str(params),'--output',str(out)]
     if pooled:args.append('--pool-loci')

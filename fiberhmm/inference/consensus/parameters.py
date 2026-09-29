@@ -43,7 +43,7 @@ class SROptions:
 
 @dataclass
 class CROptions:
-    engine: str = control('call_harmonization', 'Consensus algorithm', 'Lattice recaller (the consensus CLI default) finds class geometries by k-means on confident calls and scores every molecule\'s lattice against them with EM (no Monte Carlo). Staged native families uses lattice-aware Monte Carlo fits and shared-geometry consolidation. Call harmonization is the separate lightweight overlap method. Saved historical engines remain available.', choices=['lattice_recaller', 'staged_native_families', 'call_harmonization', 'native_family_distribution', 'legacy_lattice'])
+    engine: str = control('lattice_recaller', 'Consensus algorithm', 'Lattice recaller (the default) finds class geometries by k-means on confident calls and scores every molecule\'s lattice against them with EM (no Monte Carlo). Staged native families (deprecated) uses lattice-aware Monte Carlo fits and shared-geometry consolidation. Call harmonization is the separate lightweight overlap method. Saved historical engines remain available.', choices=['lattice_recaller', 'staged_native_families', 'call_harmonization', 'native_family_distribution', 'legacy_lattice'])
     harmonization_cut: float = control(.5, 'Native-call clustering distance', 'Average-linkage cut on overlap of the shorter footprint. Larger values merge more similar geometries.', 0, .99, .05)
     harmonization_fold_overlap: float = control(.7, 'Family folding overlap', 'Direct non-transitive overlap required to fold a recurrent family into an anchor.', .01, 1, .05)
     harmonization_max_call_bp: int = control(100, 'Maximum class footprint length (bp)', 'Longer native calls remain visible but are not used to nominate TF-sized classes.', 1, 1000, 1)
@@ -208,7 +208,7 @@ class RecallerOptions:
     edge_contraction_rate: float = control(0.5, 'Edge contraction: marked rate', 'Sites at the class edge that class members mark more often than this are moved outside the box.', 0.05, 0.99, 0.05)
     edge_minimum_members: float = control(20., 'Edge contraction: minimum members', 'Posterior-weighted class members a site needs before its marked rate is used.', 1, 100000, 1)
     edge_gain_nats: float = control(5., 'Edge contraction: held-out gain (nats)', 'A contraction is kept only if it is proposed in both halves and raises held-out likelihood by this much, summed over both.', 0, 10000, 0.5)
-    abutting: bool = control(False, 'Call footprints abutting wider protection', 'A protected stretch with one edge where a class edge sits (within its edge box) that runs on past the class is called as that class with something abutting it (e.g. CTCF against a nucleosome), even without a marked linker on the far side. Off: such stretches count as broader protection.')
+    abutting: bool = control(False, 'Call footprints abutting wider protection (experimental)', 'EXPERIMENTAL, off by default: the abutting configurations are not a normalized prior (each gets the whole hidden-edge box, so the class hypothesis gains mass with the number of possible extensions, even with no chemical evidence); runs that enable it are flagged in the manifest. A protected stretch with one edge where a class edge sits (within its edge box) that runs on past the class is called as that class with something abutting it (e.g. CTCF against a nucleosome), even without a marked linker on the far side. Off: such stretches count as broader protection.')
     class_weighting: str = control('bp', 'Class configuration weighting', 'bp: each configuration weighted by the edge positions it covers inside the class boxes (widening boxes adds tolerance without diluting); configurations: uniform over lattice configurations.', choices=['bp', 'configurations'])
     learned_spots: bool = control(True, 'Learned internal spots', 'Learn a class-specific mark rate at interior positions that are sometimes marked while bound (e.g. CTCF +7/+8 on Hia5); kept only when held-out likelihood improves.')
     spot_minimum_evidence_nats: float = control(10., 'Spot channel resolution (nats)', 'Spots are learned only on channels whose expected evidence over the class reaches this.', 0, 1000, 0.5)
@@ -237,6 +237,31 @@ def parameter_schema():
     return {group: [dict(name=f.name, default=getattr(cls(), f.name),
                         type=type(getattr(cls(), f.name)).__name__, **dict(f.metadata))
                     for f in fields(cls)] for group, cls in GROUPS.items()}
+
+
+# Controls each engine reads, per group; a group not listed is read in full. A control outside these sets must stay at
+# its default, so a setting the chosen engine would ignore is rejected instead of being recorded as if it were used.
+ACTIVE_CONTROLS = dict(
+    staged_native_families=dict(
+        cr={'engine','enabled','edge_tolerance_mode','minimum_edge_tolerance_bp'}, sr={'enabled'}, cross={'enabled'},
+        rescue={'enabled'}, split={'enabled'}, comparability={'enabled'}, recaller=set(),
+        compute={'require_native_cache','cores','maximum_matrix_mb','maximum_region_bp','fit_cache_dir','fit_backend','predictive_backend','predictive_stopping'}),
+    # The recaller reads the input group (native replay and loading), Hia5 nucleosome replay and the compute budget.
+    # sr/cross.enabled are accepted but change nothing (the recaller's classes are shared by construction; its mode is
+    # CR). fit_cache_dir is accepted and unused (no native fits are cached).
+    lattice_recaller=dict(
+        cr={'engine','enabled'}, sr={'enabled'}, cross={'enabled'}, rescue={'enabled'}, split={'enabled'},
+        comparability={'enabled'}, families={'recall_hia5_nucleosomes','nuc_split_minimum_llr','stop_after'},
+        compute={'cores','maximum_region_bp','maximum_matrix_mb','fit_cache_dir','require_native_cache','predictive_stopping'}),
+)
+
+
+def _reject_inactive(result, active, engine, advice):
+    for group, names in active.items():
+        default = GROUPS[group]()
+        for f in fields(default):
+            if f.name not in names and getattr(result[group],f.name) != getattr(default,f.name):
+                raise ValueError(f'{group}.{f.name} is not used by {engine}; reset it to its default ({advice})')
 
 
 def parse_options(values=None):
@@ -285,26 +310,41 @@ def parse_options(values=None):
             if value not in (getattr(CROptions(),name),fixed):
                 raise ValueError(f'cr.{name} is fixed to {fixed!r} for staged families; use families.physical_radius_bp for consolidation')
             setattr(result['cr'],name,fixed)
-        active = dict(cr={'engine','enabled','edge_tolerance_mode','minimum_edge_tolerance_bp'}, sr={'enabled'}, cross={'enabled'},
-            rescue={'enabled'}, split={'enabled'}, comparability={'enabled'},
-            compute={'require_native_cache','cores','maximum_matrix_mb','maximum_region_bp','fit_cache_dir','fit_backend','predictive_backend','predictive_stopping'})
-        for group, names in active.items():
-            default = GROUPS[group]()
-            for f in fields(default):
-                if f.name not in names and getattr(result[group],f.name) != getattr(default,f.name):
-                    raise ValueError(f'{group}.{f.name} is not used by staged families; reset it to its default and use the families controls')
+        _reject_inactive(result, ACTIVE_CONTROLS['staged_native_families'], 'staged families',
+                         'use the families controls')
     elif result['cr'].engine=='lattice_recaller':
         if not result['cr'].enabled or any(result[g].enabled for g in ('rescue', 'split', 'comparability')):
             raise ValueError('The lattice recaller classifies molecules against discovered classes; enable CR and disable rescue, nucleosome splitting and legacy comparability')
+        if not result['input'].correct_native:
+            raise ValueError('input.correct_native=false is not supported by the lattice recaller: it discovers and scores '
+                             'classes from the replayed native calls and their LLRs. Keep native replay on, or use '
+                             'cr.engine=staged_native_families to classify the original BAM calls')
+        if result['families'].stop_after!='resolved':
+            raise ValueError('families.stop_after (--stop-after) applies to staged_native_families only: the lattice recaller '
+                             'discovers and scores classes in one pass. Every run saves evidence.json.gz for replay with '
+                             '--evidence or --resume')
+        if result['compute'].require_native_cache:
+            raise ValueError('compute.require_native_cache (--start-at consolidation) applies to staged_native_families only')
         r = result['recaller']
         if r.edge_quantile_low >= r.edge_quantile_high or r.core_quantile_low >= r.core_quantile_high:
             raise ValueError('recaller edge/core quantile pairs must have low < high')
         if r.tile_step_bp > r.tile_bp:
             raise ValueError('recaller.tile_step_bp must not exceed recaller.tile_bp (tiles must overlap or abut)')
+        if r.call_max_bp > r.tile_bp - r.tile_step_bp:
+            # A call is used for discovery only inside one tile; a wider call straddling a tile overlap would be
+            # invisible to every tile, depending on its phase relative to the tile starts.
+            raise ValueError(f'recaller.call_max_bp ({r.call_max_bp}) must not exceed the tile overlap, recaller.tile_bp - '
+                             f'recaller.tile_step_bp ({r.tile_bp} - {r.tile_step_bp} = {r.tile_bp - r.tile_step_bp}): '
+                             'raise tile_bp or lower tile_step_bp, or a wide footprint straddling a tile overlap is never discovered')
         if result['compute'].predictive_stopping!='full':
             raise ValueError('compute.predictive_stopping applies only to staged native families')
-    elif result['compute'].predictive_stopping!='full':
-        raise ValueError('compute.predictive_stopping applies only to staged native families')
+        _reject_inactive(result, ACTIVE_CONTROLS['lattice_recaller'], 'the lattice recaller',
+                         'the recaller\'s own controls are in the recaller group')
+    else:
+        if result['compute'].predictive_stopping!='full':
+            raise ValueError('compute.predictive_stopping applies only to staged native families')
+        _reject_inactive(result, dict(recaller=set()), f"cr.engine={result['cr'].engine}",
+                         'the recaller group applies to cr.engine=lattice_recaller only')
     for name in ('native_minimum_call_attribution_mass', 'native_minimum_geometry_retention',
                  'native_minimum_visible_geometry_mass'):
         if not 0 < getattr(cross,name) <= 1:

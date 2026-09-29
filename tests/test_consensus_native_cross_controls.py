@@ -5,7 +5,8 @@ from fiberhmm.inference.consensus.parameters import parse_options, parameter_sch
 
 
 def test_native_cross_defaults_are_separate_and_in_shared_schema():
-    options=parse_options({'cr':{'predictive_replicates':63}})
+    # Historical-engine control (call_harmonization was the library default before 3.0); request it explicitly.
+    options=parse_options({'cr':{'engine':'call_harmonization','predictive_replicates':63}})
     assert options['cr'].predictive_replicates==63
     assert options['cross'].native_predictive_replicates==4095
     fields={f['name']:f for f in parameter_schema()['cross']}
@@ -50,7 +51,7 @@ def test_native_workflow_passes_all_controls_without_changing_source_or_cr_budge
         captures.append(kwargs);return dict(links=[],nodes=[],status='complete')
     monkeypatch.setattr(module,'reciprocal_native_graph',graph)
     monkeypatch.setattr(module,'summarize_native_correspondences',lambda *_:[])
-    options=parse_options({'sr':{'enabled':False},'cr':{'predictive_replicates':63,'residual_nomination':False},
+    options=parse_options({'sr':{'enabled':False},'cr':{'engine':'call_harmonization','predictive_replicates':63,'residual_nomination':False},
         'cross':{'enabled':True,'native_predictive_replicates':16383,
             'native_minimum_call_attribution_mass':.07,'native_minimum_geometry_retention':.08,
             'native_minimum_visible_geometry_mass':.09,'native_minimum_testable_fraction':.6},

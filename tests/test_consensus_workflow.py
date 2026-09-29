@@ -62,12 +62,13 @@ def test_full_workflow_mixed_assays_and_immutable_native_source(tmp_path):
 
 def test_cancellation_does_not_emit_complete_result(tmp_path):
     def stop(stage,message):raise ConsensusCancelled('cancel')
-    with pytest.raises(ConsensusCancelled):run_workflow(payload(),{'input':{'correct_native':False}},tmp_path,stop)
+    # Historical engine (the library default before 3.0), requested explicitly.
+    with pytest.raises(ConsensusCancelled):run_workflow(payload(),{'cr':{'engine':'call_harmonization'},'input':{'correct_native':False}},tmp_path,stop)
     assert not (tmp_path/'result.json.gz').exists()
 
 
 def test_requires_actual_query_replay_never_fabricates_it(tmp_path):
-    with pytest.raises(ValueError,match='actual-query replay'):run_workflow(payload(),{},tmp_path)
+    with pytest.raises(ValueError,match='actual-query replay'):run_workflow(payload(),{'cr':{'engine':'call_harmonization'}},tmp_path)
 
 
 def test_joint_resource_limit_is_an_unresolved_edge_not_loss_of_all_native_layers(tmp_path,monkeypatch):
