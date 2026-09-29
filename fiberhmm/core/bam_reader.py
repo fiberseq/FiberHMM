@@ -251,6 +251,127 @@ def get_modified_positions_pysam(read, prob_threshold: int = 125, mode: str = 'p
     return mod_positions
 
 
+# ---------------------------------------------------------------------------
+# MM/ML spec parsing (SAM tags spec, "Base modifications")
+# ---------------------------------------------------------------------------
+#
+# One MM entry is ``<base><strand><codes>[.?],skip,skip,...``.  ``codes`` is
+# either a run of single-letter codes (``C+hm``: both 5hmC and 5mC are called
+# at every listed C) or ONE numeric ChEBI code (``A+21839``).  ML holds one
+# probability per (listed base, code), interleaved code-fastest, so a spec
+# with n listed bases and c codes consumes n*c ML values.  The optional flag
+# says what an UNLISTED target base means: ``.`` (or absent) = unmodified,
+# ``?`` = unknown (no call made there).
+
+# Mod codes accepted per footprinting mode.  pysam reports single-letter codes
+# as str and ChEBI codes as int; both spellings of a modification are listed.
+M6A_MOD_CODES = frozenset({'a', 21839})
+FIVE_MC_MOD_CODES = frozenset({'m', 27551})
+
+# Target bases accepted per mode (DAF accepts every mod code: legacy DAF BAMs
+# encode deaminations with arbitrary codes such as C+m or C+u).
+_MODE_TARGET_BASES = {
+    'pacbio-fiber': ('A', 'T'),
+    'nanopore-fiber': ('A',),
+    'gpc': ('C',),
+    'cpg': ('C',),
+    'daf': ('T', 'A', 'C', 'G'),
+}
+_MODE_MOD_CODES = {
+    'pacbio-fiber': M6A_MOD_CODES,
+    'nanopore-fiber': M6A_MOD_CODES,
+    'gpc': FIVE_MC_MOD_CODES,
+    'cpg': FIVE_MC_MOD_CODES,
+    'daf': None,   # no code filter
+}
+
+
+def _parse_mm_spec_header(base_mod: str):
+    """Split ``C+hm?`` into ``('C', '+', ['h', 'm'], '?')``; None if malformed."""
+    if len(base_mod) < 3 or base_mod[1] not in '+-':
+        return None
+    target = base_mod[0].upper()
+    rest = base_mod[2:]
+    flag = '.'
+    if rest[-1] in '.?':
+        flag = rest[-1]
+        rest = rest[:-1]
+    if not rest:
+        return None
+    if rest.isdigit():
+        codes = [int(rest)]
+    elif rest.isalpha():
+        codes = list(rest)
+    else:
+        return None
+    return target, base_mod[1], codes, flag
+
+
+def _parse_mm_skip_counts(parts) -> np.ndarray:
+    try:
+        return np.asarray(parts, dtype=np.int64)
+    except (ValueError, TypeError):
+        skip_counts = []
+        for x in parts:
+            if x.strip():
+                try:
+                    skip_counts.append(int(x))
+                except ValueError:
+                    continue
+        return np.asarray(skip_counts, dtype=np.int64)
+
+
+def _ml_as_array(ml_tag) -> np.ndarray:
+    if isinstance(ml_tag, (bytes, bytearray, memoryview)):
+        return np.frombuffer(ml_tag, dtype=np.uint8)
+    if isinstance(ml_tag, np.ndarray):
+        return ml_tag
+    return np.asarray(ml_tag, dtype=np.uint8)
+
+
+def _iter_mm_specs(mm_tag: str, ml_arr_all: np.ndarray):
+    """Yield ``(target, strand, codes, flag, skip_arr, ml_block)`` per MM entry.
+
+    ``ml_block`` is the entry's ML slice, shaped ``(n_listed, n_codes)`` when
+    complete (possibly short when ML is truncated).  Malformed headers are
+    yielded with ``codes=None`` so callers still advance through ML.
+    """
+    ml_idx = 0
+    for mod_spec in mm_tag.split(';'):
+        if not mod_spec:
+            continue
+        parts = mod_spec.split(',')
+        header = _parse_mm_spec_header(parts[0])
+        skip_arr = _parse_mm_skip_counts(parts[1:])
+        n_mods = len(skip_arr)
+        if header is None:
+            # Unknown layout: assume one code (the pre-3.0 behaviour).
+            ml_idx += n_mods
+            continue
+        target, strand, codes, flag = header
+        n_ml = n_mods * len(codes)
+        ml_block = ml_arr_all[ml_idx:ml_idx + n_ml]
+        ml_idx += n_ml
+        yield target, strand, codes, flag, skip_arr, ml_block
+
+
+def _mm_spec_walk(search_bytes: np.ndarray, target: str, skip_arr: np.ndarray,
+                  cache: Dict[str, np.ndarray]):
+    """Return (all target positions, listed base indices, valid mask)."""
+    if target not in cache:
+        cache[target] = np.where(search_bytes == ord(target))[0]
+    base_positions = cache[target]
+    n_mods = len(skip_arr)
+    base_indices = np.cumsum(skip_arr) + np.arange(n_mods)
+    valid = base_indices < len(base_positions)
+    return base_positions, base_indices, valid
+
+
+def _code_qualities(ml_block: np.ndarray, n_mods: int, n_codes: int, j: int):
+    """Qualities for code ``j`` (length <= n_mods when ML is truncated)."""
+    return ml_block[j::n_codes][:n_mods]
+
+
 def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
                                sequence: str, is_reverse: bool) -> Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]]:
     """Parse MM/ML into per-mod-type position + quality arrays (SEQ frame).
@@ -263,10 +384,12 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
 
     Returns dict mapping ``(target_base, mod_code)`` -> ``(positions, qualities)``
     with positions in SEQ frame, unfiltered (caller applies prob_threshold).
+    Multi-code entries (``C+hm``) yield one key per code; ChEBI codes are ints
+    (as in pysam).
     """
     result: Dict[Tuple[str, str], Tuple[np.ndarray, np.ndarray]] = {}
 
-    if not mm_tag or not ml_tag:
+    if not mm_tag or ml_tag is None:
         return result
     try:
         if len(ml_tag) == 0:
@@ -274,12 +397,7 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
     except TypeError:
         pass
 
-    if isinstance(ml_tag, (bytes, bytearray, memoryview)):
-        ml_arr_all = np.frombuffer(ml_tag, dtype=np.uint8)
-    elif isinstance(ml_tag, np.ndarray):
-        ml_arr_all = ml_tag
-    else:
-        ml_arr_all = np.asarray(ml_tag, dtype=np.uint8)
+    ml_arr_all = _ml_as_array(ml_tag)
 
     seq_upper = sequence.upper()
     q_len = len(seq_upper)
@@ -293,79 +411,39 @@ def parse_mm_ml_per_mod_type(mm_tag: str, ml_tag,
     seq_bytes = np.frombuffer(search_seq.encode('ascii'), dtype=np.uint8)
     base_positions_cache: Dict[str, np.ndarray] = {}
 
-    ml_idx = 0
-    for mod_spec in mm_tag.split(';'):
-        if not mod_spec:
-            continue
-        parts = mod_spec.split(',')
-        if len(parts) < 2:
-            continue
-
-        base_mod = parts[0]  # e.g. "A+a" or "A+a." or "C+m?"
-        try:
-            skip_arr = np.asarray(parts[1:], dtype=np.int64)
-        except (ValueError, TypeError):
-            skip_counts = []
-            for x in parts[1:]:
-                if x.strip():
-                    try:
-                        skip_counts.append(int(x))
-                    except ValueError:
-                        continue
-            skip_arr = np.asarray(skip_counts, dtype=np.int64)
+    for target_base, _strand, codes, _flag, skip_arr, ml_block in _iter_mm_specs(
+            mm_tag, ml_arr_all):
         n_mods = len(skip_arr)
-
-        # Parse "X+y" or "X+y." or "X-y?" into (target_base, mod_code)
-        if len(base_mod) < 3:
-            ml_idx += n_mods
-            continue
-        target_base = base_mod[0].upper()
-        # mod_code is the 3rd char (2 chars in: after base + strand)
-        mod_code = base_mod[2]
-
         if n_mods == 0:
             continue
-        # Target positions in the sequence (cached per base)
-        if target_base not in base_positions_cache:
-            base_positions_cache[target_base] = np.where(
-                seq_bytes == ord(target_base))[0]
-        base_positions = base_positions_cache[target_base]
-
+        base_positions, base_indices, valid = _mm_spec_walk(
+            seq_bytes, target_base, skip_arr, base_positions_cache)
         if len(base_positions) == 0:
-            ml_idx += n_mods
             continue
+        n_codes = len(codes)
+        for j, mod_code in enumerate(codes):
+            ml_slice = _code_qualities(ml_block, n_mods, n_codes, j)
+            code_valid = valid.copy()
+            if len(ml_slice) < n_mods:
+                code_valid[len(ml_slice):] = False
+            if not np.any(code_valid):
+                continue
+            positions = base_positions[base_indices[code_valid]]
+            qualities = ml_slice[code_valid[:len(ml_slice)]]
+            # Flip from ORIGINAL frame back to SEQ frame for reverse reads.
+            if is_reverse:
+                positions = q_len - 1 - positions
 
-        # Vectorized skip-count walk
-        base_indices = np.cumsum(skip_arr) + np.arange(n_mods)
-        valid = base_indices < len(base_positions)
-
-        ml_end = ml_idx + n_mods
-        ml_slice = ml_arr_all[ml_idx:ml_end]
-        ml_idx = ml_end
-        if len(ml_slice) < n_mods:
-            valid[len(ml_slice):] = False
-
-        if not np.any(valid):
-            continue
-
-        positions = base_positions[base_indices[valid]]
-        qualities = ml_slice[valid] if len(ml_slice) >= n_mods \
-            else ml_slice[valid[:len(ml_slice)]]
-
-        # Flip from ORIGINAL frame back to SEQ frame for reverse reads.
-        if is_reverse:
-            positions = q_len - 1 - positions
-
-        key = (target_base, mod_code)
-        if key in result:
-            # Multiple mod specs for same (base, mod_code) — concatenate
-            prev_pos, prev_qual = result[key]
-            result[key] = (
-                np.concatenate([prev_pos, positions]),
-                np.concatenate([prev_qual, qualities]),
-            )
-        else:
-            result[key] = (positions, qualities)
+            key = (target_base, mod_code)
+            if key in result:
+                # Multiple mod specs for same (base, mod_code) — concatenate
+                prev_pos, prev_qual = result[key]
+                result[key] = (
+                    np.concatenate([prev_pos, positions]),
+                    np.concatenate([prev_qual, qualities]),
+                )
+            else:
+                result[key] = (positions, qualities)
 
     return result
 
@@ -436,6 +514,123 @@ def cigar_to_query_ref(read) -> np.ndarray:
 _COMPLEMENT_TABLE = str.maketrans('ACGTacgtNn', 'TGCAtgcaNn')
 
 
+def parse_mm_tag_query_calls(mm_tag: str, ml_tag,
+                             sequence: str, is_reverse: bool,
+                             prob_threshold: int = 125,
+                             mode: str = 'pacbio-fiber') -> Tuple[Set[int], Set[int]]:
+    """Parse MM/ML into ``(modified, unknown)`` query positions (SEQ frame).
+
+    ``modified``: target bases whose ML for an accepted mod code is at least
+    ``prob_threshold`` (identical to :func:`parse_mm_tag_query_positions`).
+
+    ``unknown``: target bases NOT listed by an accepted ``?``-flagged entry
+    (SAM spec: under ``?`` an unlisted base carries no call).  Callers encode
+    these as non-target instead of unmodified.  Bases of an entry flagged
+    ``.`` (or unflagged) are all known, so ``unknown`` is empty for the
+    standard fully-listed Dorado/fibertools output.
+    """
+    return _parse_mm_query(mm_tag, ml_tag, sequence, is_reverse,
+                           prob_threshold, mode, want_unknown=True)
+
+
+def _parse_mm_query(mm_tag, ml_tag, sequence, is_reverse, prob_threshold,
+                    mode, want_unknown=False, debug=False):
+    mod_positions: Set[int] = set()
+    unknown_positions: Set[int] = set()
+
+    if not mm_tag or ml_tag is None:
+        return mod_positions, unknown_positions
+    try:
+        if len(ml_tag) == 0:
+            return mod_positions, unknown_positions
+    except TypeError:
+        pass
+
+    seq_upper = sequence.upper()
+    q_len = len(seq_upper)
+
+    # CORRECTNESS: MM walks positions in the ORIGINAL sequencing direction,
+    # which equals SEQ for forward-aligned reads and equals the reverse
+    # complement of SEQ for reverse-aligned reads.  We do the walk on
+    # ``search_seq`` (== ORIGINAL) and flip positions back to SEQ frame at
+    # the end via ``q_len - 1 - pos``.
+    if is_reverse:
+        search_seq = seq_upper.translate(_COMPLEMENT_TABLE)[::-1]
+    else:
+        search_seq = seq_upper
+
+    # Accepts raw bytes (fastest IPC format), array.array (what pysam
+    # returns), numpy, or a Python list (legacy callers).
+    ml_arr_all = _ml_as_array(ml_tag)
+
+    if debug and mode == 'daf':
+        base_counts = {b: seq_upper.count(b) for b in 'ACGT'}
+        print(f"  [DAF DEBUG] Seq len={len(sequence)}, bases: A={base_counts['A']} C={base_counts['C']} G={base_counts['G']} T={base_counts['T']}")
+        print(f"  [DAF DEBUG] MM tag: {mm_tag[:200]}...")
+        print(f"  [DAF DEBUG] ML tag len: {len(ml_arr_all)}, first 10 values: {ml_arr_all[:10].tolist()}")
+        print(f"  [DAF DEBUG] is_reverse: {is_reverse}, walking on {'RC(SEQ)' if is_reverse else 'SEQ'}")
+
+    accepted_bases = _MODE_TARGET_BASES.get(mode, ())
+    accepted_codes = _MODE_MOD_CODES.get(mode)
+
+    base_pos_cache: Dict[str, np.ndarray] = {}
+    search_bytes = np.frombuffer(search_seq.encode('ascii'), dtype=np.uint8)
+    # '?' bookkeeping (original-frame indices into the per-base position array)
+    listed_by_base: Dict[str, List[np.ndarray]] = {}
+    unknown_bases: Set[str] = set()
+    known_bases: Set[str] = set()
+
+    for target_base, _strand, codes, flag, skip_arr, ml_block in _iter_mm_specs(
+            mm_tag, ml_arr_all):
+        if target_base not in accepted_bases:
+            continue
+        n_codes = len(codes)
+        code_idx = [j for j, c in enumerate(codes)
+                    if accepted_codes is None or c in accepted_codes]
+        if not code_idx:
+            continue
+        n_mods = len(skip_arr)
+        base_positions, base_indices, valid = _mm_spec_walk(
+            search_bytes, target_base, skip_arr, base_pos_cache)
+        if want_unknown:
+            if flag == '?':
+                unknown_bases.add(target_base)
+                listed_by_base.setdefault(target_base, []).append(
+                    base_indices[valid])
+            else:
+                known_bases.add(target_base)
+        if n_mods == 0 or len(base_positions) == 0:
+            continue
+
+        for j in code_idx:
+            ml_slice_arr = _code_qualities(ml_block, n_mods, n_codes, j)
+            code_valid = valid.copy()
+            if len(ml_slice_arr) < n_mods:
+                code_valid[len(ml_slice_arr):] = False
+            above_thresh = np.zeros(n_mods, dtype=bool)
+            above_thresh[:len(ml_slice_arr)] = ml_slice_arr >= prob_threshold
+            keep = code_valid & above_thresh
+            if np.any(keep):
+                hit_positions = base_positions[base_indices[keep]]
+                # Flip from ORIGINAL frame back to SEQ frame for reverse reads.
+                if is_reverse:
+                    hit_positions = q_len - 1 - hit_positions
+                mod_positions.update(hit_positions.tolist())
+
+    if want_unknown:
+        for target_base in unknown_bases - known_bases:
+            base_positions = base_pos_cache[target_base]
+            unlisted = np.ones(len(base_positions), dtype=bool)
+            for idx in listed_by_base.get(target_base, ()):
+                unlisted[idx] = False
+            positions = base_positions[unlisted]
+            if is_reverse:
+                positions = q_len - 1 - positions
+            unknown_positions.update(positions.tolist())
+
+    return mod_positions, unknown_positions
+
+
 def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
                                   sequence: str, is_reverse: bool,
                                   prob_threshold: int = 125,
@@ -452,8 +647,12 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
     Validated against pysam ``modified_bases`` on both forward and reverse
     reads (see ``tests/test_mm_parser_vs_pysam.py``).
 
-    MM tag format: ``"A+a.,0,5,3;C+m?,1,2,4;"`` — base+strand+mod_code
-    followed by comma-separated skip counts.
+    MM tag format: ``"A+a.,0,5,3;C+m?,1,2,4;"`` — base+strand+mod code(s)
+    followed by comma-separated skip counts.  Multi-code entries (``C+hm``)
+    interleave their ML values per listed base; only the mode's codes are
+    counted (m6A: ``a``/21839; 5mC: ``m``/27551, so 5hmC is not 5mC).  DAF
+    mode accepts every code.  Use :func:`parse_mm_tag_query_calls` to also
+    get the ``?``-unknown bases.
 
     Args:
         mm_tag: MM tag string from BAM.
@@ -462,130 +661,45 @@ def parse_mm_tag_query_positions(mm_tag: str, ml_tag,
         is_reverse: Whether read is reverse-aligned.  Triggers the RC walk.
         prob_threshold: Minimum ML probability (0-255) to call modification.
         mode: 'pacbio-fiber' (A/T both accepted), 'nanopore-fiber' (A only),
-              or 'daf' (C/G + deamination products T/A).
+              'gpc'/'cpg' (C only) or 'daf' (C/G + deamination products T/A).
 
     Returns:
         Set of query positions (in SEQ frame) with modification calls at or
         above prob_threshold.
     """
-    mod_positions: Set[int] = set()
+    return _parse_mm_query(mm_tag, ml_tag, sequence, is_reverse,
+                           prob_threshold, mode, debug=debug)[0]
 
-    if not mm_tag or not ml_tag:
-        return mod_positions
 
-    seq_upper = sequence.upper()
-    q_len = len(seq_upper)
+def mm_applicable(read) -> bool:
+    """Whether ``read``'s MM/ML can be walked against its stored SEQ.
 
-    # CORRECTNESS: MM walks positions in the ORIGINAL sequencing direction,
-    # which equals SEQ for forward-aligned reads and equals the reverse
-    # complement of SEQ for reverse-aligned reads.  We do the walk on
-    # ``search_seq`` (== ORIGINAL) and flip positions back to SEQ frame at
-    # the end via ``q_len - 1 - pos``.
-    if is_reverse:
-        search_seq = seq_upper.translate(_COMPLEMENT_TABLE)[::-1]
-    else:
-        search_seq = seq_upper
+    MM skip counts index the full basecalled sequence.  A hard-clipped record
+    (typically a supplementary alignment written without ``-Y``) stores only
+    part of that sequence while carrying the parent's MM/ML, so walking MM
+    over it assigns calls to the wrong bases.  The SAM ``MN`` tag records the
+    SEQ length MM/ML were computed for; when present it decides.  Otherwise a
+    record is applicable unless its CIGAR has a hard clip (op 5).
 
-    # Convert ml_tag to a numpy uint8 array once.  Accepts raw bytes (fastest
-    # IPC format), array.array (what pysam returns), or Python list (legacy
-    # callers).  All downstream slicing becomes O(1) numpy views.
-    if isinstance(ml_tag, (bytes, bytearray, memoryview)):
-        ml_arr_all = np.frombuffer(ml_tag, dtype=np.uint8)
-    elif isinstance(ml_tag, np.ndarray):
-        ml_arr_all = ml_tag
-    else:
-        ml_arr_all = np.asarray(ml_tag, dtype=np.uint8)
-    ml_len_total = len(ml_arr_all)
-
-    if debug and mode == 'daf':
-        # Count bases in sequence
-        base_counts = {b: seq_upper.count(b) for b in 'ACGT'}
-        print(f"  [DAF DEBUG] Seq len={len(sequence)}, bases: A={base_counts['A']} C={base_counts['C']} G={base_counts['G']} T={base_counts['T']}")
-        print(f"  [DAF DEBUG] MM tag: {mm_tag[:200]}...")
-        print(f"  [DAF DEBUG] ML tag len: {ml_len_total}, first 10 values: {ml_arr_all[:10].tolist()}")
-        print(f"  [DAF DEBUG] is_reverse: {is_reverse}, walking on {'RC(SEQ)' if is_reverse else 'SEQ'}")
-
-    ml_idx = 0
-    # Pre-compute base position arrays per target base (cached within one call)
-    base_pos_cache: Dict[str, np.ndarray] = {}
-    search_bytes = np.frombuffer(search_seq.encode('ascii'), dtype=np.uint8)
-
-    for mod_spec in mm_tag.split(';'):
-        if not mod_spec:
-            continue
-
-        parts = mod_spec.split(',')
-        if len(parts) < 2:
-            continue
-
-        base_mod = parts[0]
+    Records without MM are trivially applicable (R/Y and MD evidence lives in
+    SEQ itself).  Works on slim stubs lacking ``cigartuples`` (returns True
+    unless ``MN`` disagrees).
+    """
+    has_tag = getattr(read, 'has_tag', None)
+    if has_tag is None or not (has_tag('MM') or has_tag('Mm')):
+        return True
+    seq = getattr(read, 'query_sequence', None)
+    if has_tag('MN'):
         try:
-            skip_arr = np.asarray(parts[1:], dtype=np.int64)
-        except (ValueError, TypeError):
-            skip_counts = []
-            for x in parts[1:]:
-                if x.strip():
-                    try:
-                        skip_counts.append(int(x))
-                    except ValueError:
-                        continue
-            skip_arr = np.asarray(skip_counts, dtype=np.int64)
-
-        n_mods = len(skip_arr)
-
-        if len(base_mod) > 0:
-            target_base = base_mod[0].upper()
-        else:
-            ml_idx += n_mods
-            continue
-
-        if mode == 'pacbio-fiber':
-            if target_base not in ('A', 'T'):
-                ml_idx += n_mods
-                continue
-        elif mode == 'nanopore-fiber':
-            if target_base != 'A':
-                ml_idx += n_mods
-                continue
-        elif mode in ('gpc', 'cpg'):
-            if target_base != 'C':
-                ml_idx += n_mods
-                continue
-        elif mode == 'daf':
-            if target_base not in ('T', 'A', 'C', 'G'):
-                ml_idx += n_mods
-                continue
-
-        if target_base not in base_pos_cache:
-            base_pos_cache[target_base] = np.where(search_bytes == ord(target_base))[0]
-        base_positions = base_pos_cache[target_base]
-
-        if n_mods == 0 or len(base_positions) == 0:
-            ml_idx += n_mods
-            continue
-
-        base_indices = np.cumsum(skip_arr) + np.arange(n_mods)
-
-        ml_end = ml_idx + n_mods
-        ml_slice_arr = ml_arr_all[ml_idx:ml_end]
-        ml_idx = ml_end
-
-        valid = base_indices < len(base_positions)
-        if len(ml_slice_arr) < n_mods:
-            valid[len(ml_slice_arr):] = False
-
-        above_thresh = np.zeros(n_mods, dtype=bool)
-        above_thresh[:len(ml_slice_arr)] = ml_slice_arr >= prob_threshold
-
-        keep = valid & above_thresh
-        if np.any(keep):
-            hit_positions = base_positions[base_indices[keep]]
-            # Flip from ORIGINAL frame back to SEQ frame for reverse reads.
-            if is_reverse:
-                hit_positions = q_len - 1 - hit_positions
-            mod_positions.update(hit_positions.tolist())
-
-    return mod_positions
+            return seq is not None and int(read.get_tag('MN')) == len(seq)
+        except (KeyError, TypeError, ValueError):
+            return False
+    cigar = getattr(read, 'cigartuples', None)
+    if cigar:
+        for op, _length in cigar:
+            if op == 5:
+                return False
+    return True
 
 
 def detect_daf_strand(sequence: str, mod_positions: Set[int]) -> str:
@@ -709,7 +823,8 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
                                 mode: str = 'pacbio-fiber',
                                 strand: str = '.',
                                 context_size: int = 3,
-                                is_reverse: bool = False) -> np.ndarray:
+                                is_reverse: bool = False,
+                                unknown_positions: Optional[Set[int]] = None) -> np.ndarray:
     """
     Encode a read for HMM using context from the query sequence.
 
@@ -728,6 +843,9 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
             basecalled A's (the m6A target) appear as T's in SEQ. The
             encoder must look at T positions with RC context to recover
             strand-symmetric behavior.
+        unknown_positions: Query positions with no modification call (bases
+            left unlisted by a ``?``-flagged MM entry). Encoded as non-target
+            so they do not count as unmodified evidence.
 
     Returns:
         Encoded observation array for HMM (length = len(sequence))
@@ -745,31 +863,36 @@ def encode_from_query_sequence(sequence: str, mod_positions: Set[int],
 
     # Determine target base based on mode
     if mode == 'pacbio-fiber':
-        return _encode_pacbio_m6a_observations(
+        encoded = _encode_pacbio_m6a_observations(
             sequence, mod_positions, edge_trim, context_size,
             non_target_code, unmethylated_offset,
         )
 
     elif mode == 'nanopore-fiber':
-        return _encode_nanopore_m6a_observations(
+        encoded = _encode_nanopore_m6a_observations(
             sequence, mod_positions, edge_trim, context_size,
             is_reverse, non_target_code, unmethylated_offset,
         )
 
     elif mode == 'daf':
-        return _encode_daf_observations(
+        encoded = _encode_daf_observations(
             sequence, mod_positions, edge_trim, strand, context_size,
             non_target_code, unmethylated_offset,
         )
 
     elif mode in ('gpc', 'cpg'):
-        return _encode_5mc_observations(
+        encoded = _encode_5mc_observations(
             sequence, mod_positions, edge_trim, context_size, mode,
             is_reverse, non_target_code, unmethylated_offset,
         )
 
     else:
         raise ValueError(f"Unknown mode: {mode}")
+
+    if unknown_positions:
+        unknown_mask = _mod_positions_mask(unknown_positions, len(encoded))
+        encoded[unknown_mask] = non_target_code + unmethylated_offset
+    return encoded
 
 
 def _encode_5mc_observations(sequence: str, mod_positions: Set[int],

@@ -638,3 +638,88 @@ def test_recall_read_accepts_compact_array_tag_sequences_without_modifications()
     assert tf_calls == []
     assert kept_nucs == [(10, 80), (200, 120)]
     assert msps == [(0, 50)]
+
+
+def test_write_ma_tags_preserves_duplex_deam_groups():
+    """Regression: recall on a merged duplex BAM silently dropped the
+    ``deam+``/``deam-`` strand-coverage groups written by fiberhmm-pair."""
+    read = _FakeRead()
+    read.set_tag(
+        'MA',
+        '200;nuc.Q:1-100;msp.:101-50;deam+:1-150;deam-:21-180',
+        value_type='Z',
+    )
+    read.set_tag('AQ', array.array('B', [77]))
+    write_ma_tags(read, 200, tf_calls=[], kept_nucs=[(0, 90)], msps=[(90, 60)],
+                  nq_for_kept_nucs=[12])
+    assert read.get_tag('MA') == (
+        '200;nuc.Q:1-90;msp.:91-60;deam+:1-150;deam-:21-180'
+    )
+    assert list(read.get_tag('AQ')) == [12]
+
+
+def test_write_ma_tags_preserves_unknown_quality_group_with_its_aq_bytes():
+    read = _FakeRead()
+    # Old layout: nuc.Q (1 byte), foo.QQ (2 bytes x 2 annotations), tf.QQQ.
+    read.set_tag('MA', '200;nuc.Q:1-100;foo.QQ:5-10,40-5;tf.QQQ:150-20',
+                 value_type='Z')
+    read.set_tag('AQ', array.array('B', [9, 1, 2, 3, 4, 50, 60, 70]))
+    tfs = [TFCall(start=160, length=20, llr=3.0, n_opps=5,
+                  left_ambiguity=0, right_ambiguity=0)]
+    write_ma_tags(read, 200, tfs, kept_nucs=[(0, 100)], msps=[],
+                  nq_for_kept_nucs=[200])
+    parsed = parse_ma_tag(read.get_tag('MA'))
+    assert [raw[0] for raw in parsed['raw_types']] == ['nuc', 'tf', 'foo']
+    quals = parse_aq_array(read.get_tag('AQ'), ['Q', 'QQQ', 'QQ'], [1, 1, 2])
+    assert quals[0] == [200]
+    assert quals[1][0] == llr_to_tq(3.0)
+    assert quals[2:] == [[1, 2], [3, 4]]
+
+
+def test_write_ma_tags_drops_quality_group_whose_aq_is_misaligned():
+    read = _FakeRead()
+    read.set_tag('MA', '200;foo.Q:5-10;deam+:1-150', value_type='Z')
+    with pytest.warns(RuntimeWarning, match='foo'):
+        write_ma_tags(read, 200, tf_calls=[], kept_nucs=[(0, 100)], msps=[])
+    assert read.get_tag('MA') == '200;nuc.Q:1-100;deam+:1-150'
+
+
+def test_recall_warns_when_call_recorded_snp_mask_or_reference():
+    """Recall re-derives deaminations from the read and cannot re-apply the
+    call's SNP mask/reference; it must say so instead of staying silent."""
+    import io
+
+    import pysam
+
+    from fiberhmm.inference.tf_recaller import (
+        unapplied_call_daf_inputs,
+        warn_unapplied_call_daf_inputs,
+    )
+
+    header = pysam.AlignmentHeader.from_dict({
+        'HD': {'VN': '1.6'},
+        'SQ': [{'SN': 'chr1', 'LN': 1000}],
+        'PG': [
+            {'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call',
+             'DS': 'mode=daf daf_snp_mask=on/12sites ddda_mcg=off',
+             'CL': 'fiberhmm-call -i a.bam -o b.bam --enzyme ddda '
+                   '--daf-snp-mask snps.bed --reference=ref.fa'},
+        ],
+    })
+    found = unapplied_call_daf_inputs(header)
+    assert found == ['SNP mask (daf_snp_mask=on/12sites)',
+                     '--daf-snp-mask snps.bed', '--reference ref.fa']
+    stream = io.StringIO()
+    warn_unapplied_call_daf_inputs(header, 'daf', stream=stream)
+    assert 'does not re-apply the SNP mask' in stream.getvalue()
+    stream = io.StringIO()
+    assert warn_unapplied_call_daf_inputs(header, 'pacbio-fiber', stream=stream) == []
+    assert stream.getvalue() == ''
+
+    clean = pysam.AlignmentHeader.from_dict({
+        'HD': {'VN': '1.6'},
+        'SQ': [{'SN': 'chr1', 'LN': 1000}],
+        'PG': [{'ID': 'fiberhmm-call', 'PN': 'fiberhmm-call',
+                'DS': 'mode=daf daf_snp_mask=off', 'CL': '-i a.bam -o b.bam'}],
+    })
+    assert unapplied_call_daf_inputs(clean) == []

@@ -6,6 +6,7 @@ Y (C or T) / R (A or G) in the query sequence, adds an st:Z tag, and
 writes a new BAM ready for ``fiberhmm-apply --mode daf``.
 """
 
+import itertools
 import os
 import sys
 import time
@@ -386,8 +387,10 @@ def process_bam_daf_encode(
             input_bam, "rb", threads=io_threads, check_sq=False
         )
 
-        # Check MD tag on the first mapped read
-        _check_md_tag(inbam, ref_fasta, _log)
+        # Check MD tag on the first mapped reads.  The peeked reads are
+        # buffered and replayed rather than rewinding the file, so a
+        # non-seekable input (``-i -``) streams correctly.
+        peeked, read_iter = _check_md_tag(inbam, ref_fasta, _log)
 
         # Open output — handle stdout specially
         _output_target = output_bam
@@ -406,7 +409,7 @@ def process_bam_daf_encode(
             disable=(output_bam == "-"),
         )
 
-        for read in inbam.fetch(until_eof=True):
+        for read in itertools.chain(peeked, read_iter):
             total += 1
 
             # Filter: unmapped / secondary / supplementary pass through
@@ -526,12 +529,17 @@ def process_bam_daf_encode(
 def _check_md_tag(inbam, ref_fasta, _log):
     """Peek at the first few mapped reads to check for the MD tag.
 
-    Resets the file iterator after peeking.  Prints a warning or error.
+    Returns ``(peeked, read_iter)``: the reads consumed while peeking and the
+    live iterator positioned after them.  The caller replays ``peeked`` ahead
+    of ``read_iter`` instead of rewinding the file, so a non-seekable input
+    (``-i -``) streams correctly.  Prints a warning or error.
     """
-    # Save position and peek
+    read_iter = inbam.fetch(until_eof=True)
+    peeked = []
     checked = 0
     has_md = False
-    for read in inbam.fetch(until_eof=True):
+    for read in read_iter:
+        peeked.append(read)
         if read.is_unmapped or read.is_secondary or read.is_supplementary:
             continue
         if read.has_tag("MD"):
@@ -540,9 +548,6 @@ def _check_md_tag(inbam, ref_fasta, _log):
         checked += 1
         if checked >= 10:
             break
-
-    # Reset iterator
-    inbam.reset()
 
     if not has_md:
         if ref_fasta is not None:
@@ -564,3 +569,5 @@ def _check_md_tag(inbam, ref_fasta, _log):
             )
             _log.flush()
             sys.exit(1)
+
+    return peeked, read_iter

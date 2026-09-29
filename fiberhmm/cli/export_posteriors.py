@@ -40,12 +40,22 @@ from fiberhmm.cli.common import (
 
 # Package imports
 from fiberhmm.core.bam_reader import (
-    detect_daf_strand,
-    encode_from_query_sequence,
+    add_daf_run_mask_arguments,
+    apply_daf_run_mask_arguments,
+    configure_daf_run_mask,
     get_reference_positions,
+    has_iupac_encoding,
+    mm_applicable,
 )
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.core.model_io import freeze_model_for_inference, load_model_with_metadata
+from fiberhmm.inference.engine import (
+    CHIMERA_SKIP,
+    _extract_fiber_read_from_pysam,
+    _process_single_read,
+    configure_daf_chimera_filter,
+    configure_daf_snp_mask,
+)
 from fiberhmm.inference.parallel import _get_genome_regions
 
 
@@ -58,81 +68,91 @@ def _detect_format(output_path: str, format_arg: str) -> str:
     return 'tsv'
 
 
+# Posterior export shares call's per-read extraction and encoding: MM/ML
+# (mode-filtered mod codes, '?' unknowns, SEQ-frame positions for reverse
+# reads), R/Y and MD DAF evidence, the DAF SNP mask, the chimera filter and
+# the DAF run mask all come from fiberhmm.inference.engine, so posteriors
+# describe exactly the observations fiberhmm-call decodes.
+DEFAULT_PROB_THRESHOLD = 128   # same as fiberhmm-call / fiberhmm-apply
+DEFAULT_EDGE_TRIM = 10         # same as fiberhmm-call / fiberhmm-apply
+
+_SKIP_REASONS = ('filtered', 'mm_not_applicable', 'chimera', 'no_modifications',
+                 'not_owned')
+
+
+def _new_stats() -> Dict[str, int]:
+    return {k: 0 for k in _SKIP_REASONS}
+
+
 def extract_posteriors_from_read(read, model: FiberHMM, mode: str,
-                                  context_size: int, edge_trim: int) -> Optional[Dict]:
+                                  context_size: int, edge_trim: int,
+                                  prob_threshold: int = DEFAULT_PROB_THRESHOLD,
+                                  stats: Optional[Dict[str, int]] = None) -> Optional[Dict]:
     """
     Extract posterior probabilities from a single read.
-    Returns dict with fiber data or None if filtered.
+    Returns dict with fiber data or None if filtered (reason tallied in
+    ``stats`` when given).
+
+    Posteriors, reference positions and footprint runs are all in the stored
+    SEQ (query) frame, index-aligned with each other.
     """
-    if read.is_unmapped or read.is_secondary or read.is_supplementary:
+    def _skip(reason):
+        if stats is not None:
+            stats[reason] = stats.get(reason, 0) + 1
         return None
+
+    if read.is_unmapped or read.is_secondary or read.is_supplementary:
+        return _skip('filtered')
 
     sequence = read.query_sequence
     if sequence is None or len(sequence) < 100:
-        return None
+        return _skip('filtered')
 
-    # Get modification positions from MM/ML tags
-    try:
-        mod_dict = dict(read.modified_bases_forward)
-    except (TypeError, ValueError):
-        mod_dict = {}
+    # Hard-clipped records carrying the parent's MM/ML cannot be walked.
+    if not has_iupac_encoding(sequence) and not mm_applicable(read):
+        return _skip('mm_not_applicable')
 
-    mod_positions = set()
-    for key, positions in mod_dict.items():
-        for pos, qual in positions:
-            if qual >= 128:
-                mod_positions.add(pos)
+    fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
+    if fiber_read is CHIMERA_SKIP:
+        return _skip('chimera')
+    if fiber_read is None or len(fiber_read['m6a_query_positions']) < 10:
+        return _skip('no_modifications')
 
-    if len(mod_positions) < 10:
-        return None
+    result = _process_single_read(
+        fiber_read, model, edge_trim, False, mode, context_size,
+        msp_min_size=1, with_scores=False, return_posteriors=True,
+    )
+    if result is None or result.get('posteriors') is None:
+        return _skip('no_modifications')
 
-    # Determine strand
+    p_footprint = np.asarray(result['posteriors'], dtype=np.float16)
+
     if mode == 'daf':
-        strand = detect_daf_strand(sequence, mod_positions)
+        strand = result.get('strand') or fiber_read.get('_daf_strand') or '.'
     else:
         strand = '-' if read.is_reverse else '+'
 
-    # Encode read
-    encoded = encode_from_query_sequence(
-        sequence, mod_positions, edge_trim,
-        mode=mode, strand=strand, context_size=context_size,
-        is_reverse=bool(read.is_reverse),
-    )
-
-    if len(encoded) == 0:
-        return None
-
-    # Get posteriors using forward-backward
-    posteriors = model.predict_proba(encoded)
-    p_footprint = posteriors[:, 0].astype(np.float16)
-
-    # Get reference position mapping
+    # Reference position for each query (SEQ-frame) index.
     q2r = get_reference_positions(read)
     ref_positions = np.array([p if p is not None else -1 for p in q2r], dtype=np.int32)
 
-    # Viterbi path for footprint intervals
-    states = model.predict(encoded)
-
-    # Extract footprint intervals
-    states_padded = np.concatenate([[1], states, [1]])
-    diff = np.diff(states_padded)
-    fp_start_idx = np.where(diff == -1)[0]
-    fp_end_idx = np.where(diff == 1)[0]
-
+    # Footprint runs (Viterbi state 0), query frame -> reference half-open
+    # intervals, same convention as fiberhmm-extract.
     fp_starts_ref = []
     fp_sizes_ref = []
-
-    if len(fp_start_idx) > 0 and len(ref_positions) > 0:
-        for s, e in zip(fp_start_idx, fp_end_idx):
-            s_clamped = min(s, len(ref_positions) - 1)
-            e_clamped = min(e, len(ref_positions)) - 1
-
-            ref_s = ref_positions[s_clamped]
-            ref_e = ref_positions[e_clamped] if e_clamped >= 0 else ref_s
-
-            if ref_s >= 0 and ref_e >= 0:
-                fp_starts_ref.append(ref_s)
-                fp_sizes_ref.append(max(1, ref_e - ref_s))
+    n_ref = len(ref_positions)
+    for s, size in zip(np.asarray(result['ns']), np.asarray(result['nl'])):
+        s = int(s)
+        e = s + int(size) - 1
+        if n_ref == 0 or s >= n_ref:
+            continue
+        e = min(e, n_ref - 1)
+        ref_s = int(ref_positions[s])
+        ref_e = int(ref_positions[e])
+        if ref_s >= 0 and ref_e >= 0:
+            lo, hi = min(ref_s, ref_e), max(ref_s, ref_e) + 1
+            fp_starts_ref.append(lo)
+            fp_sizes_ref.append(hi - lo)
 
     return {
         'read_name': read.query_name,
@@ -151,6 +171,19 @@ _worker_model = None
 _worker_params = None
 
 
+def _configure_read_extraction(params: dict) -> None:
+    """Per-process DAF extraction policy (chimera filter, SNP mask, run mask)."""
+    configure_daf_chimera_filter(
+        params.get('filter_chimeras', True),
+        params.get('chimera_min_seg', 5),
+        params.get('chimera_purity', 0.8),
+    )
+    configure_daf_snp_mask(params.get('daf_snp_mask_path'))
+    run_mask = params.get('daf_run_mask')
+    if run_mask is not None:
+        configure_daf_run_mask(*run_mask)
+
+
 def _init_worker(model_path: str, params: dict):
     """Initialize worker with model and warmup numba JIT."""
     global _worker_model, _worker_params
@@ -162,6 +195,7 @@ def _init_worker(model_path: str, params: dict):
     _worker_model, _, _ = load_model_with_metadata(model_path, normalize=True)
     _worker_model = freeze_model_for_inference(_worker_model)
     _worker_params = params
+    _configure_read_extraction(params)
 
     # Warmup numba JIT with a dummy sequence
     dummy = np.zeros(100, dtype=np.int32)
@@ -172,26 +206,57 @@ def _init_worker(model_path: str, params: dict):
         pass  # OK if warmup fails
 
 
-def _process_region_worker(args) -> Tuple[str, int, int, List[Dict]]:
-    """Worker to process a region and extract posteriors."""
+def _process_region_worker(args) -> Tuple[str, int, int, List[Dict], Dict[str, int]]:
+    """Worker to process a region and extract posteriors.
+
+    A read is written by the region containing its ``reference_start`` only,
+    so reads spanning region boundaries are exported once.
+    """
     global _worker_model, _worker_params
 
     chrom, start, end, input_bam = args
     mode = _worker_params['mode']
     context_size = _worker_params['context_size']
     edge_trim = _worker_params['edge_trim']
+    prob_threshold = _worker_params.get('prob_threshold', DEFAULT_PROB_THRESHOLD)
 
     results = []
+    stats = _new_stats()
 
     with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as bam:
         for read in bam.fetch(chrom, start, end):
+            if not (start <= read.reference_start < end):
+                stats['not_owned'] += 1
+                continue
             result = extract_posteriors_from_read(
-                read, _worker_model, mode, context_size, edge_trim
+                read, _worker_model, mode, context_size, edge_trim,
+                prob_threshold=prob_threshold, stats=stats,
             )
             if result is not None:
                 results.append(result)
 
-    return (chrom, start, end, results)
+    return (chrom, start, end, results, stats)
+
+
+def _worker_params_for(mode, context_size, edge_trim, prob_threshold,
+                       extraction=None) -> dict:
+    params = {
+        'mode': mode,
+        'context_size': context_size,
+        'edge_trim': edge_trim,
+        'prob_threshold': prob_threshold,
+    }
+    params.update(extraction or {})
+    return params
+
+
+def _report_skips(stats: Dict[str, int]) -> None:
+    parts = [f"{k}={v:,}" for k, v in stats.items() if v and k != 'not_owned']
+    if parts:
+        print("Skipped reads: " + ", ".join(parts))
+    if stats.get('mm_not_applicable'):
+        print(f"  {stats['mm_not_applicable']:,} hard-clipped/MN-mismatched records "
+              "carry MM/ML that does not index their stored SEQ; not exported.")
 
 
 def _write_batch_to_h5(grp, fibers: List[Dict], start_idx: int):
@@ -238,8 +303,16 @@ def _write_batch_to_h5(grp, fibers: List[Dict], start_idx: int):
 
 
 def _process_regions(regions, input_bam, model_path, params,
-                     n_cores, verbose, result_callback):
-    """Process all regions and call result_callback(chrom, results) for each."""
+                     n_cores, verbose, result_callback, stats=None):
+    """Process all regions and call result_callback(chrom, results) for each.
+
+    Per-read skip counts are summed into ``stats`` when given.
+    """
+    def _merge(worker_stats):
+        if stats is not None:
+            for k, v in worker_stats.items():
+                stats[k] = stats.get(k, 0) + v
+
     if n_cores > 1:
         with ProcessPoolExecutor(
             max_workers=n_cores,
@@ -272,7 +345,8 @@ def _process_regions(regions, input_bam, model_path, params,
                     region_info = pending.pop(future)
 
                     try:
-                        chrom, start, end, results = future.result()
+                        chrom, start, end, results, worker_stats = future.result()
+                        _merge(worker_stats)
                         result_callback(chrom, results)
                         del results
                     except Exception as e:
@@ -293,7 +367,8 @@ def _process_regions(regions, input_bam, model_path, params,
         _init_worker(model_path, params)
         for chrom, start, end in tqdm(regions, desc="Processing regions", disable=not verbose):
             args = (chrom, start, end, input_bam)
-            _, _, _, results = _process_region_worker(args)
+            _, _, _, results, worker_stats = _process_region_worker(args)
+            _merge(worker_stats)
             result_callback(chrom, results)
             del results
 
@@ -303,12 +378,14 @@ def export_posteriors_tsv(
     model_path: str,
     output_path: str,
     chroms: Optional[Set[str]] = None,
-    edge_trim: int = 100,
+    edge_trim: int = DEFAULT_EDGE_TRIM,
     n_cores: int = 4,
     region_size: int = 5_000_000,
     verbose: bool = True,
     mode_override: str = None,
     context_size_override: int = None,
+    prob_threshold: int = DEFAULT_PROB_THRESHOLD,
+    extraction: Optional[dict] = None,
 ) -> int:
     """Export posterior probabilities to gzipped TSV."""
     from fiberhmm.posteriors.tsv_backend import PosteriorsTSVWriter
@@ -331,12 +408,10 @@ def export_posteriors_tsv(
         print(f"Processing {len(regions)} regions from {input_bam}")
         print(f"Using {n_cores} cores, output format: TSV")
 
-    params = {
-        'mode': mode,
-        'context_size': context_size,
-        'edge_trim': edge_trim
-    }
+    params = _worker_params_for(mode, context_size, edge_trim,
+                                prob_threshold, extraction)
 
+    stats = _new_stats()
     compress = output_path.endswith('.gz')
     writer = PosteriorsTSVWriter(
         output_path, mode=mode, context_size=context_size,
@@ -357,11 +432,13 @@ def export_posteriors_tsv(
             )
 
     try:
-        _process_regions(regions, input_bam, model_path, params, n_cores, verbose, on_results)
+        _process_regions(regions, input_bam, model_path, params, n_cores,
+                         verbose, on_results, stats=stats)
     finally:
         total = writer.close()
 
     if verbose:
+        _report_skips(stats)
         out_file = writer.output_path
         file_size = os.path.getsize(out_file) / (1024 * 1024)
         print(f"Wrote {out_file} ({file_size:.1f} MB, {total:,} fibers)")
@@ -374,13 +451,15 @@ def export_posteriors_hdf5(
     model_path: str,
     output_h5: str,
     chroms: Optional[Set[str]] = None,
-    edge_trim: int = 100,
+    edge_trim: int = DEFAULT_EDGE_TRIM,
     n_cores: int = 4,
     region_size: int = 5_000_000,
     write_batch_size: int = 1000,
     verbose: bool = True,
     mode_override: str = None,
     context_size_override: int = None,
+    prob_threshold: int = DEFAULT_PROB_THRESHOLD,
+    extraction: Optional[dict] = None,
 ) -> int:
     """
     Export posterior probabilities to HDF5.
@@ -408,11 +487,10 @@ def export_posteriors_hdf5(
         print(f"Processing {len(regions)} regions from {input_bam}")
         print(f"Using {n_cores} cores with streaming/batched writes, output format: HDF5")
 
-    params = {
-        'mode': mode,
-        'context_size': context_size,
-        'edge_trim': edge_trim
-    }
+    params = _worker_params_for(mode, context_size, edge_trim,
+                                prob_threshold, extraction)
+
+    stats = _new_stats()
 
     # Group regions by chromosome
     regions_by_chrom = {}
@@ -471,7 +549,10 @@ def export_posteriors_hdf5(
             if len(write_buffers[chrom]) >= write_batch_size:
                 flush_buffer(chrom)
 
-        _process_regions(regions, input_bam, model_path, params, n_cores, verbose, on_results)
+        _process_regions(regions, input_bam, model_path, params, n_cores,
+                         verbose, on_results, stats=stats)
+        if verbose:
+            _report_skips(stats)
 
         # Flush remaining buffers
         for chrom in regions_by_chrom:
@@ -517,13 +598,15 @@ def export_posteriors(
     output_path: str,
     format: str = 'auto',
     chroms: Optional[Set[str]] = None,
-    edge_trim: int = 100,
+    edge_trim: int = DEFAULT_EDGE_TRIM,
     n_cores: int = 4,
     region_size: int = 5_000_000,
     write_batch_size: int = 1000,
     verbose: bool = True,
     mode_override: str = None,
     context_size_override: int = None,
+    prob_threshold: int = DEFAULT_PROB_THRESHOLD,
+    extraction: Optional[dict] = None,
 ) -> int:
     """
     Export posterior probabilities to TSV or HDF5.
@@ -545,6 +628,8 @@ def export_posteriors(
             verbose=verbose,
             mode_override=mode_override,
             context_size_override=context_size_override,
+            prob_threshold=prob_threshold,
+            extraction=extraction,
         )
     else:
         return export_posteriors_tsv(
@@ -558,6 +643,8 @@ def export_posteriors(
             verbose=verbose,
             mode_override=mode_override,
             context_size_override=context_size_override,
+            prob_threshold=prob_threshold,
+            extraction=extraction,
         )
 
 
@@ -755,7 +842,21 @@ def main():
                             'pacbio. Ignored for dddb/ddda.')
 
     add_legacy_mode_override(parser)
-    add_edge_trim_args(parser, default=100)
+    add_edge_trim_args(parser, default=DEFAULT_EDGE_TRIM)
+    parser.add_argument('--prob-threshold', type=int, default=DEFAULT_PROB_THRESHOLD,
+                       help='Min ML probability (0-255) for an MM/ML modification call '
+                            '(same default as fiberhmm-call)')
+    daf = parser.add_argument_group('DAF options (mode=daf only; same as fiberhmm-call)')
+    daf.add_argument('--keep-chimeras', action='store_true',
+                     help='Do not drop DAF strand-swap chimeric reads')
+    daf.add_argument('--chimera-min-seg', type=int, default=5,
+                     help='DAF chimera: min same-strand deamination events per segment')
+    daf.add_argument('--chimera-purity', type=float, default=0.8,
+                     help='DAF chimera: min same-strand purity per segment')
+    daf.add_argument('--daf-snp-mask', default=None, metavar='BED',
+                     help='0-based BED of reference positions whose conversions are '
+                          'ignored (e.g. the mask fiberhmm-call used)')
+    add_daf_run_mask_arguments(daf)
     add_parallel_args(parser, default_cores=4, default_region_size=5_000_000)
 
     parser.add_argument('--batch-size', type=int, default=1000,
@@ -808,6 +909,21 @@ def main():
 
     chroms = set(args.chroms) if args.chroms else None
 
+    extraction = {
+        'filter_chimeras': not args.keep_chimeras,
+        'chimera_min_seg': args.chimera_min_seg,
+        'chimera_purity': args.chimera_purity,
+        'daf_snp_mask_path': args.daf_snp_mask,
+    }
+    if effective_mode == 'daf':
+        # Chemistry default (DddA: keep-one on runs >= 2), as fiberhmm-call.
+        extraction['daf_run_mask'] = tuple(
+            apply_daf_run_mask_arguments(args, args.enzyme))
+    else:
+        if args.daf_mask_runs or args.daf_snp_mask:
+            parser.error("--daf-mask-runs/--daf-snp-mask require mode daf")
+        extraction['daf_run_mask'] = (0, 'keep-one')
+
     export_posteriors(
         input_bam=args.input,
         model_path=model_path,
@@ -820,6 +936,8 @@ def main():
         write_batch_size=args.batch_size,
         verbose=args.verbose or True,
         mode_override=effective_mode,
+        prob_threshold=args.prob_threshold,
+        extraction=extraction,
     )
 
 
@@ -831,9 +949,9 @@ def export_posteriors_from_bam(
     format: str = 'auto',
     mode: str = None,
     context_size: int = None,
-    edge_trim: int = 100,
+    edge_trim: int = DEFAULT_EDGE_TRIM,
     min_mapq: int = 20,
-    prob_threshold: int = 125,
+    prob_threshold: int = DEFAULT_PROB_THRESHOLD,
     n_workers: int = 4,
     chroms: Optional[Set[str]] = None,
     verbose: bool = True,
@@ -849,6 +967,7 @@ def export_posteriors_from_bam(
         verbose=verbose,
         mode_override=mode,
         context_size_override=context_size,
+        prob_threshold=prob_threshold,
     )
 
 

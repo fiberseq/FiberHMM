@@ -156,6 +156,30 @@ def _read_quality(read) -> tuple:
     )
 
 
+def deamination_flavour_key(calls) -> str:
+    """Grouping key for dedup: the read's dominant deamination flavour.
+
+    ``calls`` is ``[(ref_pos, flavor), ...]`` from ``_deam_positions_list``
+    (flavor 1 = Y / C->T, 0 = R / G->A). PCR copies of one molecule carry the
+    same template strand, hence the same deamination flavour, but may align
+    in either orientation (library reads come from both strands of the
+    amplicon), so alignment orientation must NOT split them. Returns ``'CT'``,
+    ``'GA'``, or ``'mixed'`` for an exact tie.
+    """
+    ct = 0
+    total = 0
+    for _, flavor in calls:
+        total += 1
+        if flavor == 1:
+            ct += 1
+    ga = total - ct
+    if ct > ga:
+        return 'CT'
+    if ga > ct:
+        return 'GA'
+    return 'mixed'
+
+
 def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=False,
               k=32, bands=8, seed=7, collapse=True, prob_threshold=0,
               stats_tsv=None, io_threads=4, max_end_diff=50):
@@ -192,8 +216,8 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
                 n_lowdeam += 1
                 continue
             pos_sets.append(frozenset(p for p, _ in calls))
-            strand_key = '' if ignore_strand else ('-' if read.is_reverse else '+')
-            group_keys.append((read.reference_id, strand_key))
+            flavour_key = '' if ignore_strand else deamination_flavour_key(calls)
+            group_keys.append((read.reference_id, flavour_key))
             endpoints.append((int(read.reference_start), int(read.reference_end)))
             quals.append(_read_quality(read))
             n_fingerprintable += 1
@@ -326,8 +350,10 @@ Examples:
                         help='Maximum difference at both aligned reference ends for '
                              'two reads to be duplicates (default 50 bp).')
     parser.add_argument('--ignore-strand', action='store_true',
-                        help='Cluster across strands. Default: only reads on the same '
-                             'strand (deamination is strand-specific) can be duplicates.')
+                        help='Cluster across deamination flavours. Default: only reads '
+                             'with the same dominant flavour (C->T vs G->A, i.e. the '
+                             'same template strand) can be duplicates; alignment '
+                             'orientation is never used.')
     parser.add_argument('-p', '--prob-threshold', type=int, default=0,
                         help='Min ML probability for MM/ML-native dU calls (0-255, '
                              'default 0 = accept all). Ignored for R/Y and MD sources.')

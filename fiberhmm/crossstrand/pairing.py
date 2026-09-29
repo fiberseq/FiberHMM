@@ -219,11 +219,15 @@ def build_feature(read, index: int, params: PairParams,
                   reference: Optional[np.ndarray] = None) -> Optional[ReadFeat]:
     """Build a :class:`ReadFeat` for a primary mapped read, or None if unusable.
 
-    None when: unmapped/secondary/supplementary, no sequence, no deamination
-    flavor. Nucleosome dyads and sequence evidence are optional individually;
-    a read may be sequence-pairable even when it lacks a footprint pattern.
+    None when: unmapped/secondary/supplementary, a marked PCR duplicate
+    (0x400; a copy would compete with its own original for the opposite-strand
+    mate and block the true duplex), no sequence, no deamination flavor.
+    Nucleosome dyads and sequence evidence are optional individually; a read
+    may be sequence-pairable even when it lacks a footprint pattern.
     """
     if read.is_unmapped or read.is_secondary or read.is_supplementary:
+        return None
+    if read.is_duplicate:
         return None
     if read.query_sequence is None or not read.has_tag('MA'):
         return None

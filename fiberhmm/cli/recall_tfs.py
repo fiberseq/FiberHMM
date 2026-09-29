@@ -1091,6 +1091,8 @@ def main(default_recall_nucs: bool = False):
     # store the tags in SEQ (query) frame -- flipping those again mis-places
     # every reverse-strand call. Auto-detect from the header, overridable.
     input_molecular_frame = _resolve_input_molecular_frame(args, bam_in.header)
+    from fiberhmm.inference.tf_recaller import warn_unapplied_call_daf_inputs
+    warn_unapplied_call_daf_inputs(bam_in.header, mode)
 
     bam_out = None
     try:

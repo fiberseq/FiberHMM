@@ -22,6 +22,7 @@ Features:
 
 import argparse
 import os
+import sys
 from collections import defaultdict
 from typing import Dict, List, Tuple
 
@@ -31,10 +32,9 @@ import pysam
 from tqdm import tqdm
 
 # Package imports
-from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
 from fiberhmm.probabilities.context_counter import ContextCounter, encoder_context_code
 from fiberhmm.probabilities.stats import generate_probability_stats
-from fiberhmm.probabilities.utils import detect_strand_and_base
+from fiberhmm.probabilities.utils import detect_strand_and_base, extract_training_read
 
 
 def parse_args():
@@ -159,71 +159,52 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                 filter_stats['short_read'] += 1
                 continue
 
-            # Get MM/ML tags
-            mm_tag = None
-            ml_tag = None
-
-            try:
-                if read.has_tag('MM'):
-                    mm_tag = read.get_tag('MM')
-                elif read.has_tag('Mm'):
-                    mm_tag = read.get_tag('Mm')
-            except KeyError:
-                pass
-
-            if mm_tag is None:
-                filter_stats['no_mm_tag'] += 1
-                continue
-
             # Track MM tag types (for diagnostics)
-            for mod_spec in mm_tag.split(';'):
-                if mod_spec:
-                    base_mod = mod_spec.split(',')[0] if ',' in mod_spec else mod_spec
-                    mm_tag_types[base_mod] += 1
-
             try:
-                if read.has_tag('ML'):
-                    ml_tag = list(read.get_tag('ML'))
-                elif read.has_tag('Ml'):
-                    ml_tag = list(read.get_tag('Ml'))
+                mm_tag = read.get_tag('MM') if read.has_tag('MM') else (
+                    read.get_tag('Mm') if read.has_tag('Mm') else None)
             except KeyError:
-                pass
+                mm_tag = None
+            if mm_tag:
+                for mod_spec in mm_tag.split(';'):
+                    if mod_spec:
+                        base_mod = mod_spec.split(',')[0] if ',' in mod_spec else mod_spec
+                        mm_tag_types[base_mod] += 1
 
-            if ml_tag is None:
-                filter_stats['no_ml_tag'] += 1
+            # Same evidence extraction as fiberhmm-call (DAF: R/Y -> MD -> MM/ML)
+            ext = extract_training_read(read, mode, args.prob_threshold)
+            if isinstance(ext, str):
+                filter_stats[ext] = filter_stats.get(ext, 0) + 1
                 continue
-
-            # Parse modifications
-            mod_positions = parse_mm_tag_query_positions(
-                mm_tag, ml_tag, read.query_sequence,
-                read.is_reverse, args.prob_threshold, mode=mode
-            )
-
-            # Determine strand and target base
-            strand, target_base = detect_strand_and_base(
-                read.query_sequence, mod_positions, mode
-            )
-            strand_assignments[f"{strand}:{target_base}"] += 1
+            sequence, mod_positions, strand, unknown = ext
 
             # Process read with appropriate counter
             if mode == 'daf':
                 # DAF-seq: always use C counter (G contexts are RC'd to C internally)
+                strand_assignments[f"{strand}:{'G' if strand == '-' else 'C'}"] += 1
                 if 'C' in counters:
                     counters['C'].process_read_daf(
-                        read.query_sequence, mod_positions, strand, args.edge_trim
+                        sequence, mod_positions, strand, args.edge_trim,
+                        skip_positions=unknown,
                     )
             elif mode in ('gpc', 'cpg'):
                 # 5mC methylation footprinting: count only C's in the GpC/CpG motif
                 if 'C' in counters:
                     counters['C'].process_read_5mc(
-                        read.query_sequence, mod_positions, mode, args.edge_trim,
-                        is_reverse=read.is_reverse,
+                        sequence, mod_positions, mode, args.edge_trim,
+                        is_reverse=read.is_reverse, skip_positions=unknown,
                     )
-            elif target_base in counters:
-                counters[target_base].process_read(
-                    read.query_sequence, mod_positions, args.edge_trim,
-                    is_reverse=(mode == 'nanopore-fiber' and read.is_reverse),
+            else:
+                _strand, target_base = detect_strand_and_base(
+                    sequence, mod_positions, mode
                 )
+                strand_assignments[f"{_strand}:{target_base}"] += 1
+                if target_base in counters:
+                    counters[target_base].process_read(
+                        sequence, mod_positions, args.edge_trim,
+                        is_reverse=(mode == 'nanopore-fiber' and read.is_reverse),
+                        skip_positions=unknown,
+                    )
 
             reads_processed += 1
             filter_stats['processed'] += 1
@@ -246,6 +227,11 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
         print(f"      Short (<{args.min_read_length}bp):      {filter_stats['short_read']:>10,}")
         print(f"      No MM tag:          {filter_stats['no_mm_tag']:>10,}")
         print(f"      No ML tag:          {filter_stats['no_ml_tag']:>10,}")
+        for reason, label in (('no_modifications', 'No deaminations/mods'),
+                              ('chimera', 'DAF chimera'),
+                              ('mm_not_applicable', 'MM not applicable')):
+            if filter_stats.get(reason):
+                print(f"      {label + ':':<20}{filter_stats[reason]:>10,}")
 
     # Print MM tag diagnostics for daf mode (to show C vs G strand detection)
     if mode == 'daf':
@@ -382,6 +368,17 @@ def main():
     inaccessible_counters = {base: ContextCounter(max_context, base) for base in target_bases}
     inaccessible_reads, inaccessible_scanned, inaccessible_stats = process_sample_set(
         args.inaccessible, inaccessible_counters, args.mode, args, "inaccessible", output_dir, base_name)
+
+    # A table estimated from zero reads is meaningless: fail loudly instead
+    # of writing empty/placeholder tables and exiting 0.
+    empty_sets = [name for name, n in (('accessible', accessible_reads),
+                                       ('inaccessible', inaccessible_reads)) if n == 0]
+    if empty_sets:
+        print(f"\nError: 0 reads passed the filters for the {' and '.join(empty_sets)} "
+              f"sample(s) (mode {args.mode}). Check --mode, --min-mapq, "
+              f"--min-read-length and --prob-threshold, and that the BAM carries "
+              f"MM/ML, R/Y or MD evidence.", file=sys.stderr)
+        sys.exit(1)
 
     # Report and save results
     print("\n" + "=" * 60)

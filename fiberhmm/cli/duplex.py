@@ -16,6 +16,9 @@ receive the standard pair status/partner tags plus model metadata:
     dm:i  standardized duplex-model decision score x1000
     mg:i  two-sided reciprocal margin x1000
     mv:Z  frozen model identifier
+
+Reads flagged as PCR duplicates (0x400) are excluded from pairing and written
+through without pair tags; the receipt counts them as ``duplicate_reads``.
 """
 from __future__ import annotations
 
@@ -295,6 +298,13 @@ def run_pairing(in_bam: str, out_bam: str, reference_path: Optional[str],
                 if read.reference_start < previous_start:
                     raise ValueError("input BAM is not coordinate sorted")
                 previous_start = read.reference_start
+                if read.is_duplicate:
+                    # 0x400 PCR copies (fiberhmm-dedup / call --dedup mark and
+                    # retain them) are not pairing candidates: a copy competes
+                    # with its original for the opposite-strand mate and blocks
+                    # the true duplex. They pass through untagged in pass 2.
+                    counts["duplicate_reads"] += 1
+                    continue
                 if component and read.reference_start >= component_end:
                     process_component(component)
                     component = []

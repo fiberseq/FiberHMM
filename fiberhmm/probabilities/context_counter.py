@@ -189,7 +189,7 @@ class ContextCounter:
         self.total_positions += 1
 
     def process_read(self, sequence: str, mod_positions: Set[int], edge_trim: int = 10,
-                     is_reverse: bool = False):
+                     is_reverse: bool = False, skip_positions: Set[int] = frozenset()):
         """
         Process all target base positions in a read.
 
@@ -202,21 +202,28 @@ class ContextCounter:
                 sit on SEQ T's. Pass True to count it in the basecalled-forward frame
                 (matching the encoder's T-target/RC-context handling); otherwise its
                 unmethylated opposite-strand A's would be counted as misses.
+            skip_positions: SEQ-frame positions with no call (bases an MM ``?``
+                entry left unlisted); not counted as modified or unmodified.
         """
         if is_reverse:
             L = len(sequence)
             sequence = reverse_complement(sequence)
             mod_positions = {L - 1 - p for p in mod_positions if 0 <= p < L}
+            if skip_positions:
+                skip_positions = {L - 1 - p for p in skip_positions if 0 <= p < L}
         seq_upper = sequence.upper()
         seq_len = len(sequence)
 
         for i in range(edge_trim, seq_len - edge_trim):
             if seq_upper[i] == self.center_base:
+                if skip_positions and i in skip_positions:
+                    continue
                 is_mod = i in mod_positions
                 self.add_position(sequence, i, is_mod)
 
     def process_read_5mc(self, sequence: str, mod_positions: Set[int],
-                         motif: str, edge_trim: int = 10, is_reverse: bool = False):
+                         motif: str, edge_trim: int = 10, is_reverse: bool = False,
+                         skip_positions: Set[int] = frozenset()):
         """Count C positions restricted to a dinucleotide motif for 5mC footprinting.
 
         ``motif='gpc'`` (M.CviPI, GpC) or ``'cpg'`` (M.SssI, CpG). Only C's inside the
@@ -228,11 +235,14 @@ class ContextCounter:
         We reverse-complement such reads into the basecalled-forward frame (methylated
         C back on a ``C``) and remap mod positions, then count uniformly — matching the
         encoder's G-target/RC-context handling and pooling both strands' contexts.
+        ``skip_positions`` (SEQ frame) are bases with no call (MM ``?``).
         """
         if is_reverse:
             L = len(sequence)
             sequence = reverse_complement(sequence)
             mod_positions = {L - 1 - p for p in mod_positions if 0 <= p < L}
+            if skip_positions:
+                skip_positions = {L - 1 - p for p in skip_positions if 0 <= p < L}
         seq_upper = sequence.upper()
         seq_len = len(sequence)
         lo = max(edge_trim, 1)
@@ -248,11 +258,12 @@ class ContextCounter:
                 ok = next_g and not prev_g   # CpG, exclude GCG
             else:
                 ok = False
-            if ok:
+            if ok and not (skip_positions and i in skip_positions):
                 self.add_position(sequence, i, i in mod_positions)
 
     def process_read_daf(self, sequence: str, mod_positions: Set[int],
-                         strand: str, edge_trim: int = 10):
+                         strand: str, edge_trim: int = 10,
+                         skip_positions: Set[int] = frozenset()):
         """
         Process a DAF-seq read with proper sequence reconstruction.
 
@@ -277,6 +288,7 @@ class ContextCounter:
             mod_positions: Set of positions marked by MM tag (T or A that were deaminated)
             strand: '+' for C→T, '-' for G→A, '.' defaults to + strand
             edge_trim: Bases to skip at edges
+            skip_positions: Positions with no call (MM ``?``); not counted.
         """
         # This counter must be C-centered for DAF mode
         if self.center_base != 'C':
@@ -300,6 +312,8 @@ class ContextCounter:
             # Process G positions and convert contexts to C-centered via RC
             for i in range(edge_trim, seq_len - edge_trim):
                 if reconstructed[i] == orig_base:
+                    if skip_positions and i in skip_positions:
+                        continue
                     # Check context bounds
                     if i < self.max_context or i >= seq_len - self.max_context:
                         continue
@@ -343,6 +357,8 @@ class ContextCounter:
             # Process C positions directly
             for i in range(edge_trim, seq_len - edge_trim):
                 if reconstructed[i] == orig_base:
+                    if skip_positions and i in skip_positions:
+                        continue
                     is_deaminated = i in mod_positions
                     self.add_position(reconstructed, i, is_deaminated)
 

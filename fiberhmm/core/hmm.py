@@ -356,7 +356,7 @@ class FiberHMM:
             if self.transmat_ is not None:
                 self._log_transmat = np.log(self.transmat_)
             if self.emissionprob_ is not None:
-                self._log_emissionprob = np.log(self.emissionprob_)
+                self._log_emissionprob = _log_emissions(self.emissionprob_)
 
     def freeze_log_probs(self) -> 'FiberHMM':
         """Cache log-probability arrays for read-only inference workloads.
@@ -917,6 +917,24 @@ class TrainingMonitor:
         self.history = []
 
 
+def _log_emissions(emissionprob: np.ndarray) -> np.ndarray:
+    """log(emissionprob), with observations impossible in EVERY state made neutral.
+
+    A symbol whose emission probability is 0 in all states (e.g. a context no
+    training read covered, written as 0/0) would make the forward/backward
+    sums -inf - -inf = NaN for the whole read. Such a column carries no
+    evidence about the state, so it is scored log(1) = 0 in every state. All
+    other entries (including a 0 in just one state) are unchanged.
+    """
+    with np.errstate(divide='ignore'):
+        log_emit = np.log(emissionprob)
+    if log_emit.ndim == 2:
+        dead = np.all(emissionprob <= 0, axis=0)
+        if np.any(dead):
+            log_emit[:, dead] = 0.0
+    return log_emit
+
+
 def _logsumexp(a: np.ndarray, axis: Optional[int] = None,
                keepdims: bool = False) -> np.ndarray:
     """Numerically stable log-sum-exp. Uses scipy if available."""
@@ -1024,7 +1042,8 @@ def train_model(emission_probs: np.ndarray,
                 train_data: np.ndarray,
                 n_iterations: int = 10,
                 use_legacy: bool = False,
-                normalize: bool = True) -> Tuple[FiberHMM, list]:
+                normalize: bool = True,
+                train_lengths=None) -> Tuple[FiberHMM, list]:
     """
     Train multiple HMM models and return the best one.
 
@@ -1034,9 +1053,15 @@ def train_model(emission_probs: np.ndarray,
         n_iterations: Number of random initializations
         use_legacy: Try to use hmmlearn for training
         normalize: If True, normalize states so State 0 = accessible (default True)
+        train_lengths: Per-read lengths of each training array (dict keyed like
+            ``train_data``, or one list); each read is then its own sequence in
+            Baum-Welch. None trains on the concatenation as one sequence.
 
     Returns:
         (best_model, all_models)
+
+    Raises:
+        ValueError: when no initialization reaches a finite log-likelihood.
     """
     from fiberhmm.core.model_io import _convert_hmmlearn_model
 
@@ -1069,12 +1094,22 @@ def train_model(emission_probs: np.ndarray,
 
         # Train
         if isinstance(train_data, dict):
-            data = train_data[i % len(train_data)]
+            key = i % len(train_data)
+            data = train_data[key]
         else:
+            key = None
             data = train_data
+        if isinstance(train_lengths, dict):
+            lengths = list(train_lengths[key])
+        elif train_lengths is not None:
+            lengths = list(train_lengths)
+        else:
+            lengths = [len(data)]
+        if sum(lengths) != len(data):
+            raise ValueError('train_lengths do not sum to the training array length')
 
         training = data.reshape(-1, 1)
-        model.fit(training, lengths=[len(data)], verbose=True, desc=f"Init {i+1} EM")
+        model.fit(training, lengths=lengths, verbose=True, desc=f"Init {i+1} EM")
 
         # Get log probability
         if hasattr(model, 'monitor_') and model.monitor_ and model.monitor_.history:
@@ -1088,13 +1123,21 @@ def train_model(emission_probs: np.ndarray,
 
         all_models.append(model)
 
-        if logprob > best_logprob:
+        # A NaN/inf log-likelihood (e.g. an impossible observation) must never
+        # win the model selection.
+        if np.isfinite(logprob) and logprob > best_logprob:
             best_logprob = logprob
             best_model = model
 
         # Update progress bar with current best
         if HAS_TQDM:
             pbar.set_postfix({'best_logprob': f'{best_logprob:.2e}'})
+
+    if best_model is None:
+        raise ValueError(
+            'no training initialization reached a finite log-likelihood; '
+            'check the emission table for observations that are impossible '
+            'in every state and the training reads for empty input')
 
     # Normalize states for best model and all models
     if normalize:

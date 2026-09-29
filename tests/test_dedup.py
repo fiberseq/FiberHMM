@@ -183,3 +183,97 @@ def test_call_wrapper_forwards_dedup_parameters(daf_bam, monkeypatch):
         "stats_tsv": "clusters.tsv",
         "max_end_diff": 75,
     }
+
+
+# ---------------------------------------------------------------------------
+# Grouping key: deamination flavour (CT/GA), never alignment orientation.
+# PCR copies of one deaminated template strand keep its flavour but can align
+# in either orientation; on NAPA DddA, orientation grouping missed ~40% of
+# duplicates (130 clusters mixed orientations, 0 mixed flavours).
+# ---------------------------------------------------------------------------
+
+
+def _seq_with_code(sites, code):
+    sequence = ["A"] * 200
+    for position in sites:
+        sequence[position] = code
+    return "".join(sequence)
+
+
+def _make_flavour_bam(path, reads):
+    header = pysam.AlignmentHeader.from_dict(
+        {
+            "HD": {"VN": "1.6", "SO": "coordinate"},
+            "SQ": [{"SN": "chr1", "LN": 1000}],
+        }
+    )
+    with pysam.AlignmentFile(str(path), "wb", header=header) as output:
+        for name, sites, code, is_reverse in reads:
+            read = pysam.AlignedSegment(header)
+            read.query_name = name
+            read.flag = 16 if is_reverse else 0
+            read.reference_id = 0
+            read.reference_start = 0
+            read.mapping_quality = 60
+            read.cigarstring = "200M"
+            read.query_sequence = _seq_with_code(sites, code)
+            read.query_qualities = pysam.qualitystring_to_array("I" * 200)
+            output.write(read)
+
+
+def test_deamination_flavour_key():
+    from fiberhmm.cli.dedup import deamination_flavour_key
+
+    assert deamination_flavour_key([(1, 1), (2, 1), (3, 0)]) == "CT"
+    assert deamination_flavour_key([(1, 0), (2, 0), (3, 1)]) == "GA"
+    assert deamination_flavour_key([(1, 0), (2, 1)]) == "mixed"
+
+
+def test_pcr_copies_in_both_orientations_are_one_molecule(tmp_path):
+    path = tmp_path / "orient.bam"
+    _make_flavour_bam(
+        path,
+        [("fwd0", A_SITES, "Y", False), ("fwd1", A_SITES, "Y", False),
+         ("rev0", A_SITES, "Y", True), ("rev1", A_SITES, "Y", True)],
+    )
+    stats = run_dedup(str(path), str(tmp_path / "out.bam"), collapse=False)
+    assert stats["n_fingerprintable"] == 4
+    assert stats["n_clusters"] == 1
+    assert stats["n_duplicates"] == 3
+
+
+def test_opposite_flavours_never_merge_even_with_shared_positions(tmp_path):
+    path = tmp_path / "flavour.bam"
+    _make_flavour_bam(
+        path,
+        [("ct0", A_SITES, "Y", False), ("ct1", A_SITES, "Y", True),
+         ("ga0", A_SITES, "R", False), ("ga1", A_SITES, "R", True)],
+    )
+    stats = run_dedup(str(path), str(tmp_path / "out.bam"), collapse=False)
+    assert stats["n_clusters"] == 2
+    records = list(pysam.AlignmentFile(str(tmp_path / "out.bam"), check_sq=False))
+    clusters = {read.query_name: read.get_tag("di") for read in records}
+    assert clusters["ct0"] == clusters["ct1"]
+    assert clusters["ga0"] == clusters["ga1"]
+    assert clusters["ct0"] != clusters["ga0"]
+    # --ignore-strand still clusters across flavours (flag kept for compatibility).
+    merged = run_dedup(str(path), str(tmp_path / "merged.bam"),
+                       collapse=False, ignore_strand=True)
+    assert merged["n_clusters"] == 1
+
+
+def test_call_auto_dedup_uses_flavour_key(tmp_path):
+    from fiberhmm.cli.call import _dedup_input_first
+
+    path = tmp_path / "orient.bam"
+    _make_flavour_bam(
+        path,
+        [("fwd0", A_SITES, "Y", False), ("rev0", A_SITES, "Y", True)],
+    )
+    temporary_bam, stats = _dedup_input_first(
+        str(path), str(tmp_path / "output.bam"), 0.95, True, 1,
+        region_parallel=False,
+    )
+    records = list(pysam.AlignmentFile(temporary_bam, check_sq=False))
+    assert stats["n_clusters"] == 1
+    assert sum(read.is_duplicate for read in records) == 1

@@ -10,7 +10,7 @@ from fiberhmm.core.bam_reader import (
     encode_from_query_sequence,
     extract_daf_iupac_positions,
     has_iupac_encoding,
-    parse_mm_tag_query_positions,
+    parse_mm_tag_query_calls,
 )
 from fiberhmm.core.hmm import FiberHMM
 from fiberhmm.inference.circular import (
@@ -612,6 +612,14 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
             )
             if md_res is not None:
                 payload['_daf_md_result'] = md_res   # (ct_list, ga_list, strand_tag)
+        elif _DAF_CHIMERA_CFG['filter']:
+            # R/Y input carries only the dominant flavour as IUPAC; the other
+            # flavour's C->T / G->A mismatches are still raw bases, visible
+            # through MD (or the reference). The worker needs both lists for
+            # the strand-swap chimera filter.
+            rest = _daf_raw_mismatch_lists(read, ref_fasta)
+            if rest is not None:
+                payload['_daf_md_result'] = rest
 
     if include_ddda_mcg:
         from fiberhmm.daf.m5c import build_ddda_mcg_observation_payload
@@ -661,9 +669,65 @@ def configure_daf_chimera_filter(filter_chimeras: bool = True,
     _DAF_CHIMERA_CFG['purity'] = float(purity)
 
 
+def _daf_raw_mismatch_lists(read, ref_fasta=None):
+    """Raw (not IUPAC-encoded) C->T / G->A query mismatches of a live read.
+
+    Returns ``(ct_list, ga_list, 'CT')`` or None when the read has no
+    reference evidence (no usable MD and no FASTA). SNP-masked reference
+    positions are excluded, as on the MD path.
+    """
+    if not hasattr(read, 'get_aligned_pairs'):
+        return None
+    if ref_fasta is None and not read.has_tag('MD'):
+        return None
+    from fiberhmm.daf.encoder import get_daf_positions
+    try:
+        return get_daf_positions(
+            read,
+            force_strand='CT',   # always return both lists; strand unused
+            ref_fasta=ref_fasta,
+            excluded_reference_positions=_daf_reference_mask(read),
+        )
+    except Exception:
+        return None
+
+
+def _is_iupac_daf_chimera(read, query_sequence: str, excluded_query_positions,
+                          ref_fasta=None) -> bool:
+    """Strand-swap chimera test for an R/Y-encoded DAF read.
+
+    CT events are Y bases plus any raw C->T mismatches; GA events are R bases
+    plus raw G->A mismatches (from MD/reference, when available). SNP-masked
+    positions are removed from both, matching the MD path.
+    """
+    from fiberhmm.daf.encoder import is_daf_chimera
+    min_seg = _DAF_CHIMERA_CFG['min_seg']
+    seq_arr = np.frombuffer(query_sequence.upper().encode('ascii'), dtype=np.uint8)
+    ct = set(np.flatnonzero(seq_arr == ord('Y')).tolist())
+    ga = set(np.flatnonzero(seq_arr == ord('R')).tolist())
+    if max(len(ct), len(ga)) < min_seg:
+        return False
+    rest = getattr(read, '_daf_md_result', None)
+    if rest is None:
+        rest = _daf_raw_mismatch_lists(read, ref_fasta)
+    if rest is not None:
+        ct.update(rest[0])
+        ga.update(rest[1])
+    if excluded_query_positions:
+        ct.difference_update(excluded_query_positions)
+        ga.difference_update(excluded_query_positions)
+    return is_daf_chimera(sorted(ct), sorted(ga),
+                          min_seg_events=min_seg,
+                          purity=_DAF_CHIMERA_CFG['purity'])
+
+
 def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
                                     ref_fasta=None) -> Optional[dict]:
-    """Extract minimal data needed for HMM processing from a pysam read."""
+    """Extract minimal data needed for HMM processing from a pysam read.
+
+    Returns a fiber_read dict, None (no usable evidence), or
+    :data:`CHIMERA_SKIP` (DAF strand-swap chimera, when the filter is on).
+    """
     query_sequence = read.query_sequence
     if not query_sequence:
         return None
@@ -679,6 +743,10 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         )
         if excluded_query_positions is None:
             excluded_query_positions = _daf_excluded_query_positions(read)
+        # Strand-swap chimera filter, same policy as the MD path below.
+        if _DAF_CHIMERA_CFG['filter'] and _is_iupac_daf_chimera(
+                read, query_sequence, excluded_query_positions, ref_fasta):
+            return CHIMERA_SKIP
         mod_positions.difference_update(excluded_query_positions)
         if not mod_positions:
             return None
@@ -767,20 +835,33 @@ def _extract_fiber_read_from_pysam(read, mode: str, prob_threshold: int,
         ml_bytes = ml_raw
 
     try:
-        mod_pos_set = parse_mm_tag_query_positions(
+        mod_pos_set, unknown_pos_set = parse_mm_tag_query_calls(
             mm_tag, ml_bytes, query_sequence, read.is_reverse,
             prob_threshold=prob_threshold, mode=mode,
         )
     except Exception:
         return None
 
-    return {
+    if mode == 'daf':
+        # SNP mask applies to MM/ML-native deamination calls too.
+        excluded_query_positions = getattr(
+            read, '_daf_excluded_query_positions', None)
+        if excluded_query_positions is None:
+            excluded_query_positions = _daf_excluded_query_positions(read)
+        if excluded_query_positions:
+            mod_pos_set.difference_update(excluded_query_positions)
+
+    fiber_read = {
         'read_id': read.query_name,
         'query_sequence': query_sequence,
         'm6a_query_positions': mod_pos_set,
         'query_length': len(query_sequence),
         'is_reverse': bool(read.is_reverse),
     }
+    if unknown_pos_set:
+        # Bases left unlisted by a '?' MM entry: no call, not "unmodified".
+        fiber_read['unknown_query_positions'] = unknown_pos_set
+    return fiber_read
 
 
 def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool,
@@ -812,15 +893,19 @@ def _process_single_read(fiber_read: dict, model, edge_trim: int, circular: bool
     is_reverse = fiber_read.get('is_reverse', False)
     encode_sequence = query_sequence
     encode_mods = m6a_positions
+    unknown_positions = fiber_read.get('unknown_query_positions')
     circular_read_length = None
     if circular and len(query_sequence) > 0:
         encode_sequence, encode_mods = tile_sequence_and_mods(query_sequence, m6a_positions)
+        if unknown_positions:
+            unknown_positions = tile_sequence_and_mods(
+                query_sequence, unknown_positions)[1]
         circular_read_length = len(query_sequence)
 
     encoded = encode_from_query_sequence(
         encode_sequence, encode_mods, edge_trim,
         mode=mode, strand=strand, context_size=context_size,
-        is_reverse=is_reverse,
+        is_reverse=is_reverse, unknown_positions=unknown_positions,
     )
 
     if len(encoded) == 0:

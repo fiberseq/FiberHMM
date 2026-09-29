@@ -519,6 +519,75 @@ def test_shared_ma_parser_exposes_ddda_mcg_intervals():
     assert parsed["ddda_mcg"] == [(20, 5), (30, 6)]
 
 
+def test_default_whole_island_annotation_tags_unmethylated_island_as_ucg(tmp_path):
+    """Regression: unmethylated whole-island calls must be written as
+    ``ddda_ucg`` spans (they were counted but never projected, so the
+    default ``recall-tfs --use-m5c`` policy masked every CpG)."""
+    import pysam
+
+    reference_sequence = "A" * 250 + "CACG" * 100 + "A" * 250
+    reference = tmp_path / "reference.fa"
+    reference.write_text(">chr1\n" + reference_sequence + "\n")
+    pysam.faidx(str(reference))
+
+    # Every C deaminated, CpG C included: an unmethylated island.
+    sequence = ["Y" if base == "C" else base for base in reference_sequence]
+    input_bam = tmp_path / "input.bam"
+    header = {
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": "chr1", "LN": len(reference_sequence)}],
+        "PG": [{"ID": "fiberhmm-call", "DS": "enzyme=ddda"}],
+    }
+    with pysam.AlignmentFile(input_bam, "wb", header=header) as sink:
+        read = pysam.AlignedSegment(sink.header)
+        read.query_name = "unmethylated-island"
+        read.query_sequence = "".join(sequence)
+        read.flag = 0
+        read.reference_id = 0
+        read.reference_start = 0
+        read.mapping_quality = 60
+        read.cigartuples = [(0, len(sequence))]
+        read.query_qualities = pysam.qualitystring_to_array("I" * len(sequence))
+        read.set_tag("MA", f"{len(sequence)};msp.:1-{len(sequence)}", value_type="Z")
+        sink.write(read)
+
+    output_bam = tmp_path / "output.bam"
+    used_bed = tmp_path / "islands.used.bed"
+    stats = annotate_bam_per_read_islands(
+        str(input_bam), str(output_bam), str(reference), None,
+        DDDA_FIVE_PRIME_FACTORS,
+        threads=1,
+        used_islands_bed=str(used_bed),
+    )
+    assert stats["unmethylated_islands"] == 1
+    assert stats["methylated_islands"] == 0
+    assert stats["tagged_reads"] == 1
+    island_fields = used_bed.read_text().strip().split("\t")
+    island = (int(island_fields[1]), int(island_fields[2]))
+    with pysam.AlignmentFile(output_bam, "rb", check_sq=False) as source:
+        tagged = next(source)
+    parsed = parse_ma_tag(tagged.get_tag("MA"))
+    assert not parsed.get("ddda_mcg")
+    tagged_start, tagged_length = parsed["ddda_ucg"][0]
+    assert (tagged_start, tagged_start + tagged_length) == island
+
+
+def test_locus_projection_can_select_unmethylated_domains():
+    class Read:
+        query_sequence = "A" * 10
+        query_length = 10
+        reference_start = 100
+        reference_name = "chr1"
+        is_unmapped = False
+        cigartuples = [(0, 10)]
+
+    domains = [
+        M5CDomain("chr1", 103, 107, True, 0.99),
+        M5CDomain("chr1", 108, 110, False, 0.99),
+    ]
+    assert project_domains_to_query(Read(), domains, methylated=False) == [(8, 10)]
+
+
 def test_whole_island_tags_record_methylated_and_unmethylated_calls():
     class Read:
         query_sequence = "A" * 100

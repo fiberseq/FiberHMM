@@ -1394,8 +1394,14 @@ def observations_from_ddda_mcg_payload(
     ]
 
 
-def project_domains_to_query(read, domains: Sequence[M5CDomain]) -> list[tuple[int, int]]:
-    """Project methylated reference domains to SEQ-frame query spans."""
+def project_domains_to_query(read, domains: Sequence[M5CDomain],
+                             methylated: bool = True) -> list[tuple[int, int]]:
+    """Project reference domains of one state to SEQ-frame query spans.
+
+    Only domains whose ``methylated`` flag equals ``methylated`` are
+    projected: ``True`` (default) for ``ddda_mcg`` spans, ``False`` for the
+    unmethylated-island ``ddda_ucg`` spans.
+    """
     if read.is_unmapped or not read.query_sequence:
         return []
     from fiberhmm.core.bam_reader import cigar_to_query_ref
@@ -1403,7 +1409,7 @@ def project_domains_to_query(read, domains: Sequence[M5CDomain]) -> list[tuple[i
     q_to_ref = cigar_to_query_ref(read)
     spans = []
     for domain in domains:
-        if not domain.methylated or domain.chrom != read.reference_name:
+        if bool(domain.methylated) != bool(methylated) or domain.chrom != read.reference_name:
             continue
         positions = np.flatnonzero((q_to_ref >= domain.start) & (q_to_ref < domain.end))
         if len(positions):
@@ -2000,7 +2006,9 @@ def annotate_bam_per_read_islands(
                             for call in calls if call.state == "unmethylated"
                         ]
                         methylated_spans = project_domains_to_query(read, methylated)
-                        unmethylated_spans = project_domains_to_query(read, unmethylated)
+                        unmethylated_spans = project_domains_to_query(
+                            read, unmethylated, methylated=False,
+                        )
                         add_island_m5c_ma_tags(
                             read, methylated_spans, unmethylated_spans,
                         )

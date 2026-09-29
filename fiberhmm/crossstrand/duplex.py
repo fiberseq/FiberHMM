@@ -152,8 +152,13 @@ def load_duplex_model(path: Optional[str] = None,
 
 def build_pattern_feature(read, index: int, params: DuplexParams,
                           prob_threshold: int = 0) -> Optional[ReadFeat]:
-    """Build a dyad feature without deriving any sequence-identity signature."""
+    """Build a dyad feature without deriving any sequence-identity signature.
+
+    Marked PCR duplicates (0x400) are never pairing candidates.
+    """
     if read.is_unmapped or read.is_secondary or read.is_supplementary:
+        return None
+    if read.is_duplicate:
         return None
     if read.query_sequence is None or not read.has_tag("MA"):
         return None

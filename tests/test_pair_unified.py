@@ -147,3 +147,95 @@ def test_from_paired_cannot_stop_after_pair(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         _run_pair_cli(monkeypatch, "-i", str(tmp_path / "x.bam"), "-o", str(tmp_path / "y.bam"),
                       "--from-paired", "--stop-after", "pair")
+
+
+def _add_pcr_duplicate(tmp_path, source, template_name, copy_name):
+    """Rewrite ``source`` with a 0x400 PCR copy of ``template_name``."""
+    with pysam.AlignmentFile(source, "rb") as bam:
+        header = bam.header
+        records = list(bam.fetch(until_eof=True))
+    template = next(read for read in records if read.query_name == template_name)
+    copy = pysam.AlignedSegment.fromstring(template.to_string(), header)
+    copy.query_name = copy_name
+    copy.is_duplicate = True
+    records.append(copy)
+    records.sort(key=lambda read: (read.reference_start, read.query_name))
+    path = tmp_path / "with_duplicate.bam"
+    with pysam.AlignmentFile(path, "wb", header=header) as out:
+        for read in records:
+            out.write(read)
+    pysam.index(str(path))
+    return path
+
+
+@pytest.mark.parametrize("mode", ["sequence-only", "hybrid"])
+def test_marked_pcr_duplicates_are_not_pairing_candidates(tmp_path, mode):
+    source, reference = _write_sequence_resolved_fixture(tmp_path)
+    with_dup = _add_pcr_duplicate(tmp_path, source, "ct-a", "ct-a-pcr")
+    output = tmp_path / "paired.bam"
+    receipt = run_pairing(
+        str(with_dup), str(output), str(reference),
+        params=DuplexParams(min_overlap_bp=100, min_nucs=1),
+        sequence_params=PairParams(
+            min_overlap_bp=100, min_nucs=1, min_sequence_bases=500,
+            min_sequence_margin=0.002, max_sequence_pair_rate=0.01,
+        ),
+        pairing_mode=mode, io_threads=1,
+    )
+    # The PCR copy must not compete with its original for the GA mate.
+    assert receipt["counts"]["pairs"] == 2
+    assert receipt["counts"]["duplicate_reads"] == 1
+    reads = {read.query_name: read for read in _records(output)}
+    assert len(reads) == 5  # duplicate passed through
+    duplicate = reads["ct-a-pcr"]
+    assert duplicate.is_duplicate
+    assert not duplicate.has_tag("mt") and not duplicate.has_tag("mp")
+    assert reads["ct-a"].get_tag("mp") == "ga-a"
+    assert reads["ga-a"].get_tag("mp") == "ct-a"
+
+
+def test_feature_builders_skip_marked_duplicates(tmp_path):
+    from fiberhmm.crossstrand.duplex import build_pattern_feature
+    from fiberhmm.crossstrand.pairing import build_feature
+
+    source, _reference = _write_sequence_resolved_fixture(tmp_path)
+    read = next(r for r in _records(source) if r.query_name == "ct-a")
+    assert build_feature(read, 0, PairParams(min_nucs=1)) is not None
+    assert build_pattern_feature(read, 0, DuplexParams(min_nucs=1)) is not None
+    read.is_duplicate = True
+    assert build_feature(read, 0, PairParams(min_nucs=1)) is None
+    assert build_pattern_feature(read, 0, DuplexParams(min_nucs=1)) is None
+
+
+def test_legacy_run_pair_skips_and_counts_duplicates(tmp_path):
+    from fiberhmm.cli.pair import run_pair
+
+    source, reference = _write_sequence_resolved_fixture(tmp_path)
+    with_dup = _add_pcr_duplicate(tmp_path, source, "ct-a", "ct-a-pcr")
+    output = tmp_path / "legacy.bam"
+    stats = run_pair(
+        str(with_dup), str(output),
+        PairParams(min_overlap_bp=100, min_nucs=1, min_sequence_bases=500),
+        reference_path=str(reference), io_threads=1,
+    )
+    assert stats["n_duplicates"] == 1
+    assert stats["n_pairs"] == 2
+    assert len(_records(output)) == 5
+
+
+@pytest.mark.parametrize("extra", [
+    ["-r", "ref.fa"],
+    ["--sequence-only"],
+    ["--min-margin", "2.0"],
+    ["--min-overlap", "100"],
+    ["--pairs-tsv", "pairs.tsv"],
+])
+def test_from_paired_rejects_pairing_options(tmp_path, monkeypatch, capsys, extra):
+    source, _reference = _write_sequence_resolved_fixture(tmp_path)
+    if extra[0] == "-r":
+        extra = ["-r", str(_reference)]
+    with pytest.raises(SystemExit) as exit_info:
+        _run_pair_cli(monkeypatch, "-i", str(source), "-o", str(tmp_path / "out.bam"),
+                      "--from-paired", *extra)
+    assert exit_info.value.code == 2
+    assert "--from-paired skips pairing" in capsys.readouterr().err

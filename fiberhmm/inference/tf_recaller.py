@@ -796,6 +796,60 @@ def extract_modifications(read, mode: str, context_size: int = 3
     return mod_pos, strand, seq
 
 
+def unapplied_call_daf_inputs(header) -> List[str]:
+    """Describe DAF call inputs recorded in @PG that recall cannot re-apply.
+
+    ``fiberhmm-call`` may exclude SNP-masked sites (``--daf-snp-mask`` or
+    auto ``--daf-call-snps``) and derive deaminations against a reference
+    FASTA (``--reference``).  recall-tfs/recall-nucs re-derive deaminations
+    from the read alone, so masked sites come back as hits.  Returns one
+    human-readable item per such input found in a ``fiberhmm-call`` @PG line.
+    """
+    try:
+        header_dict = header.to_dict() if hasattr(header, 'to_dict') else dict(header)
+    except Exception:
+        return []
+    found: List[str] = []
+    for record in header_dict.get('PG', []) or []:
+        program = str(record.get('PN') or record.get('ID') or '')
+        if not program.startswith('fiberhmm-call'):
+            continue
+        description = str(record.get('DS', ''))
+        command = str(record.get('CL', '')).split()
+        for token in description.split():
+            if token.startswith('daf_snp_mask=on'):
+                found.append(f"SNP mask ({token})")
+        for flag in ('--daf-snp-mask', '--reference'):
+            for index, argument in enumerate(command):
+                value = None
+                if argument == flag and index + 1 < len(command):
+                    value = command[index + 1]
+                elif argument.startswith(flag + '='):
+                    value = argument.split('=', 1)[1]
+                if value is not None:
+                    found.append(f"{flag} {value}")
+    return list(dict.fromkeys(found))
+
+
+def warn_unapplied_call_daf_inputs(header, mode: str, stream=None) -> List[str]:
+    """Warn (stderr) when the input's call used DAF inputs recall ignores."""
+    if mode != 'daf':
+        return []
+    found = unapplied_call_daf_inputs(header)
+    if found:
+        import sys
+        print(
+            "WARNING: the input was called by fiberhmm-call with "
+            + "; ".join(found)
+            + ". Recall re-derives deaminations from each read and does not "
+            "re-apply the SNP mask or reference, so masked sites count as "
+            "hits again. Re-run fiberhmm-call with the same options for "
+            "SNP-masked calls.",
+            file=stream if stream is not None else sys.stderr,
+        )
+    return found
+
+
 def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
                 mode: str, context_size: int,
                 min_llr: float, min_opps: int,
@@ -905,6 +959,80 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
     return tf_calls, kept_nucs, msps
 
 
+# MA features write_ma_tags regenerates from the recall; every other group is
+# carried through unchanged.
+_REGENERATED_MA_FEATURES = frozenset({'nuc', 'msp', 'tf'})
+
+
+def _ma_group_head(group: str) -> Tuple[str, str]:
+    """Return ``(feature, qual_spec)`` for one MA group string."""
+    head = group.partition(':')[0]
+    for index, character in enumerate(head):
+        if character in '.+-':
+            return head[:index], head[index + 1:]
+    return head, ''
+
+
+def _preserved_ma_groups(read) -> Tuple[List[str], List[str], List[int]]:
+    """Collect the read's MA groups that ``write_ma_tags`` does not rewrite.
+
+    Returns ``(groups, names, aq_bytes)``: the verbatim MA group strings in
+    their original order, their AN names (``''`` when unnamed), and the AQ
+    bytes that belong to quality-bearing preserved groups.  A preserved group
+    whose AQ bytes cannot be located (AQ missing or inconsistent with the MA
+    quality specs) is dropped with a warning rather than written with
+    misaligned qualities.
+    """
+    if not read.has_tag('MA'):
+        return [], [], []
+    groups = [group for group in str(read.get_tag('MA')).split(';')[1:] if group]
+    old_names = (parse_an_tag(str(read.get_tag('AN')))
+                 if read.has_tag('AN') else [])
+    try:
+        old_aq = list(read.get_tag('AQ')) if read.has_tag('AQ') else []
+    except (TypeError, ValueError):
+        old_aq = []
+
+    layout = []
+    expected_aq = 0
+    for group in groups:
+        feature, qual_spec = _ma_group_head(group)
+        count = sum(bool(item) for item in group.partition(':')[2].split(','))
+        n_bytes = len(qual_spec) * count
+        layout.append((group, feature, count, expected_aq, n_bytes))
+        expected_aq += n_bytes
+    aq_consistent = len(old_aq) == expected_aq
+
+    kept_groups: List[str] = []
+    kept_names: List[str] = []
+    kept_aq: List[int] = []
+    name_offset = 0
+    dropped = []
+    for group, feature, count, aq_offset, n_bytes in layout:
+        group_names = old_names[name_offset:name_offset + count]
+        group_names.extend([''] * (count - len(group_names)))
+        name_offset += count
+        if feature in _REGENERATED_MA_FEATURES:
+            continue
+        if n_bytes and not aq_consistent:
+            dropped.append(feature)
+            continue
+        kept_groups.append(group)
+        kept_names.extend(group_names)
+        if n_bytes:
+            kept_aq.extend(old_aq[aq_offset:aq_offset + n_bytes])
+    if dropped:
+        import warnings
+        warnings.warn(
+            "write_ma_tags: dropping MA group(s) "
+            f"{sorted(set(dropped))} on read "
+            f"{getattr(read, 'query_name', '?')}: their AQ qualities could "
+            "not be aligned (AQ missing or inconsistent with MA)",
+            RuntimeWarning, stacklevel=3,
+        )
+    return kept_groups, kept_names, kept_aq
+
+
 def write_ma_tags(read, read_length: int,
                   tf_calls: Sequence[TFCall],
                   kept_nucs: Sequence[Tuple[int, int]],
@@ -942,31 +1070,14 @@ def write_ma_tags(read, read_length: int,
     """
     import array as pyarray
 
-    # ddda_mcg is a molecule-specific layer produced before TF recall.
-    # Preserve it when this writer refreshes nuc/msp/tf groups; it has no AQ
-    # bytes itself.
-    preserved_m5c = []
-    preserved_m5c_names = []
-    if read.has_tag('MA'):
-        from fiberhmm.daf.m5c import ma_group_feature
-        old_names = (parse_an_tag(str(read.get_tag('AN')))
-                     if read.has_tag('AN') else [])
-        name_offset = 0
-        for group in str(read.get_tag('MA')).split(';')[1:]:
-            annotation_count = sum(
-                bool(item) for item in group.partition(':')[2].split(',')
-            )
-            group_names = old_names[name_offset:name_offset + annotation_count]
-            group_names.extend([''] * (annotation_count - len(group_names)))
-            name_offset += annotation_count
-            if ma_group_feature(group) in {
-                DDDA_MCG_FEATURE, DDDA_MCG_HEMI_FEATURE, DDDA_UCG_FEATURE,
-            }:
-                preserved_m5c.append(group)
-                preserved_m5c_names.extend(group_names)
-    n_preserved_m5c = sum(
+    # Groups this writer does not regenerate (ddda_mcg/ddda_ucg/hemi from
+    # tag-m5c, deam+/deam- from the duplex merge, or any other tool's layer)
+    # are preserved verbatim after the refreshed nuc/msp/tf groups, together
+    # with their AN names and, for quality-bearing groups, their AQ bytes.
+    preserved_groups, preserved_names, preserved_aq = _preserved_ma_groups(read)
+    n_preserved = sum(
         sum(bool(item) for item in group.partition(':')[2].split(','))
-        for group in preserved_m5c
+        for group in preserved_groups
     )
 
     if downstream_compat and not also_write_legacy:
@@ -1066,7 +1177,7 @@ def write_ma_tags(read, read_length: int,
         tf_intervals, "tf", tf_q_rows,
     )
     needs_an = (nuc_split or msp_split or tf_split or
-                any(preserved_m5c_names))
+                any(preserved_names))
 
     if not downstream_compat:
         # Spec mode: write MA + AQ. The fiberseq Molecular-annotation spec
@@ -1077,7 +1188,7 @@ def write_ma_tags(read, read_length: int,
         #   - AQ to only be present if SOME annotation type specifies P or Q
         #     (we use Q on nuc+ and tf+; if neither has any annotations and
         #     only msp+ is emitted, AQ stays unwritten)
-        has_any_annotation = bool(ma_nucs or ma_msps or ma_tfs or preserved_m5c)
+        has_any_annotation = bool(ma_nucs or ma_msps or ma_tfs or preserved_groups)
         if not has_any_annotation:
             # Strip any stale tags, leave the read with no MA/AQ
             for tag in ('MA', 'AQ', 'AN'):
@@ -1094,17 +1205,17 @@ def write_ma_tags(read, read_length: int,
                 tf_intervals=ma_tfs,
                 nuc_qual_spec='QQQ' if nuc_qqq else 'Q',
             )
-            if preserved_m5c:
-                ma = ';'.join([ma, *preserved_m5c])
+            if preserved_groups:
+                ma = ';'.join([ma, *preserved_groups])
             read.set_tag('MA', ma, value_type='Z')
             if needs_an:
-                m5c_names = (
-                    preserved_m5c_names if any(preserved_m5c_names)
+                kept_names = (
+                    preserved_names if any(preserved_names)
                     else [f'fh_{DDDA_MCG_FEATURE}_{i}'
-                          for i in range(n_preserved_m5c)]
+                          for i in range(n_preserved)]
                 )
                 read.set_tag('AN', format_an_tag(
-                    nuc_names + msp_names + tf_names + m5c_names),
+                    nuc_names + msp_names + tf_names + kept_names),
                              value_type='Z')
             elif read.has_tag('AN'):
                 try:
@@ -1114,7 +1225,7 @@ def write_ma_tags(read, read_length: int,
             # AQ only carries values for nuc+Q and tf+QQQ. If neither is
             # present in this read, no quality type is in MA -> spec says
             # AQ must not be written.
-            has_quality = bool(ma_nucs or ma_tfs)
+            has_quality = bool(ma_nucs or ma_tfs or preserved_aq)
             if has_quality:
                 split_nq_values = [row[0] for row in (nuc_q_split or [])]
                 split_tq_vals = [row[0] for row in (tf_q_split or [])]
@@ -1134,6 +1245,8 @@ def write_ma_tags(read, read_length: int,
                     nuc_lq_values=split_nuc_el,
                     nuc_rq_values=split_nuc_er,
                 )
+                if preserved_aq:
+                    aq.extend(preserved_aq)
                 read.set_tag('AQ', aq)
             elif read.has_tag('AQ'):
                 try:

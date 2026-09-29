@@ -6,7 +6,7 @@ Contains helper functions used by generate_probs, bootstrap_probs, and transfer_
 
 import os
 from pathlib import Path
-from typing import Set, Tuple
+from typing import NamedTuple, Set, Tuple
 
 # Reverse complement lookup
 _RC_TABLE = str.maketrans('ACGT', 'TGCA')
@@ -87,3 +87,79 @@ def get_base_name(output_path: str, default: str = "probs") -> str:
     """
     base_name = os.path.basename(output_path.rstrip('/'))
     return base_name if base_name else default
+
+
+# ---------------------------------------------------------------------------
+# Shared per-read evidence extraction for the table-building / training tools
+# ---------------------------------------------------------------------------
+
+class TrainingRead(NamedTuple):
+    """Modification evidence of one read, as the inference encoder sees it.
+
+    ``sequence`` is the SEQ-frame sequence the counters/encoder consume (R/Y
+    already decoded to T/A for DAF). ``strand`` is the DAF conversion strand
+    (``'+'`` C->T, ``'-'`` G->A, ``'.'`` unknown) and ``'.'`` otherwise.
+    ``unknown_positions`` are target bases an MM ``?`` entry left unlisted.
+    """
+    sequence: str
+    mod_positions: Set[int]
+    strand: str
+    unknown_positions: Set[int]
+
+
+def extract_training_read(read, mode: str, prob_threshold: int):
+    """Extract a read's evidence exactly as ``fiberhmm-call`` does.
+
+    DAF: the call engine's R/Y -> MD -> MM/ML precedence, including its
+    strand-swap chimera filter. Other modes: the MM/ML parser with the mode's
+    mod codes. MM/ML is only walked when ``mm_applicable(read)`` (no hard clip
+    without a matching ``MN``).
+
+    Returns a :class:`TrainingRead`, or a skip-reason string: ``'chimera'``,
+    ``'no_modifications'``, ``'no_mm_tag'``, ``'no_ml_tag'``,
+    ``'mm_not_applicable'``.
+    """
+    from fiberhmm.core.bam_reader import mm_applicable, parse_mm_tag_query_calls
+
+    if mode == 'daf':
+        from fiberhmm.inference.engine import (
+            CHIMERA_SKIP,
+            _extract_fiber_read_from_pysam,
+        )
+        fr = _extract_fiber_read_from_pysam(read, 'daf', prob_threshold)
+        if fr is CHIMERA_SKIP:
+            return 'chimera'
+        if fr is None:
+            return 'no_modifications'
+        strand = fr.get('_daf_strand')
+        if strand is None:
+            # MM/ML-native deamination calls (no R/Y, no usable MD).
+            if not mm_applicable(read):
+                return 'mm_not_applicable'
+            strand = detect_strand_and_base(
+                fr['query_sequence'], fr['m6a_query_positions'], 'daf')[0]
+        return TrainingRead(fr['query_sequence'], set(fr['m6a_query_positions']),
+                            strand, set(fr.get('unknown_query_positions') or ()))
+
+    mm_tag = ml_tag = None
+    try:
+        if read.has_tag('MM'):
+            mm_tag = read.get_tag('MM')
+        elif read.has_tag('Mm'):
+            mm_tag = read.get_tag('Mm')
+        if read.has_tag('ML'):
+            ml_tag = read.get_tag('ML')
+        elif read.has_tag('Ml'):
+            ml_tag = read.get_tag('Ml')
+    except KeyError:
+        pass
+    if mm_tag is None:
+        return 'no_mm_tag'
+    if ml_tag is None:
+        return 'no_ml_tag'
+    if not mm_applicable(read):
+        return 'mm_not_applicable'
+    mods, unknown = parse_mm_tag_query_calls(
+        mm_tag, list(ml_tag), read.query_sequence, read.is_reverse,
+        prob_threshold, mode=mode)
+    return TrainingRead(read.query_sequence, mods, '.', unknown)

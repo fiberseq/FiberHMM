@@ -412,26 +412,32 @@ def _process_reference_bam(bam_path, max_context, args):
                 break
 
     print(f"  Processed {total_reads:,} reads, {reads_with_footprints:,} with footprint tags")
+    if reads_with_footprints == 0:
+        print("Error: no reference reads carry footprint tags (ns/nl); cannot "
+              "estimate accessibility priors.", file=sys.stderr)
+        sys.exit(1)
     return counters
+
+
+def _transfer_target_bases(mode):
+    """Centre bases of the emission table a mode trains (DAF: C only; the GA
+    strand is reverse-complemented into C-centred contexts, as in call)."""
+    if mode in ('daf', 'gpc', 'cpg'):
+        return ['C']
+    return ['A']
 
 
 def _process_target_bam(bam_path, mode, max_context, args):
     """Process target BAM to get modification rates per context."""
     import pysam
 
-    from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
     from fiberhmm.probabilities.context_counter import ContextCounter
-    from fiberhmm.probabilities.utils import detect_strand_and_base
+    from fiberhmm.probabilities.utils import (
+        detect_strand_and_base,
+        extract_training_read,
+    )
 
-    if mode in ('pacbio-fiber', 'nanopore-fiber'):
-        target_bases = ['A']
-    elif mode == 'daf':
-        target_bases = ['C', 'G']
-    elif mode in ('gpc', 'cpg'):
-        target_bases = ['C']  # 5mC, motif-restricted in process_read_5mc
-    else:
-        target_bases = ['A']
-
+    target_bases = _transfer_target_bases(mode)
     counters = {base: ContextCounter(max_context, base) for base in target_bases}
     total_reads = 0
 
@@ -450,42 +456,34 @@ def _process_target_bam(bam_path, mode, max_context, args):
             if read.reference_end - read.reference_start < args.min_read_length:
                 continue
 
-            mm_tag = ml_tag = None
-            try:
-                if read.has_tag('MM'):
-                    mm_tag = read.get_tag('MM')
-                elif read.has_tag('Mm'):
-                    mm_tag = read.get_tag('Mm')
-                if read.has_tag('ML'):
-                    ml_tag = list(read.get_tag('ML'))
-                elif read.has_tag('Ml'):
-                    ml_tag = list(read.get_tag('Ml'))
-            except KeyError:
+            # Same evidence extraction as fiberhmm-call (DAF: R/Y -> MD -> MM/ML)
+            ext = extract_training_read(read, mode, args.prob_threshold)
+            if isinstance(ext, str):
                 continue
+            sequence, mod_positions, strand, unknown = ext
 
-            if mm_tag is None:
-                continue
-
-            mod_positions = parse_mm_tag_query_positions(
-                mm_tag, ml_tag, read.query_sequence,
-                read.is_reverse, args.prob_threshold, mode=mode
-            )
-
-            strand, target_base = detect_strand_and_base(
-                read.query_sequence, mod_positions, mode
-            )
-
-            if mode in ('gpc', 'cpg'):
-                if 'C' in counters:
-                    counters['C'].process_read_5mc(
-                        read.query_sequence, mod_positions, mode, args.edge_trim,
-                        is_reverse=read.is_reverse,
-                    )
-            elif target_base in counters:
-                counters[target_base].process_read(
-                    read.query_sequence, mod_positions, args.edge_trim,
-                    is_reverse=(mode == 'nanopore-fiber' and read.is_reverse),
+            if mode == 'daf':
+                # Deaminations sit on T (CT strand) / A (GA strand): count the
+                # original C/G targets, GA reads reverse-complemented to C.
+                counters['C'].process_read_daf(
+                    sequence, mod_positions, strand, args.edge_trim,
+                    skip_positions=unknown,
                 )
+            elif mode in ('gpc', 'cpg'):
+                counters['C'].process_read_5mc(
+                    sequence, mod_positions, mode, args.edge_trim,
+                    is_reverse=read.is_reverse, skip_positions=unknown,
+                )
+            else:
+                _strand, target_base = detect_strand_and_base(
+                    sequence, mod_positions, mode
+                )
+                if target_base in counters:
+                    counters[target_base].process_read(
+                        sequence, mod_positions, args.edge_trim,
+                        is_reverse=(mode == 'nanopore-fiber' and read.is_reverse),
+                        skip_positions=unknown,
+                    )
 
             total_reads += 1
             if total_reads % 5000 == 0:
@@ -495,6 +493,10 @@ def _process_target_bam(bam_path, mode, max_context, args):
                 break
 
     print(f"  Processed {total_reads:,} reads")
+    if total_reads == 0:
+        print(f"Error: 0 target reads passed the filters (mode {mode}); nothing to "
+              f"estimate. Check --mode and the read filters.", file=sys.stderr)
+        sys.exit(1)
     return counters
 
 
@@ -599,12 +601,7 @@ def cmd_transfer(args):
     print(f"Target mode: {args.mode}")
     print(f"Context sizes: {args.context_sizes}")
 
-    if args.mode in ('pacbio-fiber', 'nanopore-fiber'):
-        target_bases = ['A']
-    elif args.mode == 'daf':
-        target_bases = ['C', 'G']
-    else:
-        target_bases = ['A']
+    target_bases = _transfer_target_bases(args.mode)
 
     print(f"Target bases: {', '.join(target_bases)}")
 

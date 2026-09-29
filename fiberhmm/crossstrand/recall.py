@@ -28,7 +28,7 @@ from fiberhmm.core.bam_reader import (
     ContextEncoder, _encode_daf_observations, _mod_positions_mask,
     _sequence_base_int_array,
 )
-from fiberhmm.io.ma_tags import format_an_tag, parse_an_tag, parse_ma_tag
+from fiberhmm.io.ma_tags import parse_ma_tag
 
 _BASE_C = 1   # _BASE_TO_INT: A=0, C=1, T=2, G=3
 _BASE_G = 3
@@ -214,9 +214,6 @@ def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
                                  edge_trim, ctx.k)
     if len(obs) == 0:
         return False
-    # preserve the strand-regime (deam+/deam-) to re-append after write_ma_tags
-    deam_parts = [c for c in seg.get_tag('MA').split(';')[1:] if c.startswith('deam')]
-
     fp = predict_footprints_and_msps(ctx.apply_model, obs, msp_min_size=msp_min_size,
                                      with_scores=False, nuc_min_size=nuc_min_size)
     apply_result = {'ns': fp['footprint_starts'], 'nl': fp['footprint_sizes'],
@@ -241,20 +238,8 @@ def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
                   nq_for_kept_nucs=res.get('nq_for_kept_nucs'),
                   nuc_el_for_kept=res.get('nuc_el_for_kept'),
                   nuc_er_for_kept=res.get('nuc_er_for_kept'))
-    if deam_parts:  # write_ma_tags rebuilt MA; restore the strand-regime tracks
-        base_ma = seg.get_tag('MA') if seg.has_tag('MA') else str(seg.query_length)
-        seg.set_tag('MA', base_ma + ';' + ';'.join(deam_parts), value_type='Z')
-        # AN is optional. If the standard writer needed it for split/named
-        # annotations, preserve positional alignment by appending anonymous
-        # entries for every restored deam interval.
-        if seg.has_tag('AN'):
-            names = parse_an_tag(str(seg.get_tag('AN')))
-            n_deam = sum(
-                sum(bool(item) for item in part.partition(':')[2].split(','))
-                for part in deam_parts
-            )
-            names.extend([''] * n_deam)
-            seg.set_tag('AN', format_an_tag(names), value_type='Z')
+    # write_ma_tags carries the strand-regime (deam+/deam-) groups and their
+    # AN names through unchanged, so nothing needs re-appending here.
     return True
 
 

@@ -27,7 +27,10 @@ for added local tags on reads that received a confident mate --
     sg:i  sequence assignment margin x1,000,000 (sequence pairs only)
     pa:A  sequence assignment kind: 'R' reciprocal, 'C' constrained 2x2
 
-and an optional ``--pairs-tsv`` table of resolved pairs. Pairing is done within
+and an optional ``--pairs-tsv`` table of resolved pairs. Reads flagged as PCR
+duplicates (0x400, e.g. from ``fiberhmm-dedup --flag-only`` or call's default
+mark-and-retain dedup) are never pairing candidates; they pass through without
+pair tags and are counted. Pairing is done within
 each chromosome, so a coordinate-sorted + indexed BAM is required.
 
 The module-level ``run_pair`` function below preserves the pre-unification
@@ -69,6 +72,27 @@ def _has_usable_sequence_score(score: SequenceScore | None) -> bool:
             bool(np.isfinite(score.rate)))
 
 
+# (argparse dest, option string) of options used only by the pairing stage.
+_PAIRING_ONLY_OPTIONS = (
+    ('reference', '--reference'),
+    ('sequence_only', '--sequence-only'),
+    ('pairs_tsv', '--pairs-tsv'),
+    ('receipt_json', '--receipt-json'),
+    ('model', '--model'),
+    ('call_layer', '--call-layer'),
+    ('min_margin', '--min-margin'),
+    ('null_floor', '--null-floor'),
+    ('min_overlap', '--min-overlap'),
+    ('min_nucs', '--min-nucs'),
+    ('min_sequence_bases', '--min-sequence-bases'),
+    ('min_component_discordance_rate', '--min-component-discordance-rate'),
+    ('max_sequence_pair_rate', '--max-sequence-pair-rate'),
+    ('min_sequence_margin', '--min-sequence-margin'),
+    ('max_component', '--max-component'),
+    ('no_index', '--no-index'),
+)
+
+
 def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
              pairs_tsv=None, io_threads=4, reference_path=None,
              paired_only=False):
@@ -88,7 +112,7 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
     # disambiguates the rare case of a name shared across strands.
     resolved = {}
     status_of = {}  # (name, flavor) -> status char
-    n_reads = n_feat = n_paired = 0
+    n_reads = n_feat = n_paired = n_dup = 0
     per_chrom_paired = Counter()
     per_method = Counter()
     seen_feature_names = {}
@@ -114,6 +138,11 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
                   "fallback", file=sys.stderr)
         for read in chain((first,), it):
             n_reads += 1
+            if read.is_duplicate and not (
+                read.is_unmapped or read.is_secondary or read.is_supplementary
+            ):
+                n_dup += 1
+                continue
             f = build_feature(read, idx, params, prob_threshold, reference)
             if f is not None:
                 previous = seen_feature_names.get(f.name)
@@ -160,6 +189,9 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
         fasta.close()
 
     n_pairs = n_paired // 2
+    if n_dup:
+        print(f"  {n_dup:,} marked PCR duplicates (0x400) excluded from pairing "
+              "and passed through", file=sys.stderr)
     print(f"Pass 1: {n_reads:,} reads ({n_feat:,} featurizable) -> "
           f"{n_pairs:,} cross-strand pairs covering {n_paired:,} reads "
           f"({100.0*n_paired/max(n_feat,1):.1f}% of featurizable) "
@@ -240,7 +272,8 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
     bam.close()
     print(f"Pass 2: wrote {n_written:,} reads -> {out_bam} [{time.time()-t0:.0f}s]",
           file=sys.stderr)
-    return {'n_reads': n_reads, 'n_featurizable': n_feat, 'n_pairs': n_pairs}
+    return {'n_reads': n_reads, 'n_featurizable': n_feat, 'n_pairs': n_pairs,
+            'n_duplicates': n_dup}
 
 
 def main():
@@ -301,7 +334,9 @@ Examples:
                         'molecules without re-calling) or recall (default)')
     p.add_argument('--from-paired', action='store_true',
                    help='Input is already pair-tagged (mt/mp from an earlier '
-                        '--stop-after pair run): skip pairing and start at merge')
+                        '--stop-after pair run): skip pairing and start at merge. '
+                        'Pairing-stage options (--reference, --sequence-only, '
+                        '--pairs-tsv, --model, --min-* ...) are rejected here.')
     # Accepted for older command lines; the full workflow is now the default.
     p.add_argument('--merge', action='store_true', help=argparse.SUPPRESS)
     p.add_argument('--recall', action='store_true', help=argparse.SUPPRESS)
@@ -354,6 +389,16 @@ Examples:
         args.stop_after = 'merge'
     if args.from_paired and args.stop_after == 'pair':
         p.error('--from-paired starts at merge; it cannot stop after pair')
+    if args.from_paired:
+        # Pairing is skipped, so pairing-stage options would be silently
+        # ignored; refuse them instead.
+        ignored = [
+            option for dest, option in _PAIRING_ONLY_OPTIONS
+            if getattr(args, dest) != p.get_default(dest)
+        ]
+        if ignored:
+            p.error('--from-paired skips pairing; these pairing options have no '
+                    'effect there: ' + ', '.join(ignored))
     if not args.from_paired and not args.sequence_only and not args.reference:
         p.error('--reference is required for default pairing; use --sequence-only '
                 'to require sequence-supported pairs only')
@@ -426,11 +471,13 @@ Examples:
         print('fiberhmm-pair: merged the pairs tagged in the input', file=sys.stderr)
         return
     counts = receipt['counts']
+    duplicates = counts.get('duplicate_reads', 0)
     print(
         f"fiberhmm-pair: {counts.get('pairs', 0):,} pairs "
         f"[sequence {counts.get('sequence_pairs', 0):,}; "
         f"sequence-free {counts.get('sequence_free_pairs', 0):,}] "
-        f"in {receipt['seconds']:.1f}s",
+        + (f"({duplicates:,} marked PCR duplicates excluded) " if duplicates else '')
+        + f"in {receipt['seconds']:.1f}s",
         file=sys.stderr,
     )
 

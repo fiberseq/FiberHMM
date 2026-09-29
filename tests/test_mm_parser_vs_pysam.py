@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 
+import numpy as np
 import pytest
 
 pysam = pytest.importorskip("pysam")
@@ -318,3 +319,168 @@ def test_real_bam_per_mod_type_matches_pysam():
                             f"sample_pysam={sorted(only_p)[:3]} "
                             f"sample_ours={sorted(only_o)[:3]}")
     assert matched == tested
+
+
+# ---------------------------------------------------------------------------
+# Multi-code entries, ChEBI codes, mod-code filtering, '?' semantics
+# (synthetic, compared against pysam; no private BAMs)
+# ---------------------------------------------------------------------------
+
+from fiberhmm.core.bam_reader import (  # noqa: E402
+    encode_from_query_sequence,
+    mm_applicable,
+    parse_mm_tag_query_calls,
+)
+
+_MIXED_SEQ = "ACGTACCGATCAGCATCGACCATGACAGTCAGCATACG"
+
+
+def _segment(seq, is_reverse, mm, ml, cigar=None, extra_tags=()):
+    import array as pyarray
+    header = pysam.AlignmentHeader.from_dict(
+        {"HD": {"VN": "1.6"}, "SQ": [{"LN": 100_000, "SN": "chr1"}]})
+    a = pysam.AlignedSegment(header)
+    a.query_name = "r"
+    a.query_sequence = seq
+    a.flag = 16 if is_reverse else 0
+    a.reference_id = 0
+    a.reference_start = 10
+    a.mapping_quality = 60
+    a.cigartuples = cigar or [(0, len(seq))]
+    a.set_tags([("MM", mm, "Z"), ("ML", pyarray.array("B", ml))] + list(extra_tags))
+    return a
+
+
+def _pysam_flat(read):
+    out = {}
+    for (base, _strand, code), pqs in (read.modified_bases or {}).items():
+        out.setdefault((base, code), set()).update(pqs)
+    return out
+
+
+def _ours_flat(read):
+    ours = parse_mm_ml_per_mod_type(
+        read.get_tag("MM"), bytes(read.get_tag("ML")),
+        read.query_sequence, read.is_reverse)
+    return {k: set(zip(p.tolist(), q.tolist())) for k, (p, q) in ours.items()}
+
+
+@pytest.mark.parametrize("is_reverse", [False, True])
+def test_multi_code_entry_ml_stride_matches_pysam(is_reverse):
+    """``C+hm`` consumes two ML values per listed C (interleaved per base).
+
+    Before 3.0 the parser advanced ML by the number of listed bases only, so
+    every later entry read the wrong probabilities: on this read the A+a
+    calls came out as [0, 9] instead of pysam's [0, 4, 11].
+    """
+    mm = "C+hm?,0,1;A+a.,0,0,1;"
+    ml = [10, 20, 30, 40, 200, 150, 250]
+    r = _segment(_MIXED_SEQ, is_reverse, mm, ml)
+    assert _ours_flat(r) == _pysam_flat(r)
+    ours = parse_mm_tag_query_positions(
+        mm, bytes(ml), r.query_sequence, r.is_reverse, 125, "pacbio-fiber")
+    assert ours == _pysam_positions(r, {"a"}, 125)
+    assert len(ours) == 3
+
+
+@pytest.mark.parametrize("is_reverse", [False, True])
+def test_chebi_code_matches_pysam(is_reverse):
+    mm = "A+21839.,0,1;"
+    ml = [200, 210]
+    r = _segment(_MIXED_SEQ, is_reverse, mm, ml)
+    assert _ours_flat(r) == _pysam_flat(r)
+    assert ("A", 21839) in _ours_flat(r)
+    ours = parse_mm_tag_query_positions(
+        mm, bytes(ml), r.query_sequence, r.is_reverse, 125, "pacbio-fiber")
+    assert ours == _pysam_positions(r, {21839}, 125) and len(ours) == 2
+
+
+@pytest.mark.parametrize("is_reverse", [False, True])
+def test_5hmc_not_counted_as_5mc(is_reverse):
+    """gpc/cpg count only 5mC (m/27551); 5hmC (h) is a different mark."""
+    mm = "C+hm.,0,1;"
+    ml = [250, 10, 10, 250]       # C#0: 5hmC; C#2: 5mC
+    r = _segment(_MIXED_SEQ, is_reverse, mm, ml)
+    for mode in ("gpc", "cpg"):
+        ours = parse_mm_tag_query_positions(
+            mm, bytes(ml), r.query_sequence, r.is_reverse, 125, mode)
+        assert ours == _pysam_positions(r, {"m"}, 125)
+        assert len(ours) == 1
+
+
+@pytest.mark.parametrize("is_reverse", [False, True])
+def test_m6a_mode_ignores_other_a_codes(is_reverse):
+    """A non-m6A code on A (e.g. inosine 'A+17596') is not an m6A call."""
+    mm = "A+17596.,0;A+a.,1;"
+    ml = [250, 250]
+    r = _segment(_MIXED_SEQ, is_reverse, mm, ml)
+    assert _ours_flat(r) == _pysam_flat(r)
+    for mode in ("pacbio-fiber", "nanopore-fiber"):
+        ours = parse_mm_tag_query_positions(
+            mm, bytes(ml), r.query_sequence, r.is_reverse, 125, mode)
+        assert ours == _pysam_positions(r, {"a"}, 125)
+        assert len(ours) == 1
+
+
+@pytest.mark.parametrize("is_reverse", [False, True])
+def test_question_flag_unlisted_bases_are_unknown(is_reverse):
+    """Under ``?`` an unlisted A carries no call; under ``.`` it is unmodified."""
+    seq = _MIXED_SEQ
+    r = _segment(seq, is_reverse, "A+a?,1,2;", [250, 20])
+    listed = _pysam_flat(r)[("A", "a")]
+    listed_pos = {p for p, _ in listed}
+    mods, unknown = parse_mm_tag_query_calls(
+        "A+a?,1,2;", bytes([250, 20]), r.query_sequence, r.is_reverse,
+        125, "nanopore-fiber")
+    assert mods == {p for p, q in listed if q >= 125}
+    # every A in the MM walk frame that pysam did not report is unknown
+    walk = r.query_sequence.upper()
+    target = "T" if is_reverse else "A"
+    all_targets = {i for i, b in enumerate(walk) if b == target}
+    assert unknown == all_targets - listed_pos
+    assert unknown and not (unknown & listed_pos)
+
+    mods_dot, unknown_dot = parse_mm_tag_query_calls(
+        "A+a.,1,2;", bytes([250, 20]), r.query_sequence, r.is_reverse,
+        125, "nanopore-fiber")
+    assert mods_dot == mods and unknown_dot == set()
+
+
+def test_question_flag_unknown_bases_encode_as_non_target():
+    """Unknown bases leave the HMM uninformed instead of voting 'unmethylated'."""
+    seq = _MIXED_SEQ * 3
+    mm = "A+a?,4,6;"
+    mods, unknown = parse_mm_tag_query_calls(
+        mm, bytes([250, 250]), seq, False, 125, "nanopore-fiber")
+    k = 3
+    non_target = 4 ** (2 * k)
+    non_target_obs = non_target + non_target + 1
+    plain = encode_from_query_sequence(
+        seq, mods, edge_trim=0, mode="nanopore-fiber", context_size=k)
+    masked = encode_from_query_sequence(
+        seq, mods, edge_trim=0, mode="nanopore-fiber", context_size=k,
+        unknown_positions=unknown)
+    # interior A's only (the outer k bases lack a full context either way)
+    unknown_idx = sorted(p for p in unknown if k <= p < len(seq) - k)
+    assert unknown_idx
+    # before: unknown A's were encoded as unmethylated A observations
+    assert all(non_target < c < non_target_obs for c in plain[unknown_idx])
+    assert all(c == non_target_obs for c in masked[unknown_idx])
+    keep = np.setdiff1d(np.arange(len(seq)), unknown_idx)
+    assert np.array_equal(plain[keep], masked[keep])
+
+
+def test_mm_applicable_hard_clip_and_mn():
+    seq = _MIXED_SEQ
+    ok = _segment(seq, False, "A+a.,0;", [250])
+    assert mm_applicable(ok)
+    clipped = _segment(seq, False, "A+a.,0;", [250],
+                       cigar=[(5, 50), (0, len(seq))])
+    assert not mm_applicable(clipped)
+    clipped_mn = _segment(seq, False, "A+a.,0;", [250],
+                          cigar=[(5, 50), (0, len(seq))],
+                          extra_tags=[("MN", len(seq))])
+    assert mm_applicable(clipped_mn)
+    stale_mn = _segment(seq, False, "A+a.,0;", [250],
+                        extra_tags=[("MN", len(seq) + 50)])
+    assert not mm_applicable(stale_mn)

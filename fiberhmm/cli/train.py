@@ -25,6 +25,8 @@ from tqdm import tqdm
 
 from fiberhmm.core.bam_reader import (
     ContextEncoder,
+    add_daf_run_mask_arguments,
+    apply_daf_run_mask_arguments,
     detect_daf_strand,
     encode_from_query_sequence,
 )
@@ -82,6 +84,10 @@ def parse_args():
                         help='Generate training statistics and example plots')
     parser.add_argument('--n-examples', type=int, default=5,
                         help='Number of example reads to plot (with --stats)')
+    # DAF adjacent-run mask used when encoding training reads (daf mode).
+    # Training has no chemistry, so the default is off; pass --daf-mask-runs 2
+    # to encode like fiberhmm-call's DddA default.
+    add_daf_run_mask_arguments(parser)
 
     return parser.parse_args()
 
@@ -275,16 +281,32 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                         if read.query_name in seen_read_ids:
                             continue
 
-                        # Get modifications
                         from fiberhmm.core.bam_reader import (
                             FiberRead,
                             get_modified_positions_pysam,
+                            mm_applicable,
+                            parse_mm_tag_query_calls,
                             parse_mm_tag_query_positions,
                         )
 
-                        mod_query_pos = get_modified_positions_pysam(read, prob_threshold, mode)
+                        daf_strand = None
+                        unknown_pos = set()
+                        query_sequence = read.query_sequence
+                        if mode == 'daf':
+                            # Same R/Y -> MD -> MM/ML extraction (and chimera
+                            # filter) as fiberhmm-call.
+                            from fiberhmm.probabilities.utils import extract_training_read
+                            ext = extract_training_read(read, mode, prob_threshold)
+                            if isinstance(ext, str):
+                                continue
+                            query_sequence, mod_query_pos, daf_strand, unknown_pos = ext
+                        else:
+                            # Hard-clipped records carry the parent's MM/ML.
+                            if not mm_applicable(read):
+                                continue
+                            # Get modifications
+                            mod_query_pos = get_modified_positions_pysam(read, prob_threshold, mode)
 
-                        if not mod_query_pos:
                             try:
                                 mm_tag = read.get_tag('MM') if read.has_tag('MM') else (
                                     read.get_tag('Mm') if read.has_tag('Mm') else None)
@@ -293,11 +315,16 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                             except KeyError:
                                 mm_tag = ml_tag = None
 
-                            if mm_tag and ml_tag:
+                            if not mod_query_pos and mm_tag and ml_tag:
                                 mod_query_pos = parse_mm_tag_query_positions(
                                     mm_tag, ml_tag, read.query_sequence,
                                     read.is_reverse, prob_threshold, mode=mode
                                 )
+                            if mm_tag and ml_tag and '?' in mm_tag:
+                                # Bases a '?' entry left unlisted carry no call.
+                                unknown_pos = parse_mm_tag_query_calls(
+                                    mm_tag, ml_tag, read.query_sequence,
+                                    read.is_reverse, prob_threshold, mode=mode)[1]
 
                         if not mod_query_pos:
                             continue
@@ -314,11 +341,13 @@ def sample_reads_indexed(bam_path: str, n_samples: int, seed: int,
                             ref_start=read.reference_start,
                             ref_end=read.reference_end,
                             strand='-' if read.is_reverse else '+',
-                            query_sequence=read.query_sequence,
+                            query_sequence=query_sequence,
                             m6a_query_positions=set(mod_query_pos),
                             query_to_ref=query_to_ref,
                             is_reverse=read.is_reverse,
                         )
+                        fiber_read.daf_strand = daf_strand
+                        fiber_read.unknown_query_positions = set(unknown_pos)
 
                         sampled.append(fiber_read)
                         seen_read_ids.add(read.query_name)
@@ -375,8 +404,8 @@ def generate_training_arrays(reads: list, edge_trim: int,
     for fiber_read in tqdm(reads, desc="Encoding"):
         # Detect strand based on mode
         if mode == 'daf':
-            strand = detect_daf_strand(fiber_read.query_sequence,
-                                       fiber_read.m6a_query_positions)
+            strand = getattr(fiber_read, 'daf_strand', None) or detect_daf_strand(
+                fiber_read.query_sequence, fiber_read.m6a_query_positions)
         elif mode == 'nanopore-fiber':
             strand = '.'  # No strand detection for nanopore
         else:  # m6a mode
@@ -390,6 +419,7 @@ def generate_training_arrays(reads: list, edge_trim: int,
             strand=strand,
             context_size=context_size,
             is_reverse=getattr(fiber_read, 'is_reverse', False),
+            unknown_positions=getattr(fiber_read, 'unknown_query_positions', None),
         )
 
         if len(encoded) > 0:
@@ -402,19 +432,23 @@ def generate_training_arrays(reads: list, edge_trim: int,
     if len(encoded_reads) == 0:
         raise ValueError("No reads successfully encoded! Check input BAM files.")
 
-    # Create shuffled training arrays
+    # Create shuffled training arrays. Each array is the reads concatenated;
+    # train_lengths[i] holds the per-read lengths so Baum-Welch treats every
+    # read as its own sequence (no transitions across read boundaries).
     train_arrays = {}
+    train_lengths = {}
     for i in range(n_iterations):
         np.random.seed(i)
         indices = np.random.permutation(len(encoded_reads))
         shuffled = [encoded_reads[j] for j in indices]
         train_arrays[i] = np.concatenate(shuffled).astype(int)
+        train_lengths[i] = [len(x) for x in shuffled]
 
-    return train_arrays, train_rids, encoded_reads, valid_reads
+    return train_arrays, train_rids, encoded_reads, valid_reads, train_lengths
 
 
 def train_hmm(emission_probs: np.ndarray, train_arrays: dict,
-              use_legacy: bool = False) -> tuple:
+              use_legacy: bool = False, train_lengths: dict = None) -> tuple:
     """
     Train HMM models and return best one.
     Returns (best_model, all_models).
@@ -425,7 +459,8 @@ def train_hmm(emission_probs: np.ndarray, train_arrays: dict,
         emission_probs,
         train_arrays,
         n_iterations=len(train_arrays),
-        use_legacy=use_legacy
+        use_legacy=use_legacy,
+        train_lengths=train_lengths,
     )
 
     print("\nBest model selected")
@@ -904,6 +939,9 @@ def main():
 
     os.makedirs(args.outdir, exist_ok=True)
 
+    if args.mode == 'daf':
+        apply_daf_run_mask_arguments(args, None)
+
     # Generate emission probabilities
     print("\nLoading emission probabilities...")
     emission_probs = make_emission_probs(
@@ -968,14 +1006,26 @@ def main():
         )
         print(f"Total sampled: {len(sampled)} reads")
 
-        # Generate training arrays
-        train_arrays, train_rids, encoded_reads, valid_reads = generate_training_arrays(
-            sampled, args.edge_trim, args.iterations, args.mode, args.context_size
-        )
+        if not sampled:
+            print("Error: 0 reads passed the filters; nothing to train on. Check "
+                  "--mode, --min-mapq, --min-read-length and --prob-threshold, and "
+                  "that the BAM carries MM/ML, R/Y or MD evidence.", file=sys.stderr)
+            sys.exit(1)
 
-        # Train
-        print(f"\nTraining HMM ({args.iterations} iterations)...")
-        best_model, all_models = train_hmm(emission_probs, train_arrays, args.use_hmmlearn)
+        try:
+            # Generate training arrays
+            train_arrays, train_rids, encoded_reads, valid_reads, train_lengths = \
+                generate_training_arrays(
+                    sampled, args.edge_trim, args.iterations, args.mode, args.context_size
+                )
+
+            # Train
+            print(f"\nTraining HMM ({args.iterations} iterations)...")
+            best_model, all_models = train_hmm(emission_probs, train_arrays,
+                                               args.use_hmmlearn, train_lengths)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
 
     # Save
     print(f"\nSaving to {args.outdir}")
@@ -987,16 +1037,9 @@ def main():
         context_size=args.context_size,
         mode=args.mode
     )
-    print("  Saved: best-model.json (recommended)")
-
-    # Also save in NPZ for backwards compatibility
-    save_model(
-        best_model,
-        os.path.join(args.outdir, 'best-model.npz'),
-        context_size=args.context_size,
-        mode=args.mode
-    )
-    print("  Saved: best-model.npz (numpy format)")
+    print("  Saved: best-model.json")
+    # (Models are saved as JSON only; save_model() cannot write .npz. The old
+    # 'best-model.npz' save silently rewrote best-model.json.)
 
     # Save all models as JSON list
     all_models_data = []
