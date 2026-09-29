@@ -316,10 +316,12 @@ def test_call_skips_hard_clipped_supplementary(tmp_path, benchmark_model_path):
             out.write(read)
     pysam.index(str(bam))
     output = tmp_path / "out.bam"
+    # --primary is the default since 3.0 (supplementary records pass through
+    # before the hard-clip guard is reached); --no-primary exercises the guard.
     result = _run_cli(
         "fiberhmm.cli.call", "-i", bam, "-o", output, "-m", benchmark_model_path,
         "--min-read-length", "0", "--prob-threshold", "0", "--no-qc",
-        "--no-recall-nucs", "-c", "1", "--io-threads", "1",
+        "--no-recall-nucs", "-c", "1", "--io-threads", "1", "--no-primary",
     )
     stderr = result.stderr.decode(errors="replace")
     stdout = result.stdout.decode(errors="replace")

@@ -115,6 +115,22 @@ def apply_result_has_footprints(apply_result: Optional[Mapping[str, Any]]) -> bo
     return len(apply_result["ns"]) > 0 or len(apply_result["as"]) > 0
 
 
+def payload_cpg_mask(payload: Mapping[str, Any], read_length: int,
+                     policy: str):
+    """DddA CpG mask for one slim payload (see ``make_apply_payload``).
+
+    Same policy as ``fiberhmm-recall-tfs``: with ``unmethylated-only`` every
+    CpG is excluded except inside the molecule's ``ddda_ucg`` island calls.
+    """
+    from fiberhmm.inference.tf_recaller import cpg_mask_from_intervals
+
+    intervals = payload.get('_cpg_ma_intervals') or {}
+    return cpg_mask_from_intervals(
+        read_length, policy,
+        intervals.get('ucg', ()), intervals.get('mcg', ()),
+    )
+
+
 def run_ddda_mcg_stage(
     observation_payload,
     apply_result: Mapping[str, Any],

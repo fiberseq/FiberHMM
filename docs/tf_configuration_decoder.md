@@ -26,7 +26,8 @@ sum over I in C of sum(ell[j] inside I) − lambda * number of intervals
 The all-accessible configuration has objective zero. Every interval must contain
 at least `min_opps` informative targets and begin and end on positive evidence.
 Neutral bases contribute neither evidence nor opportunity count. The current
-`lambda` is the existing `min_llr` setting: DddA 7, Hia5 5, and DddB 4 by default.
+`lambda` is the existing `min_llr` setting: 5.0 by default for every preset
+(Hia5, DddB and DddA).
 There is no learned occupancy/family-frequency prior and no fixed count cap.
 
 This is a MAP-style segmentation with a constant cost per protected interval.

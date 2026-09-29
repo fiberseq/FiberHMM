@@ -15,13 +15,18 @@ fiberhmm-pair \
 ```
 
 The input must be coordinate sorted, indexed, DddA called, and contain an `MA`
-`nuc` track. The reference FASTA is used only to enumerate non-CpG C/G enzyme
-opportunities. The scorer never derives or retains A/T allele agreement.
+`nuc` track. The FASTA must contain every BAM contig with a matching length.
+The sequence-free scorer uses it only to enumerate non-CpG DddA opportunities
+(a C not followed by G, or a G not preceded by C) and never derives or retains
+A/T allele agreement; in the default combined workflow the same FASTA also
+supplies the A/T evidence of the separate sequence-supported route.
 
 ## Evidence and selection
 
 Each candidate must overlap by at least 1,500 bp and contain at least four
-nucleosome dyads on both reads. The frozen linear model combines:
+nucleosome dyads on both reads, and the two protection profiles must share at
+least 20 twenty-bp bins with at least two smoothed opportunities per bin on
+both reads. The frozen linear model combines:
 
 - lag-tolerant smoothed dyad correlation;
 - dyad-anchor F1 at three tolerance/shift settings;
@@ -39,17 +44,28 @@ Within each complete overlap component, an edge must be best for both reads.
 The default two-sided decision-score margin is 1.0 against the next candidate
 or a virtual null score of zero. Reads that fail this gate remain unresolved.
 
-The BAM retains all input records by default. Pair members carry `mt:A:P`,
-their reciprocal partner in `mp:Z`, `pm:A:D`, the decision score in `dm:i`
-(×1,000), margin in `mg:i` (×1,000), and model ID in `mv:Z`. Candidate reads
-that abstain carry `mt:A:U`. `--paired-only` writes only selected primary source
-records and remains compatible with `fiberhmm-pair --from-paired`.
+Pair members carry `mt:A:P`, their reciprocal partner in `mp:Z`, `pm:A:D`,
+the decision score in `dm:i` (×1,000), margin in `mg:i` (×1,000), and model ID
+in `mv:Z`. Candidate reads that abstain carry `mt:A:U`. With
+`--stop-after pair` every input record is written with these tags, and
+`--pairs-only` (alias `--paired-only`) writes only the selected primary source
+records, ready for `fiberhmm-pair --from-paired`. In the default workflow the
+two source reads of each pair are replaced by their joint molecule (see
+[paired-duplex.md](paired-duplex.md)); `--pairs-only` there writes only joint
+molecules.
+
+The model has status `externally_replicated_experimental` in both bundled
+model files. A `pm:D` pair is not checked against A/T genotype: a sequence
+pair only takes precedence over a model pair that would reuse one of its reads.
+Analyses that need genotype-consistent pairs should use `--sequence-only` or
+keep `pm:S`.
 
 ## Nucleosome call layers
 
 `--call-layer auto` is the default. BAMs declaring
-`nuc_model=ddda_phase_posterior_v1` use the calibration fit after FiberHMM
-FiberHMM 3.0 phase-marginal rotational DddA recall. Older BAMs use the archived-MA
+`nuc_model=ddda_phase_posterior_v1` (in a `@CO` chemistry declaration or the
+`@PG` description) use the calibration fit after FiberHMM 3.0 phase-marginal
+rotational DddA recall. Older BAMs use the archived-MA
 calibration. `--call-layer rotational-recall` or `--call-layer input-ma` is
 available when provenance was stripped during BAM processing.
 
@@ -57,10 +73,14 @@ The two calibrations were trained on independent A/T-selected mates in GRCh38
 chr1:[0,40.1 Mb) and evaluated once on the disjoint interval
 chr1:[40.5,80.5 Mb) in the same 11 scDAF libraries:
 
-| MA call layer | Competitive true edge first | Margin-1 outcomes |
+| MA call layer | Competitive true edge ranked first | Margin-1 assignments made |
 |---|---:|---:|
-| archived input MA | 72/80 (90.0%) | 51 correct, 4 wrong, 38 abstained |
-| FiberHMM 3.0 rotational recall | 73/80 (91.3%) | 48 correct, 5 wrong, 40 abstained |
+| archived input MA | 72/80 (90.0%) | 55: 51 correct, 4 wrong (92.7%) |
+| FiberHMM 3.0 rotational recall | 73/80 (91.3%) | 53: 48 correct, 5 wrong (90.6%) |
+
+Counts are the `external_validation` blocks of `ddda_duplex_v1.json` and
+`ddda_duplex_rotational_v1.json`; reads without a margin-1 assignment are left
+unresolved.
 
 The rotational layer rescued one competitive rank error and introduced no rank
 regressions on the 80 common external cases. Its margin-1 set is slightly less

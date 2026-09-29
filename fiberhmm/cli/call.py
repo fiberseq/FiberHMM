@@ -58,7 +58,11 @@ from fiberhmm.inference.parallel import (
     _process_bam_region_parallel_fused,
     _process_bam_streaming_pipeline_fused,
 )
-from fiberhmm.inference.tf_recaller import ENZYME_PRESETS, TF_DECODER_VERSION
+from fiberhmm.inference.tf_recaller import (
+    ENZYME_PRESETS,
+    TF_DECODER_VERSION,
+    resolve_cpg_masking,
+)
 from fiberhmm.models import (
     SUPPORTED_ENZYMES,
     bundled_models_differ_by_tool,
@@ -110,8 +114,11 @@ def parse_args():
                    help='Bases to mask at edges (default 10)')
     p.add_argument('--min-mapq', type=int, default=0,
                    help='Min mapping quality (default 0)')
-    p.add_argument('--prob-threshold', type=int, default=128,
-                   help='Min modification probability 0-255 (default 128)')
+    p.add_argument('--prob-threshold', type=int, default=None,
+                   help='Min MM/ML modification probability 0-255. Default: '
+                        'chemistry preset -- 248 for Hia5 Nanopore (--seq '
+                        'nanopore, given or detected), 128 otherwise. R/Y- and '
+                        'MD-encoded DAF input is binary and ignores it.')
     p.add_argument('--min-read-length', type=int, default=1000,
                    help='Min aligned read length (default 1000 — matches fiberhmm-apply)')
     p.add_argument('--msp-min-size', type=int, default=0,
@@ -120,8 +127,10 @@ def parse_args():
                    help='Min footprint size to count as nucleosome (default 85)')
     p.add_argument('--with-scores', '--scores', dest='with_scores',
                    action='store_true',
-                   help='Compute confidence scores (nq/aq tags). --scores is '
-                        'the fiberhmm-apply spelling.')
+                   help='Write the HMM posterior-mean nq score of baseline '
+                        'nucleosomes (with --no-recall-nucs; nucleosome recall '
+                        'writes its own LLR-based nq). No aq is written. '
+                        '--scores is the fiberhmm-apply spelling.')
     p.add_argument('-r', '--circular', action='store_true',
                    help='Enable circular molecule mode (3x tile internally, '
                         'emit wrapped MA/AQ/AN annotations).')
@@ -132,10 +141,13 @@ def parse_args():
                         '(uBAM) input, off (pass-through) for indexed aligned '
                         'BAMs. A run that skips >90%% of records as unmapped '
                         'fails unless --no-process-unmapped is given.')
-    p.add_argument('--primary', action='store_true',
-                   help='Skip secondary/supplementary alignments (recommended '
-                        'for pooled analyses). Hard-clipped records whose MM/ML '
-                        'cannot match SEQ are always skipped (hard_clipped_mm).')
+    p.add_argument('--primary', action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help='Call primary alignments only (default); secondary and '
+                        'supplementary records are passed through uncalled. '
+                        '--no-primary also calls them. Hard-clipped records '
+                        'whose MM/ML cannot match SEQ are always skipped '
+                        '(hard_clipped_mm).')
 
     # --- Recall params ---
     p.add_argument('--min-llr', type=float, default=None,
@@ -147,6 +159,20 @@ def parse_args():
                    help='v2 nucs with nl < this may be demoted to tf+ (default 90).')
     p.add_argument('--emission-uplift', type=float, default=None,
                    help='Emission power transform. Default: enzyme preset.')
+    p.add_argument('--use-m5c', action=argparse.BooleanOptionalAction,
+                   default=None,
+                   help='DddA CpG-aware recall, as in fiberhmm-recall-tfs: CpG '
+                        'observations are excluded from nucleosome and TF '
+                        'recall except inside confident unmethylated island '
+                        'calls (MA ddda_ucg from fiberhmm-tag-m5c) the input '
+                        'already carries. Default: on for --enzyme ddda, off '
+                        'otherwise; --no-use-m5c for an ablation.')
+    p.add_argument('--cpg-mask-policy',
+                   choices=('unmethylated-only', 'methylated-only'),
+                   default='unmethylated-only',
+                   help='With CpG-aware recall: keep CpGs only inside ddda_ucg '
+                        'islands (default), or mask only ddda_mcg spans (the '
+                        'former behaviour).')
     p.add_argument('--no-legacy-tags', action='store_true',
                    help='Skip ns/nl/as/al, emit only MA/AQ.')
     p.add_argument('--downstream-compat', action='store_true',
@@ -285,9 +311,10 @@ def parse_args():
     p.add_argument('--dedup-min-deam', type=int, default=10,
                    help='With --dedup: reads with fewer deamination calls are '
                         'not fingerprinted and pass through (default 10).')
-    p.add_argument('--dedup-prob-threshold', type=int, default=0,
+    p.add_argument('--dedup-prob-threshold', type=int, default=None,
                    help='With --dedup: min ML probability for MM/ML-native dU '
-                        'calls, 0-255 (default 0 = accept all).')
+                        'calls, 0-255 (default: the calling --prob-threshold, '
+                        '128). R/Y and MD inputs are binary and ignore it.')
     p.add_argument('--dedup-ignore-strand', action='store_true',
                    help='With --dedup: cluster reads across deamination '
                         'flavours (C->T with G->A reads). Default: only reads '
@@ -773,6 +800,21 @@ def _resolve_process_unmapped(args):
     return False, None
 
 
+def _resolve_call_prob_threshold(args, chemistry=None):
+    """Explicit --prob-threshold, else the resolved chemistry's default.
+
+    ``chemistry`` is the run's (input-reconciled) chemistry declaration, so a
+    custom ``-m`` that inherits Hia5 Nanopore from the input BAM also gets the
+    Nanopore threshold.
+    """
+    from fiberhmm.models import resolve_prob_threshold
+
+    chemistry = chemistry or {}
+    enzyme = args.enzyme or chemistry.get('enzyme')
+    seq = args.seq or chemistry.get('platform')
+    return resolve_prob_threshold(args.prob_threshold, enzyme, seq)
+
+
 def _validate_model_context(model_paths, k):
     """Exit with a clear message if ``k`` cannot index every model table."""
     seen = set()
@@ -874,6 +916,13 @@ def _main(args):
         sys.exit(2)
     k = args.context_size or int(model_k or 3)
     ddda_mcg = _configure_ddda_mcg(args, mode)
+    # DddA CpG-aware recall: the same default policy as recall-tfs/-nucs.
+    try:
+        use_m5c = resolve_cpg_masking(args.use_m5c, args.enzyme, mode)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
+    cpg_mask_policy = args.cpg_mask_policy if use_m5c else None
     _validate_model_context(
         [('apply model', apply_model_path), ('recall model', recall_model_path)],
         k,
@@ -972,15 +1021,22 @@ def _main(args):
     # custom -m without --enzyme inherits the input's enzyme/platform when the
     # observation mode matches.
     input_header = None
+    run_chemistry = _chemistry_declaration(
+        args, mode, apply_model_path, recall_model_path)
     if args.input != '-':
         import pysam
         with pysam.AlignmentFile(args.input, 'rb', check_sq=False) as _bam:
             input_header = _bam.header
-        reconcile_chemistry(
-            input_header,
-            _chemistry_declaration(args, mode, apply_model_path, recall_model_path),
+        run_chemistry = reconcile_chemistry(
+            input_header, run_chemistry,
             replace=args.replace_chemistry, tool='fiberhmm-call',
         )
+
+    # ML threshold: explicit value, else the resolved chemistry's preset
+    # (Hia5 Nanopore 248, otherwise 128). Integrated dedup follows it.
+    args.prob_threshold = _resolve_call_prob_threshold(args, run_chemistry)
+    if args.dedup_prob_threshold is None:
+        args.dedup_prob_threshold = args.prob_threshold
 
     process_unmapped, unmapped_reason = _resolve_process_unmapped(args)
     if unmapped_reason:
@@ -1193,6 +1249,8 @@ def _main(args):
             'DS': (f"FiberHMM fused apply+recall; coord=molecular "
                    f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
                    f"mode={mode} enzyme={args.enzyme or 'custom'} "
+                   f"prob_threshold={args.prob_threshold} "
+                   f"primary_only={'on' if args.primary else 'off'} "
                    f"tf_decoder={TF_DECODER_VERSION} tf_interval_penalty={min_llr} "
                    f"recall_nucs={recall_nucs} "
                    f"nuc_recall_policy={nuc_recall_policy} "
@@ -1204,7 +1262,8 @@ def _main(args):
                    f"chimera_filter={chimera_state} dedup={dedup_state} "
                    f"daf_snp_mask={snp_state} "
                    f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'} "
-                   f"ddda_mcg={'on' if ddda_mcg else 'off'}"),
+                   f"ddda_mcg={'on' if ddda_mcg else 'off'} "
+                   f"cpg_mask={cpg_mask_policy or 'off'}"),
         }
 
         mode_label = 'region-parallel' if args.region_parallel else 'streaming'
@@ -1214,7 +1273,9 @@ def _main(args):
             f"  apply model:  {apply_model_path}\n"
             f"  recall model: {recall_model_path or '(reuse apply model)'}\n"
             f"  nuc likelihood model: {nuc_model_path or '(reuse recall model)'}\n"
-            f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'}\n"
+            f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'} "
+            f"prob-threshold={args.prob_threshold} "
+            f"primary-only={'on' if args.primary else 'off'}\n"
             f"  min_llr={min_llr} min_opps={args.min_opps} "
             f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
             f"  tf-decoder={TF_DECODER_VERSION} interval-penalty={min_llr}\n"
@@ -1223,6 +1284,7 @@ def _main(args):
             f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'}\n"
             f"  cores={args.cores} io-threads={args.io_threads} "
             f"ddda_mcg={'on' if ddda_mcg else 'off'} "
+            f"cpg_mask={cpg_mask_policy or 'off'} "
             f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'}"
             f"{' circular=on' if args.circular else ''}\n"
             "=========================================================================\n",
@@ -1276,6 +1338,7 @@ def _main(args):
                 pg_record=pg_record,
                 ddda_mcg=ddda_mcg,
                 daf_snp_mask_path=snp_mask_path,
+                cpg_mask_policy=cpg_mask_policy,
             )
         else:
             n_reads, n_fp = _process_bam_streaming_pipeline_fused(
@@ -1321,6 +1384,7 @@ def _main(args):
                 pg_record=pg_record,
                 ddda_mcg=ddda_mcg,
                 daf_snp_mask_path=snp_mask_path,
+                cpg_mask_policy=cpg_mask_policy,
                 # A run that skipped nearly everything as unmapped is an
                 # error unless the user asked for pass-through explicitly.
                 fail_on_mostly_unmapped=args.process_unmapped is not False,

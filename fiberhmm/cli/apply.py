@@ -36,7 +36,9 @@ def parse_args():
         epilog='''
 Output:
   Tagged BAM file with footprint annotations (ns/nl and as/al tags).
-  Use extract_tags.py to convert to BED12/bigBed for visualization.
+  Use fiberhmm-extract to convert to BED12/bigBed for visualization.
+  fiberhmm-call (apply + nucleosome/TF recall in one pass) is the
+  recommended entry point; fiberhmm-apply runs the HMM stage alone.
 
 Examples:
   # Hia5 PacBio -- bundled model, no -m needed
@@ -53,7 +55,7 @@ Examples:
   fiberhmm-apply -i data.bam -m custom.json -o output/ -c 8
 
   # Extract to bigBed for browser visualization
-  fiberhmm-extract-tags -i output/data_footprints.bam --footprint --bigbed
+  fiberhmm-extract -i output/data_footprints.bam --nucleosome --msp
 '''
     )
 
@@ -91,17 +93,23 @@ Examples:
     # BAM); main() rejects them instead of silently ignoring them. Use
     # fiberhmm-call --region-parallel for region selection.
     add_parallel_args(parser, default_cores=1, default_region_size=10_000_000)
+    for action in parser._actions:
+        if action.dest in ('region_size', 'skip_scaffolds', 'chroms'):
+            action.help = argparse.SUPPRESS
 
     # Filtering
-    add_filter_args(parser, min_mapq=0, prob_threshold=128, min_read_length=1000)
+    add_filter_args(parser, min_mapq=0, prob_threshold=None, min_read_length=1000)
     parser.add_argument('-t', '--train-reads', default=None,
                         help='TSV file of read IDs used in training (to exclude)')
     # Parsed-but-never-implemented options, kept only so old command lines get
     # a clear error instead of an argparse "unrecognized argument".
     parser.add_argument('-l', '--min-footprints', type=int, default=0,
                         help=argparse.SUPPRESS)
-    parser.add_argument('--primary', action='store_true',
-                        help='Only process primary alignments (skip secondary/supplementary). '
+    parser.add_argument('--primary', action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help='Call primary alignments only (default); secondary '
+                             'and supplementary records are passed through '
+                             'uncalled. --no-primary also calls them. '
                              'Hard-clipped records whose MM/ML cannot match SEQ '
                              'are always skipped (hard_clipped_mm).')
     parser.add_argument('--process-unmapped', action=argparse.BooleanOptionalAction,
@@ -196,6 +204,29 @@ def _input_index_state(path):
         return False, False
 
 
+def _resolve_apply_prob_threshold(args):
+    """Explicit --prob-threshold, else the chemistry's default threshold."""
+    from fiberhmm.models import (
+        declared_prob_threshold_chemistry,
+        resolve_prob_threshold,
+    )
+
+    if args.prob_threshold is not None:
+        return int(args.prob_threshold)
+    enzyme, seq = args.enzyme, args.seq
+    if not enzyme and args.input != '-':
+        import pysam
+        try:
+            with pysam.AlignmentFile(args.input, 'rb', check_sq=False) as bam:
+                declared_enzyme, declared_seq = (
+                    declared_prob_threshold_chemistry(bam.header))
+        except (OSError, ValueError):
+            declared_enzyme = declared_seq = None
+        enzyme = declared_enzyme
+        seq = seq or declared_seq
+    return resolve_prob_threshold(None, enzyme, seq)
+
+
 def main():
     args = parse_args()
     from fiberhmm.inference.read_filters import MostlyUnmappedError
@@ -278,11 +309,10 @@ def _main(args):
             "------------------------------------------------------------------------\n"
             "  NOTE: DddA model detected.\n"
             "  This model calls NUCLEOSOMES only. To recover TF / Pol II\n"
-            "  footprints, run the beta 2nd-pass recaller after this step:\n"
+            "  footprints, run the 2nd-pass recaller after this step (or use\n"
+            "  fiberhmm-call --enzyme ddda, which runs both passes):\n"
             "\n"
             "    fiberhmm-recall-tfs -i <output.bam> -o <recalled.bam> --enzyme ddda\n"
-            "\n"
-            "  fiberhmm-recall-tfs is a beta feature.\n"
             "------------------------------------------------------------------------\n",
             file=_sys.stderr,
         )
@@ -340,6 +370,11 @@ def _main(args):
 
     print(f"  Mode: {mode}")
     args.mode = mode
+
+    # ML threshold: explicit value, else the chemistry preset (Hia5 Nanopore
+    # 248, otherwise 128). A custom -m without --enzyme takes the chemistry
+    # the input BAM declares.
+    args.prob_threshold = _resolve_apply_prob_threshold(args)
 
     # Determine MSP minimum size (default 60bp for all modes)
     msp_min_size = args.msp_min_size if args.msp_min_size is not None else 0

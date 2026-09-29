@@ -164,7 +164,8 @@ The top level also has:
   - each window's output folder and input digest;
   - `refitted: false` and `rediscovered: false`.
 - `bams/`: the shared family BAM export, only when inputs came from BAMs. Turn it
-  off with `--no-bam`. The export options are the same as for `fiberhmm-consensus`.
+  off with `--no-bam`. The export options are those of `fiberhmm-consensus`
+  except `--bam-recaller-layer`, which transfer does not offer.
 - `chip_evaluation.json`, with `--chip-bed`. It gives the AUROC and average
   precision of each class and channel's per-window EM prevalence against overlap
   of a peak with the window. The metrics are descriptive, with no fitting and no

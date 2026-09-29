@@ -125,9 +125,23 @@ def resolve_observation_mode(
 
 def add_filter_args(parser: argparse.ArgumentParser,
                     min_mapq: int = 0,
-                    prob_threshold: int = 128,
+                    prob_threshold: Optional[int] = 128,
                     min_read_length: int = 1000) -> None:
-    """Add read filtering arguments (--min-mapq, --prob-threshold, --min-read-length)."""
+    """Add read filtering arguments (--min-mapq, --prob-threshold, --min-read-length).
+
+    ``prob_threshold=None`` makes the default chemistry-dependent (resolved by
+    :func:`fiberhmm.models.resolve_prob_threshold` once --enzyme/--seq are
+    known): 248 for Hia5 Nanopore, 128 otherwise.
+    """
+    if prob_threshold is None:
+        threshold_help = ("Minimum MM/ML probability (0-255) to call a "
+                          "modification. Default: chemistry preset -- 248 for "
+                          "Hia5 Nanopore (--seq nanopore, given or detected), "
+                          "128 otherwise. R/Y- and MD-encoded DAF input is "
+                          "binary and ignores it.")
+    else:
+        threshold_help = (f"Minimum MM/ML probability (0-255) to call "
+                          f"modification (default: {prob_threshold})")
     parser.add_argument(
         '--min-mapq', '-q', type=int, default=min_mapq,
         help="Minimum mapping quality; reads below this are written to output "
@@ -136,7 +150,7 @@ def add_filter_args(parser: argparse.ArgumentParser,
     )
     parser.add_argument(
         '--prob-threshold', type=int, default=prob_threshold,
-        help=f"Minimum MM/ML probability (0-255) to call modification (default: {prob_threshold})"
+        help=threshold_help,
     )
     parser.add_argument(
         '--min-read-length', type=int, default=min_read_length,

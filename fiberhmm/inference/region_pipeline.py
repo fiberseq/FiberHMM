@@ -264,7 +264,8 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                     f"({file_size:.1f} MB, {merge_time:.1f}s)"
                 )
                 if output_posteriors.endswith('.h5'):
-                    print(f"  To convert to H5: python posteriors_io.py tsv2h5 {tsv_path} {output_posteriors}")
+                    print("  HDF5 output needs fiberhmm-posteriors (pip install "
+                          "\"fiberhmm[posteriors]\"); the TSV above holds the same data.")
 
         elapsed = time.time() - start_time
         rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
@@ -442,8 +443,11 @@ def _process_bam_region_parallel_fused(
     pg_record: dict = None,
     ddda_mcg: bool = False,
     daf_snp_mask_path: str = None,
+    cpg_mask_policy: Optional[str] = None,
 ):
     """Region-parallel fused apply+recall.
+
+    ``cpg_mask_policy`` enables DddA CpG-aware recall (None = off).
 
     Splits the BAM into genomic regions, runs fused apply+recall in each
     region as an independent worker, then concatenates sorted temp BAMs
@@ -485,6 +489,7 @@ def _process_bam_region_parallel_fused(
         'nuc_model_path': nuc_model_path,
         'derived_tf_max_edge_ambiguity': derived_tf_max_edge_ambiguity,
         'ddda_mcg': ddda_mcg,
+        'cpg_mask_policy': cpg_mask_policy,
         'daf_snp_mask_path': daf_snp_mask_path,
         'pg_record': pg_record,
         # Path string, NOT an open handle: pysam.FastaFile is not fork-safe,

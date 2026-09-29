@@ -226,3 +226,82 @@ def get_model_path(enzyme: str, tool: str = 'recall', seq: str | None = None) ->
             f"The fiberhmm installation may be incomplete."
         )
     return path
+
+
+# ---------------------------------------------------------------------------
+# Per-chemistry default ML threshold
+# ---------------------------------------------------------------------------
+
+#: Default minimum ML probability (0-255) for calling from MM/ML, used by
+#: ``fiberhmm-call`` and ``fiberhmm-apply`` and by the DAF tools
+#: (``fiberhmm-dedup``/``-pair``/``-merge``) for MM/ML-native dU calls.
+DEFAULT_PROB_THRESHOLD = 128
+
+#: Chemistry-specific overrides of that default, keyed by (enzyme, platform).
+#: Nanopore Hia5 m6A is a strict hard-call assay: Dorado's m6A ML values are
+#: only reliable near the top of the scale, and the bundled Hia5 Nanopore QC
+#: reference (``fiberhmm/qc/references.json``) and the strand-rescue
+#: ``hia5-nanopore`` preset are calibrated at 248.
+PROB_THRESHOLD_OVERRIDES: dict[tuple[str, str], int] = {
+    ('hia5', 'nanopore'): 248,
+}
+
+
+def default_prob_threshold(
+    enzyme: str | None,
+    seq: str | None,
+    fallback: int = DEFAULT_PROB_THRESHOLD,
+) -> int:
+    """Default ML threshold for one chemistry.
+
+    ``enzyme``/``seq`` are the *resolved* chemistry (after ``--seq`` detection
+    and after a custom model inherits the input BAM's declared chemistry).
+    Returns the chemistry override when one exists (Hia5 + Nanopore: 248) and
+    ``fallback`` otherwise, so each tool keeps its own historical default for
+    every other chemistry. An explicit ``--prob-threshold`` always wins; call
+    this only when the user did not pass one.
+    """
+    key = (str(enzyme or '').lower(), str(seq or '').lower())
+    return int(PROB_THRESHOLD_OVERRIDES.get(key, fallback))
+
+
+def resolve_prob_threshold(
+    explicit: int | None,
+    enzyme: str | None,
+    seq: str | None,
+    fallback: int = DEFAULT_PROB_THRESHOLD,
+) -> int:
+    """``explicit`` when given, else :func:`default_prob_threshold`."""
+    if explicit is not None:
+        return int(explicit)
+    return default_prob_threshold(enzyme, seq, fallback)
+
+
+def declared_prob_threshold_chemistry(header) -> tuple[str | None, str | None]:
+    """(enzyme, platform) from a BAM header's FIBERHMM-CHEMISTRY declaration.
+
+    Falls back to the compatibility inference from a pre-declaration
+    ``fiberhmm-call`` @PG record. Returns ``(None, None)`` when nothing is
+    known, or when the header declares several different chemistries. Used by
+    tools that read an existing FiberHMM BAM (extract, recall, qc) and have no
+    ``--enzyme`` of their own.
+    """
+    try:
+        from fiberhmm.io.bam_header import (
+            declared_chemistries,
+            infer_legacy_chemistry,
+        )
+        declared = declared_chemistries(header)
+        if not declared:
+            legacy = infer_legacy_chemistry(header)
+            declared = [legacy] if legacy else []
+    except Exception:
+        return None, None
+    pairs = {
+        (str(item.get('enzyme', '')).lower() or None,
+         str(item.get('platform', '')).lower() or None)
+        for item in declared
+    }
+    if len(pairs) != 1:
+        return None, None
+    return next(iter(pairs))

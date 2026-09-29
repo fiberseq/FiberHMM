@@ -239,6 +239,23 @@ def reference_profile_for_assay(mode: str, enzyme: Optional[str]) -> str:
     return ""
 
 
+QC_PROB_THRESHOLD = 125
+
+
+def default_qc_prob_threshold(mode: str, enzyme: Optional[str]) -> int:
+    """ML threshold QC uses when none is given: the assay's chemistry preset.
+
+    A Nanopore m6A assay (``nanopore-fiber``; Hia5 unless another enzyme is
+    recorded) reads ML at 248, the threshold its bundled QC reference was
+    calibrated at; every other assay keeps 125.
+    """
+    from fiberhmm.models import default_prob_threshold
+
+    if mode == "nanopore-fiber":
+        return default_prob_threshold(enzyme or "hia5", "nanopore", QC_PROB_THRESHOLD)
+    return QC_PROB_THRESHOLD
+
+
 def infer_assay(
     path: str,
     reads: Sequence,
@@ -2029,7 +2046,7 @@ def run_qc(
     sample_reads: int = DEFAULT_SAMPLE_READS,
     seed: int = DEFAULT_SEED,
     min_mapq: int = 20,
-    prob_threshold: int = 125,
+    prob_threshold: Optional[int] = None,
     min_opportunities: int = 200,
     snp_report_path: Optional[str] = None,
     snp_mask_path: Optional[str] = None,
@@ -2048,6 +2065,8 @@ def run_qc(
     resolved_mode, resolved_enzyme, inferred_profile = infer_assay(
         input_path, sampled.reads, mode=mode, enzyme=enzyme
     )
+    if prob_threshold is None:
+        prob_threshold = default_qc_prob_threshold(resolved_mode, resolved_enzyme)
     profile_key = inferred_profile if reference_profile == "auto" else reference_profile
     if (
         reference_profile not in ("auto", "none", "", None)
@@ -2758,7 +2777,7 @@ def run_multi_qc(
     sample_reads: int = DEFAULT_SAMPLE_READS,
     seed: int = DEFAULT_SEED,
     min_mapq: int = 20,
-    prob_threshold: int = 125,
+    prob_threshold: Optional[int] = None,
     min_opportunities: int = 200,
     stream: Optional[TextIO] = sys.stderr,
 ) -> dict:

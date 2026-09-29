@@ -41,31 +41,29 @@ fp_model   = phase0/data/fp_models/ct_nanopore_fp_3mer.json
 
 ## Rebuild
 
-The build script lives in the research repo, not in the shipped v2.0.0
-package:
-
-```bash
-# Run from the FiberHMM v1.0/v3-caller checkout
-python dev_scripts/build_ddda_model.py \
-  --source-model "../Release v2.0.0/models/dddb_nanopore.json" \
-  --fp-model phase0/data/fp_models/ct_nanopore_fp_3mer.json \
-  --fn 0.5 --breathing 0.05 \
-  --out-model "../Release v2.0.0/models/ddda_nuc.json"
-```
+The build script lives in the research repository and is not shipped with
+the package. It combined the DddB transitions (`dddb_nanopore.json`) with a
+C->T false-positive context model using the parameters above.
 
 ## Usage
 
+Normally the model is used through the preset, which also runs the dedicated
+TF recaller (`ddda_TF.json`) and DddA nucleosome refinement in one pass:
+
 ```bash
-python apply_model.py \
-  -i <ddda_daf_encoded.bam> \
-  -m models/ddda_nuc.json \
-  -o out/ \
-  --mode daf -k 3 --cores 4
+fiberhmm-call -i <ddda.bam> -o calls.bam --enzyme ddda -c 4
 ```
 
-Then **filter output** to discard sub-nucleosomal calls (footprints
-< 90 bp from ns/nl) before downstream analysis. Those positions are
-re-called by the dedicated TF caller in the sibling pipeline.
+To run the nucleosome HMM alone:
+
+```bash
+fiberhmm-apply -i <ddda.bam> --enzyme ddda -o out/ -c 4
+```
+
+After `fiberhmm-apply` alone, **filter output** to discard sub-nucleosomal
+calls (footprints < 90 bp from ns/nl) before downstream analysis, or run
+`fiberhmm-recall-tfs --enzyme ddda` on it: those positions are re-called by
+the dedicated TF recaller.
 
 ## Limitations / future work
 

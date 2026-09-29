@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-FiberHMM generate_probs.py
-Generate emission probability tables from control BAM files.
+fiberhmm-probs: generate emission probability tables from control BAM files.
 
 Requires TWO types of control samples:
 1. Accessible/naked DNA: Dechromatinized or naked DNA treated with MTase
@@ -443,9 +442,9 @@ def main():
             n_inacc = len(inacc_probs)
             print(f"    k={ctx_size} ({2*ctx_size + 1}-mer): {n_acc} accessible, {n_inacc} inaccessible contexts")
 
-    # Also create combined probability files for direct use with train_model.py
+    # Also create combined probability files for direct use with fiberhmm-train
     print("\n" + "-" * 60)
-    print("Creating combined probability files for train_model.py:")
+    print("Creating combined probability files for fiberhmm-train:")
 
     for ctx_size in args.context_sizes:
         for base in target_bases:
@@ -500,7 +499,7 @@ def main():
     print("\nNext steps:")
     print("  1. Review the modification rates - accessible should be HIGH,")
     print("     inaccessible should be LOW (background miscall rate)")
-    print("  2. Use the *_probs.tsv files with train_model.py to build HMM")
+    print("  2. Use the *_probs.tsv files with fiberhmm-train to build the HMM")
 
 
 if __name__ == '__main__':

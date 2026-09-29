@@ -432,8 +432,8 @@ support and local sequence opportunity. Cross-assay overlap is population
 concordance rather than molecule-level truth.
 
 The exact event, configuration, matching, bootstrap, audit, figure-source, and
-artifact-receipt tables are documented in the
-[two-locus benchmark bundle](../../paper/analysis/strand_consensus/two_locus_20260824/README.md).
+artifact-receipt tables are part of the manuscript's two-locus benchmark bundle,
+which is distributed with the paper rather than with this package.
 The current claim boundary is defined by this document and the emitted audit report.
 
 ## Commands

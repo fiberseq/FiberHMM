@@ -145,10 +145,52 @@ def recall_consensus_read(read, model, context_size: int, edge_trim: int = 10,
         nuc_min_size=nuc_min_size)
 
 
-class RecallContext:
-    """Loaded models/tables for both-strand recall (build once, reuse per read)."""
+def consensus_cpg_intervals(ct_read, ga_read, ref_start: int,
+                            length: int) -> dict:
+    """Project both source reads' ``ddda_ucg``/``ddda_mcg`` island calls onto
+    a both-strand consensus (reference frame, all-M, origin ``ref_start``).
 
-    def __init__(self, enzyme: str = 'ddda'):
+    The two reads are the two strands of one molecule, so an island call on
+    either strand applies to the consensus (union). Returns the
+    ``{'ucg': [...], 'mcg': [...]}`` half-open intervals that
+    :func:`fiberhmm.inference.tf_recaller.cpg_mask_from_intervals` takes.
+    """
+    from fiberhmm.cli.extract_tags import _build_query_to_ref
+    from fiberhmm.inference.tf_recaller import read_cpg_intervals
+
+    marks = {'ucg': np.zeros(int(length), dtype=bool),
+             'mcg': np.zeros(int(length), dtype=bool)}
+    for read in (ct_read, ga_read):
+        intervals = read_cpg_intervals(read)
+        if not (intervals['ucg'] or intervals['mcg']):
+            continue
+        q2r = np.asarray(_build_query_to_ref(read))
+        for key in ('ucg', 'mcg'):
+            for start, end in intervals[key]:
+                ref = q2r[max(0, int(start)):min(len(q2r), int(end))]
+                pos = ref[ref >= 0] - int(ref_start)
+                pos = pos[(pos >= 0) & (pos < int(length))]
+                marks[key][pos] = True
+    result = {}
+    for key, mark in marks.items():
+        runs = []
+        if mark.any():
+            edges = np.flatnonzero(np.diff(np.concatenate(([0], mark.view(np.int8), [0]))))
+            runs = [(int(a), int(b)) for a, b in zip(edges[0::2], edges[1::2])]
+        result[key] = runs
+    return result
+
+
+class RecallContext:
+    """Loaded models/tables for both-strand recall (build once, reuse per read).
+
+    ``use_m5c`` follows the recall-tfs/call CpG-aware policy
+    (:func:`fiberhmm.inference.tf_recaller.resolve_cpg_masking`): ``None``
+    means on for DddA, off otherwise.
+    """
+
+    def __init__(self, enzyme: str = 'ddda', use_m5c: Optional[bool] = None,
+                 cpg_mask_policy: str = 'unmethylated-only'):
         from fiberhmm.core.model_io import load_model_with_metadata
         from fiberhmm.inference.nuc_recaller import (
             attach_nuc_profile_emissions,
@@ -158,6 +200,8 @@ class RecallContext:
             ENZYME_PRESETS,
             build_conditional_hit_tables,
             build_llr_tables,
+            build_m5c_llr_tables,
+            resolve_cpg_masking,
         )
         from fiberhmm.models import _bundled_model_path, get_model_path
         self.apply_model, self.k, _ = load_model_with_metadata(get_model_path(enzyme, tool='apply'))
@@ -169,6 +213,7 @@ class RecallContext:
         self.nuc_llr_hit = self.llr_hit
         self.nuc_llr_miss = self.llr_miss
         self.nuc_profile = None
+        nuc_model = recall_model
         if enzyme == 'ddda':
             nuc_model, _, _ = load_model_with_metadata(
                 get_model_path(enzyme, tool='nuc_refine')
@@ -182,6 +227,16 @@ class RecallContext:
                 protected_hit,
                 accessible_hit,
             )
+        # DddA CpG-aware recall, as in fiberhmm-call and recall-tfs/-nucs.
+        self.cpg_mask_policy = (
+            cpg_mask_policy
+            if resolve_cpg_masking(use_m5c, enzyme.lower(), 'daf') else None
+        )
+        self.m5c_llr_hit = self.m5c_llr_miss = None
+        self.nuc_m5c_llr_hit = self.nuc_m5c_llr_miss = None
+        if self.cpg_mask_policy:
+            self.m5c_llr_hit, self.m5c_llr_miss = build_m5c_llr_tables(recall_model)
+            self.nuc_m5c_llr_hit, self.nuc_m5c_llr_miss = build_m5c_llr_tables(nuc_model)
 
 
 def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
@@ -190,7 +245,8 @@ def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
                           split_min_opps: int = 3, nuc_min_size: int = 85,
                           msp_min_size: int = 0, phase_nrl: int = 196,
                           nuc_recall_policy: str = 'conservative',
-                          derived_tf_max_edge_ambiguity: int | None = 12) -> bool:
+                          derived_tf_max_edge_ambiguity: int | None = 12,
+                          cpg_intervals: dict | None = None) -> bool:
     """Full both-strand recall (HMM + nucleosome recaller + TF recaller) on one
     consensus read, writing MA/AQ + legacy tags in place. Returns False if the
     read is not a both-strand consensus.
@@ -199,6 +255,11 @@ def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
     both-strand observation, so the LLR accumulates over both strands' informative
     positions (C via the C-table, G reverse-complemented into it), with
     single-strand-flank bases of the absent strand left non-target.
+
+    With CpG-aware recall on (``ctx.cpg_mask_policy``), CpG observations are
+    excluded from nucleosome and TF recall except inside the source reads'
+    ``ddda_ucg`` islands (``cpg_intervals``, see
+    :func:`consensus_cpg_intervals`), exactly as in ``fiberhmm-call``.
     """
     from fiberhmm.inference.engine import predict_footprints_and_msps
     from fiberhmm.inference.fused_stages import build_fused_recall_result
@@ -219,6 +280,14 @@ def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
     apply_result = {'ns': fp['footprint_starts'], 'nl': fp['footprint_sizes'],
                     'as': fp['msp_starts'], 'al': fp['msp_sizes'], 'encoded': obs}
     resolved_min_llr = ctx.min_llr if min_llr is None else float(min_llr)
+    m5c_mask = None
+    if getattr(ctx, 'cpg_mask_policy', None):
+        from fiberhmm.inference.tf_recaller import cpg_mask_from_intervals
+        intervals = cpg_intervals or {}
+        m5c_mask = cpg_mask_from_intervals(
+            len(conv), ctx.cpg_mask_policy,
+            intervals.get('ucg', ()), intervals.get('mcg', ()),
+        )
     res = build_fused_recall_result(
         {'query_sequence': conv}, apply_result, ctx.llr_hit, ctx.llr_miss,
         resolved_min_llr, min_opps, unify_threshold, with_scores=True,
@@ -230,6 +299,11 @@ def recall_consensus_full(seg, ctx: RecallContext, *, edge_trim: int = 10,
             derived_tf_max_edge_ambiguity if ctx.nuc_profile is not None else None),
         nuc_llr_hit=ctx.nuc_llr_hit,
         nuc_llr_miss=ctx.nuc_llr_miss,
+        m5c_mask=m5c_mask,
+        m5c_llr_hit=getattr(ctx, 'm5c_llr_hit', None),
+        m5c_llr_miss=getattr(ctx, 'm5c_llr_miss', None),
+        nuc_m5c_llr_hit=getattr(ctx, 'nuc_m5c_llr_hit', None),
+        nuc_m5c_llr_miss=getattr(ctx, 'nuc_m5c_llr_miss', None),
     )
 
     kept_nucs = list(zip([int(x) for x in res['ns']], [int(x) for x in res['nl']]))

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FiberHMM prob_utils.py
-Shared utilities for probability generation scripts (generate_probs.py, bootstrap_probs.py, transfer_probs.py).
+Shared utilities for probability generation (fiberhmm-probs and fiberhmm-utils transfer).
 
 Contains:
 - ContextCounter: Counts modification events by sequence context

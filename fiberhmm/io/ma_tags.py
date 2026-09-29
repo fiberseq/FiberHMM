@@ -6,15 +6,24 @@ Annotation types emitted by FiberHMM. All use the ``.`` (unknown) strand
 field, matching fibertools: nucleosomes, MSPs and TF footprints are
 strand-agnostic molecular features. (The parser also accepts ``+``/``-`` so
 tags written by FiberHMM <= 2.13.1, which used ``+``, still read back.)
-  - ``nuc.Q``    nucleosomes (>= unify_threshold bp). Quality byte = ``nq``
-                 (per-call posterior mean, 0-255). The recaller emits
-                 ``nuc.QQQ`` (nq, el, er) instead.
+  - ``nuc.Q``    nucleosomes (>= unify_threshold bp) without nucleosome
+                 recall. Quality byte = ``nq`` (HMM posterior mean x255, the
+                 input's ``nq`` carried through, or 0). With nucleosome recall
+                 (the fiberhmm-call default) the layer is ``nuc.QQQ``
+                 (``nq, el, er``), where ``nq`` is LLR x10 like ``tq``.
   - ``msp.``     methylase-sensitive patches (no quality).
   - ``tf.QQQ``   recaller TF footprints. Quality bytes per call:
                  (``tq``, ``el``, ``er``) = (LLR-derived score,
                  left-edge sharpness, right-edge sharpness).
   - ``ddda_mcg.`` complete CpG islands assigned a confident molecule-specific
                    methylated state by DddA contrast (no quality bytes).
+  - ``ddda_ucg.`` complete CpG islands assigned a confident molecule-specific
+                   unmethylated state (no quality bytes). Written by
+                   ``fiberhmm-tag-m5c``; DddA CpG-aware recall keeps CpG
+                   observations only inside these spans.
+  - ``deam+`` / ``deam-`` CT- and GA-strand coverage of a both-strand
+                   consensus read from ``fiberhmm-pair``/``fiberhmm-merge``
+                   (no quality bytes).
   - ``ddda_mcg+/-`` and ``ddda_mcg_hemi+/-`` are accepted for compatibility
                     with older experimental per-CpG/cross-strand outputs; the
                     production island caller does not emit them.

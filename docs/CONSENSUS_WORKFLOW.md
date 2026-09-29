@@ -16,7 +16,7 @@ library API.
 ## Quick start
 
 ```bash
-pip install -e '.[consensus]'
+pip install fiberhmm        # consensus is part of the core install
 fiberhmm-consensus --bam calls.bam --region chr19:47514980-47515330 --output classes
 fiberhmm-consensus --bam calls.bam --bed windows.bed --cores 4 --output classes
 ```

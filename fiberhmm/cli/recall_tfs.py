@@ -95,6 +95,7 @@ from fiberhmm.inference.fused_stages import build_fused_recall_result
 from fiberhmm.inference.tagging import write_fused_recall_tags
 from fiberhmm.inference.tf_recaller import (
     ENZYME_PRESETS,
+    RECALL_PROB_THRESHOLD,
     TF_DECODER_VERSION,
     HAS_NUMBA,
     apply_emission_uplift,
@@ -104,6 +105,7 @@ from fiberhmm.inference.tf_recaller import (
     build_m5c_llr_tables,
     extract_modifications,
     recall_read,
+    resolve_cpg_masking,
     write_ma_tags,
 )
 # ---------------------------------------------------------------------------
@@ -161,6 +163,7 @@ def _build_recall_pg_record(args, mode, model_path, nuc_cfg):
             'FiberHMM second-pass footprint refinement; coord=molecular '
             '(ns/nl/as/al/MA in molecular original-fiber coordinates); '
             f'mode={mode} enzyme={args.enzyme or "custom"} '
+            f'prob_threshold={getattr(args, "prob_threshold", None)} '
             f'tf_decoder={TF_DECODER_VERSION} '
             f'recall_nucs={recall_nucs} nuc_recall_policy={policy} '
             f'nuc_profile={profile_identity or "off"} '
@@ -176,7 +179,8 @@ def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
                  cpg_mask_policy="unmethylated-only",
                  nuc_protected_hit=None, nuc_accessible_hit=None,
                  nuc_llr_hit=None, nuc_llr_miss=None,
-                 nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None):
+                 nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None,
+                 prob_threshold=RECALL_PROB_THRESHOLD):
     """Set per-process globals once per worker.
 
     Slim version: workers receive compact payloads and return compact results —
@@ -212,6 +216,7 @@ def _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
     _WORKER['nuc_llr_miss'] = nuc_llr_miss
     _WORKER['nuc_m5c_llr_hit'] = nuc_m5c_llr_hit
     _WORKER['nuc_m5c_llr_miss'] = nuc_m5c_llr_miss
+    _WORKER['prob_threshold'] = int(prob_threshold)
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +336,7 @@ def _process_payload_record(payload) -> tuple:
         m5c_llr_hit=_WORKER.get('m5c_llr_hit'),
         m5c_llr_miss=_WORKER.get('m5c_llr_miss'),
         cpg_mask_policy=_WORKER.get('cpg_mask_policy', 'unmethylated-only'),
+        prob_threshold=_WORKER.get('prob_threshold', RECALL_PROB_THRESHOLD),
     )
     stats['tf'] = len(tf_calls)
     survived_short = sum(1 for _, length in kept_nucs if length < unify_threshold)
@@ -410,7 +416,10 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
         ns_seq, nl_seq = ns_raw, nl_raw
         as_seq, al_seq = as_raw, al_raw
 
-    extracted = extract_modifications(read, _WORKER['mode'], _WORKER['k'])
+    extracted = extract_modifications(
+        read, _WORKER['mode'], _WORKER['k'],
+        prob_threshold=_WORKER.get('prob_threshold', RECALL_PROB_THRESHOLD),
+    )
     if extracted is None:
         # No modification data: pass v2 calls through unchanged (TF-only shape).
         nucs = [(int(s), int(L)) for s, L in zip(ns_seq, nl_seq) if int(L) > 0]
@@ -536,7 +545,8 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
                         nuc_protected_hit=None, nuc_accessible_hit=None,
                         nuc_llr_hit=None, nuc_llr_miss=None,
                         nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None,
-                        failure_messages=None):
+                        failure_messages=None,
+                        prob_threshold=RECALL_PROB_THRESHOLD):
     """Single-threaded path.  No IPC — process reads directly."""
     if failure_messages is None:
         failure_messages = []
@@ -545,7 +555,8 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
                  cpg_mask_policy,
                  nuc_protected_hit, nuc_accessible_hit,
                  nuc_llr_hit, nuc_llr_miss,
-                 nuc_m5c_llr_hit, nuc_m5c_llr_miss)
+                 nuc_m5c_llr_hit, nuc_m5c_llr_miss,
+                 prob_threshold)
     n_reads = n_v2 = n_tf = n_demoted = n_failed = 0
     for read in bam_in:
         if max_reads and n_reads >= max_reads:
@@ -579,7 +590,8 @@ def _parallel_loop(bam_in, bam_out, _header_text,
                    nuc_protected_hit=None, nuc_accessible_hit=None,
                    nuc_llr_hit=None, nuc_llr_miss=None,
                    nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None,
-                   failure_messages=None):
+                   failure_messages=None,
+                   prob_threshold=RECALL_PROB_THRESHOLD):
     """Multi-core path with slim IPC and bounded in-flight queue.
 
     Uses apply_async + a bounded deque instead of imap to cap how many chunks
@@ -622,7 +634,8 @@ def _parallel_loop(bam_in, bam_out, _header_text,
                   cpg_mask_policy,
                   nuc_protected_hit, nuc_accessible_hit,
                   nuc_llr_hit, nuc_llr_miss,
-                  nuc_m5c_llr_hit, nuc_m5c_llr_miss),
+                  nuc_m5c_llr_hit, nuc_m5c_llr_miss,
+                  prob_threshold),
     ) as pool:
         buf_reads: list = []
         buf_payloads: list = []
@@ -694,6 +707,12 @@ def parse_args(default_recall_nucs: bool = False):
     p.add_argument('--min-llr', type=float, default=None,
                    help='Override native LLR cost per TF interval in joint decoding '
                         '(nats; default: enzyme preset; not an FDR threshold).')
+    p.add_argument('--prob-threshold', type=int, default=None,
+                   help='Min MM/ML probability 0-255 for re-reading modification '
+                        'calls. Default: chemistry preset -- 248 for Hia5 '
+                        'Nanopore (--seq nanopore, or the input\'s declared '
+                        f'chemistry), {RECALL_PROB_THRESHOLD} otherwise. R/Y- and '
+                        'MD-encoded DAF input is binary and ignores it.')
     p.add_argument('--min-opps', type=int, default=3,
                    help='Min informative target positions per call (default 3)')
     p.add_argument('--emission-uplift', type=float, default=None,
@@ -931,6 +950,34 @@ def _input_declared_mode(path):
     return modes.pop() if len(modes) == 1 else None
 
 
+def _resolve_recall_prob_threshold(args, header=None):
+    """Explicit --prob-threshold, else the chemistry preset.
+
+    The chemistry is --enzyme/--seq when given, else the input BAM's own
+    FIBERHMM-CHEMISTRY declaration in ``header`` (a custom --model recall of
+    a Hia5 Nanopore call therefore also reads ML at 248).
+    """
+    from fiberhmm.models import (
+        declared_prob_threshold_chemistry,
+        resolve_prob_threshold,
+    )
+
+    explicit = getattr(args, 'prob_threshold', None)
+    if explicit is not None:
+        if not 0 <= int(explicit) <= 255:
+            raise SystemExit('--prob-threshold must be in [0, 255]')
+        return int(explicit)
+    enzyme, seq = args.enzyme, args.seq
+    if (not enzyme or not seq) and header is not None:
+        declared_enzyme, declared_seq = declared_prob_threshold_chemistry(header)
+        if not enzyme:
+            enzyme = declared_enzyme
+            seq = seq or declared_seq
+        elif declared_enzyme == enzyme:
+            seq = seq or declared_seq
+    return resolve_prob_threshold(None, enzyme, seq, RECALL_PROB_THRESHOLD)
+
+
 def main(default_recall_nucs: bool = False):
     args = parse_args(default_recall_nucs=default_recall_nucs)
     try:
@@ -1087,13 +1134,12 @@ def _main(args):
 
     llr_hit, llr_miss = build_llr_tables(model)
     m5c_llr_hit = m5c_llr_miss = None
-    use_m5c_arg = getattr(args, 'use_m5c', None)
-    use_m5c = args.enzyme == 'ddda' if use_m5c_arg is None else use_m5c_arg
     cpg_mask_policy = getattr(args, 'cpg_mask_policy', 'unmethylated-only')
-    if use_m5c and (mode != 'daf' or args.enzyme not in (None, 'ddda')):
-        raise SystemExit(
-            '--use-m5c is calibrated only for DddA or a custom DAF/DddA model'
-        )
+    try:
+        use_m5c = resolve_cpg_masking(
+            getattr(args, 'use_m5c', None), args.enzyme, mode)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     if use_m5c:
         m5c_llr_hit, m5c_llr_miss = build_m5c_llr_tables(
             model, emission_uplift=uplift,
@@ -1195,6 +1241,13 @@ def _main(args):
         # mis-places every reverse-strand call. Auto-detect from the header,
         # overridable.
         input_molecular_frame = _resolve_input_molecular_frame(args, bam_in.header)
+        # ML threshold for re-reading MM/ML: explicit, else the chemistry
+        # preset (Hia5 Nanopore 248, otherwise 125), taken from --enzyme/--seq
+        # or the input's own chemistry declaration.
+        prob_threshold = _resolve_recall_prob_threshold(args, bam_in.header)
+        args.prob_threshold = prob_threshold
+        print(f"[recall_tfs] ML threshold for MM/ML calls: {prob_threshold}",
+              file=sys.stderr)
         from fiberhmm.inference.tf_recaller import warn_unapplied_call_daf_inputs
         warn_unapplied_call_daf_inputs(bam_in.header, mode)
 
@@ -1233,6 +1286,7 @@ def _main(args):
                     nuc_llr_hit, nuc_llr_miss,
                     nuc_m5c_llr_hit, nuc_m5c_llr_miss,
                     failure_messages=failure_messages,
+                    prob_threshold=prob_threshold,
                 )
             else:
                 n_reads, n_v2, n_tf, n_demoted, n_failed = _parallel_loop(
@@ -1246,6 +1300,7 @@ def _main(args):
                     nuc_llr_hit, nuc_llr_miss,
                     nuc_m5c_llr_hit, nuc_m5c_llr_miss,
                     failure_messages=failure_messages,
+                    prob_threshold=prob_threshold,
                 )
         finally:
             bam_in.close()

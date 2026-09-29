@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-extract_tags.py - Extract tags from FiberHMM-tagged BAMs to BED12/bigBed.
+fiberhmm-extract - Extract tags from FiberHMM-tagged BAMs to BED12/bigBed.
 
 Supported annotation types:
   - nucleosome: Nucleosomes (ns/nl or MA nuc) -> BED12 (one line per read).
@@ -26,16 +26,16 @@ Output files are named: {dataset}_{type}.bb (bigBed by default)
 
 Usage:
     # Default: extract all types to bigBed in same directory as input
-    python extract_tags.py -i tagged.bam
+    fiberhmm-extract -i tagged.bam
 
     # Extract only nucleosomes
-    python extract_tags.py -i tagged.bam --nucleosome
+    fiberhmm-extract -i tagged.bam --nucleosome
 
     # Extract to specific directory with 8 cores
-    python extract_tags.py -i tagged.bam -o output/ -c 8
+    fiberhmm-extract -i tagged.bam -o output/ -c 8
 
     # Keep BED files (in addition to bigBed)
-    python extract_tags.py -i tagged.bam --keep-bed
+    fiberhmm-extract -i tagged.bam --keep-bed
 """
 
 import argparse
@@ -1792,6 +1792,27 @@ def _print_tag_diagnostic(diag: Dict[str, object], extract_types: list) -> None:
     print()
 
 
+EXTRACT_PROB_THRESHOLD = 125
+
+
+def _default_extract_prob_threshold(path: str) -> int:
+    """Chemistry preset for a FiberHMM BAM: 248 for Hia5 Nanopore, else 125.
+
+    Read from the BAM's FIBERHMM-CHEMISTRY declaration (or a pre-declaration
+    fiberhmm-call @PG record); a BAM without either keeps 125.
+    """
+    from fiberhmm.models import (
+        declared_prob_threshold_chemistry,
+        default_prob_threshold,
+    )
+    try:
+        with pysam.AlignmentFile(path, 'rb', check_sq=False) as bam:
+            enzyme, seq = declared_prob_threshold_chemistry(bam.header)
+    except (OSError, ValueError):
+        enzyme = seq = None
+    return default_prob_threshold(enzyme, seq, EXTRACT_PROB_THRESHOLD)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Extract tags from FiberHMM-tagged BAMs to BED12/bigBed',
@@ -1799,16 +1820,16 @@ def main():
         epilog="""
 Examples:
     # Default: extract all types to bigBed in same directory as input
-    python extract_tags.py -i tagged.bam
+    fiberhmm-extract -i tagged.bam
 
     # Extract only nucleosomes
-    python extract_tags.py -i tagged.bam --nucleosome
+    fiberhmm-extract -i tagged.bam --nucleosome
 
     # Extract to specific directory with 8 cores
-    python extract_tags.py -i tagged.bam -o output/ -c 8
+    fiberhmm-extract -i tagged.bam -o output/ -c 8
 
     # Keep BED files (in addition to bigBed)
-    python extract_tags.py -i tagged.bam --keep-bed
+    fiberhmm-extract -i tagged.bam --keep-bed
         """
     )
 
@@ -1857,9 +1878,12 @@ Examples:
 
     # Filtering
     parser.add_argument('-q', '--min-mapq', type=int, default=0, help='Min mapping quality (default: 0, no filtering)')
-    parser.add_argument('-p', '--prob-threshold', type=int, default=125,
-                        help='Min probability for native MM/ML m6a/m5c (0-255); '
-                             'not applied to DddA MA ddda_mcg spans')
+    parser.add_argument('-p', '--prob-threshold', type=int, default=None,
+                        help='Min probability for native MM/ML m6a/m5c/dU calls '
+                             '(0-255). Default: 248 when the BAM declares Hia5 '
+                             'Nanopore (FIBERHMM-CHEMISTRY header), 125 '
+                             'otherwise. Not applied to DddA MA ddda_mcg spans '
+                             'or to R/Y/MD deaminations (binary).')
     parser.add_argument('--no-scores', action='store_true', help='Omit scores from output')
     parser.add_argument('--block-scores', action='store_true',
                         help='Append per-block quality as extra BED column(s) (BED12+N). '
@@ -1908,6 +1932,11 @@ Examples:
     if not os.path.exists(args.input):
         print(f"Error: Input file not found: {args.input}")
         sys.exit(1)
+
+    # ML threshold: explicit, else the BAM's declared chemistry preset
+    # (Hia5 Nanopore 248, otherwise 125).
+    if args.prob_threshold is None:
+        args.prob_threshold = _default_extract_prob_threshold(args.input)
 
     # Default output directory to input file's directory
     if args.outdir is None:
@@ -1961,6 +1990,7 @@ Examples:
     print(f"Output: {args.outdir}")
     print(f"Extract types: {', '.join(extract_types)}")
     print(f"Cores: {args.cores}")
+    print(f"ML threshold (native MM/ML): {args.prob_threshold}")
     print()
 
     # Quick tag sniff so the user knows which tracks will populate.

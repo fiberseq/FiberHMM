@@ -4,8 +4,8 @@ Export per-position HMM posterior probabilities for downstream analysis.
 
 Runs the HMM forward-backward algorithm on each read to produce P(footprint)
 at every position. Input is any BAM with MM/ML modification tags (the same BAM
-you would pass to apply_model.py). This is a parallel pipeline to apply_model,
-not a downstream step.
+you would pass to fiberhmm-apply). This is a parallel pipeline to
+fiberhmm-apply, not a downstream step.
 
 Supports two output formats:
   - TSV (gzipped): No extra dependencies, base64-encoded uint8 posteriors
@@ -13,10 +13,10 @@ Supports two output formats:
 
 Usage:
     # TSV output (no extra deps)
-    python export_posteriors.py -i experiment.bam -m model.json -o posteriors.tsv.gz -c 4
+    fiberhmm-posteriors -i experiment.bam --enzyme hia5 --seq pacbio -o posteriors.tsv.gz -c 4
 
-    # HDF5 output (requires h5py)
-    python export_posteriors.py -i experiment.bam -m model.json -o posteriors.h5 -c 4
+    # HDF5 output (requires h5py: pip install "fiberhmm[posteriors]")
+    fiberhmm-posteriors -i experiment.bam -m model.json -o posteriors.h5 -c 4
 """
 
 import argparse
@@ -941,7 +941,7 @@ def main():
     )
 
 
-# Alias for apply_model.py integration
+# Python API entry point (same pipeline as the fiberhmm-posteriors command)
 def export_posteriors_from_bam(
     input_bam: str,
     model_path: str,

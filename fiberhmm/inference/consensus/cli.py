@@ -43,7 +43,7 @@ def main(argv=None):
     p.add_argument('--pool-loci',action='store_true',help='CL-CR: pool BED6 windows in their provided orientations')
     p.add_argument('--chemistry',choices=['ddda','dddb','hia5-pacbio','hia5-nanopore'],help='Explicit missing-metadata declaration for --bam; conflicts fail')
     p.add_argument('--parameters',help='JSON parameter groups; see --schema')
-    p.add_argument('--engine',choices=['lattice_recaller','staged_native_families'],help='Consensus engine (default lattice_recaller; staged_native_families is the Monte Carlo engine). Overrides cr.engine from --parameters or --resume')
+    p.add_argument('--engine',choices=['lattice_recaller','staged_native_families'],help='Consensus engine (default lattice_recaller; staged_native_families is the deprecated Monte Carlo engine). Overrides cr.engine from --parameters or --resume')
     p.add_argument('--consolidation-bp',type=int,help='staged_native_families only: shared-family edge allowance (default 10; 5 gives finer grouping)')
     p.add_argument('--stop-after',choices=['native','parents','consolidated','resolved'],help='staged_native_families only: last stage to compute (the lattice recaller runs in one pass)')
     p.add_argument('--start-at',choices=['native','consolidation'],default='native',help='staged_native_families only: consolidation restarts from saved native fits')

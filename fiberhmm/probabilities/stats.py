@@ -23,7 +23,7 @@ def generate_probability_stats(accessible_counters: Dict[str, 'ContextCounter'],
     """
     Generate summary statistics and QC plots for emission probability tables.
 
-    This is the shared implementation used by generate_probs.py and bootstrap_probs.py.
+    This is the shared implementation used by fiberhmm-probs.
 
     Args:
         accessible_counters: Dict mapping base -> ContextCounter for accessible regions

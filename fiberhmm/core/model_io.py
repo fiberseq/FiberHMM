@@ -114,7 +114,7 @@ def _load_pickle(filepath: str) -> FiberHMM:
     if isinstance(obj, dict):
         if obj.get('model_type') == 'FiberHMM_native':
             return FiberHMM.from_dict(obj)
-        # Also handle the new metadata format from train_model.py
+        # Also handle the metadata format written by fiberhmm-train
         if 'model' in obj:
             inner = obj['model']
             if isinstance(inner, FiberHMM):

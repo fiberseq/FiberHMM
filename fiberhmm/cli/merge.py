@@ -20,7 +20,7 @@ reads. Output is coordinate-sorted and indexed.
 Consensus reads carry:
     MA:Z   ...;deam+:<CT coverage>;deam-:<GA coverage>
     cs:Z   source read names, "<ct_name>;<ga_name>"
-    mc/mg/pm/pa/sb/sd/sr/sg  pairing evidence carried from fiberhmm-pair
+    mc/mg/pm/pa/sb/sd/sr/sg/dm/mv  pairing evidence carried from fiberhmm-pair
     dc:i   reference-frame deamination count (C->T and G->A)
     bc:i   canonical source-base conflicts replaced by N
 """
@@ -35,9 +35,14 @@ from collections import defaultdict
 import numpy as np
 import pysam
 
+from fiberhmm.models import DEFAULT_PROB_THRESHOLD
 from fiberhmm.crossstrand.consensus import build_consensus
 from fiberhmm.crossstrand.pairing import FLAVOR_CT, read_flavor
-from fiberhmm.crossstrand.recall import RecallContext, recall_consensus_full
+from fiberhmm.crossstrand.recall import (
+    RecallContext,
+    consensus_cpg_intervals,
+    recall_consensus_full,
+)
 from fiberhmm.inference.bam_output import atomic_output, temporary_output_path
 from fiberhmm.io.bam_header import append_ma_types
 
@@ -100,16 +105,18 @@ def _merged_bp(intervals):
 def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
               recall=False, enzyme='ddda', phase_nrl=196,
               nuc_recall_policy='conservative',
-              derived_tf_max_edge_ambiguity=12):
+              derived_tf_max_edge_ambiguity=12, use_m5c=None):
     t0 = time.time()
     ctx = None
     if recall:
-        ctx = RecallContext(enzyme)
+        ctx = RecallContext(enzyme, use_m5c=use_m5c)
         print(f"merge-recall: loaded {enzyme} apply+recall models (k={ctx.k}); "
               f"re-calling footprints (HMM + nuc + TF recallers) on both-strand "
-              f"consensus reads", file=sys.stderr)
+              f"consensus reads; CpG-aware recall "
+              f"{ctx.cpg_mask_policy or 'off'}", file=sys.stderr)
     bam = pysam.AlignmentFile(in_bam, 'rb')
-    header = append_ma_types(bam.header, ['deam'])
+    header = append_ma_types(
+        bam.header, ['deam', 'nuc', 'msp', 'tf'] if recall else ['deam'])
 
     # Records are written unsorted to a hidden sibling, sorted into another
     # hidden sibling and only then renamed to out_bam; the unsorted file is
@@ -188,11 +195,17 @@ def _run_merge_passes(bam, in_bam, out_bam, unsorted, header, prob_threshold,
             ]
             seg = _make_consensus_segment(cons, header, tid, pair_tags)
             if ctx is not None:
+                cpg_intervals = (
+                    consensus_cpg_intervals(ct_read, ga_read,
+                                            cons.ref_start, cons.length)
+                    if ctx.cpg_mask_policy else None
+                )
                 recalled = recall_consensus_full(
                     seg, ctx, phase_nrl=phase_nrl,
                     nuc_recall_policy=nuc_recall_policy,
                     derived_tf_max_edge_ambiguity=(
                         derived_tf_max_edge_ambiguity),
+                    cpg_intervals=cpg_intervals,
                 )
                 if not recalled:
                     n_build_fail += 1
@@ -309,8 +322,18 @@ Examples:
              'nucleosome refinement to have a deamination hit within BP on '
              'both sides (default 12; -1 disables).',
     )
-    p.add_argument('-p', '--prob-threshold', type=int, default=0,
-                   help='Min ML prob for MM/ML dU calls (default 0)')
+    p.add_argument('--use-m5c', action=argparse.BooleanOptionalAction,
+                   default=None,
+                   help='With --recall: DddA CpG-aware recall, as in '
+                        'fiberhmm-call and fiberhmm-recall-tfs (CpGs excluded '
+                        'except inside the source reads\' ddda_ucg islands). '
+                        'Default: on for --enzyme ddda.')
+    p.add_argument('-p', '--prob-threshold', type=int,
+                   default=DEFAULT_PROB_THRESHOLD,
+                   help='Min ML probability for MM/ML-native dU calls (0-255; '
+                        f'default {DEFAULT_PROB_THRESHOLD}, the same as '
+                        'fiberhmm-call). R/Y- and MD-encoded input is binary '
+                        'and ignores it.')
     p.add_argument('--io-threads', type=int, default=4, help='htslib compression threads (default 4)')
     from fiberhmm.core.bam_reader import add_daf_run_mask_arguments, apply_daf_run_mask_arguments
     add_daf_run_mask_arguments(p)
@@ -333,7 +356,8 @@ Examples:
               nuc_recall_policy=args.nuc_recall_policy,
               derived_tf_max_edge_ambiguity=(
                   None if args.ddda_derived_tf_max_edge_gap < 0
-                  else args.ddda_derived_tf_max_edge_gap))
+                  else args.ddda_derived_tf_max_edge_gap),
+              use_m5c=args.use_m5c)
 
 
 if __name__ == '__main__':

@@ -31,6 +31,7 @@ from typing import List, Optional
 import numpy as np
 import pysam
 
+from fiberhmm.models import DEFAULT_PROB_THRESHOLD
 from fiberhmm.cli.extract_tags import _build_query_to_ref, _deam_positions_list
 
 _PRIME = (1 << 61) - 1
@@ -354,9 +355,12 @@ Examples:
                              'with the same dominant flavour (C->T vs G->A, i.e. the '
                              'same template strand) can be duplicates; alignment '
                              'orientation is never used.')
-    parser.add_argument('-p', '--prob-threshold', type=int, default=0,
-                        help='Min ML probability for MM/ML-native dU calls (0-255, '
-                             'default 0 = accept all). Ignored for R/Y and MD sources.')
+    parser.add_argument('-p', '--prob-threshold', type=int,
+                        default=DEFAULT_PROB_THRESHOLD,
+                        help='Min ML probability for MM/ML-native dU calls (0-255; '
+                             f'default {DEFAULT_PROB_THRESHOLD}, the same as '
+                             'fiberhmm-call). R/Y- and MD-encoded input is binary '
+                             'and ignores it.')
     parser.add_argument('--num-hashes', type=int, default=32,
                         help='MinHash signature width (default 32).')
     parser.add_argument('--bands', type=int, default=8,

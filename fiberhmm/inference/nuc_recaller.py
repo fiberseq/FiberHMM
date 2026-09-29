@@ -14,8 +14,7 @@ nucleosome-sized pieces, and unresolved edge ambiguity stays protected.
           Viterbi overshoot, whose cumulative LLR -> nq, whose left/right
           ambiguity -> el/er (conservative+loose edge convention, same as tf+QQQ).
 
-Design notes: nuc_recaller_collab/DESIGN.md (esp. §7b). The split is evidence-only
-(no size prior); DddB recovers ~20-30% of buried linkers, which is the accepted
+The split is evidence-only (no size prior); DddB recovers ~20-30% of buried linkers, which is the accepted
 floor for an under-deaminating enzyme. Fiber-seq / DddA give the kernel much more
 signal per read.
 """

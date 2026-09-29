@@ -116,8 +116,12 @@ def _process_bam_streaming_pipeline_fused(
     ddda_mcg: bool = False,
     daf_snp_mask_path: str = None,
     fail_on_mostly_unmapped: bool = False,
+    cpg_mask_policy: Optional[str] = None,
 ):
-    """Fused apply+recall streaming pipeline."""
+    """Fused apply+recall streaming pipeline.
+
+    ``cpg_mask_policy`` enables DddA CpG-aware recall (None = off).
+    """
     from fiberhmm.cli.provenance import output_header_with_provenance
 
     configure_daf_snp_mask(daf_snp_mask_path)
@@ -178,7 +182,7 @@ def _process_bam_streaming_pipeline_fused(
                               filter_chimeras, chimera_min_seg, chimera_purity,
                               phase_nrl, nuc_profile_path,
                               derived_tf_max_edge_ambiguity, ddda_mcg,
-                              nuc_model_path),
+                              nuc_model_path, cpg_mask_policy),
                 )
 
                 inflight = deque()

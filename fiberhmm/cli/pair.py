@@ -50,6 +50,7 @@ from itertools import chain
 import numpy as np
 import pysam
 
+from fiberhmm.models import DEFAULT_PROB_THRESHOLD
 from fiberhmm.crossstrand.pairing import (
     PairParams, STATUS_PAIRED, SequenceScore, assign_pairs, build_feature,
 )
@@ -359,7 +360,12 @@ Examples:
                    help='Max difference rate on a sequence-selected pair (default 0.01)')
     p.add_argument('--min-sequence-margin', type=float, default=0.002,
                    help='Min sequence preference/assignment margin (default 0.002)')
-    p.add_argument('-p', '--prob-threshold', type=int, default=0, help='Min ML prob for MM/ML dU calls (default 0)')
+    p.add_argument('-p', '--prob-threshold', type=int,
+                   default=DEFAULT_PROB_THRESHOLD,
+                   help='Min ML probability for MM/ML-native dU calls (0-255; '
+                        f'default {DEFAULT_PROB_THRESHOLD}, the same as '
+                        'fiberhmm-call). R/Y- and MD-encoded input is binary '
+                        'and ignores it.')
     p.add_argument('--max-component', type=int, default=10000,
                    help='Safety ceiling for a complete overlap component (default 10000)')
     p.add_argument('--io-threads', type=int, default=4, help='htslib compression threads for output (default 4)')
@@ -372,6 +378,13 @@ Examples:
     p.add_argument('--ddda-derived-tf-max-edge-gap', type=int, default=12,
                    metavar='BP', help='Edge-evidence requirement for TF calls '
                    'exposed only by DddA nucleosome refinement (default 12; -1 disables)')
+    p.add_argument('--use-m5c', action=argparse.BooleanOptionalAction,
+                   default=None,
+                   help='Joint recall: DddA CpG-aware recall, as in '
+                        'fiberhmm-call and fiberhmm-recall-tfs -- CpG '
+                        'observations are excluded except inside the source '
+                        'reads\' ddda_ucg islands (fiberhmm-tag-m5c). Default: '
+                        'on; --no-use-m5c for an ablation.')
     from fiberhmm.core.bam_reader import add_daf_run_mask_arguments, apply_daf_run_mask_arguments
     add_daf_run_mask_arguments(p)
     args = p.parse_args()
@@ -455,6 +468,7 @@ Examples:
                     None if args.ddda_derived_tf_max_edge_gap < 0
                     else args.ddda_derived_tf_max_edge_gap
                 ),
+                use_m5c=args.use_m5c,
             )
     except (OSError, ValueError, RuntimeError) as error:
         print(f'fiberhmm-pair: error: {error}', file=sys.stderr)

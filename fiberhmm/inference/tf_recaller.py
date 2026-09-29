@@ -100,6 +100,69 @@ TF_DECODER_VERSION = "multi_interval_v1"
 CPG_MASK_POLICIES = ("unmethylated-only", "methylated-only")
 
 
+def resolve_cpg_masking(use_m5c: Optional[bool], enzyme: Optional[str],
+                        mode: Optional[str]) -> bool:
+    """The DddA CpG-aware recall policy shared by every recalling command.
+
+    ``fiberhmm-call``, ``fiberhmm-recall-tfs``/``-recall-nucs`` and the joint
+    both-strand recall of ``fiberhmm-pair``/``-merge`` all resolve it here:
+    unset (``None``) means on for DddA and off for every other enzyme; an
+    explicit request is honoured, but enabling it outside DAF mode or for a
+    non-DddA preset is refused (the CpG treatment is calibrated for DddA only).
+    Raises :class:`ValueError` on such a request.
+    """
+    enabled = (enzyme == 'ddda') if use_m5c is None else bool(use_m5c)
+    if enabled and (mode != 'daf' or enzyme not in (None, 'ddda')):
+        raise ValueError(
+            '--use-m5c is calibrated only for DddA or a custom DAF/DddA model'
+        )
+    return enabled
+
+
+def cpg_mask_from_intervals(read_len: int, policy: str = "unmethylated-only",
+                            ucg_intervals=(), mcg_intervals=()) -> np.ndarray:
+    """CpG mask from SEQ-frame ``ddda_ucg``/``ddda_mcg`` intervals.
+
+    ``True`` marks positions whose CpG observations are excluded from recall.
+    ``unmethylated-only`` (the production policy) excludes every CpG except
+    those inside confidently unmethylated whole-island calls (``ddda_ucg``);
+    ``methylated-only`` reproduces the former policy that excluded CpGs only
+    inside ``ddda_mcg`` intervals.
+    """
+    if policy not in CPG_MASK_POLICIES:
+        raise ValueError(
+            f"unknown CpG mask policy {policy!r}; expected one of "
+            f"{', '.join(CPG_MASK_POLICIES)}"
+        )
+    read_len = int(read_len)
+    if policy == "unmethylated-only":
+        mask = np.ones(read_len, dtype=bool)
+        for start, end in ucg_intervals or ():
+            mask[max(0, int(start)):min(read_len, int(end))] = False
+        return mask
+    mask = np.zeros(read_len, dtype=bool)
+    for start, end in mcg_intervals or ():
+        mask[max(0, int(start)):min(read_len, int(end))] = True
+    return mask
+
+
+def read_cpg_intervals(read) -> dict:
+    """SEQ-frame ``ddda_ucg``/``ddda_mcg`` intervals carried by ``read``'s MA.
+
+    Returns ``{'ucg': [...], 'mcg': [...]}`` (empty lists without MA). Small
+    and picklable, so pipelines can compute it in the main process and ship
+    it to workers that only see a slim payload.
+    """
+    if not read.has_tag('MA'):
+        return {'ucg': [], 'mcg': []}
+    from fiberhmm.daf.m5c import ma_intervals
+
+    return {
+        'ucg': [tuple(map(int, iv)) for iv in ma_intervals(read, DDDA_UCG_FEATURE)],
+        'mcg': [tuple(map(int, iv)) for iv in ma_intervals(read, DDDA_MCG_FEATURE)],
+    }
+
+
 def build_cpg_mask(read, read_len: int,
                    policy: str = "unmethylated-only") -> np.ndarray:
     """Return positions at which CpG observations are excluded from recall.
@@ -109,27 +172,15 @@ def build_cpg_mask(read, read_len: int,
     former policy, which masked only ``ddda_mcg`` intervals, is retained for
     explicit compatibility and comparison runs.
     """
-    from fiberhmm.daf.m5c import ma_intervals
-
     if policy not in CPG_MASK_POLICIES:
         raise ValueError(
             f"unknown CpG mask policy {policy!r}; expected one of "
             f"{', '.join(CPG_MASK_POLICIES)}"
         )
-    if policy == "unmethylated-only":
-        mask = np.ones(int(read_len), dtype=bool)
-        intervals = (ma_intervals(read, DDDA_UCG_FEATURE)
-                     if read.has_tag('MA') else [])
-        for start, end in intervals:
-            mask[max(0, start):min(read_len, end)] = False
-        return mask
-
-    mask = np.zeros(int(read_len), dtype=bool)
-    intervals = (ma_intervals(read, DDDA_MCG_FEATURE)
-                 if read.has_tag('MA') else [])
-    for start, end in intervals:
-        mask[max(0, start):min(read_len, end)] = True
-    return mask
+    intervals = read_cpg_intervals(read)
+    return cpg_mask_from_intervals(
+        read_len, policy, intervals['ucg'], intervals['mcg'],
+    )
 
 
 # Per-enzyme defaults: (min_llr, emission_uplift). All bundled models are used
@@ -747,11 +798,20 @@ def call_single_excursion_intervals(obs: np.ndarray, lo: int, hi: int,
     )
 
 
-def extract_modifications(read, mode: str, context_size: int = 3
+#: ML threshold recall-tfs/recall-nucs have always used for MM/ML input.
+#: Chemistry presets override it (Hia5 Nanopore: 248); see
+#: :func:`fiberhmm.models.resolve_prob_threshold`.
+RECALL_PROB_THRESHOLD = 125
+
+
+def extract_modifications(read, mode: str, context_size: int = 3,
+                          prob_threshold: int = RECALL_PROB_THRESHOLD,
                           ) -> Optional[Tuple[set, str, str]]:
     """Pull (mod_positions, strand, sequence) for a read.
 
     Returns None if the read can't be processed (no MM tag, no sequence).
+    ``prob_threshold`` applies to MM/ML calls only; R/Y and MD deaminations
+    are binary.
     Uses the manual MM/ML parser instead of pysam.modified_bases (the
     latter segfaults on some long Hia5 reads; SIGSEGV is uncatchable).
     """
@@ -787,7 +847,7 @@ def extract_modifications(read, mode: str, context_size: int = 3
         return None
     mod_pos = parse_mm_tag_query_positions(
         mm_tag, ml_tag, seq, read.is_reverse,
-        prob_threshold=125, mode=mode,
+        prob_threshold=prob_threshold, mode=mode,
     )
     if mode == 'daf':
         strand = detect_daf_strand(seq, mod_pos)
@@ -857,7 +917,9 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
                 input_molecular_frame: bool = True,
                 m5c_llr_hit: Optional[np.ndarray] = None,
                 m5c_llr_miss: Optional[np.ndarray] = None,
-                cpg_mask_policy: str = "unmethylated-only") -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
+                cpg_mask_policy: str = "unmethylated-only",
+                prob_threshold: int = RECALL_PROB_THRESHOLD,
+                ) -> Tuple[List[TFCall], List[Tuple[int, int]], List[Tuple[int, int]]]:
     """Process one read.
 
     Returns:
@@ -897,7 +959,8 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
         ns_raw, nl_raw = flip_intervals_to_seq(ns_raw, nl_raw, read)
         as_raw, al_raw = flip_intervals_to_seq(as_raw, al_raw, read)
 
-    extracted = extract_modifications(read, mode, context_size)
+    extracted = extract_modifications(read, mode, context_size,
+                                      prob_threshold=prob_threshold)
     if extracted is None:
         # Pass through v2 calls unchanged
         nucs = [

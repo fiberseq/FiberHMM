@@ -621,6 +621,15 @@ def make_apply_payload(read, mode: str = 'fiber', ref_fasta=None,
             if rest is not None:
                 payload['_daf_md_result'] = rest
 
+    if mode == 'daf' and read.has_tag('MA'):
+        # DddA CpG-aware recall reads the molecule's own tag-m5c island calls
+        # (ddda_ucg exempts CpGs from masking); the worker only sees this
+        # payload, so the SEQ-frame intervals travel with it.
+        from fiberhmm.inference.tf_recaller import read_cpg_intervals
+        cpg_intervals = read_cpg_intervals(read)
+        if cpg_intervals['ucg'] or cpg_intervals['mcg']:
+            payload['_cpg_ma_intervals'] = cpg_intervals
+
     if include_ddda_mcg:
         from fiberhmm.daf.m5c import build_ddda_mcg_observation_payload
         observations = build_ddda_mcg_observation_payload(

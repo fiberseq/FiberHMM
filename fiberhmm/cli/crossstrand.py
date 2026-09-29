@@ -23,6 +23,7 @@ import os
 import sys
 import time
 
+from fiberhmm.models import DEFAULT_PROB_THRESHOLD
 from fiberhmm.cli.merge import run_merge
 from fiberhmm.cli.duplex import run_pairing
 from fiberhmm.crossstrand.pairing import PairParams
@@ -80,17 +81,18 @@ def run_pipeline(in_bam, out_bam, params: PairParams, recall=True, enzyme='ddda'
 
 def main():
     p = argparse.ArgumentParser(
-        prog='fiberhmm-crossstrand',
+        prog='python -m fiberhmm.cli.crossstrand',
         description='One-command DAF cross-strand consensus + both-strand '
                     're-call (pair -> merge -> recall).',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
     # Full pipeline, both recallers on the both-strand consensus (default)
-    fiberhmm-crossstrand -i calls.bam -o consensus.bam -r hg38.fa
+    # Deprecated: use fiberhmm-pair (same pipeline, supported command).
+    python -m fiberhmm.cli.crossstrand -i calls.bam -o consensus.bam -r hg38.fa
 
     # Consensus only (skip the footprint re-call), and only consensus reads
-    fiberhmm-crossstrand -i calls.bam -o consensus.bam -r hg38.fa --no-recall --pairs-only
+    python -m fiberhmm.cli.crossstrand -i calls.bam -o consensus.bam -r hg38.fa --no-recall --pairs-only
         """,
     )
     p.add_argument('-i', '--input', required=True, help='Footprint-called DAF BAM (coord-sorted + indexed)')
@@ -123,7 +125,11 @@ Examples:
                    help='Max difference rate on a sequence-selected pair (default 0.01)')
     p.add_argument('--min-sequence-margin', type=float, default=0.001,
                    help='Min sequence preference/assignment margin (default 0.001)')
-    p.add_argument('-p', '--prob-threshold', type=int, default=0, help='Min ML prob for MM/ML dU calls (default 0)')
+    p.add_argument('-p', '--prob-threshold', type=int,
+                   default=DEFAULT_PROB_THRESHOLD,
+                   help='Min ML probability for MM/ML-native dU calls (0-255; '
+                        f'default {DEFAULT_PROB_THRESHOLD}). R/Y- and MD-encoded '
+                        'input is binary and ignores it.')
     p.add_argument('--io-threads', type=int, default=4, help='htslib compression threads (default 4)')
     p.add_argument('--phase-nrl', type=int, default=196,
                    help='Nucleosome repeat length for consensus recall (default 196)')

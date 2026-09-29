@@ -19,6 +19,7 @@ CHIMERA_RESULT = "__fiberhmm_chimera_skip__"
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
+    payload_cpg_mask,
     run_ddda_mcg_stage,
     run_hmm_apply_stage,
 )
@@ -85,8 +86,12 @@ def _init_fused_worker(
     derived_tf_max_edge_ambiguity=None,
     ddda_mcg=False,
     nuc_model_path=None,
+    cpg_mask_policy=None,
 ):
     """Initialize worker process for the fused apply+recall pipeline.
+
+    ``cpg_mask_policy`` (e.g. ``'unmethylated-only'``) turns on DddA
+    CpG-aware recall exactly as in ``fiberhmm-recall-tfs``; ``None`` = off.
 
     Loads the apply HMM model plus the LLR tables used for TF configuration
     scan. recall_model_path=None means reuse the apply model's emissions
@@ -140,7 +145,8 @@ def _init_fused_worker(
         _worker_recall_state['nuc_llr_hit'] = nuc_llr_hit
         _worker_recall_state['nuc_llr_miss'] = nuc_llr_miss
     _worker_recall_state['ddda_mcg'] = bool(ddda_mcg)
-    if ddda_mcg:
+    _worker_recall_state['cpg_mask_policy'] = cpg_mask_policy
+    if ddda_mcg or cpg_mask_policy:
         m5c_hit, m5c_miss = build_m5c_llr_tables(
             r_model, emission_uplift=emission_uplift,
         )
@@ -320,6 +326,11 @@ def _process_fused_payload_chunk_worker(
                     # Keep ordinary apply/recall output even if this optional
                     # early feature fails on one malformed read.
                     m5c_mask, m5c_spans, m5c_failed = None, [], True
+            elif _worker_recall_state.get('cpg_mask_policy'):
+                m5c_mask = payload_cpg_mask(
+                    payload, len(fiber_read['query_sequence']),
+                    _worker_recall_state['cpg_mask_policy'],
+                )
 
             fused_result = build_fused_recall_result(
                 fiber_read,

@@ -36,6 +36,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pysam
 
+from fiberhmm.models import DEFAULT_PROB_THRESHOLD
 from fiberhmm import __version__
 from fiberhmm.crossstrand.duplex import (
     DuplexModel,
@@ -461,7 +462,7 @@ def run_duplex(in_bam: str, out_bam: str, reference_path: str, **kwargs):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="fiberhmm-duplex",
+        prog="python -m fiberhmm.cli.duplex",
         description=(
             "Sequence-identity-free CT/GA duplex pairing from FiberHMM "
             "nucleosome lattices and DddA protection profiles."
@@ -492,8 +493,11 @@ def main():
                         help="Minimum genomic overlap in bp (default 1500)")
     parser.add_argument("--min-nucs", type=int, default=4,
                         help="Minimum dyads in the overlap on each read (default 4)")
-    parser.add_argument("-p", "--prob-threshold", type=int, default=0,
-                        help="Minimum ML probability for MM/ML dU calls (default 0)")
+    parser.add_argument("-p", "--prob-threshold", type=int,
+                        default=DEFAULT_PROB_THRESHOLD,
+                        help="Minimum ML probability for MM/ML-native dU calls "
+                             f"(0-255; default {DEFAULT_PROB_THRESHOLD}). R/Y- and "
+                             "MD-encoded input is binary and ignores it.")
     parser.add_argument("--max-component", type=int, default=10000,
                         help="Safety ceiling for a complete overlap component (default 10000)")
     parser.add_argument("--io-threads", type=int, default=4,

@@ -20,6 +20,7 @@ from fiberhmm.inference.engine import (
 from fiberhmm.inference.fused_stages import (
     apply_result_has_footprints,
     build_fused_recall_result,
+    payload_cpg_mask,
     run_ddda_mcg_stage,
     run_hmm_apply_stage,
 )
@@ -532,7 +533,8 @@ def _init_fused_region_worker(
             )
         )
     _worker_recall_state['ddda_mcg'] = bool(params.get('ddda_mcg', False))
-    if _worker_recall_state['ddda_mcg']:
+    _worker_recall_state['cpg_mask_policy'] = params.get('cpg_mask_policy')
+    if _worker_recall_state['ddda_mcg'] or _worker_recall_state['cpg_mask_policy']:
         m5c_hit, m5c_miss = build_m5c_llr_tables(
             r_model, emission_uplift=emission_uplift,
         )
@@ -748,6 +750,11 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                                 )
                             except Exception:
                                 m5c_mask, m5c_spans, m5c_failed = None, [], True
+                        elif _worker_recall_state.get('cpg_mask_policy'):
+                            m5c_mask = payload_cpg_mask(
+                                payload, len(fiber_read['query_sequence']),
+                                _worker_recall_state['cpg_mask_policy'],
+                            )
 
                         fused_result = build_fused_recall_result(
                             fiber_read,
