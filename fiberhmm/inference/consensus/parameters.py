@@ -208,7 +208,6 @@ class RecallerOptions:
     edge_contraction_rate: float = control(0.5, 'Edge contraction: marked rate', 'Sites at the class edge that class members mark more often than this are moved outside the box.', 0.05, 0.99, 0.05)
     edge_minimum_members: float = control(20., 'Edge contraction: minimum members', 'Posterior-weighted class members a site needs before its marked rate is used.', 1, 100000, 1)
     edge_gain_nats: float = control(5., 'Edge contraction: held-out gain (nats)', 'A contraction is kept only if it is proposed in both halves and raises held-out likelihood by this much, summed over both.', 0, 10000, 0.5)
-    abutting: bool = control(False, 'Call footprints abutting wider protection (experimental)', 'EXPERIMENTAL, off by default: the abutting configurations are not a normalized prior (each gets the whole hidden-edge box, so the class hypothesis gains mass with the number of possible extensions, even with no chemical evidence); runs that enable it are flagged in the manifest. A protected stretch with one edge where a class edge sits (within its edge box) that runs on past the class is called as that class with something abutting it (e.g. CTCF against a nucleosome), even without a marked linker on the far side. Off: such stretches count as broader protection.')
     class_weighting: str = control('bp', 'Class configuration weighting', 'bp: each configuration weighted by the edge positions it covers inside the class boxes (widening boxes adds tolerance without diluting); configurations: uniform over lattice configurations.', choices=['bp', 'configurations'])
     learned_spots: bool = control(True, 'Learned internal spots', 'Learn a class-specific mark rate at interior positions that are sometimes marked while bound (e.g. CTCF +7/+8 on Hia5); kept only when held-out likelihood improves.')
     spot_minimum_evidence_nats: float = control(10., 'Spot channel resolution (nats)', 'Spots are learned only on channels whose expected evidence over the class reaches this.', 0, 1000, 0.5)
@@ -271,6 +270,15 @@ def parse_options(values=None):
     result = {}
     for group, cls in GROUPS.items():
         supplied = values.get(group, {})
+        if group == 'recaller' and isinstance(supplied, dict) and 'abutting' in supplied:
+            # Removed in 3.0 (its configuration weights were not a normalized prior). Manifests, frozen catalogs and
+            # sessions from before the removal carry abutting=false; accept and drop that, refuse a request for it.
+            if supplied['abutting'] is not False:
+                raise ValueError('recaller.abutting was removed in FiberHMM 3.0: it overweighted classes against '
+                                 'wider protection. Molecules whose protected run lines up with one class edge are '
+                                 'reported in the "+ edge" prevalence tier; for footprints against a nucleosome, '
+                                 'use recaller.linker=either.')
+            supplied = {k: v for k, v in supplied.items() if k != 'abutting'}
         definitions = {f.name: f for f in fields(cls)}
         if not isinstance(supplied, dict) or set(supplied) - set(definitions):
             raise ValueError(f"Unknown parameter in {group}")

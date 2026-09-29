@@ -125,13 +125,15 @@ These change numbers relative to 2.x.
 - `fiberhmm-site-consensus` and targeted families (use `fiberhmm-consensus`).
 - The staged Monte Carlo consensus engine (`--engine staged_native_families`)
   is deprecated but still available.
+- The `recaller.abutting` option (added during development; its configuration
+  weights were not a normalized prior). Molecules whose protected run lines up
+  with one class edge are reported in the "+ edge" prevalence tier; for
+  footprints against a nucleosome use `recaller.linker=either`.
 
 ### Known issues
 
 - Tools that re-read MM/ML from an existing BAM (`recall-tfs`, `extract`,
   `qc`) use 125 for non-Nanopore chemistries while `call`/`apply` use 128.
-- `recaller.abutting` is experimental and biases prevalence and support upward
-  when enabled.
 - `fiberhmm-tag-consensus` needs an assignment table that no shipped command
   produces; its format is documented in the command's help.
 - Legacy `.pickle` models execute code when loaded; load only trusted files.

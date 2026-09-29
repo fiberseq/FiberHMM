@@ -357,12 +357,6 @@ def _tsv_rows(rows):
     return [dict(r, edge_range=_range_text(r.get('edge_range'))) for r in rows]
 
 
-def _abutting_warning():
-    return ('recaller.abutting is EXPERIMENTAL: its configuration weights are not a normalized prior (the class gains '
-            'likelihood with the number of possible abutting extensions, even without chemical evidence), so '
-            'prevalence and support for abutting classes are biased upward. Treat these results as exploratory.')
-
-
 def run_lattice_recaller(payload, options, output_dir=None, progress=None, frozen=None):
     """frozen: a frozen.FrozenClasses; classes and tiles then come from the catalog (no discovery)."""
     from ..harmonized_families.workflow import prepare_sources
@@ -376,9 +370,6 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
     before = digest(payload); sources = prepare_sources(payload, options)
     write_json(out/'evidence.json.gz', payload)
     warnings = []
-    if opt.abutting:
-        import warnings as _warnings
-        warnings.append(_abutting_warning()); _warnings.warn(warnings[-1]); progress('recaller_discovery', 'WARNING: ' + warnings[-1])
     from ..execution import shared_worker_pool
     cores = options['compute'].cores
     with shared_worker_pool(cores):

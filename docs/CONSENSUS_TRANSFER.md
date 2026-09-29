@@ -69,7 +69,7 @@ turned off. The code path for each molecule is the same as in a normal run.
 
 - **Fixed by the catalog:** the class set, class spans and edge boxes, the
   per-channel boxes and learned spot rates, the tiles, and all recaller options
-  (linker, flank, weighting, abutting, BF threshold, support and resolution
+  (linker, flank, weighting, BF threshold, support and resolution
   thresholds).
 - **Estimated from the target molecules:**
   - EM prevalence and the three prevalence tiers;

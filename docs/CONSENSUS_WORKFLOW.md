@@ -197,7 +197,6 @@ The `recaller` controls:
 | `report_unsupported_classes` | off | also catalogue unsupported classes |
 | `efficiency_calibration` | off | scale each channel's accessible rate by its most-marked molecules |
 | `tile_bp`, `tile_step_bp`, `minimum_channel_units` | 350, 250, 20 | tiling and minimum molecules per channel |
-| `abutting` | off | **Experimental.** Calls a protected stretch that runs on past the class, with one edge in a class box, as the class with something abutting it. Its configuration weights are not a normalized prior: the class gains likelihood from the number of possible extensions even without chemical evidence. Runs that enable it get a warning and a `data_warnings` entry, and their prevalence and support are biased upward. |
 
 ## Outputs
 

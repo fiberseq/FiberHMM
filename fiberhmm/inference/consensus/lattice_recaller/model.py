@@ -84,21 +84,7 @@ def _prepare(u, gs, f, opt):
         br |= valid & (l1 <= g['L'][1]) & (r0 >= g['R'][0])
     br &= ~anycls
     full = lambda x: np.broadcast_to(x, valid.shape)
-    # Abutting footprints (option): a protected run with one edge in a class edge box that continues past the class's
-    # other box is that class with something abutting it (the aligned edge is the evidence; the hidden edge is taken to
-    # be anywhere in its box), not broader protection.
-    abuts = [None]*len(gs)
-    if opt.abutting:
-        anyab = np.zeros_like(valid)
-        for c, g in enumerate(gs):
-            # The aligned edge must line up tightly: its whole range (between the marks around it) inside the box.
-            inL = (l0 >= g['L'][0]) & (l1 <= g['L'][1]); inR = (r0 >= g['R'][0]) & (r1 <= g['R'][1])
-            left = valid & ~anycls & inL & (r0 > g['R'][1]); right = valid & ~anycls & inR & (l1 < g['L'][0])
-            abuts[c] = (left, right); anyab |= left | right
-        br &= ~anyab
-    else:
-        anyab = np.zeros_like(valid)
-    other = valid & ~anycls & ~br & ~anyab
+    other = valid & ~anycls & ~br
     cls = []; bounds = []
     for c, (g, cm) in enumerate(zip(gs, cms)):
         Lw, Rw = g['L'][1] - g['L'][0] + 1, g['R'][1] - g['R'][0] + 1
@@ -106,22 +92,15 @@ def _prepare(u, gs, f, opt):
             wl = np.clip(np.minimum(l1, g['L'][1]) - np.maximum(l0, g['L'][0]) + 1, 0, None)
             wr = np.clip(np.minimum(r1, g['R'][1]) - np.maximum(r0, g['R'][0]) + 1, 0, None)
             W = np.broadcast_to(wl*wr, cm.shape).astype(float)
-            if abuts[c] is not None:     # hidden edge: its whole box
-                W = np.where(abuts[c][0], full(wl*Rw), np.where(abuts[c][1], full(Lw*wr), W))
-            members = cm | (abuts[c][0] | abuts[c][1] if abuts[c] is not None else False)
-            use = members & (W > 0)
+            use = cm & (W > 0)
             logw = np.log(W[use]) - math.log(Lw*Rw)
         else:
-            use = cm | (abuts[c][0] | abuts[c][1] if abuts[c] is not None else False)
+            use = cm
             logw = np.full(int(use.sum()), -math.log(max(int(use.sum()), 1)))
         ii, jc = np.nonzero(use)
         cls.append((ii, jc + 1, s0[use], logw))
-        # Each configuration's edge ranges (left edge in [l0, l1], right edge in [r0, r1]), for the molecule's own call;
-        # an abutting configuration's hidden edge is its box.
+        # Each configuration's edge ranges (left edge in [l0, l1], right edge in [r0, r1]), for the molecule's own call.
         el0, el1, er0, er1 = full(l0).astype(float), full(l1).astype(float), full(r0).astype(float), full(r1).astype(float)
-        if abuts[c] is not None:
-            el0, el1 = np.where(abuts[c][1], g['L'][0], el0), np.where(abuts[c][1], g['L'][1], el1)
-            er0, er1 = np.where(abuts[c][0], g['R'][0], er0), np.where(abuts[c][0], g['R'][1], er1)
         bounds.append((el0[use], el1[use], er0[use], er1[use]))
     # The broader-protection configuration that best explains the molecule (its edge ranges), if any.
     broader = None

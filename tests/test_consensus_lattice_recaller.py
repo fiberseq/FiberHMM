@@ -327,12 +327,16 @@ def test_wide_native_calls_of_members_do_not_inherit_a_small_class_label(tmp_pat
     assert sum(bool(q['family']) for q in own) > 30
 
 
-def test_abutting_runs_are_flagged_experimental(tmp_path):
-    with pytest.warns(UserWarning, match='EXPERIMENTAL'):
-        res = run_workflow(planted_payload(n=80), {'cr': {'engine': 'lattice_recaller'}, 'recaller': {'learned_spots': False, 'abutting': True}}, tmp_path)
-    assert any('recaller.abutting is EXPERIMENTAL' in w for w in res['manifest']['data_warnings'])
-    help_text = next(c for c in __import__('fiberhmm.inference.consensus.parameters', fromlist=['x']).parameter_schema()['recaller'] if c['name'] == 'abutting')
-    assert 'EXPERIMENTAL' in help_text['help']
+def test_abutting_option_is_removed_but_old_manifests_still_parse():
+    """recaller.abutting was removed in 3.0 (unnormalized configuration weights: +88 nats on null evidence).
+    Manifests, frozen catalogs and sessions written before the removal carry abutting=false and must still load;
+    a request for abutting=true is refused with the alternatives named."""
+    from fiberhmm.inference.consensus.parameters import parse_options, parameter_schema
+    assert not any(c['name'] == 'abutting' for c in parameter_schema()['recaller'])
+    options = parse_options({'cr': {'engine': 'lattice_recaller'}, 'recaller': {'abutting': False, 'stringency': 0.9}})
+    assert not hasattr(options['recaller'], 'abutting') and options['recaller'].stringency == 0.9
+    with pytest.raises(ValueError, match=r'removed in FiberHMM 3\.0.*\+ edge.*linker=either'):
+        parse_options({'cr': {'engine': 'lattice_recaller'}, 'recaller': {'abutting': True}})
 
 
 def test_recaller_records_mode_cr_whatever_sr_and_cross_say(tmp_path):
