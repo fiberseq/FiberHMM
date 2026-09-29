@@ -23,7 +23,11 @@ from fiberhmm.inference.fused_stages import (
     run_ddda_mcg_stage,
     run_hmm_apply_stage,
 )
-from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
+from fiberhmm.inference.read_filters import (
+    ReadFilterConfig,
+    new_skip_counts,
+    streaming_skip_reason,
+)
 from fiberhmm.inference.region_types import (
     RegionBamResult,
     RegionBamWorkItem,
@@ -34,10 +38,10 @@ from fiberhmm.inference.tagging import (
     set_legacy_apply_tags,
     write_fused_recall_tags,
 )
+from fiberhmm.inference.worker_results import record_failure_message
 from fiberhmm.io.bam_header import (
     append_coord_marker,
     append_ma_types,
-    maybe_append_pg,
 )
 from fiberhmm.posteriors.region_tsv import format_region_posterior_line
 
@@ -56,9 +60,6 @@ def _region_nuc_profile(path):
         from fiberhmm.inference.nuc_recaller import load_nuc_profile
         _REGION_NUC_PROFILE_CACHE[path] = load_nuc_profile(path)
     return _REGION_NUC_PROFILE_CACHE[path]
-
-
-_PRE_OWNERSHIP_SKIP_REASONS = {"unmapped", "secondary_supplementary"}
 
 
 def _write_skipped_region_read(outbam, read, skip_reasons: dict, reason: str) -> int:
@@ -103,12 +104,32 @@ def _init_region_worker(model_path: str, params: dict):
         raise
 
 
+def _passthrough_region(inbam, outbam, work_item, skip_reasons, strip) -> int:
+    """Copy one pass-through plan item (unselected contig or ``'*'``)."""
+    chrom = work_item.region[0]
+    written = 0
+    for read in inbam.fetch(chrom):
+        strip(read)
+        outbam.write(read)
+        written += 1
+        reason = 'unmapped' if read.is_unmapped else 'contig_not_selected'
+        skip_reasons[reason] += 1
+    return written
+
+
+def _region_read_owned(read, start: int, end: int) -> bool:
+    """A region owns the reads that START in it (fetch returns overlaps)."""
+    return start <= read.reference_start < end
+
+
 def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
     """
     Worker function: process one genomic region and write to temp BAM.
 
     Each worker opens its own BAM file handle and uses the index to fetch
-    reads from its assigned region. This enables true parallel I/O.
+    reads from its assigned region. This enables true parallel I/O. Only
+    reads that start inside the region are written (ownership is decided
+    before any write), so records spanning a boundary appear exactly once.
 
     Uses global _worker_model and _worker_region_params (set by _init_region_worker).
 
@@ -120,8 +141,11 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
     """
     import traceback
 
+    from fiberhmm.inference.streaming_drain import strip_for_apply
+
     global _worker_model, _worker_region_params
 
+    chrom, start, end = '?', 0, 0
     try:
         work_item = RegionBamWorkItem.from_value(args)
         chrom, start, end = work_item.region
@@ -154,36 +178,32 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
         write_msps = params.get('write_msps', True)
         io_threads = int(params.get('io_threads', 4))
 
+        def strip(read):
+            strip_for_apply(read, write_msps)
+
         total_reads = 0
         reads_with_footprints = 0
         written = 0
         skipped = 0
         posteriors_written = 0
+        failures = 0
+        failure_messages = []
 
-        skip_reasons = {
-            'unmapped': 0,
-            'secondary_supplementary': 0,
-            'low_mapq': 0,
-            'too_short': 0,
-            'training_excluded': 0,
-            'no_modifications': 0,
-            'extraction_failed': 0,
-            'no_footprints': 0,
-            'chimera': 0,
-        }
+        skip_reasons = new_skip_counts()
         filter_config = ReadFilterConfig(
             min_mapq=min_mapq,
             min_read_length=min_read_length,
             primary_only=primary_only,
             process_unmapped=False,
             train_rids=train_rids,
+            mode=mode,
         )
 
         pysam.set_verbosity(0)
 
         # Open posteriors TSV file for streaming writes (if requested).
         tsv_file = None
-        if return_posteriors and temp_tsv_path:
+        if return_posteriors and temp_tsv_path and not work_item.passthrough:
             try:
                 tsv_file = open(temp_tsv_path, 'w')
             except Exception:
@@ -195,29 +215,21 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                                          header=append_coord_marker(inbam.header),
                                          threads=io_threads) as outbam:
 
-                    # Fetch reads from this region using the index.
-                    try:
-                        read_iter = inbam.fetch(chrom, start, end)
-                    except ValueError:
-                        # Region not in BAM (e.g., unplaced contigs).
-                        if tsv_file:
-                            tsv_file.close()
-                        return RegionBamResult(temp_bam_path, 0, 0, 0)
+                    if work_item.passthrough:
+                        written = _passthrough_region(
+                            inbam, outbam, work_item, skip_reasons, strip)
+                        return RegionBamResult(
+                            temp_bam_path, 0, 0, written, None, skip_reasons,
+                        )
 
-                    for read in read_iter:
+                    for read in inbam.fetch(chrom, start, end):
+                        # Ownership first: a boundary-spanning record is
+                        # fetched by every region it overlaps.
+                        if not _region_read_owned(read, start, end):
+                            continue
+                        strip(read)
+
                         skip_reason = streaming_skip_reason(read, filter_config)
-                        if skip_reason in _PRE_OWNERSHIP_SKIP_REASONS:
-                            written += _write_skipped_region_read(
-                                outbam, read, skip_reasons, skip_reason
-                            )
-                            skipped += 1
-                            continue
-
-                        # Only process reads that START in this region to avoid duplicates.
-                        # fetch returns reads that overlap the region.
-                        if read.reference_start < start or read.reference_start >= end:
-                            continue
-
                         if skip_reason:
                             written += _write_skipped_region_read(
                                 outbam, read, skip_reasons, skip_reason
@@ -240,6 +252,8 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
                                 skip_reasons['no_modifications'] += 1
                                 continue
                         except Exception:
+                            failures += 1
+                            record_failure_message(failure_messages, read.query_name)
                             outbam.write(read)
                             written += 1
                             skipped += 1
@@ -288,16 +302,15 @@ def _process_region_to_bam(args: RegionBamWorkItem) -> RegionBamResult:
             if tsv_file:
                 tsv_file.close()
 
-        # Return TSV path if we wrote any posteriors.
-        if return_posteriors and posteriors_written > 0 and temp_tsv_path:
-            return RegionBamResult(
-                temp_bam_path, total_reads, reads_with_footprints,
-                written, temp_tsv_path, skip_reasons,
-            )
-
+        metrics = {'worker_failures': failures} if failures else {}
+        tsv_out = (
+            temp_tsv_path
+            if return_posteriors and posteriors_written > 0 and temp_tsv_path
+            else None
+        )
         return RegionBamResult(
             temp_bam_path, total_reads, reads_with_footprints,
-            written, None, skip_reasons,
+            written, tsv_out, skip_reasons, metrics, tuple(failure_messages),
         )
 
     except Exception as e:
@@ -557,14 +570,21 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
     apply+recall per read, write in-order to a coordinate-sorted temp BAM.
 
     Because pysam.fetch(chrom,start,end) yields reads in coordinate order
-    AND we only process reads that START in this region (the reference_start
-    filter), each temp BAM is coordinate-sorted within itself. Concatenating
-    temp BAMs in region order gives a coordinate-sorted final BAM without
-    any sort pass.
+    AND we only write reads that START in this region (ownership is decided
+    before any write), each temp BAM is coordinate-sorted within itself and
+    boundary-spanning records appear once. Concatenating temp BAMs in region
+    order gives a coordinate-sorted final BAM without any sort pass.
+
+    Per-read exceptions pass the read through unannotated and are counted in
+    ``metrics['worker_failures']`` with the first tracebacks, for the run's
+    failure policy.
 
     Returns a RegionBamResult with temp BAM, counts, and skip reasons.
     """
     import traceback
+
+    from fiberhmm.cli.provenance import output_header_with_provenance
+    from fiberhmm.inference.streaming_drain import strip_for_fused_call
 
     global _worker_model, _worker_region_params, _worker_recall_state
 
@@ -610,21 +630,22 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
         derived_tf_max_edge_ambiguity = params.get(
             'derived_tf_max_edge_ambiguity')
 
+        def strip(read):
+            strip_for_fused_call(read, also_write_legacy)
+
         pysam.set_verbosity(0)
 
         total_reads = 0
         reads_with_fp = 0
         written = 0
         skipped = 0
-        skip_reasons = {
-            'unmapped': 0, 'secondary_supplementary': 0, 'low_mapq': 0,
-            'too_short': 0, 'training_excluded': 0, 'no_modifications': 0,
-            'extraction_failed': 0, 'no_footprints': 0, 'chimera': 0,
-        }
+        failure_messages = []
+        skip_reasons = new_skip_counts()
         metrics = {
             'ddda_mcg_reads': 0,
             'ddda_mcg_spans': 0,
             'ddda_mcg_failures': 0,
+            'worker_failures': 0,
         }
         filter_config = ReadFilterConfig(
             min_mapq=min_mapq,
@@ -632,40 +653,46 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
             primary_only=primary_only,
             process_unmapped=False,
             train_rids=train_rids,
+            mode=mode,
+            has_reference=ref_fasta is not None,
         )
+
+        def pass_through(read, reason=None):
+            nonlocal written, skipped
+            outbam.write(read)
+            written += 1
+            if reason is not None:
+                skipped += 1
+                skip_reasons[reason] += 1
 
         with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
             ma_types = [] if downstream_compat else ["nuc", "msp", "tf"]
             if params.get("ddda_mcg", False):
                 ma_types.append("ddda_mcg")
             output_header = append_ma_types(
-                maybe_append_pg(inbam.header, params.get('pg_record')),
+                output_header_with_provenance(inbam.header, params.get('pg_record')),
                 ma_types,
             )
             with pysam.AlignmentFile(
                     temp_bam_path, "wb",
                     header=output_header,
                     threads=io_threads) as outbam:
-                try:
-                    read_iter = inbam.fetch(chrom, start, end)
-                except ValueError:
-                    return RegionBamResult(temp_bam_path, 0, 0, 0)
+                if work_item.passthrough:
+                    written = _passthrough_region(
+                        inbam, outbam, work_item, skip_reasons, strip)
+                    return RegionBamResult(
+                        temp_bam_path, 0, 0, written, None, skip_reasons,
+                    )
 
-                for read in read_iter:
+                for read in inbam.fetch(chrom, start, end):
+                    # Ownership first: a boundary-spanning record is fetched
+                    # by every region it overlaps.
+                    if not _region_read_owned(read, start, end):
+                        continue
+                    strip(read)
                     skip_reason = streaming_skip_reason(read, filter_config)
-                    if skip_reason in _PRE_OWNERSHIP_SKIP_REASONS:
-                        written += _write_skipped_region_read(
-                            outbam, read, skip_reasons, skip_reason
-                        )
-                        skipped += 1
-                        continue
-                    if read.reference_start < start or read.reference_start >= end:
-                        continue
                     if skip_reason:
-                        written += _write_skipped_region_read(
-                            outbam, read, skip_reasons, skip_reason
-                        )
-                        skipped += 1
+                        pass_through(read, skip_reason)
                         continue
 
                     payload = make_apply_payload(
@@ -673,25 +700,16 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                         include_ddda_mcg=bool(params.get('ddda_mcg', False)),
                     )
                     if payload is None:
-                        outbam.write(read)
-                        written += 1
-                        skipped += 1
-                        skip_reasons['no_modifications'] += 1
+                        pass_through(read, 'no_modifications')
                         continue
 
                     try:
                         fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
                         if fiber_read is CHIMERA_SKIP:
-                            outbam.write(read)
-                            written += 1
-                            skipped += 1
-                            skip_reasons['chimera'] += 1
+                            pass_through(read, 'chimera')
                             continue
                         if fiber_read is None:
-                            outbam.write(read)
-                            written += 1
-                            skipped += 1
-                            skip_reasons['no_modifications'] += 1
+                            pass_through(read, 'no_modifications')
                             continue
                         apply_result = run_hmm_apply_stage(
                             fiber_read,
@@ -705,82 +723,89 @@ def _process_region_to_bam_fused(args: RegionBamWorkItem) -> RegionBamResult:
                             with_scores,
                         )
                     except Exception:
-                        outbam.write(read)
-                        written += 1
-                        skipped += 1
-                        skip_reasons['extraction_failed'] += 1
+                        metrics['worker_failures'] += 1
+                        record_failure_message(failure_messages, read.query_name)
+                        pass_through(read, 'extraction_failed')
                         continue
 
                     total_reads += 1
 
                     if not apply_result_has_footprints(apply_result):
-                        outbam.write(read)
-                        written += 1
+                        pass_through(read)
                         skip_reasons['no_footprints'] += 1
                         continue
 
-                    m5c_mask = None
-                    m5c_spans = []
-                    m5c_failed = False
-                    if _worker_recall_state.get('ddda_mcg'):
-                        try:
-                            m5c_mask, m5c_spans = run_ddda_mcg_stage(
-                                payload.get('_ddda_mcg_observations'),
-                                apply_result,
-                                len(fiber_read['query_sequence']),
-                            )
-                        except Exception:
-                            m5c_mask, m5c_spans, m5c_failed = None, [], True
+                    try:
+                        m5c_mask = None
+                        m5c_spans = []
+                        m5c_failed = False
+                        if _worker_recall_state.get('ddda_mcg'):
+                            try:
+                                m5c_mask, m5c_spans = run_ddda_mcg_stage(
+                                    payload.get('_ddda_mcg_observations'),
+                                    apply_result,
+                                    len(fiber_read['query_sequence']),
+                                )
+                            except Exception:
+                                m5c_mask, m5c_spans, m5c_failed = None, [], True
 
-                    fused_result = build_fused_recall_result(
-                        fiber_read,
-                        apply_result,
-                        llr_hit,
-                        llr_miss,
-                        min_llr,
-                        min_opps,
-                        unify_threshold,
-                        with_scores,
-                        recall_nucs=recall_nucs,
-                        split_min_llr=split_min_llr,
-                        split_min_opps=split_min_opps,
-                        nuc_recall_policy=nuc_recall_policy,
-                        nuc_min_size=nuc_min_size,
-                        msp_min_size=msp_min_size,
-                        phase_nrl=phase_nrl,
-                        nuc_profile=nuc_profile,
-                        derived_tf_max_edge_ambiguity=(
-                            derived_tf_max_edge_ambiguity),
-                        m5c_mask=m5c_mask,
-                        m5c_llr_hit=_worker_recall_state.get('m5c_llr_hit'),
-                        m5c_llr_miss=_worker_recall_state.get('m5c_llr_miss'),
-                        nuc_llr_hit=_worker_recall_state.get('nuc_llr_hit'),
-                        nuc_llr_miss=_worker_recall_state.get('nuc_llr_miss'),
-                        nuc_m5c_llr_hit=_worker_recall_state.get(
-                            'nuc_m5c_llr_hit'),
-                        nuc_m5c_llr_miss=_worker_recall_state.get(
-                            'nuc_m5c_llr_miss'),
-                    )
+                        fused_result = build_fused_recall_result(
+                            fiber_read,
+                            apply_result,
+                            llr_hit,
+                            llr_miss,
+                            min_llr,
+                            min_opps,
+                            unify_threshold,
+                            with_scores,
+                            recall_nucs=recall_nucs,
+                            split_min_llr=split_min_llr,
+                            split_min_opps=split_min_opps,
+                            nuc_recall_policy=nuc_recall_policy,
+                            nuc_min_size=nuc_min_size,
+                            msp_min_size=msp_min_size,
+                            phase_nrl=phase_nrl,
+                            nuc_profile=nuc_profile,
+                            derived_tf_max_edge_ambiguity=(
+                                derived_tf_max_edge_ambiguity),
+                            m5c_mask=m5c_mask,
+                            m5c_llr_hit=_worker_recall_state.get('m5c_llr_hit'),
+                            m5c_llr_miss=_worker_recall_state.get('m5c_llr_miss'),
+                            nuc_llr_hit=_worker_recall_state.get('nuc_llr_hit'),
+                            nuc_llr_miss=_worker_recall_state.get('nuc_llr_miss'),
+                            nuc_m5c_llr_hit=_worker_recall_state.get(
+                                'nuc_m5c_llr_hit'),
+                            nuc_m5c_llr_miss=_worker_recall_state.get(
+                                'nuc_m5c_llr_miss'),
+                        )
+                        if _worker_recall_state.get('ddda_mcg'):
+                            fused_result['ddda_mcg_spans'] = m5c_spans
+                            fused_result['ddda_mcg_failed'] = m5c_failed
+                        write_fused_recall_tags(
+                            read,
+                            read_length=len(fiber_read['query_sequence']),
+                            result=fused_result,
+                            also_write_legacy=also_write_legacy,
+                            downstream_compat=downstream_compat,
+                        )
+                    except Exception:
+                        # Same contract as the streaming worker: the read is
+                        # passed through unannotated and the failure counted.
+                        metrics['worker_failures'] += 1
+                        record_failure_message(failure_messages, read.query_name)
+                        strip(read)
+                        pass_through(read)
+                        continue
                     if _worker_recall_state.get('ddda_mcg'):
-                        fused_result['ddda_mcg_spans'] = m5c_spans
-                        fused_result['ddda_mcg_failed'] = m5c_failed
                         metrics['ddda_mcg_reads'] += int(bool(m5c_spans))
                         metrics['ddda_mcg_spans'] += len(m5c_spans)
                         metrics['ddda_mcg_failures'] += int(m5c_failed)
-                    write_fused_recall_tags(
-                        read,
-                        read_length=len(fiber_read['query_sequence']),
-                        result=fused_result,
-                        also_write_legacy=also_write_legacy,
-                        downstream_compat=downstream_compat,
-                    )
-                    outbam.write(read)
-                    written += 1
+                    pass_through(read)
                     reads_with_fp += 1
 
         return RegionBamResult(
             temp_bam_path, total_reads, reads_with_fp,
-            written, None, skip_reasons, metrics,
+            written, None, skip_reasons, metrics, tuple(failure_messages),
         )
 
     except Exception:

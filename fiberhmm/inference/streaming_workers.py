@@ -22,7 +22,10 @@ from fiberhmm.inference.fused_stages import (
     run_ddda_mcg_stage,
     run_hmm_apply_stage,
 )
-from fiberhmm.inference.worker_results import WorkerChunkResult
+from fiberhmm.inference.worker_results import (
+    WorkerChunkResult,
+    record_failure_message,
+)
 
 _worker_model = None
 _worker_debug_timing = False
@@ -30,6 +33,13 @@ _worker_debug_timing = False
 # Per-worker recall state: LLR tables for native TF configuration decoding. Lives alongside
 # _worker_model and is populated by _init_fused_worker.
 _worker_recall_state = {}
+
+
+def _read_id(record):
+    """Best-effort read name of a fiber_read dict or apply payload."""
+    if isinstance(record, dict):
+        return record.get('read_id') or record.get('query_name')
+    return None
 
 
 def _init_bam_worker(model_path, debug_timing=False):
@@ -204,6 +214,7 @@ def _process_chunk_worker(
 
     results = []
     read_failures = 0
+    messages = []
     for fiber_read in chunk_reads:
         try:
             result = _process_single_read(
@@ -213,12 +224,14 @@ def _process_chunk_worker(
                 return_posteriors=return_posteriors,
             )
         except Exception:
-            # Per-read failure: skip this read but keep the worker alive.
+            # Per-read failure: skip this read but keep the worker alive; the
+            # traceback travels back so the run can report (and fail) on it.
             result = None
             read_failures += 1
+            record_failure_message(messages, _read_id(fiber_read))
         results.append(result)
 
-    return WorkerChunkResult(results, read_failures)
+    return WorkerChunkResult(results, read_failures, tuple(messages))
 
 
 def _process_fused_payload_chunk_worker(
@@ -259,6 +272,7 @@ def _process_fused_payload_chunk_worker(
 
     results = []
     read_failures = 0
+    messages = []
     for payload in chunk_payloads:
         try:
             fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
@@ -343,8 +357,9 @@ def _process_fused_payload_chunk_worker(
             # Per-read failure must not kill the worker or the whole chunk.
             read_failures += 1
             results.append(None)
+            record_failure_message(messages, _read_id(payload))
 
-    return WorkerChunkResult(results, read_failures)
+    return WorkerChunkResult(results, read_failures, tuple(messages))
 
 
 def _process_payload_chunk_worker(
@@ -372,6 +387,7 @@ def _process_payload_chunk_worker(
 
     results = []
     read_failures = 0
+    messages = []
     for payload in chunk_payloads:
         try:
             fiber_read = extract_fiber_read_from_payload(payload, mode, prob_threshold)
@@ -389,6 +405,7 @@ def _process_payload_chunk_worker(
         except Exception:
             result = None
             read_failures += 1
+            record_failure_message(messages, _read_id(payload))
         results.append(result)
 
-    return WorkerChunkResult(results, read_failures)
+    return WorkerChunkResult(results, read_failures, tuple(messages))

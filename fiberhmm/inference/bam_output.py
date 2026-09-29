@@ -4,6 +4,8 @@ import os
 import shutil
 import subprocess
 import sys
+import uuid
+from contextlib import contextmanager
 from typing import List
 
 import numpy as np
@@ -11,6 +13,74 @@ import pysam
 
 from fiberhmm.core.bam_reader import get_bam_chrom_sizes
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
+
+
+def index_paths_for(path: str) -> List[str]:
+    """Index files a BAM/BED at ``path`` may have beside it."""
+    candidates = [path + '.bai', path + '.csi', path + '.crai', path + '.tbi']
+    stem, ext = os.path.splitext(path)
+    if ext in ('.bam', '.cram'):
+        candidates.extend([stem + '.bai', stem + '.csi', stem + '.crai'])
+    return candidates
+
+
+def _remove_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def temporary_output_path(path: str) -> str:
+    """Hidden sibling path for writing ``path`` atomically.
+
+    The temporary file lives in the destination directory so ``os.replace``
+    is an atomic rename on the same filesystem. It is created by the writer
+    itself (not ``mkstemp``), so it gets the caller's umask permissions.
+    """
+    final = os.path.abspath(path)
+    directory, name = os.path.split(final)
+    return os.path.join(
+        directory, f".{name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
+    )
+
+
+def commit_output(temporary: str, final: str) -> None:
+    """Atomically move a finished temporary output to its final path.
+
+    Index files left beside ``final`` by an earlier run would describe the old
+    content, so they are removed first.
+    """
+    for stale in index_paths_for(final):
+        _remove_quietly(stale)
+    os.replace(temporary, final)
+
+
+@contextmanager
+def atomic_output(path):
+    """Yield a temporary sibling path; publish it to ``path`` only on success.
+
+    ``'-'`` (stdout) and ``None`` are yielded unchanged. On any exception the
+    temporary file (and any index written beside it) is removed and the
+    exception propagates, so a failed run never leaves a valid-looking output
+    at ``path``.
+    """
+    if path is None or path == '-':
+        yield path
+        return
+    temporary = temporary_output_path(path)
+    try:
+        yield temporary
+    except BaseException:
+        _remove_quietly(temporary)
+        for index in index_paths_for(temporary):
+            _remove_quietly(index)
+        raise
+    if not os.path.exists(temporary):
+        raise FileNotFoundError(
+            f"internal error: temporary output {temporary} was not written"
+        )
+    commit_output(temporary, os.path.abspath(path))
 
 
 def _run_samtools_index(output_bam: str, threads: int, check: bool = False) -> subprocess.CompletedProcess:
@@ -43,6 +113,10 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
     first to save time; only sort if indexing fails.
     """
     import time
+
+    if output_bam == '-':
+        # Streamed to stdout: there is no file to sort or index.
+        return
 
     bam_size_mb = os.path.getsize(output_bam) / (1024 * 1024)
     bam_size_gb = bam_size_mb / 1024

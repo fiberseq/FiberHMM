@@ -54,7 +54,9 @@ import numpy as np
 import pysam
 
 from fiberhmm.core.bam_reader import cigar_to_query_ref
+from fiberhmm.inference.bam_output import atomic_output, temporary_output_path
 from fiberhmm.inference.parallel import _get_genome_regions
+from fiberhmm.inference.region_planning import RegionPlanError
 from fiberhmm.io.ma_tags import (
     DDDA_MCG_FEATURE,
     flip_interval_frame,
@@ -551,7 +553,9 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
             f"{traceback.format_exc()}\n"
         )
         sys.stderr.flush()
-        return (temp_bed_paths, 0, {t: 0 for t in (params or {}).get('extract_types', [])})
+        # Re-raise: the region's temp BED is incomplete, and returning it with
+        # zero counts used to publish a partial BED with exit 0.
+        raise
 
 
 def _extract_footprints(read, bed_out, with_scores: bool,
@@ -1407,6 +1411,7 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
         # {extract_type: [(region_idx, temp_bed_path)]}
         temp_beds_by_type = {t: [] for t in extract_types}
         completed = 0
+        failed_regions = []
 
         with ProcessPoolExecutor(
             max_workers=n_cores,
@@ -1427,7 +1432,9 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                         if tb and os.path.exists(tb) and os.path.getsize(tb) > 0:
                             temp_beds_by_type[t].append((futures[future], tb))
                 except Exception as e:
-                    print(f"Worker error: {e}")
+                    failed_regions.append(work_items[futures[future]][0])
+                    print(f"\nWorker error in region "
+                          f"{work_items[futures[future]][0]}: {e}")
 
                 elapsed = time.time() - start_time
                 rate = total_reads / elapsed if elapsed > 0 else 0
@@ -1435,22 +1442,38 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                 print(f"\r  Regions: {completed}/{len(regions)} | Reads: {total_reads:,} | {feat_str} | {rate:.0f} reads/s", end='')
         print()
 
-        # Concatenate + sort per type
+        if failed_regions:
+            raise RuntimeError(
+                f"{len(failed_regions)} of {len(regions)} region worker(s) "
+                f"failed (first: {failed_regions[0]}); no BED output was "
+                "written. See the worker traceback(s) above."
+            )
+
+        # Concatenate + sort per type. Each final BED is assembled in a hidden
+        # sibling and renamed into place only when complete.
         for t in extract_types:
             beds = sorted(temp_beds_by_type[t], key=lambda x: x[0])
             out_path = output_beds[t]
             print(f"  [{t}] concatenating {len(beds)} region BEDs...")
-            with open(out_path, 'w') as outf:
-                for _, tb in beds:
-                    with open(tb, 'r') as inf:
-                        shutil.copyfileobj(inf, outf)
-            if os.path.getsize(out_path) > 0:
-                print(f"  [{t}] sorting BED...")
-                sorted_bed = out_path + '.sorted'
-                sort_cmd, sort_env = _build_sort_cmd(
-                    out_path, sorted_bed, temp_dir, sort_mem, sort_parallel)
-                subprocess.run(sort_cmd, check=True, env=sort_env)
-                os.replace(sorted_bed, out_path)
+            with atomic_output(out_path) as partial_path:
+                with open(partial_path, 'w') as outf:
+                    for _, tb in beds:
+                        with open(tb, 'r') as inf:
+                            shutil.copyfileobj(inf, outf)
+                if os.path.getsize(partial_path) > 0:
+                    print(f"  [{t}] sorting BED...")
+                    # Beside the output (same filesystem) so the rename is
+                    # atomic even when the system temp dir is another device.
+                    sorted_bed = partial_path + '.sorted'
+                    try:
+                        sort_cmd, sort_env = _build_sort_cmd(
+                            partial_path, sorted_bed, temp_dir, sort_mem,
+                            sort_parallel)
+                        subprocess.run(sort_cmd, check=True, env=sort_env)
+                        os.replace(sorted_bed, partial_path)
+                    finally:
+                        if os.path.exists(sorted_bed):
+                            os.remove(sorted_bed)
 
         elapsed = time.time() - start_time
         feat_summary = ', '.join(f"{t}: {total_features[t]:,}" for t in extract_types)
@@ -1524,14 +1547,18 @@ def bed_to_bigbed(bed_path: str, bigbed_path: str, chrom_sizes: Dict[str, int],
         if bed_type == 'bed12':
             type_flag = f'-type=bed12+{n_extra}' if n_extra > 0 else '-type=bed12'
             cmd.append(type_flag)
-        cmd.extend([bed_path, sizes_file, bigbed_path])
+        partial_bigbed = temporary_output_path(bigbed_path)
+        cmd.extend([bed_path, sizes_file, partial_bigbed])
 
         result = subprocess.run(cmd, capture_output=True, text=True)
 
         if result.returncode != 0:
             print(f"bedToBigBed error: {result.stderr}")
+            if os.path.exists(partial_bigbed):
+                os.remove(partial_bigbed)
             return False
 
+        os.replace(partial_bigbed, bigbed_path)
         return True
 
     except FileNotFoundError:
@@ -1968,26 +1995,31 @@ Examples:
         t: os.path.join(args.outdir, f"{dataset}_{t}.bb") for t in extract_types
     }
     print(f"=== Extracting {', '.join(extract_types)} (single pass) ===")
-    n_reads, n_features = extract_tags_parallel(
-        input_bam=args.input,
-        output_beds=output_beds,
-        extract_types=extract_types,
-        n_cores=args.cores,
-        region_size=args.region_size,
-        min_mapq=args.min_mapq,
-        prob_threshold=args.prob_threshold,
-        with_scores=not args.no_scores,
-        min_tq=args.min_tq,
-        block_scores=args.block_scores,
-        circular_groups=args.circular_groups,
-        haplotype_fields=args.haplotype_fields,
-        skip_scaffolds=args.skip_scaffolds,
-        chroms=chroms,
-        sort_mem=args.sort_mem,
-        sort_parallel=args.sort_parallel or args.cores,
-    )
+    try:
+        n_reads, n_features = extract_tags_parallel(
+            input_bam=args.input,
+            output_beds=output_beds,
+            extract_types=extract_types,
+            n_cores=args.cores,
+            region_size=args.region_size,
+            min_mapq=args.min_mapq,
+            prob_threshold=args.prob_threshold,
+            with_scores=not args.no_scores,
+            min_tq=args.min_tq,
+            block_scores=args.block_scores,
+            circular_groups=args.circular_groups,
+            haplotype_fields=args.haplotype_fields,
+            skip_scaffolds=args.skip_scaffolds,
+            chroms=chroms,
+            sort_mem=args.sort_mem,
+            sort_parallel=args.sort_parallel or args.cores,
+        )
+    except (RuntimeError, RegionPlanError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     print()
+    bigbed_failures = []
     for extract_type in extract_types:
         feats = n_features.get(extract_type, 0)
         bed_path = output_beds[extract_type]
@@ -2021,6 +2053,15 @@ Examples:
                         os.remove(bed_path)
                     except (PermissionError, OSError) as e:
                         print(f"  Warning: Could not remove BED file: {e}")
+            elif shutil.which('bedToBigBed'):
+                # A missing bedToBigBed is a documented soft fallback (BED
+                # only); a failing one is an error.
+                bigbed_failures.append(extract_type)
+
+    if bigbed_failures:
+        print(f"error: bedToBigBed failed for {', '.join(bigbed_failures)}; "
+              "the BED file(s) were kept.", file=sys.stderr)
+        sys.exit(1)
 
     print("\nDone!")
 

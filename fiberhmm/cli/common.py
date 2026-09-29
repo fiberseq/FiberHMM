@@ -246,3 +246,199 @@ def add_version_args(parser: argparse.ArgumentParser) -> None:
         '--version', action='version',
         version=f'%(prog)s {__version__}'
     )
+
+
+# ---------------------------------------------------------------------------
+# Sequencing-platform inference for a missing --seq
+# ---------------------------------------------------------------------------
+
+PLATFORM_SNIFF_READS = 200
+# Share of informative reads the minority MM pattern may reach before the
+# input is treated as mixed/conflicting.
+_PLATFORM_MINORITY_FRACTION = 0.10
+_PACBIO_PROGRAMS = {"ccs", "pbmm2", "primrose", "jasmine", "lima", "pbindex",
+                    "pbccs"}
+_ONT_PROGRAMS = {"dorado", "guppy", "guppy_basecaller", "minknow", "bonito"}
+
+
+class PlatformEvidence:
+    """Result of :func:`sniff_sequencing_platform`."""
+
+    def __init__(self, platform=None, source="", conflict=None):
+        self.platform = platform      # 'pacbio' | 'nanopore' | None
+        self.source = source          # human-readable evidence summary
+        self.conflict = conflict      # explanation when evidence disagrees
+
+    def __repr__(self):  # pragma: no cover - debugging aid
+        return (f"PlatformEvidence(platform={self.platform!r}, "
+                f"source={self.source!r}, conflict={self.conflict!r})")
+
+
+def _mm_spec_platform(mm_tag: str):
+    """'pacbio' for a T-a (bottom-strand m6A) spec, 'nanopore' for A+a only."""
+    specs = [item.split(",", 1)[0] for item in str(mm_tag).split(";") if item]
+    bases = {spec.rstrip(".?") for spec in specs}
+    if "T-a" in bases:
+        return "pacbio"
+    if "A+a" in bases:
+        return "nanopore"
+    return None
+
+
+def _header_platform(header_dict):
+    votes = set()
+    for group in header_dict.get("RG", []):
+        platform = str(group.get("PL", "")).upper()
+        if platform in {"PACBIO", "PACBIO_SMRT"}:
+            votes.add("pacbio")
+        elif platform in {"ONT", "NANOPORE", "OXFORD_NANOPORE"}:
+            votes.add("nanopore")
+    for program in header_dict.get("PG", []):
+        name = str(program.get("PN") or program.get("ID") or "").lower()
+        name = name.split(".", 1)[0]
+        command = str(program.get("CL", ""))
+        if name.startswith("fiberhmm"):
+            continue
+        if name in _PACBIO_PROGRAMS or "map-hifi" in command or "map-pb" in command:
+            votes.add("pacbio")
+        elif name in _ONT_PROGRAMS or "map-ont" in command or "lr:hq" in command:
+            votes.add("nanopore")
+    return votes
+
+
+def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS):
+    """Infer PacBio vs Nanopore from a BAM's own evidence.
+
+    Evidence, strongest first: a FiberHMM chemistry declaration in the header;
+    the MM modification specs of the first reads (PacBio fiber-seq reports
+    bottom-strand m6A as ``T-a``, Nanopore reports only ``A+a``); @RG ``PL`` and
+    @PG program names. Disagreement between sources, or a mix of MM patterns,
+    is reported as a conflict rather than resolved silently. Returns a
+    :class:`PlatformEvidence`; ``platform`` is None when nothing is known
+    (including stdin, which cannot be peeked without consuming it).
+    """
+    if not bam_path or bam_path == "-":
+        return PlatformEvidence(source="stdin (not inspected)")
+    import pysam
+
+    from fiberhmm.io.bam_header import declared_chemistries
+
+    try:
+        with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as bam:
+            header = bam.header.to_dict()
+            declared = {
+                str(item.get("platform", "")).lower()
+                for item in declared_chemistries(bam.header)
+            } & {"pacbio", "nanopore"}
+            counts = {"pacbio": 0, "nanopore": 0}
+            examined = 0
+            for read in bam.fetch(until_eof=True):
+                if read.is_secondary or read.is_supplementary:
+                    continue
+                tag = "MM" if read.has_tag("MM") else ("Mm" if read.has_tag("Mm") else None)
+                if tag is None:
+                    continue
+                platform = _mm_spec_platform(read.get_tag(tag))
+                if platform:
+                    counts[platform] += 1
+                examined += 1
+                if examined >= n_reads:
+                    break
+    except (OSError, ValueError) as exc:
+        return PlatformEvidence(source=f"unreadable input ({exc})")
+
+    sources = []
+    if len(declared) > 1:
+        return PlatformEvidence(conflict=(
+            "the input header declares several platforms "
+            f"({', '.join(sorted(declared))})"))
+    declared_platform = next(iter(declared), None)
+    if declared_platform:
+        sources.append((declared_platform, "FIBERHMM-CHEMISTRY declaration"))
+
+    informative = counts["pacbio"] + counts["nanopore"]
+    mm_platform = None
+    if informative:
+        majority = max(counts, key=counts.get)
+        minority = informative - counts[majority]
+        if minority > _PLATFORM_MINORITY_FRACTION * informative:
+            return PlatformEvidence(conflict=(
+                f"MM specs are mixed: {counts['pacbio']} read(s) carry PacBio "
+                f"T-a calls and {counts['nanopore']} read(s) only Nanopore-style "
+                "A+a calls"))
+        mm_platform = majority
+        pattern = "T-a present" if majority == "pacbio" else "A+a only, no T-a"
+        sources.append((majority, f"MM specs of {informative} read(s) ({pattern})"))
+
+    header_votes = _header_platform(header)
+    if len(header_votes) == 1:
+        sources.append((next(iter(header_votes)), "@RG/@PG header records"))
+    elif len(header_votes) > 1 and mm_platform is None and not declared_platform:
+        return PlatformEvidence(conflict=(
+            "@RG/@PG header records name both PacBio and Nanopore tools"))
+
+    platforms = {platform for platform, _ in sources}
+    if len(platforms) > 1:
+        detail = "; ".join(f"{src} -> {platform}" for platform, src in sources)
+        return PlatformEvidence(conflict=f"evidence disagrees ({detail})")
+    if not sources:
+        return PlatformEvidence(source="no platform evidence in the first reads")
+    return PlatformEvidence(
+        platform=sources[0][0],
+        source="; ".join(src for _, src in sources),
+    )
+
+
+def resolve_platform_argument(args, input_path, *, tool: str,
+                              enzyme_attr: str = "enzyme") -> None:
+    """Fill a missing ``args.seq`` from the input BAM, or exit with a fix.
+
+    Only enzymes whose bundled model or observation frame depends on the
+    platform (Hia5) are sniffed; for DAF enzymes a missing ``--seq`` is filled
+    only from explicit header evidence (it then affects just the declared
+    platform). An explicit ``--seq`` is authoritative; a disagreeing sniff
+    only warns.
+    """
+    from fiberhmm.models import enzyme_requires_platform
+
+    enzyme = getattr(args, enzyme_attr, None)
+    if not enzyme:
+        return
+    requires = enzyme_requires_platform(enzyme)
+    evidence = sniff_sequencing_platform(input_path)
+    explicit = getattr(args, "seq", None)
+    if explicit:
+        if evidence.platform and evidence.platform != explicit:
+            print(
+                f"WARNING: --seq {explicit} was given, but the input looks like "
+                f"{evidence.platform} ({evidence.source}). Using --seq {explicit} "
+                "as requested.",
+                file=sys.stderr,
+            )
+        return
+    if evidence.conflict:
+        if requires:
+            print(
+                f"error: {tool}: cannot infer the sequencing platform for "
+                f"--enzyme {enzyme}: {evidence.conflict}. Pass --seq pacbio or "
+                "--seq nanopore.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        return
+    if evidence.platform:
+        if requires or "header" in evidence.source or "declaration" in evidence.source:
+            args.seq = evidence.platform
+            print(
+                f"NOTE: --seq not given; using --seq {evidence.platform} "
+                f"(detected from {evidence.source}).",
+                file=sys.stderr,
+            )
+        return
+    if requires:
+        print(
+            f"WARNING: --seq not given for --enzyme {enzyme} and the platform "
+            f"could not be detected ({evidence.source}); assuming PacBio. Pass "
+            "--seq nanopore for Nanopore data.",
+            file=sys.stderr,
+        )

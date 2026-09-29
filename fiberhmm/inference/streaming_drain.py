@@ -4,9 +4,46 @@ from __future__ import annotations
 
 import numpy as np
 
+from fiberhmm.inference.read_filters import LEGACY_CALL_TAGS, strip_stale_call_tags
 from fiberhmm.inference.streaming_workers import CHIMERA_RESULT
 from fiberhmm.inference.tagging import set_legacy_apply_tags, write_fused_recall_tags
-from fiberhmm.inference.worker_results import coerce_worker_chunk_result
+from fiberhmm.inference.worker_results import (
+    coerce_worker_chunk_result,
+    extend_failure_messages,
+    worker_chunk_failure_messages,
+)
+
+APPLY_MSP_TAGS = ("as", "al", "aq")
+
+
+def apply_legacy_tags(write_msps: bool):
+    """Legacy tags an apply run rewrites (MSP tags only when it writes MSPs)."""
+    if write_msps:
+        return LEGACY_CALL_TAGS
+    return tuple(tag for tag in LEGACY_CALL_TAGS if tag not in APPLY_MSP_TAGS)
+
+
+def strip_for_apply(read, write_msps: bool = True) -> None:
+    """Remove stale call tags the apply writer would otherwise leave behind."""
+    strip_stale_call_tags(
+        read, legacy_tags=apply_legacy_tags(write_msps), keep_m5c_groups=False,
+    )
+
+
+def strip_for_fused_call(read, also_write_legacy: bool = True) -> None:
+    """Remove stale call tags the fused call writer would otherwise leave."""
+    strip_stale_call_tags(
+        read,
+        legacy_tags=LEGACY_CALL_TAGS if also_write_legacy else (),
+        keep_m5c_groups=True,
+    )
+
+
+def _record_chunk_failures(counters, value) -> None:
+    messages = worker_chunk_failure_messages(value)
+    if messages:
+        store = counters.setdefault('failure_messages', [])
+        extend_failure_messages(store, messages)
 
 try:
     from fiberhmm.posteriors.hdf5_backend import get_ref_positions_from_read
@@ -31,13 +68,18 @@ def _drain_oldest_chunk(
     coordinate sort order when the input is coordinate sorted.
     """
     future, chunk_read_objs, chunk_reads, chunk_skip_flags = inflight.popleft()
-    results, worker_failures = coerce_worker_chunk_result(future.result())
+    value = future.result()
+    results, worker_failures = coerce_worker_chunk_result(value)
     if worker_failures:
         counters['worker_failures'] = counters.get('worker_failures', 0) + worker_failures
+    _record_chunk_failures(counters, value)
     result_iter = iter(results)
     fiber_iter = iter(chunk_reads)
 
     for read_obj, is_skipped in zip(chunk_read_objs, chunk_skip_flags):
+        # Every written read loses the previous run's calls first; processed
+        # reads then receive this run's tags.
+        strip_for_apply(read_obj, write_msps)
         if is_skipped:
             outbam.write(read_obj)
             counters['written'] += 1
@@ -87,13 +129,18 @@ def _drain_oldest_fused_chunk(
 ):
     """Drain one fused apply+recall chunk and write reads in input order."""
     future, chunk_read_objs, chunk_payloads, chunk_skip_flags = inflight.popleft()
-    results, worker_failures = coerce_worker_chunk_result(future.result())
+    value = future.result()
+    results, worker_failures = coerce_worker_chunk_result(value)
     if worker_failures:
         counters['worker_failures'] = counters.get('worker_failures', 0) + worker_failures
+    _record_chunk_failures(counters, value)
     result_iter = iter(results)
     payload_iter = iter(chunk_payloads)
 
     for read_obj, is_skipped in zip(chunk_read_objs, chunk_skip_flags):
+        # Every written read loses the previous run's calls first; processed
+        # reads then receive this run's tags.
+        strip_for_fused_call(read_obj, also_write_legacy)
         if is_skipped:
             outbam.write(read_obj)
             counters['written'] += 1

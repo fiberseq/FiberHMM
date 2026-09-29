@@ -10,20 +10,31 @@ from typing import Optional, Set, Tuple
 import numpy as np
 import pysam
 
-from fiberhmm.inference.bam_output import _sort_and_index_bam
+from fiberhmm.inference.bam_output import _sort_and_index_bam, atomic_output
 from fiberhmm.io.bam_header import append_coord_marker
 from fiberhmm.inference.engine import (
+    CHIMERA_SKIP,
     _extract_fiber_read_from_pysam,
     _process_single_read,
 )
 from fiberhmm.inference.mp_context import _MP_CONTEXT
-from fiberhmm.inference.read_filters import ReadFilterConfig, streaming_skip_reason
+from fiberhmm.inference.read_filters import (
+    ReadFilterConfig,
+    new_skip_counts,
+    streaming_skip_reason,
+)
+from fiberhmm.inference.streaming_drain import strip_for_apply
 from fiberhmm.inference.streaming_workers import (
     _init_bam_worker,
     _process_chunk_worker,
 )
 from fiberhmm.inference.tagging import set_legacy_apply_tags
-from fiberhmm.inference.worker_results import coerce_worker_chunk_result
+from fiberhmm.inference.worker_results import (
+    coerce_worker_chunk_result,
+    enforce_worker_failure_policy,
+    extend_failure_messages,
+    worker_chunk_failure_messages,
+)
 
 # Optional: inline posteriors export
 try:
@@ -40,7 +51,9 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
                               msp_min_size: int, nuc_min_size: int = 85,
                               with_scores: bool = False,
                               return_posteriors: bool = False,
-                              write_msps: bool = True) -> Tuple[int, int, int, Optional[list]]:
+                              write_msps: bool = True,
+                              failure_messages: Optional[list] = None,
+                              ) -> Tuple[int, int, int, Optional[list]]:
     """
     Process a chunk of reads and write to BAM.
 
@@ -58,7 +71,11 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
             chunk_reads, edge_trim, circular, mode, context_size, msp_min_size,
             nuc_min_size, with_scores, return_posteriors
         )
-        results, worker_failures = coerce_worker_chunk_result(future.result())
+        value = future.result()
+        results, worker_failures = coerce_worker_chunk_result(value)
+        if failure_messages is not None:
+            extend_failure_messages(
+                failure_messages, worker_chunk_failure_messages(value))
     else:
         # Single-threaded: process directly
         results = []
@@ -76,6 +93,7 @@ def _process_and_write_chunk(chunk_reads: list, chunk_read_objs: list,
     reads_with_footprints = 0
     no_footprints = 0
     for read_obj, result in zip(chunk_read_objs, results):
+        strip_for_apply(read_obj, write_msps)
         if result is not None:
             set_legacy_apply_tags(read_obj, result, with_scores, write_msps)
             reads_with_footprints += 1
@@ -149,24 +167,17 @@ def _process_bam_legacy_pipeline(
     reads_with_footprints = 0
     skipped = 0
     worker_failures = 0
+    failure_messages: list = []
 
     # Track skip reasons
-    skip_reasons = {
-        'unmapped': 0,
-        'secondary_supplementary': 0,
-        'low_mapq': 0,
-        'too_short': 0,
-        'training_excluded': 0,
-        'no_modifications': 0,
-        'extraction_failed': 0,
-        'no_footprints': 0,
-    }
+    skip_reasons = new_skip_counts()
     filter_config = ReadFilterConfig(
         min_mapq=min_mapq,
         min_read_length=min_read_length,
         primary_only=primary_only,
         process_unmapped=False,
         train_rids=train_rids,
+        mode=mode,
     )
 
     chunk_size = 2000  # Reads per chunk
@@ -181,9 +192,13 @@ def _process_bam_legacy_pipeline(
     print("Processing and writing BAM (streaming)...")
     sys.stdout.flush()
 
-    # Open input and output BAMs
-    with pysam.AlignmentFile(input_bam, "rb", threads=io_threads, check_sq=False) as inbam:
-        with pysam.AlignmentFile(output_bam, "wb",
+    # Open input and output BAMs. File output goes to a temporary sibling that
+    # is published only if the whole run (including the failure policy)
+    # succeeds.
+    with atomic_output(output_bam) as output_path, \
+            pysam.AlignmentFile(input_bam, "rb", threads=io_threads,
+                                check_sq=False) as inbam:
+        with pysam.AlignmentFile(output_path, "wb",
                                  header=append_coord_marker(inbam.header),
                                  threads=io_threads) as outbam:
 
@@ -216,6 +231,7 @@ def _process_bam_legacy_pipeline(
                 for read in inbam:
                     skip_reason = streaming_skip_reason(read, filter_config)
                     if skip_reason:
+                        strip_for_apply(read, write_msps)
                         outbam.write(read)
                         skipped += 1
                         skip_reasons[skip_reason] += 1
@@ -224,14 +240,29 @@ def _process_bam_legacy_pipeline(
                     # Extract data needed for processing
                     try:
                         fiber_read = _extract_fiber_read_from_pysam(read, mode, prob_threshold)
+                        if fiber_read is CHIMERA_SKIP:
+                            # DAF strand-swap chimera: pass through unannotated,
+                            # exactly as the streaming and region pipelines do.
+                            strip_for_apply(read, write_msps)
+                            outbam.write(read)
+                            skipped += 1
+                            skip_reasons['chimera'] += 1
+                            continue
                         if fiber_read is None:
+                            strip_for_apply(read, write_msps)
                             outbam.write(read)
                             skipped += 1
                             skip_reasons['no_modifications'] += 1
                             continue
                     except Exception:
+                        from fiberhmm.inference.worker_results import (
+                            record_failure_message,
+                        )
+                        record_failure_message(failure_messages, read.query_name)
+                        strip_for_apply(read, write_msps)
                         outbam.write(read)
                         skipped += 1
+                        worker_failures += 1
                         skip_reasons['extraction_failed'] += 1
                         continue
 
@@ -252,7 +283,8 @@ def _process_bam_legacy_pipeline(
                             mode, context_size, msp_min_size, nuc_min_size=nuc_min_size,
                             with_scores=with_scores,
                             return_posteriors=return_posteriors,
-                            write_msps=write_msps
+                            write_msps=write_msps,
+                            failure_messages=failure_messages,
                         )
                         reads_with_footprints += n_fp
                         skip_reasons['no_footprints'] += n_nofp
@@ -278,6 +310,7 @@ def _process_bam_legacy_pipeline(
                         with_scores=with_scores,
                         return_posteriors=return_posteriors,
                         write_msps=write_msps,
+                        failure_messages=failure_messages,
                     )
                     reads_with_footprints += n_fp
                     skip_reasons['no_footprints'] += n_nofp
@@ -294,22 +327,29 @@ def _process_bam_legacy_pipeline(
                         posterior_stats = posterior_writer.close()
                         posterior_writer = None
 
-    elapsed = time.time() - start_time
-    rate = total_reads / elapsed if elapsed > 0 else 0
-    print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s")
-    if worker_failures:
-        print(f"  Worker read failures: {worker_failures:,} (passed through unchanged)")
+        elapsed = time.time() - start_time
+        rate = total_reads / elapsed if elapsed > 0 else 0
+        print(f"\r  Processed: {total_reads:,} | Skipped: {skipped:,} | With footprints: {reads_with_footprints:,} | {rate:.1f} reads/s")
 
-    # Print skip reasons summary
-    if skipped > 0:
-        print("  Skip reasons:")
-        for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
-            if count > 0:
-                pct = 100 * count / (total_reads + skipped)
-                print(f"    {reason}: {count:,} ({pct:.1f}%)")
+        # Print skip reasons summary
+        if skipped > 0:
+            print("  Skip reasons:")
+            for reason, count in sorted(skip_reasons.items(), key=lambda x: -x[1]):
+                if count > 0:
+                    pct = 100 * count / (total_reads + skipped)
+                    print(f"    {reason}: {count:,} ({pct:.1f}%)")
+        # Inside the atomic context: raising discards the temporary BAM.
+        enforce_worker_failure_policy(
+            worker_failures,
+            total_reads + skip_reasons['extraction_failed'],
+            failure_messages,
+            log=sys.stdout,
+        )
 
-    # Index the output BAM (sort first if needed)
-    _sort_and_index_bam(output_bam, threads=n_cores)
+    # Index the output BAM (sort first if needed). A stdout stream has no
+    # file to sort or index.
+    if output_bam != '-':
+        _sort_and_index_bam(output_bam, threads=n_cores)
 
     # Report posteriors after the writer has been closed by the processing finally block.
     if posterior_stats:

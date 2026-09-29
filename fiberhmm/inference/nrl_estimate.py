@@ -44,13 +44,21 @@ def estimate_phase_nrl(
     msp_min_size: int = 0,
     prob_threshold: int = 128,
     edge_trim: int = 10,
+    include_unmapped: bool = False,
 ) -> dict:
     """Return ``{'nrl', 'ci', 'n_pairs', 'n_reads', 'source'}``.
 
     ``nrl`` is the clamped integer estimate (always within
     ``[clamp_lo, clamp_hi]``). ``source`` is ``'estimated'`` or ``'anchor'``
     (insufficient data).
+
+    ``include_unmapped`` samples unmapped reads too; the caller sets it when
+    the run itself calls unmapped reads (uBAM / streamed input), so the
+    estimate is drawn from the molecules being called. Hard-clipped records
+    whose MM/ML cannot match SEQ are never sampled.
     """
+    from fiberhmm.inference.read_filters import hard_clipped_mm_unreliable
+
     model = freeze_model_for_inference(load_model(apply_model_path))
     r_model, _, _ = load_model_with_metadata(recall_model_path or apply_model_path)
     llr_hit, llr_miss = build_llr_tables(r_model)
@@ -61,10 +69,11 @@ def estimate_phase_nrl(
     try:
         for read in bam.fetch(until_eof=True):
             if (
-                read.is_unmapped
+                (read.is_unmapped and not include_unmapped)
                 or read.is_secondary
                 or read.is_supplementary
                 or read.is_duplicate
+                or hard_clipped_mm_unreliable(read, mode)
             ):
                 continue
             fr = _extract_fiber_read_from_pysam(read, mode, prob_threshold)

@@ -38,6 +38,7 @@ import pysam
 from fiberhmm.crossstrand.consensus import build_consensus
 from fiberhmm.crossstrand.pairing import FLAVOR_CT, read_flavor
 from fiberhmm.crossstrand.recall import RecallContext, recall_consensus_full
+from fiberhmm.inference.bam_output import atomic_output, temporary_output_path
 from fiberhmm.io.bam_header import append_ma_types
 
 _TAG_SOURCES = 'cs'
@@ -110,6 +111,27 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
     bam = pysam.AlignmentFile(in_bam, 'rb')
     header = append_ma_types(bam.header, ['deam'])
 
+    # Records are written unsorted to a hidden sibling, sorted into another
+    # hidden sibling and only then renamed to out_bam; the unsorted file is
+    # removed however the run ends (it used to survive as out.bam.unsorted.bam).
+    unsorted = temporary_output_path(out_bam)
+    try:
+        return _run_merge_passes(
+            bam, in_bam, out_bam, unsorted, header, prob_threshold, pairs_only,
+            io_threads, ctx, phase_nrl, nuc_recall_policy,
+            derived_tf_max_edge_ambiguity, t0,
+        )
+    finally:
+        try:
+            os.remove(unsorted)
+        except OSError:
+            pass
+
+
+def _run_merge_passes(bam, in_bam, out_bam, unsorted, header, prob_threshold,
+                      pairs_only, io_threads, ctx, phase_nrl, nuc_recall_policy,
+                      derived_tf_max_edge_ambiguity, t0):
+    """Both passes of :func:`run_merge` plus the atomic sort/index."""
     # Pass 1: per chromosome, collect the paired reads and build consensus.
     merged_names = set()          # source read names replaced by a consensus
     consensus_lengths = []
@@ -117,7 +139,6 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
     n_consensus = n_pairs_seen = n_build_fail = 0
     seen_paired_names = set()
 
-    unsorted = out_bam + '.unsorted.bam'
     out = pysam.AlignmentFile(unsorted, 'wb', header=header, threads=io_threads)
 
     def flush(tid, paired):
@@ -212,10 +233,6 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
     except Exception:
         out.close()
         bam.close()
-        try:
-            os.remove(unsorted)
-        except OSError:
-            pass
         raise
 
     # Pass 2: pass through non-merged reads (unless --pairs-only). Reopen the
@@ -236,12 +253,10 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
                  if r.startswith('chr') and '_' not in r and r != 'chrM')
     bam.close()
 
-    pysam.sort('-@', str(io_threads), '-o', out_bam, unsorted)
+    with atomic_output(out_bam) as sorted_path:
+        pysam.sort('-@', str(io_threads), '-O', 'bam', '-o', sorted_path,
+                   unsorted)
     pysam.index(out_bam)
-    try:
-        os.remove(unsorted)
-    except OSError:
-        pass
 
     # ---- stats ----
     both_bp = sum(_merged_bp(v) for v in both_intervals.values())

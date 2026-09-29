@@ -13,6 +13,7 @@ import re
 from array import array
 
 import numpy as np
+import pytest
 
 from fiberhmm.cli import extract_tags
 from fiberhmm.cli.extract_tags import (
@@ -144,13 +145,13 @@ def test_extract_region_worker_closes_temp_beds_when_partial_open_fails(
         "msp": str(tmp_path / "msp.bed"),
     }
 
-    returned_paths, n_reads, n_features = extract_tags._extract_region_worker(
-        (("chr1", 0, 100), "input.bam", temp_bed_paths)
-    )
+    # A failing region must fail the run (its temp BED is incomplete); it used
+    # to be reported as an empty region, publishing a partial BED with exit 0.
+    with pytest.raises(OSError, match="open failed"):
+        extract_tags._extract_region_worker(
+            (("chr1", 0, 100), "input.bam", temp_bed_paths)
+        )
 
-    assert returned_paths == temp_bed_paths
-    assert n_reads == 0
-    assert n_features == {"nucleosome": 0, "msp": 0}
     assert opened[0].closed
 
 

@@ -18,8 +18,13 @@ from fiberhmm.cli.common import (
     add_stats_args,
     add_version_args,
     resolve_observation_mode,
+    resolve_platform_argument,
 )
-from fiberhmm.core.model_io import load_model_with_metadata
+from fiberhmm.core.model_io import (
+    ModelContextError,
+    load_model_with_metadata,
+    validate_context_size,
+)
 from fiberhmm.inference.parallel import process_bam_for_footprints
 from fiberhmm.inference.stats import collect_stats_from_bam
 
@@ -69,8 +74,10 @@ Examples:
                         help='Auto-select a supported bundled chemistry model. Use '
                              '--seq pacbio|nanopore for Hia5.')
     parser.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                        help='Hia5 sequencing platform; omission warns '
-                             'and defaults to pacbio. Ignored for dddb/ddda.')
+                        help='Hia5 sequencing platform. When omitted it is '
+                             'detected from the input (MM specs: PacBio T-a vs '
+                             'Nanopore A+a only; header records); conflicting '
+                             'evidence stops the run. Ignored for dddb/ddda.')
 
     # Backward-compatible escape hatch; normal workflows infer this.
     add_legacy_mode_override(parser)
@@ -79,20 +86,30 @@ Examples:
     parser.add_argument('-k', '--context-size', type=int, default=None,
                         help='Context size (auto-detected from model if not specified)')
 
-    # Parallelization
+    # Parallelization. --region-size/--skip-scaffolds/--chroms come from the
+    # shared factory but have no apply implementation (apply streams the whole
+    # BAM); main() rejects them instead of silently ignoring them. Use
+    # fiberhmm-call --region-parallel for region selection.
     add_parallel_args(parser, default_cores=1, default_region_size=10_000_000)
 
     # Filtering
     add_filter_args(parser, min_mapq=0, prob_threshold=128, min_read_length=1000)
     parser.add_argument('-t', '--train-reads', default=None,
                         help='TSV file of read IDs used in training (to exclude)')
+    # Parsed-but-never-implemented options, kept only so old command lines get
+    # a clear error instead of an argparse "unrecognized argument".
     parser.add_argument('-l', '--min-footprints', type=int, default=0,
-                        help='Minimum footprints required per read')
+                        help=argparse.SUPPRESS)
     parser.add_argument('--primary', action='store_true',
-                        help='Only process primary alignments (skip secondary/supplementary)')
-    parser.add_argument('--process-unmapped', action='store_true',
+                        help='Only process primary alignments (skip secondary/supplementary). '
+                             'Hard-clipped records whose MM/ML cannot match SEQ '
+                             'are always skipped (hard_clipped_mm).')
+    parser.add_argument('--process-unmapped', action=argparse.BooleanOptionalAction,
+                        default=None,
                         help='Process unmapped reads that have sequences and modification tags. '
-                             'Enabled automatically in streaming mode when no BAM index exists.')
+                             'Default: automatic -- on for stdin, unindexed and unaligned '
+                             '(uBAM) input. A run that skips >90%% of records as unmapped '
+                             'fails unless --no-process-unmapped is given.')
 
     # Processing
     add_edge_trim_args(parser, default=10)
@@ -103,7 +120,7 @@ Examples:
     parser.add_argument('--scores', action='store_true',
                         help='Compute per-footprint confidence scores (slower but more informative)')
     parser.add_argument('--scores-db', action='store_true',
-                        help='Output SQLite database with detailed per-footprint scores')
+                        help=argparse.SUPPRESS)
     parser.add_argument('--msp-min-size', type=int, default=0,
                         help='Minimum size for MSP regions in bp. Default 0 '
                              '(emit every accessible run; matches fibertools, '
@@ -139,8 +156,60 @@ Examples:
     return parser.parse_args()
 
 
+def _reject_unimplemented_options(args):
+    """Exit on options apply accepted but never implemented."""
+    problems = []
+    if args.chroms:
+        problems.append("--chroms")
+    if args.skip_scaffolds:
+        problems.append("--skip-scaffolds")
+    if args.region_size != 10_000_000:
+        problems.append("--region-size")
+    if problems:
+        print(
+            f"error: {', '.join(problems)} had no effect in fiberhmm-apply "
+            "(it always streams the whole BAM) and are no longer accepted. "
+            "Use fiberhmm-call --region-parallel for region selection, or "
+            "subset the BAM with samtools view first.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if args.scores_db:
+        print("error: --scores-db was never implemented (no database was "
+              "written); use --scores and fiberhmm-extract.", file=sys.stderr)
+        sys.exit(2)
+    if args.min_footprints:
+        print("error: -l/--min-footprints was never implemented (reads were "
+              "never filtered by footprint count); filter downstream instead.",
+              file=sys.stderr)
+        sys.exit(2)
+
+
+def _input_index_state(path):
+    """(indexed, aligned) for a file input; (False, False) if unreadable."""
+    import pysam
+
+    try:
+        with pysam.AlignmentFile(path, 'rb', check_sq=False) as bam:
+            return bool(bam.has_index()), bool(bam.references)
+    except (OSError, ValueError):
+        return False, False
+
+
 def main():
     args = parse_args()
+    from fiberhmm.inference.read_filters import MostlyUnmappedError
+    from fiberhmm.inference.worker_results import WorkerFailureError
+
+    try:
+        _main(args)
+    except (WorkerFailureError, MostlyUnmappedError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _main(args):
+    _reject_unimplemented_options(args)
     from fiberhmm.core.bam_reader import apply_daf_run_mask_arguments
     try:
         apply_daf_run_mask_arguments(args, args.enzyme)
@@ -166,6 +235,10 @@ def main():
     # Create output directory (unless writing to stdout)
     if not stdout_mode:
         os.makedirs(args.outdir, exist_ok=True)
+
+    # A missing --seq is inferred from the input's own evidence (and refused
+    # on conflicting evidence) before the bundled model is chosen.
+    resolve_platform_argument(args, args.input, tool='fiberhmm-apply')
 
     # Resolve model path: explicit -m wins; else use bundled model for --enzyme
     model_path = args.model
@@ -228,6 +301,11 @@ def main():
             print(f"  WARNING: Overriding model context size {model_context_size} with {context_size}")
     else:
         context_size = model_context_size
+    try:
+        validate_context_size(model, context_size, label=f"model {model_path}")
+    except ModelContextError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
     print(f"  Context size: k={context_size} ({2*context_size + 1}-mer)")
 
     # Bundled workflows infer mode from enzyme/platform; custom models use
@@ -280,12 +358,7 @@ def main():
         dataset = os.path.basename(args.input).replace('.bam', '')
 
     # Determine if we need scores
-    with_scores = args.scores or args.scores_db
-
-    # Setup scores database path if needed
-    db_path = None
-    if args.scores_db:
-        db_path = os.path.join(args.outdir, f"{dataset}_scores.db")
+    with_scores = args.scores
 
     # Print settings
     mode_descs = {
@@ -307,8 +380,6 @@ def main():
         print("  Circular mode: enabled")
     if with_scores:
         print("  Confidence scores: enabled")
-    if args.scores_db:
-        print(f"  Scores database: {db_path}")
     if mode == 'daf':
         print("  Strand detection: automatic (C=+, G=-)")
     elif mode == 'nanopore-fiber':
@@ -321,33 +392,30 @@ def main():
         print("  Stats: enabled")
     print()
 
-    # Parse chromosomes
-    chroms_set = set(args.chroms) if args.chroms else None
-    if chroms_set:
-        print(f"Processing only chromosomes: {', '.join(sorted(chroms_set))}")
-    if args.skip_scaffolds:
-        print("Skipping scaffold/contig chromosomes")
+    # Unmapped reads are called automatically for stdin, unindexed and
+    # unaligned (uBAM) input; an explicit --[no-]process-unmapped wins.
+    process_unmapped = args.process_unmapped
+    if process_unmapped is None:
+        if args.input == '-':
+            process_unmapped = True
+            reason = "stdin input"
+        else:
+            indexed, aligned = _input_index_state(args.input)
+            process_unmapped = not (indexed and aligned)
+            reason = ("unaligned input (no @SQ reference sequences)"
+                      if not aligned else "no BAM index")
+        if process_unmapped:
+            print(f"Enabling unmapped read processing ({reason})")
 
     # Mode selection:
-    #   n_cores > 1 or stdin → streaming pipeline
-    #   n_cores == 1 → single-threaded chunk mode
-    use_streaming = False
-
+    #   --streaming, stdin, n_cores > 1 or unmapped processing → streaming
+    #   pipeline (the only path that calls unmapped reads)
+    #   otherwise (n_cores == 1) → single-threaded chunk mode
+    use_streaming = bool(
+        args.streaming or args.input == '-' or n_cores > 1 or process_unmapped
+    )
     if args.input == '-':
-        use_streaming = True
         print("Reading from stdin, using streaming pipeline mode")
-    elif n_cores > 1:
-        use_streaming = True
-    # else: n_cores == 1, use legacy single-threaded chunk mode
-
-    # Auto-detect process_unmapped: enable when streaming without an index
-    process_unmapped = args.process_unmapped
-    if use_streaming and not process_unmapped and args.input != '-':
-        has_index = (os.path.exists(args.input + '.bai') or
-                     os.path.exists(args.input.replace('.bam', '.bai')))
-        if not has_index:
-            process_unmapped = True
-            print("Enabling unmapped read processing (no BAM index)")
 
     # === MAIN PROCESSING ===
     if stdout_mode:
@@ -378,9 +446,6 @@ def main():
         max_reads=args.max_reads,
         debug_timing=args.debug_timing,
         region_parallel=False,
-        region_size=args.region_size,
-        skip_scaffolds=args.skip_scaffolds,
-        chroms=chroms_set,
         primary_only=args.primary,
         output_posteriors=args.output_posteriors,
         write_msps=not args.no_msps,
@@ -388,6 +453,9 @@ def main():
         streaming_pipeline=use_streaming,
         chunk_size=args.chunk_size,
         process_unmapped=process_unmapped,
+        # A run that skipped nearly everything as unmapped is an error unless
+        # the user asked for pass-through explicitly.
+        fail_on_mostly_unmapped=args.process_unmapped is not False,
     )
     print(f"\nProcessed {total_reads:,} reads -> {reads_with_footprints:,} with footprints",
           file=sys.stderr if stdout_mode else sys.stdout)
@@ -406,19 +474,6 @@ def main():
         stats.write_summary(f"{stats_prefix}_stats.txt")
         stats.plot_distributions(stats_prefix)
         print(f"Stats: {stats_prefix}_stats.txt, {stats_prefix}_stats.pdf")
-
-    # Print scores database info
-    if db_path and os.path.exists(db_path):
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM reads")
-        n_reads = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM footprints")
-        n_footprints = cursor.fetchone()[0]
-        conn.close()
-        print(f"Scores DB: {db_path}")
-        print(f"  {n_reads:,} reads, {n_footprints:,} footprints")
 
     if stdout_mode:
         print("\nDone!", file=sys.stderr)

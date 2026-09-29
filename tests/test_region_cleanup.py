@@ -49,9 +49,17 @@ def _install_failing_region_pool(monkeypatch, tmp_path):
 
 
 def _indexed_input_bam(tmp_path):
+    # A real (empty) coordinate-sorted, indexed BAM: region-parallel now
+    # validates the index and the region plan before creating temp state, so a
+    # zero-byte placeholder no longer reaches the worker-failure path under test.
+    import pysam
+
     input_bam = tmp_path / "input.bam"
-    input_bam.write_bytes(b"")
-    (tmp_path / "input.bam.bai").write_bytes(b"")
+    header = {"HD": {"VN": "1.6", "SO": "coordinate"},
+              "SQ": [{"SN": "chr1", "LN": 100}]}
+    with pysam.AlignmentFile(str(input_bam), "wb", header=header):
+        pass
+    pysam.index(str(input_bam))
     return str(input_bam)
 
 

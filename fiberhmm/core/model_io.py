@@ -209,6 +209,58 @@ def _save_json(model: FiberHMM, filepath: str, context_size: int, mode: str):
 
 
 # =============================================================================
+# Context-size validation
+# =============================================================================
+
+class ModelContextError(ValueError):
+    """A model's emission table does not match the requested context size."""
+
+
+def expected_emission_width(context_size: int) -> int:
+    """Emission columns for a ``context_size`` model.
+
+    Each flank of ``k`` bases gives ``4**(2k)`` context codes; the encoder
+    emits a methylated and an unmethylated symbol per code plus one
+    non-target symbol per block: ``2 * (4**(2k) + 1)`` (8194 at k=3).
+    """
+    return 2 * (4 ** (2 * int(context_size)) + 1)
+
+
+def context_size_for_width(width: int):
+    """Inverse of :func:`expected_emission_width`, or None if no k matches."""
+    for k in range(1, 9):
+        if expected_emission_width(k) == int(width):
+            return k
+    return None
+
+
+def validate_context_size(model: FiberHMM, context_size: int,
+                          label: str = "model") -> None:
+    """Raise :class:`ModelContextError` if ``context_size`` cannot index ``model``.
+
+    Encoded observations index the emission table directly (inside numba), so
+    a context size that does not match the table width reads out-of-range
+    columns silently instead of failing.
+    """
+    emission = getattr(model, "emissionprob_", None)
+    if emission is None:
+        return  # nothing to index (not a loaded emission model)
+    width = int(np.asarray(emission).shape[1])
+    expected = expected_emission_width(context_size)
+    if width != expected:
+        implied = context_size_for_width(width)
+        hint = (
+            f"; the table was built for k={implied}"
+            if implied is not None else ""
+        )
+        raise ModelContextError(
+            f"{label} has {width} emission columns but k={int(context_size)} "
+            f"needs {expected}{hint}. Drop -k/--context-size to use the "
+            "model's own context size."
+        )
+
+
+# =============================================================================
 # Loading with metadata
 # =============================================================================
 

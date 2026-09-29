@@ -74,7 +74,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                                 io_threads: int = 4,
                                 streaming_pipeline: bool = False,
                                 chunk_size: int = 500,
-                                process_unmapped: bool = False) -> Tuple[int, int]:
+                                process_unmapped: bool = False,
+                                fail_on_mostly_unmapped: bool = False) -> Tuple[int, int]:
     """
     Process BAM file and add footprint tags - SINGLE PASS STREAMING.
 
@@ -161,6 +162,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 max_reads=max_reads,
                 debug_timing=debug_timing,
                 process_unmapped=process_unmapped,
+                fail_on_mostly_unmapped=fail_on_mostly_unmapped,
             )
 
     if model is None and model_path is not None and n_cores <= 1:

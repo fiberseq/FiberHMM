@@ -103,6 +103,22 @@ _SEQ_REQUIRED = {'hia5', 'ecogii', 'sssi'}
 _SEQ_DEFAULT  = 'pacbio'   # default when --seq is omitted for a platform model
 
 
+def enzyme_requires_platform(enzyme: str | None) -> bool:
+    """True when ``--seq`` selects the bundled model / observation frame."""
+    return bool(enzyme) and str(enzyme).lower() in _SEQ_REQUIRED
+
+
+def bundled_models_differ_by_tool(enzyme: str | None, seq: str | None = None) -> bool:
+    """True when the preset ships different apply and recall tables (DddA)."""
+    if not enzyme:
+        return False
+    try:
+        entry = _get_bundled_entry(enzyme, seq, warn_missing_seq=False)
+    except KeyError:
+        return False
+    return entry.get('apply') != entry.get('recall')
+
+
 def _get_bundled_entry(
     enzyme: str,
     seq: str | None,

@@ -27,13 +27,27 @@ import sys
 from fiberhmm.cli.common import (
     add_legacy_mode_override,
     resolve_observation_mode,
+    resolve_platform_argument,
+)
+from fiberhmm.cli.provenance import (
+    REPLACE_CHEMISTRY_KEY,
+    ChemistryConflictError,
+    reconcile_chemistry,
 )
 from fiberhmm.cli.provenance import (
     chemistry_declaration as _chemistry_declaration,
+)
+from fiberhmm.cli.provenance import (
     nuc_profile_identity as _nuc_profile_identity,
+)
+from fiberhmm.cli.provenance import (
     nuc_profile_sha256 as _nuc_profile_sha256,
 )
-from fiberhmm.core.model_io import load_model_with_metadata
+from fiberhmm.core.model_io import (
+    ModelContextError,
+    load_model_with_metadata,
+    validate_context_size,
+)
 from fiberhmm.daf.snps import (
     DEFAULT_SNP_MIN_ALT_FIBERS,
     DEFAULT_SNP_MIN_DEPTH,
@@ -47,6 +61,7 @@ from fiberhmm.inference.parallel import (
 from fiberhmm.inference.tf_recaller import ENZYME_PRESETS, TF_DECODER_VERSION
 from fiberhmm.models import (
     SUPPORTED_ENZYMES,
+    bundled_models_differ_by_tool,
     get_metadata_mode_aliases,
     get_observation_mode,
 )
@@ -71,8 +86,15 @@ def parse_args():
     p.add_argument('--enzyme', choices=sorted(SUPPORTED_ENZYMES), default=None,
                    help='Bundled enzyme preset.')
     p.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                   help='Hia5 platform; omission warns and defaults to pacbio. '
-                        'Ignored for dddb/ddda.')
+                   help='Sequencing platform. For Hia5 it selects the model; '
+                        'when omitted it is detected from the input (MM specs: '
+                        'PacBio T-a vs Nanopore A+a only; header records) and '
+                        'the run stops if the evidence conflicts. For '
+                        'dddb/ddda it only sets the declared platform.')
+    p.add_argument('--replace-chemistry', action='store_true',
+                   help='Replace, instead of reconcile with, the input BAM\'s '
+                        'FIBERHMM-CHEMISTRY declaration (re-calling a BAM with '
+                        'a deliberately different chemistry).')
     p.add_argument('--reference', default=None,
                    help='Reference FASTA for DAF-seq BAMs that lack '
                         'both R/Y IUPAC encoding and MD tags. When present, acts '
@@ -96,15 +118,24 @@ def parse_args():
                    help='Min MSP size (default 0)')
     p.add_argument('--nuc-min-size', type=int, default=85,
                    help='Min footprint size to count as nucleosome (default 85)')
-    p.add_argument('--with-scores', action='store_true',
-                   help='Compute confidence scores (nq/aq tags).')
+    p.add_argument('--with-scores', '--scores', dest='with_scores',
+                   action='store_true',
+                   help='Compute confidence scores (nq/aq tags). --scores is '
+                        'the fiberhmm-apply spelling.')
     p.add_argument('-r', '--circular', action='store_true',
                    help='Enable circular molecule mode (3x tile internally, '
                         'emit wrapped MA/AQ/AN annotations).')
-    p.add_argument('--process-unmapped', action='store_true',
-                   help='Process unmapped reads (default: pass through).')
+    p.add_argument('--process-unmapped', action=argparse.BooleanOptionalAction,
+                   default=None,
+                   help='Call unmapped reads that carry SEQ + MM/ML. Default: '
+                        'automatic -- on for stdin, unindexed and unaligned '
+                        '(uBAM) input, off (pass-through) for indexed aligned '
+                        'BAMs. A run that skips >90%% of records as unmapped '
+                        'fails unless --no-process-unmapped is given.')
     p.add_argument('--primary', action='store_true',
-                   help='Skip secondary/supplementary alignments.')
+                   help='Skip secondary/supplementary alignments (recommended '
+                        'for pooled analyses). Hard-clipped records whose MM/ML '
+                        'cannot match SEQ are always skipped (hard_clipped_mm).')
 
     # --- Recall params ---
     p.add_argument('--min-llr', type=float, default=None,
@@ -258,8 +289,9 @@ def parse_args():
                    help='With --dedup: min ML probability for MM/ML-native dU '
                         'calls, 0-255 (default 0 = accept all).')
     p.add_argument('--dedup-ignore-strand', action='store_true',
-                   help='With --dedup: allow reads on opposite strands to be '
-                        'duplicates (default: strand-aware).')
+                   help='With --dedup: cluster reads across deamination '
+                        'flavours (C->T with G->A reads). Default: only reads '
+                        'of the same flavour can be duplicates.')
     p.add_argument('--dedup-max-end-diff', type=int, default=50,
                    help='With --dedup: maximum difference at both aligned reference '
                         'ends for duplicate matching (default 50 bp).')
@@ -270,7 +302,7 @@ def parse_args():
 
     # --- Parallelism ---
     p.add_argument('-c', '--cores', type=int, default=4,
-                   help='Worker processes (default 4).')
+                   help='Worker processes (0 = all CPUs; default 4).')
     p.add_argument('--chunk-size', type=int, default=500,
                    help='Reads per worker chunk (default 500; streaming mode only).')
     p.add_argument('--io-threads', type=int, default=8,
@@ -317,9 +349,18 @@ def _resolve_apply_model(args):
 
 
 def _resolve_recall_model(args):
+    """TF-recall table: --recall-model, else the apply model, else the preset's.
+
+    A custom ``-m`` drives TF recall too (``--recall-model`` help: "Default:
+    reuse apply model"), so a refit table is used for both passes. The one
+    exception is a preset that ships a separate recall table (DddA:
+    ddda_nuc.json for apply, ddda_TF.json for recall), where ``-m`` replaces
+    only the apply model.
+    """
     if args.recall_model:
         return args.recall_model
-    # For recall, bundled model may differ; fallback to apply model if not available.
+    if args.model and not bundled_models_differ_by_tool(args.enzyme, args.seq):
+        return None  # reuse the custom apply model
     if args.enzyme:
         try:
             return _get_bundled_model(args.enzyme, tool='recall', seq=args.seq)
@@ -371,7 +412,7 @@ def _resolve_derived_tf_edge_gap(args, recall_nucs: bool):
 
 
 def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
-                       recall_nucs, input_bam) -> int:
+                       recall_nucs, input_bam, include_unmapped=False) -> int:
     """Resolve --phase-nrl (off / auto / fixed bp) to an int (0 = off).
 
     ``input_bam`` is the BAM to sample for auto-estimation -- the deduped
@@ -403,6 +444,7 @@ def _resolve_phase_nrl(args, apply_model_path, recall_model_path, mode, k,
         nuc_recall_policy=_resolve_nuc_recall_policy(args, mode),
         nuc_min_size=args.nuc_min_size, msp_min_size=args.msp_min_size,
         prob_threshold=args.prob_threshold, edge_trim=args.edge_trim,
+        include_unmapped=include_unmapped,
     )
     ci = res['ci']
     ci_str = f" CI[{ci[0]:.0f}-{ci[1]:.0f}]" if ci else ""
@@ -557,25 +599,52 @@ def _dedup_input_first(input_bam, output_bam, min_jaccard, flag_only, io_threads
           f"{'mark/retain' if flag_only else 'collapse'}) "
           "BEFORE footprinting...", file=sys.stderr)
     outdir = os.path.dirname(os.path.abspath(output_bam)) if output_bam != '-' else None
-    fd, tmp = tempfile.mkstemp(prefix='fiberhmm_dedup_', suffix='.bam', dir=outdir)
+    fd, tmp = tempfile.mkstemp(prefix='.fiberhmm_dedup_', suffix='.bam', dir=outdir)
     os.close(fd)
-    stats = run_dedup(input_bam, tmp, min_jaccard=min_jaccard,
-                      collapse=not flag_only, io_threads=io_threads,
-                      min_deam=min_deam, prob_threshold=prob_threshold,
-                      ignore_strand=ignore_strand, stats_tsv=stats_tsv,
-                      max_end_diff=max_end_diff)
-    if stats is None:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        return None, None
-    if region_parallel:
-        # region-parallel needs a coordinate index on its input; dedup
-        # preserves the input's sort order so this is valid.
-        try:
-            pysam.index(tmp)
-        except pysam.SamtoolsError:
-            pass
+    try:
+        stats = run_dedup(input_bam, tmp, min_jaccard=min_jaccard,
+                          collapse=not flag_only, io_threads=io_threads,
+                          min_deam=min_deam, prob_threshold=prob_threshold,
+                          ignore_strand=ignore_strand, stats_tsv=stats_tsv,
+                          max_end_diff=max_end_diff)
+        if stats is None:
+            _remove_dedup_temp(tmp)
+            return None, None
+        if region_parallel:
+            # region-parallel needs a coordinate index on its input; dedup
+            # preserves the input's sort order so this is valid.
+            try:
+                pysam.index(tmp)
+            except pysam.SamtoolsError as exc:
+                raise ValueError(
+                    f"--region-parallel: could not index the deduplicated copy "
+                    f"of {input_bam} ({exc}); the input must be "
+                    "coordinate-sorted."
+                ) from exc
+    except BaseException:
+        _remove_dedup_temp(tmp)
+        raise
     return tmp, stats
+
+
+def _remove_dedup_temp(dedup_tmp):
+    """Remove the pre-footprinting dedup temp BAM and any index beside it."""
+    import os
+
+    if not dedup_tmp:
+        return
+    dedup_stem = dedup_tmp[:-4] if dedup_tmp.endswith('.bam') else dedup_tmp
+    for path in (
+        dedup_tmp,
+        dedup_tmp + '.bai',
+        dedup_tmp + '.csi',
+        dedup_stem + '.bai',
+        dedup_stem + '.csi',
+    ):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def _daf_snp_depth_preflight(
@@ -673,13 +742,104 @@ def _daf_snp_depth_preflight(
     }
 
 
+def _input_is_indexed_and_aligned(input_bam):
+    """(indexed, aligned) for a file input; (False, False) if unreadable."""
+    import pysam
+
+    try:
+        with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+            return bool(bam.has_index()), bool(bam.references)
+    except (OSError, ValueError):
+        return False, False
+
+
+def _resolve_process_unmapped(args):
+    """Auto-enable unmapped calling for stdin, unindexed or unaligned input.
+
+    Returns ``(process_unmapped, reason)``. An explicit
+    --process-unmapped/--no-process-unmapped always wins.
+    """
+    if args.process_unmapped is not None:
+        return bool(args.process_unmapped), None
+    if args.region_parallel:
+        return False, None
+    if args.input == '-':
+        return True, 'stdin input'
+    indexed, aligned = _input_is_indexed_and_aligned(args.input)
+    if not aligned:
+        return True, 'unaligned input (no @SQ reference sequences)'
+    if not indexed:
+        return True, 'unindexed input'
+    return False, None
+
+
+def _validate_model_context(model_paths, k):
+    """Exit with a clear message if ``k`` cannot index every model table."""
+    seen = set()
+    for label, path in model_paths:
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        model, _, _ = load_model_with_metadata(path)
+        try:
+            validate_context_size(model, k, label=f"{label} {path}")
+        except ModelContextError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(2)
+
+
 def main():
     args = parse_args()
+    from fiberhmm.inference.read_filters import MostlyUnmappedError
+    from fiberhmm.inference.region_planning import RegionPlanError
+    from fiberhmm.inference.worker_results import WorkerFailureError
+
+    try:
+        _main(args)
+    except ChemistryConflictError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
+    except RegionPlanError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
+    except (WorkerFailureError, MostlyUnmappedError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _main(args):
     stdout_mode = (args.output == '-')
     using_bundled_model = args.model is None
 
     if stdout_mode:
         sys.stdout = sys.stderr  # informational prints → stderr, BAM → real stdout
+
+    if args.cores == 0:
+        import multiprocessing
+        args.cores = multiprocessing.cpu_count()
+    if args.cores < 0:
+        print("error: --cores must be >= 0 (0 = all CPUs)", file=sys.stderr)
+        sys.exit(2)
+
+    if args.region_parallel:
+        if args.input == '-' or args.output == '-':
+            print("error: --region-parallel requires file I/O "
+                  "(input must be indexed BAM, not stdin; output cannot be stdout).",
+                  file=sys.stderr)
+            sys.exit(1)
+        from fiberhmm.inference.region_planning import (
+            plan_region_work,
+            require_indexed_bam,
+        )
+        # Fail in a second, before dedup/SNP/NRL passes, on an unusable input
+        # or an empty/unknown region selection.
+        require_indexed_bam(args.input)
+        plan_region_work(args.input, args.region_size, args.skip_scaffolds,
+                         set(args.chroms) if args.chroms else None)
+
+    # A missing --seq is inferred from the input's own evidence (and refused
+    # on conflicting evidence) before any model is chosen.
+    resolve_platform_argument(args, args.input, tool='fiberhmm-call')
 
     apply_model_path = _resolve_apply_model(args)
     recall_model_path = _resolve_recall_model(args)
@@ -714,26 +874,10 @@ def main():
         sys.exit(2)
     k = args.context_size or int(model_k or 3)
     ddda_mcg = _configure_ddda_mcg(args, mode)
-
-    explicit_dedup = args.dedup
-    if explicit_dedup is False and (args.dedup_collapse or args.dedup_flag_only):
-        print(
-            "error: --no-dedup conflicts with --dedup-collapse/--dedup-flag-only",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    args.dedup = _resolve_dedup(args, mode)
-    if args.dedup and args.input == '-':
-        if explicit_dedup is True or args.dedup_collapse or args.dedup_flag_only:
-            print("error: --dedup requires a file input (it two-passes the BAM to "
-                  "fingerprint reads); cannot dedup a stdin stream.", file=sys.stderr)
-            sys.exit(1)
-        print(
-            "  automatic DAF dedup skipped for stdin; save the input BAM or use "
-            "--no-dedup to silence this note.",
-            file=sys.stderr,
-        )
-        args.dedup = False
+    _validate_model_context(
+        [('apply model', apply_model_path), ('recall model', recall_model_path)],
+        k,
+    )
 
     explicit_dedup = args.dedup
     if explicit_dedup is False and (args.dedup_collapse or args.dedup_flag_only):
@@ -823,428 +967,452 @@ def main():
         print("error: --dedup-max-end-diff must be non-negative", file=sys.stderr)
         sys.exit(2)
 
+    # Chemistry: reconcile with the input's declaration now (file input) so a
+    # conflicting re-call fails in a second, before dedup/SNP/NRL passes. A
+    # custom -m without --enzyme inherits the input's enzyme/platform when the
+    # observation mode matches.
+    input_header = None
+    if args.input != '-':
+        import pysam
+        with pysam.AlignmentFile(args.input, 'rb', check_sq=False) as _bam:
+            input_header = _bam.header
+        reconcile_chemistry(
+            input_header,
+            _chemistry_declaration(args, mode, apply_model_path, recall_model_path),
+            replace=args.replace_chemistry, tool='fiberhmm-call',
+        )
+
+    process_unmapped, unmapped_reason = _resolve_process_unmapped(args)
+    if unmapped_reason:
+        print(f"  NOTE: calling unmapped reads ({unmapped_reason}); pass "
+              "--no-process-unmapped to pass them through instead.",
+              file=sys.stderr)
+    if args.region_parallel and args.process_unmapped:
+        print("  NOTE: --region-parallel passes unmapped reads through uncalled; "
+              "use the streaming pipeline to call them.", file=sys.stderr)
+
     snp_mask_path = args.daf_snp_mask
     snp_report_path = None
     snp_mask_sites = 0
 
-    # PCR dedup runs FIRST (DAF only). The default mark/retain mode preserves
-    # every molecule record while flagging non-representatives; explicit
-    # collapse mode keeps one representative per cluster. working_input feeds
-    # every downstream stage.
+    # PCR dedup runs FIRST (DAF only); everything after it runs under a
+    # finally that removes the dedup temp BAM however the run ends.
     working_input = args.input
     dedup_tmp = None
     dedup_stats = None
-    if args.dedup:
-        if mode != 'daf':
-            print(f"  NOTE: --dedup applies to DAF-seq (ddda/dddb) deamination "
-                  f"data; mode is {mode!r} (fiber-seq has no deamination) -- "
-                  f"skipping dedup.", file=sys.stderr)
-        else:
-            dedup_tmp, dedup_stats = _dedup_input_first(
-                args.input, args.output, args.dedup_min_jaccard,
-                not args.dedup_collapse, args.io_threads, args.region_parallel,
-                min_deam=args.dedup_min_deam,
-                prob_threshold=args.dedup_prob_threshold,
-                ignore_strand=args.dedup_ignore_strand,
-                stats_tsv=args.dedup_stats_tsv,
-                max_end_diff=args.dedup_max_end_diff)
-            if dedup_tmp is not None:
-                working_input = dedup_tmp
+    try:
+        # PCR dedup runs FIRST (DAF only). The default mark/retain mode preserves
+        # every molecule record while flagging non-representatives; explicit
+        # collapse mode keeps one representative per cluster. working_input feeds
+        # every downstream stage.
+        if args.dedup:
+            if mode != 'daf':
+                print(f"  NOTE: --dedup applies to DAF-seq (ddda/dddb) deamination "
+                      f"data; mode is {mode!r} (fiber-seq has no deamination) -- "
+                      f"skipping dedup.", file=sys.stderr)
+            else:
+                dedup_tmp, dedup_stats = _dedup_input_first(
+                    args.input, args.output, args.dedup_min_jaccard,
+                    not args.dedup_collapse, args.io_threads, args.region_parallel,
+                    min_deam=args.dedup_min_deam,
+                    prob_threshold=args.dedup_prob_threshold,
+                    ignore_strand=args.dedup_ignore_strand,
+                    stats_tsv=args.dedup_stats_tsv,
+                    max_end_diff=args.dedup_max_end_diff)
+                if dedup_tmp is not None:
+                    working_input = dedup_tmp
 
-    # Recurrent SNP discovery follows deduplication so PCR copies cannot
-    # inflate opposite-direction support. In nondestructive mark/retain mode,
-    # the SNP caller ignores 0x400 records while FiberHMM still annotates them.
-    run_snp_discovery = args.daf_call_snps is True
-    snp_preflight = None
-    auto_snp = (
-        args.daf_call_snps is None
-        and snp_mask_path is None
-        and mode == 'daf'
-        and args.enzyme in ('ddda', 'dddb')
-    )
-    if auto_snp and args.input != '-' and args.output != '-':
-        snp_preflight = _daf_snp_depth_preflight(
-            args.input,
-            min_mapq=args.min_mapq,
-            min_local_depth=2 * args.daf_snp_min_depth,
+        # Recurrent SNP discovery follows deduplication so PCR copies cannot
+        # inflate opposite-direction support. In nondestructive mark/retain mode,
+        # the SNP caller ignores 0x400 records while FiberHMM still annotates them.
+        run_snp_discovery = args.daf_call_snps is True
+        snp_preflight = None
+        auto_snp = (
+            args.daf_call_snps is None
+            and snp_mask_path is None
+            and mode == 'daf'
+            and args.enzyme in ('ddda', 'dddb')
         )
-        run_snp_discovery = bool(snp_preflight['run'])
+        if auto_snp and args.input != '-' and args.output != '-':
+            snp_preflight = _daf_snp_depth_preflight(
+                args.input,
+                min_mapq=args.min_mapq,
+                min_local_depth=2 * args.daf_snp_min_depth,
+            )
+            run_snp_discovery = bool(snp_preflight['run'])
+            if run_snp_discovery:
+                print(
+                    "  automatic DAF SNP screen enabled: bounded preflight found "
+                    f"{snp_preflight['reason'].replace('_', ' ')} support "
+                    f"(estimated genome coverage {snp_preflight['estimated_genome_coverage']:.2f}x; "
+                    f"max start-bin reads {snp_preflight['max_alignment_start_bin_reads']:,}; "
+                    f"targeted-bin fraction {100 * snp_preflight['supported_start_bin_fraction']:.1f}%; "
+                    f"max sampled depth {snp_preflight['max_local_depth']:,}) "
+                    f"within {snp_preflight['records_examined']:,} records",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    "  automatic DAF SNP screen skipped: bounded preflight found "
+                    f"estimated genome coverage {snp_preflight['estimated_genome_coverage']:.2f}x; "
+                    f"max start-bin reads {snp_preflight['max_alignment_start_bin_reads']:,}; "
+                    f"targeted-bin fraction "
+                    f"{100 * snp_preflight['supported_start_bin_fraction']:.1f}% "
+                    f"(targeted trigger requires >= {snp_preflight['minimum_depth']:,} "
+                    "start-bin reads and >= 10% of eligible reads); "
+                    "isolated sampled depth peak "
+                    f"{snp_preflight['max_local_depth']:,} "
+                    f"({snp_preflight['records_examined']:,} records examined)",
+                    file=sys.stderr,
+                )
+        elif auto_snp:
+            print(
+                "  automatic DAF SNP screen skipped for stdin/stdout; use saved BAMs "
+                "or force --daf-call-snps with file input/output",
+                file=sys.stderr,
+            )
+
         if run_snp_discovery:
+            from pathlib import Path
+
+            from fiberhmm.daf.snps import (
+                call_opposite_conversion_snps,
+                write_snp_outputs,
+            )
+
+            output_path = Path(args.output)
+            snp_prefix = args.daf_snp_output_prefix or str(
+                output_path.parent / 'qc' / f"{output_path.with_suffix('').name}.daf_snps"
+            )
+            snp_policy_name = describe_snp_threshold_policy(
+                args.daf_snp_min_fraction,
+                args.daf_snp_min_depth,
+                args.daf_snp_min_alt_fibers,
+            )['name']
             print(
-                "  automatic DAF SNP screen enabled: bounded preflight found "
-                f"{snp_preflight['reason'].replace('_', ' ')} support "
-                f"(estimated genome coverage {snp_preflight['estimated_genome_coverage']:.2f}x; "
-                f"max start-bin reads {snp_preflight['max_alignment_start_bin_reads']:,}; "
-                f"targeted-bin fraction {100 * snp_preflight['supported_start_bin_fraction']:.1f}%; "
-                f"max sampled depth {snp_preflight['max_local_depth']:,}) "
-                f"within {snp_preflight['records_examined']:,} records",
+                "\n  --daf-call-snps: two-pass opposite-conversion SNP discovery "
+                f"after deduplication (policy={snp_policy_name}; "
+                f"fraction >= {args.daf_snp_min_fraction:g}, "
+                f"depth >= {args.daf_snp_min_depth}, "
+                f"alternate fibers >= {args.daf_snp_min_alt_fibers})...",
                 file=sys.stderr,
             )
+            snp_payload = call_opposite_conversion_snps(
+                working_input,
+                min_fraction=args.daf_snp_min_fraction,
+                min_depth=args.daf_snp_min_depth,
+                min_alt_fibers=args.daf_snp_min_alt_fibers,
+                min_dominant_events=args.daf_snp_min_dominant_events,
+                min_dominant_purity=args.daf_snp_min_dominant_purity,
+                min_mapq=args.min_mapq,
+                reference_fasta=args.reference,
+                min_amplicon_reads=args.daf_snp_min_amplicon_reads,
+            )
+            if dedup_tmp is not None:
+                snp_payload["input"] = str(Path(args.input).resolve())
+                snp_payload["preprocessing"] = {
+                    "deduplication": "duplicate-flagged records excluded",
+                    "mode": dedup_stats.get("mode") if dedup_stats else None,
+                    "n_duplicates": (
+                        int(dedup_stats.get("n_duplicates", 0)) if dedup_stats else 0
+                    ),
+                    "max_end_diff_bp": args.dedup_max_end_diff,
+                }
+            snp_payload = write_snp_outputs(snp_payload, snp_prefix)
+            snp_mask_path = snp_payload['outputs']['bed']
+            snp_report_path = snp_payload['outputs']['json']
+            snp_mask_sites = snp_payload['n_called_snps']
+            print(
+                f"  DAF SNP mask: {snp_mask_sites:,} sites -> {snp_mask_path}",
+                file=sys.stderr,
+            )
+        elif snp_mask_path:
+            from fiberhmm.daf.snps import mask_summary
+
+            snp_mask_sites = mask_summary(snp_mask_path)['n_sites']
+
+        # Freeze DddA nucleosome-refinement likelihoods independently of the TF
+        # recaller. NRL estimation is part of nuc refinement and uses the same
+        # frozen model.
+        nuc_model_path = _resolve_nuc_model_path(args, recall_nucs)
+        _validate_model_context([('nuc likelihood model', nuc_model_path)], k)
+
+        # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
+        phase_nrl = _resolve_phase_nrl(
+            args, apply_model_path, nuc_model_path or recall_model_path, mode, k,
+            recall_nucs, working_input, include_unmapped=process_unmapped)
+
+        # DddA uses phase-aware radial nucleosome inference; other enzymes use the
+        # accessible-cut Kadane split (no profile).
+        nuc_profile_path = _resolve_nuc_profile_path(args, recall_nucs)
+        nuc_profile_identity = _nuc_profile_identity(nuc_profile_path)
+        nuc_profile_sha256 = _nuc_profile_sha256(nuc_profile_path)
+        derived_tf_max_edge_ambiguity = _resolve_derived_tf_edge_gap(
+            args, recall_nucs)
+
+        # @PG provenance for the output BAM header. The molecular-frame note is the
+        # important bit: it tells downstream tools how to read ns/nl/as/al/MA.
+        import fiberhmm as _fh
+        chimera_state = ('n/a' if mode != 'daf'
+                         else ('off' if args.keep_chimeras else 'on'))
+        dedup_state = ('off' if not args.dedup or dedup_tmp is None
+                       else f"j{args.dedup_min_jaccard}"
+                            f"{'/collapse' if args.dedup_collapse else '/mark'}"
+                            f"/ends{args.dedup_max_end_diff}")
+        if snp_mask_path:
+            snp_state = f"on/{snp_mask_sites}sites"
+        elif snp_preflight is not None and not snp_preflight['run']:
+            snp_state = f"auto-skip/depth{snp_preflight['max_local_depth']}"
         else:
-            print(
-                "  automatic DAF SNP screen skipped: bounded preflight found "
-                f"estimated genome coverage {snp_preflight['estimated_genome_coverage']:.2f}x; "
-                f"max start-bin reads {snp_preflight['max_alignment_start_bin_reads']:,}; "
-                f"targeted-bin fraction "
-                f"{100 * snp_preflight['supported_start_bin_fraction']:.1f}% "
-                f"(targeted trigger requires >= {snp_preflight['minimum_depth']:,} "
-                "start-bin reads and >= 10% of eligible reads); "
-                "isolated sampled depth peak "
-                f"{snp_preflight['max_local_depth']:,} "
-                f"({snp_preflight['records_examined']:,} records examined)",
-                file=sys.stderr,
-            )
-    elif auto_snp:
-        print(
-            "  automatic DAF SNP screen skipped for stdin/stdout; use saved BAMs "
-            "or force --daf-call-snps with file input/output",
-            file=sys.stderr,
-        )
-
-    if run_snp_discovery:
-        from pathlib import Path
-
-        from fiberhmm.daf.snps import (
-            call_opposite_conversion_snps,
-            write_snp_outputs,
-        )
-
-        output_path = Path(args.output)
-        snp_prefix = args.daf_snp_output_prefix or str(
-            output_path.parent / 'qc' / f"{output_path.with_suffix('').name}.daf_snps"
-        )
-        snp_policy_name = describe_snp_threshold_policy(
-            args.daf_snp_min_fraction,
-            args.daf_snp_min_depth,
-            args.daf_snp_min_alt_fibers,
-        )['name']
-        print(
-            "\n  --daf-call-snps: two-pass opposite-conversion SNP discovery "
-            f"after deduplication (policy={snp_policy_name}; "
-            f"fraction >= {args.daf_snp_min_fraction:g}, "
-            f"depth >= {args.daf_snp_min_depth}, "
-            f"alternate fibers >= {args.daf_snp_min_alt_fibers})...",
-            file=sys.stderr,
-        )
-        snp_payload = call_opposite_conversion_snps(
-            working_input,
-            min_fraction=args.daf_snp_min_fraction,
-            min_depth=args.daf_snp_min_depth,
-            min_alt_fibers=args.daf_snp_min_alt_fibers,
-            min_dominant_events=args.daf_snp_min_dominant_events,
-            min_dominant_purity=args.daf_snp_min_dominant_purity,
-            min_mapq=args.min_mapq,
-            reference_fasta=args.reference,
-            min_amplicon_reads=args.daf_snp_min_amplicon_reads,
-        )
-        if dedup_tmp is not None:
-            snp_payload["input"] = str(Path(args.input).resolve())
-            snp_payload["preprocessing"] = {
-                "deduplication": "duplicate-flagged records excluded",
-                "mode": dedup_stats.get("mode") if dedup_stats else None,
-                "n_duplicates": (
-                    int(dedup_stats.get("n_duplicates", 0)) if dedup_stats else 0
-                ),
-                "max_end_diff_bp": args.dedup_max_end_diff,
-            }
-        snp_payload = write_snp_outputs(snp_payload, snp_prefix)
-        snp_mask_path = snp_payload['outputs']['bed']
-        snp_report_path = snp_payload['outputs']['json']
-        snp_mask_sites = snp_payload['n_called_snps']
-        print(
-            f"  DAF SNP mask: {snp_mask_sites:,} sites -> {snp_mask_path}",
-            file=sys.stderr,
-        )
-    elif snp_mask_path:
-        from fiberhmm.daf.snps import mask_summary
-
-        snp_mask_sites = mask_summary(snp_mask_path)['n_sites']
-
-    # Freeze DddA nucleosome-refinement likelihoods independently of the TF
-    # recaller. NRL estimation is part of nuc refinement and uses the same
-    # frozen model.
-    nuc_model_path = _resolve_nuc_model_path(args, recall_nucs)
-
-    # Resolve the Pass-2 phase prior: off / auto-estimate / fixed bp.
-    phase_nrl = _resolve_phase_nrl(
-        args, apply_model_path, nuc_model_path or recall_model_path, mode, k,
-                                   recall_nucs, working_input)
-
-    # DddA uses phase-aware radial nucleosome inference; other enzymes use the
-    # accessible-cut Kadane split (no profile).
-    nuc_profile_path = _resolve_nuc_profile_path(args, recall_nucs)
-    nuc_profile_identity = _nuc_profile_identity(nuc_profile_path)
-    nuc_profile_sha256 = _nuc_profile_sha256(nuc_profile_path)
-    derived_tf_max_edge_ambiguity = _resolve_derived_tf_edge_gap(
-        args, recall_nucs)
-
-    # @PG provenance for the output BAM header. The molecular-frame note is the
-    # important bit: it tells downstream tools how to read ns/nl/as/al/MA.
-    import fiberhmm as _fh
-    chimera_state = ('n/a' if mode != 'daf'
-                     else ('off' if args.keep_chimeras else 'on'))
-    dedup_state = ('off' if not args.dedup or dedup_tmp is None
-                   else f"j{args.dedup_min_jaccard}"
-                        f"{'/collapse' if args.dedup_collapse else '/mark'}"
-                        f"/ends{args.dedup_max_end_diff}")
-    if snp_mask_path:
-        snp_state = f"on/{snp_mask_sites}sites"
-    elif snp_preflight is not None and not snp_preflight['run']:
-        snp_state = f"auto-skip/depth{snp_preflight['max_local_depth']}"
-    else:
-        snp_state = 'off'
-    pg_record = {
-        'PN': 'fiberhmm-call',
-        'VN': getattr(_fh, '__version__', 'unknown'),
-        'CL': ' '.join(sys.argv),
-        # Machine-readable, versioned scientific metadata. Unlike DS/CL this
-        # contract is safe for downstream model selection and survives renames.
-        'chemistry': _chemistry_declaration(
+            snp_state = 'off'
+        chemistry = _chemistry_declaration(
             args,
             mode,
             apply_model_path,
             recall_model_path,
             nuc_profile_identity,
             nuc_profile_sha256,
-        ),
-        # The `coord=molecular` token is a stable, version-independent contract
-        # for downstream consumers (e.g. FiberBrowser) to detect that ns/nl/as/al
-        # and MA are in molecular (original-fiber) frame -- keep the exact token.
-        'DS': (f"FiberHMM fused apply+recall; coord=molecular "
-               f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
-               f"mode={mode} enzyme={args.enzyme or 'custom'} "
-               f"tf_decoder={TF_DECODER_VERSION} tf_interval_penalty={min_llr} "
-               f"recall_nucs={recall_nucs} "
-               f"nuc_recall_policy={nuc_recall_policy} "
-               f"nuc_profile={nuc_profile_identity or 'off'} "
-               f"nuc_sha256={nuc_profile_sha256 or 'off'} "
-               f"phase_nrl={phase_nrl} "
-               f"ddda_derived_tf_edge_gap="
-               f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'} "
-               f"chimera_filter={chimera_state} dedup={dedup_state} "
-               f"daf_snp_mask={snp_state} "
-               f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'} "
-               f"ddda_mcg={'on' if ddda_mcg else 'off'}"),
-    }
-
-    mode_label = 'region-parallel' if args.region_parallel else 'streaming'
-    print(
-        "\n=========================================================================\n"
-        f"  fiberhmm-call [BETA] — fused apply + recall-tfs ({mode_label})\n"
-        f"  apply model:  {apply_model_path}\n"
-        f"  recall model: {recall_model_path or '(reuse apply model)'}\n"
-        f"  nuc likelihood model: {nuc_model_path or '(reuse recall model)'}\n"
-        f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'}\n"
-        f"  min_llr={min_llr} min_opps={args.min_opps} "
-        f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
-        f"  tf-decoder={TF_DECODER_VERSION} interval-penalty={min_llr}\n"
-        f"  nuc-recall-policy={nuc_recall_policy} phase-nrl={phase_nrl}\n"
-        f"  ddda-derived-tf-edge-gap="
-        f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'}\n"
-        f"  cores={args.cores} io-threads={args.io_threads} "
-        f"ddda_mcg={'on' if ddda_mcg else 'off'} "
-        f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'}"
-        f"{' circular=on' if args.circular else ''}\n"
-        "=========================================================================\n",
-        file=sys.stderr,
-    )
-
-    also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
-
-    if args.region_parallel:
-        if args.input == '-' or args.output == '-':
-            print("error: --region-parallel requires file I/O "
-                  "(input must be indexed BAM, not stdin; output cannot be stdout).",
-                  file=sys.stderr)
-            sys.exit(1)
-        chroms_set = set(args.chroms) if args.chroms else None
-        n_reads, n_fp = _process_bam_region_parallel_fused(
-            input_bam=working_input,
-            output_bam=args.output,
-            apply_model_path=apply_model_path,
-            recall_model_path=recall_model_path,
-            train_rids=set(),
-            edge_trim=args.edge_trim,
-            circular=args.circular,
-            mode=mode,
-            context_size=k,
-            msp_min_size=args.msp_min_size,
-            nuc_min_size=args.nuc_min_size,
-            min_mapq=args.min_mapq,
-            prob_threshold=args.prob_threshold,
-            min_read_length=args.min_read_length,
-            with_scores=args.with_scores,
-            min_llr=min_llr,
-            min_opps=args.min_opps,
-            unify_threshold=args.unify_threshold,
-            emission_uplift=uplift,
-            also_write_legacy=also_write_legacy,
-            downstream_compat=args.downstream_compat,
-            n_cores=args.cores,
-            region_size=args.region_size,
-            skip_scaffolds=args.skip_scaffolds,
-            chroms=chroms_set,
-            io_threads=args.io_threads,
-            primary_only=args.primary,
-            ref_fasta_path=args.reference,
-            recall_nucs=recall_nucs,
-            split_min_llr=args.split_min_llr,
-            split_min_opps=args.split_min_opps,
-            nuc_recall_policy=nuc_recall_policy,
-            filter_chimeras=not args.keep_chimeras,
-            chimera_min_seg=args.chimera_min_seg,
-            chimera_purity=args.chimera_purity,
-            phase_nrl=phase_nrl,
-            nuc_profile_path=nuc_profile_path,
-            nuc_model_path=nuc_model_path,
-            derived_tf_max_edge_ambiguity=derived_tf_max_edge_ambiguity,
-            pg_record=pg_record,
-            ddda_mcg=ddda_mcg,
-            daf_snp_mask_path=snp_mask_path,
         )
-    else:
-        n_reads, n_fp = _process_bam_streaming_pipeline_fused(
-            input_bam=working_input,
-            output_bam=args.output,
-            model_path=apply_model_path,
-            recall_model_path=recall_model_path,
-            train_rids=set(),
-            edge_trim=args.edge_trim,
-            circular=args.circular,
-            mode=mode,
-            context_size=k,
-            msp_min_size=args.msp_min_size,
-            nuc_min_size=args.nuc_min_size,
-            min_mapq=args.min_mapq,
-            prob_threshold=args.prob_threshold,
-            min_read_length=args.min_read_length,
-            with_scores=args.with_scores,
-            min_llr=min_llr,
-            min_opps=args.min_opps,
-            unify_threshold=args.unify_threshold,
-            emission_uplift=uplift,
-            also_write_legacy=also_write_legacy,
-            downstream_compat=args.downstream_compat,
-            max_reads=args.max_reads,
-            n_cores=args.cores,
-            chunk_size=args.chunk_size,
-            io_threads=args.io_threads,
-            process_unmapped=args.process_unmapped,
-            primary_only=args.primary,
-            ref_fasta_path=args.reference,
-            recall_nucs=recall_nucs,
-            split_min_llr=args.split_min_llr,
-            split_min_opps=args.split_min_opps,
-            nuc_recall_policy=nuc_recall_policy,
-            filter_chimeras=not args.keep_chimeras,
-            chimera_min_seg=args.chimera_min_seg,
-            chimera_purity=args.chimera_purity,
-            phase_nrl=phase_nrl,
-            nuc_profile_path=nuc_profile_path,
-            nuc_model_path=nuc_model_path,
-            derived_tf_max_edge_ambiguity=derived_tf_max_edge_ambiguity,
-            pg_record=pg_record,
-            ddda_mcg=ddda_mcg,
-            daf_snp_mask_path=snp_mask_path,
+        pg_record = {
+            'PN': 'fiberhmm-call',
+            'VN': getattr(_fh, '__version__', 'unknown'),
+            'CL': ' '.join(sys.argv),
+            # Machine-readable, versioned scientific metadata. Unlike DS/CL this
+            # contract is safe for downstream model selection and survives renames.
+            'chemistry': (
+                reconcile_chemistry(
+                    input_header, chemistry, replace=args.replace_chemistry,
+                    tool='fiberhmm-call',
+                )
+                if input_header is not None else chemistry
+            ),
+            REPLACE_CHEMISTRY_KEY: bool(args.replace_chemistry),
+            # The `coord=molecular` token is a stable, version-independent contract
+            # for downstream consumers (e.g. FiberBrowser) to detect that ns/nl/as/al
+            # and MA are in molecular (original-fiber) frame -- keep the exact token.
+            'DS': (f"FiberHMM fused apply+recall; coord=molecular "
+                   f"(ns/nl/as/al/MA in molecular original-fiber coordinates); "
+                   f"mode={mode} enzyme={args.enzyme or 'custom'} "
+                   f"tf_decoder={TF_DECODER_VERSION} tf_interval_penalty={min_llr} "
+                   f"recall_nucs={recall_nucs} "
+                   f"nuc_recall_policy={nuc_recall_policy} "
+                   f"nuc_profile={nuc_profile_identity or 'off'} "
+                   f"nuc_sha256={nuc_profile_sha256 or 'off'} "
+                   f"phase_nrl={phase_nrl} "
+                   f"ddda_derived_tf_edge_gap="
+                   f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'} "
+                   f"chimera_filter={chimera_state} dedup={dedup_state} "
+                   f"daf_snp_mask={snp_state} "
+                   f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'} "
+                   f"ddda_mcg={'on' if ddda_mcg else 'off'}"),
+        }
+
+        mode_label = 'region-parallel' if args.region_parallel else 'streaming'
+        print(
+            "\n=========================================================================\n"
+            f"  fiberhmm-call [BETA] — fused apply + recall-tfs ({mode_label})\n"
+            f"  apply model:  {apply_model_path}\n"
+            f"  recall model: {recall_model_path or '(reuse apply model)'}\n"
+            f"  nuc likelihood model: {nuc_model_path or '(reuse recall model)'}\n"
+            f"  mode={mode} k={k} enzyme={args.enzyme or 'custom'}\n"
+            f"  min_llr={min_llr} min_opps={args.min_opps} "
+            f"unify_threshold={args.unify_threshold} uplift={uplift}\n"
+            f"  tf-decoder={TF_DECODER_VERSION} interval-penalty={min_llr}\n"
+            f"  nuc-recall-policy={nuc_recall_policy} phase-nrl={phase_nrl}\n"
+            f"  ddda-derived-tf-edge-gap="
+            f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'}\n"
+            f"  cores={args.cores} io-threads={args.io_threads} "
+            f"ddda_mcg={'on' if ddda_mcg else 'off'} "
+            f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'}"
+            f"{' circular=on' if args.circular else ''}\n"
+            "=========================================================================\n",
+            file=sys.stderr,
         )
 
-    if not stdout_mode and not args.region_parallel:
-        # region-parallel already indexes.  Streaming mode needs an index pass.
-        import pysam
-        try:
-            pysam.index(args.output)
-        except pysam.SamtoolsError:
-            pass
+        also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
 
-    # Clean up the pre-footprinting dedup temp (+ its index), if any.
-    if dedup_tmp is not None:
-        import os
-        dedup_stem = dedup_tmp[:-4] if dedup_tmp.endswith('.bam') else dedup_tmp
-        for _p in (
-            dedup_tmp,
-            dedup_tmp + '.bai',
-            dedup_tmp + '.csi',
-            dedup_stem + '.bai',
-            dedup_stem + '.csi',
-        ):
+        if args.region_parallel:
+            chroms_set = set(args.chroms) if args.chroms else None
+            n_reads, n_fp = _process_bam_region_parallel_fused(
+                input_bam=working_input,
+                output_bam=args.output,
+                apply_model_path=apply_model_path,
+                recall_model_path=recall_model_path,
+                train_rids=set(),
+                edge_trim=args.edge_trim,
+                circular=args.circular,
+                mode=mode,
+                context_size=k,
+                msp_min_size=args.msp_min_size,
+                nuc_min_size=args.nuc_min_size,
+                min_mapq=args.min_mapq,
+                prob_threshold=args.prob_threshold,
+                min_read_length=args.min_read_length,
+                with_scores=args.with_scores,
+                min_llr=min_llr,
+                min_opps=args.min_opps,
+                unify_threshold=args.unify_threshold,
+                emission_uplift=uplift,
+                also_write_legacy=also_write_legacy,
+                downstream_compat=args.downstream_compat,
+                n_cores=args.cores,
+                region_size=args.region_size,
+                skip_scaffolds=args.skip_scaffolds,
+                chroms=chroms_set,
+                io_threads=args.io_threads,
+                primary_only=args.primary,
+                ref_fasta_path=args.reference,
+                recall_nucs=recall_nucs,
+                split_min_llr=args.split_min_llr,
+                split_min_opps=args.split_min_opps,
+                nuc_recall_policy=nuc_recall_policy,
+                filter_chimeras=not args.keep_chimeras,
+                chimera_min_seg=args.chimera_min_seg,
+                chimera_purity=args.chimera_purity,
+                phase_nrl=phase_nrl,
+                nuc_profile_path=nuc_profile_path,
+                nuc_model_path=nuc_model_path,
+                derived_tf_max_edge_ambiguity=derived_tf_max_edge_ambiguity,
+                pg_record=pg_record,
+                ddda_mcg=ddda_mcg,
+                daf_snp_mask_path=snp_mask_path,
+            )
+        else:
+            n_reads, n_fp = _process_bam_streaming_pipeline_fused(
+                input_bam=working_input,
+                output_bam=args.output,
+                model_path=apply_model_path,
+                recall_model_path=recall_model_path,
+                train_rids=set(),
+                edge_trim=args.edge_trim,
+                circular=args.circular,
+                mode=mode,
+                context_size=k,
+                msp_min_size=args.msp_min_size,
+                nuc_min_size=args.nuc_min_size,
+                min_mapq=args.min_mapq,
+                prob_threshold=args.prob_threshold,
+                min_read_length=args.min_read_length,
+                with_scores=args.with_scores,
+                min_llr=min_llr,
+                min_opps=args.min_opps,
+                unify_threshold=args.unify_threshold,
+                emission_uplift=uplift,
+                also_write_legacy=also_write_legacy,
+                downstream_compat=args.downstream_compat,
+                max_reads=args.max_reads,
+                n_cores=args.cores,
+                chunk_size=args.chunk_size,
+                io_threads=args.io_threads,
+                process_unmapped=process_unmapped,
+                primary_only=args.primary,
+                ref_fasta_path=args.reference,
+                recall_nucs=recall_nucs,
+                split_min_llr=args.split_min_llr,
+                split_min_opps=args.split_min_opps,
+                nuc_recall_policy=nuc_recall_policy,
+                filter_chimeras=not args.keep_chimeras,
+                chimera_min_seg=args.chimera_min_seg,
+                chimera_purity=args.chimera_purity,
+                phase_nrl=phase_nrl,
+                nuc_profile_path=nuc_profile_path,
+                nuc_model_path=nuc_model_path,
+                derived_tf_max_edge_ambiguity=derived_tf_max_edge_ambiguity,
+                pg_record=pg_record,
+                ddda_mcg=ddda_mcg,
+                daf_snp_mask_path=snp_mask_path,
+                # A run that skipped nearly everything as unmapped is an
+                # error unless the user asked for pass-through explicitly.
+                fail_on_mostly_unmapped=args.process_unmapped is not False,
+            )
+
+        if not stdout_mode and not args.region_parallel:
+            # region-parallel already indexes.  Streaming mode needs an index pass.
+            import pysam
             try:
-                os.remove(_p)
-            except OSError:
+                pysam.index(args.output)
+            except pysam.SamtoolsError:
                 pass
 
-    # Preserve only aggregate full-run deduplication statistics beside QC.
-    # This lets a later standalone/multi-BAM fiberhmm-qc reproduce the exact
-    # duplication panel without rescanning or packaging molecule identities.
-    if dedup_stats is not None and not stdout_mode:
-        import json
-        from pathlib import Path
+        # The pre-footprinting dedup temp is no longer needed; removing it here
+        # (as well as in the finally below) keeps the disk footprint low during QC.
+        _remove_dedup_temp(dedup_tmp)
 
-        output_path = Path(args.output)
-        dedup_report_path = (
-            output_path.parent / "qc" /
-            f"{output_path.with_suffix('').name}.dedup.json"
-        )
-        dedup_report_path.parent.mkdir(parents=True, exist_ok=True)
-        dedup_payload = {
-            "schema_version": 1,
-            "method": "fiberhmm_deamination_fingerprint",
-            "input": str(Path(args.input).resolve()),
-            "output": str(output_path.resolve()),
-            "statistics": dedup_stats,
-        }
-        temporary = dedup_report_path.with_name(dedup_report_path.name + ".tmp")
-        temporary.write_text(json.dumps(dedup_payload, indent=2, sort_keys=True) + "\n")
-        temporary.replace(dedup_report_path)
-        print(f"  PCR deduplication report: {dedup_report_path}", file=sys.stderr)
+        # Preserve only aggregate full-run deduplication statistics beside QC.
+        # This lets a later standalone/multi-BAM fiberhmm-qc reproduce the exact
+        # duplication panel without rescanning or packaging molecule identities.
+        if dedup_stats is not None and not stdout_mode:
+            import json
+            from pathlib import Path
 
-    # Bounded post-call QC. Indexed BAMs are sampled via random genomic
-    # windows; unindexed outputs use a capped prefix reservoir. This never
-    # rescans the whole BAM and is deliberately independent of deduplication.
-    if args.qc:
-        if stdout_mode:
-            print("  NOTE: automatic QC skipped for stdout BAM output; run "
-                  "fiberhmm-qc on the saved BAM.", file=sys.stderr)
-        elif mode not in ('daf', 'pacbio-fiber', 'nanopore-fiber'):
-            print(f"  NOTE: automatic QC is not defined for mode {mode!r}; "
-                  "skipping.", file=sys.stderr)
-        else:
-            try:
-                from pathlib import Path
+            output_path = Path(args.output)
+            dedup_report_path = (
+                output_path.parent / "qc" /
+                f"{output_path.with_suffix('').name}.dedup.json"
+            )
+            dedup_report_path.parent.mkdir(parents=True, exist_ok=True)
+            dedup_payload = {
+                "schema_version": 1,
+                "method": "fiberhmm_deamination_fingerprint",
+                "input": str(Path(args.input).resolve()),
+                "output": str(output_path.resolve()),
+                "statistics": dedup_stats,
+            }
+            temporary = dedup_report_path.with_name(dedup_report_path.name + ".tmp")
+            temporary.write_text(json.dumps(dedup_payload, indent=2, sort_keys=True) + "\n")
+            temporary.replace(dedup_report_path)
+            print(f"  PCR deduplication report: {dedup_report_path}", file=sys.stderr)
 
-                from fiberhmm.qc.core import run_qc
+        # Bounded post-call QC. Indexed BAMs are sampled via random genomic
+        # windows; unindexed outputs use a capped prefix reservoir. This never
+        # rescans the whole BAM and is deliberately independent of deduplication.
+        if args.qc:
+            if stdout_mode:
+                print("  NOTE: automatic QC skipped for stdout BAM output; run "
+                      "fiberhmm-qc on the saved BAM.", file=sys.stderr)
+            elif mode not in ('daf', 'pacbio-fiber', 'nanopore-fiber'):
+                print(f"  NOTE: automatic QC is not defined for mode {mode!r}; "
+                      "skipping.", file=sys.stderr)
+            else:
+                try:
+                    from pathlib import Path
 
-                qc_prefix = args.qc_output_prefix
-                if qc_prefix is None:
-                    output_path = Path(args.output)
-                    qc_prefix = str(
-                        output_path.parent / 'qc' / output_path.with_suffix('').name
+                    from fiberhmm.qc.core import run_qc
+
+                    qc_prefix = args.qc_output_prefix
+                    if qc_prefix is None:
+                        output_path = Path(args.output)
+                        qc_prefix = str(
+                            output_path.parent / 'qc' / output_path.with_suffix('').name
+                        )
+
+                    run_qc(
+                        input_path=args.output,
+                        output_prefix=qc_prefix,
+                        mode=mode,
+                        enzyme=args.enzyme or 'auto',
+                        # The automatic reference is locked to the resolved
+                        # enzyme/platform combination selected for this call.
+                        # Explicit profile overrides belong to standalone
+                        # fiberhmm-qc, where they cannot silently mislabel a call.
+                        reference_profile='auto',
+                        reference_fasta=args.reference,
+                        sample_reads=args.qc_sample_reads,
+                        seed=args.qc_seed,
+                        min_mapq=args.qc_min_mapq,
+                        prob_threshold=args.prob_threshold,
+                        snp_report_path=snp_report_path,
+                        snp_mask_path=snp_mask_path,
+                        snp_preflight_summary=snp_preflight,
+                        dedup_run_summary=dedup_stats,
                     )
+                except Exception as exc:
+                    # QC must never invalidate a successfully written callset.
+                    print(f"  WARNING: automatic FiberHMM QC could not run: {exc}",
+                          file=sys.stderr)
 
-                run_qc(
-                    input_path=args.output,
-                    output_prefix=qc_prefix,
-                    mode=mode,
-                    enzyme=args.enzyme or 'auto',
-                    # The automatic reference is locked to the resolved
-                    # enzyme/platform combination selected for this call.
-                    # Explicit profile overrides belong to standalone
-                    # fiberhmm-qc, where they cannot silently mislabel a call.
-                    reference_profile='auto',
-                    reference_fasta=args.reference,
-                    sample_reads=args.qc_sample_reads,
-                    seed=args.qc_seed,
-                    min_mapq=args.qc_min_mapq,
-                    prob_threshold=args.prob_threshold,
-                    snp_report_path=snp_report_path,
-                    snp_mask_path=snp_mask_path,
-                    snp_preflight_summary=snp_preflight,
-                    dedup_run_summary=dedup_stats,
-                )
-            except Exception as exc:
-                # QC must never invalidate a successfully written callset.
-                print(f"  WARNING: automatic FiberHMM QC could not run: {exc}",
-                      file=sys.stderr)
-
+    finally:
+        _remove_dedup_temp(dedup_tmp)
 
 if __name__ == '__main__':
     main()

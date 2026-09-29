@@ -63,18 +63,32 @@ import pysam
 from fiberhmm.cli.common import (
     add_legacy_mode_override,
     resolve_observation_mode,
+    resolve_platform_argument,
 )
 from fiberhmm.cli.provenance import (
+    REPLACE_CHEMISTRY_KEY,
+    ChemistryConflictError,
     chemistry_declaration,
     nuc_profile_identity,
     nuc_profile_sha256,
+    output_header_with_provenance,
 )
 from fiberhmm.core.bam_reader import encode_from_query_sequence
-from fiberhmm.core.model_io import load_model_with_metadata
+from fiberhmm.core.model_io import (
+    ModelContextError,
+    load_model_with_metadata,
+    validate_context_size,
+)
+from fiberhmm.inference.bam_output import atomic_output
+from fiberhmm.inference.worker_results import (
+    WorkerFailureError,
+    enforce_worker_failure_policy,
+    extend_failure_messages,
+    record_failure_message,
+)
 from fiberhmm.io.bam_header import (
     append_coord_marker,
     header_has_coord_marker,
-    maybe_append_pg,
 )
 from fiberhmm.io.ma_tags import flip_intervals_to_seq
 from fiberhmm.inference.fused_stages import build_fused_recall_result
@@ -131,6 +145,7 @@ def _build_recall_pg_record(args, mode, model_path, nuc_cfg):
     import fiberhmm as _fh
 
     return {
+        REPLACE_CHEMISTRY_KEY: bool(getattr(args, 'replace_chemistry', False)),
         'PN': program_name,
         'VN': getattr(_fh, '__version__', 'unknown'),
         'CL': ' '.join(sys.argv),
@@ -256,6 +271,7 @@ def _make_payload(read, mode=None) -> dict:
             tags[t] = val
 
     payload = {
+        'name': getattr(read, 'query_name', None),
         'seq': read.query_sequence,
         'is_reverse': read.is_reverse,
         'tags': tags,
@@ -451,10 +467,17 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
     return (None, None, None, None, result), stats
 
 
+class _ChunkStats(dict):
+    """Per-chunk counters plus the first per-read failure tracebacks."""
+
+    failure_messages = ()
+
+
 def _process_payload_chunk(payloads):
     """Worker: process a list of compact payloads."""
     out = []
-    total = {key: 0 for key in _STATS_KEYS}
+    total = _ChunkStats({key: 0 for key in _STATS_KEYS})
+    messages = []
     for payload in payloads:
         try:
             result, stats = _process_payload_record(payload)
@@ -462,9 +485,14 @@ def _process_payload_chunk(payloads):
             result = None
             stats = {key: 0 for key in _STATS_KEYS}
             stats['failed'] = 1
+            record_failure_message(
+                messages,
+                payload.get('name') if isinstance(payload, dict) else None,
+            )
         out.append(result)
         for key in _STATS_KEYS:
             total[key] += stats[key]
+    total.failure_messages = tuple(messages)
     return out, total
 
 
@@ -507,8 +535,11 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
                         cpg_mask_policy="unmethylated-only",
                         nuc_protected_hit=None, nuc_accessible_hit=None,
                         nuc_llr_hit=None, nuc_llr_miss=None,
-                        nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None):
+                        nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None,
+                        failure_messages=None):
     """Single-threaded path.  No IPC — process reads directly."""
+    if failure_messages is None:
+        failure_messages = []
     _worker_init(llr_hit, llr_miss, mode, k, min_llr, min_opps, unify_threshold,
                  nuc_cfg, input_molecular_frame, m5c_llr_hit, m5c_llr_miss,
                  cpg_mask_policy,
@@ -525,6 +556,8 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
             result = None
             stats = {key: 0 for key in _STATS_KEYS}
             stats['failed'] = 1
+            record_failure_message(failure_messages,
+                                   getattr(read, 'query_name', None))
         if result is not None:
             _apply_result(read, result, also_write_legacy, downstream_compat)
         bam_out.write(read)
@@ -545,7 +578,8 @@ def _parallel_loop(bam_in, bam_out, _header_text,
                    cpg_mask_policy="unmethylated-only",
                    nuc_protected_hit=None, nuc_accessible_hit=None,
                    nuc_llr_hit=None, nuc_llr_miss=None,
-                   nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None):
+                   nuc_m5c_llr_hit=None, nuc_m5c_llr_miss=None,
+                   failure_messages=None):
     """Multi-core path with slim IPC and bounded in-flight queue.
 
     Uses apply_async + a bounded deque instead of imap to cap how many chunks
@@ -567,6 +601,9 @@ def _parallel_loop(bam_in, bam_out, _header_text,
         nonlocal n_reads, n_v2, n_tf, n_demoted, n_failed
         reads_chunk, fut = pending.popleft()
         out_results, stats = fut.get()   # blocks until result is ready
+        if failure_messages is not None:
+            extend_failure_messages(failure_messages,
+                                    getattr(stats, 'failure_messages', ()))
         for read, result in zip(reads_chunk, out_results):
             if result is not None:
                 _apply_result(read, result, also_write_legacy, downstream_compat)
@@ -639,8 +676,17 @@ def parse_args(default_recall_nucs: bool = False):
                         f'min-llr/emission-uplift defaults '
                         f'({", ".join(sorted(ENZYME_PRESETS))}).')
     p.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                   help='Hia5 sequencing platform; omission warns and defaults '
-                        'to pacbio. Ignored for dddb/ddda.')
+                   help='Hia5 sequencing platform. When omitted it is taken '
+                        'from the input\'s FIBERHMM-CHEMISTRY declaration or '
+                        'detected from its MM specs (PacBio T-a vs Nanopore '
+                        'A+a only); conflicting evidence stops the run. '
+                        'Ignored for dddb/ddda.')
+    p.add_argument('--replace-chemistry', action='store_true',
+                   help='Replace, instead of reconcile with, the input BAM\'s '
+                        'FIBERHMM-CHEMISTRY declaration. By default a custom '
+                        '--model inherits the input\'s enzyme/platform when its '
+                        'observation mode matches, and a conflicting '
+                        '--enzyme/--seq is refused.')
     p.add_argument('--daf-mask-runs', type=int, default=None, metavar='N',
                    help='DAF only: thin targets lying in same-strand runs of >= N original C (CT) or G (GA) bases (CC/GG and longer at N=2; see --daf-run-policy). Adjacent conversions are coupled and do not follow the per-site emission model. Default: 2 with keep-one for --enzyme ddda (duplex-validated), off otherwise; 0 disables.')
     p.add_argument('--daf-run-policy', choices=['keep-one', 'drop'], default='keep-one',
@@ -684,7 +730,7 @@ def parse_args(default_recall_nucs: bool = False):
                         'Molecular-annotation spec. Loses per-TF quality '
                         'scoring (tq/el/er) -- positions and lengths only.')
     p.add_argument('-c', '--cores', type=int, default=1,
-                   help='Worker processes. 0 = auto-detect (default 1).')
+                   help='Worker processes (0 = all CPUs; default 1).')
     p.add_argument('--chunk-size', type=int, default=1024,
                    help='Reads per worker chunk (default 1024). '
                         'Larger values reduce IPC overhead; decrease if RAM '
@@ -871,14 +917,43 @@ def _resolve_input_molecular_frame(args, header) -> bool:
     return is_mol
 
 
+def _input_declared_mode(path):
+    """Observation mode declared by the input BAM's chemistry, if unique."""
+    if not path or path == '-':
+        return None
+    from fiberhmm.io.bam_header import declared_chemistries
+    try:
+        with pysam.AlignmentFile(path, 'rb', check_sq=False) as bam:
+            modes = {item.get('mode') for item in declared_chemistries(bam.header)}
+    except (OSError, ValueError):
+        return None
+    modes.discard(None)
+    return modes.pop() if len(modes) == 1 else None
+
+
 def main(default_recall_nucs: bool = False):
     args = parse_args(default_recall_nucs=default_recall_nucs)
+    try:
+        _main(args)
+    except ChemistryConflictError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
+    except WorkerFailureError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _main(args):
     using_bundled_model = args.model is None
 
     stdout_mode = (args.out_bam == '-')
     if stdout_mode:
         # Redirect informational prints to stderr so BAM stream on stdout stays clean
         sys.stdout = sys.stderr
+
+    # A missing --seq comes from the input's declaration or MM specs (refused
+    # on conflicting evidence) before the bundled model is chosen.
+    resolve_platform_argument(args, args.in_bam, tool='fiberhmm-recall-tfs')
 
     # Resolve model path: explicit -m wins; else use bundled model for --enzyme
     model_path = args.model
@@ -947,6 +1022,19 @@ def main(default_recall_nucs: bool = False):
         fb_mode, fb_k = _resolve_model_metadata(model_path)
         model_mode = model_mode or fb_mode
         model_k = model_k or fb_k
+    if (
+        not using_bundled_model
+        and args.mode is None
+        and model_mode in (None, '', 'unknown')
+    ):
+        # A custom table without mode metadata recalls a FiberHMM-called BAM
+        # in the observation mode that BAM declares.
+        declared_mode = _input_declared_mode(args.in_bam)
+        if declared_mode:
+            print(f"[recall_tfs] custom model has no mode metadata; using the "
+                  f"input BAM's declared mode {declared_mode!r}.",
+                  file=sys.stderr)
+            model_mode = declared_mode
     from fiberhmm.models import get_metadata_mode_aliases, get_observation_mode
     inferred_mode = (
         get_observation_mode(
@@ -975,6 +1063,11 @@ def main(default_recall_nucs: bool = False):
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
     k = args.context_size or int(model_k)
+    try:
+        validate_context_size(model, k, label=f"model {model_path}")
+    except ModelContextError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
     nuc_recall_policy = _resolve_nuc_recall_policy(args, mode)
     # Same observation lattice as the first pass: unset means the chemistry
     # default (DddA keep-one on runs >= 2). Configured before any worker starts.
@@ -1061,6 +1154,12 @@ def main(default_recall_nucs: bool = False):
                 'ddda', tool='nuc_refine', seq=args.seq,
             )
             nuc_model, _, _ = load_model_with_metadata(nuc_model_path)
+            try:
+                validate_context_size(
+                    nuc_model, k, label=f"nuc likelihood model {nuc_model_path}")
+            except ModelContextError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                sys.exit(2)
             # A TF-emission sensitivity override must not retune the frozen
             # DddA radial-nucleosome likelihoods.
             nuc_uplift = 1.0
@@ -1083,74 +1182,84 @@ def main(default_recall_nucs: bool = False):
         )
 
     # Open BAMs with io-threads. pysam accepts "-" as stdin/stdout natively.
-    bam_in = pysam.AlignmentFile(args.in_bam, 'rb',
-                                  check_sq=False,
-                                  threads=args.io_threads)
-    # Resolve the coordinate frame of the input ns/nl/as/al tags. Current
-    # FiberHMM stamps the @CO molecular marker; legacy/v1.0 BAMs lack it and
-    # store the tags in SEQ (query) frame -- flipping those again mis-places
-    # every reverse-strand call. Auto-detect from the header, overridable.
-    input_molecular_frame = _resolve_input_molecular_frame(args, bam_in.header)
-    from fiberhmm.inference.tf_recaller import warn_unapplied_call_daf_inputs
-    warn_unapplied_call_daf_inputs(bam_in.header, mode)
+    # A file output is written to a hidden sibling and published only when
+    # the run (including the per-read failure policy) succeeds.
+    failure_messages = []
+    with atomic_output(args.out_bam) as out_path:
+        bam_in = pysam.AlignmentFile(args.in_bam, 'rb',
+                                     check_sq=False,
+                                     threads=args.io_threads)
+        # Resolve the coordinate frame of the input ns/nl/as/al tags. Current
+        # FiberHMM stamps the @CO molecular marker; legacy/v1.0 BAMs lack it
+        # and store the tags in SEQ (query) frame -- flipping those again
+        # mis-places every reverse-strand call. Auto-detect from the header,
+        # overridable.
+        input_molecular_frame = _resolve_input_molecular_frame(args, bam_in.header)
+        from fiberhmm.inference.tf_recaller import warn_unapplied_call_daf_inputs
+        warn_unapplied_call_daf_inputs(bam_in.header, mode)
 
-    bam_out = None
-    try:
-        from fiberhmm.io.bam_header import append_ma_types
-        output_header = append_coord_marker(bam_in.header)
-        if not args.downstream_compat:
-            output_header = append_ma_types(output_header, ("nuc", "msp", "tf"))
-        output_header = maybe_append_pg(
-            output_header,
-            _build_recall_pg_record(args, mode, model_path, nuc_cfg),
-        )
-        bam_out = pysam.AlignmentFile(args.out_bam, 'wb',
-                                       header=output_header,
-                                       threads=args.io_threads)
-        header_text = str(bam_in.header)
-
-        # Compat mode always writes legacy tags (TFs live in ns/nl there).
-        also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
-
-        if n_cores == 1:
-            n_reads, n_v2, n_tf, n_demoted, n_failed = _single_thread_loop(
-                bam_in, bam_out, header_text,
-                llr_hit, llr_miss, mode, k,
-                min_llr, args.min_opps, args.unify_threshold,
-                also_write_legacy, args.downstream_compat, args.max_reads,
-                nuc_cfg, input_molecular_frame,
-                m5c_llr_hit, m5c_llr_miss, cpg_mask_policy,
-                nuc_protected_hit, nuc_accessible_hit,
-                nuc_llr_hit, nuc_llr_miss,
-                nuc_m5c_llr_hit, nuc_m5c_llr_miss,
+        bam_out = None
+        try:
+            from fiberhmm.io.bam_header import append_ma_types
+            output_header = append_coord_marker(bam_in.header)
+            if not args.downstream_compat:
+                output_header = append_ma_types(output_header, ("nuc", "msp", "tf"))
+            # Reconciles the run's chemistry with the input's declaration: a
+            # custom --model inherits the input's enzyme/platform when the
+            # mode matches; a real conflict raises ChemistryConflictError
+            # before any output is written.
+            output_header = output_header_with_provenance(
+                output_header,
+                _build_recall_pg_record(args, mode, model_path, nuc_cfg),
             )
-        else:
-            n_reads, n_v2, n_tf, n_demoted, n_failed = _parallel_loop(
-                bam_in, bam_out, header_text,
-                llr_hit, llr_miss, mode, k,
-                min_llr, args.min_opps, args.unify_threshold,
-                also_write_legacy, args.downstream_compat, args.max_reads,
-                n_cores, args.chunk_size, nuc_cfg, input_molecular_frame,
-                m5c_llr_hit, m5c_llr_miss, cpg_mask_policy,
-                nuc_protected_hit, nuc_accessible_hit,
-                nuc_llr_hit, nuc_llr_miss,
-                nuc_m5c_llr_hit, nuc_m5c_llr_miss,
-            )
-    finally:
-        bam_in.close()
-        if bam_out is not None:
-            bam_out.close()
+            bam_out = pysam.AlignmentFile(out_path, 'wb',
+                                          header=output_header,
+                                          threads=args.io_threads)
+            header_text = str(bam_in.header)
 
-    print(
-        f"[recall_tfs] processed {n_reads} reads; {n_v2} carried v2 tags; "
-        f"{n_tf} TF calls emitted; {n_demoted} v2 short nucs demoted to tf+",
-        file=sys.stderr,
-    )
-    if n_failed:
+            # Compat mode always writes legacy tags (TFs live in ns/nl there).
+            also_write_legacy = (True if args.downstream_compat
+                                 else (not args.no_legacy_tags))
+
+            if n_cores == 1:
+                n_reads, n_v2, n_tf, n_demoted, n_failed = _single_thread_loop(
+                    bam_in, bam_out, header_text,
+                    llr_hit, llr_miss, mode, k,
+                    min_llr, args.min_opps, args.unify_threshold,
+                    also_write_legacy, args.downstream_compat, args.max_reads,
+                    nuc_cfg, input_molecular_frame,
+                    m5c_llr_hit, m5c_llr_miss, cpg_mask_policy,
+                    nuc_protected_hit, nuc_accessible_hit,
+                    nuc_llr_hit, nuc_llr_miss,
+                    nuc_m5c_llr_hit, nuc_m5c_llr_miss,
+                    failure_messages=failure_messages,
+                )
+            else:
+                n_reads, n_v2, n_tf, n_demoted, n_failed = _parallel_loop(
+                    bam_in, bam_out, header_text,
+                    llr_hit, llr_miss, mode, k,
+                    min_llr, args.min_opps, args.unify_threshold,
+                    also_write_legacy, args.downstream_compat, args.max_reads,
+                    n_cores, args.chunk_size, nuc_cfg, input_molecular_frame,
+                    m5c_llr_hit, m5c_llr_miss, cpg_mask_policy,
+                    nuc_protected_hit, nuc_accessible_hit,
+                    nuc_llr_hit, nuc_llr_miss,
+                    nuc_m5c_llr_hit, nuc_m5c_llr_miss,
+                    failure_messages=failure_messages,
+                )
+        finally:
+            bam_in.close()
+            if bam_out is not None:
+                bam_out.close()
+
         print(
-            f"[recall_tfs] warning: {n_failed} reads passed through unchanged "
-            "after recall errors",
+            f"[recall_tfs] processed {n_reads} reads; {n_v2} carried v2 tags; "
+            f"{n_tf} TF calls emitted; {n_demoted} v2 short nucs demoted to tf+",
             file=sys.stderr,
+        )
+        # Inside the atomic context: raising discards the temporary BAM.
+        enforce_worker_failure_policy(
+            n_failed, n_reads, failure_messages, log=sys.stderr, label='recall',
         )
 
 

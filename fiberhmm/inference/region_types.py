@@ -18,6 +18,9 @@ class RegionBamWorkItem:
     input_bam: str
     temp_bam_path: str
     temp_tsv_path: Optional[str] = None
+    # Copy the region's records unannotated (unselected contig, or the
+    # unplaced unmapped reads for region ``('*', 0, 0)``).
+    passthrough: bool = False
 
     @classmethod
     def from_value(
@@ -44,6 +47,9 @@ class RegionBamResult:
     temp_tsv_path: Optional[str] = None
     skip_reasons: SkipReasons = field(default_factory=dict)
     metrics: Metrics = field(default_factory=dict)
+    # First per-read failure tracebacks from this region (see
+    # worker_results.enforce_worker_failure_policy).
+    failure_messages: Tuple[str, ...] = ()
 
     @classmethod
     def from_value(
@@ -96,6 +102,7 @@ class RegionBamAggregation:
     metrics: Metrics = field(default_factory=dict)
     temp_bams: List[Tuple[int, str]] = field(default_factory=list)
     temp_tsvs: List[Tuple[int, str]] = field(default_factory=list)
+    failure_messages: List[str] = field(default_factory=list)
 
     @property
     def completed(self) -> int:
@@ -118,6 +125,9 @@ class RegionBamAggregation:
 
         for name, count in result.metrics.items():
             self.metrics[name] = self.metrics.get(name, 0) + count
+
+        from fiberhmm.inference.worker_results import extend_failure_messages
+        extend_failure_messages(self.failure_messages, result.failure_messages)
 
         if include_tsv and result.temp_tsv_path:
             self.temp_tsvs.append((region_index, result.temp_tsv_path))

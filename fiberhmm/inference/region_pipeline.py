@@ -15,9 +15,14 @@ import pysam
 from fiberhmm.inference.bam_output import (
     _concatenate_region_bams,
     _sort_and_index_bam,
+    atomic_output,
 )
 from fiberhmm.inference.mp_context import _MP_CONTEXT
-from fiberhmm.inference.region_planning import _get_genome_regions
+from fiberhmm.inference.region_planning import (
+    _get_genome_regions,
+    plan_region_work,
+    require_indexed_bam,
+)
 from fiberhmm.inference.region_types import (
     RegionBamAggregation,
     RegionBamResult,
@@ -33,12 +38,42 @@ from fiberhmm.inference.region_workers import (
     _process_region_to_bam_fused,
     _process_region_to_bed,
 )
+from fiberhmm.inference.worker_results import enforce_worker_failure_policy
 from fiberhmm.posteriors.region_tsv import (
     merge_region_posteriors_tsv as _merge_region_posteriors_tsv,
 )
 from fiberhmm.posteriors.region_tsv import (
     region_posteriors_tsv_output_path,
 )
+
+
+def _plan_work_items(input_bam, temp_dir, region_size, skip_scaffolds, chroms,
+                     with_tsv=False):
+    """Region work items (processing + pass-through) in output order."""
+    plan = plan_region_work(input_bam, region_size, skip_scaffolds, chroms)
+    work_items = []
+    for i, item in enumerate(plan):
+        temp_bam = os.path.join(temp_dir, f'region_{i:06d}.bam')
+        temp_tsv = (
+            os.path.join(temp_dir, f'region_{i:06d}.tsv')
+            if with_tsv and not item.passthrough else None
+        )
+        work_items.append(RegionBamWorkItem(
+            item.region, input_bam, temp_bam, temp_tsv, item.passthrough,
+        ))
+    n_regions = sum(1 for item in plan if not item.passthrough)
+    return work_items, n_regions
+
+
+def _enforce_region_failures(aggregation) -> None:
+    failures = int(aggregation.metrics.get('worker_failures', 0))
+    enforce_worker_failure_policy(
+        failures,
+        aggregation.total_reads + failures,
+        aggregation.failure_messages,
+        log=sys.stdout,
+        label='region worker',
+    )
 
 
 def _process_bam_region_parallel(input_bam: str, output_bam: str,
@@ -83,10 +118,9 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
     if not os.path.exists(input_bam + '.bai') and not os.path.exists(input_bam.replace('.bam', '.bai')):
         print("Indexing input BAM for region-parallel processing...")
         pysam.index(input_bam)
+    require_indexed_bam(input_bam)
 
-    # Get regions
-    regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
-    print(f"Processing {len(regions)} regions with {n_cores} cores...")
+    print(f"Planning regions with {n_cores} cores...")
     if return_posteriors:
         print(f"Posteriors will be written to: {output_posteriors}")
     sys.stdout.flush()
@@ -115,12 +149,16 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
             'io_threads': io_threads,
         }
 
-        # Work items - include temp H5 path if posteriors requested
-        work_items = []
-        for i, region in enumerate(regions):
-            temp_bam = os.path.join(temp_dir, f'region_{i:06d}.bam')
-            temp_h5 = os.path.join(temp_dir, f'region_{i:06d}.tsv') if return_posteriors else None
-            work_items.append(RegionBamWorkItem(region, input_bam, temp_bam, temp_h5))
+        # Work items (processing regions plus pass-through contigs and the
+        # unplaced unmapped reads) - include temp TSV path if posteriors
+        # requested.
+        work_items, n_regions = _plan_work_items(
+            input_bam, temp_dir, region_size, skip_scaffolds, chroms,
+            with_tsv=return_posteriors,
+        )
+        regions = work_items
+        print(f"Processing {n_regions} regions "
+              f"(+{len(work_items) - n_regions} pass-through)...")
 
         # Process regions in parallel
         aggregation = RegionBamAggregation()
@@ -190,7 +228,10 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
         non_empty_bams = [bam for _, bam in aggregation.temp_bams
                          if os.path.exists(bam) and os.path.getsize(bam) > 0]
 
-        _concatenate_region_bams(input_bam, output_bam, non_empty_bams, temp_dir)
+        _enforce_region_failures(aggregation)
+        with atomic_output(output_bam) as output_path:
+            _concatenate_region_bams(input_bam, output_path, non_empty_bams,
+                                     temp_dir)
 
         sys.stdout.flush()
 
@@ -412,9 +453,10 @@ def _process_bam_region_parallel_fused(
     """
     start_time = time.time()
 
-    regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
-    print(f"Processing {len(regions)} regions with {n_cores} cores (fused apply+recall)...")
-    sys.stdout.flush()
+    require_indexed_bam(input_bam)
+    # Validate the plan (unknown --chroms, nothing left to process) before
+    # creating any temporary state.
+    plan_region_work(input_bam, region_size, skip_scaffolds, chroms)
 
     output_dir = os.path.dirname(os.path.abspath(output_bam))
     temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_call_tmp_', dir=output_dir)
@@ -450,15 +492,16 @@ def _process_bam_region_parallel_fused(
         'ref_fasta_path': ref_fasta_path,
     }
 
-    work_items = [
-        RegionBamWorkItem(
-            (r[0], r[1], r[2]), input_bam,
-            os.path.join(temp_dir, f'region_{i:06d}.bam'),
-        )
-        for i, r in enumerate(regions)
-    ]
-
     try:
+        work_items, n_regions = _plan_work_items(
+            input_bam, temp_dir, region_size, skip_scaffolds, chroms,
+        )
+        regions = work_items
+        print(f"Processing {n_regions} regions "
+              f"(+{len(work_items) - n_regions} pass-through) with {n_cores} "
+              "cores (fused apply+recall)...")
+        sys.stdout.flush()
+
         aggregation = RegionBamAggregation()
 
         print(f"  Initializing {n_cores} workers (loading apply model + LLR tables)...")
@@ -514,10 +557,13 @@ def _process_bam_region_parallel_fused(
             )
 
         # Concat region BAMs in region-index order - preserves coord sort.
+        # Published atomically, and only if the per-read failure policy holds.
         aggregation.temp_bams.sort(key=lambda x: x[0])
         non_empty = [bam for _, bam in aggregation.temp_bams
                      if os.path.exists(bam) and os.path.getsize(bam) > 0]
-        _concatenate_region_bams(input_bam, output_bam, non_empty, temp_dir)
+        _enforce_region_failures(aggregation)
+        with atomic_output(output_bam) as output_path:
+            _concatenate_region_bams(input_bam, output_path, non_empty, temp_dir)
 
         # Index directly (input sorted -> each region sorted -> concat sorted).
         try:
