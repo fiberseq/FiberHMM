@@ -32,7 +32,7 @@ from tqdm import tqdm
 
 # Package imports
 from fiberhmm.core.bam_reader import parse_mm_tag_query_positions
-from fiberhmm.probabilities.context_counter import ContextCounter
+from fiberhmm.probabilities.context_counter import ContextCounter, encoder_context_code
 from fiberhmm.probabilities.stats import generate_probability_stats
 from fiberhmm.probabilities.utils import detect_strand_and_base
 
@@ -221,7 +221,8 @@ def process_bam(bam_path: str, counters: Dict[str, ContextCounter],
                     )
             elif target_base in counters:
                 counters[target_base].process_read(
-                    read.query_sequence, mod_positions, args.edge_trim
+                    read.query_sequence, mod_positions, args.edge_trim,
+                    is_reverse=(mode == 'nanopore-fiber' and read.is_reverse),
                 )
 
             reads_processed += 1
@@ -428,14 +429,14 @@ def main():
             print(f"\n  Generating TSV files for k={min(args.context_sizes)} to k={max(args.context_sizes)}...")
         for ctx_size in args.context_sizes:
             # Accessible probabilities
-            _, acc_probs = acc.get_encoding_table(ctx_size, encode_by_code=(args.mode in ('gpc','cpg','daf')))
+            _, acc_probs = acc.get_encoding_table(ctx_size)
             acc_tsv = os.path.join(tables_dir, f"{base_name}_accessible_{base}_k{ctx_size}.tsv")
             acc_probs[['encode', 'context', 'hit', 'nohit', 'ratio']].to_csv(
                 acc_tsv, sep='\t', index=False
             )
 
             # Inaccessible probabilities
-            _, inacc_probs = inacc.get_encoding_table(ctx_size, encode_by_code=(args.mode in ('gpc','cpg','daf')))
+            _, inacc_probs = inacc.get_encoding_table(ctx_size)
             inacc_tsv = os.path.join(tables_dir, f"{base_name}_inaccessible_{base}_k{ctx_size}.tsv")
             inacc_probs[['encode', 'context', 'hit', 'nohit', 'ratio']].to_csv(
                 inacc_tsv, sep='\t', index=False
@@ -456,8 +457,8 @@ def main():
                inaccessible_counters[base].total_positions == 0:
                 continue
 
-            _, acc_probs = accessible_counters[base].get_encoding_table(ctx_size, encode_by_code=(args.mode in ('gpc','cpg','daf')))
-            _, inacc_probs = inaccessible_counters[base].get_encoding_table(ctx_size, encode_by_code=(args.mode in ('gpc','cpg','daf')))
+            _, acc_probs = accessible_counters[base].get_encoding_table(ctx_size)
+            _, inacc_probs = inaccessible_counters[base].get_encoding_table(ctx_size)
 
             # Skip if both are empty
             if len(acc_probs) == 0 and len(inacc_probs) == 0:
@@ -470,8 +471,8 @@ def main():
             # Outer merge to include all observed contexts from both samples
             combined = acc_df.merge(inacc_df, on='context', how='outer')
             combined = combined.fillna(0.0)  # Missing contexts get 0 probability
-            combined = combined.sort_values('context').reset_index(drop=True)
-            combined['encode'] = range(len(combined))
+            combined['encode'] = [encoder_context_code(c, base) for c in combined['context']]
+            combined = combined.sort_values('encode').reset_index(drop=True)
 
             # Reorder columns
             combined = combined[['encode', 'context', 'accessible_prob', 'inaccessible_prob']]

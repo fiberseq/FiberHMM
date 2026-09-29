@@ -27,6 +27,21 @@ def reverse_complement(seq: str) -> str:
     return seq.translate(_RC_TABLE)[::-1]
 
 
+def encoder_context_code(context: str, center_base: str) -> int:
+    """The code the inference encoder gives the centre of ``context`` (a 2k+1-mer).
+
+    Emission tables are indexed by this code. It is NOT the context's rank in
+    alphabetical order: the encoder numbers bases A=0, C=1, T=2, G=3, so an
+    alphabetical (ACGT) numbering swaps every G and T digit. Returns 4**(2k)
+    (the non-target code) when the centre is not ``center_base``.
+    """
+    from fiberhmm.core.bam_reader import _encode_vectorized
+    k = len(context) // 2
+    nc = 4 ** (2 * k)
+    codes = _encode_vectorized(context, center_base, k, 0, nc, include_rc=False)
+    return int(codes[k]) if len(codes) > k else nc
+
+
 def detect_strand_and_base(sequence: str, mod_positions: Set[int], mode: str) -> Tuple[str, str]:
     """
     Detect strand and target base based on mode.
@@ -173,7 +188,8 @@ class ContextCounter:
 
         self.total_positions += 1
 
-    def process_read(self, sequence: str, mod_positions: Set[int], edge_trim: int = 10):
+    def process_read(self, sequence: str, mod_positions: Set[int], edge_trim: int = 10,
+                     is_reverse: bool = False):
         """
         Process all target base positions in a read.
 
@@ -181,7 +197,16 @@ class ContextCounter:
             sequence: Read sequence
             mod_positions: Set of positions that are modified
             edge_trim: Bases to skip at edges
+            is_reverse: Nanopore single-strand reads only. A reverse-aligned read's
+                SEQ is the reverse complement of the basecall, so its methylated A's
+                sit on SEQ T's. Pass True to count it in the basecalled-forward frame
+                (matching the encoder's T-target/RC-context handling); otherwise its
+                unmethylated opposite-strand A's would be counted as misses.
         """
+        if is_reverse:
+            L = len(sequence)
+            sequence = reverse_complement(sequence)
+            mod_positions = {L - 1 - p for p in mod_positions if 0 <= p < L}
         seq_upper = sequence.upper()
         seq_len = len(sequence)
 
@@ -366,23 +391,24 @@ class ContextCounter:
             self.total_positions += 1
 
     def get_probabilities(self, context_size: int = 3,
-                          encode_by_code: bool = False) -> pd.DataFrame:
+                          encode_by_code: bool = True) -> pd.DataFrame:
         """
         Get probability table for a specific context size.
 
         Args:
             context_size: Bases on each side (3 = 7-mer hexamer)
-            encode_by_code: If False (default, legacy) the ``encode`` column is a
-                sequential index over sorted contexts — this equals the apply-time
-                base-4 hexamer code ONLY when coverage is dense (all contexts present,
-                e.g. m6A/daf). If True, ``encode`` is the actual base-4 code from
-                ContextEncoder (center = ``self.center_base``, no RC), which is REQUIRED
-                for sparse motif modes (gpc/cpg) where only GpC/CpG contexts appear and
-                sequential numbering would misalign with the encoder.
+            encode_by_code: Kept for compatibility; must be True. The ``encode``
+                column is always the code the apply-time encoder gives the context
+                (``encoder_context_code``). The old sequential/alphabetical numbering
+                was removed: it G/T-swapped every table built with it (DddB fixed
+                2026-09-23, Hia5 Nanopore 2026-09-29).
 
         Returns:
             DataFrame with columns: context, hit, nohit, ratio, encode
         """
+        if not encode_by_code:
+            raise ValueError("alphabetical context numbering was removed: it does not "
+                             "match the inference encoder (A=0, C=1, T=2, G=3)")
         if context_size > self.max_context:
             raise ValueError(f"Requested context size {context_size} > max {self.max_context}")
 
@@ -413,32 +439,19 @@ class ContextCounter:
         df = pd.DataFrame(rows)
         if len(df) > 0:
             df = df.sort_values('context').reset_index(drop=True)
-            if encode_by_code:
-                # Assign the code the APPLY-TIME encoder produces for each context, by
-                # running that exact function (_encode_vectorized) on the context
-                # string and reading the center-position code. This guarantees the
-                # emission table lines up with apply-time observations. Required for
-                # sparse motif modes (gpc/cpg); ContextEncoder.get_lookup uses a
-                # DIFFERENT scheme and does not match the encoder.
-                from fiberhmm.core.bam_reader import _encode_vectorized
-                nc = 4 ** (2 * context_size)
-                k = context_size
-
-                def _code(ctx):
-                    codes = _encode_vectorized(ctx, self.center_base, k, 0, nc,
-                                               include_rc=False)
-                    return int(codes[k]) if len(codes) > k else nc
-
-                df['encode'] = df['context'].map(_code)
-                df = df[df['encode'] < nc].reset_index(drop=True)
-                df['encode'] = df['encode'].astype(int)
-            else:
-                df['encode'] = range(len(df))
+            # The code the APPLY-TIME encoder produces for each context, so the
+            # emission table lines up with apply-time observations for dense (m6A,
+            # DAF) and sparse (gpc/cpg) modes alike. ContextEncoder.get_lookup uses
+            # a DIFFERENT scheme and does not match the encoder.
+            nc = 4 ** (2 * context_size)
+            df['encode'] = df['context'].map(lambda c: encoder_context_code(c, self.center_base))
+            df = df[df['encode'] < nc].reset_index(drop=True)
+            df['encode'] = df['encode'].astype(int)
 
         return df
 
     def get_encoding_table(self, context_size: int = 3, fill_missing: bool = False,
-                           encode_by_code: bool = False) -> Tuple[Dict[str, int], pd.DataFrame]:
+                           encode_by_code: bool = True) -> Tuple[Dict[str, int], pd.DataFrame]:
         """
         Get encoding lookup table and probabilities for a context size.
 
@@ -457,9 +470,10 @@ class ContextCounter:
             return {}, pd.DataFrame(columns=['context', 'hit', 'nohit', 'ratio', 'encode'])
 
         if fill_missing and context_size <= 5:  # Only allow fill_missing for small k
-            # Build deterministic encoding (alphabetical order of ALL possible)
+            # Every possible context, numbered by the encoder's own code
             all_contexts = self._generate_all_contexts(context_size)
-            context_to_code = {ctx: i for i, ctx in enumerate(sorted(all_contexts))}
+            context_to_code = {ctx: encoder_context_code(ctx, self.center_base)
+                               for ctx in all_contexts}
 
             # Add encoding to probability table
             probs['encode'] = probs['context'].map(context_to_code)
@@ -481,17 +495,11 @@ class ContextCounter:
                 probs = pd.concat([probs, pd.DataFrame(missing)], ignore_index=True)
 
             probs = probs.sort_values('encode').reset_index(drop=True)
-        elif encode_by_code:
-            # Keep the true base-4 codes assigned by get_probabilities (they match the
-            # apply-time encoder). Do NOT re-index sequentially, which would misalign
-            # sparse motif modes (gpc/cpg).
-            context_to_code = dict(zip(probs['context'], probs['encode']))
-            probs = probs.sort_values('encode').reset_index(drop=True)
         else:
-            # Fast path: only observed contexts, encode alphabetically
-            observed_contexts = sorted(probs['context'].unique())
-            context_to_code = {ctx: i for i, ctx in enumerate(observed_contexts)}
-            probs['encode'] = probs['context'].map(context_to_code)
+            # Only observed contexts, keeping the encoder codes from get_probabilities.
+            # Never re-index sequentially: that misaligns sparse tables and G/T-swaps
+            # dense ones.
+            context_to_code = dict(zip(probs['context'], probs['encode']))
             probs = probs.sort_values('encode').reset_index(drop=True)
 
         return context_to_code, probs

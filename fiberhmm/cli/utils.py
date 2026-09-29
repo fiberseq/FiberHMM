@@ -483,7 +483,8 @@ def _process_target_bam(bam_path, mode, max_context, args):
                     )
             elif target_base in counters:
                 counters[target_base].process_read(
-                    read.query_sequence, mod_positions, args.edge_trim
+                    read.query_sequence, mod_positions, args.edge_trim,
+                    is_reverse=(mode == 'nanopore-fiber' and read.is_reverse),
                 )
 
             total_reads += 1
@@ -646,8 +647,7 @@ def cmd_transfer(args):
         regression_data_k = {}
 
         for base in target_bases:
-            target_rates = target_counters[base].get_probabilities(
-                k, encode_by_code=(args.mode in ('gpc', 'cpg')))
+            target_rates = target_counters[base].get_probabilities(k)
 
             if accessibility_priors_df is not None:
                 center_idx = k
@@ -684,9 +684,9 @@ def cmd_transfer(args):
             print(f"    Enrichment ratio: {p_acc/max(0.001, p_inacc):.1f}x")
 
             # Create output files
-            output_df = target_rates[['context']].copy()
-            output_df = output_df.sort_values('context').reset_index(drop=True)
-            output_df['encode'] = range(len(output_df))
+            # Index by the encoder's own context code (never alphabetical rank)
+            output_df = target_rates[['context', 'encode']].copy()
+            output_df = output_df.sort_values('encode').reset_index(drop=True)
 
             acc_df = output_df.copy()
             acc_df['ratio'] = p_acc
@@ -700,7 +700,7 @@ def cmd_transfer(args):
             inacc_df[['encode', 'context', 'ratio']].to_csv(inacc_file, sep='\t', index=False)
 
             combined = pd.DataFrame({
-                'encode': range(len(output_df)),
+                'encode': output_df['encode'].values,
                 'context': output_df['context'].values,
                 'accessible_prob': p_acc,
                 'inaccessible_prob': p_inacc
