@@ -78,7 +78,8 @@ def discover(sources, region, opt, progress, cores=1):
     return kept, dropped, tiles, diagnostics
 
 
-def quantify(sources, classes, tiles, opt, progress, cores=1):
+def quantify(sources, classes, tiles, opt, progress, cores=1, frozen=None):
+    """frozen: a frozen.FrozenClasses (transfer); each channel is then scored with its fixed boxes and spots, no fitting."""
     rows, mols, broad = [], [], []
     efficiency = Un.efficiency_factors(sources) if opt.efficiency_calibration else None
     chem = {s['dataset_id']: s['chemistry'] for s in sources}
@@ -105,9 +106,11 @@ def quantify(sources, classes, tiles, opt, progress, cores=1):
             chemistry = chem[ch.split('::', 1)[0]]
             gs = [_jitter(classes[x], chemistry, opt) for x in grp]
             f = Un.unknown_accessible_fraction(sources, ch, {u['uid'] for u in us})
-            tasks.append((us, gs, f, opt)); meta.append((gi, grp, ch, len(us)))
+            tasks.append((us, gs, f, opt) if frozen is None else (us, gs, f, opt, frozen.fixed(classes, grp, ch, chemistry)))
+            meta.append((gi, grp, ch, len(us)))
     done = lambda i: progress('recaller_quantify', f'group {meta[i][0] + 1}/{len(groups)} ({len(meta[i][1])} classes), {meta[i][2]}: {meta[i][3]} molecules')
-    for (gi, grp, ch, _), (us, gs, f, _o), res in zip(meta, tasks, _run_all(Mo.fit_channel, tasks, cores, done)):
+    fit = Mo.fit_channel if frozen is None else frozen.score
+    for (gi, grp, ch, _), (us, gs, f, _o, *_), res in zip(meta, tasks, _run_all(fit, tasks, cores, done)):
         if res is None:
             continue
         k = len(grp); w = res['w']
@@ -123,6 +126,7 @@ def quantify(sources, classes, tiles, opt, progress, cores=1):
                              supported=bool(gain == gain and gain >= opt.support_gain_nats and lb >= opt.support_minimum_lower_bound),
                              resolution_nats=round(res['resolution'][c], 2), resolved=bool(res['resolution'][c] >= opt.resolution_nats),
                              spots=';'.join(f'{p}:{v:.3f}' for p, v in res['spots'][c].items()), edge_contraction=res['edges'][c],
+                             spot_rates={str(p): float(v) for p, v in res['spots'][c].items()},   # full precision (frozen transfer)
                              unknown_accessible_fraction=round(f, 4),
                              efficiency=None if not efficiency else round(efficiency.get(ch, 1.), 4)))
             for u, p, call in zip(res['units'], res['P'][:, c], res['calls']):
@@ -276,7 +280,8 @@ MOLECULE_FIELDS = ['class_id', 'channel', 'unit_id', 'posterior', 'log_bf', 'lab
 BROADER_FIELDS = ['group', 'classes', 'channel', 'unit_id', 'posterior', 'start', 'end']
 
 
-def run_lattice_recaller(payload, options, output_dir=None, progress=None):
+def run_lattice_recaller(payload, options, output_dir=None, progress=None, frozen=None):
+    """frozen: a frozen.FrozenClasses; classes and tiles then come from the catalog (no discovery)."""
     from ..harmonized_families.workflow import prepare_sources
     started = time.monotonic(); progress = progress or (lambda *_: None); opt = options['recaller']
     out = Path(output_dir or tempfile.mkdtemp(prefix='fiberhmm-recaller-')); out.mkdir(parents=True, exist_ok=True)
@@ -289,8 +294,8 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None):
         classes, dropped, tiles, diagnostics, rows, mols, broad = [], [], [], [], [], [], []
     else:
         cores = options['compute'].cores
-        classes, dropped, tiles, diagnostics = discover(sources, region, opt, progress, cores)
-        rows, mols, broad = quantify(sources, classes, tiles, opt, progress, cores) if classes else ([], [], [])
+        classes, dropped, tiles, diagnostics = discover(sources, region, opt, progress, cores) if frozen is None else frozen.discovery()
+        rows, mols, broad = quantify(sources, classes, tiles, opt, progress, cores, frozen=frozen) if classes else ([], [], [])
     snap = snapshot(sources, classes, rows, mols, opt, region=region, broad=broad)
     stages = [dict(id='resolved', label='Lattice recaller', seconds=time.monotonic() - started, families=len(classes),
                    original_calls=sum(len(r['proposals']) for d in snap['datasets'].values() for r in d['cr']['records']),
@@ -317,10 +322,14 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None):
                                  efficiency_calibration=opt.efficiency_calibration),
                    browser_sources=payload.get('browser_sources'), pooling=payload.get('pooling'), input_files=payload.get('input_files'),
                    display_mode=mode, presentation_revision='lattice_recaller_v1')
+    if frozen is not None:
+        receipt['transfer'] = frozen.provenance()
     result = dict(schema=SCHEMA, cr_mode=MODE, manifest=receipt, stages=stages, stage_results={'resolved': snap}, final_stage='resolved',
                   recaller=dict(classes=[dict(id=g['id'], start=g['span'][0], end=g['span'][1], L=list(g['L']), R=list(g['R']), calls=g['calls'],
                                               stability=g['stability'], supported_channels=sum(1 for r in rows if r['class_id'] == g['id'] and r['supported']))
                                          for g in classes], rows=rows), **snap)
+    if frozen is not None:
+        result['transfer'] = receipt['transfer']
     if digest(payload) != before:
         raise AssertionError('Input payload mutated')
     write_json(out/'manifest.json', receipt); write_json(out/'result.json.gz', result)

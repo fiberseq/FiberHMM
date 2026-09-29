@@ -1,18 +1,33 @@
-"""Freeze CL-CR families or score them on oriented target BAM windows."""
+"""Freeze a consensus run's classes (lattice_recaller) or families (staged_native_families) and apply them to new
+evidence or oriented target BAM windows without rediscovery or refitting."""
 import argparse
 import csv
 import html
 from pathlib import Path
 from .artifacts import read_json,write_json,digest
-from .transfer import export_run,load_bundle,score_payload
+from .transfer import export_run,load_bundle,score_payload,run_engine,RECALLER_MODE
 from .cli import Progress
+
+STAGED_SCHEMA='fiberhmm.frozen_families.v1'
+MODEL_FILES=('frozen_classes.json.gz','frozen_models.json.gz')
+
+
+def _model_path(value):
+    """--models accepts the frozen file or the --freeze-run output directory holding it."""
+    path=Path(value)
+    if path.is_dir():
+        found=[path/n for n in MODEL_FILES if (path/n).is_file()]
+        if len(found)!=1:raise ValueError(f'{path} must contain exactly one of {", ".join(MODEL_FILES)}')
+        return found[0]
+    return path
 
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     source=parser.add_mutually_exclusive_group(required=True)
-    source.add_argument('--freeze-run',help='Completed oriented CL-CR result directory; export models without refitting')
-    source.add_argument('--models',help='Portable frozen_models.json.gz')
+    source.add_argument('--freeze-run',help='Completed consensus result directory: a lattice_recaller run (any frame) or an oriented '
+                        'staged_native_families CL-CR run; export its classes/models without refitting')
+    source.add_argument('--models',help='frozen_classes.json.gz (lattice_recaller), frozen_models.json.gz (staged), or the --freeze-run output directory')
     inputs=parser.add_mutually_exclusive_group()
     inputs.add_argument('--bam',action='append')
     inputs.add_argument('--datasets',help='JSON list of dataset_id and BAM paths')
@@ -25,16 +40,38 @@ def main(argv=None):
     parser.add_argument('--bam-scope',choices=['regions','full'],default='regions')
     parser.add_argument('--bam-grouping',choices=['datasets','files'],default='datasets')
     parser.add_argument('--json-progress',action='store_true')
+    recaller=parser.add_argument_group('lattice_recaller catalogs')
+    recaller.add_argument('--cores',type=int,help='Worker processes for scoring (default: this machine\'s consensus default)')
+    recaller.add_argument('--dataset-map',action='append',default=[],metavar='TARGET=SOURCE',
+                          help='Use the frozen per-channel boxes and spots of source dataset SOURCE for target dataset TARGET '
+                               '(needed when several source datasets share the target chemistry)')
+    recaller.add_argument('--include-training-molecules',action='store_true',
+                          help='Score molecules the catalog was trained on (default: exclude them, as for staged families); '
+                               'use for self-application checks')
     parser.add_argument('--output',required=True,help='New or empty output directory')
     args=parser.parse_args(argv);out=Path(args.output)
     if out.exists() and any(out.iterdir()):parser.error('Output directory must be empty')
     out.mkdir(parents=True,exist_ok=True);progress=Progress(args.json_progress)
     if args.freeze_run:
         if args.bam or args.datasets or args.evidence or args.bed or args.chip_bed:parser.error('--freeze-run accepts no target inputs')
+        if run_engine(args.freeze_run)==RECALLER_MODE:
+            from .lattice_recaller.frozen import CATALOG_NAME
+            catalog=export_run(args.freeze_run,out/CATALOG_NAME)
+            progress('complete',f"Exported {len(catalog['classes'])} frozen classes over {len(catalog['channels'])} channels")
+            return
         bundle=export_run(args.freeze_run,out/'frozen_models.json.gz')
         progress('complete',f"Exported {len(bundle['models'])} frozen families")
         return
     if not (args.bam or args.datasets or args.evidence):parser.error('Supply --bam, --datasets or --evidence')
+    model_path=_model_path(args.models);schema=read_json(model_path).get('schema')
+    from .lattice_recaller.frozen import SCHEMA as RECALLER_SCHEMA
+    if schema==RECALLER_SCHEMA:
+        return _apply_recaller(args,parser,out,progress,model_path)
+    if schema!=STAGED_SCHEMA:
+        raise ValueError(f'Unsupported frozen model schema {schema!r}; this FiberHMM applies {RECALLER_SCHEMA} and {STAGED_SCHEMA}')
+    if args.cores is not None or args.dataset_map or args.include_training_molecules:
+        parser.error('--cores, --dataset-map and --include-training-molecules apply to lattice_recaller catalogs only')
+    args.models=str(model_path)
     if args.evidence and args.bed:parser.error('Saved evidence fixes its coordinate frame; omit --bed')
     if not args.evidence and not args.bed:parser.error('BAM transfer requires oriented BED6')
     if args.evidence and args.chip_bed:parser.error('ChIP evaluation requires explicit target BED windows')
@@ -123,5 +160,98 @@ def main(argv=None):
     svg.append('</svg>');(out/'families.svg').write_text(''.join(svg))
     (out/'report.html').write_text('<!doctype html><meta charset="utf-8"><title>Frozen footprint families</title><h1>Frozen footprint family transfer</h1><p>Source models were not refitted. Compatibility is not occupancy probability. Unassessed calls and training-molecule exclusions are retained in window JSON files.</p><img src="families.svg" alt="Frozen family mean spans in oriented analysis coordinates"><p><a href="families.tsv">Per-window family counts</a> · <a href="calls.tsv">Original call assignments</a></p>'+('<p><a href="chip_evaluation.json">Descriptive ChIP discrimination</a>: peak overlap with supplied windows; no target fitting or uncertainty estimate.</p>' if args.chip_bed else '')+'<table border="1">'+headers+rows+'</table>')
     progress('complete',f'{len(windows)} windows scored against {len(bundle["models"])} frozen families')
+
+
+def _read_peaks(path):
+    peaks=[]
+    with open(path) as handle:
+        for line in handle:
+            if not line.strip() or line.startswith(('#','track ','browser ')):continue
+            fields=line.split()
+            if len(fields)<3 or int(fields[1])<0 or int(fields[2])<=int(fields[1]):raise ValueError('Invalid ChIP BED interval')
+            peaks.append(dict(chrom=fields[0],start=int(fields[1]),end=int(fields[2])))
+    return peaks
+
+
+def _apply_recaller(args,parser,out,progress,model_path):
+    """Score target evidence against a frozen lattice-recaller class catalog; each window is a normal recaller run."""
+    from .lattice_recaller import frozen as F
+    from .lattice_recaller.workflow import CLASS_FIELDS
+    if args.evidence and args.bed:parser.error('Saved evidence fixes its coordinate frame; omit --bed')
+    if not args.evidence and not args.bed:parser.error('BAM transfer requires oriented BED6')
+    if args.evidence and args.chip_bed:parser.error('ChIP evaluation requires explicit target BED windows')
+    catalog=F.load_catalog(model_path);frame=catalog['frame']['region'];width=frame['end']-frame['start']
+    overrides=read_json(args.parameters) if args.parameters else None
+    dataset_map={}
+    for item in args.dataset_map:
+        target,sep,source=item.partition('=')
+        if not sep or not target or not source or target in dataset_map:parser.error('--dataset-map takes unique TARGET=SOURCE pairs')
+        dataset_map[target]=source
+    from .execution import single_threaded_blas
+    jobs=[]
+    if args.evidence:
+        jobs.append((None,read_json(args.evidence)))
+    else:
+        from .regions import load_bed,pool_payloads
+        from .bam import load_bam_payload
+        datasets=read_json(args.datasets) if args.datasets else [dict(dataset_id=Path(p).stem,paths=[str(Path(p).resolve())],**({'chemistry':args.chemistry} if args.chemistry else {})) for p in (args.bam or [])]
+        if len({d['dataset_id'] for d in datasets})!=len(datasets):parser.error('Duplicate dataset names; use --datasets with unique IDs')
+        windows=load_bed(args.bed,pooled=True)
+        if any(w['end']-w['start']!=width for w in windows):parser.error(f'BED widths must match the frozen frame ({width} bp)')
+        load_options=F.transfer_options(catalog,[],overrides,1)
+        for i,w in enumerate(windows):
+            progress('load',f"Window {i+1}/{len(windows)} {w['name']}")
+            pooled=pool_payloads([load_bam_payload(datasets,dict(chrom=w['chrom'],start=w['start'],end=w['end']),load_options,progress)],[w])
+            same=not catalog['frame']['pooled'] and w['strand']=='+' and [w['start'],w['end']]==[frame['start'],frame['end']]
+            region=dict(chrom=w['chrom'] if same else 'oriented_BED',start=frame['start'],end=frame['end'])
+            jobs.append((w,F.shift_payload(pooled,frame['start'],region)))
+    analyses=[];summary=[];runs=[]
+    with single_threaded_blas():
+        for i,(w,payload) in enumerate(jobs):
+            folder=out if len(jobs)==1 else out/f'window_{i+1:06d}'
+            progress('transfer',f"{w['name'] if w else 'evidence'}: scoring against {len(catalog['classes'])} frozen classes")
+            result,target=F.apply_catalog(catalog,payload,folder,parameters=overrides,cores=args.cores,dataset_map=dataset_map,
+                                          include_training=args.include_training_molecules,progress=progress,window=w)
+            if target.get('input_files'):analyses.append((result,target))
+            runs.append(dict(window=w,output=str(folder),input_digest=result['manifest']['input_digest'],
+                             channel_map=result['transfer']['channel_map'],excluded_training_molecules=result['transfer']['excluded_training_molecules'],
+                             classes=len(result['recaller']['rows'])))
+            for r in result['recaller']['rows']:
+                summary.append(dict(window=w['name'] if w else 'evidence',chrom=w['chrom'] if w else frame.get('chrom',''),
+                    window_start=w['start'] if w else frame['start'],window_end=w['end'] if w else frame['end'],window_strand=w['strand'] if w else '',
+                    source_channel=result['transfer']['channel_map'].get(r['channel']),**{k:r.get(k) for k in CLASS_FIELDS}))
+    fields=['window','chrom','window_start','window_end','window_strand','source_channel']+CLASS_FIELDS
+    with (out/'transfer_summary.tsv').open('w',newline='') as handle:
+        writer=csv.DictWriter(handle,fieldnames=fields,delimiter='\t');writer.writeheader();writer.writerows(summary)
+    evaluation=None
+    if args.chip_bed:
+        peaks=_read_peaks(args.chip_bed)
+        for row in summary:row['chip_overlap']=int(any(p['chrom']==row['chrom'] and p['start']<row['window_end'] and p['end']>row['window_start'] for p in peaks))
+        from sklearn.metrics import roc_auc_score,average_precision_score
+        evaluation=[]
+        for channel,cls in sorted({(r['channel'],r['class_id']) for r in summary}):
+            subset=[r for r in summary if (r['channel'],r['class_id'])==(channel,cls)]
+            labels=[r['chip_overlap'] for r in subset];scores=[r['prevalence'] for r in subset]
+            evaluation.append(dict(channel=channel,class_id=cls,loci=len(subset),positives=sum(labels),
+                auroc=float(roc_auc_score(labels,scores)) if len(set(labels))==2 else None,
+                average_precision=float(average_precision_score(labels,scores)) if len(set(labels))==2 else None,
+                fitting='none; frozen-class EM prevalence per window',uncertainty='not estimated; loci may be correlated'))
+        write_json(out/'chip_evaluation.json',evaluation)
+    bams=[]
+    if analyses and not args.no_bam:
+        from .bam_export import export_bams
+        bams=export_bams(analyses,out/'bams',grouping=args.bam_grouping,scope=args.bam_scope,progress=progress)
+    write_json(out/'transfer_manifest.json',dict(schema='fiberhmm.transfer_run.lattice_recaller.v1',catalog=str(Path(model_path).resolve()),
+        catalog_sha256=catalog['content_sha256'],catalog_schema=catalog['schema'],source_provenance=catalog['provenance'],frame=catalog['frame'],
+        refitted=False,rediscovered=False,preparation_parameters=overrides,dataset_map=dataset_map,
+        include_training_molecules=args.include_training_molecules,windows=runs,bams=bams,apply_code=F.code_identity(),
+        chip_label='peak overlaps supplied window' if args.chip_bed else None))
+    if len(jobs)>1:
+        (out/'report.html').write_text('<!doctype html><meta charset="utf-8"><title>Frozen class transfer</title><h1>Frozen class transfer</h1>'
+            '<p>Classes, edge boxes and learned spots were fixed by the catalog; prevalences were estimated per window. '
+            '<a href="transfer_summary.tsv">All windows</a></p>'+''.join('<p><a href="'+html.escape(str(Path(r['output']).relative_to(out)))+'/report.html">'
+            +html.escape(r['window']['name'])+'</a></p>' for r in runs))
+    progress('complete',f'{len(jobs)} window(s) scored against {len(catalog["classes"])} frozen classes')
+
 
 if __name__=='__main__':main()

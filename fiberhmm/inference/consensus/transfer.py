@@ -59,6 +59,8 @@ def save_bundle(path, models, region, training_units, provenance):
 
 def load_bundle(path):
     body=read_json(path);expected=body.pop('content_sha256',None)
+    if str(body.get('schema','')).startswith('fiberhmm.frozen_classes.'):
+        raise ValueError('This is a lattice-recaller frozen-class catalog; load it with lattice_recaller.frozen.load_catalog')
     if body.get('schema')!=SCHEMA or expected!=digest(body): raise ValueError('Invalid frozen-family schema or content digest')
     value=_decode(body)
     if value['region'][1]<=value['region'][0]:raise ValueError('Invalid frozen window coordinates')
@@ -71,7 +73,29 @@ def load_bundle(path):
     value['content_sha256']=expected
     return value
 
+STAGED_MODE='staged_native_families'
+RECALLER_MODE='lattice_recaller'
+
+
+def run_engine(run_dir):
+    """The consensus engine that produced a result directory; fails fast for runs transfer cannot freeze."""
+    root=Path(run_dir)
+    if not (root/'manifest.json').is_file():raise ValueError(f'{root} is not a consensus result directory (no manifest.json)')
+    mode=read_json(root/'manifest.json').get('cr_mode')
+    if mode==RECALLER_MODE:return RECALLER_MODE
+    if mode in (None,STAGED_MODE):return STAGED_MODE
+    raise ValueError(f'fiberhmm-transfer cannot freeze a {mode} run; supported engines: {RECALLER_MODE} (default), {STAGED_MODE}')
+
+
 def export_run(run_dir, output):
+    """Freeze a completed run: lattice-recaller classes (lattice_recaller/frozen.py) or staged families."""
+    if run_engine(run_dir)==RECALLER_MODE:
+        from .lattice_recaller.frozen import freeze_run
+        return freeze_run(run_dir,output)
+    return export_staged_run(run_dir,output)
+
+
+def export_staged_run(run_dir, output):
     """Freeze displayed, converged final models; preserve aliases and sources."""
     root=Path(run_dir);manifest=read_json(root/'manifest.json');evidence=read_json(root/'evidence.json.gz')
     if not evidence.get('pooling'):raise ValueError('Transfer models require an oriented CL-CR run (--pool-loci)')
