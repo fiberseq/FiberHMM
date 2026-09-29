@@ -13,9 +13,10 @@ import pytest
 
 from fiberhmm.crossstrand.pairing import (
     FLAVOR_CT, FLAVOR_GA, PairParams, ReadFeat, STATUS_NONE, STATUS_PAIRED,
-    STATUS_UNRESOLVED, _gaussian_kernel, _sequence_signature, assign_pairs,
-    score_pair,
+    STATUS_UNRESOLVED, SequenceScore, _gaussian_kernel, _sequence_signature,
+    _sequence_signature_from_md, assign_pairs, score_pair,
 )
+from fiberhmm.cli.pair import _has_usable_sequence_score
 
 
 def _mk(index, name, flavor, start, end, dyads, params):
@@ -215,3 +216,26 @@ def test_snp_scale_2x2_difference_is_not_force_assigned(params):
     res = assign_pairs(feats, tighter_fallback)
     assert res.partner == {}
     assert all(res.status[i] == STATUS_UNRESOLVED for i in range(4))
+
+
+def test_md_signature_recovers_safe_reference_bases_without_fasta():
+    header = pysam.AlignmentHeader.from_dict({
+        'HD': {'VN': '1.6'}, 'SQ': [{'SN': 'chr1', 'LN': 1000}],
+    })
+    read = pysam.AlignedSegment(header)
+    read.query_name = 'md'
+    read.reference_id = 0
+    read.reference_start = 100
+    read.cigarstring = '6M'
+    # Reference ACGTAT; query differs G-for-A at the first safe position.
+    read.query_sequence = 'GCGTAT'
+    read.set_tag('MD', '0A5')
+    positions, bases = _sequence_signature_from_md(read)
+    assert positions.tolist() == [100, 103, 104, 105]
+    assert bytes(bases).decode() == 'GTAT'
+
+
+def test_empty_sequence_score_is_not_serialized():
+    assert not _has_usable_sequence_score(None)
+    assert not _has_usable_sequence_score(SequenceScore(0, 0, float('nan')))
+    assert _has_usable_sequence_score(SequenceScore(1000, 0, 0.0))

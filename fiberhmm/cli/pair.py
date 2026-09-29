@@ -41,7 +41,7 @@ import numpy as np
 import pysam
 
 from fiberhmm.crossstrand.pairing import (
-    PairParams, STATUS_PAIRED, assign_pairs, build_feature,
+    PairParams, STATUS_PAIRED, SequenceScore, assign_pairs, build_feature,
 )
 
 _TAG_PARTNER = 'mp'
@@ -56,12 +56,19 @@ _TAG_SEQ_MARGIN = 'sg'
 _TAG_ASSIGNMENT = 'pa'
 
 
+def _has_usable_sequence_score(score: SequenceScore | None) -> bool:
+    """True only when sequence evidence can be serialized meaningfully."""
+    return (score is not None and score.bases > 0 and
+            bool(np.isfinite(score.rate)))
+
+
 def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
              pairs_tsv=None, io_threads=4, reference_path=None):
     t0 = time.time()
     if reference_path is None:
-        print("Warning: no reference FASTA supplied; sequence-first pairing is "
-              "disabled and only the legacy footprint fallback will run.",
+        print("Info: no reference FASTA supplied; sequence-first pairing will "
+              "use per-read MD+CIGAR evidence where available and otherwise "
+              "fall back to footprints.",
               file=sys.stderr)
     bam = pysam.AlignmentFile(in_bam, 'rb')
     if bam.header.get('HD', {}).get('SO') != 'coordinate':
@@ -149,7 +156,7 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
                 # order columns CT then GA
                 ct, ga = (name, mate) if flavor == 1 else (mate, name)
                 corr_text = '' if corr is None else f'{corr:.4f}'
-                if seq is None:
+                if not _has_usable_sequence_score(seq):
                     seq_fields = ('', '', '', '')
                 else:
                     seq_fields = (
@@ -181,7 +188,7 @@ def run_pair(in_bam, out_bam, params: PairParams, prob_threshold=0,
                             read.set_tag(_TAG_CORR, int(round(1000 * corr)), value_type='i')
                         read.set_tag(_TAG_MARGIN, int(round(1000 * marg)), value_type='i')
                         read.set_tag(_TAG_METHOD, method, value_type='A')
-                        if seq is not None:
+                        if _has_usable_sequence_score(seq):
                             read.set_tag(_TAG_SEQ_BASES, seq.bases, value_type='i')
                             read.set_tag(_TAG_SEQ_DIFF, seq.mismatches, value_type='i')
                             read.set_tag(

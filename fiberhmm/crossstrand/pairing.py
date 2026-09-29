@@ -173,6 +173,46 @@ def _sequence_signature(read, reference: np.ndarray) -> Tuple[np.ndarray, np.nda
     return q2r[valid].astype(np.int64), seq[valid]
 
 
+def _sequence_signature_from_md(read) -> Tuple[np.ndarray, np.ndarray]:
+    """Return the same A/T-only signature using the read's MD+CIGAR record.
+
+    Archived DAF BAMs commonly retain an MD tag but not the reference FASTA
+    used for alignment.  ``get_aligned_pairs(with_seq=True)`` reconstructs the
+    reference base at each aligned query position from MD+CIGAR, which is all
+    pairing needs.  This path is evidence-equivalent to indexing a FASTA at
+    covered positions and fails closed when MD is absent or malformed.
+    """
+    if not getattr(read, 'has_tag', lambda _tag: False)('MD'):
+        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.uint8)
+    sequence = (getattr(read, 'query_sequence', None) or '').upper()
+    if not sequence:
+        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.uint8)
+    try:
+        pairs = read.get_aligned_pairs(with_seq=True)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.uint8)
+
+    positions: List[int] = []
+    bases: List[int] = []
+    for qpos, rpos, ref_base in pairs:
+        if qpos is None or rpos is None or ref_base is None:
+            continue
+        ref = str(ref_base).upper()
+        if ref not in ('A', 'T') or not (0 <= int(qpos) < len(sequence)):
+            continue
+        base = sequence[int(qpos)]
+        if base == 'Y':
+            base = 'C'
+        elif base == 'R':
+            base = 'G'
+        if base not in 'ACGT':
+            continue
+        positions.append(int(rpos))
+        bases.append(ord(base))
+    return (np.asarray(positions, dtype=np.int64),
+            np.asarray(bases, dtype=np.uint8))
+
+
 def build_feature(read, index: int, params: PairParams,
                   prob_threshold: int = 0,
                   reference: Optional[np.ndarray] = None) -> Optional[ReadFeat]:
@@ -203,11 +243,10 @@ def build_feature(read, index: int, params: PairParams,
         if hi > lo:
             klo = lo - (cb - krad)
             sig[lo:hi] += kern[klo:klo + (hi - lo)]
-    if reference is None:
-        seq_pos = np.empty(0, dtype=np.int64)
-        seq_base = np.empty(0, dtype=np.uint8)
-    else:
+    if reference is not None:
         seq_pos, seq_base = _sequence_signature(read, reference)
+    else:
+        seq_pos, seq_base = _sequence_signature_from_md(read)
     return ReadFeat(index=index, name=read.query_name, flavor=flavor,
                     ref_start=int(read.reference_start),
                     ref_end=int(read.reference_end),
