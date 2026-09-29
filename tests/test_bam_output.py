@@ -437,7 +437,7 @@ def test_sort_and_index_bam_direct_samtools_index_success(monkeypatch, tmp_path)
 
 def test_sort_and_index_bam_sorts_when_direct_index_reports_unsorted(monkeypatch, tmp_path):
     output_bam = tmp_path / "out.bam"
-    sorted_bam = tmp_path / "out.sorted.bam"
+    sorted_bam = tmp_path / "out.bam.sorting.bam"  # sibling scratch, any output name
     output_bam.write_bytes(b"bam")
     calls = []
     replacements = []
@@ -485,7 +485,7 @@ def test_sort_and_index_bam_falls_back_to_pysam_when_samtools_missing(monkeypatc
 
 def test_sort_and_index_bam_uses_pysam_sort_when_samtools_sort_fails(monkeypatch, tmp_path):
     output_bam = tmp_path / "out.bam"
-    sorted_bam = tmp_path / "out.sorted.bam"
+    sorted_bam = tmp_path / "out.bam.sorting.bam"  # sibling scratch, any output name
     output_bam.write_bytes(b"bam")
     calls = []
     pysam_sorts = []

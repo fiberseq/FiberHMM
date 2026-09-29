@@ -75,7 +75,7 @@ from fiberhmm.core.bam_reader import (
     encode_from_query_sequence,
     extract_daf_iupac_positions,
     has_iupac_encoding,
-    parse_mm_tag_query_positions,
+    parse_mm_tag_query_calls,
 )
 from fiberhmm.io.ma_tags import (
     DDDA_MCG_HEMI_FEATURE,
@@ -811,7 +811,29 @@ def extract_modifications(read, mode: str, context_size: int = 3,
 
     Returns None if the read can't be processed (no MM tag, no sequence).
     ``prob_threshold`` applies to MM/ML calls only; R/Y and MD deaminations
-    are binary.
+    are binary. Callers that encode observations should use
+    :func:`extract_modification_calls`, which also returns the bases an MM
+    ``?`` entry leaves without a call.
+    """
+    extracted = extract_modification_calls(
+        read, mode, context_size, prob_threshold=prob_threshold)
+    if extracted is None:
+        return None
+    return extracted[:3]
+
+
+def extract_modification_calls(read, mode: str, context_size: int = 3,
+                               prob_threshold: int = RECALL_PROB_THRESHOLD,
+                               ) -> Optional[Tuple[set, str, str, set]]:
+    """Pull (mod_positions, strand, sequence, unknown_positions) for a read.
+
+    ``unknown_positions`` are SEQ-frame target bases an MM ``?`` entry left
+    unlisted (no call, SAM spec); pass them to
+    :func:`encode_from_query_sequence` as ``unknown_positions`` so they are
+    non-target rather than misses. Empty for R/Y, MD and fully listed
+    (``.``/unflagged) MM data, whose encoding is therefore unchanged.
+
+    Returns None if the read can't be processed (no MM tag, no sequence).
     Uses the manual MM/ML parser instead of pysam.modified_bases (the
     latter segfaults on some long Hia5 reads; SIGSEGV is uncatchable).
     """
@@ -824,7 +846,7 @@ def extract_modifications(read, mode: str, context_size: int = 3,
         except KeyError:
             st_tag = None
         mod_pos, strand, seq = extract_daf_iupac_positions(seq, st_tag)
-        return mod_pos, strand, seq
+        return mod_pos, strand, seq, set()
     try:
         mm_tag = read.get_tag('MM') if read.has_tag('MM') else read.get_tag('Mm')
     except KeyError:
@@ -842,10 +864,10 @@ def extract_modifications(read, mode: str, context_size: int = 3,
             if md_result is not None:
                 ct_pos, ga_pos, strand_tag = md_result
                 if strand_tag == 'CT':
-                    return set(ct_pos), '+', seq.upper()
-                return set(ga_pos), '-', seq.upper()
+                    return set(ct_pos), '+', seq.upper(), set()
+                return set(ga_pos), '-', seq.upper(), set()
         return None
-    mod_pos = parse_mm_tag_query_positions(
+    mod_pos, unknown_pos = parse_mm_tag_query_calls(
         mm_tag, ml_tag, seq, read.is_reverse,
         prob_threshold=prob_threshold, mode=mode,
     )
@@ -853,7 +875,7 @@ def extract_modifications(read, mode: str, context_size: int = 3,
         strand = detect_daf_strand(seq, mod_pos)
     else:
         strand = '.'
-    return mod_pos, strand, seq
+    return mod_pos, strand, seq, unknown_pos
 
 
 def unapplied_call_daf_inputs(header) -> List[str]:
@@ -959,8 +981,8 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
         ns_raw, nl_raw = flip_intervals_to_seq(ns_raw, nl_raw, read)
         as_raw, al_raw = flip_intervals_to_seq(as_raw, al_raw, read)
 
-    extracted = extract_modifications(read, mode, context_size,
-                                      prob_threshold=prob_threshold)
+    extracted = extract_modification_calls(read, mode, context_size,
+                                           prob_threshold=prob_threshold)
     if extracted is None:
         # Pass through v2 calls unchanged
         nucs = [
@@ -975,11 +997,12 @@ def recall_read(read, llr_hit: np.ndarray, llr_miss: np.ndarray,
         ]
         return [], nucs, msps
 
-    mod_pos, strand, seq = extracted
+    mod_pos, strand, seq, unknown_pos = extracted
     obs = encode_from_query_sequence(
         seq, mod_pos, edge_trim=10, mode=mode, strand=strand,
         context_size=context_size,
         is_reverse=bool(read.is_reverse),
+        unknown_positions=unknown_pos,
     )
     read_len = len(seq)
     m5c_mask = None

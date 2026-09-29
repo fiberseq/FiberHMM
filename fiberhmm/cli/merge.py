@@ -266,10 +266,11 @@ def _run_merge_passes(bam, in_bam, out_bam, unsorted, header, prob_threshold,
                  if r.startswith('chr') and '_' not in r and r != 'chrM')
     bam.close()
 
-    with atomic_output(out_bam) as sorted_path:
+    # Sort into the temporary and index it there; the BAM and its index are
+    # published together, so a failed index keeps any previous output intact.
+    with atomic_output(out_bam, finalize=pysam.index) as sorted_path:
         pysam.sort('-@', str(io_threads), '-O', 'bam', '-o', sorted_path,
                    unsorted)
-    pysam.index(out_bam)
 
     # ---- stats ----
     both_bp = sum(_merged_bp(v) for v in both_intervals.values())

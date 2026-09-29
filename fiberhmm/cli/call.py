@@ -30,9 +30,11 @@ from fiberhmm.cli.common import (
     resolve_platform_argument,
 )
 from fiberhmm.cli.provenance import (
+    DEFAULTS_RESOLVED_KEY,
     REPLACE_CHEMISTRY_KEY,
     ChemistryConflictError,
     reconcile_chemistry,
+    resolve_effective_chemistry,
 )
 from fiberhmm.cli.provenance import (
     chemistry_declaration as _chemistry_declaration,
@@ -915,6 +917,23 @@ def _main(args):
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
     k = args.context_size or int(model_k or 3)
+    # Chemistry: reconcile with the input's declaration now (file input) so a
+    # conflicting re-call fails in a second, before dedup/SNP/NRL passes, and
+    # so every enzyme-dependent default below (CpG masking, DAF run mask, ML
+    # threshold, dedup/SNP screens, nucleosome policy, TF presets) follows the
+    # effective chemistry. A custom -m without --enzyme inherits the input's
+    # enzyme/platform when the observation mode matches; the model paths
+    # resolved above stay in use. A stdin header cannot be read in advance:
+    # the pg_record marker then refuses a late enzyme inheritance.
+    input_header = None
+    if args.input != '-':
+        import pysam
+        with pysam.AlignmentFile(args.input, 'rb', check_sq=False) as _bam:
+            input_header = _bam.header
+    run_chemistry = resolve_effective_chemistry(
+        args, mode, input_header, apply_model_path, recall_model_path,
+        replace=args.replace_chemistry, tool='fiberhmm-call',
+    )
     ddda_mcg = _configure_ddda_mcg(args, mode)
     # DddA CpG-aware recall: the same default policy as recall-tfs/-nucs.
     try:
@@ -1015,22 +1034,6 @@ def _main(args):
     if args.dedup_max_end_diff < 0:
         print("error: --dedup-max-end-diff must be non-negative", file=sys.stderr)
         sys.exit(2)
-
-    # Chemistry: reconcile with the input's declaration now (file input) so a
-    # conflicting re-call fails in a second, before dedup/SNP/NRL passes. A
-    # custom -m without --enzyme inherits the input's enzyme/platform when the
-    # observation mode matches.
-    input_header = None
-    run_chemistry = _chemistry_declaration(
-        args, mode, apply_model_path, recall_model_path)
-    if args.input != '-':
-        import pysam
-        with pysam.AlignmentFile(args.input, 'rb', check_sq=False) as _bam:
-            input_header = _bam.header
-        run_chemistry = reconcile_chemistry(
-            input_header, run_chemistry,
-            replace=args.replace_chemistry, tool='fiberhmm-call',
-        )
 
     # ML threshold: explicit value, else the resolved chemistry's preset
     # (Hia5 Nanopore 248, otherwise 128). Integrated dedup follows it.
@@ -1243,6 +1246,7 @@ def _main(args):
                 if input_header is not None else chemistry
             ),
             REPLACE_CHEMISTRY_KEY: bool(args.replace_chemistry),
+            DEFAULTS_RESOLVED_KEY: True,
             # The `coord=molecular` token is a stable, version-independent contract
             # for downstream consumers (e.g. FiberBrowser) to detect that ns/nl/as/al
             # and MA are in molecular (original-fiber) frame -- keep the exact token.
@@ -1388,15 +1392,10 @@ def _main(args):
                 # A run that skipped nearly everything as unmapped is an
                 # error unless the user asked for pass-through explicitly.
                 fail_on_mostly_unmapped=args.process_unmapped is not False,
+                # region-parallel already indexes; streaming indexes the
+                # temporary before publishing BAM + index together.
+                index_output=not stdout_mode,
             )
-
-        if not stdout_mode and not args.region_parallel:
-            # region-parallel already indexes.  Streaming mode needs an index pass.
-            import pysam
-            try:
-                pysam.index(args.output)
-            except pysam.SamtoolsError:
-                pass
 
         # The pre-footprinting dedup temp is no longer needed; removing it here
         # (as well as in the finally below) keeps the disk footprint low during QC.

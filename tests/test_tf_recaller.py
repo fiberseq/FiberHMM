@@ -504,9 +504,10 @@ def test_extract_modifications_keeps_raw_ml_container(monkeypatch):
 
     def fake_parse(mm_tag, ml_tag, sequence, is_reverse, prob_threshold, mode):
         captured['ml_tag'] = ml_tag
-        return {0}
+        return {0}, set()
 
-    monkeypatch.setattr(tf_recaller, 'parse_mm_tag_query_positions', fake_parse)
+    # extract_modifications reads MM/ML through the '?'-aware parser.
+    monkeypatch.setattr(tf_recaller, 'parse_mm_tag_query_calls', fake_parse)
 
     assert tf_recaller.extract_modifications(read, 'pacbio-fiber', 3) == (
         {0}, '.', read.query_sequence,

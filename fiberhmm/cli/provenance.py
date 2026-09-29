@@ -87,6 +87,12 @@ _CORE_FIELDS = ("assay", "enzyme", "platform", "mode")
 # Private pg_record key: replace, rather than reconcile with, the input's
 # chemistry declarations (``--replace-chemistry``).
 REPLACE_CHEMISTRY_KEY = "_replace_chemistry"
+# Private pg_record key: the run already chose its enzyme-dependent defaults
+# (see :func:`resolve_effective_chemistry`). Inheriting a supported enzyme
+# only when the output header is written (stdin input, whose header cannot be
+# read in advance) would advertise defaults the run did not use, so it is
+# refused.
+DEFAULTS_RESOLVED_KEY = "_enzyme_defaults_resolved"
 
 
 class ChemistryConflictError(ValueError):
@@ -146,6 +152,72 @@ def reconcile_chemistry(input_header, requested, *, replace=False, tool=None):
     return resolved
 
 
+def resolve_effective_chemistry(args, mode, input_header, apply_model_path,
+                                recall_model_path, *, replace=False, tool=None):
+    """Reconcile this run with the input and adopt the inherited chemistry.
+
+    Call after the model paths and observation mode are resolved and BEFORE
+    any enzyme-dependent default (CpG masking, DAF run mask, ML threshold,
+    nucleosome policy, TF presets, dedup/SNP screens) is chosen. A custom
+    ``--model`` without ``--enzyme``/``--seq`` inherits the input BAM's
+    declared enzyme/platform (see :func:`reconcile_chemistry`); the inherited
+    values are written back to ``args.enzyme``/``args.seq`` so every later
+    default is exactly the one ``--enzyme <inherited>`` would select, while
+    the explicitly given model files stay in use. Only supported presets are
+    adopted (development chemistries have no defaults to inherit). Returns the
+    reconciled declaration; raises :class:`ChemistryConflictError` on a
+    conflict.
+    """
+    from fiberhmm.models import SUPPORTED_ENZYMES
+
+    requested = chemistry_declaration(
+        args, mode, apply_model_path, recall_model_path)
+    if input_header is None:
+        return requested
+    resolved = reconcile_chemistry(
+        input_header, requested, replace=replace, tool=tool)
+    adopted = []
+    enzyme = str(resolved.get("enzyme", "")).lower()
+    if not getattr(args, "enzyme", None) and enzyme in SUPPORTED_ENZYMES:
+        args.enzyme = enzyme
+        adopted.append(f"--enzyme {enzyme}")
+    platform = str(resolved.get("platform", "")).lower()
+    if (
+        adopted
+        and not getattr(args, "seq", None)
+        and platform in ("pacbio", "nanopore")
+    ):
+        args.seq = platform
+        adopted.append(f"--seq {platform}")
+    if adopted:
+        import sys
+
+        prefix = f"{tool}: " if tool else ""
+        print(
+            f"NOTE: {prefix}custom model on an input declaring "
+            f"[{_describe(resolved)}]; using the defaults of "
+            f"{' '.join(adopted)} with the given model file(s).",
+            file=sys.stderr,
+        )
+    return resolved
+
+
+def _refuse_late_enzyme_inheritance(requested, resolved, tool):
+    from fiberhmm.models import SUPPORTED_ENZYMES
+
+    before = str(requested.get("enzyme", "")).lower()
+    after = str(resolved.get("enzyme", "")).lower()
+    if before in _PLACEHOLDER_VALUES and after in SUPPORTED_ENZYMES:
+        prefix = f"{tool}: " if tool else ""
+        raise ChemistryConflictError(
+            f"{prefix}the input declares enzyme={after}, but its header was "
+            "not available before this custom-model run chose its "
+            "enzyme-dependent defaults (stdin input). Pass "
+            f"--enzyme {after} (with --model for the custom table), or "
+            "--replace-chemistry to declare the run as custom."
+        )
+
+
 def strip_chemistry_declarations(header):
     """Copy of ``header`` without ``FIBERHMM-CHEMISTRY`` @CO declarations."""
     import pysam
@@ -177,12 +249,17 @@ def output_header_with_provenance(input_header, pg_record):
         return input_header
     record = dict(pg_record)
     replace = bool(record.pop(REPLACE_CHEMISTRY_KEY, False))
+    defaults_resolved = bool(record.pop(DEFAULTS_RESOLVED_KEY, False))
     header = input_header
     if record.get("chemistry"):
+        requested = record["chemistry"]
         record["chemistry"] = reconcile_chemistry(
-            input_header, record["chemistry"], replace=replace,
+            input_header, requested, replace=replace,
             tool=record.get("PN"),
         )
+        if defaults_resolved:
+            _refuse_late_enzyme_inheritance(
+                requested, record["chemistry"], record.get("PN"))
         if replace:
             header = strip_chemistry_declarations(input_header)
     return maybe_append_pg(header, record)

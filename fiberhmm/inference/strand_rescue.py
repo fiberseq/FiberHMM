@@ -37,12 +37,12 @@ from fiberhmm.cli.extract_tags import (
 from fiberhmm.core.bam_reader import (
     cigar_to_query_ref,
     encode_from_query_sequence,
-    parse_mm_tag_query_positions,
+    parse_mm_tag_query_calls,
 )
 from fiberhmm.inference.tf_recaller import (
     N_CTX,
     UNMETH_OFFSET,
-    extract_modifications,
+    extract_modification_calls,
 )
 from fiberhmm.inference.tf_sites import bounded_edge_components
 from fiberhmm.io.bam_header import declared_ma_types
@@ -1195,16 +1195,18 @@ def hard_observations(
             raise ValueError('Joint duplex evidence requires the forward reference-frame merge output')
         conv,ct,ga=decode_ry_consensus(sequence)
         return encode_daf_both_strand(conv,ct,ga,*masks,edge_trim=10,context_size=context_size), 'BOTH'
+    # Bases an MM '?' entry leaves unlisted carry no call: they are encoded
+    # non-target (as in fiberhmm-call), not as misses.
     if strand_mode == "daf":
-        extracted = extract_modifications(read, "daf", context_size)
+        extracted = extract_modification_calls(read, "daf", context_size)
         if extracted is None:
             return None
-        modification_positions, symbol, sequence = extracted
+        modification_positions, symbol, sequence, unknown_positions = extracted
         strand = "CT" if symbol == "+" else "GA"
     else:
         if not read.has_tag("MM") or not read.has_tag("ML"):
             return None
-        modification_positions = parse_mm_tag_query_positions(
+        modification_positions, unknown_positions = parse_mm_tag_query_calls(
             read.get_tag("MM"),
             read.get_tag("ML"),
             sequence,
@@ -1221,6 +1223,7 @@ def hard_observations(
         strand=symbol,
         context_size=context_size,
         is_reverse=bool(read.is_reverse),
+        unknown_positions=unknown_positions,
     )
     return observations, strand
 

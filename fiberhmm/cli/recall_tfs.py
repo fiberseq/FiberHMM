@@ -66,12 +66,14 @@ from fiberhmm.cli.common import (
     resolve_platform_argument,
 )
 from fiberhmm.cli.provenance import (
+    DEFAULTS_RESOLVED_KEY,
     REPLACE_CHEMISTRY_KEY,
     ChemistryConflictError,
     chemistry_declaration,
     nuc_profile_identity,
     nuc_profile_sha256,
     output_header_with_provenance,
+    resolve_effective_chemistry,
 )
 from fiberhmm.core.bam_reader import encode_from_query_sequence
 from fiberhmm.core.model_io import (
@@ -103,7 +105,7 @@ from fiberhmm.inference.tf_recaller import (
     build_cpg_mask,
     build_llr_tables,
     build_m5c_llr_tables,
-    extract_modifications,
+    extract_modification_calls,
     recall_read,
     resolve_cpg_masking,
     write_ma_tags,
@@ -151,6 +153,7 @@ def _build_recall_pg_record(args, mode, model_path, nuc_cfg):
         'PN': program_name,
         'VN': getattr(_fh, '__version__', 'unknown'),
         'CL': ' '.join(sys.argv),
+        DEFAULTS_RESOLVED_KEY: True,
         'chemistry': chemistry_declaration(
             args,
             mode,
@@ -416,7 +419,7 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
         ns_seq, nl_seq = ns_raw, nl_raw
         as_seq, al_seq = as_raw, al_raw
 
-    extracted = extract_modifications(
+    extracted = extract_modification_calls(
         read, _WORKER['mode'], _WORKER['k'],
         prob_threshold=_WORKER.get('prob_threshold', RECALL_PROB_THRESHOLD),
     )
@@ -426,10 +429,13 @@ def _process_nuc_payload_record(read, payload, nuc_cfg) -> tuple:
         msps = [(int(s), int(L)) for s, L in zip(as_seq, al_seq) if int(L) > 0]
         return (([], nucs, msps, None)), stats
 
-    mod_pos, strand, seq = extracted
+    # Bases an MM '?' entry leaves unlisted carry no call: non-target, as in
+    # the fused call path, not misses.
+    mod_pos, strand, seq, unknown_pos = extracted
     obs = encode_from_query_sequence(
         seq, mod_pos, edge_trim=10, mode=_WORKER['mode'], strand=strand,
         context_size=_WORKER['k'], is_reverse=bool(read.is_reverse),
+        unknown_positions=unknown_pos,
     )
     apply_result = {
         'encoded': obs,
@@ -936,16 +942,10 @@ def _resolve_input_molecular_frame(args, header) -> bool:
     return is_mol
 
 
-def _input_declared_mode(path):
-    """Observation mode declared by the input BAM's chemistry, if unique."""
-    if not path or path == '-':
-        return None
+def _header_declared_mode(header):
+    """Observation mode declared by an input BAM header's chemistry, if unique."""
     from fiberhmm.io.bam_header import declared_chemistries
-    try:
-        with pysam.AlignmentFile(path, 'rb', check_sq=False) as bam:
-            modes = {item.get('mode') for item in declared_chemistries(bam.header)}
-    except (OSError, ValueError):
-        return None
+    modes = {item.get('mode') for item in declared_chemistries(header)}
     modes.discard(None)
     return modes.pop() if len(modes) == 1 else None
 
@@ -1058,12 +1058,20 @@ def _main(args):
     else:
         n_cores = max(1, args.cores)
 
-    # Presets + overrides
-    preset = ENZYME_PRESETS.get(args.enzyme, {}) if args.enzyme else {}
-    min_llr = args.min_llr if args.min_llr is not None else preset.get('min_llr', 5.0)
-    uplift = args.emission_uplift if args.emission_uplift is not None \
-        else preset.get('emission_uplift', 1.0)
+    # Open the input first: its header (read without consuming records, so
+    # stdin works too) settles the effective chemistry before any
+    # enzyme-dependent default is chosen.
+    bam_in = pysam.AlignmentFile(args.in_bam, 'rb',
+                                 check_sq=False,
+                                 threads=args.io_threads)
+    try:
+        _recall(args, bam_in, model_path, using_bundled_model, n_cores)
+    finally:
+        bam_in.close()
 
+
+def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
+    """Resolve chemistry and defaults from ``bam_in``'s header, then recall."""
     model, model_k, model_mode = load_model_with_metadata(model_path)
     if not model_mode or not model_k:
         fb_mode, fb_k = _resolve_model_metadata(model_path)
@@ -1076,7 +1084,7 @@ def _main(args):
     ):
         # A custom table without mode metadata recalls a FiberHMM-called BAM
         # in the observation mode that BAM declares.
-        declared_mode = _input_declared_mode(args.in_bam)
+        declared_mode = _header_declared_mode(bam_in.header)
         if declared_mode:
             print(f"[recall_tfs] custom model has no mode metadata; using the "
                   f"input BAM's declared mode {declared_mode!r}.",
@@ -1115,6 +1123,25 @@ def _main(args):
     except ModelContextError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
+    # Effective chemistry: a custom --model without --enzyme inherits the
+    # input's declared enzyme/platform (same observation mode), and every
+    # default below -- TF presets, DAF run mask, CpG masking, ML threshold,
+    # nucleosome profile/likelihood model -- is then the one --enzyme
+    # <inherited> selects, with the given model file. Conflicts fail here,
+    # before any output is written.
+    resolve_effective_chemistry(
+        args, mode, bam_in.header, model_path, None,
+        replace=bool(getattr(args, 'replace_chemistry', False)),
+        tool=('fiberhmm-recall-nucs' if getattr(args, 'recall_nucs', False)
+              else 'fiberhmm-recall-tfs'),
+    )
+
+    # Presets + overrides
+    preset = ENZYME_PRESETS.get(args.enzyme, {}) if args.enzyme else {}
+    min_llr = args.min_llr if args.min_llr is not None else preset.get('min_llr', 5.0)
+    uplift = args.emission_uplift if args.emission_uplift is not None \
+        else preset.get('emission_uplift', 1.0)
+
     nuc_recall_policy = _resolve_nuc_recall_policy(args, mode)
     # Same observation lattice as the first pass: unset means the chemistry
     # default (DddA keep-one on runs >= 2). Configured before any worker starts.
@@ -1232,9 +1259,6 @@ def _main(args):
     # the run (including the per-read failure policy) succeeds.
     failure_messages = []
     with atomic_output(args.out_bam) as out_path:
-        bam_in = pysam.AlignmentFile(args.in_bam, 'rb',
-                                     check_sq=False,
-                                     threads=args.io_threads)
         # Resolve the coordinate frame of the input ns/nl/as/al tags. Current
         # FiberHMM stamps the @CO molecular marker; legacy/v1.0 BAMs lack it
         # and store the tags in SEQ (query) frame -- flipping those again
@@ -1303,7 +1327,6 @@ def _main(args):
                     prob_threshold=prob_threshold,
                 )
         finally:
-            bam_in.close()
             if bam_out is not None:
                 bam_out.close()
 

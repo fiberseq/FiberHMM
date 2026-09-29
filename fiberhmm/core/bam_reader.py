@@ -538,13 +538,21 @@ def _parse_mm_query(mm_tag, ml_tag, sequence, is_reverse, prob_threshold,
     mod_positions: Set[int] = set()
     unknown_positions: Set[int] = set()
 
-    if not mm_tag or ml_tag is None:
+    if not mm_tag:
         return mod_positions, unknown_positions
-    try:
-        if len(ml_tag) == 0:
+    empty_ml = ml_tag is None
+    if not empty_ml:
+        try:
+            empty_ml = len(ml_tag) == 0
+        except TypeError:
+            pass
+    if empty_ml:
+        # No ML values: nothing can be modified. Under '?' every target base
+        # the entry lists no call for is still unknown (all of them for an
+        # empty entry), so the walk below must run for the unknown bookkeeping.
+        if not want_unknown or '?' not in mm_tag:
             return mod_positions, unknown_positions
-    except TypeError:
-        pass
+        ml_tag = np.empty(0, dtype=np.uint8)
 
     seq_upper = sequence.upper()
     q_len = len(seq_upper)

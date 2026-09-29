@@ -195,7 +195,12 @@ def _process_bam_legacy_pipeline(
     # Open input and output BAMs. File output goes to a temporary sibling that
     # is published only if the whole run (including the failure policy)
     # succeeds.
-    with atomic_output(output_bam) as output_path, \
+    # Sorting/indexing runs on the closed temporary, before publication, so a
+    # finalization failure leaves any previous output and its index intact.
+    with atomic_output(
+        output_bam,
+        finalize=lambda path: _sort_and_index_bam(path, threads=n_cores),
+    ) as output_path, \
             pysam.AlignmentFile(input_bam, "rb", threads=io_threads,
                                 check_sq=False) as inbam:
         with pysam.AlignmentFile(output_path, "wb",
@@ -345,11 +350,6 @@ def _process_bam_legacy_pipeline(
             failure_messages,
             log=sys.stdout,
         )
-
-    # Index the output BAM (sort first if needed). A stdout stream has no
-    # file to sort or index.
-    if output_bam != '-':
-        _sort_and_index_bam(output_bam, threads=n_cores)
 
     # Report posteriors after the writer has been closed by the processing finally block.
     if posterior_stats:

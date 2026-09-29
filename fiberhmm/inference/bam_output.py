@@ -45,25 +45,52 @@ def temporary_output_path(path: str) -> str:
     )
 
 
-def commit_output(temporary: str, final: str) -> None:
-    """Atomically move a finished temporary output to its final path.
+_INDEX_SUFFIXES = ('.bai', '.csi', '.crai', '.tbi')
 
-    Index files left beside ``final`` by an earlier run would describe the old
-    content, so they are removed first.
+
+def _remove_temporaries(temporary: str) -> None:
+    """Remove a temporary output and everything finalization put beside it."""
+    _remove_quietly(temporary)
+    for index in index_paths_for(temporary):
+        _remove_quietly(index)
+    _remove_quietly(_sorting_path(temporary))
+
+
+def commit_output(temporary: str, final: str) -> None:
+    """Publish a finished temporary output, and its index, at ``final``.
+
+    Indexes finalization built beside the temporary (``temporary + '.bai'``
+    etc.) are published with it under the matching final name; every other
+    index left beside ``final`` by an earlier run would describe the old
+    content and is removed. The BAM is renamed before its index so the index
+    is never older than the data it describes.
     """
+    fresh = {
+        final + suffix: temporary + suffix
+        for suffix in _INDEX_SUFFIXES
+        if os.path.exists(temporary + suffix)
+    }
     for stale in index_paths_for(final):
-        _remove_quietly(stale)
+        if stale not in fresh:
+            _remove_quietly(stale)
     os.replace(temporary, final)
+    for final_index, temporary_index in fresh.items():
+        os.replace(temporary_index, final_index)
 
 
 @contextmanager
-def atomic_output(path):
+def atomic_output(path, finalize=None):
     """Yield a temporary sibling path; publish it to ``path`` only on success.
 
-    ``'-'`` (stdout) and ``None`` are yielded unchanged. On any exception the
-    temporary file (and any index written beside it) is removed and the
-    exception propagates, so a failed run never leaves a valid-looking output
-    at ``path``.
+    ``finalize(temporary)``, when given, runs after the body on the closed
+    temporary output (e.g. sort and index it); the finished BAM and any index
+    it built are then published together (:func:`commit_output`).
+
+    ``'-'`` (stdout) and ``None`` are yielded unchanged and not finalized. On
+    any exception, in the body or in ``finalize``, the temporary file and
+    everything finalization wrote beside it are removed and the exception
+    propagates: a failed run never leaves a valid-looking output at ``path``,
+    and a previous output there (with its index) is left untouched.
     """
     if path is None or path == '-':
         yield path
@@ -71,16 +98,25 @@ def atomic_output(path):
     temporary = temporary_output_path(path)
     try:
         yield temporary
+        if not os.path.exists(temporary):
+            raise FileNotFoundError(
+                f"internal error: temporary output {temporary} was not written"
+            )
+        if finalize is not None:
+            finalize(temporary)
     except BaseException:
-        _remove_quietly(temporary)
-        for index in index_paths_for(temporary):
-            _remove_quietly(index)
+        _remove_temporaries(temporary)
         raise
-    if not os.path.exists(temporary):
-        raise FileNotFoundError(
-            f"internal error: temporary output {temporary} was not written"
-        )
-    commit_output(temporary, os.path.abspath(path))
+    try:
+        commit_output(temporary, os.path.abspath(path))
+    except BaseException:
+        _remove_temporaries(temporary)
+        raise
+
+
+def _sorting_path(output_bam: str) -> str:
+    """Scratch path for sorting ``output_bam`` (a ``.bam`` sibling)."""
+    return output_bam + '.sorting.bam'
 
 
 def _run_samtools_index(output_bam: str, threads: int, check: bool = False) -> subprocess.CompletedProcess:
@@ -175,24 +211,27 @@ def _sort_and_index_bam(output_bam: str, verbose: bool = True, threads: int = 4)
         sys.stdout.flush()
 
     # Sort using samtools (faster than pysam for large files)
-    sorted_bam = output_bam.replace('.bam', '.sorted.bam')
+    sorted_bam = _sorting_path(output_bam)
     sort_start = time.time()
     try:
-        _run_samtools_sort(output_bam, sorted_bam, threads)
-        if verbose:
-            sort_time = time.time() - sort_start
-            speed = bam_size_gb / sort_time if sort_time > 0 else 0
-            print(f"  Sorted in {sort_time:.1f}s ({speed:.2f} GB/s)")
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        # Fallback to pysam
-        if verbose:
-            print("  Using pysam sort (slower)...")
-        pysam.sort("-o", sorted_bam, output_bam)
-        if verbose:
-            sort_time = time.time() - sort_start
-            print(f"  Sorted (pysam) in {sort_time:.1f}s")
-
-    os.replace(sorted_bam, output_bam)
+        try:
+            _run_samtools_sort(output_bam, sorted_bam, threads)
+            if verbose:
+                sort_time = time.time() - sort_start
+                speed = bam_size_gb / sort_time if sort_time > 0 else 0
+                print(f"  Sorted in {sort_time:.1f}s ({speed:.2f} GB/s)")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            # Fallback to pysam
+            if verbose:
+                print("  Using pysam sort (slower)...")
+            pysam.sort("-o", sorted_bam, output_bam)
+            if verbose:
+                sort_time = time.time() - sort_start
+                print(f"  Sorted (pysam) in {sort_time:.1f}s")
+        os.replace(sorted_bam, output_bam)
+    except BaseException:
+        _remove_quietly(sorted_bam)
+        raise
 
     if verbose:
         print("  Indexing sorted BAM...")

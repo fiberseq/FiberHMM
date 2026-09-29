@@ -320,7 +320,8 @@ def _header_platform(header_dict):
     return votes
 
 
-def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS):
+def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS,
+                              *, inspect_reads: bool = True):
     """Infer PacBio vs Nanopore from a BAM's own evidence.
 
     Evidence, strongest first: a FiberHMM chemistry declaration in the header;
@@ -330,6 +331,11 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS):
     is reported as a conflict rather than resolved silently. Returns a
     :class:`PlatformEvidence`; ``platform`` is None when nothing is known
     (including stdin, which cannot be peeked without consuming it).
+
+    At most ``n_reads`` records are read, tagged or not (an MM-less DAF BAM
+    is never scanned to EOF). Records are not read at all when
+    ``inspect_reads`` is False or when the header's chemistry declaration
+    names a single platform.
     """
     if not bam_path or bam_path == "-":
         return PlatformEvidence(source="stdin (not inspected)")
@@ -345,19 +351,17 @@ def sniff_sequencing_platform(bam_path, n_reads: int = PLATFORM_SNIFF_READS):
                 for item in declared_chemistries(bam.header)
             } & {"pacbio", "nanopore"}
             counts = {"pacbio": 0, "nanopore": 0}
-            examined = 0
-            for read in bam.fetch(until_eof=True):
-                if read.is_secondary or read.is_supplementary:
-                    continue
-                tag = "MM" if read.has_tag("MM") else ("Mm" if read.has_tag("Mm") else None)
-                if tag is None:
-                    continue
-                platform = _mm_spec_platform(read.get_tag(tag))
-                if platform:
-                    counts[platform] += 1
-                examined += 1
-                if examined >= n_reads:
-                    break
+            if inspect_reads and len(declared) != 1:
+                for inspected, read in enumerate(bam.fetch(until_eof=True), 1):
+                    if not (read.is_secondary or read.is_supplementary):
+                        tag = ("MM" if read.has_tag("MM")
+                               else ("Mm" if read.has_tag("Mm") else None))
+                        platform = (_mm_spec_platform(read.get_tag(tag))
+                                    if tag else None)
+                        if platform:
+                            counts[platform] += 1
+                    if inspected >= n_reads:
+                        break
     except (OSError, ValueError) as exc:
         return PlatformEvidence(source=f"unreadable input ({exc})")
 
@@ -419,8 +423,12 @@ def resolve_platform_argument(args, input_path, *, tool: str,
     if not enzyme:
         return
     requires = enzyme_requires_platform(enzyme)
-    evidence = sniff_sequencing_platform(input_path)
     explicit = getattr(args, "seq", None)
+    # Read MM specs only when they can decide something: an explicit --seq is
+    # authoritative (header evidence still backs the mismatch warning), and a
+    # platform-independent (DAF) enzyme takes only header evidence below.
+    evidence = sniff_sequencing_platform(
+        input_path, inspect_reads=bool(requires and not explicit))
     if explicit:
         if evidence.platform and evidence.platform != explicit:
             print(

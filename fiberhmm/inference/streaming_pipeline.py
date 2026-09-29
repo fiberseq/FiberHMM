@@ -117,10 +117,13 @@ def _process_bam_streaming_pipeline_fused(
     daf_snp_mask_path: str = None,
     fail_on_mostly_unmapped: bool = False,
     cpg_mask_policy: Optional[str] = None,
+    index_output: bool = False,
 ):
     """Fused apply+recall streaming pipeline.
 
     ``cpg_mask_policy`` enables DddA CpG-aware recall (None = off).
+    ``index_output`` indexes a file output before it is published (best
+    effort: unsorted output stays unindexed, as before).
     """
     from fiberhmm.cli.provenance import output_header_with_provenance
 
@@ -156,7 +159,16 @@ def _process_bam_streaming_pipeline_fused(
 
     _log = sys.stderr if output_bam == '-' else sys.stdout
 
-    with atomic_output(output_bam) as output_path:
+    def _index_quietly(path):
+        # Runs on the closed temporary; the index is published with the BAM.
+        try:
+            pysam.index(path)
+        except pysam.SamtoolsError:
+            pass
+
+    with atomic_output(
+        output_bam, finalize=_index_quietly if index_output else None,
+    ) as output_path:
         with pysam.AlignmentFile(input_bam, "rb", threads=io_threads,
                                  check_sq=False) as inbam:
             ma_types = [] if downstream_compat else ["nuc", "msp", "tf"]
@@ -367,7 +379,13 @@ def _process_bam_streaming_pipeline(
 
     start_time = time.time()
 
-    with atomic_output(output_bam) as output_path:
+    def _finalize(path):
+        # Runs on the closed temporary before publication. Unaligned /
+        # unmapped-processing output has no coordinates to index.
+        if not process_unmapped and has_references:
+            _sort_and_index_bam(path, threads=n_cores)
+
+    with atomic_output(output_bam, finalize=_finalize) as output_path:
         with pysam.AlignmentFile(input_bam, "rb", threads=io_threads,
                                  check_sq=False) as inbam:
             has_references = bool(inbam.references)
@@ -502,10 +520,6 @@ def _process_bam_streaming_pipeline(
         # Inside the atomic context: raising here discards the temporary BAM.
         _check_run_outcome(counters, total_reads, skip_reasons, skipped,
                            fail_on_mostly_unmapped, _log)
-
-    # Unaligned / unmapped-processing output has no coordinates to index.
-    if output_bam != '-' and not process_unmapped and has_references:
-        _sort_and_index_bam(output_bam, threads=n_cores)
 
     if posterior_stats:
         n_fibers, file_size = posterior_stats

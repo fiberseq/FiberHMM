@@ -375,7 +375,10 @@ def run_pairing(in_bam: str, out_bam: str, reference_path: Optional[str],
     # Published atomically: a failed pass 2 never leaves a partial BAM at
     # out_bam.
     from fiberhmm.inference.bam_output import atomic_output
-    with atomic_output(out_bam) as out_path, \
+    # The index is built on the closed temporary and published with the BAM.
+    with atomic_output(
+        out_bam, finalize=pysam.index if create_index else None,
+    ) as out_path, \
             pysam.AlignmentFile(in_bam, "rb") as bam, pysam.AlignmentFile(
         out_path, "wb", header=output_header, threads=io_threads,
     ) as out:
@@ -418,8 +421,6 @@ def run_pairing(in_bam: str, out_bam: str, reference_path: Optional[str],
                 out.write(read)
                 written += 1
     counts["written_reads"] = written
-    if create_index:
-        pysam.index(out_bam)
 
     receipt = {
         "status": "complete",

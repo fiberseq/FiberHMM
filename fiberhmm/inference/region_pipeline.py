@@ -229,20 +229,19 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
                          if os.path.exists(bam) and os.path.getsize(bam) > 0]
 
         _enforce_region_failures(aggregation)
-        with atomic_output(output_bam) as output_path:
+
+        def _finalize(path):
+            # Index (sorting first if needed) the closed temporary; the BAM
+            # and its index are published together afterwards.
+            sys.stdout.flush()
+            output_size_gb = os.path.getsize(path) / (1024**3)
+            print(f"Output BAM: {output_size_gb:.2f}GB")
+            print("Step: Index/Sort...")
+            _sort_and_index_bam(path, threads=n_cores)
+
+        with atomic_output(output_bam, finalize=_finalize) as output_path:
             _concatenate_region_bams(input_bam, output_path, non_empty_bams,
                                      temp_dir)
-
-        sys.stdout.flush()
-
-        # Verify output was created
-        if os.path.exists(output_bam):
-            output_size_gb = os.path.getsize(output_bam) / (1024**3)
-            print(f"Output BAM: {output_size_gb:.2f}GB")
-
-        # Index the output BAM (sort first if needed)
-        print("Step: Index/Sort...")
-        _sort_and_index_bam(output_bam, threads=n_cores)
 
         # Merge temp TSV files if posteriors were requested
         if return_posteriors and aggregation.temp_tsvs:
@@ -567,14 +566,17 @@ def _process_bam_region_parallel_fused(
         non_empty = [bam for _, bam in aggregation.temp_bams
                      if os.path.exists(bam) and os.path.getsize(bam) > 0]
         _enforce_region_failures(aggregation)
-        with atomic_output(output_bam) as output_path:
-            _concatenate_region_bams(input_bam, output_path, non_empty, temp_dir)
 
-        # Index directly (input sorted -> each region sorted -> concat sorted).
-        try:
-            pysam.index(output_bam)
-        except pysam.SamtoolsError:
-            pass
+        def _index_quietly(path):
+            # Index the closed temporary directly (input sorted -> each region
+            # sorted -> concat sorted); published together with the BAM.
+            try:
+                pysam.index(path)
+            except pysam.SamtoolsError:
+                pass
+
+        with atomic_output(output_bam, finalize=_index_quietly) as output_path:
+            _concatenate_region_bams(input_bam, output_path, non_empty, temp_dir)
 
         elapsed = time.time() - start_time
         rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
