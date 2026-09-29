@@ -27,19 +27,16 @@ from fiberhmm.core.bam_reader import (  # noqa: E402
     parse_mm_tag_query_positions,
 )
 
-# Path to a real hia5 PacBio BAM with MM/ML tags and a mix of forward + reverse
-# reads.  If missing, the integration-style tests skip gracefully.
-REAL_BAM_CANDIDATES = [
-    "/Users/tt7739/Dropbox/Fiber-NET-seq/FiberHMM v1.0/v3-caller/phase0/data/"
-    "test_hia5_2-4hr_sna_eve_ftz.bam",
-    "/tmp/bench/test_hia5_2-4hr_sna_eve_ftz.bam",
-]
+# Real hia5 PacBio BAM with MM/ML tags and a mix of forward + reverse reads,
+# supplied through FIBERHMM_REAL_HIA5_BAM.  If unset, the integration-style
+# tests skip; the synthetic tests below always run.
+REAL_BAM_ENV = "FIBERHMM_REAL_HIA5_BAM"
 
 
 def _find_real_bam():
-    for p in REAL_BAM_CANDIDATES:
-        if os.path.exists(p):
-            return p
+    path = os.environ.get(REAL_BAM_ENV)
+    if path and os.path.exists(path):
+        return path
     return None
 
 
@@ -220,7 +217,7 @@ def test_real_bam_bulk_match_pysam(n_reads):
     read, both forward and reverse."""
     bam_path = _find_real_bam()
     if bam_path is None:
-        pytest.skip("no real hia5 BAM available in this environment")
+        pytest.skip(f"set {REAL_BAM_ENV} to a real hia5 PacBio BAM")
 
     fwd_ok = fwd_total = rev_ok = rev_total = 0
     drift_examples = []
@@ -271,7 +268,7 @@ def test_real_bam_per_mod_type_matches_pysam():
     as pysam on real BAM."""
     bam_path = _find_real_bam()
     if bam_path is None:
-        pytest.skip("no real hia5 BAM available in this environment")
+        pytest.skip(f"set {REAL_BAM_ENV} to a real hia5 PacBio BAM")
 
     tested = matched = 0
     with pysam.AlignmentFile(bam_path, "rb", check_sq=False) as f:

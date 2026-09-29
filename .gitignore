@@ -80,6 +80,15 @@ docs/proposals/
 
 # Local DddA analysis and handoff artifacts
 ddda_profile/
+/ddda_nuc_output/
+
+# Internal research/collaboration trees (never part of the public release)
+/consensus_recaller_collab/
+/handoff/
+/analysis/
+/*_outputs/
+docs/validation/
+docs/multiassay/
 docs/daf-m5c.md
 docs/daf-m5c-validation.md
 docs/fiberbrowser-m5c-handoff.md

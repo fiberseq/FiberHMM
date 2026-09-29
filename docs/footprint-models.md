@@ -1,9 +1,5 @@
 # Footprint population models
 
-For implementation status, downstream integration details, and the OCT family
-caller handoff, see
-[`FOOTPRINT_POPULATION_MODEL_HANDOFF.md`](FOOTPRINT_POPULATION_MODEL_HANDOFF.md).
-
 FiberHMM footprint population models turn ordinary single-molecule footprint
 calls into a reusable population model without replacing or filtering the
 source calls. The complete artifact is a **footprint population model**; each

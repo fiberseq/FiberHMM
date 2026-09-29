@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FIBERHMM_NO_UPDATE_CHECK: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  test:
+    name: pytest (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install FiberHMM with all optional features and test tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[all,dev]"
+      - name: Run the test suite
+        run: python -m pytest tests -q -p no:cacheprovider
+
+  package:
+    name: wheel smoke (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build the wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir dist
+      - name: Wheel contains only the fiberhmm package
+        run: |
+          python - <<'EOF'
+          import glob, zipfile
+          wheel, = glob.glob("dist/fiberhmm-*.whl")
+          tops = {name.split("/")[0] for name in zipfile.ZipFile(wheel).namelist()}
+          extra = {t for t in tops if t != "fiberhmm" and not t.endswith(".dist-info")}
+          assert not extra, f"unexpected top-level entries in {wheel}: {sorted(extra)}"
+          print(wheel, sorted(tops))
+          EOF
+      - name: Install the wheel into a clean venv (core dependencies only)
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/venv/bin/python" -m pip install dist/fiberhmm-*.whl
+      - name: Run --help for every console script
+        # Run outside the checkout so the installed wheel, not the source tree, is used.
+        working-directory: ${{ runner.temp }}
+        run: |
+          VENV="$RUNNER_TEMP/venv"
+          scripts=$("$VENV/bin/python" -c "from importlib.metadata import distribution; print('\n'.join(sorted(e.name for e in distribution('fiberhmm').entry_points if e.group == 'console_scripts')))")
+          test -n "$scripts"
+          status=0
+          for script in $scripts; do
+            if "$VENV/bin/$script" --help > /dev/null; then
+              echo "ok   $script"
+            else
+              echo "::error::$script --help failed"
+              status=1
+            fi
+          done
+          exit $status

@@ -14,13 +14,14 @@ import sys
 import numpy as np
 import pysam
 
-sys.path.insert(0, "/mnt/g/Dropbox/Fiber-NET-seq/FiberHMM v1.0/Release v2.0.0")
 from fiberhmm.core.bam_reader import (encode_from_query_sequence,
                                       get_modified_positions_pysam, ContextEncoder)
 
-CHROM_BAM = "/mnt/z/fiberhmm_corpus/ecogii_yeast/chromatin_rep1.bam"
-NUC_BED = "/mnt/z/fiberhmm_corpus/ecogii_yeast/GSM7779503_Nuclei_MEcoGII_Rep1_Nucleosome.bed.gz"
-OUT = "/mnt/z/fiberhmm_corpus/ecogii_yeast/yeast_emis"
+if len(sys.argv) != 4:
+    sys.exit("usage: build_ecogii_supervised_emissions.py CHROMATIN_BAM "
+             "NUCLEOSOME_BED_GZ OUT_PREFIX")
+# e.g. chromatin_rep1.bam, GSM7779503_Nuclei_MEcoGII_Rep1_Nucleosome.bed.gz, yeast_emis
+CHROM_BAM, NUC_BED, OUT = sys.argv[1:4]
 K = 3
 NC = 4 ** (2 * K)
 MAXREADS = 60000

@@ -105,15 +105,6 @@ def k3_model(hexamer_emission_probs):
 
 
 @pytest.fixture
-def test_model_path():
-    """Path to a real JSON model for integration tests (if available)."""
-    path = os.path.join(os.path.dirname(__file__), '..', 'models', 'dm6_dddb.json')
-    if os.path.exists(path):
-        return path
-    return None
-
-
-@pytest.fixture
 def temp_dir():
     """Temporary directory for file operations."""
     with tempfile.TemporaryDirectory() as tmpdir:

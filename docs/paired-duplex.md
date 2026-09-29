@@ -33,8 +33,9 @@ fiberhmm-pair \
 
 `--stop-after pair` writes only the tagged pair members, and `--stop-after merge`
 merges without re-calling. `--from-paired` starts from an already paired BAM.
-The older `fiberhmm-merge` and `fiberhmm-crossstrand` commands still work but are
-deprecated aliases for these forms.
+`fiberhmm-pair` replaces the former `fiberhmm-crossstrand` command, which is no
+longer installed. `fiberhmm-merge` is still installed but deprecated; use
+`fiberhmm-pair --from-paired` for an already paired BAM.
 
 The input must already contain ordinary FiberHMM calls and be coordinate
 sorted and indexed. The default workflow requires a reference FASTA because

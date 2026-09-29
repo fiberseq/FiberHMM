@@ -280,6 +280,7 @@ def test_unindexed_sampler_is_bounded_and_deterministic(tmp_path):
 
 
 def test_run_qc_writes_reports_without_whole_bam_scan(tmp_path):
+    pytest.importorskip("matplotlib")  # PDF report needs the optional [plots] extra
     bam_path = tmp_path / "input.bam"
     prefix = tmp_path / "sample"
     _write_unindexed_iupac_bam(bam_path, n_reads=40)
@@ -332,6 +333,7 @@ def test_run_qc_reports_automatic_low_coverage_snp_skip(tmp_path):
 
 
 def test_multi_qc_writes_individual_and_combined_reports(tmp_path):
+    pytest.importorskip("matplotlib")  # PNG/PDF reports need the optional [plots] extra
     first = tmp_path / "first.bam"
     second = tmp_path / "second.bam"
     output_dir = tmp_path / "qc"

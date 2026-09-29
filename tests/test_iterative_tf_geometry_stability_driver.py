@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from collections import Counter
 from copy import deepcopy
 from pathlib import Path
@@ -10,7 +11,24 @@ import numpy as np
 import pytest
 
 
-WORKSPACE = Path(__file__).resolve().parents[2]
+# These tests exercise the paper's analysis scripts, which live in a sibling
+# ``paper/`` checkout (not part of the FiberHMM repository). Point
+# FIBERHMM_PAPER_WORKSPACE at the directory that contains ``paper/`` to run them.
+WORKSPACE = Path(
+    os.environ.get("FIBERHMM_PAPER_WORKSPACE") or Path(__file__).resolve().parents[2]
+)
+_SCRIPTS = WORKSPACE / "paper" / "analysis" / "strand_consensus"
+_REQUIRED = (
+    "run_iterative_tf_geometry_stability.py",
+    "plot_iterative_tf_geometry_stability.py",
+    "compare_tf_geometry_catalogs.py",
+)
+if not all((_SCRIPTS / name).is_file() for name in _REQUIRED):
+    pytest.skip(
+        f"paper/ analysis scripts not found under {WORKSPACE} "
+        "(set FIBERHMM_PAPER_WORKSPACE)",
+        allow_module_level=True,
+    )
 
 
 def _load(name: str, relative: str):

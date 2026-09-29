@@ -184,12 +184,16 @@ def test_payload_is_not_mutated(tmp_path):
     assert payload == before
 
 
-# ---------------------------------------------------------------- frozen prototype reference (local data only)
-REFERENCE = Path.home()/'fiberhmm_work/cr_recaller_reference_20260925'
-NAPA = Path.home()/'fiberhmm_work/napa_keepone_20260923/napa_full_keepone/evidence.json.gz'
+# ---------------------------------------------------------------- frozen prototype reference (external data)
+# FIBERHMM_CR_REFERENCE_DIR: directory holding napa_N1.classes.tsv (frozen prototype output).
+# FIBERHMM_NAPA_EVIDENCE: the matching NAPA keep-one evidence.json.gz. Skipped unless both are set.
+import os  # noqa: E402  (kept local to this optional block)
+
+REFERENCE = Path(os.environ.get('FIBERHMM_CR_REFERENCE_DIR') or '/nonexistent/cr_recaller_reference')
+NAPA = Path(os.environ.get('FIBERHMM_NAPA_EVIDENCE') or '/nonexistent/napa_evidence.json.gz')
 
 
-@pytest.mark.skipif(not (REFERENCE/'napa_N1.classes.tsv').exists() or not NAPA.exists(), reason='frozen reference data not on this machine')
+@pytest.mark.skipif(not (REFERENCE/'napa_N1.classes.tsv').exists() or not NAPA.exists(), reason='set FIBERHMM_CR_REFERENCE_DIR and FIBERHMM_NAPA_EVIDENCE')
 def test_matches_frozen_prototype_reference_napa(tmp_path):
     import csv
     payload = json.load(gzip.open(NAPA)); payload['region'] = dict(chrom='chr19', start=47514980, end=47515330)

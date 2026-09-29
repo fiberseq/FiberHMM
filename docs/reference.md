@@ -184,9 +184,8 @@ collapse, never used as a cross-library prior. Independent assays do not enter
 inference. SR consumes only standard sequence, hard MM/ML (or DAF mismatches),
 and existing MA calls. The `hia5-nanopore` preset reads standard Dorado m6A and
 uses the strict hard-call threshold `ML >= 248`. Consensus reconstruction from
-annotation combinations is specified
-separately for FiberBrowser in
-[`FIBERBROWSER_CONSENSUS_RECONSTRUCTION.md`](./FIBERBROWSER_CONSENSUS_RECONSTRUCTION.md).
+annotation combinations is described in
+[`CONSENSUS_WORKFLOW.md`](./CONSENSUS_WORKFLOW.md).
 
 `ddda_mcg.` is a molecular interval annotation, not a native per-base `MM:C+m`
 modification call. DAF amplification removes that native channel. Each span is

@@ -4,7 +4,7 @@ This guide covers installation of FiberHMM on Linux and macOS systems.
 
 ## Requirements
 
-- Python 3.9 or later
+- Python 3.10 or later
 - C compiler (gcc on Linux, Xcode command line tools on macOS)
 - htslib development headers (for pysam)
 
@@ -80,29 +80,37 @@ conda activate fiberhmm
 
 ### 3. Install FiberHMM
 
-#### Basic installation (core functionality)
+#### Basic installation
 
 ```bash
 pip install fiberhmm
 ```
 
-#### With performance optimizations
+This installs every command, including `fiberhmm-consensus` and
+`fiberhmm-transfer`. Numba, scikit-learn, joblib and threadpoolctl are core
+dependencies. The `fiberhmm[consensus]` and `fiberhmm[numba]` extras still
+resolve but add nothing beyond the core install.
 
-```bash
-pip install "fiberhmm[numba]"
-```
-
-#### With visualization support
+#### Plotting support (QC PDFs, `--stats` plots)
 
 ```bash
 pip install "fiberhmm[plots]"
 ```
 
-#### Full installation (all features)
+#### HDF5 posteriors export
+
+```bash
+pip install "fiberhmm[posteriors]"
+```
+
+#### Full installation (all optional features)
 
 ```bash
 pip install "fiberhmm[all]"
 ```
+
+GPU acceleration of the consensus engine is available separately through
+`pip install "fiberhmm[cuda]"` (PyTorch).
 
 ### 4. Verify Installation
 
@@ -116,17 +124,11 @@ fiberhmm-train --help
 fiberhmm-probs --help
 fiberhmm-extract --help
 fiberhmm-utils --help
+fiberhmm-call --help
+fiberhmm-consensus --help
 ```
 
 ## Optional Dependencies
-
-### Numba (Recommended)
-
-Numba provides ~10x speedup for HMM computations:
-
-```bash
-pip install numba
-```
 
 ### UCSC tools (for bigBed output)
 
@@ -182,11 +184,11 @@ For contributing to FiberHMM:
 git clone https://github.com/fiberseq/FiberHMM.git
 cd FiberHMM
 
-# Install with development dependencies
-pip install -e ".[dev]"
+# Install with all optional features and development dependencies
+pip install -e ".[all,dev]"
 
 # Run tests
-pytest tests/ -v
+pytest tests/ -q
 ```
 
 ## Updating

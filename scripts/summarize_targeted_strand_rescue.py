@@ -98,7 +98,7 @@ def _resolve_declared_path(value: str, declaring_file: Path) -> Path:
 
     # Production manifests preserve the absolute path used for the validated
     # run. When the complete validation tree is copied to another host (for
-    # example from /mnt/g to macOS Dropbox), relocate paths anchored at the
+    # example from a Linux workstation to a laptop), relocate paths anchored at the
     # repository-owned consensus_validation_outputs directory. Do not guess
     # for arbitrary missing absolute paths.
     anchor = "consensus_validation_outputs"

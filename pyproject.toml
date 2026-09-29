@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fiberhmm"
-version = "2.16.8"
+version = "3.0.0"
 description = "Hidden Markov Model for calling chromatin footprints from fiber-seq and DAF-seq data"
 readme = "README.md"
 license = {text = "MIT"}
@@ -30,32 +30,36 @@ classifiers = [
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.20",
     "scipy>=1.7",
     "pandas>=1.3",
     "pysam>=0.19",
     "tqdm>=4.60",
+    # fiberhmm-consensus / fiberhmm-transfer (lattice recaller) and the
+    # numba-accelerated HMM paths import these unconditionally.
+    "numba>=0.55",
+    "scikit-learn>=1.1",
+    "joblib>=1.4.2",
+    "threadpoolctl>=3.1",
 ]
 
 [project.optional-dependencies]
+# numba/consensus are kept as aliases: their packages are core dependencies
+# since 3.0, and FiberBrowser pins fiberhmm[consensus].
 numba = ["numba>=0.55"]
 consensus = ["numba>=0.55", "scikit-learn>=1.1", "joblib>=1.4.2", "threadpoolctl>=3.1"]
 cuda = ["torch>=2.0"]
 plots = ["matplotlib>=3.5"]
 posteriors = ["h5py>=3.0"]
 all = [
-    "numba>=0.55",
-    "scikit-learn>=1.1",
-    "joblib>=1.4.2",
-    "threadpoolctl>=3.1",
     "matplotlib>=3.5",
     "h5py>=3.0",
 ]
@@ -86,7 +90,6 @@ fiberhmm-tag-m5c = "fiberhmm.cli._entry:tag_m5c_main"
 fiberhmm-recall-tfs = "fiberhmm.cli._entry:recall_tfs_main"
 fiberhmm-recall-nucs = "fiberhmm.cli._entry:recall_nucs_main"
 fiberhmm-call = "fiberhmm.cli._entry:call_main"
-fiberhmm-run = "fiberhmm.cli._entry:run_main"
 fiberhmm-dedup = "fiberhmm.cli._entry:dedup_main"
 fiberhmm-pair = "fiberhmm.cli._entry:pair_main"
 fiberhmm-merge = "fiberhmm.cli._entry:merge_main"
@@ -98,17 +101,6 @@ fiberhmm-tag-consensus = "fiberhmm.cli._entry:tag_families_main"
 fiberhmm-consensus = "fiberhmm.inference.consensus.cli:main"
 fiberhmm-transfer = "fiberhmm.inference.consensus.transfer_cli:main"
 fiberhmm-qc = "fiberhmm.cli._entry:qc_main"
-
-# Top-level scripts kept for backward compatibility
-[tool.setuptools]
-py-modules = [
-    "apply_model",
-    "train_model",
-    "generate_probs",
-    "extract_tags",
-    "fiberhmm_utils",
-    "export_posteriors",
-]
 
 [tool.setuptools.packages.find]
 include = ["fiberhmm*"]
@@ -143,7 +135,7 @@ exclude_lines = [
 
 [tool.black]
 line-length = 100
-target-version = ["py39", "py310", "py311", "py312"]
+target-version = ["py310", "py311", "py312", "py313"]
 exclude = '''
 /(
     \.git
@@ -154,7 +146,7 @@ exclude = '''
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 exclude = [
     ".git",
     ".venv",

@@ -96,12 +96,6 @@ def call_main():
     return main()
 
 
-def run_main():
-    _notify()
-    from fiberhmm.cli.run import main
-    return main()
-
-
 def dedup_main():
     _notify()
     from fiberhmm.cli.dedup import main
@@ -114,21 +108,9 @@ def pair_main():
     return main()
 
 
-def duplex_main():
-    _notify()
-    from fiberhmm.cli.duplex import main
-    return main()
-
-
 def merge_main():
     _notify()
     from fiberhmm.cli.merge import main
-    return main()
-
-
-def crossstrand_main():
-    _notify()
-    from fiberhmm.cli.crossstrand import main
     return main()
 
 

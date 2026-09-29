@@ -41,6 +41,7 @@ class _TrackingHandle:
 
 
 def test_tsv_to_h5_closes_gzip_inputs_when_conversion_fails(monkeypatch, tmp_path):
+    pytest.importorskip("h5py")  # optional [posteriors] extra
     tsv_path = tmp_path / "bad.tsv.gz"
     with gzip.open(tsv_path, "wt") as handle:
         handle.write("#metadata:{}\n")

@@ -12,7 +12,7 @@
 #
 # DEPS (install before running):
 #   ccs (pbccs)   : conda install -c bioconda pbccs      # NOT yet installed
-#   ft            : /home/tommytullius/yes/bin/ft        # present
+#   ft            : fibertools-rs on PATH (or FT=/path/to/ft)
 #   pbmm2         : present
 # If the SRA object is already CCS-with-kinetics, skip the ccs step (set -C).
 #
@@ -23,7 +23,7 @@
 # Usage:
 #   samosa_ccs_to_modbam.sh -i subreads.bam -o out.aligned.bam -r ref.fa [-C]   # -C: input already CCS
 set -euo pipefail
-FT=${FT:-/home/tommytullius/yes/bin/ft}
+FT=${FT:-ft}
 CCS_DONE=0; IN=""; OUT=""; REF=""
 while getopts "i:o:r:C" f; do case $f in i) IN=$OPTARG;; o) OUT=$OPTARG;; r) REF=$OPTARG;; C) CCS_DONE=1;; esac; done
 [ -z "$IN" ] || [ -z "$OUT" ] || [ -z "$REF" ] && { echo "usage: -i in.bam -o out.bam -r ref.fa [-C]"; exit 2; }

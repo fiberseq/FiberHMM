@@ -22,7 +22,7 @@
 #   dorado_basecall_guarded.sh -i POD5_DIR -o OUT.bam [-m "sup,6mA,5mCG_5hmCG"] [-r REF.fa]
 set -uo pipefail
 
-DORADO=${DORADO:-/home/tommytullius/tools/dorado-0.8.0-linux-x64/bin/dorado}
+DORADO=${DORADO:-dorado}     # dorado binary (override with DORADO=/path/to/dorado)
 MODEL="sup,6mA,5mCG_5hmCG"     # accuracy tier + modification models
 REF=""; BATCH=96
 MAX_USED_GB=${MAX_USED_GB:-30}     # do not start if >= this many GB already used

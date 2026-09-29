@@ -3,7 +3,6 @@
 import pytest
 
 from fiberhmm.inference import legacy_pipeline, parallel, streaming_pipeline
-from fiberhmm.posteriors import hdf5_backend
 
 
 def _install_fake_posterior_writer(monkeypatch):
@@ -153,6 +152,9 @@ def test_fused_streaming_reference_fasta_closes_when_drain_fails(
 
 
 def test_hdf5_posterior_writer_closes_file_when_finalize_fails(monkeypatch, tmp_path):
+    pytest.importorskip("h5py")  # optional [posteriors] extra
+    from fiberhmm.posteriors import hdf5_backend
+
     class FakeH5:
         def __init__(self):
             self.attrs = {}

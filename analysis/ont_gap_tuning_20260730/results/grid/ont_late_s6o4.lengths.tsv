@@ -1,8 +1,0 @@
-label	stage	count	p10	p25	median	p75	p90
-ont_late_s6o4	core_below_floor_fragment	5503	87.0	90.0	99.0	114.0	129.0
-ont_late_s6o4	cut	27150	13.0	18.0	32.0	52.0	79.0
-ont_late_s6o4	fragment	120575	26.0	50.0	132.0	196.0	392.0
-ont_late_s6o4	postsplit_subfloor	40271	20.0	25.0	33.0	50.0	68.0
-ont_late_s6o4	protected_core	80262	91.0	114.0	147.0	285.0	497.0
-ont_late_s6o4	protected_loose	80262	101.0	124.0	156.0	294.0	507.0
-ont_late_s6o4	raw_footprint	93425	33.0	78.0	152.0	305.0	560.0

@@ -1,6 +1,7 @@
 """Read-only regression coverage for the targeted SR production summarizer."""
 
 import importlib.util
+import os
 from pathlib import Path
 
 import pytest
@@ -8,13 +9,11 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "summarize_targeted_strand_rescue.py"
-MATRIX = (
-    REPO_ROOT
-    / "consensus_validation_outputs"
-    / "strand_rescue_targeted_full_20260716"
-    / "manifests"
-    / "targeted_sr_run_matrix.json"
-)
+# The completed NAPA production matrix is validation output, not a tracked
+# fixture. Point FIBERHMM_TARGETED_SR_MATRIX at targeted_sr_run_matrix.json to
+# run the end-to-end receipt check.
+MATRIX_ENV = "FIBERHMM_TARGETED_SR_MATRIX"
+MATRIX = Path(os.environ.get(MATRIX_ENV, "")).expanduser() if os.environ.get(MATRIX_ENV) else None
 
 
 def _load_module():
@@ -45,18 +44,18 @@ def test_declared_validation_path_relocates_only_repository_owned_tree(tmp_path)
     target.write_text("{}")
 
     relocated = module._resolve_declared_path(
-        "/mnt/g/old/repo/consensus_validation_outputs/run/manifest.json",
+        "/nonexistent/old-host/repo/consensus_validation_outputs/run/manifest.json",
         matrix,
     )
     assert relocated == target.resolve()
 
-    unrelated = module._resolve_declared_path("/mnt/g/old/repo/input.bam", matrix)
-    assert unrelated == Path("/mnt/g/old/repo/input.bam")
+    unrelated = module._resolve_declared_path("/nonexistent/old-host/repo/input.bam", matrix)
+    assert unrelated == Path("/nonexistent/old-host/repo/input.bam")
 
 
 def test_completed_napa_receipt_report_timing_and_audit_agree():
-    if not MATRIX.is_file():
-        pytest.skip("targeted production matrix is not present")
+    if MATRIX is None or not MATRIX.is_file():
+        pytest.skip(f"set {MATRIX_ENV} to a targeted production run matrix")
     module = _load_module()
     summary = module.build_summary(MATRIX, {"ddda:napa"})
     assert summary["schema"] == "fiberhmm.validation.targeted_sr.production_summary.v1"

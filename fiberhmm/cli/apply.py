@@ -209,7 +209,7 @@ def main():
             "\n"
             "    fiberhmm-recall-tfs -i <output.bam> -o <recalled.bam> --enzyme ddda\n"
             "\n"
-            "  fiberhmm-recall-tfs is a beta feature, first in fiberhmm 2.6.0.\n"
+            "  fiberhmm-recall-tfs is a beta feature.\n"
             "------------------------------------------------------------------------\n",
             file=_sys.stderr,
         )

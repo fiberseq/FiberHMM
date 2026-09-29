@@ -920,7 +920,7 @@ def main(default_recall_nucs: bool = False):
         "\n"
         "========================================================================\n"
         "  fiberhmm-recall-tfs  [BETA]\n"
-        "  LLR TF footprint recaller -- beta feature shipped in fiberhmm 2.6.0.\n"
+        "  LLR TF footprint recaller (beta).\n"
         "  Defaults validated on Hia5 PacBio, DddB DAF, and DddA DAF-seq.\n"
         "\n"
         + mode_banner +
