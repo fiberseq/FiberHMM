@@ -706,9 +706,9 @@ def check_bam(path, *, scan_records: int = DEFAULT_SCAN_RECORDS,
     try:
         with pysam.AlignmentFile(path, "r" if path.endswith(".sam") else "rb",
                                  check_sq=False) as bam:
-            header = bam.header
+            header = bam.header.to_dict()
             scan = scan_reads(bam, scan_records)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, UnicodeDecodeError) as error:
         raise AdvisoryInputError(f"{path}: cannot read as a BAM ({error})") from error
     found = check_header(header, scan=scan, index=index, path=path)
     if sidecars and "://" not in path:
@@ -746,7 +746,11 @@ def check_qc(path, *, index: Optional[dict] = None) -> list[Advisory]:
     rule = idx.rules["qc-nanopore-opportunities"]
     findings = []
     for sample in samples:
+        if not isinstance(sample, dict):
+            raise AdvisoryInputError(f"{path}: malformed QC report (a sample is not a JSON object)")
         assay = sample.get("assay") or {}
+        if not isinstance(assay, dict):
+            raise AdvisoryInputError(f"{path}: malformed QC report (assay is not a JSON object)")
         mode = str(assay.get("mode") or "").lower()
         profile = str(assay.get("reference_profile") or "").lower()
         if mode != "nanopore-fiber" and "nanopore" not in profile:
@@ -779,21 +783,33 @@ def _posteriors_metadata(path: str) -> dict:
             import h5py
         except ImportError as error:
             raise AdvisoryInputError(f"{path}: h5py is needed to read HDF5 posteriors") from error
-        with h5py.File(path, "r") as handle:
-            attrs = {key: handle.attrs[key] for key in handle.attrs}
+        try:
+            with h5py.File(path, "r") as handle:
+                attrs = {key: handle.attrs[key] for key in handle.attrs}
+        except (OSError, ValueError, KeyError) as error:
+            raise AdvisoryInputError(f"{path}: cannot read as HDF5 ({error})") from error
         if "format_version" not in attrs:
             raise AdvisoryInputError(f"{path}: not a fiberhmm-posteriors HDF5 file")
-        return {key: (value.decode() if isinstance(value, bytes) else value)
-                for key, value in attrs.items()}
+        try:
+            return {key: (value.decode() if isinstance(value, bytes) else value)
+                    for key, value in attrs.items()}
+        except UnicodeDecodeError as error:
+            raise AdvisoryInputError(f"{path}: malformed HDF5 metadata ({error})") from error
     opener = gzip.open if path.endswith(".gz") else open
     try:
-        with opener(path, "rt") as handle:
+        with opener(path, "rt", encoding="utf-8") as handle:
             first = handle.readline()
-    except OSError as error:
+    except (OSError, EOFError, UnicodeDecodeError) as error:
         raise AdvisoryInputError(f"{path}: {error}") from error
     if not first.startswith("#metadata:"):
         raise AdvisoryInputError(f"{path}: not a fiberhmm-posteriors TSV (no #metadata line)")
-    return json.loads(first[len("#metadata:"):])
+    try:
+        metadata = json.loads(first[len("#metadata:"):])
+    except ValueError as error:
+        raise AdvisoryInputError(f"{path}: malformed #metadata line ({error})") from error
+    if not isinstance(metadata, dict):
+        raise AdvisoryInputError(f"{path}: malformed #metadata line (not a JSON object)")
+    return metadata
 
 
 def check_consensus(path, *, index: Optional[dict] = None) -> list[Advisory]:
@@ -813,19 +829,27 @@ def check_consensus(path, *, index: Optional[dict] = None) -> list[Advisory]:
     findings = []
     versions = []
     if run_manifest.is_file():
-        versions = [a.get("fiberhmm_version") for a in _read_json(str(run_manifest)).get("attempts", [])]
+        attempts = _read_json(str(run_manifest)).get("attempts", [])
+        if not isinstance(attempts, list) or not all(isinstance(a, dict) for a in attempts):
+            raise AdvisoryInputError(f"{run_manifest}: malformed attempts (not a list of objects)")
+        versions = [a.get("fiberhmm_version") for a in attempts]
     for manifest_path in manifests:
         manifest = _read_json(str(manifest_path))
         if manifest.get("cr_mode") != "lattice_recaller":
             continue
         recaller = manifest.get("recaller") or {}
+        if not isinstance(recaller, dict):
+            raise AdvisoryInputError(f"{manifest_path}: malformed recaller (not a JSON object)")
         if "unscored_classes" in recaller:
             continue  # written by code with the fix (same commit added the field)
         classes = manifest_path.parent / "classes.tsv"
         tiers = None
         if classes.is_file():
-            with open(classes) as handle:
-                tiers = "prevalence_edge" in handle.readline()
+            try:
+                with open(classes, encoding="utf-8") as handle:
+                    tiers = "prevalence_edge" in handle.readline()
+            except (OSError, UnicodeDecodeError) as error:
+                raise AdvisoryInputError(f"{classes}: {error}") from error
         if tiers is False:
             continue  # predates prevalence tiers
         if versions and all(v and _version_tuple(v) >= _version_tuple(rule["fixed_in"]["version"])
@@ -847,9 +871,9 @@ def check_consensus(path, *, index: Optional[dict] = None) -> list[Advisory]:
 def _read_json(path: str) -> dict:
     opener = gzip.open if path.endswith(".gz") else open
     try:
-        with opener(path, "rt") as handle:
+        with opener(path, "rt", encoding="utf-8") as handle:
             data = json.load(handle)
-    except (OSError, ValueError) as error:
+    except (OSError, EOFError, ValueError) as error:
         raise AdvisoryInputError(f"{path}: cannot read JSON ({error})") from error
     if not isinstance(data, dict):
         raise AdvisoryInputError(f"{path}: not a JSON object")
@@ -910,24 +934,33 @@ def report(path, *, scan_records: int = DEFAULT_SCAN_RECORDS, sidecars: bool = T
            index: Optional[dict] = None) -> dict:
     """JSON-ready report for one output (``fiberhmm.advisory_report.v1``).
 
-    Unreadable or unknown paths give ``status: "error"`` with ``error`` set
-    instead of raising.
+    Never raises for a bad input: missing, unreadable, malformed or unknown
+    paths (and any other failure while checking one) give ``status: "error"``
+    with ``error`` set. Interrupts (``KeyboardInterrupt``, ``SystemExit``)
+    still propagate.
     """
     import fiberhmm
 
-    data = index if index is not None else load_index()
     base = {
         "schema": REPORT_SCHEMA,
         "path": str(path),
         "checked_with": {"fiberhmm_version": fiberhmm.__version__,
-                         "advisories_revision": data.get("revision")},
+                         "advisories_revision": None},
     }
+
+    def error_report(message: str) -> dict:
+        return {**base, "kind": None, "status": "error", "needs_rerun": None,
+                "confirmed": None, "error": message, "advisories": []}
+
     try:
+        data = index if index is not None else load_index()
+        base["checked_with"]["advisories_revision"] = data.get("revision")
         kind = output_kind(path)
         advisories = check_path(path, scan_records=scan_records, sidecars=sidecars, index=data)
     except AdvisoryInputError as error:
-        return {**base, "kind": None, "status": "error", "needs_rerun": None,
-                "confirmed": None, "error": str(error), "advisories": []}
+        return error_report(str(error))
+    except Exception as error:  # noqa: BLE001 - one bad input must not abort a batch
+        return error_report(f"{path}: cannot check ({type(error).__name__}: {error})")
     return {
         **base,
         "kind": kind,

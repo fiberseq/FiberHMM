@@ -463,3 +463,52 @@ def test_code_commit_comes_from_the_program_path_only(version, cl, expected):
         assert (found.status, found.confidence) == expected
         if expected[1] == "medium":
             assert "1ca7d0a" in found.evidence[0]
+
+
+def test_report_never_raises_for_malformed_inputs(tmp_path):
+    """Every malformed artifact gets an error report instead of an exception."""
+    cases = {
+        "broken.tsv": b"#metadata:{broken\n",
+        "shape.tsv": b"#metadata:[]\n",
+        "bad_unicode.tsv": b"\xff\xfe#metadata:{}\n",
+        "bad.tsv.gz": b"not gzip",
+        "bad.h5": b"not hdf5",
+        "bad.bam": b"broken",
+        "invalid.qc.json": json.dumps({"samples": [None]}).encode(),
+        "assay.qc.json": json.dumps({"assay": "nanopore"}).encode(),
+        "list.qc.json": b"[1, 2]",
+        "bad_unicode.qc.json": b"\xff{}",
+        "bad_sq.sam": b"@SQ\tSN:p\tLN:x\n",
+        "missing_id.sam": b"@SQ\tSN:p\tLN:100\n@PG\tPN:fiberhmm-call\tVN:3.0.0\n",
+    }
+    for name, content in cases.items():
+        (tmp_path / name).write_bytes(content)
+    consensus = tmp_path / "consensus"
+    consensus.mkdir()
+    (consensus / "manifest.json").write_text(json.dumps(
+        {"cr_mode": "lattice_recaller", "recaller": []}))
+    (consensus / "consensus_run.json").write_text(json.dumps({"attempts": [None]}))
+    other = tmp_path / "consensus2"
+    other.mkdir()
+    (other / "manifest.json").write_text(json.dumps({"cr_mode": "lattice_recaller"}))
+    (other / "classes.tsv").write_bytes(b"\xff\xfe")
+    for path in [*(tmp_path / name for name in cases), consensus, other,
+                 tmp_path / "missing.bam"]:
+        payload = report(path)
+        assert payload["status"] == "error", (path, payload)
+        assert payload["error"] and payload["advisories"] == []
+        json.dumps(payload)
+
+
+def test_cli_keeps_going_after_a_malformed_input(tmp_path):
+    bad = tmp_path / "bad.tsv"
+    bad.write_text("#metadata:{broken\n")
+    good = tmp_path / "good.bam"
+    _write_bam(good, _header([_hia5_call("3.0.0", "--prob-threshold 248 --primary")]))
+    result = subprocess.run(
+        [sys.executable, "-m", "fiberhmm.cli.check", "--json", str(bad), str(good)],
+        capture_output=True, text=True, cwd=REPO_ROOT)
+    assert result.returncode == 2, result.stderr
+    assert "Traceback" not in result.stderr
+    reports = json.loads(result.stdout)["reports"]
+    assert [r["status"] for r in reports] == ["error", "clean"]
