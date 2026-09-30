@@ -7,6 +7,12 @@ Verbatim copies of the pre-vectorisation implementations at release head
 ``fiberhmm.cli.extract_tags._deam_positions_list``.  The optimised
 production code must reproduce these exactly; see
 ``tests/test_daf_mismatch_fastpath.py``.
+
+Deliberate departure from the verbatim SNP-screen copy (the old behaviour was
+nondeterministic, so it cannot be frozen): ``_aligned_pairs`` skips pysam's
+MD reconstruction when MD does not describe the CIGAR (``md_matches_cigar``);
+for a short MD pysam copies undefined memory into the reference string. Such
+reads use the FASTA or are unusable, as in ``get_daf_positions``.
 """
 from __future__ import annotations
 
@@ -162,11 +168,13 @@ def _counter_quantile(counter: Counter, probability: float) -> Optional[int]:
 
 
 def _aligned_pairs(read, reference_handle=None):
-    try:
-        return read.get_aligned_pairs(with_seq=True)
-    except (ValueError, TypeError, IndexError, AssertionError):
-        if reference_handle is None or read.reference_name is None:
-            return None
+    if md_matches_cigar(read):
+        try:
+            return read.get_aligned_pairs(with_seq=True)
+        except (ValueError, TypeError, IndexError, AssertionError):
+            pass
+    if reference_handle is None or read.reference_name is None:
+        return None
     try:
         start = int(read.reference_start)
         end = int(read.reference_end)

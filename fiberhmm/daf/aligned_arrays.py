@@ -68,6 +68,34 @@ def md_reference_length(md) -> Optional[int]:
     return sum(map(int, _MD_DIGIT_RUNS.findall(md))) + len(_MD_LETTERS.findall(md))
 
 
+def md_disagrees_with_cigar(read) -> bool:
+    """True when ``read`` has an MD tag that does not describe its CIGAR.
+
+    pysam builds the ``get_aligned_pairs(with_seq=True)`` /
+    ``get_reference_sequence()`` reference from MD+CIGAR without checking
+    that MD covers every M/=/X/D base: for an MD shorter than that span it
+    copies whatever bytes follow the parsed MD in memory, so the "reference"
+    bases of the rest of the read change from run to run (and sometimes fail
+    to decode). An MD longer than the span raises instead. Callers that want
+    MD-derived reference bases must treat such reads as having no usable MD
+    (FASTA fallback, or skip), as ``get_daf_positions`` and the dedup
+    fingerprint already do. Reads without MD, or objects that are not
+    alignments, return False (the caller's own path handles them).
+    """
+    try:
+        md = read.get_tag("MD")
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return False
+    try:
+        cigar = read.cigartuples
+    except (AttributeError, TypeError, ValueError):
+        return False
+    if not cigar:
+        return False
+    span = sum(length for op, length in cigar if op in (0, 2, 7, 8))
+    return md_reference_length(md) != span
+
+
 def matched_base_arrays(
     read, sequence: Optional[str] = None
 ) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
@@ -157,5 +185,6 @@ __all__ = [
     "BASE_T",
     "BASE_Y",
     "matched_base_arrays",
+    "md_disagrees_with_cigar",
     "md_reference_length",
 ]

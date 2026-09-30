@@ -193,8 +193,8 @@ def _write_dataset(tmp_path: Path, seed: int, short_md: bool):
                     r"(\d+)$", lambda m: str(int(m.group(1)) + 5000), md))
             elif kind == 8 and short_md:
                 # MD shorter than the CIGAR: pysam's reference string then
-                # reads undefined memory, so only paths that pre-validate
-                # MD (get_daf_positions, dedup) are compared on these.
+                # reads undefined memory, so every path must pre-validate MD
+                # (FASTA fallback or skip) before using it.
                 read.set_tag("MD", md[:-1] + "0" if md[-1] != "0" else md)
             else:
                 read.set_tag("MD", md)

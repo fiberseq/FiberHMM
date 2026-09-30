@@ -20,6 +20,7 @@ from fiberhmm.daf.aligned_arrays import (
     BASE_T,
     BASE_Y,
     matched_base_arrays,
+    md_disagrees_with_cigar,
 )
 
 
@@ -166,11 +167,16 @@ def _counter_quantile(counter: Counter, probability: float) -> Optional[int]:
 
 
 def _aligned_pairs(read, reference_handle=None):
-    try:
-        return read.get_aligned_pairs(with_seq=True)
-    except (ValueError, TypeError, IndexError, AssertionError):
-        if reference_handle is None or read.reference_name is None:
-            return None
+    # An MD tag that does not describe the CIGAR gives no defined reference
+    # bases (pysam reads past a short MD into undefined memory): such a read
+    # uses the FASTA when one is given and is unusable otherwise.
+    if not md_disagrees_with_cigar(read):
+        try:
+            return read.get_aligned_pairs(with_seq=True)
+        except (ValueError, TypeError, IndexError, AssertionError):
+            pass
+    if reference_handle is None or read.reference_name is None:
+        return None
     try:
         start = int(read.reference_start)
         end = int(read.reference_end)

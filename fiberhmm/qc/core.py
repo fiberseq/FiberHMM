@@ -375,12 +375,21 @@ def _daf_marks(read, reference_handle=None, prob_threshold: int = 125):
 
 
 def _aligned_reference_pairs(read, reference_handle=None):
-    """Return aligned query/reference/base triples without requiring a FASTA."""
-    try:
-        return read.get_aligned_pairs(with_seq=True)
-    except (AttributeError, ValueError, TypeError, IndexError, AssertionError):
-        if reference_handle is None or read.reference_name is None:
-            return None
+    """Return aligned query/reference/base triples without requiring a FASTA.
+
+    An MD tag that does not describe the CIGAR gives no defined reference
+    bases (pysam reads past a short MD into undefined memory), so such a read
+    uses the FASTA when one is given, like a read without MD.
+    """
+    from fiberhmm.daf.aligned_arrays import md_disagrees_with_cigar
+
+    if not md_disagrees_with_cigar(read):
+        try:
+            return read.get_aligned_pairs(with_seq=True)
+        except (AttributeError, ValueError, TypeError, IndexError, AssertionError):
+            pass
+    if reference_handle is None or read.reference_name is None:
+        return None
     try:
         start = int(read.reference_start)
         end = int(read.reference_end)
