@@ -579,3 +579,14 @@ def test_consensus_export_keeps_fibertools_ma_under_family_layers():
     assert resolve_disabled_legacy_frame(exported)[0] == 'molecular'
     with pysam.AlignmentFile(str(FX / 'fiberhmm3.0.0_call.bam')) as bam:
         assert _export_ds(bam.header) == 'Frozen staged family annotations in MA/AQ/AN'
+
+
+def test_header_dropping_concatenation_leaves_the_frame_undecided():
+    """`samtools cat` of several files keeps one header: the other inputs'
+    frame is not in it, so fibertools provenance of the kept one is not enough
+    (fiberhmm-call joining its own region files is not such a step)."""
+    cat = _pg(ID='samtools', PN='samtools', CL='samtools cat -o all.bam a.bam b.bam')
+    assert legacy_tag_frame({'PG': _chain(_ALN, _FT, cat)})[0] is None
+    own_regions = _pg(ID='samtools', PN='samtools',
+                      CL='samtools cat -b /tmp/x/.fiberhmm_tmp/bam_list.txt -o x.bam')
+    assert legacy_tag_frame({'PG': _chain(_ALN, _FT, own_regions)})[0] == 'molecular'

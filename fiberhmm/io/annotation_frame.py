@@ -113,22 +113,28 @@ def _record_decision(pg: dict):
 def _branch_decisions(d: dict, transparent=()) -> set:
     """The nearest deciding record on every ancestry branch of every leaf of
     the @PG history (the PP graph of :mod:`fiberhmm.advisories`: samtools
-    merge joins, renamed IDs, missing PP links), over each plausible reading.
-    Returns a set of ``(frame, kind)`` and ``None`` for branches nothing
-    decides. Records whose kind is in ``transparent`` are looked through."""
-    from fiberhmm.advisories import _history_graphs, _pg_records
+    merge joins, renamed IDs, missing, duplicated or forward PP links), over
+    each plausible reading. Returns a set of ``(frame, kind)`` and ``None``
+    for branches nothing decides. Records whose kind is in ``transparent``
+    are looked through. A step that joined several inputs but kept one header
+    (``samtools cat``, GatherBamFiles) adds an undecided branch: the other
+    inputs' history is not in the header."""
+    from fiberhmm.advisories import _drops_input_headers, _history_graphs, _pg_records
     records = _pg_records(d)
     if not records:
         return {None}
     graphs, node = _history_graphs(records)
-    own = {}
+    own, dropped = {}, set()
     for index, record in enumerate(records):
         decision = _record_decision(record)
         if decision is not None and decision[1] not in transparent:
             own.setdefault(node[index], decision)
+        if _drops_input_headers(record):
+            dropped.add(node[index])
     nodes = sorted(set(node))
     out = set()
-    for parents, _note in graphs:
+    for graph in graphs:
+        parents = graph.parents
         children = {p for n in nodes for p in parents[n]}
         memo = {}
 
@@ -145,6 +151,8 @@ def _branch_decisions(d: dict, transparent=()) -> set:
                     if parent not in visiting:  # a PP cycle adds nothing
                         result |= decide(parent, visiting | {n})
                 result = result or {None}
+                if n in dropped:
+                    result = result | {None}
             memo[n] = result
             return result
 
