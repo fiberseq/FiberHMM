@@ -102,11 +102,13 @@ fiberhmm-tag-consensus = "fiberhmm.cli._entry:tag_families_main"
 fiberhmm-consensus = "fiberhmm.inference.consensus.cli:main"
 fiberhmm-transfer = "fiberhmm.inference.consensus.transfer_cli:main"
 fiberhmm-qc = "fiberhmm.cli._entry:qc_main"
+fiberhmm-check = "fiberhmm.cli._entry:check_main"
 
 [tool.setuptools.packages.find]
 include = ["fiberhmm*"]
 
 [tool.setuptools.package-data]
+"fiberhmm" = ["advisories.json"]
 "fiberhmm.models" = ["*.json", "*.md", "legacy/*.json"]
 "fiberhmm.qc" = ["*.json", "*.md"]
 

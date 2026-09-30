@@ -1,0 +1,12 @@
+@HD	VN:1.6	SO:coordinate
+@SQ	SN:chr2L	LN:23513712
+@SQ	SN:chr2R	LN:25286936
+@PG	PN:minimap2	ID:minimap2	VN:2.28-r1209	CL:minimap2 -t 40 --MD -Y -y -a -x map-ont /home/user2/cc/genomes/dmel/dm6.mmi FX5STS_1_yw_2-4hr_rho.fastq
+@PG	PN:samtools	ID:samtools	VN:1.19.2	PP:minimap2	CL:samtools view -@ 4 -b FX5STS_1_yw_2-4hr_rho.sam
+@PG	PN:samtools	ID:samtools.1	VN:1.19.2	PP:samtools	CL:samtools sort -@ 4 -o FX5STS_1_yw_2-4hr_rho.sorted.bam
+@PG	PN:minimap2	ID:minimap2-364C0E2B	VN:2.28-r1209	CL:minimap2 -t 40 --MD -Y -y -a -x map-ont /home/user2/cc/genomes/dmel/dm6.mmi FX5STS_2_yw_2-4hr_zen.fastq
+@PG	PN:samtools	ID:samtools-3A881439	VN:1.19.2	PP:minimap2-364C0E2B	CL:samtools view -@ 4 -b FX5STS_2_yw_2-4hr_zen.sam
+@PG	PN:samtools	ID:samtools.1-5419538F	VN:1.19.2	PP:samtools-3A881439	CL:samtools sort -@ 4 -o FX5STS_2_yw_2-4hr_zen.sorted.bam
+@PG	PN:samtools	ID:samtools.2	VN:1.21	PP:samtools.1	CL:samtools merge -f -@ 8 -o Datasets/DAF-seq/spacetime_updated/GEO_paper_only_fiberhmm_v2.16.7_2026-09-01/_work/TIMER_DAF_WT_2_4h_pooled.retained_inputs.bam Datasets/DAF-seq/spacetime_updated/bam/FX5STS_1_yw_2-4hr_rho.sorted.bam Datasets/DAF-seq/spacetime_updated/bam/FX5STS_2_yw_2-4hr_zen.sorted.bam
+@PG	PN:samtools	ID:samtools.3	VN:1.21	PP:samtools.1-5419538F	CL:samtools merge -f -@ 8 -o Datasets/DAF-seq/spacetime_updated/GEO_paper_only_fiberhmm_v2.16.7_2026-09-01/_work/TIMER_DAF_WT_2_4h_pooled.retained_inputs.bam Datasets/DAF-seq/spacetime_updated/bam/FX5STS_1_yw_2-4hr_rho.sorted.bam Datasets/DAF-seq/spacetime_updated/bam/FX5STS_2_yw_2-4hr_zen.sorted.bam
+@PG	PN:fiberhmm-call	ID:fiberhmm-call	VN:2.16.7	PP:samtools.3	DS:FiberHMM fused apply+recall; coord=molecular (ns/nl/as/al/MA in molecular original-fiber coordinates); mode=daf recall_nucs=True nuc_recall_policy=conservative phase_nrl=188 chimera_filter=on dedup=off	CL:/tmp/fiberhmm-v2.16.7.DUcgIi/fiberhmm/cli/call.py -i Datasets/DAF-seq/spacetime_updated/GEO_paper_only_fiberhmm_v2.16.7_2026-09-01/_work/TIMER_DAF_WT_2_4h_pooled.retained_inputs.bam -o Datasets/DAF-seq/spacetime_updated/GEO_paper_only_fiberhmm_v2.16.7_2026-09-01/_work/TIMER_DAF_WT_2_4h_pooled.fiberhmm_v2.16.7.pre_dedup.bam --enzyme dddb --seq nanopore -k 3 --min-llr 4.0 --min-opps 3 --unify-threshold 90 --emission-uplift 1.0 --recall-nucs --nuc-recall-policy conservative --phase-nrl auto --region-parallel -c 14 --io-threads 8

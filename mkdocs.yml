@@ -103,6 +103,7 @@ nav:
       - Command line: reference/cli.md
       - BAM tags: reference/bam-tags.md
       - Header declarations: reference/headers.md
+      - Checking outputs for re-runs: reference/advisories.md
       - Bundled models: reference/models.md
       - Consensus output files: reference/consensus-outputs.md
       - Python API: reference/python-api.md

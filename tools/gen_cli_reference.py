@@ -40,6 +40,7 @@ COMMANDS: list[tuple[str, str, str]] = [
     ("fiberhmm-recall-tfs", "fiberhmm.cli.recall_tfs", "main"),
     ("fiberhmm-recall-nucs", "fiberhmm.cli.recall_tfs", "main_recall_nucs"),
     ("fiberhmm-qc", "fiberhmm.cli.qc", "main"),
+    ("fiberhmm-check", "fiberhmm.cli.check", "main"),
     ("fiberhmm-extract", "fiberhmm.cli.extract_tags", "main"),
     ("fiberhmm-dedup", "fiberhmm.cli.dedup", "main"),
     ("fiberhmm-daf-encode", "fiberhmm.cli.daf_encode", "main"),

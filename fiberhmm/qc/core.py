@@ -2304,8 +2304,12 @@ def run_qc(
     tsv_path = Path(str(prefix) + ".qc.tsv")
     plot_path = Path(str(prefix) + ".qc.png")
     pdf_path = Path(str(prefix) + ".qc.pdf")
+    from fiberhmm import __version__ as fiberhmm_version
+
     result = {
         "schema_version": 1,
+        # Read by fiberhmm.advisories (re-run QC after a fix); since 3.0.
+        "fiberhmm_version": fiberhmm_version,
         "input": str(Path(input_path).resolve()),
         "assay": {
             "mode": resolved_mode,

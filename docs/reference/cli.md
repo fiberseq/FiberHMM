@@ -279,6 +279,16 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--snp-report` | — | fiberhmm-daf-snps JSON to plot (single input only) |
 | `--fail-on-qc` | off | Exit 2 when the final status is FAIL |
 
+## fiberhmm-check
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `PATH` | required | BAM/CRAM/SAM, &lt;prefix&gt;.qc.json, posteriors .tsv(.gz)/.h5, or a fiberhmm-consensus output directory |
+| `--json` | off | Print one JSON document (schema fiberhmm.advisory_check.v1) with a fiberhmm.advisory_report.v1 report per path |
+| `--scan-records` | — | BAM records to scan for read-level evidence (duplicate, pairing and call tags); 0 reads the header only (default: 5000) |
+| `--no-sidecars` | off | Do not also check the QC report fiberhmm-call writes beside a BAM (qc/&lt;name&gt;.qc.json) |
+| `--list` | off | List every known advisory and exit |
+
 ## fiberhmm-extract
 
 | Flag | Default | Description |

@@ -67,6 +67,11 @@ Run from a clean checkout of the release commit.
    top `CHANGELOG.md` entry names it.
 2. **Docs in sync.** `python tools/gen_cli_reference.py --check` exits 0 and
    `mkdocs build --strict` succeeds.
+   **Advisories.** Every change in this release that alters results has an
+   entry in `fiberhmm/advisories.json` (read by
+   [`fiberhmm-check`](../reference/advisories.md)); then
+   `python tools/build_advisory_index.py` refreshes the table digests and
+   the commit table up to the release commit.
 3. **CI green** on the release commit (tests and wheel smoke on Linux/macOS,
    Python 3.10 and 3.12).
 4. **Wheel smoke.** Build and install into a fresh venv with core
@@ -83,7 +88,9 @@ Run from a clean checkout of the release commit.
     ```
 
     The wheel must contain only the `fiberhmm` package with its bundled models
-    (`fiberhmm/models/*.json`, `legacy/*.json`) and QC references.
+    (`fiberhmm/models/*.json`, `legacy/*.json`), QC references,
+    `fiberhmm/advisories.json` and `fiberhmm/_build_info.py` (the release
+    commit, written by `setup.py`).
 5. **Tag** the release commit (`git tag -a vX.Y.Z -m "FiberHMM X.Y.Z"`) and
    push the tag; the docs workflow publishes the site.
 6. **PyPI.** `python -m twine upload dist/fiberhmm-X.Y.Z*` (TestPyPI first

@@ -154,3 +154,9 @@ def qc_main():
     _notify()
     from fiberhmm.cli.qc import main
     return main()
+
+
+def check_main():
+    _notify()
+    from fiberhmm.cli.check import main
+    return main()

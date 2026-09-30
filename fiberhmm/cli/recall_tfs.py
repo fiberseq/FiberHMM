@@ -124,8 +124,13 @@ _NucCfg = namedtuple(
 _NucCfg.__new__.__defaults__ = ('conservative', None, None)
 
 
-def _build_recall_pg_record(args, mode, model_path, nuc_cfg):
-    """Build command and exact nucleosome-profile provenance for output BAM."""
+def _build_recall_pg_record(args, mode, model_path, nuc_cfg, nuc_model_path=None):
+    """Build command and exact table/nucleosome-profile provenance for output BAM.
+
+    ``model_path`` is the table of this run's recall pass (it has no apply
+    pass), so it is declared as ``recall_sha256``; ``nuc_model_path`` is a
+    separate nucleosome-likelihood table when one is used (DddA).
+    """
     profile_path = (
         getattr(nuc_cfg, 'nuc_profile_path', None)
         if nuc_cfg is not None else None
@@ -153,10 +158,11 @@ def _build_recall_pg_record(args, mode, model_path, nuc_cfg):
         'chemistry': chemistry_declaration(
             args,
             mode,
-            model_path,
             None,
+            model_path,
             profile_identity,
             profile_sha256,
+            nuc_model_path=nuc_model_path,
         ),
         'DS': (
             'FiberHMM second-pass footprint refinement; coord=molecular '
@@ -1212,6 +1218,7 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
     nuc_protected_hit = nuc_accessible_hit = None
     nuc_llr_hit = nuc_llr_miss = None
     nuc_m5c_llr_hit = nuc_m5c_llr_miss = None
+    separate_nuc_model_path = None
     if nuc_cfg is not None:
         nuc_model = model
         nuc_model_path = model_path
@@ -1221,6 +1228,7 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
             nuc_model_path = _get_bundled(
                 'ddda', tool='nuc_refine', seq=args.seq,
             )
+            separate_nuc_model_path = nuc_model_path
             nuc_model, _, _ = load_model_with_metadata(nuc_model_path)
             try:
                 validate_context_size(
@@ -1282,7 +1290,9 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
             # before any output is written.
             output_header = output_header_with_provenance(
                 output_header,
-                _build_recall_pg_record(args, mode, model_path, nuc_cfg),
+                _build_recall_pg_record(
+                    args, mode, model_path, nuc_cfg,
+                    nuc_model_path=separate_nuc_model_path),
             )
             bam_out = pysam.AlignmentFile(out_path, 'wb',
                                           header=output_header,

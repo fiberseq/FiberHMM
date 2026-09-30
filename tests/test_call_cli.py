@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -133,13 +134,23 @@ def test_fiberhmm_call_stdout_is_clean_bam_stream(benchmark_model_path, tmp_path
         chemistry = declared_chemistries(bam.header)
 
     assert len(reads) == 4
-    assert chemistry == [{
+    # Core contract plus the run's code/table identity (fiberhmm.advisories).
+    (declaration,) = chemistry
+    identity = {
+        key: declaration.pop(key)
+        for key in ("apply_sha256", "recall_sha256", "fiberhmm_version", "pg")
+    }
+    declaration.pop("fiberhmm_commit", None)  # only from a git checkout
+    assert declaration == {
         "assay": "fiber-seq",
         "enzyme": "custom",
         "platform": "pacbio",
         "mode": "pacbio-fiber",
         "model": Path(benchmark_model_path).stem,
-    }]
+    }
+    table_sha256 = hashlib.sha256(Path(benchmark_model_path).read_bytes()).hexdigest()
+    assert identity["apply_sha256"] == identity["recall_sha256"] == table_sha256
+    assert identity["pg"] == "fiberhmm-call"
 
 
 def test_fiberhmm_call_rejects_development_ecogii_as_public_preset(tmp_path):

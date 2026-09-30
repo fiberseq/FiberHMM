@@ -14,8 +14,21 @@ def chemistry_declaration(
     recall_model_path,
     nuc_profile_identity=None,
     nuc_profile_sha256=None,
+    *,
+    nuc_model_path=None,
 ):
-    """Build the stable BAM-header chemistry contract for one call run."""
+    """Build the stable BAM-header chemistry contract for one call run.
+
+    ``apply_model_path`` is the emission table of the footprint (apply) pass
+    and ``recall_model_path`` the table of the recall pass; either is None
+    when the run has no such pass (``fiberhmm-recall-tfs`` has no apply pass,
+    ``fiberhmm-apply`` no recall pass). ``nuc_model_path`` is a separate
+    nucleosome-likelihood table (DddA nucleosome refinement), when used.
+
+    Besides assay/enzyme/platform/mode, the declaration records the exact
+    code and tables behind the calls (see :func:`run_identity_fields`), which
+    :mod:`fiberhmm.advisories` uses to decide whether a BAM needs re-running.
+    """
     if mode == "daf":
         assay = "daf"
     elif mode in {"pacbio-fiber", "nanopore-fiber"}:
@@ -49,7 +62,40 @@ def chemistry_declaration(
         declaration["nuc_model"] = str(nuc_profile_identity)
     if nuc_profile_sha256:
         declaration["nuc_sha256"] = str(nuc_profile_sha256)
+    declaration.update(run_identity_fields(
+        apply_model_path, recall_model_path, nuc_model_path))
     return declaration
+
+
+def run_identity_fields(apply_model_path=None, recall_model_path=None,
+                        nuc_model_path=None):
+    """Declaration fields naming the code and tables of one producer run.
+
+    ``apply_sha256``/``recall_sha256``/``nuc_model_sha256`` are sha256 digests
+    of the emission-table files the run read (omitted for a pass the run does
+    not have), ``fiberhmm_version`` is the package version and
+    ``fiberhmm_commit`` the git commit when known (``+dirty`` when the
+    package's tracked files differ from it; omitted for source trees without
+    git metadata). All values fit the ``FIBERHMM-CHEMISTRY`` value alphabet.
+    """
+    from fiberhmm.identity import fiberhmm_commit, fiberhmm_version, file_sha256
+
+    fields = {}
+    for key, path in (
+        ("apply_sha256", apply_model_path),
+        ("recall_sha256", recall_model_path),
+        ("nuc_model_sha256", nuc_model_path),
+    ):
+        digest = file_sha256(path)
+        if digest:
+            fields[key] = digest
+    version = re.sub(r"[^A-Za-z0-9_.+-]+", "_", fiberhmm_version()).strip("_")
+    if version:
+        fields["fiberhmm_version"] = version
+    commit = fiberhmm_commit()
+    if commit and re.fullmatch(r"[0-9a-f]{40}(\+dirty)?", commit):
+        fields["fiberhmm_commit"] = commit
+    return fields
 
 
 def nuc_profile_identity(path):
@@ -243,7 +289,7 @@ def output_header_with_provenance(input_header, pg_record):
     header. ``pg_record`` may carry :data:`REPLACE_CHEMISTRY_KEY` to replace
     the input's chemistry declarations instead of reconciling with them.
     """
-    from fiberhmm.io.bam_header import maybe_append_pg
+    from fiberhmm.io.bam_header import append_chemistry, append_pg_record
 
     if not pg_record:
         return input_header
@@ -262,4 +308,15 @@ def output_header_with_provenance(input_header, pg_record):
                 requested, record["chemistry"], record.get("PN"))
         if replace:
             header = strip_chemistry_declarations(input_header)
-    return maybe_append_pg(header, record)
+    chemistry = record.pop("chemistry", None)
+    output = append_pg_record(header, record)
+    if not chemistry:
+        return output
+    # Link the declaration to the @PG line of this run (IDs are made unique
+    # by append_pg_record), so each run's tables and code can be attributed.
+    programs = output.to_dict().get("PG", [])
+    program_id = str(programs[-1].get("ID", "")) if programs else ""
+    chemistry = dict(chemistry)
+    if program_id and re.fullmatch(r"[A-Za-z0-9_.+-]+", program_id):
+        chemistry["pg"] = program_id
+    return append_chemistry(output, chemistry)

@@ -38,6 +38,12 @@ def _open_text_file(path: str, mode: str) -> TextIO:
     return open(path, mode)
 
 
+
+def _fiberhmm_version():
+    from fiberhmm import __version__
+
+    return __version__
+
 class PosteriorsTSVWriter:
     """
     Simple streaming writer for posteriors in TSV format.
@@ -76,6 +82,9 @@ class PosteriorsTSVWriter:
             'edge_trim': edge_trim,
             'source_bam': os.path.basename(source_bam),
             'format_version': 1,
+            # fiberhmm.advisories reads this to tell whether the file needs
+            # re-exporting after a fix (written since 3.0).
+            'fiberhmm_version': _fiberhmm_version(),
         }
         self._file.write(f"#metadata:{json.dumps(metadata)}\n")
         self._file.write("#read_id\tchrom\tstart\tend\tstrand\tposteriors_b64\tfp_starts\tfp_sizes\n")

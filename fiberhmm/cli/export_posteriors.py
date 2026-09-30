@@ -517,6 +517,9 @@ def export_posteriors_hdf5(
         f.attrs['edge_trim'] = edge_trim
         f.attrs['source_bam'] = os.path.basename(input_bam)
         f.attrs['format_version'] = 2
+        # Read by fiberhmm.advisories (re-export after a fix); since 3.0.
+        from fiberhmm import __version__ as _fiberhmm_version
+        f.attrs['fiberhmm_version'] = _fiberhmm_version
 
         # Pre-create chromosome groups
         for chrom in regions_by_chrom:

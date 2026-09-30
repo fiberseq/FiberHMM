@@ -7,7 +7,9 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 
 > **Nanopore Hia5 users: re-run your calls.** The Nanopore Hia5 emission table
 > shipped in every 2.x release was context-swapped (see *Fixed*). The DddB
-> table had the same kind of error until this release.
+> table had the same kind of error until this release. `fiberhmm-check
+> <outputs>` lists which of your BAMs, QC reports, posteriors files and
+> consensus results need re-running.
 
 ### New
 
@@ -58,6 +60,26 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 - `fiberhmm-call`: `--scores` (as in `fiberhmm-apply`) and `-c 0` for all
   CPUs; `@PG` records the ML threshold, primary-only setting and CpG masking.
 - Every `fiberhmm-*` command accepts `--version` (prints `fiberhmm <version>`).
+- **`fiberhmm-check`: which outputs need re-running.** Reads the provenance
+  of BAMs (header and a bounded record sample), QC reports, posteriors files
+  and consensus result directories and lists the fixes and default changes
+  in this release that apply, each with severity (`rerun-required`,
+  `rerun-recommended`, `info`), the evidence matched and the exact command to
+  re-run; `--json` for scripts and GUIs; exit status 3 when something needs
+  re-running. The advisory list ships as `fiberhmm/advisories.json` with the
+  digest of every historical Nanopore Hia5 and DddB table; Python API
+  `fiberhmm.advisories` (`report`, `check_path`, `check_bam`,
+  `check_header`). See
+  [Checking outputs for re-runs](https://fiberseq.github.io/FiberHMM/reference/advisories/).
+- **Run identity in the chemistry declaration.** Each run's
+  `FIBERHMM-CHEMISTRY` line also records the sha256 of the emission tables it
+  read (`apply_sha256`, `recall_sha256`, `nuc_model_sha256`),
+  `fiberhmm_version`, `fiberhmm_commit` (from a git checkout, or from
+  `fiberhmm/_build_info.py`, which a wheel built from a git checkout now
+  carries) and `pg`, the `@PG` ID of the run. The required fields are
+  unchanged. `fiberhmm-dedup` and `fiberhmm-merge` write an `@PG` record
+  (merge's joint recall also a chemistry declaration), and QC reports and
+  posteriors files record `fiberhmm_version`.
 - **Resumable `fiberhmm-call --region-parallel` runs.** Finished regions are
   kept in a work directory (`.<output>.fiberhmm-work`, or `--work-dir`) with a
   manifest of the input BAM identity and every effective parameter;

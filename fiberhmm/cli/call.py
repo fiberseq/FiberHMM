@@ -1295,9 +1295,12 @@ def _main(args):
             args,
             mode,
             apply_model_path,
-            recall_model_path,
+            # The recall pass reuses the apply table when no separate recall
+            # table is resolved: record the table it actually read.
+            recall_model_path or apply_model_path,
             nuc_profile_identity,
             nuc_profile_sha256,
+            nuc_model_path=nuc_model_path,
         )
         pg_record = {
             'PN': 'fiberhmm-call',

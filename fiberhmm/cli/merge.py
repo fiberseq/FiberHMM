@@ -102,6 +102,55 @@ def _merged_bp(intervals):
     return total
 
 
+def _merge_output_header(header, *, recall, enzyme, prob_threshold, pairs_only,
+                         nuc_recall_policy, phase_nrl, cpg_mask_policy):
+    """Input header plus this merge's @PG and, with recall, its chemistry.
+
+    The joint recall calls footprints with the bundled ``enzyme`` tables, so
+    the output declares that chemistry with the tables' digests (as
+    ``fiberhmm-call`` does); a merge without recall makes no calls and only
+    records its @PG.
+    """
+    from types import SimpleNamespace
+
+    import fiberhmm
+    from fiberhmm.cli.provenance import (
+        chemistry_declaration,
+        output_header_with_provenance,
+    )
+    from fiberhmm.models import get_model_path
+
+    record = {
+        'PN': 'fiberhmm-merge',
+        'VN': getattr(fiberhmm, '__version__', 'unknown'),
+        'CL': ' '.join(sys.argv),
+        'DS': (f"both-strand consensus of CT/GA pairs; recall={'on' if recall else 'off'} "
+               f"enzyme={enzyme if recall else 'n/a'} prob_threshold={prob_threshold} "
+               f"pairs_only={'on' if pairs_only else 'off'}"
+               + (f" nuc_recall_policy={nuc_recall_policy} phase_nrl={phase_nrl} "
+                  f"cpg_mask={cpg_mask_policy or 'off'}" if recall else '')),
+    }
+    if recall:
+        # The DddA tables do not depend on the platform; declare the one the
+        # input declares (e.g. DddA on Nanopore) rather than the DddA default,
+        # which would conflict with it.
+        from fiberhmm.io.bam_header import declared_chemistries
+
+        platforms = {
+            str(d.get('platform', '')).lower() for d in declared_chemistries(header)
+            if str(d.get('mode', '')).lower() == 'daf'
+        } - {'', 'unknown'}
+        seq = next(iter(platforms)) if len(platforms) == 1 else None
+        record['chemistry'] = chemistry_declaration(
+            SimpleNamespace(enzyme=enzyme, seq=seq), 'daf',
+            get_model_path(enzyme, tool='apply'),
+            get_model_path(enzyme, tool='recall'),
+            nuc_model_path=(get_model_path(enzyme, tool='nuc_refine')
+                            if enzyme == 'ddda' else None),
+        )
+    return output_header_with_provenance(header, record)
+
+
 def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
               recall=False, enzyme='ddda', phase_nrl=196,
               nuc_recall_policy='conservative',
@@ -117,6 +166,10 @@ def run_merge(in_bam, out_bam, prob_threshold=0, pairs_only=False, io_threads=4,
     bam = pysam.AlignmentFile(in_bam, 'rb')
     header = append_ma_types(
         bam.header, ['deam', 'nuc', 'msp', 'tf'] if recall else ['deam'])
+    header = _merge_output_header(
+        header, recall=recall, enzyme=enzyme, prob_threshold=prob_threshold,
+        pairs_only=pairs_only, nuc_recall_policy=nuc_recall_policy,
+        phase_nrl=phase_nrl, cpg_mask_policy=ctx.cpg_mask_policy if ctx else None)
 
     # Records are written unsorted to a hidden sibling, sorted into another
     # hidden sibling and only then renamed to out_bam; the unsorted file is

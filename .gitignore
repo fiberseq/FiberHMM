@@ -99,3 +99,6 @@ docs/fiberhmm-for-daf-seq-guide-pr.md
 CLAUDE.md
 AGENTS.md
 .claude/
+
+# Written by setup.py when a wheel is built (git commit of the build)
+fiberhmm/_build_info.py

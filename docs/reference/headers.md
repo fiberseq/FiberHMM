@@ -6,8 +6,8 @@ header lines. `@CO` lines are written as `@CO<TAB><text>`; pysam's
 
 | Line | Written by | Purpose |
 |---|---|---|
-| `@PG` | every producer (`call`, `apply`, `recall-tfs`/`-nucs`, `pair`, `merge`, `tag-m5c`, `consensus`, `tag-consensus`, …) | provenance: command line, version, resolved settings |
-| `@CO FIBERHMM-CHEMISTRY:v1:` | `call`, `apply`, `recall-tfs`/`-nucs` | authoritative chemistry of the calls |
+| `@PG` | every producer (`call`, `apply`, `recall-tfs`/`-nucs`, `dedup`, `pair`, `merge`, `tag-m5c`, `consensus`, `tag-consensus`, …) | provenance: command line, version, resolved settings |
+| `@CO FIBERHMM-CHEMISTRY:v1:` | `call`, `apply`, `recall-tfs`/`-nucs`, `merge` (joint recall) | authoritative chemistry of the calls, and the code and tables that made them |
 | `@CO MA-TYPES:v1:` | every command that writes `MA` | advisory list of `MA` group names |
 | `@CO fiberhmm:coord=molecular` | `apply`, `recall-tfs`/`-nucs` | coordinate-frame marker (`call` puts `coord=molecular` in its `@PG DS`) |
 | `@CO FIBERHMM-CONSENSUS-MA:v1:` | `consensus`, `transfer` | meaning of the consensus layers' bytes |
@@ -42,6 +42,26 @@ warn when a SNP mask or reference used at calling time cannot be re-applied.
 `nuc_sha256` (the nucleosome profile and its file digest) when a distinct
 nucleosome profile is active. Keys match `[a-z][a-z0-9_]*`; values match
 `[A-Za-z0-9_.+-]+`.
+
+Since 3.0 each run also records what made its calls, after the required
+fields (keys sorted):
+
+| Field | Value |
+|---|---|
+| `apply_sha256` | sha256 of the emission table of the footprint (apply) pass |
+| `recall_sha256` | sha256 of the table of the recall pass (the apply table when it is reused) |
+| `nuc_model_sha256` | sha256 of a separate nucleosome-likelihood table (DddA), when used |
+| `fiberhmm_version` | FiberHMM version |
+| `fiberhmm_commit` | git commit of the code (`<sha>+dirty` with local changes under `fiberhmm/`), when known: running from a git checkout, or a wheel built from one; omitted otherwise |
+| `pg` | the `@PG` ID of the run the declaration belongs to |
+
+```text
+@CO	FIBERHMM-CHEMISTRY:v1:assay=fiber-seq;enzyme=hia5;platform=nanopore;mode=nanopore-fiber;apply_sha256=9e6ea94c…;fiberhmm_commit=…;fiberhmm_version=3.0.0;model=hia5_nanopore;pg=fiberhmm-call;recall_sha256=9e6ea94c…
+```
+
+A BAM processed several times holds one declaration per run.
+[`fiberhmm-check`](advisories.md) compares these fields with the known
+fixes to tell whether the BAM needs re-running.
 
 Vocabulary:
 

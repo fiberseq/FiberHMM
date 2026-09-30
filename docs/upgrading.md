@@ -9,6 +9,22 @@ lists what 2.x users need to act on. The full list of changes is in the
 pip install --upgrade fiberhmm      # needs Python >= 3.10
 ```
 
+## Check which outputs need re-running
+
+`fiberhmm-check` reads what each output records about how it was made and
+lists the fixes below that apply to it, with the exact command to re-run:
+
+```bash
+fiberhmm-check data/*.bam qc/*.qc.json consensus_out/
+```
+
+It exits 0 when nothing needs re-running and 3 when something does, and
+`--json` gives the same result for scripts. BAMs record the digests of the
+tables they were called with since 3.0, so later releases can tell exactly;
+for 2.x BAMs the check uses the version and command line, and says so when
+that cannot decide (development builds reported 2.16.8 on both sides of some
+fixes). See [Checking outputs for re-runs](reference/advisories.md).
+
 ## Re-run Nanopore Hia5 calls
 
 !!! danger "Nanopore Hia5 emission table"

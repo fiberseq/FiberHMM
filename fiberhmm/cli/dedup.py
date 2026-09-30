@@ -181,6 +181,28 @@ def deamination_flavour_key(calls) -> str:
     return 'mixed'
 
 
+def _dedup_output_header(header, *, min_jaccard, min_deam, ignore_strand,
+                         collapse, prob_threshold, max_end_diff):
+    """Input header plus a @PG record for this dedup run.
+
+    Records the version and grouping so a later reader
+    (:mod:`fiberhmm.advisories`) can tell which duplicate rules made the flags.
+    """
+    import fiberhmm
+    from fiberhmm.io.bam_header import append_pg_record
+
+    grouping = 'none' if ignore_strand else 'deamination_flavour'
+    return append_pg_record(header, {
+        'PN': 'fiberhmm-dedup',
+        'VN': getattr(fiberhmm, '__version__', 'unknown'),
+        'CL': ' '.join(sys.argv),
+        'DS': (f"DAF duplicate marking; grouping={grouping} "
+               f"min_jaccard={min_jaccard} min_deam={min_deam} "
+               f"max_end_diff={max_end_diff} prob_threshold={prob_threshold} "
+               f"mode={'collapse' if collapse else 'flag'}"),
+    })
+
+
 def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=False,
               k=32, bands=8, seed=7, collapse=True, prob_threshold=0,
               stats_tsv=None, io_threads=4, max_end_diff=50):
@@ -279,7 +301,12 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
     # ---- Pass 2: write output (same iteration order = same indexing) ----
     n_written = n_flagged = 0
     with pysam.AlignmentFile(in_bam, "rb", check_sq=False) as bam:
-        out = pysam.AlignmentFile(out_bam, "wb", template=bam, threads=io_threads)
+        out = pysam.AlignmentFile(
+            out_bam, "wb", threads=io_threads,
+            header=_dedup_output_header(
+                bam.header, min_jaccard=min_jaccard, min_deam=min_deam,
+                ignore_strand=ignore_strand, collapse=collapse,
+                prob_threshold=prob_threshold, max_end_diff=max_end_diff))
         for idx, read in enumerate(bam.fetch(until_eof=True)):
             c = int(labels[idx])
             if c >= 0:

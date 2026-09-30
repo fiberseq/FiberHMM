@@ -41,6 +41,18 @@ default_prob_threshold("dddb", None)                   # 128
   chemistry-dependent ML threshold.
 - `SUPPORTED_ENZYMES`: `("ddda", "dddb", "hia5")`.
 
+## Re-run advisories: `fiberhmm.advisories`
+
+```python
+from fiberhmm.advisories import report, check_path, check_bam, check_header
+
+report("calls.bam")["status"]      # "clean" | "info" | "rerun-recommended" | "rerun-required" | "error"
+check_bam("calls.bam", scan_records=0)   # list[Advisory], header only
+```
+
+Which fixes and default changes apply to an existing output; the JSON shape
+and the evidence rules are in [Checking outputs for re-runs](advisories.md).
+
 ## Reading calls: `fiberhmm.io.ma_tags`
 
 | Function | Purpose |

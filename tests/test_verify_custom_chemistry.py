@@ -193,7 +193,8 @@ def test_recall_custom_model_keeps_explicit_table(tmp_path):
                              check_sq=False) as bam:
         chemistry = [c for c in bam.header.to_dict().get("CO", [])
                      if c.startswith("FIBERHMM-CHEMISTRY")]
-    assert chemistry[-1].endswith("model=dddb_nanopore")
+    # Fields are sorted after the core four; the run identity follows model.
+    assert ";model=dddb_nanopore;" in chemistry[-1] + ";"
     assert "enzyme=ddda" in chemistry[-1]
 
 
