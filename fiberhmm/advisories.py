@@ -17,9 +17,10 @@ Public API (stable; used by FiberBrowser's Library)::
     payload = report("calls.bam")                 # JSON-ready dict
 
 Evidence, strongest first: a recorded table digest (decides table advisories
-exactly); a recorded commit or one named in the ``@PG CL`` path (e.g. a
-``frozen_<sha>`` source tree), checked against the commits that contain the
-fix; the reported version. A version shared by builds on both sides of a fix
+exactly); a recorded commit or one named in the path of the program the
+``@PG CL`` ran (e.g. a ``frozen_<sha>/fiberhmm/cli/call.py`` source tree; input,
+output and model paths never count), checked against the commits that contain
+the fix; the reported version. A version shared by builds on both sides of a fix
 (development snapshots reported 2.16.8 while already containing 3.0 fixes)
 gives ``possibly_affected`` with low confidence, never ``affected``.
 """
@@ -218,6 +219,29 @@ def _cl_value(cl: str, flags: Iterable[str]) -> Optional[str]:
     return None
 
 
+_EXECUTABLE_RE = re.compile(r"(?:/fiberhmm/cli/[A-Za-z0-9_]+\.py|(?:^|/)fiberhmm-[a-z0-9-]+)$")
+
+
+def _executable_path(cl: str) -> Optional[str]:
+    """The program path a FiberHMM ``@PG CL`` starts with, or None.
+
+    FiberHMM records ``' '.join(sys.argv)``: its first word is the script
+    that ran (``.../fiberhmm/cli/call.py`` for ``python -m`` or a source
+    tree, ``.../bin/fiberhmm-call`` for an installed command). Paths may hold
+    spaces, so the program is the words before the first option that end in
+    such a script name. Input, output and model paths are never taken as
+    the program.
+    """
+    words = str(cl or "").split(" ")
+    for end in range(1, len(words) + 1):
+        if words[end - 1].startswith("-") and end > 1:
+            return None
+        candidate = " ".join(words[:end]).strip()
+        if candidate and _EXECUTABLE_RE.search(candidate):
+            return candidate
+    return None
+
+
 def _model_stem(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
@@ -331,9 +355,10 @@ def _code_finding(index: _Index, rule: dict, run: _Run) -> _Finding:
                 _NOT if has_fix else AFFECTED, "medium" if dirty else "high",
                 [f"{where} declares commit {_short(sha)}{note}, which "
                  f"{'contains' if has_fix else 'predates'} the {noun} ({_short(fix)})"])
-    if fix:
+    executable = _executable_path(run.cl)
+    if fix and executable:
         verdicts = {}
-        for token in _HEX_TOKEN_RE.findall(run.cl):
+        for token in _HEX_TOKEN_RE.findall(os.path.dirname(executable)):
             sha, entry = index.commit(token)
             if entry is not None:
                 verdicts[sha] = index.contains(entry, fix)

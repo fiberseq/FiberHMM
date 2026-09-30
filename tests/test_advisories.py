@@ -437,3 +437,29 @@ def test_samtools_merged_histories():
     # A FiberHMM run after the merge re-calls every read.
     recall = _hia5_call("3.0.0", "--prob-threshold 248 --primary", pid="fiberhmm-call.2")
     assert check_header(_header([pacbio, ont, recall])) == []
+
+
+@pytest.mark.parametrize("version, cl, expected", [
+    # An input directory named after a fixed commit cannot clear an old call ...
+    ("2.16.7", "fiberhmm-call -i /data/frozen_dc7abba/input.bam -o out.bam",
+     ("affected", "high")),
+    ("2.16.7", "/opt/env/bin/fiberhmm-call -i /data/frozen_dc7abba/input.bam -o o.bam",
+     ("affected", "high")),
+    # ... and one named after a pre-fix commit cannot condemn a fixed release.
+    ("3.0.0", "fiberhmm-call -i /data/frozen_1ca7d0a/input.bam -o out.bam", None),
+    ("3.0.0", "/usr/bin/fiberhmm-call -i a.bam -o /out/frozen_1ca7d0a/b.bam", None),
+    # The script path itself (python -m / a source tree, spaces allowed) still counts.
+    ("3.0.0", "/work/Fiber NET/frozen_1ca7d0a_p29/fiberhmm/cli/call.py -i a.bam -o b.bam",
+     ("affected", "medium")),
+])
+def test_code_commit_comes_from_the_program_path_only(version, cl, expected):
+    record = {"PN": "fiberhmm-call", "ID": "fiberhmm-call", "VN": version,
+              "CL": cl + " --enzyme hia5 --seq nanopore --primary --prob-threshold 248",
+              "DS": "mode=nanopore-fiber enzyme=hia5"}
+    found = _by_id(check_header(_header([record]))).get("hia5-nanopore-gt-table")
+    if expected is None:
+        assert found is None
+    else:
+        assert (found.status, found.confidence) == expected
+        if expected[1] == "medium":
+            assert "1ca7d0a" in found.evidence[0]
