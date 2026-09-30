@@ -288,14 +288,25 @@ def bam_has_mod_tags(path: str, records: int = 200) -> bool:
 # Internal read names: "<serial in hex>~<original name>". Every input record
 # gets its own serial, so records that share a name (the same read name in two
 # input files, or twice in one) stay separate molecules through alignment;
-# original_name() restores the name on the output record.
+# the name is restored on the output record. A SAM/BAM query name holds at
+# most 254 characters: when the prefixed name would not fit, the internal
+# name is the serial alone ("<serial in hex>#") and the feeder keeps the
+# original (ReadFeeder.restore_name).
 INTERNAL_NAME_SEPARATOR = "~"
+LONG_NAME_MARK = "#"
+QNAME_MAX_LENGTH = 254
+_NAME_END = re.compile(rb"[\s]")
+
+
+def _is_serial(text: str) -> bool:
+    return bool(text) and all(c in "0123456789abcdef" for c in text)
 
 
 def original_name(internal: str) -> str:
-    """The input read name behind an internal name (unchanged if it is not one)."""
+    """The input read name behind an inline internal name (unchanged if it
+    is not one; long names need :meth:`ReadFeeder.restore_name`)."""
     serial, sep, name = internal.partition(INTERNAL_NAME_SEPARATOR)
-    if sep and serial and all(c in "0123456789abcdef" for c in serial):
+    if sep and _is_serial(serial):
         return name
     return internal
 
@@ -315,12 +326,35 @@ class ReadFeeder:
         self.done_bytes = 0
         self.reads = 0
         self.error: Optional[BaseException] = None
+        # Serial -> original name, for names too long to carry inline. Read
+        # from the aligner thread (restore_name) while the feeder thread adds.
+        self._long_names: dict[str, str] = {}
+        self._long_lock = threading.Lock()
 
     def _name(self, header: bytes) -> bytes:
-        # header is b"@name[ comment]..."; the serial goes in front of the name.
-        serial = b"%x" % self.reads + INTERNAL_NAME_SEPARATOR.encode()
+        # header is b"@name[ comment]..." (possibly a whole FASTQ record);
+        # the serial goes in front of the name.
+        serial = b"%x" % self.reads
         self.reads += 1
-        return b"@" + serial + header[1:]
+        body = header[1:]
+        end = _NAME_END.search(body)
+        name = body[:end.start()] if end else body
+        internal = serial + INTERNAL_NAME_SEPARATOR.encode() + name
+        if len(internal) > QNAME_MAX_LENGTH:
+            with self._long_lock:
+                self._long_names[serial.decode()] = name.decode("utf-8", "replace")
+            internal = serial + LONG_NAME_MARK.encode()
+        return b"@" + internal + body[len(name):]
+
+    def restore_name(self, internal: str) -> str:
+        """The input name behind ``internal`` (inline or long); a long name is
+        released, so call it once per input record."""
+        if internal.endswith(LONG_NAME_MARK) and _is_serial(internal[:-1]):
+            with self._long_lock:
+                name = self._long_names.pop(internal[:-1], None)
+            if name is not None:
+                return name
+        return original_name(internal)
 
     def chunks(self) -> Iterator[bytes]:
         for rf in self.files:

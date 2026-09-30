@@ -920,7 +920,9 @@ class Pipeline:
                                      threads=min(4, max(1, cfg.cores))) as out:
                 # Same @SQ lines in the same order: reference ids carry over.
                 for group in _group_by_name(stream):
-                    record = self._process_group(group, circular, sequences, stats)
+                    # One group per input record: restore (and release) its name.
+                    name = feeder.restore_name(group[0].query_name)
+                    record = self._process_group(group, circular, sequences, stats, name)
                     if record is not None:
                         out.write(record)
         except BaseException:
@@ -957,7 +959,7 @@ class Pipeline:
                      "the plasmid map; for amplicons, the genome).")
         return stats
 
-    def _process_group(self, group, circular, sequences, stats):
+    def _process_group(self, group, circular, sequences, stats, name=None):
         cfg = self.config
         stats["reads"] += 1
         primary = None
@@ -990,7 +992,7 @@ class Pipeline:
             return None
         # The feeder numbered every input record (records sharing a name stay
         # separate molecules); the output keeps the name the reads came with.
-        record.query_name = mm2.original_name(record.query_name)
+        record.query_name = name if name is not None else mm2.original_name(record.query_name)
         if record.has_tag("SA"):
             record.set_tag("SA", None)
         if cfg.resolved_hard_clip():

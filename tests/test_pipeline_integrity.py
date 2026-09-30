@@ -71,6 +71,40 @@ def test_reads_sharing_a_name_stay_separate_molecules(tmp_path, monkeypatch):
     assert p.stats["align"]["reads"] == 2 and p.stats["align"]["kept"] == 2
 
 
+def test_feeder_internal_names_fit_the_qname_limit(tmp_path):
+    """Serial prefixes must not push a legal 254-character name over the SAM
+    limit: such names travel as the bare serial and are restored exactly."""
+    from fiberhmm.pipeline import aligner as mm2
+    long_a, long_b = "q" * 254, "~" + "z" * 253
+    names = [long_a, "r~1", long_a, long_b, "x" * 250, ""]
+    fq = tmp_path / "names.fq"
+    fq.write_text("".join(f"@{n} comment\nACGT\n+\nIIII\n" for n in names))
+    feeder = mm2.ReadFeeder([mm2.classify_read_file(str(fq))], False)
+    internal = [e[0] for e in mm2.iter_fastq_entries(feeder.chunks())]
+    assert all(len(n) <= mm2.QNAME_MAX_LENGTH for n in internal)
+    assert len(set(internal)) == len(names)          # every record its own molecule
+    assert [feeder.restore_name(n) for n in internal] == names
+    assert feeder._long_names == {}                  # released once restored
+
+
+@needs_minimap2
+def test_legal_254_character_read_names_align(tmp_path, monkeypatch):
+    monkeypatch.setenv("FIBERHMM_MINIMAP2_INDEX_DIR", str(tmp_path / "mmi"))
+    sequence = random_seq(6000, 4)
+    ref = tmp_path / "long.fa"; ref.write_text(">p\n" + sequence + "\n")
+    name = "q" * 254
+    fq = tmp_path / "long.fq"
+    fq.write_text("".join(f"@{name}\n{sequence[s:s + 1500]}\n+\n{'I' * 1500}\n"
+                          for s in (500, 3000)))
+    p = Pipeline(config(tmp_path / "out", fq, ref))
+    p._setup(); p.step_prepare_reference(); p.step_index(); p.step_align()
+    with pysam.AlignmentFile(p.aligned_bam) as bam:
+        records = list(bam.fetch(until_eof=True))
+    p.close()
+    assert [r.query_name for r in records] == [name, name]
+    assert sorted(r.reference_start for r in records) == [500, 3000]
+
+
 @pytest.mark.parametrize("sample", ["../escape", "/tmp/abs", "a/b", "..", ".hidden", "a b", "x\ty"])
 def test_sample_cannot_leave_outdir(tmp_path, sample):
     reads = tmp_path / "r.fastq"; reads.write_text("@r\nAAAA\n+\nIIII\n")
