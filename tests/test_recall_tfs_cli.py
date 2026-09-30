@@ -277,7 +277,6 @@ def test_recall_tfs_closes_bams_when_processing_fails(monkeypatch):
         context_size=None,
         max_reads=0,
         chunk_size=1024,
-        input_frame="molecular",
     )
 
     monkeypatch.setattr(recall_tfs, "parse_args",
