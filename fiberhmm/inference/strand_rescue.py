@@ -1133,6 +1133,7 @@ def _has_mapped_annotation_overlap(
     start: int,
     end: int,
     annotation_frame: str = 'molecular',
+    molecular_layers: frozenset = frozenset(),
 ) -> bool:
     """Test one MA layer against a reference window without decoding evidence.
 
@@ -1163,7 +1164,8 @@ def _has_mapped_annotation_overlap(
                 flip_interval_frame(
                     int(raw_start), int(raw_length), read_length
                 )
-                if read.is_reverse and annotation_frame == 'molecular'
+                if read.is_reverse and (annotation_frame == 'molecular'
+                                        or name in molecular_layers)
                 else (int(raw_start), int(raw_length))
             )
             query_end = query_start + length
@@ -1316,6 +1318,8 @@ def load_region_evidence(
             ma_annotation_frame = resolve_ma_frame(bam.header)
         if load_diagnostics is not None:
             load_diagnostics['ma_annotation_frame'] = ma_annotation_frame
+        from fiberhmm.io.annotation_frame import consensus_molecular_layers
+        molecular_layers = consensus_molecular_layers(bam.header)
         # ``disabled`` legacy ns/nl/as/al become molecular when fibertools
         # wrote them (see resolve_disabled_legacy_frame). Applied, and
         # recorded, only for reads that actually fall back to legacy tags, so
@@ -1359,6 +1363,7 @@ def load_region_evidence(
                     int(required_annotation_overlap[1]),
                     int(required_annotation_overlap[2]),
                     annotation_frame=ma_annotation_frame,
+                    molecular_layers=molecular_layers,
                 )
             ):
                 annotation_overlap_excluded_count += 1
@@ -1434,7 +1439,9 @@ def load_region_evidence(
                 else np.asarray([], dtype=np.int64)
             )
             try:
-                parsed_annotations = _parse_all_ma_annotations(read, annotation_frame=ma_annotation_frame) or {}
+                parsed_annotations = _parse_all_ma_annotations(
+                    read, annotation_frame=ma_annotation_frame,
+                    molecular_layers=molecular_layers) or {}
             except (KeyError, TypeError, ValueError):
                 parsed_annotations = {}
             if legacy_annotation_frame is not None and not has_annotation_tag(read):

@@ -22,6 +22,16 @@ implementations must follow it; the same page is in both repositories.
 | `MA`/`AQ`/`AN` | Molecular when `coord=molecular` appears anywhere in `@PG` or `@CO`, otherwise SEQ. This is FiberHMM's `ma_annotation_frame`, and this rule does not change it. |
 | Legacy `ns/nl`, `as/al` and the parallel `nq`, `aq`, `lq`, `rq` | Decided by the rule below. The quality arrays follow their intervals' order. |
 
+**Consensus family layers** in `MA` carry their own frame. The
+`@CO FIBERHMM-CONSENSUS-MA:v1:` contract lists them with
+`"coordinates": "original_source_call_in_molecular_frame"`, and both readers
+treat those layers as molecular ahead of the header rule: FiberBrowser in
+its compact read loader, FiberHMM in `consensus_molecular_layers`. The rest
+of an exported `MA` follows the header rule. FiberHMM's export copies a
+fibertools read's `Ma` groups into the `MA` it writes, because `MA` wins over
+`Ma`. It writes the copy in that file's `MA` frame, which is SEQ unless
+`coord=molecular` is declared, and adds no `coord=` token of its own.
+
 Evidence that fibertools-rs writes molecular frame:
 
 - In the 0.6.2 source, `add_nucleosomes_to_record` gets its input from

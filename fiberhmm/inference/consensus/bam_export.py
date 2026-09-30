@@ -17,7 +17,7 @@ import tempfile
 import pysam
 
 from ...io.bam_header import append_ma_types, append_pg_record
-from ...io.ma_tags import annotation_tags, parse_ma_tag, parse_an_tag, format_an_tag, llr_to_tq
+from ...io.ma_tags import annotation_tags, parse_aq_array, parse_ma_tag, parse_an_tag, format_an_tag, llr_to_tq
 from ..tf_family_ids import allocate_repeating_family_ids, TFFamilyInterval
 from .artifacts import digest, write_json
 from .native_presentation import Q0_SEMANTICS
@@ -227,26 +227,49 @@ def _project_to_molecule(read, interval, molecule_length, tolerant=False):
     return (molecule_length-hi,hi-lo) if read.is_reverse else (lo,hi-lo)
 
 
-def _export_ds(header):
-    """The export's @PG DS. A fibertools source's export says coord=molecular:
-    family layers are written in molecular frame, and so are fibertools' Ma
-    annotations copied into MA (see _append_annotations) and its ns/nl/as/al.
-    It uses the carried-over token, so the export still reads as fibertools
-    provenance (not a FiberHMM caller) for consensus's legacy frame.
-    FiberHMM-called sources already declare coord=molecular and unmarked
-    FiberHMM <= 2.12 sources are left as they were: both keep the old DS."""
-    from ...io.annotation_frame import append_coord_to_ds, legacy_tag_frame, ma_annotation_frame
-    ds='Frozen staged family annotations in MA/AQ/AN'
-    if ma_annotation_frame(header)!='molecular' and legacy_tag_frame(header)[0]=='molecular':
-        return append_coord_to_ds(ds,'molecular')
-    return ds
+EXPORT_DS='Frozen staged family annotations in MA/AQ/AN'
 
 
-def _append_annotations(read, rows):
+def _fibertools_ma_in_frame(ma, aq, an, read, frame):
+    """A fibertools Ma (always molecular) re-expressed for an MA of ``frame``.
+
+    Consensus export copies Ma into the MA it writes (MA wins over Ma). The
+    copy must use the file's MA frame (the header's coord=molecular
+    declaration, ``ma_annotation_frame``); family layers are declared
+    molecular separately by the export contract. For a SEQ-frame file a
+    reverse read's intervals are flipped and each group re-sorted, carrying
+    its Aq bytes and An names. fibertools groups carry at most one quality
+    byte, so no edge bytes need swapping; anything else is refused."""
+    if frame=='molecular' or not read.is_reverse:
+        return ma,aq,an
+    parsed=parse_ma_tag(ma);types=parsed['raw_types'];length=int(parsed['read_length'])
+    if any(len(spec)>1 for _,_,spec,_ in types):
+        raise ValueError('fibertools Ma group with edge-quality bytes; cannot re-express it in SEQ frame')
+    count=sum(len(iv) for _,_,_,iv in types)
+    quals=parse_aq_array(aq,[t[2] for t in types],[len(t[3]) for t in types])
+    names=parse_an_tag(str(an)) if an is not None else ['']*count
+    if len(names)!=count: raise ValueError('Source Ma/An length mismatch')
+    groups=[];new_aq=[];new_names=[];cursor=0
+    for name,strand,spec,intervals in types:
+        items=[]
+        for start,size in intervals:
+            items.append((length-start-size,size,quals[cursor],names[cursor]));cursor+=1
+        items.sort(key=lambda item:item[0])
+        groups.append(name+strand+spec+':'+','.join(f'{s+1}-{n}' for s,n,_,_ in items))
+        for _,_,q,nm in items:
+            new_aq.extend(q);new_names.append(nm)
+    return (';'.join([str(length),*groups]),new_aq,
+            format_an_tag(new_names) if an is not None else None)
+
+
+def _append_annotations(read, rows, ma_frame='molecular'):
     # A fibertools (>= 0.13) read keeps its footprints in Ma/Aq/An; they seed
-    # the new MA so the family layers do not hide them (MA wins over Ma).
+    # the new MA so the family layers do not hide them (MA wins over Ma), in
+    # the file's MA frame (``ma_frame``).
     source=annotation_tags(read)
-    old,old_aq,old_an,_=source if source is not None else (str(read.query_length),None,None,None)
+    old,old_aq,old_an,kind=source if source is not None else (str(read.query_length),None,None,None)
+    if kind=='Ma':
+        old,old_aq,old_an=_fibertools_ma_in_frame(old,old_aq,old_an,read,ma_frame)
     parsed=parse_ma_tag(old);types=parsed['raw_types']
     if any(name in {r['layer'] for r in rows} for name,_,_,_ in types):
         raise ValueError('Source already contains the target family layer; use the original source BAM')
@@ -421,7 +444,9 @@ def _export_source_bams(analyses, output_dir, scope):
                 existing_rg={r['ID'] for r in retained_rg}
                 while source_rg in existing_rg: source_rg+='_'
                 hd['RG']=[*retained_rg,dict(ID=source_rg,DS='Original source BAM: '+str(source))]
-                header=append_pg_record(pysam.AlignmentHeader.from_dict(hd),dict(PN='fiberhmm-consensus',DS=_export_ds(bam.header)))
+                header=append_pg_record(pysam.AlignmentHeader.from_dict(hd),dict(PN='fiberhmm-consensus',DS=EXPORT_DS))
+                from ...io.annotation_frame import ma_annotation_frame
+                ma_frame=ma_annotation_frame(bam.header)
                 with pysam.AlignmentFile(str(temporary),'wb',header=header) as dest:
                     for read in _export_reads(bam,windows,scope):
                         sha=hashlib.sha256(read.to_string().encode()).hexdigest()
@@ -437,7 +462,7 @@ def _export_source_bams(analyses, output_dir, scope):
                                     from .bam import _resolve_bam_fetch_region
                                     chrom,_,_,_=_resolve_bam_fetch_region(str(source),chrom,*row['interval'])
                                 normalized.append(dict(row,chrom=chrom))
-                            annotations+=_append_annotations(read,normalized);matched.add(key)
+                            annotations+=_append_annotations(read,normalized,ma_frame);matched.add(key)
                         if not read.has_tag('RG'): read.set_tag('RG',source_rg,value_type='Z')
                         dest.write(read);written+=1
             if set(records)-matched: raise ValueError('Some frozen family assignments did not match exact source alignments')

@@ -620,26 +620,75 @@ def test_fiberhmm_ma_wins_when_a_read_carries_both():
 def test_consensus_export_keeps_fibertools_ma_under_family_layers():
     """Exporting family layers onto a fibertools 0.13 read copies its Ma
     nucleosomes/MSPs/FIRE into the new MA (MA wins over Ma, so they would
-    otherwise vanish), and a fibertools source's export declares molecular."""
+    otherwise vanish). Codex round 14 [HIGH] 2: the copy must be in the
+    file's MA frame (this header declares nothing, so SEQ), while the family
+    layer stays molecular as its FIBERHMM-CONSENSUS-MA contract declares."""
     from fiberhmm.cli.extract_tags import _parse_all_ma_annotations
-    from fiberhmm.inference.consensus.bam_export import (
-        _append_annotations, _export_ds)
+    from fiberhmm.inference.consensus.bam_export import _append_annotations
+    from fiberhmm.io.annotation_frame import ma_annotation_frame
     with pysam.AlignmentFile(str(FX / 'ft0.13_addnuc_fire.bam')) as bam:
-        header = bam.header
+        frame = ma_annotation_frame(bam.header)
         read = next(r for r in bam if r.query_name == 'read_rev')
+    assert frame == 'seq'
     rows = [dict(chrom='chrT', interval=[100, 120], layer='fam', token='t1', tq=50, fi=1, op=2)]
-    assert _append_annotations(read, rows) == 1
-    parsed = _parse_all_ma_annotations(read, annotation_frame='molecular')
+    assert _append_annotations(read, rows, frame) == 1
+    parsed = _parse_all_ma_annotations(read, annotation_frame=frame, molecular_layers={'fam'})
     assert len(parsed['nuc']) == 25 and len(parsed['msp']) == 24 and len(parsed['fire']) == 7
+    want = EXPECTED['fixtures']['ft0.13_addnuc_fire.bam']
+    assert sorted([a['start'], a['start'] + a['length']] for a in parsed['nuc']) == want['nuc']['read_rev']
+    assert sorted([a['start'], a['start'] + a['length']] for a in parsed['msp']) == want['msp']['read_rev']
+    fire = sorted([a['start'], a['start'] + a['length'], a['quals'][0]] for a in parsed['fire'])
+    assert fire == want['fire']['read_rev']          # Aq bytes stay with their elements
     fam = parsed['fam'][0]
     assert (fam['start'], fam['start'] + fam['length']) == (100, 120)  # 8000M at 0: query == reference
-    assert [a['start'] for a in parsed['nuc']][:1] == [8000 - 392 - 154]
-    from fiberhmm.io.annotation_frame import ma_annotation_frame, resolve_disabled_legacy_frame
-    from fiberhmm.io.bam_header import append_pg_record
-    exported = append_pg_record(header, dict(PN='fiberhmm-consensus', DS=_export_ds(header)))
-    # the export's MA reads as molecular, and a 0.6.2-style export still
-    # resolves consensus's disabled legacy frame from its fibertools provenance
-    assert ma_annotation_frame(exported) == 'molecular'
-    assert resolve_disabled_legacy_frame(exported)[0] == 'molecular'
-    with pysam.AlignmentFile(str(FX / 'fiberhmm3.0.0_call.bam')) as bam:
-        assert _export_ds(bam.header) == 'Frozen staged family annotations in MA/AQ/AN'
+    # a declared-molecular file copies Ma verbatim
+    with pysam.AlignmentFile(str(FX / 'ft0.13_addnuc_fire.bam')) as bam:
+        read = next(r for r in bam if r.query_name == 'read_rev')
+    _append_annotations(read, rows, 'molecular')
+    assert read.get_tag('MA').startswith(read.get_tag('Ma') + ';fam.')
+
+
+def test_consensus_export_publisher_keeps_fibertools_footprints_in_place(tmp_path):
+    """The full export_bams publisher on a fibertools 0.13 source (Codex's
+    shape): read back with the header's MA frame and the contract's molecular
+    layers, the copied nucleosomes and the family land where fibertools and
+    the family put them, and the export declares no frame it did not write."""
+    import hashlib
+    from fiberhmm.cli.extract_tags import _parse_all_ma_annotations
+    from fiberhmm.inference.consensus.artifacts import digest
+    from fiberhmm.inference.consensus.bam_export import export_bams
+    from fiberhmm.io.annotation_frame import consensus_molecular_layers, ma_annotation_frame
+    import shutil
+    src = tmp_path / 'ft013.bam'
+    shutil.copy(FX / 'ft0.13_addnuc_fire.bam', src)
+    pysam.index(str(src))
+    with pysam.AlignmentFile(str(src)) as bam:
+        read = next(r for r in bam if r.is_reverse)
+    sha = hashlib.sha256(read.to_string().encode()).hexdigest()
+    unit = dict(unit_id='u', read_name=read.query_name, positions=list(range(8000)),
+                source_members=[dict(read_name=read.query_name, library_id=str(src),
+                                     record_sha256=sha, alignment_occurrence=0)],
+                native_multi_interval_calls=[dict(interval=[100, 120], llr=8, opportunities=20)])
+    payload = dict(region=dict(chrom='chrT', start=0, end=8000),
+                   strata=[dict(dataset_id='a', chemistry='hia5-pacbio', units=[unit])],
+                   input_files=[dict(dataset_id='a', path=str(src), size=src.stat().st_size,
+                                     mtime_ns=src.stat().st_mtime_ns)])
+    result = dict(final_stage='resolved',
+                  manifest=dict(input_digest=digest(payload), parameters={'cross': {'enabled': False}},
+                                display_mode='SR'),
+                  datasets={'a': dict(cr=dict(records=[dict(unit_id='a::u', proposals=[
+                      dict(source_interval=[100, 120], compatible_families=['compact'])])]))})
+    outputs = export_bams([(result, payload)], tmp_path / 'export', scope='full')
+    with pysam.AlignmentFile(outputs[0]['bam']) as bam:
+        header = bam.header
+        read = next(r for r in bam if r.is_reverse)
+    assert 'coord=' not in header.to_dict()['PG'][-1].get('DS', '')
+    layers = consensus_molecular_layers(header)
+    parsed = _parse_all_ma_annotations(read, annotation_frame=ma_annotation_frame(header),
+                                       molecular_layers=layers)
+    want = EXPECTED['fixtures']['ft0.13_addnuc_fire.bam']['nuc']['read_rev']
+    assert sorted([a['start'], a['start'] + a['length']] for a in parsed['nuc']) == want
+    family = [(a['start'], a['start'] + a['length']) for name in layers for a in parsed.get(name, [])]
+    assert family == [(100, 120)]
+
+

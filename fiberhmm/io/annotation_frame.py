@@ -256,6 +256,33 @@ def legacy_tag_frame(header) -> Tuple[Optional[str], str]:
     return report['frame'], reason
 
 
+CONSENSUS_CONTRACT_PREFIX = 'FIBERHMM-CONSENSUS-MA:v1:'
+CONSENSUS_MOLECULAR_COORDINATES = 'original_source_call_in_molecular_frame'
+
+
+def consensus_molecular_layers(header) -> frozenset:
+    """MA layers a FIBERHMM-CONSENSUS-MA contract declares molecular.
+
+    Consensus export writes its family layers in molecular frame and says so
+    per layer (``coordinates``), whatever the header's MA frame is; readers
+    honour it ahead of :func:`ma_annotation_frame` (FiberBrowser's
+    ``bam_consensus_contracts`` does the same)."""
+    import json
+    hdr = _header_dict(header) or {}
+    layers = set()
+    for comment in hdr.get('CO', []) or []:
+        text = str(comment)
+        if not text.startswith(CONSENSUS_CONTRACT_PREFIX):
+            continue
+        try:
+            value = json.loads(text[len(CONSENSUS_CONTRACT_PREFIX):])
+        except ValueError:
+            continue
+        if isinstance(value, dict) and value.get('coordinates') == CONSENSUS_MOLECULAR_COORDINATES:
+            layers.update(str(layer) for layer in value.get('layers', []) or [])
+    return frozenset(layers)
+
+
 def resolve_disabled_legacy_frame(header) -> Optional[Tuple[str, str]]:
     """``('molecular', reason)`` when fibertools wrote the ns/nl/as/al.
 

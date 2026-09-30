@@ -181,13 +181,15 @@ def _duplicate_bed_value(read) -> int:
     return int(bool(getattr(read, 'is_duplicate', False)))
 
 
-def _parse_all_ma_annotations(read, *, annotation_frame='molecular'):
+def _parse_all_ma_annotations(read, *, annotation_frame='molecular', molecular_layers=frozenset()):
     """Parse MA/AQ/AN once and return annotations grouped by type.
 
     Values retain the exact target-specific ordering and quality orientation
     previously returned by :func:`_parse_ma_annotations`. Without FiberHMM's
     ``MA`` the fibertools (>= 0.13) ``Ma``/``Aq``/``An`` tags are read instead;
     those are always molecular frame, whatever ``annotation_frame`` says.
+    Groups named in ``molecular_layers`` (consensus family layers, declared
+    molecular by their FIBERHMM-CONSENSUS-MA contract) are molecular too.
     """
     if annotation_frame not in ('seq', 'molecular'):
         raise ValueError('Unknown MA annotation frame')
@@ -215,8 +217,9 @@ def _parse_all_ma_annotations(read, *, annotation_frame='molecular'):
     annotations = {}
     ann_idx = 0
     read_length = int(parsed['read_length'])
-    is_reverse = bool(getattr(read, 'is_reverse', False)) and annotation_frame == 'molecular'
+    read_reverse = bool(getattr(read, 'is_reverse', False))
     for name, _strand, _qspec, intervals in parsed['raw_types']:
+        is_reverse = read_reverse and (annotation_frame == 'molecular' or name in molecular_layers)
         for s, length in intervals:
             quals = per_annotation[ann_idx] if ann_idx < len(per_annotation) else []
             ann_name = an_names[ann_idx] if ann_idx < len(an_names) else ''

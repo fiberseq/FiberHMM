@@ -84,8 +84,10 @@ recall-tfs/recall-nucs, consensus evidence loading and extract. If a read
 has both, FiberHMM's own `MA` is used. Recall writes its calls to
 `MA`/`AQ` (and `ns`/`nl`/`as`/`al`) and leaves the fibertools `Ma` tag in
 place. Consensus BAM export copies a read's `Ma` annotations into the `MA`
-it writes (so the family layers do not hide them) and, for a fibertools
-source, records `coord=molecular` in its `@PG`.
+it writes, so the family layers do not hide them. The copy is in the file's
+`MA` frame, which is query frame unless the header declares
+`coord=molecular`. The family layers are molecular, as their
+`FIBERHMM-CONSENSUS-MA` contract declares.
 
 ## Converting to query or reference coordinates
 
