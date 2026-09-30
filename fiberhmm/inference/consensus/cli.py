@@ -59,7 +59,8 @@ def _main(argv=None):
     source.add_argument('--bam',action='append',help='Repeat for separate datasets; chemistry comes from BAM @CO metadata')
     source.add_argument('--datasets',help='JSON list of {dataset_id, paths: [BAMs], chemistry?: profile}')
     source.add_argument('--evidence',help='Saved evidence.json.gz, including pooled evidence')
-    source.add_argument('--resume',help='Previous run directory containing evidence.json.gz, manifest.json and fit_cache')
+    source.add_argument('--resume',help='Start a NEW run (in a new --output) from a finished run directory: reuses its evidence.json.gz, manifest.json '
+                        'and fit_cache to rerun stages. To finish an interrupted multi-window run in place, use --continue')
     p.add_argument('--bed',help='BED3 windows for independent runs; BED6 with equal widths for CL-CR')
     p.add_argument('--region',action='append',help='Alternative CHROM:START-END, explicitly 0-based half-open')
     p.add_argument('--pool-loci',action='store_true',help='CL-CR: pool BED6 windows in their provided orientations')
@@ -71,14 +72,24 @@ def _main(argv=None):
     p.add_argument('--start-at',choices=['native','consolidation'],default='native',help='staged_native_families only: consolidation restarts from saved native fits')
     p.add_argument('--cores',type=int,help='Worker processes (sets compute.cores; default 4)')
     p.add_argument('--cache',help='staged_native_families only: persistent exact native-fit cache directory')
-    p.add_argument('--json-progress',action='store_true',help='Structured progress on stderr')
+    p.add_argument('--json-progress','--progress-json',action='store_true',help='Structured progress on stderr (JSON lines)')
     p.add_argument('--daf-mask-runs',type=int,default=None,metavar='N',help='DAF only: thin targets in same-strand runs of >= N original C (CT) or G (GA) bases in lattices and native replay (2 = CC/GG and longer; 0 = off). Default: per dataset chemistry, DddA keep-one on runs >= 2 (duplex-validated), DddB off')
     p.add_argument('--daf-run-policy',choices=['keep-one','drop'],default='keep-one',help="With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run")
     p.add_argument('--no-bam',action='store_true',help='Save frozen results/reports without materializing family-tagged BAMs')
     p.add_argument('--bam-scope',choices=['regions','full'],default='regions',help='Export whole alignments overlapping analyzed windows (default), or the full source BAM')
     p.add_argument('--bam-grouping',choices=['datasets','files'],default='datasets',help='One BAM per logical dataset (default) or original source file')
     p.add_argument('--bam-recaller-layer',action='store_true',help="lattice_recaller: also write the optional tf_recaller MA layer (the recaller's own per-molecule class calls at every prevalence tier; bytes tq,fi,tier,q0,lr,rr) to exported BAMs. Off by default; the calls are always in result.json.gz")
-    p.add_argument('--output',help='New or empty result directory')
+    p.add_argument('--output',help='New or empty result directory (with --continue: the interrupted run\'s directory)')
+    p.add_argument('--continue',dest='continue_run',action='store_true',
+                   help='Finish an interrupted --bam + --bed/--region run in its existing --output directory: windows whose '
+                        'completion marker matches are kept, missing or partial windows are rerun, and the aggregate outputs '
+                        '(regions.json, report.html, BAMs) are rebuilt. Refused if the BAMs, windows or parameters differ from '
+                        "the run's consensus_run.json (--cores, --window-jobs and --json-progress may change). Not the same as "
+                        '--resume, which starts a new run from saved evidence')
+    p.add_argument('--window-jobs',type=int,default=0,metavar='N',
+                   help='Independent BED windows analysed at the same time (default 0 = automatic: up to --cores windows, '
+                        'each with an equal share of --cores; one at a time for staged_native_families, whose per-window '
+                        'compute.maximum_matrix_mb budget is a hard limit). 1 = one window at a time, each using every core')
     from fiberhmm.cli.common import add_version_args
     add_version_args(p)
     args=p.parse_args(argv)
@@ -92,14 +103,27 @@ def _main(argv=None):
         print(json.dumps(parameter_schema(),indent=2));return
     if not args.output or not any((args.bam,args.datasets,args.evidence,args.resume)): p.error('Supply BAMs/datasets, evidence or resume, and --output')
     out=Path(args.output).resolve()
-    if out.exists() and any(out.iterdir()): p.error('Output directory must be empty; existing results are never overwritten')
+    if args.window_jobs<0: p.error('--window-jobs must be >= 0 (0 = automatic)')
+    if args.continue_run:
+        if args.evidence or args.resume or args.pool_loci or not (args.bed or args.region):
+            p.error('--continue applies to --bam/--datasets runs over independent --bed/--region windows; pooled (--pool-loci) '
+                    'and --evidence/--resume replays are one analysis: rerun them into a new --output')
+        from .batch import RUN_MANIFEST
+        if not (out/RUN_MANIFEST).is_file():
+            p.error(f'--continue: {out} has no {RUN_MANIFEST}; give the --output directory of the interrupted run '
+                    '(or start a new run without --continue)')
+    elif out.exists() and any(out.iterdir()):
+        p.error('Output directory must be empty; existing results are never overwritten '
+                '(to finish an interrupted multi-window run there, add --continue)')
     if args.bed and args.region: p.error('Use --bed or --region')
     if args.pool_loci and not args.bed and not (args.evidence or args.resume): p.error('--pool-loci requires oriented BED6')
     if args.pool_loci and (args.evidence or args.resume): p.error('Saved evidence fixes pooling; omit --pool-loci when replaying')
     if (args.evidence or args.resume) and (args.bed or args.region): p.error('Saved evidence already fixes the windows')
     if args.start_at=='consolidation' and not (args.resume or (args.evidence and args.cache)): p.error('Consolidation requires --resume or --evidence plus --cache')
     values={};resume=Path(args.resume).resolve() if args.resume else None
-    if resume and not (resume/'manifest.json').is_file(): p.error('Resume an individual window_XXXXXX directory or a pooled run, not the batch parent directory')
+    if resume and not (resume/'manifest.json').is_file():
+        p.error('Resume an individual window_XXXXXX directory or a pooled run, not the batch parent directory '
+                '(to finish an interrupted multi-window run in place, use --continue with its original inputs and --output)')
     if resume: values=read_json(resume/'manifest.json')['parameters']
     if args.parameters:
         for k,v in read_json(args.parameters).items(): values.setdefault(k,{}).update(v)
@@ -154,10 +178,10 @@ def _main(argv=None):
                 # CL-CR pools every window into one analysis, so all payloads are needed together.
                 count=1;jobs=iter([('pooled',pool_payloads([load(i,w) for i,w in enumerate(windows)],windows),out)])
             else:
-                # Independent windows stream: load, analyse, record the BAM assignments, then drop the payload
-                # and result, so memory does not grow with the number of BED rows.
-                count=len(windows)
-                jobs=((w['name'],load(i,w),out if len(windows)==1 else out/f'window_{i+1:06d}') for i,w in enumerate(windows))
+                # Independent windows are restartable work units (batch.py): each loads, analyses and marks its own
+                # directory, then drops its payload, so memory grows with --window-jobs, not with the BED rows.
+                summary,bam_outputs=_run_windows(args,out,windows,datasets,values,progress)
+                print(json.dumps(dict(status='complete',output=str(out),regions=summary,bams=bam_outputs)));return
         from .bam_export import ExportPlan
         summary=[];plan=ExportPlan(recaller_layer=args.bam_recaller_layer) if not args.no_bam else None;bam_outputs=[]
         for i,(name,payload,folder) in enumerate(jobs):
@@ -175,6 +199,36 @@ def _main(argv=None):
             (out/'report.html').write_text('<!doctype html><meta charset="utf-8"><h1>Consensus windows</h1>'+''.join(
                 '<p><a href="'+str(Path(r['output']).relative_to(out))+'/report.html">'+html.escape(r['name'])+'</a></p>' for r in summary))
     print(json.dumps(dict(status='complete',output=str(out),regions=summary,bams=bam_outputs)))
+
+
+def _window_task(spec):
+    """One BED window in a worker process (--window-jobs > 1); all output goes to the window's log."""
+    from . import bam
+    from .batch import run_unit
+    return run_unit(spec,load=bam.load_bam_payload,run=run_analysis,isolate=True)
+
+
+def _run_windows(args,out,windows,datasets,values,progress):
+    from . import bam
+    from .batch import run_windows, run_unit, ContinueRefused
+    from .regions import machine_compute_defaults
+    cores=int(values.get('compute',{}).get('cores') or machine_compute_defaults()['cores'])
+    window_jobs=args.window_jobs
+    if not window_jobs and values.get('cr',{}).get('engine')=='staged_native_families':
+        # The staged engine treats compute.maximum_matrix_mb (default: a quarter of RAM) as a hard per-window budget;
+        # automatic concurrency would multiply it. An explicit --window-jobs is honoured.
+        window_jobs=1
+    # One window at a time runs in this process; the loader and engine are looked up when each window starts.
+    serial=lambda spec:run_unit(spec,load=bam.load_bam_payload,run=run_analysis,forward=progress)
+    try:
+        return run_windows(out,windows,datasets,values,continue_run=args.continue_run,cores=cores,window_jobs=window_jobs,
+            daf_mask=(args.daf_mask_runs,args.daf_run_policy) if args.daf_mask_runs is not None else None,
+            options=dict(no_bam=args.no_bam,bam_scope=args.bam_scope,bam_grouping=args.bam_grouping,
+                         bam_recaller_layer=args.bam_recaller_layer),
+            serial_task=serial,parallel_task=_window_task,progress=progress,
+            export=dict(no_bam=args.no_bam,recaller_layer=args.bam_recaller_layer,grouping=args.bam_grouping,scope=args.bam_scope))
+    except ContinueRefused as error:
+        print(f'error: {error}',file=sys.stderr);raise SystemExit(2)
 
 
 if __name__=='__main__':main()

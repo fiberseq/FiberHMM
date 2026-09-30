@@ -240,11 +240,61 @@ printf 'chrDemo\t9900\t10250\nchrDemo\t14000\t14350\n' > out/windows.bed
 fiberhmm-consensus --bam out/pacbio.calls.bam --bed out/windows.bed --cores 2 --output out/classes_bed
 ```
 
-Each BED3 row is an independent analysis in genomic coordinates. Windows are
-streamed (loaded, analysed and exported one at a time), so memory does not
-grow with the number of rows. The output has an index `report.html`,
-`regions.json` and one `window_000001/`, `window_000002/`, … directory per
-row, each a complete run.
+Each BED3 row is an independent analysis in genomic coordinates. Each window
+is loaded, analysed and written by itself, so memory grows with the number of
+windows running at once, not with the number of rows. The output has an index
+`report.html`, `regions.json` and one `window_000001/`, `window_000002/`, …
+directory per row, each a complete run.
+
+Independent windows run in parallel: `--window-jobs N` analyses *N* windows at
+a time, each with `--cores / N` workers (default `0` = automatic: up to
+`--cores` windows at once; one at a time for the deprecated
+`staged_native_families` engine, whose per-window `compute.maximum_matrix_mb`
+budget is a hard limit). `--window-jobs 1` runs one window at a time with
+every core, which suits a few large windows or memory-heavy runs (each
+concurrent window holds its own evidence). Results do not depend on it. Each window logs to `logs/window_NNNNNN.log`; the terminal shows
+windows done/total and an ETA (`--json-progress`, alias `--progress-json`: `stage: "windows"` events
+with `completed`, `total`, `reused` and `eta_seconds`).
+
+## Long runs and resuming
+
+A BED with many windows is a restartable batch. Each window writes its outputs
+into its own directory and, last, an atomic `unit_complete.json` marker
+holding a digest of the run's inputs and parameters, the window and the
+consensus code version, plus the size of every file it wrote. The run's
+contract (BAM and index identity, windows, parameters, BAM-export options,
+DAF run mask) is saved as `consensus_run.json`. If a run is interrupted,
+rerun the same command with `--continue`:
+
+```bash
+fiberhmm-consensus --bam calls.bam --bed sites.bed --cores 8 --output out/sites
+# ... interrupted ...
+fiberhmm-consensus --bam calls.bam --bed sites.bed --cores 8 --output out/sites --continue
+```
+
+- Windows whose marker matches are kept; missing, partial or damaged windows
+  and windows computed by other code are rerun.
+- `regions.json`, the top-level `report.html` and the family-tagged BAMs are
+  rebuilt from all completed windows at the end, so the outputs are the same
+  whether windows ran one at a time, in parallel, or across an interrupted
+  and continued run (apart from timing fields and the per-window
+  `compute.cores`).
+- Different BAMs (or a modified BAM or index), windows or parameters are
+  refused with the fields that differ. Only `--cores`, `--window-jobs` and
+  `--json-progress` may change between attempts.
+- Continuing a finished run reruns nothing and rebuilds the aggregates.
+- Without `--continue` the output directory must be empty, as always.
+- A failing window stops the run and the other windows' workers; completed
+  windows are kept for `--continue` once the cause is fixed. The failing
+  window's log is named in the error.
+
+!!! note "`--continue` versus `--resume`"
+    `--continue` finishes an interrupted multi-window run **in place**, in
+    its own `--output`. `--resume RUN_DIR` starts a **new** analysis, in a new
+    `--output`, from one finished window or pooled run's saved evidence (for
+    example with different `--parameters`; see [Replay](#replay)).
+    `--continue` does not apply to `--pool-loci`, `--evidence` or `--resume`
+    runs, which are single analyses: rerun them.
 
 ## Pooling loci (CL-CR)
 
@@ -271,7 +321,8 @@ together.
 `--evidence evidence.json.gz` or `--resume RUN_DIR` reruns an analysis on
 saved evidence, for example with different `--parameters`, without reading
 the BAMs again. `--resume` takes one window or pooled run directory, not a
-multi-window parent. The recaller runs in one pass, so `--stop-after`,
+multi-window parent (to finish an interrupted multi-window run, use
+[`--continue`](#long-runs-and-resuming)). The recaller runs in one pass, so `--stop-after`,
 `--start-at`, `--consolidation-bp` and `--cache` (staged-engine options) are
 rejected before any work starts:
 

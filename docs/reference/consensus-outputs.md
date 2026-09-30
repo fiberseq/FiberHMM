@@ -24,7 +24,13 @@ out/classes/
 
 With several BED windows the top level holds `report.html`, `regions.json`
 (one entry per window: `name`, `output`, `status`, `seconds`) and one
-`window_NNNNNN/` run directory per window. `bams/` holds
+`window_NNNNNN/` run directory per window. Every BAM + BED/`--region` run also
+writes `consensus_run.json` (the run contract `--continue` checks, with one
+entry per attempt), `logs/window_NNNNNN.log` (one log per window) and, in each
+window directory (the output directory itself for a single window),
+`unit_complete.json`: the completion marker written last, with the unit
+digest, window, status, seconds and the size of every file the window wrote.
+See [Long runs and resuming](../workflows/consensus.md#long-runs-and-resuming). `bams/` holds
 `NNN_<dataset>.families.bam` (CSI-indexed) and `bam_exports.json` (per-output
 counts of annotations, matched and written alignments, scope and source
 windows; and the exported families).

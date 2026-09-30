@@ -404,6 +404,8 @@ def test_cli_rejects_staged_stage_controls_before_loading_and_streams_windows(tm
         cli.main(common + ['--parameters', str(params), '--output', str(tmp_path/'bad2')])
     assert events == []
     with redirect_stdout(io.StringIO()):
-        cli.main(common + ['--output', str(tmp_path/'ok')])
+        # --window-jobs 1: since 3.0 independent windows run in parallel worker processes by default (where these
+        # in-process stubs do not apply); one window at a time keeps the in-process streaming order under test.
+        cli.main(common + ['--window-jobs', '1', '--output', str(tmp_path/'ok')])
     # Independent windows stream: each is loaded and analysed before the next is loaded.
     assert events == [('load', 100), ('run', 100), ('load', 300), ('run', 300)]

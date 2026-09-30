@@ -365,6 +365,28 @@ def parse_args():
     p.add_argument('--chroms', nargs='+', default=None,
                    help='Only process these chromosomes (region-parallel mode).')
 
+    # --- Long runs: resume and progress ---
+    p.add_argument('--resume', action='store_true',
+                   help='Continue an interrupted --region-parallel run: regions finished '
+                        'in the work directory are reused, missing or partial regions are '
+                        'rerun, then the output is merged and published as usual. Refused '
+                        'if the input BAM or any effective parameter changed. Implies '
+                        '--region-parallel for an indexed, aligned input; with no work '
+                        'directory present a new run starts. Streaming (stdin, unindexed) '
+                        'runs cannot resume.')
+    p.add_argument('--work-dir', default=None, metavar='DIR',
+                   help='Region-parallel work directory holding finished region BAMs and '
+                        'the resume manifest (default: .<output name>.fiberhmm-work beside '
+                        'the output). Kept when a run fails or is interrupted; removed '
+                        'after a successful publish.')
+    p.add_argument('--keep-work-dir', action='store_true',
+                   help='Keep the region-parallel work directory after a successful run.')
+    p.add_argument('--progress-json', nargs='?', const='-', default=None, metavar='FILE',
+                   help='Write machine-readable progress, one JSON object per line, to '
+                        'stderr (no value) or append to FILE: start, region (regions '
+                        'done/total, reads, reads/s, ETA), merge, done and stopped events '
+                        '(schema fiberhmm.progress.v1).')
+
     from fiberhmm.cli.common import add_version_args
     add_version_args(p)
     return p.parse_args()
@@ -838,10 +860,25 @@ def main():
     args = parse_args()
     from fiberhmm.inference.read_filters import MostlyUnmappedError
     from fiberhmm.inference.region_planning import RegionPlanError
+    from fiberhmm.inference.region_resume import (
+        ResumeRefused, RunInterrupted, interrupt_on_terminate,
+    )
     from fiberhmm.inference.worker_results import WorkerFailureError
 
     try:
-        _main(args)
+        # SIGTERM/SIGHUP unwind like Ctrl-C: temporaries are removed, the
+        # region-parallel work directory is kept for --resume, and nothing is
+        # half-published.
+        with interrupt_on_terminate():
+            _main(args)
+    except KeyboardInterrupt as exc:
+        signum = getattr(exc, 'signum', None) if isinstance(exc, RunInterrupted) else None
+        print("error: interrupted" + (f" (signal {signum})" if signum else "") +
+              "; no output was published", file=sys.stderr)
+        sys.exit(128 + (signum or 2))
+    except ResumeRefused as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
     except ChemistryConflictError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
@@ -865,6 +902,23 @@ def _main(args):
         args.cores = multiprocessing.cpu_count()
     if args.cores < 0:
         print("error: --cores must be >= 0 (0 = all CPUs)", file=sys.stderr)
+        sys.exit(2)
+
+    if args.resume and not args.region_parallel:
+        # Only the region-parallel pipeline keeps per-region results; an
+        # indexed, aligned file input can always take that path.
+        if args.input == '-' or args.output == '-' or \
+                _input_is_indexed_and_aligned(args.input) != (True, True):
+            print("error: --resume needs the region-parallel pipeline (a "
+                  "coordinate-sorted, indexed BAM file in and a BAM file out); "
+                  "streaming runs (stdin/stdout, unindexed or unaligned input) "
+                  "cannot resume.", file=sys.stderr)
+            sys.exit(2)
+        print("  NOTE: --resume implies --region-parallel.", file=sys.stderr)
+        args.region_parallel = True
+    if (args.work_dir or args.keep_work_dir) and not args.region_parallel:
+        print("error: --work-dir/--keep-work-dir apply to --region-parallel runs",
+              file=sys.stderr)
         sys.exit(2)
 
     if args.region_parallel:
@@ -1308,8 +1362,36 @@ def _main(args):
 
         also_write_legacy = True if args.downstream_compat else (not args.no_legacy_tags)
 
+        progress = None
+        if args.progress_json:
+            from fiberhmm.inference.region_resume import ProgressJSON
+            progress = ProgressJSON(args.progress_json, 'fiberhmm-call')
         if args.region_parallel:
             chroms_set = set(args.chroms) if args.chroms else None
+            from fiberhmm.inference.region_resume import (
+                default_work_dir, input_identity, reference_identity,
+            )
+            # Everything that decides the called records, beyond what the
+            # region pipeline records itself (its parameters, model digests
+            # and region plan): --resume refuses a work directory made with
+            # anything else.
+            run_identity = {
+                'tool': 'fiberhmm-call',
+                'fiberhmm_version': getattr(_fh, '__version__', 'unknown'),
+                'input': input_identity(args.input),
+                'dedup': {
+                    'applied': dedup_tmp is not None,
+                    'min_jaccard': args.dedup_min_jaccard,
+                    'collapse': bool(args.dedup_collapse),
+                    'min_deam': args.dedup_min_deam,
+                    'prob_threshold': args.dedup_prob_threshold,
+                    'ignore_strand': bool(args.dedup_ignore_strand),
+                    'max_end_diff': args.dedup_max_end_diff,
+                },
+                'daf_run_mask': [args.daf_mask_runs, args.daf_run_policy],
+                'reference': reference_identity(args.reference),
+                'process_unmapped': process_unmapped,
+            }
             n_reads, n_fp = _process_bam_region_parallel_fused(
                 input_bam=working_input,
                 output_bam=args.output,
@@ -1354,8 +1436,16 @@ def _main(args):
                 ddda_mcg=ddda_mcg,
                 daf_snp_mask_path=snp_mask_path,
                 cpg_mask_policy=cpg_mask_policy,
+                work_dir=args.work_dir or str(default_work_dir(args.output)),
+                resume=args.resume,
+                keep_work_dir=args.keep_work_dir,
+                run_identity=run_identity,
+                progress=progress,
             )
         else:
+            if progress is not None:
+                progress('start', output=None if stdout_mode else str(args.output),
+                         regions_total=None)
             n_reads, n_fp = _process_bam_streaming_pipeline_fused(
                 input_bam=working_input,
                 output_bam=args.output,
@@ -1407,6 +1497,9 @@ def _main(args):
                 # temporary before publishing BAM + index together.
                 index_output=not stdout_mode,
             )
+            if progress is not None:
+                progress('done', output=None if stdout_mode else str(args.output),
+                         reads=n_reads, reads_with_footprints=n_fp)
 
         # The pre-footprinting dedup temp is no longer needed; removing it here
         # (as well as in the finally below) keeps the disk footprint low during QC.

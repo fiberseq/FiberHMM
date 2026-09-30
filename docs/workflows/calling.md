@@ -62,6 +62,73 @@ fiberhmm-call -i aligned.bam -o - --enzyme hia5 --seq pacbio -c 8 | ft fire - fi
 per stage. `--max-reads N` (streaming only) stops after *N* reads, for a quick
 look.
 
+## Long runs and resuming
+
+A genome-scale `--region-parallel` run can take many hours. It keeps every
+finished region in a work directory, so an interrupted run (Ctrl-C, `kill`,
+a closed laptop lid, a crashed node) continues where it stopped:
+
+```bash
+fiberhmm-call -i sorted.bam -o calls.bam --enzyme hia5 --seq pacbio \
+    -c 16 --region-parallel --skip-scaffolds
+# ... interrupted after 212 of 318 regions ...
+fiberhmm-call -i sorted.bam -o calls.bam --enzyme hia5 --seq pacbio \
+    -c 16 --region-parallel --skip-scaffolds --resume
+```
+
+- The work directory is `.<output name>.fiberhmm-work` beside the output
+  (`.calls.bam.fiberhmm-work/`), or `--work-dir DIR`. It holds each finished
+  region's BAM, a `region_NNNNNN.done.json` marker written after the region
+  finished, and `manifest.json` with the run identity: the input BAM (path,
+  size, modification time, header and index SHA-256), every effective
+  parameter including the resolved chemistry and defaults, the model,
+  nucleosome-profile and SNP-mask digests, the region plan and the FiberHMM
+  version.
+- `--resume` reuses every region whose marker and BAM validate, reruns
+  missing or partial regions, then merges and publishes the output
+  atomically, exactly as an uninterrupted run would: the records are
+  identical. The header's `@PG` keeps the original command line. Integrated
+  dedup, the DAF SNP screen and the NRL estimate are recomputed (they are
+  deterministic).
+- A change to the input BAM or to any parameter is refused, naming the
+  fields that differ; nothing is mixed. `--cores` and `--io-threads` may
+  change.
+- `--resume` implies `--region-parallel` for an indexed, aligned BAM. With no
+  work directory it starts a new run, so a runner can always pass it.
+  Streaming runs (stdin, stdout, unsorted or unaligned input) cannot resume.
+- Without `--resume`, an existing work directory is never discarded: the
+  run stops and asks for `--resume` (or for the directory to be deleted).
+- The work directory is removed after a successful publish
+  (`--keep-work-dir` keeps it) and kept when a run fails or is interrupted.
+  It needs about as much space as the output BAM.
+- `SIGINT`, `SIGTERM` and `SIGHUP` stop the run at once (queued regions are
+  cancelled, workers are stopped); a partly written output is never
+  published, and the exit status is 128 + the signal number.
+
+### Machine-readable progress
+
+`--progress-json` writes one JSON object per line to stderr, or appends them
+to a file with `--progress-json FILE`. Every line has `schema`
+(`fiberhmm.progress.v1`), `tool`, `event` and `time` (Unix seconds):
+
+| `event` | Extra fields |
+|---|---|
+| `start` | `regions_total`, `regions_done`, `regions_reused`, `work_dir`, `output` |
+| `region` | `region` (`[chrom, start, end]`), `regions_done`, `regions_total`, `regions_reused`, `reads`, `reads_with_footprints`, `reads_per_s`, `elapsed_s`, `eta_s` |
+| `merge` | `regions_total`, `bams` |
+| `done` | `output`, `regions_total`, `regions_reused`, `reads`, `reads_with_footprints`, `elapsed_s` |
+| `stopped` | `reason`, `regions_done`, `regions_total`, `work_dir` |
+
+```json
+{"schema": "fiberhmm.progress.v1", "tool": "fiberhmm-call", "event": "region", "time": 1790733514.5, "region": ["chr2L", 2000000, 4000000], "regions_done": 57, "regions_total": 318, "regions_reused": 40, "reads": 812344, "reads_with_footprints": 790012, "reads_per_s": 1840.2, "elapsed_s": 212.4, "eta_s": 3120.0}
+```
+
+`reads_per_s`, `elapsed_s` and `eta_s` cover only regions processed in this
+attempt (reused regions are excluded); `eta_s` scales the elapsed time by the
+remaining called base pairs and is `null` until the first region finishes.
+Region-parallel runs emit every event; streaming runs emit only `start` and
+`done`. The text progress line shows the same ETA.
+
 ## Which records are called
 
 - **Primary alignments only** (default). Secondary and supplementary records
@@ -219,3 +286,6 @@ BAM index: out/apply/hia5_pacbio_footprints.bam.bai
 - Pipe `-o -` into `ft fire` or `samtools` to avoid intermediate files.
 - Numba compiles the HMM kernels when each worker starts, which takes a few
   seconds; it is negligible on real data sets.
+- For long runs, see [Long runs and resuming](#long-runs-and-resuming): the
+  resume bookkeeping (one small JSON marker per region, header and index
+  digests) costs well under a second per run.

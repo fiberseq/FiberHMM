@@ -112,6 +112,10 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--region-size` | `10000000` | Region size in bp for --region-parallel (default 10 Mb). |
 | `--skip-scaffolds` | off | Skip scaffold/contig chromosomes in region-parallel mode. |
 | `--chroms` | — | Only process these chromosomes (region-parallel mode). |
+| `--resume` | off | Continue an interrupted --region-parallel run: regions finished in the work directory are reused, missing or partial regions are rerun, then the output is merged and published as usual. Refused if the input BAM or any effective parameter changed. Implies --region-parallel for an indexed, aligned input; with no work directory present a new run starts. Streaming (stdin, unindexed) runs cannot resume. |
+| `--work-dir` | — | Region-parallel work directory holding finished region BAMs and the resume manifest (default: .&lt;output name&gt;.fiberhmm-work beside the output). Kept when a run fails or is interrupted; removed after a successful publish. |
+| `--keep-work-dir` | off | Keep the region-parallel work directory after a successful run. |
+| `--progress-json` | — | Write machine-readable progress, one JSON object per line, to stderr (no value) or append to FILE: start, region (regions done/total, reads, reads/s, ETA), merge, done and stopped events (schema fiberhmm.progress.v1). |
 
 ## fiberhmm-apply
 
@@ -425,7 +429,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--bam` | — | Repeat for separate datasets; chemistry comes from BAM @CO metadata |
 | `--datasets` | — | JSON list of {dataset_id, paths: [BAMs], chemistry?: profile} |
 | `--evidence` | — | Saved evidence.json.gz, including pooled evidence |
-| `--resume` | — | Previous run directory containing evidence.json.gz, manifest.json and fit_cache |
+| `--resume` | — | Start a NEW run (in a new --output) from a finished run directory: reuses its evidence.json.gz, manifest.json and fit_cache to rerun stages. To finish an interrupted multi-window run in place, use --continue |
 | `--bed` | — | BED3 windows for independent runs; BED6 with equal widths for CL-CR |
 | `--region` | — | Alternative CHROM:START-END, explicitly 0-based half-open |
 | `--pool-loci` | off | CL-CR: pool BED6 windows in their provided orientations |
@@ -437,14 +441,16 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--start-at` | `native` | staged_native_families only: consolidation restarts from saved native fits Choices: `native`, `consolidation`. |
 | `--cores` | — | Worker processes (sets compute.cores; default 4) |
 | `--cache` | — | staged_native_families only: persistent exact native-fit cache directory |
-| `--json-progress` | off | Structured progress on stderr |
+| `--json-progress` / `--progress-json` | off | Structured progress on stderr (JSON lines) |
 | `--daf-mask-runs` | — | DAF only: thin targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases in lattices and native replay (2 = CC/GG and longer; 0 = off). Default: per dataset chemistry, DddA keep-one on runs &gt;= 2 (duplex-validated), DddB off |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run Choices: `keep-one`, `drop`. |
 | `--no-bam` | off | Save frozen results/reports without materializing family-tagged BAMs |
 | `--bam-scope` | `regions` | Export whole alignments overlapping analyzed windows (default), or the full source BAM Choices: `regions`, `full`. |
 | `--bam-grouping` | `datasets` | One BAM per logical dataset (default) or original source file Choices: `datasets`, `files`. |
 | `--bam-recaller-layer` | off | lattice_recaller: also write the optional tf_recaller MA layer (the recaller's own per-molecule class calls at every prevalence tier; bytes tq,fi,tier,q0,lr,rr) to exported BAMs. Off by default; the calls are always in result.json.gz |
-| `--output` | — | New or empty result directory |
+| `--output` | — | New or empty result directory (with --continue: the interrupted run's directory) |
+| `--continue` | off | Finish an interrupted --bam + --bed/--region run in its existing --output directory: windows whose completion marker matches are kept, missing or partial windows are rerun, and the aggregate outputs (regions.json, report.html, BAMs) are rebuilt. Refused if the BAMs, windows or parameters differ from the run's consensus_run.json (--cores, --window-jobs and --json-progress may change). Not the same as --resume, which starts a new run from saved evidence |
+| `--window-jobs` | `0` | Independent BED windows analysed at the same time (default 0 = automatic: up to --cores windows, each with an equal share of --cores; one at a time for staged_native_families, whose per-window compute.maximum_matrix_mb budget is a hard limit). 1 = one window at a time, each using every core |
 
 ## fiberhmm-transfer
 

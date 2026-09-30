@@ -119,7 +119,34 @@ These never had an effect in `fiberhmm-apply`. Use
 ### A failed run left no output
 
 Intended: outputs are published only when the run succeeds, and an earlier
-output at the same path is kept.
+output at the same path is kept. A `--region-parallel` run keeps its finished
+regions; see below.
+
+### An interrupted `--region-parallel` run
+
+Rerun the same command with `--resume`: finished regions in
+`.<output name>.fiberhmm-work/` (or `--work-dir`) are reused. See
+[Long runs and resuming](workflows/calling.md#long-runs-and-resuming).
+
+### `work directory … from an earlier interrupted run exists`
+
+A previous `--region-parallel` run to the same output stopped before
+publishing. Add `--resume` to continue it, or delete the named directory to
+start over. FiberHMM never discards finished regions silently.
+
+### `--resume refused: the input or parameters differ from the interrupted run`
+
+The input BAM (path, size, modification time, header or index) or an
+effective parameter differs from the run that made the work directory; the
+message names the fields. Rerun with the original input and options, or
+delete the work directory to start over. Rebuilding or touching the input
+BAM counts as a change.
+
+### `--resume needs the region-parallel pipeline`
+
+Only region-parallel runs keep per-region results. Streaming runs (stdin,
+stdout, unsorted or unaligned input) restart from the beginning; sort and
+index the input to make a long run resumable.
 
 ## DAF-seq
 
@@ -178,7 +205,28 @@ same way.
 
 ### `Output directory must be empty; existing results are never overwritten`
 
-Choose a new `--output` directory.
+Choose a new `--output` directory. If that directory holds an interrupted
+multi-window BAM run, add `--continue` to finish it in place.
+
+### `--continue refused: inputs or parameters differ from the original run`
+
+`--continue` only finishes the run recorded in `consensus_run.json`; the
+message names the fields that differ (BAMs or their indexes, windows,
+parameters, BAM-export options, DAF run mask). Use the original command
+(only `--cores`, `--window-jobs` and `--json-progress` may change), or write
+the changed analysis to a new `--output`.
+
+### `--continue` versus `--resume`
+
+`--continue` finishes an interrupted multi-window run in its own `--output`;
+`--resume RUN_DIR` starts a new run from one finished window's saved
+evidence. See
+[Long runs and resuming](workflows/consensus.md#long-runs-and-resuming).
+
+### A window failed in a multi-window run
+
+The error names the window and its `logs/window_NNNNNN.log`. Completed
+windows are kept: fix the cause and rerun the same command with `--continue`.
 
 ### No classes, or classes marked `unscored`
 

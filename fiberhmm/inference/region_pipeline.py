@@ -444,6 +444,11 @@ def _process_bam_region_parallel_fused(
     ddda_mcg: bool = False,
     daf_snp_mask_path: str = None,
     cpg_mask_policy: Optional[str] = None,
+    work_dir: Optional[str] = None,
+    resume: bool = False,
+    keep_work_dir: bool = False,
+    run_identity: Optional[dict] = None,
+    progress=None,
 ):
     """Region-parallel fused apply+recall.
 
@@ -454,16 +459,26 @@ def _process_bam_region_parallel_fused(
     in region order.  Input BAM must be coordinate-sorted + indexed.
 
     Output is coordinate-sorted with no sort pass needed.
+
+    ``work_dir`` makes the run resumable (see :mod:`region_resume`): finished
+    region BAMs and their markers are kept there (also when the run fails or
+    is interrupted), ``resume`` reuses the ones that validate against
+    ``run_identity`` plus this function's own parameters, model digests and
+    region plan, and the directory is removed after a successful publish
+    unless ``keep_work_dir``. Without ``work_dir`` a private temporary
+    directory is used and always removed. ``progress(event, **fields)``
+    receives machine-readable progress events.
     """
     start_time = time.time()
 
     require_indexed_bam(input_bam)
     # Validate the plan (unknown --chroms, nothing left to process) before
     # creating any temporary state.
-    plan_region_work(input_bam, region_size, skip_scaffolds, chroms)
-
-    output_dir = ensure_parent_dir(output_bam)
-    temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_call_tmp_', dir=output_dir)
+    plan = plan_region_work(input_bam, region_size, skip_scaffolds, chroms)
+    emit = progress or (lambda event, **fields: None)
+    # A missing output directory is created (as every writer does), for both the
+    # resumable work directory and the private temporary directory below.
+    ensure_parent_dir(output_bam)
 
     params = {
         'edge_trim': edge_trim, 'circular': circular,
@@ -497,47 +512,128 @@ def _process_bam_region_parallel_fused(
         'ref_fasta_path': ref_fasta_path,
     }
 
+    work = None
+    published = False
+    if work_dir is not None:
+        from fiberhmm.inference.region_resume import (
+            WorkDir, file_digest, reference_identity,
+        )
+        identity = dict(
+            run_identity or {},
+            region_pipeline=dict(
+                {k: v for k, v in params.items()
+                 if k not in ('pg_record', 'io_threads')},
+                emission_uplift=emission_uplift,
+                region_size=region_size, skip_scaffolds=skip_scaffolds,
+                chroms=chroms,
+            ),
+            files=dict(
+                apply_model=file_digest(apply_model_path),
+                recall_model=file_digest(recall_model_path),
+                nuc_profile=file_digest(nuc_profile_path),
+                nuc_model=file_digest(nuc_model_path),
+                daf_snp_mask=file_digest(daf_snp_mask_path),
+                reference=reference_identity(ref_fasta_path),
+            ),
+            region_plan=[[list(item.region), bool(item.passthrough)]
+                         for item in plan],
+            pg_record={k: v for k, v in (pg_record or {}).items() if k != 'CL'},
+        )
+        work = WorkDir(work_dir, identity, pg_record, resume=resume).open()
+        params['pg_record'] = work.pg_record
+        temp_dir = str(work.path)
+    else:
+        output_dir = ensure_parent_dir(output_bam)
+        temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_call_tmp_', dir=output_dir)
+
+    aggregation = RegionBamAggregation()
+    regions = []
     try:
         work_items, n_regions = _plan_work_items(
             input_bam, temp_dir, region_size, skip_scaffolds, chroms,
         )
         regions = work_items
+        reused = work.completed(work_items) if work is not None else {}
+        for index, result in sorted(reused.items()):
+            aggregation.add_result(index, result)
+        pending = [(i, item) for i, item in enumerate(work_items) if i not in reused]
+        # Remaining work in processed base pairs (pass-through items count as
+        # nothing): a steadier ETA basis than the region count.
+        def _bp(item):
+            return 0 if item.passthrough else max(0, item.region[2] - item.region[1])
+        pending_bp = sum(_bp(item) for _, item in pending)
         print(f"Processing {n_regions} regions "
               f"(+{len(work_items) - n_regions} pass-through) with {n_cores} "
               "cores (fused apply+recall)...")
+        if reused:
+            print(f"  Resuming: {len(reused)}/{len(work_items)} regions already "
+                  f"finished in {temp_dir}; {len(pending)} to run.")
         sys.stdout.flush()
+        emit('start', regions_total=len(work_items), regions_done=len(reused),
+             regions_reused=len(reused), work_dir=temp_dir if work else None,
+             output=os.path.abspath(output_bam))
 
-        aggregation = RegionBamAggregation()
+        dispatch_start = time.time()
+        new_reads = 0
+        done_bp = 0
+        if pending:
+            print(f"  Initializing {n_cores} workers (loading apply model + LLR tables)...")
+            sys.stdout.flush()
+            pool_start = time.time()
+            first_result = None
+            initializer, initargs = _init_fused_region_worker, (
+                apply_model_path, recall_model_path, emission_uplift, params)
+            if work is not None:
+                from fiberhmm.inference.region_resume import worker_initializer
+                initializer, initargs = worker_initializer, (initializer, *initargs)
+            executor = ProcessPoolExecutor(
+                max_workers=n_cores,
+                mp_context=_MP_CONTEXT,
+                initializer=initializer,
+                initargs=initargs,
+            )
+            try:
+                futures = {executor.submit(_process_region_to_bam_fused, item): i
+                           for i, item in pending}
 
-        print(f"  Initializing {n_cores} workers (loading apply model + LLR tables)...")
-        sys.stdout.flush()
-        pool_start = time.time()
-        first_result = None
-
-        with ProcessPoolExecutor(
-            max_workers=n_cores,
-            mp_context=_MP_CONTEXT,
-            initializer=_init_fused_region_worker,
-            initargs=(apply_model_path, recall_model_path, emission_uplift, params),
-        ) as executor:
-            futures = {executor.submit(_process_region_to_bam_fused, item): i
-                       for i, item in enumerate(work_items)}
-
-            for future in as_completed(futures):
-                result = RegionBamResult.from_value(future.result())
-                aggregation.add_result(futures[future], result)
-                if first_result is None:
-                    first_result = time.time()
-                    print(f"  Workers ready ({first_result - pool_start:.1f}s). Processing...")
+                for future in as_completed(futures):
+                    index = futures[future]
+                    result = RegionBamResult.from_value(future.result())
+                    if work is not None:
+                        work.mark_done(index, work_items[index], result)
+                    aggregation.add_result(index, result)
+                    new_reads += result.total_reads
+                    done_bp += _bp(work_items[index])
+                    if first_result is None:
+                        first_result = time.time()
+                        print(f"  Workers ready ({first_result - pool_start:.1f}s). Processing...")
+                        sys.stdout.flush()
+                    elapsed = time.time() - dispatch_start
+                    rate = new_reads / elapsed if elapsed > 0 else 0
+                    eta = (elapsed * (pending_bp - done_bp) / done_bp
+                           if done_bp > 0 else None)
+                    print(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
+                          f"Reads: {aggregation.total_reads:,} | "
+                          f"With FP: {aggregation.reads_with_footprints:,} | "
+                          f"{rate:.0f} r/s"
+                          f"{f' | ETA {eta / 60:.1f} min' if eta is not None and aggregation.completed < len(regions) else ''}",
+                          end='')
                     sys.stdout.flush()
-                elapsed = time.time() - start_time
-                rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
-                print(f"\r  Regions: {aggregation.completed}/{len(regions)} | "
-                      f"Reads: {aggregation.total_reads:,} | "
-                      f"With FP: {aggregation.reads_with_footprints:,} | "
-                      f"{rate:.0f} r/s", end='')
-                sys.stdout.flush()
-        print()
+                    emit('region', region=list(work_items[index].region),
+                         regions_done=aggregation.completed,
+                         regions_total=len(regions), regions_reused=len(reused),
+                         reads=aggregation.total_reads,
+                         reads_with_footprints=aggregation.reads_with_footprints,
+                         reads_per_s=round(rate, 1),
+                         elapsed_s=round(elapsed, 1),
+                         eta_s=round(eta, 1) if eta is not None else None)
+            except BaseException:
+                from fiberhmm.inference.region_resume import abort_executor
+                abort_executor(executor)
+                raise
+            else:
+                executor.shutdown(wait=True)
+            print()
 
         if aggregation.total_skipped > 0:
             total_enc = aggregation.total_reads + aggregation.total_skipped
@@ -576,8 +672,10 @@ def _process_bam_region_parallel_fused(
             except pysam.SamtoolsError:
                 pass
 
+        emit('merge', regions_total=len(regions), bams=len(non_empty))
         with atomic_output(output_bam, finalize=_index_quietly) as output_path:
             _concatenate_region_bams(input_bam, output_path, non_empty, temp_dir)
+        published = True
 
         elapsed = time.time() - start_time
         rate = aggregation.total_reads / elapsed if elapsed > 0 else 0
@@ -586,8 +684,37 @@ def _process_bam_region_parallel_fused(
             f"{aggregation.reads_with_footprints:,} with footprints, "
             f"{rate:.1f} r/s"
         )
+        emit('done', output=os.path.abspath(output_bam),
+             regions_total=len(regions), regions_reused=len(reused),
+             reads=aggregation.total_reads,
+             reads_with_footprints=aggregation.reads_with_footprints,
+             elapsed_s=round(elapsed, 1))
+        if work is not None and not keep_work_dir:
+            work.remove()
 
+    except BaseException as exc:
+        if work is not None and not published:
+            # Interrupted or failed: finished regions stay in the work dir.
+            done, total = aggregation.completed, len(regions)
+            from fiberhmm.inference.worker_results import WorkerFailureError
+            if isinstance(exc, KeyboardInterrupt):
+                advice = "Rerun the same command with --resume to continue."
+            elif isinstance(exc, WorkerFailureError):
+                # The failed reads are recorded in the finished regions, so a
+                # resume would reuse them and fail the same way.
+                advice = (f"The failed reads are part of the finished regions: "
+                          f"delete {temp_dir} before rerunning.")
+            else:
+                advice = ("Fix the cause and rerun with --resume (finished regions "
+                          f"are reused), or delete {temp_dir} to start over.")
+            print(f"\n  Stopped ({type(exc).__name__}): {done}/{total} regions "
+                  f"finished and kept in {temp_dir}; nothing was published. "
+                  f"{advice}", file=sys.stderr)
+            emit('stopped', reason=type(exc).__name__, regions_done=done,
+                 regions_total=total, work_dir=temp_dir)
+        raise
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        if work is None:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     return aggregation.total_reads, aggregation.reads_with_footprints

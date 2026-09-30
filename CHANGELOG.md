@@ -36,6 +36,25 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 - `fiberhmm-call`: `--scores` (as in `fiberhmm-apply`) and `-c 0` for all
   CPUs; `@PG` records the ML threshold, primary-only setting and CpG masking.
 - Every `fiberhmm-*` command accepts `--version` (prints `fiberhmm <version>`).
+- **Resumable `fiberhmm-call --region-parallel` runs.** Finished regions are
+  kept in a work directory (`.<output>.fiberhmm-work`, or `--work-dir`) with a
+  manifest of the input BAM identity and every effective parameter;
+  `--resume` reuses them, reruns missing or partial regions and publishes
+  records identical to an uninterrupted run, and refuses a changed input or
+  parameter set. `SIGTERM`/`SIGHUP` stop a run as cleanly as Ctrl-C (never a
+  half-published output). `--progress-json` writes machine-readable progress
+  lines (regions done/total, reads/s, ETA) for GUIs and runners. See
+  [Long runs and resuming](https://fiberseq.github.io/FiberHMM/workflows/calling/#long-runs-and-resuming).
+- **Restartable multi-window consensus runs.** `fiberhmm-consensus --bam …
+  --bed/--region` writes each window with an atomic completion marker and
+  the run contract in `consensus_run.json`; `--continue` finishes an
+  interrupted run in place (skips completed windows, redoes partial ones,
+  rebuilds `regions.json`, the report and the BAMs, refuses changed inputs
+  or parameters). Independent windows now run in parallel (`--window-jobs`,
+  default automatic within `--cores`) with per-window logs and a
+  windows-done/ETA progress line; results do not depend on the schedule.
+  `--resume` keeps its meaning (a new run from saved evidence). See
+  [Long runs and resuming](https://fiberseq.github.io/FiberHMM/workflows/consensus/#long-runs-and-resuming).
 - GitHub Actions CI (Linux/macOS, Python 3.10/3.12) with a wheel smoke test.
 - Documentation site (MkDocs, published to GitHub Pages from `docs/`) with
   getting-started, concept, workflow and reference pages, a synthetic demo
@@ -117,7 +136,7 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   conflicting chemistry stops `fiberhmm-consensus` and `fiberhmm-transfer`
   with a one-line error (exit 2) before any results are written, instead of a
   traceback. Each engine rejects knobs it ignores; explicit `sr`/`cross` settings are honoured. Worker pools stop on
-  errors; multi-window BEDs stream.
+  errors; multi-window BEDs load one window per concurrent job.
 
 ### Changed defaults
 
