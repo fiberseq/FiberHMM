@@ -268,6 +268,38 @@ def test_region_filter_keeps_reads_through_the_origin(tmp_path):
     assert [(r.query_name, r.reference_start, r.reference_end) for r in kept] == [("origin", 1500, 3300)]
 
 
+def test_region_subset_keeps_identical_molecules_once_each(tmp_path):
+    """Two identical stored records are two molecules: both stay, whether a
+    record is fetched through several overlapping regions or through the
+    circular-origin window as well as its region."""
+    seq = "A" * 2000
+    ref = tmp_path / "circle.fa"; ref.write_text(">p\n" + seq + "\n")
+    h = pysam.AlignmentHeader.from_dict({"HD": {"SO": "coordinate"},
+                                         "SQ": [{"SN": "p", "LN": 2000, "M5": sequence_md5(seq),
+                                                 "TP": "circular"}]})
+    bam = tmp_path / "dups.bam"
+    with pysam.AlignmentFile(str(bam), "wb", header=h) as out:
+        for start, length, copies in ((100, 300, 2), (350, 100, 1), (1500, 1800, 2)):
+            for _ in range(copies):
+                r = pysam.AlignedSegment(h); r.query_name = "same"; r.reference_id = 0
+                r.reference_start = start; r.query_sequence = "A" * length
+                r.cigarstring = f"{length}M"; r.mapping_quality = 60; r.set_tag("MD", str(length))
+                out.write(r)
+    pysam.index(str(bam))
+
+    def subset(name, regions):
+        p = Pipeline(config(tmp_path / name, bam, ref, topology="circular", regions=regions))
+        p._setup(); p.step_prepare_reference(); p.step_index(); p.step_align(); p.close()
+        with pysam.AlignmentFile(p.aligned_bam) as handle:
+            return sorted((r.reference_start, r.reference_end)
+                          for r in handle.fetch(until_eof=True))
+    # The origin-spanning pair via the wrapped part only.
+    assert subset("origin", ["p:1-50"]) == [(1500, 3300)] * 2
+    # Overlapping and touching regions, and the last-base window: each record once.
+    assert subset("many", ["p:150-200", "p:180-400", "p:401-420", "p:1990-2000",
+                           "p:1-10"]) == [(100, 400)] * 2 + [(350, 450)] + [(1500, 3300)] * 2
+
+
 def _wrapped_read():
     h = pysam.AlignmentHeader.from_dict({"SQ": [{"SN": "p", "LN": 2000, "TP": "circular"}]})
     r = pysam.AlignedSegment(h); r.query_name = "r"; r.reference_id = 0; r.reference_start = 1500

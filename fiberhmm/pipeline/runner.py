@@ -804,29 +804,40 @@ class Pipeline:
         tmp = os.path.join(self.outdir, STATE_DIR, "tmp", f"{self.sample}.unsorted.bam")
         os.makedirs(os.path.dirname(tmp), exist_ok=True)
         kept = 0
-        seen: set = set()
         lengths = {c.name: c.length for c in self.reference.contigs}
+        # Fetch windows per contig: the regions, plus the last base, where
+        # records that run past the contig end (through a circular origin)
+        # are indexed. Merged into disjoint, non-touching windows so each
+        # stored record is fetched once per window it overlaps; a record is
+        # written from the first window it overlaps only. Records are thus
+        # kept by occurrence: identical records (two molecules with the same
+        # name and alignment) both stay.
+        windows: dict[str, list[tuple[int, int]]] = {}
+        for chrom, start, end in self.regions:
+            windows.setdefault(chrom, []).append((start, end))
+            length = lengths.get(chrom)
+            if length:
+                windows[chrom].append((length - 1, length))
         with pysam.AlignmentFile(self.use_aligned_input) as src:
             header = decorate_header(src.header.to_dict(), self.reference)
             with pysam.AlignmentFile(tmp, "wb", header=header) as out:
-                for chrom, start, end in self.regions:
-                    candidates = [src.fetch(chrom, start, end)]
-                    length = lengths.get(chrom)
-                    if length:
-                        # Records that run past the contig end (through a circular
-                        # origin) are indexed at their start: fetch them at the
-                        # last base and keep those whose wrapped part overlaps.
-                        candidates.append(src.fetch(chrom, length - 1, length))
-                    for batch in candidates:
-                        for read in batch:
-                            if not self._overlaps_regions(read, [(chrom, start, end)]):
+                for chrom, spans in windows.items():
+                    merged: list[list[int]] = []
+                    for start, end in sorted(spans):
+                        if merged and start <= merged[-1][1]:
+                            merged[-1][1] = max(merged[-1][1], end)
+                        else:
+                            merged.append([start, end])
+                    previous_end = None
+                    for start, end in merged:
+                        for read in src.fetch(chrom, start, end):
+                            if previous_end is not None and read.reference_start < previous_end:
+                                continue  # overlaps an earlier window: already seen there
+                            if not self._overlaps_regions(read):
                                 continue
-                            key = read.to_string()  # the complete record
-                            if key in seen:
-                                continue
-                            seen.add(key)
                             out.write(read)
                             kept += 1
+                        previous_end = end
         _sort_index_publish(tmp, self.aligned_bam, self.config.cores)
         message = f"{kept} records in {len(self.regions)} region(s) of the aligned input"
         self.log(f"align: {message}")
