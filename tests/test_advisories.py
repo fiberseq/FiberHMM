@@ -732,3 +732,67 @@ def test_samtools_cat_hides_the_other_inputs_history(tmp_path):
     header = _header(gather, [_declaration("fiberhmm-call", apply_sha256=fixed,
                                            recall_sha256=fixed)], linked=False)
     assert _by_id(check_header(header))["hia5-nanopore-gt-table"].status == "possibly_affected"
+
+
+_SAMTOOLS = shutil.which("samtools")
+
+
+@pytest.mark.skipif(_SAMTOOLS is None, reason="samtools not installed")
+@pytest.mark.parametrize("spelling", [
+    ["-b", "{list}"], ["-b{list}"], ["-fb{list}"], ["-q", "-b{list}"], ["-f", "-b", "{list}"],
+    ["{good}", "{bad}"], ["-f", "--", "{good}", "{bad}"],
+])
+def test_real_samtools_cat_spellings_are_all_concatenation(tmp_path, spelling):
+    """Every spelling samtools cat accepts for several inputs (attached -bFILE,
+    clustered flags, file lists, positional inputs) hides the later inputs'
+    headers: the file is never clean."""
+    swapped = _sha(MODELS / "legacy" / "hia5_nanopore_gt_swapped_legacy.json")
+    fixed = _sha(MODELS / "hia5_nanopore.json")
+    paths = {}
+    for name, digest in (("good", fixed), ("bad", swapped)):
+        paths[name] = str(tmp_path / f"{name}.bam")
+        header = _header([_call("fiberhmm-call")], [
+            _declaration("fiberhmm-call", apply_sha256=digest, recall_sha256=digest)])
+        _write_bam(paths[name], header, [(name, [], 0)])
+    paths["list"] = str(tmp_path / "inputs.list")
+    Path(paths["list"]).write_text(f"{paths['good']}\n{paths['bad']}\n")
+    out = tmp_path / "joined.bam"
+    args = [a.format(**paths) for a in spelling]
+    subprocess.run([_SAMTOOLS, "cat", "-o", str(out), *args], check=True,
+                   capture_output=True)
+    with pysam.AlignmentFile(str(out)) as handle:
+        assert sorted(r.query_name for r in handle) == ["bad", "good"]
+    payload = report(out, sidecars=False)
+    assert payload["status"] == "rerun-required", (args, payload)
+    assert "kept one header" in payload["advisories"][0]["evidence"][0]
+
+
+@pytest.mark.parametrize("arguments, joins", [
+    ("-b x.list -o o.bam", True),
+    ("-bx.list -o o.bam", True),
+    ("-o o.bam -fqbx.list", True),
+    ("--output-fmt=BAM -o o.bam a.bam b.bam", True),
+    ("--output-fmt BAM -o o.bam a.bam", False),
+    ("--verb 3 -o o.bam a.bam", False),
+    ("--no-PG -o o.bam -- -o.bam", False),
+    ("-o o.bam a.bam - ", True),
+    ("-hheader.sam -oo.bam a.bam", False),
+    ("-h header.sam -o o.bam a.bam", False),
+    ("-o o.bam a.bam", False),
+    ("--bogus -o o.bam a.bam", True),          # unparsable: never cleared
+    ("-Z -o o.bam a.bam", True),
+])
+def test_samtools_cat_command_lines_are_parsed_like_getopt(arguments, joins):
+    record = {"PN": "samtools", "ID": "samtools", "CL": "samtools cat " + arguments}
+    assert adv._drops_input_headers(record) is joins
+
+
+def test_fiberhmm_region_concatenation_is_not_a_join_even_with_spaces():
+    for directory in ("/data/run 1/.out.bam.fiberhmm-work",
+                      "/Users/x/FiberHMM v1.0/.fiberhmm_call_tmp_ab12"):
+        cl = (f"samtools cat -h {directory}/region_000000.bam "
+              f"-b {directory}/bam_list.txt -o /Users/x/FiberHMM v1.0/out.bam")
+        assert adv._drops_input_headers({"PN": "samtools", "CL": cl}) is False, cl
+    # Same shape but files outside a FiberHMM work directory: a user's join.
+    cl = "samtools cat -h /d/region_000000.bam -b /d/bam_list.txt -o /d/out.bam"
+    assert adv._drops_input_headers({"PN": "samtools", "CL": cl}) is True

@@ -346,21 +346,76 @@ def _is_merge_record(record: dict) -> bool:
     return bool(re.search(r"(?:^|[\s/])samtools\s+merge(?:\s|$)", command))
 
 
-_CAT_VALUE_OPTIONS = {"-o", "-h", "-b", "-@", "--threads", "-O", "--output-fmt",
-                      "--output-fmt-option", "--input-fmt-option", "--reference", "-r"}
+# samtools cat's getopt (1.21): short options with a value, short flags, and
+# long options (getopt_long: "--name=value" or "--name value", unique prefixes).
+_CAT_SHORT_VALUE = frozenset("hob@rp")
+_CAT_SHORT_FLAG = frozenset("fq")
+_CAT_LONG = {"no-PG": False, "threads": True, "output-fmt": True,
+             "output-fmt-option": True, "input-fmt-option": True, "reference": True,
+             "verbosity": True, "write-index": False}
+# fiberhmm-call joining its own region BAMs (bam_output._samtools_cat_bams);
+# matched on the whole command so directory names may contain spaces.
+_FIBERHMM_REGION_CAT_RE = re.compile(
+    r"samtools\s+cat\s+-h\s+(?P<dir>.+?/\.[^/]*fiberhmm[^/]*)/region_\d+\.bam\s+"
+    r"-b\s+(?P=dir)/[^/]*bam_list[^/]*\.txt\s+-o\s+\S.*$")
 
 
-def _fiberhmm_part(path: str) -> bool:
-    """A file in one of fiberhmm-call's own temporary or work directories
-    (``.fiberhmm_call_tmp_*``, ``.fiberhmm_tmp_*``, ``.<output>.fiberhmm-work``),
-    whose region BAMs it concatenates into one call's output."""
-    parts = path.replace("\\", "/").split("/")
-    return any(p.startswith(".fiberhmm_") or (p.startswith(".") and p.endswith(".fiberhmm-work"))
-               for p in parts[:-1])
+def _cat_arguments(tokens: list[str]) -> tuple[list[str], list[str], bool]:
+    """``(inputs, list_files, unknown)`` of a ``samtools cat`` argument list,
+    parsed the way its getopt does: attached (``-bFILE``) and separate
+    (``-b FILE``) values, clustered flags (``-fq``, ``-fbFILE``), long options
+    with ``=`` or a separate value and unique prefixes, ``--``, and ``-``
+    (stdin) as an input. ``unknown`` is set for anything it cannot parse."""
+    inputs: list[str] = []
+    lists: list[str] = []
+    unknown = False
+    options_done = False
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        i += 1
+        if options_done or token == "-" or not token.startswith("-"):
+            inputs.append(token)
+            continue
+        if token == "--":
+            options_done = True
+            continue
+        if token.startswith("--"):
+            name, equals, _value = token[2:].partition("=")
+            matches = [k for k in _CAT_LONG if k == name] or \
+                      [k for k in _CAT_LONG if k.startswith(name)]
+            if len(matches) != 1:
+                unknown = True
+                continue
+            if _CAT_LONG[matches[0]] and not equals:
+                i += 1  # its value is the next word
+            continue
+        j = 1
+        while j < len(token):
+            flag = token[j]
+            if flag in _CAT_SHORT_VALUE:
+                value = token[j + 1:]
+                if not value:
+                    value = tokens[i] if i < len(tokens) else ""
+                    i += 1
+                if flag == "b":
+                    lists.append(value)
+                break
+            if flag not in _CAT_SHORT_FLAG:
+                unknown = True
+                break
+            j += 1
+    return inputs, lists, unknown
 
 
 def _drops_input_headers(record: dict) -> bool:
-    """Whether a @PG step joined several inputs but kept one header."""
+    """Whether a @PG step may have joined several inputs but kept one header.
+
+    ``samtools cat`` of two or more inputs, or of any file list (it can name
+    any number of files), and Picard GatherBamFiles. A ``samtools cat``
+    command line that cannot be parsed counts too; fiberhmm-call's own
+    concatenation of its region BAMs does not.
+    """
     command = str(record.get("CL", ""))
     name = str(record.get("PN") or record.get("ID") or "")
     if re.search(r"GatherBamFiles", f"{name} {command}", re.IGNORECASE):
@@ -368,27 +423,10 @@ def _drops_input_headers(record: dict) -> bool:
     match = re.search(r"(?:^|[\s/])samtools\s+cat(?:\s|$)(.*)", command)
     if not match:
         return False
-    tokens = match.group(1).split()
-    inputs, paths, listed = [], [], False
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
-        if token in _CAT_VALUE_OPTIONS:
-            value = tokens[i + 1] if i + 1 < len(tokens) else ""
-            if token == "-b":
-                listed = True
-                inputs.append(value)
-            if token in ("-b", "-h"):
-                paths.append(value)
-            i += 2
-            continue
-        if not token.startswith("-"):
-            inputs.append(token)
-            paths.append(token)
-        i += 1
-    if paths and all(_fiberhmm_part(path) for path in paths):
-        return False  # fiberhmm-call joining its own region files
-    return listed or len(inputs) >= 2
+    if _FIBERHMM_REGION_CAT_RE.search(command):
+        return False
+    inputs, lists, unknown = _cat_arguments(match.group(1).split())
+    return unknown or bool(lists) or len(inputs) >= 2
 
 
 @dataclass
