@@ -22,6 +22,7 @@ import pysam
 
 from fiberhmm.core.bam_reader import (
     extract_daf_iupac_positions,
+    parse_mm_tag_query_calls,
     parse_mm_tag_query_positions,
 )
 from fiberhmm.io.ma_tags import parse_ma_tag
@@ -309,25 +310,56 @@ def _mm_ml(read) -> tuple[str, Sequence[int]]:
     return mm, ml
 
 
-def _daf_marks(read, reference_handle=None, prob_threshold: int = 125) -> np.ndarray:
-    sequence = (read.query_sequence or "").upper()
-    if "R" in sequence or "Y" in sequence:
-        positions, _strand, _converted = extract_daf_iupac_positions(
-            sequence, read.get_tag("st") if read.has_tag("st") else None
-        )
-        return np.asarray(sorted(positions), dtype=np.int64)
+_NO_UNKNOWN: frozenset = frozenset()
 
+
+def _mm_calls(read, mode: str, prob_threshold: int):
+    """``(modified, unknown)`` query positions (SEQ frame) from MM/ML, or None.
+
+    ``unknown`` holds the target bases an MM ``?`` entry leaves unlisted: no
+    call was made there, so they are not opportunities (SAM spec). Entries
+    flagged ``.`` (or unflagged) list every base, so reads without a ``?``
+    entry take the historical parse unchanged and ``unknown`` is empty.
+    Returns None when the read carries no usable MM/ML.
+    """
+    sequence = (read.query_sequence or "").upper()
     mm, ml = _mm_ml(read)
-    if mm and len(ml):
-        positions = parse_mm_tag_query_positions(
+    if mm and "?" in mm:
+        # Even with an empty ML, a '?' entry says which bases were observed.
+        modified, unknown = parse_mm_tag_query_calls(
             mm,
             ml,
             sequence,
             read.is_reverse,
             prob_threshold=prob_threshold,
-            mode="daf",
+            mode=mode,
         )
-        return np.asarray(sorted(positions), dtype=np.int64)
+        return np.asarray(sorted(modified), dtype=np.int64), unknown
+    if not mm or not len(ml):
+        return None
+    positions = parse_mm_tag_query_positions(
+        mm,
+        ml,
+        sequence,
+        read.is_reverse,
+        prob_threshold=prob_threshold,
+        mode=mode,
+    )
+    return np.asarray(sorted(positions), dtype=np.int64), _NO_UNKNOWN
+
+
+def _daf_marks(read, reference_handle=None, prob_threshold: int = 125):
+    """DAF event query positions and the MM ``?``-unknown query positions."""
+    sequence = (read.query_sequence or "").upper()
+    if "R" in sequence or "Y" in sequence:
+        positions, _strand, _converted = extract_daf_iupac_positions(
+            sequence, read.get_tag("st") if read.has_tag("st") else None
+        )
+        return np.asarray(sorted(positions), dtype=np.int64), _NO_UNKNOWN
+
+    calls = _mm_calls(read, "daf", prob_threshold)
+    if calls is not None:
+        return calls
 
     try:
         from fiberhmm.daf.encoder import get_daf_positions
@@ -336,10 +368,10 @@ def _daf_marks(read, reference_handle=None, prob_threshold: int = 125) -> np.nda
     except Exception:
         result = None
     if result is None:
-        return np.empty(0, dtype=np.int64)
+        return np.empty(0, dtype=np.int64), _NO_UNKNOWN
     ct_positions, ga_positions, strand = result
     positions = ct_positions if strand == "CT" else ga_positions
-    return np.asarray(sorted(positions), dtype=np.int64)
+    return np.asarray(sorted(positions), dtype=np.int64), _NO_UNKNOWN
 
 
 def _aligned_reference_pairs(read, reference_handle=None):
@@ -380,6 +412,7 @@ def _daf_signal_profile(
     pairs = _aligned_reference_pairs(read, reference_handle)
     if pairs is not None:
         opportunities = 0
+        opportunity_queries: list[int] = []
         positions: list[int] = []
         aligned_positions: list[int] = []
         query_to_reference: dict[int, int] = {}
@@ -397,6 +430,7 @@ def _daf_signal_profile(
             if reference_base not in ("C", "G"):
                 continue
             opportunities += 1
+            opportunity_queries.append(int(query_position))
             query_base = sequence[query_position]
             if (
                 reference_base == "C" and query_base in ("T", "Y")
@@ -408,7 +442,13 @@ def _daf_signal_profile(
         # Some DAF representations carry calls only in MM/ML. Translate those
         # query coordinates onto the same reference axis when possible.
         if not positions:
-            fallback = _daf_marks(read, reference_handle, prob_threshold)
+            fallback, unknown = _daf_marks(read, reference_handle, prob_threshold)
+            if unknown:
+                # Bases an MM '?' entry leaves unlisted were never observed.
+                opportunities -= sum(
+                    1 for query_position in opportunity_queries
+                    if query_position in unknown
+                )
             positions = sorted(
                 {
                     query_to_reference[int(position)]
@@ -427,42 +467,60 @@ def _daf_signal_profile(
 
     # Fallback for unaligned/MD-less encoded DAF BAMs. This is less exact but
     # preserves support for files that have no recoverable reference bases.
-    positions = _daf_marks(read, reference_handle, prob_threshold)
+    positions, unknown = _daf_marks(read, reference_handle, prob_threshold)
     opportunities = _opportunities(sequence, positions, "daf")
+    if unknown:
+        # Unlisted '?' bases counted above (C/G/R/Y; events are never unknown).
+        opportunities -= sum(
+            1 for position in unknown
+            if 0 <= int(position) < len(sequence)
+            and sequence[int(position)] in "CGRY"
+        )
     return positions, opportunities, 0, len(sequence)
 
 
-def _fiber_marks(read, mode: str, prob_threshold: int) -> np.ndarray:
-    sequence = (read.query_sequence or "").upper()
-    mm, ml = _mm_ml(read)
-    if not mm or not len(ml):
-        return np.empty(0, dtype=np.int64)
-    positions = parse_mm_tag_query_positions(
-        mm,
-        ml,
-        sequence,
-        read.is_reverse,
-        prob_threshold=prob_threshold,
-        mode=mode,
-    )
-    return np.asarray(sorted(positions), dtype=np.int64)
+def _fiber_marks(read, mode: str, prob_threshold: int):
+    """Modified query positions and the MM ``?``-unknown query positions."""
+    calls = _mm_calls(read, mode, prob_threshold)
+    if calls is None:
+        return np.empty(0, dtype=np.int64), _NO_UNKNOWN
+    return calls
+
+
+def _fiber_opportunities(
+    sequence: str, mode: str, is_reverse: bool, unknown=_NO_UNKNOWN
+) -> int:
+    """Fiber-seq target bases the MM entries made a call at.
+
+    Counted on the strand the MM parser (and the encoder) reads: Nanopore
+    Hia5 calls basecalled-forward A only, which is SEQ T on a reverse-aligned
+    read; PacBio calls A on both strands (SEQ A + T in either orientation).
+    ``unknown`` (bases a ``?`` entry leaves unlisted, reported by the parser
+    in that same frame) are not opportunities.
+    """
+    sequence = sequence.upper()
+    if mode == "nanopore-fiber":
+        targets = sequence.count("T" if is_reverse else "A")
+    else:
+        targets = sequence.count("A") + sequence.count("T")
+    return targets - len(unknown)
 
 
 def _opportunities(sequence: str, positions: np.ndarray, mode: str) -> int:
+    """DAF opportunities of an unaligned/MD-less read (Fiber-seq modes:
+    :func:`_fiber_opportunities`, which needs the read orientation)."""
     sequence = sequence.upper()
-    if mode == "daf":
-        total = sum(sequence.count(base) for base in "CGRY")
-        # Raw mismatch and MM/ML representations place converted targets at
-        # A/T; add only events not already represented by C/G/R/Y.
-        total += sum(
-            1 for position in positions
-            if 0 <= int(position) < len(sequence)
-            and sequence[int(position)] not in "CGRY"
-        )
-        return total
-    if mode == "nanopore-fiber":
-        return sequence.count("A")
-    return sequence.count("A") + sequence.count("T")
+    if mode != "daf":
+        raise ValueError(f"_opportunities is DAF-only, not {mode!r}")
+    total = sum(sequence.count(base) for base in "CGRY")
+    # Raw mismatch and MM/ML representations place converted targets at
+    # A/T; add only events not already represented by C/G/R/Y.
+    total += sum(
+        1 for position in positions
+        if 0 <= int(position) < len(sequence)
+        and sequence[int(position)] not in "CGRY"
+    )
+    return total
 
 
 def _signal_profile(
@@ -481,8 +539,10 @@ def _signal_profile(
             excluded_reference_positions=excluded,
         )
     sequence = read.query_sequence or ""
-    positions = _fiber_marks(read, mode, prob_threshold)
-    return positions, _opportunities(sequence, positions, mode), 0, len(sequence)
+    positions, unknown = _fiber_marks(read, mode, prob_threshold)
+    opportunities = _fiber_opportunities(
+        sequence, mode, bool(getattr(read, "is_reverse", False)), unknown)
+    return positions, opportunities, 0, len(sequence)
 
 
 def _footprint_lengths(read) -> tuple[list[int], list[int], bool]:

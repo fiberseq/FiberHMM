@@ -382,3 +382,174 @@ def test_qc_cli_requires_output_dir_for_inputs_in_different_directories(tmp_path
     inputs = [str(tmp_path / "one" / "a.bam"), str(tmp_path / "two" / "b.bam")]
     with pytest.raises(ValueError, match="require -o/--output-dir"):
         resolve_output_dir(inputs, None)
+
+
+# ---------------------------------------------------------------------------
+# MM '?' (unknown) specs: unlisted target bases are not opportunities
+# ---------------------------------------------------------------------------
+
+def _mm_read(header, sequence, *, reverse, specs, name):
+    """Aligned read whose MM lists ``specs`` = [(base, strand, flag, n_listed,
+    n_hits)]: the first ``n_listed`` target bases (original frame) are listed,
+    the first ``n_hits`` of them with ML 255, the rest with ML 0."""
+    original = (
+        sequence.translate(str.maketrans("ACGT", "TGCA"))[::-1]
+        if reverse else sequence
+    )
+    mm_parts, ml = [], []
+    for base, strand, flag, n_listed, n_hits in specs:
+        total = original.count(base)
+        n_listed = total if n_listed is None else n_listed
+        mm_parts.append(f"{base}{strand}a{flag}" + "".join([",0"] * n_listed))
+        ml += [255] * n_hits + [0] * (n_listed - n_hits)
+    read = pysam.AlignedSegment(header)
+    read.query_name = name
+    read.query_sequence = sequence
+    read.flag = 16 if reverse else 0
+    read.reference_id = 0
+    read.reference_start = 0
+    read.mapping_quality = 60
+    read.cigartuples = [(0, len(sequence))]
+    read.set_tag("MM", ";".join(mm_parts) + ";")
+    read.set_tag("ML", ml)
+    return read
+
+
+def _random_sequence(length, seed):
+    rng = np.random.default_rng(seed)
+    return "".join(rng.choice(list("ACGT"), size=length))
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_qc_excludes_question_unlisted_bases_nanopore(reverse):
+    from fiberhmm.qc.core import _signal_profile
+
+    header = pysam.AlignmentHeader.from_dict(
+        {"HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 10_000}]})
+    sequence = _random_sequence(1200, seed=11)
+    listed = _mm_read(header, sequence, reverse=reverse, name="dot",
+                      specs=[("A", "+", ".", None, 20)])
+    unknown = _mm_read(header, sequence, reverse=reverse, name="question",
+                       specs=[("A", "+", "?", 100, 20)])
+
+    dot_positions, dot_opportunities, _, _ = _signal_profile(
+        listed, "nanopore-fiber")
+    positions, opportunities, _, _ = _signal_profile(unknown, "nanopore-fiber")
+    # '.': every basecalled-forward A (SEQ T on a reverse read) is an
+    # opportunity.
+    original_a = sequence.count("T" if reverse else "A")
+    assert dot_opportunities == original_a
+    assert len(dot_positions) == 20
+    # '?': only the 100 listed bases were observed.
+    assert opportunities == 100
+    np.testing.assert_array_equal(positions, dot_positions)
+
+    result, _ = analyze_sample([unknown], "nanopore-fiber", None,
+                               min_opportunities=50)
+    assert result["signal"]["n_opportunities"] == 100
+    assert result["signal"]["aggregate_rate"] == pytest.approx(0.2)
+
+
+def test_qc_excludes_question_unlisted_bases_pacbio():
+    from fiberhmm.qc.core import _signal_profile
+
+    header = pysam.AlignmentHeader.from_dict(
+        {"HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 10_000}]})
+    sequence = _random_sequence(1200, seed=12)
+    read = _mm_read(header, sequence, reverse=False, name="question",
+                    specs=[("A", "+", "?", 60, 10), ("T", "-", "?", 40, 5)])
+    positions, opportunities, _, _ = _signal_profile(read, "pacbio-fiber")
+    assert opportunities == 100
+    assert len(positions) == 15
+    # A fully-listed '?' read is identical to '.'.
+    full = _mm_read(header, sequence, reverse=False, name="full",
+                    specs=[("A", "+", "?", None, 10), ("T", "-", "?", None, 5)])
+    dot = _mm_read(header, sequence, reverse=False, name="dot",
+                   specs=[("A", "+", ".", None, 10), ("T", "-", ".", None, 5)])
+    assert _signal_profile(full, "pacbio-fiber")[1] == \
+        _signal_profile(dot, "pacbio-fiber")[1] == \
+        sequence.count("A") + sequence.count("T")
+
+
+@pytest.mark.parametrize("with_md", [False, True])
+def test_qc_excludes_question_unlisted_bases_daf_mm(with_md):
+    """DAF calls carried only in MM/ML (no R/Y): a '?' spec's unlisted bases
+    are not opportunities; a '.' spec keeps the legacy C/G count. With an MD
+    tag (reference-conditioned path, no SEQ mismatches) and without one."""
+    from fiberhmm.qc.core import _signal_profile
+
+    header = pysam.AlignmentHeader.from_dict(
+        {"HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 10_000}]})
+    sequence = _random_sequence(1200, seed=13)
+
+    def daf_read(flag, n_listed, name):
+        read = _mm_read(header, sequence, reverse=False, name=name,
+                        specs=[("C", "+", flag, n_listed, 10)])
+        read.set_tag("st", "CT")
+        if with_md:
+            read.set_tag("MD", str(len(sequence)))
+        return read
+
+    legacy = sequence.count("C") + sequence.count("G")
+    positions, opportunities, _, _ = _signal_profile(
+        daf_read(".", None, "dot"), "daf")
+    assert (len(positions), opportunities) == (10, legacy)
+    positions, opportunities, _, _ = _signal_profile(
+        daf_read("?", 50, "question"), "daf")
+    assert len(positions) == 10
+    assert opportunities == sequence.count("G") + 50
+
+
+def _revcomp(sequence):
+    return sequence.translate(str.maketrans("ACGT", "TGCA"))[::-1]
+
+
+@pytest.mark.parametrize("flag", [".", "?"])
+def test_qc_nanopore_orientation_invariant(flag):
+    """Regression: ONT QC counted SEQ A as opportunities on reverse-aligned
+    reads, i.e. the opposite strand to the basecalled-forward A's the MM
+    calls refer to. The same molecule aligned forward or reverse must give
+    identical opportunities, events and rate."""
+    from fiberhmm.qc.core import _signal_profile
+
+    header = pysam.AlignmentHeader.from_dict(
+        {"HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 10_000}]})
+    # A/T-skewed molecule so the two strands' A counts clearly differ.
+    rng = np.random.default_rng(21)
+    molecule = "".join(rng.choice(list("ACGT"), p=[0.4, 0.2, 0.2, 0.2],
+                                  size=1500))
+    assert molecule.count("A") != molecule.count("T")
+    n_listed = None if flag == "." else 300
+    forward = _mm_read(header, molecule, reverse=False, name="fwd",
+                       specs=[("A", "+", flag, n_listed, 40)])
+    reverse = _mm_read(header, _revcomp(molecule), reverse=True, name="rev",
+                       specs=[("A", "+", flag, n_listed, 40)])
+    assert forward.get_tag("MM") == reverse.get_tag("MM")
+
+    fwd_positions, fwd_opportunities, _, _ = _signal_profile(
+        forward, "nanopore-fiber")
+    rev_positions, rev_opportunities, _, _ = _signal_profile(
+        reverse, "nanopore-fiber")
+    expected = molecule.count("A") if flag == "." else 300
+    assert fwd_opportunities == rev_opportunities == expected
+    assert len(fwd_positions) == len(rev_positions) == 40
+    fwd, _ = analyze_sample([forward], "nanopore-fiber", None,
+                            min_opportunities=50)
+    rev, _ = analyze_sample([reverse], "nanopore-fiber", None,
+                            min_opportunities=50)
+    assert fwd["signal"] == rev["signal"]
+
+
+def test_qc_pacbio_counts_both_strands_in_either_orientation():
+    from fiberhmm.qc.core import _signal_profile
+
+    header = pysam.AlignmentHeader.from_dict(
+        {"HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 10_000}]})
+    molecule = _random_sequence(1500, seed=22)
+    specs = [("A", "+", ".", None, 30), ("T", "-", ".", None, 10)]
+    forward = _mm_read(header, molecule, reverse=False, name="f", specs=specs)
+    reverse = _mm_read(header, _revcomp(molecule), reverse=True, name="r",
+                       specs=specs)
+    both = molecule.count("A") + molecule.count("T")
+    assert _signal_profile(forward, "pacbio-fiber")[1] == both
+    assert _signal_profile(reverse, "pacbio-fiber")[1] == both

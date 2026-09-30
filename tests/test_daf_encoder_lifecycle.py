@@ -140,3 +140,95 @@ def test_daf_encode_reads_stdin_without_seeking(tmp_path):
     assert len(file_records) == 15
     assert any("Y" in seq for _, seq, _ in file_records)
     assert records(from_stdin) == file_records
+
+
+def _sha256(path):
+    import hashlib
+    from pathlib import Path
+
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _hidden_leftovers(directory):
+    return [p.name for p in directory.iterdir()
+            if p.name.startswith(".") or ".sorting" in p.name]
+
+
+def test_daf_encode_finalization_failure_keeps_previous_output(tmp_path):
+    """A failed sort/index must not replace (or corrupt) an earlier output.
+
+    Regression: daf-encode wrote its output in place and sorted/indexed the
+    final file, so a failure after encoding left a half-published BAM next to
+    a stale index describing the previous content."""
+    from unittest.mock import patch
+
+    import pysam
+
+    src = tmp_path / "raw.bam"
+    _write_md_bam(src)
+    out = tmp_path / "encoded.bam"
+    out.write_bytes(src.read_bytes())
+    pysam.index(str(out))
+    bam_digest, bai_digest = _sha256(out), _sha256(str(out) + ".bai")
+
+    with patch.object(encoder, "_sort_and_index_bam",
+                      side_effect=OSError("injected finalization failure")):
+        with pytest.raises(OSError, match="injected"):
+            encoder.process_bam_daf_encode(str(src), str(out), io_threads=1)
+    assert _sha256(out) == bam_digest
+    assert _sha256(str(out) + ".bai") == bai_digest
+    assert _hidden_leftovers(tmp_path) == []
+
+
+def test_daf_encode_publishes_sorted_bam_with_fresh_index(tmp_path):
+    import pysam
+
+    src = tmp_path / "raw.bam"
+    _write_md_bam(src)
+    out = tmp_path / "encoded.bam"
+    out.write_bytes(b"stale")
+    (tmp_path / "encoded.bam.bai").write_bytes(b"stale-index")
+
+    summary = encoder.process_bam_daf_encode(str(src), str(out), io_threads=1)
+    assert summary["encoded"] == 15
+    with pysam.AlignmentFile(str(out), "rb") as bam:
+        assert bam.has_index()
+        reads = list(bam.fetch("chr1"))
+    assert len(reads) == 15
+    assert all(read.get_tag("st") == "CT" for read in reads)
+    assert _hidden_leftovers(tmp_path) == []
+
+
+def test_daf_encode_streams_to_stdout(tmp_path):
+    """``-o -`` streams the BAM (no temporary, no sort/index) with the same
+    records as a file output."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    import pysam
+
+    src = tmp_path / "raw.bam"
+    _write_md_bam(src)
+    env = dict(os.environ, FIBERHMM_NO_UPDATE_CHECK="1")
+    cmd = [sys.executable, "-m", "fiberhmm.cli.daf_encode", "--io-threads", "1",
+           "-i", str(src)]
+    from_file = tmp_path / "from_file.bam"
+    repo = Path(__file__).resolve().parents[1]
+    subprocess.run(cmd + ["-o", str(from_file)], check=True, env=env,
+                   capture_output=True, cwd=repo)
+    streamed = tmp_path / "streamed.bam"
+    with open(streamed, "wb") as sink:
+        proc = subprocess.run(cmd + ["-o", "-"], stdout=sink,
+                              stderr=subprocess.PIPE, env=env, cwd=repo)
+    assert proc.returncode == 0, proc.stderr.decode()[-2000:]
+
+    def records(path):
+        with pysam.AlignmentFile(str(path), "rb", check_sq=False) as bam:
+            return [(r.query_name, r.query_sequence, r.get_tag("st"))
+                    for r in bam.fetch(until_eof=True)]
+
+    assert records(streamed) == records(from_file)
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "from_file.bam", "from_file.bam.bai", "raw.bam", "streamed.bam"]

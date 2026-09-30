@@ -229,11 +229,22 @@ def _resolve_apply_prob_threshold(args):
 
 def main():
     args = parse_args()
+    from fiberhmm.cli.provenance import ChemistryConflictError
     from fiberhmm.inference.read_filters import MostlyUnmappedError
     from fiberhmm.inference.worker_results import WorkerFailureError
 
     try:
         _main(args)
+    except ChemistryConflictError as exc:
+        # apply has no --replace-chemistry: its output keeps the input's
+        # declaration, so point at the tool that can re-declare it.
+        message = str(exc).replace(
+            ", or --replace-chemistry to re-declare the output deliberately.",
+            ". fiberhmm-apply keeps the input's declaration; use "
+            "fiberhmm-call --replace-chemistry to re-declare it deliberately.",
+        )
+        print(f"error: {message}", file=sys.stderr)
+        sys.exit(2)
     except (WorkerFailureError, MostlyUnmappedError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -241,12 +252,6 @@ def main():
 
 def _main(args):
     _reject_unimplemented_options(args)
-    from fiberhmm.core.bam_reader import apply_daf_run_mask_arguments
-    try:
-        apply_daf_run_mask_arguments(args, args.enzyme)
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        sys.exit(2)
     using_bundled_model = args.model is None
 
     # Handle stdout output mode — redirect all prints to stderr
@@ -296,26 +301,6 @@ def _main(args):
     print("Model loaded successfully")
     print(f"  Start probs: {model.startprob_}")
     print(f"  Transition matrix:\n{model.transmat_}")
-
-    # Surface the DddA two-pass workflow whenever a DddA model is detected.
-    # ddda_nuc.json deliberately does NOT emit sub-nucleosomal TF calls;
-    # users unaware of fiberhmm-recall-tfs will think their data just has
-    # no TFs. Print a prominent notice (stderr so BAM streams stay clean).
-    _model_basename = os.path.basename(model_path).lower()
-    if 'ddda' in _model_basename or getattr(args, 'enzyme', None) == 'ddda':
-        import sys as _sys
-        print(
-            "\n"
-            "------------------------------------------------------------------------\n"
-            "  NOTE: DddA model detected.\n"
-            "  This model calls NUCLEOSOMES only. To recover TF / Pol II\n"
-            "  footprints, run the 2nd-pass recaller after this step (or use\n"
-            "  fiberhmm-call --enzyme ddda, which runs both passes):\n"
-            "\n"
-            "    fiberhmm-recall-tfs -i <output.bam> -o <recalled.bam> --enzyme ddda\n"
-            "------------------------------------------------------------------------\n",
-            file=_sys.stderr,
-        )
 
     # Show optimization status
     from fiberhmm.core.hmm import HAS_NUMBA
@@ -371,9 +356,54 @@ def _main(args):
     print(f"  Mode: {mode}")
     args.mode = mode
 
+    # Chemistry: reconcile with the input's declaration BEFORE any
+    # enzyme-dependent default (DAF run mask, ML threshold) is chosen, as
+    # fiberhmm-call does. A custom -m without --enzyme inherits the input's
+    # supported enzyme/platform when the observation mode matches, so it gets
+    # exactly the defaults of --enzyme <inherited> with the given table; a
+    # conflicting declaration is refused (the output keeps the input header's
+    # declaration, which would then misdescribe these calls). A stdin header
+    # cannot be read in advance: no inheritance there.
+    from fiberhmm.cli.provenance import resolve_effective_chemistry
+    input_header = None
+    if args.input != '-':
+        import pysam
+        with pysam.AlignmentFile(args.input, 'rb', check_sq=False) as _bam:
+            input_header = _bam.header
+    resolve_effective_chemistry(
+        args, mode, input_header, model_path, None, tool='fiberhmm-apply',
+    )
+
+    from fiberhmm.core.bam_reader import apply_daf_run_mask_arguments
+    try:
+        apply_daf_run_mask_arguments(args, args.enzyme)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    # Surface the DddA two-pass workflow whenever a DddA model is detected.
+    # ddda_nuc.json deliberately does NOT emit sub-nucleosomal TF calls;
+    # users unaware of fiberhmm-recall-tfs will think their data just has
+    # no TFs. Print a prominent notice (stderr so BAM streams stay clean).
+    _model_basename = os.path.basename(model_path).lower()
+    if 'ddda' in _model_basename or getattr(args, 'enzyme', None) == 'ddda':
+        import sys as _sys
+        print(
+            "\n"
+            "------------------------------------------------------------------------\n"
+            "  NOTE: DddA model detected.\n"
+            "  This model calls NUCLEOSOMES only. To recover TF / Pol II\n"
+            "  footprints, run the 2nd-pass recaller after this step (or use\n"
+            "  fiberhmm-call --enzyme ddda, which runs both passes):\n"
+            "\n"
+            "    fiberhmm-recall-tfs -i <output.bam> -o <recalled.bam> --enzyme ddda\n"
+            "------------------------------------------------------------------------\n",
+            file=_sys.stderr,
+        )
+
     # ML threshold: explicit value, else the chemistry preset (Hia5 Nanopore
-    # 248, otherwise 128). A custom -m without --enzyme takes the chemistry
-    # the input BAM declares.
+    # 248, otherwise 128). A custom -m on an input declaring an unsupported
+    # chemistry still takes that declaration's threshold.
     args.prob_threshold = _resolve_apply_prob_threshold(args)
 
     # Determine MSP minimum size (default 60bp for all modes)

@@ -230,3 +230,98 @@ def test_effective_chemistry_helper_adopts_supported_enzymes_only():
     assert (args.enzyme, args.seq) == ("hia5", "pacbio")
 
 
+
+
+# ---------------------------------------------------------------------------
+# fiberhmm-apply: a custom -m inherits the declared enzyme's defaults too
+# ---------------------------------------------------------------------------
+
+def _footprint_tags(path):
+    with pysam.AlignmentFile(str(path), "rb", check_sq=False) as bam:
+        return [
+            (read.query_name,
+             *(tuple(read.get_tag(tag)) if read.has_tag(tag) else None
+               for tag in ("ns", "nl", "as", "al")))
+            for read in bam.fetch(until_eof=True)
+        ]
+
+
+def _apply(input_bam, outdir, *flags):
+    result = _run_cli(
+        "fiberhmm.cli.apply", "-i", input_bam, "-o", outdir,
+        "--min-read-length", "0", "-c", "1", "--io-threads", "1", *flags,
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    tags = _footprint_tags(Path(outdir) / "declared_footprints.bam")
+    assert any(fields[1] for fields in tags)       # footprints were called
+    return tags, result
+
+
+def _ddda_run_rich_bam(root):
+    """DddA-declared CT reads whose linkers are single fully deaminated
+    20-C runs: keep-one leaves one event per linker, so the run mask decides
+    whether the linkers are called."""
+    import numpy as np
+
+    rng = np.random.RandomState(4)
+    header = pysam.AlignmentHeader.from_dict({
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": "chr1", "LN": 50_000}]})
+    raw = root / "raw.bam"
+    with pysam.AlignmentFile(str(raw), "wb", header=header) as bam:
+        for i in range(4):
+            parts = []
+            for _ in range(12):
+                protected = "".join(
+                    "C" if rng.rand() < 0.2 else base
+                    for base in rng.choice(list("AGT"), 150))
+                parts.append(protected)
+                parts.append("Y" * 20 + "".join(rng.choice(list("AGT"), 20)))
+            sequence = "".join(parts)
+            read = pysam.AlignedSegment(header)
+            read.query_name = f"r{i}"
+            read.query_sequence = sequence
+            read.flag = 0
+            read.reference_id = 0
+            read.reference_start = i * 100
+            read.mapping_quality = 60
+            read.cigartuples = [(0, len(sequence))]
+            read.set_tag("st", "CT")
+            bam.write(read)
+    pysam.index(str(raw))
+    return _declare(raw, root / "declared.bam", {
+        "assay": "daf", "enzyme": "ddda", "platform": "pacbio",
+        "mode": "daf", "model": "ddda_nuc",
+    })
+
+
+def test_apply_custom_model_inherits_ddda_run_mask(tmp_path):
+    """Regression: ``fiberhmm-apply -m <table>`` on a DddA-declared input chose
+    the DAF run mask from enzyme=None (off), while ``--enzyme ddda`` with the
+    same table applies CC/GG keep-one."""
+    source = _ddda_run_rich_bam(tmp_path)
+    table = _bundled("ddda_nuc.json")
+    inherited, result = _apply(source, tmp_path / "inherited", "-m", table)
+    assert b"using the defaults of --enzyme ddda" in result.stderr
+    explicit, _ = _apply(source, tmp_path / "explicit",
+                         "-m", table, "--enzyme", "ddda")
+    mask_off, _ = _apply(source, tmp_path / "mask_off",
+                         "-m", table, "--enzyme", "ddda",
+                         "--daf-mask-runs", "0")
+    assert inherited == explicit
+    # The fixture has CC/GG runs: keep-one changes the calls, so the equality
+    # above is not vacuous.
+    assert explicit != mask_off
+
+
+def test_apply_refuses_conflicting_declared_chemistry(tmp_path, ddda_declared_bam):
+    result = _run_cli(
+        "fiberhmm.cli.apply", "-i", ddda_declared_bam, "-o", tmp_path / "out",
+        "--enzyme", "dddb", "--min-read-length", "0", "-c", "1",
+        "--io-threads", "1",
+    )
+    assert result.returncode == 2
+    assert b"declares chemistry" in result.stderr
+    # apply has no --replace-chemistry of its own.
+    assert b"fiberhmm-call --replace-chemistry" in result.stderr
+    assert not (tmp_path / "out" / "declared_footprints.bam").exists()

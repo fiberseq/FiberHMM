@@ -72,6 +72,22 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   `--from-paired` rejects pairing options. Recall keeps MA groups it does not
   regenerate (`deam+`/`deam-`) and warns when the call's SNP mask or reference
   cannot be re-applied.
+- **`fiberhmm-daf-encode` output is atomic.** The BAM is encoded, sorted and
+  indexed as a hidden temporary and published with its index only on success;
+  a failed run leaves an earlier output and its index untouched. `-o -` still
+  streams.
+- **`fiberhmm-apply` chemistry.** A custom `-m` without `--enzyme` on an input
+  that declares a supported enzyme now gets that enzyme's defaults (DddA:
+  CC/GG keep-one run mask; ML threshold), exactly as `fiberhmm-call` and
+  `--enzyme <declared>` with the same table; previously the run mask was
+  chosen from no enzyme (off). A chemistry that contradicts the input's
+  declaration stops with exit 2 instead of writing footprints under a header
+  that declares another chemistry.
+- **QC opportunities.** `fiberhmm-qc` no longer counts bases an MM `?` entry
+  leaves unlisted (no call made) as unmodified opportunities, and Nanopore
+  Hia5 QC counts the basecalled-forward A's (SEQ T on reverse-aligned reads)
+  instead of the opposite strand, so the same molecule gives the same rate in
+  either orientation. PacBio, R/Y and MD QC output is unchanged.
 - **Posteriors, training.** Posteriors decode reverse reads in the call's
   frame and handle DAF; `fiberhmm-probs`, `fiberhmm-train` and
   `fiberhmm-utils transfer` read DAF like `fiberhmm-call` and exit non-zero on
@@ -115,6 +131,12 @@ These change numbers relative to 2.x.
   dependencies (`[consensus]` and `[numba]` remain as empty aliases).
 - `fiberhmm-apply` rejects `--chroms`, `--skip-scaffolds`, `--region-size`,
   `--scores-db` and `-l`, which never had an effect there.
+- **`fiberhmm-apply -m` on DddA-declared input** applies the DddA CC/GG
+  keep-one run mask (see *Fixed*); nucleosome calls from such runs change.
+- **Nanopore QC rates.** Per-read ONT Hia5 rates on reverse-aligned reads use
+  the correct strand's A count, and `?`-mode reads exclude unlisted bases, so
+  `fiberhmm-qc` rates for ONT data shift (about ±1–2% at the quartiles on the
+  Drosophila control; `?` data more).
 
 ### Removed
 
@@ -131,6 +153,14 @@ These change numbers relative to 2.x.
   footprints against a nucleosome use `recaller.linker=either`.
 
 ### Known issues
+
+- The packaged `hia5_nanopore` QC reference (rate ECDF, rate quantiles and
+  rate-stratified exemplars) was computed with the old Nanopore opportunity
+  count. Recomputed on the same bounded control sample with the fixed count,
+  the 5/25/50/75/95% rate quantiles move from 0.00209/0.0388/0.0735/0.1111/
+  0.1832 to 0.00200/0.0392/0.0742/0.1103/0.1876; the phasogram and
+  footprint-size references are unaffected. The PASS/WARN rate intervals are
+  therefore off by at most a few percent until the reference is regenerated.
 
 - Tools that re-read MM/ML from an existing BAM (`recall-tfs`, `extract`,
   `qc`) use 125 for non-Nanopore chemistries while `call`/`apply` use 128.

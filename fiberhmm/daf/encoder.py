@@ -14,7 +14,7 @@ import time
 import pysam
 from tqdm import tqdm
 
-from fiberhmm.inference.bam_output import _sort_and_index_bam
+from fiberhmm.inference.bam_output import _sort_and_index_bam, atomic_output
 
 # CIGAR op codes (from the BAM spec) that consume reference:
 #   M=0, D=2, N=3, =7, X=8. Of these, MD describes M/=/X/D only
@@ -358,9 +358,26 @@ def process_bam_daf_encode(
     dict
         Summary statistics: total, encoded, ct, ga, skipped, mean_deam_rate.
     """
-    # When writing to stdout, all logging goes to stderr
-    _log = sys.stderr if output_bam == "-" else sys.stderr
+    # All logging goes to stderr (stdout may carry the BAM stream).
+    _log = sys.stderr
 
+    def _finalize(path):
+        # Sort + index the closed temporary; atomic_output then publishes the
+        # BAM with its index (stdout output is streamed and never finalized).
+        print("\nFinalizing output BAM...", file=_log)
+        _sort_and_index_bam(path, verbose=True, threads=io_threads)
+
+    with atomic_output(output_bam, finalize=_finalize) as output_path:
+        summary = _encode_stream(
+            input_bam, output_path, reference, min_mapq, min_read_length,
+            io_threads, force_strand, _log,
+        )
+    return summary
+
+
+def _encode_stream(input_bam, output_path, reference, min_mapq,
+                   min_read_length, io_threads, force_strand, _log):
+    """Encode ``input_bam`` into ``output_path`` (a temporary or ``"-"``)."""
     # Counters
     total = 0
     encoded = 0
@@ -393,8 +410,8 @@ def process_bam_daf_encode(
         peeked, read_iter = _check_md_tag(inbam, ref_fasta, _log)
 
         # Open output — handle stdout specially
-        _output_target = output_bam
-        if output_bam == "-":
+        _output_target = output_path
+        if output_path == "-":
             _output_target = os.fdopen(1, "wb", closefd=False)
 
         outbam = pysam.AlignmentFile(
@@ -406,7 +423,7 @@ def process_bam_daf_encode(
             unit=" reads",
             file=_log,
             mininterval=2.0,
-            disable=(output_bam == "-"),
+            disable=(output_path == "-"),
         )
 
         for read in itertools.chain(peeked, read_iter):
@@ -517,11 +534,6 @@ def process_bam_daf_encode(
         print(f"  Throughput:        {total / elapsed:>12,.0f} reads/sec", file=_log)
     print(f"{'=' * 60}", file=_log)
     _log.flush()
-
-    # Sort + index if writing to a file (not stdout)
-    if output_bam != "-" and os.path.isfile(output_bam):
-        print("\nFinalizing output BAM...", file=_log)
-        _sort_and_index_bam(output_bam, verbose=True, threads=io_threads)
 
     return summary
 
