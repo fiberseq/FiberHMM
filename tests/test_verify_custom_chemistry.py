@@ -125,13 +125,15 @@ def test_call_stdin_custom_model_refuses_uninheritable_defaults(
 
 
 def _cpg_only_ddda_input(path):
-    from fiberhmm.io.bam_header import append_chemistry
+    from fiberhmm.io.bam_header import append_chemistry, append_coord_marker
 
-    header = append_chemistry(
+    # Stands for fiberhmm-call output, which always declares its frame;
+    # recall-tfs refuses a header that does not say which frame as/al use.
+    header = append_coord_marker(append_chemistry(
         pysam.AlignmentHeader.from_dict({
             "HD": {"SO": "coordinate"}, "SQ": [{"SN": "chr1", "LN": 1000}]}),
         {"assay": "daf", "enzyme": "ddda", "platform": "pacbio", "mode": "daf"},
-    )
+    ))
     read = pysam.AlignedSegment(header)
     read.query_name = "cpg_only"
     sequence = list("ATCGA" * 80)

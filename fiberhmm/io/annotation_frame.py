@@ -184,14 +184,6 @@ def pass_through_frame(header, explicit=None) -> Optional[str]:
     return legacy_tag_frame(header)[0]
 
 
-def merged_input_frame(headers) -> Optional[str]:
-    """One frame for several inputs, or ``None`` when any is unknown or they differ."""
-    frames = {legacy_tag_frame(header)[0] for header in headers}
-    if len(frames) == 1:
-        return frames.pop()
-    return None
-
-
 AMBIGUOUS_FRAME_HELP = (
     'FiberHMM cannot tell which coordinate frame this BAM\'s ns/nl/as/al tags '
     'use ({reason}). Reverse-strand footprints would be mirrored if it '

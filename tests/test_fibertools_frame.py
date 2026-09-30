@@ -30,7 +30,6 @@ import pytest
 from fiberhmm.io.annotation_frame import (
     append_coord_to_ds,
     legacy_tag_frame,
-    merged_input_frame,
 )
 from fiberhmm.io.ma_tags import (
     annotation_tags,
@@ -127,9 +126,6 @@ def test_pass_through_ds_token_is_honest():
     assert append_coord_to_ds('DAF dedup', 'molecular').startswith('DAF dedup; coord=molecular')
     assert 'coord=seq' in append_coord_to_ds('DAF dedup', 'seq')
     assert append_coord_to_ds('DAF dedup', None) == 'DAF dedup'
-    mol = {'CO': ['fiberhmm:coord=molecular']}
-    assert merged_input_frame([mol, mol]) == 'molecular'
-    assert merged_input_frame([mol, {}]) is None
 
 
 # --------------------------------------------------------------------------- #
