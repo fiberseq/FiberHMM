@@ -68,6 +68,28 @@ def _remove_temporaries(temporary: str) -> None:
     _remove_quietly(_sorting_path(temporary))
 
 
+def _backup_copy(path: str, backup: str) -> None:
+    """A recoverable copy of ``path`` at ``backup``: a hard link, else a
+    byte-verified copy, else ``OSError``. A symlink is backed up as a link."""
+    if os.path.islink(path):
+        os.symlink(os.readlink(path), backup)
+        return
+    try:
+        os.link(path, backup)
+        return
+    except OSError:
+        pass
+    import filecmp
+
+    try:
+        shutil.copy2(path, backup)
+        if not filecmp.cmp(path, backup, shallow=False):
+            raise OSError(f"backup copy of {path} does not match it")
+    except BaseException:
+        _remove_quietly(backup)
+        raise
+
+
 def commit_output(temporary: str, final: str) -> None:
     """Publish a finished temporary output, and its index, at ``final``.
 
@@ -81,10 +103,16 @@ def commit_output(temporary: str, final: str) -> None:
     removed, (2) the new data replaces the old, (3) the new indexes are put in
     place. A reader or a crash between steps sees the old data or the new data
     without an index (which tools report) -- never an index describing other
-    data. The previous pair is kept as hidden hard links until the publication
-    finished; any failure or signal during it restores that pair (or, when
-    there was none, removes the half-published output), so a failed rerun
-    leaves the earlier valid output exactly as it was.
+    data.
+
+    Before anything is touched, the complete previous generation (the BAM and
+    every index beside it) is backed up as hidden hard links, or, where hard
+    links are unavailable, as byte-verified copies; if that is impossible the
+    publication is refused and nothing changes. Any failure or signal during
+    publication restores that generation (or, when there was no previous
+    output, removes the half-published one), so a failed rerun leaves the
+    earlier valid output exactly as it was. An old index is restored only
+    together with its BAM.
     """
     final = os.path.abspath(final)
     fresh = {
@@ -99,11 +127,13 @@ def commit_output(temporary: str, final: str) -> None:
     try:
         for path in previous:
             backup = os.path.join(directory, f".{os.path.basename(path)}.{token}.previous")
-            try:
-                os.link(path, backup)
-            except OSError:
-                continue  # no hard links here: publication is still ordered, not reversible
+            _backup_copy(path, backup)
             backups[path] = backup
+    except BaseException:
+        for backup in backups.values():
+            _remove_quietly(backup)
+        raise
+    try:
         for stale in index_paths_for(final):
             _remove_quietly(stale)
         os.replace(temporary, final)
@@ -113,14 +143,26 @@ def commit_output(temporary: str, final: str) -> None:
         for path in index_paths_for(final):
             _remove_quietly(path)
         if final in backups:
-            with suppress(OSError):
-                os.replace(backups.pop(final), final)
-        elif final not in previous:
+            try:
+                os.replace(backups[final], final)
+            except OSError:
+                # Keep the whole previous generation where it is rather than
+                # delete it; no index is restored beside data it does not describe.
+                kept = ", ".join(sorted(backups.values()))
+                backups.clear()
+                print(f"WARNING: could not restore the previous {final}; it is kept "
+                      f"as {kept}", file=sys.stderr)
+            else:
+                backups.pop(final)
+                for path, backup in list(backups.items()):
+                    try:
+                        os.replace(backup, path)
+                    except OSError:
+                        _remove_quietly(path)
+                    backups.pop(path, None)
+        else:
             _remove_quietly(final)  # nothing to restore: no half-published output
-        for path, backup in list(backups.items()):
-            with suppress(OSError):
-                os.replace(backup, path)
-            backups.pop(path, None)
+            # An index without its BAM describes nothing: it is not restored.
         raise
     finally:
         for backup in backups.values():

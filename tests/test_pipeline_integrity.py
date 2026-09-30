@@ -342,6 +342,110 @@ def test_failed_publication_keeps_the_previous_bam_and_index(tmp_path):
     assert not [p for p in tmp_path.iterdir() if p.name.startswith(".")]
 
 
+def _publication_pair(root, name):
+    final = root / f"{name}.bam"; temporary = root / f".{name}.tmp.bam"
+    final.write_bytes(b"old-bam"); Path(str(final) + ".bai").write_bytes(b"old-index")
+    temporary.write_bytes(b"new-bam"); Path(str(temporary) + ".bai").write_bytes(b"new-index")
+    return final, temporary
+
+
+def _pair_state(final):
+    index = Path(str(final) + ".bai")
+    return (final.read_bytes() if final.exists() else None,
+            index.read_bytes() if index.exists() else None)
+
+
+def test_publication_backup_falls_back_to_a_verified_copy(tmp_path):
+    """Hard links failing for the BAM only (EMLINK), or everywhere (EOPNOTSUPP),
+    must still give a complete backup generation: a failure or interrupt then
+    restores the old BAM and index together, never new BAM + old index."""
+    import errno
+    link, replace = os.link, os.replace
+    for case, error in (("emlink", errno.EMLINK), ("unsupported", errno.EOPNOTSUPP)):
+        final, temporary = _publication_pair(tmp_path, case)
+
+        def fail_link(src, dst):
+            if case == "unsupported" or str(src) == str(final):
+                raise OSError(error, os.strerror(error))
+            return link(src, dst)
+
+        def fail_index(src, dst):
+            if str(src) == str(temporary) + ".bai":
+                raise (KeyboardInterrupt if case == "unsupported" else RuntimeError)("injected")
+            return replace(src, dst)
+        with pytest.raises((RuntimeError, KeyboardInterrupt)), \
+                patch.object(bam_output.os, "link", fail_link), \
+                patch.object(bam_output.os, "replace", fail_index):
+            bam_output.commit_output(str(temporary), str(final))
+        assert _pair_state(final) == (b"old-bam", b"old-index"), case
+        assert not [p for p in tmp_path.iterdir() if p.name.endswith(".previous")]
+    # Normal success with copies instead of links leaves no backups behind.
+    final, temporary = _publication_pair(tmp_path, "copied")
+    with patch.object(bam_output.os, "link", side_effect=OSError(errno.EXDEV, "x")):
+        bam_output.commit_output(str(temporary), str(final))
+    assert _pair_state(final) == (b"new-bam", b"new-index")
+    assert not [p for p in tmp_path.iterdir() if p.name.endswith(".previous")]
+
+
+def test_publication_is_refused_when_no_backup_can_be_made(tmp_path):
+    import errno
+    final, temporary = _publication_pair(tmp_path, "refused")
+    with pytest.raises(OSError), \
+            patch.object(bam_output.os, "link", side_effect=OSError(errno.EOPNOTSUPP, "x")), \
+            patch.object(bam_output.shutil, "copy2", side_effect=OSError(errno.ENOSPC, "full")):
+        bam_output.commit_output(str(temporary), str(final))
+    assert _pair_state(final) == (b"old-bam", b"old-index")
+    assert temporary.read_bytes() == b"new-bam"   # nothing was touched
+    assert not [p for p in tmp_path.iterdir() if p.name.endswith(".previous")]
+
+
+def test_publication_never_restores_an_index_without_its_bam(tmp_path):
+    """If the old BAM cannot be put back, no old index is put beside the new
+    data, and the previous generation is kept rather than deleted."""
+    final, temporary = _publication_pair(tmp_path, "stuck")
+    replace = os.replace
+
+    def fail(src, dst):
+        if str(src) == str(temporary) + ".bai":
+            raise RuntimeError("injected index rename failure")
+        if str(src).endswith(".previous") and str(dst) == str(final):
+            raise OSError("cannot restore")
+        return replace(src, dst)
+    with pytest.raises(RuntimeError), patch.object(bam_output.os, "replace", fail):
+        bam_output.commit_output(str(temporary), str(final))
+    assert _pair_state(final) == (b"new-bam", None)
+    kept = sorted(p.read_bytes() for p in tmp_path.iterdir() if p.name.endswith(".previous"))
+    assert kept == [b"old-bam", b"old-index"]
+    # An orphan index (no previous BAM) is not resurrected by a rollback.
+    orphan = tmp_path / "orphan.bam"; Path(str(orphan) + ".bai").write_bytes(b"orphan-index")
+    tmp = tmp_path / ".orphan.tmp.bam"; tmp.write_bytes(b"new"); Path(str(tmp) + ".bai").write_bytes(b"i")
+
+    def fail_orphan(src, dst):
+        if str(src) == str(tmp) + ".bai":
+            raise RuntimeError("injected")
+        return replace(src, dst)
+    with pytest.raises(RuntimeError), patch.object(bam_output.os, "replace", fail_orphan):
+        bam_output.commit_output(str(tmp), str(orphan))
+    assert _pair_state(orphan) == (None, None)
+
+
+def test_publication_restores_a_symlinked_previous_output_as_a_symlink(tmp_path):
+    target = tmp_path / "store.bam"; target.write_bytes(b"old-bam")
+    final = tmp_path / "linked.bam"; final.symlink_to(target)
+    temporary = tmp_path / ".linked.tmp.bam"; temporary.write_bytes(b"new-bam")
+    Path(str(temporary) + ".bai").write_bytes(b"new-index")
+    replace = os.replace
+
+    def fail_index(src, dst):
+        if str(src) == str(temporary) + ".bai":
+            raise RuntimeError("injected")
+        return replace(src, dst)
+    with pytest.raises(RuntimeError), patch.object(bam_output.os, "replace", fail_index):
+        bam_output.commit_output(str(temporary), str(final))
+    assert final.is_symlink() and os.readlink(final) == str(target)
+    assert target.read_bytes() == b"old-bam"
+
+
 def test_pipeline_publication_never_pairs_new_index_with_old_bam(tmp_path):
     h = pysam.AlignmentHeader.from_dict({"HD": {"SO": "unsorted"}, "SQ": [{"SN": "p", "LN": 1000}]})
     unsorted = tmp_path / "x.unsorted.bam"
