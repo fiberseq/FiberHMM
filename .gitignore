@@ -34,6 +34,9 @@ venv/
 *.fasta.fai
 *.bam
 *.bai
+# Small real fibertools/FiberHMM frame fixtures (tests/test_fibertools_frame.py)
+!tests/fixtures/fibertools_frame/*.bam
+!tests/fixtures/fibertools_frame/*.bai
 *.bb
 *.bigBed
 *.bigbed

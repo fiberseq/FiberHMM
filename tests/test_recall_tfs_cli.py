@@ -114,11 +114,22 @@ def test_resolve_input_molecular_frame_auto_detects_marker():
         "DS": "FiberHMM fused apply+recall; coord=molecular; mode=daf",
     }]}
     legacy = {"CO": []}
+    fibertools = {"PG": [{"ID": "ft", "PN": "fibertools-rs",
+                          "CL": "ft predict-m6a in.bam out.bam"}]}
+    declared_seq = {"PG": [{"ID": "fiberhmm-dedup", "PN": "fiberhmm-dedup",
+                            "DS": "DAF duplicate marking; coord=seq"}]}
     R = recall_tfs._resolve_input_molecular_frame
-    # auto: marker present -> molecular; absent -> legacy query-frame
+    # auto: coord=molecular or fibertools nucleosome provenance -> molecular;
+    # a FiberHMM coord=seq record -> query frame.
     assert R(SimpleNamespace(input_frame="auto"), mol) is True
     assert R(SimpleNamespace(input_frame="auto"), fused) is True
-    assert R(SimpleNamespace(input_frame="auto"), legacy) is False
+    assert R(SimpleNamespace(input_frame="auto"), fibertools) is True
+    assert R(SimpleNamespace(input_frame="auto"), declared_seq) is False
+    # No provenance at all is ambiguous (FiberHMM <= 2.12 output, SEQ, looks
+    # the same as a fibertools BAM that lost its @PG history, molecular):
+    # auto used to guess SEQ here and now asks for an explicit frame.
+    with pytest.raises(SystemExit, match="--input-frame query"):
+        R(SimpleNamespace(input_frame="auto"), legacy)
     # explicit overrides win regardless of the marker
     assert R(SimpleNamespace(input_frame="molecular"), legacy) is True
     assert R(SimpleNamespace(input_frame="query"), mol) is False
@@ -190,7 +201,7 @@ def test_recall_tfs_single_thread_passes_failed_reads_through(monkeypatch):
     monkeypatch.setattr(
         recall_tfs,
         "_make_payload",
-        lambda read, mode=None: read.query_name,
+        lambda read, *args, **kwargs: read.query_name,
     )
     monkeypatch.setattr(recall_tfs, "_process_payload_record", fake_process)
     monkeypatch.setattr(
@@ -252,6 +263,7 @@ def test_recall_tfs_closes_bams_when_processing_fails(monkeypatch):
         context_size=None,
         max_reads=0,
         chunk_size=1024,
+        input_frame="molecular",
     )
 
     monkeypatch.setattr(recall_tfs, "parse_args",

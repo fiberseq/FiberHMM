@@ -329,6 +329,49 @@ def parse_ma_tag(ma_string: str) -> dict:
     return out
 
 
+# fibertools-rs >= 0.13 writes the same Molecular-annotation spec as FiberHMM's
+# MA/AQ/AN under mixed-case names (e.g. ``Ma:Z:3000;nuc.:1239-166,...;msp.:...;
+# fire.Q:...`` with ``Aq`` holding one byte per fire.Q element), always in
+# molecular frame. FiberHMM's own MA wins when a read carries both.
+FIBERTOOLS_ANNOTATION_TAGS = ('Ma', 'Aq', 'An')
+FIBERHMM_ANNOTATION_TAGS = ('MA', 'AQ', 'AN')
+
+
+def has_annotation_tag(read) -> bool:
+    """True when ``read`` carries FiberHMM ``MA`` or fibertools ``Ma``."""
+    return any(read.has_tag(tags[0]) for tags in
+               (FIBERHMM_ANNOTATION_TAGS, FIBERTOOLS_ANNOTATION_TAGS))
+
+
+def annotation_tags(read):
+    """``(ma, aq, an, source)`` of a read's molecular annotations, or ``None``.
+
+    ``source`` is ``'MA'`` for FiberHMM's tags (frame from the header, see
+    :mod:`fiberhmm.io.annotation_frame`) or ``'Ma'`` for fibertools' (always
+    molecular frame). ``aq``/``an`` are ``None`` when absent.
+    """
+    for ma_tag, aq_tag, an_tag in (FIBERHMM_ANNOTATION_TAGS, FIBERTOOLS_ANNOTATION_TAGS):
+        if read.has_tag(ma_tag):
+            return (str(read.get_tag(ma_tag)),
+                    read.get_tag(aq_tag) if read.has_tag(aq_tag) else None,
+                    read.get_tag(an_tag) if read.has_tag(an_tag) else None,
+                    ma_tag)
+    return None
+
+
+def fibertools_ma_intervals(read) -> Optional[dict]:
+    """A fibertools ``Ma`` tag's nucleosomes and MSPs, molecular frame.
+
+    Returns ``{'nuc': [(start, length), ...], 'msp': [...]}`` (0-based) when
+    the read has ``Ma`` and no FiberHMM ``MA``, else ``None``. Used where
+    FiberHMM reads legacy ns/nl/as/al: fibertools >= 0.13 no longer writes those.
+    """
+    if read.has_tag('MA') or not read.has_tag('Ma'):
+        return None
+    parsed = parse_ma_tag(str(read.get_tag('Ma')))
+    return {'nuc': list(parsed['nuc']), 'msp': list(parsed['msp'])}
+
+
 def parse_aq_array(aq, qual_spec_per_type: Sequence[str],
                    n_annotations_per_type: Sequence[int]) -> List[List[int]]:
     """Parse the flat AQ array into per-annotation quality lists.

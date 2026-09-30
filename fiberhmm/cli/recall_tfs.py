@@ -84,11 +84,13 @@ from fiberhmm.inference.worker_results import (
     extend_failure_messages,
     record_failure_message,
 )
-from fiberhmm.io.bam_header import (
-    append_coord_marker,
-    header_has_coord_marker,
+from fiberhmm.io.annotation_frame import (
+    MOLECULAR,
+    ambiguous_frame_message,
+    legacy_tag_frame,
 )
-from fiberhmm.io.ma_tags import flip_intervals_to_seq
+from fiberhmm.io.bam_header import append_coord_marker
+from fiberhmm.io.ma_tags import fibertools_ma_intervals, flip_intervals_to_seq
 from fiberhmm.inference.fused_stages import build_fused_recall_result
 from fiberhmm.inference.tagging import write_fused_recall_tags
 from fiberhmm.inference.tf_recaller import (
@@ -255,7 +257,30 @@ class _PayloadRead:
         return len(self.query_sequence) if self.query_sequence else 0
 
 
-def _make_payload(read, mode=None) -> dict:
+def _fibertools_ma_as_legacy_tags(read, input_molecular_frame=True) -> dict:
+    """``ns/nl/as/al`` for a read whose only footprints are a fibertools ``Ma``.
+
+    fibertools-rs >= 0.13 writes nucleosomes and MSPs only to ``Ma`` (always
+    molecular frame). The recaller reads ns/nl/as/al in the run's input frame,
+    so the intervals are expressed in that frame: unchanged for molecular
+    runs, flipped to SEQ when ``--input-frame query`` was forced.
+    """
+    if read.has_tag('ns') or read.has_tag('as'):
+        return {}
+    ma = fibertools_ma_intervals(read)
+    if not ma or not (ma['nuc'] or ma['msp']):
+        return {}
+    tags = {}
+    for (start_tag, length_tag), feature in ((('ns', 'nl'), 'nuc'), (('as', 'al'), 'msp')):
+        starts = [int(s) for s, _ in ma[feature]]
+        lengths = [int(n) for _, n in ma[feature]]
+        if not input_molecular_frame:
+            starts, lengths = flip_intervals_to_seq(starts, lengths, read)
+        tags[start_tag], tags[length_tag] = starts, lengths
+    return tags
+
+
+def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
     """Extract only the tag data workers need from a pysam read.
 
     Runs in the main process.  The resulting dict is ~5–30 KB (sequence
@@ -279,6 +304,7 @@ def _make_payload(read, mode=None) -> dict:
                 except TypeError:
                     pass  # scalar or already bytes
             tags[t] = val
+    tags.update(_fibertools_ma_as_legacy_tags(read, input_molecular_frame))
 
     payload = {
         'name': getattr(read, 'query_name', None),
@@ -570,7 +596,7 @@ def _single_thread_loop(bam_in, bam_out, _header_text,
         if max_reads and n_reads >= max_reads:
             break
         try:
-            result, stats = _process_payload_record(_make_payload(read, mode))
+            result, stats = _process_payload_record(_make_payload(read, mode, input_molecular_frame))
         except Exception:
             result = None
             stats = {key: 0 for key in _STATS_KEYS}
@@ -653,7 +679,7 @@ def _parallel_loop(bam_in, bam_out, _header_text,
             if max_reads and n >= max_reads:
                 break
             buf_reads.append(read)
-            buf_payloads.append(_make_payload(read, mode))
+            buf_payloads.append(_make_payload(read, mode, input_molecular_frame))
             n += 1
 
             if len(buf_reads) >= chunk_size:
@@ -743,10 +769,15 @@ def parse_args(default_recall_nucs: bool = False):
     p.add_argument('--input-frame', choices=['auto', 'molecular', 'query'],
                    default='auto',
                    help='Coordinate frame of the input ns/nl/as/al tags. '
-                        '"auto" (default) detects the @CO fiberhmm:coord=molecular '
-                        'marker: present -> molecular (current FiberHMM), absent '
-                        '-> query/seq (legacy v1.0). Force with molecular/query. '
-                        'Wrong frame mis-places reverse-strand calls.')
+                        '"auto" (default) reads the header provenance: a '
+                        'coord=molecular declaration (FiberHMM >= 2.13) or a '
+                        'fibertools nucleosome command (ft predict-m6a, '
+                        'add-nucleosomes, fire) -> molecular; a FiberHMM '
+                        'coord=seq record -> query. When the header does not '
+                        'decide it (e.g. FiberHMM <= 2.12 output) the run '
+                        'stops and asks for molecular or query. A wrong frame '
+                        'mirrors reverse-strand calls. fibertools Ma tags are '
+                        'always molecular.')
     p.add_argument('--no-legacy-tags', action='store_true',
                    help='Skip refreshed ns/nl/as/al -- emit only MA/AQ.')
     p.add_argument('--downstream-compat', action='store_true',
@@ -866,10 +897,17 @@ def _estimate_phase_nrl_from_tags(path, nuc_min_size, sample_target=20000):
     bam = pysam.AlignmentFile(path, 'rb', check_sq=False)
     try:
         for read in bam:
-            if not read.has_tag('ns') or not read.has_tag('nl'):
-                continue
-            ns = list(read.get_tag('ns'))
-            nl = list(read.get_tag('nl'))
+            if read.has_tag('ns') and read.has_tag('nl'):
+                ns = list(read.get_tag('ns'))
+                nl = list(read.get_tag('nl'))
+            else:
+                # fibertools >= 0.13 keeps nucleosomes only in Ma. Spacing is
+                # the same in either frame, so no flip is needed here.
+                ma = fibertools_ma_intervals(read)
+                if not ma or not ma['nuc']:
+                    continue
+                ns = [s for s, _ in ma['nuc']]
+                nl = [n for _, n in ma['nuc']]
             centers = sorted(
                 s + length / 2.0
                 for s, length in zip(ns, nl)
@@ -927,9 +965,15 @@ def _resolve_recall_nucs_phase_nrl(args) -> int:
 def _resolve_input_molecular_frame(args, header) -> bool:
     """Decide whether the input ns/nl/as/al are molecular-frame.
 
-    --input-frame: auto (default) detects the @CO coord marker; molecular/query
-    force it. Returns True for molecular (flip reverse tags to seq), False for
-    legacy seq/query frame (use as-is)."""
+    --input-frame molecular/query force it. auto (default) reads the header's
+    provenance (fiberhmm.io.annotation_frame.legacy_tag_frame): a
+    coord=molecular declaration or a fibertools nucleosome command means
+    molecular, a FiberHMM coord=seq record means SEQ. When the provenance does
+    not decide it (e.g. FiberHMM <= 2.12 output, which has no FiberHMM @PG)
+    the run stops rather than risk mirroring every reverse-strand footprint.
+    Returns True for molecular (flip reverse tags to seq), False for SEQ.
+    fibertools ``Ma`` tags are molecular regardless of this choice.
+    """
     choice = str(getattr(args, 'input_frame', 'auto')).lower()
     if choice == 'molecular':
         return True
@@ -937,13 +981,11 @@ def _resolve_input_molecular_frame(args, header) -> bool:
         print("  [recall] input-frame=query: treating ns/nl/as/al as legacy "
               "SEQ-frame tags (no molecular flip).", file=sys.stderr)
         return False
-    is_mol = header_has_coord_marker(header)
-    if not is_mol:
-        print("  [recall] NOTE: input BAM has no @CO fiberhmm:coord=molecular "
-              "marker -> treating ns/nl/as/al as legacy SEQ-frame (v1.0). "
-              "Reverse-strand calls are kept in place (no double flip).",
-              file=sys.stderr)
-    return is_mol
+    frame, reason = legacy_tag_frame(header)
+    if frame is None:
+        raise SystemExit("error: " + ambiguous_frame_message(reason))
+    print(f"  [recall] input frame: {frame} ({reason}).", file=sys.stderr)
+    return frame == MOLECULAR
 
 
 def _header_declared_mode(header):
@@ -1262,11 +1304,10 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
     # the run (including the per-read failure policy) succeeds.
     failure_messages = []
     with atomic_output(args.out_bam) as out_path:
-        # Resolve the coordinate frame of the input ns/nl/as/al tags. Current
-        # FiberHMM stamps the @CO molecular marker; legacy/v1.0 BAMs lack it
-        # and store the tags in SEQ (query) frame -- flipping those again
-        # mis-places every reverse-strand call. Auto-detect from the header,
-        # overridable.
+        # Resolve the coordinate frame of the input ns/nl/as/al tags from the
+        # header provenance (coord=molecular declaration, fibertools
+        # nucleosome @PG, FiberHMM coord=seq record); stop when it cannot be
+        # decided. A wrong frame mirrors every reverse-strand call.
         input_molecular_frame = _resolve_input_molecular_frame(args, bam_in.header)
         # ML threshold for re-reading MM/ML: explicit, else the chemistry
         # preset (Hia5 Nanopore 248, otherwise 125), taken from --enzyme/--seq
