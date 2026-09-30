@@ -116,20 +116,22 @@ def test_resolve_input_molecular_frame_auto_detects_marker():
     legacy = {"CO": []}
     fibertools = {"PG": [{"ID": "ft", "PN": "fibertools-rs",
                           "CL": "ft predict-m6a in.bam out.bam"}]}
-    declared_seq = {"PG": [{"ID": "fiberhmm-dedup", "PN": "fiberhmm-dedup",
-                            "DS": "DAF duplicate marking; coord=seq"}]}
+    # a fibertools branch merged with an unmarked fiberhmm-apply branch
+    disagree = {"PG": [
+        {"ID": "fiberhmm-apply", "PN": "fiberhmm-apply", "CL": "fiberhmm-apply -i a"},
+        {"ID": "samtools", "PN": "samtools", "PP": "fiberhmm-apply", "CL": "samtools sort"},
+        {"ID": "ft.1", "PN": "fibertools-rs", "CL": "ft predict-m6a b c"},
+        {"ID": "samtools-1A2B3C4D", "PN": "samtools", "PP": "ft.1", "CL": "samtools sort"},
+    ]}
     R = recall_tfs._resolve_input_molecular_frame
-    # auto: coord=molecular or fibertools nucleosome provenance -> molecular;
-    # a FiberHMM coord=seq record -> query frame.
+    # auto: the shared footprint-tag frame rule
     assert R(SimpleNamespace(input_frame="auto"), mol) is True
     assert R(SimpleNamespace(input_frame="auto"), fused) is True
     assert R(SimpleNamespace(input_frame="auto"), fibertools) is True
-    assert R(SimpleNamespace(input_frame="auto"), declared_seq) is False
-    # No provenance at all is ambiguous (FiberHMM <= 2.12 output, SEQ, looks
-    # the same as a fibertools BAM that lost its @PG history, molecular):
-    # auto used to guess SEQ here; now it is undecided and the first read
-    # with ns/nl/as/al stops the run with a request for an explicit frame.
-    assert R(SimpleNamespace(input_frame="auto"), legacy) is None
+    assert R(SimpleNamespace(input_frame="auto"), legacy) is False
+    # Merged histories whose writers disagree, with nothing declared: auto is
+    # undecided and the first read with ns/nl/as/al stops the run.
+    assert R(SimpleNamespace(input_frame="auto"), disagree) is None
 
     class LegacyRead:
         query_sequence, is_reverse = "A" * 10, True

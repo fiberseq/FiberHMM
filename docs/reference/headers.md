@@ -9,7 +9,7 @@ header lines. `@CO` lines are written as `@CO<TAB><text>`; pysam's
 | `@PG` | every producer (`call`, `apply`, `recall-tfs`/`-nucs`, `dedup`, `pair`, `merge`, `tag-m5c`, `consensus`, `tag-consensus`, …) | provenance: command line, version, resolved settings |
 | `@CO FIBERHMM-CHEMISTRY:v1:` | `call`, `apply`, `recall-tfs`/`-nucs`, `merge` (joint recall) | authoritative chemistry of the calls, and the code and tables that made them |
 | `@CO MA-TYPES:v1:` | every command that writes `MA` | advisory list of `MA` group names |
-| `@CO fiberhmm:coord=molecular` | `apply`, `recall-tfs`/`-nucs` | coordinate-frame marker (`call` puts `coord=molecular` in its `@PG DS`; `dedup`, `pair`, `merge`, `tag-m5c`, `call-m5c`, `tag-consensus` and `strand-rescue-annotate` put `coord=molecular` or `coord=seq` in theirs for the tags they carried over). See [Coordinate frames](../concepts/coordinates.md#how-fiberhmm-tells-the-frame-of-a-bam) |
+| `@CO fiberhmm:coord=molecular` | `apply`, `recall-tfs`/`-nucs` | coordinate-frame marker (`call` puts `coord=molecular` in its `@PG DS`; `dedup`, `pair`, `merge`, `tag-m5c`, `call-m5c`, `tag-consensus` and `strand-rescue-annotate` put `coord=molecular` in theirs when the tags they carried over are molecular). See [Footprint-tag coordinate frame](footprint-tag-frame.md) |
 | `@CO FIBERHMM-CONSENSUS-MA:v1:` | `consensus`, `transfer` | meaning of the consensus layers' bytes |
 | `@CO FIBERHMM-CONSENSUS-FAMILY:v1:` | `consensus`, `transfer` | one entry per class and layer |
 | `@CO FIBERHMM-STRAND-RESCUE:v6:` | `strand-rescue-annotate` | shadow-layer contract |

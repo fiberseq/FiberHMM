@@ -32,49 +32,42 @@ The `ns`/`nl`/`as`/`al` arrays carry no frame of their own, and two
 generations of writers used different frames: FiberHMM 2.12 and earlier
 wrote query frame, while FiberHMM 2.13 and later and every fibertools
 version write molecular frame. FiberHMM therefore reads the frame from the
-header's provenance:
+header's `@PG` provenance, with the rule it shares with FiberBrowser
+([Footprint-tag coordinate frame](../reference/footprint-tag-frame.md)):
 
-1. The `@PG` history is followed through its `PP` links, not header order.
-   `samtools merge` keeps one chain per input (renaming clashing IDs), so a
-   history can have several branches. On each branch the last record that
-   bears on footprint tags decides:
-    - a FiberHMM record (`fiberhmm-*` PN or ID) whose `DS` says
-      `coord=molecular` or `coord=seq` means that frame. `fiberhmm-call`,
-      `-apply` and `-recall-tfs`/`-recall-nucs` declare `coord=molecular`;
-    - a fibertools-rs record (by PN, ID or program name, so records without
-      PN count) whose command writes nucleosomes (`ft predict-m6a` or `m6a`,
-      `ft add-nucleosomes`, `ft fire`, `ft fiber-hmm`, and the older names
-      `ft predict` and `ft add`) means molecular;
-    - a FiberHMM record with no `coord=` token copied the tags unchanged and
-      leaves the frame as it was; other programs (aligners, samtools) too.
-2. If every branch gives the same frame, that is the frame.
-3. If branches disagree or some are undecided, the header's explicit
-   declarations (`coord=` in FiberHMM `@PG` records, `@CO
-   fiberhmm:coord=molecular` from older `fiberhmm-apply`/`-recall-tfs`) decide
-   when they all agree. Otherwise the frame is unknown.
+- The `@PG` history is followed through its `PP` links, not header order.
+  Each chain (`samtools merge` keeps one per input) votes with the frame of
+  its last footprint writer. fibertools-rs nucleosome commands (`ft
+  predict-m6a`, `m6a`, `add-nucleosomes`, `fire`, `fiber-hmm`, the older
+  `predict` and `add`) write molecular frame. `fiberhmm-call`, `-apply`,
+  `-recall-tfs` and `-recall-nucs` write molecular frame when they declare
+  `coord=molecular`, otherwise query frame. Other FiberHMM tools pass the
+  tags through and do not vote.
+- If the votes agree, they decide. With no votes, a `coord=molecular`
+  declaration anywhere means molecular, otherwise query frame (unmarked
+  FiberHMM 2.12 output).
+- Merged histories whose votes disagree are molecular when `coord=molecular`
+  is declared. Otherwise FiberHMM does not guess: `fiberhmm-recall-tfs` and
+  `-recall-nucs` stop at the first read that carries `ns`/`nl`/`as`/`al` and
+  ask for `--input-frame query` or `--input-frame molecular`. Reads whose
+  only footprints are fibertools `Ma` tags need no frame.
 
 Tools that copy footprint tags without rewriting them (`fiberhmm-dedup`,
 `-pair`, `-merge`, `-tag-m5c`, `-call-m5c`, `-tag-consensus`,
-`-strand-rescue-annotate`) add `coord=molecular` or `coord=seq` to their own
-`@PG` `DS` to record the frame they carried over. If they could not tell the
-frame, they add nothing.
+`-strand-rescue-annotate`) add `coord=molecular` to their own `@PG` `DS` when
+the tags they carried are molecular. They record nothing otherwise.
 
-An unknown frame is not guessed. Output of FiberHMM 2.12 or earlier (no
-FiberHMM `@PG`, query frame) looks the same as a fibertools BAM whose `@PG`
-history was lost (molecular frame). In that case `fiberhmm-recall-tfs` and
-`-recall-nucs` stop at the first read that carries `ns`/`nl`/`as`/`al` and
-ask for `--input-frame query` or `--input-frame molecular` (reads whose only
-footprints are fibertools `Ma` tags need no frame). Consensus, which reads legacy tags only for Hia5 input without
-`MA`, stops and asks you to set its legacy Hia5 annotation frame. It applies
-molecular frame by itself only when fibertools wrote the tags and no FiberHMM
-caller ran after it: reads a FiberHMM caller left without `MA` are ones it
-skipped, and they keep whatever tags they had before. `fiberhmm-tag-m5c --input-frame` and `fiberhmm-call-m5c
---tag-input-frame` force the frame of their DAF inputs in the same way.
+Consensus reads legacy tags only for Hia5 input without `MA`. It applies
+molecular frame by itself only when fibertools is the last writer on every
+chain. Reads a FiberHMM caller left without `MA` are ones it skipped, and
+they keep whatever tags they had before. Otherwise it asks you to set its
+legacy Hia5 annotation frame. `fiberhmm-tag-m5c --input-frame` and
+`fiberhmm-call-m5c --tag-input-frame` force the frame of their DAF inputs.
 
-One case cannot be detected from the header. FiberHMM 2.12 or earlier run on
-a BAM that had already been through `ft predict-m6a` wrote query-frame tags,
-but the header still shows only the fibertools command. Pass
-`--input-frame query` for such files.
+One case cannot be detected from the header. FiberHMM 2.12 or earlier wrote
+query-frame tags and no `@PG`. Run on a BAM that had already been through
+`ft predict-m6a`, it leaves a header that shows only the fibertools command.
+Pass `--input-frame query` for such files.
 
 `MA`, `AQ` and `AN` are written only by FiberHMM, so their frame comes from
 the `coord=molecular` declaration alone (unmarked `MA` is query frame).

@@ -773,14 +773,15 @@ def parse_args(default_recall_nucs: bool = False):
     p.add_argument('--input-frame', choices=['auto', 'molecular', 'query'],
                    default='auto',
                    help='Coordinate frame of the input ns/nl/as/al tags. '
-                        '"auto" (default) reads the header provenance: a '
-                        'coord=molecular declaration (FiberHMM >= 2.13) or a '
-                        'fibertools nucleosome command (ft predict-m6a, '
-                        'add-nucleosomes, fire) -> molecular; a FiberHMM '
-                        'coord=seq record -> query. When the header does not '
-                        'decide it (e.g. FiberHMM <= 2.12 output) the run '
-                        'stops at the first read with these tags and asks '
-                        'for molecular or query. A wrong frame '
+                        '"auto" (default) follows the @PG PP chain: the last '
+                        'footprint writer decides (fibertools predict-m6a/'
+                        'add-nucleosomes/fire -> molecular; FiberHMM '
+                        'call/apply/recall -> molecular when declared '
+                        'coord=molecular, else query); no writer -> '
+                        'molecular if coord=molecular is declared, else '
+                        'query (FiberHMM <= 2.12). Merged histories whose '
+                        'writers disagree, with no declaration, stop the run '
+                        'at the first read with these tags. A wrong frame '
                         'mirrors reverse-strand calls. fibertools Ma tags are '
                         'always molecular.')
     p.add_argument('--no-legacy-tags', action='store_true',
@@ -970,13 +971,11 @@ def _resolve_recall_nucs_phase_nrl(args) -> int:
 def _resolve_input_molecular_frame(args, header) -> bool:
     """Decide whether the input ns/nl/as/al are molecular-frame.
 
-    --input-frame molecular/query force it. auto (default) reads the header's
-    provenance (fiberhmm.io.annotation_frame.legacy_tag_frame): a
-    coord=molecular declaration or a fibertools nucleosome command means
-    molecular, a FiberHMM coord=seq record means SEQ. When the provenance does
-    not decide it (e.g. FiberHMM <= 2.12 output, which has no FiberHMM @PG)
-    the run stops at the first read with those tags rather than risk
-    mirroring every reverse-strand footprint.
+    --input-frame molecular/query force it. auto (default) applies the shared
+    footprint-tag frame rule (fiberhmm.io.annotation_frame.legacy_tag_frame,
+    docs/reference/footprint-tag-frame.md). When merged @PG histories
+    disagree and nothing declares coord=molecular, the run stops at the first
+    read with those tags rather than risk mirroring reverse-strand footprints.
     Returns True for molecular (flip reverse tags to seq), False for SEQ, and
     None when undecided (then any read with ns/nl/as/al stops the run; reads
     whose only footprints are fibertools ``Ma``, always molecular, proceed).
@@ -1319,10 +1318,10 @@ def _recall(args, bam_in, model_path, using_bundled_model, n_cores):
     # the run (including the per-read failure policy) succeeds.
     failure_messages = []
     with atomic_output(args.out_bam) as out_path:
-        # Resolve the coordinate frame of the input ns/nl/as/al tags from the
-        # header provenance (coord=molecular declaration, fibertools
-        # nucleosome @PG, FiberHMM coord=seq record); stop when it cannot be
-        # decided. A wrong frame mirrors every reverse-strand call.
+        # Resolve the coordinate frame of the input ns/nl/as/al tags with the
+        # shared footprint-tag frame rule (last writer on each @PG PP chain);
+        # merged histories that disagree stop at the first read that needs
+        # it. A wrong frame mirrors every reverse-strand call.
         input_molecular_frame = _resolve_input_molecular_frame(args, bam_in.header)
         # ML threshold for re-reading MM/ML: explicit, else the chemistry
         # preset (Hia5 Nanopore 248, otherwise 125), taken from --enzyme/--seq

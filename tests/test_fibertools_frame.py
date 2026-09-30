@@ -18,6 +18,7 @@ position of each footprint is known without trusting FiberHMM's frame logic.
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import subprocess
@@ -28,8 +29,12 @@ import pysam
 import pytest
 
 from fiberhmm.io.annotation_frame import (
+    FIBERHMM_FOOTPRINT_PROGRAMS,
     append_coord_to_ds,
     legacy_tag_frame,
+    legacy_tag_frame_report,
+    pg_family,
+    pg_writer_frame,
 )
 from fiberhmm.io.ma_tags import (
     annotation_tags,
@@ -99,101 +104,146 @@ def _chain(*pgs):
     return out
 
 
-@pytest.mark.parametrize('pgs, expected', [
-    # fibertools-rs nucleosome writers, current and old command names
-    ([_pg(ID='ft', PN='fibertools-rs', CL='ft predict-m6a in.bam out.bam')], 'molecular'),
-    ([_pg(ID='ft', PN='fibertools-rs', CL='ft m6a -t 8 in.bam out.bam')], 'molecular'),
-    ([_pg(ID='ft', PN='fibertools-rs', CL='ft predict in.bam out.bam')], 'molecular'),
-    ([_pg(ID='ft', PN='fibertools-rs', CL='ft add in.bam out.bam')], 'molecular'),
-    ([_pg(ID='ft', PN='fibertools-rs', CL='/opt/bin/ft add-nucleosomes in.bam out.bam')], 'molecular'),
-    ([_pg(ID='ft', PN='fibertools-rs', CL='ft fire in.bam out.bam')], 'molecular'),
-    # a fibertools command that does not write ns/nl is not evidence
-    ([_pg(ID='ft', PN='fibertools-rs', CL='ft extract in.bam --all x')], None),
-    # no provenance at all: FiberHMM <= 2.12 (SEQ) looks exactly like this
-    ([_pg(ID='pbmm2', PN='pbmm2', CL='pbmm2 align ref in.bam out.bam')], None),
-    ([], None),
-    # a FiberHMM pass-through record without a coord token keeps the frame
-    (_chain(_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
-      _pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='DAF duplicate marking')), 'molecular'),
-    ([_pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='DAF duplicate marking')], None),
-    # explicit FiberHMM declarations
-    ([_pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='x; coord=seq (footprint tags)')], 'seq'),
-    (_chain(_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
-      _pg(ID='fiberhmm-tag-m5c', PN='fiberhmm-tag-m5c', DS='x; coord=seq')), 'seq'),
-    # a path mentioning fiberhmm is not a FiberHMM program record
-    (_chain(_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
-      _pg(ID='samtools', PN='samtools', CL='samtools sort -o ~/fiberhmm_work/x.bam')), 'molecular'),
+# Synthetic-header cases mirror FiberBrowser's tests/test_footprint_tag_frame.py
+# (the shared rule, docs/reference/footprint-tag-frame.md).
+
+REPORT = legacy_tag_frame_report
+FT = {"ID": "ft.1", "PN": "fibertools-rs", "CL": "ft predict-m6a in.bam out.bam"}
+FHMM_OLD = {"ID": "fiberhmm-apply", "PN": "fiberhmm-apply", "CL": "fiberhmm-apply -i in.bam -o out.bam"}
+FHMM_NEW = {"ID": "fiberhmm-call", "PN": "fiberhmm-call", "CL": "fiberhmm-call -i in.bam -o out.bam",
+            "DS": "FiberHMM fused apply+recall; coord=molecular"}
+SORT = {"ID": "samtools", "PN": "samtools", "CL": "samtools sort -o out.bam"}
+
+
+def _frame(pgs, co=()):
+    return REPORT({"PG": list(pgs), "CO": list(co)})["frame"]
+
+
+@pytest.mark.parametrize("ran", [(FT, FHMM_OLD, SORT), (FHMM_OLD, FT, SORT)])
+def test_every_header_order_of_one_chain_gives_the_same_frame(ran):
+    chain = _chain(*ran)
+    want = "seq" if ran[1] is FHMM_OLD else "molecular"   # the later writer decides
+    for order in itertools.permutations(chain):
+        assert _frame(order) == want, [r["ID"] for r in order]
+
+
+def test_unmarked_fiberhmm_writer_after_fibertools_in_the_chain_wins_even_when_listed_first():
+    pgs = _chain(FT, FHMM_OLD)
+    assert _frame([pgs[1], pgs[0]]) == "seq"
+
+
+def test_header_order_is_the_chain_only_when_no_record_has_pp():
+    assert _frame([FT, FHMM_OLD]) == "seq"
+    assert _frame([FHMM_OLD, FT]) == "molecular"
+    report = REPORT({"PG": [FHMM_OLD, FT, dict(SORT, PP="ft.1")]})
+    assert report["ambiguous"] and report["votes"] == {"molecular": 1, "seq": 1}
+
+
+@pytest.mark.parametrize("record,family", [
+    ({"ID": "ft.1", "PN": "fibertools-rs"}, "fibertools"),
+    ({"ID": "ft.1-61483E4"}, "fibertools"),
+    ({"ID": "x", "CL": "/opt/bin/ft add-nuc in.bam out.bam"}, "fibertools"),
+    ({"ID": "fiberhmm-call-75E22241"}, "fiberhmm"),
+    ({"ID": "fiberhmm-call.2", "PN": "fiberhmm-call"}, "fiberhmm"),
+    ({"ID": "samtools-fiberhmm-output", "PN": "samtools"}, None),
+    ({"ID": "ft.1", "PN": "samtools"}, None),
+    ({"ID": "samtools", "PN": "samtools", "CL": "samtools sort -o ~/fiberhmm_work/x.bam"}, None),
+    ({"ID": "whatever", "CL": "python pipeline.py fiberhmm-call"}, None),
 ])
-def test_legacy_tag_frame_rule(pgs, expected):
-    assert legacy_tag_frame({'PG': pgs})[0] == expected
+def test_producer_identity(record, family):
+    assert pg_family(record) == family
 
 
-_FT = _pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b')
-_ALN = _pg(ID='pbmm2', PN='pbmm2', CL='pbmm2 align ref in out')
-_MERGE = 'samtools merge -o all.bam a.bam b.bam'
+@pytest.mark.parametrize("cl,writes", [
+    ("ft predict-m6a in.bam out.bam", True), ("ft -t 8 m6a in.bam out.bam", True),
+    ("ft predict -m 254 in.bam out.bam", True), ("ft add in.bam out.bam", True),
+    ("ft add-nuc --min-ml-score 225 in.cram out.bam", True), ("ft fire - -", True),
+    ("fibertools-rs fiber-hmm in.bam out.bam", True),
+    ("ft extract --all out.tsv in.bam", False), ("ft convert-tags in.bam out.bam", False),
+    ("ft pileup in.bam", False), ("ft clear-kinetics in.bam out.bam", False),
+])
+def test_fibertools_footprint_writers(cl, writes):
+    assert (pg_writer_frame({"ID": "ft.1", "PN": "fibertools-rs", "CL": cl}, False) == "molecular") is writes
 
 
-def _merged(branch_a, branch_b):
-    """samtools merge of two histories: clashing IDs renamed with a -XXXXXXXX
-    suffix, one merge record per chain end (same PN/VN/CL, one PP each)."""
-    def rename(pgs, suffix):
-        ids = {pg['ID']: pg['ID'] + suffix for pg in pgs}
-        return [dict(pg, ID=ids[pg['ID']], **({'PP': ids[pg['PP']]} if 'PP' in pg else {}))
-                for pg in pgs]
-    a, b = branch_a, rename(branch_b, '-0A1B2C3D')
-    ends = [a[-1]['ID'], b[-1]['ID']]
-    merge = [_pg(ID='samtools' + ('' if i == 0 else '-5E6F7A8B'), PN='samtools', VN='1.21',
-                 CL=_MERGE, PP=end) for i, end in enumerate(ends)]
-    return a + b + merge
+def test_fiberhmm_passthrough_programs_do_not_reset_the_frame():
+    for pn in ("fiberhmm-tag-m5c", "fiberhmm-dedup", "fiberhmm-merge", "fiberhmm-pair", "fiberhmm-tag-consensus",
+               "fiberhmm-strand-rescue-annotate", "fiberhmm-pipeline", "fiberhmm-call-m5c"):
+        assert _frame(_chain(FT, {"ID": pn, "PN": pn, "CL": f"{pn} -i in.bam -o out.bam"})) == "molecular", pn
+    for pn in sorted(FIBERHMM_FOOTPRINT_PROGRAMS):
+        assert _frame(_chain(FT, {"ID": pn, "PN": pn, "CL": f"{pn} -i in.bam"})) == "seq", pn
 
 
-def test_pp_graph_follows_each_branch_of_a_merge():
-    fibertools = _chain(_ALN, _FT)
-    old_fiberhmm = _chain(_ALN)                      # FiberHMM <= 2.12: no @PG of its own
-    called = _chain(_ALN, _pg(ID='fiberhmm-call', PN='fiberhmm-call', DS='x; coord=molecular'))
-    # both branches fibertools: molecular, through the renamed IDs
-    assert legacy_tag_frame({'PG': _merged(fibertools, fibertools)})[0] == 'molecular'
-    # fibertools merged with an unmarked old BAM: header order would say
-    # molecular (the fibertools record is last-but-merge); the branches say unknown
-    assert legacy_tag_frame({'PG': _merged(fibertools, old_fiberhmm)})[0] is None
-    # an explicit coord= declaration settles a disagreement it does not contradict
-    assert legacy_tag_frame({'PG': _merged(fibertools, called)})[0] == 'molecular'
-    seq = _chain(_ALN, _pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='x; coord=seq (c)'))
-    assert legacy_tag_frame({'PG': _merged(called, seq)})[0] is None
+def test_fiberhmm_writer_frame_follows_its_own_or_the_header_declaration():
+    assert _frame(_chain(FT, FHMM_NEW)) == "molecular"
+    assert _frame(_chain(FT, FHMM_OLD), co=["fiberhmm:coord=molecular"]) == "molecular"
+    assert _frame(_chain(FT, {"ID": "fiberhmm", "PN": "fiberhmm", "CL": "fiberhmm-apply -i in.bam"})) == "seq"
 
 
-def test_pp_graph_order_does_not_decide():
-    """Header order is not ancestry. A caller's branch listed before a
-    fibertools branch would look superseded by fibertools in header order;
-    on the PP graph it is still a branch whose MA-less reads the caller
-    skipped, so consensus's disabled frame is not inferred."""
-    from fiberhmm.io.annotation_frame import resolve_disabled_legacy_frame
-    merged = _merged(_chain(_ALN, _pg(ID='fiberhmm-call', PN='fiberhmm-call',
-                                      DS='x; coord=molecular')), _chain(_ALN, _FT))
-    assert resolve_disabled_legacy_frame({'PG': merged}) is None
-    assert resolve_disabled_legacy_frame({'PG': _merged(_chain(_ALN, _FT), _chain(_ALN, _FT))})[0] \
-        == 'molecular'
+def test_pp_cycles_terminate():
+    pgs = [dict(FT, PP="fiberhmm-apply"), dict(FHMM_OLD, PP="ft.1")]
+    assert REPORT({"PG": pgs})["frame"] in ("seq", "molecular")
+    assert _frame([dict(SORT, PP="samtools")]) == "seq"
 
 
-def test_fibertools_without_pn_and_pp_cycles():
-    no_pn = [_pg(ID='ft.1', CL='ft predict-m6a a b')]
-    assert legacy_tag_frame({'PG': no_pn})[0] == 'molecular'
-    by_cl = [_pg(ID='x', CL='/usr/local/bin/fibertools add-nucleosomes a b')]
-    assert legacy_tag_frame({'PG': by_cl})[0] == 'molecular'
-    # a PP cycle neither loops forever nor invents a frame
-    cycle = [dict(_FT, PP='fiberhmm-dedup'),
-             _pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='d', PP='ft')]
-    assert legacy_tag_frame({'PG': cycle})[0] in ('molecular', None)
+def test_pp_to_a_missing_id_ends_the_chain():
+    assert _frame([FT, dict(SORT, PP="not-there")]) == "molecular"
+    assert _frame([dict(FT, PP="gone"), dict(SORT, PP="ft.1")]) == "molecular"
 
 
-def test_coord_molecular_declaration_anywhere_wins():
-    assert legacy_tag_frame({'CO': ['fiberhmm:coord=molecular']})[0] == 'molecular'
-    assert legacy_tag_frame({'PG': [_pg(ID='x', PN='x', DS='coord=molecular')]})[0] == 'molecular'
+def test_duplicate_ids_link_to_the_nearest_preceding_record():
+    pgs = [dict(FHMM_OLD, ID="dup"), dict(SORT, PP="dup"), dict(FT, ID="dup"), dict(SORT, ID="s2", PP="dup")]
+    report = REPORT({"PG": pgs})
+    assert report["votes"] == {"molecular": 1, "seq": 1} and report["ambiguous"]
+
+
+def _old_and_ft_branches():
+    old_branch = _chain(dict(FHMM_OLD, ID="fiberhmm-apply"), dict(SORT, ID="samtools"))
+    ft_branch = _chain(dict(FT, ID="ft.1-570F7E82"), dict(SORT, ID="samtools-39D564CF"))
+    return old_branch, ft_branch
+
+
+def test_merged_branches_that_disagree_are_ambiguous():
+    old_branch, ft_branch = _old_and_ft_branches()
+    report = REPORT({"PG": old_branch + ft_branch})
+    assert report["ambiguous"] and report["frame"] == "seq" and report["source"] == "majority"
+    two_ft = ft_branch + _chain(dict(FT, ID="ft.1-60F6C071"), dict(SORT, ID="samtools-11AAC8BA"))
+    report = REPORT({"PG": old_branch + two_ft})
+    assert report["ambiguous"] and report["frame"] == "molecular"
+    report = REPORT({"PG": old_branch + ft_branch, "CO": ["fiberhmm:coord=molecular"]})
+    assert report["frame"] == "molecular" and not report["ambiguous"]
+    new_branch = _chain(FHMM_NEW, dict(SORT, ID="samtools-7BAE9814"))
+    report = REPORT({"PG": old_branch + new_branch})
+    assert report["ambiguous"] and report["frame"] == "molecular" and report["source"] == "declared"
+
+
+def test_no_writer_uses_the_declaration_or_the_seq_default():
+    report = REPORT({"PG": [SORT]})
+    assert (report["frame"], report["source"], report["ambiguous"], report["chains"]) == ("seq", "default", False, 1)
+    assert REPORT({"CO": ["fiberhmm:coord=molecular"]})["frame"] == "molecular"
+    assert REPORT(None)["frame"] == "seq"
+
+
+def test_fiberhmm_refuses_where_fiberbrowser_takes_the_majority():
+    """FiberHMM differs from the shared report in one case only: disagreeing
+    writers with nothing declared (FiberBrowser shows the majority)."""
+    old_branch, ft_branch = _old_and_ft_branches()
+    two_ft = ft_branch + _chain(dict(FT, ID="ft.1-60F6C071"), dict(SORT, ID="samtools-11AAC8BA"))
+    for pgs in (old_branch + ft_branch, old_branch + two_ft):
+        frame, reason = legacy_tag_frame({"PG": pgs})
+        assert frame is None and 'disagree' in reason
+    # declared: the declaration decides, as in FiberBrowser
+    new_branch = _chain(FHMM_NEW, dict(SORT, ID="samtools-7BAE9814"))
+    assert legacy_tag_frame({"PG": old_branch + new_branch})[0] == "molecular"
+    # every other case is the shared report's frame
+    for pgs in (_chain(FT, FHMM_OLD), _chain(FHMM_OLD, FT), [SORT], []):
+        assert legacy_tag_frame({"PG": pgs})[0] == REPORT({"PG": pgs})["frame"]
 
 
 def test_pass_through_ds_token_is_honest():
     assert append_coord_to_ds('DAF dedup', 'molecular').startswith('DAF dedup; coord=molecular')
-    assert 'coord=seq' in append_coord_to_ds('DAF dedup', 'seq')
+    # the shared rule has one declaration token: SEQ and unknown are not recorded
+    assert append_coord_to_ds('DAF dedup', 'seq') == 'DAF dedup'
     assert append_coord_to_ds('DAF dedup', None) == 'DAF dedup'
 
 
@@ -265,23 +315,23 @@ def test_recall_nucs_reverse_read_matches_forward_read(tmp_path, name):
             assert nucs and all(on_gap), (read.query_name, nucs)
 
 
-def test_recall_refuses_when_provenance_is_ambiguous(tmp_path):
-    """A header with no frame evidence (a FiberHMM <= 2.12 BAM looks like this;
-    so does a fibertools BAM whose @PG history was lost) stops the run with a
-    message naming both explicit choices, instead of guessing SEQ."""
-    src = FX / 'ft0.6.2_addnuc_fire.bam'
-    stripped = tmp_path / 'noprov.bam'
-    with pysam.AlignmentFile(str(src)) as bam:
+def test_recall_refuses_when_merged_histories_disagree(tmp_path):
+    """Writers that disagree across merged @PG branches, with nothing declaring
+    coord=molecular, stop the run with a message naming both explicit
+    choices instead of guessing (FiberBrowser would show the majority)."""
+    old_branch, ft_branch = _old_and_ft_branches()
+    mixed = tmp_path / 'mixed.bam'
+    with pysam.AlignmentFile(str(FX / 'ft0.6.2_addnuc_fire.bam')) as bam:
         header = bam.header.to_dict()
-        header.pop('PG', None)
-        with pysam.AlignmentFile(str(stripped), 'wb', header=header) as out:
+        header['PG'] = old_branch + ft_branch
+        with pysam.AlignmentFile(str(mixed), 'wb', header=header) as out:
             for read in bam:
                 out.write(read)
-    pysam.index(str(stripped))
+    pysam.index(str(mixed))
     out = tmp_path / 'x.bam'
     env = dict(os.environ)
     env['PYTHONPATH'] = os.pathsep.join(filter(None, [str(REPO), env.get('PYTHONPATH')]))
-    base = [sys.executable, '-m', 'fiberhmm.cli.recall_tfs', '-i', str(stripped), '-o', str(out),
+    base = [sys.executable, '-m', 'fiberhmm.cli.recall_tfs', '-i', str(mixed), '-o', str(out),
             '--enzyme', 'hia5', '--seq', 'pacbio', '-c', '1']
     proc = subprocess.run(base, capture_output=True, text=True, env=env)
     assert proc.returncode != 0
@@ -396,7 +446,7 @@ _INPUT_HEADERS = {
     # a previous pass-through tool that resolved SEQ frame
     'seq': dict(_BASE, PG=[_pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='x; coord=seq')]),
 }
-_RECORDED = {'fibertools': 'molecular', 'unknown': None, 'seq': 'seq'}
+_RECORDED = {'fibertools': 'molecular', 'unknown': None, 'seq': None}
 
 
 def _pass_through_headers(header):
@@ -467,7 +517,7 @@ def test_dedup_run_records_molecular_for_fibertools_input(tmp_path):
 @pytest.mark.parametrize('frame_arg, expected, used', [
     ('auto', 'coord=molecular', True),     # the fixture's fibertools provenance
     ('molecular', 'coord=molecular', True),
-    ('query', 'coord=seq', False),         # the user's explicit choice is what was assumed
+    ('query', None, False),                # the user's explicit SEQ choice: nothing declared
 ])
 def test_tag_m5c_records_the_frame_it_carried(monkeypatch, tmp_path, frame_arg, expected, used):
     """The recorded frame is the one the tool actually used on the tags."""
@@ -485,7 +535,10 @@ def test_tag_m5c_records_the_frame_it_carried(monkeypatch, tmp_path, frame_arg, 
     tag_m5c.main(['-i', str(FX / 'ft0.6.2_addnuc_fire.bam'), '-o', str(tmp_path / 'o.bam'),
                   '-r', str(tmp_path / 'ref.fa'), '--enzyme', 'ddda',
                   '--input-frame', frame_arg])
-    assert expected in captured['record']['DS']
+    if expected is None:
+        assert 'coord=' not in captured['record']['DS']
+    else:
+        assert expected in captured['record']['DS']
     assert captured['frame'] is used
 
 
@@ -579,14 +632,3 @@ def test_consensus_export_keeps_fibertools_ma_under_family_layers():
     assert resolve_disabled_legacy_frame(exported)[0] == 'molecular'
     with pysam.AlignmentFile(str(FX / 'fiberhmm3.0.0_call.bam')) as bam:
         assert _export_ds(bam.header) == 'Frozen staged family annotations in MA/AQ/AN'
-
-
-def test_header_dropping_concatenation_leaves_the_frame_undecided():
-    """`samtools cat` of several files keeps one header: the other inputs'
-    frame is not in it, so fibertools provenance of the kept one is not enough
-    (fiberhmm-call joining its own region files is not such a step)."""
-    cat = _pg(ID='samtools', PN='samtools', CL='samtools cat -o all.bam a.bam b.bam')
-    assert legacy_tag_frame({'PG': _chain(_ALN, _FT, cat)})[0] is None
-    own_regions = _pg(ID='samtools', PN='samtools',
-                      CL='samtools cat -b /tmp/x/.fiberhmm_tmp/bam_list.txt -o x.bam')
-    assert legacy_tag_frame({'PG': _chain(_ALN, _FT, own_regions)})[0] == 'molecular'

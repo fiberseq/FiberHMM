@@ -1,6 +1,8 @@
 """Coordinate-frame policy for footprint annotations read from a BAM.
 
-Three tag families carry footprints, and each has its own frame rule:
+Three tag families carry footprints, and each has its own frame rule
+(docs/reference/footprint-tag-frame.md, shared with FiberBrowser's
+``browser/services/bam_tags.py``):
 
 ``MA``/``AQ``/``AN`` (written only by FiberHMM)
     Historical unmarked FiberHMM BAMs use stored SEQ coordinates. Molecular MA
@@ -11,248 +13,287 @@ Three tag families carry footprints, and each has its own frame rule:
     Always molecular (original read orientation), whatever the header says.
 
 ``ns/nl/as/al`` (fibertools, and FiberHMM >= 2.0)
-    The tags carry no frame, so it comes from the @PG/@CO provenance
-    (:func:`legacy_tag_frame`):
-
-    1. follow the @PG history through PP links (the graph of
-       :mod:`fiberhmm.advisories`: samtools-merge branches, renamed IDs,
-       missing links); on each branch the last record bearing on footprint
-       tags decides: a FiberHMM record (``fiberhmm-*``) with ``coord=`` in DS
-       -> that frame; a fibertools-rs record (PN, ID or CL program) whose
-       command writes nucleosomes (``ft predict-m6a``/``m6a``, ``ft
-       add-nucleosomes``, ``ft fire``, ``ft fiber-hmm``, and the old ``ft
-       predict``/``ft add`` names) -> molecular; a FiberHMM record with no
-       coord token passed the tags through and is looked through;
-    2. all branches agree -> that frame;
-    3. otherwise the header's explicit coord= declarations decide if they
-       agree; else unknown (``None``).
-
-    FiberHMM <= 2.12 wrote ns/nl in SEQ frame and no @PG of its own; FiberHMM
-    2.13.0 started writing molecular tags, its @PG and the ``coord=molecular``
-    token in the same release. So no released FiberHMM wrote SEQ-frame tags
-    under its own @PG, and an unmarked ``fiberhmm-*`` record is a tool that
-    did not touch ns/nl. Unknown covers both an unmarked FiberHMM <= 2.12 BAM
-    (SEQ) and a fibertools BAM whose @PG history was lost (molecular); callers
-    must ask for an explicit frame rather than guess.
-
-FiberBrowser's ``bam_legacy_tags_are_molecular`` applies the same evidence;
-an unmarked ``fiberhmm-*`` record after fibertools carries the frame through
-here (for the reason above).
+    The tags carry no frame, so it comes from the @PG provenance
+    (:func:`legacy_tag_frame_report`): every @PG leaf starts a chain walked up
+    through PP; the chain votes with the frame of the last footprint writer
+    that ran on it (fibertools nucleosome commands: molecular; FiberHMM
+    apply/call/recall-tfs/recall-nucs: molecular when declared, else SEQ).
+    FiberHMM pass-through tools do not vote. Agreeing votes decide; no votes
+    mean molecular if coord=molecular is declared anywhere, else SEQ
+    (unmarked FiberHMM <= 2.12). Disagreeing votes (merged files) mean
+    molecular when declared; otherwise FiberBrowser shows the majority, while
+    FiberHMM, where a wrong guess changes calls, refuses
+    (:func:`legacy_tag_frame` returns ``None``).
 """
 from __future__ import annotations
 
 import re
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 MOLECULAR = 'molecular'
 SEQ = 'seq'
+_COORD_MOLECULAR = 'coord=molecular'
 
-# fibertools-rs subcommands that (re)write ns/nl (kept identical to
-# FiberBrowser's browser/services/bam_tags.py so both tools agree):
-# predict-m6a (aliases m6a/m6A; `ft predict` in fibertools-rs 0.1-0.3, still
-# accepted as a prefix by 0.13), add-nucleosomes (`ft add` in 0.2, likewise),
-# fire, fiber-hmm.
-FIBERTOOLS_NUC_COMMAND_RE = re.compile(
-    r"(?:^|[\s/])(?:ft|fibertools)(?:\s+\S+)*?\s+"
-    r"(?:predict(?:-m6a)?|m6a|add(?:-nuc\w*)?|fire|fiber-hmm)(?:\s|$)")
+# fibertools-rs subcommands that (re)write ns/nl: predict-m6a (m6a; `predict`
+# in 0.1-0.3), add-nucleosomes (`add` in 0.2), fire, fiber-hmm. fibertools
+# accepts any unambiguous subcommand prefix (`ft add-nuc` is in real headers);
+# the shortest unambiguous prefix of each writer.
+FIBERTOOLS_FOOTPRINT_SUBCOMMANDS = frozenset(
+    {'predict', 'predict-m6a', 'm6a', 'add', 'add-nucleosomes', 'add-nucleosome', 'fire', 'fiber-hmm'})
+_FIBERTOOLS_FOOTPRINT_PREFIXES = (('add-nucleosomes', 3), ('predict-m6a', 4), ('fire', 3), ('fiber-hmm', 5))
+_FIBERTOOLS_PROGRAMS = frozenset({'ft', 'fibertools', 'fibertools-rs'})
+# FiberHMM programs that write the legacy tags. Every other fiberhmm-* program
+# (tag-m5c, call-m5c, dedup, merge, pair, strand-rescue-annotate, tag-consensus,
+# pipeline, ...) passes them through unchanged.
+FIBERHMM_FOOTPRINT_PROGRAMS = frozenset(
+    {'fiberhmm-apply', 'fiberhmm-call', 'fiberhmm-recall-tfs', 'fiberhmm-recall-nucs'})
+_FIBERHMM_NAME_RE = re.compile(r'^fiberhmm(?:-[a-z0-9-]+)?$')
+# @PG ID collision suffixes added by samtools/pysam when headers are merged
+# (`ID.1`, `ID-61483E4`); stripped for classification only, never for PP.
+_PG_ID_SUFFIX_RE = re.compile(r'(?:\.\d+|-[0-9a-f]{6,8})$')
 
-_COORD_TOKEN_RE = re.compile(r"coord=(molecular|seq)\b", re.IGNORECASE)
+# Pass-through tools append this to their @PG DS with coord=molecular when the
+# tags they carried are molecular (append_coord_to_ds).
+CARRIED_OVER = 'footprint tags carried over from the input'
 
 
-def _header_dict(header) -> dict:
-    return header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
+def _header_dict(header) -> Optional[dict]:
+    try:
+        return header.to_dict() if hasattr(header, 'to_dict') else dict(header or {})
+    except (TypeError, ValueError):
+        return None
 
 
 def ma_annotation_frame(header):
-    header = _header_dict(header)
+    header = _header_dict(header) or {}
     texts = [str(c) for c in header.get('CO', [])]
     texts += [' '.join(str(v) for v in pg.values()) for pg in header.get('PG', [])]
     return 'molecular' if any('coord=molecular' in text.lower() for text in texts) else 'seq'
 
 
-def _is_fiberhmm_program(pg: dict) -> bool:
-    """A FiberHMM program record: PN or ID ``fiberhmm-*`` (samtools may suffix
-    the ID). A command line that merely mentions fiberhmm is not one."""
-    return any(str(pg.get(key, '') or '').lower().startswith('fiberhmm')
-               for key in ('PN', 'ID'))
-
-
-def _is_fibertools_program(pg: dict) -> bool:
-    """fibertools-rs by PN, ID (``ft``, ``ft.1``, ``fibertools...``, samtools-
-    suffixed) or the CL executable, so records without PN count too."""
-    if 'fibertools' in str(pg.get('PN', '') or '').lower():
+def _is_fibertools_footprint_subcommand(token: str) -> bool:
+    if token in FIBERTOOLS_FOOTPRINT_SUBCOMMANDS:
         return True
-    if re.match(r'(?:ft|fibertools)(?:$|[.\-_])', str(pg.get('ID', '') or '').lower()):
-        return True
-    words = str(pg.get('CL', '') or '').split()
-    return bool(words) and words[0].rsplit('/', 1)[-1].lower() in ('ft', 'fibertools')
+    return any(len(token) >= n and full.startswith(token) for full, n in _FIBERTOOLS_FOOTPRINT_PREFIXES)
 
 
-def _is_fibertools_nuc_program(pg: dict) -> bool:
-    return (_is_fibertools_program(pg)
-            and bool(FIBERTOOLS_NUC_COMMAND_RE.search(str(pg.get('CL', '') or '').lower())))
+def _pg_id_base(ident: str) -> str:
+    base = ident.lower()
+    while True:
+        stripped = _PG_ID_SUFFIX_RE.sub('', base)
+        if stripped == base or not stripped:
+            return base
+        base = stripped
 
 
-# How one @PG record bears on the frame of the footprint tags after it:
-# (frame, kind) with kind 'fibertools' (wrote ns/nl molecular), 'caller'
-# (FiberHMM wrote its own tags and declared their frame) or 'carried' (a
-# FiberHMM pass-through tool recorded the frame it carried over); None when
-# the record does not touch footprint tags.
-def _record_decision(pg: dict):
-    if _is_fiberhmm_program(pg):
-        ds = str(pg.get('DS', '') or '')
-        match = _COORD_TOKEN_RE.search(ds)
-        if match:
-            return (match.group(1).lower(), 'carried' if CARRIED_OVER in ds else 'caller')
-        return None
-    if _is_fibertools_nuc_program(pg):
-        return (MOLECULAR, 'fibertools')
+def _cl_tokens(cl) -> List[str]:
+    return [token for token in str(cl or '').lower().split() if token]
+
+
+def _basename(token: str) -> str:
+    return token.rstrip('/').rsplit('/', 1)[-1]
+
+
+def pg_family(pg: dict) -> Optional[str]:
+    """``'fibertools'``, ``'fiberhmm'`` or None (any other program).
+
+    PN decides when present; else the ID with collision suffixes stripped; else
+    the program named by the first CL token. A PN such as ``samtools`` is never
+    overridden by an ID or CL that happens to mention a producer."""
+    pn = str(pg.get('PN', '') or '').strip().lower()
+    if pn:
+        if 'fibertools' in pn:
+            return 'fibertools'
+        return 'fiberhmm' if _FIBERHMM_NAME_RE.match(pn) else None
+    base = _pg_id_base(str(pg.get('ID', '') or '').strip())
+    if base in _FIBERTOOLS_PROGRAMS or base.startswith('fibertools'):
+        return 'fibertools'
+    if _FIBERHMM_NAME_RE.match(base):
+        return 'fiberhmm'
+    tokens = _cl_tokens(pg.get('CL', ''))
+    program = _basename(tokens[0]) if tokens else ''
+    if program in _FIBERTOOLS_PROGRAMS:
+        return 'fibertools'
+    if _FIBERHMM_NAME_RE.match(program):
+        return 'fiberhmm'
     return None
 
 
-def _branch_decisions(d: dict, transparent=()) -> set:
-    """The nearest deciding record on every ancestry branch of every leaf of
-    the @PG history (the PP graph of :mod:`fiberhmm.advisories`: samtools
-    merge joins, renamed IDs, missing, duplicated or forward PP links), over
-    each plausible reading. Returns a set of ``(frame, kind)`` and ``None``
-    for branches nothing decides. Records whose kind is in ``transparent``
-    are looked through. A step that joined several inputs but kept one header
-    (``samtools cat``, GatherBamFiles) adds an undecided branch: the other
-    inputs' history is not in the header."""
-    from fiberhmm.advisories import _drops_input_headers, _history_graphs, _pg_records
-    records = _pg_records(d)
-    if not records:
-        return {None}
-    graphs, node = _history_graphs(records)
-    own, dropped = {}, set()
-    for index, record in enumerate(records):
-        decision = _record_decision(record)
-        if decision is not None and decision[1] not in transparent:
-            own.setdefault(node[index], decision)
-        if _drops_input_headers(record):
-            dropped.add(node[index])
-    nodes = sorted(set(node))
-    out = set()
-    for graph in graphs:
-        parents = graph.parents
-        children = {p for n in nodes for p in parents[n]}
-        memo = {}
-
-        def decide(n, visiting):
-            if n in memo:
-                return memo[n]
-            if n in own:
-                result = {own[n]}
-            elif not parents[n]:
-                result = {None}
-            else:
-                result = set()
-                for parent in parents[n]:
-                    if parent not in visiting:  # a PP cycle adds nothing
-                        result |= decide(parent, visiting | {n})
-                result = result or {None}
-                if n in dropped:
-                    result = result | {None}
-            memo[n] = result
-            return result
-
-        for leaf in (n for n in nodes if n not in children):
-            out |= decide(leaf, frozenset())
-    return out
+def _pg_text(pg: dict) -> str:
+    try:
+        return ' '.join(str(v) for v in pg.values()).lower()
+    except AttributeError:
+        return str(pg).lower()
 
 
-def _explicit_frames(d: dict) -> set:
-    """Every frame the header states outright: coord= tokens in FiberHMM @PG
-    DS, and coord=molecular in any @PG or @CO text."""
-    frames = set()
-    for pg in d.get('PG', []) or []:
-        if not isinstance(pg, dict):
-            continue
-        if _is_fiberhmm_program(pg):
-            match = _COORD_TOKEN_RE.search(str(pg.get('DS', '') or ''))
-            if match:
-                frames.add(match.group(1).lower())
-        if 'coord=molecular' in ' '.join(str(v) for v in pg.values()).lower():
-            frames.add(MOLECULAR)
-    if any('coord=molecular' in str(c).lower() for c in d.get('CO', []) or []):
-        frames.add(MOLECULAR)
-    return frames
+def _is_carried_over(pg: dict) -> bool:
+    """A FiberHMM pass-through record that recorded the frame it carried."""
+    return CARRIED_OVER in str(pg.get('DS', '') or '')
+
+
+def pg_writer_frame(pg: dict, header_marker: bool, *, carried_votes: bool = True) -> Optional[str]:
+    """Frame of the legacy tags this @PG record wrote, or None if it wrote none.
+
+    ``carried_votes=False`` looks through pass-through records that declared
+    ``coord=molecular`` for tags they carried over (the shared rule counts them
+    as writers of that frame, which gives the same answer)."""
+    family = pg_family(pg)
+    if family == 'fibertools':
+        tokens = _cl_tokens(pg.get('CL', ''))
+        start = next((i + 1 for i, t in enumerate(tokens) if _basename(t) in _FIBERTOOLS_PROGRAMS), 1)
+        if any(_is_fibertools_footprint_subcommand(t) for t in tokens[start:]):
+            return MOLECULAR   # fibertools only ever writes molecular frame
+        return None
+    if family == 'fiberhmm':
+        record_marker = _COORD_MOLECULAR in _pg_text(pg)
+        tokens = _cl_tokens(pg.get('CL', ''))
+        names = {
+            str(pg.get('PN', '') or '').strip().lower(),
+            _pg_id_base(str(pg.get('ID', '') or '').strip()),
+            _basename(tokens[0]) if tokens else '',
+        }
+        writer = bool(names & FIBERHMM_FOOTPRINT_PROGRAMS)
+        if not writer and record_marker and not carried_votes and _is_carried_over(pg):
+            return None
+        if record_marker or writer:
+            return MOLECULAR if (record_marker or header_marker) else SEQ
+    return None
+
+
+def legacy_tag_frame_report(header, *, carried_votes: bool = True) -> dict:
+    """How the legacy ns/nl/as/al tags' frame was decided (the shared rule;
+    field-for-field FiberBrowser's ``legacy_tag_frame_report``).
+
+    Each @PG leaf (a record no other record names as PP) starts a chain that is
+    walked up through PP. The chain's frame is that of the first footprint
+    writer met (the last one to run). Header order is used as the chain only
+    when no record has a PP field. Chains without a writer do not vote.
+    Agreeing votes decide; with no votes an explicit coord=molecular anywhere
+    means molecular, else SEQ (unmarked legacy FiberHMM). Conflicting votes
+    (merged files) resolve to molecular when coord=molecular is declared
+    anywhere, else to the majority (ties: SEQ), and are reported as
+    ambiguous; ``declared`` says whether a declaration exists. ``writers``
+    lists each vote's record ID, frame and producer family.
+    """
+    report = {'frame': SEQ, 'source': 'default', 'ambiguous': False, 'declared': False,
+              'votes': {MOLECULAR: 0, SEQ: 0}, 'writers': [], 'chains': 0}
+    hdr = _header_dict(header)
+    if hdr is None:
+        return report
+    pgs = [pg for pg in (hdr.get('PG', []) or []) if isinstance(pg, dict)]
+    comments = [str(c).lower() for c in (hdr.get('CO', []) or [])]
+    header_marker = any(_COORD_MOLECULAR in c for c in comments)
+    declared = header_marker or any(_COORD_MOLECULAR in _pg_text(pg) for pg in pgs)
+    report['declared'] = declared
+
+    frames = [pg_writer_frame(pg, header_marker, carried_votes=carried_votes) for pg in pgs]
+    ids = [str(pg.get('ID', '') or '') for pg in pgs]
+    parent: List[Optional[int]] = [None] * len(pgs)
+    if any('PP' in pg for pg in pgs):
+        by_id: Dict[str, List[int]] = {}
+        for i, ident in enumerate(ids):
+            by_id.setdefault(ident, []).append(i)
+        for i, pg in enumerate(pgs):
+            pp = str(pg.get('PP', '') or '')
+            candidates = [j for j in by_id.get(pp, []) if j != i] if pp else []
+            if candidates:
+                earlier = [j for j in candidates if j < i]
+                parent[i] = earlier[-1] if earlier else candidates[-1]
+    else:
+        parent = [i - 1 if i > 0 else None for i in range(len(pgs))]
+    referenced = {j for j in parent if j is not None}
+    leaves = [i for i in range(len(pgs)) if i not in referenced]
+    if pgs and not leaves:          # every record is someone's parent: a PP cycle
+        leaves = [len(pgs) - 1]
+    report['chains'] = len(leaves)
+
+    for leaf in leaves:
+        node, seen = leaf, set()
+        while node is not None and node not in seen:
+            seen.add(node)
+            if frames[node] is not None:
+                report['votes'][frames[node]] += 1
+                report['writers'].append({'id': ids[node], 'frame': frames[node],
+                                          'family': pg_family(pgs[node])})
+                break
+            node = parent[node]
+
+    mol, seq = report['votes'][MOLECULAR], report['votes'][SEQ]
+    if mol and seq:
+        report['ambiguous'] = True
+        report['source'] = 'declared' if declared else 'majority'
+        report['frame'] = MOLECULAR if (declared or mol > seq) else SEQ
+    elif mol or seq:
+        report['source'] = 'provenance'
+        report['frame'] = MOLECULAR if mol else SEQ
+    elif declared:
+        report['source'] = 'declared'
+        report['frame'] = MOLECULAR
+    return report
 
 
 def legacy_tag_frame(header) -> Tuple[Optional[str], str]:
-    """Frame of a BAM's ns/nl/as/al tags from its provenance.
+    """Frame of a BAM's ns/nl/as/al for FiberHMM: ``(frame, reason)``.
 
-    Returns ``(frame, reason)``: ``frame`` is ``'molecular'``, ``'seq'`` or
-    ``None`` when the header does not decide it; ``reason`` is a short
-    human-readable account of the evidence. The @PG history is followed
-    through its PP links: each branch (samtools merge keeps one per input)
-    takes the frame of its last footprint-writing record. When the branches
-    disagree or some are undecided, the header's explicit coord= declarations
-    decide if they agree; otherwise the frame is unknown.
+    The shared rule (:func:`legacy_tag_frame_report`), except that merged
+    histories whose writers disagree with no coord=molecular declaration give
+    ``None``: FiberBrowser may show the majority, but FiberHMM would change
+    calls on a wrong guess, so its tools ask for an explicit frame instead.
     """
-    try:
-        d = _header_dict(header)
-        branches = _branch_decisions(d)
-    except (TypeError, ValueError, AttributeError):
-        return None, 'unreadable header'
-    frames = {b[0] if b else None for b in branches}
-    if len(frames) == 1 and None not in frames:
-        frame = frames.pop()
-        kinds = {b[1] for b in branches}
-        how = ('a fibertools nucleosome command wrote the tags' if kinds == {'fibertools'}
-               else f'the @PG history declares coord={frame}')
-        return frame, how
-    explicit = _explicit_frames(d)
-    if len(explicit) == 1:
-        frame = explicit.pop()
-        return frame, f'the header declares coord={frame}'
-    if len(frames - {None}) > 1 or len(explicit) > 1:
-        return None, ('merged @PG histories disagree on the frame of the '
-                      'footprint tags')
-    return None, ('no coord=molecular declaration and no fibertools '
-                  'nucleosome command in the @PG history')
+    report = legacy_tag_frame_report(header)
+    votes = f"{report['votes'][MOLECULAR]} molecular / {report['votes'][SEQ]} SEQ"
+    if report['ambiguous'] and not report['declared']:
+        return None, (f'merged @PG histories disagree ({votes} footprint-writer votes) '
+                      'and nothing declares coord=molecular')
+    reasons = {
+        'provenance': 'the last footprint writer on the @PG chains that have one',
+        'declared': 'coord=molecular is declared in the header',
+        'default': 'no footprint writer in the @PG history (unmarked FiberHMM <= 2.12 wrote SEQ)',
+    }
+    reason = reasons[report['source']]
+    if report['ambiguous']:
+        reason += f' (merged histories disagree: {votes})'
+    return report['frame'], reason
 
 
 def resolve_disabled_legacy_frame(header) -> Optional[Tuple[str, str]]:
     """``('molecular', reason)`` when fibertools wrote the ns/nl/as/al.
 
     For consensus's ``legacy_hia5_annotation_frame='disabled'``, which only
-    applies to reads without MA/Ma. When, on every branch of the @PG history,
-    fibertools' nucleosome command is the last program that wrote footprint
-    tags, every read's legacy tags are fibertools' own (molecular). A FiberHMM
-    caller (a coord= declaration on its own writes, or the @CO marker) does
-    not vouch for them: the reads it left without MA are ones it skipped, and
-    they keep whatever tags came before it (for example query-frame tags from
-    FiberHMM <= 2.12). FiberHMM pass-through records are looked through.
-    Anything else returns ``None`` and the explicit-frame error stands.
+    applies to reads without MA/Ma. It is stricter than the shared rule: every
+    @PG chain's last footprint writer must be fibertools. A FiberHMM writer
+    (call/apply/recall, or the @CO marker of older ones) does not vouch for
+    legacy tags: the reads it left without MA are ones it skipped, and they
+    keep whatever tags came before it (for example query-frame tags from
+    FiberHMM <= 2.12). Pass-through records are looked through. Anything else
+    returns ``None`` and the explicit-frame error stands.
     """
-    try:
-        d = _header_dict(header)
-        if any('coord=molecular' in str(c).lower() for c in d.get('CO', []) or []):
-            return None
-        branches = _branch_decisions(d, transparent=('carried',))
-    except (TypeError, ValueError, AttributeError):
+    hdr = _header_dict(header)
+    if hdr is None:
         return None
-    if branches == {(MOLECULAR, 'fibertools')}:
-        return MOLECULAR, 'a fibertools nucleosome command wrote the tags'
+    if any(_COORD_MOLECULAR in str(c).lower() for c in hdr.get('CO', []) or []):
+        return None
+    report = legacy_tag_frame_report(hdr, carried_votes=False)
+    writers = report['writers']
+    if (report['source'] == 'provenance' and report['frame'] == MOLECULAR and writers
+            and all(w['family'] == 'fibertools' for w in writers)):
+        return MOLECULAR, 'a fibertools nucleosome command is the last footprint writer on every @PG chain'
     return None
 
 
-CARRIED_OVER = 'footprint tags carried over from the input'
-
-
 def coord_ds_token(frame: Optional[str]) -> str:
-    """``coord=<frame>`` for a @PG DS, or ``''`` when the frame is unknown."""
-    return f'coord={frame}' if frame in (MOLECULAR, SEQ) else ''
+    """``coord=molecular`` for a @PG DS, or ``''``. The shared rule has one
+    declaration token; SEQ and unknown frames are not recorded."""
+    return _COORD_MOLECULAR if frame == MOLECULAR else ''
 
 
 def append_coord_to_ds(ds: str, frame: Optional[str]) -> str:
-    """Record the frame of the ns/nl/as/al a pass-through tool carried over.
+    """Record that a pass-through tool carried molecular-frame footprint tags.
 
     Tools that copy footprint tags without rewriting them keep the input's
-    frame; saying so in their own @PG lets readers that look at the latest
-    record (and people reading the header) see it. Unknown frames are left
-    unrecorded rather than guessed.
+    frame. Saying so in their own @PG makes the header state it outright
+    (readers that only look for the declaration, and people reading the
+    header). SEQ and unknown frames are left unrecorded rather than guessed.
     """
     token = coord_ds_token(frame)
     if not token:
@@ -277,10 +318,11 @@ def pass_through_frame(header, explicit=None) -> Optional[str]:
 
 AMBIGUOUS_FRAME_HELP = (
     'FiberHMM cannot tell which coordinate frame this BAM\'s ns/nl/as/al tags '
-    'use ({reason}). Reverse-strand footprints would be mirrored if it '
-    'guessed wrong. Pass the frame explicitly: {query_flag} for output of '
-    'FiberHMM 2.12 or earlier (SEQ frame); {molecular_flag} for fibertools '
-    'output whose @PG history was lost, or any other molecular-frame BAM.'
+    'use: {reason}. Reverse-strand footprints would be mirrored if it guessed '
+    'wrong. Pass the frame explicitly: {query_flag} if they are SEQ frame '
+    '(FiberHMM 2.12 or earlier), {molecular_flag} if they are molecular '
+    '(fibertools, FiberHMM 2.13 or later). A merged file whose inputs used '
+    'different frames cannot be read either way; split it by input.'
 )
 
 

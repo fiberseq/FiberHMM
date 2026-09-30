@@ -96,7 +96,7 @@ WARNING: the input was called by fiberhmm-call with SNP mask (daf_snp_mask=on/0s
 | Option | Default | Notes |
 |---|---|---|
 | `--prob-threshold` | 125; 248 for Hia5 Nanopore | `fiberhmm-call` uses 128 for non-Nanopore data |
-| `--input-frame` | `auto` | frame of the input's legacy tags. `auto` reads the header provenance: `coord=molecular` or a fibertools nucleosome command means molecular; a FiberHMM `coord=seq` record means query. If neither is present (for example FiberHMM 2.12 output), the run stops at the first read with these tags and asks for `molecular` or `query` ([Coordinate frames](../concepts/coordinates.md#how-fiberhmm-tells-the-frame-of-a-bam)). fibertools `Ma` tags are always molecular. |
+| `--input-frame` | `auto` | frame of the input's legacy tags. `auto` applies the [shared frame rule](../reference/footprint-tag-frame.md): the last footprint writer on each `@PG` PP chain decides (fibertools: molecular; FiberHMM call/apply/recall: molecular when it declares `coord=molecular`, else query); with no writer, a `coord=molecular` declaration means molecular, otherwise query (FiberHMM 2.12 output). Merged histories that disagree with nothing declared stop the run at the first read with these tags. fibertools `Ma` tags are always molecular. |
 | `-c/--cores` | 1 | `0` = all CPUs |
 | `--chunk-size` | 1024 | reads per worker chunk |
 | `--phase-nrl` | `auto` | estimated from the input's existing nucleosome tags |

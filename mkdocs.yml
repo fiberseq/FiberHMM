@@ -103,6 +103,7 @@ nav:
       - Command line: reference/cli.md
       - BAM tags: reference/bam-tags.md
       - Header declarations: reference/headers.md
+      - Footprint-tag coordinate frame: reference/footprint-tag-frame.md
       - Checking outputs for re-runs: reference/advisories.md
       - Bundled models: reference/models.md
       - Consensus output files: reference/consensus-outputs.md
