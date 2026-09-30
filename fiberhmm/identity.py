@@ -17,7 +17,6 @@ The commit comes from, in order:
 from __future__ import annotations
 
 import functools
-import hashlib
 import os
 import subprocess
 from pathlib import Path
@@ -78,28 +77,27 @@ def fiberhmm_commit() -> str | None:
     return commit or None
 
 
-_SHA_CACHE: dict[tuple[str, int, int], str] = {}
+# Remembered digests follow the resume rule (fiberhmm.io.run_state): reused only
+# while device, inode, size, mtime and ctime are unchanged, and only remembered
+# when the file did not change while it was being hashed.
+_SHA_MEMO = None
 
 
 def file_sha256(path) -> str | None:
-    """sha256 of a file's bytes (cached by path, size and mtime), or None."""
+    """sha256 of a file's bytes, or None when it cannot be read.
+
+    Repeated calls in one process reuse a digest only under the
+    :class:`fiberhmm.io.run_state.DigestMemo` rule, so a same-size rewrite
+    with its modification time restored is hashed again.
+    """
+    global _SHA_MEMO
     if not path:
         return None
+    from fiberhmm.io.run_state import DigestMemo
+
+    if _SHA_MEMO is None:
+        _SHA_MEMO = DigestMemo()
     try:
-        resolved = os.path.realpath(os.fspath(path))
-        stat = os.stat(resolved)
-    except (OSError, TypeError):
+        return _SHA_MEMO.sha256(os.fspath(path))
+    except (OSError, TypeError, ValueError):
         return None
-    key = (resolved, stat.st_size, stat.st_mtime_ns)
-    cached = _SHA_CACHE.get(key)
-    if cached is not None:
-        return cached
-    digest = hashlib.sha256()
-    try:
-        with open(resolved, "rb") as handle:
-            for block in iter(lambda: handle.read(1 << 20), b""):
-                digest.update(block)
-    except OSError:
-        return None
-    _SHA_CACHE[key] = digest.hexdigest()
-    return _SHA_CACHE[key]

@@ -103,3 +103,25 @@ def test_merge_recall_keeps_the_declared_platform_of_the_input():
     with pytest.raises(ChemistryConflictError):
         _merge_output_header(
             header("assay=daf;enzyme=dddb;platform=nanopore;mode=daf"), **kwargs)
+
+
+def test_provenance_digest_rehashes_a_same_size_rewrite_with_restored_mtime(tmp_path):
+    """identity.file_sha256 follows the run_state memo rule (dev/inode/size/mtime/ctime):
+    replacing a table's bytes at equal size and restoring its mtime in one process
+    must not return the stale digest."""
+    import hashlib
+    import os
+
+    from fiberhmm.identity import file_sha256
+
+    table = tmp_path / "table.json"
+    table.write_bytes(b"AAAA")
+    stat = table.stat()
+    first = file_sha256(table)
+    assert first == hashlib.sha256(b"AAAA").hexdigest()
+    table.write_bytes(b"TTTT")
+    os.utime(table, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    assert file_sha256(table) == hashlib.sha256(b"TTTT").hexdigest()
+    assert file_sha256(tmp_path / "missing.json") is None
+    assert file_sha256(tmp_path) is None
+    assert file_sha256(None) is None
