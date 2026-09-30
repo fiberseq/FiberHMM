@@ -191,8 +191,11 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 - **DddB emission table** reindexed from ACGT to encoder context order (the
   same error, also in every 2.x release); DddB calls from 2.x should be
   re-run. The old table is kept as
-  `legacy/dddb_nanopore_gt_swapped_legacy.json`.
-  <!-- pending: dddb_nanopore.json moved to legacy / new DddB table (other session) -->
+  `legacy/dddb_nanopore_gt_swapped_legacy.json`. 3.0 also ships a new
+  in-vivo DddB table: it keeps the (reindexed) naked table's protected state,
+  transitions and start probabilities and re-estimates only the accessible
+  state's per-context rates in vivo. The naked table is kept as
+  `legacy/dddb_nanopore_naked_2f10003c.json`.
 - **fibertools BAMs.** `fiberhmm-recall-tfs`/`-recall-nucs --input-frame
   auto` read `ns/nl/as/al` written by fibertools (`ft predict-m6a`,
   `add-nucleosomes`, `fire`, and the older `ft predict`/`ft add`) in molecular
@@ -326,8 +329,10 @@ These change numbers relative to 2.x.
   with a phase-aware posterior (the locked `ddda_nuc_profile.json`,
   `ddda_phase_posterior_v1`) and reads its likelihoods from a separate
   internal table, `ddda_nuc_refine.json`, so a TF recalibration never retunes
-  it. DddA TF and nucleosome calls change.
-  <!-- pending: ddda_nuc_refine flat table (other session) -->
+  it. That table is context-independent (one hit probability per state;
+  sequence context enters through the rotational profile), because a
+  per-context pattern frozen from the v2.6.0 TF table did not track SsDddA
+  context rates. DddA TF and nucleosome calls change.
 - **DddA adjacent-target thinning on.** For DddA, runs of two or more
   same-strand targets (CC on CT reads, GG on GA reads) keep only their 5'-most
   target in `fiberhmm-call`, `-apply`, `-recall-tfs`/`-recall-nucs`, `-pair`,
