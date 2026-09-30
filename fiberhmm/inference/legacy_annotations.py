@@ -16,7 +16,7 @@ def legacy_annotations(read, frame):
         present=[read.has_tag(starts_tag),read.has_tag(lengths_tag)]
         if not any(present):continue
         if frame=='disabled':
-            raise ValueError('Legacy Hia5 as/al or ns/nl tags require an explicit annotation frame in Native input (seq for the verified ind 2–4 h BAM); the BAM header does not show which frame they use (no coord=molecular declaration or fibertools nucleosome command). No MSPs were silently discarded.')
+            raise ValueError('Legacy Hia5 as/al or ns/nl tags require an explicit annotation frame in Native input (seq for the verified ind 2–4 h BAM); the BAM header does not show that fibertools wrote them, and reads a FiberHMM caller left without MA keep whatever tags they had before it. No MSPs were silently discarded.')
         if not all(present):raise ValueError(f'Incomplete legacy {target} tag pair')
         starts,lengths=read.get_tag(starts_tag),read.get_tag(lengths_tag)
         if len(starts)!=len(lengths):raise ValueError(f'Mismatched legacy {target} tag lengths')

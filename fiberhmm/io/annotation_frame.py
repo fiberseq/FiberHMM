@@ -109,16 +109,45 @@ def legacy_tag_frame(header) -> Tuple[Optional[str], str]:
     return frame, reason
 
 
-def resolve_disabled_legacy_frame(header) -> Optional[Tuple[str, str]]:
-    """``('molecular', reason)`` when provenance shows molecular ns/nl/as/al.
+def _fiberhmm_wrote_footprints(pg: dict) -> bool:
+    """A FiberHMM caller record (call/apply/recall): it declares coord= for
+    tags it wrote itself, not for tags it carried over."""
+    ds = str(pg.get('DS', '') or '')
+    return (_is_fiberhmm_program(pg) and bool(_COORD_TOKEN_RE.search(ds))
+            and CARRIED_OVER not in ds)
 
-    For consensus's ``legacy_hia5_annotation_frame='disabled'``: a fibertools
-    nucleosome command or a coord=molecular declaration settles the frame, so
-    the option need not be set by hand. Anything else (unknown, or a FiberHMM
-    coord=seq record) returns ``None`` and the explicit-frame error stands.
+
+def resolve_disabled_legacy_frame(header) -> Optional[Tuple[str, str]]:
+    """``('molecular', reason)`` when fibertools wrote the ns/nl/as/al.
+
+    For consensus's ``legacy_hia5_annotation_frame='disabled'``, which only
+    applies to reads without MA/Ma. When fibertools' nucleosome command is the
+    last program that wrote footprint tags, every read's legacy tags are
+    fibertools' own (molecular). A FiberHMM caller (a coord= declaration on
+    its own writes, or the @CO marker) does not vouch for them: the reads it
+    left without MA are ones it skipped, and they keep whatever tags came
+    before it (for example query-frame tags from FiberHMM <= 2.12). Anything
+    other than fibertools provenance returns ``None`` and the explicit-frame
+    error stands.
     """
-    frame, reason = legacy_tag_frame(header)
-    return (frame, reason) if frame == MOLECULAR else None
+    try:
+        d = _header_dict(header)
+    except (TypeError, ValueError):
+        return None
+    if any('coord=molecular' in str(c).lower() for c in d.get('CO', []) or []):
+        return None
+    writer = None
+    for pg in d.get('PG', []) or []:
+        if not isinstance(pg, dict):
+            continue
+        if _is_fibertools_nuc_program(pg):
+            writer = f"fibertools @PG {pg.get('ID') or pg.get('PN')} wrote the nucleosome tags"
+        elif _fiberhmm_wrote_footprints(pg):
+            writer = None
+    return (MOLECULAR, writer) if writer else None
+
+
+CARRIED_OVER = 'footprint tags carried over from the input'
 
 
 def coord_ds_token(frame: Optional[str]) -> str:
@@ -137,7 +166,8 @@ def append_coord_to_ds(ds: str, frame: Optional[str]) -> str:
     token = coord_ds_token(frame)
     if not token:
         return ds
-    return f'{ds}; {token} (footprint tags carried over from the input)' if ds else token
+    token = f'{token} ({CARRIED_OVER})'
+    return f'{ds}; {token}' if ds else token
 
 
 def pass_through_frame(header, explicit=None) -> Optional[str]:

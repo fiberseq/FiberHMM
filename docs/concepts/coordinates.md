@@ -58,8 +58,10 @@ FiberHMM `@PG`, query frame) looks the same as a fibertools BAM whose `@PG`
 history was lost (molecular frame). In that case `fiberhmm-recall-tfs` and
 `-recall-nucs` stop and ask for `--input-frame query` or `--input-frame
 molecular`. Consensus, which reads legacy tags only for Hia5 input without
-`MA`, stops and asks you to set its legacy Hia5 annotation frame (a known
-molecular frame is applied automatically). `fiberhmm-tag-m5c --input-frame` and `fiberhmm-call-m5c
+`MA`, stops and asks you to set its legacy Hia5 annotation frame. It applies
+molecular frame by itself only when fibertools wrote the tags and no FiberHMM
+caller ran after it: reads a FiberHMM caller left without `MA` are ones it
+skipped, and they keep whatever tags they had before. `fiberhmm-tag-m5c --input-frame` and `fiberhmm-call-m5c
 --tag-input-frame` force the frame of their DAF inputs in the same way.
 
 One case cannot be detected from the header. FiberHMM 2.12 or earlier run on

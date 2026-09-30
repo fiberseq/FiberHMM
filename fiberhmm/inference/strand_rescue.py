@@ -1316,10 +1316,10 @@ def load_region_evidence(
             ma_annotation_frame = resolve_ma_frame(bam.header)
         if load_diagnostics is not None:
             load_diagnostics['ma_annotation_frame'] = ma_annotation_frame
-        # ``disabled`` legacy ns/nl/as/al become molecular when the header's
-        # provenance says so (fibertools nucleosome command or a coord=molecular
-        # declaration). Applied, and recorded, only for reads that actually
-        # fall back to legacy tags, so MA-carrying BAMs load exactly as before.
+        # ``disabled`` legacy ns/nl/as/al become molecular when fibertools
+        # wrote them (see resolve_disabled_legacy_frame). Applied, and
+        # recorded, only for reads that actually fall back to legacy tags, so
+        # MA-carrying BAMs load exactly as before.
         from fiberhmm.io.annotation_frame import resolve_disabled_legacy_frame
         provenance_legacy_frame = (
             resolve_disabled_legacy_frame(bam.header)

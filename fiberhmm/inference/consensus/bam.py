@@ -270,8 +270,8 @@ def _load_payload(state,request,options,progress):
                 for path in _flatten_paths(getattr(ds,'paths',None) or ds.path):
                     actual,lo,hi,_=_resolve_bam_fetch_region(path,chrom,start,end)
                     with pysam.AlignmentFile(path,'rb') as bam:
-                        # 'disabled' legacy tags of a BAM whose provenance shows molecular
-                        # frame (fibertools, coord=molecular); only reads without MA/Ma use it.
+                        # 'disabled' legacy tags that fibertools wrote are molecular
+                        # (resolve_disabled_legacy_frame); only reads without MA/Ma use it.
                         legacy_frame=options['input'].legacy_hia5_annotation_frame
                         if legacy_frame=='disabled':
                             from fiberhmm.io.annotation_frame import resolve_disabled_legacy_frame

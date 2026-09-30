@@ -426,3 +426,27 @@ def test_tag_m5c_records_the_frame_it_carried(monkeypatch, tmp_path, frame_arg, 
                   '-r', str(tmp_path / 'ref.fa'), '--enzyme', 'ddda',
                   '--input-frame', frame_arg])
     assert expected in captured['record']['DS']
+
+
+@pytest.mark.parametrize('header, expected', [
+    ({'PG': [_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b')]}, 'molecular'),
+    # a pass-through FiberHMM tool after fibertools keeps it
+    ({'PG': [_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
+             _pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup',
+                 DS='DAF dedup; coord=molecular (footprint tags carried over from the input)')]},
+     'molecular'),
+    # a FiberHMM caller after fibertools: reads it left without MA are ones it
+    # skipped, so their legacy tags are not vouched for
+    ({'PG': [_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
+             _pg(ID='fiberhmm-call', PN='fiberhmm-call', DS='x; coord=molecular (ns/nl)')]}, None),
+    # FiberHMM 2.16.8 run over FiberHMM <= 2.12 output (the real ind Hia5 BAM
+    # shape): 150 unrecalled reads keep query-frame ns/nl under coord=molecular
+    ({'PG': [_pg(ID='pbmm2', PN='pbmm2', CL='pbmm2 align'),
+             _pg(ID='fiberhmm-call', PN='fiberhmm-call', DS='x; coord=molecular (ns/nl)')]}, None),
+    ({'CO': ['fiberhmm:coord=molecular']}, None),
+    ({}, None),
+])
+def test_consensus_disabled_frame_resolves_only_from_fibertools(header, expected):
+    from fiberhmm.io.annotation_frame import resolve_disabled_legacy_frame
+    resolved = resolve_disabled_legacy_frame(header)
+    assert (resolved[0] if resolved else None) == expected
