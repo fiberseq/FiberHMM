@@ -16,7 +16,7 @@ import tempfile
 
 import pysam
 
-from ...io.bam_header import append_coord_marker, append_ma_types, append_pg_record
+from ...io.bam_header import append_ma_types, append_pg_record
 from ...io.ma_tags import annotation_tags, parse_ma_tag, parse_an_tag, format_an_tag, llr_to_tq
 from ..tf_family_ids import allocate_repeating_family_ids, TFFamilyInterval
 from .artifacts import digest, write_json
@@ -227,16 +227,19 @@ def _project_to_molecule(read, interval, molecule_length, tolerant=False):
     return (molecule_length-hi,hi-lo) if read.is_reverse else (lo,hi-lo)
 
 
-def _declare_fibertools_frame(header):
-    """Mark a fibertools source's export molecular: family layers are written in
-    molecular frame, and so are fibertools' Ma annotations copied into MA
-    (see _append_annotations) and its ns/nl/as/al. FiberHMM-called sources
-    already declare coord=molecular; unmarked FiberHMM <= 2.12 sources are
-    left as they were."""
-    from ...io.annotation_frame import legacy_tag_frame, ma_annotation_frame
+def _export_ds(header):
+    """The export's @PG DS. A fibertools source's export says coord=molecular:
+    family layers are written in molecular frame, and so are fibertools' Ma
+    annotations copied into MA (see _append_annotations) and its ns/nl/as/al.
+    It uses the carried-over token, so the export still reads as fibertools
+    provenance (not a FiberHMM caller) for consensus's legacy frame.
+    FiberHMM-called sources already declare coord=molecular and unmarked
+    FiberHMM <= 2.12 sources are left as they were: both keep the old DS."""
+    from ...io.annotation_frame import append_coord_to_ds, legacy_tag_frame, ma_annotation_frame
+    ds='Frozen staged family annotations in MA/AQ/AN'
     if ma_annotation_frame(header)!='molecular' and legacy_tag_frame(header)[0]=='molecular':
-        return append_coord_marker(header)
-    return header
+        return append_coord_to_ds(ds,'molecular')
+    return ds
 
 
 def _append_annotations(read, rows):
@@ -397,7 +400,7 @@ def _export_source_bams(analyses, output_dir, scope):
         try:
             with pysam.AlignmentFile(str(source),'rb') as bam:
                 layers=sorted({f['layer'] for f in families})
-                header=append_ma_types(_declare_fibertools_frame(bam.header),layers)
+                header=append_ma_types(bam.header,layers)
                 hd=header.to_dict();old_comments=list(hd.get('CO',[]))
                 owned_layers=set()
                 for comment in old_comments:
@@ -418,7 +421,7 @@ def _export_source_bams(analyses, output_dir, scope):
                 existing_rg={r['ID'] for r in retained_rg}
                 while source_rg in existing_rg: source_rg+='_'
                 hd['RG']=[*retained_rg,dict(ID=source_rg,DS='Original source BAM: '+str(source))]
-                header=append_pg_record(pysam.AlignmentHeader.from_dict(hd),dict(PN='fiberhmm-consensus',DS='Frozen staged family annotations in MA/AQ/AN'))
+                header=append_pg_record(pysam.AlignmentHeader.from_dict(hd),dict(PN='fiberhmm-consensus',DS=_export_ds(bam.header)))
                 with pysam.AlignmentFile(str(temporary),'wb',header=header) as dest:
                     for read in _export_reads(bam,windows,scope):
                         sha=hashlib.sha256(read.to_string().encode()).hexdigest()

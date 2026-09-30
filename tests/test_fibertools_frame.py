@@ -490,7 +490,7 @@ def test_consensus_export_keeps_fibertools_ma_under_family_layers():
     otherwise vanish), and a fibertools source's export declares molecular."""
     from fiberhmm.cli.extract_tags import _parse_all_ma_annotations
     from fiberhmm.inference.consensus.bam_export import (
-        _append_annotations, _declare_fibertools_frame)
+        _append_annotations, _export_ds)
     with pysam.AlignmentFile(str(FX / 'ft0.13_addnuc_fire.bam')) as bam:
         header = bam.header
         read = next(r for r in bam if r.query_name == 'read_rev')
@@ -501,6 +501,12 @@ def test_consensus_export_keeps_fibertools_ma_under_family_layers():
     fam = parsed['fam'][0]
     assert (fam['start'], fam['start'] + fam['length']) == (100, 120)  # 8000M at 0: query == reference
     assert [a['start'] for a in parsed['nuc']][:1] == [8000 - 392 - 154]
-    assert 'coord=molecular' in str(_declare_fibertools_frame(header))
+    from fiberhmm.io.annotation_frame import ma_annotation_frame, resolve_disabled_legacy_frame
+    from fiberhmm.io.bam_header import append_pg_record
+    exported = append_pg_record(header, dict(PN='fiberhmm-consensus', DS=_export_ds(header)))
+    # the export's MA reads as molecular, and a 0.6.2-style export still
+    # resolves consensus's disabled legacy frame from its fibertools provenance
+    assert ma_annotation_frame(exported) == 'molecular'
+    assert resolve_disabled_legacy_frame(exported)[0] == 'molecular'
     with pysam.AlignmentFile(str(FX / 'fiberhmm3.0.0_call.bam')) as bam:
-        assert str(_declare_fibertools_frame(bam.header)) == str(bam.header)
+        assert _export_ds(bam.header) == 'Frozen staged family annotations in MA/AQ/AN'
