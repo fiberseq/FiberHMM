@@ -105,8 +105,8 @@ def md_matches_cigar(read) -> bool:
         return False
     # Equal lengths are not enough: a ``^`` run covering a CIGAR insertion
     # makes pysam read past its reconstructed reference (undefined memory).
-    return not md_deletion_spans_insertion(
-        md, [op for op, _length in cigar], [length for _op, length in cigar])
+    table = np.asarray(cigar, dtype=np.int64)
+    return not md_deletion_spans_insertion(md, table[:, 0], table[:, 1])
 
 
 # ---------------------------------------------------------------------------

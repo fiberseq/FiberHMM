@@ -29,6 +29,17 @@ from typing import Optional, Tuple
 import numpy as np
 import pysam
 
+try:
+    from numba import njit as _numba_njit
+    _HAS_NUMBA = True
+except ImportError:  # pragma: no cover - numba is a core dependency
+    _HAS_NUMBA = False
+
+    def _numba_njit(*args, **kwargs):  # type: ignore[misc]
+        def _wrap(fn):
+            return fn
+        return _wrap
+
 # Per-operation lookup tables indexed by BAM CIGAR code (0..9).  P (6) and
 # B (9) are left to the slow path.
 def _op_table(codes):
@@ -68,6 +79,65 @@ def md_reference_length(md) -> Optional[int]:
     return sum(map(int, _MD_DIGIT_RUNS.findall(md))) + len(_MD_LETTERS.findall(md))
 
 
+@_numba_njit(cache=True)
+def _md_walk_ends_short(md, ops, lengths):
+    """pysam's ``build_alignment_sequence`` MD walk over the CIGAR layout.
+
+    True when the walk stops before the last M/=/X/D base, so that
+    ``build_reference_sequence`` indexes past the string it built.
+    """
+    size = 0
+    for k in range(ops.size):
+        op = ops[k]
+        if op == 0 or op == 1 or op == 2 or op == 6 or op == 7 or op == 8:
+            size += lengths[k]
+    inserted = np.zeros(size, dtype=np.bool_)
+    position = 0
+    last_reference = -1
+    for k in range(ops.size):
+        op = ops[k]
+        length = lengths[k]
+        if op == 0 or op == 2 or op == 7 or op == 8:
+            if length > 0:
+                last_reference = position + length - 1
+            position += length
+        elif op == 1 or op == 6:
+            for j in range(position, position + length):
+                inserted[j] = True
+            position += length
+    position = 0
+    matches = 0
+    index = 0
+    n = md.size
+    while index < n:
+        char = md[index]
+        if 48 <= char <= 57:
+            matches = matches * 10 + (char - 48)
+            index += 1
+            continue
+        for _ in range(matches):
+            while position < size and inserted[position]:
+                position += 1
+            position += 1
+        while position < size and inserted[position]:
+            position += 1
+        matches = 0
+        index += 1
+        if char == 94:
+            while index < n and 65 <= md[index] <= 90:
+                position += 1
+                index += 1
+        else:
+            position += 1
+    for _ in range(matches):
+        while position < size and inserted[position]:
+            position += 1
+        position += 1
+    while position < size and inserted[position]:
+        position += 1
+    return position <= last_reference
+
+
 def md_deletion_spans_insertion(md, ops, lengths) -> bool:
     """True when an MD ``^`` deletion run covers a CIGAR insertion.
 
@@ -90,31 +160,41 @@ def md_deletion_spans_insertion(md, ops, lengths) -> bool:
     inserted = ((ops == 1) | (ops == 6)) & (lengths > 0)
     if not inserted.any():
         return False
-    ref_seq = np.where(np.isin(ops, (0, 2, 7, 8)), lengths, 0)
+    md_codes = np.frombuffer(md.encode("ascii"), dtype=np.uint8)
+    if _HAS_NUMBA:
+        return bool(_md_walk_ends_short(md_codes, ops, lengths))
+    return _deletion_run_covers(md_codes, ops, lengths, inserted)
+
+
+def _deletion_run_covers(chars, ops, lengths, inserted) -> bool:
+    """Vectorised form of the check (used when numba is unavailable)."""
+    ref_seq = np.where(_REF_SEQ_OPS.take(ops, mode="clip"), lengths, 0)
     insertion_offsets = (np.cumsum(ref_seq) - ref_seq)[inserted]
 
-    chars = np.frombuffer(md.encode("ascii"), dtype=np.uint8)
-    digit = (chars >= 48) & (chars <= 57)
-    caret = chars == 94
-    upper = (chars >= 65) & (chars <= 90)
     index = np.arange(chars.size)
+    digit = (chars - 48) < 10          # uint8 arithmetic wraps below '0'
+    upper = (chars - 65) < 26
+    caret = chars == 94
+    # A ^ run is the upper-case letters right after a '^'.
     previous_other = np.maximum.accumulate(np.where(upper, -1, index))
-    deleted = upper & (previous_other >= 0) & caret[np.maximum(previous_other, 0)]
-    consumed = np.where(digit | caret, 0, 1).astype(np.int64)
-    run_ends = np.flatnonzero(digit & ~np.append(digit[1:], False))
-    if run_ends.size:
-        consumed[run_ends] = np.fromiter(
-            map(int, _MD_DIGIT_RUNS.findall(md)), dtype=np.int64, count=run_ends.size)
-    offsets = np.cumsum(consumed) - consumed
-    run_start = deleted & ~np.append(False, deleted[:-1])
-    starts = offsets[run_start]
-    if not starts.size:
+    deleted = upper & (previous_other >= 0) & caret[previous_other]
+    if not deleted.any():
         return False
-    run_lengths = np.bincount(np.cumsum(run_start)[deleted] - 1)
+    # Reference bases consumed per character: each digit contributes its
+    # place value within its run; '^' none; any other character one.
+    run_end = np.minimum.accumulate(np.where(digit, chars.size, index)[::-1])[::-1]
+    place = np.power(10, np.maximum(run_end - index - 1, 0), dtype=np.int64)
+    consumed = np.where(digit, (chars.astype(np.int64) - 48) * place,
+                        np.where(caret, 0, 1))
+    offsets = np.cumsum(consumed) - consumed
+    first = deleted.copy()
+    first[1:] &= ~deleted[:-1]
+    last = deleted.copy()
+    last[:-1] &= ~deleted[1:]
+    starts = offsets[first]
+    ends = offsets[last] + 1
     before = np.searchsorted(starts, insertion_offsets, side="left") - 1
-    valid = before >= 0
-    before = np.maximum(before, 0)
-    return bool((valid & (insertion_offsets < starts[before] + run_lengths[before])).any())
+    return bool(((before >= 0) & (insertion_offsets < ends[np.maximum(before, 0)])).any())
 
 
 def md_disagrees_with_cigar(read) -> bool:
@@ -146,8 +226,8 @@ def md_disagrees_with_cigar(read) -> bool:
     span = sum(length for op, length in cigar if op in (0, 2, 7, 8))
     if md_reference_length(md) != span:
         return True
-    return md_deletion_spans_insertion(
-        md, [op for op, _length in cigar], [length for _op, length in cigar])
+    table = np.asarray(cigar, dtype=np.int64)
+    return md_deletion_spans_insertion(md, table[:, 0], table[:, 1])
 
 
 def matched_base_arrays(

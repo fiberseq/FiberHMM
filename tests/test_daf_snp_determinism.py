@@ -210,8 +210,8 @@ def test_reference_conflict_tie_keeps_c():
 
 
 def test_snp_screen_is_independent_of_read_order(hard_dataset, tmp_path):
-    """Passes before the fix too (apart from the short-MD noise): the screen's
-    counts, bottom-k profile sample and amplicon endpoints are order-free."""
+    """The screen's counts, bottom-k profile sample and amplicon endpoints are
+    order-free. (At 6ce4cbc this failed only through the short-MD noise.)"""
     bam_path, fasta_path = hard_dataset
     reads = _reads(bam_path)
     random.Random(5).shuffle(reads)
@@ -302,9 +302,10 @@ def _random_md_case(rng):
 
 
 def test_md_deletion_spans_insertion_matches_the_pysam_walk():
+    import numpy as np
     import daf_mismatch_reference as oracle
     from fiberhmm.daf.aligned_arrays import (
-        md_deletion_spans_insertion, md_reference_length)
+        _deletion_run_covers, md_deletion_spans_insertion, md_reference_length)
 
     rng = random.Random(29)
     seen = Counter()
@@ -316,6 +317,13 @@ def test_md_deletion_spans_insertion_matches_the_pysam_walk():
         observed = md_deletion_spans_insertion(
             md, [op for op, _ in cigar], [length for _, length in cigar])
         assert observed == expected, (md, cigar)
+        # The vectorised fallback (no numba) agrees wherever it is reached.
+        ops = np.array([op for op, _ in cigar], dtype=np.int64)
+        lengths = np.array([length for _, length in cigar], dtype=np.int64)
+        inserted = ((ops == 1) | (ops == 6)) & (lengths > 0)
+        if "^" in md and inserted.any():
+            chars = np.frombuffer(md.encode("ascii"), dtype=np.uint8)
+            assert _deletion_run_covers(chars, ops, lengths, inserted) == expected, (md, cigar)
         seen[expected] += 1
     assert seen[True] > 100 and seen[False] > 100
 
