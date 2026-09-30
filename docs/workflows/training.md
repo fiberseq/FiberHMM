@@ -142,9 +142,10 @@ fiberhmm-utils convert old_model.pickle new_model.json
 - `transfer` estimates emissions for a target chemistry (for example DAF) by
   regressing its per-context rates on accessibility learned from footprint
   calls in a reference BAM (`--reference-bam`) or a priors table
-  (`--accessibility-priors`). **Known issue in 3.0.0:** `fiberhmm-utils
-  transfer` stops with `KeyError: 'total'` while estimating emissions; use
-  `fiberhmm-probs` with matched controls instead.
+  (`--accessibility-priors`; a priors table saved at the largest `-k` serves
+  every smaller `-k`). The estimate is one global accessible/inaccessible pair
+  for all contexts; for context-specific tables use `fiberhmm-probs` with
+  matched controls.
 
 Models are JSON (preferred); `.npz` and `.pickle` still load (`-m` accepts
 them). Every option: [`fiberhmm-probs`](../reference/cli.md#fiberhmm-probs),

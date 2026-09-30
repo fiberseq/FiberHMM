@@ -75,7 +75,8 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                                 streaming_pipeline: bool = False,
                                 chunk_size: int = 500,
                                 process_unmapped: bool = False,
-                                fail_on_mostly_unmapped: bool = False) -> Tuple[int, int]:
+                                fail_on_mostly_unmapped: bool = False,
+                                pg_record: Optional[dict] = None) -> Tuple[int, int]:
     """
     Process BAM file and add footprint tags - SINGLE PASS STREAMING.
 
@@ -88,6 +89,9 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
         skip_scaffolds: If True, skip scaffold/contig chromosomes
         chroms: If provided, only process these chromosomes
         output_posteriors: If provided, write HMM posteriors to this H5 file (inline)
+        pg_record: ``@PG`` record plus ``chemistry`` declaration for the output
+            header (streaming and chunked paths; see
+            :func:`fiberhmm.cli.provenance.output_header_with_provenance`)
 
     Returns:
         (total_reads_processed, reads_with_footprints)
@@ -163,6 +167,7 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
                 debug_timing=debug_timing,
                 process_unmapped=process_unmapped,
                 fail_on_mostly_unmapped=fail_on_mostly_unmapped,
+                pg_record=pg_record,
             )
 
     if model is None and model_path is not None and n_cores <= 1:
@@ -191,4 +196,5 @@ def process_bam_for_footprints(input_bam: str, output_bam: str,
         output_posteriors=output_posteriors,
         write_msps=write_msps,
         io_threads=io_threads,
+        pg_record=pg_record,
     )

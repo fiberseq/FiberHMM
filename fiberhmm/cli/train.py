@@ -89,6 +89,8 @@ def parse_args():
     # to encode like fiberhmm-call's DddA default.
     add_daf_run_mask_arguments(parser)
 
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(parser)
     return parser.parse_args()
 
 

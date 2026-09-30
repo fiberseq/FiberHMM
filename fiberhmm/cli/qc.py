@@ -59,6 +59,8 @@ def parse_args(argv=None):
     parser.add_argument("--snp-mask", default=None, help="Applied DAF SNP-mask BED to summarize (single input only)")
     parser.add_argument("--snp-report", default=None, help="fiberhmm-daf-snps JSON to plot (single input only)")
     parser.add_argument("--fail-on-qc", action="store_true", help="Exit 2 when the final status is FAIL")
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(parser)
     return parser.parse_args(argv)
 
 

@@ -45,12 +45,7 @@ exercise the commands, and QC grades them against real reference data sets,
 so expect QC to report WARN or FAIL on them.
 
 All commands below run from the directory that contains `demo/`, and write
-into `out/`. Create it first: `fiberhmm-call --region-parallel` does not
-create missing output directories.
-
-```bash
-mkdir -p out
-```
+into `out/` (FiberHMM commands create missing output directories).
 
 ## Hia5 Fiber-seq, PacBio
 
@@ -62,7 +57,7 @@ fiberhmm-call -i demo/hia5_pacbio.bam -o out/pacbio.calls.bam \
 The banner states the resolved settings (abridged):
 
 ```text
-  fiberhmm-call [BETA] — fused apply + recall-tfs (region-parallel)
+  fiberhmm-call — fused apply + recall-tfs (region-parallel)
   apply model:  .../fiberhmm/models/hia5_pacbio.json
   mode=pacbio-fiber k=3 enzyme=hia5 prob-threshold=128 primary-only=on
   min_llr=5.0 min_opps=3 unify_threshold=90 uplift=1.0
@@ -167,7 +162,7 @@ Clustering (Jaccard >= 0.95; ends ±50 bp): 377 reads -> 325 molecules | 52 dupl
   apply model:  .../fiberhmm/models/ddda_nuc.json
   recall model: .../fiberhmm/models/ddda_TF.json
   nuc likelihood model: .../fiberhmm/models/ddda_nuc_refine.json
-  cores=2 io-threads=8 ddda_mcg=off cpg_mask=unmethylated-only daf_run_mask=>=2/keep-one
+  cores=2 io-threads=8 cpg_mask=unmethylated-only daf_run_mask=>=2/keep-one
 ```
 
 The 52 PCR copies planted in the demo are found and flagged (`0x400`, with

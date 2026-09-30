@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""fiberhmm-recall-tfs CLI  --  [BETA]  LLR-based TF footprint recaller.
+"""fiberhmm-recall-tfs CLI  --  LLR-based TF footprint recaller.
 
-*** BETA FEATURE ***
-This tool ships as beta: the algorithm, tag schema, and per-enzyme
-defaults are stable enough to use, but downstream integrations (fibertools,
-FiberBrowser) may still be catching up and calibration outside the
-validated enzymes (Hia5 PacBio, DddB DAF, DddA DAF-seq) has not been
-exhaustively tested. Please report surprises on the FiberHMM issue tracker.
+Per-enzyme defaults are calibrated for Hia5 (PacBio, Nanopore), DddB and
+DddA DAF-seq.
 
 Runs as a 2nd pass on a BAM already tagged by ``fiberhmm-apply``.
 Writes spec-compliant ``MA``/``AQ`` Molecular-annotation tags
@@ -810,6 +806,8 @@ def parse_args(default_recall_nucs: bool = False):
                           'length from the input BAM\'s existing nuc tags (no '
                           'HMM re-run). Lowers the split bar near phase-predicted '
                           'linkers in long footprints.')
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(p)
     return p.parse_args()
 
 
@@ -1021,8 +1019,7 @@ def _main(args):
             sys.exit(1)
         print(f"[recall_tfs] using bundled model: {model_path}", file=sys.stderr)
 
-    # Prominent beta banner: this feature is new, expect rough edges.
-    # Mode line varies based on --downstream-compat.
+    # Banner; the mode line varies with --downstream-compat.
     if args.downstream_compat:
         mode_banner = (
             "  MODE: DOWNSTREAM-COMPAT -- TF calls written into legacy ns/nl.\n"
@@ -1041,9 +1038,7 @@ def _main(args):
     print(
         "\n"
         "========================================================================\n"
-        "  fiberhmm-recall-tfs  [BETA]\n"
-        "  LLR TF footprint recaller (beta).\n"
-        "  Defaults validated on Hia5 PacBio, DddB DAF, and DddA DAF-seq.\n"
+        "  fiberhmm-recall-tfs  --  LLR TF footprint recaller\n"
         "\n"
         + mode_banner +
         "\n"

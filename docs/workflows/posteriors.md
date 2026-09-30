@@ -70,12 +70,9 @@ processes unindexed input in one pass.
 
 The DAF options (`--keep-chimeras`, `--chimera-*`, `--daf-snp-mask`,
 `--daf-mask-runs`, `--daf-run-policy`) behave as in `fiberhmm-call`, so the
-posteriors describe the observations `fiberhmm-call` decodes. Two
-differences from `fiberhmm-call`:
-
-- `--seq` is not detected from the input; without it Hia5 uses PacBio.
-- `--prob-threshold` defaults to 128 for every chemistry, including Hia5
-  Nanopore (where `fiberhmm-call` uses 248); pass `--prob-threshold 248` to
-  match a Nanopore call.
+posteriors describe the observations `fiberhmm-call` decodes. As in
+`fiberhmm-call`, a missing `--seq` is detected from the input, and
+`--prob-threshold` defaults to the chemistry preset (248 for Hia5 Nanopore,
+128 otherwise).
 
 Every option: [`fiberhmm-posteriors`](../reference/cli.md#fiberhmm-posteriors).

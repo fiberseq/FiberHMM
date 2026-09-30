@@ -1926,6 +1926,8 @@ Examples:
                              'ignored on BSD/macOS sort). 0 = use --cores. '
                              'Feature-detected, so safe to leave on.')
 
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(parser)
     args = parser.parse_args()
 
     # Validate input

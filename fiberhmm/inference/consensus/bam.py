@@ -64,9 +64,31 @@ def _load_dataset_evidence(state, dsid, chemistry, *, chrom, evidence_start, evi
     return reads,model,preset,dict(source_type='bam',evidence_reads=len(reads),files=files)
 
 
+def _dataset_chemistry(item, paths):
+    """(profile, header records) for one dataset; raises ChemistryResolutionError."""
+    from fiberhmm.io.bam_header import (CONSENSUS_CHEMISTRY_PROFILES, ChemistryResolutionError,
+        bam_chemistry_profile as _bam_chemistry, resolve_bam_chemistry as _resolve_chemistry)
+    if not item.get('chemistry') and any(_bam_chemistry(Path(p))[0] is None for p in paths):
+        raise ChemistryResolutionError('Every BAM needs chemistry metadata or an explicit dataset chemistry: '+item['dataset_id']+
+            '; the header declares none, or enzyme=custom (a custom -m without --enzyme). Pass --chemistry ('+
+            ', '.join(CONSENSUS_CHEMISTRY_PROFILES)+') or a dataset chemistry')
+    return _resolve_chemistry([Path(p) for p in paths],item.get('chemistry'))
+
+
+def check_dataset_chemistries(datasets):
+    """Resolve every dataset's chemistry from its BAM headers before any work starts.
+
+    Raises ChemistryResolutionError (missing/unsupported/conflicting chemistry)
+    or OSError (unreadable BAM), which the command-line tools report as
+    one-line errors."""
+    for item in datasets:
+        paths=_flatten_paths(item.get('paths') or [])
+        if paths:  # an empty dataset is reported by load_bam_payload
+            _dataset_chemistry(item,paths)
+
+
 def load_bam_payload(datasets, region, options=None, progress=None):
     """datasets: [{dataset_id, paths, chemistry?}]; metadata conflicts are errors."""
-    from fiberhmm.io.bam_header import resolve_bam_chemistry as _resolve_chemistry, bam_chemistry_profile as _bam_chemistry
     from .parameters import parse_options
     options=options or parse_options({'cr':{'engine':STAGED_MODE}})
     if options['cr'].engine not in STAGED_LIKE:
@@ -77,9 +99,7 @@ def load_bam_payload(datasets, region, options=None, progress=None):
         if dsid in rows: raise ValueError('Duplicate dataset ID: '+dsid)
         paths=_flatten_paths(item['paths'])
         if not paths: raise ValueError('Dataset has no BAM paths: '+dsid)
-        if not item.get('chemistry') and any(_bam_chemistry(Path(p))[0] is None for p in paths):
-            raise ValueError('Every BAM needs chemistry metadata or an explicit dataset chemistry: '+dsid)
-        chemistry,metadata=_resolve_chemistry([Path(p) for p in paths],item.get('chemistry'))
+        chemistry,metadata=_dataset_chemistry(item,paths)
         chemistry_records[dsid]=dict(requested_chemistry=item.get('chemistry'),files=metadata)
         rows[dsid]=SimpleNamespace(paths=paths,path=paths[0],label=dsid,data_type='bam',
             family_scan_chemistry=chemistry,available_layers={})

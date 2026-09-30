@@ -6,8 +6,8 @@ header lines. `@CO` lines are written as `@CO<TAB><text>`; pysam's
 
 | Line | Written by | Purpose |
 |---|---|---|
-| `@PG` | every producer (`call`, `recall-tfs`/`-nucs`, `pair`, `merge`, `tag-m5c`, `consensus`, `tag-consensus`, …) | provenance: command line, version, resolved settings |
-| `@CO FIBERHMM-CHEMISTRY:v1:` | `call`, `recall-tfs`/`-nucs` | authoritative chemistry of the calls |
+| `@PG` | every producer (`call`, `apply`, `recall-tfs`/`-nucs`, `pair`, `merge`, `tag-m5c`, `consensus`, `tag-consensus`, …) | provenance: command line, version, resolved settings |
+| `@CO FIBERHMM-CHEMISTRY:v1:` | `call`, `apply`, `recall-tfs`/`-nucs` | authoritative chemistry of the calls |
 | `@CO MA-TYPES:v1:` | every command that writes `MA` | advisory list of `MA` group names |
 | `@CO fiberhmm:coord=molecular` | `apply`, `recall-tfs`/`-nucs` | coordinate-frame marker (`call` puts `coord=molecular` in its `@PG DS`) |
 | `@CO FIBERHMM-CONSENSUS-MA:v1:` | `consensus`, `transfer` | meaning of the consensus layers' bytes |
@@ -23,7 +23,7 @@ downstream processing unless a tool rewrites the header.
 `fiberhmm-call`'s `DS` field states the frame and every resolved setting:
 
 ```text
-FiberHMM fused apply+recall; coord=molecular (ns/nl/as/al/MA in molecular original-fiber coordinates); mode=daf enzyme=ddda prob_threshold=128 primary_only=on tf_decoder=multi_interval_v1 tf_interval_penalty=5.0 recall_nucs=True nuc_recall_policy=conservative nuc_profile=ddda_phase_posterior_v1 nuc_sha256=c86b05dc... phase_nrl=189 ddda_derived_tf_edge_gap=12 chimera_filter=on dedup=j0.95/mark/ends50 daf_snp_mask=on/0sites daf_run_mask=>=2/keep-one ddda_mcg=off cpg_mask=unmethylated-only
+FiberHMM fused apply+recall; coord=molecular (ns/nl/as/al/MA in molecular original-fiber coordinates); mode=daf enzyme=ddda prob_threshold=128 primary_only=on tf_decoder=multi_interval_v1 tf_interval_penalty=5.0 recall_nucs=True nuc_recall_policy=conservative nuc_profile=ddda_phase_posterior_v1 nuc_sha256=c86b05dc... phase_nrl=189 ddda_derived_tf_edge_gap=12 chimera_filter=on dedup=j0.95/mark/ends50 daf_snp_mask=on/0sites daf_run_mask=>=2/keep-one cpg_mask=unmethylated-only
 ```
 
 The recallers record the recall subset. Recall reads the input's `@PG` to

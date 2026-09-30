@@ -338,8 +338,14 @@ def _process_bam_streaming_pipeline(
     debug_timing: bool = False,
     process_unmapped: bool = False,
     fail_on_mostly_unmapped: bool = False,
+    pg_record: Optional[dict] = None,
 ) -> Tuple[int, int]:
-    """Streaming producer-consumer pipeline for BAM processing."""
+    """Streaming producer-consumer pipeline for BAM processing.
+
+    ``pg_record`` (``PN``/``VN``/``CL``/``DS`` plus ``chemistry``) is written
+    to the output header as ``@PG`` and a chemistry declaration.
+    """
+    from fiberhmm.cli.provenance import output_header_with_provenance
     if max_inflight is None:
         max_inflight = 2 * n_cores
 
@@ -390,7 +396,9 @@ def _process_bam_streaming_pipeline(
                                  check_sq=False) as inbam:
             has_references = bool(inbam.references)
             with pysam.AlignmentFile(_output_target(output_path), "wb",
-                                     header=append_coord_marker(inbam.header),
+                                     header=output_header_with_provenance(
+                                         append_coord_marker(inbam.header),
+                                         pg_record),
                                      threads=io_threads) as outbam:
 
                 if output_posteriors:

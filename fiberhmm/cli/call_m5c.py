@@ -247,6 +247,10 @@ def main(argv=None):
                   domain.methylated, domain.posterior)
         for domain in domains if domain.start < end and domain.end > start
     ]
+    from fiberhmm.inference.bam_output import ensure_parent_dir
+    for path in (args.output, args.tag_output):
+        if path and path != "-":
+            ensure_parent_dir(path)
     handle = sys.stdout if args.output == "-" else open(args.output, "w")
     try:
         write_bed(domains, handle)

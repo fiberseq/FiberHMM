@@ -213,6 +213,10 @@ def main(argv=None):
                f"{mode_details}posterior={args.posterior} "
                "five_prime_factors=" + ",".join(f"{value:.6g}" for value in factors)),
     }
+    from fiberhmm.inference.bam_output import ensure_parent_dir
+    for path in (args.output, args.calls_tsv, args.write_cpg_islands):
+        if path and path != "-":
+            ensure_parent_dir(path)
     stats = annotate_bam_per_read_islands(
         args.input, args.output, args.reference, args.cpg_islands, factors,
         posterior_threshold=args.posterior,

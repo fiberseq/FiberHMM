@@ -339,6 +339,8 @@ Examples:
     p.add_argument('--io-threads', type=int, default=4, help='htslib compression threads (default 4)')
     from fiberhmm.core.bam_reader import add_daf_run_mask_arguments, apply_daf_run_mask_arguments
     add_daf_run_mask_arguments(p)
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(p)
     args = p.parse_args()
     try:
         apply_daf_run_mask_arguments(args, args.enzyme)

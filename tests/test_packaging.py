@@ -140,3 +140,57 @@ def test_python_floor_matches_classifiers():
     assert minors and min(minors) == int(floor.group(1))
     # int.bit_count() and numba parfor kernels in the consensus engine need 3.10+.
     assert int(floor.group(1)) >= 10
+
+
+def test_project_urls_point_at_the_docs_site():
+    urls = _section("project.urls")
+    assert re.search(
+        r'^Documentation\s*=\s*"https://fiberseq\.github\.io/FiberHMM/"', urls, re.M)
+    assert re.search(
+        r'^Homepage\s*=\s*"https://github\.com/fiberseq/FiberHMM"', urls, re.M)
+    assert re.search(
+        r'^Repository\s*=\s*"https://github\.com/fiberseq/FiberHMM"', urls, re.M)
+
+
+_VERSION_PROBE = r"""
+import contextlib, importlib, io, json, sys
+
+results = {}
+for script, (module, attr) in json.loads(sys.argv[1]).items():
+    sys.argv = [script, '--version']
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            getattr(importlib.import_module(module), attr)()
+        code = 'returned without exiting'
+    except SystemExit as exc:
+        code = exc.code or 0
+    except BaseException as exc:  # noqa: BLE001 - reported to the parent
+        code = f'{type(exc).__name__}: {exc}'
+    results[script] = [code, out.getvalue()]
+print('RESULTS=' + json.dumps(results))
+"""
+
+
+def test_every_console_script_prints_the_package_version():
+    import json
+    import os
+    import subprocess
+    import sys
+
+    env = dict(os.environ, FIBERHMM_NO_UPDATE_CHECK="1")
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(PYPROJECT.parent)] + [p for p in [env.get("PYTHONPATH")] if p]
+    )
+    scripts = _console_scripts()
+    proc = subprocess.run(
+        [sys.executable, "-c", _VERSION_PROBE, json.dumps(scripts)],
+        capture_output=True, text=True, env=env, timeout=600,
+    )
+    line = [ln for ln in proc.stdout.splitlines() if ln.startswith("RESULTS=")]
+    assert line, proc.stderr[-4000:]
+    results = json.loads(line[-1][len("RESULTS="):])
+    assert set(results) == set(scripts)
+    expected = [0, f"fiberhmm {fiberhmm.__version__}\n"]
+    wrong = {name: got for name, got in results.items() if got != expected}
+    assert not wrong

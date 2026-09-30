@@ -35,6 +35,7 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   `fiberhmm-pair`/`-merge` accept `--use-m5c`/`--no-use-m5c`.
 - `fiberhmm-call`: `--scores` (as in `fiberhmm-apply`) and `-c 0` for all
   CPUs; `@PG` records the ML threshold, primary-only setting and CpG masking.
+- Every `fiberhmm-*` command accepts `--version` (prints `fiberhmm <version>`).
 - GitHub Actions CI (Linux/macOS, Python 3.10/3.12) with a wheel smoke test.
 - Documentation site (MkDocs, published to GitHub Pages from `docs/`) with
   getting-started, concept, workflow and reference pages, a synthetic demo
@@ -64,9 +65,12 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   inconsistent MM/ML are skipped. Region-parallel mode keeps every record
   exactly once and refuses unusable plans. Worker failures above 1% fail the
   run. Outputs (call, apply, recall, merge, pair, extract) are published
-  atomically, so a failed run leaves no valid-looking partial BAM. Re-calling
-  removes stale call tags from skipped reads, and `-k` is validated against the
-  model.
+  atomically, so a failed run leaves no valid-looking partial BAM. Every
+  writer creates a missing output directory (`fiberhmm-call`, `-recall-tfs`,
+  `-dedup`, `-tag-m5c`, `-call-m5c` and `-posteriors` stopped with
+  `FileNotFoundError`).
+  Re-calling removes stale call tags from skipped reads, and `-k` is validated
+  against the model.
 - **DAF tools and parsing.** The MM parser steps ML correctly after multi-code
   entries, filters modification codes, and treats `?`-mode unlisted bases as
   unknown. R/Y input gets the chimera filter; MM/ML dU input gets the SNP mask.
@@ -87,21 +91,32 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   chosen from no enzyme (off). A chemistry that contradicts the input's
   declaration stops with exit 2 instead of writing footprints under a header
   that declares another chemistry.
+- **`fiberhmm-apply` provenance.** Apply output carries an `@PG` record
+  (resolved mode, enzyme, `k`, ML threshold, primary-only, DAF run mask;
+  `coord=molecular`) and a `FIBERHMM-CHEMISTRY` declaration, written by the
+  same helpers as `fiberhmm-call`, so recall, extract and QC read its
+  chemistry and a refit `-m` inherits it. A custom `-m` on declared stdin
+  input stops with exit 2 (pass `--enzyme`), as in `fiberhmm-call`.
 - **QC opportunities.** `fiberhmm-qc` no longer counts bases an MM `?` entry
   leaves unlisted (no call made) as unmodified opportunities, and Nanopore
   Hia5 QC counts the basecalled-forward A's (SEQ T on reverse-aligned reads)
   instead of the opposite strand, so the same molecule gives the same rate in
   either orientation. PacBio, R/Y and MD QC output is unchanged.
 - **Posteriors, training.** Posteriors decode reverse reads in the call's
-  frame and handle DAF; `fiberhmm-probs`, `fiberhmm-train` and
+  frame and handle DAF, and resolve `--seq` and the ML threshold like
+  `fiberhmm-call`; `fiberhmm-probs`, `fiberhmm-train` and
   `fiberhmm-utils transfer` read DAF like `fiberhmm-call` and exit non-zero on
   zero reads; Baum-Welch trains per read; all-zero emission columns are
-  neutral.
+  neutral. `fiberhmm-utils transfer` no longer stops with
+  `KeyError: 'total'`, and a saved `--accessibility-priors` table serves every
+  smaller `-k`.
 - **Consensus.** Looser prevalence tiers are a coherent union (a non-member
   adds only its remaining `1 − P`; previously a tier could exceed 1). Staged
   XCR units merge by complete linkage. The declared enzyme is honoured, and
-  EcoGII/custom BAMs never resolve to Hia5. Each engine rejects knobs it
-  ignores; explicit `sr`/`cross` settings are honoured. Worker pools stop on
+  EcoGII/custom BAMs never resolve to Hia5; a missing, unsupported or
+  conflicting chemistry stops `fiberhmm-consensus` and `fiberhmm-transfer`
+  with a one-line error (exit 2) before any results are written, instead of a
+  traceback. Each engine rejects knobs it ignores; explicit `sr`/`cross` settings are honoured. Worker pools stop on
   errors; multi-window BEDs stream.
 
 ### Changed defaults
@@ -110,12 +125,12 @@ These change numbers relative to 2.x.
 
 - **ML threshold per chemistry.** Hia5 on Nanopore (`--seq nanopore`, given or
   detected) calls m6A at ML ≥ 248 in `fiberhmm-call`, `-apply`,
-  `-recall-tfs`/`-recall-nucs`, `-extract` and `-qc` (read from the BAM's
+  `-recall-tfs`/`-recall-nucs`, `-extract`, `-qc` and `-posteriors` (read from the BAM's
   chemistry declaration where the tool has no `--enzyme`); 248 is also the
   threshold the Hia5 Nanopore QC reference is calibrated at, so automatic QC
   after an ONT Hia5 call no longer caps the rate score at WARN for a
   threshold mismatch. Other chemistries keep 128
-  (`call`, `apply`) or 125 (`recall`, `extract`, `qc`). An explicit
+  (`call`, `apply`, `posteriors`) or 125 (`recall`, `extract`, `qc`). An explicit
   `--prob-threshold` always wins.
 - **Primary alignments only.** `fiberhmm-call` and `fiberhmm-apply` pass
   secondary and supplementary records through uncalled (`--no-primary` to call
@@ -170,8 +185,4 @@ These change numbers relative to 2.x.
   `qc`) use 125 for non-Nanopore chemistries while `call`/`apply` use 128.
 - `fiberhmm-tag-consensus` needs an assignment table that no shipped command
   produces; its format is documented in the command's help.
-- `fiberhmm-utils transfer` stops with `KeyError: 'total'` while estimating
-  emissions; use `fiberhmm-probs` with matched controls.
-- `fiberhmm-call --region-parallel` does not create a missing output
-  directory.
 - Legacy `.pickle` models execute code when loaded; load only trusted files.

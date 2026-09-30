@@ -30,8 +30,30 @@ class Progress:
             print(f'{stage}: {bar}{message}',file=sys.stderr,flush=True)
 
 
+def check_chemistry(parser, datasets):
+    """Resolve every BAM dataset's chemistry up front; a missing, unsupported or conflicting
+    chemistry (or an unreadable BAM) is a one-line error (exit 2), not a traceback. It is an input
+    problem, not a usage one, so no usage block is printed."""
+    from fiberhmm.io.bam_header import ChemistryResolutionError
+    from .bam import check_dataset_chemistries
+    try: check_dataset_chemistries(datasets)
+    except (ChemistryResolutionError, OSError) as error: parser.exit(2,f'{parser.prog}: error: {error}\n')
+
+
+def report_chemistry_errors(run, prog):
+    """Run ``run()``; a chemistry error raised later (e.g. from a --datasets entry) exits 2 with one line."""
+    from fiberhmm.io.bam_header import ChemistryResolutionError
+    try: return run()
+    except ChemistryResolutionError as error:
+        print(f'{prog}: error: {error}',file=sys.stderr);raise SystemExit(2)
+
+
 def main(argv=None):
-    p=argparse.ArgumentParser(description=__doc__)
+    return report_chemistry_errors(lambda: _main(argv),'fiberhmm-consensus')
+
+
+def _main(argv=None):
+    p=argparse.ArgumentParser(prog='fiberhmm-consensus',description=__doc__)
     p.add_argument('--schema',action='store_true',help='Print every parameter group with defaults and help as JSON (cr.engine selects the engine; the default is lattice_recaller)')
     source=p.add_mutually_exclusive_group()
     source.add_argument('--bam',action='append',help='Repeat for separate datasets; chemistry comes from BAM @CO metadata')
@@ -57,6 +79,8 @@ def main(argv=None):
     p.add_argument('--bam-grouping',choices=['datasets','files'],default='datasets',help='One BAM per logical dataset (default) or original source file')
     p.add_argument('--bam-recaller-layer',action='store_true',help="lattice_recaller: also write the optional tf_recaller MA layer (the recaller's own per-molecule class calls at every prevalence tier; bytes tq,fi,tier,q0,lr,rr) to exported BAMs. Off by default; the calls are always in result.json.gz")
     p.add_argument('--output',help='New or empty result directory')
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(p)
     args=p.parse_args(argv)
     from fiberhmm.core.bam_reader import configure_daf_run_mask
     # An explicit value applies to every DAF dataset; unset leaves each dataset
@@ -101,6 +125,10 @@ def main(argv=None):
         values['compute']['fit_cache_dir']=str(Path(values['compute']['fit_cache_dir']).resolve())
     try: options=parse_options(values)
     except ValueError as error: p.error(str(error))
+    datasets=None
+    if not (args.evidence or resume):
+        datasets=read_json(args.datasets) if args.datasets else [dict(dataset_id=f'dataset_{i+1}',paths=[str(Path(path).resolve())],chemistry=args.chemistry) for i,path in enumerate(args.bam)]
+        check_chemistry(p,datasets)
     progress=Progress(args.json_progress)
     out.mkdir(parents=True,exist_ok=True)
     from .execution import single_threaded_blas
@@ -110,7 +138,6 @@ def main(argv=None):
             payload=read_json(resume/'evidence.json.gz' if resume else args.evidence)
             count=1;jobs=iter([('analysis',payload,out)])
         else:
-            datasets=read_json(args.datasets) if args.datasets else [dict(dataset_id=f'dataset_{i+1}',paths=[str(Path(path).resolve())],chemistry=args.chemistry) for i,path in enumerate(args.bam)]
             if args.bed: windows=load_bed(args.bed,pooled=args.pool_loci)
             elif args.region:
                 windows=[]

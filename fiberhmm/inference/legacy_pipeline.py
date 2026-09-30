@@ -161,8 +161,14 @@ def _process_bam_legacy_pipeline(
     output_posteriors: Optional[str] = None,
     write_msps: bool = True,
     io_threads: int = 4,
+    pg_record: Optional[dict] = None,
 ) -> Tuple[int, int]:
-    """Process a BAM through the legacy chunked apply path."""
+    """Process a BAM through the legacy chunked apply path.
+
+    ``pg_record`` (``PN``/``VN``/``CL``/``DS`` plus ``chemistry``) is written
+    to the output header as ``@PG`` and a chemistry declaration.
+    """
+    from fiberhmm.cli.provenance import output_header_with_provenance
     total_reads = 0
     reads_with_footprints = 0
     skipped = 0
@@ -204,7 +210,8 @@ def _process_bam_legacy_pipeline(
             pysam.AlignmentFile(input_bam, "rb", threads=io_threads,
                                 check_sq=False) as inbam:
         with pysam.AlignmentFile(output_path, "wb",
-                                 header=append_coord_marker(inbam.header),
+                                 header=output_header_with_provenance(
+                                     append_coord_marker(inbam.header), pg_record),
                                  threads=io_threads) as outbam:
 
             if output_posteriors:

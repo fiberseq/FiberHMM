@@ -365,6 +365,8 @@ def parse_args():
     p.add_argument('--chroms', nargs='+', default=None,
                    help='Only process these chromosomes (region-parallel mode).')
 
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(p)
     return p.parse_args()
 
 
@@ -1050,6 +1052,17 @@ def _main(args):
         print("  NOTE: --region-parallel passes unmapped reads through uncalled; "
               "use the streaming pipeline to call them.", file=sys.stderr)
 
+    # A missing output directory is created (as apply/extract/recall do)
+    # before the dedup, SNP and region-parallel temporaries that live in it.
+    if not stdout_mode:
+        from fiberhmm.inference.bam_output import ensure_parent_dir
+        try:
+            ensure_parent_dir(args.output)
+        except OSError as exc:
+            print(f"error: cannot create the output directory for "
+                  f"{args.output}: {exc}", file=sys.stderr)
+            sys.exit(2)
+
     snp_mask_path = args.daf_snp_mask
     snp_report_path = None
     snp_mask_sites = 0
@@ -1266,14 +1279,13 @@ def _main(args):
                    f"chimera_filter={chimera_state} dedup={dedup_state} "
                    f"daf_snp_mask={snp_state} "
                    f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'} "
-                   f"ddda_mcg={'on' if ddda_mcg else 'off'} "
                    f"cpg_mask={cpg_mask_policy or 'off'}"),
         }
 
         mode_label = 'region-parallel' if args.region_parallel else 'streaming'
         print(
             "\n=========================================================================\n"
-            f"  fiberhmm-call [BETA] — fused apply + recall-tfs ({mode_label})\n"
+            f"  fiberhmm-call — fused apply + recall-tfs ({mode_label})\n"
             f"  apply model:  {apply_model_path}\n"
             f"  recall model: {recall_model_path or '(reuse apply model)'}\n"
             f"  nuc likelihood model: {nuc_model_path or '(reuse recall model)'}\n"
@@ -1287,7 +1299,6 @@ def _main(args):
             f"  ddda-derived-tf-edge-gap="
             f"{derived_tf_max_edge_ambiguity if derived_tf_max_edge_ambiguity is not None else 'off'}\n"
             f"  cores={args.cores} io-threads={args.io_threads} "
-            f"ddda_mcg={'on' if ddda_mcg else 'off'} "
             f"cpg_mask={cpg_mask_policy or 'off'} "
             f"daf_run_mask={('>=' + str(args.daf_mask_runs) + '/' + args.daf_run_policy) if args.daf_mask_runs else 'off'}"
             f"{' circular=on' if args.circular else ''}\n"

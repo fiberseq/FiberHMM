@@ -296,3 +296,72 @@ def test_question_flag_bases_are_not_counted():
     assert listed.total_modified == naive.total_modified == 1
     assert listed.total_positions == 2
     assert naive.total_positions > 50
+
+
+def _write_footprint_reference_bam(path, n_reads=6):
+    """Fiber-seq-like reference: forward reads with ns/nl footprints."""
+    header = pysam.AlignmentHeader.from_dict(
+        {"HD": {"VN": "1.6", "SO": "coordinate"},
+         "SQ": [{"LN": REF_LEN, "SN": "chr1"}]})
+    ref = _reference()
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for i in range(n_reads):
+            start = i * 150
+            a = pysam.AlignedSegment(header)
+            a.query_name = f"ref{i}"
+            a.query_sequence = ref[start:start + READ_LEN]
+            a.flag = 0
+            a.reference_id = 0
+            a.reference_start = start
+            a.mapping_quality = 60
+            a.cigartuples = [(0, READ_LEN)]
+            starts = list(range(20 + 7 * i, READ_LEN - 200, 200))
+            a.set_tag("ns", starts)
+            a.set_tag("nl", [147] * len(starts))
+            out.write(a)
+    pysam.index(str(path))
+    return str(path)
+
+
+def test_transfer_command_runs_end_to_end(tmp_path, monkeypatch):
+    """`fiberhmm-utils transfer` always stopped with KeyError: 'total'
+    (ContextCounter tables carry hit/nohit, not total)."""
+    target = _write_daf_bam(tmp_path / "target.bam", "iupac", n_reads=3)
+    reference = _write_footprint_reference_bam(tmp_path / "reference.bam")
+    common = ["-t", target, "-k", "1", "2", "--min-observations", "1",
+              "-q", "0", "--min-read-length", "100"]
+    out = tmp_path / "from_bam"
+    monkeypatch.setattr(sys, "argv", [
+        "fiberhmm-utils", "transfer", "-rb", reference, "-o", str(out), *common])
+    fh_utils.main()
+    import pandas as pd
+    tables = out / "tables"
+    bam_k1 = pd.read_csv(tables / "from_bam_C_k1_probs.tsv", sep="\t")
+    assert len(bam_k1) == 16
+    assert (bam_k1["accessible_prob"] > 0).all()
+
+    # Saved priors (written at the largest k) reproduce every smaller k.
+    priors = tables / "from_bam_accessibility_priors_C_k2.tsv"
+    out2 = tmp_path / "from_priors"
+    monkeypatch.setattr(sys, "argv", [
+        "fiberhmm-utils", "transfer", "-ap", str(priors), "-o", str(out2), *common])
+    fh_utils.main()
+    for k in (1, 2):
+        a = pd.read_csv(tables / f"from_bam_C_k{k}_probs.tsv", sep="\t")
+        b = pd.read_csv(out2 / "tables" / f"from_priors_C_k{k}_probs.tsv", sep="\t")
+        pd.testing.assert_frame_equal(a, b)
+
+
+def test_transfer_regression_uses_hit_plus_nohit_as_weight():
+    import pandas as pd
+    contexts = [f"A{b}C{c}" for b in "ACGT" for c in "ACGT"][:12]
+    x = np.linspace(0.05, 0.95, len(contexts))
+    rates = pd.DataFrame({"context": contexts, "hit": (100 * (0.1 + 0.5 * x)).astype(int),
+                          "nohit": 100 - (100 * (0.1 + 0.5 * x)).astype(int)})
+    rates["ratio"] = rates["hit"] / 100
+    priors = pd.DataFrame({"context": contexts, "accessible_bp": (1000 * x).astype(int),
+                           "total_bp": 1000, "p_accessible": x})
+    p_acc, p_inacc, diag = fh_utils._estimate_emission_probs(rates, priors, 50)
+    assert diag["n_contexts"] == 12 and diag["total_target_obs"] == 1200
+    assert p_acc == pytest.approx(0.6, abs=0.02)
+    assert p_inacc == pytest.approx(0.1, abs=0.02)

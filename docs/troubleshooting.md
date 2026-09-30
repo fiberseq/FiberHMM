@@ -104,11 +104,6 @@ Align with `minimap2 --MD`, run `samtools calmd`, or pass `--reference`.
 Index the BAM (`samtools index`), or drop `--region-parallel` to stream.
 `--region-parallel` also cannot read stdin or write stdout.
 
-### `FileNotFoundError: … .fiberhmm_call_tmp_…`
-
-`fiberhmm-call --region-parallel` does not create a missing output
-directory. Create it first (`mkdir -p`).
-
 ### Hard-clipped records are skipped (`hard_clipped_mm`)
 
 Supplementary alignments hard-clipped by minimap2 keep the full read's
@@ -164,7 +159,7 @@ Use the "+ edge" prevalence tier, or `recaller.linker=either`.
 ### Missing or unsupported chemistry
 
 ```text
-ValueError: Every BAM needs chemistry metadata or an explicit dataset chemistry: dataset_1
+fiberhmm-consensus: error: Every BAM needs chemistry metadata or an explicit dataset chemistry: dataset_1; the header declares none, or enzyme=custom (a custom -m without --enzyme). Pass --chemistry (ddda, dddb, hia5-pacbio, hia5-nanopore) or a dataset chemistry
 ```
 
 The BAM has no chemistry declaration (for example it was called with a
@@ -173,11 +168,13 @@ custom `-m` and no `--enzyme`, so it declares `enzyme=custom`). Pass
 `chemistry`) to say which emission model to use.
 
 ```text
-ValueError: BAM header declares ecogii chemistry (ecogii-pacbio); consensus has no ecogii profile (supported: ddda, dddb, hia5-pacbio, hia5-nanopore). Another enzyme's emissions are never substituted: run consensus only on supported chemistries
+fiberhmm-consensus: error: BAM header declares ecogii chemistry (ecogii-pacbio); consensus has no ecogii profile (supported: ddda, dddb, hia5-pacbio, hia5-nanopore). Another enzyme's emissions are never substituted: run consensus only on supported chemistries
 ```
 
 Consensus supports only the four chemistries above; EcoGII and other enzymes
-are rejected rather than scored with Hia5 emissions.
+are rejected rather than scored with Hia5 emissions. Both errors are raised
+before any results are written (exit 2); `fiberhmm-transfer` reports them the
+same way.
 
 ### `Output directory must be empty; existing results are never overwritten`
 
@@ -215,12 +212,7 @@ threshold for the chemistry.
 
 ## Known issues in 3.0.0
 
-- `fiberhmm-utils transfer` stops with `KeyError: 'total'` while estimating
-  emissions. Use `fiberhmm-probs` with matched controls.
 - Tools that re-read `MM`/`ML` from a BAM (`recall-tfs`, `extract`, `qc`) use
-  ML 125 for non-Nanopore chemistries while `call`/`apply` use 128;
-  `fiberhmm-posteriors` uses 128 for every chemistry. Pass `--prob-threshold`
-  to align them.
-- `fiberhmm-consensus` reports a missing or unsupported chemistry as a Python
-  traceback ending in the `ValueError` quoted above.
+  ML 125 for non-Nanopore chemistries while `call`/`apply`/`posteriors` use
+  128. Pass `--prob-threshold` to align them.
 - Legacy `.pickle` models execute code when loaded; load only trusted files.

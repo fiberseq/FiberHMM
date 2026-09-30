@@ -202,9 +202,9 @@ BAM index: out/apply/hia5_pacbio_footprints.bam.bai
   `--stats` samples reads for summary plots (needs `fiberhmm[plots]`);
   `--output-posteriors FILE` also exports HMM posteriors; `-t` excludes the
   read IDs a model was trained on.
-- `fiberhmm-apply` writes no `FIBERHMM-CHEMISTRY` declaration (only the
-  `@CO fiberhmm:coord=molecular` frame marker), so recall on its output needs
-  `--enzyme`.
+- `fiberhmm-apply` records the same provenance as `fiberhmm-call`: an `@PG`
+  line with its resolved settings and a `FIBERHMM-CHEMISTRY` declaration, so
+  recall, extract and QC read the chemistry from its output.
 - `--chroms`, `--skip-scaffolds`, `--region-size`, `--scores-db` and `-l`
   never had an effect in `fiberhmm-apply` and are rejected; use
   `fiberhmm-call --region-parallel` to select regions.

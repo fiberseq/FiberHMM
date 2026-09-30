@@ -16,6 +16,7 @@ from fiberhmm.inference.bam_output import (
     _concatenate_region_bams,
     _sort_and_index_bam,
     atomic_output,
+    ensure_parent_dir,
 )
 from fiberhmm.inference.mp_context import _MP_CONTEXT
 from fiberhmm.inference.region_planning import (
@@ -126,7 +127,7 @@ def _process_bam_region_parallel(input_bam: str, output_bam: str,
     sys.stdout.flush()
 
     # Create temp directory in output folder for easier cleanup
-    output_dir = os.path.dirname(os.path.abspath(output_bam))
+    output_dir = ensure_parent_dir(output_bam)
     temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_tmp_', dir=output_dir)
 
     try:
@@ -318,7 +319,7 @@ def _process_bed_region_parallel(input_bam: str, output_bed: str,
     sys.stdout.flush()
 
     # Create temp directory for BED files (small compared to BAMs)
-    output_dir = os.path.dirname(os.path.abspath(output_bed))
+    output_dir = ensure_parent_dir(output_bed)
     temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_bed_tmp_', dir=output_dir)
 
     try:
@@ -461,7 +462,7 @@ def _process_bam_region_parallel_fused(
     # creating any temporary state.
     plan_region_work(input_bam, region_size, skip_scaffolds, chroms)
 
-    output_dir = os.path.dirname(os.path.abspath(output_bam))
+    output_dir = ensure_parent_dir(output_bam)
     temp_dir = tempfile.mkdtemp(prefix='.fiberhmm_call_tmp_', dir=output_dir)
 
     params = {

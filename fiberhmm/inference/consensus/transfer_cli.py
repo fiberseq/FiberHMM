@@ -6,7 +6,7 @@ import html
 from pathlib import Path
 from .artifacts import read_json,write_json,digest
 from .transfer import export_run,load_bundle,score_payload,run_engine,RECALLER_MODE
-from .cli import Progress
+from .cli import Progress, check_chemistry, report_chemistry_errors
 
 STAGED_SCHEMA='fiberhmm.frozen_families.v1'
 MODEL_FILES=('frozen_classes.json.gz','frozen_models.json.gz')
@@ -23,7 +23,11 @@ def _model_path(value):
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description=__doc__)
+    return report_chemistry_errors(lambda: _main(argv),'fiberhmm-transfer')
+
+
+def _main(argv=None):
+    parser=argparse.ArgumentParser(prog='fiberhmm-transfer',description=__doc__)
     source=parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--freeze-run',help='Completed consensus result directory: a lattice_recaller run (any frame) or an oriented '
                         'staged_native_families CL-CR run; export its classes/models without refitting')
@@ -49,6 +53,8 @@ def main(argv=None):
                           help='Score molecules the catalog was trained on (default: exclude them, as for staged families); '
                                'use for self-application checks')
     parser.add_argument('--output',required=True,help='New or empty output directory')
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(parser)
     args=parser.parse_args(argv);out=Path(args.output)
     if out.exists() and any(out.iterdir()):parser.error('Output directory must be empty')
     out.mkdir(parents=True,exist_ok=True);progress=Progress(args.json_progress)
@@ -84,6 +90,7 @@ def main(argv=None):
         params=read_json(args.parameters);params.setdefault('cr',{})['engine']='staged_native_families';options=parse_options(params)
     datasets=read_json(args.datasets) if args.datasets else [dict(dataset_id=Path(p).stem,paths=[p],**({'chemistry':args.chemistry} if args.chemistry else {})) for p in (args.bam or [])]
     if len({d['dataset_id'] for d in datasets})!=len(datasets):parser.error('Duplicate dataset names; use --datasets with unique IDs')
+    check_chemistry(parser,datasets)
     windows=load_bed(args.bed,pooled=True) if args.bed else [None]
     if any(w and w['end']-w['start']!=bundle['region'][1]-bundle['region'][0] for w in windows):parser.error('BED widths must match the frozen source window')
     analyses=[];all_results=[];summary=[]
@@ -196,6 +203,7 @@ def _apply_recaller(args,parser,out,progress,model_path):
         from .bam import load_bam_payload
         datasets=read_json(args.datasets) if args.datasets else [dict(dataset_id=Path(p).stem,paths=[str(Path(p).resolve())],**({'chemistry':args.chemistry} if args.chemistry else {})) for p in (args.bam or [])]
         if len({d['dataset_id'] for d in datasets})!=len(datasets):parser.error('Duplicate dataset names; use --datasets with unique IDs')
+        check_chemistry(parser,datasets)
         windows=load_bed(args.bed,pooled=True)
         if any(w['end']-w['start']!=width for w in windows):parser.error(f'BED widths must match the frozen frame ({width} bp)')
         load_options=F.transfer_options(catalog,[],overrides,1)

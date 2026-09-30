@@ -6,6 +6,8 @@ match `--help` exactly. Behaviour that does not fit in a flag description is
 explained on the [workflow pages](../workflows/calling.md); defaults that
 depend on the chemistry are collected in
 [Chemistries and platforms](../concepts/chemistries.md#default-settings-per-chemistry).
+Every command also accepts `-h`/`--help` and `--version` (prints
+`fiberhmm <version>`).
 
 | Command | What it does | Guide |
 |---|---|---|
@@ -586,9 +588,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `-o` / `--output` | required | Output file (.tsv.gz for TSV, .h5/.hdf5 for HDF5) |
 | `--format` | `auto` | Output format (default: auto-detect from extension) Choices: `auto`, `hdf5`, `tsv`. |
 | `--enzyme` | — | Auto-select a bundled enzyme model. Choices: `ddda`, `dddb`, `hia5`. |
-| `--seq` | — | Hia5 platform; omission warns and defaults to pacbio. Ignored for dddb/ddda. Choices: `pacbio`, `nanopore`. |
+| `--seq` | — | Hia5 platform; detected from the input when omitted, as in fiberhmm-call. Ignored for dddb/ddda. Choices: `pacbio`, `nanopore`. |
 | `--edge-trim` / `-e` | `10` | Bases to trim from read edges (default: 10) |
-| `--prob-threshold` | `128` | Min ML probability (0-255) for an MM/ML modification call (default: 128; not raised to 248 for Hia5 Nanopore -- pass --prob-threshold 248 to match fiberhmm-call there) |
+| `--prob-threshold` | — | Min ML probability (0-255) for an MM/ML modification call. Default: chemistry preset, as in fiberhmm-call -- 248 for Hia5 Nanopore (--seq nanopore, given or detected), 128 otherwise. |
 | `--keep-chimeras` | off | Do not drop DAF strand-swap chimeric reads |
 | `--chimera-min-seg` | `5` | DAF chimera: min same-strand deamination events per segment (default: 5) |
 | `--chimera-purity` | `0.8` | DAF chimera: min same-strand purity per segment (default: 0.8) |

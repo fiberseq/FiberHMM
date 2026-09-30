@@ -387,6 +387,8 @@ Examples:
                         'on; --no-use-m5c for an ablation.')
     from fiberhmm.core.bam_reader import add_daf_run_mask_arguments, apply_daf_run_mask_arguments
     add_daf_run_mask_arguments(p)
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(p)
     args = p.parse_args()
     try:
         apply_daf_run_mask_arguments(args, 'ddda')

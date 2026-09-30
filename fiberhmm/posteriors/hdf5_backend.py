@@ -56,7 +56,10 @@ class PosteriorWriter:
         self.output_path = output_path
         self.batch_size = batch_size
 
-        # Open H5 file
+        # Open H5 file (creating a missing output directory, as every
+        # FiberHMM writer does)
+        from fiberhmm.inference.bam_output import ensure_parent_dir
+        ensure_parent_dir(output_path)
         self.h5 = h5py.File(output_path, 'w')
 
         # Write file-level metadata

@@ -64,8 +64,9 @@ Notes:
   `qc`) use 125 for non-Nanopore chemistries while `call`/`apply` use 128.
   This is a known inconsistency kept for compatibility; pass
   `--prob-threshold` to make them agree.
-- Other tools keep their own defaults: `fiberhmm-posteriors` 128 (also for
-  Hia5 Nanopore), `fiberhmm-probs` 128, `fiberhmm-train` 125,
+- `fiberhmm-posteriors` resolves its threshold like `fiberhmm-call` (248 for
+  Hia5 Nanopore, 128 otherwise).
+- Other tools keep their own defaults: `fiberhmm-probs` 128, `fiberhmm-train` 125,
   `fiberhmm-utils transfer` 128, `fiberhmm-consensus` 125 for Hia5 PacBio and
   248 for Hia5 Nanopore.
 - `fiberhmm-call` and `fiberhmm-apply` call **primary alignments only**

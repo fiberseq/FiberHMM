@@ -322,6 +322,14 @@ def header_has_coord_marker(header) -> bool:
 CONSENSUS_CHEMISTRY_PROFILES = ("ddda", "dddb", "hia5-pacbio", "hia5-nanopore")
 
 
+class ChemistryResolutionError(ValueError):
+    """An input's chemistry is missing, ambiguous, conflicting or unsupported.
+
+    A user-facing input error: command-line tools report it as a one-line
+    error (exit 2) instead of a traceback.
+    """
+
+
 def chemistry_profile_from_declaration(declaration, *, enzyme_recorded=True) -> str | None:
     """Map a chemistry declaration to a profile key.
 
@@ -355,7 +363,8 @@ def bam_chemistry_profile(path) -> tuple[str | None, dict | None, str]:
             profiles = {chemistry_profile_from_declaration(value) for value in declarations}
             profiles.discard(None)
             if len(profiles) != 1:
-                raise ValueError(f"ambiguous chemistry declarations in {path}")
+                raise ChemistryResolutionError(
+                    f"ambiguous chemistry declarations in {path}")
         if declarations:
             declaration = declarations[-1]
             return chemistry_profile_from_declaration(declaration), declaration, "declared_v1"
@@ -385,24 +394,24 @@ def resolve_bam_chemistry(paths, requested: str | None):
         if profile is not None:
             detected.add(profile)
     if len(detected) > 1:
-        raise ValueError(
+        raise ChemistryResolutionError(
             "inputs declare different chemistries; discover separate catalogs "
             "before cross-dataset geometry matching"
         )
     detected_profile = next(iter(detected), None)
     if requested is not None and detected_profile is not None and requested != detected_profile:
-        raise ValueError(
+        raise ChemistryResolutionError(
             f"--chemistry {requested} conflicts with BAM chemistry {detected_profile}"
         )
     selected = requested or detected_profile
     if selected is None:
-        raise ValueError(
+        raise ChemistryResolutionError(
             "chemistry is absent, custom or ambiguous in the BAM header; provide --chemistry "
             f"({', '.join(CONSENSUS_CHEMISTRY_PROFILES)})"
         )
     if selected not in CONSENSUS_CHEMISTRY_PROFILES:
         enzyme = selected.split("-", 1)[0]
-        raise ValueError(
+        raise ChemistryResolutionError(
             f"BAM header declares {enzyme} chemistry ({selected}); consensus has no {enzyme} "
             f"profile (supported: {', '.join(CONSENSUS_CHEMISTRY_PROFILES)}). Another enzyme's "
             "emissions are never substituted: run consensus only on supported chemistries"

@@ -1393,6 +1393,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(parser)
     args = parser.parse_args(argv)
     if args.diagnostics == "stream":
         parser.error(

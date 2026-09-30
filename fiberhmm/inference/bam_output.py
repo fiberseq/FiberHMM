@@ -31,6 +31,18 @@ def _remove_quietly(path: str) -> None:
         pass
 
 
+def ensure_parent_dir(path: str) -> str:
+    """Create the directory that will hold output ``path`` (like ``mkdir -p``).
+
+    Every FiberHMM writer creates missing output directories, as
+    ``fiberhmm-apply``/``-extract`` always did for their output directory.
+    Returns the directory.
+    """
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    return directory
+
+
 def temporary_output_path(path: str) -> str:
     """Hidden sibling path for writing ``path`` atomically.
 
@@ -86,6 +98,7 @@ def atomic_output(path, finalize=None):
     temporary output (e.g. sort and index it); the finished BAM and any index
     it built are then published together (:func:`commit_output`).
 
+    A missing destination directory is created first.
     ``'-'`` (stdout) and ``None`` are yielded unchanged and not finalized. On
     any exception, in the body or in ``finalize``, the temporary file and
     everything finalization wrote beside it are removed and the exception
@@ -95,6 +108,7 @@ def atomic_output(path, finalize=None):
     if path is None or path == '-':
         yield path
         return
+    ensure_parent_dir(path)
     temporary = temporary_output_path(path)
     try:
         yield temporary

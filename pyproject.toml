@@ -72,7 +72,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/fiberseq/FiberHMM"
-Documentation = "https://github.com/fiberseq/FiberHMM#readme"
+Documentation = "https://fiberseq.github.io/FiberHMM/"
 Repository = "https://github.com/fiberseq/FiberHMM"
 Issues = "https://github.com/fiberseq/FiberHMM/issues"
 

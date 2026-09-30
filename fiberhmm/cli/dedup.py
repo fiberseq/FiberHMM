@@ -372,6 +372,8 @@ Examples:
                         help='Write a cluster_id<TAB>n_reads table to this path.')
     parser.add_argument('--io-threads', type=int, default=4,
                         help='htslib BAM compression threads for output (default 4).')
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(parser)
     args = parser.parse_args()
 
     if not os.path.exists(args.input):
@@ -384,6 +386,11 @@ Examples:
         print("Error: --max-end-diff must be non-negative.", file=sys.stderr)
         sys.exit(1)
 
+    if args.output != '-':
+        from fiberhmm.inference.bam_output import ensure_parent_dir
+        ensure_parent_dir(args.output)
+        if args.stats_tsv:
+            ensure_parent_dir(args.stats_tsv)
     run_dedup(
         in_bam=args.input, out_bam=args.output,
         min_jaccard=args.min_jaccard, min_deam=args.min_deam,

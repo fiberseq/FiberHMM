@@ -253,12 +253,46 @@ def add_verbose_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def resolve_input_prob_threshold(explicit, enzyme, seq, input_path) -> int:
+    """ML threshold for a run on ``input_path``: explicit, else chemistry preset.
+
+    ``enzyme``/``seq`` are the run's resolved chemistry (``--enzyme``/``--seq``
+    after platform detection). Without an enzyme (a custom ``--model``) the
+    input header's chemistry declaration decides, so a custom table on a
+    declared Hia5 Nanopore BAM also reads ML at 248. Resolved by
+    :func:`fiberhmm.models.resolve_prob_threshold`, shared with call/apply.
+    """
+    from fiberhmm.models import (
+        declared_prob_threshold_chemistry,
+        resolve_prob_threshold,
+    )
+
+    if explicit is not None:
+        return int(explicit)
+    if not enzyme and input_path and input_path != '-':
+        import pysam
+        try:
+            with pysam.AlignmentFile(input_path, 'rb', check_sq=False) as bam:
+                declared_enzyme, declared_seq = (
+                    declared_prob_threshold_chemistry(bam.header))
+        except (OSError, ValueError):
+            declared_enzyme = declared_seq = None
+        enzyme = declared_enzyme
+        seq = seq or declared_seq
+    return resolve_prob_threshold(None, enzyme, seq)
+
+
 def add_version_args(parser: argparse.ArgumentParser) -> None:
-    """Add --version flag."""
+    """Add ``--version``: prints ``fiberhmm <version>`` and exits.
+
+    Every console script registers it, so each reports the same package
+    version string.
+    """
     from fiberhmm import __version__
     parser.add_argument(
         '--version', action='version',
-        version=f'%(prog)s {__version__}'
+        version=f'fiberhmm {__version__}',
+        help="Print the FiberHMM version and exit",
     )
 
 

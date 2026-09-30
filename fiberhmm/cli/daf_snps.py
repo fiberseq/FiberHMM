@@ -52,6 +52,8 @@ def parse_args(argv=None):
     parser.add_argument("--min-mapq", type=int, default=20, help="Minimum mapping quality (default 20)")
     parser.add_argument("--min-amplicon-reads", type=int, default=20, help="Minimum aligned reads required for an amplicon consensus (default 20)")
     parser.add_argument("--reference", default=None, help="Indexed FASTA fallback for BAMs lacking MD")
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(parser)
     return parser.parse_args(argv)
 
 

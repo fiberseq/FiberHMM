@@ -69,8 +69,7 @@ WARNING: --seq not given for --enzyme hia5 and the platform could not be detecte
 ```
 
 An explicit `--seq` always wins; if the input looks like the other platform
-you get a warning, not an error. `fiberhmm-posteriors` does not detect the
-platform: without `--seq` it uses PacBio.
+you get a warning, not an error.
 
 ## What the chemistry changes
 
@@ -89,7 +88,7 @@ The full table, including the thresholds of the other tools, is in
 
 ## Re-calling a BAM FiberHMM already called
 
-`fiberhmm-call` and `fiberhmm-recall-tfs`/`-recall-nucs` write a
+`fiberhmm-call`, `fiberhmm-apply` and `fiberhmm-recall-tfs`/`-recall-nucs` write a
 [`FIBERHMM-CHEMISTRY`](../reference/headers.md#fiberhmm-chemistry) line into
 the output header. Tools that read such a BAM take the chemistry from it:
 
@@ -116,7 +115,3 @@ NOTE: fiberhmm-recall-tfs: custom model on an input declaring [assay=daf enzyme=
 `--replace-chemistry` drops the input's declaration and writes this run's
 (for a custom model, `enzyme=custom;platform=unknown`). Use it only when you
 are deliberately re-calling with a different chemistry.
-
-`fiberhmm-apply` does not write a chemistry declaration, so recalling an
-apply output needs `--enzyme` (and `--seq` for Hia5, unless it can be
-detected from the reads).

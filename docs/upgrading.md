@@ -35,7 +35,7 @@ the 2.x builder**, which had the same ordering error.
 
 | Change | 2.x | 3.0 | To get the 2.x behaviour |
 |---|---|---|---|
-| ML threshold for Hia5 Nanopore (`call`, `apply`, `recall-tfs`/`-nucs`, `extract`, `qc`) | 128 / 125 | **248** | `--prob-threshold 128` (or 125) |
+| ML threshold for Hia5 Nanopore (`call`, `apply`, `recall-tfs`/`-nucs`, `extract`, `qc`, `posteriors`) | 128 / 125 | **248** | `--prob-threshold 128` (or 125) |
 | Alignments called by `call`/`apply` | all | **primary only** | `--no-primary` |
 | DddA CpG-aware recall in `call` and `pair`/`merge` joint recall | off | **on** (`ddda_ucg` islands exempt), as in `recall-tfs` | `--no-use-m5c` |
 | DAF tools reading MM/ML dU (`dedup`, `pair`, `merge`) | ML 0 | **ML 128** | `--prob-threshold 0` |

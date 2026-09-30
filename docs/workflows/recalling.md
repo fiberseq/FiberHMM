@@ -36,14 +36,14 @@ fiberhmm-recall-nucs -i out/apply/hia5_pacbio_footprints.bam -o out/apply.recall
 [recall_tfs] processed 300 reads; 300 carried v2 tags; ... TF calls emitted; ... v2 short nucs demoted to tf+
 ```
 
-`fiberhmm-apply` output has no chemistry declaration, so `--enzyme` is
-required (and `--seq`, unless it can be detected from the `MM` tags). The
-recall output declares its chemistry and `MA-TYPES`, keeps the input order,
-and is not indexed; run `samtools index` if the input was sorted.
+`fiberhmm-apply` output declares its chemistry like `fiberhmm-call` output,
+so a refit table given with `-m` alone inherits it (see below). The recall
+output declares its chemistry and `MA-TYPES`, keeps the input order, and is
+not indexed; run `samtools index` if the input was sorted.
 
 ## With a refit or custom table
 
-On a BAM that `fiberhmm-call` produced, give only the model:
+On a BAM that `fiberhmm-call` or `fiberhmm-apply` produced, give only the model:
 
 ```bash
 fiberhmm-recall-tfs -i out/dddb.calls.bam -o out/dddb.refit.bam -m dddb_refit.json -c 2

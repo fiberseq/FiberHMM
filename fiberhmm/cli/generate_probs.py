@@ -84,6 +84,8 @@ def parse_args():
     parser.add_argument('--verbose', '-v', action='store_true',
                         help='Show detailed filter statistics per BAM file')
 
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(parser)
     return parser.parse_args()
 
 

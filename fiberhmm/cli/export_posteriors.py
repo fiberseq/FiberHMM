@@ -35,7 +35,9 @@ from fiberhmm.cli.common import (
     add_parallel_args,
     add_verbose_args,
     add_version_args,
+    resolve_input_prob_threshold,
     resolve_observation_mode,
+    resolve_platform_argument,
 )
 
 # Package imports
@@ -611,9 +613,13 @@ def export_posteriors(
     """
     Export posterior probabilities to TSV or HDF5.
 
-    Dispatches to format-specific implementation.
+    Dispatches to format-specific implementation. A missing output
+    directory is created.
     """
+    from fiberhmm.inference.bam_output import ensure_parent_dir
+
     fmt = _detect_format(output_path, format)
+    ensure_parent_dir(output_path)
 
     if fmt == 'hdf5':
         return export_posteriors_hdf5(
@@ -837,16 +843,16 @@ def main():
     parser.add_argument('--enzyme', choices=_ENZYMES, default=None,
                        help='Auto-select a bundled enzyme model.')
     parser.add_argument('--seq', choices=['pacbio', 'nanopore'], default=None,
-                       help='Hia5 platform; omission warns and defaults to '
-                            'pacbio. Ignored for dddb/ddda.')
+                       help='Hia5 platform; detected from the input when '
+                            'omitted, as in fiberhmm-call. Ignored for dddb/ddda.')
 
     add_legacy_mode_override(parser)
     add_edge_trim_args(parser, default=DEFAULT_EDGE_TRIM)
-    parser.add_argument('--prob-threshold', type=int, default=DEFAULT_PROB_THRESHOLD,
-                       help='Min ML probability (0-255) for an MM/ML modification call '
-                            f'(default: {DEFAULT_PROB_THRESHOLD}; not raised to 248 for '
-                            'Hia5 Nanopore -- pass --prob-threshold 248 to match '
-                            'fiberhmm-call there)')
+    parser.add_argument('--prob-threshold', type=int, default=None,
+                       help='Min ML probability (0-255) for an MM/ML modification '
+                            'call. Default: chemistry preset, as in fiberhmm-call '
+                            '-- 248 for Hia5 Nanopore (--seq nanopore, given or '
+                            'detected), 128 otherwise.')
     daf = parser.add_argument_group('DAF options (mode=daf only; same as fiberhmm-call)')
     daf.add_argument('--keep-chimeras', action='store_true',
                      help='Do not drop DAF strand-swap chimeric reads')
@@ -871,6 +877,12 @@ def main():
 
     using_bundled_model = args.model is None
     model_path = args.model
+    # A missing --seq is inferred from the input (and refused on conflicting
+    # evidence) before the bundled model and ML threshold are chosen, as in
+    # fiberhmm-call/-apply.
+    resolve_platform_argument(args, args.input, tool='fiberhmm-posteriors')
+    prob_threshold = resolve_input_prob_threshold(
+        args.prob_threshold, args.enzyme, args.seq, args.input)
     if model_path is None:
         if args.enzyme is None:
             parser.error("one of --model or --enzyme must be provided.")
@@ -938,7 +950,7 @@ def main():
         write_batch_size=args.batch_size,
         verbose=args.verbose or True,
         mode_override=effective_mode,
-        prob_threshold=args.prob_threshold,
+        prob_threshold=prob_threshold,
         extraction=extraction,
     )
 

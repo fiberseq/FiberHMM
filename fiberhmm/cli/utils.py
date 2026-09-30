@@ -312,8 +312,47 @@ def _parse_footprints_from_bam_read(read):
     return None
 
 
+def _priors_for_context(priors_df, context_size, base):
+    """Accessibility priors of ``base``-centred ``(2k+1)``-mers from a priors TSV.
+
+    A saved priors table holds one context length (the ``max_context`` of the
+    run that wrote it). Longer contexts are trimmed to ``context_size`` and
+    their counts summed, so a table saved at k=6 serves k=3..6; shorter
+    contexts cannot be widened and are ignored.
+    """
+    k = int(context_size)
+    width = 2 * k + 1
+    aggregated = defaultdict(lambda: [0, 0])
+    for context, acc, total in zip(priors_df['context'].astype(str),
+                                   priors_df['accessible_bp'],
+                                   priors_df['total_bp']):
+        if len(context) < width or (len(context) - width) % 2:
+            continue
+        trim = (len(context) - width) // 2
+        small = context[trim:len(context) - trim]
+        if small[k] != base:
+            continue
+        aggregated[small][0] += int(acc)
+        aggregated[small][1] += int(total)
+    rows = [
+        {'context': context, 'accessible_bp': acc, 'total_bp': total,
+         'p_accessible': acc / total if total > 0 else 0.5}
+        for context, (acc, total) in sorted(aggregated.items())
+    ]
+    return pd.DataFrame(
+        rows, columns=['context', 'accessible_bp', 'total_bp', 'p_accessible'])
+
+
 def _estimate_emission_probs(target_rates, accessibility_priors, min_observations=100):
-    """Estimate P(m|acc) and P(m|inacc) using weighted linear regression."""
+    """Estimate P(m|acc) and P(m|inacc) using weighted linear regression.
+
+    ``target_rates`` is a :meth:`ContextCounter.get_probabilities` table
+    (``hit``/``nohit``/``ratio`` per context); the per-context observation
+    count is ``hit + nohit``.
+    """
+    if 'total' not in target_rates.columns:
+        target_rates = target_rates.assign(
+            total=target_rates['hit'] + target_rates['nohit'])
     merged = target_rates.merge(accessibility_priors, on='context', how='inner')
     merged = merged[(merged['total'] >= min_observations) &
                     (merged['total_bp'] >= min_observations)]
@@ -647,12 +686,7 @@ def cmd_transfer(args):
             target_rates = target_counters[base].get_probabilities(k)
 
             if accessibility_priors_df is not None:
-                center_idx = k
-                priors = accessibility_priors_df[
-                    accessibility_priors_df['context'].apply(
-                        lambda c: len(c) > center_idx and c[center_idx] == base
-                    )
-                ].copy()
+                priors = _priors_for_context(accessibility_priors_df, k, base)
             elif accessibility_counters is not None and base in accessibility_counters:
                 priors = accessibility_counters[base].get_accessibility_priors(k)
             else:
@@ -733,7 +767,7 @@ def cmd_transfer(args):
 
     print("\nDone!")
     print("Note: This estimates GLOBAL emission probs (same for all contexts).")
-    print("For context-specific probs, use generate_probs.py with proper controls.")
+    print("For context-specific probs, use fiberhmm-probs with matched controls.")
 
 
 # =============================================================================
@@ -1370,6 +1404,8 @@ Examples:
                    help='Output path (single input only). Default: write '
                         '<name>.fixed.bb alongside each input.')
 
+    from fiberhmm.cli.common import add_version_args
+    add_version_args(parser)
     args = parser.parse_args()
 
     if args.command is None:

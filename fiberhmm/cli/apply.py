@@ -207,25 +207,40 @@ def _input_index_state(path):
 
 def _resolve_apply_prob_threshold(args):
     """Explicit --prob-threshold, else the chemistry's default threshold."""
-    from fiberhmm.models import (
-        declared_prob_threshold_chemistry,
-        resolve_prob_threshold,
-    )
+    from fiberhmm.cli.common import resolve_input_prob_threshold
 
-    if args.prob_threshold is not None:
-        return int(args.prob_threshold)
-    enzyme, seq = args.enzyme, args.seq
-    if not enzyme and args.input != '-':
-        import pysam
-        try:
-            with pysam.AlignmentFile(args.input, 'rb', check_sq=False) as bam:
-                declared_enzyme, declared_seq = (
-                    declared_prob_threshold_chemistry(bam.header))
-        except (OSError, ValueError):
-            declared_enzyme = declared_seq = None
-        enzyme = declared_enzyme
-        seq = seq or declared_seq
-    return resolve_prob_threshold(None, enzyme, seq)
+    return resolve_input_prob_threshold(
+        args.prob_threshold, args.enzyme, args.seq, args.input)
+
+
+def _apply_pg_record(args, mode, context_size, chemistry, daf_run_mask):
+    """@PG record plus chemistry declaration for the output header.
+
+    The same provenance ``fiberhmm-call`` writes (via the shared
+    :func:`fiberhmm.cli.provenance.output_header_with_provenance`), so apply
+    output can be re-called or recalled without restating ``--enzyme``.
+    ``chemistry`` is the input-reconciled declaration; the defaults it implies
+    are already resolved, so a stdin header may not change the enzyme late.
+    """
+    import fiberhmm
+    from fiberhmm.cli.provenance import DEFAULTS_RESOLVED_KEY
+
+    min_run, policy = daf_run_mask if mode == 'daf' else (0, None)
+    return {
+        'PN': 'fiberhmm-apply',
+        'VN': getattr(fiberhmm, '__version__', 'unknown'),
+        'CL': ' '.join(sys.argv),
+        'chemistry': chemistry,
+        DEFAULTS_RESOLVED_KEY: True,
+        # Keep the literal `coord=molecular` token: downstream tools detect
+        # the molecular frame of ns/nl/as/al from it.
+        'DS': (f"FiberHMM apply; coord=molecular (ns/nl/as/al in molecular "
+               f"original-fiber coordinates); mode={mode} "
+               f"enzyme={args.enzyme or 'custom'} k={context_size} "
+               f"prob_threshold={args.prob_threshold} "
+               f"primary_only={'on' if args.primary else 'off'} "
+               f"daf_run_mask={f'>={min_run}/{policy}' if min_run else 'off'}"),
+    }
 
 
 def main():
@@ -243,6 +258,9 @@ def main():
             ", or --replace-chemistry to re-declare the output deliberately.",
             ". fiberhmm-apply keeps the input's declaration; use "
             "fiberhmm-call --replace-chemistry to re-declare it deliberately.",
+        ).replace(
+            ", or --replace-chemistry to declare the run as custom.",
+            " (fiberhmm-apply cannot re-declare the input's chemistry).",
         )
         print(f"error: {message}", file=sys.stderr)
         sys.exit(2)
@@ -371,13 +389,13 @@ def _main(args):
         import pysam
         with pysam.AlignmentFile(args.input, 'rb', check_sq=False) as _bam:
             input_header = _bam.header
-    resolve_effective_chemistry(
+    run_chemistry = resolve_effective_chemistry(
         args, mode, input_header, model_path, None, tool='fiberhmm-apply',
     )
 
     from fiberhmm.core.bam_reader import apply_daf_run_mask_arguments
     try:
-        apply_daf_run_mask_arguments(args, args.enzyme)
+        daf_run_mask = apply_daf_run_mask_arguments(args, args.enzyme)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
@@ -406,6 +424,8 @@ def _main(args):
     # 248, otherwise 128). A custom -m on an input declaring an unsupported
     # chemistry still takes that declaration's threshold.
     args.prob_threshold = _resolve_apply_prob_threshold(args)
+    pg_record = _apply_pg_record(args, mode, context_size, run_chemistry,
+                                 daf_run_mask)
 
     # Determine MSP minimum size (default 60bp for all modes)
     msp_min_size = args.msp_min_size if args.msp_min_size is not None else 0
@@ -522,6 +542,7 @@ def _main(args):
         # A run that skipped nearly everything as unmapped is an error unless
         # the user asked for pass-through explicitly.
         fail_on_mostly_unmapped=args.process_unmapped is not False,
+        pg_record=pg_record,
     )
     print(f"\nProcessed {total_reads:,} reads -> {reads_with_footprints:,} with footprints",
           file=sys.stderr if stdout_mode else sys.stdout)
