@@ -56,6 +56,10 @@ the 2.x builder**, which had the same ordering error.
 | DddA CpG-aware recall in `call` and `pair`/`merge` joint recall | off | **on** (`ddda_ucg` islands exempt), as in `recall-tfs` | `--no-use-m5c` |
 | DAF tools reading MM/ML dU (`dedup`, `pair`, `merge`) | ML 0 | **ML 128** | `--prob-threshold 0` |
 | DAF duplicate grouping | by alignment orientation | **by deamination flavour** (more duplicates found; for example 5.8% → 9.9% on one DddA data set) | none |
+| TF recall decoder (all chemistries) | one maximum per positive-score excursion | **exact best set of intervals**, `--min-llr` is the per-interval cost (`tf_decoder=multi_interval_v1` in `@PG`) | none |
+| TF `--min-llr` preset for DddB | 4.0 | **5.0** (as every preset) | `--min-llr 4` |
+| DddA TF table and radial nucleosome recall | 2.x `ddda_TF.json`, radial template | **duplex-calibrated `ddda_TF.json`; phase-aware posterior edges** (`ddda_nuc_profile.json`, `ddda_nuc_refine.json`) | none |
+| DddA adjacent-target thinning (`call`, `apply`, `recall-tfs`/`-nucs`, `pair`/`merge`, consensus) | off | **runs of ≥ 2 CC/GG targets keep one** | `--daf-mask-runs 0` |
 | Looser consensus prevalence tiers (`prevalence_edge`, `prevalence_loose`) | could double-count and exceed 1 | coherent union; drops by up to about 0.14 (typically 0.002–0.04); core unchanged | none (the old value was an error) |
 
 R/Y- and MD-encoded deaminations are binary and unaffected by ML thresholds.
@@ -88,12 +92,12 @@ These now either work or stop with a clear message:
 |---|---|
 | `fiberhmm-run` | `fiberhmm-call`, piped into `ft fire` if needed |
 | `python apply_model.py`, `extract_tags.py`, `train_model.py`, `generate_probs.py`, `export_posteriors.py`, `fiberhmm_utils.py` | the `fiberhmm-*` commands |
-| `fiberhmm-site-consensus`, targeted families | `fiberhmm-consensus` |
-| `fiberhmm-crossstrand` | `fiberhmm-pair` |
-| `fiberhmm-merge` | still installed but deprecated: `fiberhmm-pair --from-paired` |
-| `fiberhmm-call --ddda-mcg` | `fiberhmm-tag-m5c`, then `fiberhmm-recall-tfs` ([DAF-seq](workflows/daf-seq.md#ddda-cpg-island-methylation)) |
+| `fiberhmm-site-consensus`, targeted families (development builds only) | `fiberhmm-consensus` |
+| `fiberhmm-crossstrand`, `fiberhmm-duplex` (development builds only) | `fiberhmm-pair` |
+| `fiberhmm-merge` (development builds only) | still installed but deprecated: `fiberhmm-pair --from-paired` |
+| `fiberhmm-call --ddda-mcg` (development builds only) | `fiberhmm-tag-m5c`, then `fiberhmm-recall-tfs` ([DAF-seq](workflows/daf-seq.md#ddda-cpg-island-methylation)) |
 | `fiberhmm-apply --chroms`, `--skip-scaffolds`, `--region-size`, `--scores-db`, `-l` | rejected (they never had an effect); use `fiberhmm-call --region-parallel` |
-| `recaller.abutting` | removed; use the "+ edge" tier or `recaller.linker=either` |
+| `recaller.abutting` (development builds only) | removed; use the "+ edge" tier or `recaller.linker=either` |
 | `--engine staged_native_families` (consensus) | deprecated but available |
 | `fiberhmm[consensus]`, `fiberhmm[numba]` | still accepted; their packages are core dependencies now |
 

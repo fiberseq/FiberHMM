@@ -245,8 +245,8 @@ How it works:
 - The 5' context correction uses calibrated DddA factors;
   `--estimate-factors` re-estimates them from the BAM.
 
-The per-CpG `fiberhmm-call --ddda-mcg` mode of 2.x was retired and prints
-this workflow instead.
+The per-CpG `fiberhmm-call --ddda-mcg` mode of development builds after
+2.16.8 was retired and prints this workflow instead.
 
 ### Aggregate domains: `fiberhmm-call-m5c`
 
