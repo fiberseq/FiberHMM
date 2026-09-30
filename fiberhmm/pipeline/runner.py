@@ -781,14 +781,22 @@ class Pipeline:
                            message=stats.get("message"))
 
     def _read_pieces(self, read) -> list[tuple[int, int]]:
-        """The reference intervals a record covers; a record running past the end
-        of its contig (the SAM circular representation) also covers the start."""
+        """The reference intervals a record covers. A record running past the
+        end of a circular contig (the SAM circular representation) also covers
+        the start -- the whole contig once it spans a full turn; on a linear
+        contig the part past the end is not on the reference."""
         start, end = read.reference_start, read.reference_end
+        if end is None or end <= start:
+            end = start + 1
         if getattr(self, "_lengths_of", None) is not self.reference:
-            self._lengths = {c.name: c.length for c in self.reference.contigs}
+            self._lengths = {c.name: (c.length, c.circular) for c in self.reference.contigs}
             self._lengths_of = self.reference
-        length = self._lengths.get(read.reference_name)
+        length, circular = self._lengths.get(read.reference_name, (None, False))
         if length and end > length:
+            if not circular:
+                return [(start, length)] if start < length else []
+            if end - start >= length:
+                return [(0, length)]
             return [(start, length), (0, end - length)]
         return [(start, end)]
 

@@ -15,6 +15,7 @@ from fiberhmm.daf.snps import (
     VALIDATED_SNP_POLICY_NAME,
     call_opposite_conversion_snps,
     describe_snp_threshold_policy,
+    wrapped_reference_sites,
 )
 
 
@@ -180,3 +181,121 @@ def test_opposite_conversion_snp_caller_and_encoder_mask(tmp_path):
     assert unmasked is not None and masked is not None
     assert 10 in unmasked[0]
     assert 10 not in masked[0]
+
+
+# --- reference end: topology decides; every turn of a circular record --------
+
+_EDGE_KWARGS = {"min_dominant_events": 1, "min_depth": 2, "min_alt_fibers": 2,
+                "min_fraction": 0.2}
+
+
+def _past_end_bam(path, sq, comments=()):
+    """Ten records spanning [90, 110) on LN 100 that support C->T at unrolled 105."""
+    header = pysam.AlignmentHeader.from_dict({"SQ": [sq], **({"CO": list(comments)}
+                                                            if comments else {})})
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for i in range(10):
+            r = pysam.AlignedSegment(header); r.query_name = f"x{i}"; r.reference_id = 0
+            r.reference_start = 90; r.mapping_quality = 60; r.cigarstring = "20M"
+            if i < 5:
+                r.query_sequence = "T" * 20; r.set_tag("MD", "0C" * 20 + "0")
+            else:
+                r.query_sequence = "A" * 15 + "T" + "A" * 4
+                r.set_tag("MD", "0G" * 15 + "0C" + "0G" * 4 + "0")
+            out.write(r)
+    return path
+
+
+def test_linear_overhang_is_not_folded_onto_the_contig(tmp_path):
+    from fiberhmm.daf.snps import _read_arrays
+    for name, sq in (("tp_linear", {"SN": "p", "LN": 100, "TP": "linear"}),
+                     ("no_tp", {"SN": "p", "LN": 100})):
+        bam = _past_end_bam(tmp_path / f"{name}.bam", sq)
+        result = call_opposite_conversion_snps(str(bam), **_EDGE_KWARGS)
+        positions = [s["position_0based"] for s in result["site_distribution"]]
+        assert 5 not in positions and not any(p >= 100 for p in positions), (name, positions)
+        with pysam.AlignmentFile(str(bam)) as handle:
+            read = next(iter(handle))
+            rpos, ref_codes, query_codes = _read_arrays(read)
+            assert rpos.tolist() == list(range(90, 100))
+            assert len(ref_codes) == len(query_codes) == 10
+            assert wrapped_reference_sites(read, {5}) == {5}
+
+
+def test_circular_overhang_folds_by_tp_or_reference_comment(tmp_path):
+    from fiberhmm.pipeline.reference import REFERENCE_COMMENT_PREFIX
+    comment = REFERENCE_COMMENT_PREFIX + "contig=p;length=100;topology=circular"
+    for name, sq, comments in (("tp", {"SN": "p", "LN": 100, "TP": "circular"}, ()),
+                               ("comment", {"SN": "p", "LN": 100}, (comment,))):
+        bam = _past_end_bam(tmp_path / f"{name}.bam", sq, comments)
+        result = call_opposite_conversion_snps(str(bam), **_EDGE_KWARGS)
+        assert [s["position_0based"] for s in result["site_distribution"]
+                if s["called_as_snp"]] == [5], name
+
+
+def _multi_turn_read(header, start=90, length=220, mismatch_turns=()):
+    """A G->A-dominant record on LN 100 spanning [start, start+length): the
+    reference is C at site 5 and G elsewhere; G->A at sites 20/30/40/50 on
+    every turn, and C->T at site 5 on the listed turns (0-based turn number)."""
+    r = pysam.AlignedSegment(header); r.query_name = "multi"; r.reference_id = 0
+    r.reference_start = start; r.mapping_quality = 60; r.cigarstring = f"{length}M"
+    query, md, run = [], [], 0
+    for offset in range(length):
+        position = start + offset
+        site, turn = position % 100, position // 100
+        if site == 5 and turn in mismatch_turns:
+            query.append("T"); md.append(f"{run}C"); run = 0
+        elif site == 5:
+            query.append("C"); run += 1
+        elif site in (20, 30, 40, 50):
+            query.append("A"); md.append(f"{run}G"); run = 0
+        else:
+            query.append("G"); run += 1
+    md.append(str(run))
+    r.query_sequence = "".join(query); r.set_tag("MD", "".join(md))
+    return r
+
+
+def test_multi_turn_circular_records_are_masked_and_counted_on_every_turn(tmp_path):
+    from fiberhmm.daf.snps import _read_arrays
+    from fiberhmm.inference import engine
+    header = pysam.AlignmentHeader.from_dict({"SQ": [{"SN": "p", "LN": 100, "TP": "circular"}]})
+    read = _multi_turn_read(header)
+    saved = engine._DAF_SNP_MASK
+    try:
+        engine._DAF_SNP_MASK = {"p": {5}}
+        assert sorted(engine._daf_excluded_query_positions(read)) == [15, 115, 215]
+    finally:
+        engine._DAF_SNP_MASK = saved
+    assert wrapped_reference_sites(read, {5}) == {5, 105, 205, 305}
+    rpos, _, _ = _read_arrays(read)
+    assert int(rpos.max()) < 100 and sorted(set(rpos.tolist())) == list(range(100))
+    # The encoder mask drops the C->T event on every turn.
+    marked = _multi_turn_read(header, mismatch_turns=(1, 2, 3))
+    masked = get_daf_positions(marked, force_strand="CT",
+                               excluded_reference_positions=wrapped_reference_sites(marked, {5}))
+    assert masked == get_daf_positions(read, force_strand="CT")
+    assert masked != get_daf_positions(marked, force_strand="CT")
+    # The SNP screen counts a molecule once per site however many turns cover
+    # it (and a mismatch once if any turn has it); pass 1 offers each site once.
+    from fiberhmm.daf.snps import _SiteAccumulator, _covers_a_turn_twice
+    accumulator = _SiteAccumulator({5: ("C", "T", "CT"), 20: ("G", "A", "GA")})
+    for turns in ((1,), (), (0, 1, 2, 3)):
+        rpos, ref_codes, query_codes = _read_arrays(_multi_turn_read(header, mismatch_turns=turns))
+        accumulator.add_read("GA", rpos, ref_codes, query_codes)
+    assert accumulator.opposite_depth.tolist() == [3, 0]
+    assert accumulator.opposite_mismatches.tolist() == [2, 0]
+    assert accumulator.expected_depth.tolist() == [0, 3]
+    assert accumulator.expected_mismatches.tolist() == [0, 3]
+    assert _covers_a_turn_twice(read)
+    single = _multi_turn_read(header, start=90, length=20)
+    assert not _covers_a_turn_twice(single)
+    bam = tmp_path / "multi.bam"
+    with pysam.AlignmentFile(str(bam), "wb", header=header) as out:
+        for i in range(4):
+            r = _multi_turn_read(header, mismatch_turns=(1,) if i < 2 else ())
+            r.query_name = f"m{i}"
+            out.write(r)
+    result = call_opposite_conversion_snps(str(bam), max_profile_sites=5000, min_depth=1,
+                                           min_alt_fibers=1, min_dominant_events=1)
+    assert result["accounting"]["ga_dominant_records"] == 4

@@ -334,6 +334,29 @@ def test_region_subset_keeps_identical_molecules_once_each(tmp_path):
                            "p:1-10"]) == [(100, 400)] * 2 + [(350, 450)] + [(1500, 3300)] * 2
 
 
+def test_region_pieces_follow_topology_and_every_turn(tmp_path):
+    seq = random_seq(100, 9)
+    ref = tmp_path / "small.fa"; ref.write_text(">p\n" + seq + "\n")
+    reads = tmp_path / "r.fastq"; reads.write_text("@r\nAAAA\n+\nIIII\n")
+    h = pysam.AlignmentHeader.from_dict({"SQ": [{"SN": "p", "LN": 100}]})
+
+    def record(start, length):
+        r = pysam.AlignedSegment(h); r.query_name = "r"; r.reference_id = 0
+        r.reference_start = start; r.query_sequence = "A" * length; r.cigarstring = f"{length}M"
+        return r
+    circular = Pipeline(config(tmp_path / "c", reads, ref, topology="circular"))
+    circular._setup(); circular.step_prepare_reference()
+    assert circular._read_pieces(record(90, 20)) == [(90, 100), (0, 10)]
+    assert circular._read_pieces(record(90, 220)) == [(0, 100)]     # several turns
+    assert circular._overlaps_regions(record(90, 220), [("p", 40, 50)])
+    circular.close()
+    linear = Pipeline(config(tmp_path / "l", reads, ref, topology="linear"))
+    linear._setup(); linear.step_prepare_reference()
+    assert linear._read_pieces(record(90, 20)) == [(90, 100)]        # overhang is off-reference
+    assert not linear._overlaps_regions(record(90, 20), [("p", 0, 10)])
+    linear.close()
+
+
 def _wrapped_read():
     h = pysam.AlignmentHeader.from_dict({"SQ": [{"SN": "p", "LN": 2000, "TP": "circular"}]})
     r = pysam.AlignedSegment(h); r.query_name = "r"; r.reference_id = 0; r.reference_start = 1500

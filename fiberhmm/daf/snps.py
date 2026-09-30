@@ -214,23 +214,77 @@ def _base_code(base: str) -> int:
     return ord(base) if len(base) == 1 else 0
 
 
-def contig_length_past_end(read) -> Optional[int]:
-    """The contig length when ``read`` runs past the end of its contig, else None.
+_TOPOLOGY: dict = {}
 
-    A record on a circular contig may extend past ``LN`` (SAM section 1.4;
-    ``fiberhmm-pipeline`` writes origin-spanning reads that way); its reference
-    positions ``p >= LN`` mean ``p - LN``.
+
+def circular_contig_lengths(header) -> dict:
+    """``{name: LN}`` of the contigs a header declares circular.
+
+    A contig is circular when its ``@SQ`` line has ``TP:circular`` or a
+    ``FIBERHMM-REFERENCE`` ``@CO`` line (written by ``fiberhmm-pipeline``)
+    gives it ``topology=circular``. Cached per header object (the cache holds
+    the header, so its id cannot be reused while cached).
     """
+    cached = _TOPOLOGY.get(id(header))
+    if cached is not None and cached[0] is header:
+        return cached[1]
+    try:
+        data = header.to_dict() if hasattr(header, "to_dict") else dict(header or {})
+    except (TypeError, ValueError, AttributeError):
+        data = {}
+    lengths: dict = {}
+    declared: dict = {}
+    for sq in data.get("SQ", []) or []:
+        try:
+            length = int(sq.get("LN"))
+        except (TypeError, ValueError):
+            continue
+        declared[str(sq.get("SN"))] = length
+        if str(sq.get("TP", "")).lower() == "circular":
+            lengths[str(sq.get("SN"))] = length
+    comments = [str(c) for c in data.get("CO", []) or []]
+    if any(c.startswith("FIBERHMM-REFERENCE:") for c in comments):
+        from fiberhmm.pipeline.reference import parse_reference_comment
+
+        for comment in comments:
+            parsed = parse_reference_comment(comment)
+            if (parsed and str(parsed.get("topology", "")).lower() == "circular"
+                    and parsed["contig"] in declared):
+                lengths[parsed["contig"]] = declared[parsed["contig"]]
+    if len(_TOPOLOGY) > 64:
+        _TOPOLOGY.clear()
+    _TOPOLOGY[id(header)] = (header, lengths)
+    return lengths
+
+
+def _past_end(read) -> tuple:
+    """``(LN, circular)`` when ``read`` runs past the end of its contig, else
+    ``(None, False)``."""
     end = getattr(read, "reference_end", None)
     header = getattr(read, "header", None)
     name = getattr(read, "reference_name", None)
     if end is None or header is None or name is None:
-        return None
+        return None, False
     try:
         length = int(header.get_reference_length(name))
     except (AttributeError, KeyError, ValueError, TypeError):
-        return None
-    return length if length > 0 and end > length else None
+        return None, False
+    if length <= 0 or end <= length:
+        return None, False
+    return length, name in circular_contig_lengths(header)
+
+
+def contig_length_past_end(read) -> Optional[int]:
+    """The contig length when ``read`` runs past the end of a circular contig.
+
+    A record on a circular contig may extend past ``LN`` (SAM section 1.4;
+    ``fiberhmm-pipeline`` writes origin-spanning reads that way); its reference
+    positions ``p >= LN`` mean ``p mod LN``, on every turn. On a linear
+    contig (no ``TP:circular`` and no circular ``FIBERHMM-REFERENCE`` line)
+    positions past ``LN`` are not on the reference and return None here.
+    """
+    length, circular = _past_end(read)
+    return length if circular else None
 
 
 _WRAPPED_SITES: dict = {}
@@ -239,21 +293,25 @@ _WRAPPED_SITES: dict = {}
 def wrapped_reference_sites(read, sites):
     """``sites`` (reference positions on the read's contig) as the read sees them.
 
-    For a record that runs past its contig end, each site ``p`` is also present
-    as ``p + LN``, so a mask applies to the part of the read after the origin
-    too. Other records get ``sites`` unchanged.
+    For a record that runs past the end of a circular contig, each site ``p``
+    is also present as ``p + k*LN`` for every further turn ``k`` the record
+    reaches, so a mask applies to every part of the read after the origin.
+    Other records (including linear overhangs, whose positions past ``LN``
+    are no reference site) get ``sites`` unchanged.
     """
     if not sites:
         return sites
     length = contig_length_past_end(read)
     if length is None:
         return sites
-    key = (id(sites), length)
+    turns = (int(read.reference_end) - 1) // length
+    key = (id(sites), len(sites), length, turns)
     cached = _WRAPPED_SITES.get(key)
     if cached is None or cached[0] is not sites:
         if len(_WRAPPED_SITES) > 64:
             _WRAPPED_SITES.clear()
-        cached = (sites, frozenset(sites) | frozenset(int(p) + length for p in sites))
+        cached = (sites, frozenset(int(p) + k * length
+                                   for k in range(turns + 1) for p in sites))
         _WRAPPED_SITES[key] = cached
     return cached[1]
 
@@ -265,12 +323,14 @@ def _read_arrays(read, reference_handle=None):
     order, same upper-cased bases); ``None`` exactly when ``_profile`` is.
     The vectorised MD path is used whenever it is exact; anything else
     (no MD tag, FASTA fallback, malformed alignments) goes through
-    ``_profile`` itself.
+    ``_profile`` itself. Positions past the contig end are folded onto the
+    contig (``p mod LN``, every turn) on a circular contig and dropped on a
+    linear one (:func:`_on_contig`).
     """
     arrays = matched_base_arrays(read)
     if arrays is not None:
         _qpos, rpos, ref_codes, query_codes = arrays
-        return _canonical_positions(read, rpos), ref_codes, query_codes
+        return _on_contig(read, rpos, ref_codes, query_codes)
     profile = _profile(read, reference_handle)
     if profile is None:
         return None
@@ -282,15 +342,33 @@ def _read_arrays(read, reference_handle=None):
     query_codes = np.fromiter(
         (_base_code(pair[3]) for pair in pairs), dtype=np.int64, count=len(pairs)
     )
-    return _canonical_positions(read, rpos), ref_codes, query_codes
+    return _on_contig(read, rpos, ref_codes, query_codes)
 
 
-def _canonical_positions(read, rpos):
-    """Reference positions of a record past its contig end, folded back (p - LN)."""
-    length = contig_length_past_end(read)
+def _on_contig(read, rpos, ref_codes, query_codes):
+    """Aligned positions on the contig: past its end, ``p mod LN`` on a
+    circular contig (every turn), dropped on a linear one."""
+    length, circular = _past_end(read)
     if length is None:
-        return rpos
-    return np.where(rpos >= length, rpos - length, rpos)
+        return rpos, ref_codes, query_codes
+    if circular:
+        return np.where(rpos >= length, rpos % length, rpos), ref_codes, query_codes
+    keep = rpos < length
+    return rpos[keep], ref_codes[keep], query_codes[keep]
+
+
+def _covers_a_turn_twice(read) -> bool:
+    """Whether a record on a circular contig spans more than one full turn
+    (so folded positions repeat)."""
+    length, circular = _past_end(read)
+    return bool(circular and read.reference_end - read.reference_start > length)
+
+
+def _first_occurrences(positions: np.ndarray) -> np.ndarray:
+    """Indices of the first occurrence of each position, in read order (a
+    record on a circular contig may cover a position on several turns)."""
+    _, first = np.unique(positions, return_index=True)
+    return np.sort(first)
 
 
 def _conversion_masks(ref_codes, query_codes):
@@ -406,7 +484,9 @@ class _SiteAccumulator:
         )
         # A site's expected direction is CT for reference C and GA for G.
         expected = site_is_c if direction == "CT" else ~site_is_c
-        # Positions are unique within a read, so fancy-index increments are exact.
+        # A read counts once per site: fancy-index increments do not
+        # accumulate repeated indices, so a site a circular record covers on
+        # several turns adds one depth, and one mismatch if any turn has it.
         self.expected_depth[sites[expected]] += 1
         self.expected_mismatches[sites[expected & mismatch]] += 1
         self.opposite_depth[sites[~expected]] += 1
@@ -523,6 +603,10 @@ def call_opposite_conversion_snps(
                     if cg_index.size:
                         cg_positions = rpos[cg_index]
                         cg_is_c = is_c[cg_index]
+                        if _covers_a_turn_twice(read):
+                            first = _first_occurrences(cg_positions)
+                            cg_positions = cg_positions[first]
+                            cg_is_c = cg_is_c[first]
                         fresh = offered_sites.first_offers(
                             read.reference_name,
                             cg_positions,
