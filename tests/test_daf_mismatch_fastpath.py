@@ -262,6 +262,29 @@ def test_snp_screen_matches_reference(dataset, use_fasta, max_profile_sites):
     assert _canonical(observed) == _canonical(expected)
 
 
+@pytest.fixture(scope="module")
+def conflict_dataset(tmp_path_factory):
+    """Short MDs plus a C site whose MD reads G on every 7th amplicon read;
+    with seed 313 both hypotheses enter the full site profile."""
+    return _write_dataset(tmp_path_factory.mktemp("daf313"), 313, short_md=True)
+
+
+@pytest.mark.parametrize("use_fasta", [False, True])
+def test_snp_screen_matches_reference_on_bad_md_and_reference_conflict(
+        conflict_dataset, use_fasta):
+    bam_path, fasta = conflict_dataset
+    kwargs = dict(
+        reference_fasta=str(fasta) if use_fasta else None,
+        max_profile_sites=5000,
+        min_depth=3,
+        min_alt_fibers=3,
+    )
+    expected = reference.call_opposite_conversion_snps(str(bam_path), **kwargs)
+    observed = snps.call_opposite_conversion_snps(str(bam_path), **kwargs)
+    assert observed["accounting"]["reference_base_conflict_sites"] == 1
+    assert _canonical(observed) == _canonical(expected)
+
+
 def test_snp_screen_calls_planted_snps(dataset):
     bam_path, fasta = dataset
     payload = snps.call_opposite_conversion_snps(

@@ -8,11 +8,17 @@ Verbatim copies of the pre-vectorisation implementations at release head
 production code must reproduce these exactly; see
 ``tests/test_daf_mismatch_fastpath.py``.
 
-Deliberate departure from the verbatim SNP-screen copy (the old behaviour was
-nondeterministic, so it cannot be frozen): ``_aligned_pairs`` skips pysam's
-MD reconstruction when MD does not describe the CIGAR (``md_matches_cigar``);
-for a short MD pysam copies undefined memory into the reference string. Such
-reads use the FASTA or are unusable, as in ``get_daf_positions``.
+Two deliberate departures from the verbatim SNP-screen copy (both were
+nondeterministic, so no frozen behaviour can be reproduced for them):
+
+* ``_aligned_pairs`` skips pysam's MD reconstruction when MD does not
+  describe the CIGAR (``md_matches_cigar``): for a short MD pysam copies
+  undefined memory into the reference string. Such reads use the FASTA or
+  are unusable, as in ``get_daf_positions``.
+* A position profiled as both C and G (reads' MD tags disagree) used to keep
+  whichever hypothesis set iteration visited last (``PYTHONHASHSEED``
+  dependent). Both are now counted and the one with more dominant-direction
+  fibers (expected + opposite depth) is kept; a tie keeps C.
 """
 from __future__ import annotations
 
@@ -325,15 +331,15 @@ def call_opposite_conversion_snps(
         profiled_sites = set(sampled_profile_sites)
         for chrom, position, reference, _alternate, _direction in candidates:
             profiled_sites.add((chrom, position, reference))
-        profiled_by_chrom = defaultdict(dict)
+        profiled_by_chrom = defaultdict(lambda: defaultdict(list))
         for chrom, position, reference in profiled_sites:
             alternate = "T" if reference == "C" else "A"
             expected_direction = "CT" if reference == "C" else "GA"
-            profiled_by_chrom[chrom][position] = (
+            profiled_by_chrom[chrom][position].append((
                 reference,
                 alternate,
                 expected_direction,
-            )
+            ))
 
         site_stats: dict[tuple[str, int, str], Counter] = defaultdict(Counter)
         amplicon_groups = _discover_amplicon_groups(
@@ -385,12 +391,13 @@ def call_opposite_conversion_snps(
                     continue
                 seen = set()
                 for _query_position, position, reference_base, query_base in pairs:
-                    site = chrom_sites.get(position)
-                    if site is None or position in seen:
+                    hypotheses = chrom_sites.get(position)
+                    if hypotheses is None or position in seen:
+                        continue
+                    site = next((h for h in hypotheses if h[0] == reference_base), None)
+                    if site is None:
                         continue
                     reference, alternate, expected_direction = site
-                    if reference_base != reference:
-                        continue
                     key = (read.reference_name, position, reference)
                     mismatch = query_base in (("T", "Y") if reference == "C" else ("A", "R"))
                     if direction == expected_direction:
@@ -404,9 +411,26 @@ def call_opposite_conversion_snps(
         if reference_handle is not None:
             reference_handle.close()
 
+    rejected = set()
+    for chrom, chrom_sites in profiled_by_chrom.items():
+        for position, hypotheses in chrom_sites.items():
+            if len(hypotheses) < 2:
+                continue
+            depth = {
+                reference: site_stats[(chrom, position, reference)]["expected_depth"]
+                + site_stats[(chrom, position, reference)]["opposite_depth"]
+                for reference, _alternate, _direction in hypotheses
+            }
+            rejected.add((chrom, position, "G" if depth["C"] >= depth["G"] else "C"))
+    if rejected:
+        accounting["reference_base_conflict_sites"] += len(rejected)
+        profiled_sites -= rejected
+
     calls = []
     for key, alt_fibers in sorted(candidates.items()):
         chrom, position, reference, alternate, direction = key
+        if (chrom, position, reference) in rejected:
+            continue
         stats = site_stats[(chrom, position, reference)]
         depth = stats["opposite_depth"]
         observed_alt = stats["opposite_mismatches"]

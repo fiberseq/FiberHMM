@@ -527,6 +527,31 @@ def _dominant_direction(
     return None
 
 
+def _resolve_reference_conflicts(conflicted_by_chrom, site_stats) -> set:
+    """Pick one reference base where reads' MD tags disagree (C vs G).
+
+    For each position profiled under both hypotheses, the base reported by
+    more of the screen's dominant-direction fibers (expected + opposite
+    depth, pass 2) is kept; a tie keeps C, the earlier base in A<C<G<T
+    order. Returns the rejected ``(chrom, position, reference)`` keys, which
+    are then neither called nor profiled. The result depends only on the
+    reads, not on set/dict iteration order or ``PYTHONHASHSEED``.
+    """
+    rejected = set()
+    for chrom in sorted(conflicted_by_chrom):
+        for position in sorted(conflicted_by_chrom[chrom]):
+            depths = {}
+            for reference in ("C", "G"):
+                stats = site_stats.get((chrom, position, reference)) or {}
+                depths[reference] = (
+                    int(stats.get("expected_depth", 0))
+                    + int(stats.get("opposite_depth", 0))
+                )
+            loser = "G" if depths["C"] >= depths["G"] else "C"
+            rejected.add((chrom, position, loser))
+    return rejected
+
+
 def call_opposite_conversion_snps(
     input_path: str,
     min_fraction: float = DEFAULT_SNP_MIN_FRACTION,
@@ -644,11 +669,20 @@ def call_opposite_conversion_snps(
         profiled_sites = set(sampled_profile_sites)
         for chrom, position, reference, _alternate, _direction in candidates:
             profiled_sites.add((chrom, position, reference))
+        # Reads whose MD tags disagree about a position's reference base can
+        # put it in the profile as both C and G. Each hypothesis is counted
+        # separately (the second in its own accumulator) and resolved after
+        # pass 2 by _resolve_reference_conflicts; sorted order puts the C
+        # hypothesis in the primary map.
         profiled_by_chrom = defaultdict(dict)
-        for chrom, position, reference in profiled_sites:
+        conflicted_by_chrom = defaultdict(dict)
+        for chrom, position, reference in sorted(profiled_sites):
             alternate = "T" if reference == "C" else "A"
             expected_direction = "CT" if reference == "C" else "GA"
-            profiled_by_chrom[chrom][position] = (
+            target = profiled_by_chrom[chrom]
+            if position in target:
+                target = conflicted_by_chrom[chrom]
+            target[position] = (
                 reference,
                 alternate,
                 expected_direction,
@@ -656,6 +690,7 @@ def call_opposite_conversion_snps(
 
         site_stats: dict[tuple[str, int, str], Counter] = defaultdict(Counter)
         site_accumulators: dict[str, _SiteAccumulator] = {}
+        conflict_accumulators: dict[str, _SiteAccumulator] = {}
         amplicon_groups = _discover_amplicon_groups(
             amplicon_bins, min_amplicon_reads
         )
@@ -709,15 +744,31 @@ def call_opposite_conversion_snps(
                     accumulator = _SiteAccumulator(chrom_sites)
                     site_accumulators[read.reference_name] = accumulator
                 accumulator.add_read(direction, rpos, ref_codes, query_codes)
+                conflicted_sites = conflicted_by_chrom.get(read.reference_name)
+                if conflicted_sites:
+                    accumulator = conflict_accumulators.get(read.reference_name)
+                    if accumulator is None:
+                        accumulator = _SiteAccumulator(conflicted_sites)
+                        conflict_accumulators[read.reference_name] = accumulator
+                    accumulator.add_read(direction, rpos, ref_codes, query_codes)
         for chrom, accumulator in site_accumulators.items():
+            accumulator.export(chrom, site_stats)
+        for chrom, accumulator in conflict_accumulators.items():
             accumulator.export(chrom, site_stats)
     finally:
         if reference_handle is not None:
             reference_handle.close()
 
+    rejected_sites = _resolve_reference_conflicts(conflicted_by_chrom, site_stats)
+    if rejected_sites:
+        accounting["reference_base_conflict_sites"] += len(rejected_sites)
+        profiled_sites -= rejected_sites
+
     calls = []
     for key, alt_fibers in sorted(candidates.items()):
         chrom, position, reference, alternate, direction = key
+        if (chrom, position, reference) in rejected_sites:
+            continue
         stats = site_stats[(chrom, position, reference)]
         depth = stats["opposite_depth"]
         observed_alt = stats["opposite_mismatches"]
