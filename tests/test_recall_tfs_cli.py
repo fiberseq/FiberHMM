@@ -127,9 +127,21 @@ def test_resolve_input_molecular_frame_auto_detects_marker():
     assert R(SimpleNamespace(input_frame="auto"), declared_seq) is False
     # No provenance at all is ambiguous (FiberHMM <= 2.12 output, SEQ, looks
     # the same as a fibertools BAM that lost its @PG history, molecular):
-    # auto used to guess SEQ here and now asks for an explicit frame.
+    # auto used to guess SEQ here; now it is undecided and the first read
+    # with ns/nl/as/al stops the run with a request for an explicit frame.
+    assert R(SimpleNamespace(input_frame="auto"), legacy) is None
+
+    class LegacyRead:
+        query_sequence, is_reverse = "A" * 10, True
+
+        def has_tag(self, tag):
+            return tag in ("ns", "nl")
+
+        def get_tag(self, tag):
+            return [1]
+
     with pytest.raises(SystemExit, match="--input-frame query"):
-        R(SimpleNamespace(input_frame="auto"), legacy)
+        recall_tfs._make_payload(LegacyRead(), None, None)
     # explicit overrides win regardless of the marker
     assert R(SimpleNamespace(input_frame="molecular"), legacy) is True
     assert R(SimpleNamespace(input_frame="query"), mol) is False

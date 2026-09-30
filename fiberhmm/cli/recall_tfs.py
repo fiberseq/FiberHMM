@@ -293,6 +293,10 @@ def _make_payload(read, mode=None, input_molecular_frame=True) -> dict:
     bytes is a straight memcpy vs. pickling a Python list.
     parse_mm_tag_query_positions accepts bytes directly via np.frombuffer.
     """
+    if input_molecular_frame is None and any(
+            read.has_tag(t) for t in ('ns', 'nl', 'as', 'al')):
+        raise SystemExit("error: " + ambiguous_frame_message(
+            _UNDECIDED_FRAME['reason'] or 'the header does not decide it'))
     tags = {}
     for t in ('MM', 'Mm', 'ML', 'Ml', 'ns', 'nl', 'as', 'al', 'nq', 'st', 'MA'):
         if read.has_tag(t):
@@ -775,7 +779,8 @@ def parse_args(default_recall_nucs: bool = False):
                         'add-nucleosomes, fire) -> molecular; a FiberHMM '
                         'coord=seq record -> query. When the header does not '
                         'decide it (e.g. FiberHMM <= 2.12 output) the run '
-                        'stops and asks for molecular or query. A wrong frame '
+                        'stops at the first read with these tags and asks '
+                        'for molecular or query. A wrong frame '
                         'mirrors reverse-strand calls. fibertools Ma tags are '
                         'always molecular.')
     p.add_argument('--no-legacy-tags', action='store_true',
@@ -970,9 +975,11 @@ def _resolve_input_molecular_frame(args, header) -> bool:
     coord=molecular declaration or a fibertools nucleosome command means
     molecular, a FiberHMM coord=seq record means SEQ. When the provenance does
     not decide it (e.g. FiberHMM <= 2.12 output, which has no FiberHMM @PG)
-    the run stops rather than risk mirroring every reverse-strand footprint.
-    Returns True for molecular (flip reverse tags to seq), False for SEQ.
-    fibertools ``Ma`` tags are molecular regardless of this choice.
+    the run stops at the first read with those tags rather than risk
+    mirroring every reverse-strand footprint.
+    Returns True for molecular (flip reverse tags to seq), False for SEQ, and
+    None when undecided (then any read with ns/nl/as/al stops the run; reads
+    whose only footprints are fibertools ``Ma``, always molecular, proceed).
     """
     choice = str(getattr(args, 'input_frame', 'auto')).lower()
     if choice == 'molecular':
@@ -983,9 +990,17 @@ def _resolve_input_molecular_frame(args, header) -> bool:
         return False
     frame, reason = legacy_tag_frame(header)
     if frame is None:
-        raise SystemExit("error: " + ambiguous_frame_message(reason))
+        # Only reads with ns/nl/as/al need the frame (fibertools Ma is always
+        # molecular), so the run stops at the first such read (_make_payload).
+        _UNDECIDED_FRAME['reason'] = reason
+        print(f"  [recall] input frame: undecided ({reason}); the run stops "
+              "at the first read with ns/nl/as/al.", file=sys.stderr)
+        return None
     print(f"  [recall] input frame: {frame} ({reason}).", file=sys.stderr)
     return frame == MOLECULAR
+
+
+_UNDECIDED_FRAME = {'reason': ''}
 
 
 def _header_declared_mode(header):
