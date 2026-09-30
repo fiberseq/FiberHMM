@@ -1,4 +1,13 @@
-"""Call recurrent opposite-conversion SNPs in DAF-seq alignments."""
+"""Frozen per-pair reference for the DAF mismatch scans (test-only).
+
+Verbatim copies of the pre-vectorisation implementations at release head
+45b9a1a: ``fiberhmm.daf.snps.call_opposite_conversion_snps`` (with its
+``_aligned_pairs``/``_profile``/``_consider_profile_site`` helpers),
+``fiberhmm.daf.encoder.get_daf_positions`` and the MD branch of
+``fiberhmm.cli.extract_tags._deam_positions_list``.  The optimised
+production code must reproduce these exactly; see
+``tests/test_daf_mismatch_fastpath.py``.
+"""
 from __future__ import annotations
 
 import json
@@ -9,18 +18,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 import pysam
-
-from fiberhmm.daf.aligned_arrays import (
-    BASE_A,
-    BASE_C,
-    BASE_G,
-    BASE_R,
-    BASE_T,
-    BASE_Y,
-    matched_base_arrays,
-)
 
 
 _SITE_PROFILE_SEED = 20260824
@@ -29,8 +27,6 @@ _SITE_PROFILE_MIN_DEPTH = 3
 _AMPLICON_BIN_BP = 10_000
 _AMPLICON_MIN_READS = 20
 _AMPLICON_MIN_BIN_READS = 3
-# Cap (64 KiB blocks) on the SNP screen's repeat-offer cache; see _OfferedSites.
-_OFFERED_SITES_MAX_BLOCKS = 2048
 
 # Canonical production policy selected by the FiberHMM DAF SNP downsampling
 # validation.  Keep these values centralized: the Python API and both CLI
@@ -209,170 +205,6 @@ def _profile(read, reference_handle=None):
     return ct_positions, ga_positions, usable_pairs
 
 
-def _base_code(base: str) -> int:
-    """ASCII code of a single upper-cased base (0 for anything else)."""
-    return ord(base) if len(base) == 1 else 0
-
-
-def _read_arrays(read, reference_handle=None):
-    """Per-read ``(rpos, ref_codes, query_codes)`` arrays for the SNP screen.
-
-    Equivalent to the usable pairs of :func:`_profile` (same pairs, same
-    order, same upper-cased bases); ``None`` exactly when ``_profile`` is.
-    The vectorised MD path is used whenever it is exact; anything else
-    (no MD tag, FASTA fallback, malformed alignments) goes through
-    ``_profile`` itself.
-    """
-    arrays = matched_base_arrays(read)
-    if arrays is not None:
-        _qpos, rpos, ref_codes, query_codes = arrays
-        return rpos, ref_codes, query_codes
-    profile = _profile(read, reference_handle)
-    if profile is None:
-        return None
-    pairs = profile[2]
-    rpos = np.fromiter((pair[1] for pair in pairs), dtype=np.int64, count=len(pairs))
-    ref_codes = np.fromiter(
-        (_base_code(pair[2]) for pair in pairs), dtype=np.int64, count=len(pairs)
-    )
-    query_codes = np.fromiter(
-        (_base_code(pair[3]) for pair in pairs), dtype=np.int64, count=len(pairs)
-    )
-    return rpos, ref_codes, query_codes
-
-
-def _conversion_masks(ref_codes, query_codes):
-    """Boolean C->T/Y and G->A/R masks, as ``_profile`` classifies pairs."""
-    ct = (ref_codes == BASE_C) & ((query_codes == BASE_T) | (query_codes == BASE_Y))
-    ga = (ref_codes == BASE_G) & ((query_codes == BASE_A) | (query_codes == BASE_R))
-    return ct, ga
-
-
-class _OfferedSites:
-    """Remembers which ``(chrom, position, C|G)`` keys were already offered.
-
-    Offering a key to :func:`_consider_profile_site` a second time is always
-    a no-op: a selected key returns immediately, and a rejected or evicted
-    key ranks at or above the heap threshold, which never increases. Skipping
-    repeat offers therefore leaves the bottom-k sample (and the order of the
-    effective offers) unchanged while avoiding one hash per covered C/G per
-    read. The memory is a cache only: it is cleared when it exceeds
-    ``max_blocks`` blocks, which merely re-admits harmless repeat offers.
-    """
-
-    _BLOCK_BITS = 16
-    _BLOCK_MASK = (1 << _BLOCK_BITS) - 1
-
-    def __init__(self, max_blocks: Optional[int] = None):
-        self._blocks: dict[tuple[str, int], np.ndarray] = {}
-        self._max_blocks = (
-            _OFFERED_SITES_MAX_BLOCKS if max_blocks is None else max_blocks
-        )
-
-    def first_offers(self, chrom: str, positions: np.ndarray, flags: np.ndarray) -> np.ndarray:
-        """Mark keys as offered; True where a key had not been offered before.
-
-        ``positions`` must be unique within the call (one read's aligned
-        reference positions); ``flags`` is 1 for reference C, 2 for G.
-        """
-        fresh = np.empty(positions.size, dtype=bool)
-        block_ids = positions >> self._BLOCK_BITS
-        boundaries = np.flatnonzero(np.diff(block_ids)) + 1
-        starts = [0] + boundaries.tolist()
-        ends = boundaries.tolist() + [positions.size]
-        for start, end in zip(starts, ends):
-            key = (chrom, int(block_ids[start]))
-            block = self._blocks.get(key)
-            if block is None:
-                if len(self._blocks) >= self._max_blocks:
-                    self._blocks.clear()
-                block = np.zeros(1 << self._BLOCK_BITS, dtype=np.uint8)
-                self._blocks[key] = block
-            offsets = positions[start:end] & self._BLOCK_MASK
-            segment_flags = flags[start:end]
-            fresh[start:end] = (block[offsets] & segment_flags) == 0
-            block[offsets] |= segment_flags
-        return fresh
-
-
-class _SiteAccumulator:
-    """Pass-2 per-site fiber counts for one contig's profiled sites."""
-
-    def __init__(self, chrom_sites: dict):
-        self.positions = np.fromiter(
-            sorted(chrom_sites), dtype=np.int64, count=len(chrom_sites)
-        )
-        self.references = [
-            chrom_sites[position][0] for position in self.positions.tolist()
-        ]
-        self.reference_codes = np.array(
-            [_base_code(reference) for reference in self.references], dtype=np.int64
-        )
-        self.site_is_c = self.reference_codes == BASE_C
-        size = self.positions.size
-        self.expected_depth = np.zeros(size, dtype=np.int64)
-        self.expected_mismatches = np.zeros(size, dtype=np.int64)
-        self.opposite_depth = np.zeros(size, dtype=np.int64)
-        self.opposite_mismatches = np.zeros(size, dtype=np.int64)
-        # Amplicons/plasmids: a dense position -> site-index table over the
-        # profiled span. Sparse whole-genome sites fall back to searchsorted.
-        self.lookup = None
-        self.lookup_start = 0
-        if size:
-            span = int(self.positions[-1] - self.positions[0]) + 1
-            if span <= self._MAX_DENSE_SPAN:
-                self.lookup_start = int(self.positions[0])
-                self.lookup = np.full(span, -1, dtype=np.int32)
-                self.lookup[self.positions - self.lookup_start] = np.arange(size)
-
-    _MAX_DENSE_SPAN = 1 << 22
-
-    def _site_index(self, rpos):
-        """Site index of each position (any in-range index where absent)."""
-        if self.lookup is None:
-            index = np.searchsorted(self.positions, rpos)
-            np.minimum(index, self.positions.size - 1, out=index)
-            return index
-        offsets = rpos - self.lookup_start
-        np.clip(offsets, 0, self.lookup.size - 1, out=offsets)
-        index = self.lookup[offsets]
-        index[index < 0] = 0
-        return index
-
-    def add_read(self, direction: str, rpos, ref_codes, query_codes) -> None:
-        index = self._site_index(rpos)
-        hit = (self.positions[index] == rpos) & (self.reference_codes[index] == ref_codes)
-        if not hit.any():
-            return
-        sites = index[hit]
-        query = query_codes[hit]
-        site_is_c = self.site_is_c[sites]
-        mismatch = np.where(
-            site_is_c,
-            (query == BASE_T) | (query == BASE_Y),
-            (query == BASE_A) | (query == BASE_R),
-        )
-        # A site's expected direction is CT for reference C and GA for G.
-        expected = site_is_c if direction == "CT" else ~site_is_c
-        # Positions are unique within a read, so fancy-index increments are exact.
-        self.expected_depth[sites[expected]] += 1
-        self.expected_mismatches[sites[expected & mismatch]] += 1
-        self.opposite_depth[sites[~expected]] += 1
-        self.opposite_mismatches[sites[~expected & mismatch]] += 1
-
-    def export(self, chrom: str, site_stats) -> None:
-        touched = np.flatnonzero((self.expected_depth + self.opposite_depth) > 0)
-        for site in touched.tolist():
-            site_stats[(chrom, int(self.positions[site]), self.references[site])] = Counter(
-                {
-                    "expected_depth": int(self.expected_depth[site]),
-                    "expected_mismatches": int(self.expected_mismatches[site]),
-                    "opposite_depth": int(self.opposite_depth[site]),
-                    "opposite_mismatches": int(self.opposite_mismatches[site]),
-                }
-            )
-
-
 def _dominant_direction(
     ct_count: int,
     ga_count: int,
@@ -431,7 +263,6 @@ def call_opposite_conversion_snps(
     profile_heap: list[tuple[int, tuple[str, int, str]]] = []
     sampled_profile_sites: set[tuple[str, int, str]] = set()
     amplicon_bins: Counter = Counter()
-    offered_sites = _OfferedSites()
     try:
         with pysam.AlignmentFile(input_path, "rb", check_sq=False) as bam:
             for read in bam.fetch(until_eof=True):
@@ -447,14 +278,11 @@ def call_opposite_conversion_snps(
                 amplicon_bins[
                     (read.reference_name, int(read.reference_start) // _AMPLICON_BIN_BP)
                 ] += 1
-                arrays = _read_arrays(read, reference_handle)
-                if arrays is None:
+                profile = _profile(read, reference_handle)
+                if profile is None:
                     accounting["unusable_alignment_records"] += 1
                     continue
-                rpos, ref_codes, query_codes = arrays
-                ct_mask, ga_mask = _conversion_masks(ref_codes, query_codes)
-                ct_positions = rpos[ct_mask].tolist()
-                ga_positions = rpos[ga_mask].tolist()
+                ct_positions, ga_positions, _pairs = profile
                 direction = _dominant_direction(
                     len(ct_positions),
                     len(ga_positions),
@@ -465,28 +293,15 @@ def call_opposite_conversion_snps(
                     accounting["ambiguous_direction_records"] += 1
                     continue
                 accounting[f"{direction.lower()}_dominant_records"] += 1
-                if max_profile_sites > 0:
-                    is_c = ref_codes == BASE_C
-                    cg_index = np.flatnonzero(is_c | (ref_codes == BASE_G))
-                    if cg_index.size:
-                        cg_positions = rpos[cg_index]
-                        cg_is_c = is_c[cg_index]
-                        fresh = offered_sites.first_offers(
-                            read.reference_name,
-                            cg_positions,
-                            np.where(cg_is_c, 1, 2).astype(np.uint8),
+                for _query_position, position, reference_base, _query_base in _pairs:
+                    if reference_base in ("C", "G"):
+                        _consider_profile_site(
+                            (read.reference_name, position, reference_base),
+                            profile_heap,
+                            sampled_profile_sites,
+                            max_profile_sites,
+                            profile_seed,
                         )
-                        chrom = read.reference_name
-                        for position, site_is_c in zip(
-                            cg_positions[fresh].tolist(), cg_is_c[fresh].tolist()
-                        ):
-                            _consider_profile_site(
-                                (chrom, position, "C" if site_is_c else "G"),
-                                profile_heap,
-                                sampled_profile_sites,
-                                max_profile_sites,
-                                profile_seed,
-                            )
                 if direction == "GA":
                     for position in set(ct_positions):
                         candidate_alt_counts[(read.reference_name, position, "C", "T", "GA")] += 1
@@ -513,7 +328,6 @@ def call_opposite_conversion_snps(
             )
 
         site_stats: dict[tuple[str, int, str], Counter] = defaultdict(Counter)
-        site_accumulators: dict[str, _SiteAccumulator] = {}
         amplicon_groups = _discover_amplicon_groups(
             amplicon_bins, min_amplicon_reads
         )
@@ -549,26 +363,35 @@ def call_opposite_conversion_snps(
                 chrom_sites = profiled_by_chrom.get(read.reference_name)
                 if not chrom_sites:
                     continue
-                arrays = _read_arrays(read, reference_handle)
-                if arrays is None:
+                profile = _profile(read, reference_handle)
+                if profile is None:
                     continue
-                rpos, ref_codes, query_codes = arrays
-                ct_mask, ga_mask = _conversion_masks(ref_codes, query_codes)
+                ct_positions, ga_positions, pairs = profile
                 direction = _dominant_direction(
-                    int(np.count_nonzero(ct_mask)),
-                    int(np.count_nonzero(ga_mask)),
+                    len(ct_positions),
+                    len(ga_positions),
                     min_dominant_events,
                     min_dominant_purity,
                 )
                 if direction is None:
                     continue
-                accumulator = site_accumulators.get(read.reference_name)
-                if accumulator is None:
-                    accumulator = _SiteAccumulator(chrom_sites)
-                    site_accumulators[read.reference_name] = accumulator
-                accumulator.add_read(direction, rpos, ref_codes, query_codes)
-        for chrom, accumulator in site_accumulators.items():
-            accumulator.export(chrom, site_stats)
+                seen = set()
+                for _query_position, position, reference_base, query_base in pairs:
+                    site = chrom_sites.get(position)
+                    if site is None or position in seen:
+                        continue
+                    reference, alternate, expected_direction = site
+                    if reference_base != reference:
+                        continue
+                    key = (read.reference_name, position, reference)
+                    mismatch = query_base in (("T", "Y") if reference == "C" else ("A", "R"))
+                    if direction == expected_direction:
+                        site_stats[key]["expected_depth"] += 1
+                        site_stats[key]["expected_mismatches"] += int(mismatch)
+                    else:
+                        site_stats[key]["opposite_depth"] += 1
+                        site_stats[key]["opposite_mismatches"] += int(mismatch)
+                    seen.add(position)
     finally:
         if reference_handle is not None:
             reference_handle.close()
@@ -772,106 +595,216 @@ def call_opposite_conversion_snps(
     }
 
 
-def write_snp_outputs(payload: dict, output_prefix: str) -> dict:
-    prefix = Path(output_prefix)
-    prefix.parent.mkdir(parents=True, exist_ok=True)
-    bed_path = Path(str(prefix) + ".bed")
-    vcf_path = Path(str(prefix) + ".vcf")
-    json_path = Path(str(prefix) + ".json")
-    amplicon_path = Path(str(prefix) + ".amplicons.tsv")
-    with bed_path.open("w") as handle:
-        handle.write(
-            "#chrom\tstart\tend\tchange\talt_fibers\topposite_depth\talt_fraction\topposite_direction\n"
-        )
-        for call in payload["calls"]:
-            handle.write(
-                f"{call['chrom']}\t{call['position_0based']}\t{call['position_0based'] + 1}\t"
-                f"{call['reference']}>{call['alternate']}\t{call['alternate_fibers']}\t"
-                f"{call['opposite_direction_depth']}\t{call['alternate_fraction']:.8f}\t"
-                f"{call['opposite_dominant_direction']}\n"
-            )
-    with vcf_path.open("w") as handle:
-        handle.write("##fileformat=VCFv4.3\n")
-        handle.write("##source=FiberHMM-bidirectional-recurrent-DAF-SNP\n")
-        handle.write('##INFO=<ID=AF,Number=1,Type=Float,Description="Opposite-direction fiber fraction">\n')
-        handle.write('##INFO=<ID=DP,Number=1,Type=Integer,Description="Opposite-direction fiber depth">\n')
-        handle.write('##INFO=<ID=AC,Number=1,Type=Integer,Description="Alternate fibers">\n')
-        handle.write('##INFO=<ID=ED,Number=1,Type=Integer,Description="Expected-direction fiber depth">\n')
-        handle.write('##INFO=<ID=EA,Number=1,Type=Integer,Description="Expected-direction mismatch fibers">\n')
-        handle.write('##INFO=<ID=EF,Number=1,Type=Float,Description="Expected-direction mismatch fraction">\n')
-        handle.write('##INFO=<ID=OD,Number=1,Type=String,Description="Dominant direction on which event is unexpected">\n')
-        handle.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
-        for call in payload["calls"]:
-            handle.write(
-                f"{call['chrom']}\t{call['position_0based'] + 1}\t.\t"
-                f"{call['reference']}\t{call['alternate']}\t.\tPASS\t"
-                f"AF={call['alternate_fraction']:.8f};DP={call['opposite_direction_depth']};"
-                f"AC={call['alternate_fibers']};ED={call['expected_direction_depth']};"
-                f"EA={call['expected_direction_mismatch_fibers']};"
-                f"EF={call['expected_direction_mismatch_fraction']:.8f};"
-                f"OD={call['opposite_dominant_direction']}\n"
-            )
-    with amplicon_path.open("w") as handle:
-        handle.write(
-            "amplicon_id\tchrom\tconsensus_start_0based\t"
-            "consensus_end_0based_exclusive\tconsensus_length_bp\t"
-            "total_aligned_reads\tn_called_snps\tsnp_positions_relative_bp\n"
-        )
-        for amplicon in payload.get("amplicons", []):
-            positions = ",".join(
-                f"{site['change']}@{site['relative_position_bp']}"
-                for site in amplicon.get("snp_positions", [])
-            )
-            handle.write(
-                f"{amplicon['amplicon_id']}\t{amplicon['chrom']}\t"
-                f"{amplicon['consensus_start_0based']}\t"
-                f"{amplicon['consensus_end_0based_exclusive']}\t"
-                f"{amplicon['consensus_length_bp']}\t"
-                f"{amplicon['total_aligned_reads']}\t"
-                f"{amplicon['n_called_snps']}\t{positions}\n"
-            )
-    payload = {
-        **payload,
-        "outputs": {
-            "bed": str(bed_path.resolve()),
-            "vcf": str(vcf_path.resolve()),
-            "json": str(json_path.resolve()),
-            "amplicons_tsv": str(amplicon_path.resolve()),
-        },
-    }
-    temporary = json_path.with_name(json_path.name + ".tmp")
-    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    os.replace(temporary, json_path)
-    return payload
 
 
-def load_snp_mask(path: Optional[str]) -> dict[str, set[int]]:
-    mask: dict[str, set[int]] = defaultdict(set)
-    if not path:
-        return {}
-    with Path(path).open() as handle:
-        for line in handle:
-            if not line.strip() or line.startswith("#"):
-                continue
-            fields = line.rstrip("\n").split("\t")
-            if len(fields) < 3:
-                raise ValueError(f"invalid SNP mask line: {line.rstrip()!r}")
-            mask[fields[0]].update(range(int(fields[1]), int(fields[2])))
-    return dict(mask)
+# --- fiberhmm.daf.encoder at 45b9a1a -------------------------------------
+
+from fiberhmm.daf.encoder import _aligned_pairs_from_fasta  # unchanged helper
+
+_CIGAR_REF_CONSUMING_FOR_MD = {0, 2, 7, 8}
 
 
-def mask_summary(path: Optional[str]) -> dict:
-    mask = load_snp_mask(path)
-    return {
-        "path": str(Path(path).resolve()) if path else None,
-        "n_sites": sum(len(positions) for positions in mask.values()),
-        "n_contigs": len(mask),
-    }
+def _md_tag_ref_length(md_string: str) -> int:
+    """Return the reference length encoded by an MD tag.
+
+    MD is a sequence of: runs of digits (ref positions matched), single-base
+    mismatches (one ref base consumed each), and ``^<SEQ>`` deletions
+    (len(<SEQ>) ref bases consumed). See SAM spec section 1.4.11.
+    """
+    n = 0
+    i = 0
+    L = len(md_string)
+    while i < L:
+        c = md_string[i]
+        if c.isdigit():
+            j = i
+            while j < L and md_string[j].isdigit():
+                j += 1
+            n += int(md_string[i:j])
+            i = j
+        elif c == '^':
+            # ^<seq> deletion; each letter is one ref base consumed.
+            j = i + 1
+            while j < L and md_string[j].isalpha():
+                j += 1
+            n += j - (i + 1)
+            i = j
+        elif c.isalpha():
+            # Single-base mismatch, one ref base consumed.
+            n += 1
+            i += 1
+        else:
+            # Skip any stray punctuation (the spec doesn't allow it but
+            # be permissive on read-side).
+            i += 1
+    return n
 
 
-__all__ = [
-    "call_opposite_conversion_snps",
-    "load_snp_mask",
-    "mask_summary",
-    "write_snp_outputs",
-]
+def md_matches_cigar(read) -> bool:
+    """Cheap pre-validation: does the MD tag's encoded reference length
+    match the CIGAR's reference-consuming operations?
+
+    Returns True if the read has no MD tag (caller should handle that
+    case separately), True if the lengths match, False if they disagree.
+
+    Motivation: ``pysam.AlignedSegment.get_aligned_pairs(with_seq=True)``
+    raises AssertionError on mismatch AND, in at least some pysam
+    versions, corrupts internal malloc state before the exception
+    propagates — which then manifests as ``malloc(): invalid size``
+    somewhere later in the worker. Skipping the call on obviously-bad
+    MD avoids triggering the crash path at all.
+    """
+    try:
+        md = read.get_tag('MD') if read.has_tag('MD') else None
+    except Exception:
+        return True
+    if md is None:
+        return True
+    try:
+        md_len = _md_tag_ref_length(md)
+    except Exception:
+        return False
+    cigar = read.cigartuples
+    if cigar is None:
+        return True
+    cigar_ref_len = sum(length for op, length in cigar
+                        if op in _CIGAR_REF_CONSUMING_FOR_MD)
+    return md_len == cigar_ref_len
+
+
+def get_daf_positions(
+    read,
+    force_strand=None,
+    ref_fasta=None,
+    excluded_reference_positions=None,
+):
+    """Collect C->T and G->A mismatch positions for a DAF-seq read.
+
+    Pure position-collection helper used by both ``encode_read_daf``
+    (which rewrites the query sequence with R/Y IUPAC codes) and the
+    in-memory fallback inside ``fiberhmm-call --mode daf`` (which
+    consumes positions directly without touching the stored sequence).
+
+    Parameters
+    ----------
+    read : pysam.AlignedSegment
+        Aligned read from a BAM file.
+    force_strand : str or None
+        ``"CT"``, ``"GA"``, or ``None`` (auto-detect per read).
+    ref_fasta : pysam.FastaFile or None
+        Opened reference FASTA, used as fallback when the MD tag is absent.
+
+    Returns
+    -------
+    tuple or None
+        ``(ct_positions, ga_positions, strand)`` where ``strand`` is
+        ``"CT"`` or ``"GA"`` and the two lists are the full sets of
+        C->T and G->A query-position mismatches (both populated even
+        though only the selected-strand list is used downstream -- the
+        other is returned for diagnostics and future use).
+
+        ``None`` if the read should be skipped (unmapped, secondary,
+        supplementary, no mismatches, or ambiguous strand with
+        no ``force_strand``).
+    """
+    # Skip unmapped / secondary / supplementary
+    if read.is_unmapped or read.is_secondary or read.is_supplementary:
+        return None
+
+    seq = read.query_sequence
+    if seq is None:
+        return None
+
+    # Get aligned pairs with reference bases.
+    # Pre-validate MD vs CIGAR to avoid pysam's AssertionError path on
+    # malformed BAMs — that path can corrupt malloc state in some pysam
+    # versions, crashing the worker later with "malloc(): invalid size".
+    pairs = None
+    if md_matches_cigar(read):
+        try:
+            pairs = read.get_aligned_pairs(with_seq=True)
+        except Exception:
+            # MD tag missing and no way to get ref bases without it.
+            if ref_fasta is None:
+                return None
+            pairs = None
+    elif ref_fasta is None:
+        # MD disagrees with CIGAR and no reference available — can't
+        # safely get ref bases. Skip this read.
+        return None
+
+    # Fallback: build pairs from reference FASTA when MD tag is absent
+    if pairs is None or all(p[2] is None for p in pairs if p[0] is not None and p[1] is not None):
+        if ref_fasta is None:
+            return None
+        try:
+            pairs = _aligned_pairs_from_fasta(read, ref_fasta)
+        except Exception:
+            return None
+
+    # Collect mismatch positions
+    ct_positions = []  # C->T (+ strand deamination)
+    ga_positions = []  # G->A (- strand deamination)
+
+    excluded_reference_positions = excluded_reference_positions or set()
+    for query_pos, ref_pos, ref_base in pairs:
+        if query_pos is None or ref_pos is None or ref_base is None:
+            continue
+        if ref_pos in excluded_reference_positions:
+            continue
+        ref_base = ref_base.upper()
+        query_base = seq[query_pos].upper()
+        if ref_base == "C" and query_base == "T":
+            ct_positions.append(query_pos)
+        elif ref_base == "G" and query_base == "A":
+            ga_positions.append(query_pos)
+
+    n_ct = len(ct_positions)
+    n_ga = len(ga_positions)
+
+    # Determine conversion strand
+    if force_strand is not None:
+        strand = force_strand.upper()
+    else:
+        if n_ct == 0 and n_ga == 0:
+            return None
+        if n_ct > n_ga:
+            strand = "CT"
+        elif n_ga > n_ct:
+            strand = "GA"
+        else:
+            # Equal and nonzero -- ambiguous, skip
+            return None
+
+    return (ct_positions, ga_positions, strand)
+
+
+
+# --- MD branch (priority 3) of fiberhmm.cli.extract_tags._deam_positions_list at 45b9a1a
+
+def deam_positions_md_branch(read):
+    """Priority-3 (MD mismatch) branch of ``_deam_positions_list``.
+
+    Only reached when the read has no MM/ML ``u`` calls and no R/Y codes.
+    """
+    positions_list = []
+    if not positions_list and read.has_tag('MD'):
+        seq = read.query_sequence
+        if seq:
+            pairs = None
+            if md_matches_cigar(read):
+                try:
+                    pairs = read.get_aligned_pairs(with_seq=True)
+                except Exception:
+                    pairs = None
+            if pairs:
+                for qpos, rpos, ref_base in pairs:
+                    if qpos is None or rpos is None or ref_base is None:
+                        continue
+                    ref_up = ref_base.upper()
+                    q_up = seq[qpos].upper() if qpos < len(seq) else ''
+                    if ref_up == 'C' and q_up == 'T':
+                        positions_list.append((int(rpos), 1))
+                    elif ref_up == 'G' and q_up == 'A':
+                        positions_list.append((int(rpos), 0))
+    return positions_list

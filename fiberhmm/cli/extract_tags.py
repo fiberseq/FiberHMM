@@ -1194,7 +1194,21 @@ def _deam_positions_list(read, aligned_pairs, prob_threshold: int = 0):
             # "malloc(): invalid size". Cheap check in pure Python.
             from fiberhmm.daf.encoder import md_matches_cigar
             pairs = None
-            if md_matches_cigar(read):
+            arrays = None
+            md_ok = md_matches_cigar(read)
+            if md_ok:
+                # Vectorised equivalent of the per-pair loop below; None
+                # whenever that loop must run instead.
+                from fiberhmm.daf.aligned_arrays import matched_base_arrays
+                arrays = matched_base_arrays(read, seq)
+            if arrays is not None:
+                _qpos, rpos, ref_codes, query_codes = arrays
+                ct = (ref_codes == ord('C')) & (query_codes == ord('T'))
+                ga = (ref_codes == ord('G')) & (query_codes == ord('A'))
+                hits = np.flatnonzero(ct | ga)
+                positions_list.extend(zip(
+                    rpos[hits].tolist(), ct[hits].astype(np.int64).tolist()))
+            elif md_ok:
                 try:
                     pairs = read.get_aligned_pairs(with_seq=True)
                 except Exception:

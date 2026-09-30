@@ -11,9 +11,18 @@ import os
 import sys
 import time
 
+import numpy as np
 import pysam
 from tqdm import tqdm
 
+from fiberhmm.daf.aligned_arrays import (
+    BASE_A,
+    BASE_C,
+    BASE_G,
+    BASE_T,
+    matched_base_arrays,
+    md_reference_length,
+)
 from fiberhmm.inference.bam_output import _sort_and_index_bam, atomic_output
 
 # CIGAR op codes (from the BAM spec) that consume reference:
@@ -30,6 +39,9 @@ def _md_tag_ref_length(md_string: str) -> int:
     mismatches (one ref base consumed each), and ``^<SEQ>`` deletions
     (len(<SEQ>) ref bases consumed). See SAM spec section 1.4.11.
     """
+    fast = md_reference_length(md_string)  # ASCII fast path, same accounting
+    if fast is not None:
+        return fast
     n = 0
     i = 0
     L = len(md_string)
@@ -144,6 +156,10 @@ def get_daf_positions(
     # versions, crashing the worker later with "malloc(): invalid size".
     pairs = None
     if md_matches_cigar(read):
+        arrays = matched_base_arrays(read, seq)
+        if arrays is not None:
+            return _daf_positions_from_arrays(
+                arrays, force_strand, excluded_reference_positions)
         try:
             pairs = read.get_aligned_pairs(with_seq=True)
         except Exception:
@@ -182,6 +198,36 @@ def get_daf_positions(
         elif ref_base == "G" and query_base == "A":
             ga_positions.append(query_pos)
 
+    return _daf_positions_result(ct_positions, ga_positions, force_strand)
+
+
+def _daf_positions_from_arrays(arrays, force_strand, excluded_reference_positions):
+    """Vectorised equivalent of the per-pair mismatch loop above.
+
+    ``arrays`` comes from :func:`matched_base_arrays`, which reproduces the
+    matched pairs of ``get_aligned_pairs(with_seq=True)`` exactly.
+    """
+    qpos, rpos, ref_codes, query_codes = arrays
+    ct_index = np.flatnonzero((ref_codes == BASE_C) & (query_codes == BASE_T))
+    ga_index = np.flatnonzero((ref_codes == BASE_G) & (query_codes == BASE_A))
+    if excluded_reference_positions:
+        # Membership is tested with Python ints on the few mismatch
+        # candidates only, exactly as the per-pair loop tests each pair.
+        ct_index = [
+            index for index, ref_pos in zip(ct_index.tolist(), rpos[ct_index].tolist())
+            if ref_pos not in excluded_reference_positions
+        ]
+        ga_index = [
+            index for index, ref_pos in zip(ga_index.tolist(), rpos[ga_index].tolist())
+            if ref_pos not in excluded_reference_positions
+        ]
+    ct_positions = qpos[ct_index].tolist()
+    ga_positions = qpos[ga_index].tolist()
+    return _daf_positions_result(ct_positions, ga_positions, force_strand)
+
+
+def _daf_positions_result(ct_positions, ga_positions, force_strand):
+    """Strand decision shared by both mismatch-collection paths."""
     n_ct = len(ct_positions)
     n_ga = len(ga_positions)
 
