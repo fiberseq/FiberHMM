@@ -149,6 +149,15 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   `--from-paired` rejects pairing options. Recall keeps MA groups it does not
   regenerate (`deam+`/`deam-`) and warns when the call's SNP mask or reference
   cannot be re-applied.
+- **The DAF SNP screen is deterministic.** For a read whose `MD` is shorter
+  than its alignment, pysam fills the rest of the "reference" from undefined
+  memory, so a screen without a FASTA (`fiberhmm-daf-snps`, `fiberhmm-call`,
+  `fiberhmm-pipeline`) could call different SNPs on every run. Reads whose
+  `MD` does not match the CIGAR now use the FASTA, or are skipped without one,
+  as encoding and dedup already did; QC does the same. Where reads' `MD` tags
+  disagree about a site's base (C in some, G in others), the kept base was
+  chosen by hash order; it is now the base reported by more classified reads
+  (a tie keeps C), and the report counts such sites.
 - **`fiberhmm-daf-encode` output is atomic.** The BAM is encoded, sorted and
   indexed as a hidden temporary and published with its index only on success;
   a failed run leaves an earlier output and its index untouched. `-o -` still

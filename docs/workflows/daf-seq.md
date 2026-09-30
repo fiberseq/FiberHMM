@@ -127,6 +127,16 @@ The production policy `bidirectional_five_fiber_v1` requires, independently
 in each conversion-direction class, a mismatch fraction ≥ 0.2, depth ≥ 5 and
 at least 5 mismatch-carrying reads. Duplicate-flagged reads are excluded.
 Amplicons need at least 20 reads to be summarized.
+Amplicons need at least 20 reads to be summarized.
+
+Reference bases come from each read's `MD` tag; the reference FASTA
+(`--reference`) is used only for reads without a usable `MD`. A read whose
+`MD` does not match its CIGAR is read against the FASTA, or skipped without
+one. If reads' `MD` tags disagree about a site's base (C in some, G in
+others), the base reported by more C→T- or G→A-dominant reads is kept (a tie
+keeps C) and the JSON counts such sites under
+`accounting.reference_base_conflict_sites`. The same input gives
+byte-identical outputs on every run.
 
 **Integrated.** For DddA/DddB file input, `fiberhmm-call` screens
 automatically after duplicate marking when a bounded preflight finds enough
