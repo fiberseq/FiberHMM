@@ -8,13 +8,17 @@ Verbatim copies of the pre-vectorisation implementations at release head
 production code must reproduce these exactly; see
 ``tests/test_daf_mismatch_fastpath.py``.
 
-Two deliberate departures from the verbatim SNP-screen copy (both were
-nondeterministic, so no frozen behaviour can be reproduced for them):
+Deliberate departures from the verbatim copies (the old behaviour was
+nondeterministic, so it cannot be frozen):
 
 * ``_aligned_pairs`` skips pysam's MD reconstruction when MD does not
   describe the CIGAR (``md_matches_cigar``): for a short MD pysam copies
   undefined memory into the reference string. Such reads use the FASTA or
   are unusable, as in ``get_daf_positions``.
+* ``md_matches_cigar`` (used by ``_aligned_pairs``, ``get_daf_positions`` and
+  the dedup MD branch) also rejects an MD of the right length whose ``^`` run
+  covers a CIGAR insertion; ``pysam_md_walk_ends_short`` replays pysam's
+  walk to detect it.
 * A position profiled as both C and G (reads' MD tags disagree) used to keep
   whichever hypothesis set iteration visited last (``PYTHONHASHSEED``
   dependent). Both are now counted and the one with more dominant-direction
