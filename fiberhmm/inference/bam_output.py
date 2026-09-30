@@ -90,6 +90,22 @@ def _backup_copy(path: str, backup: str) -> None:
         raise
 
 
+def _restore(backup: str, path: str) -> None:
+    """Put a backup back at ``path``. A hard-link backup of a file still at
+    ``path`` is the same file, where rename does nothing: drop the extra link."""
+    os.replace(backup, path)
+    if os.path.lexists(backup):
+        _remove_quietly(backup)
+
+
+def _remove_obsolete(path: str) -> None:
+    """Remove an index that would describe other data; only absence is fine."""
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
 def commit_output(temporary: str, final: str) -> None:
     """Publish a finished temporary output, and its index, at ``final``.
 
@@ -111,8 +127,11 @@ def commit_output(temporary: str, final: str) -> None:
     publication is refused and nothing changes. Any failure or signal during
     publication restores that generation (or, when there was no previous
     output, removes the half-published one), so a failed rerun leaves the
-    earlier valid output exactly as it was. An old index is restored only
-    together with its BAM.
+    earlier valid output exactly as it was. An old index that cannot be
+    removed stops the publication (it would describe the new data wrongly),
+    and publication is checked to leave no index but the new ones. An old
+    index is restored only together with its BAM; one that cannot be put
+    back is kept as its named backup, with a warning.
     """
     final = os.path.abspath(final)
     fresh = {
@@ -135,16 +154,19 @@ def commit_output(temporary: str, final: str) -> None:
         raise
     try:
         for stale in index_paths_for(final):
-            _remove_quietly(stale)
+            _remove_obsolete(stale)
         os.replace(temporary, final)
         for final_index, temporary_index in fresh.items():
             os.replace(temporary_index, final_index)
+        leftover = [p for p in index_paths_for(final) if os.path.lexists(p) and p not in fresh]
+        if leftover:
+            raise OSError(f"obsolete index {', '.join(leftover)} is still beside {final}")
     except BaseException:
         for path in index_paths_for(final):
             _remove_quietly(path)
         if final in backups:
             try:
-                os.replace(backups[final], final)
+                _restore(backups[final], final)
             except OSError:
                 # Keep the whole previous generation where it is rather than
                 # delete it; no index is restored beside data it does not describe.
@@ -155,11 +177,13 @@ def commit_output(temporary: str, final: str) -> None:
             else:
                 backups.pop(final)
                 for path, backup in list(backups.items()):
+                    backups.pop(path, None)
                     try:
-                        os.replace(backup, path)
+                        _restore(backup, path)
                     except OSError:
                         _remove_quietly(path)
-                    backups.pop(path, None)
+                        print(f"WARNING: could not restore the index {path} of the previous "
+                              f"{final}; it is kept as {backup}", file=sys.stderr)
         else:
             _remove_quietly(final)  # nothing to restore: no half-published output
             # An index without its BAM describes nothing: it is not restored.

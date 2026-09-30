@@ -518,6 +518,54 @@ def test_publication_never_restores_an_index_without_its_bam(tmp_path):
     assert _pair_state(orphan) == (None, None)
 
 
+def test_publication_refuses_when_an_obsolete_index_cannot_be_removed(tmp_path, capsys):
+    """An old .csi that cannot be deleted would describe the new BAM: the
+    publication fails and the previous generation (BAM, BAI, CSI) is restored."""
+    import errno
+    final, temporary = _publication_pair(tmp_path, "stale")
+    csi = Path(str(final) + ".csi"); csi.write_bytes(b"old-csi")
+    remove = os.remove
+
+    def fail_remove(path):
+        if str(path) == str(csi):
+            raise PermissionError(errno.EACCES, "index cannot be removed")
+        return remove(path)
+    with pytest.raises(PermissionError), patch.object(bam_output.os, "remove", fail_remove):
+        bam_output.commit_output(str(temporary), str(final))
+    assert _pair_state(final) == (b"old-bam", b"old-index") and csi.read_bytes() == b"old-csi"
+    assert not [p for p in tmp_path.iterdir() if p.name.endswith(".previous")]
+    # An obsolete index that reappears (or survives) after publication also fails it.
+    final, temporary = _publication_pair(tmp_path, "survivor")
+    csi = Path(str(final) + ".csi"); csi.write_bytes(b"old-csi")
+    replace = os.replace
+
+    def resurrect(src, dst):
+        result = replace(src, dst)
+        if str(dst) == str(final) + ".bai":
+            csi.write_bytes(b"stale")
+        return result
+    with pytest.raises(OSError, match="obsolete index"), \
+            patch.object(bam_output.os, "replace", resurrect):
+        bam_output.commit_output(str(temporary), str(final))
+    assert _pair_state(final) == (b"old-bam", b"old-index") and csi.read_bytes() == b"old-csi"
+    # An index that cannot be put back is kept under a named backup, with a warning.
+    final, temporary = _publication_pair(tmp_path, "keep")
+
+    def fail_index_restore(src, dst):
+        if str(src) == str(temporary) + ".bai":
+            raise RuntimeError("publication")
+        if str(src).endswith(".previous") and str(dst) == str(final) + ".bai":
+            raise PermissionError(errno.EACCES, "rollback")
+        return replace(src, dst)
+    capsys.readouterr()
+    with pytest.raises(RuntimeError), patch.object(bam_output.os, "replace", fail_index_restore):
+        bam_output.commit_output(str(temporary), str(final))
+    assert _pair_state(final) == (b"old-bam", None)
+    kept = [p for p in tmp_path.iterdir() if p.name.startswith(".keep.bam.bai")]
+    assert len(kept) == 1 and kept[0].read_bytes() == b"old-index"
+    assert kept[0].name in capsys.readouterr().err
+
+
 def test_publication_restores_a_symlinked_previous_output_as_a_symlink(tmp_path):
     target = tmp_path / "store.bam"; target.write_bytes(b"old-bam")
     final = tmp_path / "linked.bam"; final.symlink_to(target)
