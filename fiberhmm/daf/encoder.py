@@ -21,6 +21,7 @@ from fiberhmm.daf.aligned_arrays import (
     BASE_G,
     BASE_T,
     matched_base_arrays,
+    md_deletion_spans_insertion,
     md_reference_length,
 )
 from fiberhmm.inference.bam_output import _sort_and_index_bam, atomic_output
@@ -100,7 +101,12 @@ def md_matches_cigar(read) -> bool:
         return True
     cigar_ref_len = sum(length for op, length in cigar
                         if op in _CIGAR_REF_CONSUMING_FOR_MD)
-    return md_len == cigar_ref_len
+    if md_len != cigar_ref_len:
+        return False
+    # Equal lengths are not enough: a ``^`` run covering a CIGAR insertion
+    # makes pysam read past its reconstructed reference (undefined memory).
+    return not md_deletion_spans_insertion(
+        md, [op for op, _length in cigar], [length for _op, length in cigar])
 
 
 # ---------------------------------------------------------------------------

@@ -269,3 +269,136 @@ def test_call_snp_screen_is_identical_across_worker_counts(hard_dataset, tmp_pat
     assert results[0][1]["n_called_snps"] >= 4
     for other in results[1:]:
         assert other == results[0]
+
+
+# --- MD whose deletion run covers a CIGAR insertion ---------------------------
+
+def _random_md_case(rng):
+    """A CIGAR with M/I/D ops and an MD of the same reference length whose
+    deletion runs may or may not line up with the CIGAR's D operations."""
+    cigar = []
+    for _ in range(rng.randint(1, 6)):
+        cigar.append((rng.choice((0, 0, 1, 2, 7)), rng.randint(1, 6)))
+    span = sum(length for op, length in cigar if op in (0, 2, 7, 8))
+    tokens, used = [], 0
+    while used < span:
+        kind = rng.random()
+        room = span - used
+        if kind < 0.4 and not (tokens and tokens[-1].isdigit()):
+            n = rng.randint(0, room)
+            tokens.append(str(n))
+            used += n
+        elif kind < 0.7:
+            n = rng.randint(1, min(4, room))
+            tokens.append("^" + "".join(rng.choice("ACGT") for _ in range(n)))
+            used += n
+            if used < span or rng.random() < 0.5:
+                tokens.append("0")
+        elif kind >= 0.7:
+            tokens.append(rng.choice("ACGT"))
+            used += 1
+    md = "".join(tokens) or "0"
+    return md, cigar
+
+
+def test_md_deletion_spans_insertion_matches_the_pysam_walk():
+    import daf_mismatch_reference as oracle
+    from fiberhmm.daf.aligned_arrays import (
+        md_deletion_spans_insertion, md_reference_length)
+
+    rng = random.Random(29)
+    seen = Counter()
+    for _ in range(4000):
+        md, cigar = _random_md_case(rng)
+        span = sum(length for op, length in cigar if op in (0, 2, 7, 8))
+        assert md_reference_length(md) == span
+        expected = oracle.pysam_md_walk_ends_short(md, cigar)
+        observed = md_deletion_spans_insertion(
+            md, [op for op, _ in cigar], [length for _, length in cigar])
+        assert observed == expected, (md, cigar)
+        seen[expected] += 1
+    assert seen[True] > 100 and seen[False] > 100
+
+
+def test_md_deletion_over_an_insertion_is_never_used(tmp_path):
+    from fiberhmm.daf.aligned_arrays import matched_base_arrays
+    from fiberhmm.daf.encoder import get_daf_positions, md_matches_cigar
+
+    header = pysam.AlignmentHeader.from_dict({"SQ": [{"SN": "c", "LN": 1000}]})
+    read = pysam.AlignedSegment(header)
+    read.query_name = "r"
+    read.reference_id = 0
+    read.reference_start = 100
+    read.mapping_quality = 60
+    read.cigarstring = "10M20I10M"
+    read.query_sequence = "T" * 40
+    read.set_tag("MD", "0^" + "ACGT" * 5 + "0")  # 20 bases, as the CIGAR says
+    assert matched_base_arrays(read) is None
+    assert md_disagrees_with_cigar(read) and not md_matches_cigar(read)
+    spy = _SpyRead(read)
+    assert snps._aligned_pairs(spy) is None and spy.with_seq_calls == 0
+    assert _aligned_reference_pairs(spy) is None and spy.with_seq_calls == 0
+    assert get_daf_positions(read) is None
+    # A deletion run that lines up with the CIGAR's D stays on the MD path.
+    read.cigarstring = "10M4D3I6M"
+    read.query_sequence = "C" * 19
+    read.set_tag("MD", "10^ACGT6")
+    assert not md_disagrees_with_cigar(read) and md_matches_cigar(read)
+    assert matched_base_arrays(read) is not None
+
+
+# --- C/G conflicts decided by the reads ---------------------------------------
+
+def _conflict_bam(path, c_claims, g_claims):
+    """Reads over a 100 bp contig; site 60's MD base is C on ``c_claims``
+    reads and G on ``g_claims`` reads (each split evenly CT/GA-dominant)."""
+    reference = "C" * 30 + "G" * 30 + "A" * 40
+    header = pysam.AlignmentHeader.from_dict({"SQ": [{"SN": "p", "LN": 100}]})
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        index = 0
+        for claim, count in (("C", c_claims), ("G", g_claims)):
+            for i in range(count):
+                claimed = reference[:60] + claim + reference[61:]
+                query = list(claimed)
+                if i % 2:
+                    query[0:10] = "T" * 10          # C->T dominant
+                else:
+                    query[30:40] = "A" * 10         # G->A dominant
+                query[60] = "T" if claim == "C" else "A"
+                fields, matches = [], 0
+                for ref_base, query_base in zip(claimed, query):
+                    if ref_base == query_base:
+                        matches += 1
+                    else:
+                        fields += [str(matches), ref_base]
+                        matches = 0
+                read = pysam.AlignedSegment(header)
+                read.query_name = f"r{index}"
+                read.reference_id = 0
+                read.reference_start = 0
+                read.mapping_quality = 60
+                read.cigarstring = "100M"
+                read.query_sequence = "".join(query)
+                read.set_tag("MD", "".join(fields) + str(matches))
+                out.write(read)
+                index += 1
+    return path
+
+
+@pytest.mark.parametrize("c_claims,g_claims,kept", [(6, 10, "G"), (10, 6, "C"), (8, 8, "C")])
+def test_reference_conflict_keeps_the_base_most_reads_report(tmp_path, c_claims, g_claims, kept):
+    import daf_mismatch_reference as oracle
+
+    bam = _conflict_bam(tmp_path / "conflict.bam", c_claims, g_claims)
+    kwargs = dict(max_profile_sites=5000, min_depth=3, min_alt_fibers=3,
+                  min_amplicon_reads=1)
+    payload = snps.call_opposite_conversion_snps(str(bam), **kwargs)
+    assert payload["accounting"]["reference_base_conflict_sites"] == 1
+    rows = [row for row in payload["site_distribution"] if row["position_0based"] == 60]
+    depth = {"C": c_claims, "G": g_claims}[kept]
+    assert [(row["reference"], row["expected_direction_depth"]
+             + row["opposite_direction_depth"]) for row in rows] == [(kept, depth)]
+    calls = [call for call in payload["calls"] if call["position_0based"] == 60]
+    assert [call["reference"] for call in calls] == [kept]
+    expected = oracle.call_opposite_conversion_snps(str(bam), **kwargs)
+    assert json.dumps(payload, sort_keys=True) == json.dumps(expected, sort_keys=True)

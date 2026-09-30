@@ -68,6 +68,55 @@ def md_reference_length(md) -> Optional[int]:
     return sum(map(int, _MD_DIGIT_RUNS.findall(md))) + len(_MD_LETTERS.findall(md))
 
 
+def md_deletion_spans_insertion(md, ops, lengths) -> bool:
+    """True when an MD ``^`` deletion run covers a CIGAR insertion.
+
+    pysam lays out M/=/X/D/I/P bases, then walks MD over them, skipping
+    insertions before every MD token but not inside a ``^`` deletion run. A
+    deletion run of length L starting at reference offset o therefore
+    swallows an I/P operation that sits strictly between o and o + L (its
+    reference offset counts the M/=/X/D bases before it); the walk ends short
+    and pysam builds the rest of the reference from undefined memory, even
+    though the MD length matches the CIGAR. MD is read as pysam reads it: a
+    ``^`` run is the upper-case letters after it; every other non-digit
+    character (except ``^``) is one reference base. ``ops``/``lengths`` are
+    the CIGAR codes and lengths; a non-ASCII or non-string MD returns False
+    (callers reject those on length).
+    """
+    if not isinstance(md, str) or "^" not in md or not md.isascii():
+        return False
+    ops = np.asarray(ops, dtype=np.int64)
+    lengths = np.asarray(lengths, dtype=np.int64)
+    inserted = ((ops == 1) | (ops == 6)) & (lengths > 0)
+    if not inserted.any():
+        return False
+    ref_seq = np.where(np.isin(ops, (0, 2, 7, 8)), lengths, 0)
+    insertion_offsets = (np.cumsum(ref_seq) - ref_seq)[inserted]
+
+    chars = np.frombuffer(md.encode("ascii"), dtype=np.uint8)
+    digit = (chars >= 48) & (chars <= 57)
+    caret = chars == 94
+    upper = (chars >= 65) & (chars <= 90)
+    index = np.arange(chars.size)
+    previous_other = np.maximum.accumulate(np.where(upper, -1, index))
+    deleted = upper & (previous_other >= 0) & caret[np.maximum(previous_other, 0)]
+    consumed = np.where(digit | caret, 0, 1).astype(np.int64)
+    run_ends = np.flatnonzero(digit & ~np.append(digit[1:], False))
+    if run_ends.size:
+        consumed[run_ends] = np.fromiter(
+            map(int, _MD_DIGIT_RUNS.findall(md)), dtype=np.int64, count=run_ends.size)
+    offsets = np.cumsum(consumed) - consumed
+    run_start = deleted & ~np.append(False, deleted[:-1])
+    starts = offsets[run_start]
+    if not starts.size:
+        return False
+    run_lengths = np.bincount(np.cumsum(run_start)[deleted] - 1)
+    before = np.searchsorted(starts, insertion_offsets, side="left") - 1
+    valid = before >= 0
+    before = np.maximum(before, 0)
+    return bool((valid & (insertion_offsets < starts[before] + run_lengths[before])).any())
+
+
 def md_disagrees_with_cigar(read) -> bool:
     """True when ``read`` has an MD tag that does not describe its CIGAR.
 
@@ -79,8 +128,10 @@ def md_disagrees_with_cigar(read) -> bool:
     to decode). An MD longer than the span raises instead. Callers that want
     MD-derived reference bases must treat such reads as having no usable MD
     (FASTA fallback, or skip), as ``get_daf_positions`` and the dedup
-    fingerprint already do. Reads without MD, or objects that are not
-    alignments, return False (the caller's own path handles them).
+    fingerprint already do. The same holds when an MD deletion run covers a
+    CIGAR insertion (:func:`md_deletion_spans_insertion`). Reads without MD,
+    or objects that are not alignments, return False (the caller's own path
+    handles them).
     """
     try:
         md = read.get_tag("MD")
@@ -93,7 +144,10 @@ def md_disagrees_with_cigar(read) -> bool:
     if not cigar:
         return False
     span = sum(length for op, length in cigar if op in (0, 2, 7, 8))
-    return md_reference_length(md) != span
+    if md_reference_length(md) != span:
+        return True
+    return md_deletion_spans_insertion(
+        md, [op for op, _length in cigar], [length for _op, length in cigar])
 
 
 def matched_base_arrays(
@@ -141,6 +195,8 @@ def matched_base_arrays(
         return None
     if md_reference_length(md) != ref_seq_total:
         return None
+    if md_deletion_spans_insertion(md, ops, lengths):
+        return None
     try:
         reference = read.get_reference_sequence()
     except Exception:
@@ -185,6 +241,7 @@ __all__ = [
     "BASE_T",
     "BASE_Y",
     "matched_base_arrays",
+    "md_deletion_spans_insertion",
     "md_disagrees_with_cigar",
     "md_reference_length",
 ]

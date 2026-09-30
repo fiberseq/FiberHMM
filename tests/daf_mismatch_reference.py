@@ -701,7 +701,58 @@ def md_matches_cigar(read) -> bool:
         return True
     cigar_ref_len = sum(length for op, length in cigar
                         if op in _CIGAR_REF_CONSUMING_FOR_MD)
-    return md_len == cigar_ref_len
+    # Departure from the frozen copy: equal lengths are not enough when a
+    # deletion run covers an insertion (pysam then reads undefined memory).
+    return md_len == cigar_ref_len and not pysam_md_walk_ends_short(md, cigar)
+
+
+def pysam_md_walk_ends_short(md, cigar) -> bool:
+    """Replay pysam's ``build_alignment_sequence`` MD walk (per character).
+
+    Returns True when the walk ends before the last M/=/X/D base of the
+    layout, i.e. when ``build_reference_sequence`` would index past the
+    string it built (undefined memory). Insertions (I/P) are skipped before
+    every MD token but not inside a ``^`` run, exactly as in pysam 0.24.
+    """
+    layout = []
+    for op, length in cigar:
+        if op in (0, 2, 7, 8):
+            layout.extend("R" * length)
+        elif op in (1, 6):
+            layout.extend("i" * length)
+    size = len(layout)
+    position = 0
+
+    def skip_insertions(position):
+        while position < size and layout[position] == "i":
+            position += 1
+        return position
+
+    matches = 0
+    index = 0
+    while index < len(md):
+        char = md[index]
+        if char.isdigit():
+            matches = matches * 10 + int(char)
+            index += 1
+            continue
+        for _ in range(matches):
+            position = skip_insertions(position) + 1
+        position = skip_insertions(position)
+        matches = 0
+        if char == "^":
+            index += 1
+            while index < len(md) and "A" <= md[index] <= "Z":
+                position += 1
+                index += 1
+        else:
+            position += 1
+            index += 1
+    for _ in range(matches):
+        position = skip_insertions(position) + 1
+    position = skip_insertions(position)
+    last_reference = max((i for i, kind in enumerate(layout) if kind == "R"), default=-1)
+    return position <= last_reference
 
 
 def get_daf_positions(
