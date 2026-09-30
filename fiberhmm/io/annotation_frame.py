@@ -275,7 +275,10 @@ def resolve_disabled_legacy_frame(header) -> Optional[Tuple[str, str]]:
         return None
     report = legacy_tag_frame_report(hdr, carried_votes=False)
     writers = report['writers']
+    # Every chain must vote fibertools: a chain with no footprint writer (an
+    # independent aligner history merged in, say) is unknown, not molecular.
     if (report['source'] == 'provenance' and report['frame'] == MOLECULAR and writers
+            and len(writers) == report['chains']
             and all(w['family'] == 'fibertools' for w in writers)):
         return MOLECULAR, 'a fibertools nucleosome command is the last footprint writer on every @PG chain'
     return None

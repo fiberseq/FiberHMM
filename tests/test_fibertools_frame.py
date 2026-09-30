@@ -559,6 +559,17 @@ def test_tag_m5c_records_the_frame_it_carried(monkeypatch, tmp_path, frame_arg, 
              _pg(ID='fiberhmm-call', PN='fiberhmm-call', DS='x; coord=molecular (ns/nl)'))}, None),
     ({'CO': ['fiberhmm:coord=molecular']}, None),
     ({}, None),
+    # Codex round 14: fibertools -> sort, merged with an independent aligner
+    # chain that has no footprint writer (its reverse reads carry SEQ-frame
+    # ns/nl). One writer vote over two chains is not "every chain".
+    ({'PG': _chain(_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
+                   _pg(ID='samtools', PN='samtools', CL='samtools sort'))
+            + [_pg(ID='pbmm2', PN='pbmm2', CL='pbmm2 align ref in out')]}, None),
+    # two fibertools chains merged: both vote fibertools
+    ({'PG': _chain(_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
+                   _pg(ID='samtools', PN='samtools', CL='samtools sort'))
+            + _chain(_pg(ID='ft-0A1B2C3D', PN='fibertools-rs', CL='ft add-nucleosomes c d'),
+                     _pg(ID='samtools-5E6F7A8B', PN='samtools', CL='samtools sort'))}, 'molecular'),
 ])
 def test_consensus_disabled_frame_resolves_only_from_fibertools(header, expected):
     from fiberhmm.io.annotation_frame import resolve_disabled_legacy_frame
