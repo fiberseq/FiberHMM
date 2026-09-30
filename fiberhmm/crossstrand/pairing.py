@@ -24,6 +24,7 @@ from typing import Dict, List, Optional, Sequence, Set, Tuple
 import numpy as np
 
 from fiberhmm.cli.extract_tags import _build_query_to_ref, _deam_positions_list
+from fiberhmm.daf.aligned_arrays import md_disagrees_with_cigar
 from fiberhmm.io.ma_tags import flip_interval_frame, parse_ma_tag
 
 # Deamination flavor codes (match _deam_positions_list: 1 = Y = C->U, 0 = R = G->U).
@@ -181,9 +182,13 @@ def _sequence_signature_from_md(read) -> Tuple[np.ndarray, np.ndarray]:
     used for alignment.  ``get_aligned_pairs(with_seq=True)`` reconstructs the
     reference base at each aligned query position from MD+CIGAR, which is all
     pairing needs.  This path is evidence-equivalent to indexing a FASTA at
-    covered positions and fails closed when MD is absent or malformed.
+    covered positions and fails closed when MD is absent or malformed,
+    including an MD that does not describe the CIGAR (pysam would fill the
+    reference from undefined memory; see ``md_disagrees_with_cigar``).
     """
     if not getattr(read, 'has_tag', lambda _tag: False)('MD'):
+        return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.uint8)
+    if md_disagrees_with_cigar(read):
         return np.empty(0, dtype=np.int64), np.empty(0, dtype=np.uint8)
     sequence = (getattr(read, 'query_sequence', None) or '').upper()
     if not sequence:

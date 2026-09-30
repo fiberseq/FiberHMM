@@ -400,3 +400,86 @@ def test_pair_then_merge_bam_io_contract(tmp_path):
     with pysam.AlignmentFile(full, 'rb') as bam:
         full_rows = list(bam.fetch(until_eof=True))
     assert [row.query_name for row in full_rows] == ['ct-io.cs']
+
+
+def _malformed_md_bam(path):
+    """Linear contig; r_ok has a valid MD, r_short an MD covering only half
+    its 200M, r_span an MD whose ^ run covers the CIGAR insertion."""
+    import random
+    rng = random.Random(3)
+    ref = ''.join(rng.choice('ACGT') for _ in range(1000))
+    header = pysam.AlignmentHeader.from_dict({'SQ': [{'SN': 'chr1', 'LN': 1000}]})
+    with pysam.AlignmentFile(str(path), 'wb', header=header) as out:
+        for name, cigar, query, md in (
+            ('r_ok', '200M', ref[100:300], '200'),
+            ('r_short', '200M', ref[100:300], '100'),
+            ('r_span', '10M20I10M', ref[100:110] + 'A' * 20 + ref[110:120],
+             '0^' + ref[100:120] + '0'),
+        ):
+            read = pysam.AlignedSegment(header)
+            read.query_name = name
+            read.reference_id = 0
+            read.reference_start = 100
+            read.mapping_quality = 60
+            read.cigarstring = cigar
+            read.query_sequence = query
+            read.set_tag('MD', md)
+            out.write(read)
+    return path
+
+
+_MD_SIGNATURE_DRIVER = r"""
+import sys, pysam
+from fiberhmm.crossstrand.pairing import _sequence_signature_from_md
+with pysam.AlignmentFile(sys.argv[1], check_sq=False) as bam:
+    for read in bam.fetch(until_eof=True):
+        positions, bases = _sequence_signature_from_md(read)
+        print(read.query_name, positions.tolist(), bytes(bases).decode())
+"""
+
+
+def test_md_signature_fails_closed_when_md_does_not_describe_the_cigar(tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    bam = _malformed_md_bam(tmp_path / 'malformed.bam')
+    with pysam.AlignmentFile(str(bam), check_sq=False) as handle:
+        signatures = {read.query_name: _sequence_signature_from_md(read)
+                      for read in handle.fetch(until_eof=True)}
+    assert signatures['r_ok'][0].size > 20
+    for name in ('r_short', 'r_span'):
+        positions, bases = signatures[name]
+        assert positions.size == 0 and bases.size == 0, name
+
+    class Spy:
+        """Records whether pysam's MD reconstruction is attempted."""
+
+        def __init__(self, read):
+            self._read, self.with_seq = read, 0
+
+        def get_aligned_pairs(self, *args, **kwargs):
+            self.with_seq += bool(kwargs.get('with_seq'))
+            return self._read.get_aligned_pairs(*args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self._read, name)
+
+    with pysam.AlignmentFile(str(bam), check_sq=False) as handle:
+        for read in handle.fetch(until_eof=True):
+            spy = Spy(read)
+            _sequence_signature_from_md(spy)
+            # Undecodable garbage used to be caught as ValueError only by luck.
+            assert spy.with_seq == (read.query_name == 'r_ok'), read.query_name
+    # Deterministic from process to process (the undefined bytes were not).
+    repo = Path(__file__).resolve().parents[1]
+    outputs = set()
+    for seed in (0, 1, 2):
+        env = dict(os.environ, PYTHONHASHSEED=str(seed), FIBERHMM_NO_UPDATE_CHECK='1',
+                   PYTHONPATH=str(repo) + os.pathsep + os.environ.get('PYTHONPATH', ''))
+        result = subprocess.run([sys.executable, '-c', _MD_SIGNATURE_DRIVER, str(bam)],
+                                capture_output=True, env=env, timeout=300)
+        assert result.returncode == 0, result.stderr.decode(errors='replace')
+        outputs.add(result.stdout)
+    assert len(outputs) == 1
