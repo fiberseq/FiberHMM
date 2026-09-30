@@ -822,7 +822,6 @@ class FiberPosterior:
 def main():
     parser = argparse.ArgumentParser(
         description="Export HMM posterior probabilities for downstream analysis",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
     parser.add_argument('-i', '--input', required=True, help='Input BAM file')
@@ -845,14 +844,17 @@ def main():
     add_edge_trim_args(parser, default=DEFAULT_EDGE_TRIM)
     parser.add_argument('--prob-threshold', type=int, default=DEFAULT_PROB_THRESHOLD,
                        help='Min ML probability (0-255) for an MM/ML modification call '
-                            '(same default as fiberhmm-call)')
+                            f'(default: {DEFAULT_PROB_THRESHOLD}; not raised to 248 for '
+                            'Hia5 Nanopore -- pass --prob-threshold 248 to match '
+                            'fiberhmm-call there)')
     daf = parser.add_argument_group('DAF options (mode=daf only; same as fiberhmm-call)')
     daf.add_argument('--keep-chimeras', action='store_true',
                      help='Do not drop DAF strand-swap chimeric reads')
     daf.add_argument('--chimera-min-seg', type=int, default=5,
-                     help='DAF chimera: min same-strand deamination events per segment')
+                     help='DAF chimera: min same-strand deamination events per segment '
+                          '(default: 5)')
     daf.add_argument('--chimera-purity', type=float, default=0.8,
-                     help='DAF chimera: min same-strand purity per segment')
+                     help='DAF chimera: min same-strand purity per segment (default: 0.8)')
     daf.add_argument('--daf-snp-mask', default=None, metavar='BED',
                      help='0-based BED of reference positions whose conversions are '
                           'ignored (e.g. the mask fiberhmm-call used)')
@@ -860,7 +862,7 @@ def main():
     add_parallel_args(parser, default_cores=4, default_region_size=5_000_000)
 
     parser.add_argument('--batch-size', type=int, default=1000,
-                       help='Fibers per HDF5 write batch')
+                       help='Fibers per HDF5 write batch (default: 1000)')
 
     add_verbose_args(parser)
     add_version_args(parser)

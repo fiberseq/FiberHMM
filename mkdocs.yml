@@ -1,0 +1,114 @@
+site_name: FiberHMM
+site_description: Chromatin footprint calling from Fiber-seq and DAF-seq single-molecule data
+site_url: https://fiberseq.github.io/FiberHMM/
+repo_url: https://github.com/fiberseq/FiberHMM
+repo_name: fiberseq/FiberHMM
+edit_uri: edit/main/docs/
+copyright: FiberHMM is released under the MIT License.
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - content.code.copy
+    - search.highlight
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+
+# Pages kept at their pre-3.0 paths so old GitHub links still resolve; each
+# points to its new page. They are not part of the site.
+exclude_docs: |
+  /reference.md
+  /CONSENSUS_WORKFLOW.md
+  /CONSENSUS_TRANSFER.md
+  /duplex.md
+  /paired-duplex.md
+  /strand_rescue.md
+  /footprint-models.md
+  /INSTALL.md
+  /tf_configuration_decoder.md
+  /fiberseq-site/
+  /examples/
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quick start: getting-started/quickstart.md
+      - Choosing the chemistry: getting-started/choosing-chemistry.md
+  - Concepts:
+      - How FiberHMM works: concepts/how-it-works.md
+      - Chemistries and platforms: concepts/chemistries.md
+      - Coordinate frames: concepts/coordinates.md
+      - Annotations and scores: concepts/annotations.md
+  - Workflows:
+      - Calling footprints: workflows/calling.md
+      - Re-calling: workflows/recalling.md
+      - DAF-seq: workflows/daf-seq.md
+      - Duplex (paired strands): workflows/duplex.md
+      - Extracting tracks: workflows/extracting.md
+      - Posteriors: workflows/posteriors.md
+      - Quality control: workflows/qc.md
+      - Footprint classes (consensus): workflows/consensus.md
+      - Transferring classes: workflows/transfer.md
+      - Strand rescue: workflows/strand-rescue.md
+      - Tag consensus states: workflows/tag-consensus.md
+      - Footprint population model: workflows/footprint-model.md
+      - Training a model: workflows/training.md
+  - Reference:
+      - Command line: reference/cli.md
+      - BAM tags: reference/bam-tags.md
+      - Header declarations: reference/headers.md
+      - Bundled models: reference/models.md
+      - Consensus output files: reference/consensus-outputs.md
+      - Python API: reference/python-api.md
+      - Environment variables: reference/environment.md
+  - Troubleshooting: troubleshooting.md
+  - Upgrading from 2.x: upgrading.md
+  - Changelog: changelog.md
+  - About:
+      - Citing: about/citing.md
+      - Contributing: about/contributing.md
+      - License: about/license.md

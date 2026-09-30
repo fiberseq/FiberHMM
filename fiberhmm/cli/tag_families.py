@@ -470,6 +470,26 @@ def build_parser() -> argparse.ArgumentParser:
             "Append local TF-family ID and assignment-confidence bytes to the "
             "complete tf_sr Molecular Annotation layer."
         ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Assignment TSV (-a): tab-separated with exactly this header row\n"
+            "  read_name alignment_occurrence tf_sr_ordinal family_id\n"
+            "  assignment_probability family_key contig call_start call_end\n"
+            "and optionally a final calibration_scope column (v2). One row per\n"
+            "assigned tf_sr call:\n"
+            "  alignment_occurrence  0-based occurrence of read_name in file order\n"
+            "  tf_sr_ordinal         0-based position of the call in the record's\n"
+            "                        tf_sr group\n"
+            "  family_id             1-255; written as fi (0 = unassigned)\n"
+            "  assignment_probability  (0,1]; written as fq = round(255 x p)\n"
+            "  family_key            stable family identifier (one family_id and\n"
+            "                        contig per key)\n"
+            "  contig, call_start, call_end  the call's reference interval,\n"
+            "                        0-based half-open; must match the BAM exactly\n"
+            "  calibration_scope     how the probability was calibrated (v2)\n"
+            f"A family_id may be reused on one contig only by families at least\n"
+            f"{FAMILY_SEPARATION_BP} bp apart. Every row must match a tf_sr call."
+        ),
     )
     add_version_args(parser)
     parser.add_argument("-i", "--input", required=True, help="Input BAM with tf_sr.QQQ")

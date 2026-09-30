@@ -48,7 +48,10 @@ def parse_args():
     parser.add_argument('--inaccessible', '-u', required=True, nargs='+',
                         help='BAM file(s) from inaccessible/untreated samples (native chromatin)')
     parser.add_argument('-o', '--output', required=True,
-                        help='Output file prefix (will create _accessible.tsv and _inaccessible.tsv)')
+                        help='Output directory; its name is the table prefix. Writes '
+                             'tables/<name>_accessible_<base>_k<k>.tsv, '
+                             'tables/<name>_inaccessible_<base>_k<k>.tsv and a combined '
+                             'tables/<name>_<base>_k<k>_probs.tsv')
 
     # Context settings
     parser.add_argument('-k', '--context-sizes', type=int, nargs='+', default=[3, 4, 5, 6],
@@ -499,7 +502,8 @@ def main():
     print("\nNext steps:")
     print("  1. Review the modification rates - accessible should be HIGH,")
     print("     inaccessible should be LOW (background miscall rate)")
-    print("  2. Use the *_probs.tsv files with fiberhmm-train to build the HMM")
+    print("  2. Pass the accessible and inaccessible tables (tables/*_accessible_*_k<k>.tsv")
+    print("     and tables/*_inaccessible_*_k<k>.tsv) to fiberhmm-train -p")
 
 
 if __name__ == '__main__':

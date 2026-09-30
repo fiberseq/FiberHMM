@@ -106,8 +106,13 @@ def parse_args(argv=None):
         "--enzyme", required=True, choices=("ddda",),
         help="Required chemistry assertion. Only DddA DAF-seq is supported.",
     )
-    parser.add_argument("--posterior", type=float, default=0.99)
-    parser.add_argument("--min-other", type=int, default=10)
+    parser.add_argument("--posterior", type=float, default=0.99,
+                        help="Whole-island posterior needed for a call: >= this is "
+                             "methylated (ddda_mcg), <= 1 - this unmethylated "
+                             "(ddda_ucg) (default 0.99).")
+    parser.add_argument("--min-other", type=int, default=10,
+                        help="Minimum non-CpG observations on the molecule's island "
+                             "overlap, the internal accessibility baseline (default 10).")
     parser.add_argument(
         "--cpg-islands",
         help=("Optional BED3 of merged, non-overlapping CpG islands. Default: "
@@ -138,12 +143,14 @@ def parse_args(argv=None):
                         help="Comma-separated A,C,G,T factors; default calibrated DddA values")
     parser.add_argument("--estimate-factors", action="store_true",
                         help="Estimate 5' factors from this BAM instead of using calibrated values")
-    parser.add_argument("--factor-sample-reads", type=int, default=5000)
+    parser.add_argument("--factor-sample-reads", type=int, default=5000,
+                        help="Reads sampled by --estimate-factors (default 5000).")
     parser.add_argument("--input-frame", choices=("auto", "molecular", "query"),
                         default="auto",
                         help="Frame of legacy ns/nl tags when MA is absent; "
                              "auto uses the FiberHMM header marker")
-    parser.add_argument("--io-threads", type=int, default=4)
+    parser.add_argument("--io-threads", type=int, default=4,
+                        help="htslib BAM compression threads (default 4).")
     return parser.parse_args(argv)
 
 

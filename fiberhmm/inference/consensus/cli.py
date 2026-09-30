@@ -47,7 +47,7 @@ def main(argv=None):
     p.add_argument('--consolidation-bp',type=int,help='staged_native_families only: shared-family edge allowance (default 10; 5 gives finer grouping)')
     p.add_argument('--stop-after',choices=['native','parents','consolidated','resolved'],help='staged_native_families only: last stage to compute (the lattice recaller runs in one pass)')
     p.add_argument('--start-at',choices=['native','consolidation'],default='native',help='staged_native_families only: consolidation restarts from saved native fits')
-    p.add_argument('--cores',type=int)
+    p.add_argument('--cores',type=int,help='Worker processes (sets compute.cores; default 4)')
     p.add_argument('--cache',help='staged_native_families only: persistent exact native-fit cache directory')
     p.add_argument('--json-progress',action='store_true',help='Structured progress on stderr')
     p.add_argument('--daf-mask-runs',type=int,default=None,metavar='N',help='DAF only: thin targets in same-strand runs of >= N original C (CT) or G (GA) bases in lattices and native replay (2 = CC/GG and longer; 0 = off). Default: per dataset chemistry, DddA keep-one on runs >= 2 (duplex-validated), DddB off')

@@ -63,7 +63,8 @@ Examples:
 
     # Required
     parser.add_argument('-i', '--input', required=True,
-                        help='Input BAM file with modification calls (must be indexed)')
+                        help='Input BAM file with modification calls, or "-" for stdin '
+                             '(unaligned and unindexed BAMs are streamed)')
     parser.add_argument('-m', '--model', default=None,
                         help='Path to trained HMM model (.json, .npz, or .pickle). '
                              'If omitted, the bundled model for --enzyme/--seq is used.')
@@ -545,7 +546,7 @@ def _main(args):
     else:
         print("\nDone!")
         print("\nTo extract BED12/bigBed for browser visualization:")
-        print(f"  fiberhmm-extract-tags -i {output_bam}")
+        print(f"  fiberhmm-extract -i {output_bam}")
 
 
 if __name__ == '__main__':

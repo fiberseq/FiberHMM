@@ -20,14 +20,14 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   (`tf_consensus`, `q0` = the molecule's class posterior ×255), records a
   per-dataset `trusted_strand` for DAF classes, and can write the recaller's
   calls as an opt-in `tf_recaller` layer (`--bam-recaller-layer`). See
-  [docs/CONSENSUS_WORKFLOW.md](docs/CONSENSUS_WORKFLOW.md).
+  [Footprint classes](https://fiberseq.github.io/FiberHMM/workflows/consensus/).
 - **Prevalence tiers.** Each class × channel reports core, edge and loose
   prevalence plus the Wilson lower bound of the core prevalence.
 - **Recaller transfer.** `fiberhmm-transfer --freeze-run` on a lattice-recaller
   run writes a versioned, digest-checked frozen class catalog;
   `fiberhmm-transfer --models` scores new data or loci against it without
   rediscovery (EM prevalence, tiers and per-molecule labels are recomputed on
-  the target). See [docs/CONSENSUS_TRANSFER.md](docs/CONSENSUS_TRANSFER.md).
+  the target). See [Transferring classes](https://fiberseq.github.io/FiberHMM/workflows/transfer/).
 - `fiberhmm-consensus` and `fiberhmm-transfer` work on a plain
   `pip install fiberhmm`.
 - `fiberhmm-recall-tfs`/`-recall-nucs` accept `--prob-threshold`;
@@ -36,6 +36,10 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 - `fiberhmm-call`: `--scores` (as in `fiberhmm-apply`) and `-c 0` for all
   CPUs; `@PG` records the ML threshold, primary-only setting and CpG masking.
 - GitHub Actions CI (Linux/macOS, Python 3.10/3.12) with a wheel smoke test.
+- Documentation site (MkDocs, published to GitHub Pages from `docs/`) with
+  getting-started, concept, workflow and reference pages, a synthetic demo
+  data generator (`docs/examples/make_demo_data.py`) and a command-line
+  reference generated from the argument parsers.
 
 ### Fixed
 
@@ -166,4 +170,8 @@ These change numbers relative to 2.x.
   `qc`) use 125 for non-Nanopore chemistries while `call`/`apply` use 128.
 - `fiberhmm-tag-consensus` needs an assignment table that no shipped command
   produces; its format is documented in the command's help.
+- `fiberhmm-utils transfer` stops with `KeyError: 'total'` while estimating
+  emissions; use `fiberhmm-probs` with matched controls.
+- `fiberhmm-call --region-parallel` does not create a missing output
+  directory.
 - Legacy `.pickle` models execute code when loaded; load only trusted files.

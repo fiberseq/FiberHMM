@@ -1,4 +1,4 @@
-"""docs/reference.md's generated flag tables must match the argparse parsers.
+"""docs/reference/cli.md's generated flag tables must match the argparse parsers.
 
 Regenerate with ``python tools/gen_cli_reference.py`` after changing any
 command's options or help text.
@@ -53,5 +53,13 @@ def test_reference_flags_match_argparse(name):
         generator.generated_section(generator.REFERENCE.read_text()), name)
     fresh = "\n".join(generator.render_command(*command)) + "\n"
     assert documented.strip() == fresh.strip(), (
-        f"{name} options drifted from docs/reference.md; run "
+        f"{name} options drifted from docs/reference/cli.md; run "
         "python tools/gen_cli_reference.py")
+
+
+def test_whole_generated_reference_is_current():
+    """Every command's table (not only the main ones) matches ``--help``."""
+    generator = _generator()
+    documented = generator.generated_section(generator.REFERENCE.read_text())
+    assert documented == generator.render(), (
+        "docs/reference/cli.md is out of date; run python tools/gen_cli_reference.py")

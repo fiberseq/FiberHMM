@@ -55,7 +55,8 @@ nuc_recaller_collab/
 # Build artifacts
 dist/
 build/
-docs/fiberseq-site/
+# mkdocs build output
+/site/
 
 # Generated output
 probs/

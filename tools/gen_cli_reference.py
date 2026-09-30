@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Render every FiberHMM console script's argparse options into docs/reference.md.
+"""Render every FiberHMM console script's argparse options into docs/reference/cli.md.
 
-The flag tables in ``docs/reference.md`` (between the ``BEGIN``/``END
+The flag tables in ``docs/reference/cli.md`` (between the ``BEGIN``/``END
 GENERATED CLI REFERENCE`` markers) are generated from the parsers themselves,
-so they cannot drift from ``--help``:
+so they cannot drift from ``--help``. The page is part of the documentation
+site (``mkdocs.yml``):
 
     python tools/gen_cli_reference.py            # rewrite the generated section
     python tools/gen_cli_reference.py --check    # exit 1 if it is out of date
@@ -26,7 +27,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-REFERENCE = REPO_ROOT / "docs" / "reference.md"
+REFERENCE = REPO_ROOT / "docs" / "reference" / "cli.md"
 BEGIN = "<!-- BEGIN GENERATED CLI REFERENCE (tools/gen_cli_reference.py) -->"
 END = "<!-- END GENERATED CLI REFERENCE -->"
 
@@ -134,6 +135,10 @@ def _help(parser: argparse.ArgumentParser, action: argparse.Action) -> str:
     # BooleanOptionalAction appends "(default: True)" on some Python versions
     # only; the Default column already carries it.
     text = re.sub(r"\s*\(default: (True|False|None)\)$", "", text)
+    # Placeholders such as <BAM stem> would be read as HTML tags by Markdown.
+    text = text.replace("<", "&lt;").replace(">", "&gt;")
+    # ... and an underscore next to such a placeholder would open emphasis.
+    text = re.sub(r"(?<=&gt;)_|_(?=&lt;)", r"\\_", text)
     return text.replace("|", "\\|")
 
 
@@ -158,13 +163,13 @@ def _subparsers(parser: argparse.ArgumentParser):
 
 def render_command(name: str, module: str, function: str) -> list[str]:
     parser = capture_parser(module, function)
-    lines = [f"### {name}", ""]
+    lines = [f"## {name}", ""]
     rows = _table(parser)
     if len(rows) > 2:
         lines.extend(rows)
         lines.append("")
     for sub_name, sub_parser in _subparsers(parser):
-        lines.extend([f"#### {name} {sub_name}", ""])
+        lines.extend([f"### {name} {sub_name}", ""])
         sub_rows = _table(sub_parser)
         if len(sub_rows) > 2:
             lines.extend(sub_rows)
@@ -200,8 +205,8 @@ def generated_section(text: str) -> str:
 
 
 def command_section(section: str, name: str) -> str:
-    """The generated text for one command (its ### block up to the next ###)."""
-    match = re.search(rf"^### {re.escape(name)}\n.*?(?=^### |\Z|^{re.escape(END)})",
+    """The generated text for one command (its ## block up to the next ##)."""
+    match = re.search(rf"^## {re.escape(name)}\n.*?(?=^## |\Z|^{re.escape(END)})",
                       section, flags=re.S | re.M)
     return match.group(0) if match else ""
 
@@ -209,7 +214,7 @@ def command_section(section: str, name: str) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true",
-                        help="Exit 1 if docs/reference.md is out of date.")
+                        help="Exit 1 if docs/reference/cli.md is out of date.")
     args = parser.parse_args(argv)
     sys.path.insert(0, str(REPO_ROOT))
     text = REFERENCE.read_text()
@@ -217,7 +222,7 @@ def main(argv=None) -> int:
     fresh = render()
     if args.check:
         if current != fresh:
-            print("docs/reference.md CLI reference is out of date; run "
+            print("docs/reference/cli.md CLI reference is out of date; run "
                   "python tools/gen_cli_reference.py", file=sys.stderr)
             return 1
         return 0

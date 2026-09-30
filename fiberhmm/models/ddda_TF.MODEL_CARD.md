@@ -15,8 +15,10 @@ first-pass nucleosome HMM.
 - For each callable non-CpG cytosine opportunity, the scan accumulates either
   `log P(event|protected) - log P(event|accessible)` or
   `log P(no event|protected) - log P(no event|accessible)`.
-- The released DddA operating point is LLR >= 7 with at least three informative
-  opportunities. BAM quality is `TQ = min(255, round(10 * LLR))`.
+- DddA TF recall uses the interval cost shared by every preset,
+  `--min-llr 5.0` nats, with at least three informative opportunities (the
+  earlier DddA operating point was LLR >= 7). BAM quality is
+  `TQ = min(255, round(10 * LLR))`.
 - `TQ` is evidence under this exact model, not a posterior probability or a
   calibrated false-discovery rate.
 

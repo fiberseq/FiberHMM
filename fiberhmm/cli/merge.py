@@ -308,8 +308,9 @@ Examples:
     p.add_argument('--pairs-only', action='store_true',
                    help='Emit only consensus reads (default: also pass through unmerged reads)')
     p.add_argument('--recall', action='store_true',
-                   help='Re-call footprints on each both-strand consensus read (HMM '
-                        'layer over both strands; writes ns/nl/as/al + MA nuc./msp.). '
+                   help='Re-call footprints on each both-strand consensus read (HMM, '
+                        'nucleosome and TF recall over both strands; writes '
+                        'ns/nl/as/al + MA nuc/msp/tf). '
                         'Reads the deam+/deam- regime and uses C and G targets jointly.')
     p.add_argument('--enzyme', default='ddda', help='Model preset for --recall (default ddda)')
     p.add_argument('--phase-nrl', type=int, default=196,

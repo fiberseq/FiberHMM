@@ -341,8 +341,9 @@ Examples:
                              'molecule (default 0.95; the bimodal gap sits ~0.90-0.95). '
                              'Lower = more aggressive collapsing.')
     parser.add_argument('--flag-only', action='store_true',
-                        help='Keep all reads and only mark duplicates (set the 0x400 '
-                             'duplicate flag + di/ds tags on non-representatives). '
+                        help='Keep all reads and only mark duplicates: set the 0x400 '
+                             'duplicate flag on non-representatives and di/ds cluster '
+                             'tags on every member of a duplicate cluster. '
                              'Default: collapse each cluster to one representative read.')
     parser.add_argument('--min-deam', type=int, default=10,
                         help='Reads with fewer than this many deamination calls are '

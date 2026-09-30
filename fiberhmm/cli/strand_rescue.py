@@ -1406,7 +1406,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.skip_nuc_edge_refinement and (
         args.nuc_site or args.forced_nuc_sites_only
     ):
-        parser.error("--skip-nuc-edge-refinement cannot be combined with nuc sites")
+        parser.error("--nuc-site/--forced-nuc-sites-only need "
+                     "--independent-nuc-edge-refinement (nucleosome edge "
+                     "normalization is off by default)")
     if args.min_support < 1:
         parser.error("--min-support must be positive")
     if args.minimum_geometry_support < 1:

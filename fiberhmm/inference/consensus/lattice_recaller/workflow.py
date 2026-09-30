@@ -4,7 +4,7 @@ Outputs (output_dir): evidence.json.gz, manifest.json, result.json.gz (browser s
 per-call records, plus a 'recaller' block per class), classes.tsv (one row per class x channel, including channels
 that could not score the class), molecules.tsv.gz (one row per class x channel x scored molecule), broader.tsv.gz
 (molecules best explained by protection wider than a group's classes) and the standard report (families.tsv,
-calls.tsv, report.html). Columns are documented in docs/CONSENSUS_WORKFLOW.md.
+calls.tsv, report.html). Columns are documented in docs/reference/consensus-outputs.md.
 """
 from __future__ import annotations
 

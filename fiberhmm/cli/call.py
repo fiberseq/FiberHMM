@@ -104,9 +104,9 @@ def parse_args():
     p.add_argument('--reference', default=None,
                    help='Reference FASTA for DAF-seq BAMs that lack '
                         'both R/Y IUPAC encoding and MD tags. When present, acts '
-                        'as a fallback source for deamination-site detection. '
-                        'Required and always used by --ddda-mcg to determine '
-                        'CpG and DddA sequence context.')
+                        'as a fallback source for deamination-site detection '
+                        '(R/Y codes and a usable MD tag take precedence). Must '
+                        'match the BAM\'s assembly and be faidx-indexed.')
 
     # --- Apply params ---
     add_legacy_mode_override(p)

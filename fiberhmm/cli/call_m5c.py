@@ -54,14 +54,21 @@ def parse_args(argv=None):
         "--enzyme", required=True, choices=("ddda",),
         help="Required chemistry assertion. Only DddA DAF-seq is supported.",
     )
-    parser.add_argument("--window", type=int, default=1000)
+    parser.add_argument("--window", type=int, default=1000,
+                        help="Aggregate window size in bp (default 1000).")
     parser.add_argument("--chunk-bp", type=int, default=5_000_000,
                         help="Bound observation collection in this many bp; "
                              "the HMM still runs once across the complete region")
-    parser.add_argument("--min-other", type=int, default=10)
-    parser.add_argument("--min-cpg", type=int, default=10)
-    parser.add_argument("--posterior", type=float, default=0.99)
-    parser.add_argument("--max-gap", type=int, default=1000)
+    parser.add_argument("--min-other", type=int, default=10,
+                        help="Minimum non-CpG observations for a molecule's per-window "
+                             "baseline (default 10).")
+    parser.add_argument("--min-cpg", type=int, default=10,
+                        help="Minimum CpG observations for an informative window (default 10).")
+    parser.add_argument("--posterior", type=float, default=0.99,
+                        help="Window posterior needed to join a called domain (default 0.99).")
+    parser.add_argument("--max-gap", type=int, default=1000,
+                        help="Maximum gap in bp bridged between called windows of the "
+                             "same state (default 1000).")
     parser.add_argument("--five-prime-factors", default=None,
                         help="Comma-separated A,C,G,T factors; default calibrated DddA values")
     parser.add_argument("--estimate-factors", action="store_true",
@@ -85,7 +92,8 @@ def parse_args(argv=None):
     parser.add_argument("--tag-input-frame", choices=("auto", "molecular", "query"),
                         default="auto",
                         help="Frame of tag-BAM legacy ns/nl when MA is absent")
-    parser.add_argument("--io-threads", type=int, default=4)
+    parser.add_argument("--io-threads", type=int, default=4,
+                        help="htslib BAM threads (default 4).")
     return parser.parse_args(argv)
 
 
