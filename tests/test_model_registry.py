@@ -80,8 +80,28 @@ def test_ddda_nuc_refinement_model_is_separately_frozen():
     # TF calibration may change ddda_TF.json without changing this contract.
     assert json.loads(nuc_model.read_text())["mode"] == "daf"
     assert hashlib.sha256(nuc_model.read_bytes()).hexdigest() == (
-        "5e1f29ba6abbf7c1909f2566efbd4c3f82cf4ecf4aa5de2c96f0a51b48e85bfb"
+        "deca9e3e0e99e17fa5734389e1a27a94a734ce9df49481d6e3ff2590ccc05af6"
     )
+
+
+def test_ddda_nuc_refinement_model_is_context_independent():
+    """Radial-nucleosome likelihoods carry one hit probability per state (2026-09-29).
+
+    The previous table's per-context pattern did not track SsDddA context rates;
+    the flat table keeps its state means and its transitions.
+    """
+    import numpy as np
+    from fiberhmm.core.model_io import load_model_with_metadata
+    from fiberhmm.inference.tf_recaller import build_conditional_hit_tables
+
+    nuc_model = Path(get_model_path("ddda", tool="nuc_refine"))
+    protected, accessible = build_conditional_hit_tables(load_model_with_metadata(str(nuc_model))[0])
+    assert np.ptp(protected) < 1e-12 and np.ptp(accessible) < 1e-12
+    assert protected[0] == pytest.approx(1.907e-6, rel=1e-3)
+    assert accessible[0] == pytest.approx(0.6370, abs=1e-4)
+    legacy = nuc_model.parent / "legacy" / "ddda_nuc_refine_context_v2.6.json"
+    new, old = json.loads(nuc_model.read_text()), json.loads(legacy.read_text())
+    assert new["transmat"] == old["transmat"] and new["startprob"] == old["startprob"]
 
 
 def test_ddda_tf_model_is_physical_duplex_calibrated_release_artifact():

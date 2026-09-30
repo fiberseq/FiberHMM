@@ -300,7 +300,8 @@ the automatic dedup pre-pass (or use `--no-dedup`).
 - **Independent state models** — `ddda_nuc.json` drives the first-pass
   nucleosome HMM; `ddda_TF.json` contains physical-duplex-calibrated TF
   emissions; and the internal `ddda_nuc_refine.json` freezes the likelihoods
-  used by radial nucleosome refinement. Updating TF calibration therefore does
+  used by radial nucleosome refinement (one hit probability per state; sequence
+  context enters through the rotational profile, not the table). Updating TF calibration therefore does
   not silently retune the HMM or radial nucleosome caller. (For QC you can run
   the stages separately: `fiberhmm-apply --enzyme ddda` followed by
   `fiberhmm-recall-tfs --enzyme ddda`.)
@@ -924,7 +925,7 @@ still expose mode where it is an actual input to model construction.
 | `hia5_nanopore.json` | `hia5` | `nanopore` | `nanopore-fiber` | apply / recall-tfs |
 | `ddda_nuc.json` | `ddda` | — | `daf` | apply — **nucleosomes only** |
 | `ddda_TF.json` | `ddda` | — | `daf` | recall-tfs — **required 2nd pass** |
-| `ddda_nuc_refine.json` | `ddda` | — | `daf` | internal radial-nucleosome likelihood snapshot |
+| `ddda_nuc_refine.json` | `ddda` | — | `daf` | internal radial-nucleosome likelihoods (context-independent) |
 | `dddb_nanopore.json` | `dddb` | — | `daf` | apply / recall-tfs |
 
 For DddA, `fiberhmm-call --enzyme ddda` runs both models in one pass. Hia5 and
