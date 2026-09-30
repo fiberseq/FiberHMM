@@ -195,18 +195,22 @@ def test_reference_conflict_keeps_the_majority_md_base(hard_dataset):
 
 
 def test_reference_conflict_tie_keeps_c():
-    def stats(expected, opposite):
-        return Counter({"expected_depth": expected, "opposite_depth": opposite})
+    def stats(expected, opposite, other=0):
+        counter = Counter({"expected_depth": expected, "opposite_depth": opposite})
+        if other:
+            counter["other_reference_depth"] = other
+        return counter
 
     site_stats = {
-        ("x", 5, "C"): stats(3, 1), ("x", 5, "G"): stats(2, 2),   # tie -> C
-        ("x", 9, "C"): stats(1, 1), ("x", 9, "G"): stats(2, 1),   # G majority
-        ("y", 2, "G"): stats(4, 0),                               # C unseen
+        ("x", 5, "C"): stats(3, 1, 4), ("x", 5, "G"): stats(2, 2, 4),   # tie -> C
+        ("x", 9, "C"): stats(1, 1, 3), ("x", 9, "G"): stats(2, 1, 2),   # G majority
+        ("y", 2, "G"): stats(4, 0, 1),        # C never profiled, G majority
+        ("y", 3, "C"): stats(1, 0, 6),        # G never profiled, G majority
+        ("y", 4, "C"): stats(7, 0),           # undisputed
     }
-    conflicted = {"x": {5: ("G", "A", "GA"), 9: ("G", "A", "GA")},
-                  "y": {2: ("G", "A", "GA")}}
-    assert snps._resolve_reference_conflicts(conflicted, site_stats) == {
-        ("x", 5, "G"), ("x", 9, "C"), ("y", 2, "C")}
+    rejected, disputed = snps._resolve_reference_conflicts(site_stats)
+    assert rejected == {("x", 5, "G"), ("x", 9, "C"), ("y", 3, "C")}
+    assert disputed == 4
 
 
 def test_snp_screen_is_independent_of_read_order(hard_dataset, tmp_path):
@@ -357,9 +361,11 @@ def test_md_deletion_over_an_insertion_is_never_used(tmp_path):
 
 # --- C/G conflicts decided by the reads ---------------------------------------
 
-def _conflict_bam(path, c_claims, g_claims):
+def _conflict_bam(path, c_claims, g_claims, c_alt=True):
     """Reads over a 100 bp contig; site 60's MD base is C on ``c_claims``
-    reads and G on ``g_claims`` reads (each split evenly CT/GA-dominant)."""
+    reads and G on ``g_claims`` reads (each split evenly CT/GA-dominant).
+    The claimed base reads as its deamination/SNP allele (T or A), except
+    on C-claim reads with ``c_alt=False``, which read C (no candidate)."""
     reference = "C" * 30 + "G" * 30 + "A" * 40
     header = pysam.AlignmentHeader.from_dict({"SQ": [{"SN": "p", "LN": 100}]})
     with pysam.AlignmentFile(str(path), "wb", header=header) as out:
@@ -372,7 +378,7 @@ def _conflict_bam(path, c_claims, g_claims):
                     query[0:10] = "T" * 10          # C->T dominant
                 else:
                     query[30:40] = "A" * 10         # G->A dominant
-                query[60] = "T" if claim == "C" else "A"
+                query[60] = ("T" if c_alt else "C") if claim == "C" else "A"
                 fields, matches = [], 0
                 for ref_base, query_base in zip(claimed, query):
                     if ref_base == query_base:
@@ -408,5 +414,24 @@ def test_reference_conflict_keeps_the_base_most_reads_report(tmp_path, c_claims,
              + row["opposite_direction_depth"]) for row in rows] == [(kept, depth)]
     calls = [call for call in payload["calls"] if call["position_0based"] == 60]
     assert [call["reference"] for call in calls] == [kept]
+    expected = oracle.call_opposite_conversion_snps(str(bam), **kwargs)
+    assert json.dumps(payload, sort_keys=True) == json.dumps(expected, sort_keys=True)
+
+
+@pytest.mark.parametrize("cap", [0, 1, 20, 5000])
+def test_reference_majority_does_not_depend_on_profile_sampling(tmp_path, cap):
+    """Codex round-14 HIGH 4: 20 fibers report C (no mismatch, so C is never
+    a candidate) and 10 report G with G->A. With a small profile cap the C
+    hypothesis was never profiled, so the minority G>A was called."""
+    import daf_mismatch_reference as oracle
+
+    bam = _conflict_bam(tmp_path / "conflict.bam", 20, 10, c_alt=False)
+    kwargs = dict(max_profile_sites=cap, min_depth=5, min_alt_fibers=5,
+                  min_amplicon_reads=1)
+    payload = snps.call_opposite_conversion_snps(str(bam), **kwargs)
+    assert [call for call in payload["calls"] if call["position_0based"] == 60] == []
+    assert payload["accounting"]["reference_base_conflict_sites"] == 1
+    assert all(row["reference"] == "C" for row in payload["site_distribution"]
+               if row["position_0based"] == 60)
     expected = oracle.call_opposite_conversion_snps(str(bam), **kwargs)
     assert json.dumps(payload, sort_keys=True) == json.dumps(expected, sort_keys=True)

@@ -453,7 +453,11 @@ class _SiteAccumulator:
             [_base_code(reference) for reference in self.references], dtype=np.int64
         )
         self.site_is_c = self.reference_codes == BASE_C
+        # The other C/G base: reads whose MD reports it here vote against
+        # this site's reference base (_resolve_reference_conflicts).
+        self.other_codes = np.where(self.site_is_c, BASE_G, BASE_C)
         size = self.positions.size
+        self.other_depth = np.zeros(size, dtype=np.int64)
         self.expected_depth = np.zeros(size, dtype=np.int64)
         self.expected_mismatches = np.zeros(size, dtype=np.int64)
         self.opposite_depth = np.zeros(size, dtype=np.int64)
@@ -485,7 +489,11 @@ class _SiteAccumulator:
 
     def add_read(self, direction: str, rpos, ref_codes, query_codes) -> None:
         index = self._site_index(rpos)
-        hit = (self.positions[index] == rpos) & (self.reference_codes[index] == ref_codes)
+        at_site = self.positions[index] == rpos
+        other = at_site & (self.other_codes[index] == ref_codes)
+        if other.any():
+            self.other_depth[index[other]] += 1
+        hit = at_site & (self.reference_codes[index] == ref_codes)
         if not hit.any():
             return
         sites = index[hit]
@@ -509,7 +517,7 @@ class _SiteAccumulator:
     def export(self, chrom: str, site_stats) -> None:
         touched = np.flatnonzero((self.expected_depth + self.opposite_depth) > 0)
         for site in touched.tolist():
-            site_stats[(chrom, int(self.positions[site]), self.references[site])] = Counter(
+            stats = Counter(
                 {
                     "expected_depth": int(self.expected_depth[site]),
                     "expected_mismatches": int(self.expected_mismatches[site]),
@@ -517,6 +525,9 @@ class _SiteAccumulator:
                     "opposite_mismatches": int(self.opposite_mismatches[site]),
                 }
             )
+            if self.other_depth[site]:
+                stats["other_reference_depth"] = int(self.other_depth[site])
+            site_stats[(chrom, int(self.positions[site]), self.references[site])] = stats
 
 
 def _dominant_direction(
@@ -535,29 +546,31 @@ def _dominant_direction(
     return None
 
 
-def _resolve_reference_conflicts(conflicted_by_chrom, site_stats) -> set:
-    """Pick one reference base where reads' MD tags disagree (C vs G).
+def _resolve_reference_conflicts(site_stats) -> tuple[set, int]:
+    """Keep a site's reference base only where most reads report it.
 
-    For each position profiled under both hypotheses, the base reported by
-    more of the screen's dominant-direction fibers (expected + opposite
-    depth, pass 2) is kept; a tie keeps C, the earlier base in A<C<G<T
-    order. Returns the rejected ``(chrom, position, reference)`` keys, which
-    are then neither called nor profiled. The result depends only on the
-    reads, not on set/dict iteration order or ``PYTHONHASHSEED``.
+    A profiled site ``(chrom, position, base)`` has ``expected + opposite``
+    depth from the dominant-direction fibers whose MD reports ``base`` there,
+    and ``other_reference_depth`` from those reporting the other C/G base. It
+    is rejected (neither called nor profiled) when the other base has more
+    fibers, or as many and ``base`` is G: a tie keeps C, the earlier base in
+    A<C<G<T order. Both counts come from every classified fiber covering the
+    site, whichever hypotheses were sampled for the profile or passed the
+    candidate threshold, so the choice depends only on the reads. Returns
+    the rejected keys and the number of positions where both bases occur.
     """
     rejected = set()
-    for chrom in sorted(conflicted_by_chrom):
-        for position in sorted(conflicted_by_chrom[chrom]):
-            depths = {}
-            for reference in ("C", "G"):
-                stats = site_stats.get((chrom, position, reference)) or {}
-                depths[reference] = (
-                    int(stats.get("expected_depth", 0))
-                    + int(stats.get("opposite_depth", 0))
-                )
-            loser = "G" if depths["C"] >= depths["G"] else "C"
-            rejected.add((chrom, position, loser))
-    return rejected
+    disputed = set()
+    for key in sorted(site_stats):
+        stats = site_stats[key]
+        other = int(stats.get("other_reference_depth", 0))
+        if not other:
+            continue
+        own = int(stats.get("expected_depth", 0)) + int(stats.get("opposite_depth", 0))
+        disputed.add(key[:2])
+        if other > own or (other == own and key[2] == "G"):
+            rejected.add(key)
+    return rejected, len(disputed)
 
 
 def call_opposite_conversion_snps(
@@ -679,9 +692,9 @@ def call_opposite_conversion_snps(
             profiled_sites.add((chrom, position, reference))
         # Reads whose MD tags disagree about a position's reference base can
         # put it in the profile as both C and G. Each hypothesis is counted
-        # separately (the second in its own accumulator) and resolved after
-        # pass 2 by _resolve_reference_conflicts; sorted order puts the C
-        # hypothesis in the primary map.
+        # separately (the second in its own accumulator; sorted order puts C
+        # in the primary map), every site also counts the fibers reporting
+        # the other base, and _resolve_reference_conflicts keeps the majority.
         profiled_by_chrom = defaultdict(dict)
         conflicted_by_chrom = defaultdict(dict)
         for chrom, position, reference in sorted(profiled_sites):
@@ -767,10 +780,10 @@ def call_opposite_conversion_snps(
         if reference_handle is not None:
             reference_handle.close()
 
-    rejected_sites = _resolve_reference_conflicts(conflicted_by_chrom, site_stats)
-    if rejected_sites:
-        accounting["reference_base_conflict_sites"] += len(rejected_sites)
-        profiled_sites -= rejected_sites
+    rejected_sites, disputed_positions = _resolve_reference_conflicts(site_stats)
+    if disputed_positions:
+        accounting["reference_base_conflict_sites"] += disputed_positions
+    profiled_sites -= rejected_sites
 
     calls = []
     for key, alt_fibers in sorted(candidates.items()):

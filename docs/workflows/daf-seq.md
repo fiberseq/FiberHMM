@@ -134,7 +134,8 @@ Reference bases come from each read's `MD` tag; the reference FASTA
 `MD` does not match its CIGAR is read against the FASTA, or skipped without
 one. If reads' `MD` tags disagree about a site's base (C in some, G in
 others), the base reported by more C→T- or G→A-dominant reads is kept (a tie
-keeps C) and the JSON counts such sites under
+keeps C), independent of the background site sample and of the thresholds,
+and the JSON counts such sites under
 `accounting.reference_base_conflict_sites`. The same input gives
 byte-identical outputs on every run.
 

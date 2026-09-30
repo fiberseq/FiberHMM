@@ -238,8 +238,9 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   `MD` does not match the CIGAR now use the FASTA, or are skipped without one,
   as encoding and dedup already did; QC does the same. Where reads' `MD` tags
   disagree about a site's base (C in some, G in others), the kept base was
-  chosen by hash order; it is now the base reported by more classified reads
-  (a tie keeps C), and the report counts such sites. An `MD` whose deletion
+  chosen by hash order, or by which sites the background profile happened
+  to sample; it is now the base reported by more classified reads at every
+  site (a tie keeps C), and the report counts such sites. An `MD` whose deletion
   run covers a CIGAR insertion is treated the same way. `fiberhmm-pair`'s
   sequence signature (without a FASTA) and `fiberhmm-pipeline`'s check of
   aligned input against the reference never read such an `MD` either (the

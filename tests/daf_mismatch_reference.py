@@ -19,10 +19,12 @@ nondeterministic, so it cannot be frozen):
   the dedup MD branch) also rejects an MD of the right length whose ``^`` run
   covers a CIGAR insertion; ``pysam_md_walk_ends_short`` replays pysam's
   walk to detect it.
-* A position profiled as both C and G (reads' MD tags disagree) used to keep
-  whichever hypothesis set iteration visited last (``PYTHONHASHSEED``
-  dependent). Both are now counted and the one with more dominant-direction
-  fibers (expected + opposite depth) is kept; a tie keeps C.
+* Where reads' MD tags disagree about a position's base (C vs G), a
+  position profiled as both used to keep whichever hypothesis set iteration
+  visited last (``PYTHONHASHSEED`` dependent). Every profiled site now keeps
+  its base only if at least as many dominant-direction fibers report it as
+  report the other C/G base (a tie keeps C), whether or not the other base
+  was profiled; both hypotheses are counted where both are.
 """
 from __future__ import annotations
 
@@ -346,6 +348,7 @@ def call_opposite_conversion_snps(
             ))
 
         site_stats: dict[tuple[str, int, str], Counter] = defaultdict(Counter)
+        base_votes: dict[tuple[str, int], Counter] = defaultdict(Counter)
         amplicon_groups = _discover_amplicon_groups(
             amplicon_bins, min_amplicon_reads
         )
@@ -394,9 +397,15 @@ def call_opposite_conversion_snps(
                 if direction is None:
                     continue
                 seen = set()
+                voted = set()
                 for _query_position, position, reference_base, query_base in pairs:
                     hypotheses = chrom_sites.get(position)
-                    if hypotheses is None or position in seen:
+                    if hypotheses is None:
+                        continue
+                    if reference_base in ("C", "G") and (position, reference_base) not in voted:
+                        voted.add((position, reference_base))
+                        base_votes[(read.reference_name, position)][reference_base] += 1
+                    if position in seen:
                         continue
                     site = next((h for h in hypotheses if h[0] == reference_base), None)
                     if site is None:
@@ -416,19 +425,17 @@ def call_opposite_conversion_snps(
             reference_handle.close()
 
     rejected = set()
-    for chrom, chrom_sites in profiled_by_chrom.items():
-        for position, hypotheses in chrom_sites.items():
-            if len(hypotheses) < 2:
-                continue
-            depth = {
-                reference: site_stats[(chrom, position, reference)]["expected_depth"]
-                + site_stats[(chrom, position, reference)]["opposite_depth"]
-                for reference, _alternate, _direction in hypotheses
-            }
-            rejected.add((chrom, position, "G" if depth["C"] >= depth["G"] else "C"))
-    if rejected:
-        accounting["reference_base_conflict_sites"] += len(rejected)
-        profiled_sites -= rejected
+    disputed = set()
+    for chrom, position, reference in profiled_sites:
+        votes = base_votes.get((chrom, position), Counter())
+        own, other = votes[reference], votes["G" if reference == "C" else "C"]
+        if own and other:
+            disputed.add((chrom, position))
+        if other > own or (other == own and other and reference == "G"):
+            rejected.add((chrom, position, reference))
+    if disputed:
+        accounting["reference_base_conflict_sites"] += len(disputed)
+    profiled_sites -= rejected
 
     calls = []
     for key, alt_fibers in sorted(candidates.items()):
