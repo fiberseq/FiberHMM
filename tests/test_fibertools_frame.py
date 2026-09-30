@@ -154,13 +154,6 @@ def test_fibertools_ma_parses_with_the_ma_parser():
     assert rev['nuc'][0] == (391, 155)
 
 
-def test_fiberhmm_ma_wins_over_fibertools_ma():
-    with pysam.AlignmentFile(str(FX / 'fiberhmm3.0.0_call.bam')) as bam:
-        read = next(iter(bam))
-    assert annotation_tags(read)[3] == 'MA'
-    assert fibertools_ma_intervals(read) is None
-
-
 # --------------------------------------------------------------------------- #
 #  recall-tfs / recall-nucs on fibertools and FiberHMM BAMs                      #
 # --------------------------------------------------------------------------- #
@@ -402,18 +395,20 @@ def test_dedup_run_records_molecular_for_fibertools_input(tmp_path):
         assert legacy_tag_frame(bam.header)[0] == 'molecular'
 
 
-@pytest.mark.parametrize('frame_arg, expected', [
-    ('auto', 'coord=molecular'),       # the fixture's fibertools provenance
-    ('molecular', 'coord=molecular'),
-    ('query', 'coord=seq'),            # the user's explicit choice is what was assumed
+@pytest.mark.parametrize('frame_arg, expected, used', [
+    ('auto', 'coord=molecular', True),     # the fixture's fibertools provenance
+    ('molecular', 'coord=molecular', True),
+    ('query', 'coord=seq', False),         # the user's explicit choice is what was assumed
 ])
-def test_tag_m5c_records_the_frame_it_carried(monkeypatch, tmp_path, frame_arg, expected):
+def test_tag_m5c_records_the_frame_it_carried(monkeypatch, tmp_path, frame_arg, expected, used):
+    """The recorded frame is the one the tool actually used on the tags."""
     import fiberhmm.cli.tag_m5c as tag_m5c
 
     captured = {}
 
     def fake_annotate(*args, header_record=None, **kwargs):
         captured['record'] = header_record
+        captured['frame'] = kwargs['input_molecular_frame']
         return {}
 
     monkeypatch.setattr(tag_m5c, '_preflight_input', lambda path: None)
@@ -422,6 +417,7 @@ def test_tag_m5c_records_the_frame_it_carried(monkeypatch, tmp_path, frame_arg, 
                   '-r', str(tmp_path / 'ref.fa'), '--enzyme', 'ddda',
                   '--input-frame', frame_arg])
     assert expected in captured['record']['DS']
+    assert captured['frame'] is used
 
 
 @pytest.mark.parametrize('header, expected', [
@@ -446,3 +442,65 @@ def test_consensus_disabled_frame_resolves_only_from_fibertools(header, expected
     from fiberhmm.io.annotation_frame import resolve_disabled_legacy_frame
     resolved = resolve_disabled_legacy_frame(header)
     assert (resolved[0] if resolved else None) == expected
+
+
+def test_recall_runs_ma_only_input_without_provenance(tmp_path):
+    """fibertools 0.13 Ma is molecular by definition, so a lost @PG history
+    does not block recall of Ma-only reads (only ns/nl/as/al need the frame)."""
+    stripped = tmp_path / 'ma_noprov.bam'
+    with pysam.AlignmentFile(str(FX / 'ft0.13_addnuc_fire.bam')) as bam:
+        header = bam.header.to_dict()
+        header.pop('PG', None)
+        with pysam.AlignmentFile(str(stripped), 'wb', header=header) as out:
+            for read in bam:
+                out.write(read)
+    pysam.index(str(stripped))
+    out = tmp_path / 'o.bam'
+    env = dict(os.environ)
+    env['PYTHONPATH'] = os.pathsep.join(filter(None, [str(REPO), env.get('PYTHONPATH')]))
+    proc = subprocess.run(
+        [sys.executable, '-m', 'fiberhmm.cli.recall_tfs', '-i', str(stripped), '-o', str(out),
+         '--enzyme', 'hia5', '--seq', 'pacbio', '-c', '1'], capture_output=True, text=True, env=env)
+    assert proc.returncode == 0, proc.stderr
+    with pysam.AlignmentFile(str(out)) as bam:
+        got = {r.query_name: _reference_nucs(r) for r in bam}
+    assert got == EXPECTED['fixtures']['ft0.13_addnuc_fire.bam']['nuc']
+
+
+def test_fiberhmm_ma_wins_when_a_read_carries_both():
+    """A read with FiberHMM MA and a stale fibertools Ma: every reader uses MA."""
+    from array import array
+    from fiberhmm.cli.extract_tags import _parse_all_ma_annotations
+    with pysam.AlignmentFile(str(FX / 'ft0.13_addnuc_fire.bam')) as bam:
+        read = next(r for r in bam if r.query_name == 'read_rev')
+    read.set_tag('MA', '8000;nuc.Q:101-150')
+    read.set_tag('AQ', array('B', [77]))
+    assert annotation_tags(read)[3] == 'MA'
+    assert fibertools_ma_intervals(read) is None
+    parsed = _parse_all_ma_annotations(read, annotation_frame='molecular')
+    assert [(a['start'], a['length'], a['quals']) for a in parsed['nuc']] == [(8000 - 250, 150, [77])]
+    assert 'fire' not in parsed and 'msp' not in parsed
+    from fiberhmm.inference.legacy_annotations import legacy_annotations
+    assert legacy_annotations(read, 'molecular') is None
+
+
+def test_consensus_export_keeps_fibertools_ma_under_family_layers():
+    """Exporting family layers onto a fibertools 0.13 read copies its Ma
+    nucleosomes/MSPs/FIRE into the new MA (MA wins over Ma, so they would
+    otherwise vanish), and a fibertools source's export declares molecular."""
+    from fiberhmm.cli.extract_tags import _parse_all_ma_annotations
+    from fiberhmm.inference.consensus.bam_export import (
+        _append_annotations, _declare_fibertools_frame)
+    with pysam.AlignmentFile(str(FX / 'ft0.13_addnuc_fire.bam')) as bam:
+        header = bam.header
+        read = next(r for r in bam if r.query_name == 'read_rev')
+    rows = [dict(chrom='chrT', interval=[100, 120], layer='fam', token='t1', tq=50, fi=1, op=2)]
+    assert _append_annotations(read, rows) == 1
+    parsed = _parse_all_ma_annotations(read, annotation_frame='molecular')
+    assert len(parsed['nuc']) == 25 and len(parsed['msp']) == 24 and len(parsed['fire']) == 7
+    fam = parsed['fam'][0]
+    assert (fam['start'], fam['start'] + fam['length']) == (100, 120)  # 8000M at 0: query == reference
+    assert [a['start'] for a in parsed['nuc']][:1] == [8000 - 392 - 154]
+    assert 'coord=molecular' in str(_declare_fibertools_frame(header))
+    with pysam.AlignmentFile(str(FX / 'fiberhmm3.0.0_call.bam')) as bam:
+        assert str(_declare_fibertools_frame(bam.header)) == str(bam.header)

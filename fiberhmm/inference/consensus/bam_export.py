@@ -16,8 +16,8 @@ import tempfile
 
 import pysam
 
-from ...io.bam_header import append_ma_types, append_pg_record
-from ...io.ma_tags import parse_ma_tag, parse_an_tag, format_an_tag, llr_to_tq
+from ...io.bam_header import append_coord_marker, append_ma_types, append_pg_record
+from ...io.ma_tags import annotation_tags, parse_ma_tag, parse_an_tag, format_an_tag, llr_to_tq
 from ..tf_family_ids import allocate_repeating_family_ids, TFFamilyInterval
 from .artifacts import digest, write_json
 from .native_presentation import Q0_SEMANTICS
@@ -227,16 +227,31 @@ def _project_to_molecule(read, interval, molecule_length, tolerant=False):
     return (molecule_length-hi,hi-lo) if read.is_reverse else (lo,hi-lo)
 
 
+def _declare_fibertools_frame(header):
+    """Mark a fibertools source's export molecular: family layers are written in
+    molecular frame, and so are fibertools' Ma annotations copied into MA
+    (see _append_annotations) and its ns/nl/as/al. FiberHMM-called sources
+    already declare coord=molecular; unmarked FiberHMM <= 2.12 sources are
+    left as they were."""
+    from ...io.annotation_frame import legacy_tag_frame, ma_annotation_frame
+    if ma_annotation_frame(header)!='molecular' and legacy_tag_frame(header)[0]=='molecular':
+        return append_coord_marker(header)
+    return header
+
+
 def _append_annotations(read, rows):
-    old=read.get_tag('MA') if read.has_tag('MA') else str(read.query_length)
+    # A fibertools (>= 0.13) read keeps its footprints in Ma/Aq/An; they seed
+    # the new MA so the family layers do not hide them (MA wins over Ma).
+    source=annotation_tags(read)
+    old,old_aq,old_an,_=source if source is not None else (str(read.query_length),None,None,None)
     parsed=parse_ma_tag(old);types=parsed['raw_types']
     if any(name in {r['layer'] for r in rows} for name,_,_,_ in types):
         raise ValueError('Source already contains the target family layer; use the original source BAM')
-    aq=list(read.get_tag('AQ')) if read.has_tag('AQ') else []
+    aq=list(old_aq) if old_aq is not None else []
     expected=sum(len(q)*len(iv) for _,_,q,iv in types)
     if len(aq)!=expected: raise ValueError('Source MA/AQ length mismatch')
     count=sum(len(iv) for _,_,_,iv in types)
-    names=parse_an_tag(read.get_tag('AN')) if read.has_tag('AN') else ['']*count
+    names=parse_an_tag(str(old_an)) if old_an is not None else ['']*count
     if len(names)!=count: raise ValueError('Source MA/AN length mismatch')
     # Preserve an existing native TQ when no replay score was available.
     native_tq={};cursor=0
@@ -382,7 +397,7 @@ def _export_source_bams(analyses, output_dir, scope):
         try:
             with pysam.AlignmentFile(str(source),'rb') as bam:
                 layers=sorted({f['layer'] for f in families})
-                header=append_ma_types(bam.header,layers)
+                header=append_ma_types(_declare_fibertools_frame(bam.header),layers)
                 hd=header.to_dict();old_comments=list(hd.get('CO',[]))
                 owned_layers=set()
                 for comment in old_comments:

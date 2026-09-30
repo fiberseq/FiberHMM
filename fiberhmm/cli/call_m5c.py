@@ -264,12 +264,22 @@ def main(argv=None):
     if args.tag_bam:
         import fiberhmm
         from fiberhmm.io.annotation_frame import append_coord_to_ds, pass_through_frame
+        from fiberhmm.io.annotation_frame import MOLECULAR, legacy_tag_frame
+        tag_input_frame = {
+            "auto": None, "molecular": True, "query": False,
+        }[args.tag_input_frame]
         carried_frame = None  # stdin cannot be read twice: leave it unrecorded
         if args.tag_bam != "-":
             with pysam.AlignmentFile(args.tag_bam, check_sq=False) as source:
+                if tag_input_frame is None:
+                    # auto: the shared provenance rule; an undecided header
+                    # keeps the coord=molecular-marker fallback in daf.m5c.
+                    resolved = legacy_tag_frame(source.header)[0]
+                    if resolved is not None:
+                        tag_input_frame = resolved == MOLECULAR
                 carried_frame = pass_through_frame(
                     source.header,
-                    args.tag_input_frame if args.tag_mode != "locus" else None)
+                    tag_input_frame if args.tag_mode != "locus" else None)
         header_record = {
             "PN": "fiberhmm-call-m5c",
             "VN": getattr(fiberhmm, "__version__", "unknown"),
@@ -293,9 +303,7 @@ def main(argv=None):
                 posterior_threshold=args.read_posterior,
                 min_other=args.min_other,
                 min_cpg=args.read_min_island_cpg,
-                input_molecular_frame={
-                    "auto": None, "molecular": True, "query": False,
-                }[args.tag_input_frame],
+                input_molecular_frame=tag_input_frame,
                 threads=args.io_threads,
                 header_record=header_record,
                 used_islands_bed=args.write_cpg_islands,

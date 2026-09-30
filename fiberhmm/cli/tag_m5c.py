@@ -177,6 +177,17 @@ def main(argv=None):
         "auto": None, "molecular": True, "query": False,
     }[args.input_frame]
     _preflight_input(args.input)
+    import pysam
+    from fiberhmm.io.annotation_frame import (
+        MOLECULAR, append_coord_to_ds, legacy_tag_frame, pass_through_frame)
+    with pysam.AlignmentFile(args.input, check_sq=False) as source:
+        input_header = source.header.to_dict()
+    if input_molecular_frame is None:
+        # auto: the shared provenance rule; an undecided header keeps the
+        # historical fallback (the coord=molecular marker, else query frame).
+        resolved = legacy_tag_frame(input_header)[0]
+        if resolved is not None:
+            input_molecular_frame = resolved == MOLECULAR
     if args.estimate_factors and args.five_prime_factors:
         raise SystemExit("use either --estimate-factors or --five-prime-factors, not both")
     if args.estimate_factors:
@@ -204,10 +215,7 @@ def main(argv=None):
         f"island_min_oe={args.cpg_island_min_oe}; "
         f"min_other={args.min_other} min_island_cpg={args.min_island_cpg} "
     )
-    import pysam
-    from fiberhmm.io.annotation_frame import append_coord_to_ds, pass_through_frame
-    with pysam.AlignmentFile(args.input, check_sq=False) as source:
-        carried_frame = pass_through_frame(source.header, input_molecular_frame)
+    carried_frame = pass_through_frame(input_header, input_molecular_frame)
     header_record = {
         "PN": "fiberhmm-tag-m5c",
         "VN": getattr(fiberhmm, "__version__", "unknown"),

@@ -56,8 +56,9 @@ frame, they add nothing.
 An unknown frame is not guessed. Output of FiberHMM 2.12 or earlier (no
 FiberHMM `@PG`, query frame) looks the same as a fibertools BAM whose `@PG`
 history was lost (molecular frame). In that case `fiberhmm-recall-tfs` and
-`-recall-nucs` stop and ask for `--input-frame query` or `--input-frame
-molecular`. Consensus, which reads legacy tags only for Hia5 input without
+`-recall-nucs` stop at the first read that carries `ns`/`nl`/`as`/`al` and
+ask for `--input-frame query` or `--input-frame molecular` (reads whose only
+footprints are fibertools `Ma` tags need no frame). Consensus, which reads legacy tags only for Hia5 input without
 `MA`, stops and asks you to set its legacy Hia5 annotation frame. It applies
 molecular frame by itself only when fibertools wrote the tags and no FiberHMM
 caller ran after it: reads a FiberHMM caller left without `MA` are ones it
@@ -83,7 +84,9 @@ FiberHMM reads `Ma` wherever it reads `MA` or the legacy arrays: in
 recall-tfs/recall-nucs, consensus evidence loading and extract. If a read
 has both, FiberHMM's own `MA` is used. Recall writes its calls to
 `MA`/`AQ` (and `ns`/`nl`/`as`/`al`) and leaves the fibertools `Ma` tag in
-place.
+place. Consensus BAM export copies a read's `Ma` annotations into the `MA`
+it writes (so the family layers do not hide them) and marks a fibertools
+source's export `coord=molecular`.
 
 ## Converting to query or reference coordinates
 
