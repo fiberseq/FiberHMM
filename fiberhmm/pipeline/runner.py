@@ -1100,24 +1100,55 @@ class Pipeline:
         work = self.call_work_dir
         started_path = os.path.join(self.outdir, STATE_DIR, "call.started")
         discard = self._forced("call") or not resumable
-        if not discard and os.path.isdir(work):
-            try:
-                with open(started_path, encoding="utf-8") as handle:
-                    started = json.load(handle).get("fingerprint")
-            except (OSError, ValueError, AttributeError):
-                started = None
-            if started != fingerprint:
-                changed = fingerprint_changes(started or {}, fingerprint)
-                if self._upstream_reran(changed, {"aligned": "align"}) or started is None:
-                    discard = True
-                else:
-                    self._refuse("call", changed, what="interrupted calling state")
-        if discard:
-            shutil.rmtree(work, ignore_errors=True)
-            with contextlib.suppress(FileNotFoundError):
-                os.remove(started_path)
+        # The work directory has its own owner lock (fiberhmm-call --work-dir
+        # holds it while running, possibly outside this pipeline): hold it
+        # while the state is inspected and removed, and refuse a live owner.
+        lock = self._lock_call_work(work)
+        try:
+            if not discard and lock is not None:
+                try:
+                    with open(started_path, encoding="utf-8") as handle:
+                        started = json.load(handle).get("fingerprint")
+                except (OSError, ValueError, AttributeError):
+                    started = None
+                if started != fingerprint:
+                    changed = fingerprint_changes(started or {}, fingerprint)
+                    if self._upstream_reran(changed, {"aligned": "align"}) or started is None:
+                        discard = True
+                    else:
+                        self._refuse("call", changed, what="interrupted calling state")
+            if discard:
+                if lock is not None:
+                    _empty_locked_dir(work)
+                    lock.remove = True
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(started_path)
+        finally:
+            if lock is not None:
+                lock.release()
+                if discard:
+                    with contextlib.suppress(OSError):
+                        os.rmdir(work)
         if resumable:
             write_json_atomic(started_path, {"fingerprint": fingerprint})
+
+    @staticmethod
+    def _lock_call_work(work: str):
+        """The call work directory's own lock (as ``fiberhmm-call`` takes it),
+        or None when there is no work directory."""
+        from fiberhmm.inference.region_resume import LOCK
+        from fiberhmm.io.run_state import DirectoryBusy, DirectoryLock
+
+        if not os.path.isdir(work):
+            return None
+        try:
+            return DirectoryLock(os.path.join(work, LOCK),
+                                 "fiberhmm-call work directory").acquire()
+        except DirectoryBusy as exc:
+            raise PipelineError(
+                f"the calling work directory is in use: {exc}",
+                hint="Another fiberhmm-call (or pipeline) is running on this output "
+                     "directory's calling state; wait for it to finish or stop it.") from None
 
     def step_call(self) -> None:
         cfg = self.config
@@ -1386,6 +1417,20 @@ def _child_env() -> dict:
     if root not in parts:
         env["PYTHONPATH"] = os.pathsep.join([root] + parts)
     return env
+
+
+def _empty_locked_dir(path: str) -> None:
+    """Remove everything in ``path`` except its lock file (still held)."""
+    from fiberhmm.inference.region_resume import LOCK
+
+    for entry in os.scandir(path):
+        if entry.name == LOCK:
+            continue
+        if entry.is_dir(follow_symlinks=False):
+            shutil.rmtree(entry.path, ignore_errors=True)
+        else:
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(entry.path)
 
 
 def _group_by_name(records):

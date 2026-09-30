@@ -494,6 +494,34 @@ def test_changed_file_in_call_args_is_a_changed_setting(tmp_path, monkeypatch, s
     assert "--redo call" in last["hint"]
 
 
+def test_pipeline_cleanup_refuses_a_live_work_dir_owner(tmp_path):
+    """--redo cleanup must not delete a calling work directory that a live
+    fiberhmm-call --work-dir owner holds (its own lock, not the OUTDIR lock)."""
+    from fiberhmm.inference.region_resume import WorkDir
+    reads = tmp_path / "r.fastq"; reads.write_text("@r\nAAAA\n+\nIIII\n")
+    ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + "A" * 1000 + "\n")
+    p = Pipeline(config(tmp_path / "out", reads, ref, call_mode="resumable", redo="call"))
+    p._setup()
+    work = Path(p.call_work_dir)
+    owner = WorkDir(work, {"parameter": 1}).open()
+    try:
+        inode = (work / ".lock").stat().st_ino
+        manifest = (work / "manifest.json").read_text()
+        for resumable in (True, False):
+            with pytest.raises(PipelineError, match="in use"):
+                p._prepare_call_state({"new_parameter": 2}, resumable)
+            assert (work / ".lock").stat().st_ino == inode
+            assert (work / "manifest.json").read_text() == manifest
+        with pytest.raises(Exception, match="in use"):
+            WorkDir(work, {"parameter": 2}).open()
+    finally:
+        owner.release()
+    # Once the owner is gone the same cleanup proceeds.
+    p._prepare_call_state({"new_parameter": 2}, True)
+    assert not work.exists()
+    p.close()
+
+
 def test_redo_call_discards_incompatible_resumable_state(tmp_path, monkeypatch):
     from fiberhmm.inference.region_resume import WorkDir
     reads = tmp_path / "r.fastq"; reads.write_text("@r\nAAAA\n+\nIIII\n")
