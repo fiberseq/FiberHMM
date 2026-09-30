@@ -208,6 +208,16 @@ def _window_task(spec):
     return run_unit(spec,load=bam.load_bam_payload,run=run_analysis,isolate=True)
 
 
+def effective_daf_mask(args):
+    """The explicit DAF run-mask request in force: --daf-mask-runs, else an inherited FIBERHMM_DAF_RUN_MASK
+    (with FIBERHMM_DAF_RUN_POLICY), else None (each dataset's chemistry default). It is part of the run record that
+    --continue must match, and window workers restore it."""
+    if args.daf_mask_runs is not None: return (args.daf_mask_runs,args.daf_run_policy)
+    from fiberhmm.core.bam_reader import daf_run_mask_explicit,daf_run_mask_min_length,daf_run_mask_policy
+    if daf_run_mask_explicit(): return (daf_run_mask_min_length(),daf_run_mask_policy())
+    return None
+
+
 def _run_windows(args,out,windows,datasets,values,progress):
     from . import bam
     from .batch import run_windows, run_unit, ContinueRefused
@@ -222,7 +232,7 @@ def _run_windows(args,out,windows,datasets,values,progress):
     serial=lambda spec:run_unit(spec,load=bam.load_bam_payload,run=run_analysis,forward=progress)
     try:
         return run_windows(out,windows,datasets,values,continue_run=args.continue_run,cores=cores,window_jobs=window_jobs,
-            daf_mask=(args.daf_mask_runs,args.daf_run_policy) if args.daf_mask_runs is not None else None,
+            daf_mask=effective_daf_mask(args),
             options=dict(no_bam=args.no_bam,bam_scope=args.bam_scope,bam_grouping=args.bam_grouping,
                          bam_recaller_layer=args.bam_recaller_layer),
             serial_task=serial,parallel_task=_window_task,progress=progress,

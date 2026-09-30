@@ -330,7 +330,7 @@ def test_completed_steps_are_skipped_and_changes_refused(tmp_path):
     from fiberhmm.pipeline.progress import write_marker
     out = tmp_path / "out"
     (out / "x.bam").parent.mkdir(parents=True)
-    (out / "x.bam").write_text("")
+    (out / "x.bam").write_bytes(b"BAM\x01 records")
     config = PipelineConfig(reads=["r.fastq"], reference="ref.fa", enzyme="dddb",
                             outdir=str(out), quiet=True)
     pipe = Pipeline(config, ProgressReporter())
@@ -341,6 +341,14 @@ def test_completed_steps_are_skipped_and_changes_refused(tmp_path):
     with pytest.raises(PipelineError, match="different settings or inputs") as refused:
         pipe._is_complete("align", {"a": 2})
     assert "--redo align" in refused.value.hint
+    # A kept output must still be what the step wrote: truncated, or changed at
+    # the same size with its mtime restored, it is made again.
+    stat = (out / "x.bam").stat()
+    (out / "x.bam").write_bytes(b"BAM\x01 RECORDS")
+    os.utime(out / "x.bam", ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    assert pipe._is_complete("align", {"a": 1}) is False
+    (out / "x.bam").write_bytes(b"")
+    assert pipe._is_complete("align", {"a": 1}) is False
     (out / "x.bam").unlink()  # outputs gone: run again
     assert pipe._is_complete("align", {"a": 1}) is False
     forced = Pipeline(PipelineConfig(reads=["r.fastq"], reference="ref.fa", enzyme="dddb",
@@ -615,4 +623,7 @@ def test_read_inputs_fastq_tags_and_bam_to_fastq(tmp_path):
     fed = b"".join(mm2.ReadFeeder([mm2.classify_read_file(str(plain)),
                                    mm2.classify_read_file(str(bam))], False).chunks())
     names = [e[0] for e in mm2.iter_fastq_entries([fed])]
-    assert names == ["r1", "f", "r"]
+    # Every input record gets its own internal name (serial~name); the output
+    # restores the original name.
+    assert names == ["0~r1", "1~f", "2~r"]
+    assert [mm2.original_name(n) for n in names] == ["r1", "f", "r"]

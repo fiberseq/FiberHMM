@@ -3,8 +3,11 @@
 Every BED window (or --region) is an independent work unit. A unit writes its outputs into its own directory
 (``window_XXXXXX/``; the output directory itself when there is only one window) and, last, an atomic completion
 marker ``unit_complete.json`` carrying a digest of the unit's inputs, parameters and code. ``--continue`` skips units
-whose marker matches, redoes missing, partial or mismatched units, and refuses when the run-level inputs or
-parameters differ from the run manifest ``consensus_run.json``. Aggregate outputs (``regions.json``, the top-level
+whose marker matches and whose recorded files still have their size and SHA-256, redoes missing, partial, altered or
+mismatched units, and refuses when the run-level inputs (BAM and index content digests), parameters or the effective
+DAF run mask (command line or FIBERHMM_DAF_RUN_MASK) differ from the run manifest ``consensus_run.json``. A run owns
+its output directory exclusively (``flock`` on ``.consensus_run.lock``) while it runs; see
+:mod:`fiberhmm.io.run_state` for the digest-reuse rule and the lock. Aggregate outputs (``regions.json``, the top-level
 ``report.html`` and the family-tagged BAMs) are always rebuilt from the completed units' saved artifacts, so they are
 the same whether units ran serially, in parallel, or across an interrupted and continued run.
 
@@ -19,17 +22,19 @@ import json
 import shutil
 import sys
 import time
+from fiberhmm.io.run_state import DigestMemo, DirectoryBusy, DirectoryLock, sha256_file
 from .artifacts import digest, read_json, write_json
 
 RUN_MANIFEST = 'consensus_run.json'
 UNIT_MARKER = 'unit_complete.json'
 LOG_DIR = 'logs'
+RUN_LOCK = '.consensus_run.lock'
 RUN_SCHEMA = 'fiberhmm.consensus.run.v1'
 UNIT_SCHEMA = 'fiberhmm.consensus.unit.v1'
 # Top-level outputs rebuilt from the units at the end of every run.
 AGGREGATES = ('bams', 'regions.json', 'report.html')
 # Run-level entries that never belong to a unit (kept when a single-window unit is redone in place).
-PROTECTED = (RUN_MANIFEST, LOG_DIR)
+PROTECTED = (RUN_MANIFEST, LOG_DIR, RUN_LOCK)
 # Execution-only controls: they never change a result, so --continue may change them.
 EXECUTION_ONLY = (('compute', 'cores'),)
 
@@ -49,17 +54,23 @@ def code_digest():
     return _CODE_DIGEST
 
 
-def file_identity(path):
-    """Path, size and mtime of an input file and of its index; a changed BAM or index is a different input."""
+def file_identity(path, memo=None):
+    """Path, size, mtime and content SHA-256 of an input file and of its index.
+
+    Different content is a different input even when size and mtime were preserved. The mtime stays part of the
+    identity because the aggregate BAM export checks the evidence's recorded source mtimes. ``memo``
+    (:class:`~fiberhmm.io.run_state.DigestMemo`) only avoids rehashing files whose metadata shows them unchanged."""
+    memo = memo if memo is not None else DigestMemo()
     p = Path(path).expanduser().resolve()
-    def stat(q):
+    def content(q):
         try:
-            s = q.stat(); return dict(size=s.st_size, mtime_ns=s.st_mtime_ns)
+            s = q.stat()
+            return dict(size=s.st_size, mtime_ns=s.st_mtime_ns, sha256=memo.sha256(q))
         except OSError:
             return None
-    index = next(({'path': str(q), **stat(q)} for q in (Path(str(p)+'.csi'), Path(str(p)+'.bai'), p.with_suffix('.bai'))
-                  if stat(q)), None)
-    return dict(path=str(p), file=stat(p), index=index)
+    index = next(({'path': str(q), **content(q)} for q in (Path(str(p)+'.csi'), Path(str(p)+'.bai'), p.with_suffix('.bai'))
+                  if q.is_file() and content(q)), None)
+    return dict(path=str(p), file=content(p), index=index)
 
 
 def _scientific(values):
@@ -69,9 +80,14 @@ def _scientific(values):
     return values
 
 
-def run_record(datasets, windows, values, options):
-    """The run-level contract --continue must match (execution-only controls excluded)."""
-    return dict(datasets=[dict(dataset_id=d['dataset_id'], chemistry=d.get('chemistry'), paths=[file_identity(p) for p in d['paths']])
+def run_record(datasets, windows, values, options, memo=None):
+    """The run-level contract --continue must match (execution-only controls excluded).
+
+    Dataset paths are normalised exactly as the loader reads them (a single path may be given as a string)."""
+    from .bam import _flatten_paths
+    memo = memo if memo is not None else DigestMemo()
+    return dict(datasets=[dict(dataset_id=d['dataset_id'], chemistry=d.get('chemistry'),
+                               paths=[file_identity(p, memo) for p in _flatten_paths(d.get('paths') or [])])
                           for d in datasets],
                 windows=[dict(w) for w in windows], parameters=_scientific(values), options=dict(options))
 
@@ -82,6 +98,11 @@ def _differences(previous, current, prefix=''):
         for key in sorted(set(previous) | set(current)):
             out += _differences(previous.get(key), current.get(key), f'{prefix}.{key}' if prefix else str(key))
         return out
+    if isinstance(previous, list) and isinstance(current, list) and len(previous) == len(current):
+        out = []
+        for i, (a, b) in enumerate(zip(previous, current)):
+            out += _differences(a, b, f'{prefix}.{i}' if prefix else str(i))
+        return out
     return [] if previous == current else [prefix or '(root)']
 
 
@@ -89,11 +110,14 @@ class ContinueRefused(ValueError):
     """--continue with inputs or parameters that differ from the original run."""
 
 
-def open_run(out, record, *, continue_run, execution):
+def open_run(out, record, *, continue_run, execution, memo=None):
     """Write (fresh) or validate (--continue) the run manifest; returns the run digest."""
     from fiberhmm import __version__
     path = out/RUN_MANIFEST
     run_digest = digest(record)
+    if not continue_run and any(entry.name != RUN_LOCK for entry in out.iterdir()):
+        raise ContinueRefused(f'{out} is not empty; existing results are never overwritten (to finish an '
+                              'interrupted multi-window run there, add --continue)')
     if continue_run:
         if not path.is_file():
             raise ContinueRefused(f'{out} has no {RUN_MANIFEST}; --continue needs the output directory of a '
@@ -111,8 +135,17 @@ def open_run(out, record, *, continue_run, execution):
         attempts = previous.get('attempts', []) + [dict(fiberhmm_version=__version__, execution=execution)]
     else:
         attempts = [dict(fiberhmm_version=__version__, execution=execution)]
-    write_json(path, dict(schema=RUN_SCHEMA, status='running', run_digest=run_digest, **record, attempts=attempts))
+    write_json(path, dict(schema=RUN_SCHEMA, status='running', run_digest=run_digest, **record, attempts=attempts,
+                          digests=(memo or DigestMemo()).to_json()))
     return run_digest
+
+
+def previous_digests(out):
+    """The digest memo a run manifest in ``out`` remembers (empty when there is none)."""
+    try:
+        return DigestMemo(read_json(out/RUN_MANIFEST).get('digests'))
+    except (OSError, ValueError, AttributeError):
+        return DigestMemo()
 
 
 def unit_folder(out, index, count):
@@ -125,12 +158,13 @@ def _unit_files(folder, single):
         rel = path.relative_to(folder)
         if not path.is_file() or rel.name == UNIT_MARKER: continue
         if single and (rel.parts[0] in PROTECTED or rel.parts[0] in AGGREGATES and rel.parts[0] != 'report.html'): continue
-        files[rel.as_posix()] = path.stat().st_size
+        files[rel.as_posix()] = dict(size=path.stat().st_size, sha256=sha256_file(path))
     return files
 
 
 def completed_unit(folder, unit_digest):
-    """The unit's marker if it is complete for exactly this digest and every recorded file is intact, else None."""
+    """The unit's marker if it is complete for exactly this digest and every recorded file still has its size and
+    SHA-256, else None (a marker from before content digests were recorded is not trusted)."""
     marker = folder/UNIT_MARKER
     try:
         value = read_json(marker)
@@ -138,9 +172,10 @@ def completed_unit(folder, unit_digest):
         return None
     if value.get('schema') != UNIT_SCHEMA or value.get('digest') != unit_digest:
         return None
-    for rel, size in value.get('files', {}).items():
+    for rel, recorded in value.get('files', {}).items():
         path = folder/rel
-        if not path.is_file() or path.stat().st_size != size:
+        if (not isinstance(recorded, dict) or not path.is_file() or path.stat().st_size != recorded.get('size')
+                or sha256_file(path) != recorded.get('sha256')):
             return None
     return value
 
@@ -295,10 +330,27 @@ def finish_run(out):
 def run_windows(out, windows, datasets, values, *, continue_run, cores, window_jobs, daf_mask, options,
                 serial_task, parallel_task, progress, export):
     """The whole multi-window run: manifest, unit scheduling, and aggregate rebuild. Returns (summary, bam_outputs)."""
+    lock = DirectoryLock(out/RUN_LOCK, 'fiberhmm-consensus output directory', remove=True)
+    try:
+        lock.acquire()
+    except DirectoryBusy as error:
+        raise ContinueRefused(str(error)) from None
+    try:
+        return _run_windows_locked(out, windows, datasets, values, continue_run=continue_run, cores=cores,
+                                   window_jobs=window_jobs, daf_mask=daf_mask, options=options,
+                                   serial_task=serial_task, parallel_task=parallel_task, progress=progress,
+                                   export=export)
+    finally:
+        lock.release()
+
+
+def _run_windows_locked(out, windows, datasets, values, *, continue_run, cores, window_jobs, daf_mask, options,
+                        serial_task, parallel_task, progress, export):
     count = len(windows)
-    record = run_record(datasets, windows, values, dict(options, daf_mask=list(daf_mask) if daf_mask else None))
+    memo = previous_digests(out) if continue_run else DigestMemo()
+    record = run_record(datasets, windows, values, dict(options, daf_mask=list(daf_mask) if daf_mask else None), memo)
     run_digest = open_run(out, record, continue_run=continue_run,
-                          execution=dict(cores=cores, window_jobs=window_jobs))
+                          execution=dict(cores=cores, window_jobs=window_jobs), memo=memo)
     code = code_digest(); specs = []
     for i, w in enumerate(windows):
         folder = unit_folder(out, i, count)

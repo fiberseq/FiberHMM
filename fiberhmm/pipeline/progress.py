@@ -20,10 +20,14 @@ carries ``time`` (Unix seconds) and ``elapsed_s`` (since the start). The last
 line of a run is always a ``done`` event.
 
 A finished step writes ``OUTDIR/.fiberhmm-pipeline/<step>.done`` holding its
-fingerprint (the settings and input files it depends on) and its outputs. A
-later run skips the step when the fingerprint matches and the outputs exist,
-and refuses to run when the fingerprint differs (a different input or
-setting in the same output directory) unless the step is redone on purpose.
+fingerprint (the settings, and the content identity -- size and SHA-256 -- of
+the input files it depends on), its outputs and the size and SHA-256 of every
+output file. A later run skips the step only when the fingerprint matches and
+every output still has its recorded size and digest (a missing, truncated or
+altered output reruns the step), and refuses to run when the fingerprint
+differs (a different input or setting in the same output directory) unless the
+step is redone on purpose. Digests of unchanged files are not recomputed: see
+:mod:`fiberhmm.io.run_state` for the reuse rule.
 """
 from __future__ import annotations
 
@@ -32,7 +36,10 @@ import os
 import sys
 import threading
 import time
+import uuid
 from typing import Callable, Optional
+
+from fiberhmm.io.run_state import DigestMemo, content_identity
 
 STATE_DIR = ".fiberhmm-pipeline"
 
@@ -94,10 +101,9 @@ def marker_path(outdir: str, step: str) -> str:
     return os.path.join(outdir, STATE_DIR, f"{step}.done")
 
 
-def file_fingerprint(path: str) -> dict:
-    stat = os.stat(path)
-    return {"path": os.path.abspath(path), "size": stat.st_size,
-            "mtime_ns": stat.st_mtime_ns}
+def file_fingerprint(path: str, memo: Optional[DigestMemo] = None) -> dict:
+    """``{"path", "size", "sha256"}``: a file's content identity."""
+    return content_identity(path, memo)
 
 
 def read_marker(outdir: str, step: str) -> Optional[dict]:
@@ -108,8 +114,22 @@ def read_marker(outdir: str, step: str) -> Optional[dict]:
         return None
 
 
-def outputs_exist(outputs) -> bool:
-    return all(os.path.exists(path) for path in _output_paths(outputs or {}))
+def outputs_valid(marker: dict, memo: Optional[DigestMemo] = None) -> tuple[bool, str]:
+    """Whether every output a marker lists still has its recorded size and SHA-256."""
+    recorded = marker.get("artifacts")
+    if not isinstance(recorded, dict):
+        return False, "the marker records no output digests (an older FiberHMM wrote it)"
+    for path in _output_paths(marker.get("outputs") or {}):
+        expected = recorded.get(path)
+        if not isinstance(expected, dict):
+            return False, f"{os.path.basename(path)} has no recorded digest"
+        if not os.path.isfile(path):
+            return False, f"{os.path.basename(path)} is missing"
+        if os.path.getsize(path) != expected.get("size"):
+            return False, f"{os.path.basename(path)} changed size"
+        if (memo or DigestMemo()).sha256(path) != expected.get("sha256"):
+            return False, f"{os.path.basename(path)} changed content"
+    return True, ""
 
 
 def _output_paths(outputs) -> list[str]:
@@ -132,16 +152,32 @@ def fingerprint_changes(old: dict, new: dict) -> list[str]:
 
 
 def write_marker(outdir: str, step: str, fingerprint: dict, outputs: dict,
-                 summary: Optional[dict] = None) -> None:
+                 summary: Optional[dict] = None, memo: Optional[DigestMemo] = None) -> None:
+    """Record a finished step: fingerprint, outputs and each output's size and SHA-256."""
     path = marker_path(outdir, step)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.tmp{os.getpid()}"
-    with open(tmp, "w", encoding="utf-8") as handle:
-        json.dump({"step": step, "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                   "fingerprint": fingerprint, "outputs": outputs,
-                   "summary": summary or {}}, handle, indent=2, default=str)
-        handle.write("\n")
-    os.replace(tmp, path)
+    artifacts = {}
+    for output in _output_paths(outputs or {}):
+        identity = content_identity(output, memo)
+        artifacts[output] = {"size": identity["size"], "sha256": identity["sha256"]}
+    write_json_atomic(path, {"step": step, "completed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                             "fingerprint": fingerprint, "outputs": outputs,
+                             "artifacts": artifacts, "summary": summary or {}})
+
+
+def write_json_atomic(path: str, value) -> None:
+    tmp = f"{path}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, indent=2, default=str)
+            handle.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def clear_marker(outdir: str, step: str) -> None:

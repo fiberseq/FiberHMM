@@ -252,6 +252,29 @@ def bam_records_as_fastq(path: str, with_tags: bool) -> Iterator[bytes]:
             yield f"@{read.query_name}{comment}\n{seq}\n+\n{qual}\n".encode()
 
 
+def fastq_platform_votes(path: str, records: int = 200) -> dict:
+    """``{"pacbio": n, "nanopore": n}`` from the MM tags in FASTQ header comments.
+
+    PacBio Fiber-seq reports bottom-strand m6A as ``T-a``; Nanopore reports
+    only ``A+a`` (the rule of ``fiberhmm-call``'s platform detection).
+    """
+    from fiberhmm.cli.common import _mm_spec_platform
+    counts = {"pacbio": 0, "nanopore": 0}
+    with _open_binary(path) as handle:
+        for i, line in enumerate(handle):
+            if i // 4 >= records:
+                break
+            if i % 4 != 0:
+                continue
+            for token in line.decode("utf-8", "replace").split()[1:]:
+                if token.startswith(("MM:Z:", "Mm:Z:")):
+                    platform = _mm_spec_platform(token[5:])
+                    if platform:
+                        counts[platform] += 1
+                    break
+    return counts
+
+
 def bam_has_mod_tags(path: str, records: int = 200) -> bool:
     with pysam.AlignmentFile(path, check_sq=False) as bam:
         for i, read in enumerate(bam.fetch(until_eof=True)):
@@ -262,9 +285,28 @@ def bam_has_mod_tags(path: str, records: int = 200) -> bool:
     return False
 
 
+# Internal read names: "<serial in hex>~<original name>". Every input record
+# gets its own serial, so records that share a name (the same read name in two
+# input files, or twice in one) stay separate molecules through alignment;
+# original_name() restores the name on the output record.
+INTERNAL_NAME_SEPARATOR = "~"
+
+
+def original_name(internal: str) -> str:
+    """The input read name behind an internal name (unchanged if it is not one)."""
+    serial, sep, name = internal.partition(INTERNAL_NAME_SEPARATOR)
+    if sep and serial and all(c in "0123456789abcdef" for c in serial):
+        return name
+    return internal
+
+
 class ReadFeeder:
     """Stream several read files as one FASTQ (minimap2 would treat two query
-    files as read pairs). Tracks bytes consumed for progress."""
+    files as read pairs). Tracks bytes consumed for progress.
+
+    Each record's name is prefixed with its serial number (see
+    :func:`original_name`), so alignment records group by input record, never
+    by a name two molecules happen to share."""
 
     def __init__(self, files: list[ReadFile], carry_tags: bool):
         self.files = files
@@ -274,24 +316,45 @@ class ReadFeeder:
         self.reads = 0
         self.error: Optional[BaseException] = None
 
+    def _name(self, header: bytes) -> bytes:
+        # header is b"@name[ comment]..."; the serial goes in front of the name.
+        serial = b"%x" % self.reads + INTERNAL_NAME_SEPARATOR.encode()
+        self.reads += 1
+        return b"@" + serial + header[1:]
+
     def chunks(self) -> Iterator[bytes]:
         for rf in self.files:
             start = self.done_bytes
             if rf.kind == "fastq":
                 with open(rf.path, "rb") as raw:
                     handle = gzip.GzipFile(fileobj=raw) if rf.path.lower().endswith(".gz") else raw
+                    batch: list[bytes] = []
+                    size = 0
+                    line_no = 0
                     last = b"\n"
-                    for block in iter(lambda: handle.read(1 << 20), b""):
-                        self.reads += block.count(b"\n@")  # approximate, for progress
-                        self.done_bytes = start + raw.tell()
-                        last = block[-1:]
-                        yield block
+                    for line in handle:
+                        if line_no % 4 == 0 and line.startswith(b"@"):
+                            line = self._name(line)
+                        elif line_no % 4 == 0 and line.strip():
+                            raise ValueError(f"{rf.path}: malformed FASTQ record "
+                                             f"(line {line_no + 1} does not start with '@')")
+                        elif line_no % 4 == 0:
+                            continue  # blank line between records
+                        line_no += 1
+                        batch.append(line)
+                        size += len(line)
+                        last = line[-1:]
+                        if size >= 1 << 20:
+                            self.done_bytes = start + raw.tell()
+                            yield b"".join(batch)
+                            batch, size = [], 0
+                    if batch:
+                        yield b"".join(batch)
                     if last != b"\n":
                         yield b"\n"
             else:
                 for record in bam_records_as_fastq(rf.path, self.carry_tags):
-                    self.reads += 1
-                    yield record
+                    yield self._name(record)
             self.done_bytes = start + rf.size
 
     def fraction(self) -> float:

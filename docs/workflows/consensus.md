@@ -261,9 +261,12 @@ with `completed`, `total`, `reused` and `eta_seconds`).
 A BED with many windows is a restartable batch. Each window writes its outputs
 into its own directory and, last, an atomic `unit_complete.json` marker
 holding a digest of the run's inputs and parameters, the window and the
-consensus code version, plus the size of every file it wrote. The run's
-contract (BAM and index identity, windows, parameters, BAM-export options,
-DAF run mask) is saved as `consensus_run.json`. If a run is interrupted,
+consensus code version, plus the size and SHA-256 of every file it wrote. The
+run's contract (BAM and index path, size, modification time and content
+SHA-256, windows, parameters, BAM-export options, and the DAF run mask in
+force: `--daf-mask-runs`, or an inherited `FIBERHMM_DAF_RUN_MASK`) is saved as
+`consensus_run.json`. A run holds a lock on its output directory while it runs,
+so two runs never write the same windows. If a run is interrupted,
 rerun the same command with `--continue`:
 
 ```bash
@@ -272,15 +275,17 @@ fiberhmm-consensus --bam calls.bam --bed sites.bed --cores 8 --output out/sites
 fiberhmm-consensus --bam calls.bam --bed sites.bed --cores 8 --output out/sites --continue
 ```
 
-- Windows whose marker matches are kept; missing, partial or damaged windows
-  and windows computed by other code are rerun.
+- Windows whose marker matches and whose files still have their recorded
+  digests are kept; missing, partial, damaged or altered windows and windows
+  computed by other code are rerun.
 - `regions.json`, the top-level `report.html` and the family-tagged BAMs are
   rebuilt from all completed windows at the end, so the outputs are the same
   whether windows ran one at a time, in parallel, or across an interrupted
   and continued run (apart from timing fields and the per-window
   `compute.cores`).
-- Different BAMs (or a modified BAM or index), windows or parameters are
-  refused with the fields that differ. Only `--cores`, `--window-jobs` and
+- Different BAMs (or a modified BAM or index, even one whose size and date
+  were preserved), windows, parameters or DAF run mask are refused with the
+  fields that differ. Only `--cores`, `--window-jobs` and
   `--json-progress` may change between attempts.
 - Continuing a finished run reruns nothing and rebuilds the aggregates.
 - Without `--continue` the output directory must be empty, as always.

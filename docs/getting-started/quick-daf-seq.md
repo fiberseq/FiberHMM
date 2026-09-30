@@ -133,16 +133,22 @@ reads (`"open": {"region": "chr2L:15474001-15489000"}`).
    deaminations.
 
 Re-running the same command skips the steps that are complete, so an
-interrupted run (Ctrl-C, a closed laptop) continues where it stopped. Running
-it again on the same output directory with different reads or settings is
-refused, naming what changed; use a new `-o`, or `--redo STEP` to replace a
-step's result.
+interrupted run (Ctrl-C, a closed laptop) continues where it stopped. A step
+is skipped only when its outputs still have the size and SHA-256 it recorded;
+a damaged or replaced output is made again. Running it again on the same
+output directory with different reads, reference, settings or files named in
+`--call-args` is refused before anything in the directory changes, naming
+what changed; use a new `-o`, or `--redo STEP` to replace a step's result
+(and everything after it, including an interrupted call's resumable state).
+One run owns an output directory at a time; a second run started on it while
+the first is running is refused. `outputs.json` is removed when a rerun
+starts changing the directory and written again when it finishes.
 
 ## Common options
 
 | Option | Effect |
 |---|---|
-| `--sample NAME` | name of the output files and read group (default: the first input's name) |
+| `--sample NAME` | name of the output files and read group (default: the first input's name); one plain file name: letters, digits, `_`, `-`, `.` (no path, no leading `.`) |
 | `--region chr:start-end` | keep only reads overlapping the region (repeatable); the first is the one to open |
 | `--min-read-length N` | shortest aligned read to call (default 1000; short amplicons may want 500) |
 | `--dedup auto/on/off`, `--dedup-mode flag/collapse` | PCR-duplicate marking, and whether duplicates are kept (flagged) or collapsed |

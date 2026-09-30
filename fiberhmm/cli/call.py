@@ -1378,23 +1378,25 @@ def _main(args):
             # region pipeline records itself (its parameters, model digests
             # and region plan): --resume refuses a work directory made with
             # anything else.
-            run_identity = {
-                'tool': 'fiberhmm-call',
-                'fiberhmm_version': getattr(_fh, '__version__', 'unknown'),
-                'input': input_identity(args.input),
-                'dedup': {
-                    'applied': dedup_tmp is not None,
-                    'min_jaccard': args.dedup_min_jaccard,
-                    'collapse': bool(args.dedup_collapse),
-                    'min_deam': args.dedup_min_deam,
-                    'prob_threshold': args.dedup_prob_threshold,
-                    'ignore_strand': bool(args.dedup_ignore_strand),
-                    'max_end_diff': args.dedup_max_end_diff,
-                },
-                'daf_run_mask': [args.daf_mask_runs, args.daf_run_policy],
-                'reference': reference_identity(args.reference),
-                'process_unmapped': process_unmapped,
-            }
+            def run_identity(memo):
+                return {
+                    'tool': 'fiberhmm-call',
+                    'fiberhmm_version': getattr(_fh, '__version__', 'unknown'),
+                    'input': input_identity(args.input, memo),
+                    'dedup': {
+                        'applied': dedup_tmp is not None,
+                        'min_jaccard': args.dedup_min_jaccard,
+                        'collapse': bool(args.dedup_collapse),
+                        'min_deam': args.dedup_min_deam,
+                        'prob_threshold': args.dedup_prob_threshold,
+                        'ignore_strand': bool(args.dedup_ignore_strand),
+                        'max_end_diff': args.dedup_max_end_diff,
+                    },
+                    'daf_run_mask': [args.daf_mask_runs, args.daf_run_policy],
+                    'reference': reference_identity(args.reference, memo),
+                    'process_unmapped': process_unmapped,
+                }
+
             n_reads, n_fp = _process_bam_region_parallel_fused(
                 input_bam=working_input,
                 output_bam=args.output,

@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from typing import List
 
 import numpy as np
@@ -74,20 +74,57 @@ def commit_output(temporary: str, final: str) -> None:
     Indexes finalization built beside the temporary (``temporary + '.bai'``
     etc.) are published with it under the matching final name; every other
     index left beside ``final`` by an earlier run would describe the old
-    content and is removed. The BAM is renamed before its index so the index
-    is never older than the data it describes.
+    content and is removed.
+
+    Two files cannot be replaced in one atomic step, so the order is chosen so
+    that no moment leaves a *mismatched* pair on disk: (1) the old indexes are
+    removed, (2) the new data replaces the old, (3) the new indexes are put in
+    place. A reader or a crash between steps sees the old data or the new data
+    without an index (which tools report) -- never an index describing other
+    data. The previous pair is kept as hidden hard links until the publication
+    finished; any failure or signal during it restores that pair (or, when
+    there was none, removes the half-published output), so a failed rerun
+    leaves the earlier valid output exactly as it was.
     """
+    final = os.path.abspath(final)
     fresh = {
         final + suffix: temporary + suffix
         for suffix in _INDEX_SUFFIXES
         if os.path.exists(temporary + suffix)
     }
-    for stale in index_paths_for(final):
-        if stale not in fresh:
+    previous = [p for p in [final, *index_paths_for(final)] if os.path.lexists(p)]
+    backups = {}
+    token = f"{os.getpid()}.{uuid.uuid4().hex[:8]}"
+    directory = os.path.dirname(final)
+    try:
+        for path in previous:
+            backup = os.path.join(directory, f".{os.path.basename(path)}.{token}.previous")
+            try:
+                os.link(path, backup)
+            except OSError:
+                continue  # no hard links here: publication is still ordered, not reversible
+            backups[path] = backup
+        for stale in index_paths_for(final):
             _remove_quietly(stale)
-    os.replace(temporary, final)
-    for final_index, temporary_index in fresh.items():
-        os.replace(temporary_index, final_index)
+        os.replace(temporary, final)
+        for final_index, temporary_index in fresh.items():
+            os.replace(temporary_index, final_index)
+    except BaseException:
+        for path in index_paths_for(final):
+            _remove_quietly(path)
+        if final in backups:
+            with suppress(OSError):
+                os.replace(backups.pop(final), final)
+        elif final not in previous:
+            _remove_quietly(final)  # nothing to restore: no half-published output
+        for path, backup in list(backups.items()):
+            with suppress(OSError):
+                os.replace(backup, path)
+            backups.pop(path, None)
+        raise
+    finally:
+        for backup in backups.values():
+            _remove_quietly(backup)
 
 
 @contextmanager

@@ -518,27 +518,31 @@ def _process_bam_region_parallel_fused(
         from fiberhmm.inference.region_resume import (
             WorkDir, file_digest, reference_identity,
         )
-        identity = dict(
-            run_identity or {},
-            region_pipeline=dict(
-                {k: v for k, v in params.items()
-                 if k not in ('pg_record', 'io_threads')},
-                emission_uplift=emission_uplift,
-                region_size=region_size, skip_scaffolds=skip_scaffolds,
-                chroms=chroms,
-            ),
-            files=dict(
-                apply_model=file_digest(apply_model_path),
-                recall_model=file_digest(recall_model_path),
-                nuc_profile=file_digest(nuc_profile_path),
-                nuc_model=file_digest(nuc_model_path),
-                daf_snp_mask=file_digest(daf_snp_mask_path),
-                reference=reference_identity(ref_fasta_path),
-            ),
-            region_plan=[[list(item.region), bool(item.passthrough)]
-                         for item in plan],
-            pg_record={k: v for k, v in (pg_record or {}).items() if k != 'CL'},
-        )
+        def identity(memo):
+            # Built after the work directory is locked, with the digests it
+            # remembers (see fiberhmm.io.run_state for the reuse rule).
+            base = run_identity(memo) if callable(run_identity) else (run_identity or {})
+            return dict(
+                base,
+                region_pipeline=dict(
+                    {k: v for k, v in params.items()
+                     if k not in ('pg_record', 'io_threads')},
+                    emission_uplift=emission_uplift,
+                    region_size=region_size, skip_scaffolds=skip_scaffolds,
+                    chroms=chroms,
+                ),
+                files=dict(
+                    apply_model=file_digest(apply_model_path, memo),
+                    recall_model=file_digest(recall_model_path, memo),
+                    nuc_profile=file_digest(nuc_profile_path, memo),
+                    nuc_model=file_digest(nuc_model_path, memo),
+                    daf_snp_mask=file_digest(daf_snp_mask_path, memo),
+                    reference=reference_identity(ref_fasta_path, memo),
+                ),
+                region_plan=[[list(item.region), bool(item.passthrough)]
+                             for item in plan],
+                pg_record={k: v for k, v in (pg_record or {}).items() if k != 'CL'},
+            )
         work = WorkDir(work_dir, identity, pg_record, resume=resume).open()
         params['pg_record'] = work.pg_record
         temp_dir = str(work.path)
@@ -716,5 +720,7 @@ def _process_bam_region_parallel_fused(
     finally:
         if work is None:
             shutil.rmtree(temp_dir, ignore_errors=True)
+        else:
+            work.release()
 
     return aggregation.total_reads, aggregation.reads_with_footprints

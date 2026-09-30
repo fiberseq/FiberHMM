@@ -79,13 +79,20 @@ fiberhmm-call -i sorted.bam -o calls.bam --enzyme hia5 --seq pacbio \
 - The work directory is `.<output name>.fiberhmm-work` beside the output
   (`.calls.bam.fiberhmm-work/`), or `--work-dir DIR`. It holds each finished
   region's BAM, a `region_NNNNNN.done.json` marker written after the region
-  finished, and `manifest.json` with the run identity: the input BAM (path,
-  size, modification time, header and index SHA-256), every effective
-  parameter including the resolved chemistry and defaults, the model,
-  nucleosome-profile and SNP-mask digests, the region plan and the FiberHMM
-  version.
-- `--resume` reuses every region whose marker and BAM validate, reruns
-  missing or partial regions, then merges and publishes the output
+  finished (with the size and SHA-256 of the region's BAM), and
+  `manifest.json` with the run identity: the input BAM (path, size, content
+  SHA-256 of the BAM and its index, header SHA-256), every effective
+  parameter including the resolved chemistry and defaults, the content
+  digests of the model, nucleosome profile, SNP mask and reference, the
+  region plan and the FiberHMM version.
+- Identities compare content, not file dates: a copied or touched input is
+  the same input, a changed one is refused even if its size and date were
+  preserved. A digest is recomputed unless the file's device, inode, size,
+  modification time and status-change time (which no tool can set back) are
+  all unchanged, so resuming does not rehash unchanged inputs.
+- `--resume` reuses every region whose marker and BAM (size and SHA-256)
+  validate, reruns missing, partial or altered regions, then merges and
+  publishes the output
   atomically, exactly as an uninterrupted run would: the records are
   identical. The header's `@PG` keeps the original command line. Integrated
   dedup, the DAF SNP screen and the NRL estimate are recomputed (they are
@@ -98,6 +105,11 @@ fiberhmm-call -i sorted.bam -o calls.bam --enzyme hia5 --seq pacbio \
   Streaming runs (stdin, stdout, unsorted or unaligned input) cannot resume.
 - Without `--resume`, an existing work directory is never discarded: the
   run stops and asks for `--resume` (or for the directory to be deleted).
+- A work directory has one owner: a run holds a lock on it (`.lock`) from
+  the moment it inspects it until it has published and cleaned up, and a
+  second run on the same work directory is refused while the first is
+  alive. The lock disappears with its process, however it ends, so there
+  is never a stale lock to remove.
 - The work directory is removed after a successful publish
   (`--keep-work-dir` keeps it) and kept when a run fails or is interrupted.
   It needs about as much space as the output BAM.
@@ -287,5 +299,6 @@ BAM index: out/apply/hia5_pacbio_footprints.bam.bai
 - Numba compiles the HMM kernels when each worker starts, which takes a few
   seconds; it is negligible on real data sets.
 - For long runs, see [Long runs and resuming](#long-runs-and-resuming): the
-  resume bookkeeping (one small JSON marker per region, header and index
-  digests) costs well under a second per run.
+  resume bookkeeping costs one extra read of the input BAM when the run
+  starts (its SHA-256, at about 2-3 GB/s) and a digest of each region BAM;
+  a resume does not rehash an unchanged input.

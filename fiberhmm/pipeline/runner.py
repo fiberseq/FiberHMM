@@ -31,15 +31,18 @@ from typing import Callable, Optional
 import pysam
 
 from fiberhmm import __version__
+from fiberhmm.io.run_state import DirectoryBusy, DirectoryLock, load_memo_file, save_memo_file
 from fiberhmm.pipeline import aligner as mm2
 from fiberhmm.pipeline.circular import hard_clip, merge_origin_pieces
 from fiberhmm.pipeline.progress import (
     STATE_DIR,
     ProgressReporter,
+    clear_marker,
     file_fingerprint,
     fingerprint_changes,
-    outputs_exist,
+    outputs_valid,
     read_marker,
+    write_json_atomic,
     write_marker,
 )
 from fiberhmm.pipeline.reference import (
@@ -179,6 +182,74 @@ def default_sample_name(path: str) -> str:
     return re.sub(r"[^0-9A-Za-z_.-]+", "_", name).strip("_") or "sample"
 
 
+def validate_sample_name(name: str) -> str:
+    """An explicit --sample must be one plain file-name component.
+
+    It names files inside OUTDIR and the read group, so path separators,
+    ``.``/``..``, a leading ``.`` or ``-``, whitespace and control characters
+    are refused rather than allowed to place outputs elsewhere.
+    """
+    text = str(name)
+    bad = (not text or text in (".", "..") or text[0] in ".-"
+           or any(sep in text for sep in ("/", "\\", os.sep, os.altsep or "/"))
+           or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in text))
+    if bad:
+        raise PipelineError(
+            f"--sample {text!r} is not a plain file name",
+            hint="Use one name without path separators, spaces or a leading '.'/'-', "
+                 "e.g. --sample run1 (letters, digits, '_', '-' and '.').")
+    return text
+
+
+def infer_read_platform(paths: list[str]) -> tuple[Optional[str], str]:
+    """``(platform, evidence)`` for Hia5 reads, before alignment.
+
+    BAM inputs use ``fiberhmm-call``'s detection (FIBERHMM chemistry
+    declaration, MM specs of the first reads, @RG/@PG); FASTQ inputs the MM
+    tags in their header comments (``T-a`` present: PacBio; ``A+a`` only:
+    Nanopore). Raises :class:`PipelineError` when the inputs disagree or
+    carry no evidence: the aligner preset and read group depend on it.
+    """
+    from fiberhmm.cli.common import sniff_sequencing_platform
+    votes: dict[str, list[str]] = {}
+    for path in paths:
+        name = os.path.basename(path)
+        if path.lower().endswith((".bam", ".cram", ".sam")):
+            evidence = sniff_sequencing_platform(path)
+            if evidence.conflict:
+                raise PipelineError(f"cannot tell the sequencing platform of {name}: "
+                                    f"{evidence.conflict}",
+                                    hint="Pass --seq pacbio or --seq nanopore.")
+            if evidence.platform:
+                votes.setdefault(evidence.platform, []).append(f"{name} ({evidence.source})")
+        else:
+            counts = mm2.fastq_platform_votes(path)
+            informative = counts["pacbio"] + counts["nanopore"]
+            if not informative:
+                continue
+            majority = max(counts, key=counts.get)
+            if informative - counts[majority] > 0.1 * informative:
+                raise PipelineError(
+                    f"cannot tell the sequencing platform of {name}: its MM tags are mixed "
+                    f"({counts['pacbio']} read(s) with PacBio T-a calls, "
+                    f"{counts['nanopore']} with Nanopore-style A+a calls only)",
+                    hint="Pass --seq pacbio or --seq nanopore.")
+            votes.setdefault(majority, []).append(
+                f"{name} (MM tags of {informative} read(s))")
+    if len(votes) > 1:
+        detail = "; ".join(f"{platform}: {', '.join(src)}" for platform, src in sorted(votes.items()))
+        raise PipelineError(f"the read files disagree about the sequencing platform ({detail})",
+                            hint="Pass --seq pacbio or --seq nanopore.")
+    if not votes:
+        raise PipelineError(
+            "cannot tell the sequencing platform of the Hia5 reads: no MM tags or "
+            "platform records in the first reads",
+            hint="Pass --seq pacbio or --seq nanopore (it selects the minimap2 preset "
+                 "and the calling model).")
+    platform, sources = next(iter(votes.items()))
+    return platform, "; ".join(sources)
+
+
 _REGION = re.compile(r"^(?P<chrom>[^:\s]+):(?P<start>[\d,]+)-(?P<end>[\d,]+)$")
 
 
@@ -204,7 +275,9 @@ def format_region(chrom: str, start0: int, end: int) -> str:
 # ---------------------------------------------------------------------------
 
 _CHILDREN: list[subprocess.Popen] = []
-_CHILDREN_LOCK = threading.Lock()
+# Re-entrant: the main thread may be interrupted by a signal while it holds the
+# lock, and the cleanup that follows (terminate_children) runs on that thread.
+_CHILDREN_LOCK = threading.RLock()
 
 
 def _register(proc: subprocess.Popen) -> subprocess.Popen:
@@ -246,10 +319,15 @@ def terminate_children() -> None:
 
 
 def install_cancel_handlers() -> None:
-    """SIGTERM (and SIGINT) stop the children and raise :class:`PipelineCancelled`."""
+    """SIGTERM (and SIGINT) raise :class:`PipelineCancelled` in the main thread.
+
+    The handler only raises: the children are stopped by the normal cleanup
+    paths the exception unwinds through (``Pipeline.run``, the step's
+    ``finally``), never from inside the handler, which could interrupt a
+    section that holds the child registry lock.
+    """
 
     def handler(signum, frame):
-        terminate_children()
         raise PipelineCancelled(signum=signum)
 
     signal.signal(signal.SIGTERM, handler)
@@ -327,6 +405,11 @@ class Pipeline:
         self.regions: list[tuple[str, int, int]] = []
         self.stats: dict = {}
         self.track_files: list[str] = []
+        self.qc_outputs: Optional[dict] = None
+        self.memo = None
+        self._lock: Optional[DirectoryLock] = None
+        self._ran: set[str] = set()
+        self._notes: list[str] = []  # logged right after the start event
         self._redo_from = None
         if config.redo:
             self._redo_from = (0 if config.redo == "all" else
@@ -337,16 +420,36 @@ class Pipeline:
         cfg = self.config
         cfg.reads = expand_read_inputs(cfg.reads)
         self.regions = [parse_region(r) for r in cfg.regions]
-        self.sample = cfg.sample or default_sample_name(cfg.reads[0])
-        os.makedirs(os.path.join(self.outdir, STATE_DIR), exist_ok=True)
+        self.sample = (validate_sample_name(cfg.sample) if cfg.sample
+                       else default_sample_name(cfg.reads[0]))
+        state = os.path.join(self.outdir, STATE_DIR)
+        os.makedirs(state, exist_ok=True)
+        # One run owns OUTDIR at a time (released by close(), or by the kernel
+        # when this process ends): markers, work files and outputs are never
+        # written by two runs at once.
+        try:
+            self._lock = DirectoryLock(os.path.join(state, "lock"),
+                                       "fiberhmm-pipeline output directory").acquire()
+        except DirectoryBusy as exc:
+            raise PipelineError(str(exc), hint="Use another output directory (-o) for a "
+                                               "second run at the same time.") from None
+        self.memo = load_memo_file(os.path.join(state, "digests.json"))
         os.makedirs(os.path.join(self.outdir, "logs"), exist_ok=True)
         self._log_handle = open(os.path.join(self.outdir, "logs", "pipeline.log"), "a",
                                 encoding="utf-8")
         self.aligned_bam = os.path.join(self.outdir, f"{self.sample}.aligned.bam")
         self.called_bam = os.path.join(self.outdir, f"{self.sample}.fiberhmm.bam")
         self.qc_prefix = os.path.join(self.outdir, "qc", f"{self.sample}.fiberhmm")
-        self.call_progress_path = os.path.join(self.outdir, STATE_DIR,
-                                               "call.progress.jsonl")
+        self.call_progress_path = os.path.join(state, "call.progress.jsonl")
+        for path in (self.aligned_bam, self.called_bam, self.qc_prefix):
+            if os.path.commonpath([self.outdir, os.path.abspath(path)]) != self.outdir:
+                raise PipelineError(f"output {path} would be outside {self.outdir}")
+        if cfg.enzyme == "hia5" and not cfg.seq:
+            # The minimap2 preset, the read group's PL and fiberhmm-call's
+            # model all follow the platform: decide it once, from the reads.
+            platform, evidence = infer_read_platform(cfg.reads)
+            cfg.seq = platform
+            self._notes.append(f"platform: {platform} (detected from {evidence})")
 
     # -- messages ------------------------------------------------------------
     def log(self, message: str, level: str = "info") -> None:
@@ -361,8 +464,26 @@ class Pipeline:
     def _forced(self, step: str) -> bool:
         return self._redo_from is not None and self.steps.index(step) >= self._redo_from
 
-    def _is_complete(self, step: str, fingerprint: dict) -> bool:
-        """True when the step can be skipped; refuse a changed setup."""
+    def _refuse(self, step: str, changed: list[str], what: str = "result") -> None:
+        raise PipelineError(
+            f"{self.outdir} already holds a '{step}' {what} made with different "
+            f"settings or inputs ({', '.join(changed) or 'setup'})",
+            hint=f"Use a new output directory (-o), or add --redo {step} to "
+                 "replace the earlier result.")
+
+    def _upstream_reran(self, changed: list[str], upstream: dict) -> bool:
+        """Every changed key is the output of an earlier step rerun in this run."""
+        return bool(changed) and all(upstream.get(k) in self._ran for k in changed)
+
+    def _is_complete(self, step: str, fingerprint: dict,
+                     upstream: Optional[dict] = None) -> bool:
+        """True when the step can be skipped; refuse a changed setup.
+
+        ``upstream`` maps fingerprint keys that hold an earlier step's output
+        to that step: when only those changed because the step reran in this
+        run (e.g. its output was damaged), this step reruns instead of being
+        refused. Kept outputs must still have their recorded size and SHA-256.
+        """
         if self._forced(step):
             return False
         marker = read_marker(self.outdir, step)
@@ -370,17 +491,46 @@ class Pipeline:
             return False
         if marker.get("fingerprint") != fingerprint:
             changed = fingerprint_changes(marker.get("fingerprint") or {}, fingerprint)
-            raise PipelineError(
-                f"{self.outdir} already holds a '{step}' result made with different "
-                f"settings or inputs ({', '.join(changed) or 'setup'})",
-                hint=f"Use a new output directory (-o), or add --redo {step} to "
-                     "replace the earlier result.")
-        if not outputs_exist(marker.get("outputs")):
+            if self._upstream_reran(changed, upstream or {}):
+                return False
+            self._refuse(step, changed)
+        ok, why = outputs_valid(marker, self.memo)
+        if not ok:
+            self.log(f"{step}: the earlier result cannot be reused ({why}); running "
+                     "it again", "warning")
             return False
         self.stats[step] = marker.get("summary") or {}
         self.progress.step(step, "skipped", message="already complete")
         self.log(f"{step}: already complete, skipped")
         return True
+
+    def _start_step(self, step: str) -> None:
+        """A step is about to change OUTDIR: the previous outputs.json no longer
+        describes it (it is written again when the run completes)."""
+        self._ran.add(step)
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(os.path.join(self.outdir, "outputs.json"))
+
+    def _drop_stale_markers(self) -> None:
+        """Forget QC/track results of an earlier called BAM that this run did not
+        redo (e.g. --redo call --no-qc): they describe a BAM that no longer
+        exists, so a later run makes them again instead of refusing."""
+        if not os.path.isfile(self.called_bam):
+            return
+        called = file_fingerprint(self.called_bam, self.memo)
+        for step in ("qc", "tracks"):
+            marker = read_marker(self.outdir, step)
+            if marker and (marker.get("fingerprint") or {}).get("called") != called:
+                clear_marker(self.outdir, step)
+
+    def _write_marker(self, step: str, fingerprint: dict, outputs: dict,
+                      summary: Optional[dict] = None) -> None:
+        write_marker(self.outdir, step, fingerprint, outputs, summary, self.memo)
+        self._save_memo()
+
+    def _save_memo(self) -> None:
+        if self.memo is not None:
+            save_memo_file(os.path.join(self.outdir, STATE_DIR, "digests.json"), self.memo)
 
     # -- run -----------------------------------------------------------------
     def run(self) -> dict:
@@ -389,6 +539,8 @@ class Pipeline:
             self.progress.emit("start", version=__version__, sample=self.sample,
                                steps=list(self.steps), outdir=self.outdir,
                                settings=self.config.calling_settings())
+            for note in self._notes:
+                self.log(note)
             self.step_prepare_reference()
             self.step_index()
             self.step_align()
@@ -396,6 +548,7 @@ class Pipeline:
             self.step_qc()
             if self.config.tracks:
                 self.step_tracks()
+            self._drop_stale_markers()
             outputs = self.write_outputs()
         except mm2.AlignerNotFound as exc:
             self.progress.emit("done", status="error",
@@ -414,20 +567,33 @@ class Pipeline:
         return outputs
 
     def close(self) -> None:
+        self._save_memo()
         if self._log_handle is not None:
             with contextlib.suppress(Exception):
                 self._log_handle.close()
+            self._log_handle = None
+        if self._lock is not None:
+            self._lock.release()
+            self._lock = None
 
     # -- prepare_reference ----------------------------------------------------
     def step_prepare_reference(self) -> None:
         cfg = self.config
         self.progress.step("prepare_reference", "running")
+        # The reference is prepared in a private staging directory and checked
+        # against the earlier steps' records before anything in OUTDIR changes:
+        # a refused rerun leaves the earlier reference, BAMs and outputs as a
+        # consistent set.
+        stage = os.path.join(self.outdir, STATE_DIR, "staging")
+        shutil.rmtree(stage, ignore_errors=True)
         try:
-            self.reference = prepare_reference(cfg.reference, self.outdir, cfg.topology,
-                                               cache_dir=mm2.index_cache_dir())
+            staged = prepare_reference(cfg.reference, stage, cfg.topology,
+                                       cache_dir=mm2.index_cache_dir())
         except (OSError, ValueError) as exc:
             raise PipelineError(f"reference: {exc}",
                                 hint="Give a FASTA or a plasmid map (.dna, .gb/.gbk, .embl)")
+        self._check_reference_reuse(staged)
+        self.reference = self._publish_reference(staged, stage)
         ref = self.reference
         for warning in ref.warnings:
             self.log(f"reference: {warning}", "warning")
@@ -447,6 +613,43 @@ class Pipeline:
         self._decide_alignment()
         self.progress.step("prepare_reference", "done", message=message)
 
+    def _reference_identity(self, ref: Optional[ReferenceInfo] = None) -> list[dict]:
+        """What the aligned and called records depend on: every contig's name,
+        length, sequence MD5 and topology."""
+        return [asdict(c) for c in (ref or self.reference).contigs]
+
+    def _check_reference_reuse(self, staged: ReferenceInfo) -> None:
+        identity = self._reference_identity(staged)
+        for step in ("align", "call"):
+            if self._forced(step):
+                continue
+            marker = read_marker(self.outdir, step) or {}
+            recorded = (marker.get("fingerprint") or {}).get("reference")
+            if recorded is not None and recorded != identity:
+                self._refuse(step, ["reference"])
+
+    def _publish_reference(self, staged: ReferenceInfo, stage: str) -> ReferenceInfo:
+        """Move the staged reference files into OUTDIR (unchanged files are left alone)."""
+        import filecmp
+        moved: dict[str, str] = {}
+        # A FASTA index goes in after its FASTA, so it is never older than it.
+        names = sorted(os.listdir(stage), key=lambda n: (n.endswith(".fai"), n))
+        replaced: set[str] = set()
+        for name in names:
+            source = os.path.join(stage, name)
+            target = os.path.join(self.outdir, name)
+            if (name[:-len(".fai")] in replaced if name.endswith(".fai") else False) or not (
+                    os.path.isfile(target) and filecmp.cmp(source, target, shallow=False)):
+                self._start_step("prepare_reference")
+                os.replace(source, target)
+                replaced.add(name)
+            moved[source] = target
+        shutil.rmtree(stage, ignore_errors=True)
+        staged.fasta = moved.get(staged.fasta, staged.fasta)
+        if staged.plasmid_map:
+            staged.plasmid_map = moved.get(staged.plasmid_map, staged.plasmid_map)
+        return staged
+
     def _decide_alignment(self) -> None:
         cfg = self.config
         aligned = [rf for rf in self.read_files if rf.kind == "aligned"]
@@ -460,6 +663,10 @@ class Pipeline:
             ok, why = header_matches_reference(bam.header, self.reference)
             if ok and cfg.enzyme in DAF_ENZYMES:
                 ok, why = _has_md_tags(bam)
+            if ok and not all(sq.get("M5") for sq in bam.header.to_dict().get("SQ", [])):
+                # Names and lengths match, but without @SQ M5 the header does not
+                # say which sequence the reads were aligned to: check the reads.
+                ok, why = _reads_match_reference(path, self.reference.fasta)
             has_index = bam.has_index()
         if not ok:
             self.log(f"align: {os.path.basename(path)} is realigned: {why}")
@@ -495,8 +702,8 @@ class Pipeline:
     def _align_fingerprint(self) -> dict:
         cfg = self.config
         return {
-            "reads": [file_fingerprint(rf.path) for rf in self.read_files],
-            "reference": [asdict(c) for c in self.reference.contigs],
+            "reads": [file_fingerprint(rf.path, self.memo) for rf in self.read_files],
+            "reference": self._reference_identity(),
             "preset": cfg.preset(),
             "min_mapq": cfg.min_mapq,
             "hard_clip": cfg.resolved_hard_clip(),
@@ -514,40 +721,66 @@ class Pipeline:
         fingerprint = self._align_fingerprint()
         if self._is_complete("align", fingerprint):
             return
+        self._start_step("align")
+        clear_marker(self.outdir, "align")
         self.progress.step("align", "running", done=0, unit="reads")
         if self.use_aligned_input:
             stats = self._subset_aligned_input()
         else:
             stats = self._align()
         self.stats["align"] = stats
-        write_marker(self.outdir, "align", fingerprint,
-                     {"bam": self.aligned_bam, "bai": self.aligned_bam + ".bai"}, stats)
+        self._write_marker("align", fingerprint,
+                           {"bam": self.aligned_bam, "bai": self.aligned_bam + ".bai"}, stats)
         self.progress.step("align", "done", done=stats.get("kept"), unit="reads",
                            message=stats.get("message"))
 
-    def _overlaps_regions(self, read) -> bool:
-        if not self.regions:
+    def _read_pieces(self, read) -> list[tuple[int, int]]:
+        """The reference intervals a record covers; a record running past the end
+        of its contig (the SAM circular representation) also covers the start."""
+        start, end = read.reference_start, read.reference_end
+        if getattr(self, "_lengths_of", None) is not self.reference:
+            self._lengths = {c.name: c.length for c in self.reference.contigs}
+            self._lengths_of = self.reference
+        length = self._lengths.get(read.reference_name)
+        if length and end > length:
+            return [(start, length), (0, end - length)]
+        return [(start, end)]
+
+    def _overlaps_regions(self, read, regions=None) -> bool:
+        regions = self.regions if regions is None else regions
+        if not regions:
             return True
         chrom = read.reference_name
-        return any(chrom == c and read.reference_start < e and read.reference_end > s
-                   for c, s, e in self.regions)
+        return any(chrom == c and ps < e and pe > s
+                   for c, s, e in regions for ps, pe in self._read_pieces(read))
 
     def _subset_aligned_input(self) -> dict:
         tmp = os.path.join(self.outdir, STATE_DIR, "tmp", f"{self.sample}.unsorted.bam")
         os.makedirs(os.path.dirname(tmp), exist_ok=True)
         kept = 0
         seen: set = set()
+        lengths = {c.name: c.length for c in self.reference.contigs}
         with pysam.AlignmentFile(self.use_aligned_input) as src:
             header = decorate_header(src.header.to_dict(), self.reference)
             with pysam.AlignmentFile(tmp, "wb", header=header) as out:
                 for chrom, start, end in self.regions:
-                    for read in src.fetch(chrom, start, end):
-                        key = (read.query_name, read.flag, read.reference_start)
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        out.write(read)
-                        kept += 1
+                    candidates = [src.fetch(chrom, start, end)]
+                    length = lengths.get(chrom)
+                    if length:
+                        # Records that run past the contig end (through a circular
+                        # origin) are indexed at their start: fetch them at the
+                        # last base and keep those whose wrapped part overlaps.
+                        candidates.append(src.fetch(chrom, length - 1, length))
+                    for batch in candidates:
+                        for read in batch:
+                            if not self._overlaps_regions(read, [(chrom, start, end)]):
+                                continue
+                            key = read.to_string()  # the complete record
+                            if key in seen:
+                                continue
+                            seen.add(key)
+                            out.write(read)
+                            kept += 1
         _sort_index_publish(tmp, self.aligned_bam, self.config.cores)
         message = f"{kept} records in {len(self.regions)} region(s) of the aligned input"
         self.log(f"align: {message}")
@@ -698,6 +931,9 @@ class Pipeline:
         if not self._overlaps_regions(record):
             stats["outside_regions"] += 1
             return None
+        # The feeder numbered every input record (records sharing a name stay
+        # separate molecules); the output keeps the name the reads came with.
+        record.query_name = mm2.original_name(record.query_name)
         if record.has_tag("SA"):
             record.set_tag("SA", None)
         if cfg.resolved_hard_clip():
@@ -709,10 +945,28 @@ class Pipeline:
         return record
 
     # -- call + qc -------------------------------------------------------------
+    def _call_arg_files(self) -> list[dict]:
+        """Content identity of every file named in --call-args (a model given with
+        -m, a recall model, an NRL profile, a mask...): a changed file is a
+        changed calling setup. Tokens and ``--option=value`` values that name
+        an existing file are included; FiberHMM's bundled defaults are covered
+        by the version."""
+        found: dict[str, dict] = {}
+        for token in self.config.call_args:
+            candidates = [token]
+            if token.startswith("-") and "=" in token:
+                candidates.append(token.split("=", 1)[1])
+            for candidate in candidates:
+                if candidate and os.path.isfile(candidate):
+                    identity = file_fingerprint(candidate, self.memo)
+                    found[identity["path"]] = identity
+        return [found[path] for path in sorted(found)]
+
     def _call_fingerprint(self) -> dict:
         cfg = self.config
         return {
-            "aligned": file_fingerprint(self.aligned_bam),
+            "aligned": file_fingerprint(self.aligned_bam, self.memo),
+            "reference": self._reference_identity(),
             "enzyme": cfg.enzyme,
             "seq": cfg.resolved_seq(),
             "min_mapq": cfg.min_mapq,
@@ -720,13 +974,14 @@ class Pipeline:
             "dedup": cfg.dedup,
             "dedup_mode": cfg.dedup_mode,
             "snp_screen": cfg.snp_screen,
-            "snp_mask": file_fingerprint(cfg.snp_mask) if cfg.snp_mask else None,
+            "snp_mask": file_fingerprint(cfg.snp_mask, self.memo) if cfg.snp_mask else None,
             "chimera_filter": cfg.chimera_filter,
             "primary": cfg.primary,
             "prob_threshold": cfg.prob_threshold,
             "use_m5c": cfg.use_m5c,
             "cpg_mask_policy": cfg.cpg_mask_policy,
             "call_args": list(cfg.call_args),
+            "call_arg_files": self._call_arg_files(),
             "fiberhmm": __version__,
         }
 
@@ -785,17 +1040,55 @@ class Pipeline:
         # change the calls, so they are not part of the step fingerprint.
         extra: list[str] = []
         if resumable:
-            extra += ["--resume", "--work-dir", os.path.join(self.outdir, STATE_DIR, "call_work"),
+            extra += ["--resume", "--work-dir", self.call_work_dir,
                       "--progress-json", self.call_progress_path]
         return cmd + list(cfg.call_args), extra
+
+    @property
+    def call_work_dir(self) -> str:
+        return os.path.join(self.outdir, STATE_DIR, "call_work")
+
+    def _prepare_call_state(self, fingerprint: dict, resumable: bool) -> None:
+        """Keep the resumable calling state only if it belongs to this call.
+
+        ``--redo`` reaching the call, or an alignment rerun in this run,
+        discards it. An interrupted call made with other settings or inputs is
+        refused like a finished one (``--redo call`` discards it); calling in
+        streaming mode does not use it.
+        """
+        work = self.call_work_dir
+        started_path = os.path.join(self.outdir, STATE_DIR, "call.started")
+        discard = self._forced("call") or not resumable
+        if not discard and os.path.isdir(work):
+            try:
+                with open(started_path, encoding="utf-8") as handle:
+                    started = json.load(handle).get("fingerprint")
+            except (OSError, ValueError, AttributeError):
+                started = None
+            if started != fingerprint:
+                changed = fingerprint_changes(started or {}, fingerprint)
+                if self._upstream_reran(changed, {"aligned": "align"}) or started is None:
+                    discard = True
+                else:
+                    self._refuse("call", changed, what="interrupted calling state")
+        if discard:
+            shutil.rmtree(work, ignore_errors=True)
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(started_path)
+        if resumable:
+            write_json_atomic(started_path, {"fingerprint": fingerprint})
 
     def step_call(self) -> None:
         cfg = self.config
         fingerprint = self._call_fingerprint()
-        if self._is_complete("call", fingerprint):
+        if self._is_complete("call", fingerprint, upstream={"aligned": "align"}):
             return
         supported = call_supported_options()
         resumable = self.resumable_call(supported)
+        # Refuses an incompatible interrupted call before OUTDIR changes.
+        self._prepare_call_state(fingerprint, resumable)
+        self._start_step("call")
+        clear_marker(self.outdir, "call")
         cmd, extra = self.call_command(supported, resumable)
         total = (self.stats.get("align") or {}).get("kept")
         if total is None and not resumable:
@@ -831,10 +1124,18 @@ class Pipeline:
         if _ensure_reference_header(self.called_bam, self.reference, cfg.cores):
             self.log("call: reference identity (@SQ M5, FIBERHMM-REFERENCE) added "
                      "to the called BAM header")
+        with pysam.AlignmentFile(self.called_bam, check_sq=False) as bam:
+            ok, why = header_matches_reference(bam.header, self.reference)
+        if not ok:
+            raise PipelineError(f"the called BAM does not match the reference: {why}",
+                                hint="Check that --reference is the reference the reads "
+                                     "were aligned to, or realign them.")
         summary = {"log": log_path, **_count_called(self.called_bam)}
         self.stats["call"] = summary
-        write_marker(self.outdir, "call", fingerprint,
-                     {"bam": self.called_bam, "bai": self.called_bam + ".bai"}, summary)
+        self._write_marker("call", fingerprint,
+                           {"bam": self.called_bam, "bai": self.called_bam + ".bai"}, summary)
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(os.path.join(self.outdir, STATE_DIR, "call.started"))
         message = (f"{summary['called']} of {summary['records']} reads called"
                    + (f", {summary['duplicate_flagged']} duplicate-flagged"
                       if summary["duplicate_flagged"] else ""))
@@ -846,13 +1147,27 @@ class Pipeline:
         """``fiberhmm-qc`` on the called BAM. A QC failure never fails the run:
         the called BAM is valid without it."""
         cfg = self.config
+        # outputs.json publishes QC only from this: the QC of the current called
+        # BAM, validated by its marker (None when QC is off or failed).
+        self.qc_outputs = None
         if not cfg.qc:
             self.progress.step("qc", "skipped", message="--no-qc")
             return
-        fingerprint = {"called": file_fingerprint(self.called_bam), "fiberhmm": __version__,
-                       "prob_threshold": cfg.prob_threshold, "min_mapq": cfg.min_mapq}
-        if self._is_complete("qc", fingerprint):
+        fingerprint = {"called": file_fingerprint(self.called_bam, self.memo),
+                       "fiberhmm": __version__,
+                       "prob_threshold": cfg.prob_threshold, "min_mapq": cfg.min_mapq,
+                       "snp_mask": (file_fingerprint(cfg.snp_mask, self.memo)
+                                    if cfg.snp_mask else None)}
+        if self._is_complete("qc", fingerprint, upstream={"called": "call"}):
+            self.qc_outputs = dict((read_marker(self.outdir, "qc") or {}).get("outputs") or {})
+            self.stats["qc"] = {"verdicts": qc_verdicts(self.qc_outputs.get("json"))}
             return
+        self._start_step("qc")
+        clear_marker(self.outdir, "qc")
+        # Files of an earlier QC run must not pass for this one's.
+        for leftover in self.qc_files().values():
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(leftover)
         self.progress.step("qc", "running")
         cmd = [sys.executable, "-m", "fiberhmm.cli.qc", "-i", self.called_bam,
                "-o", os.path.dirname(self.qc_prefix), "--min-mapq", str(cfg.min_mapq)]
@@ -871,8 +1186,8 @@ class Pipeline:
             return
         verdicts = qc_verdicts(files["json"])
         self.stats["qc"] = {"verdicts": verdicts}
-        write_marker(self.outdir, "qc", fingerprint, {"json": files["json"]},
-                     self.stats["qc"])
+        self._write_marker("qc", fingerprint, files, self.stats["qc"])
+        self.qc_outputs = files
         message = f"QC {verdicts.get('overall', '?')}"
         if verdicts.get("overall_score") is not None:
             message += f" ({verdicts['overall_score']:.0f}/100)"
@@ -934,12 +1249,14 @@ class Pipeline:
         cfg = self.config
         tracks_dir = os.path.join(self.outdir, "tracks")
         bigbed = shutil.which("bedToBigBed") is not None
-        fingerprint = {"called": file_fingerprint(self.called_bam), "bigbed": bigbed,
-                       "enzyme": cfg.enzyme}
-        if self._is_complete("tracks", fingerprint):
+        fingerprint = {"called": file_fingerprint(self.called_bam, self.memo),
+                       "bigbed": bigbed, "enzyme": cfg.enzyme}
+        if self._is_complete("tracks", fingerprint, upstream={"called": "call"}):
             marker = read_marker(self.outdir, "tracks") or {}
             self.track_files = list((marker.get("outputs") or {}).get("files") or [])
             return
+        self._start_step("tracks")
+        clear_marker(self.outdir, "tracks")
         self.progress.step("tracks", "running")
         layers = ["--nucleosome", "--msp", "--tf"]
         layers.append("--deam" if cfg.enzyme in DAF_ENZYMES else "--m6a")
@@ -958,8 +1275,8 @@ class Pipeline:
         self.track_files = sorted(
             os.path.join(tracks_dir, f) for f in os.listdir(tracks_dir)
             if f.startswith(stem) and f.endswith((".bb", ".bed")))
-        write_marker(self.outdir, "tracks", fingerprint, {"files": self.track_files},
-                     {"n_files": len(self.track_files)})
+        self._write_marker("tracks", fingerprint, {"files": self.track_files},
+                           {"n_files": len(self.track_files)})
         self.progress.step("tracks", "done", message=f"{len(self.track_files)} files")
 
     # -- outputs -----------------------------------------------------------------
@@ -972,7 +1289,7 @@ class Pipeline:
 
     def write_outputs(self) -> dict:
         ref = self.reference
-        qc = self.qc_files()
+        qc = dict(self.qc_outputs or {})
         command = ["fiberbrowser", "-f", ref.fasta, "--dataset",
                    f"{self.called_bam}:{self.sample}"]
         outputs = {
@@ -1009,12 +1326,8 @@ class Pipeline:
             "stats": self.stats,
         }
         outputs = json.loads(json.dumps(outputs, default=str))
-        path = os.path.join(self.outdir, "outputs.json")
-        tmp = f"{path}.tmp{os.getpid()}"
-        with open(tmp, "w", encoding="utf-8") as handle:
-            json.dump(outputs, handle, indent=2)
-            handle.write("\n")
-        os.replace(tmp, path)
+        write_json_atomic(os.path.join(self.outdir, "outputs.json"), outputs)
+        self._save_memo()
         return outputs
 
 
@@ -1035,7 +1348,10 @@ def _child_env() -> dict:
 
 
 def _group_by_name(records):
-    """Consecutive records sharing a query name (minimap2 output order)."""
+    """Consecutive records sharing a query name (minimap2 output order).
+
+    The names are the feeder's internal ones (one serial per input record), so
+    a group is exactly one input record's alignments."""
     group = []
     name = None
     for read in records:
@@ -1049,13 +1365,20 @@ def _group_by_name(records):
 
 
 def _sort_index_publish(unsorted: str, final: str, cores: int) -> None:
-    """Coordinate-sort and index with pysam, then move BAM + index into place."""
-    tmp_sorted = unsorted + ".sorted.bam"
-    pysam.sort("--no-PG", "-o", tmp_sorted, "-@", str(max(1, min(4, cores))),
-               "-T", os.path.join(os.path.dirname(unsorted), "sort"), unsorted)
-    pysam.index(tmp_sorted)
-    os.replace(tmp_sorted + ".bai", final + ".bai")
-    os.replace(tmp_sorted, final)
+    """Coordinate-sort and index with pysam, then publish BAM + index together
+    (:func:`fiberhmm.inference.bam_output.commit_output`: never a mismatched
+    pair, and the previous pair is restored if publication fails)."""
+    from fiberhmm.inference.bam_output import commit_output
+    tmp_sorted = f"{unsorted}.{os.getpid()}.sorted.bam"
+    try:
+        pysam.sort("--no-PG", "-o", tmp_sorted, "-@", str(max(1, min(4, cores))),
+                   "-T", os.path.join(os.path.dirname(unsorted), "sort"), unsorted)
+        pysam.index(tmp_sorted)
+        commit_output(tmp_sorted, final)
+    finally:
+        for leftover in (tmp_sorted, tmp_sorted + ".bai"):
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(leftover)
     with contextlib.suppress(FileNotFoundError):
         os.remove(unsorted)
 
@@ -1071,6 +1394,58 @@ def _has_md_tags(bam, sample: int = 200) -> tuple[bool, str]:
         if seen >= sample:
             break
     return (seen > 0), ("" if seen else "it has no mapped reads")
+
+
+def _reads_match_reference(bam_path: str, fasta: str, sample: int = 200,
+                           max_bases: int = 2_000_000) -> tuple[bool, str]:
+    """Whether the first mapped reads were aligned to the sequence in ``fasta``.
+
+    For a BAM whose @SQ lines carry no M5 checksum. With MD tags, the reference
+    bases the aligner saw (MD) must equal the FASTA's (at most 0.1% may differ,
+    e.g. IUPAC codes); without MD, at least 70% of the aligned read bases must
+    match the FASTA (a different sequence of the same length matches ~25%).
+    Positions past a contig's end (circular records) wrap.
+    """
+    compared = differ = reads = 0
+    used_md = False
+    with pysam.FastaFile(fasta) as reference, pysam.AlignmentFile(bam_path) as bam:
+        cache: dict[str, str] = {}
+        for read in bam.fetch(until_eof=True):
+            if (read.is_unmapped or read.is_secondary or read.is_supplementary
+                    or not read.query_sequence or read.reference_name not in reference.references):
+                continue
+            name = read.reference_name
+            if name not in cache:
+                cache[name] = reference.fetch(name).upper()
+            contig = cache[name]
+            length = len(contig)
+            if read.has_tag("MD"):
+                used_md = True
+                try:
+                    pairs = read.get_aligned_pairs(matches_only=True, with_seq=True)
+                except (ValueError, KeyError):
+                    return False, "its MD tags cannot be read"
+                for _, rpos, base in pairs:
+                    compared += 1
+                    differ += (base or "N").upper() != contig[rpos % length]
+            else:
+                query = read.query_sequence.upper()
+                for qpos, rpos in read.get_aligned_pairs(matches_only=True):
+                    compared += 1
+                    differ += query[qpos] != contig[rpos % length]
+            reads += 1
+            if reads >= sample or compared >= max_bases:
+                break
+    if not compared:
+        return False, "it has no mapped reads to compare with the reference"
+    fraction = differ / compared
+    if used_md and fraction > 0.001:
+        return False, (f"its @SQ lines have no M5 checksum and {fraction:.1%} of the reference "
+                       "bases in its MD tags differ from --reference")
+    if not used_md and fraction > 0.3:
+        return False, (f"its @SQ lines have no M5 checksum and {fraction:.0%} of the aligned "
+                       "bases differ from --reference")
+    return True, ""
 
 
 class _ProgressRelay:
@@ -1153,15 +1528,21 @@ def _ensure_reference_header(bam_path: str, ref: ReferenceInfo, cores: int) -> b
     if has_m5 and (not needs_comment or declared_references(header)):
         return False
     decorate_header(header, ref)
-    tmp = bam_path + ".reheader.tmp.bam"
-    with pysam.AlignmentFile(bam_path, check_sq=False) as src, \
-            pysam.AlignmentFile(tmp, "wb", header=header,
-                                threads=max(1, min(4, cores))) as out:
-        for read in src.fetch(until_eof=True):
-            out.write(read)
-    pysam.index(tmp)
-    os.replace(tmp + ".bai", bam_path + ".bai")
-    os.replace(tmp, bam_path)
+    from fiberhmm.inference.bam_output import commit_output
+    directory, name = os.path.split(bam_path)
+    tmp = os.path.join(directory, f".{name}.{os.getpid()}.reheader.tmp.bam")
+    try:
+        with pysam.AlignmentFile(bam_path, check_sq=False) as src, \
+                pysam.AlignmentFile(tmp, "wb", header=header,
+                                    threads=max(1, min(4, cores))) as out:
+            for read in src.fetch(until_eof=True):
+                out.write(read)
+        pysam.index(tmp)
+        commit_output(tmp, bam_path)
+    finally:
+        for leftover in (tmp, tmp + ".bai"):
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(leftover)
     return True
 
 

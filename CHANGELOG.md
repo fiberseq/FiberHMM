@@ -24,7 +24,10 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   `fiberhmm-call` defaults and runs `fiberhmm-qc`. A plasmid map's contig is
   named as FiberBrowser names the map, and the header records the reference
   (`@SQ M5`/`TP:circular`, `@CO FIBERHMM-REFERENCE:v1:`). Completed steps are
-  skipped on a rerun; `--progress-json` streams progress for a GUI. A
+  skipped on a rerun only while their outputs keep their recorded SHA-256; a
+  changed input, reference, setting or `--call-args` file is refused before
+  the output directory changes; one run owns an output directory at a time;
+  `--progress-json` streams progress for a GUI. A
   Plasmidsaurus-sized run takes one to two minutes. See
   [From a Plasmidsaurus run to footprints in minutes](https://fiberseq.github.io/FiberHMM/getting-started/quick-daf-seq/)
   and [Plasmids](https://fiberseq.github.io/FiberHMM/workflows/plasmids/).
@@ -82,10 +85,12 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   posteriors files record `fiberhmm_version`.
 - **Resumable `fiberhmm-call --region-parallel` runs.** Finished regions are
   kept in a work directory (`.<output>.fiberhmm-work`, or `--work-dir`) with a
-  manifest of the input BAM identity and every effective parameter;
-  `--resume` reuses them, reruns missing or partial regions and publishes
-  records identical to an uninterrupted run, and refuses a changed input or
-  parameter set. `SIGTERM`/`SIGHUP` stop a run as cleanly as Ctrl-C (never a
+  manifest of the input BAM identity (content SHA-256) and every effective
+  parameter; `--resume` reuses regions whose BAM digest still matches, reruns
+  missing, partial or altered ones and publishes records identical to an
+  uninterrupted run, and refuses a changed input or parameter set, even one
+  whose size and date were preserved. A work directory has one owner (a
+  lock; a second run on it is refused while the first is alive). `SIGTERM`/`SIGHUP` stop a run as cleanly as Ctrl-C (never a
   half-published output). `--progress-json` writes machine-readable progress
   lines (regions done/total, reads/s, ETA) for GUIs and runners. See
   [Long runs and resuming](https://fiberseq.github.io/FiberHMM/workflows/calling/#long-runs-and-resuming).
@@ -94,7 +99,8 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   the run contract in `consensus_run.json`; `--continue` finishes an
   interrupted run in place (skips completed windows, redoes partial ones,
   rebuilds `regions.json`, the report and the BAMs, refuses changed inputs
-  or parameters). Independent windows now run in parallel (`--window-jobs`,
+  (content digests), parameters or DAF run mask, including one inherited
+  from `FIBERHMM_DAF_RUN_MASK`). Independent windows now run in parallel (`--window-jobs`,
   default automatic within `--cores`) with per-window logs and a
   windows-done/ETA progress line; results do not depend on the schedule.
   `--resume` keeps its meaning (a new run from saved evidence). See

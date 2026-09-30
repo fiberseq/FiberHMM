@@ -454,6 +454,7 @@ def _daf_signal_profile(
                     query_to_reference[int(position)]
                     for position in fallback
                     if int(position) in query_to_reference
+                    and query_to_reference[int(position)] not in excluded_reference_positions
                 }
             )
         if opportunities:
@@ -532,6 +533,9 @@ def _signal_profile(
 ) -> tuple[np.ndarray, int, int, int]:
     if mode == "daf":
         excluded = (snp_mask or {}).get(getattr(read, "reference_name", None), set())
+        if excluded:
+            from fiberhmm.daf.snps import wrapped_reference_sites
+            excluded = wrapped_reference_sites(read, excluded)
         return _daf_signal_profile(
             read,
             reference_handle,

@@ -45,9 +45,9 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--reference` | required | Reference FASTA, or a plasmid map (.dna, .gb/.gbk/.genbank, .embl) converted to a FASTA whose contig is named as FiberBrowser names the map. |
 | `--enzyme` | required | Chemistry: ddda / dddb (DAF-seq) or hia5 (Fiber-seq). Choices: `ddda`, `dddb`, `hia5`. |
 | `-o` / `--outdir` | required | Output directory. |
-| `--sample` | — | Sample name for output files and the read group (default: the first input's name without extensions). |
+| `--sample` | — | Sample name for output files and the read group (default: the first input's name without extensions). One plain file name: no path separators, spaces or leading '.'/'-'. |
 | `-c` / `--cores` | `4` | minimap2 threads and fiberhmm-call worker processes (default 4). |
-| `--seq` | — | Sequencing platform. Default: nanopore for ddda/dddb; for hia5, detected by fiberhmm-call. Sets the minimap2 preset (map-ont / map-hifi). Choices: `nanopore`, `pacbio`. |
+| `--seq` | — | Sequencing platform. Default: nanopore for ddda/dddb; for hia5, detected from the reads (MM tags of the first reads: T-a = PacBio, A+a only = Nanopore; BAM @RG/@PG), an error when they do not settle it. Sets the minimap2 preset (map-ont / map-hifi), the read group's PL and fiberhmm-call's --seq. Choices: `nanopore`, `pacbio`. |
 | `--topology` | `auto` | Reference topology. auto (default): a plasmid map's own topology, FASTA contigs linear. circular: every contig is circular (a plasmid FASTA). Choices: `auto`, `circular`, `linear`. |
 | `--region` | — | Keep only reads overlapping this region (1-based, inclusive; repeatable). The first region is the one outputs.json asks FiberBrowser to open. |
 | `--min-mapq` | `20` | Keep primary alignments with at least this MAPQ (default 20); also passed to fiberhmm-call and fiberhmm-qc. |
@@ -68,7 +68,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--call-mode` | `auto` | auto (default): fiberhmm-call's resumable region-parallel mode for genome-scale data (&gt;=20,000 reads over at least --cores regions), streaming for targeted runs (one amplicon or plasmid), which it calls faster. Choices: `auto`, `streaming`, `resumable`. |
 | `--no-qc` | off | Skip fiberhmm-qc. |
 | `--tracks` | off | Also extract nucleosome/MSP/TF/deamination (or m6A) tracks into OUTDIR/tracks (bigBed; BED without bedToBigBed). |
-| `--redo` | — | Redo this step and the later ones although complete (also needed to change the inputs or settings of an existing OUTDIR). Choices: `all`, `align`, `call`, `qc`, `tracks`. |
+| `--redo` | — | Redo this step and the later ones although complete (also needed to change the inputs or settings of an existing OUTDIR; discards an interrupted call's resumable state). Choices: `all`, `align`, `call`, `qc`, `tracks`. |
 | `--progress-json` | — | Append JSON-lines progress events to FILE ('-' for stdout). |
 | `-v` / `--verbose` | off | Echo the output of fiberhmm-call, -qc and -extract. |
 | `-q` / `--quiet` | off | No progress messages on stderr. |

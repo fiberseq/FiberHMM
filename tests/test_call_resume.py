@@ -115,11 +115,41 @@ def test_resume_refuses_changed_parameters_and_input(tmp_path, monkeypatch, regi
     assert '--resume' in capsys.readouterr().err
     assert call(monkeypatch, region_bam, output, benchmark_model_path, '--resume', '--min-mapq', '5') == 2
     assert 'region_pipeline.min_mapq' in capsys.readouterr().err
+    # Identity is content, not metadata: touching the input is accepted by the digest...
     stat = os.stat(region_bam)
     os.utime(region_bam, ns=(stat.st_atime_ns, stat.st_mtime_ns+10**9))
+    # ...but different records of the same size, with size and mtime preserved, are refused.
+    same_size_variant(region_bam)
     assert call(monkeypatch, region_bam, output, benchmark_model_path, '--resume') == 2
-    assert 'input.mtime_ns' in capsys.readouterr().err
+    assert 'input.sha256' in capsys.readouterr().err
     assert not output.exists() and len(list(work_dir(output).glob('region_*.done.json'))) == 3
+
+
+def same_size_variant(path):
+    """Rewrite ``path`` with one QNAME character changed, same byte size, mtime restored (like cp -p)."""
+    path = Path(path)
+    stat = path.stat()
+    with pysam.AlignmentFile(str(path), 'rb', check_sq=False) as handle:
+        header = handle.header
+        rows = list(handle.fetch(until_eof=True))
+    candidate = path.with_name(path.name+'.variant')
+    for index, row in enumerate(rows):
+        original = row.query_name
+        for position in range(len(original)):
+            for char in 'abcdefghijklmnopqrstuvwxyz0123456789':
+                if char == original[position]:
+                    continue
+                row.query_name = original[:position]+char+original[position+1:]
+                with pysam.AlignmentFile(str(candidate), 'wb', header=header) as out:
+                    for item in rows:
+                        out.write(item)
+                if candidate.stat().st_size == stat.st_size:
+                    path.write_bytes(candidate.read_bytes())
+                    candidate.unlink()
+                    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+                    return row.query_name
+        row.query_name = original
+    raise AssertionError('no same-size variant found')
 
 
 def test_resume_mode_rules(tmp_path, monkeypatch, region_bam, benchmark_model_path, capsys):

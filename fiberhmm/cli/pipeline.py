@@ -22,8 +22,11 @@ Examples:
 OUTDIR gets <sample>.aligned.bam, <sample>.fiberhmm.bam (+ .bai), qc/, the
 reference FASTA (and a copy of the plasmid map), optional tracks/, and
 outputs.json (schema fiberhmm.pipeline.outputs.v1) saying what to open in
-FiberBrowser. Re-running the same command skips completed steps; SIGTERM or
-Ctrl-C stops cleanly and the next run continues.
+FiberBrowser. Re-running the same command skips completed steps whose outputs
+still have their recorded SHA-256; a changed input, reference, setting or
+--call-args file is refused before OUTDIR changes (--redo STEP replaces it).
+One run owns OUTDIR at a time. SIGTERM or Ctrl-C stops cleanly and the next
+run continues.
 """
 from __future__ import annotations
 
@@ -53,14 +56,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-o", "--outdir", required=True, help="Output directory.")
     p.add_argument("--sample", default=None,
                    help="Sample name for output files and the read group "
-                        "(default: the first input's name without extensions).")
+                        "(default: the first input's name without extensions). "
+                        "One plain file name: no path separators, spaces or "
+                        "leading '.'/'-'.")
     p.add_argument("-c", "--cores", type=int, default=4,
                    help="minimap2 threads and fiberhmm-call worker processes "
                         "(default 4).")
     p.add_argument("--seq", choices=["nanopore", "pacbio"], default=None,
                    help="Sequencing platform. Default: nanopore for ddda/dddb; for "
-                        "hia5, detected by fiberhmm-call. Sets the minimap2 preset "
-                        "(map-ont / map-hifi).")
+                        "hia5, detected from the reads (MM tags of the first "
+                        "reads: T-a = PacBio, A+a only = Nanopore; BAM @RG/@PG), "
+                        "an error when they do not settle it. Sets the minimap2 "
+                        "preset (map-ont / map-hifi), the read group's PL and "
+                        "fiberhmm-call's --seq.")
     p.add_argument("--topology", choices=["auto", "circular", "linear"], default="auto",
                    help="Reference topology. auto (default): a plasmid map's own "
                         "topology, FASTA contigs linear. circular: every contig is "
@@ -134,7 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
                      default=None,
                      help="Redo this step and the later ones although complete (also "
                           "needed to change the inputs or settings of an existing "
-                          "OUTDIR).")
+                          "OUTDIR; discards an interrupted call's resumable state).")
     run.add_argument("--progress-json", default=None, metavar="FILE",
                      help="Append JSON-lines progress events to FILE ('-' for "
                           "stdout).")

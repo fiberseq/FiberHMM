@@ -495,7 +495,13 @@ def configure_daf_snp_mask(mask_path=None) -> None:
 
 
 def _daf_reference_mask(read):
-    return _DAF_SNP_MASK.get(getattr(read, "reference_name", None), set())
+    sites = _DAF_SNP_MASK.get(getattr(read, "reference_name", None), set())
+    if not sites:
+        return sites
+    # A record running past its contig end (a circular origin) reaches the
+    # masked sites again at p + LN.
+    from fiberhmm.daf.snps import wrapped_reference_sites
+    return wrapped_reference_sites(read, sites)
 
 
 def _daf_excluded_query_positions(read):

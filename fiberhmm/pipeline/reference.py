@@ -297,13 +297,16 @@ def _digest_cache_path(cache_dir: str) -> str:
 
 
 def cached_fasta_digests(path: str, cache_dir: Optional[str]) -> tuple[str, list[tuple[str, int, str]]]:
-    """``(file sha256, per-contig digests)`` for a FASTA, memoised by path/size/mtime.
+    """``(file sha256, per-contig digests)`` for a FASTA, memoised per file.
 
-    Hashing a genome takes seconds; the memo keeps later runs instant.
+    Hashing a genome takes seconds; the memo keeps later runs instant. An entry
+    is reused only while the file's device, inode, size, mtime and ctime are all
+    unchanged (the rule of :mod:`fiberhmm.io.run_state`): a content change with
+    a restored mtime still changes the ctime, so it is hashed again.
     """
+    from fiberhmm.io.run_state import stat_key
     real = os.path.realpath(path)
-    stat = os.stat(real)
-    key = f"{real}|{stat.st_size}|{stat.st_mtime_ns}"
+    key = real + "|" + "|".join(str(v) for v in stat_key(real))
     memo: dict = {}
     memo_path = _digest_cache_path(cache_dir) if cache_dir else None
     if memo_path and os.path.exists(memo_path):

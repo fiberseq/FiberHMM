@@ -20,6 +20,10 @@ import pytest
 from fiberhmm.inference.consensus import batch
 from fiberhmm.inference.consensus.cli import main
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent))
+from test_call_resume import same_size_variant  # noqa: E402
+
 TIMING = {'seconds', 'numerical_environment', 'native_timings', 'timings'}
 
 
@@ -144,7 +148,13 @@ def test_continue_refuses_changed_parameters_and_inputs(windows_run, tmp_path, c
     os.utime(bam, ns=(bam.stat().st_atime_ns, bam.stat().st_mtime_ns+10**9))
     with pytest.raises(SystemExit):
         run(out, '--continue')
-    assert 'datasets' in capsys.readouterr().err
+    assert 'datasets.0.paths.0.file.mtime_ns' in capsys.readouterr().err
+    # Different records of the same size, with size and mtime preserved (cp -p), are a different input too.
+    os.utime(bam, ns=(bam.stat().st_atime_ns, bam.stat().st_mtime_ns-10**9))
+    same_size_variant(bam)
+    with pytest.raises(SystemExit):
+        run(out, '--continue')
+    assert 'datasets.0.paths.0.file.sha256' in capsys.readouterr().err
     with pytest.raises(SystemExit):              # nothing to continue from
         run(tmp_path/'fresh', '--continue')
     with pytest.raises(SystemExit):              # pooled and evidence replays are one analysis
@@ -154,10 +164,18 @@ def test_continue_refuses_changed_parameters_and_inputs(windows_run, tmp_path, c
 def test_unit_marker_digest_and_files_are_checked(tmp_path):
     folder = tmp_path/'u'; folder.mkdir(); (folder/'a.tsv').write_text('x')
     from fiberhmm.inference.consensus.artifacts import write_json
-    write_json(folder/batch.UNIT_MARKER, dict(schema=batch.UNIT_SCHEMA, digest='d', files={'a.tsv': 1}))
+    write_json(folder/batch.UNIT_MARKER, dict(schema=batch.UNIT_SCHEMA, digest='d', files=batch._unit_files(folder, False)))
     assert batch.completed_unit(folder, 'd') is not None
     assert batch.completed_unit(folder, 'other') is None
+    (folder/'a.tsv').write_text('y')                 # same size, different content
+    assert batch.completed_unit(folder, 'd') is None
+    (folder/'a.tsv').write_text('x')
+    assert batch.completed_unit(folder, 'd') is not None
     (folder/'a.tsv').write_text('xy')
+    assert batch.completed_unit(folder, 'd') is None
+    # A marker from before content digests were recorded (sizes only) is not trusted.
+    (folder/'a.tsv').write_text('x')
+    write_json(folder/batch.UNIT_MARKER, dict(schema=batch.UNIT_SCHEMA, digest='d', files={'a.tsv': 1}))
     assert batch.completed_unit(folder, 'd') is None
     assert batch.plan_jobs(10, 8, 0) == (8, 1) and batch.plan_jobs(2, 8, 0) == (2, 4)
     assert batch.plan_jobs(10, 8, 3) == (3, 2) and batch.plan_jobs(1, 8, 0) == (1, 8)
