@@ -304,6 +304,11 @@ def wrapped_reference_sites(read, sites):
     reaches, so a mask applies to every part of the read after the origin.
     Other records (including linear overhangs, whose positions past ``LN``
     are no reference site) get ``sites`` unchanged.
+
+    Results are memoised only for immutable ``frozenset`` masks (what
+    :func:`load_snp_mask` returns), keyed on the object, which the cache
+    holds; a mutable ``set`` may change in place, so it is expanded afresh
+    on every call.
     """
     if not sites:
         return sites
@@ -311,7 +316,10 @@ def wrapped_reference_sites(read, sites):
     if length is None:
         return sites
     turns = (int(read.reference_end) - 1) // length
-    key = (id(sites), len(sites), length, turns)
+    if not isinstance(sites, frozenset):
+        return frozenset(int(p) + k * length
+                         for k in range(turns + 1) for p in sites)
+    key = (id(sites), length, turns)
     cached = _WRAPPED_SITES.get(key)
     if cached is None or cached[0] is not sites:
         if len(_WRAPPED_SITES) > 64:
@@ -1038,7 +1046,9 @@ def write_snp_outputs(payload: dict, output_prefix: str) -> dict:
     return payload
 
 
-def load_snp_mask(path: Optional[str]) -> dict[str, set[int]]:
+def load_snp_mask(path: Optional[str]) -> dict[str, frozenset[int]]:
+    """``{contig: frozenset(0-based positions)}`` from a BED mask (immutable,
+    so :func:`wrapped_reference_sites` can memoise per mask)."""
     mask: dict[str, set[int]] = defaultdict(set)
     if not path:
         return {}
@@ -1050,7 +1060,7 @@ def load_snp_mask(path: Optional[str]) -> dict[str, set[int]]:
             if len(fields) < 3:
                 raise ValueError(f"invalid SNP mask line: {line.rstrip()!r}")
             mask[fields[0]].update(range(int(fields[1]), int(fields[2])))
-    return dict(mask)
+    return {contig: frozenset(positions) for contig, positions in mask.items()}
 
 
 def mask_summary(path: Optional[str]) -> dict:

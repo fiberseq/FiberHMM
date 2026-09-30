@@ -299,3 +299,34 @@ def test_multi_turn_circular_records_are_masked_and_counted_on_every_turn(tmp_pa
     result = call_opposite_conversion_snps(str(bam), max_profile_sites=5000, min_depth=1,
                                            min_alt_fibers=1, min_dominant_events=1)
     assert result["accounting"]["ga_dominant_records"] == 4
+
+
+def test_wrapped_mask_follows_in_place_changes_of_a_mutable_mask(tmp_path):
+    """A same-size, in-place change of a mutable mask set must not reuse the
+    earlier expansion (the cache was keyed on the set's identity and size)."""
+    from fiberhmm.daf.snps import load_snp_mask
+    from fiberhmm.inference import engine
+    header = pysam.AlignmentHeader.from_dict({"SQ": [{"SN": "p", "LN": 100, "TP": "circular"}]})
+    read = _multi_turn_read(header)
+    sites = {5}
+    assert wrapped_reference_sites(read, sites) == {5, 105, 205, 305}
+    sites.remove(5)
+    sites.add(6)
+    assert wrapped_reference_sites(read, sites) == {6, 106, 206, 306}
+    saved = engine._DAF_SNP_MASK
+    try:
+        engine._DAF_SNP_MASK = {"p": sites}
+        assert sorted(engine._daf_excluded_query_positions(read)) == [16, 116, 216]
+        sites.remove(6)
+        sites.add(7)
+        assert sorted(engine._daf_excluded_query_positions(read)) == [17, 117, 217]
+    finally:
+        engine._DAF_SNP_MASK = saved
+    # Masks loaded from a BED are immutable, so their expansion is memoised.
+    bed = tmp_path / "mask.bed"
+    bed.write_text("p\t5\t6\n")
+    mask = load_snp_mask(str(bed))
+    assert mask == {"p": frozenset({5})} and isinstance(mask["p"], frozenset)
+    first = wrapped_reference_sites(read, mask["p"])
+    assert first == {5, 105, 205, 305}
+    assert wrapped_reference_sites(read, mask["p"]) is first
