@@ -12,10 +12,10 @@ if the file's own metadata disagrees; a custom model uses its embedded
 |---|---|---|---|---|
 | `hia5_pacbio.json` | `hia5` | `pacbio` | `pacbio-fiber` | HMM and TF recall |
 | `hia5_nanopore.json` | `hia5` | `nanopore` | `nanopore-fiber` | HMM and TF recall (reindexed to encoder order in 3.0) |
-| `dddb_nanopore.json` | `dddb` | any | `daf` | HMM and TF recall |
+| `dddb_nanopore.json` | `dddb` | any | `daf` | HMM and TF recall (in-vivo accessible-state rates on the reindexed naked table, 3.0) |
 | `ddda_nuc.json` | `ddda` | any | `daf` | first-pass nucleosome HMM |
 | `ddda_TF.json` | `ddda` | any | `daf` | TF recall ([model card](https://github.com/fiberseq/FiberHMM/blob/main/fiberhmm/models/ddda_TF.MODEL_CARD.md)) |
-| `ddda_nuc_refine.json` | `ddda` | any | `daf` | internal radial-nucleosome likelihoods |
+| `ddda_nuc_refine.json` | `ddda` | any | `daf` | internal radial-nucleosome likelihoods (context-independent: one hit probability per state) |
 | `ddda_nuc_profile.json` | `ddda` | any | — | radial nucleosome profile `ddda_phase_posterior_v1` (dyad and helical-phase template) |
 
 The public preset list is
@@ -48,6 +48,8 @@ selected by a preset.
 |---|---|
 | `hia5_nanopore_gt_swapped_legacy.json` | the Nanopore Hia5 table as shipped through 2.x, with contexts in alphabetical order (every context with a G or T read another context's emission) |
 | `dddb_nanopore_gt_swapped_legacy.json` | the DddB table before its reindexing, with the same error |
+| `dddb_nanopore_naked_2f10003c.json` | the reindexed naked DddB table the in-vivo table is built on (3.0 development builds only) |
+| `ddda_nuc_refine_context_v2.6.json` | the earlier per-context radial-nucleosome likelihoods (3.0 development builds only) |
 | `ddda_pacbio.json` | the older one-pass DddA model, superseded by `ddda_nuc.json` + `ddda_TF.json` |
 | `hia5_pacbio_fp0.1x.json` | an experimental low-false-positive Hia5 PacBio calibration that did not generalize |
 
