@@ -88,6 +88,17 @@ def _pg(**fields):
     return fields
 
 
+def _chain(*pgs):
+    """@PG records linked by PP, as every real tool writes them."""
+    out = []
+    for pg in pgs:
+        pg = dict(pg)
+        if out:
+            pg['PP'] = out[-1]['ID']
+        out.append(pg)
+    return out
+
+
 @pytest.mark.parametrize('pgs, expected', [
     # fibertools-rs nucleosome writers, current and old command names
     ([_pg(ID='ft', PN='fibertools-rs', CL='ft predict-m6a in.bam out.bam')], 'molecular'),
@@ -102,19 +113,77 @@ def _pg(**fields):
     ([_pg(ID='pbmm2', PN='pbmm2', CL='pbmm2 align ref in.bam out.bam')], None),
     ([], None),
     # a FiberHMM pass-through record without a coord token keeps the frame
-    ([_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
-      _pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='DAF duplicate marking')], 'molecular'),
+    (_chain(_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
+      _pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='DAF duplicate marking')), 'molecular'),
     ([_pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='DAF duplicate marking')], None),
     # explicit FiberHMM declarations
     ([_pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='x; coord=seq (footprint tags)')], 'seq'),
-    ([_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
-      _pg(ID='fiberhmm-tag-m5c', PN='fiberhmm-tag-m5c', DS='x; coord=seq')], 'seq'),
+    (_chain(_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
+      _pg(ID='fiberhmm-tag-m5c', PN='fiberhmm-tag-m5c', DS='x; coord=seq')), 'seq'),
     # a path mentioning fiberhmm is not a FiberHMM program record
-    ([_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
-      _pg(ID='samtools', PN='samtools', CL='samtools sort -o ~/fiberhmm_work/x.bam')], 'molecular'),
+    (_chain(_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
+      _pg(ID='samtools', PN='samtools', CL='samtools sort -o ~/fiberhmm_work/x.bam')), 'molecular'),
 ])
 def test_legacy_tag_frame_rule(pgs, expected):
     assert legacy_tag_frame({'PG': pgs})[0] == expected
+
+
+_FT = _pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b')
+_ALN = _pg(ID='pbmm2', PN='pbmm2', CL='pbmm2 align ref in out')
+_MERGE = 'samtools merge -o all.bam a.bam b.bam'
+
+
+def _merged(branch_a, branch_b):
+    """samtools merge of two histories: clashing IDs renamed with a -XXXXXXXX
+    suffix, one merge record per chain end (same PN/VN/CL, one PP each)."""
+    def rename(pgs, suffix):
+        ids = {pg['ID']: pg['ID'] + suffix for pg in pgs}
+        return [dict(pg, ID=ids[pg['ID']], **({'PP': ids[pg['PP']]} if 'PP' in pg else {}))
+                for pg in pgs]
+    a, b = branch_a, rename(branch_b, '-0A1B2C3D')
+    ends = [a[-1]['ID'], b[-1]['ID']]
+    merge = [_pg(ID='samtools' + ('' if i == 0 else '-5E6F7A8B'), PN='samtools', VN='1.21',
+                 CL=_MERGE, PP=end) for i, end in enumerate(ends)]
+    return a + b + merge
+
+
+def test_pp_graph_follows_each_branch_of_a_merge():
+    fibertools = _chain(_ALN, _FT)
+    old_fiberhmm = _chain(_ALN)                      # FiberHMM <= 2.12: no @PG of its own
+    called = _chain(_ALN, _pg(ID='fiberhmm-call', PN='fiberhmm-call', DS='x; coord=molecular'))
+    # both branches fibertools: molecular, through the renamed IDs
+    assert legacy_tag_frame({'PG': _merged(fibertools, fibertools)})[0] == 'molecular'
+    # fibertools merged with an unmarked old BAM: header order would say
+    # molecular (the fibertools record is last-but-merge); the branches say unknown
+    assert legacy_tag_frame({'PG': _merged(fibertools, old_fiberhmm)})[0] is None
+    # an explicit coord= declaration settles a disagreement it does not contradict
+    assert legacy_tag_frame({'PG': _merged(fibertools, called)})[0] == 'molecular'
+    seq = _chain(_ALN, _pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='x; coord=seq (c)'))
+    assert legacy_tag_frame({'PG': _merged(called, seq)})[0] is None
+
+
+def test_pp_graph_order_does_not_decide():
+    """Header order is not ancestry. A caller's branch listed before a
+    fibertools branch would look superseded by fibertools in header order;
+    on the PP graph it is still a branch whose MA-less reads the caller
+    skipped, so consensus's disabled frame is not inferred."""
+    from fiberhmm.io.annotation_frame import resolve_disabled_legacy_frame
+    merged = _merged(_chain(_ALN, _pg(ID='fiberhmm-call', PN='fiberhmm-call',
+                                      DS='x; coord=molecular')), _chain(_ALN, _FT))
+    assert resolve_disabled_legacy_frame({'PG': merged}) is None
+    assert resolve_disabled_legacy_frame({'PG': _merged(_chain(_ALN, _FT), _chain(_ALN, _FT))})[0] \
+        == 'molecular'
+
+
+def test_fibertools_without_pn_and_pp_cycles():
+    no_pn = [_pg(ID='ft.1', CL='ft predict-m6a a b')]
+    assert legacy_tag_frame({'PG': no_pn})[0] == 'molecular'
+    by_cl = [_pg(ID='x', CL='/usr/local/bin/fibertools add-nucleosomes a b')]
+    assert legacy_tag_frame({'PG': by_cl})[0] == 'molecular'
+    # a PP cycle neither loops forever nor invents a frame
+    cycle = [dict(_FT, PP='fiberhmm-dedup'),
+             _pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='d', PP='ft')]
+    assert legacy_tag_frame({'PG': cycle})[0] in ('molecular', None)
 
 
 def test_coord_molecular_declaration_anywhere_wins():
@@ -423,18 +492,18 @@ def test_tag_m5c_records_the_frame_it_carried(monkeypatch, tmp_path, frame_arg, 
 @pytest.mark.parametrize('header, expected', [
     ({'PG': [_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b')]}, 'molecular'),
     # a pass-through FiberHMM tool after fibertools keeps it
-    ({'PG': [_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
+    ({'PG': _chain(_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
              _pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup',
-                 DS='DAF dedup; coord=molecular (footprint tags carried over from the input)')]},
+                 DS='DAF dedup; coord=molecular (footprint tags carried over from the input)'))},
      'molecular'),
     # a FiberHMM caller after fibertools: reads it left without MA are ones it
     # skipped, so their legacy tags are not vouched for
-    ({'PG': [_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
-             _pg(ID='fiberhmm-call', PN='fiberhmm-call', DS='x; coord=molecular (ns/nl)')]}, None),
+    ({'PG': _chain(_pg(ID='ft', PN='fibertools-rs', CL='ft add-nucleosomes a b'),
+             _pg(ID='fiberhmm-call', PN='fiberhmm-call', DS='x; coord=molecular (ns/nl)'))}, None),
     # FiberHMM 2.16.8 run over FiberHMM <= 2.12 output (the real ind Hia5 BAM
     # shape): 150 unrecalled reads keep query-frame ns/nl under coord=molecular
-    ({'PG': [_pg(ID='pbmm2', PN='pbmm2', CL='pbmm2 align'),
-             _pg(ID='fiberhmm-call', PN='fiberhmm-call', DS='x; coord=molecular (ns/nl)')]}, None),
+    ({'PG': _chain(_pg(ID='pbmm2', PN='pbmm2', CL='pbmm2 align'),
+             _pg(ID='fiberhmm-call', PN='fiberhmm-call', DS='x; coord=molecular (ns/nl)'))}, None),
     ({'CO': ['fiberhmm:coord=molecular']}, None),
     ({}, None),
 ])

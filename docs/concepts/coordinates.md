@@ -34,18 +34,24 @@ wrote query frame, while FiberHMM 2.13 and later and every fibertools
 version write molecular frame. FiberHMM therefore reads the frame from the
 header's provenance:
 
-1. Any `@PG` or `@CO` line containing `coord=molecular` means molecular.
-   `fiberhmm-call` puts it in its `@PG` `DS` field; `fiberhmm-apply` and
-   `fiberhmm-recall-tfs`/`-recall-nucs` add `@CO fiberhmm:coord=molecular`.
-2. Otherwise the `@PG` lines are read in order:
-    - a fibertools-rs record whose command writes nucleosomes (`ft
-      predict-m6a` or `m6a`, `ft add-nucleosomes`, `ft fire`, `ft fiber-hmm`,
-      and the older names `ft predict` and `ft add`) means molecular;
-    - a FiberHMM record (`fiberhmm-*`) whose `DS` says `coord=seq` means
-      query frame;
+1. The `@PG` history is followed through its `PP` links, not header order.
+   `samtools merge` keeps one chain per input (renaming clashing IDs), so a
+   history can have several branches. On each branch the last record that
+   bears on footprint tags decides:
+    - a FiberHMM record (`fiberhmm-*` PN or ID) whose `DS` says
+      `coord=molecular` or `coord=seq` means that frame. `fiberhmm-call`,
+      `-apply` and `-recall-tfs`/`-recall-nucs` declare `coord=molecular`;
+    - a fibertools-rs record (by PN, ID or program name, so records without
+      PN count) whose command writes nucleosomes (`ft predict-m6a` or `m6a`,
+      `ft add-nucleosomes`, `ft fire`, `ft fiber-hmm`, and the older names
+      `ft predict` and `ft add`) means molecular;
     - a FiberHMM record with no `coord=` token copied the tags unchanged and
-      leaves the frame as it was.
-3. If nothing above decides it, the frame is unknown.
+      leaves the frame as it was; other programs (aligners, samtools) too.
+2. If every branch gives the same frame, that is the frame.
+3. If branches disagree or some are undecided, the header's explicit
+   declarations (`coord=` in FiberHMM `@PG` records, `@CO
+   fiberhmm:coord=molecular` from older `fiberhmm-apply`/`-recall-tfs`) decide
+   when they all agree. Otherwise the frame is unknown.
 
 Tools that copy footprint tags without rewriting them (`fiberhmm-dedup`,
 `-pair`, `-merge`, `-tag-m5c`, `-call-m5c`, `-tag-consensus`,
