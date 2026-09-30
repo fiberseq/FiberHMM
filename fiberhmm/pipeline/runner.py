@@ -1513,6 +1513,8 @@ def _reads_match_reference(bam_path: str, fasta: str, sample: int = 200,
     match the FASTA (a different sequence of the same length matches ~25%).
     Positions past a contig's end (circular records) wrap.
     """
+    from fiberhmm.daf.aligned_arrays import md_disagrees_with_cigar
+
     compared = differ = reads = 0
     used_md = False
     with pysam.FastaFile(fasta) as reference, pysam.AlignmentFile(bam_path) as bam:
@@ -1528,9 +1530,14 @@ def _reads_match_reference(bam_path: str, fasta: str, sample: int = 200,
             length = len(contig)
             if read.has_tag("MD"):
                 used_md = True
+                # An MD that does not describe the CIGAR has no defined
+                # reference bases (pysam reads undefined memory for a short
+                # one): the input is realigned, as for an unreadable MD.
+                if md_disagrees_with_cigar(read):
+                    return False, "its MD tags do not match their CIGAR strings"
                 try:
                     pairs = read.get_aligned_pairs(matches_only=True, with_seq=True)
-                except (ValueError, KeyError):
+                except (ValueError, KeyError, AssertionError):
                     return False, "its MD tags cannot be read"
                 for _, rpos, base in pairs:
                     compared += 1

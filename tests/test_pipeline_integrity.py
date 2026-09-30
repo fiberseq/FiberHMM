@@ -804,3 +804,52 @@ def test_failed_qc_publishes_no_qc(tmp_path, monkeypatch):
     outputs = p.write_outputs()
     assert outputs["qc"] is None and outputs["qc_report"] is None
     p.close()
+
+
+def _md_check_bam(tmp_path, seq, bad_md):
+    """Coordinate-sorted linear BAM, valid MD on every read but the last."""
+    h = pysam.AlignmentHeader.from_dict({"HD": {"SO": "coordinate"},
+                                         "SQ": [{"SN": "p", "LN": len(seq)}]})
+    bam = tmp_path / f"md_{bad_md}.bam"
+    with pysam.AlignmentFile(str(bam), "wb", header=h) as out:
+        for i in range(6):
+            start = 100 * i
+            r = pysam.AlignedSegment(h); r.query_name = f"r{i}"; r.reference_id = 0
+            r.reference_start = start; r.mapping_quality = 60
+            r.query_sequence = seq[start:start + 400]; r.cigarstring = "400M"
+            md = "400"
+            if i == 5 and bad_md == "short":
+                md = "200"          # pysam fills the rest from undefined memory
+            elif i == 5 and bad_md == "long":
+                md = "600"          # pysam raises AssertionError
+            r.set_tag("MD", md)
+            out.write(r)
+    pysam.index(str(bam))
+    return bam
+
+
+_MD_CHECK_DRIVER = r"""
+import sys
+from fiberhmm.pipeline import runner
+print(runner._reads_match_reference(sys.argv[1], sys.argv[2]))
+"""
+
+
+@pytest.mark.parametrize("bad_md", ["short", "long"])
+def test_m5_less_input_with_md_that_does_not_match_its_cigar_is_realigned(tmp_path, bad_md):
+    seq = random_seq(2000, 11)
+    fasta = tmp_path / "ref.fa"; fasta.write_text(">p\n" + seq + "\n"); pysam.faidx(str(fasta))
+    good = _md_check_bam(tmp_path, seq, "none")
+    assert runner._reads_match_reference(str(good), str(fasta)) == (True, "")
+    bam = _md_check_bam(tmp_path, seq, bad_md)
+    expected = (False, "its MD tags do not match their CIGAR strings")
+    assert runner._reads_match_reference(str(bam), str(fasta)) == expected
+    outputs = set()
+    for seed in (0, 1, 2):
+        env = dict(os.environ, PYTHONHASHSEED=str(seed), FIBERHMM_NO_UPDATE_CHECK="1",
+                   PYTHONPATH=str(REPO) + os.pathsep + os.environ.get("PYTHONPATH", ""))
+        result = subprocess.run([sys.executable, "-c", _MD_CHECK_DRIVER, str(bam), str(fasta)],
+                                capture_output=True, env=env, timeout=300)
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+        outputs.add(result.stdout.decode().strip())
+    assert outputs == {repr(expected)}
