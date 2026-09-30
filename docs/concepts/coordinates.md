@@ -5,7 +5,7 @@ call on reverse-strand reads, so it is worth knowing which is which.
 
 | Frame | Origin and direction | Used by |
 |---|---|---|
-| **Molecular** (original fiber) | the first base of the molecule as sequenced, 5'→3' of the read | per-read tags: `ns`/`nl`, `as`/`al`, `MA`/`AQ`/`AN` |
+| **Molecular** (original fiber) | the first base of the molecule as sequenced, 5'→3' of the read | per-read tags: `ns`/`nl`, `as`/`al`, `MA`/`AQ`/`AN`, and fibertools' `Ma`/`Aq`/`An` |
 | **Query** (SEQ) | the first base of the `SEQ` field as stored in the BAM | `MM`/`ML` positions after decoding, pysam `query_*` indexes, posteriors arrays |
 | **Reference** | the reference contig, 0-based half-open | BED/bigBed tracks, consensus tables, SNP masks, `--region`/`--bed` inputs |
 
@@ -26,16 +26,62 @@ molecular start. This matches the
 [Molecular-annotation spec](https://github.com/fiberseq/Molecular-annotation-spec)
 and fibertools.
 
-Writers mark the frame in the header:
+## How FiberHMM tells the frame of a BAM
 
-- `fiberhmm-call` puts `coord=molecular` in its `@PG` `DS` field;
-- `fiberhmm-apply` and `fiberhmm-recall-tfs`/`-recall-nucs` add
-  `@CO fiberhmm:coord=molecular`.
+The `ns`/`nl`/`as`/`al` arrays carry no frame of their own, and two
+generations of writers used different frames: FiberHMM 2.12 and earlier
+wrote query frame, while FiberHMM 2.13 and later and every fibertools
+version write molecular frame. FiberHMM therefore reads the frame from the
+header's provenance:
 
-Readers accept either marker. A BAM with neither (FiberHMM 1.x output) is
-treated as query frame; `fiberhmm-recall-tfs --input-frame` and
-`fiberhmm-tag-m5c --input-frame` let you force `molecular` or `query` for
-BAMs whose header was stripped.
+1. Any `@PG` or `@CO` line containing `coord=molecular` means molecular.
+   `fiberhmm-call` puts it in its `@PG` `DS` field; `fiberhmm-apply` and
+   `fiberhmm-recall-tfs`/`-recall-nucs` add `@CO fiberhmm:coord=molecular`.
+2. Otherwise the `@PG` lines are read in order:
+    - a fibertools-rs record whose command writes nucleosomes (`ft
+      predict-m6a` or `m6a`, `ft add-nucleosomes`, `ft fire`, `ft fiber-hmm`,
+      and the older names `ft predict` and `ft add`) means molecular;
+    - a FiberHMM record (`fiberhmm-*`) whose `DS` says `coord=seq` means
+      query frame;
+    - a FiberHMM record with no `coord=` token copied the tags unchanged and
+      leaves the frame as it was.
+3. If nothing above decides it, the frame is unknown.
+
+Tools that copy footprint tags without rewriting them (`fiberhmm-dedup`,
+`-pair`, `-merge`, `-tag-m5c`, `-call-m5c`, `-tag-consensus`,
+`-strand-rescue-annotate`) add `coord=molecular` or `coord=seq` to their own
+`@PG` `DS` to record the frame they carried over. If they could not tell the
+frame, they add nothing.
+
+An unknown frame is not guessed. Output of FiberHMM 2.12 or earlier (no
+FiberHMM `@PG`, query frame) looks the same as a fibertools BAM whose `@PG`
+history was lost (molecular frame). In that case `fiberhmm-recall-tfs` and
+`-recall-nucs` stop and ask for `--input-frame query` or `--input-frame
+molecular`. Consensus, which reads legacy tags only for Hia5 input without
+`MA`, stops and asks you to set its legacy Hia5 annotation frame (a known
+molecular frame is applied automatically). `fiberhmm-tag-m5c --input-frame` and `fiberhmm-call-m5c
+--tag-input-frame` force the frame of their DAF inputs in the same way.
+
+One case cannot be detected from the header. FiberHMM 2.12 or earlier run on
+a BAM that had already been through `ft predict-m6a` wrote query-frame tags,
+but the header still shows only the fibertools command. Pass
+`--input-frame query` for such files.
+
+`MA`, `AQ` and `AN` are written only by FiberHMM, so their frame comes from
+the `coord=molecular` declaration alone (unmarked `MA` is query frame).
+
+### fibertools `Ma` tags
+
+fibertools-rs 0.13 and later no longer write `ns`/`nl`/`as`/`al`. Nucleosomes,
+MSPs and FIRE elements go into `Ma`/`Aq`/`An` instead, for example
+`Ma:Z:8000;nuc.:297-154,...;msp.:451-16,...;fire.Q:804-397,...` with one
+`Aq` byte per `fire.Q` element. These tags follow the same
+Molecular-annotation spec as FiberHMM's `MA` and are always molecular frame.
+FiberHMM reads `Ma` wherever it reads `MA` or the legacy arrays: in
+recall-tfs/recall-nucs, consensus evidence loading and extract. If a read
+has both, FiberHMM's own `MA` is used. Recall writes its calls to
+`MA`/`AQ` (and `ns`/`nl`/`as`/`al`) and leaves the fibertools `Ma` tag in
+place.
 
 ## Converting to query or reference coordinates
 

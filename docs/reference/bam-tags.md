@@ -21,6 +21,10 @@ Written by `fiberhmm-call`, `fiberhmm-apply` (legacy tags only),
 | `AQ` | `B:C` | quality bytes of every `MA` annotation, in `MA` order |
 | `AN` | `Z` | one name per `MA` annotation (`.` for unnamed); written when a call wraps a circular origin (`fhw_*`), for strand-rescue roles, consensus class tokens, or when preserved groups carry names |
 
+FiberHMM also reads fibertools-rs 0.13+ `Ma`/`Aq`/`An` tags (same spec,
+always molecular frame) as input; it never writes them. See
+[Coordinate frames](../concepts/coordinates.md#fibertools-ma-tags).
+
 `--no-legacy-tags` writes only `MA`/`AQ` (existing legacy tags are left as
 they were); `--downstream-compat` writes TF calls into `ns`/`nl` and no
 `MA`/`AQ`/`AN`. Records a run skips are written without this run's call tags;
