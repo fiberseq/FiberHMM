@@ -44,10 +44,24 @@ def test_builder_codes_match_daf_encoder_on_both_strands(seed):
 
 
 def test_dddb_table_is_encoder_indexed():
-    new = np.array(json.loads((MODELS / 'dddb_nanopore.json').read_text())['emissionprob'])
+    new = np.array(json.loads((MODELS / 'legacy' / 'dddb_nanopore_naked_2f10003c.json').read_text())['emissionprob'])
     old = np.array(json.loads((MODELS / 'legacy' / 'dddb_nanopore_gt_swapped_legacy.json').read_text())['emissionprob'])
     contexts = [''.join(p[:K]) + 'C' + ''.join(p[K:]) for p in itertools.product('ACGT', repeat=2 * K)]
     alphabetical = {c: i for i, c in enumerate(sorted(contexts))}
     for ctx in contexts[::97]:
         e, a = builder_code(ctx), alphabetical[ctx]
         assert np.allclose(new[:, e], old[:, a]) and np.allclose(new[:, OFF + e], old[:, OFF + a])
+
+
+def test_shipped_dddb_table_is_built_on_the_encoder_indexed_naked_table():
+    """The shipped in-vivo table (2026-09-26) changes only the accessible state of the naked table."""
+    shipped = json.loads((MODELS / 'dddb_nanopore.json').read_text())
+    naked = json.loads((MODELS / 'legacy' / 'dddb_nanopore_naked_2f10003c.json').read_text())
+    E, N = np.array(shipped['emissionprob']), np.array(naked['emissionprob'])
+    acc = int(np.argmax(N[:, :NC].mean(axis=1))); prot = 1 - acc
+    assert np.allclose(E[prot], N[prot])
+    assert np.allclose(shipped['transmat'], naked['transmat']) and np.allclose(shipped['startprob'], naked['startprob'])
+    assert np.allclose(E[acc, :NC] + E[acc, OFF:OFF + NC], 1)
+    # in-vivo accessible rates stay rank-correlated with the naked table (a context-order bug would break this)
+    r = np.corrcoef(np.argsort(np.argsort(E[acc, :NC])), np.argsort(np.argsort(N[acc, :NC])))[0, 1]
+    assert r > 0.8
