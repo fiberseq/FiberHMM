@@ -82,12 +82,21 @@ Strongest first:
 5. **Records** (BAMs, when scanned): `di`/`ds` duplicate-cluster tags,
    pairing tags and calls without any FiberHMM `@PG`.
 
-Only the calls a file holds count: the last `fiberhmm-call`/`-apply` run and
-the recalls after it. A BAM re-called with 3.0 is clean even if its header
-still lists a 2.x call. Call histories that `samtools merge` brought in from
-other inputs (their `@PG` IDs get a `-XXXXXXXX` suffix) count too; when they
-are of different chemistries the header cannot say which reads an advisory
-applies to, and it is reported as `possibly_affected`.
+Only the calls a file holds count: on each `@PG` history (the `PP` chains),
+the last `fiberhmm-call`/`-apply` run and the recalls after it. A BAM
+re-called with 3.0 is clean even if its header still lists a 2.x call. A
+`samtools merge` keeps every input's chain (clashing `@PG` IDs get a
+`-XXXXXXXX` suffix) and joins them with its own records; the calls of every
+merged branch are in the file, so if any branch is affected the file is
+affected. A FiberHMM run after the merge re-calls every read and supersedes
+them all. When the header cannot settle it -- `@PG` records without `PP`
+links (a history written without links, or a merge), or chemistry
+declarations whose `pg=` names an ID that the merge renamed -- every
+plausible reading is checked: an advisory that holds in all of them is
+reported as found, one that holds in only some as `possibly_affected`
+(low confidence); never clean. (`samtools cat` keeps only the first input's
+header, so the other inputs' histories are not recorded and cannot be
+checked.)
 
 ## Advisories
 

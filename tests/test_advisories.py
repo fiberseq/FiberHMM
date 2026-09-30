@@ -44,11 +44,18 @@ def _by_id(advisories):
     return {a.id: a for a in advisories}
 
 
-def _header(programs, comments=()):
+def _header(programs, comments=(), linked=True):
+    """Header dict; ``linked`` chains each @PG to the one before (PP), as
+    FiberHMM's append_pg_record and htslib do. A record's own PP (or
+    ``"PP": None`` for a root) is kept."""
     header = {"HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 1000}], "PG": []}
     for i, program in enumerate(programs):
         record = dict(program)
         record.setdefault("ID", record["PN"] + (f".{i}" if i else ""))
+        if linked and i and "PP" not in record:
+            record["PP"] = header["PG"][-1]["ID"]
+        if record.get("PP") is None:
+            record.pop("PP", None)
         header["PG"].append(record)
     if comments:
         header["CO"] = list(comments)
@@ -420,24 +427,137 @@ def test_nanopore_reads_called_as_pacbio_without_seq():
 
 
 def test_samtools_merged_histories():
+    """samtools merge keeps each input's PP chain (clashing IDs get -XXXXXXXX)
+    and appends one merge record per chain end; every branch's calls count."""
     pacbio = {"PN": "fiberhmm-call", "ID": "fiberhmm-call", "VN": "2.13.0",
               "CL": "fiberhmm-call --enzyme hia5 --seq pacbio --primary",
               "DS": "mode=pacbio-fiber"}
     ont = {"PN": "fiberhmm-call", "ID": "fiberhmm-call-75E22241", "VN": "2.16.3",
            "CL": "fiberhmm-call --enzyme hia5 --seq nanopore --prob-threshold 248 --primary",
-           "DS": "mode=nanopore-fiber enzyme=hia5"}
-    # Merged-in histories of another chemistry: cannot say which reads.
-    advisory = _by_id(check_header(_header([pacbio, ont])))["hia5-nanopore-gt-table"]
-    assert (advisory.status, advisory.confidence) == ("possibly_affected", "low")
+           "DS": "mode=nanopore-fiber enzyme=hia5", "PP": None}
+    merge = {"PN": "samtools", "VN": "1.21", "CL": "samtools merge -o m.bam a.bam b.bam"}
+    merged = [pacbio, ont, dict(merge, ID="samtools", PP="fiberhmm-call"),
+              dict(merge, ID="samtools.1", PP="fiberhmm-call-75E22241")]
+    # A merged-in history of another chemistry: its reads are affected.
+    advisory = _by_id(check_header(_header(merged)))["hia5-nanopore-gt-table"]
+    assert (advisory.status, advisory.confidence) == ("affected", "high")
+    assert advisory.program == "fiberhmm-call-75E22241"
     assert "merges" in advisory.evidence[-1]
     # Merged replicates of one chemistry: every history counts.
-    ont_first = dict(ont, ID="fiberhmm-call")
-    advisory = _by_id(check_header(_header([ont_first, ont])))["hia5-nanopore-gt-table"]
-    assert advisory.status == "affected"
-    # A FiberHMM run after the merge re-calls every read.
+    ont_first = dict(ont, ID="fiberhmm-call", PP=None)
+    replicates = [ont_first, dict(ont, PP=None),
+                  dict(merge, ID="samtools", PP="fiberhmm-call"),
+                  dict(merge, ID="samtools.1", PP="fiberhmm-call-75E22241")]
+    assert _by_id(check_header(_header(replicates)))["hia5-nanopore-gt-table"].status == "affected"
+    # A FiberHMM run after the merge (linked to the last merge record only)
+    # re-calls every read: the merge event joins both chains.
     recall = _hia5_call("3.0.0", "--prob-threshold 248 --primary", pid="fiberhmm-call.2")
-    assert check_header(_header([pacbio, ont, recall])) == []
+    assert check_header(_header([*merged, recall])) == []
+    # The same run without the merge event would leave the other branch current.
+    split = [pacbio, ont, dict(merge, ID="samtools", PP="fiberhmm-call-75E22241"),
+             dict(recall, PP="samtools")]
+    split_found = _by_id(check_header(_header(split, linked=False)))
+    assert "hia5-nanopore-gt-table" not in split_found  # the PacBio branch is not ONT Hia5
+    ont_split = [dict(ont, ID="fiberhmm-call", PP=None), dict(ont, PP=None),
+                 dict(merge, ID="samtools", PP="fiberhmm-call-75E22241"),
+                 dict(recall, PP="samtools")]
+    advisory = _by_id(check_header(_header(ont_split, linked=False)))["hia5-nanopore-gt-table"]
+    assert advisory.status == "affected" and advisory.program == "fiberhmm-call"
 
+
+def test_unlinked_history_is_never_cleared():
+    """Records without PP could be a history written without links or a merge:
+    an old call either superseded or merged in is possibly affected, not clean."""
+    old = _hia5_call("2.16.3", "--prob-threshold 248 --primary", pid="fiberhmm-call")
+    new = _hia5_call("3.0.0", "--prob-threshold 248 --primary", pid="fiberhmm-call.2")
+    advisory = _by_id(check_header(_header([old, new], linked=False)))["hia5-nanopore-gt-table"]
+    assert (advisory.status, advisory.confidence) == ("possibly_affected", "low")
+    assert "no PP link" in advisory.evidence[-1]
+    # Linked, the later call supersedes the earlier one.
+    assert check_header(_header([old, new])) == []
+
+
+def _merged_bam(tmp_path, name, inputs):
+    paths = []
+    for i, (header, reads) in enumerate(inputs):
+        path = tmp_path / f"{name}_in{i}.bam"
+        _write_bam(path, header, reads)
+        paths.append(str(path))
+    out = tmp_path / f"{name}.bam"
+    pysam.merge("-f", str(out), *paths)
+    return out
+
+
+def _one_read(name):
+    return [(name, [], 0)]
+
+
+def test_real_samtools_merges_keep_every_calling_branch(tmp_path):
+    swapped = _sha(MODELS / "legacy" / "hia5_nanopore_gt_swapped_legacy.json")
+    fixed = _sha(MODELS / "hia5_nanopore.json")
+
+    def called(version, digest=None, pid="fiberhmm-call", aligner=True):
+        programs = []
+        if aligner:
+            programs.append({"PN": "minimap2", "ID": "minimap2", "VN": "2.28",
+                             "CL": "minimap2 -a -x map-ont ref.mmi reads.fq"})
+        programs.append(_hia5_call(version, "--prob-threshold 248 --primary", pid=pid))
+        comments = ([_declaration(pid, apply_sha256=digest, recall_sha256=digest)]
+                    if digest else [])
+        return _header(programs, comments)
+
+    # Same @PG ID in both inputs: samtools renames one, not the declarations.
+    for order in ((swapped, fixed), (fixed, swapped)):
+        for aligner in (True, False):
+            merged = _merged_bam(tmp_path, f"clash_{aligner}_{order[0][:4]}", [
+                (called("3.0.0", order[0], aligner=aligner), _one_read("a")),
+                (called("3.0.0", order[1], aligner=aligner), _one_read("b"))])
+            payload = report(merged, sidecars=False)
+            assert payload["status"] == "rerun-required", payload
+            advisory = payload["advisories"][0]
+            assert advisory["id"] == "hia5-nanopore-gt-table"
+            assert advisory["status"] in ("affected", "possibly_affected")
+    # Two fixed inputs merge clean.
+    merged = _merged_bam(tmp_path, "both_fixed", [
+        (called("3.0.0", fixed), _one_read("a")), (called("3.0.0", fixed), _one_read("b"))])
+    assert report(merged, sidecars=False)["status"] == "clean"
+    # Distinct IDs, no rename: an old 2.16.7 branch stays in the file.
+    merged = _merged_bam(tmp_path, "distinct", [
+        (called("2.16.7"), _one_read("a")),
+        (called("3.0.0", pid="fiberhmm-call.2"), _one_read("b"))])
+    payload = report(merged, sidecars=False)
+    assert payload["status"] == "rerun-required" and payload["confirmed"] is True
+    merged = _merged_bam(tmp_path, "distinct_bare", [
+        (called("2.16.7", aligner=False), _one_read("a")),
+        (called("3.0.0", pid="fiberhmm-call.2", aligner=False), _one_read("b"))])
+    assert report(merged, sidecars=False)["status"] == "rerun-required"
+
+
+def test_duplicate_declarations_for_one_renamed_id_are_all_considered():
+    """Both inputs declared pg=fiberhmm-call; after the rename either run could
+    own either declaration. Both runs hold reads, so the swapped table is in
+    the file whichever way they pair."""
+    swapped = _sha(MODELS / "legacy" / "hia5_nanopore_gt_swapped_legacy.json")
+    fixed = _sha(MODELS / "hia5_nanopore.json")
+    a = _hia5_call("3.0.0", "--prob-threshold 248 --primary", pid="fiberhmm-call")
+    b = dict(a, ID="fiberhmm-call-6FFFAB4F")
+    merge = {"PN": "samtools", "VN": "1.21", "CL": "samtools merge -o m.bam a.bam b.bam"}
+    records = [a, dict(b, PP=None), dict(merge, ID="samtools", PP="fiberhmm-call"),
+               dict(merge, ID="samtools.1", PP="fiberhmm-call-6FFFAB4F")]
+    comments = [_declaration("fiberhmm-call", apply_sha256=swapped, recall_sha256=swapped),
+                _declaration("fiberhmm-call", apply_sha256=fixed, recall_sha256=fixed)]
+    advisory = _by_id(check_header(_header(records, comments)))["hia5-nanopore-gt-table"]
+    assert advisory.status == "affected"
+    # Identical declarations from two merged inputs are not collapsed into one.
+    same = [_declaration("fiberhmm-call", apply_sha256=fixed, recall_sha256=fixed)] * 2
+    assert check_header(_header(records, same)) == []
+    # A later run supersedes one of them only: ambiguous which -> possibly.
+    recall = _hia5_call("3.0.0", "--prob-threshold 248 --primary", pid="fiberhmm-call.2")
+    chain = [a, dict(recall, PP="fiberhmm-call"), dict(b, PP=None)]
+    advisory = _by_id(check_header(_header(chain, comments, linked=False))).get(
+        "hia5-nanopore-gt-table")
+    assert advisory is not None and advisory.status == "possibly_affected"
+    assert any("cannot be matched" in line for line in advisory.evidence)
 
 @pytest.mark.parametrize("version, cl, expected", [
     # An input directory named after a fixed commit cannot clear an old call ...

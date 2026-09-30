@@ -249,13 +249,12 @@ def _model_stem(value: Optional[str]) -> Optional[str]:
     return re.sub(r"\.json$", "", name) or None
 
 
-def _runs(header: dict) -> list[_Run]:
-    from fiberhmm.io.bam_header import declared_chemistries
-
-    declarations = declared_chemistries(header)
-    by_pg = {d["pg"]: d for d in declarations if d.get("pg")}
+def _runs(header: dict, declarations: Optional[dict] = None) -> list[_Run]:
+    """FiberHMM runs of a header, each with the declaration ``declarations``
+    (``{@PG position: declaration}``) assigns it."""
+    declarations = declarations or {}
     runs = []
-    for position, record in enumerate(header.get("PG", [])):
+    for position, record in enumerate(_pg_records(header)):
         program = _program_name(record)
         if program is None:
             continue
@@ -264,7 +263,7 @@ def _runs(header: dict) -> list[_Run]:
             version = None
         run = _Run(position=position, id=str(record.get("ID", program)), program=program,
                    version=version, cl=str(record.get("CL", "")), ds=str(record.get("DS", "")),
-                   declaration=by_pg.get(str(record.get("ID", ""))))
+                   declaration=declarations.get(position))
         run.chemistry = _run_chemistry(run)
         runs.append(run)
     return runs
@@ -299,27 +298,216 @@ def _run_chemistry(run: _Run) -> dict:
     return chemistry
 
 
-_MERGED_ID_RE = re.compile(r"-[0-9A-F]{8}$")
+# ---------------------------------------------------------------------------
+# @PG history: which calls a file holds
+# ---------------------------------------------------------------------------
+#
+# ``@PG`` records form chains through ``PP`` (previous program). ``samtools
+# merge`` keeps every input's chain, renames IDs that clash with a
+# ``-XXXXXXXX`` suffix, and appends one merge record per chain end (same
+# PN/VN/CL, one PP each). FiberHMM links a new record to the last one only. A
+# history is therefore a DAG: a merge record joins its chains, and a run is
+# superseded only by a full call that descends from it. Every other branch's
+# calls are still in the file.
+#
+# Chemistry declarations (``@CO FIBERHMM-CHEMISTRY``) name their run's @PG ID
+# in ``pg``; samtools renames the @PG but not the comment, so after a merge
+# several declarations can name one ID. When attribution or the history is
+# ambiguous every plausible reading is checked: an advisory that holds in all
+# of them stands; one that holds in some is reported as possibly affected.
+
+_MERGE_SUFFIX_RE = re.compile(r"(?:-[0-9A-F]{8})+$")
+_MAX_SCENARIOS = 64
 
 
-def _current_runs(runs: list[_Run]) -> tuple[list[_Run], bool]:
-    """The runs whose calls the file holds, and whether they mix chemistries.
+def _pg_records(header: dict) -> list[dict]:
+    records = header.get("PG", []) or []
+    return [record for record in records if isinstance(record, dict)]
 
-    The last full call and the recalls after it. ``samtools merge`` appends
-    the other inputs' @PG records after the first input's, renaming clashing
-    IDs with a ``-XXXXXXXX`` suffix; calls in those merged-in histories hold
-    their own inputs' reads, so they count too. A FiberHMM run after the merge
-    re-calls every read and supersedes them all.
+
+def _is_merge_record(record: dict) -> bool:
+    command = str(record.get("CL", ""))
+    return bool(re.search(r"(?:^|[\s/])samtools\s+merge(?:\s|$)", command))
+
+
+def _history_graphs(records: list[dict]
+                    ) -> tuple[list[tuple[list[set[int]], Optional[str]]], list[int]]:
+    """Parent sets per @PG node, for each plausible reading of the history.
+
+    Returns ``([(parents, note)], node)``: ``node[i]`` is the node of record
+    ``i`` (records of one merge event share a node). There is one reading,
+    or two when records without ``PP`` follow others and nothing marks them
+    as merged in (a history written without links, or a merged-in root;
+    ``note`` then says so).
     """
+    by_id: dict[str, int] = {}
+    for index, record in enumerate(records):
+        by_id.setdefault(str(record.get("ID", "")), index)
+    # One node per htslib merge event: consecutive records with the same
+    # program and command line, each linked to a different chain end.
+    node = list(range(len(records)))
+    for index in range(1, len(records)):
+        record, before = records[index], records[index - 1]
+        key = tuple(str(record.get(k, "")) for k in ("PN", "VN", "CL", "DS"))
+        if (record.get("PP") and before.get("PP")
+                and key == tuple(str(before.get(k, "")) for k in ("PN", "VN", "CL", "DS"))
+                and record.get("PP") != before.get("ID")):
+            node[index] = node[index - 1]
+    parents: list[set[int]] = [set() for _ in records]
+    unlinked = []
+    for index, record in enumerate(records):
+        previous = record.get("PP")
+        if previous is not None and str(previous) in by_id:
+            parent = node[by_id[str(previous)]]
+            if parent != node[index]:
+                parents[node[index]].add(parent)
+        elif previous is None and index > 0 and node[index] == index:
+            unlinked.append(index)
+    merged_later = [i for i, record in enumerate(records) if _is_merge_record(record)]
+    ambiguous = [i for i in unlinked
+                 if not _MERGE_SUFFIX_RE.search(str(records[i].get("ID", "")))
+                 and not any(m > i for m in merged_later)]
+    readings: list[tuple[list[set[int]], Optional[str]]] = [(parents, None)]
+    if ambiguous:
+        linear = [set(p) for p in parents]
+        for index in ambiguous:
+            linear[index].add(node[index - 1])
+        names = ", ".join(str(records[i].get("ID")) for i in ambiguous[:3])
+        note = (f"@PG {names} has no PP link, so the header cannot tell whether it "
+                "continued the history before it or was merged in beside it")
+        readings = [(parents, note), (linear, note)]
+    return readings, node
+
+
+def _ancestors(parents: list[set[int]], start: int) -> set[int]:
+    seen: set[int] = set()
+    stack = list(parents[start])
+    while stack:
+        item = stack.pop()
+        if item in seen:
+            continue
+        seen.add(item)
+        stack.extend(parents[item])
+    return seen
+
+
+def _current_runs(runs: list[_Run], parents: list[set[int]],
+                  node: list[int]) -> list[_Run]:
+    """The runs whose calls the file holds: every calling or recalling run
+    that no later full call descends from (one per merged branch)."""
     producers = [run for run in runs if run.program in _CALLING | _RECALLING]
-    calls = [i for i, run in enumerate(producers) if run.program in _CALLING]
-    if not calls:
-        return producers, False
-    own = [i for i in calls if not _MERGED_ID_RE.search(producers[i].id)]
-    current = producers[(own or calls)[-1]:]
-    chemistries = {(run.chemistry.get("enzyme"), run.chemistry.get("platform"))
-                   for run in current if run.program in _CALLING}
-    return current, len(chemistries) > 1
+    superseded: set[int] = set()
+    for call in producers:
+        if call.program not in _CALLING:
+            continue
+        superseded |= _ancestors(parents, node[call.position])
+    return [run for run in producers if node[run.position] not in superseded]
+
+
+def _declaration_candidates(runs: list[_Run], header: dict) -> tuple[list[dict], list[list[int]]]:
+    """Every chemistry declaration naming a run (duplicates kept) and the
+    @PG positions it could belong to (its ``pg`` ID, or that ID renamed by
+    ``samtools merge``)."""
+    from fiberhmm.io.bam_header import _parse_chemistry_comment
+
+    declarations, candidates = [], []
+    for comment in header.get("CO", []) or []:
+        parsed = _parse_chemistry_comment(str(comment))
+        if not parsed or not parsed.get("pg"):
+            continue
+        pg = parsed["pg"]
+        matches = [run.position for run in runs
+                   if run.id == pg or (run.id.startswith(pg)
+                                       and _MERGE_SUFFIX_RE.fullmatch(run.id[len(pg):]))]
+        if matches:
+            declarations.append(parsed)
+            candidates.append(matches)
+    return declarations, candidates
+
+
+def _assignments(declarations: list[dict], candidates: list[list[int]]
+                 ) -> tuple[list[dict[int, dict]], bool]:
+    """Plausible ``{@PG position: declaration}`` assignments and whether
+    there is more than one (each run has at most one declaration; as many
+    declarations are placed as possible)."""
+    fixed: dict[int, dict] = {}
+    open_items = []
+    taken = [position for options in candidates for position in options]
+    for declaration, options in zip(declarations, candidates):
+        if len(options) == 1 and taken.count(options[0]) == 1:
+            fixed[options[0]] = declaration
+        else:
+            open_items.append((declaration, options))
+    if not open_items:
+        return [fixed], False
+    results: list[dict[int, dict]] = []
+    best = 0
+    seen = set()
+
+    def place(i: int, chosen: dict[int, dict]) -> None:
+        nonlocal best
+        if len(results) >= _MAX_SCENARIOS * 4:
+            return
+        if i == len(open_items):
+            size = len(chosen)
+            key = tuple(sorted((pos, tuple(sorted(d.items()))) for pos, d in chosen.items()))
+            if size < best or key in seen:
+                return
+            if size > best:
+                best = size
+                results.clear()
+                seen.clear()
+            seen.add(key)
+            results.append(dict(chosen))
+            return
+        declaration, options = open_items[i]
+        for position in options:
+            if position in chosen or position in fixed:
+                continue
+            chosen[position] = declaration
+            place(i + 1, chosen)
+            del chosen[position]
+        place(i + 1, chosen)
+
+    place(0, {})
+    out = [{**fixed, **chosen} for chosen in results[:_MAX_SCENARIOS]]
+    return out or [fixed], len(out) > 1
+
+
+@dataclass
+class _Reading:
+    runs: list[_Run]
+    current: list[_Run]
+    notes: list[str]
+
+
+def _readings(header: dict) -> list[_Reading]:
+    """Every plausible reading of a header's history and declarations."""
+    records = _pg_records(header)
+    graphs, node = _history_graphs(records)
+    bare = _runs(header)
+    declarations, candidates = _declaration_candidates(bare, header)
+    assignments, ambiguous = _assignments(declarations, candidates)
+    attribution_note = None
+    if ambiguous:
+        claims: dict[int, int] = {}
+        for options in candidates:
+            for position in options:
+                claims[position] = claims.get(position, 0) + 1
+        named = sorted({d["pg"] for d, options in zip(declarations, candidates)
+                        if len(options) > 1 or any(claims[o] > 1 for o in options)})
+        attribution_note = (
+            "chemistry declarations for @PG " + ", ".join(named) + " cannot be matched "
+            "to their runs (samtools merge renamed the @PG IDs but not the declarations)")
+    readings = []
+    for parents, structure_note in graphs:
+        for assignment in assignments:
+            runs = _runs(header, assignment)
+            notes = [n for n in (structure_note, attribution_note) if n]
+            readings.append(_Reading(runs, _current_runs(runs, parents, node), notes))
+            if len(readings) >= _MAX_SCENARIOS:
+                return readings
+    return readings
 
 
 # ---------------------------------------------------------------------------
@@ -548,9 +736,20 @@ def check_header(header, *, scan: Optional[ReadScan] = None, index: Optional[dic
     """
     idx = _index(index)
     data = _header_dict(header)
-    runs = _runs(data)
-    current, mixed = _current_runs(runs)
     platform = sequencing_platform(data)
+    readings = _readings(data)
+    results = [_check_reading(idx, data, reading, scan, path, platform) for reading in readings]
+    if len(results) == 1:
+        return results[0]
+    notes = list(dict.fromkeys(note for reading in readings for note in reading.notes))
+    return _merge_readings(idx, results, notes)
+
+
+def _check_reading(idx, data, reading: _Reading, scan, path, platform) -> list[Advisory]:
+    runs, current = reading.runs, reading.current
+    chemistries = {(run.chemistry.get("enzyme"), run.chemistry.get("platform"))
+                   for run in current if run.program in _CALLING}
+    mixed = len(chemistries) > 1
     found: list[Advisory] = []
     for rule in idx.data["advisories"]:
         detector = rule["detector"]
@@ -573,15 +772,39 @@ def check_header(header, *, scan: Optional[ReadScan] = None, index: Optional[dic
     return found
 
 
-def _mixed_history(advisory: Advisory) -> Advisory:
-    """A header merging call histories of different chemistries cannot say which reads."""
+_STATUS_RANK = {POSSIBLY: 0, AFFECTED: 1}
+
+
+def _merge_readings(idx, results: list[list[Advisory]], notes: list[str]) -> list[Advisory]:
+    """One advisory per rule across plausible readings of a header: as found
+    when every reading agrees on the status, else possibly affected."""
     from dataclasses import replace
 
-    note = ("the header merges FiberHMM call histories of different chemistries "
-            "(samtools merge), so it cannot tell which reads this applies to")
-    status = POSSIBLY if advisory.status == AFFECTED else advisory.status
-    return replace(advisory, status=status, confidence="low",
-                   evidence=advisory.evidence + (note,))
+    merged = []
+    for rule in idx.data["advisories"]:
+        found = [next((a for a in result if a.id == rule["id"]), None) for result in results]
+        present = [a for a in found if a is not None]
+        if not present:
+            continue
+        worst = max(present, key=lambda a: (_STATUS_RANK.get(a.status, 0),
+                                            _CONFIDENCE_RANK.get(a.confidence, 0)))
+        if len(present) == len(found) and len({a.status for a in present}) == 1:
+            confidence = min((a.confidence for a in present), key=_CONFIDENCE_RANK.get)
+            merged.append(replace(worst, confidence=confidence))
+        else:
+            merged.append(replace(worst, status=POSSIBLY, confidence="low",
+                                  evidence=worst.evidence + tuple(notes)))
+    return merged
+
+
+def _mixed_history(advisory: Advisory) -> Advisory:
+    """Name the branch: a merged file also holds calls of another chemistry."""
+    from dataclasses import replace
+
+    note = (f"the header merges FiberHMM call histories of different chemistries "
+            f"(samtools merge); this applies to the reads of the @PG {advisory.program} "
+            "history")
+    return replace(advisory, evidence=advisory.evidence + (note,))
 
 
 def _check_table(idx, rule, current, path):
@@ -606,7 +829,10 @@ def _check_table(idx, rule, current, path):
     combined = _combine(findings)
     if combined is None:
         return []
-    return [_make(rule, combined, program=programs[-1] if programs else None, path=path)]
+    # Name the latest run with the reported status (merged branches differ).
+    named = [program for program, finding in zip(programs, findings)
+             if finding.status == combined.status]
+    return [_make(rule, combined, program=named[-1] if named else None, path=path)]
 
 
 def _check_run_rule(idx, rule, runs, current, path, platform=(None, None)):
@@ -622,8 +848,12 @@ def _check_run_rule(idx, rule, runs, current, path, platform=(None, None)):
                                            f"mode without --seq; the reads are "
                                            f"{platform[0]} ({platform[1]})")
             out.append(_make(rule, finding, program=run.id, path=path))
-    # One advisory per rule: the latest matching run speaks for the file.
-    return out[-1:]
+    # One advisory per rule: the worst matching run speaks for the file (the
+    # latest of equals); merged branches each hold their own reads.
+    if not out:
+        return []
+    return [max(reversed(out), key=lambda a: (_STATUS_RANK.get(a.status, 0),
+                                              _CONFIDENCE_RANK.get(a.confidence, 0)))]
 
 
 def _check_dedup(idx, rule, runs, scan, path):
