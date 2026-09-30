@@ -204,14 +204,20 @@ def main(argv=None):
         f"island_min_oe={args.cpg_island_min_oe}; "
         f"min_other={args.min_other} min_island_cpg={args.min_island_cpg} "
     )
+    import pysam
+    from fiberhmm.io.annotation_frame import append_coord_to_ds, pass_through_frame
+    with pysam.AlignmentFile(args.input, check_sq=False) as source:
+        carried_frame = pass_through_frame(source.header, input_molecular_frame)
     header_record = {
         "PN": "fiberhmm-tag-m5c",
         "VN": getattr(fiberhmm, "__version__", "unknown"),
         "CL": " ".join(sys.argv),
-        "DS": ("DddA molecule-specific mCG; mode=whole_cpg_island; "
-               "ddda_mcg_frame=molecular; "
-               f"{mode_details}posterior={args.posterior} "
-               "five_prime_factors=" + ",".join(f"{value:.6g}" for value in factors)),
+        "DS": append_coord_to_ds(
+            "DddA molecule-specific mCG; mode=whole_cpg_island; "
+            "ddda_mcg_frame=molecular; "
+            f"{mode_details}posterior={args.posterior} "
+            "five_prime_factors=" + ",".join(f"{value:.6g}" for value in factors),
+            carried_frame),
     }
     from fiberhmm.inference.bam_output import ensure_parent_dir
     for path in (args.output, args.calls_tsv, args.write_cpg_islands):

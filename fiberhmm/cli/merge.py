@@ -120,15 +120,20 @@ def _merge_output_header(header, *, recall, enzyme, prob_threshold, pairs_only,
     )
     from fiberhmm.models import get_model_path
 
+    from fiberhmm.io.annotation_frame import append_coord_to_ds, pass_through_frame
+    # Consensus records are forward (frame-free); every other record keeps
+    # the input's footprint tags, so the output frame is the input's.
     record = {
         'PN': 'fiberhmm-merge',
         'VN': getattr(fiberhmm, '__version__', 'unknown'),
         'CL': ' '.join(sys.argv),
-        'DS': (f"both-strand consensus of CT/GA pairs; recall={'on' if recall else 'off'} "
-               f"enzyme={enzyme if recall else 'n/a'} prob_threshold={prob_threshold} "
-               f"pairs_only={'on' if pairs_only else 'off'}"
-               + (f" nuc_recall_policy={nuc_recall_policy} phase_nrl={phase_nrl} "
-                  f"cpg_mask={cpg_mask_policy or 'off'}" if recall else '')),
+        'DS': append_coord_to_ds(
+            f"both-strand consensus of CT/GA pairs; recall={'on' if recall else 'off'} "
+            f"enzyme={enzyme if recall else 'n/a'} prob_threshold={prob_threshold} "
+            f"pairs_only={'on' if pairs_only else 'off'}"
+            + (f" nuc_recall_policy={nuc_recall_policy} phase_nrl={phase_nrl} "
+               f"cpg_mask={cpg_mask_policy or 'off'}" if recall else ''),
+            pass_through_frame(header)),
     }
     if recall:
         # The DddA tables do not depend on the platform; declare the one the

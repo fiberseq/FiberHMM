@@ -322,3 +322,107 @@ def test_upstream_hia5_recall_reads_fibertools_scaffolds(name):
             assert len(nucs) == len(gaps)
             assert all(any(min(b, g[1]) - max(a, g[0]) > 0.5 * (b - a) for g in gaps)
                        for a, b in nucs), alignment.query_name
+
+
+# --------------------------------------------------------------------------- #
+#  pass-through tools record the frame of the tags they carry                  #
+# --------------------------------------------------------------------------- #
+
+_BASE = {'HD': {'VN': '1.6', 'SO': 'coordinate'}, 'SQ': [{'SN': 'chr1', 'LN': 1000}]}
+_INPUT_HEADERS = {
+    # fibertools output: molecular by provenance, no coord token anywhere
+    'fibertools': dict(_BASE, PG=[_pg(ID='ft.1', PN='fibertools-rs', VN='0.6.2',
+                                      CL='ft add-nucleosomes -t 1 in.bam out.bam')]),
+    # FiberHMM <= 2.12 output: no FiberHMM @PG, frame unknown from the header
+    'unknown': dict(_BASE, PG=[_pg(ID='pbmm2', PN='pbmm2', CL='pbmm2 align ref in out')]),
+    # a previous pass-through tool that resolved SEQ frame
+    'seq': dict(_BASE, PG=[_pg(ID='fiberhmm-dedup', PN='fiberhmm-dedup', DS='x; coord=seq')]),
+}
+_RECORDED = {'fibertools': 'molecular', 'unknown': None, 'seq': 'seq'}
+
+
+def _pass_through_headers(header):
+    """Output header of every FiberHMM tool that copies ns/nl/as/al/MA unchanged."""
+    from fiberhmm.cli.dedup import _dedup_output_header
+    from fiberhmm.cli.duplex import _header_with_program
+    from fiberhmm.cli.merge import _merge_output_header
+    from fiberhmm.cli.strand_rescue_annotate import _header_with_provenance
+    from fiberhmm.cli.tag_families import _family_header
+    header = pysam.AlignmentHeader.from_dict(header)
+    return {
+        'fiberhmm-dedup': _dedup_output_header(
+            header, min_jaccard=0.95, min_deam=10, ignore_strand=False, collapse=False,
+            prob_threshold=0, max_end_diff=50),
+        'fiberhmm-pair': _header_with_program(header, None, 'hybrid'),
+        'fiberhmm-merge': _merge_output_header(
+            header, recall=False, enzyme='ddda', prob_threshold=128, pairs_only=False,
+            nuc_recall_policy='conservative', phase_nrl=196, cpg_mask_policy=None),
+        'fiberhmm-strand-rescue-annotate': _header_with_provenance(
+            header, report_sha256='0' * 64, minimum_posterior=0.9, command_line='x'),
+        'fiberhmm-tag-consensus': _family_header(
+            header, assignment_sha256='0' * 64, command_line='x'),
+    }
+
+
+@pytest.mark.parametrize('kind', sorted(_INPUT_HEADERS))
+def test_pass_through_tools_record_the_input_frame(kind):
+    """Before the fix these @PG records had no coord token, so a reader that
+    lets the latest FiberHMM record decide (FiberBrowser) turned a fibertools
+    BAM that went through e.g. fiberhmm-dedup into SEQ frame. Unknown input
+    frames stay unrecorded rather than claimed."""
+    expected = _RECORDED[kind]
+    for program, output in _pass_through_headers(_INPUT_HEADERS[kind]).items():
+        record = output.to_dict()['PG'][-1]
+        assert record['PN'] == program
+        ds = record.get('DS', '')
+        if expected is None:
+            assert 'coord=' not in ds, program
+        else:
+            assert f'coord={expected}' in ds, program
+            assert 'coord=molecular' not in ds or expected == 'molecular', program
+        # a reader sees the same frame after the tool as before it
+        assert legacy_tag_frame(output)[0] == legacy_tag_frame(_INPUT_HEADERS[kind])[0]
+
+
+def test_dedup_run_records_molecular_for_fibertools_input(tmp_path):
+    from test_dedup import A_SITES, _make_bam
+    from fiberhmm.cli.dedup import run_dedup
+
+    plain = tmp_path / 'plain.bam'
+    _make_bam(plain, [(f'A{i}', A_SITES, i % 2 == 1, 60) for i in range(3)])
+    source = tmp_path / 'in.bam'
+    with pysam.AlignmentFile(str(plain)) as bam:
+        header = bam.header.to_dict()
+        header['PG'] = _INPUT_HEADERS['fibertools']['PG']
+        with pysam.AlignmentFile(str(source), 'wb', header=header) as out:
+            for read in bam:
+                out.write(read)
+    output = tmp_path / 'out.bam'
+    run_dedup(str(source), str(output), collapse=False)
+    with pysam.AlignmentFile(str(output), check_sq=False) as bam:
+        program = bam.header.to_dict()['PG'][-1]
+        assert program['PN'] == 'fiberhmm-dedup'
+        assert 'coord=molecular' in program['DS']
+        assert legacy_tag_frame(bam.header)[0] == 'molecular'
+
+
+@pytest.mark.parametrize('frame_arg, expected', [
+    ('auto', 'coord=molecular'),       # the fixture's fibertools provenance
+    ('molecular', 'coord=molecular'),
+    ('query', 'coord=seq'),            # the user's explicit choice is what was assumed
+])
+def test_tag_m5c_records_the_frame_it_carried(monkeypatch, tmp_path, frame_arg, expected):
+    import fiberhmm.cli.tag_m5c as tag_m5c
+
+    captured = {}
+
+    def fake_annotate(*args, header_record=None, **kwargs):
+        captured['record'] = header_record
+        return {}
+
+    monkeypatch.setattr(tag_m5c, '_preflight_input', lambda path: None)
+    monkeypatch.setattr(tag_m5c, 'annotate_bam_per_read_islands', fake_annotate)
+    tag_m5c.main(['-i', str(FX / 'ft0.6.2_addnuc_fire.bam'), '-o', str(tmp_path / 'o.bam'),
+                  '-r', str(tmp_path / 'ref.fa'), '--enzyme', 'ddda',
+                  '--input-frame', frame_arg])
+    assert expected in captured['record']['DS']

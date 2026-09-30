@@ -251,15 +251,17 @@ def _family_header(header, *, assignment_sha256: str, command_line: str):
     )
     header_dict["CO"] = comments
     output = pysam.AlignmentHeader.from_dict(header_dict)
+    from fiberhmm.io.annotation_frame import append_coord_to_ds, pass_through_frame
     return append_pg_record(
         output,
         {
             "PN": "fiberhmm-tag-consensus",
             "VN": FIBERHMM_VERSION,
             "CL": command_line,
-            "DS": (
+            "DS": append_coord_to_ds(
                 "BAM-native local TF-family IDs and conditional assignment "
-                f"confidence; assignments_sha256={assignment_sha256}"
+                f"confidence; assignments_sha256={assignment_sha256}",
+                pass_through_frame(output),
             ),
         },
     )

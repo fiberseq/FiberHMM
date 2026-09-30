@@ -2046,13 +2046,14 @@ def _header_with_provenance(
     )
     header_dict["CO"] = comments
     output = pysam.AlignmentHeader.from_dict(header_dict)
+    from fiberhmm.io.annotation_frame import append_coord_to_ds, pass_through_frame
     return append_pg_record(
         output,
         {
             "PN": "fiberhmm-strand-rescue-annotate",
             "VN": FIBERHMM_VERSION,
             "CL": command_line,
-            "DS": (
+            "DS": append_coord_to_ds(
                 "chemistry-aware MSP-to-TF rescue plus shared TF/nuc edges; "
                 "QQQ alternative probability/left-edge/right-edge confidence; "
                 "nucleosome identity/cardinality fixed; "
@@ -2064,7 +2065,8 @@ def _header_with_provenance(
                     f"action_input_index={action_input_index}"
                     if action_bgzf_sha256 is not None
                     else ""
-                )
+                ),
+                pass_through_frame(output),
             ),
         },
     )

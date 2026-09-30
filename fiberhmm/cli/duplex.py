@@ -75,14 +75,15 @@ def _header_with_program(header, model_id: Optional[str], pairing_mode: str):
         "sequence-only": "sequence-supported CT/GA pairing",
         "sequence-free": "sequence-identity-free CT/GA pairing",
     }
+    from fiberhmm.io.annotation_frame import append_coord_to_ds, pass_through_frame
     return append_pg_record(header, {
         "PN": "fiberhmm-pair",
         "VN": __version__,
         "CL": descriptions[pairing_mode],
-        "DS": (
+        "DS": append_coord_to_ds(
             f"mode={pairing_mode}; model={model_id or 'none'}; "
-            "TF LLR and haplotype unused"
-        ),
+            "TF LLR and haplotype unused",
+            pass_through_frame(header)),
     })
 
 

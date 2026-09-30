@@ -189,6 +189,7 @@ def _dedup_output_header(header, *, min_jaccard, min_deam, ignore_strand,
     (:mod:`fiberhmm.advisories`) can tell which duplicate rules made the flags.
     """
     import fiberhmm
+    from fiberhmm.io.annotation_frame import append_coord_to_ds, pass_through_frame
     from fiberhmm.io.bam_header import append_pg_record
 
     grouping = 'none' if ignore_strand else 'deamination_flavour'
@@ -196,10 +197,12 @@ def _dedup_output_header(header, *, min_jaccard, min_deam, ignore_strand,
         'PN': 'fiberhmm-dedup',
         'VN': getattr(fiberhmm, '__version__', 'unknown'),
         'CL': ' '.join(sys.argv),
-        'DS': (f"DAF duplicate marking; grouping={grouping} "
-               f"min_jaccard={min_jaccard} min_deam={min_deam} "
-               f"max_end_diff={max_end_diff} prob_threshold={prob_threshold} "
-               f"mode={'collapse' if collapse else 'flag'}"),
+        'DS': append_coord_to_ds(
+            f"DAF duplicate marking; grouping={grouping} "
+            f"min_jaccard={min_jaccard} min_deam={min_deam} "
+            f"max_end_diff={max_end_diff} prob_threshold={prob_threshold} "
+            f"mode={'collapse' if collapse else 'flag'}",
+            pass_through_frame(header)),
     })
 
 

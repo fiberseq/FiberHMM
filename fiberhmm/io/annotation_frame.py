@@ -140,6 +140,20 @@ def append_coord_to_ds(ds: str, frame: Optional[str]) -> str:
     return f'{ds}; {token} (footprint tags carried over from the input)' if ds else token
 
 
+def pass_through_frame(header, explicit=None) -> Optional[str]:
+    """Frame of the footprint tags a tool copies from ``header``'s BAM.
+
+    ``explicit`` is the tool's own frame choice when it has one (``True`` /
+    ``'molecular'``, ``False`` / ``'query'`` / ``'seq'``); ``None`` or
+    ``'auto'`` uses the provenance rule (:func:`legacy_tag_frame`).
+    """
+    if explicit in (True, MOLECULAR):
+        return MOLECULAR
+    if explicit in (False, SEQ, 'query'):
+        return SEQ
+    return legacy_tag_frame(header)[0]
+
+
 def merged_input_frame(headers) -> Optional[str]:
     """One frame for several inputs, or ``None`` when any is unknown or they differ."""
     frames = {legacy_tag_frame(header)[0] for header in headers}

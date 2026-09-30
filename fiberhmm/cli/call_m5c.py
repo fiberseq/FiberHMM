@@ -263,12 +263,21 @@ def main(argv=None):
           f"5' A,C,G,T={np.round(factors, 3)}", file=sys.stderr)
     if args.tag_bam:
         import fiberhmm
+        from fiberhmm.io.annotation_frame import append_coord_to_ds, pass_through_frame
+        carried_frame = None  # stdin cannot be read twice: leave it unrecorded
+        if args.tag_bam != "-":
+            with pysam.AlignmentFile(args.tag_bam, check_sq=False) as source:
+                carried_frame = pass_through_frame(
+                    source.header,
+                    args.tag_input_frame if args.tag_mode != "locus" else None)
         header_record = {
             "PN": "fiberhmm-call-m5c",
             "VN": getattr(fiberhmm, "__version__", "unknown"),
             "CL": " ".join(sys.argv),
-            "DS": (f"DddA-inferred mCG tag projection; tag_mode={args.tag_mode}; "
-                   "ddda_mcg_frame=molecular"),
+            "DS": append_coord_to_ds(
+                f"DddA-inferred mCG tag projection; tag_mode={args.tag_mode}; "
+                "ddda_mcg_frame=molecular",
+                carried_frame),
         }
         if args.tag_mode == "locus":
             total, tagged = annotate_bam_from_domains(
