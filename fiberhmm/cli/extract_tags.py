@@ -2051,11 +2051,25 @@ Examples:
         sys.exit(1)
 
     print()
+    # Reads that run through the origin of a TP:circular contig have
+    # coordinates past its end; split those rows at the origin.
+    from fiberhmm.io.circular_bed import (
+        block_column_count,
+        circular_contig_sizes,
+        fold_circular_bed,
+    )
+    circular_sizes = circular_contig_sizes(args.input)
     bigbed_failures = []
     for extract_type in extract_types:
         feats = n_features.get(extract_type, 0)
         bed_path = output_beds[extract_type]
         bb_path = bb_paths[extract_type]
+        if feats and circular_sizes:
+            folded = fold_circular_bed(
+                bed_path, circular_sizes,
+                block_column_count(extract_type, args.block_scores))
+            if folded:
+                print(f"  [{extract_type}] {folded:,} rows split at a circular origin")
 
         if feats == 0:
             print(f"  [{extract_type}] no features, skipping")

@@ -96,6 +96,12 @@ def call_main():
     return main()
 
 
+def pipeline_main():
+    _notify()
+    from fiberhmm.cli.pipeline import main
+    return main()
+
+
 def dedup_main():
     _notify()
     from fiberhmm.cli.dedup import main

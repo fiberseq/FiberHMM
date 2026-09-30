@@ -65,10 +65,23 @@ pip install -e ".[all,dev]"
 
 | Tool | Used by | Without it |
 |---|---|---|
+| [`minimap2`](https://github.com/lh3/minimap2), or the `mappy` module | aligning reads in `fiberhmm-pipeline` | the pipeline accepts only already-aligned BAMs |
 | [`samtools`](https://www.htslib.org/) | sorting, indexing and concatenating BAMs | FiberHMM falls back to pysam (slower) |
 | UCSC [`bedToBigBed`](https://hgdownload.soe.ucsc.edu/admin/exe/) | bigBed output of `fiberhmm-extract` and `fiberhmm-footprint-model --bigbed` | `fiberhmm-extract` writes BED only |
 | UCSC `bigBedInfo`, `bigBedToBed` | `fiberhmm-utils fix-bigbed` | the command stops |
 | [`ft`](https://github.com/fiberseq/fibertools-rs) (fibertools) | FIRE scoring after calling (`ft fire`) | not needed by FiberHMM itself |
+
+`fiberhmm-pipeline` ([From a Plasmidsaurus run to footprints](quick-daf-seq.md))
+aligns reads with minimap2. Install the program, or the `mappy` Python module
+(the pipeline uses whichever it finds, program first; `mappy` is not a
+FiberHMM dependency):
+
+```bash
+brew install minimap2                  # macOS (Homebrew)
+conda install -c bioconda minimap2     # conda / mamba
+sudo apt install minimap2              # Debian / Ubuntu
+pip install mappy                      # the Python module instead
+```
 
 ```bash
 # UCSC bedToBigBed on Linux (on a Mac use the macOSX.x86_64 build)

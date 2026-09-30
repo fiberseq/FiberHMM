@@ -34,6 +34,7 @@ END = "<!-- END GENERATED CLI REFERENCE -->"
 # Console script -> (module, function). Order is the order of the document.
 # Matches [project.scripts] in pyproject.toml (checked by the test).
 COMMANDS: list[tuple[str, str, str]] = [
+    ("fiberhmm-pipeline", "fiberhmm.cli.pipeline", "main"),
     ("fiberhmm-call", "fiberhmm.cli.call", "main"),
     ("fiberhmm-apply", "fiberhmm.cli.apply", "main"),
     ("fiberhmm-recall-tfs", "fiberhmm.cli.recall_tfs", "main"),

@@ -2096,6 +2096,105 @@ def _write_tsv(result: dict, path: Path) -> None:
         handle.write("\t".join("" if value is None else str(value) for value in fields.values()) + "\n")
 
 
+QC_CURVES_SCHEMA = "fiberhmm.qc.curves.v1"
+
+
+def _histogram_payload(values: np.ndarray, control: Optional[dict], step: int,
+                       stop: int) -> dict:
+    edges = (np.asarray(control["bin_edges_bp"], dtype=float) if control
+             else np.arange(0, stop + step, step, dtype=float))
+    values = np.asarray(values, dtype=float)
+    counts, _ = np.histogram(values, bins=edges)
+    payload = {
+        "bin_edges_bp": edges.tolist(),
+        "sample_count_per_bin": counts.astype(int).tolist(),
+        "sample_fraction_per_bin": (counts / len(values)).tolist() if len(values) else [],
+        "sample_n": int(len(values)),
+        "sample_overflow": int(np.sum(values >= edges[-1])) if len(values) else 0,
+        "reference_fraction_per_bin": list(control["fraction_per_bin"]) if control else None,
+    }
+    return payload
+
+
+def qc_curves(result: dict, arrays: dict, profile: Optional[dict],
+              control_curve: Optional[dict]) -> dict:
+    """The curves behind the QC plot, as JSON (``<prefix>.qc.curves.json``).
+
+    Schema ``fiberhmm.qc.curves.v1``: the per-read signal-rate distribution
+    and its ECDF with the bundled reference ECDF, the detrended phasogram
+    with the reference curve, nucleosome/TF footprint-size histograms with
+    the reference fractions, the duplicate cluster-size histogram, and the
+    verdicts. Rates are fractions (not percent); the reference parts are
+    ``null`` when the assay has no bundled reference.
+    """
+    rates = np.sort(np.asarray(arrays.get("rates", []), dtype=float))
+    reference_ecdf = None
+    rate_reference = (profile or {}).get("rate") if profile else None
+    if control_curve and control_curve.get("rate_ecdf"):
+        reference_ecdf = {
+            "rates": list(control_curve["rate_ecdf"]["rates"]),
+            "probabilities": list(control_curve["rate_ecdf"]["probabilities"]),
+            "source": "packaged control curve",
+        }
+    elif rate_reference:
+        reference_ecdf = {
+            "rates": list(rate_reference.get("reference_quantiles", [])),
+            "probabilities": list(rate_reference.get("reference_quantile_probabilities", [])),
+            "source": "reference quantiles",
+        }
+    curve = np.asarray(arrays.get("phasogram", []), dtype=float)
+    raw = np.asarray(arrays.get("histogram", []), dtype=float)
+    reference_phasogram = None
+    if control_curve and control_curve.get("phasogram"):
+        reference_phasogram = {
+            "lags_bp": list(control_curve["phasogram"]["lags_bp"]),
+            "detrended_pair_frequency":
+                list(control_curve["phasogram"]["detrended_pair_frequency"]),
+        }
+    sizes = (control_curve or {}).get("footprint_sizes") or {}
+    return {
+        "schema": QC_CURVES_SCHEMA,
+        "input": result.get("input"),
+        "assay": result.get("assay"),
+        "verdicts": {
+            "overall": result["overall"]["status"],
+            "overall_score": result["overall"]["score"],
+            "signal": result["signal"]["status"],
+            "signal_score": result["signal"]["score"],
+            "periodicity": result["periodicity"]["status"],
+            "periodicity_score": result["periodicity"]["score"],
+        },
+        "signal_rate": {
+            "label": result["signal"]["label"],
+            "per_read_rates": rates.tolist(),
+            "ecdf": ((np.arange(1, len(rates) + 1) / len(rates)).tolist()
+                     if len(rates) else []),
+            "reference_ecdf": reference_ecdf,
+            "warn_interval": list(rate_reference["warn_interval"])
+            if rate_reference and "warn_interval" in rate_reference else None,
+            "reference_iqr": list(rate_reference["reference_iqr"])
+            if rate_reference and "reference_iqr" in rate_reference else None,
+        },
+        "phasogram": {
+            "lags_bp": list(range(len(curve))),
+            "detrended_pair_frequency": curve.tolist(),
+            "pair_distance_counts": raw.astype(int).tolist(),
+            "nrl_bp": result["periodicity"]["nrl_bp"],
+            "reference": reference_phasogram,
+        },
+        "footprint_sizes": {
+            "nucleosome": _histogram_payload(arrays.get("nuc_lengths", []),
+                                             sizes.get("nucleosome"), 10, 2000),
+            "tf": _histogram_payload(arrays.get("tf_lengths", []), sizes.get("tf"), 5, 500),
+        },
+        "duplicates": {
+            "duplicate_fraction": result.get("deduplication", {}).get("duplicate_fraction"),
+            "molecule_cluster_size_histogram":
+                result.get("deduplication", {}).get("molecule_cluster_size_histogram"),
+        },
+    }
+
+
 def run_qc(
     input_path: str,
     output_prefix: Optional[str] = None,
@@ -2276,6 +2375,9 @@ def run_qc(
     if plotted:
         result["outputs"]["plot"] = str(plot_path.resolve())
         result["outputs"]["pdf"] = str(pdf_path.resolve())
+    curves_path = Path(str(prefix) + ".qc.curves.json")
+    _atomic_json(qc_curves(result, arrays, profile, control_curve), curves_path)
+    result["outputs"]["curves"] = str(curves_path.resolve())
     _atomic_json(result, json_path)
     _write_tsv(result, tsv_path)
     if stream is not None:

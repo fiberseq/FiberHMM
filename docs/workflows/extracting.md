@@ -72,6 +72,12 @@ BED12 | per-block scores | circular grouping | hp | ps | isDuplicate
 - `--haplotype-fields`: the read's `HP` and `PS` tags as signed integers,
   `-1` when absent. Extraction only copies them; it does not phase.
 
+On a contig declared `@SQ TP:circular`, a read stored across the origin
+(`fiberhmm-pipeline`, see [Plasmids](plasmids.md#reads-through-the-origin))
+gives features past the contig end. Their rows are split at the origin into
+two rows with the same name, one at each end of the contig; a block that
+crosses the origin is cut in two, and per-block columns follow their blocks.
+
 Each bigBed embeds its autoSQL schema, whose description starts with
 `Sample: <name>.` (the BAM stem, or `--sample-name`, with dots and spaces
 replaced). FiberBrowser uses it to group a sample's layers.

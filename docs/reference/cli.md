@@ -11,6 +11,7 @@ Every command also accepts `-h`/`--help` and `--version` (prints
 
 | Command | What it does | Guide |
 |---|---|---|
+| [`fiberhmm-pipeline`](#fiberhmm-pipeline) | Reads + reference (FASTA or plasmid map) to a called BAM: align, call, QC | [Quick DAF-seq](../getting-started/quick-daf-seq.md), [Plasmids](../workflows/plasmids.md) |
 | [`fiberhmm-call`](#fiberhmm-call) | Call nucleosomes, MSPs and TF footprints (HMM + recall) in one pass | [Calling](../workflows/calling.md) |
 | [`fiberhmm-apply`](#fiberhmm-apply) | HMM nucleosomes/MSPs only | [Calling](../workflows/calling.md#fiberhmm-apply-hmm-only) |
 | [`fiberhmm-recall-tfs`](#fiberhmm-recall-tfs), [`fiberhmm-recall-nucs`](#fiberhmm-recall-nucs) | Re-call TFs (and nucleosomes) on a called BAM | [Re-calling](../workflows/recalling.md) |
@@ -35,6 +36,42 @@ Every command also accepts `-h`/`--help`.
 <!-- BEGIN GENERATED CLI REFERENCE (tools/gen_cli_reference.py) -->
 
 Generated from each command's argparse definition by `python tools/gen_cli_reference.py`; do not edit by hand. Hidden compatibility options are omitted. `auto` means the value is resolved at run time as the description says.
+
+## fiberhmm-pipeline
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `reads` | required | Read files: FASTQ (.fastq/.fq, optionally .gz), unaligned BAM, a BAM aligned to --reference, or a directory of them. All reads given form one sample. |
+| `--reference` | required | Reference FASTA, or a plasmid map (.dna, .gb/.gbk/.genbank, .embl) converted to a FASTA whose contig is named as FiberBrowser names the map. |
+| `--enzyme` | required | Chemistry: ddda / dddb (DAF-seq) or hia5 (Fiber-seq). Choices: `ddda`, `dddb`, `hia5`. |
+| `-o` / `--outdir` | required | Output directory. |
+| `--sample` | — | Sample name for output files and the read group (default: the first input's name without extensions). |
+| `-c` / `--cores` | `4` | minimap2 threads and fiberhmm-call worker processes (default 4). |
+| `--seq` | — | Sequencing platform. Default: nanopore for ddda/dddb; for hia5, detected by fiberhmm-call. Sets the minimap2 preset (map-ont / map-hifi). Choices: `nanopore`, `pacbio`. |
+| `--topology` | `auto` | Reference topology. auto (default): a plasmid map's own topology, FASTA contigs linear. circular: every contig is circular (a plasmid FASTA). Choices: `auto`, `circular`, `linear`. |
+| `--region` | — | Keep only reads overlapping this region (1-based, inclusive; repeatable). The first region is the one outputs.json asks FiberBrowser to open. |
+| `--min-mapq` | `20` | Keep primary alignments with at least this MAPQ (default 20); also passed to fiberhmm-call and fiberhmm-qc. |
+| `--keep-soft-clips` | off | Keep unaligned read arms as soft clips. Default: hard-clip them for ddda/dddb (concatemer and chimera arms), keep them for hia5. |
+| `--no-origin-merge` | off | Do not join the two pieces of reads that run through the origin of a circular reference (keep the primary piece). |
+| `--aligner` | `auto` | The minimap2 program on PATH or the mappy module (default: auto, program first). Choices: `auto`, `minimap2`, `mappy`. |
+| `--min-read-length` | — | Minimum aligned read length to call (default 1000). |
+| `--dedup` | `auto` | DAF PCR-duplicate detection (default auto: on for file input). Choices: `auto`, `on`, `off`. |
+| `--dedup-mode` | `flag` | flag (default): mark duplicates 0x400 and keep them; collapse: keep one read per duplicate cluster. Choices: `flag`, `collapse`. |
+| `--snp-screen` | `auto` | DAF recurrent-SNP screen and mask (default auto: after a depth preflight). Choices: `auto`, `on`, `off`. |
+| `--snp-mask` | — | DAF: your own BED of SNP sites to exclude. |
+| `--chimera-filter` / `--no-chimera-filter` | on | DAF: skip strand-swap chimeric reads (default on). |
+| `--primary` / `--no-primary` | on | Call primary alignments only (default on). |
+| `--prob-threshold` | — | ML threshold override, 0-255 (default: chemistry preset). |
+| `--use-m5c` / `--no-use-m5c` | auto | DddA CpG-aware recall (default: on for ddda). |
+| `--cpg-mask-policy` | — | DddA CpG mask policy (default unmethylated-only). Choices: `unmethylated-only`, `methylated-only`. |
+| `--call-args` | — | Other fiberhmm-call options, quoted as one string (e.g. --call-args "--with-scores --min-llr 6"). |
+| `--call-mode` | `auto` | auto (default): fiberhmm-call's resumable region-parallel mode for genome-scale data (&gt;=20,000 reads over at least --cores regions), streaming for targeted runs (one amplicon or plasmid), which it calls faster. Choices: `auto`, `streaming`, `resumable`. |
+| `--no-qc` | off | Skip fiberhmm-qc. |
+| `--tracks` | off | Also extract nucleosome/MSP/TF/deamination (or m6A) tracks into OUTDIR/tracks (bigBed; BED without bedToBigBed). |
+| `--redo` | — | Redo this step and the later ones although complete (also needed to change the inputs or settings of an existing OUTDIR). Choices: `all`, `align`, `call`, `qc`, `tracks`. |
+| `--progress-json` | — | Append JSON-lines progress events to FILE ('-' for stdout). |
+| `-v` / `--verbose` | off | Echo the output of fiberhmm-call, -qc and -extract. |
+| `-q` / `--quiet` | off | No progress messages on stderr. |
 
 ## fiberhmm-call
 

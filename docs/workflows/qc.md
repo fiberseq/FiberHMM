@@ -27,7 +27,8 @@ Because the sample uses aligned reads, QC of an unaligned call set reports
 
 One input writes `<BAM directory>/qc/<BAM stem>.qc.json` and `.qc.tsv`, plus
 `.qc.png` and a vector `.qc.pdf` (TrueType text, editable in Illustrator)
-when matplotlib is installed (`fiberhmm[plots]`). `-o/--output-dir` changes
+when matplotlib is installed (`fiberhmm[plots]`), and `.qc.curves.json`, the
+data behind the plot (see [below](#the-curves-file)). `-o/--output-dir` changes
 the directory. After `fiberhmm-call` the prefix is
 `<output BAM directory>/qc/<BAM stem>` unless `--qc-output-prefix` is set.
 
@@ -41,6 +42,22 @@ out/qc_compare/combined.qc.json   combined.qc.pdf   combined.qc.png   combined.q
 out/qc_compare/pacbio.calls.qc.json   ... .pdf ... .png ... .tsv
 out/qc_compare/dddb.calls.qc.json     ... .pdf ... .png ... .tsv
 ```
+
+## The curves file
+
+`<prefix>.qc.curves.json` (schema `fiberhmm.qc.curves.v1`) holds what the
+plot draws, so another program (FiberBrowser, a notebook) can redraw it:
+
+| Key | Contents |
+|---|---|
+| `verdicts` | `overall`, `signal`, `periodicity` status (PASS/WARN/FAIL/INSUFFICIENT) and scores |
+| `signal_rate` | `per_read_rates` (sorted fractions, one per sampled read), their `ecdf`, the bundled `reference_ecdf` (`rates`, `probabilities`), `warn_interval`, `reference_iqr` |
+| `phasogram` | `lags_bp`, the sample's `detrended_pair_frequency`, raw `pair_distance_counts`, `nrl_bp` and the bundled `reference` curve |
+| `footprint_sizes` | `nucleosome` and `tf`: `bin_edges_bp`, `sample_count_per_bin`, `sample_fraction_per_bin`, `sample_n`, `sample_overflow` and `reference_fraction_per_bin` |
+| `duplicates` | `duplicate_fraction` and the molecule cluster-size histogram |
+
+Rates are fractions, not percent. Reference parts are `null` when the assay
+has no bundled reference.
 
 ## The scorecard
 

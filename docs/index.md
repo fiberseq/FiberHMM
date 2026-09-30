@@ -49,6 +49,9 @@ methyltransferases) are development-only; see
 
 ## Where to start
 
+- A quick DAF-seq run (a Plasmidsaurus FASTQ and a plasmid map or genome):
+  [From a Plasmidsaurus run to footprints in minutes](getting-started/quick-daf-seq.md),
+  one command from reads to a BAM ready for FiberBrowser.
 - New to FiberHMM: [Installation](getting-started/installation.md), then the
   [Quick start](getting-started/quickstart.md), which runs every chemistry on
   a small synthetic data set.

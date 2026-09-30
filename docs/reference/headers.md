@@ -14,6 +14,7 @@ header lines. `@CO` lines are written as `@CO<TAB><text>`; pysam's
 | `@CO FIBERHMM-CONSENSUS-FAMILY:v1:` | `consensus`, `transfer` | one entry per class and layer |
 | `@CO FIBERHMM-STRAND-RESCUE:v6:` | `strand-rescue-annotate` | shadow-layer contract |
 | `@CO FIBERHMM-TF-FAMILY:v1:` | `tag-consensus` | family-slot contract |
+| `@SQ M5`, `@SQ TP:circular`, `@CO FIBERHMM-REFERENCE:v1:` | `pipeline` | identity and topology of the reference (plasmid maps) |
 
 Header lines are copied by `samtools` and most other tools, so they survive
 downstream processing unless a tool rewrites the header.
@@ -150,3 +151,41 @@ are still validated by `fiberhmm-strand-rescue-audit`.
 `layer=tf_sr;quality_spec=QQQQQ`, the five byte meanings, the slot reuse
 distance (`fi_reuse_separation_bp=24`) and the SHA-256 of the assignment
 table.
+
+## FIBERHMM-REFERENCE
+
+`fiberhmm-pipeline` records which reference a BAM was aligned to, so a viewer
+can pair it with the right FASTA or plasmid map even after files are renamed
+(see [Plasmids](../workflows/plasmids.md)):
+
+- every `@SQ` line gets `M5`, the MD5 of the contig sequence (upper case, no
+  whitespace; the SAM standard);
+- a circular contig gets `TP:circular` (SAM standard). Its alignments may run
+  past `LN`, the SAM-preferred form for reads through the origin of a
+  circular reference: a position `p > LN` means `p - LN`;
+- for a reference made from a plasmid map, and for every circular contig,
+  one `@CO` line per contig:
+
+```text
+@CO	FIBERHMM-REFERENCE:v1:contig=N1;length=12179;md5=1276ace935ddb3051497a9b2b956a0c2;topology=circular;source=N1.dna;source_format=snapgene;source_sha256=02bb9705b987b8df586ff0723c7d24de49f5683a85654c669a5bfc8e80243d88
+```
+
+`;`-separated `key=value` fields; values are percent-encoded (RFC 3986:
+`A–Z a–z 0–9 . _ - +` stay literal, so a file name with spaces or `;` is
+safe). Fields:
+
+| Key | Value |
+|---|---|
+| `contig` | the contig name (the `@SQ SN`) |
+| `length` | contig length (the `@SQ LN`) |
+| `md5` | as `@SQ M5` |
+| `topology` | `circular` or `linear` |
+| `source` | file name of the map or FASTA, without its directory |
+| `source_format` | `snapgene`, `genbank`, `embl` or `fasta` |
+| `source_sha256` | SHA-256 of that file as given |
+
+Readers ignore unknown keys and unknown versions. `fiberhmm-call` and the other
+FiberHMM producers copy the input header, so the lines survive calling.
+Python: `fiberhmm.pipeline.reference.declared_references(header)` returns the
+parsed lines; `parse_reference_comment(text)` parses one.
+

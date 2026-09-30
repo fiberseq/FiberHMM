@@ -11,6 +11,28 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 
 ### New
 
+- **`fiberhmm-pipeline`: reads + reference to footprints in one command.**
+  FASTQ (or unaligned/aligned BAM) and a FASTA or plasmid map (SnapGene
+  `.dna`, GenBank, EMBL) in; a called BAM ready for FiberBrowser, QC and an
+  `outputs.json` saying what to open, out. Aligns with minimap2 (the program,
+  or the `mappy` module) using the DAF-seq standard `-ax map-ont --MD -Y`,
+  with a cached index; keeps primary MAPQ ≥ 20 alignments; joins reads that
+  run through the origin of a circular plasmid into one record (the SAM
+  circular-reference form) instead of truncating them; calls with
+  `fiberhmm-call` defaults and runs `fiberhmm-qc`. A plasmid map's contig is
+  named as FiberBrowser names the map, and the header records the reference
+  (`@SQ M5`/`TP:circular`, `@CO FIBERHMM-REFERENCE:v1:`). Completed steps are
+  skipped on a rerun; `--progress-json` streams progress for a GUI. A
+  Plasmidsaurus-sized run takes one to two minutes. See
+  [From a Plasmidsaurus run to footprints in minutes](https://fiberseq.github.io/FiberHMM/getting-started/quick-daf-seq/)
+  and [Plasmids](https://fiberseq.github.io/FiberHMM/workflows/plasmids/).
+- `fiberhmm-qc` also writes `<prefix>.qc.curves.json`
+  (`fiberhmm.qc.curves.v1`): the per-read signal rates and ECDF with the
+  bundled reference, the phasogram, footprint-size histograms and duplicate
+  cluster sizes behind the QC plot.
+- `fiberhmm-extract` splits rows at the origin of `@SQ TP:circular` contigs,
+  so reads stored across a plasmid's origin give valid BED/bigBed.
+
 - **Lattice recaller is the default consensus engine.** `fiberhmm-consensus`
   discovers footprint classes from confident native calls and scores every
   molecule's own modification lattice against them with EM, per chemical
