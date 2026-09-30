@@ -270,6 +270,12 @@ def _load_payload(state,request,options,progress):
                 for path in _flatten_paths(getattr(ds,'paths',None) or ds.path):
                     actual,lo,hi,_=_resolve_bam_fetch_region(path,chrom,start,end)
                     with pysam.AlignmentFile(path,'rb') as bam:
+                        # 'disabled' legacy tags of a BAM whose provenance shows molecular
+                        # frame (fibertools, coord=molecular); only reads without MA/Ma use it.
+                        legacy_frame=options['input'].legacy_hia5_annotation_frame
+                        if legacy_frame=='disabled':
+                            from fiberhmm.io.annotation_frame import resolve_disabled_legacy_frame
+                            legacy_frame=(resolve_disabled_legacy_frame(bam.header) or ('disabled',))[0]
                         for alignment in bam.fetch(actual,lo,hi):
                             if alignment.is_secondary or alignment.is_supplementary:continue
                             key=hashlib.sha256(alignment.to_string().encode()).hexdigest()
@@ -292,7 +298,7 @@ def _load_payload(state,request,options,progress):
                                                 split_minimum_llr=options['families'].nuc_split_minimum_llr,
                                                 maximum_alignment_gap_bp=options['input'].native_maximum_alignment_gap_bp,
                                                 minimum_nfr_length=options['input'].minimum_nfr_length,
-                                                legacy_annotation_frame=options['input'].legacy_hia5_annotation_frame)
+                                                legacy_annotation_frame=legacy_frame)
                                         except ValueError as error:
                                             # One inconsistent molecule (e.g. a whole-read nucleosome
                                             # annotation) must not abort the dataset: exclude it, with a receipt.

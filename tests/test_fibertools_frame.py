@@ -235,3 +235,90 @@ def test_recall_refuses_when_provenance_is_ambiguous(tmp_path):
     with pysam.AlignmentFile(str(out)) as bam:
         got = {r.query_name: _reference_nucs(r) for r in bam}
     assert got == EXPECTED['fixtures']['ft0.6.2_addnuc_fire.bam']['nuc']
+
+
+# --------------------------------------------------------------------------- #
+#  consensus evidence loading and upstream Hia5 nucleosome recall                #
+# --------------------------------------------------------------------------- #
+
+def _load(path, **kwargs):
+    import numpy as np
+    from fiberhmm.inference.strand_rescue import N_CTX, load_region_evidence
+    diagnostics = {}
+    reads = load_region_evidence(
+        str(path), 'chrT', 0, 8000, strand_mode='alignment', mode='pacbio-fiber',
+        context_size=3, prob_threshold=125, llr_hit=np.zeros(N_CTX),
+        llr_miss=np.zeros(N_CTX), min_mapq=0, ma_annotation_frame='auto',
+        load_diagnostics=diagnostics, **kwargs)
+    return reads, diagnostics
+
+
+@pytest.mark.parametrize('name', FIXTURES)
+def test_consensus_loader_places_fibertools_and_fiberhmm_footprints(name):
+    """Consensus input with the default legacy_hia5_annotation_frame=disabled:
+    Ma (0.13) and provenance-molecular ns/nl/as/al (0.6.2) load at fibertools'
+    reference positions on both strands. Before the fix the 0.13 BAMs loaded no
+    nucleosomes or MSPs and the 0.6.2 BAM raised the explicit-frame error."""
+    reads, diagnostics = _load(FX / name, legacy_annotation_frame='disabled')
+    want = EXPECTED['fixtures'][name]
+    assert sorted(r.name for r in reads) == ['read_fwd', 'read_rev']
+    for read in reads:
+        assert sorted([c.start, c.end] for c in read.nucs) == want['nuc'][read.name]
+        assert sorted([c.start, c.end] for c in read.msps) == want['msp'][read.name]
+    provenance = diagnostics.get('legacy_annotation_frame_from_provenance')
+    if name.startswith('ft0.6.2'):
+        assert provenance['frame'] == 'molecular' and 'fibertools' in provenance['reason']
+    else:
+        # MA/Ma BAMs never fall back to legacy tags: diagnostics unchanged.
+        assert provenance is None
+
+
+def test_consensus_loader_keeps_the_explicit_error_without_provenance(tmp_path):
+    src = FX / 'ft0.6.2_addnuc_fire.bam'
+    stripped = tmp_path / 'noprov.bam'
+    with pysam.AlignmentFile(str(src)) as bam:
+        header = bam.header.to_dict()
+        header.pop('PG', None)
+        with pysam.AlignmentFile(str(stripped), 'wb', header=header) as out:
+            for read in bam:
+                out.write(read)
+    pysam.index(str(stripped))
+    with pytest.raises(ValueError, match='explicit annotation frame'):
+        _load(stripped, legacy_annotation_frame='disabled')
+    reads, _ = _load(stripped, legacy_annotation_frame='molecular')
+    want = EXPECTED['fixtures']['ft0.6.2_addnuc_fire.bam']['nuc']
+    assert {r.name: sorted([c.start, c.end] for c in r.nucs) for r in reads} == want
+
+
+@pytest.mark.parametrize('name', ['ft0.13_addnuc_fire.bam', 'ft0.6.2_addnuc_fire.bam',
+                                  'fiberhmm3.0.0_call.bam'])
+def test_upstream_hia5_recall_reads_fibertools_scaffolds(name):
+    """The staged engine's upstream nucleosome/TF recall re-reads the query
+    annotations and checks them against the loaded scaffold; Ma and the
+    provenance-resolved legacy frame must agree with it on the reverse read."""
+    from fiberhmm.core.model_io import load_model_with_metadata
+    from fiberhmm.inference.consensus.adapter import evidence_unit
+    from fiberhmm.inference.consensus.upstream_recall import recall_hia5_alignment
+    from fiberhmm.inference.strand_rescue import load_region_evidence
+    from fiberhmm.inference.tf_recaller import build_llr_tables
+    from fiberhmm.io.annotation_frame import resolve_disabled_legacy_frame
+
+    model, k, mode = load_model_with_metadata(str(REPO / 'fiberhmm' / 'models' / 'hia5_pacbio.json'))
+    hit, miss = build_llr_tables(model)
+    reads = load_region_evidence(
+        str(FX / name), 'chrT', 0, 8000, strand_mode='alignment', mode=mode,
+        context_size=k, prob_threshold=125, llr_hit=hit, llr_miss=miss, min_mapq=0,
+        ma_annotation_frame='auto', legacy_annotation_frame='disabled')
+    by_name = {r.name: r for r in reads}
+    gaps = EXPECTED['truth']['gaps']
+    with pysam.AlignmentFile(str(FX / name)) as bam:
+        frame = (resolve_disabled_legacy_frame(bam.header) or ('disabled',))[0]
+        for alignment in bam:
+            unit = evidence_unit(by_name[alignment.query_name], model, 'd', [], 0, 8000)
+            result = recall_hia5_alignment(alignment, unit, model, 'alignment', mode, k,
+                                           125, 5.0, legacy_annotation_frame=frame)
+            assert result['status'] == 'recalled'
+            nucs = result['nucleosomes']
+            assert len(nucs) == len(gaps)
+            assert all(any(min(b, g[1]) - max(a, g[0]) > 0.5 * (b - a) for g in gaps)
+                       for a, b in nucs), alignment.query_name

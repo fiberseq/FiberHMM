@@ -2,17 +2,21 @@
 from numbers import Integral
 
 
+def has_legacy_tags(read):
+    return any(read.has_tag(tag) for tag in ('ns','nl','as','al'))
+
+
 def legacy_annotations(read, frame):
     if frame not in ('disabled','seq','molecular'):
         raise ValueError('Unknown legacy annotation frame')
-    if read.has_tag('MA'):
-        return None  # MA is authoritative, including an explicitly empty layer.
+    if read.has_tag('MA') or read.has_tag('Ma'):
+        return None  # MA (or fibertools Ma) is authoritative, including an explicitly empty layer.
     out={};n=int(read.query_length or 0)
     for target,starts_tag,lengths_tag in [('msp','as','al'),('nuc','ns','nl')]:
         present=[read.has_tag(starts_tag),read.has_tag(lengths_tag)]
         if not any(present):continue
         if frame=='disabled':
-            raise ValueError('Legacy Hia5 as/al or ns/nl tags require an explicit annotation frame in Native input (seq for the verified ind 2–4 h BAM). No MSPs were silently discarded.')
+            raise ValueError('Legacy Hia5 as/al or ns/nl tags require an explicit annotation frame in Native input (seq for the verified ind 2–4 h BAM); the BAM header does not show which frame they use (no coord=molecular declaration or fibertools nucleosome command). No MSPs were silently discarded.')
         if not all(present):raise ValueError(f'Incomplete legacy {target} tag pair')
         starts,lengths=read.get_tag(starts_tag),read.get_tag(lengths_tag)
         if len(starts)!=len(lengths):raise ValueError(f'Mismatched legacy {target} tag lengths')

@@ -24,7 +24,7 @@ def recall_hia5_alignment(read, unit, model, strand_mode, mode, context_size,
     from ..tf_recaller import build_llr_tables
     from ..fused_stages import _build_fused_recall_result_with_nucs
     from ...daf.m5c import ma_intervals
-    from ...io.ma_tags import flip_intervals_to_seq
+    from ...io.ma_tags import fibertools_ma_intervals, flip_intervals_to_seq
     if mode not in ('pacbio-fiber', 'nanopore-fiber'):
         raise ValueError('This upstream recall adapter is restricted to Hia5')
     settings=dict(split_minimum_llr=split_minimum_llr,split_minimum_opportunities=3,
@@ -43,6 +43,11 @@ def recall_hia5_alignment(read, unit, model, strand_mode, mode, context_size,
     def intervals(feature, start_tag, length_tag):
         if read.has_tag('MA'):
             return ma_intervals(read, feature)
+        fibertools = fibertools_ma_intervals(read)
+        if fibertools is not None:  # fibertools >= 0.13: Ma, always molecular
+            starts, lengths = flip_intervals_to_seq([a for a, _ in fibertools[feature]],
+                                                    [b for _, b in fibertools[feature]], read)
+            return sorted((int(a), int(a+b)) for a, b in zip(starts, lengths))
         if legacy_annotation_frame not in ('seq', 'molecular'):
             raise ValueError('Nuc recall needs MA annotations or an explicit legacy tag frame')
         if not read.has_tag(start_tag) and not read.has_tag(length_tag):

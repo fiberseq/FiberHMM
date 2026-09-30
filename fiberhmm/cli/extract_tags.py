@@ -59,6 +59,7 @@ from fiberhmm.inference.parallel import _get_genome_regions
 from fiberhmm.inference.region_planning import RegionPlanError
 from fiberhmm.io.ma_tags import (
     DDDA_MCG_FEATURE,
+    annotation_tags,
     flip_interval_frame,
     flip_intervals_to_seq,
     parse_an_tag,
@@ -184,21 +185,23 @@ def _parse_all_ma_annotations(read, *, annotation_frame='molecular'):
     """Parse MA/AQ/AN once and return annotations grouped by type.
 
     Values retain the exact target-specific ordering and quality orientation
-    previously returned by :func:`_parse_ma_annotations`.
+    previously returned by :func:`_parse_ma_annotations`. Without FiberHMM's
+    ``MA`` the fibertools (>= 0.13) ``Ma``/``Aq``/``An`` tags are read instead;
+    those are always molecular frame, whatever ``annotation_frame`` says.
     """
     if annotation_frame not in ('seq', 'molecular'):
         raise ValueError('Unknown MA annotation frame')
-    try:
-        ma_str = read.get_tag('MA')
-    except KeyError:
+    tags = annotation_tags(read)
+    if tags is None:
         return None
-    try:
-        aq = read.get_tag('AQ')
-    except KeyError:
+    ma_str, aq, an, source = tags
+    if source == 'Ma':
+        annotation_frame = 'molecular'
+    if aq is None:
         aq = []
     try:
-        an_names = parse_an_tag(read.get_tag('AN')) if read.has_tag('AN') else []
-    except KeyError:
+        an_names = parse_an_tag(str(an)) if an is not None else []
+    except (TypeError, ValueError):
         an_names = []
     try:
         parsed = parse_ma_tag(ma_str)

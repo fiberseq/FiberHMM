@@ -109,6 +109,18 @@ def legacy_tag_frame(header) -> Tuple[Optional[str], str]:
     return frame, reason
 
 
+def resolve_disabled_legacy_frame(header) -> Optional[Tuple[str, str]]:
+    """``('molecular', reason)`` when provenance shows molecular ns/nl/as/al.
+
+    For consensus's ``legacy_hia5_annotation_frame='disabled'``: a fibertools
+    nucleosome command or a coord=molecular declaration settles the frame, so
+    the option need not be set by hand. Anything else (unknown, or a FiberHMM
+    coord=seq record) returns ``None`` and the explicit-frame error stands.
+    """
+    frame, reason = legacy_tag_frame(header)
+    return (frame, reason) if frame == MOLECULAR else None
+
+
 def coord_ds_token(frame: Optional[str]) -> str:
     """``coord=<frame>`` for a @PG DS, or ``''`` when the frame is unknown."""
     return f'coord={frame}' if frame in (MOLECULAR, SEQ) else ''

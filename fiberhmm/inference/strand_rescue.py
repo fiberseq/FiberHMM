@@ -46,7 +46,12 @@ from fiberhmm.inference.tf_recaller import (
 )
 from fiberhmm.inference.tf_sites import bounded_edge_components
 from fiberhmm.io.bam_header import declared_ma_types
-from fiberhmm.io.ma_tags import flip_interval_frame, parse_ma_tag
+from fiberhmm.io.ma_tags import (
+    annotation_tags,
+    flip_interval_frame,
+    has_annotation_tag,
+    parse_ma_tag,
+)
 
 
 PRESETS = {
@@ -1137,8 +1142,13 @@ def _has_mapped_annotation_overlap(
     """
     if end <= start:
         raise ValueError("annotation overlap window must have positive width")
+    tags = annotation_tags(read)
+    if tags is None:
+        return False
+    if tags[3] == 'Ma':
+        annotation_frame = 'molecular'  # fibertools Ma is always molecular
     try:
-        parsed = parse_ma_tag(read.get_tag("MA"))
+        parsed = parse_ma_tag(tags[0])
     except (KeyError, TypeError, ValueError):
         return False
     query_to_reference = None
@@ -1306,6 +1316,16 @@ def load_region_evidence(
             ma_annotation_frame = resolve_ma_frame(bam.header)
         if load_diagnostics is not None:
             load_diagnostics['ma_annotation_frame'] = ma_annotation_frame
+        # ``disabled`` legacy ns/nl/as/al become molecular when the header's
+        # provenance says so (fibertools nucleosome command or a coord=molecular
+        # declaration). Applied, and recorded, only for reads that actually
+        # fall back to legacy tags, so MA-carrying BAMs load exactly as before.
+        from fiberhmm.io.annotation_frame import resolve_disabled_legacy_frame
+        provenance_legacy_frame = (
+            resolve_disabled_legacy_frame(bam.header)
+            if legacy_annotation_frame == 'disabled' else None
+        )
+        provenance_legacy_frame_used = False
         if tf_layer != "tf" and tf_layer not in declared_ma_types(bam.header):
             raise ValueError(
                 f"selected TF layer {tf_layer!r} is not declared in the BAM "
@@ -1417,9 +1437,13 @@ def load_region_evidence(
                 parsed_annotations = _parse_all_ma_annotations(read, annotation_frame=ma_annotation_frame) or {}
             except (KeyError, TypeError, ValueError):
                 parsed_annotations = {}
-            if legacy_annotation_frame is not None and not read.has_tag('MA'):
-                from .legacy_annotations import legacy_annotations
-                parsed_annotations = legacy_annotations(read, legacy_annotation_frame) or {}
+            if legacy_annotation_frame is not None and not has_annotation_tag(read):
+                from .legacy_annotations import has_legacy_tags, legacy_annotations
+                read_legacy_frame = legacy_annotation_frame
+                if provenance_legacy_frame is not None and has_legacy_tags(read):
+                    read_legacy_frame = provenance_legacy_frame[0]
+                    provenance_legacy_frame_used = True
+                parsed_annotations = legacy_annotations(read, read_legacy_frame) or {}
             projected_full = projection == "full"
             reads.append(
                 ReadEvidence(
@@ -1512,6 +1536,9 @@ def load_region_evidence(
             # targeted region cannot change the returned evidence.
             if max_reads and len(reads) >= max_reads:
                 break
+        if load_diagnostics is not None and provenance_legacy_frame_used:
+            load_diagnostics['legacy_annotation_frame_from_provenance'] = dict(
+                frame=provenance_legacy_frame[0], reason=provenance_legacy_frame[1])
     if load_diagnostics is not None:
         load_diagnostics.update(
             {
