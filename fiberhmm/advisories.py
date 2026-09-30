@@ -171,6 +171,7 @@ class _Run:
     ds: str
     declaration: Optional[dict] = None
     chemistry: dict = field(default_factory=dict)
+    note: Optional[str] = None  # evidence for a stand-in run (unrecorded history)
 
 
 def _header_dict(header) -> dict:
@@ -315,9 +316,24 @@ def _run_chemistry(run: _Run) -> dict:
 # several declarations can name one ID. When attribution or the history is
 # ambiguous every plausible reading is checked: an advisory that holds in all
 # of them stands; one that holds in some is reported as possibly affected.
+# Where the plausible readings are too many to list, one upper-bound reading
+# (every run with every declaration it could carry) decides, and nothing it
+# finds can be more than possibly affected.
+#
+# Malformed links never prove that a call was replaced: PP links that point
+# forward (to a later record; they are how a cycle arises) or to an ID that
+# several records carry are ambiguous, so readings with and without them are
+# both checked, and runs on a cycle never supersede one another.
+#
+# A step that drops its inputs' headers (``samtools cat`` of several files,
+# Picard GatherBamFiles) leaves reads whose calling history is not in the
+# header. Unless a later full call re-called them, each current calling run
+# gets a stand-in with unrecorded provenance, which can only be possibly
+# affected; the file is never clean on the strength of the first input alone.
 
 _MERGE_SUFFIX_RE = re.compile(r"(?:-[0-9A-F]{8})+$")
 _MAX_SCENARIOS = 64
+_MAX_OPEN_DECLARATIONS = 10
 
 
 def _pg_records(header: dict) -> list[dict]:
@@ -330,19 +346,70 @@ def _is_merge_record(record: dict) -> bool:
     return bool(re.search(r"(?:^|[\s/])samtools\s+merge(?:\s|$)", command))
 
 
-def _history_graphs(records: list[dict]
-                    ) -> tuple[list[tuple[list[set[int]], Optional[str]]], list[int]]:
-    """Parent sets per @PG node, for each plausible reading of the history.
+_CAT_VALUE_OPTIONS = {"-o", "-h", "-b", "-@", "--threads", "-O", "--output-fmt",
+                      "--output-fmt-option", "--input-fmt-option", "--reference", "-r"}
 
-    Returns ``([(parents, note)], node)``: ``node[i]`` is the node of record
-    ``i`` (records of one merge event share a node). There is one reading,
-    or two when records without ``PP`` follow others and nothing marks them
-    as merged in (a history written without links, or a merged-in root;
-    ``note`` then says so).
+
+def _fiberhmm_part(path: str) -> bool:
+    """A file in one of fiberhmm-call's own temporary or work directories
+    (``.fiberhmm_call_tmp_*``, ``.fiberhmm_tmp_*``, ``.<output>.fiberhmm-work``),
+    whose region BAMs it concatenates into one call's output."""
+    parts = path.replace("\\", "/").split("/")
+    return any(p.startswith(".fiberhmm_") or (p.startswith(".") and p.endswith(".fiberhmm-work"))
+               for p in parts[:-1])
+
+
+def _drops_input_headers(record: dict) -> bool:
+    """Whether a @PG step joined several inputs but kept one header."""
+    command = str(record.get("CL", ""))
+    name = str(record.get("PN") or record.get("ID") or "")
+    if re.search(r"GatherBamFiles", f"{name} {command}", re.IGNORECASE):
+        return True
+    match = re.search(r"(?:^|[\s/])samtools\s+cat(?:\s|$)(.*)", command)
+    if not match:
+        return False
+    tokens = match.group(1).split()
+    inputs, paths, listed = [], [], False
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token in _CAT_VALUE_OPTIONS:
+            value = tokens[i + 1] if i + 1 < len(tokens) else ""
+            if token == "-b":
+                listed = True
+                inputs.append(value)
+            if token in ("-b", "-h"):
+                paths.append(value)
+            i += 2
+            continue
+        if not token.startswith("-"):
+            inputs.append(token)
+            paths.append(token)
+        i += 1
+    if paths and all(_fiberhmm_part(path) for path in paths):
+        return False  # fiberhmm-call joining its own region files
+    return listed or len(inputs) >= 2
+
+
+@dataclass
+class _Graph:
+    parents: list[set[int]]
+    notes: list[str]
+
+
+def _history_graphs(records: list[dict]) -> tuple[list[_Graph], list[int]]:
+    """Parent sets per @PG node for the plausible readings of the history.
+
+    Returns ``(graphs, node)``: ``node[i]`` is the node of record ``i``
+    (records of one merge event share a node). The first graph keeps only
+    unambiguous links; a second one, when anything is ambiguous, adds the
+    ambiguous links (PP-less records continuing the record before them, PP
+    links to a duplicated ID -- to every record carrying it -- and forward PP
+    links), with notes saying what was ambiguous.
     """
-    by_id: dict[str, int] = {}
+    by_id: dict[str, list[int]] = {}
     for index, record in enumerate(records):
-        by_id.setdefault(str(record.get("ID", "")), index)
+        by_id.setdefault(str(record.get("ID", "")), []).append(index)
     # One node per htslib merge event: consecutive records with the same
     # program and command line, each linked to a different chain end.
     node = list(range(len(records)))
@@ -353,30 +420,91 @@ def _history_graphs(records: list[dict]
                 and key == tuple(str(before.get(k, "")) for k in ("PN", "VN", "CL", "DS"))
                 and record.get("PP") != before.get("ID")):
             node[index] = node[index - 1]
-    parents: list[set[int]] = [set() for _ in records]
+    strong: list[set[int]] = [set() for _ in records]
+    weak: list[set[int]] = [set() for _ in records]
+    notes: list[str] = []
     unlinked = []
     for index, record in enumerate(records):
         previous = record.get("PP")
-        if previous is not None and str(previous) in by_id:
-            parent = node[by_id[str(previous)]]
-            if parent != node[index]:
-                parents[node[index]].add(parent)
-        elif previous is None and index > 0 and node[index] == index:
-            unlinked.append(index)
+        if previous is None:
+            if index > 0 and node[index] == index:
+                unlinked.append(index)
+            continue
+        targets = by_id.get(str(previous), [])
+        if not targets:
+            continue  # links to nothing recorded: a root of unknown history
+        parents = {node[t] for t in targets} - {node[index]}
+        if len(targets) > 1:
+            weak[node[index]] |= parents
+            notes.append(f"several @PG records carry the ID {previous}, so the parent of "
+                         f"@PG {record.get('ID')} is ambiguous")
+        elif targets[0] >= index:
+            weak[node[index]] |= parents
+            notes.append(f"@PG {record.get('ID')} links forward to {previous} (PP links "
+                         "that point forward or form a cycle cannot order the history)")
+        else:
+            strong[node[index]] |= parents
     merged_later = [i for i, record in enumerate(records) if _is_merge_record(record)]
     ambiguous = [i for i in unlinked
                  if not _MERGE_SUFFIX_RE.search(str(records[i].get("ID", "")))
                  and not any(m > i for m in merged_later)]
-    readings: list[tuple[list[set[int]], Optional[str]]] = [(parents, None)]
     if ambiguous:
-        linear = [set(p) for p in parents]
         for index in ambiguous:
-            linear[index].add(node[index - 1])
+            weak[index].add(node[index - 1])
         names = ", ".join(str(records[i].get("ID")) for i in ambiguous[:3])
-        note = (f"@PG {names} has no PP link, so the header cannot tell whether it "
-                "continued the history before it or was merged in beside it")
-        readings = [(parents, note), (linear, note)]
-    return readings, node
+        notes.append(f"@PG {names} has no PP link, so the header cannot tell whether it "
+                     "continued the history before it or was merged in beside it")
+    graphs = [_Graph(strong, [])]
+    if any(weak):
+        graphs.append(_Graph([a | b for a, b in zip(strong, weak)], []))
+        graphs[0].notes = graphs[1].notes = list(dict.fromkeys(notes))
+    return graphs, node
+
+
+def _components(parents: list[set[int]]) -> list[int]:
+    """Strongly connected component of every node (iterative Tarjan)."""
+    n = len(parents)
+    index_of = [-1] * n
+    low = [0] * n
+    on_stack = [False] * n
+    component = [-1] * n
+    stack: list[int] = []
+    counter = 0
+    for root in range(n):
+        if index_of[root] != -1:
+            continue
+        work = [(root, iter(parents[root]))]
+        index_of[root] = low[root] = counter
+        counter += 1
+        stack.append(root)
+        on_stack[root] = True
+        while work:
+            vertex, edges = work[-1]
+            advanced = False
+            for nxt in edges:
+                if index_of[nxt] == -1:
+                    index_of[nxt] = low[nxt] = counter
+                    counter += 1
+                    stack.append(nxt)
+                    on_stack[nxt] = True
+                    work.append((nxt, iter(parents[nxt])))
+                    advanced = True
+                    break
+                if on_stack[nxt]:
+                    low[vertex] = min(low[vertex], index_of[nxt])
+            if advanced:
+                continue
+            work.pop()
+            if work:
+                low[work[-1][0]] = min(low[work[-1][0]], low[vertex])
+            if low[vertex] == index_of[vertex]:
+                while True:
+                    member = stack.pop()
+                    on_stack[member] = False
+                    component[member] = vertex
+                    if member == vertex:
+                        break
+    return component
 
 
 def _ancestors(parents: list[set[int]], start: int) -> set[int]:
@@ -394,14 +522,45 @@ def _ancestors(parents: list[set[int]], start: int) -> set[int]:
 def _current_runs(runs: list[_Run], parents: list[set[int]],
                   node: list[int]) -> list[_Run]:
     """The runs whose calls the file holds: every calling or recalling run
-    that no later full call descends from (one per merged branch)."""
+    that no later full call descends from (one per merged branch). Runs on
+    one PP cycle do not supersede each other."""
     producers = [run for run in runs if run.program in _CALLING | _RECALLING]
+    component = _components(parents)
     superseded: set[int] = set()
     for call in producers:
         if call.program not in _CALLING:
             continue
-        superseded |= _ancestors(parents, node[call.position])
+        own = component[node[call.position]]
+        superseded |= {a for a in _ancestors(parents, node[call.position])
+                       if component[a] != own}
     return [run for run in producers if node[run.position] not in superseded]
+
+
+def _unrecorded_inputs(records: list[dict], runs: list[_Run], current: list[_Run],
+                       parents: list[set[int]], node: list[int]) -> list[_Run]:
+    """Stand-in runs for calls whose history a header-dropping step discarded."""
+    calls = [run for run in runs if run.program in _CALLING]
+    stand_ins: list[_Run] = []
+    templates = [run for run in current if run.program in _CALLING | _RECALLING]
+    for index, record in enumerate(records):
+        if not _drops_input_headers(record):
+            continue
+        step = node[index]
+        if any(step in _ancestors(parents, node[call.position]) for call in calls):
+            continue  # a later full call re-called every read
+        note = (f"@PG {record.get('ID')} ({str(record.get('CL', ''))[:80]}) joined several "
+                "inputs but kept one header: the other inputs' calls are in the file with "
+                "no recorded provenance, so they cannot be cleared")
+        for template in templates:
+            chemistry = {key: template.chemistry.get(key)
+                         for key in ("mode", "enzyme", "platform")}
+            chemistry.update(model=None, custom_model=False)
+            stand_ins.append(_Run(
+                position=template.position,
+                id=f"{template.id} (unrecorded inputs of {record.get('ID')})",
+                program=template.program, version=None, cl=template.cl, ds=template.ds,
+                chemistry=chemistry, note=note))
+    return stand_ins
 
 
 def _declaration_candidates(runs: list[_Run], header: dict) -> tuple[list[dict], list[list[int]]]:
@@ -425,28 +584,51 @@ def _declaration_candidates(runs: list[_Run], header: dict) -> tuple[list[dict],
     return declarations, candidates
 
 
-def _assignments(declarations: list[dict], candidates: list[list[int]]
-                 ) -> tuple[list[dict[int, dict]], bool]:
-    """Plausible ``{@PG position: declaration}`` assignments and whether
-    there is more than one (each run has at most one declaration; as many
-    declarations are placed as possible)."""
+@dataclass
+class _Attribution:
+    fixed: dict                      # position -> declaration, unambiguous
+    options: dict                    # position -> [declaration or None], ambiguous runs
+    assignments: list                # every plausible assignment, when complete
+    complete: bool
+
+
+def _assignments(declarations: list[dict], candidates: list[list[int]]) -> _Attribution:
+    """Plausible ``{@PG position: declaration}`` assignments (each run has at
+    most one declaration; as many declarations are placed as possible). When
+    they are too many to list, ``complete`` is False and ``options`` gives
+    every declaration each ambiguous run could carry."""
     fixed: dict[int, dict] = {}
     open_items = []
-    taken = [position for options in candidates for position in options]
+    claims: dict[int, int] = {}
+    for options in candidates:
+        for position in options:
+            claims[position] = claims.get(position, 0) + 1
     for declaration, options in zip(declarations, candidates):
-        if len(options) == 1 and taken.count(options[0]) == 1:
+        if len(options) == 1 and claims[options[0]] == 1:
             fixed[options[0]] = declaration
         else:
             open_items.append((declaration, options))
+    choice: dict[int, list] = {}
+    for declaration, options in open_items:
+        for position in options:
+            choice.setdefault(position, [None])
+            if declaration not in choice[position]:
+                choice[position].append(declaration)
     if not open_items:
-        return [fixed], False
+        return _Attribution(fixed, {}, [fixed], True)
     results: list[dict[int, dict]] = []
+    seen: set = set()
     best = 0
-    seen = set()
+    truncated = len(open_items) > _MAX_OPEN_DECLARATIONS
+    budget = [_MAX_SCENARIOS * 50]
 
     def place(i: int, chosen: dict[int, dict]) -> None:
-        nonlocal best
-        if len(results) >= _MAX_SCENARIOS * 4:
+        nonlocal best, truncated
+        if truncated:
+            return
+        budget[0] -= 1
+        if budget[0] < 0:
+            truncated = True
             return
         if i == len(open_items):
             size = len(chosen)
@@ -459,6 +641,8 @@ def _assignments(declarations: list[dict], candidates: list[list[int]]
                 seen.clear()
             seen.add(key)
             results.append(dict(chosen))
+            if len(results) > _MAX_SCENARIOS:
+                truncated = True
             return
         declaration, options = open_items[i]
         for position in options:
@@ -469,9 +653,11 @@ def _assignments(declarations: list[dict], candidates: list[list[int]]
             del chosen[position]
         place(i + 1, chosen)
 
-    place(0, {})
-    out = [{**fixed, **chosen} for chosen in results[:_MAX_SCENARIOS]]
-    return out or [fixed], len(out) > 1
+    if not truncated:
+        place(0, {})
+    if truncated:
+        return _Attribution(fixed, choice, [], False)
+    return _Attribution(fixed, choice, [{**fixed, **chosen} for chosen in results], True)
 
 
 @dataclass
@@ -479,6 +665,7 @@ class _Reading:
     runs: list[_Run]
     current: list[_Run]
     notes: list[str]
+    upper_bound: bool = False   # findings here are at most possibly affected
 
 
 def _readings(header: dict) -> list[_Reading]:
@@ -487,9 +674,9 @@ def _readings(header: dict) -> list[_Reading]:
     graphs, node = _history_graphs(records)
     bare = _runs(header)
     declarations, candidates = _declaration_candidates(bare, header)
-    assignments, ambiguous = _assignments(declarations, candidates)
+    attribution = _assignments(declarations, candidates)
     attribution_note = None
-    if ambiguous:
+    if attribution.options:
         claims: dict[int, int] = {}
         for options in candidates:
             for position in options:
@@ -497,22 +684,39 @@ def _readings(header: dict) -> list[_Reading]:
         named = sorted({d["pg"] for d, options in zip(declarations, candidates)
                         if len(options) > 1 or any(claims[o] > 1 for o in options)})
         attribution_note = (
-            "chemistry declarations for @PG " + ", ".join(named) + " cannot be matched "
+            "chemistry declarations for @PG " + ", ".join(named[:5]) + " cannot be matched "
             "to their runs (samtools merge renamed the @PG IDs but not the declarations)")
+        if not attribution.complete:
+            attribution_note += ("; too many pairings to check one by one, so every run "
+                                 "was checked with every declaration it could carry")
     readings = []
-    for parents, structure_note in graphs:
-        for assignment in assignments:
-            runs = _runs(header, assignment)
-            notes = [n for n in (structure_note, attribution_note) if n]
-            readings.append(_Reading(runs, _current_runs(runs, parents, node), notes))
-            if len(readings) >= _MAX_SCENARIOS:
-                return readings
+    for graph in graphs:
+        notes = [n for n in (*graph.notes, attribution_note) if n]
+        if attribution.complete:
+            for assignment in attribution.assignments:
+                runs = _runs(header, assignment)
+                current = _current_runs(runs, graph.parents, node)
+                current = current + _unrecorded_inputs(records, runs, current,
+                                                       graph.parents, node)
+                readings.append(_Reading(runs, current, notes))
+        else:
+            # Upper bound: each ambiguous run once per declaration it could carry.
+            base = _runs(header, attribution.fixed)
+            runs = []
+            for run in base:
+                if run.position not in attribution.options:
+                    runs.append(run)
+                    continue
+                for declaration in attribution.options[run.position]:
+                    variant = _Run(run.position, run.id, run.program, run.version, run.cl,
+                                   run.ds, declaration=declaration)
+                    variant.chemistry = _run_chemistry(variant)
+                    runs.append(variant)
+            current = _current_runs(runs, graph.parents, node)
+            current = current + _unrecorded_inputs(records, runs, current, graph.parents, node)
+            readings.append(_Reading(runs, current, notes, upper_bound=True))
     return readings
 
-
-# ---------------------------------------------------------------------------
-# Evidence
-# ---------------------------------------------------------------------------
 
 @dataclass
 class _Finding:
@@ -739,10 +943,11 @@ def check_header(header, *, scan: Optional[ReadScan] = None, index: Optional[dic
     platform = sequencing_platform(data)
     readings = _readings(data)
     results = [_check_reading(idx, data, reading, scan, path, platform) for reading in readings]
-    if len(results) == 1:
+    if len(results) == 1 and not readings[0].upper_bound:
         return results[0]
     notes = list(dict.fromkeys(note for reading in readings for note in reading.notes))
-    return _merge_readings(idx, results, notes)
+    return _merge_readings(idx, results, notes,
+                           upper_bound=any(r.upper_bound for r in readings))
 
 
 def _check_reading(idx, data, reading: _Reading, scan, path, platform) -> list[Advisory]:
@@ -769,15 +974,24 @@ def _check_reading(idx, data, reading: _Reading, scan, path, platform) -> list[A
             found.extend(_check_pair(idx, rule, runs, scan, path))
         elif detector == "untracked_calls":
             found.extend(_check_untracked(rule, data, runs, scan, path))
+    notes = {run.id: run.note for run in current if run.note}
+    if notes:
+        from dataclasses import replace
+
+        found = [replace(a, evidence=(notes[a.program],) + a.evidence)
+                 if a.program in notes and notes[a.program] not in a.evidence else a
+                 for a in found]
     return found
 
 
 _STATUS_RANK = {POSSIBLY: 0, AFFECTED: 1}
 
 
-def _merge_readings(idx, results: list[list[Advisory]], notes: list[str]) -> list[Advisory]:
+def _merge_readings(idx, results: list[list[Advisory]], notes: list[str],
+                    upper_bound: bool = False) -> list[Advisory]:
     """One advisory per rule across plausible readings of a header: as found
-    when every reading agrees on the status, else possibly affected."""
+    when every reading agrees on the status, else possibly affected (always,
+    when a reading is only an upper bound)."""
     from dataclasses import replace
 
     merged = []
@@ -788,7 +1002,8 @@ def _merge_readings(idx, results: list[list[Advisory]], notes: list[str]) -> lis
             continue
         worst = max(present, key=lambda a: (_STATUS_RANK.get(a.status, 0),
                                             _CONFIDENCE_RANK.get(a.confidence, 0)))
-        if len(present) == len(found) and len({a.status for a in present}) == 1:
+        if (not upper_bound and len(present) == len(found)
+                and len({a.status for a in present}) == 1):
             confidence = min((a.confidence for a in present), key=_CONFIDENCE_RANK.get)
             merged.append(replace(worst, confidence=confidence))
         else:

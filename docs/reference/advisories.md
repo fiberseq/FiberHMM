@@ -94,9 +94,15 @@ links (a history written without links, or a merge), or chemistry
 declarations whose `pg=` names an ID that the merge renamed -- every
 plausible reading is checked: an advisory that holds in all of them is
 reported as found, one that holds in only some as `possibly_affected`
-(low confidence); never clean. (`samtools cat` keeps only the first input's
-header, so the other inputs' histories are not recorded and cannot be
-checked.)
+(low confidence); never clean. PP links that form a cycle or name an ID
+several records carry never count as proof that a call was replaced, and
+when the pairings of declarations and runs are too many to check one by one,
+each run is checked with every declaration it could carry (at most possibly
+affected). `samtools cat` of several files (and Picard `GatherBamFiles`)
+keeps only one input's header, so the other inputs' calls have no recorded
+history: unless a later FiberHMM call re-called every read, such a file is
+at least possibly affected, never clean. (fiberhmm-call's own `samtools cat`
+of its region files is recognised and does not count.)
 
 ## Advisories
 

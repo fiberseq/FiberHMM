@@ -632,3 +632,103 @@ def test_cli_keeps_going_after_a_malformed_input(tmp_path):
     assert "Traceback" not in result.stderr
     reports = json.loads(result.stdout)["reports"]
     assert [r["status"] for r in reports] == ["error", "clean"]
+
+
+# --- malformed or incomplete histories never clear a file ----------------------
+
+def _call(pid, version="3.0.0", pp=None):
+    record = _hia5_call(version, "--prob-threshold 248 --primary", pid=pid)
+    record["PP"] = pp
+    return record
+
+
+def test_pp_cycles_and_duplicate_ids_never_prove_replacement():
+    cycle = _header([_call("old", "2.16.7", pp="new"), _call("new", pp="old")], linked=False)
+    advisory = _by_id(check_header(cycle))["hia5-nanopore-gt-table"]
+    assert advisory.status == "possibly_affected"
+    assert any("forward" in line for line in advisory.evidence)
+    # A cycle of fixed calls is still clean.
+    fixed_cycle = _header([_call("a", pp="b"), _call("b", pp="a")], linked=False)
+    assert check_header(fixed_cycle) == []
+    # Two records share an ID; the child's parent is ambiguous.
+    duplicate = _header([_call("same", "2.16.7"), _call("same"), _call("new", pp="same")],
+                        linked=False)
+    advisory = _by_id(check_header(duplicate))["hia5-nanopore-gt-table"]
+    assert advisory.status == "possibly_affected"
+    assert any("several @PG records carry the ID same" in line for line in advisory.evidence)
+    # Unambiguous backward links still supersede.
+    linear = _header([_call("old", "2.16.7"), _call("new", pp="old")], linked=False)
+    assert check_header(linear) == []
+
+
+def test_many_ambiguous_declarations_fall_back_to_an_upper_bound():
+    """Too many pairings to enumerate: every live run is checked with every
+    declaration it could carry, and the file is at least possibly affected."""
+    swapped = _sha(MODELS / "legacy" / "hia5_nanopore_gt_swapped_legacy.json")
+    fixed = _sha(MODELS / "hia5_nanopore.json")
+    ids = ["fiberhmm-call"] + [f"fiberhmm-call-{i:08X}" for i in range(1, 6)]
+    records = [_call(pid) for pid in ids] + [_call("fresh", pp=ids[0])]
+    for comments in (
+            [_declaration("fiberhmm-call", apply_sha256=swapped, recall_sha256=swapped)]
+            + [_declaration("fiberhmm-call", apply_sha256=fixed, recall_sha256=fixed,
+                            model=f"good{i}") for i in range(5)],
+            [_declaration("fiberhmm-call", apply_sha256=fixed, recall_sha256=fixed)] * 1100
+            + [_declaration("fiberhmm-call", apply_sha256=swapped, recall_sha256=swapped)]):
+        header = _header(records, comments + [
+            _declaration("fresh", apply_sha256=fixed, recall_sha256=fixed)], linked=False)
+        advisory = _by_id(check_header(header))["hia5-nanopore-gt-table"]
+        assert advisory.status == "possibly_affected"
+        assert any("too many pairings" in line for line in advisory.evidence)
+    # All declarations fixed: the upper bound is clean too.
+    clean = [_declaration("fiberhmm-call", apply_sha256=fixed, recall_sha256=fixed,
+                          model=f"good{i}") for i in range(6)]
+    assert check_header(_header(records, clean, linked=False)) == []
+
+
+def test_samtools_cat_hides_the_other_inputs_history(tmp_path):
+    """samtools cat keeps the first input's header only: never clean unless a
+    later full call re-called every read."""
+    swapped = _sha(MODELS / "legacy" / "hia5_nanopore_gt_swapped_legacy.json")
+    fixed = _sha(MODELS / "hia5_nanopore.json")
+
+    def called(name, digest):
+        path = tmp_path / f"{name}.bam"
+        header = _header([_call("fiberhmm-call")], [
+            _declaration("fiberhmm-call", apply_sha256=digest, recall_sha256=digest)])
+        _write_bam(path, header, [(name, [], 0)])
+        return str(path)
+    good, bad = called("good", fixed), called("bad", swapped)
+    joined = tmp_path / "good_bad.bam"
+    pysam.cat("-o", str(joined), good, bad)
+    payload = report(joined, sidecars=False)
+    assert payload["status"] == "rerun-required" and payload["confirmed"] is False
+    advisory = payload["advisories"][0]
+    assert advisory["status"] == "possibly_affected"
+    assert "kept one header" in advisory["evidence"][0]
+    reverse = tmp_path / "bad_good.bam"
+    pysam.cat("-o", str(reverse), bad, good)
+    assert report(reverse, sidecars=False)["confirmed"] is True
+    # A full call after the cat re-calls every read.
+    with pysam.AlignmentFile(str(joined)) as handle:
+        header = handle.header.to_dict()
+    recalled = _header(header["PG"] + [_call("fiberhmm-call.2", pp=header["PG"][-1]["ID"])],
+                       header["CO"] + [_declaration("fiberhmm-call.2", apply_sha256=fixed,
+                                                    recall_sha256=fixed)], linked=False)
+    assert check_header(recalled) == []
+    # A cat of one file, and fiberhmm-call joining its own region files, hide nothing.
+    for cl in ("samtools cat -o out.bam one.bam",
+               "samtools cat -h /d/.fiberhmm_call_tmp_x1/region_000000.bam "
+               "-b /d/.fiberhmm_call_tmp_x1/bam_list.txt -o /d/out.bam",
+               "samtools cat -h /d/.out.bam.fiberhmm-work/region_000000.bam "
+               "-b /d/.out.bam.fiberhmm-work/bam_list.txt -o /d/out.bam"):
+        records = [_call("fiberhmm-call"), {"PN": "samtools", "ID": "samtools", "VN": "1.21",
+                                            "CL": cl, "PP": "fiberhmm-call"}]
+        header = _header(records, [_declaration("fiberhmm-call", apply_sha256=fixed,
+                                                recall_sha256=fixed)], linked=False)
+        assert check_header(header) == [], cl
+    gather = [_call("fiberhmm-call"), {"PN": "GatherBamFiles", "ID": "GatherBamFiles",
+                                       "CL": "picard GatherBamFiles I=a.bam I=b.bam O=c.bam",
+                                       "PP": "fiberhmm-call"}]
+    header = _header(gather, [_declaration("fiberhmm-call", apply_sha256=fixed,
+                                           recall_sha256=fixed)], linked=False)
+    assert _by_id(check_header(header))["hia5-nanopore-gt-table"].status == "possibly_affected"
