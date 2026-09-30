@@ -7,12 +7,20 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 
 > **Nanopore Hia5 users: re-run your calls.** The Nanopore Hia5 emission table
 > shipped in every 2.x release was context-swapped (see *Fixed*). The DddB
-> table had the same kind of error until this release. `fiberhmm-check
-> <outputs>` lists which of your BAMs, QC reports, posteriors files and
-> consensus results need re-running.
+> table had the same kind of error until this release; re-run DddB calls
+> too. `fiberhmm-check <outputs>` lists which of your BAMs, QC reports,
+> posteriors files and consensus results need re-running.
 
 ### New
 
+- **New commands.** `fiberhmm-pipeline` (reads + reference to a called BAM),
+  `fiberhmm-check` (which outputs need re-running), `fiberhmm-consensus` and
+  `fiberhmm-transfer` (footprint classes), `fiberhmm-pair` (scDAF duplexes;
+  `fiberhmm-merge` is its deprecated merge step), `fiberhmm-strand-rescue`,
+  `-strand-rescue-annotate` and `-strand-rescue-audit`,
+  `fiberhmm-tag-consensus`, `fiberhmm-footprint-model`, and
+  `fiberhmm-tag-m5c`/`fiberhmm-call-m5c` (DddA CpG-island methylation). None
+  of these was in a 2.x release; each is described below.
 - **`fiberhmm-pipeline`: reads + reference to footprints in one command.**
   FASTQ (or unaligned/aligned BAM) and a FASTA or plasmid map (SnapGene
   `.dna`, GenBank, EMBL) in; a called BAM ready for FiberBrowser, QC and an
@@ -38,7 +46,9 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 - `fiberhmm-extract` splits rows at the origin of `@SQ TP:circular` contigs,
   so reads stored across a plasmid's origin give valid BED/bigBed.
 
-- **Lattice recaller is the default consensus engine.** `fiberhmm-consensus`
+- **Footprint classes: `fiberhmm-consensus`, with the lattice recaller as
+  its default engine.** `fiberhmm-consensus` (window, region or BED input;
+  several datasets and chemistries at once)
   discovers footprint classes from confident native calls and scores every
   molecule's own modification lattice against them with EM, per chemical
   channel (no Monte Carlo). It reports per-channel support and resolution
@@ -57,9 +67,63 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   the target). See [Transferring classes](https://fiberseq.github.io/FiberHMM/workflows/transfer/).
 - `fiberhmm-consensus` and `fiberhmm-transfer` work on a plain
   `pip install fiberhmm`.
+- **Consensus BAM export and strand trust.** Exported BAMs carry
+  `tf_consensus.QQQQQQ` (`tq`, `fi`, `fq`, `op`, `sq`, `q0`): the class slot,
+  the DAF molecule's own core protection ceiling (`sq`) and the class support
+  (`q0`); the header's class catalog records, per DAF dataset, which strand
+  reports each class reliably (`trusted_strand`, `core_resolution`). See
+  [BAM tags](https://fiberseq.github.io/FiberHMM/reference/bam-tags/). The
+  earlier staged Monte Carlo engine (`--engine staged_native_families`) is
+  shipped as a deprecated alternative; its cross-chemistry comparisons group
+  classes into units at the resolution of the coarser chemistry
+  (`units.tsv`).
+- **scDAF duplexes: `fiberhmm-pair`.** Finds the two reads (CT and GA) of one
+  DddA molecule, by sequence or, without shared sequence evidence, with a
+  bundled duplex ranker (`ddda_duplex_v1.json`,
+  `ddda_duplex_rotational_v1.json`; experimental), merges them into one
+  both-strand molecule and re-calls footprints on the joint evidence.
+  `--stop-after pair|merge|recall`, `--from-paired`, `--pairs-tsv`,
+  `--receipt-json`. `fiberhmm-extract --both-strand` writes the region both
+  strands cover (`_bothstrand` BED/bigBed). See
+  [Duplex](https://fiberseq.github.io/FiberHMM/workflows/duplex/).
+- **Strand rescue.** `fiberhmm-strand-rescue` is an optional, focal
+  secondary caller for one-strand chemistries (DddA, DddB, Nanopore Hia5): it
+  recovers TF calls missed on one strand from the opposite strand's
+  population and moves accepted calls onto a strand-balanced geometry, without
+  rewriting the ordinary calls. `fiberhmm-strand-rescue-annotate` writes the
+  result as shadow layers (`nuc_sr`, `tf_sr`), `fiberhmm-strand-rescue-audit`
+  checks them, and `fiberhmm-tag-consensus` adds a family slot and
+  confidence (`fi`, `fq`) to `tf_sr`. See
+  [Strand rescue](https://fiberseq.github.io/FiberHMM/workflows/strand-rescue/).
+- **`fiberhmm-footprint-model`** summarizes a called BAM's TF calls into
+  recurrent loci and geometry families (TSV catalog, BED/bigBed track)
+  without re-scoring or filtering the calls.
+- **DddA CpG-island methylation.** `fiberhmm-tag-m5c` calls each molecule's
+  complete CpG islands as methylated or unmethylated (genome-wide DddA
+  DAF-seq only) and writes them as `ddda_mcg`/`ddda_ucg` `MA` intervals,
+  which CpG-aware recall uses; `fiberhmm-call-m5c` calls methylated and
+  unmethylated domains across all molecules of a region (BED6). See
+  [DAF-seq](https://fiberseq.github.io/FiberHMM/workflows/daf-seq/#ddda-cpg-island-methylation).
+- **Adjacent-target thinning** for DAF input: `--daf-mask-runs N` and
+  `--daf-run-policy keep-one|drop` thin runs of N or more same-strand targets
+  (CC on CT reads, GG on GA reads) in the HMM, both recallers, duplex recall
+  and the consensus lattices; recorded in `@PG`. On by default for DddA (see
+  *Changed defaults*).
+- **`MA-TYPES:v1` header lines** advertise the `MA` group names a BAM may
+  contain, so a viewer finds rare layers without scanning reads;
+  `fiberhmm-utils ma-types` adds them to older BAMs in place (`--types` or
+  `--scan`).
 - `fiberhmm-recall-tfs`/`-recall-nucs` accept `--prob-threshold`;
   `fiberhmm-call` accepts `--use-m5c`/`--no-use-m5c` and `--cpg-mask-policy`;
-  `fiberhmm-pair`/`-merge` accept `--use-m5c`/`--no-use-m5c`.
+  `fiberhmm-pair`/`-merge` accept `--use-m5c`/`--no-use-m5c`;
+  `fiberhmm-posteriors` accepts `--prob-threshold`, `--daf-snp-mask` and the
+  chimera options (`--keep-chimeras`, `--chimera-*`).
+- Model files for development chemistries are shipped for method work only
+  (custom `-m`, not accepted by `--enzyme`, not validated):
+  `ecogii_pacbio.json` (EcoGII m6A) and `cpg_nanopore.json` (CpG
+  methyltransferase), with the `gpc`/`cpg` 5mC observation modes in
+  `fiberhmm-probs`, `-train` and `fiberhmm-utils transfer`. See
+  [Chemistries](https://fiberseq.github.io/FiberHMM/concepts/chemistries/).
 - `fiberhmm-call`: `--scores` (as in `fiberhmm-apply`) and `-c 0` for all
   CPUs; `@PG` records the ML threshold, primary-only setting and CpG masking.
 - Every `fiberhmm-*` command accepts `--version` (prints `fiberhmm <version>`).
@@ -69,7 +133,10 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   in this release that apply, each with severity (`rerun-required`,
   `rerun-recommended`, `info`), the evidence matched and the exact command to
   re-run; `--json` for scripts and GUIs; exit status 3 when something needs
-  re-running. The advisory list ships as `fiberhmm/advisories.json` with the
+  re-running. Merged (`samtools merge`), concatenated (`samtools cat`) and
+  cyclic `@PG` histories are never reported clean: every calling branch is
+  checked, and what the header cannot settle is at least "possibly
+  affected". The advisory list ships as `fiberhmm/advisories.json` with the
   digest of every historical Nanopore Hia5 and DddB table; Python API
   `fiberhmm.advisories` (`report`, `check_path`, `check_bam`,
   `check_header`). See
@@ -122,8 +189,22 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   `fiberhmm/models/legacy/hia5_nanopore_gt_swapped_legacy.json` to reproduce
   old calls. The model builder now always numbers contexts in encoder order.
 - **DddB emission table** reindexed from ACGT to encoder context order (the
-  same error). The old table is kept as
+  same error, also in every 2.x release); DddB calls from 2.x should be
+  re-run. The old table is kept as
   `legacy/dddb_nanopore_gt_swapped_legacy.json`.
+  <!-- pending: dddb_nanopore.json moved to legacy / new DddB table (other session) -->
+- **fibertools BAMs.** `fiberhmm-recall-tfs`/`-recall-nucs --input-frame
+  auto` read `ns/nl/as/al` written by fibertools (`ft predict-m6a`,
+  `add-nucleosomes`, `fire`, and the older `ft predict`/`ft add`) in molecular
+  frame; they were read in SEQ frame, so reverse-read nucleosomes and MSPs
+  were mirrored. The frame is decided by one rule shared with FiberBrowser
+  (the last footprint writer on each `@PG` chain), and a merged history whose
+  chains disagree stops the run instead of guessing. fibertools ≥ 0.13 `Ma`
+  tags (nucleosomes and MSPs) are read by recall, consensus and extract, and
+  kept by consensus export. Tools that pass footprint tags through (dedup,
+  pair, merge, tag-m5c, call-m5c, tag-consensus, strand-rescue-annotate)
+  record their frame (`coord=molecular`) in `@PG`. See
+  [Footprint-tag frame](https://fiberseq.github.io/FiberHMM/reference/footprint-tag-frame/).
 - **Calling entry points.** `fiberhmm-apply` no longer crashes on DAF
   strand-swap chimeras at the default `-c 1`. Unaligned (uBAM) and stdin input
   is called automatically instead of being skipped as unmapped, and a run that
@@ -148,7 +229,8 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   streams stdin. `fiberhmm-pair` skips `0x400` duplicates, and
   `--from-paired` rejects pairing options. Recall keeps MA groups it does not
   regenerate (`deam+`/`deam-`) and warns when the call's SNP mask or reference
-  cannot be re-applied.
+  cannot be re-applied. The DddA joint recall of `fiberhmm-merge` stops on a
+  DddB-declared input with the chemistry conflict.
 - **The DAF SNP screen is deterministic.** For a read whose `MD` is shorter
   than its alignment, pysam fills the rest of the "reference" from undefined
   memory, so a screen without a FASTA (`fiberhmm-daf-snps`, `fiberhmm-call`,
@@ -157,7 +239,23 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   as encoding and dedup already did; QC does the same. Where reads' `MD` tags
   disagree about a site's base (C in some, G in others), the kept base was
   chosen by hash order; it is now the base reported by more classified reads
-  (a tie keeps C), and the report counts such sites.
+  (a tie keeps C), and the report counts such sites. An `MD` whose deletion
+  run covers a CIGAR insertion is treated the same way. `fiberhmm-pair`'s
+  sequence signature (without a FASTA) and `fiberhmm-pipeline`'s check of
+  aligned input against the reference never read such an `MD` either (the
+  pipeline realigns that input). Called sites are unchanged on well-formed
+  input; per-site counts can change where malformed-`MD` reads were used.
+- **Circular contigs in the SNP screen and masks.** Positions past a contig's
+  end fold back onto it only when the contig is circular (`@SQ TP:circular`,
+  or `topology=circular` in the pipeline's `FIBERHMM-REFERENCE` line), on
+  every turn of a record that wraps more than once; SNP masks apply after the
+  origin too. On linear contigs, positions past the end are dropped instead
+  of being relocated onto valid sites.
+- **Replacing an existing output.** A BAM and its index are published
+  together: the previous BAM and all its indexes are backed up first (hard
+  link or verified copy) and restored if publication fails, an obsolete index
+  that cannot be removed stops publication, and a failed rerun keeps the
+  previous output.
 - **`fiberhmm-daf-encode` output is atomic.** The BAM is encoded, sorted and
   indexed as a hidden temporary and published with its index only on success;
   a failed run leaves an earlier output and its index untouched. `-o -` still
@@ -213,6 +311,28 @@ These change numbers relative to 2.x.
 - **Primary alignments only.** `fiberhmm-call` and `fiberhmm-apply` pass
   secondary and supplementary records through uncalled (`--no-primary` to call
   them).
+- **TF recall decoder.** The TF recaller finds the best set of
+  non-overlapping protected intervals in each scan interval exactly (maximize
+  the summed interval LLR minus `--min-llr` per interval) instead of taking
+  one maximum per positive-score excursion, so a modified gap can separate two
+  adjacent footprints. Emission tables and per-call LLRs are unchanged;
+  `--min-llr` is now the per-interval cost. TF calls change for every
+  chemistry. Recorded in `@PG` (`tf_decoder=multi_interval_v1`).
+- **TF `--min-llr` 5.0 for every preset** (DddB was 4.0).
+- **DddA models and nucleosome recall.** `ddda_TF.json` is recalibrated on
+  physical scDAF duplexes (the TF-recall table only; the HMM table
+  `ddda_nuc.json` is unchanged). Radial nucleosome recall infers each edge
+  with a phase-aware posterior (the locked `ddda_nuc_profile.json`,
+  `ddda_phase_posterior_v1`) and reads its likelihoods from a separate
+  internal table, `ddda_nuc_refine.json`, so a TF recalibration never retunes
+  it. DddA TF and nucleosome calls change.
+  <!-- pending: ddda_nuc_refine flat table (other session) -->
+- **DddA adjacent-target thinning on.** For DddA, runs of two or more
+  same-strand targets (CC on CT reads, GG on GA reads) keep only their 5'-most
+  target in `fiberhmm-call`, `-apply`, `-recall-tfs`/`-recall-nucs`, `-pair`,
+  `-merge` and the consensus lattices (`daf_run_mask=>=2/keep-one` in `@PG`).
+  On scDAF duplexes this gave fewer, more precise TF calls. `--daf-mask-runs
+  0` restores the 2.x behaviour; DddB stays off.
 - **DddA CpG-aware recall everywhere.** `fiberhmm-call` and the joint recall
   of `fiberhmm-pair`/`-merge` now exclude CpG observations from nucleosome and
   TF recall for DddA, except inside confident unmethylated islands
@@ -241,13 +361,49 @@ These change numbers relative to 2.x.
 - The top-level script shims (`apply_model.py`, `extract_tags.py`,
   `train_model.py`, `generate_probs.py`, `export_posteriors.py`,
   `fiberhmm_utils.py`); use the `fiberhmm-*` commands.
-- `fiberhmm-site-consensus` and targeted families (use `fiberhmm-consensus`).
 - The staged Monte Carlo consensus engine (`--engine staged_native_families`)
   is deprecated but still available.
-- The `recaller.abutting` option (added during development; its configuration
-  weights were not a normalized prior). Molecules whose protected run lines up
-  with one class edge are reported in the "+ edge" prevalence tier; for
-  footprints against a nucleosome use `recaller.linker=either`.
+
+Removed before release (present only in development builds after 2.16.8):
+
+- `fiberhmm-site-consensus` and targeted families, superseded by
+  `fiberhmm-consensus` (strand rescue and `fiberhmm-tag-consensus` stay).
+- `fiberhmm-crossstrand` and `fiberhmm-duplex`; use `fiberhmm-pair`.
+- The per-CpG `fiberhmm-call --ddda-mcg` caller; it now stops and prints the
+  `fiberhmm-tag-m5c` workflow.
+- The `--enzyme ecogii` and `--enzyme sssi` presets; their model files remain
+  for custom `-m` (see *New*).
+- The `recaller.abutting` option (its configuration weights were not a
+  normalized prior). Molecules whose protected run lines up with one class
+  edge are reported in the "+ edge" prevalence tier; for footprints against a
+  nucleosome use `recaller.linker=either`. Settings saved with
+  `abutting=false` still load; `abutting=true` is refused.
+
+### Upgrading from 2.x
+
+```bash
+pip install --upgrade fiberhmm        # Python >= 3.10
+fiberhmm-check data/*.bam qc/*.qc.json consensus_out/
+```
+
+- **Re-run** Nanopore Hia5 and DddB calls made with any 2.x release (the
+  context-swapped tables), Nanopore Hia5 reads called without `--seq` before
+  3.0 (they were called as PacBio), and 2.x `fiberhmm-posteriors` output.
+  `fiberhmm-check` lists these and the recommended re-runs (DAF duplicates,
+  QC, custom tables, `tag-m5c`, recaller tiers) per file, with the command
+  to use; it exits 3 when something needs re-running.
+- Re-calling with 3.0 also applies the new defaults above (ML 248 for Hia5
+  Nanopore, primary-only, the TF decoder, DddA models, thinning and CpG-aware
+  recall), so numbers move even where no fix applies. Most have an option to
+  get the 2.x behaviour back (the TF decoder and the DddA tables do not); the
+  context-swapped 2.x tables are kept under `fiberhmm/models/legacy/`.
+- Replace `fiberhmm-run` and the `python *.py` scripts with the `fiberhmm-*`
+  commands.
+- FiberBrowser 3.0 requires FiberHMM 3.x.
+
+The full guide, with a table of every default change and how to reproduce
+2.x numbers, is
+[Upgrading from 2.x](https://fiberseq.github.io/FiberHMM/upgrading/).
 
 ### Known issues
 
@@ -264,3 +420,9 @@ These change numbers relative to 2.x.
 - `fiberhmm-tag-consensus` needs an assignment table that no shipped command
   produces; its format is documented in the command's help.
 - Legacy `.pickle` models execute code when loaded; load only trusted files.
+
+## Earlier versions
+
+Releases up to 2.16.8 have no entries here; they are tagged in git
+(`v2.16.8`, `v2.16.7`, …; see the
+[repository tags](https://github.com/fiberseq/FiberHMM/tags)).
