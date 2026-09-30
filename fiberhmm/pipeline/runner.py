@@ -339,11 +339,58 @@ def install_cancel_handlers() -> None:
 # ---------------------------------------------------------------------------
 
 def call_supported_options() -> set[str]:
-    """Option strings ``fiberhmm-call`` accepts (``--progress-json``, ``--resume``...).
+    """Option strings ``fiberhmm-call`` accepts (``--progress-json``, ``--resume``...)."""
+    parser = _call_parser()
+    if parser is None:
+        return set()
+    return {flag for action in parser._actions for flag in action.option_strings}
 
-    The parser is captured without running the command, the way
-    ``tools/gen_cli_reference.py`` documents it.
+
+class _CallArgsError(Exception):
+    pass
+
+
+def call_arg_file_paths(call_args: list[str]) -> list[str]:
+    """Existing files that ``--call-args`` hands to ``fiberhmm-call``.
+
+    ``call_args`` is parsed with fiberhmm-call's own parser, so every option
+    spelling it accepts (``-m PATH``, ``-mPATH``, ``--model=PATH``, unique
+    prefixes...) resolves to its value; every resolved string value that
+    names an existing file is a dependency. Arguments the parser does not
+    know (or all of them, when parsing fails -- fiberhmm-call itself will
+    then refuse them) fall back to the whole-token check.
     """
+    parser = _call_parser()
+    leftover = list(call_args)
+    values: list[str] = []
+    if parser is not None:
+        for action in parser._actions:
+            action.required = False
+
+        def error(message):
+            raise _CallArgsError(message)
+
+        parser.error = error
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                namespace, leftover = parser.parse_known_args(list(call_args))
+        except (_CallArgsError, SystemExit, ValueError, TypeError):
+            leftover = list(call_args)
+        else:
+            for value in vars(namespace).values():
+                items = value if isinstance(value, (list, tuple)) else [value]
+                values.extend(item for item in items if isinstance(item, str))
+    for token in leftover:
+        values.append(token)
+        if token.startswith("-") and "=" in token:
+            values.append(token.split("=", 1)[1])
+    return [value for value in values if value and os.path.isfile(value)]
+
+
+def _call_parser() -> Optional[argparse.ArgumentParser]:
+    """A fresh fiberhmm-call argument parser, captured without running the
+    command (the way ``tools/gen_cli_reference.py`` documents it)."""
     from fiberhmm.cli import call
 
     class _Captured(Exception):
@@ -363,12 +410,11 @@ def call_supported_options() -> set[str]:
                 contextlib.redirect_stderr(io.StringIO()):
             call.parse_args()
     except _Captured as captured:
-        return {flag for action in captured.parser._actions
-                for flag in action.option_strings}
+        return captured.parser
     finally:
         argparse.ArgumentParser.parse_known_args = original
         sys.argv = saved
-    return set()
+    return None
 
 
 _CALL_PROGRESS = re.compile(
@@ -948,18 +994,13 @@ class Pipeline:
     def _call_arg_files(self) -> list[dict]:
         """Content identity of every file named in --call-args (a model given with
         -m, a recall model, an NRL profile, a mask...): a changed file is a
-        changed calling setup. Tokens and ``--option=value`` values that name
-        an existing file are included; FiberHMM's bundled defaults are covered
-        by the version."""
+        changed calling setup. The options are resolved by fiberhmm-call's own
+        parser (:func:`call_arg_file_paths`); FiberHMM's bundled defaults are
+        covered by the version."""
         found: dict[str, dict] = {}
-        for token in self.config.call_args:
-            candidates = [token]
-            if token.startswith("-") and "=" in token:
-                candidates.append(token.split("=", 1)[1])
-            for candidate in candidates:
-                if candidate and os.path.isfile(candidate):
-                    identity = file_fingerprint(candidate, self.memo)
-                    found[identity["path"]] = identity
+        for candidate in call_arg_file_paths(self.config.call_args):
+            identity = file_fingerprint(candidate, self.memo)
+            found[identity["path"]] = identity
         return [found[path] for path in sorted(found)]
 
     def _call_fingerprint(self) -> dict:

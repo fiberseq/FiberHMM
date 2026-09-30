@@ -450,8 +450,29 @@ def test_damaged_outputs_are_rebuilt_and_stale_qc_is_never_published(plasmid_run
         assert [r.to_string() for r in bam.fetch(until_eof=True)] == reference_records
 
 
+def test_call_args_files_are_resolved_by_the_call_parser(tmp_path, monkeypatch):
+    """Every spelling fiberhmm-call accepts for a file option is a dependency,
+    including attached short options (-mPATH, -m/abs/path) and prefixes."""
+    from fiberhmm.pipeline.runner import call_arg_file_paths
+    model = tmp_path / "attached.json"; model.write_text("{}")
+    recall = tmp_path / "recall.json"; recall.write_text("{}")
+    mask = tmp_path / "mask.bed"; mask.write_text("")
+    monkeypatch.chdir(tmp_path)
+    for args in (["-m" + str(model)], ["-m", str(model)], ["--model=" + str(model)],
+                 ["--model", str(model)], ["-mattached.json"], ["--mod", str(model)]):
+        assert [os.path.abspath(p) for p in call_arg_file_paths(args)] == [str(model)], args
+    found = call_arg_file_paths(["-m" + str(model), "--recall-model=" + str(recall),
+                                 "--daf-snp-mask", str(mask), "--no-recall-nucs"])
+    assert sorted(found) == sorted([str(model), str(recall), str(mask)])
+    # Unknown or unparsable arguments still fall back to whole tokens.
+    assert call_arg_file_paths(["--not-an-option", str(mask)]) == [str(mask)]
+    assert call_arg_file_paths(["--min-mapq", "x", str(mask)]) == [str(mask)]
+    assert call_arg_file_paths([]) == []
+
+
 @needs_minimap2
-def test_changed_file_in_call_args_is_a_changed_setting(tmp_path, monkeypatch):
+@pytest.mark.parametrize("spelling", ["spaced", "attached"])
+def test_changed_file_in_call_args_is_a_changed_setting(tmp_path, monkeypatch, spelling):
     monkeypatch.setenv("FIBERHMM_MINIMAP2_INDEX_DIR", str(tmp_path / "mmi"))
     sequence = random_seq(6000, 3)
     ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + sequence + "\n")
@@ -460,7 +481,7 @@ def test_changed_file_in_call_args_is_a_changed_setting(tmp_path, monkeypatch):
     model.write_bytes((REPO / "fiberhmm" / "models" / "hia5_pacbio.json").read_bytes())
     args = [str(fastq), "--reference", str(ref), "--enzyme", "hia5", "--seq", "pacbio", "-c", "1",
             "--no-qc", "--min-read-length", "0", "-o", str(tmp_path / "out"),
-            f"--call-args=-m {model} --no-recall-nucs"]
+            f"--call-args=-m{'' if spelling == 'attached' else ' '}{model} --no-recall-nucs"]
     first = _run_cli(args)
     assert first.returncode == 0, first.stderr[-3000:]
     data = json.loads(model.read_text()); data["transmat"] = [[.5, .5], [.5, .5]]
