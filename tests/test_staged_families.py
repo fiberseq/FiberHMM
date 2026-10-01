@@ -382,6 +382,24 @@ def test_dataset_names_do_not_change_staged_results(tmp_path):
             assert b'__fiberhmm_dataset_' not in raw,name
         from fiberhmm.inference.consensus.artifacts import read_json
         assert read_json(out/'evidence.json.gz')==before           # the input as given, with its dataset IDs
-        outs.append(json.dumps(clean(result,[(str(out),'OUT'),(names[0],'D0'),(names[1],'D1')]),sort_keys=True))
+        # The shared evidence pool is content-hashed: every reference still expands (Codex review of this fix).
+        from fiberhmm.inference.consensus.harmonized_families.evidence import expand
+        assert result['evidence_pool']
+        expanded=expand({k:v for k,v in result.items() if k!='evidence_pool'},result['evidence_pool'],maximum_nodes=10**8)
+        outs.append(json.dumps(clean(expanded,[(str(out),'OUT'),(names[0],'D0'),(names[1],'D1')]),sort_keys=True))
     assert outs[0]==outs[1]
     assert not any('__fiberhmm_dataset_' in s for s in seen) and any('dsZetaQ' in s for s in seen)
+
+
+def test_reserved_internal_dataset_names_are_refused_and_never_leak(tmp_path):
+    from fiberhmm.inference.consensus.harmonized_families.workflow import label_free_payload
+    data=_two_datasets(('a','b'))
+    data['strata'][0]['units'][0]['read_name']='x/__fiberhmm_dataset_0002__/y'
+    with pytest.raises(ValueError,match='reserved'):
+        label_free_payload(data)
+    # An error raised inside the engine names the datasets, also in its traceback chain.
+    values=parameters();values['compute']['require_native_cache']=True;values['cr']['engine']='staged_native_families'
+    with pytest.raises(ValueError) as error:
+        run_workflow(_two_datasets(('dsFirstQ','dsSecondQ')),values,tmp_path)
+    assert 'dsFirstQ' in str(error.value) and error.value.__cause__ is None and error.value.__suppress_context__
+

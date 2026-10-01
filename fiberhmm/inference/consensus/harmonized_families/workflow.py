@@ -316,10 +316,12 @@ def label_free_payload(payload):
     The staged engine namespaces units ('<dataset>::<unit>'), fold groups, channels and family tokens by dataset ID and
     hashes those strings into its discovery split, scoring folds, Monte Carlo seeds and orderings, so renaming a
     dataset changed its results. It runs on '__fiberhmm_dataset_NNNN__' names instead (NNNN: the dataset's position in
-    the payload) and relabel() restores the labels in every string and key of what it reports."""
+    the payload) and relabel() restores the labels in every string and key of what it reports (_relabel_result also
+    re-keys the content-hashed evidence pool). No input string may contain such a name, so restoring the labels can
+    never touch a path, read name or other user text."""
     names = list(dict.fromkeys(s['dataset_id'] for s in payload['strata']))
-    if any(_DATASET_TOKEN.search(str(n)) for n in names) or len(names) > 9999:
-        raise ValueError('Dataset IDs may not contain __fiberhmm_dataset_NNNN__')
+    if len(names) > 9999 or b'__fiberhmm_dataset_' in canonical_bytes(payload):
+        raise ValueError('Input text may not contain the reserved name __fiberhmm_dataset_ (and at most 9999 datasets)')
     token = {n: f'__fiberhmm_dataset_{i + 1:04d}__' for i, n in enumerate(names)}
     strata = []
     for s in payload['strata']:
@@ -333,11 +335,44 @@ def label_free_payload(payload):
         if isinstance(value, str):
             return _DATASET_TOKEN.sub(back, value) if '__fiberhmm_dataset_' in value else value
         if isinstance(value, dict):
-            return {relabel(k): relabel(v) for k, v in value.items()}
+            out = {relabel(k): relabel(v) for k, v in value.items()}
+            return defaultdict(value.default_factory, out) if isinstance(value, defaultdict) else out
         if isinstance(value, (list, tuple)):
+            if value and all(type(v) in (int, float, bool) for v in value[:1]) and all(type(v) in (int, float, bool) for v in value):
+                return value                              # lattices: positions, hits, probabilities
             return type(value)(relabel(v) for v in value)
         return value
     return dict(payload, strata=strata), relabel
+
+
+def _relabel_result(result, relabel):
+    """relabel() over a staged result whose shared evidence pool is keyed by content hash: each pool entry is relabelled,
+    its references to other entries re-keyed, and it is stored under the hash of its new content (as evidence.expand
+    verifies); every reference elsewhere follows."""
+    from .evidence import REF, encoded
+    pool = result.get('evidence_pool')
+    if not pool:
+        return relabel(result)
+    keys = {}
+
+    def rekey(node):
+        if isinstance(node, dict):
+            if REF in node and len(node) == 1:
+                return {REF: entry(node[REF])}
+            return {k: rekey(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [rekey(v) for v in node]
+        return node
+
+    def entry(key):
+        if key not in keys:
+            content = rekey(relabel(pool[key]))
+            keys[key] = (hashlib.sha256(encoded(content)).hexdigest(), content)
+        return keys[key][0]
+    body = rekey(relabel({k: v for k, v in result.items() if k != 'evidence_pool'}))
+    for key in pool:
+        entry(key)
+    return dict(body, evidence_pool={new: content for new, content in keys.values()})
 
 
 class _RelabelledProgress:
@@ -359,7 +394,7 @@ def run_staged_families(payload, options, output_dir=None, progress=None):
         return _run_staged_families(original, payload, relabel, options, output_dir, progress)
     except (ValueError, RuntimeError, AssertionError) as error:
         if '__fiberhmm_dataset_' in str(error):
-            raise type(error)(relabel(str(error))) from error
+            raise type(error)(relabel(str(error))) from None   # the internal names stay out of the traceback too
         raise
 
 
@@ -474,7 +509,7 @@ def _run_staged_families(original, payload, relabel, options, output_dir, progre
         evidence_encoding='shared_json_v1',evidence_pool=context['evidence_pool'],**snapshots[final_stage])
     if digest(original) != before or digest(payload) != internal: raise AssertionError('Input payload mutated')
     if implementation_hashes()!=implementation:raise RuntimeError('Consensus implementation changed during this run; result not installed')
-    receipt = relabel(receipt); result = dict(relabel(result), manifest=receipt)
+    receipt = relabel(receipt); result = dict(_relabel_result(result, relabel), manifest=receipt)
     save(out/'manifest.json', receipt); save(out/'result.json.gz', result)
     from ..report import write_report
     write_report(result,out)
