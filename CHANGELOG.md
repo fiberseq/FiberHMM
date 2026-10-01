@@ -58,6 +58,15 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   per-dataset `trusted_strand` for DAF classes, and can write the recaller's
   calls as an opt-in `tf_recaller` layer (`--bam-recaller-layer`). See
   [Footprint classes](https://fiberseq.github.io/FiberHMM/workflows/consensus/).
+- **Optional read-order robustness check for footprint classes:**
+  `fiberhmm-consensus --robust N` (`recaller.order_replicates`, default 0 =
+  off) reruns class discovery and scoring under N other deterministic read
+  orders and adds `order_robustness` (the fraction of the N+1 orders that
+  find the class supported) and `robust` (every order, or the share set by
+  `recaller.order_robust_fraction`) to `classes.tsv`, the result and the
+  manifest. The classes themselves are unchanged; the check takes roughly
+  N+1 times as long and nothing changes when it is off. See
+  [Reproducibility](https://fiberseq.github.io/FiberHMM/workflows/consensus/#reproducibility).
 - **Prevalence tiers.** Each class × channel reports core, edge and loose
   prevalence plus the Wilson lower bound of the core prevalence.
 - **Recaller transfer.** `fiberhmm-transfer --freeze-run` on a lattice-recaller
@@ -180,6 +189,20 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 
 ### Fixed
 
+- **Footprint classes no longer depend on where the BAM lives or what the
+  dataset is called.** Evidence units were named by a hash that included the
+  BAM's absolute path and the dataset label, and that name orders the
+  molecules class discovery sees and picks its split-halves and folds: the
+  same BAM opened from two folders could give a different number of classes
+  (on the demo window 16, 18 or 20). Units are now named by the dataset's
+  position in the run, the file's position in the dataset and the alignment
+  record, so the same BAMs and parameters give identical classes on any
+  machine (the order of datasets and files is part of the input). The same
+  holds for `--pool-loci` view selection and for the deprecated
+  `staged_native_families` engine, which now runs on positional dataset names
+  internally (its fit checkpoints from earlier runs are not reused). Class
+  counts from earlier runs may differ for classes near the thresholds;
+  well-supported classes are unchanged.
 - **Nanopore Hia5 emission table.** The bundled table was indexed in
   alphabetical (ACGT) context order while the encoder uses A, C, T, G, so every
   context containing G or T read another context's emission in all 2.x

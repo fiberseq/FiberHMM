@@ -223,6 +223,7 @@ The `recaller` group:
 | `report_unsupported_classes` | off | also catalog unsupported classes |
 | `efficiency_calibration` | off | scale each channel's accessible rate by its most-marked molecules |
 | `tile_bp`, `tile_step_bp`, `minimum_channel_units` | 350, 250, 20 | tiling and minimum molecules per channel |
+| `order_replicates`, `order_robust_fraction` | 0 (off), 1.0 | optional read-order robustness check (`--robust N`); see [Reproducibility](#reproducibility) |
 
 `recaller.abutting` was removed in 3.0; old manifests with `abutting=false`
 still load, and asking for `true` is refused with the alternatives (the
@@ -232,6 +233,41 @@ still load, and asking for `true` is refused with the alternatives (the
 DAF dataset (default per chemistry: DddA keep-one on runs ≥ 2, DddB off).
 `--cores` sets `compute.cores` (default 4). `--json-progress` writes
 structured progress events to stderr.
+
+## Reproducibility
+
+**Same inputs, same classes.** Since 3.0, the same BAMs with the same
+parameters give identical classes on any machine, from any folder and under
+any dataset names: a molecule is identified by its dataset's position in the
+run, its file's position in that dataset and the alignment record itself,
+never by a path or label. The order of the datasets and of the files within
+a dataset is part of the input; reorder them and you have a different (equally
+valid) run.
+
+**Near-threshold classes can depend on read order.** Discovery is
+deterministic, but the order of the molecules seeds k-means and decides the
+split-halves and folds of its held-out tests. A class well above the
+thresholds is found under any order; one close to them (a rare footprint, or
+two geometries a few bp apart) may appear under some orders and not others.
+On the demo 4 kb window, 13 of the 19 supported classes appeared under all
+eight orders tried; the count of supported classes ranged from 14 to 19.
+
+**`--robust N` marks which classes survive reordering.** It reruns discovery
+and scoring under N other deterministic read orders and adds two columns to
+`classes.tsv`: `order_robustness`, the fraction of the N+1 orders (the
+default one included) in which a class of the same geometry was found and
+supported, and `robust`, whether that fraction reaches
+`recaller.order_robust_fraction` (default 1: every order). The classes, their
+estimates and the per-molecule labels are always those of the default order;
+the check only annotates them. It takes roughly N+1 times as long as
+discovery alone (`--robust 2`: about 3×). Off by default.
+
+```bash
+fiberhmm-consensus --bam calls.bam --region chr19:47514000-47518000 --robust 2 --output out/classes_robust
+```
+
+FiberBrowser's *Check robustness to read order* option runs the same check
+with N = 2.
 
 ## Several windows
 

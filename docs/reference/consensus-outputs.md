@@ -55,6 +55,7 @@ windows; and the exported families).
 | `edge_contraction` | the kept contraction, or why it was rejected (`from <channel>: …` in a transfer) |
 | `unknown_accessible_fraction` | the channel's accessible fraction for unknown sites |
 | `efficiency` | per-channel efficiency factor, when `efficiency_calibration` is on |
+| `order_robustness`, `robust` | only with `--robust N` (`recaller.order_replicates`): the fraction of the N+1 read orders in which the class was found and supported, and whether that reaches `recaller.order_robust_fraction` (default 1: every order). See [Reproducibility](../workflows/consensus.md#reproducibility) |
 
 Unscored rows leave the estimate columns empty.
 
@@ -107,7 +108,12 @@ receipt of a CL-CR run) and `recaller`:
   channel, reason, molecules);
 - `dropped_by_core_rule` (span and core width of each dropped candidate);
 - `tiles` and per-tile `discovery` diagnostics (k chosen, prediction
-  strength per k, merges).
+  strength per k, merges);
+- `order_robustness`, only with `--robust N`: `orderings` (N+1),
+  `replicates` (N), `salts` (0 is the default order), `robust_fraction`,
+  `rule`, `matching`, `discovered_per_ordering`, `supported_per_ordering`,
+  `robust_classes`, `robust_supported_classes`, `supported_classes` and
+  `seconds`.
 
 ## `result.json.gz`
 
@@ -115,7 +121,8 @@ The frozen result FiberBrowser reads: schema `fiberhmm.consensus.v1`,
 `cr_mode: lattice_recaller`, the manifest, the per-dataset catalog and
 records, and `recaller`:
 
-- `classes`: geometry and `status` of every class;
+- `classes`: geometry and `status` of every class (and `order_robustness`
+  and `robust` with `--robust N`, also on each catalog family);
 - `rows`: the scored rows of `classes.tsv`, with full-precision spot rates;
 - `unscored`.
 
