@@ -64,7 +64,7 @@ def pool_payloads(payloads, windows):
     if any(w['strand'] not in ('+','-') or w['start']<0 or w['end']<=w['start'] for w in windows):
         raise ValueError('Invalid oriented BED window')
     if len({w['end']-w['start'] for w in windows})!=1: raise ValueError('CL-CR requires equal window widths')
-    groups={}; views=[]; parent={}; manifests=[]
+    groups={}; views=[]; parent={}; manifests=[]; ordinal={}  # dataset -> position in the run (labels never rank)
     def physical(name):
         parts=name.split('/')
         return '/'.join(parts[:2]) if len(parts)>=3 and parts[1].isdigit() else name
@@ -81,10 +81,11 @@ def pool_payloads(payloads, windows):
             ds=source['dataset_id']
             if ds in groups and groups[ds]['chemistry']!=source['chemistry']: raise ValueError('Dataset chemistry changed across loci')
             if ds not in groups: groups[ds]=dict({k:deepcopy(v) for k,v in source.items() if k!='units'},units=[])
+            ordinal.setdefault(ds,len(ordinal))
             manifests.append(dict(window=window['name'],dataset_id=ds,model=source.get('model_manifest'),load=source.get('load')))
             for original in source['units']:
                 u=orient_unit(original,window)
-                name=u.get('read_name') or ds+'::'+original['unit_id']
+                name=u.get('read_name') or f"{ordinal[ds]}::{original['unit_id']}"
                 key=physical(name);find(key)
                 if u.get('physical_molecule_id'): union(key,str(u['physical_molecule_id']))
                 for source_name in u.get('physical_source_names',[]):
@@ -99,7 +100,7 @@ def pool_payloads(payloads, windows):
         if same_window in window_views:
             raise ValueError('Repeated physical molecule within one window; by-strand CCS or duplicate inputs require explicit joint-molecule preparation')
         window_views[same_window]=u['unit_id']
-        rank=digest([key,window,ds,original_id]); previous=chosen.get(key)
+        rank=digest([key,window,ordinal[ds],original_id]); previous=chosen.get(key)
         if previous is None or rank<previous[0]:
             if previous: excluded.append(dict(unit_id=previous[2]['unit_id'],window=previous[2]['genomic_provenance']['window']['name'],reason='repeated_locus_view'))
             chosen[key]=(rank,ds,u)

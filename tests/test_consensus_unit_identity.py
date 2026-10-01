@@ -112,3 +112,44 @@ def test_cli_classes_do_not_depend_on_bam_path(tmp_path):
         assert len(found) == 1
         tables.append(found[0].read_text())
     assert len(tables[0].splitlines()) > 1 and tables[0] == tables[1]
+
+
+def test_pooled_loci_keep_the_same_views_whatever_the_dataset_label(tmp_path):
+    """--pool-loci keeps one view per molecule; which one must not depend on the dataset's label."""
+    from fiberhmm.inference.consensus.regions import pool_payloads
+    path = planted_bam(tmp_path/'a'/'demo.bam')
+    windows = [dict(name='w1', chrom='chr1', start=600, end=800, strand='+'),
+               dict(name='w2', chrom='chr1', start=700, end=900, strand='-')]
+    def pooled(label):
+        payloads = [load_bam_payload([dict(dataset_id=label, paths=[str(path)])],
+                                     dict(chrom='chr1', start=w['start'], end=w['end']), parse_options(PARAMETERS)) for w in windows]
+        result = pool_payloads(payloads, windows)
+        return ([u['unit_id'] for s in result['strata'] for u in s['units']],
+                [(e['unit_id'], e['window']) for e in result['pooling']['excluded_repeated_views']])
+    first, second = pooled('first'), pooled('second')
+    assert first[0] and first[1]            # every molecule is in both windows: one view kept, one excluded
+    assert first == second
+
+
+def test_records_sharing_a_name_or_bytes_keep_distinct_units(tmp_path):
+    """Two primary records with one QNAME, and a byte-identical repeated record: the loader collapses
+    records of one molecule into one unit (duplicate collapsing), and no two units share an id, also
+    when a copy of the file is a second input of the dataset."""
+    path = planted_bam(tmp_path/'a'/'demo.bam', n=20)
+    alone, = unit_ids(load_bam_payload([dict(dataset_id='x', paths=[str(path)])], REGION, parse_options(PARAMETERS)))
+    dup = tmp_path/'dup'/'demo.bam'; dup.parent.mkdir(parents=True)
+    with pysam.AlignmentFile(str(path)) as source, pysam.AlignmentFile(str(dup), 'wb', template=source) as out:
+        records = list(source)
+        for r in records:
+            out.write(r)
+        repeated = pysam.AlignedSegment.fromstring(records[0].to_string(), source.header)
+        out.write(repeated)                                    # byte-identical second copy
+        renamed = pysam.AlignedSegment.fromstring(records[2].to_string(), source.header)
+        renamed.query_name = records[1].query_name
+        out.write(renamed)                                     # different record, same QNAME as records[1]
+    pysam.sort('-o', str(dup) + '.s.bam', str(dup)); shutil.move(str(dup) + '.s.bam', dup); pysam.index(str(dup))
+    single, = unit_ids(load_bam_payload([dict(dataset_id='x', paths=[str(dup)])], REGION, parse_options(PARAMETERS)))
+    assert single and len(single) == len(set(single)) == len(alone)
+    other = copy_bam(dup, tmp_path/'dup2'/'demo.bam')
+    twice, = unit_ids(load_bam_payload([dict(dataset_id='x', paths=[str(dup), str(other)])], REGION, parse_options(PARAMETERS)))
+    assert len(twice) == len(set(twice)) == 2*len(single) and set(single) <= set(twice)
