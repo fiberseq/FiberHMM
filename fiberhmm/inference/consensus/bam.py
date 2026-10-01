@@ -226,7 +226,7 @@ def _load_payload(state,request,options,progress):
     from fiberhmm.inference.consensus.adapter import evidence_unit,replay_alignment,condition_unit_on_m5c
     from fiberhmm.inference.tf_recaller import ENZYME_PRESETS
     runtime=loader_runtime();strata=[];start,end=request['start'],request['end'];chrom=request['chrom']
-    for dsid in request['dataset_ids']:
+    for ordinal,dsid in enumerate(request['dataset_ids']):
         ds=state.get_dataset(dsid)
         chemistry=request.get('chemistry_overrides',{}).get(dsid) or getattr(ds,'family_scan_chemistry',None)
         if chemistry not in ('ddda','dddb','hia5-pacbio','hia5-nanopore'):
@@ -252,7 +252,10 @@ def _load_payload(state,request,options,progress):
             else:
                 representatives=reads;collapse=dict(raw_reads=len(reads),analyzed_molecules=len(reads),duplicate_reads_collapsed=0)
             projections=_projection_members(reads,representatives,exact_records=True)
-            units=[evidence_unit(read,model,dsid,projections.get(_projection_member_key(read),[]),start,end) for read in representatives]
+            # unit_id names the dataset by its ordinal in this run and the file by its index in the dataset's paths,
+            # never by label or path: the same BAM bytes must give the same classes from any location.
+            units=[evidence_unit(read,model,dsid,projections.get(_projection_member_key(read),[]),start,end,dataset_ordinal=ordinal)
+                   for read in representatives]
             use_m5c=chemistry=='ddda' and options['input'].ddda_m5c_correction
             if use_m5c and ds.data_type!='bam' and ds.available_layers.get('ddda_mcg'):
                 raise ValueError('Tagged DddA mCG conditioning currently needs BAM query coordinates; use BAM or explicitly disable that input option')

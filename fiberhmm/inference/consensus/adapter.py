@@ -16,7 +16,23 @@ def read_adapter(unit, hits=None):
         unit['raw_nuc_intervals'], unit['aligned_blocks'])
 
 
-def evidence_unit(read, model, dataset_id, source_members, start, end):
+def unit_identity(read, dataset_id, dataset_ordinal=None):
+    """The content that names an evidence unit (``unit_id`` and ``fold_group_id``).
+
+    With ``dataset_ordinal`` (the dataset's position in the run) the identity is
+    the dataset ordinal, the file's index within that dataset's paths, and the
+    record itself: the same BAM bytes give the same units wherever the file
+    lives and whatever the dataset is called. unit_id orders the units fed to
+    class discovery and keys its folds, so a path or label in it made the
+    classes depend on where the BAM was opened from. Without an ordinal (callers
+    that predate it) the dataset ID and library ID are kept as before."""
+    record = [str(read.name), str(read.strand), str(read.record_sha256 or ''), int(read.alignment_occurrence)]
+    if dataset_ordinal is None:
+        return [dataset_id, str(read.library_id or ''), *record]
+    return [int(dataset_ordinal), int(read.input_index), *record]
+
+
+def evidence_unit(read, model, dataset_id, source_members, start, end, *, dataset_ordinal=None):
     """Convert a production ReadEvidence and its same-strand duplicate aliases."""
     pp, pa = build_conditional_hit_tables(model)
     pos = np.asarray(read.positions, dtype=np.int64)
@@ -27,9 +43,7 @@ def evidence_unit(read, model, dataset_id, source_members, start, end):
     if np.any((context < 0) | (context >= len(pa))):
         raise ValueError('Native model does not cover the observed context encoding')
     members = sorted(source_members, key=lambda v: (v.get('read_name', ''), v.get('strand', '')))
-    identity = [dataset_id, str(read.library_id or ''), str(read.name), str(read.strand),
-                str(read.record_sha256 or ''), int(read.alignment_occurrence)]
-    uid = 'unit_' + digest(identity)[:24]
+    uid = 'unit_' + digest(unit_identity(read, dataset_id, dataset_ordinal))[:24]
     spans = lambda items: [[int(c.start), int(c.end)] for c in items]
     return dict(unit_id=uid, fold_group_id=uid, read_name=str(read.name), strand=str(read.strand),
         positions=pos.tolist(), hits=hit.tolist(), contexts=context.tolist(),
