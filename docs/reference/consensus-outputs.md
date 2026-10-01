@@ -99,7 +99,9 @@ The standard report tables shared with FiberBrowser.
 ## `manifest.json`
 
 Top-level keys include `schema`, `status`, `cr_mode` (`lattice_recaller`),
-`region`, `parameters` (every group, with defaults filled in),
+`region`, `parameters` (every group, with defaults filled in; the read-order
+controls `order_replicates` and `order_robust_fraction` only when that check
+is on),
 `input_digest`, `mode` / `mode_realized` (`CR`), `realized_channels`,
 `data_warnings`, `seconds`, `datasets`, `input_files`, `pooling` (the pooling
 receipt of a CL-CR run) and `recaller`:

@@ -249,8 +249,9 @@ deterministic, but the order of the molecules seeds k-means and decides the
 split-halves and folds of its held-out tests. A class well above the
 thresholds is found under any order; one close to them (a rare footprint, or
 two geometries a few bp apart) may appear under some orders and not others.
-On the demo 4 kb window, 13 of the 19 supported classes appeared under all
-eight orders tried; the count of supported classes ranged from 14 to 19.
+On the demo 4 kb window the default order finds 19 supported classes; other
+orders find between 14 and 19, and `--robust 2` (like `--robust 4`) marks 12
+of the 19 robust.
 
 **`--robust N` marks which classes survive reordering.** It reruns discovery
 and scoring under N other deterministic read orders and adds two columns to

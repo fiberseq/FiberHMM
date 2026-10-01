@@ -376,5 +376,15 @@ def parse_options(values=None):
     return result
 
 
+# The optional read-order check is recorded only when it is on, so a run without it records exactly the parameters
+# (and so the manifest, result and frozen-catalog digests) it did before the option existed.
+OFF_WHEN_UNUSED = dict(recaller=('order_replicates', ('order_replicates', 'order_robust_fraction')))
+
+
 def options_dict(options):
-    return {name: asdict(value) for name, value in options.items()}
+    out = {name: asdict(value) for name, value in options.items()}
+    for group, (switch, names) in OFF_WHEN_UNUSED.items():
+        if group in out and not out[group].get(switch):
+            for name in names:
+                out[group].pop(name, None)
+    return out

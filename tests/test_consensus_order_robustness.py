@@ -32,9 +32,9 @@ def _gz_sha(path):
 
 
 def _strip_timing(value):
-    """result/manifest without wall-clock fields (seconds) and the recorded parameters."""
+    """result/manifest without wall-clock fields (seconds)."""
     if isinstance(value, dict):
-        return {k: _strip_timing(v) for k, v in value.items() if k not in ('seconds', 'parameters')}
+        return {k: _strip_timing(v) for k, v in value.items() if k != 'seconds'}
     if isinstance(value, list):
         return [_strip_timing(v) for v in value]
     return value
@@ -76,6 +76,9 @@ def test_option_off_writes_exactly_the_default_outputs(tmp_path):
     header = (tmp_path/'a'/'classes.tsv').read_text().split('\n', 1)[0].split('\t')
     assert header == W.CLASS_FIELDS and 'order_robustness' not in header
     assert 'order_robustness' not in a['manifest']['recaller']
+    # Not even the parameters gain keys (Codex review): the manifest records the read-order controls only when on.
+    assert not {'order_replicates', 'order_robust_fraction'} & set(a['manifest']['parameters']['recaller'])
+    assert not {'order_replicates', 'order_robust_fraction'} & set(b['manifest']['parameters']['recaller'])
     assert all('robust' not in c for c in a['recaller']['classes'])
     assert all('robust' not in f for f in a['datasets']['planted']['cr']['catalog'])
 
