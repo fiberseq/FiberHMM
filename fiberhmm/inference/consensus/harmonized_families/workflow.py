@@ -8,6 +8,7 @@ from collections import defaultdict
 from copy import deepcopy
 import hashlib
 from pathlib import Path
+import re
 import tempfile
 import time
 
@@ -306,9 +307,65 @@ def consolidate_scope(parts, radius, folder, maximum_bytes, stop_after, progress
     return case, snapshots, timings
 
 
+_DATASET_TOKEN = re.compile(r'__fiberhmm_dataset_(\d{4})__')
+
+
+def label_free_payload(payload):
+    """The payload with every dataset named by its position in the run, and the function that puts the labels back.
+
+    The staged engine namespaces units ('<dataset>::<unit>'), fold groups, channels and family tokens by dataset ID and
+    hashes those strings into its discovery split, scoring folds, Monte Carlo seeds and orderings, so renaming a
+    dataset changed its results. It runs on '__fiberhmm_dataset_NNNN__' names instead (NNNN: the dataset's position in
+    the payload) and relabel() restores the labels in every string and key of what it reports."""
+    names = list(dict.fromkeys(s['dataset_id'] for s in payload['strata']))
+    if any(_DATASET_TOKEN.search(str(n)) for n in names) or len(names) > 9999:
+        raise ValueError('Dataset IDs may not contain __fiberhmm_dataset_NNNN__')
+    token = {n: f'__fiberhmm_dataset_{i + 1:04d}__' for i, n in enumerate(names)}
+    strata = []
+    for s in payload['strata']:
+        renamed = dict(s, dataset_id=token[s['dataset_id']])
+        if isinstance(s.get('stratum_id'), str):
+            renamed['stratum_id'] = s['stratum_id'].replace(s['dataset_id'], token[s['dataset_id']])
+        strata.append(renamed)
+    back = lambda m: names[int(m.group(1)) - 1]
+
+    def relabel(value):
+        if isinstance(value, str):
+            return _DATASET_TOKEN.sub(back, value) if '__fiberhmm_dataset_' in value else value
+        if isinstance(value, dict):
+            return {relabel(k): relabel(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return type(value)(relabel(v) for v in value)
+        return value
+    return dict(payload, strata=strata), relabel
+
+
+class _RelabelledProgress:
+    """A progress callback that shows dataset labels; keeps the structured .report of the wrapped one, if any."""
+    def __init__(self, inner, relabel):
+        self.inner, self.relabel = inner, relabel
+        if getattr(inner, 'report', None) is not None:
+            self.report = lambda stage, message, **work: inner.report(stage, relabel(message), **relabel(work))
+
+    def __call__(self, stage, message=None, *args, **work):
+        return self.inner(stage, self.relabel(message), *args, **self.relabel(work))
+
+
 def run_staged_families(payload, options, output_dir=None, progress=None):
+    """The staged engine on the payload's evidence; results do not depend on what the datasets are called."""
+    original = payload; payload, relabel = label_free_payload(original)
+    progress = _RelabelledProgress(progress or (lambda *_: None), relabel)
+    try:
+        return _run_staged_families(original, payload, relabel, options, output_dir, progress)
+    except (ValueError, RuntimeError, AssertionError) as error:
+        if '__fiberhmm_dataset_' in str(error):
+            raise type(error)(relabel(str(error))) from error
+        raise
+
+
+def _run_staged_families(original, payload, relabel, options, output_dir, progress):
     if not __debug__:raise RuntimeError('Staged reference invariants require assertions enabled; do not run with python -O')
-    started = time.monotonic(); progress = progress or (lambda *_: None)
+    started = time.monotonic()
     implementation=implementation_hashes()
     from ..execution import numerical_environment
     environment=numerical_environment()
@@ -316,8 +373,8 @@ def run_staged_families(payload, options, output_dir=None, progress=None):
     region = payload['region']; bounds = [region['start'], region['end']]
     if bounds[1] <= bounds[0] or bounds[1]-bounds[0] > options['compute'].maximum_region_bp:
         raise ValueError('Invalid region or maximum analysis span exceeded; no cropping')
-    before = digest(payload); sources = prepare_sources(payload, options)
-    save(out/'evidence.json.gz',payload)
+    before = digest(original); internal = digest(payload); sources = prepare_sources(payload, options)
+    save(out/'evidence.json.gz',original)
     if options['cross'].enabled and len(sources) < 2: raise ValueError('XCR requires at least two datasets')
     mode = 'XCR' if options['cross'].enabled else 'SR' if options['sr'].enabled else 'CR'
     parts = {}; native_timings = {}; dataset_by_channel = {}
@@ -402,7 +459,7 @@ def run_staged_families(payload, options, output_dir=None, progress=None):
         checkpoints=checkpoints.statistics(),detailed_stage_seconds=dict(stage_times),
         datasets=[dict(dataset_id=s['dataset_id'], chemistry=s['chemistry'], units=len(s['units']),
             model=s.get('model_manifest'),evidence_units=s.get('evidence_units')) for s in sources],
-        browser_sources=payload.get('browser_sources'), pooling=payload.get('pooling'), input_files=payload.get('input_files'),
+        browser_sources=original.get('browser_sources'), pooling=original.get('pooling'), input_files=original.get('input_files'),
         display_mode=('SR/XCR' if options['cross'].enabled and options['sr'].enabled else mode),
         numerical_environment=environment,implementation_sha256=implementation,
         recurrent_state_display=dict(
@@ -415,8 +472,9 @@ def run_staged_families(payload, options, output_dir=None, progress=None):
     result = dict(schema='fiberhmm.consensus.v1', cr_mode=MODE, manifest=receipt,
         stages=stages, stage_results=snapshots, final_stage=final_stage,
         evidence_encoding='shared_json_v1',evidence_pool=context['evidence_pool'],**snapshots[final_stage])
-    if digest(payload) != before: raise AssertionError('Input payload mutated')
+    if digest(original) != before or digest(payload) != internal: raise AssertionError('Input payload mutated')
     if implementation_hashes()!=implementation:raise RuntimeError('Consensus implementation changed during this run; result not installed')
+    receipt = relabel(receipt); result = dict(relabel(result), manifest=receipt)
     save(out/'manifest.json', receipt); save(out/'result.json.gz', result)
     from ..report import write_report
     write_report(result,out)

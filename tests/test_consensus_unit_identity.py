@@ -153,3 +153,36 @@ def test_records_sharing_a_name_or_bytes_keep_distinct_units(tmp_path):
     other = copy_bam(dup, tmp_path/'dup2'/'demo.bam')
     twice, = unit_ids(load_bam_payload([dict(dataset_id='x', paths=[str(dup), str(other)])], REGION, parse_options(PARAMETERS)))
     assert len(twice) == len(set(twice)) == 2*len(single) and set(single) <= set(twice)
+
+
+def test_pooled_unnamed_units_and_fold_groups_do_not_depend_on_dataset_labels():
+    """Codex re-review 2026-10-01 (LOW): units without a read name are named for pooling by the dataset's position,
+    not its label, so their fold groups, physical molecules and kept views are the same under any labels; also with
+    two datasets, a reversed window and a dataset with no units in one window."""
+    from fiberhmm.inference.consensus.regions import pool_payloads
+    windows = [dict(name='w1', chrom='chr1', start=600, end=800, strand='+'),
+               dict(name='w2', chrom='chr1', start=700, end=900, strand='-')]
+    def unit(uid, strand):
+        pos = list(range(600, 900, 7))
+        return dict(unit_id=uid, strand=strand, positions=pos, hits=[i % 3 == 0 for i in range(len(pos))],
+                    p_accessible=[.8]*len(pos), p_protected=[.02]*len(pos), reference_start=600, reference_end=900)
+    def pooled(labels):
+        a, b = labels
+        payloads = []
+        for w in windows:
+            strata = [dict(dataset_id=a, chemistry='ddda', units=[unit(f'unit_{i:03d}', 'CT' if i % 2 else 'GA') for i in range(8)])]
+            # b has no units in the first window, and repeats a's unit IDs (unit IDs are only unique within a dataset).
+            strata.append(dict(dataset_id=b, chemistry='ddda', units=[] if w['name'] == 'w1' else [unit(f'unit_{i:03d}', 'CT') for i in range(4)]))
+            payloads.append(dict(region=dict(chrom='chr1', start=w['start'], end=w['end']), strata=strata))
+        result = pool_payloads(payloads, windows)
+        assert [s['dataset_id'] for s in result['strata']] == [a, b]
+        view = lambda u: (u['unit_id'], u['fold_group_id'], u['physical_molecule_id'], u['strand'], u['genomic_provenance']['window']['name'])
+        return ([[view(u) for u in s['units']] for s in result['strata']],
+                sorted((e['unit_id'], e['window']) for e in result['pooling']['excluded_repeated_views']))
+    first, second = pooled(('first', 'second')), pooled(('zz', 'aa'))
+    assert len(first[0][0]) == 8 and len(first[0][1]) == 4 and len(first[1]) == 8   # a: one view of each of 8; b: 4
+    assert all('first' not in str(v) and 'second' not in str(v) for v in first)
+    assert first == second
+    # The same unit ID in two datasets is two molecules (no false pooling across datasets).
+    groups = [g for s in first[0] for _, g, *_ in s]
+    assert len(groups) == len(set(groups)) == 12

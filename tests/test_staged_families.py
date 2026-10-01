@@ -341,3 +341,47 @@ def test_cross_chemistry_units_defer_to_the_coarser_chemistry():
     assert unit_of['wide'] != unit_of['wide2'] and provenance['governing_edge_sd_bp'] == [1., 1.]
     assert provenance['edge_scatter_source'] == {'daf': 'fixed', 'hia5': 'fixed'}
     assert provenance['estimated_edge_scatter_sd_bp']['daf'][0] > 8
+
+
+def _two_datasets(names):
+    """The XCR fixture (a DddA dataset and a Hia5 one) under the given dataset IDs."""
+    data=payload();first=data['strata'][0];second=deepcopy(first)
+    for i,u in enumerate(second['units']):
+        u['unit_id']='foreign'+str(i);u['strand']='GA'
+        p=list(range(1,81,4));a,b=u['raw_tf_intervals'][0]
+        u.update(positions=p,hits=[int(x<a or x>=b) for x in p],p_accessible=[.7]*len(p),p_protected=[.04]*len(p))
+    second.update(chemistry='hia5-pacbio');data['strata'].append(second)
+    first['dataset_id'],second['dataset_id']=names
+    return data
+
+
+def test_dataset_names_do_not_change_staged_results(tmp_path):
+    """Codex re-review 2026-10-01: the staged engine hashed dataset IDs into its discovery split, scoring folds, Monte
+    Carlo seeds, family tokens and orderings, so renaming a dataset changed the numbers. It now runs on positional
+    names: two runs differing only in dataset IDs give the same result once the IDs are swapped back, and the
+    internal names never reach the output."""
+    # Wall-clock fields, and the digest of the input (which does name the datasets).
+    timing={'seconds','native_timings','detailed_stage_seconds','original_compute_seconds','checkpoints','input_digest'}
+    def clean(x,subs):
+        if isinstance(x,dict):return {clean(k,subs):clean(v,subs) for k,v in x.items() if k not in timing}
+        if isinstance(x,list):return [clean(v,subs) for v in x]
+        if isinstance(x,str):
+            for a,b in subs:x=x.replace(a,b)
+        return x
+    values=parameters();values['sr']['enabled']=True;values['cross']['enabled']=True
+    outs=[];seen=[]
+    for run,names in enumerate((('dsFirstQ','dsSecondQ'),('dsZetaQ','dsAlphaQ'))):
+        out=tmp_path/str(run);data=_two_datasets(names);before=deepcopy(data)
+        result=run_workflow(data,values,out,progress=lambda stage,message=None,**k:seen.append(f'{message} {k}'))
+        assert data==before and set(result['datasets'])==set(names)
+        assert all(f['family'].split(':',1)[0] in ('P',*names) for ds in names for f in result['datasets'][ds]['cr']['catalog'])
+        for name in ('manifest.json','result.json.gz','families.tsv','calls.tsv'):
+            raw=(out/name).read_bytes()
+            if raw[:2]==b'\x1f\x8b':
+                import gzip;raw=gzip.decompress(raw)
+            assert b'__fiberhmm_dataset_' not in raw,name
+        from fiberhmm.inference.consensus.artifacts import read_json
+        assert read_json(out/'evidence.json.gz')==before           # the input as given, with its dataset IDs
+        outs.append(json.dumps(clean(result,[(str(out),'OUT'),(names[0],'D0'),(names[1],'D1')]),sort_keys=True))
+    assert outs[0]==outs[1]
+    assert not any('__fiberhmm_dataset_' in s for s in seen) and any('dsZetaQ' in s for s in seen)
