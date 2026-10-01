@@ -360,8 +360,8 @@ def _relabel_result(result, relabel):
             if REF in node and len(node) == 1:
                 return {REF: entry(node[REF])}
             return {k: rekey(v) for k, v in node.items()}
-        if isinstance(node, list):
-            return [rekey(v) for v in node]
+        if isinstance(node, (list, tuple)):
+            return type(node)(rekey(v) for v in node)
         return node
 
     def entry(key):

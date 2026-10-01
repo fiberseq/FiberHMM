@@ -403,3 +403,22 @@ def test_reserved_internal_dataset_names_are_refused_and_never_leak(tmp_path):
         run_workflow(_two_datasets(('dsFirstQ','dsSecondQ')),values,tmp_path)
     assert 'dsFirstQ' in str(error.value) and error.value.__cause__ is None and error.value.__suppress_context__
 
+
+def test_relabelled_evidence_pool_rekeys_nested_and_tuple_references():
+    """Codex re-review: references inside tuples (outside the pool or inside a pooled entry) follow the re-keyed entry."""
+    import hashlib
+    from fiberhmm.inference.consensus.harmonized_families.evidence import REF, encoded, expand
+    from fiberhmm.inference.consensus.harmonized_families.workflow import _relabel_result, label_free_payload
+    _, relabel = label_free_payload(dict(region={}, strata=[dict(dataset_id='alpha', units=[])]))
+    key = lambda v: hashlib.sha256(encoded(v)).hexdigest()
+    leaf = {'unit': '__fiberhmm_dataset_0001__::u1', 'x': [1, 2]}
+    outer = {'parts': ({REF: key(leaf)}, 'n'), 'ds': '__fiberhmm_dataset_0001__'}
+    pool = {key(leaf): leaf, key(outer): outer}
+    result = {'records': [({REF: key(outer)},), {REF: key(leaf)}], 'evidence_pool': pool}
+    stored = lambda v: json.loads(json.dumps(v))          # as written (tuples become lists), then read back
+    assert expand(stored({'records': result['records']}), stored(pool))
+    out = stored(_relabel_result(result, relabel))
+    body = expand({'records': out['records']}, out['evidence_pool'])
+    assert body['records'][0][0] == {'parts': [{'unit': 'alpha::u1', 'x': [1, 2]}, 'n'], 'ds': 'alpha'}
+    assert body['records'][1] == {'unit': 'alpha::u1', 'x': [1, 2]}
+
