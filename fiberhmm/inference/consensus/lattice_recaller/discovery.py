@@ -239,12 +239,17 @@ def core_width(g):
     return g.get('core_bp', g['R'][0] - g['L'][1])
 
 
+def same_class(g, o, centre_bp=3.0):
+    """One class geometry found twice: span centres within centre_bp and width ratio 0.7-1.43."""
+    w = max(1., g['span'][1] - g['span'][0])
+    return abs(sum(g['span'])/2 - sum(o['span'])/2) <= centre_bp and 0.7 <= w/max(1., o['span'][1] - o['span'][0]) <= 1.43
+
+
 def dedupe(classes, centre_bp=3.0):
-    """Classes found in overlapping tiles: same centre (<= centre_bp) and width ratio 0.7-1.43 keep the better supported."""
+    """Classes found in overlapping tiles: same class (same_class) keep the better supported."""
     out = []
     for g in sorted(classes, key=lambda g: -g['calls']):
-        c = sum(g['span'])/2; w = max(1., g['span'][1] - g['span'][0])
-        if any(abs(c - sum(o['span'])/2) <= centre_bp and 0.7 <= w/max(1., o['span'][1] - o['span'][0]) <= 1.43 for o in out):
+        if any(same_class(g, o, centre_bp) for o in out):
             continue
         out.append(g)
     return sorted(out, key=lambda g: g['span'][0])

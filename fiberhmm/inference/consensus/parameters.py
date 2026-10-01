@@ -225,6 +225,8 @@ class RecallerOptions:
     tile_bp: int = control(350, 'Discovery tile (bp)', 'Regions longer than this are discovered in overlapping tiles.', 100, 5000, 10)
     tile_step_bp: int = control(250, 'Discovery tile step (bp)', 'Tile stride; classes found twice are deduplicated.', 50, 5000, 10)
     minimum_channel_units: int = control(20, 'Minimum molecules per channel', 'Channels with fewer molecules in a tile are not quantified.', 1, 100000, 1)
+    order_replicates: int = control(0, 'Read-order robustness check (extra orderings)', 'Optional and slower: rerun discovery and scoring N more times with the molecules in other deterministic orders (and so other split-halves and folds), and report for each class the fraction of the N+1 orderings that find it supported. Takes about N+1 times as long. 0 (default) = off; the classes themselves are always those of the default order.', 0, 20, 1)
+    order_robust_fraction: float = control(1.0, 'Read-order check: robust fraction', 'With the read-order check on, a class is marked robust when at least this fraction of the orderings (the default order included) find it supported. 1 (default) = every ordering; 0.5 = half of them.', 0.05, 1.0, 0.05)
 
 
 GROUPS = dict(input=InputOptions, sr=SROptions, cr=CROptions, families=FamilyStageOptions, recaller=RecallerOptions, rescue=RescueOptions,

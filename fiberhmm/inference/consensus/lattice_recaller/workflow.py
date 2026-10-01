@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import gzip
+import hashlib
 import tempfile
 import time
 from pathlib import Path
@@ -88,6 +89,61 @@ def discover(sources, region, opt, progress, cores=1):
     for i, g in enumerate(kept):
         g['id'] = f'class_{i + 1:03d}'
     return kept, dropped, tiles, diagnostics
+
+
+def reordered_sources(sources, salt):
+    """The same molecules in read ordering ``salt`` (salt 0: the input itself, untouched).
+
+    A unit's ID orders the calls k-means sees (its k-means++ start) and keys every split-half and fold of discovery
+    and scoring, so a class near a threshold can depend on it. Ordering ``salt`` renames each unit by a hash of the salt
+    and its ID and sorts the units as the loader does (DAF: CT before GA, then by ID): the run an equally valid naming of
+    the same reads would give. Nothing else changes."""
+    if not salt:
+        return sources
+    out = []
+    for s in sources:
+        daf = s['chemistry'] in ('ddda', 'dddb')
+        units = [dict(u, unit_id='unit_' + hashlib.sha256(f'lattice-order-{salt}|{u["unit_id"]}'.encode()).hexdigest()[:24])
+                 for u in s['units']]
+        units.sort(key=lambda u: ((0 if u['strand'] == 'CT' else 1) if daf else 0, u['unit_id']))
+        out.append(dict(s, units=units))
+    return out
+
+
+ROBUST_RULE = 'robust: supported in at least recaller.order_robust_fraction of the orderings (the default order included)'
+ROBUST_MATCHING = 'same class geometry as discovery deduplicates tiles: span centres within 3 bp, width ratio 0.7-1.43'
+
+
+def order_robustness(sources, region, opt, progress, cores, classes, rows):
+    """recaller.order_replicates: rerun discovery and scoring under orderings 1..N and, for every class of the default
+    ordering (0), count the orderings in which a class of the same geometry (discovery.same_class) is supported on at
+    least one channel. Sets order_robustness (that fraction of the N+1 orderings) and robust (at least
+    recaller.order_robust_fraction of them; default every ordering) on each class; the class set itself stays the
+    default ordering's. Returns the manifest block."""
+    started = time.monotonic(); n = opt.order_replicates
+    supported = lambda cls, rs: [g for g in cls if g['id'] in {r['class_id'] for r in rs if r['supported']}]
+    runs = [supported(classes, rows)]; discovered = [len(classes)]
+    for salt in range(1, n + 1):
+        note = lambda _stage, message, *_a, _s=salt, **_k: progress('recaller_robustness', f'read order {_s + 1}/{n + 1}: {message}')
+        src = reordered_sources(sources, salt)
+        cls, _dropped, tiles, _diag = discover(src, region, opt, note, cores)
+        rs = quantify(src, cls, tiles, opt, note, cores)[0] if cls else []
+        runs.append(supported(cls, rs)); discovered.append(len(cls))
+    primary = {g['id'] for g in runs[0]}
+    for g in classes:
+        found = (g['id'] in primary) + sum(any(D.same_class(g, o) for o in run) for run in runs[1:])
+        g['order_robustness'] = round(found/(n + 1), 4); g['robust'] = bool(found >= opt.order_robust_fraction*(n + 1) - 1e-9)
+    return dict(orderings=n + 1, replicates=n, salts=list(range(n + 1)), robust_fraction=opt.order_robust_fraction,
+                rule=ROBUST_RULE, matching=ROBUST_MATCHING,
+                discovered_per_ordering=discovered, supported_per_ordering=[len(r) for r in runs],
+                robust_classes=sorted(g['id'] for g in classes if g['robust']),
+                robust_supported_classes=sum(g['robust'] for g in runs[0]), supported_classes=len(runs[0]),
+                seconds=round(time.monotonic() - started, 1))
+
+
+def _robust_fields(g):
+    """order_robustness and robust of a class, when the read-order check ran (else nothing: default output unchanged)."""
+    return {k: g[k] for k in ROBUST_FIELDS if k in g}
 
 
 def _class_geometry(g):
@@ -329,7 +385,7 @@ def snapshot(sources, classes, rows, mols, opt, stage='resolved', region=None, b
                                 hypothesis=None, model_status='fitted', stage=stage, fit_flags=[], shared_scope=MODE,
                                 evidence_summary=dict(calls=g['calls'], stability=g['stability'], memberships='lattice_em_three_way'),
                                 classification_counts=counts, strand_resolution=_strand_resolution(block, s['chemistry'], opt),
-                                source_units=sum(c['compatible_units'] for c in counts.values()), recaller=block))
+                                source_units=sum(c['compatible_units'] for c in counts.values()), recaller=block, **_robust_fields(g)))
         catalog.sort(key=lambda f: (f['consensus_start'], f['consensus_end'], f['family']))
         datasets[ds] = dict(chemistry=s['chemistry'], units=[browser_unit(ds, u) for u in s['units']],
                             sr=dict(status='disabled', records=[], changed=0),
@@ -344,6 +400,7 @@ CLASS_FIELDS = ['class_id', 'group', 'channel', 'dataset', 'strand', 'start', 'e
                 'calls', 'stability', 'molecules',
                 'prevalence', 'prevalence_edge', 'prevalence_loose', 'prevalence_lower_bound', 'broader', 'other_shape', 'accessible', 'support_gain_nats', 'supported',
                 'resolution_nats', 'resolved', 'spots', 'edge_contraction', 'unknown_accessible_fraction', 'efficiency']
+ROBUST_FIELDS = ['order_robustness', 'robust']     # only with recaller.order_replicates > 0
 MOLECULE_FIELDS = ['class_id', 'channel', 'unit_id', 'posterior', 'log_bf', 'label', 'tier', 'start', 'end', 'edge_range']
 BROADER_FIELDS = ['group', 'classes', 'channel', 'unit_id', 'posterior', 'start', 'end', 'edge_range']
 
@@ -375,6 +432,12 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
     with shared_worker_pool(cores):
         classes, dropped, tiles, diagnostics = discover(sources, region, opt, progress, cores) if frozen is None else frozen.discovery()
         rows, mols, broad, unscored = quantify(sources, classes, tiles, opt, progress, cores, frozen=frozen) if classes else ([], [], [], [])
+        # Optional (recaller.order_replicates > 0, discovery runs only): which classes survive other read orders.
+        robustness = order_robustness(sources, region, opt, progress, cores, classes, rows) if frozen is None and opt.order_replicates and classes else None
+    if robustness is not None:
+        by_id = {g['id']: g for g in classes}
+        for r in rows + unscored:
+            r.update(order_robustness=by_id[r['class_id']]['order_robustness'], robust=by_id[r['class_id']]['robust'])
     snap = snapshot(sources, classes, rows, mols, opt, region=region, broad=broad)
     stages = [dict(id='resolved', label='Lattice recaller', seconds=time.monotonic() - started, families=len(classes),
                    original_calls=sum(len(r['proposals']) for d in snap['datasets'].values() for r in d['cr']['records']),
@@ -404,7 +467,8 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
                                  unscored_classes=sorted(c for c, v in status.items() if v == 'unscored'),
                                  unscored=[{k: r[k] for k in ('class_id', 'channel', 'unscored_reason', 'molecules')} for r in unscored],
                                  dropped_by_core_rule=dropped, tiles=[list(t) for t in tiles], discovery=diagnostics,
-                                 efficiency_calibration=opt.efficiency_calibration),
+                                 efficiency_calibration=opt.efficiency_calibration,
+                                 **({} if robustness is None else dict(order_robustness=robustness))),
                    browser_sources=payload.get('browser_sources'), pooling=payload.get('pooling'), input_files=payload.get('input_files'),
                    display_mode=mode, presentation_revision='lattice_recaller_v1')
     if frozen is not None:
@@ -412,7 +476,7 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
     result = dict(schema=SCHEMA, cr_mode=MODE, manifest=receipt, stages=stages, stage_results={'resolved': snap}, final_stage='resolved',
                   recaller=dict(classes=[dict(id=g['id'], start=g['span'][0], end=g['span'][1], L=list(g['L']), R=list(g['R']), calls=g['calls'],
                                               stability=g['stability'], supported_channels=sum(1 for r in rows if r['class_id'] == g['id'] and r['supported']),
-                                              status=status[g['id']])
+                                              status=status[g['id']], **_robust_fields(g))
                                          for g in classes], rows=rows, unscored=unscored), **snap)
     if frozen is not None:
         result['transfer'] = receipt['transfer']
@@ -420,7 +484,8 @@ def run_lattice_recaller(payload, options, output_dir=None, progress=None, froze
         raise AssertionError('Input payload mutated')
     write_json(out/'manifest.json', receipt); write_json(out/'result.json.gz', result)
     order = {g['id']: i for i, g in enumerate(classes)}
-    _write_tsv(out/'classes.tsv', sorted(rows + unscored, key=lambda r: (order[r['class_id']], r['channel'])), CLASS_FIELDS)
+    _write_tsv(out/'classes.tsv', sorted(rows + unscored, key=lambda r: (order[r['class_id']], r['channel'])),
+               CLASS_FIELDS + (ROBUST_FIELDS if robustness is not None else []))
     _write_tsv(out/'molecules.tsv.gz', _tsv_rows(mols), MOLECULE_FIELDS, compress=True)
     _write_tsv(out/'broader.tsv.gz', _tsv_rows(broad), BROADER_FIELDS, compress=True)
     from ..report import write_report

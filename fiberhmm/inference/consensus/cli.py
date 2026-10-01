@@ -71,6 +71,11 @@ def _main(argv=None):
     p.add_argument('--stop-after',choices=['native','parents','consolidated','resolved'],help='staged_native_families only: last stage to compute (the lattice recaller runs in one pass)')
     p.add_argument('--start-at',choices=['native','consolidation'],default='native',help='staged_native_families only: consolidation restarts from saved native fits')
     p.add_argument('--cores',type=int,help='Worker processes (sets compute.cores; default 4)')
+    p.add_argument('--robust',type=int,metavar='N',help='lattice_recaller only, optional and slower: also rerun discovery under N other read orders '
+                   'and mark which classes are robust to read order (supported in every one of the N+1 orders, or the share set by '
+                   'recaller.order_robust_fraction; classes.tsv columns '
+                   'order_robustness and robust). Takes about N+1 times as long; the classes themselves are unchanged. Sets '
+                   'recaller.order_replicates (default 0 = off)')
     p.add_argument('--cache',help='staged_native_families only: persistent exact native-fit cache directory')
     p.add_argument('--json-progress','--progress-json',action='store_true',help='Structured progress on stderr (JSON lines)')
     p.add_argument('--daf-mask-runs',type=int,default=None,metavar='N',help='DAF only: thin targets in same-strand runs of >= N original C (CT) or G (GA) bases in lattices and native replay (2 = CC/GG and longer; 0 = off). Default: per dataset chemistry, DddA keep-one on runs >= 2 (duplex-validated), DddB off')
@@ -137,7 +142,7 @@ def _main(argv=None):
                               '(every run saves evidence.json.gz for replay with --evidence or --resume)')
     values.setdefault('cr',{})['engine']=engine
     for group,name,value in [('families','physical_radius_bp',args.consolidation_bp),('families','stop_after',args.stop_after),
-                             ('compute','cores',args.cores),('compute','fit_cache_dir',args.cache)]:
+                             ('compute','cores',args.cores),('compute','fit_cache_dir',args.cache),('recaller','order_replicates',args.robust)]:
         if value is not None: values.setdefault(group,{})[name]=value
     if resume and not args.cache and engine=='staged_native_families':
         previous=read_json(resume/'manifest.json')

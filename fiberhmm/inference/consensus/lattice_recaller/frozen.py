@@ -259,6 +259,9 @@ def transfer_options(catalog, strata, overrides=None, cores=None):
                              + ', '.join(OVERRIDABLE_GROUPS))
         values.setdefault(group, {}).update(settings)
     values['families']['stop_after'] = 'resolved'
+    # The read-order check tests discovery; a transfer discovers nothing, so a source run's setting does not apply.
+    if values.get('recaller', {}).get('order_replicates'):
+        values['recaller']['order_replicates'] = 0
     if cores is not None:
         values['compute']['cores'] = int(cores)
     elif 'cores' not in (overrides or {}).get('compute', {}):

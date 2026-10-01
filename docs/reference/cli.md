@@ -487,6 +487,7 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--stop-after` | — | staged_native_families only: last stage to compute (the lattice recaller runs in one pass) Choices: `native`, `parents`, `consolidated`, `resolved`. |
 | `--start-at` | `native` | staged_native_families only: consolidation restarts from saved native fits Choices: `native`, `consolidation`. |
 | `--cores` | — | Worker processes (sets compute.cores; default 4) |
+| `--robust` | — | lattice_recaller only, optional and slower: also rerun discovery under N other read orders and mark which classes are robust to read order (supported in every one of the N+1 orders, or the share set by recaller.order_robust_fraction; classes.tsv columns order_robustness and robust). Takes about N+1 times as long; the classes themselves are unchanged. Sets recaller.order_replicates (default 0 = off) |
 | `--cache` | — | staged_native_families only: persistent exact native-fit cache directory |
 | `--json-progress` / `--progress-json` | off | Structured progress on stderr (JSON lines) |
 | `--daf-mask-runs` | — | DAF only: thin targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases in lattices and native replay (2 = CC/GG and longer; 0 = off). Default: per dataset chemistry, DddA keep-one on runs &gt;= 2 (duplex-validated), DddB off |
