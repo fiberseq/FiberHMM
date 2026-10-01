@@ -200,7 +200,8 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   machine (the order of datasets and files is part of the input). The same
   holds for `--pool-loci` view selection and for the deprecated
   `staged_native_families` engine, which now runs on positional dataset names
-  internally (its fit checkpoints from earlier runs are not reused). Class
+  internally (its family IDs differ from earlier runs and its fit
+  checkpoints from earlier runs are not reused). Class
   counts from earlier runs may differ for classes near the thresholds;
   well-supported classes are unchanged.
 - **Nanopore Hia5 emission table.** The bundled table was indexed in
