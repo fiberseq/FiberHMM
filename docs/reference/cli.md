@@ -651,15 +651,13 @@ Generated from each command's argparse definition by `python tools/gen_cli_refer
 | `--daf-snp-mask` | — | 0-based BED of reference positions whose conversions are ignored (e.g. the mask fiberhmm-call used) |
 | `--daf-mask-runs` | — | Thin DAF targets in same-strand runs of &gt;= N original C (CT) or G (GA) bases (N=2: CC/GG and longer). Default: 2 with keep-one for DddA (duplex-validated), off otherwise; 0 disables. |
 | `--daf-run-policy` | `keep-one` | With --daf-mask-runs: keep each run's 5'-most target (default) or drop the run. Choices: `keep-one`, `drop`. |
-| `--cores` / `-c` | `4` | Number of CPU cores (0=auto, default: 4) |
+| `--cores` / `-c` | `4` | Worker processes (0 = all CPUs; default: 4) |
 | `--region-size` | `5000000` | Region size in bp for parallel processing (default: 5,000,000) |
 | `--skip-scaffolds` | off | Skip scaffold/contig chromosomes |
 | `--chroms` | — | Only process these chromosomes |
-| `--io-threads` | `4` | Number of htslib decompression/compression threads for BAM I/O (default: 4) |
-| `--streaming` | off | Use streaming pipeline mode (works with unaligned/unindexed BAMs and stdin). Recommended for unaligned data or when reading from pipes. |
-| `--chunk-size` | `500` | Reads per compute chunk in streaming mode (default: 500) |
+| `--streaming` | off | Read the BAM once, in file order, in a single process (no index needed; --cores is not used). Default: region-parallel over an indexed BAM. |
 | `--batch-size` | `1000` | Fibers per HDF5 write batch (default: 1000) |
-| `-v` / `--verbose` | off | Verbose output |
+| `-v` / `--verbose` | off | Also print model/region details and a progress bar (the summary is always printed, to stderr) |
 
 ## fiberhmm-probs
 
