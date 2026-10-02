@@ -914,9 +914,13 @@ def _refuse_call_path_aliases(args, apply_model_path=None, recall_model_path=Non
                ('--dedup-stats-tsv', args.dedup_stats_tsv)]
     if args.output != '-':
         stem = Path(args.output).parent / 'qc' / Path(args.output).with_suffix('').name
-        snp_prefix = args.daf_snp_output_prefix or f"{stem}.daf_snps"
-        outputs += [('--daf-snp-output-prefix', snp_prefix + suffix)
-                     for suffix in ('.bed', '.vcf', '.json', '.amplicons.tsv')]
+        # Recurrent-SNP files: when forced, or when the automatic DddA/DddB
+        # screen may run (see auto_snp in _main).
+        if args.daf_call_snps or (args.daf_call_snps is None and args.daf_snp_mask is None
+                                  and args.enzyme in ('ddda', 'dddb')):
+            snp_prefix = args.daf_snp_output_prefix or f"{stem}.daf_snps"
+            outputs += [('--daf-snp-output-prefix', snp_prefix + suffix)
+                        for suffix in ('.bed', '.vcf', '.json', '.amplicons.tsv')]
         if args.qc:
             qc_prefix = args.qc_output_prefix or str(stem)
             outputs += [('--qc-output-prefix', qc_prefix + suffix)

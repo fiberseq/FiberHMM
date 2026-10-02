@@ -399,9 +399,10 @@ def test_sidecar_cannot_be_the_index_a_bam_output_publishes(tmp_path):
         problems = find_path_aliases(outputs={"--output": str(out),
                                               "--stats-tsv": str(tmp_path / index)})
         assert problems and "replaces or deletes" in problems[0]
-    # a TSV output has no index
-    assert find_path_aliases(outputs={"--output": str(tmp_path / "p.tsv.gz"),
-                                      "--stats": str(tmp_path / "p.tsv.gz.bai")}) == []
+    # BAM writers publish whatever the output is called
+    problems = find_path_aliases(outputs={"--output": str(tmp_path / "calls"),
+                                          "--stats-tsv": str(tmp_path / "calls.bai")})
+    assert problems and "replaces or deletes" in problems[0]
 
 
 def test_dedup_refuses_stats_tsv_at_the_output_index(tmp_path, monkeypatch, capsys):
@@ -460,7 +461,7 @@ def test_call_generated_snp_and_qc_files_cannot_overwrite_inputs(
     model.write_text("{}")
     cli, args = _call_args(monkeypatch, "-i", tmp_path / "in.bam", "-m", model,
                            "-o", tmp_path / "calls.bam",
-                           "--daf-snp-output-prefix", tmp_path / "run")
+                           "--daf-call-snps", "--daf-snp-output-prefix", tmp_path / "run")
     with pytest.raises(SystemExit) as caught:
         cli._refuse_call_path_aliases(args, str(model), str(model))
     assert caught.value.code == 2
@@ -483,3 +484,37 @@ def test_call_bundled_model_is_protected(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit):
         cli._refuse_call_path_aliases(args, str(bundled), str(bundled))
     assert "same file as --model" in capsys.readouterr().err
+
+
+def test_symlink_chain_through_a_deleted_directory_is_refused(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "in.bam").write_text("x")
+    (work / "link").symlink_to(data)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "alias").symlink_to(work / "link")
+    assert find_path_aliases(inputs={"--input": str(outside / "alias" / "in.bam")},
+                             deleted_dirs={"--work-dir": str(work)})
+    # relative link targets and physical '..'
+    (outside / "rel").symlink_to(Path("..") / "work" / "link")
+    assert find_path_aliases(inputs={"--input": str(outside / "rel" / "in.bam")},
+                             deleted_dirs={"--work-dir": str(work)})
+
+
+def test_call_reserves_snp_files_only_when_snp_discovery_can_run(
+        tmp_path, monkeypatch):
+    progress = tmp_path / "qc" / "calls.daf_snps.json"
+    for extra in (["--enzyme", "hia5", "--seq", "pacbio"],
+                  ["--enzyme", "ddda", "--no-daf-call-snps"]):
+        cli, args = _call_args(monkeypatch, "-i", tmp_path / "in.bam", *extra,
+                               "-o", tmp_path / "calls.bam", "--no-qc",
+                               "--progress-json", progress)
+        cli._refuse_call_path_aliases(args, "model.json", "model.json")  # no exit
+    cli, args = _call_args(monkeypatch, "-i", tmp_path / "in.bam", "--enzyme", "ddda",
+                           "-o", tmp_path / "calls.bam", "--no-qc",
+                           "--progress-json", progress)
+    with pytest.raises(SystemExit):
+        cli._refuse_call_path_aliases(args, "model.json", "model.json")

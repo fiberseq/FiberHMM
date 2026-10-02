@@ -584,35 +584,52 @@ def _location_key(path: str):
     return (st.st_dev, st.st_ino, tuple(reversed(rest)))
 
 
-def _is_inside(path: str, dir_key) -> bool:
-    """Whether ``path`` is, or lies anywhere below, the directory ``dir_key``.
+def _traversed_directories(path: str, max_links: int = 40):
+    """Every directory whose entries resolving ``path`` passes through.
 
-    Checked on the resolved path (the file and every directory above it) and
-    on the literal path: an entry (a symlink, or a directory reached through
-    one) whose containing directory is the deleted one disappears with it.
+    The path is resolved one component at a time, following each symlink
+    (``..`` is physical, as the kernel does it), so a link anywhere on the
+    way -- including a chain of links -- contributes the directory holding
+    it. The fully resolved path itself is included.
     """
     import os
 
     absolute = os.path.abspath(os.path.expanduser(path))
-    current = os.path.realpath(absolute)
-    while True:
-        if _location_key(current) == dir_key:
-            return True
-        parent = os.path.dirname(current)
-        if parent == current:
-            break
-        current = parent
-    current = absolute
-    while True:
-        parent = os.path.dirname(current)
-        if parent == current:
-            return False
-        if _location_key(parent) == dir_key:
-            return True
-        current = parent
+    drive, rest = os.path.splitdrive(absolute)
+    root = drive + os.sep
+    pending = [part for part in rest.split(os.sep) if part]
+    current = root
+    seen = []
+    links = 0
+    while pending:
+        name = pending.pop(0)
+        if name == '.':
+            continue
+        if name == '..':
+            current = os.path.dirname(current) or root
+            continue
+        seen.append(current)
+        candidate = os.path.join(current, name)
+        if os.path.islink(candidate) and links < max_links:
+            links += 1
+            target = os.readlink(candidate)
+            target_drive, target_rest = os.path.splitdrive(target)
+            parts = [part for part in target_rest.split(os.sep) if part]
+            if os.path.isabs(target):
+                current = (target_drive or drive) + os.sep
+            pending = parts + pending
+        else:
+            current = candidate
+    seen.append(current)
+    return seen
 
 
-_BAM_LIKE = ('.bam', '.cram')
+def _is_inside(path: str, dir_key) -> bool:
+    """Whether ``path`` is, lies below, or reaches through the directory
+    ``dir_key``: resolving it passes an entry (file, directory or symlink)
+    of that directory, which disappears with it."""
+    return any(_location_key(directory) == dir_key
+               for directory in _traversed_directories(path))
 
 
 def find_path_aliases(*, inputs=(), outputs=(), deleted_dirs=(),
@@ -623,8 +640,8 @@ def find_path_aliases(*, inputs=(), outputs=(), deleted_dirs=(),
     to a path or a list of paths, or are ``(label, path)`` pairs. An output is
     refused when it is the same file as an input, as an index beside an input
     (``.bai/.csi/.crai/.tbi/.fai/.gzi``, when ``protect_input_sidecars``), or
-    as another output -- including the index that publishing a ``.bam``/
-    ``.cram`` output writes or removes beside it. Any input (or input index)
+    as another output -- including the index (``.bai/.csi/...``) that
+    publishing an output writes or removes beside it. Any input (or input index)
     or output inside a directory in ``deleted_dirs`` (or naming it) is refused
     too.
     """
@@ -645,12 +662,12 @@ def find_path_aliases(*, inputs=(), outputs=(), deleted_dirs=(),
                 if os.path.exists(sidecar):
                     protected.append((label, sidecar, _location_key(sidecar), path))
 
-    # Indexes a BAM/CRAM output's publication writes or deletes beside it.
+    # Indexes an output's publication writes or deletes beside it (BAM
+    # writers publish whatever the file is called, so every output counts).
     implied = []
     for label, path in outputs:
-        if path.lower().endswith(_BAM_LIKE):
-            for index in dict.fromkeys(index_paths_for(path)):
-                implied.append((label, path, index, _location_key(index)))
+        for index in dict.fromkeys(index_paths_for(path)):
+            implied.append((label, path, index, _location_key(index)))
 
     problems = []
     for in_label, in_path, key, owner in protected:
