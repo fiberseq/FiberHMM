@@ -109,7 +109,9 @@ Index the BAM (`samtools index`), or drop `--region-parallel` to stream.
 Supplementary alignments hard-clipped by minimap2 keep the full read's
 `MM`/`ML`, which cannot be matched to the clipped `SEQ`; FiberHMM skips them.
 Primary alignments are unaffected. Align with `minimap2 -Y` to soft-clip
-supplementary alignments if you need them (`--no-primary`).
+supplementary alignments if you need them called (3.0 calls supplementary
+records by default). DAF records are not affected: their deaminations come
+from `SEQ` and `MD`, so hard-clipped DAF supplementary records are called.
 
 ### `fiberhmm-apply` rejects `--chroms`, `--skip-scaffolds`, `--region-size`, `--scores-db`, `-l`
 

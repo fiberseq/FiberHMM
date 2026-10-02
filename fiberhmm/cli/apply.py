@@ -162,6 +162,11 @@ Examples:
                         help=argparse.SUPPRESS)
     from fiberhmm.core.bam_reader import add_daf_run_mask_arguments
     add_daf_run_mask_arguments(parser)
+    parser.add_argument('--daf-mask-unaligned', action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help='DAF only: treat insertion and soft-clip bases as no '
+                             'evidence and leave unaligned stretches of >= 50 bp '
+                             'uncalled (default on, as in fiberhmm-call).')
 
     return parser.parse_args()
 
@@ -240,7 +245,8 @@ def _apply_pg_record(args, mode, context_size, chemistry, daf_run_mask):
                f"enzyme={args.enzyme or 'custom'} k={context_size} "
                f"prob_threshold={args.prob_threshold} "
                f"primary_only={'on' if args.alignments == 'primary' else 'off'} alignments={args.alignments} "
-               f"daf_run_mask={f'>={min_run}/{policy}' if min_run else 'off'}"),
+               f"daf_run_mask={f'>={min_run}/{policy}' if min_run else 'off'} "
+               f"daf_unaligned_mask={('on' if args.daf_mask_unaligned else 'off') if mode == 'daf' else 'n/a'}"),
     }
 
 
@@ -405,6 +411,8 @@ def _main(args):
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
+    from fiberhmm.inference.engine import configure_daf_unaligned_mask
+    configure_daf_unaligned_mask(bool(args.daf_mask_unaligned) and mode == 'daf')
 
     # Surface the DddA two-pass workflow whenever a DddA model is detected.
     # ddda_nuc.json deliberately does NOT emit sub-nucleosomal TF calls;

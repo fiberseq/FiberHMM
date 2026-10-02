@@ -59,7 +59,7 @@ The banner states the resolved settings (abridged):
 ```text
   fiberhmm-call — fused apply + recall-tfs (region-parallel)
   apply model:  .../fiberhmm/models/hia5_pacbio.json
-  mode=pacbio-fiber k=3 enzyme=hia5 prob-threshold=128 primary-only=on
+  mode=pacbio-fiber k=3 enzyme=hia5 prob-threshold=128 alignments=primary-supplementary
   min_llr=5.0 min_opps=3 unify_threshold=90 uplift=1.0
   nuc-recall-policy=conservative phase-nrl=193
 ...
@@ -111,7 +111,7 @@ input and says so.
 
 ```text
 NOTE: --seq not given; using --seq nanopore (detected from MM specs of 200 read(s) (A+a only, no T-a)).
-  mode=nanopore-fiber k=3 enzyme=hia5 prob-threshold=248 primary-only=on
+  mode=nanopore-fiber k=3 enzyme=hia5 prob-threshold=248 alignments=primary-supplementary
   nuc-recall-policy=topology phase-nrl=193
 ```
 
@@ -136,7 +136,7 @@ Clustering (Jaccard >= 0.95; ends ±50 bp): 300 reads -> 300 molecules | 0 dupli
   automatic DAF SNP screen enabled: bounded preflight found genome coverage support (...)
   DAF SNP mask: 0 sites -> out/qc/dddb.calls.daf_snps.bed
 ...
-  mode=daf k=3 enzyme=dddb prob-threshold=128 primary-only=on
+  mode=daf k=3 enzyme=dddb prob-threshold=128 alignments=primary-supplementary
 ```
 
 Deaminations are read from the `MD` tags (from `minimap2 --MD` or

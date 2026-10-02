@@ -210,6 +210,31 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 
 ### Fixed
 
+- **DAF insertions and soft clips are no longer called as protected.**
+  Deaminations are read-versus-reference mismatches, so bases with no
+  reference counterpart (CIGAR insertions and soft clips) can never carry one,
+  yet their unconverted C (CT strand) / G (GA strand) were counted as
+  unmodified, i.e. protected, targets. An insertion or clip was therefore
+  called nucleosome-packed whatever its chromatin: on synthetic 2 kb inserts
+  with an open patch, DddA called a nucleosome array (85-90% of the open
+  patch nucleosome) and DddB Nanopore one 2.1 kb "nucleosome". These bases
+  are now masked like SNP sites (no evidence either way), in every DAF input
+  form (R/Y, MD or reference, MM/ML) and in `fiberhmm-call`,
+  `fiberhmm-recall-tfs`/`-nucs`, strand rescue, consensus replay and QC. An
+  unaligned stretch of 50 bp or more is left uncalled (no nucleosome, MSP or
+  TF; a nucleosome or MSP running into it is trimmed at its edge, and a
+  trimmed nucleosome edge gets edge quality 0). The SNP mask itself had the
+  same flaw: it removed a masked site's deamination but left an unconverted
+  masked C/G counted as protected; masked sites are now no evidence too.
+  Reads without insertions or clips are called exactly as before (NAPA DddA
+  demo, 3,202 reads: all 534 reads without I/S identical; 317 of 2,582 reads
+  with small indels or clips changed, about 0.9% of their nucleosome and MSP
+  calls and 0.3% of TF calls; 85 of 86 reads with >= 50 bp clips lose the
+  calls in the clip). On by default, recorded in `@PG` as
+  `daf_unaligned_mask=on`; `--no-daf-mask-unaligned` restores the old
+  encoding. `fiberhmm-qc` reports the masked share of sampled DAF bases
+  (`unaligned_masking`). Fiber-seq m6A is read-intrinsic and unchanged.
+  `fiberhmm-check` flags affected calls (`daf-unaligned-evidence`).
 - **QC assay detection.** `fiberhmm-qc` (and the QC step of
   `fiberhmm-pipeline`) took the assay from the first `mode=` anywhere in the
   BAM header; on a deduplicated DAF BAM that was the dedup step's
@@ -448,9 +473,35 @@ These change numbers relative to 2.x.
 - **`fiberhmm-posteriors` trims 10 bases at read ends** (was 100), as
   `fiberhmm-call` and `fiberhmm-apply` do, so posteriors within 100 bases of
   a read end change. `--edge-trim 100` restores the 2.x behaviour.
-- **Primary alignments only.** `fiberhmm-call` and `fiberhmm-apply` pass
-  secondary and supplementary records through uncalled (`--no-primary` to call
-  them).
+- **Primary and supplementary alignments.** `fiberhmm-call` and
+  `fiberhmm-apply` call primary and supplementary records and pass secondary
+  records through uncalled (`--alignments`, default `primary-supplementary`).
+  A supplementary record is another part of the same read (the far side of a
+  structural variant, an insertion's transposon copy elsewhere); for DAF it
+  carries real deamination evidence against that copy's reference, which
+  2.x never used (DAF supplementary records were skipped even with
+  `--no-primary`). A supplementary record is called on its aligned bases
+  only: its soft clips are the primary record's sequence. `--primary` calls
+  primary records only; `--no-primary` (`--alignments all`) every record.
+  `fiberhmm-dedup` flags (or, collapsing, drops) a duplicate's supplementary
+  and secondary records with it. Supplementary records shorter than
+  `--min-read-length` aligned bases are skipped like any record. On a DddB
+  Nanopore Drosophila BAM (4,203 records, 446 supplementary) 198 more
+  records were called, +0.2% output size and about +4% run time; on a
+  minimap2 Hia5 Nanopore BAM without `-Y` the supplementary records are
+  hard-clipped and stay skipped (`hard_clipped_mm`).
+- **`fiberhmm-pipeline` keeps split reads and soft clips.** The aligner step
+  keeps a read's supplementary records (and its `SA` tag) on linear contigs,
+  and DAF reads keep their soft clips there (calling treats them as no
+  evidence; they are the read's own sequence for structural-variant views).
+  On circular contigs DAF reads are hard-clipped as before (concatemer arms
+  beyond one full circle) and supplementary records are joined across the
+  origin or dropped, so a plasmid molecule is not annotated twice.
+  `--hard-clip` clips everywhere, `--keep-soft-clips` nowhere,
+  `--alignments primary` keeps the primary record only. `outputs.json`
+  settings gain `alignments` and `daf_unaligned_mask`; `hard_clip` is now
+  `on`/`off`/`circular` and `primary_only` is true only for
+  `--alignments primary`.
 - **TF recall decoder.** The TF recaller finds the best set of
   non-overlapping protected intervals in each scan interval exactly (maximize
   the summed interval LLR minus `--min-llr` per interval) instead of taking

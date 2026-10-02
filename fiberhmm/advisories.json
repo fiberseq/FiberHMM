@@ -251,6 +251,35 @@
    "match": {}
   },
   {
+   "id": "daf-unaligned-evidence",
+   "severity": "rerun-recommended",
+   "artifact": "calls",
+   "title": "DAF insertions and soft clips were called as protected",
+   "reason": "Before 3.0 the unconverted C/G of DAF read bases without a reference counterpart (CIGAR insertions and soft clips) were counted as protected targets, although a deamination can only be seen against the reference. Calls inside insertions and clips were therefore nucleosomes whatever the chromatin (a synthetic 2 kb open insert was called as a nucleosome array), and nucleosome/MSP edges next to small indels and clips shifted slightly. SNP-masked sites had the same flaw. Calls on fully aligned stretches are unaffected.",
+   "fix": "Re-call with FiberHMM >= 3.0 where insertions, soft clips or SNP-masked sites matter (structural variants, insert views, read ends); 3.0 treats these bases as no evidence and leaves unaligned stretches of 50 bp or more uncalled.",
+   "fixed_in": {
+    "version": "3.0.0",
+    "commit": "cecdbf146bf8cb79930cbb9131112de1d7dfead0"
+   },
+   "changelog": "3.0.0 / Fixed / DAF insertions and soft clips are no longer called as protected",
+   "detector": "run",
+   "match": {
+    "programs": [
+     "fiberhmm-call",
+     "fiberhmm-apply",
+     "fiberhmm-recall-tfs",
+     "fiberhmm-recall-nucs"
+    ],
+    "scope": "current",
+    "mode": [
+     "daf"
+    ],
+    "ds_lacks_all": [
+     "daf_unaligned_mask="
+    ]
+   }
+  },
+  {
    "id": "hia5-nanopore-ml-threshold",
    "severity": "info",
    "artifact": "calls",
@@ -289,14 +318,14 @@
    "id": "primary-only-default",
    "severity": "info",
    "artifact": "calls",
-   "title": "Secondary and supplementary alignments were called",
-   "reason": "3.0 fiberhmm-call and fiberhmm-apply call primary alignments only by default (secondary/supplementary records pass through uncalled). This run did not choose, so it called every alignment.",
-   "fix": "Nothing is wrong. To match 3.0 defaults re-call with FiberHMM >= 3.0; --no-primary keeps the old behaviour.",
+   "title": "Secondary alignments were called",
+   "reason": "3.0 fiberhmm-call and fiberhmm-apply call primary and supplementary alignments by default and pass secondary records (alternative placements of the same bases) through uncalled. This run did not choose, so it called every alignment, secondary records included (and, before 3.0, never DAF supplementary records).",
+   "fix": "Nothing is wrong with the primary calls. To match 3.0 defaults re-call with FiberHMM >= 3.0; --no-primary (--alignments all) keeps calling every record.",
    "fixed_in": {
     "version": "3.0.0",
     "commit": "b0064097a70d06655d3032df1105d5591f2cd052"
    },
-   "changelog": "3.0.0 / Changed defaults / Primary alignments only",
+   "changelog": "3.0.0 / Changed defaults / Primary and supplementary alignments",
    "detector": "run",
    "match": {
     "programs": [
@@ -306,10 +335,12 @@
     "scope": "current",
     "cl_lacks_all": [
      "--primary",
-     "--no-primary"
+     "--no-primary",
+     "--alignments"
     ],
     "ds_lacks_all": [
-     "primary_only="
+     "primary_only=",
+     "alignments="
     ]
    }
   },
@@ -369,7 +400,7 @@
     "models/dddb_nanopore.json"
    ],
    "first_commit": "497618320a54c559b73b3b0312674d5433b63dc1",
-   "last_commit": "306ea0b2c46c9681312158093953bca60bd0af41",
+   "last_commit": "a53afa88f9065f0bda14d828ebcae84088dca10b",
    "releases": []
   },
   {
@@ -395,7 +426,7 @@
     "models/legacy/dddb_nanopore_gt_swapped_legacy.json"
    ],
    "first_commit": "d047c4df9ced4c49b2ebe10184f337cb48fff613",
-   "last_commit": "306ea0b2c46c9681312158093953bca60bd0af41",
+   "last_commit": "a53afa88f9065f0bda14d828ebcae84088dca10b",
    "releases": [
     "2.0.0",
     "2.1.0",
@@ -463,7 +494,7 @@
     "models/hia5_nanopore.json"
    ],
    "first_commit": "dc7abba13d8a295b4fdb1f0485680a6d349f9695",
-   "last_commit": "306ea0b2c46c9681312158093953bca60bd0af41",
+   "last_commit": "a53afa88f9065f0bda14d828ebcae84088dca10b",
    "releases": []
   },
   {
@@ -477,7 +508,7 @@
     "models/legacy/hia5_nanopore_gt_swapped_legacy.json"
    ],
    "first_commit": "0d53ea62bb085dbcb8d498985ed22ed8fdbdba53",
-   "last_commit": "306ea0b2c46c9681312158093953bca60bd0af41",
+   "last_commit": "a53afa88f9065f0bda14d828ebcae84088dca10b",
    "releases": [
     "2.9.1",
     "2.9.2",
@@ -3498,7 +3529,219 @@
     "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
     "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
    ]
+  },
+  "5fdd36263631ee74fc7a764b6892988b671818b4": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "b5fcf369b3bfcc89f6c4dc9bd74ce50f3da4a97c": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "851738874ad01db3a81649a26c95d42187731cf4": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "f1d8322b6b03e90b0f7775f3168b7d034d3cf1a0": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "435404569346d8ae58e2342db29e2f2fe82634bd": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "2b63c090a7c25046fe67eaac3f990ea376cf655b": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "53a68a9e6b3c272222269eeb9f05756a12f530f0": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "a9e5bf26fa589a8e8853fb938b879d845aad94b1": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "d4fffc9d32bfae8775219293051190aaffd8b1ca": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "6c8e8336e7267a9d87c7620448864efc321a7dea": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "6d452931e7a57d3b5fc9179755e356c92c74f44b": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "f809c0fa7e918d474bc48106a08c53668f2dad50": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "c24cfec7368bd423d06594d56ee825aedc4a8d27": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "cecdbf146bf8cb79930cbb9131112de1d7dfead0": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
+  },
+  "a53afa88f9065f0bda14d828ebcae84088dca10b": {
+   "version": "3.0.0",
+   "contains": [
+    "08cc6ce4755182a89aa489eb076b72175923938a",
+    "3dbc6bff487c6933dc500a97919ca183e3e79c7d",
+    "5d7baef3446ae0f9fa6a71aacd59f7a7df95c5ba",
+    "715c0d7934e98466c142e18698bb8d037d714e15",
+    "9c926a55b15b9e9449a8b99949cd659f6a53e8f8",
+    "a0b8ef2a76b9bb8d258824728b9766bd72ae4630",
+    "b0064097a70d06655d3032df1105d5591f2cd052",
+    "ba63e4b9e36fda453edb373c3eb3b18a8243fae2",
+    "cecdbf146bf8cb79930cbb9131112de1d7dfead0",
+    "dc7abba13d8a295b4fdb1f0485680a6d349f9695"
+   ]
   }
  },
- "commits_through": "306ea0b2c46c9681312158093953bca60bd0af41"
+ "commits_through": "a53afa88f9065f0bda14d828ebcae84088dca10b"
 }

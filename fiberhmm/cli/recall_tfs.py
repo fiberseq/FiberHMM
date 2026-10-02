@@ -184,7 +184,8 @@ def _build_recall_pg_record(args, mode, model_path, nuc_cfg, nuc_model_path=None
             f'recall_nucs={recall_nucs} nuc_recall_policy={policy} '
             f'nuc_profile={profile_identity or "off"} '
             f'nuc_sha256={profile_sha256 or "off"} phase_nrl={phase_nrl} '
-            f'daf_run_mask={(">=" + str(args.daf_mask_runs) + "/" + args.daf_run_policy) if getattr(args, "daf_mask_runs", 0) else "off"}'
+            f'daf_run_mask={(">=" + str(args.daf_mask_runs) + "/" + args.daf_run_policy) if getattr(args, "daf_mask_runs", 0) else "off"} '
+            f'daf_unaligned_mask={("on" if getattr(args, "daf_mask_unaligned", True) else "off") if mode == "daf" else "n/a"}'
         ),
     }
 

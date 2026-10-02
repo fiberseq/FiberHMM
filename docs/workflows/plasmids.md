@@ -57,6 +57,10 @@ reference, so the join is scored like any other part of the alignment. A
 molecule covers at most one full circle: anything beyond is concatemer
 sequence and is trimmed with the other unaligned arms. The joined record
 keeps the primary's flags and MAPQ; the supplementary record is dropped.
+Other supplementary records on a circular contig (concatemer copies of the
+same plasmid sequence) are dropped too, and DAF reads there are hard-clipped,
+so one molecule is not annotated twice; on linear contigs the pipeline keeps
+supplementary records and soft clips.
 
 `fiberhmm-call` then calls the whole molecule. FiberBrowser draws it
 continuously across the origin in a circular view (a view that runs past the
