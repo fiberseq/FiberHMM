@@ -770,3 +770,42 @@ def require_model_files(tool: str, *flag_paths) -> None:
         if problem:
             print(f"error: {tool}: {flag} {path} {problem}", file=sys.stderr)
             sys.exit(2)
+
+
+def refuse_non_bam_output(path, tool: str) -> None:
+    """Exit 2 when a BAM-writing tool is given a ``.sam``/``.cram`` output name.
+
+    The tools always write BGZF BAM; a ``.sam`` name gave BAM bytes under a SAM
+    name (plus ``x.sam.bai``).
+    """
+    if not path or path == '-':
+        return
+    suffix = str(path).lower().rsplit('.', 1)[-1] if '.' in str(path) else ''
+    if suffix in ('sam', 'cram'):
+        print(
+            f"error: {tool}: writes BAM, but the output is named {path!r}. Name "
+            "it .bam (convert afterwards with samtools view if you need "
+            f"{suffix.upper()}).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+
+def refuse_region_options_without_region_parallel(args, tool: str) -> None:
+    """Exit 2 when --chroms/--skip-scaffolds are given to a streaming run.
+
+    They select regions of the region-parallel pipeline; the streaming path
+    used to ignore them and call every read.
+    """
+    given = [flag for flag, value in (('--chroms', getattr(args, 'chroms', None)),
+                                      ('--skip-scaffolds', getattr(args, 'skip_scaffolds', False)))
+             if value]
+    if given and not getattr(args, 'region_parallel', False):
+        print(
+            f"error: {tool}: {' and '.join(given)} "
+            f"{'select' if len(given) > 1 else 'selects'} regions of "
+            "--region-parallel runs; add --region-parallel (indexed, "
+            "coordinate-sorted input), or use --region for a streaming run.",
+            file=sys.stderr,
+        )
+        sys.exit(2)

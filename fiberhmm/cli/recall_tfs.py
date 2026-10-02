@@ -59,6 +59,7 @@ import pysam
 from fiberhmm.cli.common import (
     add_force_seq_arg,
     add_legacy_mode_override,
+    refuse_non_bam_output,
     require_model_files,
     resolve_observation_mode,
     resolve_platform_argument,
@@ -1176,6 +1177,7 @@ def _main(args):
     # on conflicting evidence) before the bundled model is chosen.
     resolve_platform_argument(args, args.in_bam, tool='fiberhmm-recall-tfs')
     require_model_files('fiberhmm-recall-tfs', ('-m/--model', args.model))
+    refuse_non_bam_output(args.out_bam, 'fiberhmm-recall-tfs')
 
     # Resolve model path: explicit -m wins; else use bundled model for --enzyme
     model_path = args.model

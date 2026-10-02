@@ -241,3 +241,57 @@ def test_daf_model_with_an_m6a_enzyme_names_the_conflict(bad_inputs, function):
     assert proc.returncode == 2, proc.stderr
     assert "is a DAF-seq (deamination) model" in proc.stderr
     assert "--enzyme hia5 is Fiber-seq (m6A)" in proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# L6: region options on streaming call; L8: dedup with nothing to dedup;
+# L9: .sam output names
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def pacbio_style_bam(tmp_path_factory):
+    from conftest import make_synthetic_bam
+
+    tmp = tmp_path_factory.mktemp("l6_l9")
+    source = make_synthetic_bam(str(tmp / "src.bam"), n_reads=3, read_length=600,
+                                n_chroms=1, chrom_length=20_000, seed=41)
+    path = str(tmp / "pacbio.bam")
+    with pysam.AlignmentFile(source, "rb") as src, \
+            pysam.AlignmentFile(path, "wb", header=src.header) as out:
+        for read in src.fetch(until_eof=True):
+            read.set_tag("MM", read.get_tag("MM") + "T-a;")
+            out.write(read)
+    pysam.index(path)
+    return path
+
+
+@pytest.mark.parametrize("flags", [["--chroms", "chrNope"], ["--skip-scaffolds"]])
+def test_streaming_call_refuses_region_selection_options(pacbio_style_bam, tmp_path, flags):
+    """--chroms chrNope without --region-parallel used to call every read."""
+    output = tmp_path / "out.bam"
+    proc = _entry("call_main", "-i", pacbio_style_bam, "-o", output, "--enzyme",
+                  "hia5", "--seq", "pacbio", "--no-qc", "-c", "1", *flags)
+    assert proc.returncode == 2, proc.stderr
+    assert "--region-parallel" in proc.stderr
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("function", ["call_main", "recall_tfs_main"])
+def test_sam_or_cram_output_name_is_refused(pacbio_style_bam, tmp_path, function):
+    """-o x.sam wrote BGZF BAM bytes under a .sam name (plus x.sam.bai)."""
+    output = tmp_path / "out.sam"
+    proc = _entry(function, "-i", pacbio_style_bam, "-o", output, "--enzyme",
+                  "hia5", "--seq", "pacbio", "-c", "1")
+    assert proc.returncode == 2, proc.stderr
+    assert "Name it .bam" in proc.stderr
+    assert not output.exists()
+
+
+def test_dedup_without_fingerprintable_reads_exits_nonzero(pacbio_style_bam, tmp_path):
+    """dedup on a Fiber-seq BAM printed 'Nothing to do', wrote nothing and
+    exited 0, so an older output looked current."""
+    output = tmp_path / "dedup.bam"
+    proc = _entry("dedup_main", "-i", pacbio_style_bam, "-o", output)
+    assert proc.returncode == 1
+    assert "no output written" in proc.stderr
+    assert not output.exists()

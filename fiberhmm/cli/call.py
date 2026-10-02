@@ -30,6 +30,8 @@ from fiberhmm.cli.common import (
     ml_threshold,
     non_negative_int,
     refuse_model_enzyme_assay_conflict,
+    refuse_non_bam_output,
+    refuse_region_options_without_region_parallel,
     require_model_files,
     resolve_observation_mode,
     resolve_platform_argument,
@@ -951,6 +953,8 @@ def _main(args):
     resolve_platform_argument(args, args.input, tool='fiberhmm-call')
     require_model_files('fiberhmm-call', ('-m/--model', args.model),
                         ('--recall-model', args.recall_model))
+    refuse_region_options_without_region_parallel(args, 'fiberhmm-call')
+    refuse_non_bam_output(args.output, 'fiberhmm-call')
 
     apply_model_path = _resolve_apply_model(args)
     recall_model_path = _resolve_recall_model(args)
