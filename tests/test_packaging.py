@@ -219,7 +219,8 @@ def test_sdist_manifest_ships_what_the_tests_read():
     assert "tests" in graft
     for path in ("CHANGELOG.md", "CITATION.cff", "tools/gen_cli_reference.py",
                  "tools/build_advisory_index.py", "docs/reference/cli.md",
-                 "scripts/summarize_targeted_strand_rescue.py"):
+                 "scripts/summarize_targeted_strand_rescue.py",
+                 "models/ddda_TF.json", "models/hia5_pacbio.json"):
         assert path in included, path
         assert (root / path).exists(), path
 

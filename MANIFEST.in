@@ -8,4 +8,7 @@ graft tests
 include tools/gen_cli_reference.py tools/build_advisory_index.py
 include docs/reference/cli.md
 include scripts/summarize_targeted_strand_rescue.py
+# tests/test_model_registry.py checks the root models/ mirror of these tables.
+include models/ddda_TF.json models/ddda_nuc.json models/ddda_nuc_profile.json
+include models/dddb_nanopore.json models/hia5_nanopore.json models/hia5_pacbio.json
 global-exclude __pycache__ *.py[cod] .DS_Store
