@@ -89,9 +89,10 @@ fiberhmm-call -i sorted.bam -o calls.bam --enzyme hia5 --seq pacbio \
   replaced by an identical copy at the same path, is the same input; a
   changed one is refused even if its size and date were preserved. The
   resolved path is part of the identity, so the same data at another path
-  (for example staged to scratch) is a different input. A digest is recomputed unless the file's device, inode, size,
-  modification time and status-change time (which no tool can set back) are
-  all unchanged, so resuming does not rehash unchanged inputs.
+  (for example staged to scratch) is a different input. A digest is
+  recomputed unless the file's device, inode, size, modification time and
+  status-change time (which no tool can set back) are all unchanged, so
+  resuming does not rehash unchanged inputs.
 - `--resume` reuses every region whose marker and BAM (size and SHA-256)
   validate, reruns missing, partial or altered regions, then merges and
   publishes the output

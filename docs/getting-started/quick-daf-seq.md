@@ -105,13 +105,13 @@ FiberBrowser can pair the BAM with its map.
 ## Open it in FiberBrowser
 
 FiberBrowser, the companion browser, is installed separately
-(`pip install fiberbrowser`). Run the printed command, or open the called BAM and the reference in the
-FiberBrowser window. For a plasmid, also load the plasmid map (it adds the
-features); its contig name is the one the BAM uses, because the pipeline names
-the contig the way FiberBrowser names the map: the file name without its
-extension for SnapGene maps (`N1.dna` → `N1`), the `LOCUS` name for GenBank.
-For amplicons on a genome, `outputs.json` also gives the region with most
-reads (`"open": {"region": "chr2L:15474001-15489000"}`).
+(`pip install fiberbrowser`). Run the printed command, or open the called
+BAM and the reference in the FiberBrowser window. For a plasmid, also load
+the plasmid map (it adds the features); its contig name is the one the BAM uses, because
+the pipeline names the contig the way FiberBrowser names the map: the file
+name without its extension for SnapGene maps (`N1.dna` → `N1`), the `LOCUS`
+name for GenBank. For amplicons on a genome, `outputs.json` also gives the
+region with most reads (`"open": {"region": "chr2L:15474001-15489000"}`).
 
 ## What the pipeline does
 

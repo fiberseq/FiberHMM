@@ -438,7 +438,7 @@ fiberhmm-check data/*.bam qc/*.qc.json consensus_out/
   context-swapped 2.x tables are kept under `fiberhmm/models/legacy/`.
 - **Re-train** models built with 2.x `fiberhmm-train --base-model` on a base
   whose state 0 is the footprint, such as the bundled Nanopore Hia5 model
-  (`fiberhmm-check` cannot detect these).
+  (`fiberhmm-check` does not flag these).
 - Replace `fiberhmm-run` and the `python *.py` scripts with the `fiberhmm-*`
   commands.
 - FiberBrowser 3.0 requires FiberHMM 3.x.

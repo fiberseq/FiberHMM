@@ -55,7 +55,7 @@ bundled Nanopore Hia5 model, every 2.x release paired the inherited
 transitions with inverted states, so the resulting model called accessible
 DNA as footprint. 3.0 matches the new emission rows to the base model's
 accessible state. **Re-train models built this way with 2.x**;
-`fiberhmm-check` cannot detect them.
+`fiberhmm-check` does not flag them.
 
 ## Defaults that change numbers
 

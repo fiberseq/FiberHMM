@@ -239,11 +239,11 @@ structured progress events to stderr.
 **Same inputs, same classes.** Since 3.0, the same BAMs with the same
 parameters give identical classes on any machine (with single-threaded BLAS;
 see [Environment variables](../reference/environment.md)), from any folder
-and under any dataset names: a molecule is identified by its dataset's position in the
-run, its file's position in that dataset and the alignment record itself,
-never by a path or label. The order of the datasets and of the files within
-a dataset is part of the input; reorder them and you have a different (equally
-valid) run.
+and under any dataset names: a molecule is identified by its dataset's
+position in the run, its file's position in that dataset and the alignment
+record itself, never by a path or label. The order of the datasets and of
+the files within a dataset is part of the input; reorder them and you have a
+different (equally valid) run.
 
 **Near-threshold classes can depend on read order.** Discovery is
 deterministic, but the order of the molecules seeds k-means and decides the
