@@ -498,3 +498,244 @@ def resolve_platform_argument(args, input_path, *, tool: str,
             "--seq nanopore for Nanopore data.",
             file=sys.stderr,
         )
+
+
+# ---------------------------------------------------------------------------
+# Input/output path aliasing guard (shared by every CLI that writes files)
+# ---------------------------------------------------------------------------
+#
+# A mistyped path must never destroy data: an output that names an input (or
+# an input's index), two outputs that name one file, or an output/input inside
+# a directory the tool deletes when it finishes. Paths are compared by the
+# file they reach, not by spelling: symlinks are resolved, hard links compare
+# equal (same device and inode), and on case-insensitive filesystems (macOS
+# APFS/HFS+ default, Windows) names that differ only in case are the same.
+
+# Sidecars that describe an input and must not be overwritten either.
+_INPUT_SIDECAR_SUFFIXES = ('.bai', '.csi', '.crai', '.tbi', '.fai', '.gzi')
+
+
+class PathAliasError(ValueError):
+    """An output path would overwrite or delete an input or another output."""
+
+
+def _labelled_paths(paths):
+    """``[(label, path)]`` from ``{label: path-or-paths}`` or ``(label, path)``
+    pairs; ``None``, ``''`` and ``'-'`` (stdin/stdout) are skipped."""
+    import os
+
+    items = paths.items() if hasattr(paths, 'items') else (paths or ())
+    out = []
+    for label, value in items:
+        values = value if isinstance(value, (list, tuple)) else [value]
+        for path in values:
+            if path is None:
+                continue
+            path = os.fspath(path)
+            if path in ('', '-'):
+                continue
+            out.append((label, path))
+    return out
+
+
+def _case_insensitive_directory(directory: str) -> bool:
+    """Whether names in existing ``directory``'s filesystem ignore case.
+
+    Probed without writing: the case-swapped spelling of the nearest path
+    component that has letters is looked up. Undecidable paths count as
+    case-sensitive.
+    """
+    import os
+
+    probe = directory
+    while True:
+        parent, name = os.path.split(probe)
+        if name and name.swapcase() != name:
+            try:
+                return os.path.samefile(probe, os.path.join(parent, name.swapcase()))
+            except OSError:
+                return False
+        if not name or parent == probe:
+            return False
+        probe = parent
+
+
+def _location_key(path: str):
+    """Identity of the file ``path`` reaches (or would create).
+
+    ``(st_dev, st_ino, rest)``: the nearest existing ancestor of the fully
+    resolved path, plus the not-yet-existing components below it (case-folded
+    on a case-insensitive filesystem). Two paths with equal keys are the same
+    file now or will be once written.
+    """
+    import os
+
+    current = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+    rest = []
+    while not os.path.exists(current):
+        parent, name = os.path.split(current)
+        if parent == current:
+            break
+        rest.append(name)
+        current = parent
+    st = os.stat(current)
+    if rest and _case_insensitive_directory(current):
+        rest = [name.casefold() for name in rest]
+    return (st.st_dev, st.st_ino, tuple(reversed(rest)))
+
+
+def _traversed_directories(path: str, max_links: int = 40):
+    """Every directory whose entries resolving ``path`` passes through.
+
+    The path is resolved one component at a time, following each symlink
+    (``..`` is physical, as the kernel does it), so a link anywhere on the
+    way -- including a chain of links -- contributes the directory holding
+    it. The fully resolved path itself is included.
+    """
+    import os
+
+    absolute = os.path.abspath(os.path.expanduser(path))
+    drive, rest = os.path.splitdrive(absolute)
+    root = drive + os.sep
+    pending = [part for part in rest.split(os.sep) if part]
+    current = root
+    seen = []
+    links = 0
+    while pending:
+        name = pending.pop(0)
+        if name == '.':
+            continue
+        if name == '..':
+            current = os.path.dirname(current) or root
+            continue
+        seen.append(current)
+        candidate = os.path.join(current, name)
+        if os.path.islink(candidate) and links < max_links:
+            links += 1
+            target = os.readlink(candidate)
+            target_drive, target_rest = os.path.splitdrive(target)
+            parts = [part for part in target_rest.split(os.sep) if part]
+            if os.path.isabs(target):
+                current = (target_drive or drive) + os.sep
+            pending = parts + pending
+        else:
+            current = candidate
+    seen.append(current)
+    return seen
+
+
+def _is_inside(path: str, dir_key) -> bool:
+    """Whether ``path`` is, lies below, or reaches through the directory
+    ``dir_key``: resolving it passes an entry (file, directory or symlink)
+    of that directory, which disappears with it."""
+    return any(_location_key(directory) == dir_key
+               for directory in _traversed_directories(path))
+
+
+def find_path_aliases(*, inputs=(), outputs=(), deleted_dirs=(),
+                      protect_input_sidecars: bool = True):
+    """Problems (one sentence each) with these paths; empty when they are safe.
+
+    ``inputs``/``outputs``/``deleted_dirs`` map an option label (``'--input'``)
+    to a path or a list of paths, or are ``(label, path)`` pairs. An output is
+    refused when it is the same file as an input, as an index beside an input
+    (``.bai/.csi/.crai/.tbi/.fai/.gzi``, when ``protect_input_sidecars``), or
+    as another output -- including the index (``.bai/.csi/...``) that
+    publishing an output writes or removes beside it. Any input (or input index)
+    or output inside a directory in ``deleted_dirs`` (or naming it) is refused
+    too.
+    """
+    import os
+
+    from fiberhmm.inference.bam_output import index_paths_for
+
+    inputs = _labelled_paths(inputs)
+    outputs = _labelled_paths(outputs)
+    deleted_dirs = _labelled_paths(deleted_dirs)
+
+    protected = [(label, path, _location_key(path), None) for label, path in inputs]
+    if protect_input_sidecars:
+        for label, path in inputs:
+            sidecars = list(index_paths_for(path))
+            sidecars += [path + suffix for suffix in ('.fai', '.gzi')]
+            for sidecar in dict.fromkeys(sidecars):
+                if os.path.exists(sidecar):
+                    protected.append((label, sidecar, _location_key(sidecar), path))
+
+    # Indexes an output's publication writes or deletes beside it (BAM
+    # writers publish whatever the file is called, so every output counts).
+    implied = []
+    for label, path in outputs:
+        for index in dict.fromkeys(index_paths_for(path)):
+            implied.append((label, path, index, _location_key(index)))
+
+    problems = []
+    for in_label, in_path, key, owner in protected:
+        hit = next((i for i in implied if i[3] == key), None)
+        if hit is not None:
+            problems.append(
+                f"{in_label} {in_path} is where {hit[0]} {hit[1]} keeps its index "
+                f"({hit[2]}); publishing the output would replace or delete it. "
+                "Choose a different output path")
+
+    seen_outputs = []
+    for out_label, out_path in outputs:
+        key = _location_key(out_path)
+        clash = next((p for p in protected if p[2] == key), None)
+        if clash is not None:
+            in_label, in_path, _key, owner = clash
+            if owner is None:
+                problems.append(
+                    f"{out_label} {out_path} is the same file as {in_label} "
+                    f"{in_path}; writing it would destroy the input. Choose a "
+                    "different output path")
+            else:
+                problems.append(
+                    f"{out_label} {out_path} is the index {in_path} of {in_label} "
+                    f"{owner}; writing it would destroy that index. Choose a "
+                    "different output path")
+            continue
+        earlier = next((o for o in seen_outputs if o[2] == key), None)
+        if earlier is not None:
+            problems.append(
+                f"{earlier[0]} and {out_label} name the same file ({earlier[1]}, "
+                f"{out_path}); each output needs its own path")
+            continue
+        hit = next((i for i in implied if i[3] == key and i[1] != out_path), None)
+        if hit is not None:
+            problems.append(
+                f"{out_label} {out_path} is the index ({hit[2]}) that publishing "
+                f"{hit[0]} {hit[1]} replaces or deletes; choose a different path")
+            continue
+        seen_outputs.append((out_label, out_path, key))
+
+    for dir_label, directory in deleted_dirs:
+        dir_key = _location_key(directory)
+        candidates = ([('input', label, path) for label, path, _k, _o in protected]
+                      + [('output', label, path) for label, path in outputs])
+        for kind, label, path in candidates:
+            if _is_inside(path, dir_key):
+                problems.append(
+                    f"{kind} {label} {path} is inside {dir_label} {directory}, "
+                    "which is deleted when the run finishes; choose a path "
+                    "outside it")
+    return problems
+
+
+def check_path_aliases(**kwargs) -> None:
+    """Raise :class:`PathAliasError` for the problems :func:`find_path_aliases`
+    finds."""
+    problems = find_path_aliases(**kwargs)
+    if problems:
+        raise PathAliasError('; '.join(problems))
+
+
+def refuse_path_aliases(tool: str, **kwargs) -> None:
+    """Exit with status 2 and a one-line error naming the clashing options
+    when :func:`find_path_aliases` finds a problem. Call it before any file is
+    opened for writing."""
+    try:
+        check_path_aliases(**kwargs)
+    except PathAliasError as exc:
+        print(f"{tool}: error: {exc}", file=sys.stderr)
+        sys.exit(2)

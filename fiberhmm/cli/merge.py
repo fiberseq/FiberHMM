@@ -411,6 +411,13 @@ Examples:
     if not os.path.exists(args.input):
         print(f"Error: input not found: {args.input}", file=sys.stderr)
         sys.exit(1)
+    # -i X -o X is refused, not done in place.
+    from fiberhmm.cli.common import PathAliasError, check_path_aliases
+    try:
+        check_path_aliases(inputs={'--input': args.input},
+                           outputs={'--output': args.output})
+    except PathAliasError as exc:
+        p.error(str(exc))
     run_merge(args.input, args.output, prob_threshold=args.prob_threshold,
               pairs_only=args.pairs_only, io_threads=args.io_threads,
               recall=args.recall, enzyme=args.enzyme,

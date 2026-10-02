@@ -302,30 +302,33 @@ def run_dedup(in_bam, out_bam, min_jaccard=0.95, min_deam=10, ignore_strand=Fals
                 fh.write(f"{c}\t{sz}\n")
 
     # ---- Pass 2: write output (same iteration order = same indexing) ----
+    # Published atomically: a failed pass 2 never leaves a partial BAM at
+    # out_bam (or replaces an earlier one there).
+    from fiberhmm.inference.bam_output import atomic_output
     n_written = n_flagged = 0
-    with pysam.AlignmentFile(in_bam, "rb", check_sq=False) as bam:
-        out = pysam.AlignmentFile(
-            out_bam, "wb", threads=io_threads,
-            header=_dedup_output_header(
-                bam.header, min_jaccard=min_jaccard, min_deam=min_deam,
-                ignore_strand=ignore_strand, collapse=collapse,
-                prob_threshold=prob_threshold, max_end_diff=max_end_diff))
-        for idx, read in enumerate(bam.fetch(until_eof=True)):
-            c = int(labels[idx])
-            if c >= 0:
-                sz = cluster_sizes[c]
-                if sz > 1:
-                    read.set_tag(_TAG_CLUSTER, c, value_type='i')
-                    read.set_tag(_TAG_CLUSTER_SIZE, sz, value_type='i')
-                is_rep = idx in representatives
-                if not is_rep:
-                    read.is_duplicate = True
-                    n_flagged += 1
-                    if collapse:
-                        continue
-            out.write(read)
-            n_written += 1
-        out.close()
+    with atomic_output(out_bam) as out_path, \
+            pysam.AlignmentFile(in_bam, "rb", check_sq=False) as bam:
+        header = _dedup_output_header(
+            bam.header, min_jaccard=min_jaccard, min_deam=min_deam,
+            ignore_strand=ignore_strand, collapse=collapse,
+            prob_threshold=prob_threshold, max_end_diff=max_end_diff)
+        with pysam.AlignmentFile(out_path, "wb", threads=io_threads,
+                                 header=header) as out:
+            for idx, read in enumerate(bam.fetch(until_eof=True)):
+                c = int(labels[idx])
+                if c >= 0:
+                    sz = cluster_sizes[c]
+                    if sz > 1:
+                        read.set_tag(_TAG_CLUSTER, c, value_type='i')
+                        read.set_tag(_TAG_CLUSTER_SIZE, sz, value_type='i')
+                    is_rep = idx in representatives
+                    if not is_rep:
+                        read.is_duplicate = True
+                        n_flagged += 1
+                        if collapse:
+                            continue
+                out.write(read)
+                n_written += 1
 
     mode = "collapsed" if collapse else "flagged"
     print(f"Pass 2: wrote {n_written:,} reads ({n_flagged:,} duplicates {mode}) "
@@ -415,6 +418,11 @@ Examples:
     if args.max_end_diff < 0:
         print("Error: --max-end-diff must be non-negative.", file=sys.stderr)
         sys.exit(1)
+
+    from fiberhmm.cli.common import refuse_path_aliases
+    refuse_path_aliases('fiberhmm-dedup', inputs={'--input': args.input},
+                        outputs={'--output': args.output,
+                                 '--stats-tsv': args.stats_tsv})
 
     if args.output != '-':
         from fiberhmm.inference.bam_output import ensure_parent_dir

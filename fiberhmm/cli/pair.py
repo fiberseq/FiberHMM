@@ -417,8 +417,16 @@ Examples:
     if not args.from_paired and not args.sequence_only and not args.reference:
         p.error('--reference is required for default pairing; use --sequence-only '
                 'to require sequence-supported pairs only')
-    if os.path.abspath(args.input) == os.path.abspath(args.output):
-        p.error('input and output paths must differ')
+    from fiberhmm.cli.common import PathAliasError, check_path_aliases
+    try:
+        check_path_aliases(
+            inputs={'--input': args.input, '--reference': args.reference,
+                    '--model': args.model},
+            outputs={'--output': args.output, '--pairs-tsv': args.pairs_tsv,
+                     '--receipt-json': args.receipt_json},
+        )
+    except PathAliasError as exc:
+        p.error(str(exc))
     if args.ddda_derived_tf_max_edge_gap < -1:
         p.error('--ddda-derived-tf-max-edge-gap must be -1 or >= 0')
 
@@ -439,7 +447,14 @@ Examples:
     print(f"fiberhmm-pair: stages {' -> '.join(stages)}"
           + ('' if args.stop_after != 'recall' or args.from_paired else
              ' (use --stop-after pair to write tagged pairs only)'), file=sys.stderr)
-    paired_output = args.output if not merge else args.output + '.paired.tmp.bam'
+    # The intermediate paired BAM gets a unique hidden name beside the output:
+    # it can never be an existing file (an input of this or another run), and
+    # two runs writing the same output do not share it.
+    if merge:
+        from fiberhmm.inference.bam_output import temporary_output_path
+        paired_output = temporary_output_path(args.output) + '.paired.bam'
+    else:
+        paired_output = args.output
     if args.from_paired:
         paired_output = args.input
     receipt = None

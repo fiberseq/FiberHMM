@@ -890,6 +890,55 @@ def main():
         sys.exit(1)
 
 
+def _refuse_call_path_aliases(args, apply_model_path=None, recall_model_path=None):
+    """Refuse outputs that would destroy an input (the resolved models
+    included), another output, or be deleted with the region-parallel work
+    directory (exit 2).
+
+    The work directory is removed after a successful run unless
+    --keep-work-dir is given; then nothing the user keeps may live in it.
+    QC and DAF SNP files are written beside their prefixes and are checked as
+    outputs too.
+    """
+    from pathlib import Path
+
+    from fiberhmm.cli.common import refuse_path_aliases
+
+    deleted_dirs = {}
+    if args.region_parallel and args.output != '-' and not args.keep_work_dir:
+        from fiberhmm.inference.region_resume import default_work_dir
+        deleted_dirs['--work-dir'] = (
+            args.work_dir or str(default_work_dir(args.output)))
+    outputs = [('--output', args.output),
+               ('--progress-json', args.progress_json),
+               ('--dedup-stats-tsv', args.dedup_stats_tsv)]
+    if args.output != '-':
+        stem = Path(args.output).parent / 'qc' / Path(args.output).with_suffix('').name
+        # Recurrent-SNP files: when forced, or when the automatic DddA/DddB
+        # screen may run (see auto_snp in _main).
+        if args.daf_call_snps or (args.daf_call_snps is None and args.daf_snp_mask is None
+                                  and args.enzyme in ('ddda', 'dddb')):
+            snp_prefix = args.daf_snp_output_prefix or f"{stem}.daf_snps"
+            outputs += [('--daf-snp-output-prefix', snp_prefix + suffix)
+                        for suffix in ('.bed', '.vcf', '.json', '.amplicons.tsv')]
+        if args.qc:
+            qc_prefix = args.qc_output_prefix or str(stem)
+            outputs += [('--qc-output-prefix', qc_prefix + suffix)
+                        for suffix in ('.qc.json', '.qc.tsv', '.qc.png', '.qc.pdf',
+                                       '.qc.curves.json')]
+    refuse_path_aliases(
+        'fiberhmm-call',
+        inputs=[('--input', args.input), ('--model', args.model),
+                ('--model', apply_model_path),
+                ('--recall-model', args.recall_model),
+                ('--recall-model', recall_model_path),
+                ('--reference', args.reference),
+                ('--daf-snp-mask', args.daf_snp_mask)],
+        outputs=outputs,
+        deleted_dirs=deleted_dirs,
+    )
+
+
 def _main(args):
     stdout_mode = (args.output == '-')
     using_bundled_model = args.model is None
@@ -943,6 +992,8 @@ def _main(args):
 
     apply_model_path = _resolve_apply_model(args)
     recall_model_path = _resolve_recall_model(args)
+    # Before anything is written (everything above only reads).
+    _refuse_call_path_aliases(args, apply_model_path, recall_model_path)
 
     # Resolve mode/k from model metadata
     _, model_k, model_mode = load_model_with_metadata(apply_model_path)

@@ -21,8 +21,10 @@ Usage:
 
 import argparse
 import os
-import time
-from concurrent.futures import ProcessPoolExecutor
+import sys
+import uuid
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from contextlib import contextmanager
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
@@ -59,6 +61,33 @@ from fiberhmm.inference.engine import (
     configure_daf_snp_mask,
 )
 from fiberhmm.inference.parallel import _get_genome_regions
+
+
+class PosteriorInputError(ValueError):
+    """The input or the requested output cannot be used (a user error)."""
+
+
+def _require_h5py() -> None:
+    try:
+        import h5py  # noqa: F401
+    except ImportError as exc:
+        raise PosteriorInputError(
+            "HDF5 output (.h5/.hdf5) needs h5py: pip install \"fiberhmm[posteriors]\" "
+            "(or write .tsv.gz, which needs no extra package)") from exc
+
+
+def _require_index(input_bam: str) -> None:
+    """Region-parallel export fetches by region: the BAM needs an index."""
+    try:
+        with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as bam:
+            indexed = bam.has_index()
+    except (OSError, ValueError) as exc:
+        raise PosteriorInputError(f"cannot open {input_bam}: {exc}") from exc
+    if not indexed:
+        raise PosteriorInputError(
+            f"{input_bam} has no index (.bai/.csi). Run 'samtools index' on a "
+            "coordinate-sorted BAM, or pass --streaming to read it in one "
+            "serial pass.")
 
 
 def _detect_format(output_path: str, format_arg: str) -> str:
@@ -255,10 +284,11 @@ def _worker_params_for(mode, context_size, edge_trim, prob_threshold,
 def _report_skips(stats: Dict[str, int]) -> None:
     parts = [f"{k}={v:,}" for k, v in stats.items() if v and k != 'not_owned']
     if parts:
-        print("Skipped reads: " + ", ".join(parts))
+        print("Skipped reads: " + ", ".join(parts), file=sys.stderr)
     if stats.get('mm_not_applicable'):
         print(f"  {stats['mm_not_applicable']:,} hard-clipped/MN-mismatched records "
-              "carry MM/ML that does not index their stored SEQ; not exported.")
+              "carry MM/ML that does not index their stored SEQ; not exported.",
+              file=sys.stderr)
 
 
 def _write_batch_to_h5(grp, fibers: List[Dict], start_idx: int):
@@ -304,75 +334,221 @@ def _write_batch_to_h5(grp, fibers: List[Dict], start_idx: int):
     return fiber_ids, starts, ends, strands
 
 
+class PosteriorExportError(RuntimeError):
+    """A region (or the streaming pass) failed; nothing is published."""
+
+
+def _region_failure(region, error) -> PosteriorExportError:
+    chrom, start, end = region
+    return PosteriorExportError(
+        f"region {chrom}:{start}-{end} failed: {type(error).__name__}: {error}")
+
+
 def _process_regions(regions, input_bam, model_path, params,
                      n_cores, verbose, result_callback, stats=None):
     """Process all regions and call result_callback(chrom, results) for each.
 
-    Per-read skip counts are summed into ``stats`` when given.
+    Results are delivered in region order whatever the worker timing, so the
+    export is identical for any ``n_cores``. At most ``2 * n_cores`` regions
+    are in flight or waiting for an earlier region, which bounds memory. A
+    failing region raises :class:`PosteriorExportError` (the remaining work is
+    cancelled); it is never skipped. Per-read skip counts are summed into
+    ``stats`` when given.
     """
     def _merge(worker_stats):
         if stats is not None:
             for k, v in worker_stats.items():
                 stats[k] = stats.get(k, 0) + v
 
-    if n_cores > 1:
-        with ProcessPoolExecutor(
-            max_workers=n_cores,
-            initializer=_init_worker,
-            initargs=(model_path, params)
-        ) as executor:
-            pending = {}
-            region_iter = iter(regions)
-            max_pending = n_cores * 2
-
-            for _ in range(min(max_pending, len(regions))):
+    regions = list(regions)
+    pbar = tqdm(total=len(regions), desc="Processing regions", disable=not verbose,
+                file=sys.stderr)
+    try:
+        if n_cores > 1:
+            with ProcessPoolExecutor(
+                max_workers=n_cores,
+                initializer=_init_worker,
+                initargs=(model_path, params)
+            ) as executor:
+                window = n_cores * 2
+                pending = {}       # future -> region index
+                finished = {}      # region index -> worker result
+                next_submit = 0
+                next_emit = 0
                 try:
-                    chrom, start, end = next(region_iter)
-                    args = (chrom, start, end, input_bam)
-                    future = executor.submit(_process_region_worker, args)
-                    pending[future] = (chrom, start, end)
-                except StopIteration:
-                    break
+                    while next_emit < len(regions):
+                        while (next_submit < len(regions)
+                               and next_submit - next_emit < window):
+                            chrom, start, end = regions[next_submit]
+                            future = executor.submit(
+                                _process_region_worker,
+                                (chrom, start, end, input_bam))
+                            pending[future] = next_submit
+                            next_submit += 1
+                        while next_emit not in finished:
+                            done, _ = wait(list(pending), return_when=FIRST_COMPLETED)
+                            for future in done:
+                                index = pending.pop(future)
+                                try:
+                                    finished[index] = future.result()
+                                except Exception as error:
+                                    raise _region_failure(regions[index], error) from error
+                        while next_emit in finished:
+                            chrom, _start, _end, results, worker_stats = finished.pop(next_emit)
+                            _merge(worker_stats)
+                            result_callback(chrom, results)
+                            del results
+                            next_emit += 1
+                            pbar.update(1)
+                except BaseException:
+                    for future in pending:
+                        future.cancel()
+                    raise
+        else:
+            _init_worker(model_path, params)
+            for region in regions:
+                chrom, start, end = region
+                try:
+                    _, _, _, results, worker_stats = _process_region_worker(
+                        (chrom, start, end, input_bam))
+                except Exception as error:
+                    raise _region_failure(region, error) from error
+                _merge(worker_stats)
+                result_callback(chrom, results)
+                del results
+                pbar.update(1)
+    finally:
+        pbar.close()
 
-            pbar = tqdm(total=len(regions), desc="Processing regions", disable=not verbose)
 
-            while pending:
-                done = [fut for fut in pending if fut.done()]
+def _process_streaming(input_bam, model_path, params, verbose, result_callback,
+                       stats=None, chroms=None, skip_scaffolds=False,
+                       batch_size=1000):
+    """One serial pass over ``input_bam`` in file order (no index needed).
 
-                if not done:
-                    time.sleep(0.02)
-                    continue
+    Reads are delivered in batches of up to ``batch_size`` per contig, in the
+    order they appear in the file. ``chroms``/``skip_scaffolds`` select
+    contigs as in the region-parallel path.
+    """
+    from fiberhmm.inference.region_planning import _is_main_chromosome
 
-                for future in done:
-                    region_info = pending.pop(future)
+    _init_worker(model_path, params)
+    mode = params['mode']
+    context_size = params['context_size']
+    edge_trim = params['edge_trim']
+    prob_threshold = params.get('prob_threshold', DEFAULT_PROB_THRESHOLD)
+    local = _new_stats()
+    batch: List[Dict] = []
+    batch_chrom = None
 
-                    try:
-                        chrom, start, end, results, worker_stats = future.result()
-                        _merge(worker_stats)
-                        result_callback(chrom, results)
-                        del results
-                    except Exception as e:
-                        print(f"Error processing {region_info}: {e}")
+    def flush():
+        nonlocal batch
+        if batch:
+            result_callback(batch_chrom, batch)
+            batch = []
 
-                    pbar.update(1)
+    with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as bam:
+        if chroms is not None:
+            unknown = sorted(set(chroms) - set(bam.references))
+            if unknown:
+                raise ValueError("--chroms names contigs that are not in the "
+                                 "BAM header: " + ", ".join(unknown))
+        for read in tqdm(bam.fetch(until_eof=True), desc="Reading",
+                         disable=not verbose, file=sys.stderr, unit=" reads"):
+            chrom = read.reference_name
+            if chrom is not None and (
+                    (chroms is not None and chrom not in chroms)
+                    or (skip_scaffolds and not _is_main_chromosome(chrom))):
+                continue
+            result = extract_posteriors_from_read(
+                read, _worker_model, mode, context_size, edge_trim,
+                prob_threshold=prob_threshold, stats=local,
+            )
+            if result is None:
+                continue
+            if chrom != batch_chrom or len(batch) >= batch_size:
+                flush()
+                batch_chrom = chrom
+            batch.append(result)
+        flush()
+    if stats is not None:
+        for k, v in local.items():
+            stats[k] = stats.get(k, 0) + v
 
-                    try:
-                        chrom, start, end = next(region_iter)
-                        args = (chrom, start, end, input_bam)
-                        future = executor.submit(_process_region_worker, args)
-                        pending[future] = (chrom, start, end)
-                    except StopIteration:
-                        pass
 
-            pbar.close()
+def _plan_regions(input_bam, region_size, chroms, skip_scaffolds, streaming):
+    """Regions for the region-parallel path; None for a streaming pass."""
+    if streaming:
+        return None
+    return _get_genome_regions(input_bam, region_size,
+                               skip_scaffolds=skip_scaffolds, chroms=chroms)
+
+
+def _run_export(input_bam, model_path, params, n_cores, verbose, on_results,
+                stats, regions, chroms=None, skip_scaffolds=False):
+    """Region-parallel export over ``regions``, or a serial streaming pass
+    when ``regions`` is None."""
+    if regions is None:
+        _process_streaming(input_bam, model_path, params, verbose, on_results,
+                           stats=stats, chroms=chroms,
+                           skip_scaffolds=skip_scaffolds)
     else:
-        _init_worker(model_path, params)
-        for chrom, start, end in tqdm(regions, desc="Processing regions", disable=not verbose):
-            args = (chrom, start, end, input_bam)
-            _, _, _, results, worker_stats = _process_region_worker(args)
-            _merge(worker_stats)
-            result_callback(chrom, results)
-            del results
+        _process_regions(regions, input_bam, model_path, params, n_cores,
+                         verbose, on_results, stats=stats)
+
+
+@contextmanager
+def _atomic_export_path(final_path: str):
+    """Yield a hidden temporary sibling of ``final_path``; publish it there
+    with an atomic rename only when the body succeeds.
+
+    The temporary keeps the final name's ``.gz`` suffix (the TSV writer
+    compresses by suffix). On failure it is removed and an earlier file at
+    ``final_path`` is left untouched.
+    """
+    final = os.path.abspath(final_path)
+    directory, name = os.path.split(final)
+    suffix = '.gz' if name.endswith('.gz') else ''
+    temporary = os.path.join(
+        directory, f".{name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.partial{suffix}")
+    try:
+        yield temporary
+        os.replace(temporary, final)
+    except BaseException:
+        try:
+            os.remove(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def _export_provenance(model_path, prob_threshold, extraction, provenance=None) -> dict:
+    """Run settings recorded in the export's metadata (since 3.0).
+
+    Enough for ``fiberhmm-check`` and a reader to tell how the posteriors were
+    made: the model file and its sha256, the ML threshold, the DAF read
+    extraction policy and the code (version and git commit).
+    """
+    from fiberhmm.identity import fiberhmm_commit, file_sha256
+
+    extraction = extraction or {}
+    run_mask = extraction.get('daf_run_mask')
+    snp_mask = extraction.get('daf_snp_mask_path')
+    record = {
+        'model': os.path.basename(model_path),
+        'model_sha256': file_sha256(model_path),
+        'prob_threshold': int(prob_threshold),
+        'filter_chimeras': bool(extraction.get('filter_chimeras', True)),
+        'chimera_min_seg': extraction.get('chimera_min_seg', 5),
+        'chimera_purity': extraction.get('chimera_purity', 0.8),
+        'daf_snp_mask': os.path.basename(snp_mask) if snp_mask else None,
+        'daf_snp_mask_sha256': file_sha256(snp_mask) if snp_mask else None,
+        'daf_mask_runs': int(run_mask[0]) if run_mask is not None else None,
+        'daf_run_policy': run_mask[1] if run_mask is not None else None,
+        'fiberhmm_commit': fiberhmm_commit(),
+    }
+    record.update(provenance or {})
+    return {key: value for key, value in record.items() if value is not None}
 
 
 def export_posteriors_tsv(
@@ -388,8 +564,15 @@ def export_posteriors_tsv(
     context_size_override: int = None,
     prob_threshold: int = DEFAULT_PROB_THRESHOLD,
     extraction: Optional[dict] = None,
+    skip_scaffolds: bool = False,
+    streaming: bool = False,
+    provenance: Optional[dict] = None,
 ) -> int:
-    """Export posterior probabilities to gzipped TSV."""
+    """Export posterior probabilities to (gzipped) TSV.
+
+    Written to a temporary file and renamed to ``output_path`` only when the
+    whole export succeeded.
+    """
     from fiberhmm.posteriors.tsv_backend import PosteriorsTSVWriter
 
     model, model_context_size, model_mode = load_model_with_metadata(model_path, normalize=True)
@@ -401,49 +584,55 @@ def export_posteriors_tsv(
     context_size = context_size_override if context_size_override else model_context_size
 
     if verbose:
-        print(f"Loaded model: mode={model_mode}, context_size={model_context_size}")
+        print(f"Loaded model: mode={model_mode}, context_size={model_context_size}",
+              file=sys.stderr)
         if mode_override:
-            print(f"  Mode override: {mode}")
+            print(f"  Mode override: {mode}", file=sys.stderr)
 
-    regions = _get_genome_regions(input_bam, region_size, chroms=chroms)
+    regions = _plan_regions(input_bam, region_size, chroms, skip_scaffolds, streaming)
     if verbose:
-        print(f"Processing {len(regions)} regions from {input_bam}")
-        print(f"Using {n_cores} cores, output format: TSV")
+        if regions is None:
+            print(f"Streaming {input_bam} in one pass, output format: TSV",
+                  file=sys.stderr)
+        else:
+            print(f"Processing {len(regions)} regions from {input_bam}", file=sys.stderr)
+            print(f"Using {n_cores} cores, output format: TSV", file=sys.stderr)
 
     params = _worker_params_for(mode, context_size, edge_trim,
                                 prob_threshold, extraction)
+    metadata = _export_provenance(model_path, prob_threshold, extraction, provenance)
 
     stats = _new_stats()
     compress = output_path.endswith('.gz')
-    writer = PosteriorsTSVWriter(
-        output_path, mode=mode, context_size=context_size,
-        edge_trim=edge_trim, source_bam=input_bam, compress=compress
-    )
+    with _atomic_export_path(output_path) as temporary:
+        writer = PosteriorsTSVWriter(
+            temporary, mode=mode, context_size=context_size,
+            edge_trim=edge_trim, source_bam=input_bam, compress=compress,
+            extra_metadata=metadata,
+        )
 
-    def on_results(chrom, results):
-        for fiber in results:
-            writer.write_fiber(
-                read_id=fiber['read_name'],
-                chrom=chrom,
-                start=fiber['ref_start'],
-                end=fiber['ref_end'],
-                strand=fiber['strand'],
-                posteriors=fiber['posteriors'].astype(np.float32),
-                fp_starts=fiber['footprint_starts'],
-                fp_sizes=fiber['footprint_sizes'],
-            )
+        def on_results(chrom, results):
+            for fiber in results:
+                writer.write_fiber(
+                    read_id=fiber['read_name'],
+                    chrom=chrom,
+                    start=fiber['ref_start'],
+                    end=fiber['ref_end'],
+                    strand=fiber['strand'],
+                    posteriors=fiber['posteriors'].astype(np.float32),
+                    fp_starts=fiber['footprint_starts'],
+                    fp_sizes=fiber['footprint_sizes'],
+                )
 
-    try:
-        _process_regions(regions, input_bam, model_path, params, n_cores,
-                         verbose, on_results, stats=stats)
-    finally:
-        total = writer.close()
+        try:
+            _run_export(input_bam, model_path, params, n_cores, verbose,
+                        on_results, stats, regions, chroms, skip_scaffolds)
+        finally:
+            total = writer.close()
 
-    if verbose:
-        _report_skips(stats)
-        out_file = writer.output_path
-        file_size = os.path.getsize(out_file) / (1024 * 1024)
-        print(f"Wrote {out_file} ({file_size:.1f} MB, {total:,} fibers)")
+    _report_skips(stats)
+    file_size = os.path.getsize(output_path) / (1024 * 1024)
+    print(f"Wrote {output_path} ({file_size:.1f} MB, {total:,} fibers)", file=sys.stderr)
 
     return total
 
@@ -462,12 +651,16 @@ def export_posteriors_hdf5(
     context_size_override: int = None,
     prob_threshold: int = DEFAULT_PROB_THRESHOLD,
     extraction: Optional[dict] = None,
+    skip_scaffolds: bool = False,
+    streaming: bool = False,
+    provenance: Optional[dict] = None,
 ) -> int:
     """
     Export posterior probabilities to HDF5.
 
     STREAMING + BATCHED: Results written in batches as regions complete.
-    Memory usage stays bounded regardless of BAM size.
+    Memory usage stays bounded regardless of BAM size. Written to a temporary
+    file and renamed to ``output_h5`` only when the whole export succeeded.
     """
     import h5py
 
@@ -480,36 +673,35 @@ def export_posteriors_hdf5(
     context_size = context_size_override if context_size_override else model_context_size
 
     if verbose:
-        print(f"Loaded model: mode={model_mode}, context_size={model_context_size}")
+        print(f"Loaded model: mode={model_mode}, context_size={model_context_size}",
+              file=sys.stderr)
         if mode_override:
-            print(f"  Mode override: {mode}")
+            print(f"  Mode override: {mode}", file=sys.stderr)
 
-    regions = _get_genome_regions(input_bam, region_size, chroms=chroms)
+    regions = _plan_regions(input_bam, region_size, chroms, skip_scaffolds, streaming)
     if verbose:
-        print(f"Processing {len(regions)} regions from {input_bam}")
-        print(f"Using {n_cores} cores with streaming/batched writes, output format: HDF5")
+        if regions is None:
+            print(f"Streaming {input_bam} in one pass, output format: HDF5",
+                  file=sys.stderr)
+        else:
+            print(f"Processing {len(regions)} regions from {input_bam}", file=sys.stderr)
+            print(f"Using {n_cores} cores with streaming/batched writes, "
+                  "output format: HDF5", file=sys.stderr)
 
     params = _worker_params_for(mode, context_size, edge_trim,
                                 prob_threshold, extraction)
+    metadata = _export_provenance(model_path, prob_threshold, extraction, provenance)
 
     stats = _new_stats()
 
-    # Group regions by chromosome
-    regions_by_chrom = {}
-    for chrom, start, end in regions:
-        if chrom not in regions_by_chrom:
-            regions_by_chrom[chrom] = []
-        regions_by_chrom[chrom].append((start, end))
-
     # Track per-chromosome data
-    chrom_fiber_counts = {chrom: 0 for chrom in regions_by_chrom}
-    chrom_metadata = {chrom: {'ids': [], 'starts': [], 'ends': [], 'strands': []}
-                      for chrom in regions_by_chrom}
+    chrom_fiber_counts = {}
+    chrom_metadata = {}
 
     # Pending writes buffer per chromosome
-    write_buffers = {chrom: [] for chrom in regions_by_chrom}
+    write_buffers = {}
 
-    with h5py.File(output_h5, 'w') as f:
+    with _atomic_export_path(output_h5) as temporary, h5py.File(temporary, 'w') as f:
         # Store file metadata
         f.attrs['mode'] = mode
         f.attrs['context_size'] = context_size
@@ -520,14 +712,26 @@ def export_posteriors_hdf5(
         # Read by fiberhmm.advisories (re-export after a fix); since 3.0.
         from fiberhmm import __version__ as _fiberhmm_version
         f.attrs['fiberhmm_version'] = _fiberhmm_version
+        for key, value in metadata.items():
+            if key not in f.attrs:
+                f.attrs[key] = value
 
-        # Pre-create chromosome groups
-        for chrom in regions_by_chrom:
+        def ensure_group(chrom):
+            if chrom in write_buffers:
+                return
             grp = f.create_group(chrom)
             grp.create_group('posteriors')
             grp.create_group('ref_positions')
             grp.create_group('footprint_starts')
             grp.create_group('footprint_sizes')
+            chrom_fiber_counts[chrom] = 0
+            chrom_metadata[chrom] = {'ids': [], 'starts': [], 'ends': [], 'strands': []}
+            write_buffers[chrom] = []
+
+        # Pre-create a group per planned contig, in region order (a streaming
+        # pass creates them as contigs appear in the file).
+        for chrom in dict.fromkeys(chrom for chrom, _s, _e in regions or ()):
+            ensure_group(chrom)
 
         def flush_buffer(chrom):
             """Write buffered fibers to HDF5."""
@@ -550,25 +754,25 @@ def export_posteriors_hdf5(
             write_buffers[chrom] = []
 
         def on_results(chrom, results):
+            ensure_group(chrom)
             write_buffers[chrom].extend(results)
             if len(write_buffers[chrom]) >= write_batch_size:
                 flush_buffer(chrom)
 
-        _process_regions(regions, input_bam, model_path, params, n_cores,
-                         verbose, on_results, stats=stats)
-        if verbose:
-            _report_skips(stats)
+        _run_export(input_bam, model_path, params, n_cores, verbose,
+                    on_results, stats, regions, chroms, skip_scaffolds)
+        _report_skips(stats)
 
         # Flush remaining buffers
-        for chrom in regions_by_chrom:
+        for chrom in write_buffers:
             flush_buffer(chrom)
 
         # Finalize metadata (fast - just concatenating pre-built arrays)
         if verbose:
-            print("Finalizing metadata...")
+            print("Finalizing metadata...", file=sys.stderr)
 
         dt = h5py.special_dtype(vlen=str)
-        for chrom in regions_by_chrom:
+        for chrom in write_buffers:
             grp = f[chrom]
             meta = chrom_metadata[chrom]
             n_fibers = chrom_fiber_counts[chrom]
@@ -590,9 +794,9 @@ def export_posteriors_hdf5(
 
     total_fibers = sum(chrom_fiber_counts.values())
 
-    if verbose:
-        file_size = os.path.getsize(output_h5) / (1024 * 1024)
-        print(f"Wrote {output_h5} ({file_size:.1f} MB, {total_fibers:,} fibers)")
+    file_size = os.path.getsize(output_h5) / (1024 * 1024)
+    print(f"Wrote {output_h5} ({file_size:.1f} MB, {total_fibers:,} fibers)",
+          file=sys.stderr)
 
     return total_fibers
 
@@ -612,17 +816,29 @@ def export_posteriors(
     context_size_override: int = None,
     prob_threshold: int = DEFAULT_PROB_THRESHOLD,
     extraction: Optional[dict] = None,
+    skip_scaffolds: bool = False,
+    streaming: bool = False,
+    provenance: Optional[dict] = None,
 ) -> int:
     """
     Export posterior probabilities to TSV or HDF5.
 
     Dispatches to format-specific implementation. A missing output
-    directory is created.
+    directory is created. Region-parallel export (the default) needs an
+    indexed BAM; ``streaming`` reads the file once in order instead (serial;
+    unindexed input is fine). Any failure raises and publishes nothing: an
+    earlier file at ``output_path`` is left as it was.
     """
     from fiberhmm.inference.bam_output import ensure_parent_dir
 
     fmt = _detect_format(output_path, format)
+    if fmt == 'hdf5':
+        _require_h5py()
+    if not streaming:
+        _require_index(input_bam)
     ensure_parent_dir(output_path)
+    common = dict(skip_scaffolds=skip_scaffolds, streaming=streaming,
+                  provenance=provenance)
 
     if fmt == 'hdf5':
         return export_posteriors_hdf5(
@@ -639,6 +855,7 @@ def export_posteriors(
             context_size_override=context_size_override,
             prob_threshold=prob_threshold,
             extraction=extraction,
+            **common,
         )
     else:
         return export_posteriors_tsv(
@@ -654,6 +871,7 @@ def export_posteriors(
             context_size_override=context_size_override,
             prob_threshold=prob_threshold,
             extraction=extraction,
+            **common,
         )
 
 
@@ -869,14 +1087,47 @@ def main():
                           'ignored (e.g. the mask fiberhmm-call used)')
     add_daf_run_mask_arguments(daf)
     add_parallel_args(parser, default_cores=4, default_region_size=5_000_000)
+    # --chunk-size and --io-threads come from the shared factory but have no
+    # posteriors implementation; they are hidden and refused (not ignored).
+    for action in parser._actions:
+        if action.dest == 'streaming':
+            action.help = ("Read the BAM once, in file order, in a single process "
+                           "(no index needed; --cores is not used). Default: "
+                           "region-parallel over an indexed BAM.")
+        elif action.dest == 'cores':
+            action.help = "Worker processes (0 = all CPUs; default: 4)"
+        elif action.dest in ('chunk_size', 'io_threads'):
+            action.help = argparse.SUPPRESS
+    parser.set_defaults(chunk_size=None, io_threads=None)
 
     parser.add_argument('--batch-size', type=int, default=1000,
                        help='Fibers per HDF5 write batch (default: 1000)')
 
     add_verbose_args(parser)
+    for action in parser._actions:
+        if action.dest == 'verbose':
+            action.help = ("Also print model/region details and a progress bar "
+                           "(the summary is always printed, to stderr)")
     add_version_args(parser)
 
     args = parser.parse_args()
+
+    unsupported = [flag for flag, value in (('--chunk-size', args.chunk_size),
+                                            ('--io-threads', args.io_threads))
+                   if value is not None]
+    if unsupported:
+        parser.error(", ".join(unsupported) + " has no effect in "
+                     "fiberhmm-posteriors; remove it")
+    if args.cores < 0:
+        parser.error("--cores must be >= 0 (0 = all CPUs)")
+    n_cores = args.cores or (os.cpu_count() or 1)
+
+    output_format = _detect_format(args.output, args.format)
+    if output_format == 'hdf5':
+        try:
+            _require_h5py()
+        except PosteriorInputError as exc:
+            parser.error(str(exc))
 
     using_bundled_model = args.model is None
     model_path = args.model
@@ -894,7 +1145,13 @@ def main():
             model_path = _get_bundled(args.enzyme, tool='apply', seq=args.seq)
         except (KeyError, FileNotFoundError) as e:
             parser.error(str(e))
-        print(f"Using bundled model: {model_path}")
+        print(f"Using bundled model: {model_path}", file=sys.stderr)
+
+    from fiberhmm.cli.common import refuse_path_aliases
+    refuse_path_aliases('fiberhmm-posteriors',
+                        inputs={'--input': args.input, '--model': model_path,
+                                '--daf-snp-mask': args.daf_snp_mask},
+                        outputs={'--output': args.output})
 
     _, _, model_mode = load_model_with_metadata(model_path, normalize=False)
     from fiberhmm.models import get_metadata_mode_aliases, get_observation_mode
@@ -941,21 +1198,38 @@ def main():
             parser.error("--daf-mask-runs/--daf-snp-mask require mode daf")
         extraction['daf_run_mask'] = (0, 'keep-one')
 
-    export_posteriors(
-        input_bam=args.input,
-        model_path=model_path,
-        output_path=args.output,
-        format=args.format,
-        chroms=chroms,
-        edge_trim=args.edge_trim,
-        n_cores=args.cores,
-        region_size=args.region_size,
-        write_batch_size=args.batch_size,
-        verbose=args.verbose or True,
-        mode_override=effective_mode,
-        prob_threshold=prob_threshold,
-        extraction=extraction,
-    )
+    provenance = {
+        'enzyme': args.enzyme,
+        'platform': args.seq,
+        'fiberhmm_mode': effective_mode,
+    }
+    from fiberhmm.inference.region_planning import RegionPlanError
+    try:
+        export_posteriors(
+            input_bam=args.input,
+            model_path=model_path,
+            output_path=args.output,
+            format=args.format,
+            chroms=chroms,
+            edge_trim=args.edge_trim,
+            n_cores=n_cores,
+            region_size=args.region_size,
+            write_batch_size=args.batch_size,
+            verbose=args.verbose,
+            mode_override=effective_mode,
+            prob_threshold=prob_threshold,
+            extraction=extraction,
+            skip_scaffolds=args.skip_scaffolds,
+            streaming=args.streaming,
+            provenance=provenance,
+        )
+    except (PosteriorInputError, RegionPlanError) as exc:
+        print(f"fiberhmm-posteriors: error: {exc}", file=sys.stderr)
+        sys.exit(2)
+    except (PosteriorExportError, OSError, ValueError, RuntimeError) as exc:
+        print(f"fiberhmm-posteriors: error: {exc}; nothing was written to "
+              f"{args.output}", file=sys.stderr)
+        sys.exit(1)
 
 
 # Python API entry point (same pipeline as the fiberhmm-posteriors command)
