@@ -853,3 +853,27 @@ def test_m5_less_input_with_md_that_does_not_match_its_cigar_is_realigned(tmp_pa
         assert result.returncode == 0, result.stderr.decode(errors="replace")
         outputs.add(result.stdout.decode().strip())
     assert outputs == {repr(expected)}
+
+
+@pytest.mark.parametrize("enzyme, seq, expected", [
+    ("dddb", None, ["--mode", "daf", "--enzyme", "dddb"]),
+    ("ddda", "pacbio", ["--mode", "daf", "--enzyme", "ddda"]),
+    ("hia5", "nanopore", ["--mode", "nanopore-fiber", "--enzyme", "hia5"]),
+    ("hia5", "pacbio", ["--mode", "pacbio-fiber", "--enzyme", "hia5"]),
+])
+def test_qc_step_states_the_called_assay(tmp_path, monkeypatch, enzyme, seq, expected):
+    # Audit H1: the QC step left the assay to header inference, which read the
+    # dedup record's "mode=flag" on every deduplicated DAF BAM.
+    reads = tmp_path / "r.fastq"; reads.write_text("@r\nAAAA\n+\nIIII\n")
+    ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + "A" * 1000 + "\n")
+    cfg = config(tmp_path / "out", reads, ref, enzyme=enzyme, seq=seq); cfg.qc = True
+    p = Pipeline(cfg); p._setup(); p.step_prepare_reference()
+    Path(p.called_bam).write_bytes(b"called")
+    seen = []
+    monkeypatch.setattr(Pipeline, "_run_logged",
+                        lambda self, cmd, log, *a, **k: seen.append(cmd) or 3)
+    p.step_qc()
+    (cmd,) = seen
+    at = cmd.index("--mode")
+    assert cmd[at:at + 4] == expected
+    p.close()

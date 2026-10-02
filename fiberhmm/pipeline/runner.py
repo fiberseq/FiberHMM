@@ -1263,7 +1263,8 @@ class Pipeline:
                 os.remove(leftover)
         self.progress.step("qc", "running")
         cmd = [sys.executable, "-m", "fiberhmm.cli.qc", "-i", self.called_bam,
-               "-o", os.path.dirname(self.qc_prefix), "--min-mapq", str(cfg.min_mapq)]
+               "-o", os.path.dirname(self.qc_prefix), "--min-mapq", str(cfg.min_mapq),
+               *self.qc_assay_args()]
         if cfg.prob_threshold is not None:
             cmd += ["--prob-threshold", str(cfg.prob_threshold)]
         if cfg.snp_mask:
@@ -1286,6 +1287,15 @@ class Pipeline:
             message += f" ({verdicts['overall_score']:.0f}/100)"
         self.log(f"qc: {message}")
         self.progress.step("qc", "done", message=message)
+
+    def qc_assay_args(self) -> list[str]:
+        """The assay this run called, stated to fiberhmm-qc (never guessed)."""
+        cfg = self.config
+        if cfg.enzyme in DAF_ENZYMES:
+            return ["--mode", "daf", "--enzyme", cfg.enzyme]
+        if cfg.enzyme == "hia5" and cfg.seq in ("pacbio", "nanopore"):
+            return ["--mode", f"{cfg.seq}-fiber", "--enzyme", "hia5"]
+        return []
 
     def _run_logged(self, cmd: list[str], log_path: str,
                     on_line: Optional[Callable[[str], None]] = None,
