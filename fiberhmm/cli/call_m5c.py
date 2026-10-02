@@ -110,8 +110,27 @@ def _parse_region(text, fasta):
     return chrom, start, end
 
 
+def _check_paths(args) -> None:
+    """Path conflicts, checked before any input is opened."""
+    if bool(args.tag_bam) != bool(args.tag_output):
+        raise SystemExit("--tag-bam and --tag-output must be supplied together")
+    if args.output == "-" and args.tag_output == "-":
+        raise SystemExit(
+            "-o - and --tag-output - would write the BED and the BAM to the same "
+            "stdout; send at most one of them to stdout")
+    if args.output != "-" and any(_same_file(path, args.output) for path in args.input):
+        raise SystemExit("output BED path must differ from every input BAM")
+    if args.tag_bam and _same_file(args.tag_bam, args.tag_output):
+        raise SystemExit("--tag-bam and --tag-output paths must differ")
+    if args.tag_output and any(_same_file(path, args.tag_output) for path in args.input):
+        raise SystemExit("--tag-output path must differ from every input BAM")
+    if args.tag_output and args.output != "-" and _same_file(args.output, args.tag_output):
+        raise SystemExit("--output BED and --tag-output BAM paths must differ")
+
+
 def main(argv=None):
     args = parse_args(argv)
+    _check_paths(args)
     from fiberhmm.cli.tag_m5c import _preflight_input
     for input_path in args.input:
         _preflight_input(input_path)
@@ -130,16 +149,6 @@ def main(argv=None):
         raise SystemExit("--read-posterior must be between 0.5 and 1")
     if args.read_min_island_cpg < 1:
         raise SystemExit("--read-min-island-cpg must be positive")
-    if bool(args.tag_bam) != bool(args.tag_output):
-        raise SystemExit("--tag-bam and --tag-output must be supplied together")
-    if args.output != "-" and any(_same_file(path, args.output) for path in args.input):
-        raise SystemExit("output BED path must differ from every input BAM")
-    if args.tag_bam and _same_file(args.tag_bam, args.tag_output):
-        raise SystemExit("--tag-bam and --tag-output paths must differ")
-    if args.tag_output and any(_same_file(path, args.tag_output) for path in args.input):
-        raise SystemExit("--tag-output path must differ from every input BAM")
-    if args.tag_output and args.output != "-" and _same_file(args.output, args.tag_output):
-        raise SystemExit("--output BED and --tag-output BAM paths must differ")
     if args.estimate_factors and args.five_prime_factors:
         raise SystemExit("use either --estimate-factors or --five-prime-factors, not both")
     if args.five_prime_factors:

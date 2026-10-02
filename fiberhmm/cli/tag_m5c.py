@@ -18,18 +18,32 @@ from fiberhmm.daf.m5c import (
 )
 
 
+_KNOWN_ENZYMES = ("ddda", "dddb", "hia5", "ecogii", "sssi")
+_ENZYME_OPTION_RE = re.compile(r"(?:--enzyme[ =]|(?<![a-z0-9_-])enzyme=)([a-z0-9]+)")
+
+
 def _declared_enzymes(header) -> set[str]:
-    """Find enzyme names explicitly recorded in BAM @PG/@CO provenance."""
+    """Enzymes the BAM's FiberHMM provenance declares.
+
+    Read from the ``FIBERHMM-CHEMISTRY`` declarations and the enzyme option
+    (``--enzyme X`` in ``CL``, ``enzyme=X`` in ``DS``) of FiberHMM ``@PG``
+    records. Other programs' records, file and directory names never count
+    (an aligner run on ``/data/ddda_vs_hia5/reads.fastq`` declares nothing).
+    """
+    from fiberhmm.io.bam_header import declared_chemistries
+
     data = header.to_dict() if hasattr(header, "to_dict") else dict(header)
-    text = "\n".join([
-        *(str(value) for value in data.get("CO", [])),
-        *(" ".join(str(value) for value in record.values())
-          for record in data.get("PG", [])),
-    ]).lower()
-    return {
-        enzyme for enzyme in ("ddda", "dddb", "hia5", "ecogii", "sssi")
-        if re.search(rf"(?<![a-z0-9]){enzyme}(?![a-z0-9])", text)
+    enzymes = {
+        str(declaration.get("enzyme", "")).lower()
+        for declaration in declared_chemistries(data)
     }
+    for record in data.get("PG", []):
+        program = str(record.get("PN") or record.get("ID") or "").lower()
+        if not program.startswith("fiberhmm"):
+            continue
+        text = f"{record.get('CL', '')} {record.get('DS', '')}".lower()
+        enzymes.update(match.group(1) for match in _ENZYME_OPTION_RE.finditer(text))
+    return {enzyme for enzyme in enzymes if enzyme in _KNOWN_ENZYMES}
 
 
 def _preflight_input(path: str, max_primary_reads: int = 5000) -> None:
