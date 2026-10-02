@@ -23,9 +23,12 @@ OPENBLAS_NUM_THREADS=1 FIBERHMM_NO_UPDATE_CHECK=1 python -m pytest tests -q -p n
 
 Single-threaded BLAS keeps the consensus reference tests exact. Tests that
 need private data sets skip when the data are absent. Benchmarks are
-excluded by default (`-m benchmark tests/benchmarks` runs them). CI runs the
-suite on Linux and macOS with Python 3.10 and 3.12 and smoke-tests a wheel
-install (`.github/workflows/ci.yml`). Code style: `black` and `ruff`, line
+excluded by default (`-m benchmark tests/benchmarks` runs them). The
+`fiberhmm-pipeline` end-to-end tests need `minimap2` and some tests need
+`samtools` on `PATH`; they skip without them. CI runs the suite on Linux and
+macOS with Python 3.10, 3.12 and 3.13 (with `minimap2` and `samtools`
+installed and the full git history) and smoke-tests a wheel install
+(`.github/workflows/ci.yml`). Code style: `black` and `ruff`, line
 length 100.
 
 Every fix should come with a test that fails before it and passes after.
@@ -44,7 +47,7 @@ mkdocs build --strict         # what CI runs; warnings fail the build
 ```
 
 The site is deployed to GitHub Pages by `.github/workflows/docs.yml` on
-pushes to `main` and on version tags.
+pushes to `main`; pull requests only build it.
 
 The [command-line reference](../reference/cli.md) is generated from the
 commands' argument parsers. After changing any option or help text, run:
@@ -73,7 +76,7 @@ Run from a clean checkout of the release commit.
    `python tools/build_advisory_index.py` refreshes the table digests and
    the commit table up to the release commit.
 3. **CI green** on the release commit (tests and wheel smoke on Linux/macOS,
-   Python 3.10 and 3.12).
+   Python 3.10, 3.12 and 3.13).
 4. **Wheel smoke.** Build and install into a fresh venv with core
    dependencies only, outside the source tree:
 

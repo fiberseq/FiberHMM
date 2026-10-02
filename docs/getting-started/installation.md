@@ -2,8 +2,8 @@
 
 ## Requirements
 
-- Python 3.10 or later (3.10–3.13 are supported, and CI runs 3.10 and 3.12;
-  3.9 does not work).
+- Python 3.10 or later (3.10–3.13 are supported, and CI runs 3.10, 3.12 and
+  3.13; 3.9 does not work).
 - Linux or macOS.
 - A C toolchain and htslib headers only if `pip` has to build `pysam` from
   source (see [Troubleshooting](#troubleshooting)); prebuilt wheels cover the

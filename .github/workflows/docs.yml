@@ -1,24 +1,28 @@
 name: Docs
 
-# Builds the MkDocs site from docs/ and mkdocs.yml. Pull requests only build
-# (strict: any warning fails); pushes to main and version tags also deploy to
-# GitHub Pages. One-time repository setting: Settings -> Pages -> Source:
-# "GitHub Actions". Uses only the default GITHUB_TOKEN.
+# Builds the MkDocs site from docs/ and mkdocs.yml (strict: any warning fails).
+# Pushes to main (and manual runs on main) deploy to GitHub Pages; pull
+# requests and manual runs on other branches only build. Version tags are not
+# deployed: the github-pages environment that Pages creates accepts
+# deployments from the default branch only, and the release commit reaches
+# main anyway. One-time repository setting before the first deploy:
+# Settings -> Pages -> Source: "GitHub Actions". Uses only the default
+# GITHUB_TOKEN.
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
+    # The CLI reference check imports every command, whose options are also
+    # defined outside fiberhmm/cli (shared argument helpers, consensus).
     paths:
       - "docs/**"
       - "mkdocs.yml"
       - "CHANGELOG.md"
       - "LICENSE"
+      - "pyproject.toml"
       - "tools/gen_cli_reference.py"
-      - "fiberhmm/cli/**"
-      - "fiberhmm/inference/consensus/cli.py"
-      - "fiberhmm/inference/consensus/transfer_cli.py"
+      - "fiberhmm/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -50,13 +54,13 @@ jobs:
       - name: Build the site (strict)
         run: mkdocs build --strict --site-dir site
       - name: Upload the Pages artifact
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
   deploy:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:
