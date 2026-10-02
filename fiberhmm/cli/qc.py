@@ -15,6 +15,7 @@ from typing import Optional
 from fiberhmm.qc.core import (
     DEFAULT_SAMPLE_READS,
     DEFAULT_SEED,
+    QCInputError,
     load_references,
     run_multi_qc,
     run_qc,
@@ -121,21 +122,25 @@ def main(argv=None):
         "prob_threshold": args.prob_threshold,
         "min_opportunities": args.min_opportunities,
     }
-    if len(input_paths) == 1:
-        prefix = args.output_prefix or str(output_dir / _stem(input_paths[0]))
-        result = run_qc(
-            input_path=input_paths[0],
-            output_prefix=prefix,
-            snp_mask_path=args.snp_mask,
-            snp_report_path=args.snp_report,
-            **common,
-        )
-    else:
-        result = run_multi_qc(
-            input_paths=input_paths,
-            output_dir=str(output_dir),
-            **common,
-        )
+    try:
+        if len(input_paths) == 1:
+            prefix = args.output_prefix or str(output_dir / _stem(input_paths[0]))
+            result = run_qc(
+                input_path=input_paths[0],
+                output_prefix=prefix,
+                snp_mask_path=args.snp_mask,
+                snp_report_path=args.snp_report,
+                **common,
+            )
+        else:
+            result = run_multi_qc(
+                input_paths=input_paths,
+                output_dir=str(output_dir),
+                **common,
+            )
+    except QCInputError as exc:
+        print(f"fiberhmm-qc: error: {exc}", file=sys.stderr)
+        return 2
     if args.fail_on_qc and result["overall"]["status"] == "FAIL":
         return 2
     return 0

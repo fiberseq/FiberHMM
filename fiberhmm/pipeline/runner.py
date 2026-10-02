@@ -108,14 +108,20 @@ class PipelineConfig:
     call_mode: str = "auto"  # auto | streaming | resumable
     tracks: bool = False
     aligner: str = "auto"
+    force_chemistry: bool = False  # run although the reads contradict --enzyme/--seq
     redo: Optional[str] = None  # "all" or a step: redo it and the later ones
     verbose: bool = False
     quiet: bool = False
 
     def resolved_seq(self) -> Optional[str]:
-        if self.seq:
-            return self.seq
-        return "nanopore" if self.enzyme in DAF_ENZYMES else None
+        """The platform the run states: ``--seq``, or what the reads record.
+
+        None for DAF reads with no platform record that are called as given
+        (fiberhmm-call then applies its own default); DAF reads aligned here
+        without a record are aligned and declared as Nanopore (the
+        Pipeline sets ``seq`` when it decides to align).
+        """
+        return self.seq or None
 
     def resolved_hard_clip(self) -> bool:
         if self.hard_clip is not None:
@@ -199,6 +205,109 @@ def validate_sample_name(name: str) -> str:
             hint="Use one name without path separators, spaces or a leading '.'/'-', "
                  "e.g. --sample run1 (letters, digits, '_', '-' and '.').")
     return text
+
+
+def infer_daf_platform(paths: list[str]) -> tuple[Optional[str], str]:
+    """``(platform or None, evidence)`` for DAF reads, from header records only.
+
+    The same evidence ``fiberhmm-call`` accepts for a DAF enzyme: a FIBERHMM
+    chemistry declaration, ``@RG PL`` or aligner/basecaller ``@PG`` records
+    (DAF reads carry no platform-specific MM pattern). FASTQ files carry
+    none. Raises :class:`PipelineError` when the files disagree.
+    """
+    from fiberhmm.cli.common import sniff_sequencing_platform
+    votes: dict[str, list[str]] = {}
+    for path in paths:
+        if not path.lower().endswith((".bam", ".cram", ".sam")):
+            continue
+        name = os.path.basename(path)
+        evidence = sniff_sequencing_platform(path, inspect_reads=False)
+        if evidence.conflict:
+            raise PipelineError(f"cannot tell the sequencing platform of {name}: "
+                                f"{evidence.conflict}",
+                                hint="Pass --seq pacbio or --seq nanopore.")
+        if evidence.platform:
+            votes.setdefault(evidence.platform, []).append(f"{name} ({evidence.source})")
+    if len(votes) > 1:
+        detail = "; ".join(f"{platform}: {', '.join(src)}" for platform, src in sorted(votes.items()))
+        raise PipelineError(f"the read files disagree about the sequencing platform ({detail})",
+                            hint="Pass --seq pacbio or --seq nanopore.")
+    if not votes:
+        return None, "no platform record in the read files"
+    platform, sources = next(iter(votes.items()))
+    return platform, "; ".join(sources)
+
+
+def chemistry_problems(paths: list[str], enzyme: str, seq: Optional[str]) -> list[str]:
+    """Why the reads do not look like ``enzyme`` (and ``--seq``) data.
+
+    Checked on the inputs themselves, before alignment, from strong evidence
+    only: a FIBERHMM-CHEMISTRY declaration naming another enzyme (or, with an
+    explicit ``seq``, another platform); for a DAF enzyme, reads that mostly
+    carry m6A calls (MM A+a/T-a) and no R/Y-encoded deaminations; for Hia5,
+    reads that mostly carry R/Y-encoded deaminations, or no m6A call at all.
+    """
+    from fiberhmm.io.bam_header import declared_chemistries
+    problems: list[str] = []
+    for path in paths:
+        name = os.path.basename(path)
+        if path.lower().endswith((".bam", ".cram", ".sam")):
+            with pysam.AlignmentFile(path, check_sq=False) as bam:
+                declarations = declared_chemistries(bam.header)
+            enzymes = {str(d.get("enzyme", "")).lower() for d in declarations} - {"", "custom"}
+            if enzymes and enzymes != {enzyme}:
+                problems.append(f"{name} declares {'/'.join(sorted(enzymes))} chemistry "
+                                f"(FIBERHMM-CHEMISTRY), not {enzyme}")
+            platforms = {("nanopore" if str(d.get("platform", "")).lower() == "ont"
+                          else str(d.get("platform", "")).lower())
+                         for d in declarations} & {"pacbio", "nanopore"}
+            if seq and platforms and platforms != {seq}:
+                problems.append(f"{name} declares {'/'.join(sorted(platforms))} reads "
+                                f"(FIBERHMM-CHEMISTRY), not --seq {seq}")
+        found = mm2.read_chemistry_evidence(path)
+        n, m6a, iupac = found["records"], found["m6a"], found["iupac"]
+        if not n:
+            continue
+        if enzyme in DAF_ENZYMES and m6a * 2 > n and not iupac:
+            problems.append(
+                f"{m6a} of the first {n} reads of {name} carry m6A calls (MM A+a/T-a) and "
+                "none carries R/Y-encoded deaminations: these look like Fiber-seq (Hia5) "
+                "reads, not DAF-seq")
+        elif enzyme == "hia5" and iupac * 2 > n and not m6a:
+            problems.append(
+                f"{iupac} of the first {n} reads of {name} carry R/Y-encoded deaminations "
+                "and none an m6A call: these look like DAF-seq reads, not Hia5 Fiber-seq")
+        elif enzyme == "hia5" and not m6a:
+            problems.append(
+                f"none of the first {n} reads of {name} carries an m6A call (MM/ML A+a or "
+                "T-a): Hia5 calling would find no m6A")
+    return problems
+
+
+def explicit_seq_warnings(paths: list[str], enzyme: str, seq: str) -> list[str]:
+    """Warnings for an explicit ``--seq`` the reads' own records disagree with.
+
+    An explicit ``--seq`` is authoritative (as in ``fiberhmm-call``); a
+    disagreeing chemistry declaration is refused by :func:`chemistry_problems`,
+    other evidence (MM pattern for Hia5, @RG/@PG records) only warns.
+    """
+    from fiberhmm.cli.common import sniff_sequencing_platform
+    warnings = []
+    for path in paths:
+        name = os.path.basename(path)
+        if path.lower().endswith((".bam", ".cram", ".sam")):
+            evidence = sniff_sequencing_platform(path, inspect_reads=enzyme == "hia5")
+            found, source = evidence.platform, evidence.source
+        elif enzyme == "hia5":
+            counts = mm2.fastq_platform_votes(path)
+            found = max(counts, key=counts.get) if any(counts.values()) else None
+            source = f"MM tags of {sum(counts.values())} read(s)"
+        else:
+            continue
+        if found and found != seq and "declaration" not in str(source):
+            warnings.append(f"platform: --seq {seq} was given, but {name} looks like "
+                            f"{found} ({source}); using --seq {seq} as requested")
+    return warnings
 
 
 def infer_read_platform(paths: list[str]) -> tuple[Optional[str], str]:
@@ -455,7 +564,8 @@ class Pipeline:
         self.memo = None
         self._lock: Optional[DirectoryLock] = None
         self._ran: set[str] = set()
-        self._notes: list[str] = []  # logged right after the start event
+        self._notes: list = []  # logged right after the start event (text or (text, level))
+        self._replace_chemistry = False
         self._redo_from = None
         if config.redo:
             self._redo_from = (0 if config.redo == "all" else
@@ -490,12 +600,45 @@ class Pipeline:
         for path in (self.aligned_bam, self.called_bam, self.qc_prefix):
             if os.path.commonpath([self.outdir, os.path.abspath(path)]) != self.outdir:
                 raise PipelineError(f"output {path} would be outside {self.outdir}")
+        self._check_chemistry()
+        if cfg.seq:
+            self._notes.extend((warning, "warning") for warning in
+                               explicit_seq_warnings(cfg.reads, cfg.enzyme, cfg.seq))
         if cfg.enzyme == "hia5" and not cfg.seq:
             # The minimap2 preset, the read group's PL and fiberhmm-call's
             # model all follow the platform: decide it once, from the reads.
             platform, evidence = infer_read_platform(cfg.reads)
             cfg.seq = platform
             self._notes.append(f"platform: {platform} (detected from {evidence})")
+        elif cfg.enzyme in DAF_ENZYMES and not cfg.seq:
+            platform, evidence = infer_daf_platform(cfg.reads)
+            if platform:
+                cfg.seq = platform
+                self._notes.append(f"platform: {platform} (detected from {evidence})")
+
+    def _check_chemistry(self) -> None:
+        """Refuse reads that contradict --enzyme/--seq (unless --force-chemistry)."""
+        cfg = self.config
+        try:
+            problems = chemistry_problems(cfg.reads, cfg.enzyme, cfg.seq)
+        except (OSError, ValueError) as exc:
+            raise PipelineError(f"cannot read the input: {exc}")
+        if not problems:
+            return
+        # A forced run over a contradicting FIBERHMM-CHEMISTRY declaration must
+        # let fiberhmm-call replace it (it refuses otherwise).
+        self._replace_chemistry = cfg.force_chemistry and any(
+            "FIBERHMM-CHEMISTRY" in problem for problem in problems)
+        if cfg.force_chemistry:
+            for problem in problems:
+                self._notes.append((f"chemistry: {problem}; continuing (--force-chemistry)",
+                                    "warning"))
+            return
+        raise PipelineError(
+            f"the reads do not look like --enzyme {cfg.enzyme}"
+            + (f" --seq {cfg.seq}" if cfg.seq else "") + " data: " + "; ".join(problems),
+            hint="Check --enzyme and --seq. If the data really are what you said, add "
+                 "--force-chemistry.")
 
     # -- messages ------------------------------------------------------------
     def log(self, message: str, level: str = "info") -> None:
@@ -536,8 +679,15 @@ class Pipeline:
         if not marker:
             return False
         if marker.get("fingerprint") != fingerprint:
-            changed = fingerprint_changes(marker.get("fingerprint") or {}, fingerprint)
+            recorded = marker.get("fingerprint") or {}
+            changed = fingerprint_changes(recorded, fingerprint)
             if self._upstream_reran(changed, upstream or {}):
+                return False
+            if changed and all(key not in recorded for key in changed):
+                # Settings an older FiberHMM did not record for this step: its
+                # result may not reflect them, so make it again.
+                self.log(f"{step}: the earlier result does not record "
+                         f"{', '.join(changed)}; running it again")
                 return False
             self._refuse(step, changed)
         ok, why = outputs_valid(marker, self.memo)
@@ -586,7 +736,8 @@ class Pipeline:
                                steps=list(self.steps), outdir=self.outdir,
                                settings=self.config.calling_settings())
             for note in self._notes:
-                self.log(note)
+                message, level = note if isinstance(note, tuple) else (note, "info")
+                self.log(message, level)
             self.step_prepare_reference()
             self.step_index()
             self.step_align()
@@ -697,6 +848,16 @@ class Pipeline:
         return staged
 
     def _decide_alignment(self) -> None:
+        self._decide_input_alignment()
+        cfg = self.config
+        if cfg.enzyme in DAF_ENZYMES and not cfg.seq and not self.use_aligned_input:
+            # Reads aligned here need a preset and a read-group platform:
+            # without a record in the reads, DAF-seq is taken as Nanopore.
+            cfg.seq = "nanopore"
+            self.log("platform: nanopore (the DAF-seq default; the reads record no "
+                     "platform). Pass --seq pacbio for PacBio reads.")
+
+    def _decide_input_alignment(self) -> None:
         cfg = self.config
         aligned = [rf for rf in self.read_files if rf.kind == "aligned"]
         if not aligned or len(aligned) != len(self.read_files):
@@ -722,7 +883,8 @@ class Pipeline:
                      "so the output is sorted and indexed")
             return
         self.use_aligned_input = path
-        self.log(f"align: {os.path.basename(path)} is already aligned to this reference")
+        self.log(f"align: {os.path.basename(path)} is already aligned to this reference; "
+                 f"it is used in place (no {self.sample}.aligned.bam is written)")
 
     # -- index -----------------------------------------------------------------
     def step_index(self) -> None:
@@ -735,7 +897,7 @@ class Pipeline:
         t0 = time.time()
         try:
             self.index_path, built = mm2.ensure_index(
-                self.reference.fasta, self.reference.source_sha256, cfg.preset(),
+                self.reference.fasta, self.reference.contigs, cfg.preset(),
                 self.aligner, threads=cfg.cores)
         except RuntimeError as exc:
             raise PipelineError(str(exc), hint="See the minimap2 message above.")
@@ -859,29 +1021,35 @@ class Pipeline:
             (rf.kind == "fastq" and mm2.fastq_has_sam_tags(rf.path))
             or (rf.kind != "fastq" and mm2.bam_has_mod_tags(rf.path))
             for rf in self.read_files)
-        feeder = mm2.ReadFeeder(self.read_files, carry_tags)
         rg = {"ID": self.sample, "SM": self.sample,
               "PL": "ONT" if (cfg.resolved_seq() or "nanopore") == "nanopore" else "PACBIO"}
-        rg_line = "@RG\\t" + "\\t".join(f"{k}:{v}" for k, v in rg.items())
         tmpdir = os.path.join(self.outdir, STATE_DIR, "tmp")
         os.makedirs(tmpdir, exist_ok=True)
         log_path = os.path.join(self.outdir, "logs", "minimap2.log")
-        if self.aligner.kind == "minimap2":
-            cmd = mm2.minimap2_command(self.aligner, self.index_path, preset, cfg.cores,
-                                       rg_line, carry_tags)
-            self.log("align: " + " ".join(shlex.quote(c) for c in cmd))
-            stream = mm2.Minimap2Stream(cmd, feeder, log_path)
-            _register(stream.proc)
-            source_program = {"ID": "minimap2", "PN": "minimap2",
-                              "VN": self.aligner.version, "CL": " ".join(cmd)}
-        else:
-            source_program = {"ID": "mappy", "PN": "mappy", "VN": self.aligner.version,
-                              "CL": f"mappy preset={preset} MD=True (as minimap2 -ax "
-                                    f"{preset} --MD -Y)"}
-            header = mm2.mappy_header(ref.contigs, rg, source_program)
-            self.log(f"align: mappy {self.aligner.version}, preset {preset}")
-            stream = mm2.MappyStream(self.index_path, preset, cfg.cores, feeder, header,
-                                     carry_tags, self.sample)
+        loaded = mm2.index_identity(self.index_path)
+        stream, feeder, source_program = self._open_alignment(preset, rg, carry_tags,
+                                                              log_path)
+        stale = mm2.index_mismatch(stream, ref.contigs)
+        if stale:
+            # A cache entry that does not hold this reference (it would place
+            # reads on other contigs): drop it (unless another run has already
+            # replaced it), rebuild, and start again.
+            self._abort_stream(stream)
+            mm2.discard_index(self.index_path, loaded)
+            self.log(f"index: {stale}; the cached index was removed and is rebuilt",
+                     "warning")
+            try:
+                self.index_path, _ = mm2.ensure_index(ref.fasta, ref.contigs, preset,
+                                                      self.aligner, threads=cfg.cores)
+            except RuntimeError as exc:
+                raise PipelineError(str(exc), hint="See the minimap2 message above.")
+            stream, feeder, source_program = self._open_alignment(preset, rg, carry_tags,
+                                                                  log_path)
+            stale = mm2.index_mismatch(stream, ref.contigs)
+            if stale:
+                self._abort_stream(stream)
+                raise PipelineError(f"alignment index: {stale}",
+                                    hint=f"Remove {self.index_path} and run again.")
 
         header = stream.header.to_dict()
         if not any(pg.get("ID") == source_program["ID"] for pg in header.get("PG", [])):
@@ -967,6 +1135,35 @@ class Pipeline:
                      "the plasmid map; for amplicons, the genome).")
         return stats
 
+    def _open_alignment(self, preset: str, rg: dict, carry_tags: bool, log_path: str):
+        """Start the aligner on a fresh read feeder: ``(stream, feeder, @PG record)``."""
+        cfg = self.config
+        feeder = mm2.ReadFeeder(self.read_files, carry_tags)
+        if self.aligner.kind == "minimap2":
+            rg_line = "@RG\\t" + "\\t".join(f"{k}:{v}" for k, v in rg.items())
+            cmd = mm2.minimap2_command(self.aligner, self.index_path, preset, cfg.cores,
+                                       rg_line, carry_tags)
+            self.log("align: " + " ".join(shlex.quote(c) for c in cmd))
+            stream = mm2.Minimap2Stream(cmd, feeder, log_path)
+            _register(stream.proc)
+            source_program = {"ID": "minimap2", "PN": "minimap2",
+                              "VN": self.aligner.version, "CL": " ".join(cmd)}
+        else:
+            source_program = {"ID": "mappy", "PN": "mappy", "VN": self.aligner.version,
+                              "CL": f"mappy preset={preset} MD=True (as minimap2 -ax "
+                                    f"{preset} --MD -Y)"}
+            header = mm2.mappy_header(self.reference.contigs, rg, source_program)
+            self.log(f"align: mappy {self.aligner.version}, preset {preset}")
+            stream = mm2.MappyStream(self.index_path, preset, cfg.cores, feeder, header,
+                                     carry_tags, self.sample)
+        return stream, feeder, source_program
+
+    @staticmethod
+    def _abort_stream(stream) -> None:
+        stream.abort()
+        if isinstance(stream, mm2.Minimap2Stream):
+            _unregister(stream.proc)
+
     def _process_group(self, group, circular, sequences, stats, name=None):
         cfg = self.config
         stats["reads"] += 1
@@ -1045,6 +1242,7 @@ class Pipeline:
             "call_args": list(cfg.call_args),
             "call_arg_files": self._call_arg_files(),
             "fiberhmm": __version__,
+            **({"replace_chemistry": True} if self._replace_chemistry else {}),
         }
 
     def resumable_call(self, supported: set[str]) -> bool:
@@ -1096,6 +1294,8 @@ class Pipeline:
                 cmd.append("--use-m5c" if cfg.use_m5c else "--no-use-m5c")
             if cfg.cpg_mask_policy:
                 cmd += ["--cpg-mask-policy", cfg.cpg_mask_policy]
+        if self._replace_chemistry:
+            cmd.append("--replace-chemistry")
         # QC runs as its own step (fiberhmm-qc on the called BAM).
         cmd.append("--no-qc")
         # Capabilities of a newer fiberhmm-call (resume, progress). They do not
@@ -1263,7 +1463,8 @@ class Pipeline:
                 os.remove(leftover)
         self.progress.step("qc", "running")
         cmd = [sys.executable, "-m", "fiberhmm.cli.qc", "-i", self.called_bam,
-               "-o", os.path.dirname(self.qc_prefix), "--min-mapq", str(cfg.min_mapq)]
+               "-o", os.path.dirname(self.qc_prefix), "--min-mapq", str(cfg.min_mapq),
+               *self.qc_assay_args()]
         if cfg.prob_threshold is not None:
             cmd += ["--prob-threshold", str(cfg.prob_threshold)]
         if cfg.snp_mask:
@@ -1286,6 +1487,15 @@ class Pipeline:
             message += f" ({verdicts['overall_score']:.0f}/100)"
         self.log(f"qc: {message}")
         self.progress.step("qc", "done", message=message)
+
+    def qc_assay_args(self) -> list[str]:
+        """The assay this run called, stated to fiberhmm-qc (never guessed)."""
+        cfg = self.config
+        if cfg.enzyme in DAF_ENZYMES:
+            return ["--mode", "daf", "--enzyme", cfg.enzyme]
+        if cfg.enzyme == "hia5" and cfg.seq in ("pacbio", "nanopore"):
+            return ["--mode", f"{cfg.seq}-fiber", "--enzyme", "hia5"]
+        return []
 
     def _run_logged(self, cmd: list[str], log_path: str,
                     on_line: Optional[Callable[[str], None]] = None,
@@ -1343,18 +1553,37 @@ class Pipeline:
         tracks_dir = os.path.join(self.outdir, "tracks")
         bigbed = shutil.which("bedToBigBed") is not None
         fingerprint = {"called": file_fingerprint(self.called_bam, self.memo),
-                       "bigbed": bigbed, "enzyme": cfg.enzyme}
+                       "bigbed": bigbed, "enzyme": cfg.enzyme,
+                       "prob_threshold": cfg.prob_threshold, "min_mapq": cfg.min_mapq}
         if self._is_complete("tracks", fingerprint, upstream={"called": "call"}):
             marker = read_marker(self.outdir, "tracks") or {}
             self.track_files = list((marker.get("outputs") or {}).get("files") or [])
             return
+        inventory = os.path.join(self.outdir, STATE_DIR, "tracks.files.json")
+        previous = list(((read_marker(self.outdir, "tracks") or {}).get("outputs") or {})
+                        .get("files") or [])
+        try:
+            with open(inventory, encoding="utf-8") as handle:
+                previous += [str(f) for f in json.load(handle)]
+        except (OSError, ValueError, TypeError):
+            pass
+        # Kept before the marker is cleared: an interrupted or failed run must
+        # not lose the list of tracks published so far.
+        previous = sorted({os.path.abspath(f) for f in previous})
+        write_json_atomic(inventory, previous)
         self._start_step("tracks")
         clear_marker(self.outdir, "tracks")
         self.progress.step("tracks", "running")
         layers = ["--nucleosome", "--msp", "--tf"]
         layers.append("--deam" if cfg.enzyme in DAF_ENZYMES else "--m6a")
+        # fiberhmm-extract writes into a private directory: everything in it is
+        # this run's output, whatever names extract derives from the BAM's.
+        staging = os.path.join(self.outdir, STATE_DIR, "tracks_staging")
+        shutil.rmtree(staging, ignore_errors=True)
         cmd = [sys.executable, "-m", "fiberhmm.cli.extract_tags", "-i", self.called_bam,
-               "-o", tracks_dir, "-c", str(cfg.cores), *layers]
+               "-o", staging, "-c", str(cfg.cores), "-q", str(cfg.min_mapq), *layers]
+        if cfg.prob_threshold is not None:
+            cmd += ["-p", str(cfg.prob_threshold)]
         if not bigbed:
             cmd.append("--bed-only")
             self.log("tracks: bedToBigBed not found; writing BED only", "warning")
@@ -1362,12 +1591,27 @@ class Pipeline:
         self.log("tracks: " + " ".join(shlex.quote(c) for c in cmd))
         code = self._run_logged(cmd, log_path)
         if code != 0:
+            shutil.rmtree(staging, ignore_errors=True)
             raise PipelineError(f"fiberhmm-extract failed (exit {code})",
                                 hint=f"Last lines of {log_path}:\n" + _tail(log_path, 20))
-        stem = os.path.basename(self.called_bam)[:-len(".bam")]
-        self.track_files = sorted(
-            os.path.join(tracks_dir, f) for f in os.listdir(tracks_dir)
-            if f.startswith(stem) and f.endswith((".bb", ".bed")))
+        produced = sorted(f for f in os.listdir(staging) if f.endswith((".bb", ".bed")))
+        os.makedirs(tracks_dir, exist_ok=True)
+        self.track_files = [os.path.join(tracks_dir, name) for name in produced]
+        # Every track this pipeline has published here (kept until cleanup is
+        # done, so an interrupted or failed run does not lose it).
+        write_json_atomic(inventory, sorted(set(previous) | set(self.track_files)))
+        for name, target in zip(produced, self.track_files):
+            os.replace(os.path.join(staging, name), target)
+        shutil.rmtree(staging, ignore_errors=True)
+        # Tracks of the earlier run that this one did not make again (a layer
+        # with no features now) would otherwise pass for current ones.
+        for stale in previous:
+            stale = os.path.abspath(stale)
+            if (stale not in self.track_files
+                    and os.path.dirname(stale) == os.path.abspath(tracks_dir)):
+                with contextlib.suppress(FileNotFoundError):
+                    os.remove(stale)
+        write_json_atomic(inventory, self.track_files)
         self._write_marker("tracks", fingerprint, {"files": self.track_files},
                            {"n_files": len(self.track_files)})
         self.progress.step("tracks", "done", message=f"{len(self.track_files)} files")

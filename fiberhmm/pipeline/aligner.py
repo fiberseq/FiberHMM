@@ -6,13 +6,17 @@ lab's DAF-seq standard, ``minimap2 -a -x map-ont --MD -Y`` (``-Y`` keeps the
 full read sequence on supplementary records, soft-clipped).
 
 Indexes are cached under ``~/.fiberhmm/minimap2_index/<digest>.mmi`` (override
-with ``FIBERHMM_MINIMAP2_INDEX_DIR``); the digest covers the reference FASTA's
-contents, the preset and the index format, so a later run on the same genome
-starts aligning at once.
+with ``FIBERHMM_MINIMAP2_INDEX_DIR``); the digest covers what the index holds
+(every contig's name, length and sequence MD5, in order), the preset and the
+index format, so a later run on the same genome starts aligning at once. A
+plasmid map's contig is named after its file, so a renamed copy of the same map
+gets its own index. Each index has a ``.json`` sidecar recording its contigs; an
+entry whose sidecar is missing or names other contigs is rebuilt.
 """
 from __future__ import annotations
 
 import array
+import contextlib
 import gzip
 import hashlib
 import os
@@ -93,21 +97,87 @@ def find_aligner(prefer: str = "auto") -> Aligner:
     raise AlignerNotFound(INSTALL_HELP)
 
 
-def index_digest(reference_sha256: str, preset: str, aligner: Aligner) -> str:
-    text = f"{reference_sha256}|{preset}|{aligner.index_format}"
+def contig_identity(contigs) -> list[list]:
+    """``[[name, length, sequence md5], ...]`` in reference order.
+
+    ``contigs`` are :class:`~fiberhmm.pipeline.reference.Contig` objects or
+    ``(name, length, md5)`` tuples. This is what a minimap2 index holds (the
+    topology is not part of it).
+    """
+    out = []
+    for contig in contigs:
+        if isinstance(contig, (tuple, list)):
+            name, length, md5 = contig[:3]
+        else:
+            name, length, md5 = contig.name, contig.length, contig.md5
+        out.append([str(name), int(length), str(md5)])
+    return out
+
+
+def index_digest(contigs, preset: str, aligner: Aligner) -> str:
+    identity = "\n".join("\t".join(map(str, item)) for item in contig_identity(contigs))
+    text = f"{hashlib.sha256(identity.encode()).hexdigest()}|{preset}|{aligner.index_format}"
     return hashlib.sha256(text.encode()).hexdigest()[:24]
 
 
-def ensure_index(fasta: str, reference_sha256: str, preset: str, aligner: Aligner,
+def _sidecar_contigs(target: str):
+    import json
+    try:
+        with open(target + ".json", encoding="utf-8") as handle:
+            return json.load(handle).get("contigs")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def index_identity(target: str):
+    """``(inode, size, mtime_ns)`` of a cached index file, or None."""
+    try:
+        st = os.stat(target)
+    except OSError:
+        return None
+    return (st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def discard_index(target: str, loaded=None) -> bool:
+    """Remove a cached index and its sidecar (a stale or damaged entry).
+
+    With ``loaded`` (:func:`index_identity` of the file that was found stale),
+    a file another run has meanwhile replaced is left alone. Returns whether
+    the entry was removed.
+    """
+    if loaded is not None and index_identity(target) != loaded:
+        return False
+    for path in (target, target + ".json"):
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+    return True
+
+
+def ensure_index(fasta: str, contigs, preset: str, aligner: Aligner,
                  threads: int = 4, log=None) -> tuple[str, bool]:
-    """Return ``(index path, built_now)``; build and cache the index if needed."""
+    """Return ``(index path, built_now)``; build and cache the index if needed.
+
+    ``contigs`` describe ``fasta`` (see :func:`contig_identity`). A cached
+    index is reused only when its sidecar records exactly these contigs;
+    otherwise (an entry from an older FiberHMM, an interrupted write, a
+    damaged sidecar) it is rebuilt in place.
+    """
+    import json
     cache = index_cache_dir()
     os.makedirs(cache, exist_ok=True)
-    digest = index_digest(reference_sha256, preset, aligner)
+    expected = contig_identity(contigs)
+    digest = index_digest(expected, preset, aligner)
     target = os.path.join(cache, f"{digest}.mmi")
-    if os.path.exists(target) and os.path.getsize(target) > 0:
+    try:
+        cached = os.path.getsize(target) > 0
+    except OSError:
+        cached = False
+    if cached and _sidecar_contigs(target) == expected:
         return target, False
     tmp = f"{target}.tmp{os.getpid()}"
+    sidecar_tmp = f"{target}.json.tmp{os.getpid()}"
     try:
         if aligner.kind == "minimap2":
             cmd = [aligner.path, "-x", preset, "-t", str(max(1, threads)), "-d", tmp, fasta]
@@ -124,16 +194,41 @@ def ensure_index(fasta: str, reference_sha256: str, preset: str, aligner: Aligne
             mappy.Aligner(fasta, preset=preset, n_threads=max(1, threads), fn_idx_out=tmp)
             if not os.path.exists(tmp):
                 raise RuntimeError("mappy did not write the index")
+        # The sidecar goes in last: an index without one is rebuilt next time.
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(target + ".json")
         os.replace(tmp, target)
-        with open(target + ".json", "w", encoding="utf-8") as handle:
-            handle.write(
-                '{"reference": %s, "reference_sha256": "%s", "preset": "%s", '
-                '"aligner": "%s"}\n' % (_json_str(os.path.abspath(fasta)),
-                                        reference_sha256, preset, aligner.describe()))
+        with open(sidecar_tmp, "w", encoding="utf-8") as handle:
+            json.dump({"reference": os.path.abspath(fasta), "contigs": expected,
+                       "preset": preset, "aligner": aligner.describe()}, handle)
+            handle.write("\n")
+        os.replace(sidecar_tmp, target + ".json")
     finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
+        for leftover in (tmp, sidecar_tmp):
+            if os.path.exists(leftover):
+                os.remove(leftover)
     return target, True
+
+
+def index_mismatch(stream, contigs) -> Optional[str]:
+    """Why the index an alignment stream loaded does not hold ``contigs``
+    (None when it does): the last guard against a stale cache entry."""
+    expected = [(name, length) for name, length, _md5 in contig_identity(contigs)]
+    if isinstance(stream, MappyStream):
+        names = list(stream.aligner.seq_names)
+        found = [(name, len(stream.aligner.seq(name) or "")) for name in names]
+        if found == expected:
+            return None
+        found = [f"{name} ({length:,} bp)" for name, length in found]
+    else:
+        header = stream.header
+        found = list(zip(header.references, header.lengths))
+        if found == expected:
+            return None
+        found = [f"{name} ({length:,} bp)" for name, length in found]
+    shown = ", ".join(str(item) for item in found[:3])
+    return (f"the minimap2 index holds {shown or 'no contigs'}"
+            f"{' ...' if len(found) > 3 else ''}, not this reference's contigs")
 
 
 def _json_str(value: str) -> str:
@@ -273,6 +368,81 @@ def fastq_platform_votes(path: str, records: int = 200) -> dict:
                         counts[platform] += 1
                     break
     return counts
+
+
+_MM_SPEC = re.compile(r"^([ACGTUN])([+-])([A-Za-z]+|\d+)$")
+
+
+def mm_has_m6a(mm: str) -> bool:
+    """True when an MM tag has an m6A entry (``a`` or ChEBI ``21839`` on A or T)."""
+    for item in str(mm).split(";"):
+        head = item.split(",", 1)[0].strip().rstrip(".?")
+        match = _MM_SPEC.match(head)
+        if not match or match.group(1) not in "ATN":
+            continue
+        code = match.group(3)
+        if code == "21839" or (code.isalpha() and "a" in code):
+            return True
+    return False
+
+
+def read_chemistry_evidence(path: str, records: int = 200, scan_limit: int = 5000) -> dict:
+    """What the first primary reads of a FASTQ/BAM carry, for the chemistry check.
+
+    ``{"records": n, "m6a": reads with an m6A MM entry (A+a/T-a, or code
+    21839), "iupac": reads with R/Y-encoded deaminations}``. In a BAM with
+    aligned records only aligned primaries are counted (an unsorted BAM may
+    start with untagged unmapped records); unaligned BAMs count their
+    unmapped primaries. Bounded: at most ``records`` reads are counted and
+    ``scan_limit`` records read.
+    """
+    def tally(counts: dict, sequence: str, mm: Optional[str]) -> None:
+        counts["records"] += 1
+        if mm and mm_has_m6a(mm):
+            counts["m6a"] += 1
+        upper = sequence.upper()
+        if "R" in upper or "Y" in upper:
+            counts["iupac"] += 1
+
+    if path.lower().endswith(FASTQ_EXTENSIONS):
+        counts = {"records": 0, "m6a": 0, "iupac": 0}
+        with _open_binary(path) as handle:
+            header = None
+            for i, line in enumerate(handle):
+                if i % 4 == 0:
+                    header = line.decode("utf-8", "replace")
+                elif i % 4 == 1:
+                    mm = next((token[5:] for token in header.split()[1:]
+                               if token.startswith(("MM:Z:", "Mm:Z:"))), None)
+                    tally(counts, line.decode("ascii", "replace").strip(), mm)
+                    if counts["records"] >= records:
+                        break
+        return counts
+    mapped = {"records": 0, "m6a": 0, "iupac": 0}
+    unmapped = {"records": 0, "m6a": 0, "iupac": 0}
+    reached_eof = True
+    with pysam.AlignmentFile(path, check_sq=False) as bam:
+        has_sq = bool(bam.header.to_dict().get("SQ"))
+        for examined, read in enumerate(bam.fetch(until_eof=True), 1):
+            if examined > scan_limit or mapped["records"] >= records:
+                reached_eof = False
+                break
+            if not (read.is_secondary or read.is_supplementary):
+                mm = None
+                for tag in ("MM", "Mm"):
+                    if read.has_tag(tag):
+                        mm = str(read.get_tag(tag))
+                        break
+                counts = unmapped if read.is_unmapped else mapped
+                if counts["records"] < records:
+                    tally(counts, read.query_sequence or "", mm)
+    if mapped["records"]:
+        return mapped
+    if not has_sq or reached_eof:
+        return unmapped
+    # Only unmapped records within the scan of a BAM that may hold aligned
+    # ones further on: no evidence either way.
+    return {"records": 0, "m6a": 0, "iupac": 0}
 
 
 def bam_has_mod_tags(path: str, records: int = 200) -> bool:
@@ -470,6 +640,16 @@ class Minimap2Stream:
     def __iter__(self):
         return iter(self.bam)
 
+    def abort(self) -> None:
+        """Stop minimap2 without reading its output (the stream is discarded)."""
+        with contextlib.suppress(OSError):
+            self.proc.kill()
+        with contextlib.suppress(Exception):
+            self.bam.close()
+        self.proc.wait()
+        self.thread.join(timeout=5)
+        self.stderr_handle.close()
+
     def close(self) -> None:
         try:
             self.bam.close()
@@ -567,6 +747,9 @@ class MappyStream:
             tags = [("NM", hit.NM, "i"), ("MD", hit.MD, "Z"), ("RG", self.read_group_id, "Z")]
             read.set_tags(tags + extra)
             yield read
+
+    def abort(self) -> None:
+        self.aligner = None
 
     def close(self) -> None:
         if self.feeder.error is not None:

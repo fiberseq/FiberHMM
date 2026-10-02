@@ -27,8 +27,8 @@ from fiberhmm.pipeline.runner import Pipeline, PipelineConfig, PipelineError
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_pipeline import (  # noqa: E402
-    REPO, _events, _pieces, _record, _run_cli, needs_minimap2, plasmid_run, random_seq,
-    write_genbank,
+    REPO, _events, _pieces, _record, _run_cli, _write_reads, needs_minimap2, plasmid_run,
+    random_seq, write_genbank, write_snapgene,
 )
 
 assert plasmid_run  # the fixture, re-exported for this module
@@ -141,8 +141,14 @@ def test_hia5_platform_is_decided_from_the_reads(tmp_path):
     p._setup(); p.close()
     assert p.config.seq == "nanopore" and p.config.preset() == "map-ont"
     plain = tmp_path / "plain.fastq"; plain.write_text("@r\nACGT\n+\nIIII\n")
-    with pytest.raises(PipelineError, match="sequencing platform") as error:
+    # Reads without m6A calls are refused as Hia5 data first (audit M3) ...
+    with pytest.raises(PipelineError, match="no m6A") as error:
         Pipeline(config(tmp_path / "o3", plain, ref, enzyme="hia5"))._setup()
+    assert "--force-chemistry" in error.value.hint
+    # ... and, when forced, still need a platform.
+    with pytest.raises(PipelineError, match="sequencing platform") as error:
+        Pipeline(config(tmp_path / "o3b", plain, ref, enzyme="hia5",
+                        force_chemistry=True))._setup()
     assert "--seq" in error.value.hint
     with pytest.raises(PipelineError, match="disagree"):
         Pipeline(config(tmp_path / "o4", [pacbio, nanopore], ref, enzyme="hia5"))._setup()
@@ -853,3 +859,527 @@ def test_m5_less_input_with_md_that_does_not_match_its_cigar_is_realigned(tmp_pa
         assert result.returncode == 0, result.stderr.decode(errors="replace")
         outputs.add(result.stdout.decode().strip())
     assert outputs == {repr(expected)}
+
+
+@pytest.mark.parametrize("enzyme, seq, expected", [
+    ("dddb", None, ["--mode", "daf", "--enzyme", "dddb"]),
+    ("ddda", "pacbio", ["--mode", "daf", "--enzyme", "ddda"]),
+    ("hia5", "nanopore", ["--mode", "nanopore-fiber", "--enzyme", "hia5"]),
+    ("hia5", "pacbio", ["--mode", "pacbio-fiber", "--enzyme", "hia5"]),
+])
+def test_qc_step_states_the_called_assay(tmp_path, monkeypatch, enzyme, seq, expected):
+    # Audit H1: the QC step left the assay to header inference, which read the
+    # dedup record's "mode=flag" on every deduplicated DAF BAM.
+    reads = tmp_path / "r.fastq"; reads.write_text("@r\nAAAA\n+\nIIII\n")
+    ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + "A" * 1000 + "\n")
+    cfg = config(tmp_path / "out", reads, ref, enzyme=enzyme, seq=seq,
+                 force_chemistry=True); cfg.qc = True
+    p = Pipeline(cfg); p._setup(); p.step_prepare_reference()
+    Path(p.called_bam).write_bytes(b"called")
+    seen = []
+    monkeypatch.setattr(Pipeline, "_run_logged",
+                        lambda self, cmd, log, *a, **k: seen.append(cmd) or 3)
+    p.step_qc()
+    (cmd,) = seen
+    at = cmd.index("--mode")
+    assert cmd[at:at + 4] == expected
+    p.close()
+
+
+# ---------------------------------------------------------------------------
+# minimap2 index cache (audit H2)
+# ---------------------------------------------------------------------------
+
+def test_index_digest_covers_contig_names():
+    from fiberhmm.pipeline import aligner as mm2
+
+    aligner = mm2.Aligner("minimap2", "/bin/minimap2", "2.30-r1287")
+    md5 = sequence_md5("ACGT" * 100)
+    n1 = [("N1", 400, md5)]
+    assert mm2.index_digest(n1, "map-ont", aligner) == mm2.index_digest(
+        [("N1", 400, md5)], "map-ont", aligner)
+    assert mm2.index_digest(n1, "map-ont", aligner) != mm2.index_digest(
+        [("construct", 400, md5)], "map-ont", aligner)
+    assert mm2.index_digest(n1, "map-ont", aligner) != mm2.index_digest(
+        n1, "map-hifi", aligner)
+
+
+@needs_minimap2
+def test_cached_index_without_matching_sidecar_is_rebuilt(tmp_path, monkeypatch):
+    from fiberhmm.pipeline import aligner as mm2
+
+    monkeypatch.setenv("FIBERHMM_MINIMAP2_INDEX_DIR", str(tmp_path / "mmi"))
+    sequence = random_seq(3000, 5)
+    fasta = tmp_path / "p.fa"; fasta.write_text(">p\n" + sequence + "\n")
+    contigs = [("p", 3000, sequence_md5(sequence))]
+    aligner = mm2.find_aligner("minimap2")
+    target, built = mm2.ensure_index(str(fasta), contigs, "map-ont", aligner, threads=1)
+    assert built
+    assert json.loads(Path(target + ".json").read_text())["contigs"] == [list(contigs[0])]
+    assert mm2.ensure_index(str(fasta), contigs, "map-ont", aligner, threads=1) == (target, False)
+    for sidecar in (None, {"contigs": [["other", 3000, contigs[0][2]]]}):
+        if sidecar is None:
+            os.remove(target + ".json")       # interrupted write / older FiberHMM entry
+        else:
+            Path(target + ".json").write_text(json.dumps(sidecar))
+        assert mm2.ensure_index(str(fasta), contigs, "map-ont", aligner, threads=1) == (
+            target, True)
+
+
+def _snapgene_run(tmp_path, name, ref, reads, index_dir, outdir):
+    dna = tmp_path / f"{name}.dna"
+    if not dna.exists():
+        write_snapgene(dna, ref)
+    env_index = {"FIBERHMM_MINIMAP2_INDEX_DIR": str(index_dir)}
+    with patch.dict(os.environ, env_index):
+        return _run_cli([str(reads), "--reference", str(dna), "--enzyme", "dddb",
+                         "-o", str(outdir), "-c", "1", "--min-read-length", "500",
+                         "--no-qc"])
+
+
+@needs_minimap2
+def test_renamed_plasmid_map_gets_its_own_index(tmp_path):
+    # Audit H2: N1.dna and an identical construct.dna share a sequence but not
+    # a contig name; the second run reused N1's index and failed
+    # ("contig 'N1' is not in the reference").
+    ref = random_seq(5000, 31)
+    reads = tmp_path / "reads.fastq"
+    _write_reads(reads, ref, 40, 32, circular=True)
+    index_dir = tmp_path / "mmi"
+    first = _snapgene_run(tmp_path, "N1", ref, reads, index_dir, tmp_path / "o1")
+    assert first.returncode == 0, first.stderr[-3000:]
+    second = _snapgene_run(tmp_path, "construct", ref, reads, index_dir, tmp_path / "o2")
+    assert second.returncode == 0, second.stderr[-3000:]
+    outputs = json.loads((tmp_path / "o2" / "outputs.json").read_text())
+    with pysam.AlignmentFile(outputs["called_bam"]) as bam:
+        assert bam.references == ("construct",)
+        assert sum(1 for _ in bam.fetch(until_eof=True)) > 0
+    assert len(list(index_dir.glob("*.mmi"))) == 2
+
+
+@needs_minimap2
+def test_stale_index_entry_is_detected_at_alignment_and_rebuilt(tmp_path):
+    from fiberhmm.pipeline import aligner as mm2
+
+    ref = random_seq(5000, 41)
+    reads = tmp_path / "reads.fastq"
+    _write_reads(reads, ref, 40, 42, circular=True)
+    index_dir = tmp_path / "mmi"
+    first = _snapgene_run(tmp_path, "N1", ref, reads, index_dir, tmp_path / "o1")
+    assert first.returncode == 0, first.stderr[-3000:]
+    (old_index,) = index_dir.glob("*.mmi")
+    # Plant N1's index under construct's key, with a sidecar that claims
+    # construct's contigs (a damaged entry the sidecar check cannot see).
+    contigs = [["construct", 5000, sequence_md5(ref)]]
+    aligner = mm2.find_aligner("minimap2")
+    digest = mm2.index_digest(contigs, "map-ont", aligner)
+    planted = index_dir / f"{digest}.mmi"
+    planted.write_bytes(old_index.read_bytes())
+    Path(str(planted) + ".json").write_text(json.dumps({"contigs": contigs}))
+    second = _snapgene_run(tmp_path, "construct", ref, reads, index_dir, tmp_path / "o2")
+    assert second.returncode == 0, second.stderr[-3000:]
+    assert "the cached index was removed and is rebuilt" in second.stderr
+    outputs = json.loads((tmp_path / "o2" / "outputs.json").read_text())
+    with pysam.AlignmentFile(outputs["called_bam"]) as bam:
+        assert bam.references == ("construct",)
+    assert planted.read_bytes() != old_index.read_bytes()
+
+
+def test_tests_never_use_the_real_index_cache():
+    # Audit L2: the suite wrote pytest-of-* entries into ~/.fiberhmm/minimap2_index.
+    from fiberhmm.pipeline import aligner as mm2
+
+    home_cache = os.path.join(os.path.expanduser("~"), ".fiberhmm", "minimap2_index")
+    assert os.path.abspath(mm2.index_cache_dir()) != os.path.abspath(home_cache)
+
+
+def test_reference_digest_memo_drops_entries_of_gone_files(tmp_path):
+    from fiberhmm.pipeline.reference import cached_fasta_digests
+
+    cache = tmp_path / "cache"
+    paths = []
+    for i in range(3):
+        path = tmp_path / f"g{i}.fa"; path.write_text(f">c{i}\nACGT\n")
+        paths.append(path)
+    cached_fasta_digests(str(paths[0]), str(cache))
+    cached_fasta_digests(str(paths[1]), str(cache))
+    paths[0].unlink()
+    cached_fasta_digests(str(paths[2]), str(cache))
+    memo = json.loads((cache / "reference_digests.json").read_text())
+    kept = sorted(Path(key.rsplit("|", 5)[0]).name for key in memo)
+    assert kept == ["g1.fa", "g2.fa"]
+
+
+# ---------------------------------------------------------------------------
+# Chemistry and platform of the input (audit M3, M27)
+# ---------------------------------------------------------------------------
+
+def _bam_input(path, sequence, *, mm=None, encode=False, rg_pl=None, declaration=None,
+               aligned=False, n=6):
+    header = {"HD": {"VN": "1.6", "SO": "coordinate" if aligned else "unknown"}}
+    if aligned:
+        header["SQ"] = [{"SN": "p", "LN": len(sequence)}]
+    if rg_pl:
+        header["RG"] = [{"ID": "rg", "SM": "s", "PL": rg_pl}]
+    if declaration:
+        header["CO"] = ["FIBERHMM-CHEMISTRY:v1:" + declaration]
+    h = pysam.AlignmentHeader.from_dict(header)
+    with pysam.AlignmentFile(str(path), "wb", header=h) as out:
+        for i in range(n):
+            start = 200 * i
+            seq = sequence[start:start + 1500]
+            r = pysam.AlignedSegment(h); r.query_name = f"r{i}"
+            if encode:
+                seq = seq.replace("C", "Y", 20)
+            r.query_sequence = seq
+            if aligned:
+                r.reference_id = 0; r.reference_start = start; r.mapping_quality = 60
+                r.cigarstring = f"{len(seq)}M"; r.set_tag("MD", str(len(seq)))
+            else:
+                r.flag = 4
+            if mm:
+                r.set_tag("MM", mm); r.set_tag("ML", array.array("B", [255, 255]))
+            if rg_pl:
+                r.set_tag("RG", "rg")
+            out.write(r)
+    if aligned:
+        pysam.index(str(path))
+    return path
+
+
+def test_chemistry_problems_name_the_contradiction(tmp_path):
+    sequence = random_seq(4000, 7)
+    m6a = _bam_input(tmp_path / "hia5.bam", sequence, mm="A+a.,0;T-a.,0;")
+    (problem,) = runner.chemistry_problems([str(m6a)], "dddb", None)
+    assert "m6A calls" in problem and "not DAF-seq" in problem
+    assert runner.chemistry_problems([str(m6a)], "hia5", None) == []
+    encoded = _bam_input(tmp_path / "daf.bam", sequence, encode=True)
+    assert runner.chemistry_problems([str(encoded)], "dddb", None) == []
+    (problem,) = runner.chemistry_problems([str(encoded)], "hia5", "pacbio")
+    assert "R/Y-encoded" in problem
+    # m6A-model basecalls on encoded DAF reads are not refused.
+    both = _bam_input(tmp_path / "both.bam", sequence, mm="A+a.,0;", encode=True)
+    assert runner.chemistry_problems([str(both)], "ddda", None) == []
+    plain = _bam_input(tmp_path / "plain.bam", sequence)
+    assert runner.chemistry_problems([str(plain)], "ddda", None) == []
+    (problem,) = runner.chemistry_problems([str(plain)], "hia5", "pacbio")
+    assert "no m6A" in problem or "carries an m6A call" in problem
+    declared = _bam_input(tmp_path / "declared.bam", sequence, encode=True,
+                          declaration="assay=daf;enzyme=dddb;platform=nanopore;mode=daf")
+    (problem,) = runner.chemistry_problems([str(declared)], "ddda", None)
+    assert "declares dddb" in problem
+    (problem,) = runner.chemistry_problems([str(declared)], "dddb", "pacbio")
+    assert "declares nanopore" in problem
+    assert runner.chemistry_problems([str(declared)], "dddb", "nanopore") == []
+    fastq = _pacbio_fastq(tmp_path / "pb.fastq", sequence)
+    assert runner.chemistry_problems([str(fastq)], "hia5", None) == []
+    assert "m6A calls" in runner.chemistry_problems([str(fastq)], "dddb", None)[0]
+
+
+def test_daf_enzyme_on_m6a_reads_is_refused_unless_forced(tmp_path):
+    # Audit M3: --enzyme dddb on a PacBio Hia5 BAM realigned it as Nanopore and
+    # called it as DddB, rc 0.
+    sequence = random_seq(4000, 8)
+    ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + sequence + "\n")
+    m6a = _bam_input(tmp_path / "hia5.bam", sequence, mm="A+a.,0;T-a.,0;")
+    p = Pipeline(config(tmp_path / "o1", m6a, ref, enzyme="dddb"))
+    with pytest.raises(PipelineError, match="look like Fiber-seq") as refused:
+        p._setup()
+    p.close()
+    assert "--force-chemistry" in refused.value.hint
+    p = Pipeline(config(tmp_path / "o2", m6a, ref, enzyme="dddb", force_chemistry=True))
+    p._setup(); p.close()
+    assert any("--force-chemistry" in note[0] for note in p._notes if isinstance(note, tuple))
+
+
+def test_pipeline_cli_has_force_chemistry():
+    from fiberhmm.cli.pipeline import config_from_args, parse_args
+
+    args = parse_args(["r.fastq", "--reference", "ref.fa", "--enzyme", "dddb", "-o", "o",
+                       "--force-chemistry"])
+    assert config_from_args(args).force_chemistry is True
+    assert config_from_args(parse_args(["r.fastq", "--reference", "ref.fa", "--enzyme",
+                                        "dddb", "-o", "o"])).force_chemistry is False
+
+
+def test_daf_platform_comes_from_the_reads(tmp_path):
+    # Audit M27: every DAF run was declared Nanopore.
+    sequence = random_seq(4000, 9)
+    ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + sequence + "\n")
+    pacbio = _bam_input(tmp_path / "pb.bam", sequence, encode=True, rg_pl="PACBIO")
+    p = Pipeline(config(tmp_path / "o1", pacbio, ref, enzyme="ddda"))
+    p._setup(); p.step_prepare_reference(); p.close()
+    assert p.config.seq == "pacbio" and p.config.preset() == "map-hifi"
+    assert p.config.calling_settings()["seq"] == "pacbio"
+
+    # FASTQ without a platform record: aligned here as Nanopore, stated to the call.
+    fastq = tmp_path / "daf.fastq"
+    fastq.write_text("@r\n" + sequence[:1500] + "\n+\n" + "I" * 1500 + "\n")
+    p = Pipeline(config(tmp_path / "o2", fastq, ref, enzyme="dddb"))
+    p._setup()
+    assert p.config.seq is None
+    p.step_prepare_reference(); p.close()
+    assert p.config.seq == "nanopore" and p.config.preset() == "map-ont"
+    cmd, _ = p.call_command(set())
+    assert cmd[cmd.index("--seq") + 1] == "nanopore"
+
+    # Aligned DAF BAM called as given, no platform record: no --seq (fiberhmm-call's
+    # own default), and no Nanopore claim in the settings.
+    aligned = _bam_input(tmp_path / "aligned.bam", sequence, aligned=True)
+    p = Pipeline(config(tmp_path / "o3", aligned, ref, enzyme="ddda"))
+    p._setup(); p.step_prepare_reference(); p.close()
+    assert p.use_aligned_input == str(aligned)
+    assert p.config.seq is None and p.config.calling_settings()["seq"] == "auto"
+    cmd, _ = p.call_command(set())
+    assert "--seq" not in cmd
+
+
+def test_explicit_seq_contradicting_the_reads_warns(tmp_path):
+    sequence = random_seq(4000, 10)
+    ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + sequence + "\n")
+    pacbio = _pacbio_fastq(tmp_path / "pb.fastq", sequence)
+    p = Pipeline(config(tmp_path / "o1", pacbio, ref, enzyme="hia5", seq="nanopore"))
+    p._setup(); p.close()
+    (warning,) = [n for n in p._notes if isinstance(n, tuple)]
+    assert warning[1] == "warning" and "looks like pacbio" in warning[0]
+
+
+# ---------------------------------------------------------------------------
+# Tracks (audit M4, M5; Codex2 #9)
+# ---------------------------------------------------------------------------
+
+def _tracks_pipeline(tmp_path, monkeypatch, layers_made, **kwargs):
+    """A Pipeline whose fiberhmm-extract is replaced by one writing ``layers_made``
+    (named the way extract names them: '_footprints' removed from the stem)."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    reads = tmp_path / "r.fastq"; reads.write_text("@r\nAAAA\n+\nIIII\n")
+    ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + "A" * 1000 + "\n")
+    cfg = config(tmp_path / "out", reads, ref, tracks=True, **kwargs)
+    p = Pipeline(cfg); p._setup(); p.step_prepare_reference()
+    Path(p.called_bam).write_bytes(b"called")
+    seen = []
+
+    def fake_extract(self, cmd, log, *a, **k):
+        seen.append(cmd)
+        outdir = cmd[cmd.index("-o") + 1]
+        os.makedirs(outdir, exist_ok=True)
+        stem = os.path.basename(cmd[cmd.index("-i") + 1])
+        stem = stem.replace(".bam", "").replace("_footprints", "")
+        for layer in layers_made():
+            Path(outdir, f"{stem}_{layer}.bb").write_bytes(layer.encode())
+        return 0
+
+    monkeypatch.setattr(Pipeline, "_run_logged", fake_extract)
+    monkeypatch.setattr(runner.shutil, "which", lambda name: "/bin/" + name)
+    return p, seen
+
+
+def test_tracks_forward_filters_and_record_them(tmp_path, monkeypatch):
+    p, seen = _tracks_pipeline(tmp_path, monkeypatch, lambda: ["tf"],
+                               prob_threshold=250, min_mapq=30)
+    p.step_tracks()
+    (cmd,) = seen
+    assert cmd[cmd.index("-q") + 1] == "30" and cmd[cmd.index("-p") + 1] == "250"
+    fingerprint = read_marker(p.outdir, "tracks")["fingerprint"]
+    assert (fingerprint["prob_threshold"], fingerprint["min_mapq"]) == (250, 30)
+    p.close()
+    p, seen = _tracks_pipeline(tmp_path / "b", monkeypatch, lambda: ["tf"])
+    p.step_tracks()
+    assert "-p" not in seen[0] and seen[0][seen[0].index("-q") + 1] == "20"
+    p.close()
+
+
+def test_sample_with_footprints_in_its_name_keeps_its_tracks(tmp_path, monkeypatch):
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: ["nucleosome", "tf"],
+                            sample="x_footprints")
+    p.step_tracks()
+    assert [os.path.basename(f) for f in p.track_files] == [
+        "x.fiberhmm_nucleosome.bb", "x.fiberhmm_tf.bb"]
+    assert all(os.path.dirname(f) == os.path.join(p.outdir, "tracks") for f in p.track_files)
+    assert all(Path(f).exists() for f in p.track_files)
+    assert not os.path.exists(os.path.join(p.outdir, ".fiberhmm-pipeline", "tracks_staging"))
+    p.close()
+
+
+def test_redone_tracks_drop_layers_no_longer_made(tmp_path, monkeypatch):
+    made = [["nucleosome", "tf"]]
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: made[0])
+    p.step_tracks(); p.close()
+    old_tf = Path(p.outdir, "tracks", "r.fiberhmm_tf.bb")
+    assert old_tf.exists()
+    made[0] = ["nucleosome"]
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: made[0], redo="tracks")
+    p.step_tracks(); p.close()
+    assert [os.path.basename(f) for f in p.track_files] == ["r.fiberhmm_nucleosome.bb"]
+    assert not old_tf.exists()
+
+
+def test_marker_without_new_settings_is_remade_not_refused(tmp_path, monkeypatch):
+    p, seen = _tracks_pipeline(tmp_path, monkeypatch, lambda: ["tf"])
+    p.step_tracks(); p.close()
+    from fiberhmm.pipeline.progress import marker_path as step_marker
+
+    marker_path = Path(step_marker(p.outdir, "tracks"))
+    marker = json.loads(marker_path.read_text())
+    for key in ("prob_threshold", "min_mapq"):
+        del marker["fingerprint"][key]      # a marker written before these were recorded
+    marker_path.write_text(json.dumps(marker))
+    p, seen = _tracks_pipeline(tmp_path, monkeypatch, lambda: ["tf"])
+    p.step_tracks(); p.close()
+    assert len(seen) == 1                    # made again, not refused
+    marker = json.loads(marker_path.read_text())
+    marker["fingerprint"]["min_mapq"] = 5    # a recorded setting that changed: refused
+    marker_path.write_text(json.dumps(marker))
+    p, seen = _tracks_pipeline(tmp_path, monkeypatch, lambda: ["tf"])
+    with pytest.raises(PipelineError, match="min_mapq"):
+        p.step_tracks()
+    p.close()
+
+
+@needs_minimap2
+def test_footprints_sample_end_to_end_lists_its_tracks(tmp_path):
+    ref = random_seq(5000, 51)
+    reads = tmp_path / "reads.fastq"
+    _write_reads(reads, ref, 40, 52, circular=True)
+    fasta = tmp_path / "p.fa"; fasta.write_text(">p\n" + ref + "\n")
+    result = _run_cli([str(reads), "--reference", str(fasta), "--topology", "circular",
+                       "--enzyme", "dddb", "-o", str(tmp_path / "out"), "-c", "1",
+                       "--min-read-length", "500", "--no-qc", "--tracks",
+                       "--sample", "x_footprints"])
+    assert result.returncode == 0, result.stderr[-3000:]
+    outputs = json.loads((tmp_path / "out" / "outputs.json").read_text())
+    assert outputs["tracks"] and all(Path(f).exists() for f in outputs["tracks"])
+    assert all(Path(f).parent == tmp_path / "out" / "tracks" for f in outputs["tracks"])
+
+
+
+# --- Codex review of the fixes ------------------------------------------------
+
+def test_m6a_detection_accepts_numeric_codes_and_ignores_m5c():
+    from fiberhmm.pipeline.aligner import mm_has_m6a
+
+    assert mm_has_m6a("A+a.,0,1;") and mm_has_m6a("T-a?,0;") and mm_has_m6a("A+21839.,0;")
+    assert not mm_has_m6a("C+m.,0;C+h.,1;") and not mm_has_m6a("")
+
+
+def test_chemistry_evidence_skips_an_untagged_unmapped_prefix(tmp_path):
+    sequence = random_seq(4000, 12)
+    header = pysam.AlignmentHeader.from_dict({"HD": {"VN": "1.6"},
+                                              "SQ": [{"SN": "p", "LN": 4000}]})
+    path = tmp_path / "prefix.bam"
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for i in range(210):
+            r = pysam.AlignedSegment(header); r.query_name = f"u{i}"; r.flag = 4
+            r.query_sequence = sequence[:500]
+            out.write(r)
+        r = pysam.AlignedSegment(header); r.query_name = "m"; r.reference_id = 0
+        r.reference_start = 0; r.mapping_quality = 60; r.cigarstring = "500M"
+        r.query_sequence = sequence[:500]; r.set_tag("MM", "A+a.,0;T-a.,0;")
+        r.set_tag("ML", array.array("B", [255, 255]))
+        out.write(r)
+    assert runner.chemistry_problems([str(path)], "hia5", "pacbio") == []
+
+
+def test_forced_run_over_a_declaration_lets_the_call_replace_it(tmp_path):
+    sequence = random_seq(4000, 13)
+    ref = tmp_path / "ref.fa"; ref.write_text(">p\n" + sequence + "\n")
+    declared = _bam_input(tmp_path / "declared.bam", sequence, encode=True, aligned=True,
+                          declaration="assay=daf;enzyme=dddb;platform=nanopore;mode=daf")
+    p = Pipeline(config(tmp_path / "o1", declared, ref, enzyme="ddda",
+                        force_chemistry=True))
+    p._setup(); p.step_prepare_reference(); p.close()
+    cmd, _ = p.call_command(set())
+    assert "--replace-chemistry" in cmd
+    p2 = Pipeline(config(tmp_path / "o2", declared, ref, enzyme="dddb"))
+    p2._setup(); p2.step_prepare_reference(); p2.close()
+    assert "--replace-chemistry" not in p2.call_command(set())[0]
+
+
+def test_discard_index_leaves_a_replacement_alone(tmp_path):
+    from fiberhmm.pipeline import aligner as mm2
+
+    target = tmp_path / "x.mmi"; target.write_bytes(b"stale")
+    loaded = mm2.index_identity(str(target))
+    replacement = tmp_path / "new.mmi"; replacement.write_bytes(b"rebuilt by another run")
+    os.replace(replacement, target)
+    assert mm2.discard_index(str(target), loaded) is False and target.exists()
+    assert mm2.discard_index(str(target), mm2.index_identity(str(target))) is True
+    assert not target.exists()
+
+
+def test_mappy_guard_compares_lengths(tmp_path):
+    mappy = pytest.importorskip("mappy")
+    from fiberhmm.pipeline import aligner as mm2
+
+    fasta = tmp_path / "chr1.fa"; fasta.write_text(">chr1\n" + random_seq(2000, 14) + "\n")
+    index = tmp_path / "chr1.mmi"
+    mappy.Aligner(str(fasta), preset="map-ont", fn_idx_out=str(index))
+    stream = mm2.MappyStream.__new__(mm2.MappyStream)
+    stream.aligner = mappy.Aligner(fn_idx_in=str(index), preset="map-ont")
+    assert mm2.index_mismatch(stream, [("chr1", 2000, "x")]) is None
+    assert "2,000 bp" in mm2.index_mismatch(stream, [("chr1", 1000, "x")])
+
+
+def test_failed_extract_keeps_the_track_inventory(tmp_path, monkeypatch):
+    made = [["nucleosome", "tf"]]
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: made[0])
+    p.step_tracks(); p.close()
+    old_tf = Path(p.outdir, "tracks", "r.fiberhmm_tf.bb")
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: made[0], redo="tracks")
+    monkeypatch.setattr(Pipeline, "_run_logged", lambda self, cmd, log, *a, **k: 1)
+    with pytest.raises(PipelineError, match="fiberhmm-extract failed"):
+        p.step_tracks()
+    p.close()
+    made[0] = ["nucleosome"]
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: made[0], redo="tracks")
+    p.step_tracks(); p.close()
+    assert not old_tf.exists()
+    assert [os.path.basename(f) for f in p.track_files] == ["r.fiberhmm_nucleosome.bb"]
+
+
+def test_chemistry_evidence_long_unmapped_prefix_is_inconclusive(tmp_path):
+    from fiberhmm.pipeline import aligner as mm2
+
+    sequence = random_seq(1000, 15)
+    header = pysam.AlignmentHeader.from_dict({"HD": {"VN": "1.6"},
+                                              "SQ": [{"SN": "p", "LN": 1000}]})
+    path = tmp_path / "long_prefix.bam"
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        for i in range(30):
+            r = pysam.AlignedSegment(header); r.query_name = f"u{i}"; r.flag = 4
+            r.query_sequence = sequence[:300]
+            out.write(r)
+    assert mm2.read_chemistry_evidence(str(path), scan_limit=10)["records"] == 0
+    assert mm2.read_chemistry_evidence(str(path))["records"] == 30   # EOF: all unmapped
+
+
+def test_conflicting_declarations_are_a_problem_even_if_one_matches(tmp_path):
+    sequence = random_seq(4000, 16)
+    path = tmp_path / "merged.bam"
+    header = pysam.AlignmentHeader.from_dict({"HD": {"VN": "1.6"}, "CO": [
+        "FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=ddda;platform=nanopore;mode=daf",
+        "FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=dddb;platform=nanopore;mode=daf"]})
+    with pysam.AlignmentFile(str(path), "wb", header=header) as out:
+        r = pysam.AlignedSegment(header); r.query_name = "r"; r.flag = 4
+        r.query_sequence = sequence[:500].replace("C", "Y", 5)
+        out.write(r)
+    (problem,) = runner.chemistry_problems([str(path)], "ddda", None)
+    assert "ddda/dddb" in problem
+
+
+def test_pre_inventory_tracks_survive_a_failed_rerun(tmp_path, monkeypatch):
+    made = [["nucleosome", "tf"]]
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: made[0])
+    p.step_tracks(); p.close()
+    inventory = Path(p.outdir, ".fiberhmm-pipeline", "tracks.files.json")
+    inventory.unlink()                      # an outdir made before the inventory existed
+    old_tf = Path(p.outdir, "tracks", "r.fiberhmm_tf.bb")
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: made[0], redo="tracks")
+    monkeypatch.setattr(Pipeline, "_run_logged", lambda self, cmd, log, *a, **k: 1)
+    with pytest.raises(PipelineError):
+        p.step_tracks()
+    p.close()
+    made[0] = ["nucleosome"]
+    p, _ = _tracks_pipeline(tmp_path, monkeypatch, lambda: made[0], redo="tracks")
+    p.step_tracks(); p.close()
+    assert not old_tf.exists()

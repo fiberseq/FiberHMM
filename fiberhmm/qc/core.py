@@ -32,6 +32,13 @@ PLOT_MAX_LAG = 800
 PERIOD_BAND = (160, 220)
 DEFAULT_SAMPLE_READS = 2000
 DEFAULT_SEED = 20260824
+QC_MODES = ("daf", "pacbio-fiber", "nanopore-fiber")
+QC_ENZYMES = ("hia5", "ecogii", "ddda", "dddb", "sssi")
+
+
+class QCInputError(ValueError):
+    """A user-facing QC input problem (unreadable BAM, incompatible assay or
+    reference profile): command-line tools report it in one line, exit 2."""
 
 
 @dataclass
@@ -40,16 +47,26 @@ class SampledReads:
     strategy: str
     records_examined: int
     windows_examined: int = 0
+    # Stream sampling only: unmapped primary records and aligned records seen,
+    # and whether the scan reached the end of the file.
+    unmapped_primary: int = 0
+    aligned_records: int = 0
+    reached_eof: bool = False
 
 
-def _eligible(read, min_mapq: int) -> bool:
-    return not (
-        read.is_unmapped
-        or read.is_secondary
-        or read.is_supplementary
-        or read.mapping_quality < min_mapq
-        or read.query_sequence is None
-    )
+def _eligible(read, min_mapq: int, allow_unmapped: bool = False) -> bool:
+    """Primary record with a sequence; aligned ones need ``min_mapq``.
+
+    Unmapped records qualify only with ``allow_unmapped`` (a BAM with no
+    aligned records, e.g. calls made on an unaligned BAM): the labelling and
+    periodicity metrics work in read coordinates, and an unmapped record has
+    no meaningful MAPQ.
+    """
+    if read.is_secondary or read.is_supplementary or read.query_sequence is None:
+        return False
+    if read.is_unmapped:
+        return allow_unmapped
+    return read.mapping_quality >= min_mapq
 
 
 def _read_key(read) -> str:
@@ -77,16 +94,27 @@ def _bounded_stream_sample(
     seed: int,
     min_mapq: int,
     scan_limit: int,
+    allow_unmapped: bool = False,
 ) -> SampledReads:
     """Reservoir-sample a bounded prefix of an unindexed/unsorted BAM."""
     rng = np.random.default_rng(seed)
     reservoir: list = []
     eligible_seen = 0
     records_examined = 0
+    unmapped_primary = 0
+    aligned_records = 0
+    reached_eof = True
     with pysam.AlignmentFile(path, "rb", check_sq=False) as bam:
         for read in bam.fetch(until_eof=True):
+            if records_examined >= scan_limit:
+                reached_eof = False
+                break
             records_examined += 1
-            if _eligible(read, min_mapq):
+            if not read.is_unmapped:
+                aligned_records += 1
+            elif not (read.is_secondary or read.is_supplementary):
+                unmapped_primary += 1
+            if _eligible(read, min_mapq, allow_unmapped):
                 eligible_seen += 1
                 if len(reservoir) < sample_reads:
                     reservoir.append(read)
@@ -94,13 +122,28 @@ def _bounded_stream_sample(
                     index = int(rng.integers(0, eligible_seen))
                     if index < sample_reads:
                         reservoir[index] = read
-            if records_examined >= scan_limit:
-                break
     return SampledReads(
         reads=reservoir,
         strategy=f"bounded reservoir (first <= {scan_limit:,} records)",
         records_examined=records_examined,
+        unmapped_primary=unmapped_primary,
+        aligned_records=aligned_records,
+        reached_eof=reached_eof,
     )
+
+
+def _no_aligned_records(sampled: SampledReads) -> bool:
+    """The whole file was read and holds unmapped primaries, no aligned record."""
+    return (sampled.reached_eof and sampled.unmapped_primary > 0
+            and sampled.aligned_records == 0)
+
+
+def _unaligned_stream_sample(path, sample_reads, seed, scan_limit) -> SampledReads:
+    sampled = _bounded_stream_sample(
+        path, sample_reads, seed, 0, scan_limit, allow_unmapped=True
+    )
+    sampled.strategy += "; unaligned reads (the BAM has no aligned records)"
+    return sampled
 
 
 def sample_bam_reads(
@@ -119,14 +162,27 @@ def sample_bam_reads(
             indexed = bool(bam.has_index())
             references = list(bam.references)
             lengths = np.asarray(bam.lengths, dtype=np.int64)
+            index_says_unaligned = False
+            if indexed:
+                try:
+                    index_says_unaligned = bam.mapped == 0 and bam.unmapped > 0
+                except (ValueError, AttributeError):
+                    index_says_unaligned = False
     except (OSError, ValueError) as exc:
-        raise ValueError(f"cannot open BAM/CRAM {path!r}: {exc}") from exc
+        raise QCInputError(f"cannot open BAM/CRAM {path!r}: {exc}") from exc
 
+    if not references or index_says_unaligned:
+        # No @SQ, or an index counting no aligned record: an unaligned BAM
+        # (e.g. fiberhmm-call on a uBAM).
+        return _unaligned_stream_sample(path, sample_reads, seed, scan_limit)
     usable = lengths > 0
-    if not indexed or not references or not np.any(usable):
-        return _bounded_stream_sample(
+    if not indexed or not np.any(usable):
+        sampled = _bounded_stream_sample(
             path, sample_reads, seed, min_mapq, scan_limit
         )
+        if not sampled.reads and _no_aligned_records(sampled):
+            return _unaligned_stream_sample(path, sample_reads, seed, scan_limit)
+        return sampled
 
     references = [name for name, keep in zip(references, usable) if keep]
     lengths = lengths[usable]
@@ -198,6 +254,8 @@ def sample_bam_reads(
         reads = [read for _key, read in ordered]
         records_examined += fill.records_examined
         strategy += " + bounded fill"
+        if not reads and _no_aligned_records(fill):
+            return _unaligned_stream_sample(path, sample_reads, seed, scan_limit)
 
     return SampledReads(
         reads=reads,
@@ -207,13 +265,97 @@ def sample_bam_reads(
     )
 
 
-def _header_text(header) -> str:
+_CALLING_PROGRAMS = (
+    "fiberhmm-call", "fiberhmm-apply", "fiberhmm-recall-tfs", "fiberhmm-recall-nucs",
+)
+_DS_MODE_RE = re.compile(r"(?:^|[\s;(])mode=([a-z0-9_-]+)")
+_DS_ENZYME_RE = re.compile(r"(?:^|[\s;(])enzyme=([a-z0-9_-]+)")
+_CL_ENZYME_RE = re.compile(r"(?:^|\s)--enzyme(?:=|\s+)([a-z0-9_-]+)")
+_CL_SEQ_RE = re.compile(r"(?:^|\s)--seq(?:=|\s+)(pacbio|nanopore)(?:\s|$)")
+_CL_MODE_RE = re.compile(r"(?:^|\s)--mode(?:=|\s+)([a-z0-9_-]+)")
+
+
+def _calling_program_assay(header) -> tuple[Optional[str], Optional[str]]:
+    """``(mode, enzyme)`` from the newest FiberHMM calling ``@PG`` record.
+
+    Only fiberhmm-call/-apply/-recall-tfs/-recall-nucs records are read, and
+    mode and enzyme come from the same record: other programs' ``DS``/``CL``
+    text (``fiberhmm-dedup ... mode=flag``, an aligner command line) never
+    decides the assay.
+    """
     payload = header.to_dict() if hasattr(header, "to_dict") else dict(header)
-    fields: list[str] = []
+    for program in reversed(payload.get("PG", [])):
+        name = str(program.get("PN") or program.get("ID") or "").lower()
+        name = name.split(".", 1)[0]
+        if name not in _CALLING_PROGRAMS:
+            continue
+        description = str(program.get("DS", "")).lower()
+        command = str(program.get("CL", "")).lower()
+        mode = None
+        match = _DS_MODE_RE.search(description) or _CL_MODE_RE.search(command)
+        if match and match.group(1) in QC_MODES:
+            mode = match.group(1)
+        enzyme = None
+        match = _DS_ENZYME_RE.search(description) or _CL_ENZYME_RE.search(command)
+        if match and match.group(1) in QC_ENZYMES:
+            enzyme = match.group(1)
+        if mode is None and enzyme is not None:
+            if enzyme in ("ddda", "dddb"):
+                mode = "daf"
+            else:
+                seq = _CL_SEQ_RE.search(command)
+                if seq:
+                    mode = f"{seq.group(1)}-fiber"
+        if mode is None and enzyme is None:
+            continue
+        return mode, enzyme
+    return None, None
+
+
+def _declared_assay(header) -> tuple[Optional[str], Optional[str]]:
+    """``(mode, enzyme)`` from the header's FIBERHMM-CHEMISTRY declaration."""
+    from fiberhmm.io.bam_header import declared_chemistries
+
+    for declaration in reversed(declared_chemistries(header)):
+        mode = str(declaration.get("mode", "")).lower()
+        enzyme = str(declaration.get("enzyme", "")).lower()
+        mode = mode if mode in QC_MODES else None
+        enzyme = enzyme if enzyme in QC_ENZYMES else None
+        if mode is None and enzyme in ("ddda", "dddb"):
+            mode = "daf"
+        if mode or enzyme:
+            return mode, enzyme
+    return None, None
+
+
+_MINIMAP2_PRESET_RE = re.compile(
+    r"(?:(?:^|\s)-[A-Za-z]*x\s*|preset=)(map-ont|lr:hq|map-hifi|map-pb)(?=\s|$)")
+
+
+def _aligner_platform(header) -> Optional[str]:
+    """Platform named by @RG PL, by a known basecaller/aligner @PG, or by the
+    preset of a minimap2 @PG (never by other programs' command lines)."""
+    from fiberhmm.cli.common import _ONT_PROGRAMS, _PACBIO_PROGRAMS
+
+    payload = header.to_dict() if hasattr(header, "to_dict") else dict(header)
+    votes = set()
+    for group in payload.get("RG", []):
+        platform = str(group.get("PL", "")).upper()
+        if platform in {"PACBIO", "PACBIO_SMRT"}:
+            votes.add("pacbio")
+        elif platform in {"ONT", "NANOPORE", "OXFORD_NANOPORE"}:
+            votes.add("nanopore")
     for program in payload.get("PG", []):
-        fields.extend(str(program.get(key, "")) for key in ("PN", "CL", "DS"))
-    fields.extend(str(comment) for comment in payload.get("CO", []))
-    return " ".join(fields).lower()
+        name = str(program.get("PN") or program.get("ID") or "").lower().split(".", 1)[0]
+        if name in _PACBIO_PROGRAMS:
+            votes.add("pacbio")
+        elif name in _ONT_PROGRAMS:
+            votes.add("nanopore")
+        elif name in ("minimap2", "mappy"):
+            match = _MINIMAP2_PRESET_RE.search(str(program.get("CL", "")))
+            if match:
+                votes.add("nanopore" if match.group(1) in ("map-ont", "lr:hq") else "pacbio")
+    return next(iter(votes)) if len(votes) == 1 else None
 
 
 def reference_profile_for_assay(mode: str, enzyme: Optional[str]) -> str:
@@ -222,11 +364,11 @@ def reference_profile_for_assay(mode: str, enzyme: Optional[str]) -> str:
         if enzyme in ("ddda", "dddb"):
             return str(enzyme)
         if enzyme == "hia5":
-            raise ValueError("incompatible QC assay: DAF mode cannot use Hia5")
+            raise QCInputError("incompatible QC assay: DAF mode cannot use Hia5")
         return ""
     if mode in ("pacbio-fiber", "nanopore-fiber"):
         if enzyme in ("ddda", "dddb"):
-            raise ValueError(
+            raise QCInputError(
                 f"incompatible QC assay: {mode} requires an m6A fiber enzyme, "
                 f"not {enzyme}"
             )
@@ -263,34 +405,37 @@ def infer_assay(
     mode: str = "auto",
     enzyme: str = "auto",
 ) -> tuple[str, Optional[str], str]:
-    """Infer observation mode, enzyme, and built-in reference profile."""
-    with pysam.AlignmentFile(path, "rb", check_sq=False) as bam:
-        text = _header_text(bam.header)
+    """Infer observation mode, enzyme, and built-in reference profile.
 
-    resolved_mode = mode
-    if resolved_mode == "auto":
-        match = re.search(r"mode=([a-z0-9_-]+)", text)
-        if match:
-            resolved_mode = match.group(1)
-        elif "--seq nanopore" in text or "map-ont" in text:
-            resolved_mode = "nanopore-fiber"
-        elif any("R" in (read.query_sequence or "").upper() or
-                 "Y" in (read.query_sequence or "").upper() for read in reads[:20]):
-            resolved_mode = "daf"
-        elif "--enzyme ddda" in text or "--enzyme dddb" in text:
-            resolved_mode = "daf"
-        else:
-            resolved_mode = "pacbio-fiber"
+    Evidence, strongest first: the ``FIBERHMM-CHEMISTRY`` declaration; the
+    newest FiberHMM calling ``@PG`` record (mode and enzyme from that one
+    record); then the reads and non-FiberHMM records (R/Y-encoded bases mean
+    DAF; ``@RG PL``/aligner presets name the platform; PacBio otherwise).
+    """
+    with pysam.AlignmentFile(path, "rb", check_sq=False) as bam:
+        header = bam.header
+        declared_mode, declared_enzyme = _declared_assay(header)
+        program_mode, program_enzyme = _calling_program_assay(header)
+        platform = _aligner_platform(header)
 
     resolved_enzyme: Optional[str] = None if enzyme == "auto" else enzyme
     if resolved_enzyme is None:
-        match = re.search(r"enzyme=(hia5|ecogii|ddda|dddb|sssi)", text)
-        if match:
-            resolved_enzyme = match.group(1)
+        resolved_enzyme = declared_enzyme or (
+            None if declared_mode else program_enzyme)
+
+    resolved_mode = mode
+    if resolved_mode == "auto":
+        resolved_mode = declared_mode or (None if declared_enzyme else program_mode)
+        if resolved_mode is None and resolved_enzyme in ("ddda", "dddb"):
+            resolved_mode = "daf"
+    if resolved_mode in (None, "auto"):
+        if any("R" in (read.query_sequence or "").upper() or
+               "Y" in (read.query_sequence or "").upper() for read in reads[:20]):
+            resolved_mode = "daf"
+        elif platform == "nanopore":
+            resolved_mode = "nanopore-fiber"
         else:
-            match = re.search(r"--enzyme[ =](hia5|ecogii|ddda|dddb|sssi)", text)
-            if match:
-                resolved_enzyme = match.group(1)
+            resolved_mode = "pacbio-fiber"
 
     profile = reference_profile_for_assay(resolved_mode, resolved_enzyme)
     return resolved_mode, resolved_enzyme, profile
@@ -2245,7 +2390,7 @@ def run_qc(
         and inferred_profile
         and reference_profile != inferred_profile
     ):
-        raise ValueError(
+        raise QCInputError(
             f"QC reference {reference_profile!r} is incompatible with "
             f"mode={resolved_mode!r}, enzyme={resolved_enzyme!r}; "
             f"use {inferred_profile!r} (or 'none')"
@@ -2256,7 +2401,7 @@ def run_qc(
     else:
         profiles = load_references()["profiles"]
         if profile_key not in profiles:
-            raise ValueError(
+            raise QCInputError(
                 f"unknown QC reference profile {profile_key!r}; "
                 f"choose one of {', '.join(sorted(profiles))} or 'none'"
             )

@@ -10,6 +10,15 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _private_minimap2_index_cache(tmp_path_factory, monkeypatch):
+    """fiberhmm-pipeline caches minimap2 indexes and reference digests under
+    ~/.fiberhmm/minimap2_index; tests use a private directory instead (tests
+    that need their own still set FIBERHMM_MINIMAP2_INDEX_DIR themselves)."""
+    monkeypatch.setenv("FIBERHMM_MINIMAP2_INDEX_DIR",
+                       str(tmp_path_factory.getbasetemp() / "minimap2_index"))
+
+
+@pytest.fixture(autouse=True)
 def _isolate_daf_run_mask(monkeypatch):
     """CLI entry points configure the process-wide DAF run mask; keep tests independent."""
     from fiberhmm.core import bam_reader

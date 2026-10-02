@@ -553,3 +553,195 @@ def test_qc_pacbio_counts_both_strands_in_either_orientation():
     both = molecule.count("A") + molecule.count("T")
     assert _signal_profile(forward, "pacbio-fiber")[1] == both
     assert _signal_profile(reverse, "pacbio-fiber")[1] == both
+
+
+# --- assay inference reads FiberHMM's own records only (audit H1) -----------
+
+def _header_only_bam(path, programs, comments=()):
+    header = pysam.AlignmentHeader.from_dict({
+        "HD": {"VN": "1.6", "SO": "coordinate"},
+        "SQ": [{"SN": "chr1", "LN": 1000}],
+        "PG": programs,
+        "CO": list(comments),
+    })
+    with pysam.AlignmentFile(str(path), "wb", header=header):
+        pass
+    return str(path)
+
+
+_DEDUP_PG = {
+    "ID": "fiberhmm-dedup", "PN": "fiberhmm-dedup",
+    "DS": "DAF duplicate marking; grouping=deamination_flavour min_jaccard=0.95 "
+          "prob_threshold=128 mode=flag",
+    "CL": "fiberhmm-dedup -i in.bam -o out.bam",
+}
+_DDDB_CALL_PG = {
+    "ID": "fiberhmm-call", "PN": "fiberhmm-call", "PP": "fiberhmm-dedup",
+    "DS": "FiberHMM fused apply+recall; coord=molecular; mode=daf enzyme=dddb "
+          "prob_threshold=None",
+    "CL": "fiberhmm-call -i in.bam -o out.bam --enzyme dddb",
+}
+
+
+@pytest.mark.parametrize("dedup_mode", ["flag", "collapse"])
+def test_deduplicated_daf_bam_is_daf_not_dedup_mode(tmp_path, dedup_mode):
+    dedup = dict(_DEDUP_PG, DS=_DEDUP_PG["DS"].replace("mode=flag", f"mode={dedup_mode}"))
+    path = _header_only_bam(
+        tmp_path / "dddb.bam", [dedup, _DDDB_CALL_PG],
+        ["FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=dddb;platform=nanopore;mode=daf"])
+    assert infer_assay(path, [], mode="auto", enzyme="auto") == ("daf", "dddb", "dddb")
+
+
+def test_deduplicated_daf_bam_without_declaration_uses_the_call_record(tmp_path):
+    path = _header_only_bam(tmp_path / "dddb.bam", [_DEDUP_PG, _DDDB_CALL_PG])
+    assert infer_assay(path, [], mode="auto", enzyme="auto") == ("daf", "dddb", "dddb")
+
+
+def test_unrelated_program_text_never_decides_the_assay(tmp_path):
+    # Codex2 #5: an earlier record mentions mode=daf enzyme=dddb; the BAM's
+    # FiberHMM writer called Nanopore Hia5.
+    other = {"ID": "custom-tool", "PN": "custom-tool", "DS": "mode=daf enzyme=dddb"}
+    call = {"ID": "fiberhmm-call", "PN": "fiberhmm-call", "PP": "custom-tool",
+            "DS": "FiberHMM fused apply+recall; mode=nanopore-fiber enzyme=hia5",
+            "CL": "fiberhmm-call -i a.bam -o b.bam --enzyme hia5 --seq nanopore"}
+    path = _header_only_bam(tmp_path / "ont.bam", [other, call])
+    assert infer_assay(path, [], mode="auto", enzyme="auto") == (
+        "nanopore-fiber", "hia5", "hia5_nanopore")
+    declared = _header_only_bam(
+        tmp_path / "ont_declared.bam", [other, call],
+        ["FIBERHMM-CHEMISTRY:v1:assay=fiber-seq;enzyme=hia5;platform=nanopore;"
+         "mode=nanopore-fiber"])
+    assert infer_assay(declared, [], mode="auto", enzyme="auto") == (
+        "nanopore-fiber", "hia5", "hia5_nanopore")
+
+
+def test_explicit_mode_takes_the_declared_enzyme(tmp_path):
+    path = _header_only_bam(
+        tmp_path / "dddb.bam", [_DEDUP_PG, _DDDB_CALL_PG],
+        ["FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=dddb;platform=nanopore;mode=daf"])
+    assert infer_assay(path, [], mode="daf", enzyme="auto") == ("daf", "dddb", "dddb")
+
+
+def test_standalone_qc_grades_deduplicated_daf_bam_as_daf(tmp_path):
+    bam_path = tmp_path / "dddb.calls.bam"
+    _write_unindexed_iupac_bam(bam_path, n_reads=40)
+    with pysam.AlignmentFile(str(bam_path)) as bam:
+        header = bam.header.to_dict()
+        reads = [read.to_dict() for read in bam]
+    header["PG"] = [_DEDUP_PG, _DDDB_CALL_PG]
+    header["CO"] = ["FIBERHMM-CHEMISTRY:v1:assay=daf;enzyme=dddb;platform=nanopore;mode=daf"]
+    out_header = pysam.AlignmentHeader.from_dict(header)
+    with pysam.AlignmentFile(str(bam_path), "wb", header=out_header) as out:
+        for read in reads:
+            out.write(pysam.AlignedSegment.from_dict(read, out_header))
+    result = run_qc(str(bam_path), output_prefix=str(tmp_path / "x"),
+                    sample_reads=20, stream=None)
+    assert result["assay"]["mode"] == "daf"
+    assert result["assay"]["enzyme"] == "dddb"
+
+
+# --- unaligned output is sampled (audit M1) ---------------------------------
+
+def _write_unaligned_mm_bam(path, n_reads=30, with_sq=False):
+    header = {"HD": {"VN": "1.6", "SO": "unknown"}}
+    if with_sq:
+        header["SQ"] = [{"SN": "chr1", "LN": 100_000}]
+    header = pysam.AlignmentHeader.from_dict(header)
+    with pysam.AlignmentFile(str(path), "wb", header=header) as bam:
+        for index in range(n_reads):
+            sequence = _random_sequence(3000, index)
+            n_a = sequence.count("A")
+            read = pysam.AlignedSegment(header)
+            read.query_name = f"read_{index:03d}"
+            read.query_sequence = sequence
+            read.flag = 4
+            read.reference_id = -1
+            read.reference_start = -1
+            read.mapping_quality = 0
+            read.set_tag("MM", "A+a," + ",".join(["4"] * (n_a // 5)) + ";", value_type="Z")
+            read.set_tag("ML", array_module.array("B", [255] * (n_a // 5)))
+            bam.write(read)
+    return str(path)
+
+
+import array as array_module  # noqa: E402
+
+
+@pytest.mark.parametrize("with_sq", [False, True])
+def test_qc_samples_unaligned_reads(tmp_path, with_sq):
+    path = _write_unaligned_mm_bam(tmp_path / "ubam.calls.bam", with_sq=with_sq)
+    sampled = sample_bam_reads(path, sample_reads=20)
+    assert len(sampled.reads) == 20
+    assert "unaligned" in sampled.strategy
+
+
+def test_qc_on_aligned_bam_still_skips_unmapped_records(tmp_path):
+    path = tmp_path / "mixed.bam"
+    header = pysam.AlignmentHeader.from_dict(
+        {"HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 100_000}]})
+    with pysam.AlignmentFile(str(path), "wb", header=header) as bam:
+        for index in range(10):
+            read = pysam.AlignedSegment(header)
+            read.query_name = f"r{index}"
+            read.query_sequence = "ACGT" * 50
+            if index < 5:
+                read.flag, read.reference_id, read.reference_start = 0, 0, index * 300
+                read.mapping_quality, read.cigar = 60, [(0, 200)]
+            else:
+                read.flag, read.reference_id, read.reference_start = 4, -1, -1
+            bam.write(read)
+    sampled = sample_bam_reads(str(path), sample_reads=50)
+    assert sorted(read.query_name for read in sampled.reads) == [f"r{i}" for i in range(5)]
+
+
+# --- user errors are one line, exit 2 (audit M2) ----------------------------
+
+def test_qc_cli_incompatible_enzyme_is_a_clean_error(tmp_path, capsys):
+    from fiberhmm.cli.qc import main
+
+    path = _header_only_bam(
+        tmp_path / "hia5.bam",
+        [{"ID": "fiberhmm-call", "PN": "fiberhmm-call",
+          "DS": "mode=pacbio-fiber enzyme=hia5", "CL": "fiberhmm-call --enzyme hia5"}],
+        ["FIBERHMM-CHEMISTRY:v1:assay=fiber-seq;enzyme=hia5;platform=pacbio;"
+         "mode=pacbio-fiber"])
+    assert main(["-i", path, "-o", str(tmp_path / "qc"), "--enzyme", "dddb"]) == 2
+    err = capsys.readouterr().err
+    assert "incompatible QC assay" in err and "Traceback" not in err
+
+
+def test_qc_cli_missing_input_is_a_clean_error(tmp_path, capsys):
+    from fiberhmm.cli.qc import main
+
+    assert main(["-i", str(tmp_path / "missing.bam"), "-o", str(tmp_path / "qc")]) == 2
+    assert "cannot open BAM/CRAM" in capsys.readouterr().err
+
+
+def test_unmapped_prefix_of_an_aligned_bam_is_not_unaligned(tmp_path):
+    # Codex review: an unsorted BAM whose first records are unmapped still has
+    # aligned records; a bounded scan that saw none must not call it unaligned.
+    path = tmp_path / "prefix.bam"
+    header = pysam.AlignmentHeader.from_dict(
+        {"HD": {"VN": "1.6"}, "SQ": [{"SN": "chr1", "LN": 100_000}]})
+    with pysam.AlignmentFile(str(path), "wb", header=header) as bam:
+        for index in range(12):
+            read = pysam.AlignedSegment(header)
+            read.query_name = f"r{index}"
+            read.query_sequence = "ACGT" * 50
+            if index < 11:
+                read.flag, read.reference_id, read.reference_start = 4, -1, -1
+            else:
+                read.flag, read.reference_id, read.reference_start = 0, 0, 100
+                read.mapping_quality, read.cigar = 60, [(0, 200)]
+            bam.write(read)
+    sampled = sample_bam_reads(str(path), sample_reads=5, scan_limit=10)
+    assert sampled.reads == [] and "unaligned" not in sampled.strategy
+
+
+def test_qc_platform_ignores_unrelated_command_lines(tmp_path):
+    other = {"ID": "custom-tool", "PN": "custom-tool", "CL": "custom-tool --notes map-ont"}
+    path = _header_only_bam(tmp_path / "x.bam", [other])
+    assert infer_assay(path, [], mode="auto", enzyme="auto")[0] == "pacbio-fiber"
+    mm2 = {"ID": "minimap2", "PN": "minimap2", "CL": "minimap2 -ax map-ont ref.fa r.fq"}
+    path = _header_only_bam(tmp_path / "y.bam", [mm2])
+    assert infer_assay(path, [], mode="auto", enzyme="auto")[0] == "nanopore-fiber"

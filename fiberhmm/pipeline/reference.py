@@ -296,6 +296,24 @@ def _digest_cache_path(cache_dir: str) -> str:
     return os.path.join(cache_dir, "reference_digests.json")
 
 
+def _prune_digest_memo(memo: dict, n_stat_fields: int) -> dict:
+    """Entries whose file still exists unchanged (the memo is otherwise never
+    trimmed: deleted and rewritten files would accumulate)."""
+    from fiberhmm.io.run_state import stat_key
+    kept = {}
+    for key, entry in memo.items():
+        parts = str(key).rsplit("|", n_stat_fields)
+        if len(parts) != n_stat_fields + 1:
+            continue
+        try:
+            current = "|".join(str(v) for v in stat_key(parts[0]))
+        except OSError:
+            continue
+        if current == "|".join(parts[1:]):
+            kept[key] = entry
+    return kept
+
+
 def cached_fasta_digests(path: str, cache_dir: Optional[str]) -> tuple[str, list[tuple[str, int, str]]]:
     """``(file sha256, per-contig digests)`` for a FASTA, memoised per file.
 
@@ -321,6 +339,7 @@ def cached_fasta_digests(path: str, cache_dir: Optional[str]) -> tuple[str, list
     sha = file_sha256(real)
     contigs = scan_fasta(real)
     if memo_path:
+        memo = _prune_digest_memo(memo, len(stat_key(real)))
         memo[key] = {"sha256": sha, "contigs": [list(item) for item in contigs]}
         try:
             os.makedirs(cache_dir, exist_ok=True)

@@ -215,6 +215,26 @@
    }
   },
   {
+   "id": "qc-assay-misdetected",
+   "severity": "rerun-required",
+   "artifact": "QC",
+   "title": "QC graded the BAM under an unknown assay",
+   "reason": "Before the 3.0 fix fiberhmm-qc (and the QC step of fiberhmm-pipeline) took the assay from the first 'mode=' anywhere in the header, which on a DAF BAM marked by fiberhmm-dedup is the dedup mode ('flag' or 'collapse'). Deduplicated DAF BAMs were then graded INSUFFICIENT with 'm6A labeling 0%' instead of on deamination. The report's assay mode is not one of daf, pacbio-fiber or nanopore-fiber.",
+   "fix": "Re-run fiberhmm-qc on the BAM with FiberHMM >= 3.0 (or fiberhmm-pipeline with --redo qc).",
+   "fixed_in": {
+    "version": "3.0.0"
+   },
+   "changelog": "3.0.0 / Fixed / QC assay detection",
+   "detector": "qc_file",
+   "match": {
+    "mode_not_in": [
+     "daf",
+     "pacbio-fiber",
+     "nanopore-fiber"
+    ]
+   }
+  },
+  {
    "id": "recaller-tier-double-count",
    "severity": "rerun-recommended",
    "artifact": "consensus tiers",

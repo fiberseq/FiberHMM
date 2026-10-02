@@ -796,3 +796,27 @@ def test_fiberhmm_region_concatenation_is_not_a_join_even_with_spaces():
     # Same shape but files outside a FiberHMM work directory: a user's join.
     cl = "samtools cat -h /d/region_000000.bam -b /d/bam_list.txt -o /d/out.bam"
     assert adv._drops_input_headers({"PN": "samtools", "CL": cl}) is True
+
+
+def test_qc_report_with_misdetected_assay_is_flagged(tmp_path):
+    # Audit H1: a deduplicated DAF BAM was graded with assay mode "flag".
+    for mode in ("flag", "collapse"):
+        report = tmp_path / f"{mode}.qc.json"
+        report.write_text(json.dumps({
+            "schema_version": 1, "fiberhmm_version": "3.0.0", "input": "/x/dddb.bam",
+            "assay": {"mode": mode, "enzyme": "dddb"}, "sampling": {}}))
+        (advisory,) = check_path(report)
+        assert advisory.id == "qc-assay-misdetected"
+        assert (advisory.status, advisory.confidence) == ("affected", "high")
+        assert advisory.needs_rerun and repr(mode) in advisory.evidence[0]
+    combined = tmp_path / "combined.qc.json"
+    combined.write_text(json.dumps({
+        "report_type": "fiberhmm_multi_sample_qc",
+        "samples": [{"fiberhmm_version": "3.0.0", "assay": {"mode": "daf"}},
+                    {"fiberhmm_version": "3.0.0", "assay": {"mode": "flag"}}]}))
+    assert [a.id for a in check_path(combined)] == ["qc-assay-misdetected"]
+    for mode in ("daf", "pacbio-fiber"):
+        good = tmp_path / f"good_{mode}.qc.json"
+        good.write_text(json.dumps({"schema_version": 1, "fiberhmm_version": "3.0.0",
+                                    "assay": {"mode": mode}, "sampling": {}}))
+        assert check_path(good) == []

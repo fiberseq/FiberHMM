@@ -470,6 +470,10 @@ def test_plasmid_end_to_end_contract_and_rerun(plasmid_run):
     assert outputs["tracks"] and all(Path(p).exists() for p in outputs["tracks"])
     qc = outputs["qc"]
     assert qc["verdicts"]["overall"] in ("PASS", "WARN", "FAIL", "INSUFFICIENT")
+    # The called BAM is deduplicated (fiberhmm-dedup @PG "mode=flag"); QC grades
+    # it as the DAF assay it is, not as "flag" (audit H1).
+    assay = json.loads(Path(qc["json"]).read_text())["assay"]
+    assert (assay["mode"], assay["enzyme"]) == ("daf", "dddb")
     curves = json.loads(Path(qc["curves"]).read_text())
     assert curves["schema"] == "fiberhmm.qc.curves.v1"
     assert {"signal_rate", "phasogram", "footprint_sizes", "duplicates"} <= set(curves)
