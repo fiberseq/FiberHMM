@@ -52,7 +52,8 @@ plot draws, so another program (FiberBrowser, a notebook) can redraw it:
 
 | Key | Contents |
 |---|---|
-| `verdicts` | `overall`, `signal`, `periodicity` status (PASS/WARN/FAIL/INSUFFICIENT) and scores |
+| `verdicts` | `overall`, `signal`, `periodicity`, `efficiency`, `background` status (PASS/WARN/FAIL/INSUFFICIENT) and scores, and `verdict_basis` |
+| `state_rates` | `source`, `min_msp_bp`, the sorted per-read `msp_per_read_rates` and `outside_msp_per_read_rates`, and the reference quantiles (`null` when unavailable) |
 | `signal_rate` | `per_read_rates` (sorted fractions, one per sampled read), their `ecdf`, the bundled `reference_ecdf` (`rates`, `probabilities`), `warn_interval`, `reference_iqr` |
 | `phasogram` | `lags_bp`, the sample's `detrended_pair_frequency`, raw `pair_distance_counts`, `nrl_bp` and the bundled `reference` curve |
 | `footprint_sizes` | `nucleosome` and `tf`: `bin_edges_bp`, `sample_count_per_bin`, `sample_fraction_per_bin`, `sample_n`, `sample_overflow` and `reference_fraction_per_bin` |
@@ -86,8 +87,14 @@ The DddB demo call (`out/dddb.calls.bam`):
   grade is conjunctive: peak strength, repeat length, correlation with the
   reference curve and the amplitude of the reference-shaped component must
   all support it, so a flat or noisy curve cannot pass by chance.
+- **In-MSP rate (efficiency) and outside-MSP rate (background)**: see
+  [State-aware rates](#state-aware-rates).
 - **Overall**: PASS, WARN or FAIL; `INSUFFICIENT` when there is too little
-  evidence, rather than a failure.
+  evidence, rather than a failure. Where the reference has a state-aware
+  calibration, the overall status combines efficiency, background and
+  periodicity (`overall.verdict_basis: state-aware`); otherwise it combines
+  the signal rate and periodicity (`overall-rate`). Any FAIL fails; any WARN
+  or INSUFFICIENT component gives WARN.
 - **Footprint sizes** (from `MA`, or legacy `nl` for nucleosomes), PCR
   duplication (exact from the call's `.dedup.json` sidecar when integrated
   dedup ran, otherwise estimated from `0x400`/`di`/`ds` in the sample), and
@@ -106,6 +113,67 @@ strength and nucleosome and TF size across samples.
 
 Reference intervals are screening diagnostics, not biological exclusion
 criteria: a sample outside them deserves a look, not automatic rejection.
+
+## State-aware rates
+
+The overall modification rate mixes two things: how efficiently the enzyme
+labels accessible DNA, and how much of each molecule is accessible. A
+targeted amplicon at an open locus can have 20% of its length in MSPs where
+genome-wide data have 10%, so its overall rate is higher (or, under a
+different opportunity count, lower) at the *same* enzyme efficiency. QC
+therefore splits every sampled molecule by FiberHMM state:
+
+| Metric | Meaning |
+|---|---|
+| in-MSP rate (`efficiency`) | modified / opportunities inside MSPs of ≥ `--min-msp-bp` (85) bp: how well the enzyme labels accessible DNA |
+| outside-MSP rate (`background`) | the same everywhere else: nucleosomes, linkers and accessible gaps shorter than 85 bp. Internal and linker marks are pooled on purpose |
+| `msp_to_outside_ratio` | pooled in-MSP rate / pooled outside-MSP rate: signal over background |
+| `msp_length_fraction` | share of the sampled read length inside MSPs: how open the sample is |
+| `all_states` | the overall rate under the same opportunity count, for comparison |
+
+On the example data, a DddB amplicon set and the genome-wide DddB reference
+differ 1.3-fold in overall rate and 1.8-fold in MSP share, while their
+in-MSP rates agree within a few percent (42% and 45%).
+
+**Where the states come from.** If at least half of the sampled reads carry
+FiberHMM calls (`MA`, fibertools `Ma`, or legacy `ns/nl/as/al` arrays, in
+the frame the header declares), those calls are used (`state_rates.source:
+tags`). Otherwise QC runs a *light call*: the bundled apply HMM of the
+declared chemistry, through the same extraction, encoding and Viterbi code
+as `fiberhmm-call`, without nucleosome or TF recall, on at most
+`--light-call-reads` (400) sampled reads and `--light-call-seconds` (60 s)
+(`source: light_call`, with model, SHA-256, reads called and what stopped
+it). The sample is in random order, so a stopped light call is still a random
+subset. `--state-source tags|light-call|none` forces a source or skips.
+
+**Opportunities** are read off the observation encoding calling uses, so they
+are exactly the sites the HMM sees: DAF targets on the deaminated strand only
+(C on CT reads, G on GA reads) with the chemistry's adjacent-run mask (DddA)
+and the SNP mask; Hia5 PacBio A and T; Hia5 Nanopore the basecalled-strand A;
+MM `?`-unlisted bases excluded; 10 bases at each read end excluded as in
+calling. These differ from the signal rate's opportunities (all aligned C/G
+for DAF), so `all_states` and `signal` are not the same number.
+
+**Read ends.** A terminal state segment is truncated by the read end: a
+nucleosome cut below 85 bp no longer bounds an MSP and joins it, and an MSP
+cut below 85 bp counts as outside. Both errors reach at most 85 bp from the
+end, so each terminal segment is excluded up to 85 bp from its read end
+(`definition.terminal_segments: cap`).
+
+**Grading.** Each compartment reports pooled `n_events`, `n_opportunities`,
+`aggregate_rate` with a binomial `aggregate_rate_wilson95`, and per-read
+quantiles over reads with at least 50 opportunities in the compartment.
+Efficiency grades the median per-read in-MSP rate against the reference's
+per-read in-MSP rates, one-sided: PASS at or above the reference 25th
+percentile, WARN down to the 5th, FAIL below. Background grades the median
+per-read outside-MSP rate: PASS at or below the reference 75th percentile,
+WARN up to the 95th, FAIL above. The reference is the one computed from the
+same state source (calls made by this release's `fiberhmm-call` defaults, or
+the light call), under the same definition; a different `--min-msp-bp`
+reports the rates without grading them. The quantiles bounding PASS/WARN are
+`state_rates.grading` in `fiberhmm/qc/references.json`. As for the signal
+rate, an ML threshold more than 5 away from the reference's caps the grade at
+WARN.
 
 ## Reference data sets
 
@@ -133,6 +201,9 @@ combinations are rejected.
 | `--prob-threshold` | 248 for Hia5 Nanopore, 125 otherwise | ML threshold for MM/ML calls |
 | `--reference` | — | indexed FASTA for raw DAF BAMs without `MD` or R/Y |
 | `--snp-mask BED`, `--snp-report JSON` | — | single input: apply a SNP mask to the rate and periodicity, and plot a `fiberhmm-daf-snps` report |
+| `--state-source` | `auto` | in-MSP/outside-MSP states from the BAM's calls (`tags`), a bounded `light-call`, or `none` |
+| `--min-msp-bp` | 85 | shortest MSP counted as accessible; references are calibrated at 85 |
+| `--light-call-reads`, `--light-call-seconds` | 400, 60 | bounds of the light call on uncalled BAMs |
 | `--fail-on-qc` | off | exit 2 when the overall status is FAIL (WARN and INSUFFICIENT exit 0) |
 
 Every option: [`fiberhmm-qc`](../reference/cli.md#fiberhmm-qc).

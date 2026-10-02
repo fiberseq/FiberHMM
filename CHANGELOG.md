@@ -43,6 +43,23 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
   (`fiberhmm.qc.curves.v1`): the per-read signal rates and ECDF with the
   bundled reference, the phasogram, footprint-size histograms and duplicate
   cluster sizes behind the QC plot.
+- **State-aware QC rates.** `fiberhmm-qc` splits the modification rate by
+  FiberHMM state: the rate inside MSPs of at least 85 bp (enzyme
+  efficiency), the rate outside them (nucleosomes, linkers and shorter gaps;
+  background), their ratio, and the share of read length in MSPs. States come
+  from the BAM's own calls (`MA`, fibertools `Ma`, legacy `as/al`); an uncalled
+  BAM gets a bounded *light call* (the declared chemistry's bundled apply
+  HMM on at most 400 sampled reads / 60 s, no nucleosome or TF recall), and
+  the report says which. Opportunities are the calling encoding's own (DAF:
+  deaminated-strand targets with the chemistry's run and SNP masks; Hia5
+  PacBio A/T; Hia5 Nanopore basecalled A). Counts and opportunities are
+  reported per compartment so confidence intervals can be computed. New
+  report keys (`schema_minor_version: 1`, additive to schema 1):
+  `state_rates`, `efficiency`, `background`, `overall.components`,
+  `overall.verdict_basis`; `.qc.tsv`, `combined.qc.*`, `.qc.curves.json` and
+  `fiberhmm-pipeline`'s `outputs.json` (`qc.verdicts`) carry them. New
+  options: `--state-source`, `--min-msp-bp`, `--light-call-reads`,
+  `--light-call-seconds`. See [QC](https://fiberseq.github.io/FiberHMM/workflows/qc/#state-aware-rates).
 - `fiberhmm-extract` splits rows at the origin of `@SQ TP:circular` contigs,
   so reads stored across a plasmid's origin give valid BED/bigBed.
 
@@ -359,6 +376,16 @@ with FiberBrowser 3.0.0 (which requires `fiberhmm>=3.0,<4`).
 
 These change numbers relative to 2.x.
 
+- **QC verdict uses in-MSP efficiency and outside-MSP background.** Where
+  the profile has a state-aware reference (DddB, DddA, Hia5 PacBio), the
+  overall QC status combines the in-MSP rate, the outside-MSP rate and
+  periodicity; the overall signal rate is still reported and graded in
+  `signal` but no longer decides the verdict, because it also reflects how
+  accessible the sample's chromatin is (an amplicon at an open locus labels
+  more of its length than genome-wide data at the same enzyme efficiency).
+  Hia5 Nanopore, without a state-aware reference yet, keeps the
+  overall-rate verdict, as does `--state-source none`.
+
 - **ML threshold per chemistry.** Hia5 on Nanopore (`--seq nanopore`, given or
   detected) calls m6A at ML ≥ 248 in `fiberhmm-call`, `-apply`,
   `-recall-tfs`/`-recall-nucs`, `-extract`, `-qc` and `-posteriors` (read from the BAM's
@@ -476,6 +503,10 @@ The full guide, with a table of every default change and how to reproduce
 [Upgrading from 2.x](https://fiberseq.github.io/FiberHMM/upgrading/).
 
 ### Known issues
+
+- The `hia5_nanopore` QC profile has no state-aware reference (its source
+  control is not available for recalibration): in-MSP and outside-MSP rates
+  are reported but not graded, and the verdict uses the overall rate.
 
 - The packaged `hia5_nanopore` QC reference (rate ECDF, rate quantiles and
   rate-stratified exemplars) was computed with the old Nanopore opportunity
