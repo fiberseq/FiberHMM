@@ -94,7 +94,6 @@ These now either work or stop with a clear message:
 |---|---|
 | `fiberhmm-run` | `fiberhmm-call`, piped into `ft fire` if needed |
 | `python apply_model.py`, `extract_tags.py`, `train_model.py`, `generate_probs.py`, `export_posteriors.py`, `fiberhmm_utils.py` | the `fiberhmm-*` commands |
-| `fiberhmm-site-consensus`, targeted families (development builds only) | `fiberhmm-consensus` |
 | `fiberhmm-crossstrand`, `fiberhmm-duplex` (development builds only) | `fiberhmm-pair` |
 | `fiberhmm-merge` (development builds only) | still installed but deprecated: `fiberhmm-pair --from-paired` |
 | `fiberhmm-call --ddda-mcg` (development builds only) | `fiberhmm-tag-m5c`, then `fiberhmm-recall-tfs` ([DAF-seq](workflows/daf-seq.md#ddda-cpg-island-methylation)) |

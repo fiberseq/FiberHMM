@@ -17,7 +17,7 @@ footprints, runs QC and tells you how to open the result in FiberBrowser.
 1. FiberHMM (see [Installation](installation.md)):
 
     ```bash
-    pip install fiberhmm
+    pip install "fiberhmm[plots]"           # [plots] adds the QC report figures
     ```
 
 2. minimap2, the read aligner, either as a program or as the `mappy` Python
@@ -89,8 +89,8 @@ runs on the same genome start aligning at once.
 |---|---|
 | `<sample>.fiberhmm.bam` (+ `.bai`) | the calls: nucleosomes, MSPs and TF footprints on every read ([BAM tags](../reference/bam-tags.md)) |
 | `<sample>.aligned.bam` (+ `.bai`) | the alignment the calls were made on |
-| `qc/<sample>.fiberhmm.qc.pdf`, `.png` | the QC report: deamination rate, nucleosome periodicity, footprint sizes, duplicates and SNPs ([Quality control](../workflows/qc.md)) |
-| `qc/<sample>.fiberhmm.qc.json`, `.qc.curves.json` | the same, machine-readable |
+| `qc/<sample>.fiberhmm.qc.pdf`, `.png` | the QC report: deamination rate, nucleosome periodicity, footprint sizes, duplicates and SNPs ([Quality control](../workflows/qc.md)); written only with `fiberhmm[plots]` (matplotlib), otherwise the run lists the `.qc.json` as its QC report |
+| `qc/<sample>.fiberhmm.qc.json`, `.qc.curves.json` | the same, machine-readable (always written) |
 | `<contig>.fa` and a copy of the map | the reference the reads were aligned to (plasmid runs) |
 | `tracks/` | bigBed/BED tracks, with `--tracks` ([Extracting tracks](../workflows/extracting.md)) |
 | `outputs.json` | every path above and what to open in FiberBrowser |
