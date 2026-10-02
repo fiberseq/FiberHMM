@@ -1,0 +1,11 @@
+# Source distribution contents beyond the package itself (the wheel is
+# unaffected; it ships only fiberhmm/). The sdist carries the complete test
+# suite and the few repository files the tests read, so `pytest` runs from an
+# unpacked sdist (e.g. a conda recipe). Tests that need git history, external
+# tools or private data sets skip there, as in any checkout.
+include CHANGELOG.md CITATION.cff
+graft tests
+include tools/gen_cli_reference.py tools/build_advisory_index.py
+include docs/reference/cli.md
+include scripts/summarize_targeted_strand_rescue.py
+global-exclude __pycache__ *.py[cod] .DS_Store

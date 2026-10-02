@@ -83,6 +83,12 @@ jobs:
           tops = {name.split("/")[0] for name in zipfile.ZipFile(wheel).namelist()}
           extra = {t for t in tops if t != "fiberhmm" and not t.endswith(".dist-info")}
           assert not extra, f"unexpected top-level entries in {wheel}: {sorted(extra)}"
+          # Data files outside the package-data globs are easy to lose.
+          names = set(zipfile.ZipFile(wheel).namelist())
+          for required in ("fiberhmm/advisories.json",
+                           "fiberhmm/models/SUPPORTED_MODES.json",
+                           "fiberhmm/inference/consensus/harmonized_families/reference/SOURCE_MANIFEST.json"):
+              assert required in names, f"{required} missing from {wheel}"
           print(wheel, sorted(tops))
           EOF
       - name: Install the wheel into a clean venv (core dependencies only)

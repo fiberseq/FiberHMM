@@ -1,0 +1,31 @@
+# Citation metadata (https://citation-file-format.github.io/). GitHub shows it
+# as "Cite this repository". Keep version in step with pyproject.toml
+# (tests/test_packaging.py checks it).
+# TODO(owner): replace the "FiberHMM Authors" entity with the individual
+# authors (family-names, given-names, orcid), and add date-released and a DOI
+# once the release is tagged and archived; add a preferred-citation for the
+# publication when it is available (docs/about/citing.md says the same).
+cff-version: 1.2.0
+message: "If you use FiberHMM in published work, please cite it as below."
+type: software
+title: "FiberHMM: chromatin footprint calling from single-molecule Fiber-seq and DAF-seq data"
+version: 3.0.0
+authors:
+  - name: "FiberHMM Authors"
+license: MIT
+repository-code: "https://github.com/fiberseq/FiberHMM"
+url: "https://fiberseq.github.io/FiberHMM/"
+abstract: >-
+  FiberHMM calls chromatin footprints on single DNA molecules from the
+  modification marks of Fiber-seq (m6A) and DAF-seq (deamination) reads,
+  writes them back into the BAM as standard tags, and finds recurrent
+  footprint classes across molecules at a locus.
+keywords:
+  - bioinformatics
+  - chromatin
+  - fiber-seq
+  - DAF-seq
+  - hidden-markov-model
+  - nucleosome
+  - footprinting
+  - single-molecule

@@ -194,3 +194,59 @@ def test_every_console_script_prints_the_package_version():
     expected = [0, f"fiberhmm {fiberhmm.__version__}\n"]
     wrong = {name: got for name, got in results.items() if got != expected}
     assert not wrong
+
+
+def test_citation_metadata_matches_the_package():
+    """CITATION.cff (GitHub "Cite this repository") names this version and repository."""
+    root = PYPROJECT.parent
+    citation = (root / "CITATION.cff").read_text()
+    version = re.search(r"^version:\s*\"?([^\"\s]+)\"?\s*$", citation, re.M)
+    assert version and version.group(1) == fiberhmm.__version__
+    assert re.search(r"^cff-version:\s*1\.2\.0\s*$", citation, re.M)
+    assert re.search(r'^repository-code:\s*"https://github\.com/fiberseq/FiberHMM"\s*$',
+                     citation, re.M)
+    assert re.search(r"^license:\s*MIT\s*$", citation, re.M)
+
+
+def test_sdist_manifest_ships_what_the_tests_read():
+    """The sdist carries the test tree and the repository files tests open."""
+    root = PYPROJECT.parent
+    lines = [line.split("#", 1)[0].split()
+             for line in (root / "MANIFEST.in").read_text().splitlines()]
+    graft = {words[1] for words in lines if words and words[0] == "graft"}
+    included = {path for words in lines if words and words[0] == "include"
+                for path in words[1:]}
+    assert "tests" in graft
+    for path in ("CHANGELOG.md", "CITATION.cff", "tools/gen_cli_reference.py",
+                 "tools/build_advisory_index.py", "docs/reference/cli.md",
+                 "scripts/summarize_targeted_strand_rescue.py"):
+        assert path in included, path
+        assert (root / path).exists(), path
+
+
+def test_package_data_covers_every_tracked_data_file():
+    """Every non-Python file under fiberhmm/ matches a [tool.setuptools.package-data] glob,
+    so the wheel cannot silently drop one (SOURCE_MANIFEST.json once was)."""
+    import fnmatch
+    import shutil
+    import subprocess
+
+    root = PYPROJECT.parent
+    if not (root / ".git").exists() or shutil.which("git") is None:
+        import pytest
+        pytest.skip("needs a git checkout to list tracked files")
+    tracked = subprocess.run(["git", "-C", str(root), "ls-files", "fiberhmm"],
+                             capture_output=True, text=True, check=True).stdout.split()
+    data = [path for path in tracked if not path.endswith(".py")]
+    globs = []
+    for line in _section("tool.setuptools.package-data").splitlines():
+        match = re.match(r'^\s*"([\w.]+)"\s*=\s*\[(.*)\]\s*$', line)
+        if match:
+            prefix = match.group(1).replace(".", "/") + "/"
+            globs += [prefix + pattern for pattern in re.findall(r'"([^"]+)"', match.group(2))]
+    assert globs
+    missing = [path for path in data
+               if not any(fnmatch.fnmatchcase(path, pattern) and
+                          "/" not in path[len(pattern.rsplit("/", 1)[0]) + 1:]
+                          for pattern in globs)]
+    assert not missing, missing

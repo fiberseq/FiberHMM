@@ -24,7 +24,7 @@ keywords = [
     "single-molecule"
 ]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Science/Research",
     "Operating System :: MacOS",
@@ -111,6 +111,7 @@ include = ["fiberhmm*"]
 "fiberhmm" = ["advisories.json"]
 "fiberhmm.models" = ["*.json", "*.md", "legacy/*.json"]
 "fiberhmm.qc" = ["*.json", "*.md"]
+"fiberhmm.inference.consensus.harmonized_families.reference" = ["SOURCE_MANIFEST.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
