@@ -478,7 +478,9 @@ def _extract_region_worker(args) -> Tuple[dict, int, dict]:
             bed_outs = {
                 t: stack.enter_context(open(temp_bed_paths[t], 'w')) for t in extract_types
             }
-            with pysam.AlignmentFile(input_bam, "rb", check_sq=False) as inbam:
+            with pysam.AlignmentFile(
+                    input_bam, "rb", check_sq=False,
+                    index_filename=params.get('index_filename')) as inbam:
                 try:
                     read_iter = inbam.fetch(chrom, start, end)
                 except ValueError:
@@ -1357,6 +1359,31 @@ def _build_sort_cmd(in_path: str, out_path: str, tmp_dir: Optional[str],
     return cmd, env
 
 
+def _temporary_index_if_missing(input_bam: str, temp_dir: str) -> Optional[str]:
+    """Path of a temporary CSI index for an unindexed ``input_bam``, else None.
+
+    An existing index is used as htslib finds it (``.bai`` or ``.csi``, next
+    to the BAM), so a CSI-only index is honoured and nothing is written next
+    to the input (whose directory may be read-only). Without one the BAM is
+    indexed into ``temp_dir``; an unsorted BAM cannot be, which is reported as
+    a RuntimeError naming the fix.
+    """
+    with pysam.AlignmentFile(input_bam, 'rb', check_sq=False) as bam:
+        if bam.has_index():
+            return None
+    index_path = os.path.join(temp_dir, os.path.basename(input_bam) + '.csi')
+    print("Input BAM has no index; indexing it into a temporary file "
+          "(run samtools index to skip this step)...")
+    try:
+        pysam.index('-c', input_bam, index_path)
+    except pysam.utils.SamtoolsError as exc:
+        raise RuntimeError(
+            f"cannot index {input_bam} ({str(exc).strip()}); fiberhmm-extract "
+            "needs a coordinate-sorted BAM: run samtools sort, then "
+            "samtools index") from exc
+    return index_path
+
+
 def extract_tags_parallel(input_bam: str, output_beds, extract_types,
                           n_cores: int = 1, region_size: int = 10_000_000,
                           min_mapq: int = 0, prob_threshold: int = 125,
@@ -1398,11 +1425,6 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
     output_beds = {('nucleosome' if k == 'footprint' else k): v
                    for k, v in output_beds.items()}
 
-    # Check BAM index
-    if not os.path.exists(input_bam + '.bai') and not os.path.exists(input_bam.replace('.bam', '.bai')):
-        print("Indexing input BAM...")
-        pysam.index(input_bam)
-
     # Get regions
     regions = _get_genome_regions(input_bam, region_size, skip_scaffolds, chroms)
     print(f"Processing {len(regions)} regions with {n_cores} cores "
@@ -1412,7 +1434,11 @@ def extract_tags_parallel(input_bam: str, output_beds, extract_types,
     temp_dir = tempfile.mkdtemp(prefix='extract_tags_')
 
     try:
+        # Workers fetch by region, so they need an index: an existing one
+        # (.bai or .csi, as htslib finds it), else a temporary CSI index.
+        index_filename = _temporary_index_if_missing(input_bam, temp_dir)
         params = {
+            'index_filename': index_filename,
             'extract_types': extract_types,
             'min_mapq': min_mapq,
             'prob_threshold': prob_threshold,
