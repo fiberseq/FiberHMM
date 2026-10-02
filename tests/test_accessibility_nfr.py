@@ -262,6 +262,7 @@ def test_variant_x_class_pairs_internal_footprint_label_and_join():
     other = classes_from_rows(sup, {'class_007': {f'x{i}': (1, 'd::CT') for i in range(50)}})
     res = run_accessibility(payload(units), dict(FAST, nfr_regions=[(1380, 1720)]), classes=other)
     assert res['class_join']['joined_molecules'] == 0 and any('unit_id join' in w for w in res['warnings'])
+    assert all(c['internal_footprint'] is None for c in res['nfrs'][0]['configurations'])   # geometry alone does not label
 
 
 def test_within_cluster_check_and_combinations():

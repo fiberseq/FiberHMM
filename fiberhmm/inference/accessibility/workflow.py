@@ -379,8 +379,10 @@ def run_accessibility(payload, params=None, output_dir=None, progress=None, clas
         if class_units and not class_units & uids:
             warnings.append('No footprint-class molecule matches a molecule of this run (unit_id join). Classes come from a run on '
                             'different datasets or a different dataset order; variant x class pairs are not tested.')
+        # only classes with member molecules in this run can label a split (a geometry match alone is not evidence)
+        joined = [c for c in tf_els if sum(c['state'].get(u, 0) for u in uids) >= opt.min_marginal]
         for nfr in nfrs:
-            _internal_footprints(nfr, tf_els, opt)
+            _internal_footprints(nfr, joined, opt)
     all_els = sorted(elements + tf_els, key=lambda e: (e['start'], e['end'], e['id']))
     # co-accessibility
     _report(progress, 'coaccess', 'Per-read openness')
