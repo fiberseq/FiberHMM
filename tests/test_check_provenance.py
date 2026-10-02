@@ -126,7 +126,9 @@ def test_qc_report_with_a_misdetected_assay(tmp_path):
     flagged = _qc(tmp_path / "flag.qc.json", "flag")
     (advisory,) = check_path(flagged)
     assert advisory.id == "qc-assay-misdetected"
-    assert (advisory.status, advisory.severity) == ("affected", "rerun-recommended")
+    # rerun-required: fh-fix-qc-pipeline's rule (merged with this one) treats a
+    # report graded under a non-assay mode as wrong outright, not degraded.
+    assert (advisory.status, advisory.severity) == ("affected", "rerun-required")
     assert "'flag'" in advisory.evidence[0] and "ddda.fiberhmm.bam" in advisory.evidence[0]
     assert check_path(_qc(tmp_path / "daf.qc.json", "daf")) == []
     combined = tmp_path / "combined.qc.json"
@@ -155,7 +157,7 @@ def test_pipeline_output_directory_checks_its_bam_and_qc(tmp_path, capsys):
     assert adv.output_kind(outdir) == "pipeline"
     assert adv.output_kind(outdir / "outputs.json") == "pipeline"
     payload = report(outdir)
-    assert payload["kind"] == "pipeline" and payload["status"] == "rerun-recommended"
+    assert payload["kind"] == "pipeline" and payload["status"] == "rerun-required"
     (advisory,) = payload["advisories"]
     assert advisory["id"] == "qc-assay-misdetected"
     assert advisory["path"].endswith("qc/ddda.fiberhmm.qc.json")
@@ -165,9 +167,9 @@ def test_pipeline_output_directory_checks_its_bam_and_qc(tmp_path, capsys):
     # A moved OUTDIR: the recorded absolute paths are gone, the files are local.
     moved = tmp_path / "moved"
     shutil.move(str(outdir), str(moved))
-    assert report(moved)["status"] == "rerun-recommended"
+    assert report(moved)["status"] == "rerun-required"
     plotted = _pipeline(tmp_path / "plotted", plots=True)
-    assert report(plotted)["status"] == "rerun-recommended"  # reads the JSON, not the PDF
+    assert report(plotted)["status"] == "rerun-required"  # reads the JSON, not the PDF
     clean = _pipeline(tmp_path / "clean", qc_mode="daf")
     assert report(clean)["status"] == "clean"
     (clean / "ddda.fiberhmm.bam").unlink()

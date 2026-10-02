@@ -137,7 +137,7 @@ of its region files is recognised and does not count.)
 | `tag-m5c-missing-ucg` | rerun-recommended | calls | `fiberhmm-tag-m5c` before 3.0 (no `ddda_ucg`) |
 | `posteriors-reverse-frame` | rerun-required | posteriors | `fiberhmm-posteriors` files before 3.0 |
 | `qc-nanopore-opportunities` | rerun-recommended | QC | Nanopore `fiberhmm-qc` reports before 3.0 |
-| `qc-assay-misdetected` | rerun-recommended | QC | QC reports graded under an assay mode that is not one (`mode=flag` taken from `fiberhmm-dedup`'s `@PG`) |
+| `qc-assay-misdetected` | rerun-required | QC | QC reports graded under an assay mode that is not one (`mode=flag`/`collapse` taken from `fiberhmm-dedup`'s `@PG`) |
 | `recaller-tier-double-count` | rerun-recommended | consensus tiers | lattice-recaller results with edge/loose tiers before the fix |
 | `hia5-nanopore-ml-threshold` | info | calls | ONT Hia5 called at the 2.x default ML threshold |
 | `primary-only-default` | info | calls | secondary/supplementary alignments called (2.x default) |
